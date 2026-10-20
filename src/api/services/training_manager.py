@@ -21,7 +21,8 @@ Purpose:
     - Stops a job by type: SIGINT (CTRL_BREAK_EVENT on Windows), then SIGTERM,
       then SIGKILL; a training stop never reaches a test run, nor the reverse
     - Reads training metrics from MetricsLogger's JSON log files, and, once a
-      test run has ended, which report it left in the report store
+      test run has ended, what it published (its `--outcome` file) and whether
+      that report is kept and registered (the registration's one helper)
     - Lists checkpoint files with metadata
     - Reports GPU/RAM resource stats via nvidia-smi subprocess
 
@@ -40,8 +41,11 @@ Architecture Note:
     the kernel however that process ends; the runner only checks it before
     starting, to refuse early.
 
-    **Nothing here gates access.** Every caller that starts or stops a job
-    applies D8 first (WP2 wires the routes and handlers).
+    **Nothing here gates access.** Every caller that starts, stops or lists
+    applies D8 first, on its own request (`src/utils/operator_access.py`):
+    the training routes through their FastAPI dependency, the Training
+    Console's handlers through the Gradio helper. The Test tab's start and
+    cancel (M5-2) do the same before calling `start_test` and `cancel_test`.
 
 Dependencies:
     - subprocess: Launch job processes
@@ -65,6 +69,7 @@ import logging
 import os
 import re
 import secrets
+import shutil
 import signal
 import subprocess
 import sys
@@ -74,7 +79,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Deque, Dict, List, Mapping, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Deque, Dict, List, Optional, Sequence, Set, Tuple
 
 import yaml
 
@@ -162,7 +167,7 @@ JOB_TYPES: Dict[str, JobType] = {
 
 #: What measure_scorer's exit statuses say, as its module docstring defines
 #: them. Descriptive: whether a report was kept and registered is read from
-#: the disk, never from these.
+#: the disk, never from these (`TrainingManager._test_outcome`).
 _TEST_EXIT_MEANING = {
     0: "measured (with --record: registered, or already held)",
     1: "refused before anything was written, or measured but the report was not written, "
@@ -174,17 +179,38 @@ _TEST_EXIT_MEANING = {
 
 
 #: Reads, for one report file, whether it was kept and whether it is
-#: registered, from the disk: `reader(report_path, checkpoint_path)` returns
-#: `{"kept": bool | None, "registered": bool | None, "reason": str}`, None
-#: meaning "cannot be checked". **WP4 integration point:** the one public
-#: helper in src/evaluation/registration.py is passed to the runner here.
-ReportStateReader = Callable[[Path, Path], Mapping[str, Any]]
+#: registered, from the disk: `reader(report_path, checkpoint=...,
+#: expected_sha256=...)` returns a `registration.ReportState`. The runner's
+#: is the registration's one public helper (`registration.report_state`); a
+#: test may pass another.
+ReportStateReader = Callable[..., Any]
+
+#: The run's outcome file in its job directory (`measure_scorer.py --outcome`).
+OUTCOME_FILE = "outcome.json"
+
+#: A `ReportState` answer as the status's ``kept`` and ``registered`` give it:
+#: True, False, or None for "cannot be checked".
+_STATE_ANSWER = {"kept": True, "registered": True, "not_kept": False,
+                 "not_registered": False, "cannot_be_checked": None}
 
 
-def _no_report_state_reader(report: Path, checkpoint: Path) -> Dict[str, Any]:
-    return {"kept": None, "registered": None,
-            "reason": "this build has no report-state reader, so whether the report was "
-                      "kept and registered is not checked here"}
+def _registration_report_state(report: Path, **kwargs: Any) -> Any:
+    """`src.evaluation.registration.report_state`, imported when a test run
+    ends rather than when the runner is."""
+    from src.evaluation.registration import report_state
+
+    return report_state(report, **kwargs)
+
+
+def _remove(path: Path) -> None:
+    """Remove a file a job owned, or a directory it made (its job directory)."""
+    try:
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path, ignore_errors=True)
+        else:
+            path.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 @dataclass(frozen=True)
@@ -272,8 +298,10 @@ def deployment_device() -> Optional[str]:
         "(scripts/measure_scorer.py --device), so it cannot be given the deployment's device.")
 
 
-def build_test_argv(inputs: TestRunInputs, device: Optional[str]) -> List[str]:
-    """measure_scorer's command line for a test run, from `inputs` only.
+def build_test_argv(inputs: TestRunInputs, device: Optional[str], outcome: Path) -> List[str]:
+    """measure_scorer's command line for a test run, from `inputs` only, and
+    `outcome`, the new file in the job's own directory where the run says what
+    it published (`--outcome`).
 
     The expected digests make the run refuse before measuring when the
     checkpoint or the version it reads is not the one chosen. `--batch-size`
@@ -287,6 +315,7 @@ def build_test_argv(inputs: TestRunInputs, device: Optional[str]) -> List[str]:
         "--registry", str(inputs.registry),
         "--expect-checkpoint-sha256", inputs.checkpoint_sha256,
         "--expect-version-sha256", inputs.version_sha256,
+        "--outcome", str(outcome),
     ]
     for directory in inputs.evidence_dirs:
         argv += ["--training-evidence", str(directory)]
@@ -320,7 +349,8 @@ class _Job:
     outcome: Optional[Dict[str, Any]] = None
     log: Deque[str] = field(default_factory=lambda: deque(maxlen=LOG_TAIL_LINES))
     log_lock: threading.Lock = field(default_factory=threading.Lock)
-    #: Files the job owns and removes when it ends (training's temp YAML).
+    #: Files the job owns and removes when it ends (training's temp YAML, a
+    #: test run's job directory).
     cleanup: List[Path] = field(default_factory=list)
     #: A training job's own run directory, where its snapshot is read after a
     #: stop (never the run directory of a job started since).
@@ -328,6 +358,8 @@ class _Job:
     #: The report store listed before launch (test runs).
     reports_dir: Optional[Path] = None
     reports_before: Set[str] = field(default_factory=set)
+    #: Where a test run writes its outcome (`--outcome`), in its job directory.
+    outcome_path: Optional[Path] = None
     done: threading.Event = field(default_factory=threading.Event)
 
     def tail(self, n: Optional[int] = None) -> List[str]:
@@ -377,7 +409,7 @@ class TrainingManager:
         self._active: Optional[_Job] = None
         #: The latest job of each type, kept after it ends.
         self._last: Dict[str, _Job] = {}
-        self._report_state: ReportStateReader = report_state or _no_report_state_reader
+        self._report_state: ReportStateReader = report_state or _registration_report_state
         #: The last training request (as started, with its run directory).
         self._config: Optional[Dict[str, Any]] = None
 
@@ -438,7 +470,8 @@ class TrainingManager:
                       inputs: Dict[str, Any], cleanup: Sequence[Path] = (),
                       run_dir: Optional[Path] = None,
                       reports_dir: Optional[Path] = None,
-                      reports_before: Optional[Set[str]] = None) -> Tuple[Optional[_Job], str]:
+                      reports_before: Optional[Set[str]] = None,
+                      outcome_path: Optional[Path] = None) -> Tuple[Optional[_Job], str]:
         """Launch `argv` as a job of `kind` and start its monitor. Called under
         the lock, after `_slot_refusal_locked` found the slot free.
 
@@ -473,13 +506,13 @@ class TrainingManager:
                                          error_message=error, inputs=inputs,
                                          ended=datetime.now())
             for path in cleanup:
-                path.unlink(missing_ok=True)
+                _remove(path)
             logger.error(error)
             return None, error
 
         job = _Job(kind, job_id, datetime.now(), process=process, inputs=inputs,
                    cleanup=list(cleanup), run_dir=run_dir, reports_dir=reports_dir,
-                   reports_before=set(reports_before or ()))
+                   reports_before=set(reports_before or ()), outcome_path=outcome_path)
         self._last[kind.name] = job
         self._active = job
         threading.Thread(target=self._monitor, args=(job,), daemon=True,
@@ -630,10 +663,13 @@ class TrainingManager:
         version (M5), the real CLI, so it stays the single producer.
 
         `inputs` come from the server's lists and settings; the caller gates
-        the call with D8 first (WP2). The run checks the model and the cohort
+        the call with D8 first. The run checks the model and the cohort
         itself when it starts, against the digests chosen, never trusting a
-        preview. The version's report store is listed before launch, so the
-        report this run creates can be told apart when it ends.
+        preview. It is given a job directory of its own (removed once the run
+        has ended and been read), where it writes its outcome
+        (`--outcome`). The version's report store is listed before launch
+        too, so a report directory this run created without writing its
+        outcome can still be told apart when it ends.
         """
         kind = JOB_TYPES["test"]
         try:
@@ -654,10 +690,18 @@ class TrainingManager:
                         "error": f"The report store {reports_dir} cannot be listed ({exc}), so "
                                  "this run's report could not be told from others when it "
                                  "ends. Nothing was started."}
+            try:
+                job_dir = Path(tempfile.mkdtemp(prefix="shepherd-test-job-"))
+            except OSError as exc:
+                return {"success": False, "status": self._status_locked("test"),
+                        "error": f"A directory for this run's outcome could not be made "
+                                 f"({exc}). Nothing was started."}
+            outcome = job_dir / OUTCOME_FILE
             job, error = self._spawn_locked(
-                kind, build_test_argv(inputs, device),
+                kind, build_test_argv(inputs, device, outcome),
                 inputs={**inputs.summary(), "device": device or "auto"},
-                reports_dir=reports_dir, reports_before=before)
+                cleanup=[job_dir], reports_dir=reports_dir, reports_before=before,
+                outcome_path=outcome)
             if job is None:
                 return {"success": False, "error": error, "status": "failed"}
             return {"success": True, "job_id": job.job_id, "pid": job.process.pid,
@@ -833,10 +877,7 @@ class TrainingManager:
                 if self._active is job:
                     self._active = None
             for path in job.cleanup:
-                try:
-                    path.unlink(missing_ok=True)
-                except OSError:
-                    pass
+                _remove(path)
             job.done.set()
             logger.info(f"{job.kind.name.capitalize()} process ended (code={returncode}, "
                         f"status={job.status})")
@@ -893,48 +934,102 @@ class TrainingManager:
         whatever its exit status: the publication contract decides, never the
         exit code alone.
 
-        **Which report is this run's**: the run directory that appeared in the
-        version's report store during the run with this checkpoint's digest in
-        its name (the run id, `create_report_dir`). None means nothing was
-        kept; two or more (another writer in the same version, against D7's
-        single-writer rule) means it cannot be told, and nothing is claimed.
-        Whether that report was kept and registered comes from the report-state
-        reader (WP4's helper), never from the exit status.
+        **The run says what it published** in its outcome file (`--outcome`,
+        a new file in its job directory, written as soon as its report is
+        published and again at the end): the report and the digest of the
+        bytes it published. **Whether that report is kept, and whether it is
+        registered,** is then read from the report store and the ledger by the
+        registration's one helper (`registration.report_state`, given that
+        digest), never from the outcome file or the exit status alone.
+
+        **No outcome file means no report was published**, with one check
+        that keeps it true: a run that stopped or failed between publishing
+        its report and writing the file leaves a report directory and no
+        outcome. So the version's report store is listed too; a run directory
+        for this checkpoint that appeared during the run is read as above
+        (two or more cannot be told apart, and neither is claimed).
         """
+        base: Dict[str, Any] = {"report_dir": None, "report": None, "kept": None,
+                                "registered": None, "run_outcome": None}
+        path = job.outcome_path
+        try:
+            raw = path.read_bytes()
+        except FileNotFoundError:
+            return self._outcome_without_file(job, base)
+        except OSError as exc:
+            return {**base, "summary": f"The run's outcome file {path} cannot be read ({exc}), "
+                                       "so what it left cannot be checked."}
+        try:
+            run_outcome = json.loads(raw.decode("utf-8"))
+            report, published = run_outcome["report"], run_outcome["report_sha256"]
+            if not (isinstance(report, str) and report
+                    and isinstance(published, str) and _SHA256.fullmatch(published)):
+                raise ValueError("it names no report and published digest")
+        except (ValueError, KeyError, TypeError, RecursionError) as exc:
+            return {**base, "summary": f"The run's outcome file {path} is not one this runner "
+                                       f"reads ({type(exc).__name__}: {exc}), so what it left "
+                                       "cannot be checked."}
+        return self._report_outcome(job, Path(report), published, run_outcome, base)
+
+    def _outcome_without_file(self, job: _Job, base: Dict[str, Any]) -> Dict[str, Any]:
+        """A run that wrote no outcome file: no report was published, unless a
+        report directory for its checkpoint appeared in the store meanwhile."""
         reports = job.reports_dir
         sha12 = job.inputs["checkpoint_sha256"][:12]
-        base: Dict[str, Any] = {"report_dir": None, "report": None, "kept": None,
-                                "registered": None}
         try:
             after = _report_names(reports)
         except OSError as exc:
-            return {**base, "summary": f"The report store {reports} cannot be listed ({exc}), "
-                                       "so whether this run kept a report cannot be checked."}
+            return {**base, "summary": f"The run wrote no outcome file, and the report store "
+                                       f"{reports} cannot be listed ({exc}), so whether it "
+                                       "published a report cannot be checked."}
         new = sorted(name for name in after - job.reports_before if f"-{sha12}-" in name)
         if not new:
             return {**base, "kept": False, "registered": False,
-                    "summary": f"No report directory was created under {reports}: nothing "
-                               "was kept, so nothing was registered."}
+                    "summary": f"No report was published: the run wrote no outcome file and "
+                               f"created no report directory under {reports}, so it kept and "
+                               "registered nothing."}
         if len(new) > 1:
-            return {**base, "summary": f"{len(new)} report directories for this checkpoint "
-                                       f"appeared during the run ({', '.join(new)}); which one "
-                                       "is this run's cannot be told, so neither is claimed."}
-        run_dir = reports / new[0]
-        report = run_dir / "report.json"
-        state = dict(self._report_state(report, Path(job.inputs["checkpoint"])))
-        kept, registered = state.get("kept"), state.get("registered")
-        reason = state.get("reason")
+            return {**base, "summary": f"The run wrote no outcome file, and {len(new)} report "
+                                       f"directories for this checkpoint appeared during it "
+                                       f"({', '.join(new)}); which one is this run's cannot be "
+                                       "told, so neither is claimed."}
+        from src.evaluation.cohort_registry import REPORT_FILE
+
+        return self._report_outcome(job, reports / new[0] / REPORT_FILE, None, None, base)
+
+    def _report_outcome(self, job: _Job, report: Path, published: Optional[str],
+                        run_outcome: Optional[Dict[str, Any]],
+                        base: Dict[str, Any]) -> Dict[str, Any]:
+        """Kept and registered for the report this run published (`published`,
+        from its outcome file) or left without an outcome (`published` None),
+        from the registration's helper, and the summary that says so."""
+        state = self._report_state(report, checkpoint=Path(job.inputs["checkpoint"]),
+                                   expected_sha256=published)
+        kept = _STATE_ANSWER.get(state.kept)
+        registered = _STATE_ANSWER.get(state.registered)
+        run_dir = report.parent
+        said = ("" if run_outcome is not None else
+                f"The run wrote no outcome file, but a report directory for this checkpoint "
+                f"appeared during it: {run_dir}. ")
         if kept is True:
-            said = (f"A report was kept at {run_dir}"
-                    + ("; it is registered." if registered is True
-                       else "; it is not registered." if registered is False
-                       else "; whether it is registered cannot be checked."))
+            said += f"A report was kept at {run_dir}; " + (
+                f"it is registered ({state.why_registered})." if registered is True
+                else f"it is not registered ({state.why_registered})." if registered is False
+                else f"whether it is registered cannot be checked ({state.why_registered}).")
         elif kept is False:
-            said = f"No report was kept in {run_dir}."
+            said += (f"The run published a report at {report}, but it is not kept: "
+                     f"{state.why_kept}." if run_outcome is not None
+                     else f"No report was kept in {run_dir} ({state.why_kept}).")
         else:
-            said = f"Whether a report was kept in {run_dir} cannot be checked."
-        if reason:
-            said += f" ({reason})"
+            said += f"Whether the report at {report} is kept cannot be checked ({state.why_kept})."
+        registration = (run_outcome or {}).get("registration")
+        why = registration.get("why") if isinstance(registration, dict) else None
+        if registered is not True and isinstance(why, str) and why:
+            said += f" The run said of its registration: {why}"
+            said += "" if why.endswith(".") else "."
+        if run_outcome is not None and run_outcome.get("complete") is False:
+            said += (" Its outcome file is the one written when the report was published: the "
+                     "run did not get as far as writing it again at its end.")
         if job.stop_signal in ("SIGTERM", "SIGKILL"):
             said += (f" The run was ended by {job.stop_signal}, so staged files (*.tmp) may be "
                      f"left in {run_dir}")
@@ -942,8 +1037,8 @@ class TrainingManager:
                 said += (f", and, as it was registering the report, in {_ledger_dir(job)} "
                          "beside the checkpoint's ledger")
             said += "."
-        return {"report_dir": str(run_dir), "report": str(report), "kept": kept,
-                "registered": registered, "summary": said}
+        return {**base, "report_dir": str(run_dir), "report": str(report), "kept": kept,
+                "registered": registered, "run_outcome": run_outcome, "summary": said}
 
     # =========================================================================
     # Status & Metrics

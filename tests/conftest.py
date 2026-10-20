@@ -5,6 +5,10 @@ Module: tests/conftest.py
 """
 import pytest
 
+from src.config.server_settings import (
+    ENV_ACCEPT_UNAUTHENTICATED_NETWORK_BIND,
+    ENV_DEPLOYMENT_MODE,
+)
 from src.utils.gpu_lock import LOCK_FILE_ENV, WORKSPACES_ROOT_ENV
 
 
@@ -21,3 +25,17 @@ def _no_deployment_gpu_lock(monkeypatch):
     """
     monkeypatch.delenv(LOCK_FILE_ENV, raising=False)
     monkeypatch.delenv(WORKSPACES_ROOT_ENV, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _no_deployment_access_settings(monkeypatch):
+    """Every test starts read-only, as an unconfigured deployment does.
+
+    The shell the guide tells operators to prepare sets
+    `SHEPHERD_DEPLOYMENT_MODE=M1`; a suite run from it would otherwise pass
+    D8's check on every loopback request, and a test meant to see a refusal
+    would see the control run. A test that needs mode M1, or the network-bind
+    acceptance, sets it with `monkeypatch` (tests/fixtures/operator_access.py).
+    """
+    monkeypatch.delenv(ENV_DEPLOYMENT_MODE, raising=False)
+    monkeypatch.delenv(ENV_ACCEPT_UNAUTHENTICATED_NETWORK_BIND, raising=False)

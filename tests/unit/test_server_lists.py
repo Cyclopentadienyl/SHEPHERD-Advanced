@@ -21,7 +21,9 @@ The server's lists (M5-1): workspaces, their checkpoints, cohort versions.
   directory this account may not check, a checkpoint link whose target is gone;
 - **a checkpoint outside the workspace is listed and never opened**, and items
   name the workspace as the server lists it;
-- **the checkpoint route is not mounted** until D8's check gates it (WP2).
+- **the checkpoint route is gated by D8** (SPEC_4 C3): refused, opening nothing,
+  without mode M1 and a loopback request; the workspace and cohort lists stay
+  open, and the cohort route reads each run's state through the registration.
 
 Module: tests/unit/test_server_lists.py
 """
@@ -779,16 +781,34 @@ class TestTheRegistryListing:
 # ---------------------------------------------------------------------------
 # The routes
 # ---------------------------------------------------------------------------
-@pytest.fixture
-def client():
+def _lists_app():
     from fastapi import FastAPI
-    from fastapi.testclient import TestClient
 
     from src.api.routes import lists
 
     app = FastAPI()
     app.include_router(lists.router, prefix="/api/v1")
-    return TestClient(app)
+    return app
+
+
+@pytest.fixture
+def client():
+    """Starlette's default client: its requests arrive on ``testserver``, not
+    loopback, so D8 refuses an operator route whatever the mode."""
+    from fastapi.testclient import TestClient
+
+    return TestClient(_lists_app())
+
+
+@pytest.fixture
+def operator_client(monkeypatch):
+    """A client D8 allows: mode M1, loopback arrival and Host, no Origin."""
+    from fastapi.testclient import TestClient
+
+    from tests.fixtures.operator_access import OPERATOR_BASE_URL, operator_mode
+
+    operator_mode(monkeypatch)
+    return TestClient(_lists_app(), base_url=OPERATOR_BASE_URL)
 
 
 class TestRoutes:
@@ -809,20 +829,43 @@ class TestRoutes:
         assert body["workspaces"][0]["dataset_fingerprint"] == file_sha256(
             ws / "split_manifest.json")
 
-    def test_the_checkpoint_route_is_not_mounted_before_d8(self, client, checkpoint_root,
-                                                          monkeypatch):
-        """It opens every checkpoint (C3), which D8 offers only where the
-        operator controls are; D8's check is WP2's. Until WP2 mounts it with
-        that check, no route offers it (M5-1 review, P2)."""
+    @pytest.mark.parametrize("mode, base_url, says", [
+        (None, "http://127.0.0.1", "SHEPHERD_DEPLOYMENT_MODE is not set"),
+        ("M3", "http://127.0.0.1", "not to M1"),
+        ("M1", "http://192.0.2.10", "did not arrive on a loopback address"),
+        ("M1", "http://testserver", "did not arrive on a loopback address"),
+    ], ids=["mode-unset", "mode-m3", "lan-address", "not-an-address"])
+    def test_the_checkpoint_route_is_refused_without_m1_on_loopback(
+            self, checkpoint_root, monkeypatch, mode, base_url, says):
+        """It opens every checkpoint (SPEC_4 C3), which D8 offers only where the
+        operator controls are: refused with 403, naming the condition, and
+        nothing is listed or opened."""
+        from fastapi.testclient import TestClient
+
+        from src.api.services import server_lists
+
         root, _, _ = checkpoint_root
         monkeypatch.setenv(ss.ENV_WORKSPACES_ROOT, str(root))
-        assert client.get("/api/v1/workspaces/demo/checkpoints").status_code == 404
-        from src.api.routes import lists
+        if mode is not None:
+            monkeypatch.setenv(ss.ENV_DEPLOYMENT_MODE, mode)
+        monkeypatch.setattr(server_lists, "list_checkpoints",
+                            lambda *a, **k: pytest.fail("a refused request listed checkpoints"))
+        response = TestClient(_lists_app(), base_url=base_url).get(
+            "/api/v1/workspaces/demo/checkpoints")
+        assert response.status_code == 403
+        assert says in response.json()["detail"] and "Nothing was done" in response.text
 
-        assert not any("checkpoints" in getattr(route, "path", "")
-                       for route in lists.router.routes)
+    def test_the_checkpoint_route_lists_for_an_operator_on_loopback(
+            self, operator_client, checkpoint_root, monkeypatch):
+        root, _, digests = checkpoint_root
+        monkeypatch.setenv(ss.ENV_WORKSPACES_ROOT, str(root))
+        body = operator_client.get("/api/v1/workspaces/demo/checkpoints",
+                                   params={"architecture": "gat"}).json()
+        assert body["problem"] is None
+        assert {c["filename"]: c["sha256"] for c in body["checkpoints"]} == {
+            "best.pt": digests["trained"], "other.pt": digests["other"]}
 
-    def test_the_handler_wp2_mounts(self, checkpoint_root, monkeypatch):
+    def test_the_handler_the_route_mounts(self, checkpoint_root, monkeypatch):
         from src.api.routes import lists
 
         root, _, digests = checkpoint_root
@@ -849,9 +892,38 @@ class TestRoutes:
         assert body["problem"] is None
         assert [v["label"] for v in body["versions"]] == [cohort.version.manifest["label"]]
 
+    def test_the_cohort_route_reads_each_runs_state_through_the_registration(
+            self, client, registered, tmp_path, monkeypatch):
+        """The registration's one helper, given a run directory (`stored_report_state`): a
+        run directory with no report reads as not kept, never as a state the
+        list supposed, and the route passes the helper rather than nothing."""
+        cohort = _registry_copy(registered, tmp_path)
+        run = "20261020T120000Z-bbbbbbbbbbbb-00000002"
+        (cohort.version.directory / "reports" / run).mkdir(parents=True)
+        monkeypatch.setenv(ss.ENV_REGISTRY, str(cohort.registry))
+        (version,) = client.get("/api/v1/cohorts").json()["versions"]
+        (listed,) = version["reports"]
+        assert listed["problem"] is None
+        assert listed["state"]["kept"] == "not_kept"
+        assert listed["state"]["registered"] == "cannot_be_checked"
+        assert "report.json" in listed["state"]["why_kept"]
+        assert set(listed["state"]) == {"kept", "why_kept", "registered", "why_registered",
+                                        "report_sha256", "sequence"}
+
+    def test_the_cohort_list_stays_open(self, client, registered, tmp_path, monkeypatch):
+        """Read-only: no D8 dependency, even for a request D8 refuses."""
+        cohort = _registry_copy(registered, tmp_path)
+        monkeypatch.setenv(ss.ENV_REGISTRY, str(cohort.registry))
+        assert client.get("/api/v1/workspaces").status_code == 200
+        assert client.get("/api/v1/cohorts").status_code == 200
+
     def test_the_lists_are_mounted_on_the_service(self):
         from src.api.main import app
+        from src.api.operator_access import require_operator_access
 
-        paths = {getattr(route, "path", None) for route in app.routes}
-        assert {"/api/v1/workspaces", "/api/v1/cohorts"} <= paths
-        assert "/api/v1/workspaces/{name}/checkpoints" not in paths
+        routes = {getattr(route, "path", None): route for route in app.routes}
+        assert {"/api/v1/workspaces", "/api/v1/cohorts"} <= set(routes)
+        gated = routes["/api/v1/workspaces/{name}/checkpoints"]
+        assert [d.dependency for d in gated.dependencies] == [require_operator_access]
+        for open_path in ("/api/v1/workspaces", "/api/v1/cohorts"):
+            assert routes[open_path].dependencies == []

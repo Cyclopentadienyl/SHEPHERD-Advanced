@@ -11,6 +11,12 @@ Endpoints:
     GET  /pipeline/config   — Get saved UI config (.shepherd_ui_config.json)
     POST /pipeline/config  — Save UI config
 
+**The two POSTs are operator controls** (D8, M5-1): each route takes the one
+D8 dependency (`src/api/operator_access.py`), and does its work through one
+function the Diagnosis tab's handlers call in process after their own check,
+`run_reload` and `write_ui_config`: one reload and one writer, two entrances,
+each judging its own request. The GETs stay open.
+
 Version: 1.0.0
 """
 from __future__ import annotations
@@ -25,6 +31,7 @@ from fastapi import APIRouter, HTTPException, status
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field
 
+from src.api.operator_access import OPERATOR_ONLY
 from src.api.routes.diagnose import ServedIdentity
 from src.utils.file_modes import create_staging_file
 
@@ -283,10 +290,26 @@ async def get_pipeline_status() -> PipelineStatusResponse:
     return _live_status()
 
 
-@router.post("/pipeline/reload", response_model=PipelineReloadResponse)
+@router.post("/pipeline/reload", response_model=PipelineReloadResponse,
+             dependencies=OPERATOR_ONLY)
 async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadResponse:
     """
     Reload the diagnosis pipeline with new data directory and/or checkpoint.
+
+    An operator control: refused by D8's dependency before anything here runs.
+    `run_reload` does the work. **Still ``async`` with nothing awaited**, so the
+    reload runs on the event loop and waits behind a running diagnosis, as it
+    always has (BACKLOG 28 records that this serialisation is the blocked loop).
+    """
+    return run_reload(request)
+
+
+def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
+    """
+    The one reload: the route above and the Diagnosis tab's Reload both call
+    this, each after D8's check on its own request. Synchronous; a caller on
+    the event loop calls it without awaiting anything, so a reload never runs
+    beside a diagnosis.
 
     Builds the replacement first and swaps it in only once it is complete and
     verified; a rejected candidate leaves the running pipeline serving.
@@ -556,9 +579,28 @@ async def get_ui_config() -> UIConfigResponse:
     return UIConfigResponse()
 
 
-@router.post("/pipeline/config", response_model=UIConfigResponse)
+@router.post("/pipeline/config", response_model=UIConfigResponse,
+             dependencies=OPERATOR_ONLY)
 async def save_ui_config(config: UIConfigResponse) -> UIConfigResponse:
-    """Save UI configuration to .shepherd_ui_config.json.
+    """Save UI configuration to .shepherd_ui_config.json (`write_ui_config`).
+
+    An operator control: refused by D8's dependency before anything is written.
+    """
+    try:
+        return write_ui_config(config)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to save config: {e}",
+        )
+
+
+def write_ui_config(config: UIConfigResponse, target: Optional[Path] = None) -> UIConfigResponse:
+    """The one writer of .shepherd_ui_config.json: the route above and the
+    Diagnosis tab's Save Config both call it, each after D8's check. `target`
+    is the file, `CONFIG_FILE` unless the caller names the copy of that path
+    it reads back (the dashboard reads the file directly at build time, before
+    the server serves, so it keeps its own name for it).
 
     **Written beside the target and renamed onto it**, so an interrupted write
     leaves the previous selection intact instead of a truncated file. This is
@@ -568,23 +610,21 @@ async def save_ui_config(config: UIConfigResponse) -> UIConfigResponse:
     and the operator sees that default in the path field rather than being
     served from it silently — but the failure it removes is a real one, and
     losing an operator's workspace selection has no upside.
+
+    Raises whatever the write raised (``OSError``, typically), after removing
+    its staged file: the file named is then as it was.
     """
+    path = CONFIG_FILE if target is None else Path(target)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle, staged = create_staging_file(path, binary=False)
     try:
-        CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
-        handle, staged = create_staging_file(CONFIG_FILE, binary=False)
-        try:
-            with handle:
-                json.dump(config.model_dump(), handle, indent=2)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(staged, CONFIG_FILE)
-        except BaseException:
-            Path(staged).unlink(missing_ok=True)
-            raise
-        logger.info(f"UI config saved to {CONFIG_FILE}")
-        return config
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to save config: {e}",
-        )
+        with handle:
+            json.dump(config.model_dump(), handle, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(staged, path)
+    except BaseException:
+        Path(staged).unlink(missing_ok=True)
+        raise
+    logger.info(f"UI config saved to {path}")
+    return config

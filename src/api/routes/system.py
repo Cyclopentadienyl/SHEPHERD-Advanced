@@ -10,6 +10,8 @@ Purpose:
     Provide system monitoring endpoints:
     - GET /system/resources: GPU utilization, memory, RAM usage
     - GET /system/runtime:   which torch / PyG / backend stack this process runs on
+    - GET /system/operator-access: whether D8 enables the operator controls
+      for this request, or which condition fails (read-only; the UI's chip)
 
 Dependencies:
     - fastapi: Router
@@ -23,9 +25,10 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from src.api.services.training_manager import TrainingManager
+from src.utils.operator_access import check_operator_access
 from src.utils.version_checker import probe_runtime
 
 logger = logging.getLogger(__name__)
@@ -59,3 +62,17 @@ async def get_runtime_stack(force: bool = False) -> Dict[str, Any]:
     otherwise cached for the life of the process.
     """
     return probe_runtime(force=force)
+
+
+@router.get("/system/operator-access")
+def get_operator_access(request: Request) -> Dict[str, Any]:
+    """Whether the operator controls are enabled for this request (D8).
+
+    Read-only, and open to everyone: it answers about the request that asks,
+    with the same check every operator control makes (`check_operator_access`),
+    so a page can show the state beside its controls. ``enabled``, the
+    ``condition`` that decided it, and a ``reason`` an operator can act on,
+    which repeats no header value. Showing it is not the control: each
+    control checks its own request.
+    """
+    return check_operator_access(request.scope).as_status()

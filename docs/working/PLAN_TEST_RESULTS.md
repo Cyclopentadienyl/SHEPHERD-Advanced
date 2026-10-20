@@ -320,7 +320,8 @@ last one says what M4 changed.
   (`scripts/launch/shep_launch.py:17`), and the systemd unit keeps it while SPEC_4 item C1 is
   open. Gradio is mounted at `/ui` in the same app, and every UI callback is an HTTP endpoint.
   Anyone who can reach the port can therefore trigger any UI action, the Training Console's
-  included.
+  included. *Since M5-1 (2026-10-20):* the bind defaults to `127.0.0.1` and every operator
+  control, in the API and in the dashboard, checks D8 (D8, "As implemented").
 - **Authentication.** The API has none. `docs/working/results-review/SPEC_4_DEPLOYMENT_SECURITY.md`
   (normative, draft) classes reload, config and checkpoint inspection (C3), and training start
   and stop (C4), as **disable or protect**. The Gradio handlers call the managers directly, so
@@ -883,6 +884,39 @@ Test-tab button is a Gradio callback, an HTTP endpoint reachable by anyone who r
   The check reads the triggering request's own arrival: a WebUI handler that reaches the API
   through a loopback self-call is checked in the handler, never by the API's view of that
   self-call.
+- **As implemented (M5-1, 2026-10-20).** One check, `check_operator_access`
+  (`src/utils/operator_access.py`), a pure function of the triggering request's own ASGI scope
+  and the deployment setting; one FastAPI dependency (`src/api/operator_access.py`) and one
+  Gradio helper (`src/webui/operator_access.py`, reading `gr.Request.request.scope`, the HTTP
+  call that started the event under the queue and with `queue=False` alike) call it, and
+  nothing else decides. An operator control is allowed only when all hold, and the first that
+  fails is named:
+  - `SHEPHERD_DEPLOYMENT_MODE` is exactly `M1` (read at each check);
+  - the request can be read (an HTTP or WebSocket scope with a host and port `server`, and
+    headers as byte pairs): anything unreadable, or an exception while reading, is refused;
+  - `scope["server"]` is a loopback address (127.0.0.0/8, `::1` or an IPv4-mapped form);
+    `scope["client"]`, which uvicorn rewrites from `X-Forwarded-For`, is never read;
+  - no forwarding header: the four above, and also `X-Forwarded-Proto`,
+    `X-Original-Forwarded-For`, `CF-Connecting-IP` and `True-Client-IP`;
+  - exactly one `Host`, naming `localhost`, `127.0.0.1` or `[::1]` with any port (the DNS
+    rebinding guard, added to D8's three checks);
+  - an `Origin`, when present, equal to `http://<Host>` or `https://<Host>` (the cross-site
+    request guard, added likewise).
+  A refusal names the condition in words an operator can act on, ends "Nothing was done." and
+  never repeats a header's value. Gated: the API's reload, configuration save, training start
+  and stop, and both checkpoint lists (`GET /training/checkpoints`, and
+  `GET /workspaces/{name}/checkpoints`, mounted now); in the dashboard, Diagnosis Reload and
+  Save Config, Runtime Settings Restart and Apply, and the Training Console's Start, Stop,
+  Continue, Check checkpoint, run list and path save. The Console's run list and Check
+  checkpoint open checkpoint files, so they follow C3 like the route; the earlier exception for
+  the resume dropdown is closed. Gated handlers call the shared services in process: the
+  Diagnosis Reload runs the route's own function (`run_reload`), on the event loop as the route
+  does, and Save Config the API's one atomic writer (`write_ui_config`); none calls the API over
+  HTTP. Read-only routes stay open. A read-only status, `GET /api/v1/system/operator-access`,
+  answers for the request that asks (for M5-2's chip). A reload D8 refuses no longer marks a
+  real pipeline as requested. Tests call every gated route and every gated event through
+  Gradio's HTTP API, refused and allowed. The import, test start and cancel, registration and
+  load controls M5-2 adds are to take the same dependency or helper.
 
 **Left to the owner** (§4.9 question 3): who operates, and which deployment mode applies on the
 machine where the controls are enabled. *Answered 2026-10-19:* deployment mode M1, operated by
@@ -1214,12 +1248,16 @@ This is one pipeline extended, not a second one.
     `stop(job_type)` refuses across types; each monitor holds its own process; each job keeps
     its own output tail; a test run ends `completed`, `failed` or `cancelled` (training keeps
     `stopped`). The test command line is built from `TestRunInputs` (server lists and
-    settings), with expected digests and `SHEPHERD_DEVICE` as the device, no batch size. Once a
-    test run ends, its report is the run directory that appeared for its checkpoint; kept and
-    registered come from the report-state reader passed to the runner (registration's helper),
-    never from the exit status. A stop that arrives after the process ended on its own is
-    refused and changes nothing; a test run is `cancelled` only when the stop ended it. The
-    restart lock reads any job; the stop route is a plain `def`.
+    settings), with expected digests and `SHEPHERD_DEVICE` as the device, no batch size, and
+    `--outcome` naming a new file in a directory made for the job. Once a test run ends, what
+    it published is read from that outcome file, and kept and registered from the report store
+    and the ledger by the registration's one helper (`registration.report_state`, given the
+    published digest), never from the exit status; no outcome file means no report was
+    published, unless a run directory for its checkpoint appeared meanwhile (a run stopped
+    between publishing and writing its outcome), which is read the same way and said so. A
+    stop that arrives after the process ended on its own is refused and changes nothing; a
+    test run is `cancelled` only when the stop ended it. The restart lock reads any job; the
+    stop route is a plain `def`.
     Routes for test runs, and the Test tab, are not in this step.
 - **UI:**
   - **Test tab** (new):
@@ -1388,13 +1426,18 @@ The reviewer's boundaries for M5, relayed by the owner. They narrow phase 2 abov
 contract and BACKLOG stay the record, and no new planning document is added.
 
 - **Deployment:** mode M1 (§4.9 question 3; D8 above). *Its setting (M5-1, 2026-10-20):*
-  `SHEPHERD_DEPLOYMENT_MODE`, read at each use. D8's check (M5-1's next package) applies it: only
-  the exact value `M1` then enables operator controls, and unset or anything else is read-only.
-  Until that check lands nothing reads it, so it changes nothing.
+  `SHEPHERD_DEPLOYMENT_MODE`, read at each use. D8's check applies it (D8, "As implemented"):
+  only the exact value `M1` enables operator controls, and unset or anything else is read-only
+  for them.
 - **The default bind is `127.0.0.1`** (the reviewer's decisions, relayed by the owner, 2026-10-19; SPEC_4 B1, §3.1). Another address
   stays possible by explicit configuration, under SPEC_4's rules, and never lifts D8's checks on
   operator controls; a deployment that relied on the old `0.0.0.0` default gets migration notes.
-  No account system or institutional SSO is added.
+  No account system or institutional SSO is added. *As implemented (M5-1, 2026-10-20):* the
+  launcher, `src.api.main:main()` and the systemd unit bind `127.0.0.1`; a bind to any other
+  address is refused, nothing started, unless `SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND=1`
+  (`server_settings.network_bind`), whose warning says it is risk acceptance, not a control; the
+  launcher prints the address it binds and starts uvicorn with `--no-proxy-headers`; migration
+  notes in the deployment guide (§4.12).
 - **One GPU lock for managed training and evaluation jobs** (the reviewer's decisions, relayed by the owner, 2026-10-19). Jobs the
   WebUI or the API start and the formal training and evaluation CLIs (`train_model.py`,
   `measure_scorer.py`) take the same lock, one per deployment whatever the workspace; a busy
@@ -1426,11 +1469,14 @@ contract and BACKLOG stay the record, and no new planning document is added.
   CORS is tightened in the D8 batch: by default no cross-origin browser access is granted;
   administrative operations are still checked by D8 in the backend; the parent app keeps its
   `CORSMiddleware`, with an empty allow list, so the mounted Gradio follows it. Until then the
-  CORS configuration is unchanged (`allow_origins=["*"]`, `allow_credentials=True`), but under
-  Starlette 1.9 it echoes every `Origin` with credentials allowed on every response (0.52.1 did
-  so only when a cookie was sent, and sent `*` otherwise), and since Gradio 6.25 `/ui` follows
-  the parent's policy: HTTP authentication or client certificates in front of the service are no
-  defence against other websites before the D8 batch (deployment guide §4.10). Platforms are
+  CORS configuration was unchanged (`allow_origins=["*"]`, `allow_credentials=True`), and under
+  Starlette 1.9 it echoed every `Origin` with credentials allowed on every response (0.52.1 did
+  so only when a cookie was sent, and sent `*` otherwise). *As implemented (M5-1, 2026-10-20):*
+  `fastapi.middleware.cors.CORSMiddleware` itself (Gradio defers only to that class, never a
+  subclass) with `allow_origins=[]`: no `Access-Control-Allow-Origin` for another origin on
+  `/api`, `/ui/config` or `file=`, on a LAN Host too, and every cross-origin preflight is 400;
+  same-origin works. Gradio's upload route takes at most 1 MB per file (`max_file_size`), since
+  a cross-origin multipart POST still reaches it (deployment guide §4.10, §4.12). Platforms are
   accepted on the backends actually run: Linux x86_64 (the development environment) and Linux
   ARM64 (the homelab, checked by the reviewer); Windows browsers are in the browser checks, and
   a Windows backend is marked untested until one exists.

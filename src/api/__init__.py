@@ -21,8 +21,9 @@ Components:
         - disease.py: Disease info API
 
 Usage:
-    # Run with uvicorn
-    uvicorn src.api.main:app --host 0.0.0.0 --port 8000
+    # Run with uvicorn, on this machine only (SPEC_4 B1; another address is
+    # the launcher's to guard, deployment guide §4.12)
+    uvicorn src.api.main:app --host 127.0.0.1 --port 8000
 
     # Or use the CLI
     python -m src.api.main

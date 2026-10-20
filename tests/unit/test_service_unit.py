@@ -66,7 +66,8 @@ def test_the_unit_starts_through_the_launcher_with_service_flags():
     own, app_args = argv[2:argv.index("--")], argv[argv.index("--") + 1:]
     assert "--no-auto-install" in own
     assert "--no-browser" in own
-    assert app_args == ["--port", "8264"]
+    # Loopback, stated where an operator would change it (SPEC_4 B1, M5-1).
+    assert app_args == ["--host", "127.0.0.1", "--port", "8264"]
 
     app = _constant(LAUNCHER, "UVICORN_APP")
     module, _, attr = app.partition(":")
@@ -124,8 +125,14 @@ def _run_launcher(monkeypatch, launcher_args, env=None, hand_over=True):
         record["status"] = launcher.main()
     except _ExecReachedError:
         record["status"] = None
-    record["server"] = (record["exec"] or record["run"])[-1]
-    record["app_args"] = record["server"][4:]  # after python -m uvicorn APP
+    started = record["exec"] or record["run"]
+    record["server"] = started[-1] if started else None
+    if record["server"] is not None:
+        # After python -m uvicorn APP, and before what the launcher always
+        # appends last (`UVICORN_FORCED_ARGS`), which the tests below check.
+        forced = launcher.UVICORN_FORCED_ARGS
+        assert record["server"][-len(forced):] == forced
+        record["app_args"] = record["server"][4:-len(forced)]
     return record
 
 
@@ -141,6 +148,53 @@ def test_the_launcher_runs_the_units_command_by_becoming_the_server(monkeypatch)
     # uvicorn takes the last of a repeated option, so the unit's port is the
     # one served, after the launcher's defaults.
     assert done["app_args"][-2:] == ["--port", "8264"]
+
+
+def test_the_launcher_binds_loopback_by_default_and_says_so(monkeypatch, capsys):
+    """SPEC_4 B1 (M5-1): no --host given, uvicorn is given 127.0.0.1, and the
+    launcher prints the address it binds beside the URLs it shows."""
+    done = _run_launcher(monkeypatch, ["--no-auto-install", "--no-browser"])
+    assert done["app_args"][:2] == ["--host", "127.0.0.1"]
+    out = capsys.readouterr().out
+    assert "Listening on          : 127.0.0.1:8000 (loopback: this machine only)" in out
+
+
+@pytest.mark.parametrize("host", ["0.0.0.0", "::", "192.0.2.10", "", "myhost.lan"])
+def test_a_network_bind_without_risk_acceptance_starts_nothing(monkeypatch, capsys, host):
+    done = _run_launcher(monkeypatch, ["--no-auto-install", "--no-browser", "--",
+                                       f"--host={host}", "--port", "8264"])
+    assert done["status"] == 2 and done["server"] is None
+    out = capsys.readouterr().out
+    assert "ERROR: refusing to bind" in out and "Nothing was started." in out
+    assert "SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND=1" in out
+
+
+def test_risk_acceptance_starts_a_network_bind_and_says_it_is_no_control(monkeypatch, capsys):
+    done = _run_launcher(
+        monkeypatch, ["--no-auto-install", "--no-browser", "--", "--host", "0.0.0.0"],
+        env={"SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND": "1"})
+    assert done["exec"] and done["app_args"][-2:] == ["--host", "0.0.0.0"]
+    out = capsys.readouterr().out
+    assert "WARNING: binding all interfaces" in out and "not a control" in out
+    assert "Listening on          : 0.0.0.0:8000 (all interfaces)" in out
+
+
+@pytest.mark.parametrize("value", ["0", "true", "yes", " 1"])
+def test_only_the_exact_value_accepts_the_risk(monkeypatch, value):
+    done = _run_launcher(
+        monkeypatch, ["--no-auto-install", "--no-browser", "--", "--host", "0.0.0.0"],
+        env={"SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND": value})
+    assert done["status"] == 2 and done["server"] is None
+
+
+def test_uvicorn_never_trusts_proxy_headers(monkeypatch):
+    """`--no-proxy-headers` is last, so a `--proxy-headers` passed through
+    cannot turn it back on: uvicorn would rewrite the client address from
+    X-Forwarded-For for a peer on 127.0.0.1."""
+    done = _run_launcher(monkeypatch, ["--no-auto-install", "--no-browser", "--",
+                                       "--proxy-headers", "--port", "8264"])
+    assert done["server"][-1] == "--no-proxy-headers"
+    assert done["server"].index("--proxy-headers") < done["server"].index("--no-proxy-headers")
 
 
 def test_the_launcher_logs_the_port_the_unit_serves_on(monkeypatch, capsys):

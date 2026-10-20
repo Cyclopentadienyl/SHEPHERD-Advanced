@@ -356,8 +356,12 @@ def test_an_external_kg_json_decides_startup_and_a_refused_reload_keeps_serving(
     monkeypatch.setenv("SHEPHERD_KG_PATH", str(external))
     monkeypatch.setenv("SHEPHERD_DATA_DIR", str(data_dir))
     monkeypatch.setenv("SHEPHERD_CHECKPOINT_PATH", str(checkpoint))
+    # The reload is an operator control (D8): mode M1, loopback requests.
+    from tests.fixtures.operator_access import OPERATOR_BASE_URL, operator_mode
 
-    with TestClient(api.app) as client:
+    operator_mode(monkeypatch)
+
+    with TestClient(api.app, base_url=OPERATOR_BASE_URL) as client:
         assert client.get("/ready").status_code == 200
         served = api.app_state.pipeline
         assert served._graph_identity.path == external, "startup used the external file"

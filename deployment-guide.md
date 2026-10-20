@@ -1896,7 +1896,8 @@ python scripts/measure_scorer.py --checkpoint <file>.pt --data-dir data/workspac
   它在報告發佈後寫一次（`"complete": false`），結束時再寫一次（`"complete": true`）。內容包括報告的
   路徑、run id 與 digest、checkpoint 與版本的 digest、是否為確定性執行，以及在 `registration` 之下
   報告是否已登錄與原因。在報告之前就被拒絕的執行不會寫出 outcome 檔。這個檔說明的是這次執行做了什麼；
-  紀錄仍是報告存放處與 ledger，「已保留」與「已登錄」從它們讀取。
+  紀錄仍是報告存放處與 ledger，「已保留」與「已登錄」從它們讀取。job runner 為它啟動的每次測試執行，
+  在一個只屬於該執行的目錄中指定一個新的 outcome 檔（§4.11）。
 
 ---
 
@@ -1925,13 +1926,13 @@ python scripts/measure_scorer.py --checkpoint <file>.pt --data-dir data/workspac
 | `ssr_mode=False` | 伺服器端渲染會啟動一個 Node.js 行程 |
 | `analytics_enabled=False` | 設在儀表板本身，自 2026-10-12 起：不送使用分析，也不檢查版本 |
 
-**CORS** 會與 D8 一起收緊。這一步不改它的設定（`src/api/main.py` 中的 `allow_origins=["*"]` 與
-`allow_credentials=True`），但 Starlette 1.9 改變了這個設定送出的內容：現在每個跨來源的回應都會
-回送請求的 `Origin`，並附上 `Access-Control-Allow-Credentials: true`；Starlette 0.52.1 只在請求
-帶有 cookie 時才這樣做，否則送 `*`。自 Gradio 6.25 起，上層 app 有 `CORSMiddleware` 時，掛載的
-app 不再加上自己的 CORS 標頭，因此 `/ui` 也遵循同一政策。在 D8 批次之前，服務前面的 HTTP 認證
-（Basic、Negotiate/Kerberos）或 TLS 用戶端憑證因此擋不住其他網站：任何網站的頁面，只要在持有
-這些憑證的瀏覽器中打開，都能讀取 `/api/*` 與 `/ui/gradio_api/*` 的回應。
+**CORS** 自 M5-1 起與 D8 一起收緊（§4.12）：**預設不允許任何跨來源的瀏覽器存取；管理操作仍由
+後端的 D8 檢查。** 上層 app 保留它的 `CORSMiddleware`，但允許清單現在是空的（`src/api/main.py`）；
+自 Gradio 6.25 起，上層 app 恰好使用這個類別時，掛載的 app 不再加上自己的 CORS 標頭，因此 `/ui`
+也遵循同一政策。在 M5-1 之前，設定是 `allow_origins=["*"]` 與 `allow_credentials=True`，在
+Starlette 1.9 下會回送每個請求的 `Origin` 並附上 `Access-Control-Allow-Credentials: true`：任何
+網站的頁面，只要在持有服務的 HTTP 憑證或用戶端憑證的瀏覽器中打開，都能讀取 `/api/*` 與
+`/ui/gradio_api/*` 的回應。現在不能了。
 
 ### route guard
 
@@ -2033,10 +2034,15 @@ Training Console 與訓練 API 背後的服務現在執行兩種工作，各自�
   `completed`、`failed` 或 `cancelled`，只有在取消確實結束了它時才是 `cancelled`（取消送達時
   正好自行結束的執行，保留它自己的結束狀態）。因訊號而失敗時會說明是哪個訊號（例如記憶體不足被系統
   結束時為 `Process ended by SIGKILL`）。
-- **測試執行結束後，它的報告從磁碟讀取**：即該版本 report store 中為其 checkpoint 新出現的執行
-  目錄；報告是否保留、是否登錄都從那裡讀取，絕不從結束碼推斷。取消後，狀態會說明留下了什麼；
-  遭 SIGTERM 或 SIGKILL 結束時，還會指出暫存檔（`*.tmp`）可能留在哪裡：執行目錄，以及正在登錄
-  報告的執行所屬 checkpoint 的目錄（其 ledger 所在處）。
+- **測試執行結束後，它的報告從磁碟讀取。** 每次測試執行都把它的 outcome 檔
+  （`measure_scorer.py --outcome`，§4.9）寫進一個只屬於這個工作的目錄，其中寫明它發布的報告與那些
+  位元組的 digest；這份報告是否保留、是否登錄，接著由登錄流程本身的 helper 以這個 digest 從
+  report store 與 ledger 讀取，絕不從結束碼推斷（狀態的 `outcome` 提供 `kept`、`registered`、
+  附原因的 `summary`，以及執行本身的 `run_outcome`）。**沒有 outcome 檔就表示沒有發布任何報告**，
+  除非執行期間 store 中出現了它的 checkpoint 的執行目錄（在發布報告與寫出 outcome 之間被停止的
+  執行），這時會以同樣的方式讀取，並說明這一點。執行讀取完畢後，工作目錄會被移除。取消後，狀態會
+  說明留下了什麼；遭 SIGTERM 或 SIGKILL 結束時，還會指出暫存檔（`*.tmp`）可能留在哪裡：執行目錄，
+  以及正在登錄報告的執行所屬 checkpoint 的目錄（其 ledger 所在處）。
 - **Runtime Settings 的 Restart Backend** 在任何工作執行中時都會被拒絕，不論是訓練或測試執行
   （提示文字現在是 "A GPU job (training or a test run) is in progress"）。
 - `GET /api/v1/training/status` 新增 `job_id`、`end_time`、`exit_code` 與 `gpu`：占用 GPU 的
@@ -2059,7 +2065,7 @@ M5 的控制項只作用於伺服器列出的項目，從不作用於請求指�
 
 | 變數 | 值 | 未設定或被拒絕時 |
 |---|---|---|
-| `SHEPHERD_DEPLOYMENT_MODE` | 恰好是 `M1`（`m1`、` M1` 或 `M2` 都算其他值） | 唯讀：操作者控制項關閉，待 D8 的檢查套用它之後（目前尚未，見下文） |
+| `SHEPHERD_DEPLOYMENT_MODE` | 恰好是 `M1`（`m1`、` M1` 或 `M2` 都算其他值） | 唯讀：每個操作者控制項都被拒絕（D8，§4.12） |
 | `SHEPHERD_WORKSPACES_ROOT` | 一個已存在目錄的絕對路徑；其子目錄就是各個 workspace | 不列出任何 workspace |
 | `SHEPHERD_REGISTRY` | cohort registry（§4.9），即各指令以 `--registry` 接收的目錄：絕對路徑、已存在、位於 repository 之外 | 不列出任何 cohort 版本 |
 | `SHEPHERD_INTAKE_DIR` | 位於 repository 之外的已存在目錄，你把要匯入的 `shepherd-cases/1` 檔案放在這裡；絕對路徑 | 不提供任何匯入來源 |
@@ -2076,9 +2082,8 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
 - **`M1`** 是 SPEC_4 的單一 workspace 部署：在本機上，或經由 SSH forwarding 存取，由 owner 或
   指定的技術人員操作（§4.9 問題 3）。它是操作者控制項檢查的條件之一，而不是授權。其餘條件由
   D8 在處理每個請求時檢查。不要在 reverse proxy 後面、或在其他人也能登入的機器上設定它。
-- **部署模式目前尚未套用。** M5 的下一步，D8 的檢查，會讀取它，並以它把關每個操作者控制項。
-  在那一步完成之前，沒有任何東西讀取它：訓練的啟動與停止、pipeline 重新載入與設定儲存都與
-  M5-1 之前一樣開放，不論這個變數的值為何。不設定它，並不會讓這個版本變成唯讀。
+- **部署模式由 D8 套用**（§4.12）：每個操作者控制項在處理請求的當下都會讀取它；未設定或任何
+  其他值時，每個控制項都被拒絕，部署對它們而言是唯讀的。診斷、狀態頁面與唯讀清單不受影響。
 - **workspace 根目錄可以位於 repository 內**，一般使用的 `data/workspaces/` 就是如此，但必須
   由你明確指定。相對路徑、不存在的目錄與檔案都會被拒絕。
 - **registry 與 intake 目錄存放病人層級的資料。** 兩者都遵循 registry 的規則（§4.9）：相對
@@ -2120,21 +2125,22 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
 
   每個項目都以清單中的名稱指稱 workspace：對 `current -> builds/2026-10-20` 而言，它寫的是
   `current`。列出時會開啟每個 checkpoint，SPEC_4 將此歸類為 checkpoint 檢視（C3），而 D8 只在
-  操作者控制項所在之處提供它。**目前沒有任何路由提供這份清單。** M5 的下一步會在 D8 的檢查
-  之後把它掛載為 `GET /api/v1/workspaces/{name}/checkpoints`；在那之前，它只存在於服務內部，
-  供 M5 的 UI 步驟的儀表板使用。
+  操作者控制項所在之處提供它：它以 `GET /api/v1/workspaces/{name}/checkpoints` 提供（例如
+  `?architecture=gat` 只列一種架構），位於 D8 的檢查之後（§4.12），被拒絕的請求不會開啟任何檔案。
 - **既有的 checkpoint 清單**（`GET /api/v1/training/checkpoints` 與 Training Console 的
   resume 清單）以同樣的方式讀取每個檔案。每個項目新增 `sha256`、`validation`、
   `dataset_fingerprint` 與 `metadata_problem`，全部來自同一次讀取。以前它載入每個檔案卻不保留
   digest，而且載入錯誤時一聲不響地略過。讀取時已經不存在的檔案（目標已被移除的連結）沒有
-  大小或時間可顯示，會從這份清單中略去；它不再讓整份清單失敗。這份清單與 M5-1 之前一樣保持
-  開放，直到 D8 的檢查完成。
+  大小或時間可顯示，會從這份清單中略去；它不再讓整份清單失敗。自 M5-1 起，D8 像檢查控制項
+  一樣檢查它（§4.12），路由與 Training Console 的 run 清單都一樣。
 - **Cohort 版本**（`GET /api/v1/cohorts`）：registry 中的每個版本，以 label 及其 `cohort.json`
   的 SHA-256 識別，附上它的角色，以及這個角色是否提供排序。它也顯示版本的計數、所綁定的圖與
   資料集紀錄，以及匯入時間。清單絕不顯示病例識別碼或排除清單：D7 把它們留在這台機器上的
-  registry 中。中斷的匯入會附原因列出。每個版本的報告庫以 run id 列出。一次 run 的報告是否
-  保留、是否已登錄，來自登錄流程本身對報告庫與 ledger 的讀取（M5 的評估步驟）。在接上之前，
-  每個 run 都會說明它的狀態未被讀取。
+  registry 中。中斷的匯入會附原因列出。每個版本的報告庫以 run id 列出，每個 run 都會說明它的
+  報告是否保留、是否已登錄（`kept`、`registered`，各附原因，以及報告的 digest 與紀錄的序號），
+  來自登錄流程本身對報告庫的讀取，以及對報告所記錄、它量測的 checkpoint 旁邊那份 ledger 的讀取。
+  以相對路徑記錄 checkpoint 的報告，或無法讀取的報告，沒有可查的 ledger：這時 `registered` 為
+  `cannot_be_checked`，並說明原因。執行之後被移走的 checkpoint，會在執行讀取它的位置查找。
 
 ### 建置時間：`workspace_build.json`
 
@@ -2164,6 +2170,131 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
   其建置在寫入這個檔案之前就停止」：在 manifest 與這個檔案之間停止的首次建置看起來也一樣。
 - **只建圖的建置**（沒有 `--generate-samples`）既不寫 manifest，也不寫這個檔案。它的建置時間
   顯示為「未記錄」，原因是沒有可描述的 `split_manifest.json`。
+
+---
+
+## 4.12 操作者控制項、綁定位址與 CORS（自 M5-1 起，2026-10-20）
+
+M5 在 SPEC_4 的部署模式 **M1** 下執行：由 owner 或指定的技術人員在本機上操作服務，或從其他地方
+經由 SSH forwarding 操作（§4.9 問題 3）。三件事一起改變，部署可能需要對每一件採取行動：
+
+- 除非 D8 允許該請求，否則操作者控制項會被拒絕；
+- 服務預設綁定 `127.0.0.1`，不再是 `0.0.0.0`；
+- 其他網站的頁面無法讀取服務的回應（CORS）。
+
+### 操作者要設定什麼
+
+在啟動服務的地方設定 `SHEPHERD_DEPLOYMENT_MODE=M1`（§4.11；systemd unit 中是被註解掉的那行
+`Environment=`），然後重啟服務。未設定或任何其他值時，每個操作者控制項都被拒絕，部署對它們而言是
+唯讀的。診斷、查詢、狀態頁面與唯讀清單照常運作。
+
+### 哪些控制項會被檢查
+
+| 位置 | 控制項 |
+|---|---|
+| API | `POST /api/v1/pipeline/reload`、`POST /api/v1/pipeline/config`、`POST /api/v1/training/start`、`POST /api/v1/training/stop`、`GET /api/v1/training/checkpoints`、`GET /api/v1/workspaces/{name}/checkpoints` |
+| 儀表板 | Diagnosis：Reload Pipeline 與 Save Config。Runtime Settings：Restart Backend 與 Apply Settings。Training Console：Start、Stop（確認後的停止）、Continue Training、Check checkpoint、run 清單（Refresh，以及切換架構）與 Save Path |
+
+兩份 checkpoint 清單與 Check checkpoint 會開啟 checkpoint 檔案，SPEC_4 將此歸類為 checkpoint 檢視
+（C3），因此它們與控制項一樣受檢查。M5 的 UI 步驟將新增的 Test 分頁與 Model Management，也將使用
+同一個檢查。其餘一切保持開放：診斷、HPO 與疾病查詢、pipeline 狀態與儲存的 UI 路徑、訓練狀態與指標、
+workspace 與 cohort 清單、已記錄的結果，以及系統頁面。
+
+### 什麼時候允許一個請求
+
+每個控制項都檢查它正在處理的請求，在處理的當下檢查，只有在下列條件全部成立時才允許：
+
+1. `SHEPHERD_DEPLOYMENT_MODE` 恰好是 `M1`；
+2. 請求抵達這台機器的 loopback 位址：由伺服器自己的 socket 決定，絕不採用用戶端自稱的位址；
+3. 請求不帶 proxy 會加上的標頭（`Forwarded`、`X-Forwarded-For`、`X-Forwarded-Host`、
+   `X-Forwarded-Proto`、`X-Real-IP`、`X-Original-Forwarded-For`、`CF-Connecting-IP`、
+   `True-Client-IP`）：M1 沒有 reverse proxy；
+4. 請求的目標是 `localhost`、`127.0.0.1` 或 `[::1]`，任何埠號皆可（它的 `Host` 標頭），以防範
+   DNS rebinding；
+5. 若帶有 `Origin`，它就是儀表板自己的位址（`http://` 或 `https://`，相同的主機與埠號），因此
+   其他網站的頁面無法從你的瀏覽器觸發控制項。
+
+無法讀取抵達資訊的請求一律拒絕。檢查在後端：反灰的按鈕只是顯示，直接呼叫 API，或透過 Gradio 的
+HTTP API（`/ui/gradio_api/...`，像 `gradio_client` 那樣）直接呼叫儀表板事件，都會遇到同一個檢查。
+儀表板的控制項在行程內呼叫服務，從不透過 HTTP 呼叫 API。儀表板的 Reload 仍在 API 的 reload 執行的
+地方執行，因此和以前一樣會排在正在執行的診斷之後；它也不再在 180 秒後放棄等待，因此耗時較長的
+重新載入在仍在發布時不會再被顯示為失敗。
+
+**拒絕時**，API 回應 `403`，其 `error` 以可據以行動的文字說明哪個條件未通過，並以 "Nothing was
+done." 結尾；絕不重複任何標頭的值。儀表板在控制項顯示結果的地方顯示同一句話（run 清單無法容納
+句子，因此會被清空，這句話以通知的形式出現）。例如：
+
+```
+Refused: This request did not arrive on a loopback address of this machine. The operator controls work only on the machine itself, or through an SSH forward to localhost (for example ssh -L 8264:localhost:8264 <server>, then http://localhost:8264/ui). Nothing was done.
+```
+
+**這個瀏覽器是否啟用了？** `GET /api/v1/system/operator-access` 針對發出詢問的請求回答：
+`enabled`、決定結果的 `condition`，以及它的 `reason`。它是唯讀且開放的；顯示它並不是控制本身。
+
+**被 D8 拒絕的重新載入不改變任何東西。** 以前，任何人的重新載入請求，不論是否被拒絕，都會讓之後的
+每次診斷從 demo 回答變成「已設定但未提供服務」（503）。
+
+**不宣稱的事。** loopback 不是授權：任何能到達這台機器 loopback 的人，包括經由他自己的 SSH
+forward，都會通過。因此 M1 指的是一個經過驗證、由 owner 或指定技術人員操作的單一 workspace 部署。
+同一台主機上、不加任何轉送標頭的 reverse proxy 由本指南排除，而不是被偵測：不要在 M1 服務前面
+放置這樣的 proxy。
+
+### 從其他機器操作：SSH forwarding
+
+把本機的一個埠轉送到服務的 **localhost**，而不是它的網路位址：
+
+```bash
+ssh -N -L 8264:localhost:8264 you@gb10
+# 然後在你自己的機器上打開 http://localhost:8264/ui
+```
+
+轉送的連線會以 `localhost:8264` 為目標抵達伺服器的 loopback，因此控制項可以使用。
+`ssh -L 8264:<伺服器的區域網路位址>:8264` 會抵達區域網路位址而被拒絕，而且在新的綁定設定下那裡
+根本沒有服務在監聽。使用其他本機埠也可以（`-L 9000:localhost:8264`，然後打開
+`http://localhost:9000/ui`）。
+
+### 綁定位址：預設 `127.0.0.1`
+
+launcher（`launch_shepherd.sh`、`shep_launch.py`）、systemd unit 與 `python -m src.api.main`
+在沒有另外指定時都綁定 `127.0.0.1`，launcher 會印出它綁定的位址：
+
+```
+[SHEPHERD] Listening on          : 127.0.0.1:8264 (loopback: this machine only)
+```
+
+**綁定任何其他位址都會被拒絕，什麼都不會啟動**（launcher 以 2 結束），除非設定了
+`SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND=1`，因為服務沒有任何認證。這個旗標是**風險承擔，
+而不是控制**：它不認證任何人，也從不解除 D8，因此在網路綁定下，操作者控制項對每個不是從 loopback
+抵達的請求仍然拒絕，而診斷與唯讀頁面對任何能到達該位址的人開放。launcher 會印出一行說明這點的
+`WARNING:`。launcher 一律以 `--no-proxy-headers` 啟動 uvicorn，並放在其命令列的最後，因此 uvicorn
+回報的用戶端位址就是連線本身的位址。
+
+不涵蓋：手動啟動的 uvicorn（`uvicorn src.api.main:app --host 0.0.0.0`），應用程式看不到它的綁定。
+請使用 launcher。
+
+**依賴 `0.0.0.0` 的部署如何遷移。** 在 M5-1 之前，launcher 與 unit 綁定所有介面。這次更新之後：
+
+- 原本打開 `http://<伺服器的區域網路位址>:8264/ui` 的人會連不上。請給他們一個 SSH forward
+  （見上文）：這就是 M1 的方式；
+- 如果區域網路必須繼續使用診斷，請設定 `--host 0.0.0.0`（在 unit 的 `ExecStart` 中，或放在
+  launcher 命令列的 `--` 之後），**並且**在同一個環境中設定
+  `SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND=1`。沒有這個旗標時 launcher 會拒絕啟動，在
+  systemd 下 unit 會不斷重啟又失敗（`journalctl --user -u shepherd` 會顯示原因）。這時操作者
+  控制項只能在本機上或經由 SSH forward 使用；
+- 透過 HTTP 重新載入 pipeline 的腳本需要服務處於 M1 模式，並且必須呼叫
+  `http://127.0.0.1:<port>`。`scripts/measure_served_pipeline.py` 因此在它自己啟動的服務中設定
+  `SHEPHERD_DEPLOYMENT_MODE=M1`。
+
+### CORS：沒有跨來源的瀏覽器存取
+
+**預設不允許任何跨來源的瀏覽器存取；管理操作仍由後端的 D8 檢查。** 不論瀏覽器使用哪個位址，
+`/api` 與儀表板的回應都不會對其他來源帶上 `Access-Control-Allow-Origin`，每個跨來源的預檢請求
+（preflight）都回應 400。同源的使用（儀表板本身、`curl`、腳本、`gradio_client`）不受影響。
+
+CORS 只決定頁面能讀取什麼。不需要預檢的跨來源請求仍會抵達伺服器：這正是操作者控制項由 D8 而不是
+由 CORS 檢查的原因。基於同樣的理由，Gradio 的上傳路由每個檔案最多接受 1 MB：儀表板沒有上傳控制項
+（匯入來源來自 `SHEPHERD_INTAKE_DIR`），這個上限限制了其他網站的頁面能寫進 Gradio 暫存目錄的內容。
+更大的檔案會以 413 拒絕。
 
 ---
 

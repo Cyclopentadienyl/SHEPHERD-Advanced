@@ -17,6 +17,12 @@ Apply model:
     at the repo root (path + presets defined in ``src.config.runtime_presets``) and are
     consumed at launch time by ``scripts/launch/shep_launch.py`` (allocator) and
     by the training subprocess it spawns (which inherits the environment).
+
+Operator controls (D8, M5-1):
+    Restart Backend and Apply Settings each check their own Gradio request
+    first (`src/webui/operator_access.py`) and are refused, changing nothing,
+    unless D8 allows it. The greyed-out Restart button is a display, never the
+    control.
 """
 from __future__ import annotations
 
@@ -31,6 +37,7 @@ from src.config.runtime_presets import (
     load_runtime_settings,
     save_runtime_settings,
 )
+from src.webui.operator_access import operator_access
 
 
 def _active_env_override() -> str | None:
@@ -92,6 +99,54 @@ async () => {
     setTimeout(poll, 2000);
 }
 """
+
+
+def _on_restart(request: gr.Request):
+    """Restart Backend: an operator control (D8), checked on this event's own
+    request before the backend is asked for anything. The backend's own guard
+    refuses while a GPU job runs."""
+    access = operator_access(request)
+    if not access.allowed:
+        return gr.update(value=f"⛔ **{access.refusal}**")
+    result = restart_backend()
+    if not result.get("success"):
+        return gr.update(
+            value=f"⛔ **{result.get('error', 'Cannot restart right now.')}**"
+        )
+    return gr.update(
+        value="🔄 **Restarting backend…** This page will reload "
+        "automatically once the backend is back (a few seconds)."
+    )
+
+
+def _on_apply(alloc, compile_on, request: gr.Request):
+    """Apply Settings: an operator control (D8), checked on this event's own
+    request before the settings file is read or written."""
+    access = operator_access(request)
+    if not access.allowed:
+        return access.refusal
+    data = load_runtime_settings()
+    prev_alloc = data.get("allocator_preset", DEFAULT_ALLOCATOR)
+    data["allocator_preset"] = alloc
+    data["torch_compile"] = bool(compile_on)
+    save_runtime_settings(data)
+
+    parts = [
+        f"✓ Applied. Memory Allocator = **{alloc}**, "
+        f"torch.compile = **{'on' if compile_on else 'off'}**."
+    ]
+    if alloc != prev_alloc:
+        parts.append(
+            "🔄 **Restart the backend** for the new allocator to take effect "
+            "(read once at startup)."
+        )
+    parts.append("torch.compile applies to the **next training run** (no restart).")
+    if _active_env_override():
+        parts.append(
+            "⚠️ An explicit `PYTORCH_ALLOC_CONF` env override is active and takes "
+            "precedence over the allocator until removed."
+        )
+    return "  ".join(parts)
 
 
 def create_runtime_settings_tab(tab: gr.Tab | None = None) -> None:
@@ -239,17 +294,6 @@ def create_runtime_settings_tab(tab: gr.Tab | None = None) -> None:
             gr.update(visible=locked, value=_RESTART_LOCKED_HTML if locked else ""),
         )
 
-    def _on_restart():
-        result = restart_backend()
-        if not result.get("success"):
-            return gr.update(
-                value=f"⛔ **{result.get('error', 'Cannot restart right now.')}**"
-            )
-        return gr.update(
-            value="🔄 **Restarting backend…** This page will reload "
-            "automatically once the backend is back (a few seconds)."
-        )
-
     restart_lock_timer.tick(
         fn=_refresh_restart_lock, outputs=[restart_btn, restart_lock_note]
     )
@@ -265,30 +309,6 @@ def create_runtime_settings_tab(tab: gr.Tab | None = None) -> None:
 
     def _on_change(*_values):
         return "● **Unsaved changes** — click **Apply Settings** to persist."
-
-    def _on_apply(alloc, compile_on):
-        data = load_runtime_settings()
-        prev_alloc = data.get("allocator_preset", DEFAULT_ALLOCATOR)
-        data["allocator_preset"] = alloc
-        data["torch_compile"] = bool(compile_on)
-        save_runtime_settings(data)
-
-        parts = [
-            f"✓ Applied. Memory Allocator = **{alloc}**, "
-            f"torch.compile = **{'on' if compile_on else 'off'}**."
-        ]
-        if alloc != prev_alloc:
-            parts.append(
-                "🔄 **Restart the backend** for the new allocator to take effect "
-                "(read once at startup)."
-            )
-        parts.append("torch.compile applies to the **next training run** (no restart).")
-        if _active_env_override():
-            parts.append(
-                "⚠️ An explicit `PYTORCH_ALLOC_CONF` env override is active and takes "
-                "precedence over the allocator until removed."
-            )
-        return "  ".join(parts)
 
     allocator.change(fn=_on_change, inputs=[allocator], outputs=[status])
     torch_compile.change(fn=_on_change, inputs=[torch_compile], outputs=[status])

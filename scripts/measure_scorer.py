@@ -71,8 +71,12 @@ Exit status, run as a program (`_run_as_program`): 0 measured (and, with
 with one message and no traceback, or measured but the report could not be
 written, with a message saying what may be on disk (or the run failed after
 writing it, with a message naming it); 2 the command line was rejected; 3
-measured and kept, but not registered. `main` itself raises its refusals, typed,
-for the tests and the deployment probe that call it.
+measured, but not registered: the registration was refused and the report is
+kept, or the report was no longer the one the run published
+(`ReportNotAsPublished`: it may be gone, so it is not called kept); the message
+says which, and `registration.report_state` reads whether it is kept. `main`
+itself raises its refusals, typed, for the tests and the deployment probe that
+call it.
 
 **One managed GPU job at a time** (M5): `main` takes the deployment's GPU lock
 (`src/utils/gpu_lock.py`) before the device is resolved or anything is read and
@@ -128,9 +132,10 @@ MODEL_CONSTRUCTION = "production (build_shepherd_model)"
 #: registry's own definitions, imported above: the registration compares a kept
 #: report with the same block of the version the store holds it under.
 
-#: The exit status of a run that measured and kept its report but whose
-#: `--record` registration was refused: not a refusal before writing (exit 1,
-#: one message), and not a success, since the ledger holds nothing new.
+#: The exit status of a run that measured and published its report but whose
+#: `--record` registration was refused (the report kept), or found the report
+#: no longer as published (it may be gone): not a refusal before writing
+#: (exit 1, one message), and not a success, since the ledger holds nothing new.
 EXIT_NOT_REGISTERED = 3
 
 #: The cuBLAS workspace settings PyTorch documents as deterministic (CUDA 10.2

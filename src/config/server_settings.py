@@ -11,7 +11,7 @@ feature that needs it is off.
 
 | Variable | What it is | Unset |
 |---|---|---|
-| `SHEPHERD_DEPLOYMENT_MODE` | SPEC_4's deployment mode; only the exact value `M1` enables operator controls, once D8's check applies it (below) | read-only, once applied |
+| `SHEPHERD_DEPLOYMENT_MODE` | SPEC_4's deployment mode; only the exact value `M1` enables operator controls, which D8's check then allows request by request (below) | read-only |
 | `SHEPHERD_WORKSPACES_ROOT` | the one workspace root: its subdirectories are the workspaces the server lists (SPEC_4 M1's "one explicit workspace namespace") | no workspace listed |
 | `SHEPHERD_REGISTRY` | the cohort registry (the `--registry` of the CLI) | no cohort feature |
 | `SHEPHERD_INTAKE_DIR` | where an operator places import sources | no import source |
@@ -39,11 +39,18 @@ forwarding header, a loopback Host) is D8's, applied where the request is
 handled. Setting `M1` behind a reverse proxy or on a shared machine does not make
 those controls safe (SPEC_4 §3: loopback is not authorisation).
 
-**Not applied yet.** `deployment_mode()` is read by D8's check, M5-1's next
-package (WP2), which gates every operator control with it. Until that lands
-nothing else reads it: training start and stop, the pipeline reload and the
-configuration save stay as open as before M5-1, whatever the variable says, and
-leaving it unset protects nothing.
+**Where it is applied.** `deployment_mode()` is read by D8's check
+(`src/utils/operator_access.py`) on every operator control, at the moment the
+request is handled: unset or any value but `M1`, every control is refused and
+the deployment is read-only, whatever arrives on loopback.
+
+**The network bind** (SPEC_4 §3.1, B1): the service binds `127.0.0.1` by
+default, and a bind to any other address is refused unless
+`SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND=1` (`network_bind`, applied by the
+launcher and by `src.api.main:main()`). The flag records **risk acceptance, not
+a control**: it authenticates nobody, and it never lifts D8's checks, so an
+operator control stays refused for every request that does not arrive on
+loopback.
 
 Platform: nothing here is POSIX-only; `os.pathsep` is `;` on Windows.
 
@@ -51,6 +58,7 @@ Module: src/config/server_settings.py
 """
 from __future__ import annotations
 
+import ipaddress
 import os
 from functools import partial
 from pathlib import Path
@@ -66,6 +74,14 @@ ENV_REGISTRY = "SHEPHERD_REGISTRY"
 ENV_INTAKE_DIR = "SHEPHERD_INTAKE_DIR"
 ENV_TRAINING_EVIDENCE_DIRS = "SHEPHERD_TRAINING_EVIDENCE_DIRS"
 ENV_ORDERING_ROLES = "SHEPHERD_ORDERING_ROLES"
+ENV_ACCEPT_UNAUTHENTICATED_NETWORK_BIND = "SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND"
+
+#: The address the service binds unless another is configured (SPEC_4 B1).
+DEFAULT_BIND_HOST = "127.0.0.1"
+
+#: The one value of `ENV_ACCEPT_UNAUTHENTICATED_NETWORK_BIND` that accepts the
+#: risk; compared exactly, like the deployment mode.
+ACCEPTS_NETWORK_BIND = "1"
 
 #: The one deployment mode that enables operator controls (§4.9 question 3).
 #: Compared exactly: `m1`, ` M1` and `M1 ` are other values, never inferred.
@@ -79,7 +95,11 @@ NEVER_ORDERED_ROLES: Tuple[str, ...] = ("institutional_acceptance",)
 PATIENT_LEVEL_DATA = "patient-level data"
 
 __all__ = [
+    "ACCEPTS_NETWORK_BIND",
+    "BindDecision",
+    "DEFAULT_BIND_HOST",
     "DirectoryRefused",
+    "ENV_ACCEPT_UNAUTHENTICATED_NETWORK_BIND",
     "ENV_DEPLOYMENT_MODE",
     "ENV_INTAKE_DIR",
     "ENV_ORDERING_ROLES",
@@ -91,10 +111,13 @@ __all__ = [
     "Setting",
     "all_settings",
     "check_operator_directory",
+    "bind_is_loopback",
     "check_registry_root",
     "cohort_registry",
     "deployment_mode",
     "intake_directory",
+    "is_loopback_ip",
+    "network_bind",
     "ordering_roles",
     "role_offers_ordering",
     "training_evidence_dirs",
@@ -358,3 +381,84 @@ def all_settings(environ: Optional[Mapping[str, str]] = None) -> Tuple[Setting, 
         training_evidence_dirs(environ),
         ordering_roles(environ),
     )
+
+
+# ---------------------------------------------------------------------------
+# Loopback, and the network bind (SPEC_4 §3.1, B1)
+# ---------------------------------------------------------------------------
+def is_loopback_ip(text: Any) -> bool:
+    """Whether `text` is an IP address literal on the loopback network:
+    127.0.0.0/8, ``::1``, or an IPv4-mapped IPv6 form of one
+    (``::ffff:127.0.0.1``, which a dual-stack socket reports and which
+    `ipaddress` itself does not call loopback). A name, ``localhost``
+    included, is not an address and answers False; so does anything that
+    is not a string.
+    """
+    if not isinstance(text, str):
+        return False
+    try:
+        address = ipaddress.ip_address(text)
+    except ValueError:
+        return False
+    if address.is_loopback:
+        return True
+    mapped = getattr(address, "ipv4_mapped", None)
+    return mapped is not None and mapped.is_loopback
+
+
+def bind_is_loopback(host: Any) -> bool:
+    """Whether a bind address keeps the service on this machine: a loopback
+    address literal (`is_loopback_ip`, brackets around an IPv6 literal
+    allowed) or the name ``localhost``. The wildcards (``0.0.0.0``, ``::``,
+    an empty host) and every other name or address are not, since what they
+    reach cannot be told from here."""
+    if not isinstance(host, str):
+        return False
+    text = host.strip()
+    if text.startswith("[") and text.endswith("]"):
+        text = text[1:-1]
+    return text.lower() == "localhost" or is_loopback_ip(text)
+
+
+class BindDecision(NamedTuple):
+    """Whether the service may bind `host`: `allowed`, and `message`, the
+    refusal or, for an accepted network bind, the warning to show (`None`
+    for a loopback bind)."""
+
+    host: str
+    allowed: bool
+    message: Optional[str]
+
+
+def network_bind(host: Any, environ: Optional[Mapping[str, str]] = None) -> BindDecision:
+    """SPEC_4 §3.1's bind guard for one bind address.
+
+    A loopback bind (`bind_is_loopback`) is allowed. Any other is refused
+    unless `SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND` is exactly ``1``:
+    the service has no authentication, so a network bind is reachable by
+    whoever reaches the address. The flag is **risk acceptance, not a
+    control**, and the warning says so; it never lifts D8's checks, so
+    operator controls stay refused for requests that do not arrive on
+    loopback. Read at each call, never from a request.
+
+    Not covered, and not claimed (SPEC_4 §3.1): a uvicorn started by hand
+    with ``--host``, which nothing in the application can read.
+    """
+    shown = host if isinstance(host, str) else repr(host)
+    if bind_is_loopback(host):
+        return BindDecision(shown, True, None)
+    where = "all interfaces" if shown.strip() in ("", "0.0.0.0", "::", "[::]") else shown
+    if _raw(environ, ENV_ACCEPT_UNAUTHENTICATED_NETWORK_BIND) == ACCEPTS_NETWORK_BIND:
+        return BindDecision(shown, True, (
+            f"binding {where}, which is not loopback: the service is reachable from the "
+            f"network with no authentication, accepted by "
+            f"{ENV_ACCEPT_UNAUTHENTICATED_NETWORK_BIND}={ACCEPTS_NETWORK_BIND}. That is risk "
+            "acceptance, not a control: it authenticates nobody. Operator controls stay "
+            "refused for every request that does not arrive on loopback (D8)."))
+    return BindDecision(shown, False, (
+        f"refusing to bind {where}: an address other than loopback makes the service "
+        "reachable from the network, and it has no authentication. Bind "
+        f"{DEFAULT_BIND_HOST} (the default) and reach it on the machine or through SSH "
+        "forwarding to localhost, or, to accept that risk, set "
+        f"{ENV_ACCEPT_UNAUTHENTICATED_NETWORK_BIND}={ACCEPTS_NETWORK_BIND} (risk acceptance, "
+        "not a control; operator controls stay refused off loopback). Nothing was started."))

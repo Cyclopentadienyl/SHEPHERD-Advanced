@@ -1336,3 +1336,41 @@ def test_report_state_says_cannot_be_checked_rather_than_no(tmp_path, checkpoint
     copy.write_bytes(report.read_bytes())
     outside = report_state(copy, checkpoint=checkpoints / "best.pt")
     assert outside.kept == "not_kept" and "not in a registry's report store" in outside.why_kept
+
+
+# ---------------------------------------------------------------------------
+# Without a checkpoint: the server's list of kept reports (M5-1)
+# ---------------------------------------------------------------------------
+def test_report_state_without_a_checkpoint_reads_the_ledger_the_report_names(
+    tmp_path, checkpoints
+):
+    """A list of a version's kept reports knows no checkpoint file: the
+    ledger read is the one beside the checkpoint path the report records, from
+    the same read."""
+    from src.evaluation.registration import report_state
+
+    report = _report(tmp_path, checkpoint_path=str(checkpoints / "best.pt"))
+    state = report_state(report)
+    assert (state.kept, state.registered) == ("kept", "not_registered")
+    assert state.ledger_path == checkpoints.resolve() / "evaluations.json"
+
+    _register(report, checkpoints, beside=True)
+    state = report_state(report)
+    assert (state.kept, state.registered, state.sequence) == ("kept", "registered", 1)
+
+
+def test_report_state_without_a_checkpoint_never_guesses_a_ledger(tmp_path, checkpoints):
+    """A relative recorded path meant whatever that run's working directory
+    made of it; a report that cannot be read names nothing. Either way the
+    registration cannot be checked, and says why; kept is still answered."""
+    from src.evaluation.registration import report_state
+
+    relative = _report(tmp_path, checkpoint_path="runs/shepherd/r1/checkpoints/best.pt")
+    state = report_state(relative)
+    assert (state.kept, state.registered) == ("kept", "cannot_be_checked")
+    assert "relative path" in state.why_registered and state.ledger_path is None
+
+    gone = _report(tmp_path, checkpoint_path=str(checkpoints / "best.pt"))
+    gone.unlink()
+    state = report_state(gone)
+    assert (state.kept, state.registered) == ("not_kept", "cannot_be_checked")

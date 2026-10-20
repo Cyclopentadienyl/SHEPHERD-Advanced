@@ -14,6 +14,17 @@ pytest.importorskip("gradio")
 
 from src.api.services.training_manager import training_manager  # noqa: E402
 from src.webui.components import training_console as tc  # noqa: E402
+from tests.fixtures.operator_access import gradio_request, operator_mode  # noqa: E402
+
+
+#: A request D8 allows once the deployment is in mode M1 (`_operator_mode`):
+#: the console's controls are operator controls since M5-1.
+OP = gradio_request()
+
+
+@pytest.fixture(autouse=True)
+def _operator_mode(monkeypatch):
+    operator_mode(monkeypatch)
 
 
 def _run_file(ws, arch, run, name):
@@ -29,11 +40,11 @@ def test_refresh_lists_the_selected_architectures_runs(tmp_path):
     hgt = _run_file(ws, "hgt", "20261001-000000_a_111111", "last.pt")
     gat = _run_file(ws, "gat", "20261002-000000_b_222222", "model-1-0.9.pt")
 
-    update = tc._refresh_checkpoints(str(ws), "hgt")
+    update = tc._refresh_checkpoints(str(ws), "hgt", OP)
     assert [value for _, value in update["choices"]] == [str(hgt)]
     assert update["choices"][0][0].startswith("20261001-000000_a_111111 / last.pt")
 
-    update = tc._refresh_checkpoints(str(ws), "gat")  # conv_type change -> relink
+    update = tc._refresh_checkpoints(str(ws), "gat", OP)  # conv_type change -> relink
     assert [value for _, value in update["choices"]] == [str(gat)]
     assert update["value"] == str(gat)
 
@@ -43,7 +54,7 @@ def test_refresh_does_not_list_the_old_layout(tmp_path):
     (ws / "checkpoints" / "hgt").mkdir(parents=True)
     (ws / "checkpoints" / "hgt" / "last.pt").write_text("x")
 
-    update = tc._refresh_checkpoints(str(ws), "hgt")
+    update = tc._refresh_checkpoints(str(ws), "hgt", OP)
     assert update["choices"] == [] and update["value"] is None
 
 
@@ -92,8 +103,8 @@ def checkpoints(tmp_path_factory):
 
 def test_the_listed_and_the_typed_checkpoint_go_through_one_check(checkpoints):
     path = str(checkpoints["paused"])
-    from_list, _ = tc._on_check_continue(tc.CONTINUE_FROM_LIST, path, "", "cpu", None)
-    typed, _ = tc._on_check_continue(tc.CONTINUE_FROM_PATH, "ignored", path, "cpu", None)
+    from_list, _ = tc._on_check_continue(tc.CONTINUE_FROM_LIST, path, "", "cpu", None, OP)
+    typed, _ = tc._on_check_continue(tc.CONTINUE_FROM_PATH, "ignored", path, "cpu", None, OP)
 
     assert "(run list)" in from_list and "(manual path)" in typed
     for text in (from_list, typed):
@@ -103,11 +114,11 @@ def test_the_listed_and_the_typed_checkpoint_go_through_one_check(checkpoints):
 
 def test_a_finished_checkpoint_offers_extend_and_says_why_it_cannot_resume(checkpoints):
     path = str(checkpoints["finished"])
-    text, extend = tc._on_check_continue(tc.CONTINUE_FROM_PATH, None, path, "cpu", None)
+    text, extend = tc._on_check_continue(tc.CONTINUE_FROM_PATH, None, path, "cpu", None, OP)
     assert "Cannot continue" in text and "extend_epochs" in text
     assert extend["visible"] is True
 
-    text, _ = tc._on_check_continue(tc.CONTINUE_FROM_PATH, None, path, "cpu", 3)
+    text, _ = tc._on_check_continue(tc.CONTINUE_FROM_PATH, None, path, "cpu", 3, OP)
     assert "Extend training by 3 epochs at a fixed rate" in text
 
 
@@ -119,12 +130,12 @@ def test_continue_sends_only_operational_fields_and_never_bypasses_the_check(
                         lambda config: started.append(config) or {"success": True, "pid": 1,
                                                                   "run_dir": "/r"})
     refused = tc._on_resume(str(checkpoints["ws"]), "", "cpu", tc.CONTINUE_FROM_PATH, None,
-                            str(checkpoints["finished"]), None)
+                            str(checkpoints["finished"]), None, OP)
     assert started == [], "a refused checkpoint was started"
     assert "Not started" in refused[0] and "Cannot continue" in refused[-2]
 
     tc._on_resume(str(checkpoints["ws"]), "pilot", "cpu", tc.CONTINUE_FROM_LIST,
-                  str(checkpoints["paused"]), "", None)
+                  str(checkpoints["paused"]), "", None, OP)
     assert started and set(started[0]) == {"data_dir", "run_name", "device", "resume_from",
                                            "compile"}
     assert started[0]["resume_from"] == str(checkpoints["paused"])
@@ -207,11 +218,11 @@ def test_extra_epochs_left_from_a_finished_checkpoint_never_block_a_resume(
 
     extra = {"value": None, "visible": False}
     listed, manual = chosen(str(checkpoints["finished"]))
-    text, update = tc._on_check_continue(source, listed, manual, "cpu", extra["value"])
+    text, update = tc._on_check_continue(source, listed, manual, "cpu", extra["value"], OP)
     _apply(extra, update)
     assert extra["visible"] is True and "Enter **Extra epochs**" in text
     extra["value"] = 3
-    text, update = tc._on_check_continue(source, listed, manual, "cpu", extra["value"])
+    text, update = tc._on_check_continue(source, listed, manual, "cpu", extra["value"], OP)
     _apply(extra, update)
     assert "Extend training by 3 epochs" in text and extra == {"value": 3, "visible": True}
 
@@ -221,10 +232,10 @@ def test_extra_epochs_left_from_a_finished_checkpoint_never_block_a_resume(
     _apply(extra, update)
     assert extra == {"value": None, "visible": False} and preview == tc._CONTINUE_PROMPT
 
-    text, update = tc._on_check_continue(source, listed, manual, "cpu", extra["value"])
+    text, update = tc._on_check_continue(source, listed, manual, "cpu", extra["value"], OP)
     _apply(extra, update)
     assert "Resume the original training" in text and extra["visible"] is False
-    tc._on_resume(str(checkpoints["ws"]), "", "cpu", source, listed, manual, extra["value"])
+    tc._on_resume(str(checkpoints["ws"]), "", "cpu", source, listed, manual, extra["value"], OP)
     assert len(started) == 1 and "extend_epochs" not in started[0]
     assert started[0]["resume_from"] == str(checkpoints["paused"])
 
@@ -239,15 +250,15 @@ def test_a_stale_value_that_reaches_the_handlers_is_not_sent_for_an_unfinished_c
                         lambda config: started.append(config) or {"success": True, "pid": 1,
                                                                   "run_dir": "/r"})
     paused = str(checkpoints["paused"])
-    text, update = tc._on_check_continue(tc.CONTINUE_FROM_PATH, None, paused, "cpu", 3)
+    text, update = tc._on_check_continue(tc.CONTINUE_FROM_PATH, None, paused, "cpu", 3, OP)
     assert "Resume the original training" in text
     assert update["visible"] is False and update["value"] is None
-    tc._on_resume(str(checkpoints["ws"]), "", "cpu", tc.CONTINUE_FROM_PATH, None, paused, 3)
+    tc._on_resume(str(checkpoints["ws"]), "", "cpu", tc.CONTINUE_FROM_PATH, None, paused, 3, OP)
     assert len(started) == 1 and "extend_epochs" not in started[0]
 
     # A finished checkpoint still extends by the epochs entered.
     tc._on_resume(str(checkpoints["ws"]), "", "cpu", tc.CONTINUE_FROM_PATH, None,
-                  str(checkpoints["finished"]), 3)
+                  str(checkpoints["finished"]), 3, OP)
     assert started[1]["extend_epochs"] == 3
 
 
@@ -314,7 +325,7 @@ def test_continue_without_check_on_a_finished_checkpoint_shows_extra_epochs(
     monkeypatch.setattr(training_manager, "start_training",
                         lambda config: started.append(config) or {"success": True})
     result = tc._on_resume(str(checkpoints["ws"]), "", "cpu", tc.CONTINUE_FROM_PATH, None,
-                           str(checkpoints["finished"]), None)
+                           str(checkpoints["finished"]), None, OP)
     assert started == [] and "Not started" in result[0]
     assert "Enter **Extra epochs** below" in result[-2]
     assert result[-1]["visible"] is True

@@ -156,6 +156,19 @@ deployment*, not merely a loopback bind.
   application cannot read Uvicorn's CLI. That path is addressed by corrected instructions and by
   fixing the launcher's misleading URL display, not by an in-process guard.
 
+*As implemented (M5-1, 2026-10-20):* one rule, `network_bind` in `src/config/server_settings.py`:
+a loopback bind (`127.0.0.0/8`, `::1`, `localhost`) is allowed; any other, the wildcards included,
+is refused unless `SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND` is exactly `1`, and then allowed
+with a warning that names it risk acceptance, not a control, and says the operator controls stay
+refused off loopback (D8, `PLAN_TEST_RESULTS.md`). Applied at two of the three enforcement points:
+the launcher (default `--host 127.0.0.1`; it reads the last `--host` uvicorn will take, refuses
+with exit 2 before anything starts, and prints the address it binds) and `src.api.main:main()`
+(default `127.0.0.1`, refusing with `SystemExit`). **Application startup does not re-check:** it
+cannot read the bind uvicorn was given, and both entry points that pass one have refused already;
+a hand-typed uvicorn stays outside, as above. The launcher also starts uvicorn with
+`--no-proxy-headers`, last on its command line. The service has no authentication, so every
+network bind counts as one "without authentication".
+
 ---
 
 ## 4. P0 work
@@ -209,6 +222,22 @@ decision. **Do not keep shipping a known-broken service unit while a bind decisi
 lifting the operator controls' checks (D8); deployments that relied on the old default get
 migration notes. LAN inference for several frontends is kept possible, not built (BACKLOG item
 28). The question below is the record as it stood.
+
+*As implemented (M5-1, 2026-10-20):*
+- **B1:** the launcher (`UVICORN_DEFAULT_ARGS`), `src.api.main:main()` and the systemd unit
+  (`-- --host 127.0.0.1 --port 8264`, stated where an operator would change it) bind `127.0.0.1`,
+  with §3.1's guard ("as implemented" there). The launcher prints `Listening on : <host>:<port>`
+  with what it reaches beside the URLs; migration notes for deployments that relied on `0.0.0.0`
+  are in the deployment guide (§4.12). B2 has no audience under M1: C3 and C4 are not unmounted
+  but checked by D8 on every request, under any bind, in the API (one FastAPI dependency) and in
+  the dashboard (one Gradio helper), refused unless mode M1 and a loopback arrival with no
+  forwarding header, a loopback Host and no foreign Origin. CORS, reviewed with it (§6): the
+  parent app's `CORSMiddleware` has an empty allow list, so no other origin may read a response,
+  `/ui` included; Gradio's upload route takes at most 1 MB per file.
+- **C1:** `src/api/__init__.py`'s usage example names `--host 127.0.0.1`, and the unit's comment
+  no longer defers the bind. `scripts/setup_demo.py` already printed `--host 127.0.0.1` in both of
+  its commands (since `0bc79d9`, 2026-09-09), and the instruction that omitted `--host` is gone,
+  so it needed no change here. C2's deployment contract is the guide's §4.12.
 
 **One operational answer decides group B:** *does anyone reach the WebUI by the server's LAN address
 rather than through SSH?*

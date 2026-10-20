@@ -179,6 +179,11 @@ ALLOWED = {
      "json.load"): (1, _NOT_INPUT.format(what="a training run's progress, for display")),
     ("src/api/services/training_manager.py", "TrainingManager.get_metrics_history",
      "json.load"): (1, _NOT_INPUT.format(what="a training run's metrics, for display")),
+    ("src/api/services/training_manager.py", "TrainingManager._test_outcome", "json.loads"):
+        (1, _NOT_INPUT.format(what="a test run's own outcome file (`--outcome`), naming the "
+                                   "report it published and that report's digest; kept and "
+                                   "registered are read from the store and the ledger by "
+                                   "`registration.report_state` (M5-1)")),
     ("src/config/runtime_presets.py", "load_runtime_settings", "json.load"):
         (1, _NOT_INPUT.format(what="a user's persisted runtime UI settings")),
     ("src/utils/gpu_lock.py", "read_holder", "json.loads"):

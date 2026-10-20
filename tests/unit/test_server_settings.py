@@ -319,3 +319,89 @@ def test_the_module_is_importable_without_the_service():
     imported |= {alias.name for node in ast.walk(tree) if isinstance(node, ast.Import)
                  for alias in node.names}
     assert not any(name and name.startswith("src") for name in imported), imported
+
+
+# ---------------------------------------------------------------------------
+# Loopback, and the network bind (SPEC_4 §3.1, B1; M5-1)
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("text, loopback", [
+    ("127.0.0.1", True), ("127.255.0.9", True), ("::1", True), ("::ffff:127.0.0.1", True),
+    ("192.0.2.10", False), ("0.0.0.0", False), ("::", False), ("::ffff:192.0.2.1", False),
+    ("localhost", False), ("", False), (None, False), (b"127.0.0.1", False),
+])
+def test_a_loopback_address_is_an_ip_literal_on_the_loopback_network(text, loopback):
+    assert ss.is_loopback_ip(text) is loopback
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "LOCALHOST", "::1", "[::1]",
+                                  "127.0.0.2"])
+def test_a_loopback_bind_is_allowed_and_says_nothing(host):
+    decision = ss.network_bind(host, {})
+    assert decision.allowed and decision.message is None and ss.bind_is_loopback(host)
+
+
+@pytest.mark.parametrize("host, where", [("0.0.0.0", "all interfaces"), ("::", "all interfaces"),
+                                         ("", "all interfaces"), ("192.0.2.10", "192.0.2.10"),
+                                         ("myhost.lan", "myhost.lan")])
+def test_a_network_bind_is_refused_unless_the_risk_is_accepted(host, where):
+    refused = ss.network_bind(host, {})
+    assert not refused.allowed
+    assert refused.message.startswith(f"refusing to bind {where}:")
+    assert "SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND=1" in refused.message
+    assert "Nothing was started." in refused.message
+
+    accepted = ss.network_bind(host, {ss.ENV_ACCEPT_UNAUTHENTICATED_NETWORK_BIND: "1"})
+    assert accepted.allowed and accepted.host == host
+    assert "risk acceptance, not a control" in accepted.message
+    assert "Operator controls stay refused" in accepted.message
+
+
+@pytest.mark.parametrize("value", ["", "0", "true", "yes", "1 ", "01"])
+def test_only_the_exact_value_one_accepts_the_risk(value):
+    assert not ss.network_bind("0.0.0.0",
+                               {ss.ENV_ACCEPT_UNAUTHENTICATED_NETWORK_BIND: value}).allowed
+
+
+def test_the_default_bind_is_loopback():
+    assert ss.DEFAULT_BIND_HOST == "127.0.0.1" and ss.bind_is_loopback(ss.DEFAULT_BIND_HOST)
+
+
+def test_the_deployment_mode_is_documented_as_applied():
+    """WP1 said the mode was not applied yet; D8 applies it since M5-1."""
+    text = Path(ss.__file__).read_text(encoding="utf-8")
+    assert "Not applied yet" not in text and "once D8's check applies it" not in text
+    assert "src/utils/operator_access.py" in text
+
+
+# ---------------------------------------------------------------------------
+# `python -m src.api.main` applies the same bind rule
+# ---------------------------------------------------------------------------
+@pytest.fixture
+def uvicorn_runs(monkeypatch):
+    pytest.importorskip("uvicorn")
+    import uvicorn
+
+    runs = []
+    monkeypatch.setattr(uvicorn, "run", lambda app, **kwargs: runs.append((app, kwargs)))
+    return runs
+
+
+def test_the_api_entry_point_binds_loopback_without_proxy_headers(uvicorn_runs):
+    from src.api import main
+
+    main.main()
+    ((app, kwargs),) = uvicorn_runs
+    assert app == "src.api.main:app"
+    assert kwargs["host"] == "127.0.0.1" and kwargs["proxy_headers"] is False
+
+
+def test_the_api_entry_point_refuses_a_network_bind_without_acceptance(uvicorn_runs,
+                                                                       monkeypatch):
+    from src.api import main
+
+    with pytest.raises(SystemExit, match="refusing to bind all interfaces"):
+        main.main(host="0.0.0.0")
+    assert uvicorn_runs == []
+    monkeypatch.setenv(ss.ENV_ACCEPT_UNAUTHENTICATED_NETWORK_BIND, "1")
+    main.main(host="0.0.0.0")
+    assert uvicorn_runs[0][1]["host"] == "0.0.0.0"

@@ -203,14 +203,18 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# **By default no cross-origin browser access is granted; administrative
+# operations are still checked by D8 in the backend** (M5-1). An empty allow
+# list sends no Access-Control-Allow-Origin to any other origin and answers
+# every preflight 400, on /api and on the mounted dashboard alike: since Gradio
+# 6.25 a mounted app adds no CORS headers of its own when the parent's
+# middleware is exactly this class (`middleware.cls is CORSMiddleware`), so
+# **it must stay `fastapi.middleware.cors.CORSMiddleware` itself, never a
+# subclass**, or Gradio's own middleware reflects any origin on a LAN Host.
+# CORS only decides what a browser lets a page read: a cross-origin request
+# that needs no preflight still reaches the server, which is why D8, not CORS,
+# guards the operator controls.
+app.add_middleware(CORSMiddleware, allow_origins=[])
 
 # The in-process WebUI calls this API at the address the server accepted its
 # requests on, recorded from each request (`src/utils/server_address.py`).
@@ -355,8 +359,8 @@ app.include_router(search.router, prefix="/api/v1", tags=["Search"])
 app.include_router(disease.router, prefix="/api/v1", tags=["Disease"])
 app.include_router(training.router, prefix="/api/v1", tags=["Training"])
 app.include_router(system.router, prefix="/api/v1", tags=["System"])
-# The server's lists (M5-1): workspaces and cohort versions. A workspace's
-# checkpoints are not mounted until D8's check gates them (WP2; routes/lists.py).
+# The server's lists (M5-1): workspaces and cohort versions, open; a workspace's
+# checkpoints, behind D8's dependency (SPEC_4 C3; routes/lists.py).
 app.include_router(lists.router, prefix="/api/v1", tags=["Lists"])
 
 
@@ -688,17 +692,33 @@ def initialize_ontology():
 # =============================================================================
 # CLI Entry Point
 # =============================================================================
-def main():
-    """Run the API server"""
+def main(host: Optional[str] = None, port: int = 8000):
+    """Run the API server (``python -m src.api.main``), on ``127.0.0.1`` unless
+    `host` names another address.
+
+    **The bind guard** (SPEC_4 §3.1): a bind other than loopback is refused
+    (`network_bind`) unless ``SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND=1``,
+    which accepts the risk and is no control. Proxy headers are not trusted:
+    the client address uvicorn reports is the socket's, though D8 never reads
+    it anyway.
+    """
     import uvicorn
 
+    from src.config.server_settings import DEFAULT_BIND_HOST, network_bind
+
+    decision = network_bind(DEFAULT_BIND_HOST if host is None else host)
+    if not decision.allowed:
+        raise SystemExit(f"src.api.main: {decision.message}")
+    if decision.message:
+        logger.warning(decision.message)
     uvicorn.run(
         "src.api.main:app",
-        host="0.0.0.0",
-        port=8000,
+        host=decision.host,
+        port=port,
         reload=True,
         log_level="info",
         access_log=False,
+        proxy_headers=False,
     )
 
 

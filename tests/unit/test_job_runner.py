@@ -13,6 +13,7 @@ Module: tests/unit/test_job_runner.py
 from __future__ import annotations
 
 import inspect
+import json
 import os
 import signal
 import sys
@@ -101,16 +102,52 @@ def ended(manager: TrainingManager, job_type: str) -> None:
     assert manager._last[job_type].done.wait(5), f"the {job_type} job did not end"
 
 
-class Reader:
-    """A report-state reader that records what it was asked."""
+#: The registration's states, by the runner's True / False / None.
+KEPT = {True: "kept", False: "not_kept", None: "cannot_be_checked"}
+REGISTERED = {True: "registered", False: "not_registered", None: "cannot_be_checked"}
 
-    def __init__(self, kept, registered, reason=""):
-        self.answer = {"kept": kept, "registered": registered, "reason": reason}
+
+class Reader:
+    """A report-state reader with the registration helper's signature
+    (`registration.report_state`) that records what it was asked and answers
+    a `ReportState`."""
+
+    def __init__(self, kept, registered, why_kept="the reader's kept reason",
+                 why_registered="the reader's registered reason"):
+        self.answer = (kept, registered, why_kept, why_registered)
         self.asked = []
 
-    def __call__(self, report, checkpoint):
-        self.asked.append((report, checkpoint))
-        return self.answer
+    def __call__(self, report, *, checkpoint, expected_sha256=None):
+        from src.evaluation.registration import ReportState
+
+        self.asked.append((report, checkpoint, expected_sha256))
+        kept, registered, why_kept, why_registered = self.answer
+        return ReportState(KEPT[kept], why_kept, REGISTERED[registered], why_registered,
+                           expected_sha256, None, None)
+
+
+REPORT_SHA = "a" * 64
+RUN_ID = f"20261020T100000Z-{SHA_CKPT[:12]}-0a1b2c3d"
+
+
+def outcome_path(popens) -> Path:
+    """The `--outcome` file the runner passed to the latest test run."""
+    argv = popens.calls[-1]
+    return Path(argv[argv.index("--outcome") + 1])
+
+
+def write_outcome(path: Path, inputs: TestRunInputs, *, complete=True,
+                  registration=None, report=None) -> Path:
+    """What measure_scorer writes there once its report is published."""
+    report = report or reports(inputs) / RUN_ID / "report.json"
+    path.write_text(json.dumps({
+        "schema_version": 1, "complete": complete, "run_id": report.parent.name,
+        "report": str(report), "report_sha256": REPORT_SHA,
+        "checkpoint": str(inputs.checkpoint), "checkpoint_sha256": SHA_CKPT,
+        "registration": registration or {"requested": False, "registered": False,
+                                         "outcome": "not_requested", "why": "no --record"},
+    }))
+    return report
 
 
 # --------------------------------------------------------------------------- one slot
@@ -265,15 +302,15 @@ class HeldReader(Reader):
     """A report-state reader that takes its time (WP4's reads the ledger and
     hashes files), until released."""
 
-    def __init__(self, kept, registered, reason=""):
-        super().__init__(kept, registered, reason)
+    def __init__(self, kept, registered, why_registered="the reader's registered reason"):
+        super().__init__(kept, registered, why_registered=why_registered)
         self.reading = threading.Event()
         self.released = threading.Event()
 
-    def __call__(self, report, checkpoint):
+    def __call__(self, report, **kwargs):
         self.reading.set()
         self.released.wait(10)
-        return super().__call__(report, checkpoint)
+        return super().__call__(report, **kwargs)
 
 
 def test_a_cancel_after_the_run_ended_on_its_own_is_refused_and_keeps_its_ending(
@@ -282,11 +319,11 @@ def test_a_cancel_after_the_run_ended_on_its_own_is_refused_and_keeps_its_ending
     left: the cancel sends nothing, calls nothing cancelled, and hides no
     failure; the refusal says how the run ended and what it left."""
     process = FakeProcess(pid=8)
-    popen(process)
+    popens = popen(process)
     reader = HeldReader(True, False, "refused: runs disagree")
     manager = TrainingManager(report_state=reader)
     manager.start_test(inputs)
-    (reports(inputs) / f"20261020T100000Z-{SHA_CKPT[:12]}-0a1b2c3d").mkdir(parents=True)
+    write_outcome(outcome_path(popens), inputs)
     process.finish(3)
     assert reader.reading.wait(5)
     assert manager.get_test_status()["status"] == "running", "the window: still reading"
@@ -414,13 +451,35 @@ def test_the_stop_route_does_not_run_on_the_event_loop():
 
 # --------------------------------------------------------------------------- the test job's inputs
 def test_the_test_command_line_comes_from_the_inputs_only(inputs):
-    argv = build_test_argv(inputs, None)
+    outcome = Path("/tmp/job/outcome.json")
+    argv = build_test_argv(inputs, None, outcome)
     assert argv[:2] == [sys.executable, str(tm.PROJECT_ROOT / "scripts" / "measure_scorer.py")]
     assert argv[2:] == [
         "--checkpoint", str(inputs.checkpoint), "--data-dir", str(inputs.workspace),
         "--cohort", "mygene2-2026-10", "--registry", str(inputs.registry),
-        "--expect-checkpoint-sha256", SHA_CKPT, "--expect-version-sha256", SHA_VERSION]
+        "--expect-checkpoint-sha256", SHA_CKPT, "--expect-version-sha256", SHA_VERSION,
+        "--outcome", str(outcome)]
     assert "--batch-size" not in argv, "the CLI's default stays its one definition"
+
+
+def test_every_test_run_writes_its_outcome_to_a_new_file_in_its_own_directory(popen, inputs):
+    """`--outcome` names a file that does not exist yet (measure_scorer refuses
+    an existing one), in a directory made for this job alone, which is removed
+    once the run has ended and been read."""
+    first, second = FakeProcess(pid=1), FakeProcess(pid=2)
+    popens = popen(first, second)
+    manager = TrainingManager(report_state=Reader(True, False))
+    paths = []
+    for process in (first, second):
+        assert manager.start_test(inputs)["success"]
+        path = outcome_path(popens)
+        assert path.parent.is_dir() and not path.exists()
+        assert sorted(path.parent.iterdir()) == []
+        paths.append(path)
+        process.finish(1)
+        ended(manager, "test")
+        assert not path.parent.exists(), "the job's own directory is removed at its end"
+    assert paths[0].parent != paths[1].parent
 
 
 def test_the_operators_choices_and_the_evidence_setting_reach_the_command_line(inputs):
@@ -428,7 +487,7 @@ def test_the_operators_choices_and_the_evidence_setting_reach_the_command_line(i
 
     chosen = replace(inputs, record=True, deterministic=True,
                      evidence_dirs=(Path("/srv/evidence/a"), Path("/srv/evidence/b")))
-    argv = build_test_argv(chosen, "cpu")
+    argv = build_test_argv(chosen, "cpu", Path("/tmp/job/outcome.json"))
     assert argv[-8:] == ["--training-evidence", "/srv/evidence/a", "--training-evidence",
                          "/srv/evidence/b", "--device", "cpu", "--record", "--deterministic"]
 
@@ -467,26 +526,34 @@ def test_inputs_of_the_wrong_shape_are_refused_before_launch(popen, inputs, chan
 
 
 # --------------------------------------------------------------------------- what a test run left
-def _run(manager, popen, inputs, *, code=0, make=(), existing=()):
+def _run(manager, popen, inputs, *, code=0, make=(), existing=(), outcome=None):
+    """One test run: `make` run directories appear in the store during it, and
+    `outcome` (keyword arguments for `write_outcome`, or True) is written to the
+    file the runner named, before the process ends with `code`."""
     for name in existing:
         (reports(inputs) / name).mkdir(parents=True)
     process = FakeProcess(pid=6)
-    popen(process)
+    popens = popen(process)
     assert manager.start_test(inputs)["success"]
     for name in make:
         (reports(inputs) / name).mkdir(parents=True)
+    if outcome is not None:
+        write_outcome(outcome_path(popens), inputs, **({} if outcome is True else outcome))
     process.finish(code)
     ended(manager, "test")
     return manager.get_test_status()
 
 
-def test_the_report_this_run_created_is_read_from_the_disk(popen, inputs):
-    reader = Reader(True, False, "refused: a contradiction")
-    run_id = f"20261020T100000Z-{SHA_CKPT[:12]}-0a1b2c3d"
-    status = _run(TrainingManager(report_state=reader), popen, inputs, code=3, make=[run_id],
-                  existing=[f"20261019T100000Z-{SHA_CKPT[:12]}-ffffffff"])
-    run_dir = reports(inputs) / run_id
-    assert reader.asked == [(run_dir / "report.json", inputs.checkpoint)]
+def test_what_the_run_published_is_read_from_its_outcome_and_the_disk(popen, inputs):
+    """The outcome file names the report and the digest the run published; the
+    registration's helper reads kept and registered with that digest."""
+    reader = Reader(True, False, why_registered="there is no evaluations.json")
+    status = _run(TrainingManager(report_state=reader), popen, inputs, code=3, outcome={
+        "registration": {"requested": True, "registered": False, "outcome": "refused",
+                         "why": "runs disagree — investigate"}},
+        existing=[f"20261019T100000Z-{SHA_CKPT[:12]}-ffffffff"])
+    run_dir = reports(inputs) / RUN_ID
+    assert reader.asked == [(run_dir / "report.json", inputs.checkpoint, REPORT_SHA)]
     assert status["status"] == "failed" and status["exit_code"] == 3
     # Exit 3 is also a report not as published, which may be gone: "kept" is
     # the outcome's, read from the disk, never the exit status's.
@@ -495,31 +562,85 @@ def test_the_report_this_run_created_is_read_from_the_disk(popen, inputs):
     assert "measured and kept" not in status["exit_meaning"]
     outcome = status["outcome"]
     assert outcome["report_dir"] == str(run_dir) and outcome["kept"] is True
-    assert outcome["registered"] is False
-    assert outcome["summary"] == (f"A report was kept at {run_dir}; it is not registered. "
-                                  "(refused: a contradiction)")
+    assert outcome["registered"] is False and outcome["run_outcome"]["report_sha256"] == REPORT_SHA
+    assert outcome["summary"] == (
+        f"A report was kept at {run_dir}; it is not registered (there is no "
+        "evaluations.json). The run said of its registration: runs disagree — investigate.")
 
 
-@pytest.mark.parametrize("reason", ["", "its report.json does not hold the bytes published"])
-def test_kept_and_registered_come_from_the_disk_not_the_exit_status(popen, inputs, reason):
-    """Exit 0, but the reader says no report was kept: not called kept, and the
-    cause is the reader's, never one the runner supposes (a report.json that is
-    present but not as published is not "an interrupted write")."""
-    run_id = f"20261020T100000Z-{SHA_CKPT[:12]}-0a1b2c3d"
-    status = _run(TrainingManager(report_state=Reader(False, False, reason)), popen, inputs,
-                  code=0, make=[run_id])
-    assert status["status"] == "completed" and status["outcome"]["kept"] is False
-    said = f"No report was kept in {reports(inputs) / run_id}."
-    assert status["outcome"]["summary"] == (said + f" ({reason})" if reason else said)
+@pytest.mark.parametrize("kept, registered, says", [
+    (False, False, "The run published a report at {report}, but it is not kept: "
+                   "the reader's kept reason."),
+    (None, None, "Whether the report at {report} is kept cannot be checked "
+                 "(the reader's kept reason)."),
+    (True, True, "A report was kept at {run_dir}; it is registered (the reader's registered "
+                 "reason)."),
+])
+def test_kept_and_registered_come_from_the_disk_not_the_exit_status(popen, inputs, kept,
+                                                                    registered, says):
+    """Exit 0 whatever the reader says: kept and registered are the reader's,
+    with its reasons, never a cause the runner supposes."""
+    status = _run(TrainingManager(report_state=Reader(kept, registered)), popen, inputs,
+                  code=0, outcome=True)
+    report = reports(inputs) / RUN_ID / "report.json"
+    assert status["status"] == "completed"
+    assert (status["outcome"]["kept"], status["outcome"]["registered"]) == (kept, registered)
+    assert status["outcome"]["summary"].startswith(
+        says.format(report=report, run_dir=report.parent))
 
 
-def test_no_new_report_directory_means_nothing_was_kept(popen, inputs):
+def test_an_outcome_written_only_at_publication_says_the_run_did_not_finish(popen, inputs):
+    status = _run(TrainingManager(report_state=Reader(True, False)), popen, inputs, code=1,
+                  outcome={"complete": False})
+    assert status["outcome"]["kept"] is True
+    assert status["outcome"]["summary"].endswith(
+        "Its outcome file is the one written when the report was published: the run did not "
+        "get as far as writing it again at its end.")
+
+
+@pytest.mark.parametrize("content", [b"{not json", b'{"report": 3}', b"[]",
+                                     b'{"report": "/r/report.json", "report_sha256": "x"}'])
+def test_an_outcome_file_that_cannot_be_read_claims_nothing(popen, inputs, content):
+    reader = Reader(True, True)
+    process = FakeProcess(pid=6)
+    popens = popen(process)
+    manager = TrainingManager(report_state=reader)
+    manager.start_test(inputs)
+    outcome_path(popens).write_bytes(content)
+    process.finish(0)
+    ended(manager, "test")
+    outcome = manager.get_test_status()["outcome"]
+    assert reader.asked == []
+    assert outcome["kept"] is None and outcome["registered"] is None
+    assert "is not one this runner reads" in outcome["summary"]
+    assert outcome["summary"].endswith("so what it left cannot be checked.")
+
+
+def test_no_outcome_file_and_no_new_report_directory_means_nothing_was_published(popen, inputs):
     reader = Reader(True, True)
     status = _run(TrainingManager(report_state=reader), popen, inputs, code=1,
                   make=[f"20261020T100000Z-{'d' * 12}-0a1b2c3d"])  # another checkpoint's
     assert reader.asked == []
     assert status["outcome"]["kept"] is False and status["outcome"]["registered"] is False
+    assert status["outcome"]["summary"] == (
+        f"No report was published: the run wrote no outcome file and created no report "
+        f"directory under {reports(inputs)}, so it kept and registered nothing.")
     assert status["status"] == "failed"
+
+
+def test_a_report_left_without_an_outcome_file_is_still_found(popen, inputs):
+    """A run stopped between publishing its report and writing its outcome
+    (the window `--outcome` cannot close) left a report: saying "no report
+    was published" would not be true, so the run directory it created is read,
+    with no published digest to compare."""
+    reader = Reader(True, False)
+    status = _run(TrainingManager(report_state=reader), popen, inputs, code=1, make=[RUN_ID])
+    run_dir = reports(inputs) / RUN_ID
+    assert reader.asked == [(run_dir / "report.json", inputs.checkpoint, None)]
+    assert status["outcome"]["kept"] is True
+    assert status["outcome"]["summary"].startswith(
+        f"The run wrote no outcome file, but a report directory for this checkpoint appeared "
+        f"during it: {run_dir}. A report was kept at {run_dir}; it is not registered")
 
 
 def test_two_candidate_reports_are_never_guessed_between(popen, inputs):
@@ -531,11 +652,15 @@ def test_two_candidate_reports_are_never_guessed_between(popen, inputs):
     assert "cannot be told, so neither is claimed" in status["outcome"]["summary"]
 
 
-def test_without_a_report_state_reader_nothing_is_claimed(popen, inputs):
-    status = _run(TrainingManager(), popen, inputs,
-                  make=[f"20261020T100000Z-{SHA_CKPT[:12]}-0a1b2c3d"])
-    assert status["outcome"]["kept"] is None and status["outcome"]["registered"] is None
-    assert "cannot be checked" in status["outcome"]["summary"]
+def test_the_runners_reader_is_the_registrations_one_helper(popen, inputs, tmp_path):
+    """No reader given: the registration's `report_state` reads the disk. The
+    report the outcome names is not there, so it is not kept (never inferred
+    from the exit status 0), and with no ledger it is not registered."""
+    status = _run(TrainingManager(), popen, inputs, code=0, outcome=True)
+    outcome = status["outcome"]
+    assert outcome["kept"] is False and outcome["registered"] is False
+    assert "but it is not kept: there is no" in outcome["summary"]
+    assert tm.TrainingManager()._report_state is tm._registration_report_state
 
 
 def test_a_run_ended_by_sigkill_says_staged_files_may_be_left(popen, inputs, monkeypatch):

@@ -207,14 +207,34 @@ def test_the_diagnosis_tab_calls_the_recorded_address(monkeypatch):
     record_server_address(("127.0.0.1", 8264))
 
     panel._get_pipeline_status()
-    panel._reload_pipeline("data/workspaces/default", "")
     panel._call_diagnose(["HP:0001250"])
 
     assert [(method, url) for method, url, _ in calls] == [
         ("GET", "http://127.0.0.1:8264/api/v1/pipeline/status"),
-        ("POST", "http://127.0.0.1:8264/api/v1/pipeline/reload"),
         ("POST", "http://127.0.0.1:8264/api/v1/diagnose"),
     ]
+
+
+def test_the_reload_is_never_a_self_call(monkeypatch):
+    """Since D8 (M5-1) the tab's reload runs the route's own function in
+    process (`run_reload`), after the handler's own check: a self-call to
+    `/pipeline/reload` would reach the API as a loopback request, whoever
+    clicked, and the address it went to is whichever request came last."""
+    pytest.importorskip("gradio")
+    from src.api.routes import pipeline
+    from src.webui.components import diagnosis_panel as panel
+
+    calls = _record_self_calls(monkeypatch, panel)
+    record_server_address(("192.0.2.10", 8264))
+    ran = []
+    monkeypatch.setattr(pipeline, "run_reload",
+                        lambda request: ran.append(request.data_dir) or pipeline._refused(
+                            "stubbed", {}))
+
+    answer = panel._reload_pipeline("data/workspaces/default", "")
+
+    assert ran == ["data/workspaces/default"] and answer["success"] is False
+    assert calls == [], "the reload made an HTTP request"
 
 
 def test_the_tab_never_sends_its_self_calls_through_a_proxy(monkeypatch):
@@ -253,12 +273,10 @@ def test_the_tab_never_sends_its_self_calls_through_a_proxy(monkeypatch):
 
     sent.clear()
     panel._get_pipeline_status()
-    panel._reload_pipeline("data/workspaces/default", "")
     panel._call_diagnose(["HP:0001250"])
 
     assert [url for url, _ in sent] == [
         "http://192.0.2.10:8264/api/v1/pipeline/status",
-        "http://192.0.2.10:8264/api/v1/pipeline/reload",
         "http://192.0.2.10:8264/api/v1/diagnose",
     ]
     assert all(not proxies.get("http") and not proxies.get("all") for _, proxies in sent)
@@ -278,7 +296,6 @@ def test_an_unknown_address_is_reported_not_disguised_as_not_loaded(monkeypatch)
     assert "Pipeline status unavailable" in rendered
     assert "no TCP request has been recorded" in rendered
     assert "not loaded" not in rendered
-    assert "no TCP request has been recorded" in panel._reload_pipeline("d", "")["message"]
     assert "no TCP request has been recorded" in panel._call_diagnose(["HP:0001250"])["error"]
     assert calls == [], "no request should be attempted without an address"
 

@@ -10,14 +10,15 @@ request.
 - `GET /workspaces`: the workspaces under `SHEPHERD_WORKSPACES_ROOT`, each with
   its dataset identity. Reads small JSON files only; read-only and open.
 - `GET /cohorts`: the cohort versions in `SHEPHERD_REGISTRY`, with aggregates
-  only (never a case identifier, D7) and their report stores' runs. Read-only
-  and open.
-- A workspace's checkpoints: `get_workspace_checkpoints` below. **Not mounted
-  at this revision.** It opens every checkpoint of the workspace (SPEC_4 C3),
-  which D8 offers only where the operator controls are, and D8's check is
-  M5-1's next package (WP2). Until WP2 mounts it with that check as
-  `GET /workspaces/{name}/checkpoints`, no route offers it; an in-process
-  caller (the WebUI's, from M5-2) calls `server_lists.list_checkpoints`.
+  only (never a case identifier, D7) and their report stores' runs, each with
+  whether its report is kept and registered as the registration reads them
+  from the store and the ledger (`server_lists.stored_report_state`).
+  Read-only and open.
+- `GET /workspaces/{name}/checkpoints`: a listed workspace's checkpoints. It
+  opens every checkpoint of the workspace (SPEC_4 C3), which D8 offers only
+  where the operator controls are, so it takes D8's one dependency
+  (`src/api/operator_access.py`) and is refused, opening nothing, unless D8
+  allows the request.
 
 Plain `def` handlers: each reads files, so FastAPI runs them in its thread pool
 instead of on the event loop.
@@ -30,6 +31,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter
 
+from src.api.operator_access import OPERATOR_ONLY
 from src.api.services import server_lists
 
 router = APIRouter()
@@ -43,17 +45,14 @@ def get_workspaces() -> Dict[str, Any]:
 
 @router.get("/cohorts")
 def get_cohort_versions() -> Dict[str, Any]:
-    """The cohort versions in the server's registry, by label and digest."""
-    # TODO(WP4): pass the registration's one "kept?"/"registered?" helper as
-    # report_state; until then each run says its state was not read.
-    return server_lists.list_cohort_versions().as_dict("versions")
+    """The cohort versions in the server's registry, by label and digest, with
+    each kept run's kept and registered state read from the disk."""
+    return server_lists.list_cohort_versions(
+        report_state=server_lists.stored_report_state).as_dict("versions")
 
 
-# HOOK(WP2): not mounted until D8's check gates it (C3: this opens every checkpoint
-# of the workspace). WP2 mounts it with its dependency, for example
-#   router.add_api_route("/workspaces/{name}/checkpoints", get_workspace_checkpoints,
-#                        methods=["GET"], dependencies=[Depends(<D8 check>)])
-# and turns tests/unit/test_server_lists.py's "not mounted" test into a gate test.
+@router.get("/workspaces/{name}/checkpoints", dependencies=OPERATOR_ONLY)
 def get_workspace_checkpoints(name: str, architecture: Optional[str] = None) -> Dict[str, Any]:
-    """A listed workspace's checkpoints, by run, file name and SHA-256."""
+    """A listed workspace's checkpoints, by run, file name and SHA-256. An
+    operator control (D8, SPEC_4 C3)."""
     return server_lists.list_checkpoints(name, architecture).as_dict("checkpoints")

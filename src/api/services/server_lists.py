@@ -45,7 +45,8 @@ unreadable) offers no item, and says why.
 
 **What a list does not say.** Whether a report was kept and whether it is
 registered is read by the registration's one helper, passed in as
-`report_state`; nothing here infers either from which files exist.
+`report_state` (`stored_report_state` is that helper for a run directory);
+nothing here infers either from which files exist.
 
 Module: src/api/services/server_lists.py
 """
@@ -69,6 +70,7 @@ __all__ = [
     "list_workspaces",
     "resolve_checkpoint",
     "resolve_workspace",
+    "stored_report_state",
 ]
 
 #: The sample files a generated workspace's manifest binds beside the graph.
@@ -400,7 +402,6 @@ def list_checkpoints(
     (`read_run_checkpoints`' `within`). Each item names the workspace as the
     list does, so `resolve_checkpoint` finds it again by that name.
     """
-    # TODO(WP2): a route or handler offering this list is gated by D8 (C3).
     from src.kg.artifacts import read_split_manifest
     from src.utils.checkpoint_paths import (
         normalize_conv_type,
@@ -512,8 +513,6 @@ def _report_items(
         if run.problem is not None:
             items.append(ReportItem(run.run_id, None, run.problem))
         elif report_state is None:
-            # TODO(WP4): the registration's one helper that answers "kept?" and
-            # "registered?" from disk is passed here by the callers.
             items.append(ReportItem(run.run_id, None, (
                 "kept and registered are not read here: no report-state reader was given")))
         else:
@@ -552,6 +551,24 @@ def _version_item(listed: Any, report_state: Optional[ReportStateReader],
     )
 
 
+def stored_report_state(run_directory: Path) -> Dict[str, Any]:
+    """Whether the report in this run directory of a report store is kept and
+    whether it is registered, as the registration's one helper reads them
+    (`src.evaluation.registration.report_state`): kept from the store,
+    registered from the ledger beside the checkpoint the report records it
+    measured, since a list knows no checkpoint file. JSON-ready: ``kept`` and
+    ``registered`` (one of the registration's states each), their reasons,
+    the report's digest and the ledger record's sequence. No field is a server
+    path (a reason may name one, for the operator)."""
+    from src.evaluation.cohort_registry import REPORT_FILE
+    from src.evaluation.registration import report_state
+
+    state = report_state(Path(run_directory) / REPORT_FILE)
+    return {"kept": state.kept, "why_kept": state.why_kept,
+            "registered": state.registered, "why_registered": state.why_registered,
+            "report_sha256": state.report_sha256, "sequence": state.sequence}
+
+
 def list_cohort_versions(
     *, environ: Optional[Mapping[str, str]] = None,
     report_state: Optional[ReportStateReader] = None,
@@ -560,8 +577,9 @@ def list_cohort_versions(
     manifest's digest, role, aggregates, and its report store's runs.
 
     `report_state`, given a run directory, says what that run kept and whether
-    its report is registered: the registration's one helper. Without it, each
-    run is listed with no state and says so.
+    its report is registered: the registration's one helper
+    (`stored_report_state`, which the API route passes). Without it, each run
+    is listed with no state and says so.
 
     No registry configured, or one refused: no item, and why.
     """

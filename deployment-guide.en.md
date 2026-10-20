@@ -1554,7 +1554,8 @@ python scripts/measure_scorer.py --checkpoint <file>.pt --data-dir data/workspac
   run id and digest, the checkpoint and version digests, whether the run was deterministic, and
   under `registration` whether the report was registered and why. A run refused before its
   report writes no outcome file. The file says what the run did. The report store and the ledger
-  remain the record, and "kept" and "registered" are read from them.
+  remain the record, and "kept" and "registered" are read from them. The job runner gives every
+  test run it starts a new outcome file in a directory of its own (§4.11).
 
 ---
 
@@ -1585,16 +1586,15 @@ The dashboard is mounted with these settings, whatever the `GRADIO_*` environmen
 | `ssr_mode=False` | Server-side rendering starts a Node.js process |
 | `analytics_enabled=False` | On the dashboard itself, since 2026-10-12: no usage analytics and no version check |
 
-**CORS** is tightened together with D8. This step leaves its configuration as it was
-(`allow_origins=["*"]` with `allow_credentials=True`, `src/api/main.py`), but Starlette 1.9
-changes what that configuration sends: every cross-origin response now echoes the request's
-`Origin` with `Access-Control-Allow-Credentials: true`, where Starlette 0.52.1 did so only when
-the request carried a cookie and sent `*` otherwise. Since Gradio 6.25 a mounted app adds no CORS
-headers of its own when the parent app has a `CORSMiddleware`, so `/ui` follows the same policy.
-Until the D8 batch, HTTP authentication (Basic, Negotiate/Kerberos) or TLS client certificates
-in front of the service are therefore no defence against other websites: a page on any site,
-opened in a browser that holds those credentials, can read the responses of `/api/*` and
-`/ui/gradio_api/*`.
+**CORS** is tightened since M5-1, together with D8 (§4.12): **by default no cross-origin
+browser access is granted; administrative operations are still checked by D8 in the backend.**
+The parent app keeps its `CORSMiddleware`, now with an empty allow list (`src/api/main.py`), and
+since Gradio 6.25 a mounted app adds no CORS headers of its own when the parent app has exactly
+that class, so `/ui` follows the same policy. Until M5-1 the configuration was
+`allow_origins=["*"]` with `allow_credentials=True`, which under Starlette 1.9 echoed every
+request's `Origin` with `Access-Control-Allow-Credentials: true`: a page on any site, opened in a
+browser holding HTTP credentials or a client certificate for the service, could read the
+responses of `/api/*` and `/ui/gradio_api/*`. It no longer can.
 
 ### The route guard
 
@@ -1710,12 +1710,18 @@ cohort version, the same CLI an operator runs). One job at a time:
   `completed`, `failed` or `cancelled`, `cancelled` only when the cancel is what ended it (a run
   that ended on its own as the cancel arrived keeps that ending). A failure caused by a signal
   says which (`Process ended by SIGKILL`, for the out-of-memory killer).
-- **A test run's report is read from the disk once it ends**: the run directory that appeared in
-  the version's report store for its checkpoint; whether it was kept and registered is read
-  there, never inferred from the exit status. After a cancel the status says what was left; after
-  SIGTERM or SIGKILL it also names where staged files (`*.tmp`) may be left: the run directory
-  and, for a run that was registering its report, the checkpoint's directory, where its ledger
-  is.
+- **A test run's report is read from the disk once it ends.** Each test run writes its outcome
+  file (`measure_scorer.py --outcome`, §4.9) into a directory made for that job alone, naming the
+  report it published and the digest of those bytes; whether that report is kept and registered
+  is then read from the report store and the ledger by the registration's own helper, with that
+  digest, never inferred from the exit status (the status's `outcome` gives `kept`, `registered`,
+  a `summary` with the reasons, and the run's own `run_outcome`). **No outcome file means no
+  report was published**, unless a run directory for its checkpoint appeared in the store during
+  the run (a run stopped between publishing its report and writing its outcome), which is then
+  read the same way and said so. The job's directory is removed once the run has been read.
+  After a cancel the status says what was left; after SIGTERM or SIGKILL it also names where
+  staged files (`*.tmp`) may be left: the run directory and, for a run that was registering its
+  report, the checkpoint's directory, where its ledger is.
 - **Runtime Settings' Restart Backend** is refused while any job runs, training or a test run
   (its note now says "A GPU job (training or a test run) is in progress").
 - `GET /api/v1/training/status` adds `job_id`, `end_time`, `exit_code` and `gpu`: the job holding
@@ -1739,7 +1745,7 @@ repository's `data/workspaces/` included.
 
 | Variable | Value | Unset or refused |
 |---|---|---|
-| `SHEPHERD_DEPLOYMENT_MODE` | `M1`, exactly (`m1`, ` M1` or `M2` are other values) | read-only: the operator controls are off, once D8's check applies it (not yet, see below) |
+| `SHEPHERD_DEPLOYMENT_MODE` | `M1`, exactly (`m1`, ` M1` or `M2` are other values) | read-only: every operator control is refused (D8, §4.12) |
 | `SHEPHERD_WORKSPACES_ROOT` | absolute path of an existing directory; its subdirectories are the workspaces | no workspace is listed |
 | `SHEPHERD_REGISTRY` | the cohort registry (§4.9), the directory the commands take as `--registry`: absolute, existing, outside the repository | no cohort version is listed |
 | `SHEPHERD_INTAKE_DIR` | an existing directory outside the repository where you place `shepherd-cases/1` files to import; absolute | no import source is offered |
@@ -1757,10 +1763,9 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
   forwarding, operated by the owner or a designated technician (§4.9 question 3). It is one of the
   conditions an operator control checks, not an authorisation. D8 checks each request it handles
   for the others. Do not set it behind a reverse proxy or on a machine other people can log in to.
-- **The deployment mode is not applied yet.** D8's check, M5's next step, reads it and gates
-  every operator control with it. Until that step lands nothing reads it: training start and
-  stop, the pipeline reload and the configuration save stay as open as before M5-1, whatever the
-  variable says. Leaving it unset does not make this revision read-only.
+- **The deployment mode is applied by D8** (§4.12), on every operator control at the moment it
+  handles a request: unset or any other value, each one is refused and the deployment is
+  read-only for them. Diagnosis, the status pages and the read-only lists work either way.
 - **The workspaces root may be inside the repository**, as the usual `data/workspaces/` is, but
   only when you name it. A relative path, a missing directory and a file are refused.
 - **The registry and the intake directory hold patient-level data.** They follow the
@@ -1807,24 +1812,27 @@ and a file, or a label, and the server finds that name in its own list again.
 
   Each item names the workspace as the list does: for `current -> builds/2026-10-20`, it says
   `current`. Listing opens every checkpoint, which SPEC_4 classes as checkpoint inspection (C3),
-  and D8 offers that only where the operator controls are. **No route offers this list yet.**
-  M5's next step mounts it as `GET /api/v1/workspaces/{name}/checkpoints` behind D8's check;
-  until then it exists only inside the service, for the dashboard of M5's UI step.
+  and D8 offers that only where the operator controls are: it is served as
+  `GET /api/v1/workspaces/{name}/checkpoints` (`?architecture=gat`, say, for one architecture)
+  behind D8's check (§4.12), and a refused request opens nothing.
 - **The existing checkpoint list** (`GET /api/v1/training/checkpoints` and the Training
   Console's resume list) reads each file the same way. Each entry gains `sha256`, `validation`,
   `dataset_fingerprint` and `metadata_problem`, all from the one read. Before, it loaded each
   file without keeping its digest, and dropped a load error without a word. A file that is gone
   by the time it is read (a link whose target was removed) has no size or time to show and is
-  left out of this list; it no longer fails the whole list. This list stays open until D8's
-  check, as before M5-1.
+  left out of this list; it no longer fails the whole list. Since M5-1 D8 checks it like the
+  controls (§4.12), the route and the Training Console's run list alike.
 - **Cohort versions** (`GET /api/v1/cohorts`): each version in the registry, by label and the
   SHA-256 of its `cohort.json`, with its role and whether that role offers ordering. It also shows
   its counts, the graph and dataset record it is bound to, and when it was imported. The list
   never shows a case identifier or the exclusion list: D7 keeps those in the registry, on the
   machine. An interrupted import is listed with its reason. Each version's report store is
-  listed by run id. Whether a run's report was kept and whether it is registered comes from the
-  registration's own reading of the store and the ledger (M5's evaluation step). Until that is
-  wired, each run says that its state was not read.
+  listed by run id, and each run says whether its report is kept and whether it is registered
+  (`kept`, `registered`, each with its reason, the report's digest and the record's sequence),
+  from the registration's own reading of the store and of the ledger beside the checkpoint the
+  report records it measured. A report that names its checkpoint by a relative path, or that
+  cannot be read, has no ledger to look in: `registered` is then `cannot_be_checked`, saying
+  why. A checkpoint moved since the run is looked for where the run read it.
 
 ### The build time: `workspace_build.json`
 
@@ -1855,6 +1863,147 @@ Since M5-1, every build through the workspace writer (`scripts/build_knowledge_g
   one": a first build stopped between the manifest and this file looks the same.
 - **A graph-only build** (no `--generate-samples`) writes neither a manifest nor this file. Its
   build time reads "not recorded" because there is no `split_manifest.json` to describe.
+
+---
+
+## 4.12 Operator controls, the bind and CORS (since M5-1, 2026-10-20)
+
+M5 runs under SPEC_4's deployment mode **M1**: the owner or a designated technician operates the
+service on the machine, or from elsewhere through SSH forwarding (§4.9 question 3). Three things
+changed together, and a deployment may need to act on each:
+
+- the operator controls are refused unless D8 allows the request;
+- the service binds `127.0.0.1` by default, not `0.0.0.0`;
+- no other website's page can read the service's responses (CORS).
+
+### What an operator sets
+
+Set `SHEPHERD_DEPLOYMENT_MODE=M1` where the service starts (§4.11; in the systemd unit, the
+commented `Environment=` line) and restart it. Unset or any other value, every operator control
+is refused and the deployment is read-only for them. Diagnosis, the lookups, the status pages and
+the read-only lists keep working.
+
+### Which controls are checked
+
+| Where | Controls |
+|---|---|
+| API | `POST /api/v1/pipeline/reload`, `POST /api/v1/pipeline/config`, `POST /api/v1/training/start`, `POST /api/v1/training/stop`, `GET /api/v1/training/checkpoints`, `GET /api/v1/workspaces/{name}/checkpoints` |
+| Dashboard | Diagnosis: Reload Pipeline and Save Config. Runtime Settings: Restart Backend and Apply Settings. Training Console: Start, Stop (the confirmed stop), Continue Training, Check checkpoint, the run list (Refresh, and changing the architecture) and Save Path |
+
+The two checkpoint lists, and Check checkpoint, open checkpoint files, which SPEC_4 classes as
+checkpoint inspection (C3), so they are checked like the controls. The Test tab and Model
+Management that M5's UI step adds are to use the same check. Everything else stays open:
+diagnosis, the HPO and disease lookups, the pipeline status and the saved UI paths, the training
+status and metrics, the workspace and cohort lists, the recorded results and the system pages.
+
+### When a request is allowed
+
+Each control checks the request it is handling, at the moment it handles it, and allows it only
+when all of these hold:
+
+1. `SHEPHERD_DEPLOYMENT_MODE` is exactly `M1`;
+2. the request arrived on a loopback address of this machine: the server's own socket decides,
+   never an address the client states;
+3. it carries no header a proxy adds (`Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`,
+   `X-Forwarded-Proto`, `X-Real-IP`, `X-Original-Forwarded-For`, `CF-Connecting-IP`,
+   `True-Client-IP`): M1 has no reverse proxy;
+4. it was addressed to `localhost`, `127.0.0.1` or `[::1]`, with any port (its `Host` header),
+   which guards against DNS rebinding;
+5. if it carries an `Origin`, that is the dashboard's own address (`http://` or `https://`, the
+   same host and port), so a page on another website cannot trigger a control from your browser.
+
+A request whose arrival cannot be read is refused. The checks are in the backend: a greyed-out
+button is only a display, and a direct call, to the API or to a dashboard event through Gradio's
+HTTP API (`/ui/gradio_api/...`, as `gradio_client` makes one), meets the same check. The
+dashboard's controls call the services in process; they never call the API over HTTP. The
+dashboard's Reload still runs where the API's reload runs, so it waits behind a running
+diagnosis as before; and it no longer gives up after 180 s, so a long reload is no longer shown
+as failed while it is still being published.
+
+**A refusal** is `403` from the API, with an `error` that names the condition that failed in
+words to act on and ends "Nothing was done."; it never repeats a header's value. The dashboard
+shows the same sentence where the control shows its result (the run list, which cannot hold a
+sentence, is emptied and the sentence appears as a notice). For example:
+
+```
+Refused: This request did not arrive on a loopback address of this machine. The operator controls work only on the machine itself, or through an SSH forward to localhost (for example ssh -L 8264:localhost:8264 <server>, then http://localhost:8264/ui). Nothing was done.
+```
+
+**Is it enabled for this browser?** `GET /api/v1/system/operator-access` answers for the request
+that asks: `enabled`, the `condition` that decided it and its `reason`. It is read-only and open;
+showing it is not the control.
+
+**A reload that D8 refuses changes nothing.** Before, any caller's reload request, refused or
+not, turned every later diagnosis from the demo answer into "configured but not served" (503).
+
+**Not claimed.** Loopback is not authorisation: whoever reaches the machine's loopback, through
+an SSH forward of their own too, passes. M1 therefore means one verified workspace deployment
+operated by its owner or a designated technician. A reverse proxy on the same host that adds no
+forwarding header is excluded by this guide, not detected: do not put one in front of an M1
+service.
+
+### Operating from another machine: SSH forwarding
+
+Forward a local port to the service's **localhost**, not to its network address:
+
+```bash
+ssh -N -L 8264:localhost:8264 you@gb10
+# then open http://localhost:8264/ui on your own machine
+```
+
+The forwarded connection arrives on the server's loopback addressed to `localhost:8264`, so the
+controls work. `ssh -L 8264:<server LAN address>:8264` would arrive on the LAN address and be
+refused, and with the new bind it finds nothing listening. Another local port works too
+(`-L 9000:localhost:8264`, then `http://localhost:9000/ui`).
+
+### The bind: `127.0.0.1` by default
+
+The launcher (`launch_shepherd.sh`, `shep_launch.py`), the systemd unit and `python -m
+src.api.main` bind `127.0.0.1` unless told otherwise, and the launcher prints what it binds:
+
+```
+[SHEPHERD] Listening on          : 127.0.0.1:8264 (loopback: this machine only)
+```
+
+**A bind to any other address is refused and nothing is started** (the launcher exits 2) unless
+`SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND=1` is set, because the service has no
+authentication. That flag is **risk acceptance, not a control**: it authenticates nobody, and it
+never lifts D8, so on a network bind the operator controls stay refused for every request that
+does not arrive on loopback, while diagnosis and the read-only pages are open to whoever reaches
+the address. The launcher prints a `WARNING:` line that says so. The launcher always starts
+uvicorn with `--no-proxy-headers`, last on its command line, so the client address uvicorn
+reports is the connection's.
+
+Not covered: a uvicorn started by hand (`uvicorn src.api.main:app --host 0.0.0.0`), which the
+application cannot see. Use the launcher.
+
+**Migrating a deployment that relied on `0.0.0.0`.** Until M5-1 the launcher and the unit bound
+every interface. After this update:
+
+- whoever opened `http://<server LAN address>:8264/ui` gets no connection. Give them an SSH
+  forward (above): that is the M1 way;
+- if the LAN must keep reaching diagnosis, set `--host 0.0.0.0` (in the unit's `ExecStart`, or
+  after `--` on the launcher's command line) **and** `SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND=1`
+  in the same environment. Without the flag the launcher refuses to start, and under systemd the
+  unit keeps restarting and failing (`journalctl --user -u shepherd` shows the reason). The
+  operator controls then work only on the machine itself or through an SSH forward;
+- a script that reloads the pipeline over HTTP needs the service in mode M1 and must call
+  `http://127.0.0.1:<port>`. `scripts/measure_served_pipeline.py` starts its own service with
+  `SHEPHERD_DEPLOYMENT_MODE=M1` for that reason.
+
+### CORS: no cross-origin browser access
+
+**By default no cross-origin browser access is granted; administrative operations are still
+checked by D8 in the backend.** No response carries `Access-Control-Allow-Origin` for another
+origin, on `/api` or on the dashboard, whatever address the browser used, and every cross-origin
+preflight is answered 400. Same-origin use (the dashboard itself, `curl`, scripts,
+`gradio_client`) is unaffected.
+
+CORS only decides what a page may read. A cross-origin request that needs no preflight still
+reaches the server: that is why the operator controls are checked by D8, not by CORS. For the
+same reason Gradio's upload route takes at most 1 MB per file: the dashboard has no upload
+control (import sources come from `SHEPHERD_INTAKE_DIR`), and the limit bounds what another
+site's page could write into Gradio's temporary directory. A larger file is refused with 413.
 
 ---
 

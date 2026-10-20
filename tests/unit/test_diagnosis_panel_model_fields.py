@@ -70,6 +70,16 @@ def _reload_answering(monkeypatch, response):
     return sent
 
 
+def _reload(monkeypatch, *fields):
+    """The Reload handler as Gradio runs it (``async``), for a request D8
+    allows (mode M1, loopback)."""
+    import asyncio
+
+    from tests.fixtures.operator_access import operator_request
+
+    return asyncio.run(dp._on_reload_pipeline(*fields, operator_request(monkeypatch)))
+
+
 def _path_lines(rendered):
     return [line for line in rendered.splitlines()
             if line.startswith(("- Workspace", "- No workspace"))]
@@ -161,8 +171,8 @@ def test_a_successful_reload_sets_both_fields_to_what_is_served(monkeypatch):
         "status": _served(), "checkpoint_path": CHOSEN,
     })
 
-    status_md, message, data_dir, checkpoint = dp._on_reload_pipeline(
-        f" {WORKSPACE} ", f" {CHOSEN} ", "auto")
+    status_md, message, data_dir, checkpoint = _reload(
+        monkeypatch, f" {WORKSPACE} ", f" {CHOSEN} ", "auto")
 
     assert sent == [(WORKSPACE, CHOSEN, "auto")]
     assert message == "Pipeline reloaded successfully."
@@ -182,7 +192,7 @@ def test_a_successful_reload_names_its_checkpoint_once_and_how_it_was_chosen(mon
         "status": _served(), "checkpoint_path": CHOSEN, "selection_reason": reason,
     })
 
-    status_md, *_ = dp._on_reload_pipeline(WORKSPACE, "", "auto")
+    status_md, *_ = _reload(monkeypatch, WORKSPACE, "", "auto")
 
     assert status_md.count(CHOSEN) == 1
     assert _path_line(status_md) == f"- Workspace `{WORKSPACE}` · Checkpoint file `{CHOSEN}`"
@@ -197,9 +207,9 @@ def test_an_automatically_chosen_checkpoint_is_shown_and_reloaded_as_shown(monke
         "status": _served(), "checkpoint_path": CHOSEN, "selection_reason": "auto",
     })
 
-    _, _, data_dir, checkpoint = dp._on_reload_pipeline(WORKSPACE, "", "auto")
+    _, _, data_dir, checkpoint = _reload(monkeypatch, WORKSPACE, "", "auto")
     assert checkpoint["value"] == CHOSEN
-    dp._on_reload_pipeline(data_dir["value"], checkpoint["value"], "auto")
+    _reload(monkeypatch, data_dir["value"], checkpoint["value"], "auto")
 
     assert sent == [(WORKSPACE, "", "auto"), (WORKSPACE, CHOSEN, "auto")]
 
@@ -212,8 +222,8 @@ def test_a_refused_reload_keeps_what_was_typed(monkeypatch):
         "success": False, "message": "Missing required files", "status": live,
     })
 
-    status_md, message, data_dir, checkpoint = dp._on_reload_pipeline(
-        "/typed/workspace", "/typed/best.pt", "auto")
+    status_md, message, data_dir, checkpoint = _reload(
+        monkeypatch, "/typed/workspace", "/typed/best.pt", "auto")
 
     assert status_md == "❌ Missing required files" and message == "Missing required files"
     assert data_dir == UNCHANGED and checkpoint == UNCHANGED
@@ -222,7 +232,7 @@ def test_a_refused_reload_keeps_what_was_typed(monkeypatch):
 def test_a_reload_without_a_data_directory_keeps_the_fields(monkeypatch):
     sent = _reload_answering(monkeypatch, AssertionError("nothing is sent"))
 
-    status_md, message, data_dir, checkpoint = dp._on_reload_pipeline(" ", "/typed.pt", "auto")
+    status_md, message, data_dir, checkpoint = _reload(monkeypatch, " ", "/typed.pt", "auto")
 
     assert sent == []
     assert status_md == "⚠️ Data directory is required." and message == ""
@@ -251,12 +261,31 @@ def test_save_writes_what_the_fields_show_and_says_so(monkeypatch, tmp_path):
     config = tmp_path / ".shepherd_ui_config.json"
     monkeypatch.setattr(dp, "CONFIG_FILE", config)
 
-    message = dp._on_save_config(WORKSPACE, CHOSEN)
+    from tests.fixtures.operator_access import operator_request
+
+    request = operator_request(monkeypatch)
+    message = dp._on_save_config(WORKSPACE, CHOSEN, request)
 
     assert json.loads(config.read_text()) == {"data_dir": WORKSPACE, "checkpoint_path": CHOSEN}
     assert message == dp.CONFIG_SAVED
     assert "Saved the paths shown" in message
     assert "only while no pipeline is loaded" in message
 
-    dp._on_save_config(WORKSPACE, "")
+    dp._on_save_config(WORKSPACE, "", request)
     assert json.loads(config.read_text())["checkpoint_path"] is None
+
+
+def test_save_is_refused_without_m1_and_writes_nothing(monkeypatch, tmp_path):
+    """Save Config is an operator control (D8): checked on its own request,
+    before the one writer is reached."""
+    from src.api.routes import pipeline
+    from tests.fixtures.operator_access import gradio_request
+
+    config = tmp_path / ".shepherd_ui_config.json"
+    monkeypatch.setattr(dp, "CONFIG_FILE", config)
+    monkeypatch.setattr(pipeline, "write_ui_config",
+                        lambda *a, **k: pytest.fail("a refused save reached the writer"))
+
+    message = dp._on_save_config(WORKSPACE, CHOSEN, gradio_request())
+    assert message.startswith("Refused: SHEPHERD_DEPLOYMENT_MODE is not set")
+    assert not config.exists()

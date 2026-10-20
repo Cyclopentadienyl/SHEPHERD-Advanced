@@ -558,6 +558,16 @@ def test_an_unknown_server_address_is_an_unavailable_answer(monkeypatch):
     assert "no TCP request has been recorded" in answer["error"]
 
 
+def _reload(monkeypatch, *fields):
+    """The Reload handler as Gradio runs it (``async``), for a request D8
+    allows (mode M1, loopback)."""
+    import asyncio
+
+    from tests.fixtures.operator_access import operator_request
+
+    return asyncio.run(dp._on_reload_pipeline(*fields, operator_request(monkeypatch)))
+
+
 def test_a_reload_shows_the_new_models_records(monkeypatch):
     """The reload renders the candidate's status from its response; the records
     read after it must be the new model's, or say that they are not."""
@@ -568,14 +578,14 @@ def test_a_reload_shows_the_new_models_records(monkeypatch):
     monkeypatch.setattr(dp, "_get_loaded_model_evaluations",
                         lambda: _answer("records", [_record(checkpoint=OTHER_SHA)], sha=OTHER_SHA))
 
-    status_md, *_ = dp._on_reload_pipeline("data", "", "auto")
+    status_md, *_ = _reload(monkeypatch, "data", "", "auto")
 
     assert f"{HEADING} for checkpoint `sha256:{OTHER_SHA[:12]}…`" in status_md
     assert "**mygene2 · mygene2-2026-10**" in status_md
 
     monkeypatch.setattr(dp, "_get_loaded_model_evaluations",
                         lambda: _answer("records", [_record()]))
-    status_md, *_ = dp._on_reload_pipeline("data", "", "auto")
+    status_md, *_ = _reload(monkeypatch, "data", "", "auto")
 
     assert dp.RECORDS_MODEL_CHANGED in status_md
     assert "**mygene2 · " not in status_md
@@ -590,6 +600,6 @@ def test_a_refused_reload_reads_no_records(monkeypatch):
 
     monkeypatch.setattr(dp, "_get_loaded_model_evaluations", no_read)
 
-    status_md, message, *_ = dp._on_reload_pipeline("data", "", "auto")
+    status_md, message, *_ = _reload(monkeypatch, "data", "", "auto")
 
     assert status_md == "❌ refused" and message == "refused"

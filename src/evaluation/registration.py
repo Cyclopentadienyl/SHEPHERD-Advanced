@@ -191,7 +191,8 @@ class ReportState(NamedTuple):
 
     ``report_sha256`` is the digest of the bytes found (or the one expected,
     when the report could not be read); ``sequence`` the ledger record's when
-    registered; ``ledger_path`` the ledger that was (or would be) read.
+    registered; ``ledger_path`` the ledger that was (or would be) read, `None`
+    when no checkpoint was given and the report names none to find it by.
     """
 
     kept: str
@@ -200,7 +201,7 @@ class ReportState(NamedTuple):
     why_registered: str
     report_sha256: Optional[str]
     sequence: Optional[int]
-    ledger_path: Path
+    ledger_path: Optional[Path]
 
 
 def corroboration_note(result: RegistrationResult, report_path: Path) -> Optional[str]:
@@ -564,10 +565,31 @@ def key_refusal(
     )
 
 
+def _recorded_checkpoint(report: Any) -> Tuple[Optional[Path], Optional[str]]:
+    """The checkpoint a report's manifest says the run read
+    (``manifest.checkpoint_path``), for `report_state` called without one, or
+    `None` and why there is no ledger to read. Only an absolute path is
+    taken: a relative one meant whatever the run's working directory made of
+    it, which nothing here knows."""
+    if report is None:
+        return None, ("no checkpoint to find its ledger by: the report could not be read, "
+                      "and no checkpoint was given")
+    manifest = report.get("manifest") if isinstance(report, dict) else None
+    recorded = manifest.get("checkpoint_path") if isinstance(manifest, dict) else None
+    if not isinstance(recorded, str) or not recorded:
+        return None, ("the report records no checkpoint path, and no checkpoint was given, so "
+                      "which ledger to read is not known")
+    if not Path(recorded).is_absolute():
+        return None, (f"the report records its checkpoint as the relative path {recorded!r}, "
+                      "which depended on where that run was started, and no checkpoint was "
+                      "given, so which ledger to read is not known")
+    return Path(recorded), None
+
+
 def report_state(
     report_path: Path,
     *,
-    checkpoint: Path,
+    checkpoint: Optional[Path] = None,
     expected_sha256: Optional[str] = None,
 ) -> ReportState:
     """Whether one report was kept, and whether it is registered, read from
@@ -590,14 +612,22 @@ def report_state(
       report that was later removed still reads as registered. No ledger, or no
       such record, is ``not_registered``; a ledger that cannot be read, or no
       digest to look for, is ``cannot_be_checked``.
+    - **Without** ``checkpoint`` (the server's list of a version's kept
+      reports, which knows no checkpoint file; M5-1), the ledger is the one
+      beside the checkpoint the report's manifest records, taken from the same
+      read when that path is absolute (`_recorded_checkpoint`). A report that
+      cannot be read, or records no absolute path, has no ledger to read:
+      ``cannot_be_checked``, saying why. A checkpoint moved since the run is
+      looked for where the run read it, and the reason names that ledger.
 
     Reads the report once (`read_report`) and the ledger once (`read_ledger`);
     writes nothing. A link retargeted between the run and this call moves the
     ledger looked in, as it would move a later registration.
     """
-    ledger_path = _ledger_beside(checkpoint)
+    ledger_path = _ledger_beside(checkpoint) if checkpoint is not None else None
     report_path = Path(report_path)
     digest: Optional[str] = None
+    report: Any = None
     try:
         store_report_parts(report_path)
     except NotInReportStore:
@@ -606,7 +636,7 @@ def report_state(
         digest = expected_sha256
     else:
         try:
-            _, digest = read_report(report_path, expected_sha256)
+            report, digest = read_report(report_path, expected_sha256)
         except _NotTheExpectedBytes as exc:
             kept, why_kept = "not_kept", (
                 f"{report_path} holds bytes {exc.sha256[:12]}..., not the "
@@ -630,6 +660,17 @@ def report_state(
         return ReportState(kept, why_kept, "cannot_be_checked",
                            "no report digest to look for: the report could not be read and "
                            "no published digest was given", None, None, ledger_path)
+    if checkpoint is None:
+        recorded, no_ledger = _recorded_checkpoint(report)
+        if recorded is not None:
+            try:
+                ledger_path = _ledger_beside(recorded)
+            except (OSError, RuntimeError) as exc:  # a link loop: RuntimeError before 3.13
+                no_ledger = (f"the checkpoint the report records, {recorded}, cannot be "
+                             f"resolved ({type(exc).__name__}), so its ledger cannot be found")
+        if ledger_path is None:
+            return ReportState(kept, why_kept, "cannot_be_checked", no_ledger, digest, None,
+                               None)
     try:
         ledger, _ = read_ledger(ledger_path)
     except (OSError, ValueError) as exc:

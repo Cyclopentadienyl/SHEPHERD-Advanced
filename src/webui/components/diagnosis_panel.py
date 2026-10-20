@@ -26,6 +26,14 @@ Architecture Note:
     from the inference layer and ensures the same code path as external
     API clients.
 
+    **Its two operator controls are the exception** (D8, M5-1): Reload and
+    Save Config check their own Gradio request first
+    (`src/webui/operator_access.py`), then call the API's own functions in
+    process (`run_reload`, `write_ui_config` in `src/api/routes/pipeline.py`),
+    never the API over HTTP. A loopback self-call would be judged by the API
+    as local, whoever clicked; in process there is one reload and one writer,
+    each with its own check at both entrances.
+
 Dependencies:
     - gradio: UI components
     - requests: HTTP client for API calls
@@ -43,6 +51,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import anyio
 import gradio as gr
 import requests
 
@@ -56,6 +65,7 @@ from src.evaluation.caveats import (
     RELATION_DISPLAY_NAMES,
 )
 from src.utils.server_address import ServerAddressUnknownError, api_base_url
+from src.webui.operator_access import operator_access
 
 logger = logging.getLogger(__name__)
 
@@ -290,22 +300,33 @@ def _get_pipeline_status() -> Dict[str, Any]:
 def _reload_pipeline(
     data_dir: str, checkpoint_path: str, conv_type: str = "auto"
 ) -> Dict[str, Any]:
-    """Reload pipeline via API."""
+    """Reload through the one reload function the API route runs (`run_reload`),
+    in process, and return its response as the route would send it.
+
+    Called by `_on_reload_pipeline` only after D8 allowed its request. Not over
+    HTTP: the API would judge a loopback self-call as local whoever clicked
+    (D8). A request the route's model refuses, or a reload that raises, is a
+    refused reload, never a success.
+    """
+    from fastapi.encoders import jsonable_encoder
+    from pydantic import ValidationError
+
+    from src.api.routes.pipeline import PipelineReloadRequest, run_reload
+
     payload: Dict[str, Any] = {"data_dir": data_dir}
     if checkpoint_path and checkpoint_path.strip():
         payload["checkpoint_path"] = checkpoint_path.strip()
     if conv_type:
         payload["conv_type"] = conv_type
     try:
-        resp = _self_request("POST", "/api/v1/pipeline/reload", json=payload, timeout=180)
-        resp.raise_for_status()
-        return resp.json()
-    except ServerAddressUnknownError as e:
-        return {"success": False, "message": str(e)}
-    except requests.ConnectionError:
-        return {"success": False, "message": "API server not reachable."}
-    except Exception as e:
-        return {"success": False, "message": str(e)}
+        request = PipelineReloadRequest(**payload)
+    except ValidationError as e:
+        return {"success": False, "message": f"Reload refused: {e}"}
+    try:
+        return jsonable_encoder(run_reload(request))
+    except Exception as e:  # noqa: BLE001 - shown as a refused reload, as the route's 500 was
+        logger.exception("Pipeline reload failed")
+        return {"success": False, "message": f"Reload failed: {e}"}
 
 
 CONFIG_FILE = Path(".shepherd_ui_config.json")
@@ -334,13 +355,19 @@ def _load_saved_config() -> Dict[str, Any]:
 
 
 def _save_config_to_file(data_dir: str, checkpoint_path: str) -> str:
-    """Save current path config directly to file."""
+    """Save the path config through the API's one writer (`write_ui_config`:
+    staged and renamed into place), in process, after D8 allowed the request
+    (`_on_save_config`). It writes `CONFIG_FILE`, the file `_load_saved_config`
+    reads (the same path as the API's `CONFIG_FILE`)."""
+    from src.api.routes.pipeline import UIConfigResponse, write_ui_config
+
     try:
-        with open(CONFIG_FILE, "w") as f:
-            json.dump({"data_dir": data_dir, "checkpoint_path": checkpoint_path or None}, f, indent=2)
+        write_ui_config(UIConfigResponse(data_dir=data_dir,
+                                         checkpoint_path=checkpoint_path or None),
+                        target=CONFIG_FILE)
         return CONFIG_SAVED
-    except Exception as e:
-        return f"Failed to save: {e}"
+    except Exception as e:  # noqa: BLE001 - the writer removed its staged file
+        return f"Failed to save: {e}. The saved paths are as they were."
 
 
 #: `checkpoint_meta` entries that describe the run rather than measure the model.
@@ -1937,16 +1964,29 @@ def _served_path_updates(status_data: Dict[str, Any]) -> Tuple[Dict[str, Any], D
     return data_dir_update, checkpoint_update
 
 
-def _on_reload_pipeline(
-    data_dir: str, checkpoint_path: str, conv_type: str
-) -> Tuple[str, str, Dict[str, Any], Dict[str, Any]]:
-    """Handle Reload Pipeline button click.
+async def _on_reload_pipeline(
+    data_dir: str, checkpoint_path: str, conv_type: str, request: gr.Request
+) -> Tuple[Any, str, Dict[str, Any], Dict[str, Any]]:
+    """Handle Reload Pipeline button click: an operator control (D8).
+
+    **D8 first**, on this event's own request (`operator_access`): refused,
+    nothing is reloaded and the status block is left as it is, still true.
+
+    **Then the reload, on the event loop, with nothing awaited**: this
+    handler is ``async`` so the reload runs where the route runs it, and waits
+    behind a running diagnosis as before (BACKLOG 28), never beside one in a
+    worker thread. The rendering after it reads the recorded results over
+    HTTP from this same server, so it runs in a worker thread
+    (`_render_reload`), leaving the loop free to answer.
 
     Returns the status, the message, and updates for the Data Directory and
     Checkpoint fields: after a reload that succeeded they name what is now
     served (`_served_path_updates`); after a refusal they keep what the user
     typed, so it can be corrected and sent again.
     """
+    access = operator_access(request)
+    if not access.allowed:
+        return gr.update(), access.refusal, gr.update(), gr.update()
     if not data_dir or not data_dir.strip():
         return "⚠️ Data directory is required.", "", gr.update(), gr.update()
 
@@ -1955,7 +1995,11 @@ def _on_reload_pipeline(
         checkpoint_path.strip() if checkpoint_path else "",
         (conv_type or "auto").strip().lower(),
     )
+    return await anyio.to_thread.run_sync(_render_reload, result)
 
+
+def _render_reload(result: Dict[str, Any]) -> Tuple[str, str, Dict[str, Any], Dict[str, Any]]:
+    """The Reload outputs for one reload's response (`_on_reload_pipeline`)."""
     status_md = ""
     fields = (gr.update(), gr.update())
     if result.get("success"):
@@ -1993,9 +2037,13 @@ def _on_reload_pipeline(
     return status_md, msg, *fields
 
 
-def _on_save_config(data_dir: str, checkpoint_path: str) -> str:
-    """Handle Save Config button click: saves what the fields show, which with
-    a pipeline loaded is the served paths (`CONFIG_SAVED`)."""
+def _on_save_config(data_dir: str, checkpoint_path: str, request: gr.Request) -> str:
+    """Handle Save Config button click: an operator control (D8), checked on
+    this event's own request first. Saves what the fields show, which with a
+    pipeline loaded is the served paths (`CONFIG_SAVED`)."""
+    access = operator_access(request)
+    if not access.allowed:
+        return access.refusal
     return _save_config_to_file(data_dir, checkpoint_path)
 
 

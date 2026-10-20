@@ -14,6 +14,16 @@ import pytest
 pytest.importorskip("gradio")
 
 from src.webui.components import training_console as tc  # noqa: E402
+from tests.fixtures.operator_access import gradio_request, operator_mode  # noqa: E402
+
+#: A request D8 allows once the deployment is in mode M1 (`_operator_mode`):
+#: Start is an operator control since M5-1.
+OP = gradio_request()
+
+
+@pytest.fixture(autouse=True)
+def _operator_mode(monkeypatch):
+    operator_mode(monkeypatch)
 
 
 # _collect_config is positional; keep a valid baseline in signature order.
@@ -164,7 +174,7 @@ def test_on_start_randomize_overrides_and_echoes_seed(monkeypatch):
     )
     # randomize=True overrides a typed seed (999) with the generated one, and the
     # seed field (last output) echoes the seed actually used.
-    out = tc._on_start(*_args(seed=999), True)
+    out = tc._on_start(OP, *_args(seed=999), True)
     assert captured.get("seed") == 777
     assert _ufield(out[-1], "value") == 777
     assert len(out) == 9
@@ -179,7 +189,7 @@ def test_on_start_randomize_empty_seed_still_launches(monkeypatch):
         lambda config: (captured.update(config), {"success": True, "pid": 1})[1],
     )
     # An empty/locked seed field must still launch when randomize is on.
-    tc._on_start(*_args(seed=None), True)
+    tc._on_start(OP, *_args(seed=None), True)
     assert captured.get("seed") == 4242
 
 
@@ -189,7 +199,7 @@ def test_on_start_no_randomize_empty_seed_aborts(monkeypatch):
     monkeypatch.setattr(
         tc.training_manager, "start_training", lambda config: calls.append(config)
     )
-    out = tc._on_start(*_args(seed=None), False)
+    out = tc._on_start(OP, *_args(seed=None), False)
     assert calls == []  # validation aborted -> never launched
     assert "Invalid configuration" in out[0]
     assert len(out) == 9

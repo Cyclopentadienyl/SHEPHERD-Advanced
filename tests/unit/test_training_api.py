@@ -30,6 +30,7 @@ pytest.importorskip("pydantic")
 
 from src.api.services.training_manager import TrainingManager
 from tests.fixtures.job_processes import FakeProcess
+from tests.fixtures.operator_access import OPERATOR_BASE_URL, operator_mode
 
 
 # ==============================================================================
@@ -353,7 +354,10 @@ class TestTrainingAPIEndpoints:
 
     @pytest.fixture(autouse=True)
     def setup_client(self, manager, monkeypatch):
-        """Patch the global training_manager with our test instance."""
+        """Patch the global training_manager with our test instance. The
+        client is one D8 allows (mode M1, loopback): start, stop and the
+        checkpoint list are operator routes; `TestTrainingRoutesAreGated`
+        covers the refusals."""
         monkeypatch.setattr(
             "src.api.routes.training.training_manager", manager
         )
@@ -361,9 +365,10 @@ class TestTrainingAPIEndpoints:
         from src.api.routes.training import router
         from fastapi import FastAPI
 
+        operator_mode(monkeypatch)
         test_app = FastAPI()
         test_app.include_router(router, prefix="/api/v1")
-        self.client = TestClient(test_app)
+        self.client = TestClient(test_app, base_url=OPERATOR_BASE_URL)
 
     def test_get_status_idle(self):
         resp = self.client.get("/api/v1/training/status")
@@ -459,6 +464,76 @@ class TestTrainingAPIEndpoints:
             resp = self.client.post("/api/v1/training/start",
                                     json={**sample_config, "checkpoint_dir": ""})
         assert resp.status_code == 200 and resp.json()["run_dir"]
+
+
+class TestTrainingRoutesAreGated:
+    """Start, stop and the checkpoint list are operator controls (D8, M5-1):
+    refused with 403 before the route runs, nothing started, stopped or
+    opened, unless the deployment is in mode M1 and the request arrived on
+    loopback. Status and metrics stay open."""
+
+    GATED = [("post", "/api/v1/training/start", {"num_epochs": 1, "device": "cpu"}),
+             ("post", "/api/v1/training/stop", None),
+             ("get", "/api/v1/training/checkpoints", None)]
+
+    @pytest.fixture
+    def guarded(self, monkeypatch):
+        """The routes over a manager whose every action fails the test."""
+        from fastapi import FastAPI
+
+        from src.api.routes.training import router
+
+        class Untouchable:
+            def __getattr__(self, name):
+                pytest.fail(f"a refused request reached the service ({name})")
+
+        monkeypatch.setattr("src.api.routes.training.training_manager", Untouchable())
+        app = FastAPI()
+        app.include_router(router, prefix="/api/v1")
+        return app
+
+    @pytest.mark.parametrize("method, path, body", GATED)
+    @pytest.mark.parametrize("mode, base_url, headers, says", [
+        (None, "http://127.0.0.1", {}, "SHEPHERD_DEPLOYMENT_MODE is not set"),
+        ("M1", "http://192.0.2.10", {}, "did not arrive on a loopback address"),
+        ("M1", "http://127.0.0.1", {"X-Forwarded-For": "203.0.113.9"}, "forwarding header"),
+        ("M1", "http://127.0.0.1", {"Origin": "https://evil.example"}, "origin"),
+        ("M1", "http://127.0.0.1", {"Host": "evil.example"}, "not addressed to localhost"),
+    ], ids=["mode-unset", "lan", "forwarded", "foreign-origin", "rebinding-host"])
+    def test_refused_before_the_service_is_reached(self, guarded, monkeypatch, method, path,
+                                                   body, mode, base_url, headers, says):
+        from fastapi.testclient import TestClient
+
+        if mode is not None:
+            monkeypatch.setenv("SHEPHERD_DEPLOYMENT_MODE", mode)
+        client = TestClient(guarded, base_url=base_url)
+        response = getattr(client, method)(path, headers=headers,
+                                           **({"json": body} if body is not None else {}))
+        assert response.status_code == 403, response.text
+        assert says in response.json()["detail"]
+        assert "203.0.113.9" not in response.text and "evil.example" not in response.text
+
+    def test_an_invalid_body_from_a_refused_request_is_refused_not_validated(self, guarded):
+        """The gate comes first: a request D8 refuses learns nothing about
+        which settings the service would accept."""
+        from fastapi.testclient import TestClient
+
+        response = TestClient(guarded, base_url="http://192.0.2.10").post(
+            "/api/v1/training/start", json={"num_epochs": -5})
+        assert response.status_code == 403
+
+    def test_status_and_metrics_stay_open(self, manager, monkeypatch):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from src.api.routes.training import router
+
+        monkeypatch.setattr("src.api.routes.training.training_manager", manager)
+        app = FastAPI()
+        app.include_router(router, prefix="/api/v1")
+        client = TestClient(app, base_url="http://192.0.2.10")
+        assert client.get("/api/v1/training/status").status_code == 200
+        assert client.get("/api/v1/training/metrics").status_code == 200
 
 
 class TestSystemAPIEndpoint:
@@ -558,11 +633,12 @@ def real_client(monkeypatch):
 
     manager = TrainingManager()
     monkeypatch.setattr("src.api.routes.training.training_manager", manager)
+    operator_mode(monkeypatch)
     app = FastAPI()
     app.include_router(router, prefix="/api/v1")
     process = FakeProcess(pid=11)
     with patch("subprocess.Popen", return_value=process) as popen:
-        yield TestClient(app), popen
+        yield TestClient(app, base_url=OPERATOR_BASE_URL), popen
     process.finish(0)
 
 
@@ -638,9 +714,10 @@ def test_the_services_422_does_not_use_the_name_starlette_deprecated(monkeypatch
     monkeypatch.setattr(training_routes.training_manager, "start_training",
                         lambda config, **kwargs: {"success": False, "invalid_settings": True,
                                                   "error": "refused by the service"})
+    operator_mode(monkeypatch)
     app = FastAPI()
     app.include_router(training_routes.router, prefix="/api/v1")
-    client = TestClient(app)
+    client = TestClient(app, base_url=OPERATOR_BASE_URL)
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         resp = client.post("/api/v1/training/start", json={})

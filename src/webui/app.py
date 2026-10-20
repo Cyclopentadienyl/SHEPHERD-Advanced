@@ -238,6 +238,18 @@ def create_gradio_app() -> gr.Blocks:
     return app
 
 
+#: The largest file Gradio's upload route accepts, per file (M5-1). The
+#: dashboard has no upload control: its files go the other way (exports), and
+#: import sources come from the server's intake directory, never a browser (D7).
+#: Gradio still registers the route, and CORS does not stop a cross-origin
+#: multipart POST from reaching it (a "simple" request needs no preflight), so
+#: without a limit any page the operator's browser opens could write files of
+#: any size into GRADIO_TEMP_DIR. 1 MB is far above anything the dashboard
+#: sends and bounds what such a request can write; a larger file is refused
+#: with 413 while it streams.
+MAX_UPLOAD_SIZE = "1mb"
+
+
 def mount_options() -> dict[str, Any]:
     """Everything `gr.mount_gradio_app` is given besides the app, the Blocks and the path.
 
@@ -256,6 +268,7 @@ def mount_options() -> dict[str, Any]:
       (left at None, it serves the queue's event analytics).
     - ``mcp_server``: would publish every event handler as an MCP tool.
     - ``ssr_mode``: server-side rendering starts a Node.js server process.
+    - ``max_file_size``: `MAX_UPLOAD_SIZE` (below).
 
     Two routes Gradio registers with no switch at all are refused in front of
     the mount: ``src/api/middleware/gradio_routes.py``.
@@ -267,6 +280,7 @@ def mount_options() -> dict[str, Any]:
         "enable_monitoring": False,
         "mcp_server": False,
         "ssr_mode": False,
+        "max_file_size": MAX_UPLOAD_SIZE,
     }
 
 
@@ -277,4 +291,5 @@ def mount_dashboard(app: FastAPI, path: str = "/ui") -> gr.Blocks:
     return blocks
 
 
-__all__ = ["DASHBOARD_CSS", "create_gradio_app", "mount_dashboard", "mount_options"]
+__all__ = ["DASHBOARD_CSS", "MAX_UPLOAD_SIZE", "create_gradio_app", "mount_dashboard",
+           "mount_options"]

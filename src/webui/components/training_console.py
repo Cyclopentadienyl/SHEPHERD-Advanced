@@ -20,6 +20,12 @@ Architecture Note:
     All training operations go through the TrainingManager which launches
     subprocess calls to scripts/train_model.py.
 
+    **Its operator controls check D8 first** (M5-1), on their own Gradio
+    request (`src/webui/operator_access.py`): Start, Stop, Continue, Check
+    checkpoint and the run list (both open checkpoint files, SPEC_4 C3), and
+    Save Path. A refusal changes nothing and says why. The training routes
+    apply the same check through their FastAPI dependency.
+
 Dependencies:
     - gradio: UI components
     - pandas: DataFrame for chart data
@@ -43,6 +49,7 @@ import pandas as pd
 
 from src.api.services.training_manager import training_manager
 from src.config.runtime_presets import load_runtime_settings
+from src.webui.operator_access import operator_access
 
 logger = logging.getLogger(__name__)
 
@@ -84,8 +91,12 @@ def _load_training_config() -> Dict[str, str]:
     return {"data_dir": DEFAULT_WORKSPACE}
 
 
-def _save_training_config(data_dir: str) -> str:
-    """Save training path config."""
+def _save_training_config(data_dir: str, request: gr.Request) -> str:
+    """Save training path config: an operator control (D8), checked on this
+    event's own request before anything is written."""
+    access = operator_access(request)
+    if not access.allowed:
+        return access.refusal
     stripped = data_dir.strip()
     if stripped.startswith(DISPLAY_PREFIX):
         stripped = stripped[len(DISPLAY_PREFIX):]
@@ -258,12 +269,22 @@ def _collect_config(
     return config
 
 
-def _on_start(*args):
-    """Handle Start Training button click.
+def _on_start(request: gr.Request, *args):
+    """Handle Start Training button click: an operator control (D8).
+
+    `request` comes first: Gradio passes a request only to a positional
+    parameter annotated ``gr.Request``, and the form's values follow as
+    ``*args``. A request D8 refuses starts nothing and leaves the charts and
+    buttons as they are.
 
     Returns status text, 4 empty plot DataFrames (to clear stale charts),
     and 3 button updates.
     """
+    access = operator_access(request)
+    if not access.allowed:
+        no_change = gr.update()
+        return (access.refusal, no_change, no_change, no_change, no_change,
+                no_change, no_change, no_change, no_change)
     global _poll_cache_key
     _poll_cache_key = None  # force full refresh on next poll tick
     # Last input is the "Randomize seed" checkbox; the rest are all_params.
@@ -349,16 +370,21 @@ def _on_stop_cancel():
     return gr.update(visible=False)
 
 
-def _on_stop():
-    """Handle the confirmed Stop.
+def _on_stop(request: gr.Request):
+    """Handle the confirmed Stop: an operator control (D8), checked on this
+    event's own request; refused, nothing is stopped.
 
     Returns status text, gr.update() for 4 plots (no change), 3 button
     updates, and the confirmation group hidden.
     """
+    no_change = gr.update()
+    access = operator_access(request)
+    if not access.allowed:
+        return (access.refusal, no_change, no_change, no_change, no_change,
+                no_change, no_change, no_change, gr.update(visible=False))
     global _poll_cache_key
     _poll_cache_key = None  # force full refresh on next poll tick
     result = training_manager.stop_training()
-    no_change = gr.update()
     if result.get("success"):
         return (
             "**Status**: STOPPED\n" + _snapshot_sentence(result.get("outcome")),
@@ -470,12 +496,17 @@ def _preview_for(parent: str, device: Optional[str], extend_epochs) -> Dict[str,
         parent, device=device or "auto", extend_epochs=epochs, extend_if_finished=True)
 
 
-def _on_check_continue(source, listed, manual, device, extend_epochs):
+def _on_check_continue(source, listed, manual, device, extend_epochs, request: gr.Request):
     """Check button: preview what continuing from the chosen checkpoint does.
+    It opens the checkpoint (SPEC_4 C3), so D8 is checked first, on this
+    event's own request; refused, nothing is opened.
 
     Returns the preview text and the extend-epochs input's update: shown only
     for a finished checkpoint, where extending is the only way on.
     """
+    access = operator_access(request)
+    if not access.allowed:
+        return access.refusal, gr.update()
     parent = _continue_parent(source, listed, manual)
     if not parent:
         return ("Select a checkpoint from the run list, or enter a path, then click "
@@ -487,13 +518,21 @@ def _on_check_continue(source, listed, manual, device, extend_epochs):
     return text, _extra_epochs_update(preview)
 
 
-def _on_resume(data_dir, run_name, device, source, listed, manual, extend_epochs):
-    """Continue Training: the same check as the preview, then start.
+def _on_resume(data_dir, run_name, device, source, listed, manual, extend_epochs,
+               request: gr.Request):
+    """Continue Training: an operator control (D8, checked first on this
+    event's own request; refused, nothing is opened or started), then the same
+    check as the preview, then start.
 
     Only operational fields are sent (contract M3a-3): every learning setting
     comes from the checkpoint, so the training form's values are not used.
     The training service and the training process each check again.
     """
+    access = operator_access(request)
+    if not access.allowed:
+        no_change = gr.update()
+        return (access.refusal, no_change, no_change, no_change, no_change,
+                no_change, no_change, no_change, no_change, no_change)
     global _poll_cache_key
     _poll_cache_key = None
     no_start = (gr.update(interactive=True), gr.update(interactive=False),
@@ -597,14 +636,22 @@ def _strip_display_prefix(path: str) -> str:
     return p[len("SHEPHERD-Advanced/"):] if p.startswith("SHEPHERD-Advanced/") else p
 
 
-def _refresh_checkpoints(data_dir_value: str = "", conv_type_value: str = ""):
+def _refresh_checkpoints(data_dir_value: str, conv_type_value: str, request: gr.Request):
     """Refresh the resume-checkpoint dropdown for the CURRENT training architecture.
 
     Lists that architecture's run checkpoints through the shared listing
     (`TrainingManager.get_checkpoints`, contract M3a-2), latest run first, so
     the dropdown always matches the selected conv_type. Wired to both the
     Refresh button and conv_type's change event.
+
+    The listing opens every checkpoint (SPEC_4 C3), so D8 is checked first,
+    on this event's own request, as for `GET /training/checkpoints`; refused,
+    the list is emptied, nothing is opened, and a notice says why.
     """
+    access = operator_access(request)
+    if not access.allowed:
+        gr.Warning(access.refusal, duration=12)
+        return gr.update(choices=[], value=None)
     data_dir = _strip_display_prefix(data_dir_value) or DEFAULT_WORKSPACE
     checkpoints = training_manager.get_checkpoints(data_dir, conv_type_value or None)
     logger.info("Listed %d checkpoints in the %s runs of %s",

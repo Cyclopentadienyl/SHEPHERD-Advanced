@@ -14,7 +14,14 @@ ACCEL_TABLE = CONFIG_DIR / "accelerators.json"
 DEPLOYMENT_CONFIG = CONFIG_DIR / "deployment.yaml"
 DEFAULT_ENTRY = "uvicorn"
 UVICORN_APP = "src.api.main:app"
-UVICORN_DEFAULT_ARGS = ["--host", "0.0.0.0", "--port", "8000"]
+# Loopback by default (SPEC_4 B1, since M5-1); another --host after `--` is
+# checked by the bind guard below (`network_bind`).
+UVICORN_DEFAULT_ARGS = ["--host", "127.0.0.1", "--port", "8000"]
+# Always last on uvicorn's command line, so a --proxy-headers passed through
+# cannot turn it back on: uvicorn would otherwise rewrite the client address
+# from X-Forwarded-For for a peer on 127.0.0.1. M1 has no proxy, and D8 reads
+# the socket's own address and the headers, never the client address.
+UVICORN_FORCED_ARGS = ["--no-proxy-headers"]
 
 # Ensure repo root is importable so the shared, gradio-free runtime presets
 # module loads regardless of how the launcher is invoked.
@@ -26,6 +33,7 @@ from src.config.runtime_presets import (  # noqa: E402
     load_runtime_settings,
     resolve_allocator,
 )
+from src.config.server_settings import bind_is_loopback, network_bind  # noqa: E402
 
 def log(msg: str) -> None:
     print(f"[SHEPHERD] {msg}")
@@ -251,15 +259,10 @@ def split_passthrough(argv: List[str]) -> Tuple[List[str], List[str]]:
         return argv[:split], argv[split + 1:]
     return argv, []
     
-def display_base_url(uvicorn_args: List[str]) -> str:
-    """The URL to show for a server started with these uvicorn arguments.
-
-    uvicorn takes the last of a repeated option, in either spelling --
-    ``--port 8264`` or ``--port=8264`` -- so this does too. A wildcard host is
-    shown as the matching loopback address, which a browser on this machine can
-    open -- an empty ``--host=`` binds all interfaces too, so it counts as one. An
-    IPv6 literal is bracketed, as a URL requires, unless it already is.
-    """
+def bind_address(uvicorn_args: List[str]) -> Tuple[str, str]:
+    """The host and port uvicorn binds with these arguments: the last of a
+    repeated option, in either spelling -- ``--port 8264`` or ``--port=8264``
+    -- as uvicorn takes it. Without either, uvicorn's own defaults."""
     host, port = "127.0.0.1", "8000"
     for i, arg in enumerate(uvicorn_args):
         name, sep, inline = arg.partition("=")
@@ -275,6 +278,18 @@ def display_base_url(uvicorn_args: List[str]) -> str:
             port = value
         else:
             host = value
+    return host, port
+
+
+def display_base_url(uvicorn_args: List[str]) -> str:
+    """The URL to show for a server started with these uvicorn arguments.
+
+    The address is `bind_address`'s. A wildcard host is shown as the matching
+    loopback address, which a browser on this machine can open -- an empty
+    ``--host=`` binds all interfaces too, so it counts as one. An IPv6 literal
+    is bracketed, as a URL requires, unless it already is.
+    """
+    host, port = bind_address(uvicorn_args)
     host = {"": "127.0.0.1", "0.0.0.0": "127.0.0.1", "::": "::1"}.get(host, host)
     if ":" in host and not host.startswith("["):
         host = f"[{host}]"
@@ -446,6 +461,24 @@ def main() -> int:
     # bookmark a port nothing listened on.
     base_url = display_base_url(UVICORN_DEFAULT_ARGS + passthrough)
 
+    # **The bind guard** (SPEC_4 §3.1): uvicorn binds the last --host it is
+    # given; an address other than loopback is refused, nothing started, unless
+    # SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND=1 accepts the risk (no
+    # control: D8 still refuses operator controls off loopback). Only for the
+    # uvicorn entry, whose --host this launcher can read.
+    if args.entry == "uvicorn":
+        host, port = bind_address(UVICORN_DEFAULT_ARGS + passthrough)
+        decision = network_bind(host)
+        if not decision.allowed:
+            log(f"ERROR: {decision.message}")
+            return 2
+        if decision.message:
+            log(f"WARNING: {decision.message}")
+        reach = ("loopback: this machine only" if bind_is_loopback(host)
+                 else "all interfaces" if host.strip() in ("", "0.0.0.0", "::")
+                 else "this address")
+        log(f"Listening on          : {host}:{port} ({reach})")
+
     log("Access points (bookmark these):")
     log(f"  Swagger UI (API docs) : {base_url}/docs")
     log(f"  Gradio Dashboard      : {base_url}/ui")
@@ -462,7 +495,8 @@ def main() -> int:
 
     # Build launch command
     if args.entry == "uvicorn":
-        cmd = [sys.executable, "-m", "uvicorn", UVICORN_APP] + UVICORN_DEFAULT_ARGS + ["--no-access-log"] + passthrough
+        cmd = ([sys.executable, "-m", "uvicorn", UVICORN_APP] + UVICORN_DEFAULT_ARGS
+               + ["--no-access-log"] + passthrough + UVICORN_FORCED_ARGS)
     else:
         cmd = [sys.executable, "-m", args.entry] + passthrough
     # **Headless: become the server.** The only reason to keep this process

@@ -14,6 +14,11 @@ Purpose:
     - GET  /training/metrics: Get full metrics history
     - GET  /training/checkpoints: List model checkpoints
 
+    Start, stop and the checkpoint list (which opens checkpoint files, SPEC_4
+    C3) are operator controls: each takes D8's one dependency
+    (`src/api/operator_access.py`) and is refused before it runs unless D8
+    allows the request. Status and metrics stay open.
+
 Dependencies:
     - fastapi: Router, request/response models
     - pydantic: Request validation
@@ -30,6 +35,7 @@ from typing import Annotated, Any, Dict, List, Literal, Mapping, Optional
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from src.api.operator_access import OPERATOR_ONLY
 from src.api.services.training_manager import training_manager
 
 logger = logging.getLogger(__name__)
@@ -251,7 +257,7 @@ class CheckpointInfo(BaseModel):
 # =============================================================================
 # Endpoints
 # =============================================================================
-@router.post("/training/start", response_model=Dict[str, Any])
+@router.post("/training/start", response_model=Dict[str, Any], dependencies=OPERATOR_ONLY)
 async def start_training(request: TrainingStartRequest) -> Dict[str, Any]:
     """
     Start a new training run.
@@ -283,7 +289,7 @@ async def start_training(request: TrainingStartRequest) -> Dict[str, Any]:
     return result
 
 
-@router.post("/training/stop", response_model=Dict[str, Any])
+@router.post("/training/stop", response_model=Dict[str, Any], dependencies=OPERATOR_ONLY)
 def stop_training() -> Dict[str, Any]:
     """
     Stop the currently running training; a test run is never stopped by it.
@@ -320,8 +326,10 @@ async def get_training_metrics() -> Dict[str, Any]:
     return training_manager.get_metrics_history()
 
 
-@router.get("/training/checkpoints", response_model=List[CheckpointInfo])
+@router.get("/training/checkpoints", response_model=List[CheckpointInfo],
+            dependencies=OPERATOR_ONLY)
 async def get_checkpoints() -> List[Dict[str, Any]]:
     """List the checkpoints of the last requested workspace's runs, with
-    each file's own metadata (contract M3a-2)."""
+    each file's own metadata (contract M3a-2). It opens every file (SPEC_4
+    C3), so D8 gates it like the controls."""
     return training_manager.get_checkpoints()

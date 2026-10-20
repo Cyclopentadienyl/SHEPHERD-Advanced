@@ -251,7 +251,11 @@ def test_reload_toasts_once_when_the_gnn_is_absent(monkeypatch):
         panel, "_reload_pipeline", lambda *a, **k: {"success": True, "status": _status(False)}
     )
 
-    panel._on_reload_pipeline("data", "", "auto")
+    import asyncio
+
+    from tests.fixtures.operator_access import operator_request
+
+    asyncio.run(panel._on_reload_pipeline("data", "", "auto", operator_request(monkeypatch)))
 
     assert len(warnings) == 1
     assert "path-reasoning mode" in warnings[0]
@@ -286,7 +290,11 @@ def test_reload_is_quiet_when_the_gnn_loaded(monkeypatch):
         panel, "_reload_pipeline", lambda *a, **k: {"success": True, "status": _status(True)}
     )
 
-    panel._on_reload_pipeline("data", "", "auto")
+    import asyncio
+
+    from tests.fixtures.operator_access import operator_request
+
+    asyncio.run(panel._on_reload_pipeline("data", "", "auto", operator_request(monkeypatch)))
 
     assert warnings == []
 

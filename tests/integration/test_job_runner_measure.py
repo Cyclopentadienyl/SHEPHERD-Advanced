@@ -2,9 +2,12 @@
 A test run through the job runner, with the real measure_scorer (M5).
 =====================================================================
 The runner builds the command line from its inputs, the real CLI takes the GPU
-lock and measures the fixture cohort on CPU, and the runner finds the report
-that run created in the report store once it has ended. Expected digests that
-are not the files' make the run refuse before measuring, and nothing is kept.
+lock and measures the fixture cohort on CPU and writes its outcome file
+(`--outcome`, in the job's own directory), and once it has ended the runner
+reads from that file which report it published and, through the registration's
+one helper, whether that report is kept and registered. Expected digests that
+are not the files' make the run refuse before measuring: no outcome file, no
+report, nothing kept.
 
 Runs once `measure_scorer` takes the expected digests (`--expect-checkpoint-
 sha256`, `--expect-version-sha256`, WP4 of M5-1); skipped before that.
@@ -16,6 +19,7 @@ Module: tests/integration/test_job_runner_measure.py
 """
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -70,9 +74,12 @@ def _run(cohort, monkeypatch, **change):
               "checkpoint": cohort.checkpoint, "checkpoint_sha256": cohort.checkpoint_sha256}
     asked = []
 
-    def reader(report: Path, checkpoint: Path):
-        asked.append((report, checkpoint))
-        return {"kept": report.is_file(), "registered": None, "reason": "the test's reader"}
+    def reader(report: Path, **kwargs):
+        # The registration's own helper, recording what it was asked.
+        from src.evaluation.registration import report_state
+
+        asked.append((report, kwargs["checkpoint"], kwargs["expected_sha256"]))
+        return report_state(report, **kwargs)
 
     manager = TrainingManager(report_state=reader)
     started = manager.start_test(TestRunInputs(**{**fields, **change}))
@@ -93,13 +100,20 @@ def test_a_real_test_run_keeps_its_report_and_the_runner_finds_it(cohort, monkey
     created = sorted(n for n in {p.name for p in reports.iterdir()} - before if is_run_id(n))
     assert len(created) == 1
     run_dir = reports / created[0]
+    report = run_dir / "report.json"
     entries, problems = read_usage_history(resolve_version(cohort.registry, LABEL))
     assert not problems
     assert [e["kind"] for e in entries if e.get("run_id") == created[0]] == ["test_run"], \
         "a run started by the runner counts in the usage history like one from the CLI"
     assert status["outcome"]["report_dir"] == str(run_dir)
-    assert asked == [(run_dir / "report.json", cohort.checkpoint)]
-    assert status["outcome"]["kept"] is True and (run_dir / "report.json").is_file()
+    published = status["outcome"]["run_outcome"]["report_sha256"]
+    assert published == hashlib.sha256(report.read_bytes()).hexdigest()
+    assert asked == [(report, cohort.checkpoint, published)]
+    assert status["outcome"]["kept"] is True
+    # No --record: the run said so, and the ledger beside the checkpoint holds
+    # no record of it.
+    assert status["outcome"]["registered"] is False
+    assert "--record was not given" in status["outcome"]["summary"]
     assert probe(cohort.data_dir.parent / LOCK_FILE_NAME) is None, "released at the end"
 
 
@@ -108,4 +122,5 @@ def test_a_digest_that_is_not_the_files_refuses_before_measuring(cohort, monkeyp
     status = manager.get_test_status()
     assert status["status"] == "failed", manager.get_log("test")["lines"]
     assert status["outcome"]["kept"] is False and asked == []
-    assert "No report directory was created" in status["outcome"]["summary"]
+    assert status["outcome"]["summary"].startswith(
+        "No report was published: the run wrote no outcome file")
