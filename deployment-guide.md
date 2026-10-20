@@ -2199,7 +2199,7 @@ M5 在 SPEC_4 的部署模式 **M1** 下執行：由 owner 或指定的技術人
 | 位置 | 控制項 |
 |---|---|
 | API | `POST /api/v1/pipeline/reload`、`POST /api/v1/pipeline/config`、`POST /api/v1/training/start`、`POST /api/v1/training/stop`、`GET /api/v1/training/checkpoints`、`GET /api/v1/workspaces/{name}/checkpoints` |
-| 儀表板 | Diagnosis：Reload Pipeline 與 Save Config。Runtime Settings：Restart Backend 與 Apply Settings。Training Console：Start、Stop（確認後的停止）、Continue Training、Check checkpoint、run 清單（Refresh，以及切換架構）與 Save Path |
+| 儀表板 | Diagnosis：Reload Pipeline 與 Save Config。⚙ Settings（Runtime Settings）：Restart Backend 與 Apply Settings。Research › Training（Training Console）：Start、Stop（確認後的停止）、Continue Training、Check checkpoint、run 清單（Refresh，以及切換架構）與 Save Path |
 
 兩份 checkpoint 清單與 Check checkpoint 會開啟 checkpoint 檔案，SPEC_4 將此歸類為 checkpoint 檢視
 （C3），因此它們與控制項一樣受檢查。M5 的 UI 步驟將新增的 Test 分頁與 Model Management，也將使用
@@ -2319,6 +2319,96 @@ CORS 只決定頁面能讀取什麼。不需要預檢的跨來源請求仍會抵
 （§4.10 的 route guard）：儀表板沒有上傳控制項（匯入來源來自 `SHEPHERD_INTAKE_DIR`），否則其他網站
 的頁面每個請求最多能把 1000 個檔案寫進 Gradio 的暫存目錄。Gradio 每個檔案 1 MB 的上限保留作為
 第二道防線；它限制的是每個檔案，而不是檔案的數量。
+
+## 4.14 在儀表板中找到方向（自 M5-2 起，2026-10-20）
+
+`/ui` 的儀表板改為兩層導覽，頁首有兩個狀態標籤（chip），每個欄位共用同一個說明控制項。操作者
+要設定的東西都沒有改變；改變的是各項功能所在的位置。
+
+### 導覽
+
+| 位置 | 內容 |
+|---|---|
+| **Diagnosis (clinical)** | Diagnosis 分頁，與以前相同。它是第一個畫面 |
+| **Research (pre-clinical)** › Prepare › **Datasets** | 伺服器的 workspace，唯讀（見下文） |
+| **Research (pre-clinical)** › Prepare › **Training** | Training Console，與以前相同。它是 Research 下最先顯示的頁面 |
+| **Research (pre-clinical)** › Evaluate › **Test**、**Models** | 目前顯示「being built in M5」 |
+| 頁首右側的 **⚙ Settings** | Runtime Settings，與以前相同 |
+
+- 選中的階段（Diagnosis 或 Research）以填色加粗體顯示；選中的研究頁面以底線加粗體顯示；
+  Settings 被選中時有淺色填色與底線。Prepare 與 Evaluate 是分組標籤，不是按鈕。
+- 不會有任何分頁被收進選單。視窗較窄或放大倍率較高時，兩個 chip 與 Settings 會移到頁首的第二
+  行，研究頁面的分頁也會換行。
+- 瀏覽器分頁的標題會說明目前位置，例如 `Training · Research — SHEPHERD-Advanced`。重新載入
+  頁面會再次打開 Diagnosis：網址不保留位置。
+- 視窗至少 1400 × 760 CSS 像素時，頁面本身不捲動；某個區域的內容超出空間時，在它自己的面板
+  內捲動。視窗較窄或直向時，各區域上下堆疊，由頁面捲動。佈景主題
+  最小的文字為 14 px。
+
+### 頁首的兩個 chip
+
+兩者都會針對你自己的瀏覽器重新讀取：頁面載入時、每 5 秒，以及你每次使用操作者控制項之後。
+它們只是顯示：每個控制項仍在後端檢查它自己的請求（§4.13）。
+
+**Operator controls** 顯示 D8 對這個瀏覽器的請求的回答：
+
+| Chip | 意義 |
+|---|---|
+| `🔒 Operator controls: on (this machine)` | D8 允許這個瀏覽器的請求 |
+| `Read-only: deployment mode not set to M1` | `SHEPHERD_DEPLOYMENT_MODE` 不完全等於 `M1` |
+| `Read-only: request not local` | 請求不是經由本機的 loopback 抵達：請使用轉發到 `localhost` 的 SSH forward |
+| `Read-only: forwarded by a proxy` | 請求帶有 proxy 會加上的標頭 |
+| `Read-only: not addressed to localhost` | 瀏覽器使用的主機名稱不是 `localhost`、`127.0.0.1` 或 `[::1]` |
+| `Read-only: sent from another origin` / `sent from another site` | 請求來自另一個頁面 |
+| `Read-only: request not readable` | 伺服器無法讀取請求是如何抵達的 |
+
+它的 ⓘ 列出每一個操作者控制項、如何使用它們（§4.13 的 SSH forward），在唯讀時並附上 D8 給出
+的完整原因。它從不重複任何標頭的值。
+
+**GPU jobs** 顯示哪個受管理的工作佔用唯一的 GPU 名額（§4.11）：
+
+| Chip | 意義 |
+|---|---|
+| `GPU jobs: none` | 沒有受管理的訓練或評估工作在執行。它從不說「free」：這個鎖是協作式的，常駐的推論服務不在鎖的範圍內，仍可能佔用 GPU 記憶體 |
+| `GPU job: training (job runner)`、`GPU job: test run (job runner)` | 本服務啟動的工作；停止中時加上 `· stopping` |
+| `GPU job: train_model.py (CLI, pid 41822, since 09:58 UTC)` | 某個 CLI 持有 GPU 鎖，依其持有者紀錄的自我描述顯示 |
+| `GPU job: lock held, holder not described` | 鎖被持有，但沒有任何仍在執行的行程被描述為持有者 |
+| `GPU jobs: none in the job runner` | 沒有設定 GPU 鎖（`SHEPHERD_GPU_LOCK_FILE` 與 `SHEPHERD_WORKSPACES_ROOT` 都沒有設定），因此看不到 CLI 的工作 |
+| `GPU jobs: not read`（灰色） | 無法讀取狀態。鎖的設定無法使用時，ⓘ 會說明，但只對 D8 允許的瀏覽器顯示路徑 |
+
+### 說明：ⓘ 按鈕
+
+以前印在 Diagnosis、Training Console 與 Runtime Settings 各欄位下方的說明，現在放在欄位名稱
+後面的 ⓘ 裡。把滑鼠指向它、用 Tab 移到它，或點擊它：說明會出現在一個泡泡中，滑鼠可以移進泡泡
+閱讀。點擊會讓它保持打開；按 Esc 或點擊其他地方會關閉它。必須一直可見的內容仍然直接印出：拒絕
+的原因、工作的狀態、合成資料的標記、未經驗證的來源，以及 Training Console 對 HGT 的 AMP 拒絕
+（「Disabled: HGT requires full float32 …」）。
+
+### Research › Prepare › Datasets
+
+伺服器在 `SHEPHERD_WORKSPACES_ROOT` 下列出的 workspace 的唯讀清單（§4.12）：也就是 Training、
+Test 與 Models 選擇時使用的同一份清單。每一列顯示名稱；建置時間（UTC，來自
+`workspace_build.json`），或「build time not recorded」加上各來源宣告的版本；**資料集指紋**，
+即其 `split_manifest.json` 的 SHA-256 的前 12 個十六進位數字（Copy 會複製完整的 64 個；兩個
+workspace 前 12 個相同時會顯示更多位數）；來源（`synthetic` 以琥珀色顯示）；資料集紀錄是否通過
+驗證；train 與 validation 的樣本數。標記：
+
+- **serving reads this workspace**：pipeline 正從它提供服務；
+- **same dataset as served**：另一個完整指紋相同的 workspace；
+- **in your Training run bar**：這個瀏覽器分頁為 Training 選擇的 workspace；
+- **not trainable: <原因>**：有列出，但訓練會拒絕它，並附上原因。
+
+選取一列會顯示它的細節：完整指紋與 Copy、manifest 綁定的內容（短 digest）、種子與切分數量、
+來源與建置紀錄，以及 workspace 相對於伺服器 workspace 根目錄的路徑。不會顯示任何伺服器的絕對
+路徑。
+
+**Use for training ›** 會打開 Research › Training，並把該 workspace 填入這個瀏覽器分頁的 Data
+Directory（同時打開 Data Paths 以便看到）。伺服器上什麼都不會改變；Start 仍是 D8 檢查的控制項。
+不可訓練的 workspace 無法使用。
+
+這個頁面上沒有任何操作者控制項：它只讀取 workspace 的小型 JSON 檔案，從不開啟 checkpoint，因此
+唯讀的瀏覽器看到的是同樣的頁面。沒有設定 `SHEPHERD_WORKSPACES_ROOT` 時，頁面會說明這一點。資料集
+仍在伺服器上以 CLI 建置（`scripts/build_knowledge_graph.py`、`scripts/preprocess_data.py`）。
 
 ---
 

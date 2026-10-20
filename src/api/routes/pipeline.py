@@ -249,6 +249,13 @@ def _live_status() -> PipelineStatusResponse:
     )
 
 
+def live_status() -> PipelineStatusResponse:
+    """The status `GET /pipeline/status` answers, for a caller in this process:
+    the dashboard reads what is served through this one function (M5-2), never
+    a second reader. Reads application state only."""
+    return _live_status()
+
+
 def _refused(message: str, files: Dict[str, Any], **extra: Any) -> PipelineReloadResponse:
     """A refused reload, built so it can actually reach the client.
 

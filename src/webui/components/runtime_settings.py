@@ -27,6 +27,7 @@ Operator controls (D8, M5-1):
 from __future__ import annotations
 
 import os
+from typing import Any
 
 import gradio as gr
 
@@ -149,16 +150,38 @@ def _on_apply(alloc, compile_on, request: gr.Request):
     return "  ".join(parts)
 
 
-def create_runtime_settings_tab(tab: gr.Tab | None = None) -> None:
-    """Build the Runtime Settings tab (call inside a gr.Tab/gr.Blocks context).
+#: The fields' help, behind the shared ⓘ (M5-2): ``{elem_id: (title, text)}``.
+#: The badges (impact, scope) and the Details stay visible on the page.
+FIELD_HELP = {
+    "allocator_preset": (
+        "Memory Allocator",
+        "GPU memory allocation strategy — governs fragmentation and peak usage. The "
+        "backend also runs CUDA in-process (for diagnosis/inference), so a change applies "
+        "only after the backend is restarted.",
+    ),
+    "torch_compile": (
+        "Enable torch.compile",
+        "Attempts to compile supported model regions to reduce overhead; dynamic PyG/HGT "
+        "workloads may graph-break, fall back to eager, or run slower. Applies to the next "
+        "training run — no backend restart needed.",
+    ),
+}
 
-    ``tab`` is the gr.Tab this is built in. Selecting it refreshes the restart
-    lock: Gradio 6 does not tick a gr.Timer in a tab that has not been opened
-    yet (gradio#11984, #11993), so without this the first opening would show
-    the lock as it was when the dashboard was built, until the timer's first
-    tick. The backend refuses a restart during training either way
-    (``restart_backend``); this keeps the button and the note honest.
+
+def create_runtime_settings_tab(ctx: Any) -> None:
+    """Build the Runtime Settings page under ⚙ Settings (call inside its gr.Tab).
+
+    ``ctx`` is the page context (`src/webui/shell.py`). Selecting the Settings
+    tab (``ctx.tabs["settings"]``) refreshes the restart lock: Gradio 6 does not
+    tick a gr.Timer in a tab that has not been opened yet (gradio#11984,
+    #11993), so without this the first opening would show the lock as it was
+    when the dashboard was built, until the timer's first tick. The backend
+    refuses a restart during training either way (``restart_backend``); this
+    keeps the button and the note honest. The fields' help is behind the
+    shared ⓘ (`FIELD_HELP`); Apply and Restart refresh the header's chips.
     """
+    tab = ctx.tabs.get("settings")
+    ctx.help.fields(FIELD_HELP)
     settings = load_runtime_settings()
     current_alloc = settings.get("allocator_preset", DEFAULT_ALLOCATOR)
     if current_alloc not in ALLOCATOR_PRESETS:
@@ -216,10 +239,10 @@ def create_runtime_settings_tab(tab: gr.Tab | None = None) -> None:
     )
     restart_status = gr.Markdown("", elem_id="runtime_restart_status")
     gr.Markdown(
-        "<sub>**Restart Backend** relaunches the backend (REST API + this UI) so a "
+        "**Restart Backend** relaunches the backend (REST API + this UI) so a "
         "newly applied **Memory Allocator** takes effect. Locked while training is "
-        "running; the page reconnects automatically a few seconds after a restart."
-        "</sub>"
+        "running; the page reconnects automatically a few seconds after a restart.",
+        elem_classes=["shep-note"],
     )
     # Keep the lock state live without manual refresh (cheap status read).
     restart_lock_timer = gr.Timer(4.0)
@@ -234,11 +257,6 @@ def create_runtime_settings_tab(tab: gr.Tab | None = None) -> None:
         )
         gr.HTML(_badge_row(_badge("Memory", "mem"), _badge("Restart required", "restart")),
                 padding=True)
-        gr.Markdown(
-            "GPU memory allocation strategy — governs fragmentation and peak usage. "
-            "The backend also runs CUDA in-process (for diagnosis/inference), so a "
-            "change applies only after the backend is restarted."
-        )
         with gr.Accordion("Details — what each option does", open=False):
             gr.Markdown(
                 "- **cuda_async** *(default)* — NVIDIA driver's stream-ordered memory "
@@ -272,11 +290,6 @@ def create_runtime_settings_tab(tab: gr.Tab | None = None) -> None:
             ),
             padding=True,
         )
-        gr.Markdown(
-            "Attempts to compile supported model regions to reduce overhead; dynamic "
-            "PyG/HGT workloads may graph-break, fall back to eager, or run slower. "
-            "Applies to the **next training run** — no backend restart needed."
-        )
         with gr.Accordion("Details", open=False):
             gr.Markdown(
                 "⚠️ **Experimental / benchmark-only — keep this off unless you are "
@@ -304,15 +317,15 @@ def create_runtime_settings_tab(tab: gr.Tab | None = None) -> None:
     # session; without a reload the old page's pollers hang). The poller no-ops
     # if the restart was refused.
     restart_btn.click(fn=_on_restart, outputs=[restart_status]).then(
-        fn=None, inputs=None, outputs=None, js=_RESTART_RELOAD_JS
-    )
+        **ctx.chip_refresh).then(fn=None, inputs=None, outputs=None, js=_RESTART_RELOAD_JS)
 
     def _on_change(*_values):
         return "● **Unsaved changes** — click **Apply Settings** to persist."
 
     allocator.change(fn=_on_change, inputs=[allocator], outputs=[status])
     torch_compile.change(fn=_on_change, inputs=[torch_compile], outputs=[status])
-    apply_btn.click(fn=_on_apply, inputs=[allocator, torch_compile], outputs=[status])
+    apply_btn.click(fn=_on_apply, inputs=[allocator, torch_compile], outputs=[status]).then(
+        **ctx.chip_refresh)
 
 
-__all__ = ["create_runtime_settings_tab"]
+__all__ = ["FIELD_HELP", "create_runtime_settings_tab"]

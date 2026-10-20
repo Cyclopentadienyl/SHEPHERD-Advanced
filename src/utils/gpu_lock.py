@@ -215,6 +215,11 @@ def _holder_alive(holder: Mapping[str, Any]) -> bool | None:
     return True
 
 
+#: Whether a holder description's process still runs (True, False, or None
+#: when that cannot be told): the header's GPU chip (M5-2) asks it too.
+holder_alive = _holder_alive
+
+
 def describe_holder(holder: Mapping[str, Any] | None) -> str:
     """Who holds the lock, in words, from its description when there is one.
 
@@ -479,6 +484,7 @@ __all__ = [
     "GRACE_SECONDS",
     "WORKSPACES_ROOT_ENV",
     "describe_holder",
+    "holder_alive",
     "holder_path",
     "lock_location",
     "lock_state",

@@ -14,6 +14,7 @@ pytest.importorskip("gradio")
 
 from src.api.services.training_manager import training_manager  # noqa: E402
 from src.webui.components import training_console as tc  # noqa: E402
+from src.webui.shell import standalone_context  # noqa: E402
 from tests.fixtures.operator_access import gradio_request, operator_mode  # noqa: E402
 
 
@@ -184,7 +185,7 @@ def test_the_continue_inputs_pass_gradios_own_preprocessing_when_empty():
     import gradio as gr
 
     with gr.Blocks() as demo:
-        tc.create_training_tab()
+        tc.create_training_tab(standalone_context(demo))
     widgets = {getattr(block, "elem_id", None): block for block in demo.blocks.values()}
     for elem_id, empty in (("extend_epochs", 0), ("extend_epochs", None),
                            ("manual_checkpoint", ""), ("checkpoint_dropdown", None)):
@@ -277,7 +278,7 @@ def test_every_selection_change_clears_the_check_and_extra_epochs():
     import gradio as gr
 
     with gr.Blocks() as demo:
-        tc.create_training_tab()
+        tc.create_training_tab(standalone_context(demo))
     by_id = {block._id: getattr(block, "elem_id", None) for block in demo.blocks.values()}
     wiring = {}
     for fn in demo.fns.values():

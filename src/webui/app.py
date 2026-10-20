@@ -10,16 +10,18 @@ Purpose:
     Build and export the Gradio Blocks application for the SHEPHERD-Advanced
     dashboard, and mount it into the FastAPI app at /ui (`mount_dashboard`).
 
-Tabs:
-    1. Training Console — Parameter tuning, training control, live metrics
-    2. Inference Testing — (placeholder, Phase 2)
-    3. Model Management — (placeholder, Phase 3)
+Layout (M5-2, UI-A): the shell (`src/webui/shell.py`) lays out two navigation
+levels, "Diagnosis (clinical)" (the first screen), "Research (pre-clinical)"
+with Datasets · Training · Test · Models, and "⚙ Settings"; the header's chips;
+the shared timers; and gives each page builder the page context (the page
+contract is the shell's docstring). The runtime line stays at the bottom.
 
 Dependencies:
     - gradio==6.30.0 (pinned in pyproject.toml). From Gradio 6 a mounted app
       takes its theme, CSS, head and JS from gr.mount_gradio_app(), not from
-      gr.Blocks(); `mount_dashboard` is the one place that passes them.
-    - src.webui.components.training_console: create_training_tab
+      gr.Blocks(); `mount_dashboard` is the one place that passes them
+      (`mount_options`: the theme, the CSS and the one head script of the
+      shared ⓘ and the shell).
 
 Called by:
     - src.api.main (`mount_dashboard`, at /ui)
@@ -32,10 +34,14 @@ from typing import TYPE_CHECKING, Any
 
 import gradio as gr
 
-from src.webui.components.training_console import create_training_tab
-from src.webui.components.diagnosis_panel import create_diagnosis_tab
-from src.webui.components.runtime_settings import create_runtime_settings_tab
 from src.utils.version_checker import DEGRADED, NOTICE, format_runtime_line, probe_runtime
+from src.webui import shell
+from src.webui.components.datasets_page import create_datasets_page
+from src.webui.components.diagnosis_panel import create_diagnosis_tab
+from src.webui.components.help import HELP_CSS, HELP_HEAD, HelpRegistry
+from src.webui.components.runtime_settings import create_runtime_settings_tab
+from src.webui.components.training_console import create_training_tab
+from src.webui.style import SHELL_CSS
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -70,9 +76,9 @@ def _runtime_footer() -> str:
         )
     if status == NOTICE:
         detail = " ".join(issues)
+        # One line, at the page's size: text is never under 14 px (M5-2).
         return (
-            f'<span style="color:#e65100"><b>⚠️ {line}</b><br>'
-            f'<span style="font-size:0.9em">{detail}</span></span>'
+            f'<span style="color:#b45309"><b>⚠️ {line}</b> — {detail}</span>'
         )
     return f'<span style="color:#888">{line}</span>'
 
@@ -157,7 +163,7 @@ DASHBOARD_CSS = """
         align-items: center;
         padding: 2px 10px;
         border-radius: 999px;
-        font-size: 0.72rem;
+        font-size: 14px;
         font-weight: 600;
         line-height: 1.55;
         letter-spacing: 0.01em;
@@ -175,9 +181,28 @@ DASHBOARD_CSS = """
     .shep-restart-locked {
         color: #dc2626;
         font-weight: 600;
-        font-size: 0.85rem;
+        font-size: 14px;
     }
 """
+
+#: The page's head (M5-2), given to the mount (`mount_options`):
+#:
+#: - **the shell's and the shared ⓘ's style sheet, as a ``<style>`` element**.
+#:   Gradio 6.30 rewrites the mount's ``css=``: inside an ``@media`` rule it
+#:   keeps only a copy of each selector prefixed with ``.gradio-container …
+#:   .contain``, so a media query there cannot reach the page frame above
+#:   ``.contain`` (the one-screen layout needs ``body`` and Gradio's
+#:   containers), and it drops ``@supports`` and ``@container`` rules. A style
+#:   element in the head is applied as written;
+#: - **the one head script**: the shared ⓘ (and Copy) and the shell (title,
+#:   header row). It runs once per page load, before any component exists, so
+#:   both work by document-level delegation.
+DASHBOARD_HEAD = ("<style>" + HELP_CSS + SHELL_CSS + "</style>"
+                  + HELP_HEAD + shell.SHELL_HEAD)
+
+#: Text sizes of the theme: nothing under 14 px, body 15 px (the approved look).
+TEXT_SIZE = gr.themes.Size(name="shepherd", xxs="14px", xs="14px", sm="14px", md="15px",
+                           lg="16px", xl="20px", xxl="24px")
 
 
 def _dashboard_theme() -> gr.themes.Base:
@@ -185,7 +210,18 @@ def _dashboard_theme() -> gr.themes.Base:
     return gr.themes.Soft(
         font=["IBM Plex Sans"],
         font_mono=["IBM Plex Mono"],
+        text_size=TEXT_SIZE,
     )
+
+
+#: Each page's builder, by the shell's page ids (the page contract). Test and
+#: Models are added by UI-D; until then the shell shows their temporary body.
+PAGES = {
+    shell.CLINICAL: create_diagnosis_tab,
+    shell.DATASETS: create_datasets_page,
+    shell.TRAINING: create_training_tab,
+    shell.SETTINGS: create_runtime_settings_tab,
+}
 
 
 def create_gradio_app() -> gr.Blocks:
@@ -194,10 +230,11 @@ def create_gradio_app() -> gr.Blocks:
 
     Returns:
         gr.Blocks application instance. Mount it with `mount_dashboard`, which
-        passes the theme, CSS and switches (`mount_options`).
+        passes the theme, CSS, head script and switches (`mount_options`).
     """
     with gr.Blocks(
-        title="SHEPHERD-Advanced Dashboard",
+        # The first screen's title; the head script follows the location.
+        title=shell.TITLES[shell.CLINICAL],
         # No usage analytics and no version check (owner, 2026-10-12). Left to
         # Gradio's default, building this app started a version check against
         # api.gradio.app and an analytics request through huggingface_hub, and
@@ -205,29 +242,15 @@ def create_gradio_app() -> gr.Blocks:
         # reach both. This is the one place the dashboard is built. It switches
         # off only Gradio's own requests, not every Hugging Face request.
         analytics_enabled=False,
+        # The layout follows the browser's usable width, not a fixed cap.
+        fill_width=True,
         # Theme and CSS are not set here: Gradio 6 drops them from a mounted
         # Blocks, with only a warning. `mount_dashboard` passes them.
     ) as app:
-        gr.Markdown(
-            "# SHEPHERD-Advanced Dashboard\n"
-            "Rare Disease Diagnosis Engine — Training & Inference Console"
-        )
-
-        with gr.Tabs():
-            with gr.Tab("Training Console", id="train"):
-                create_training_tab()
-
-            with gr.Tab("Diagnosis", id="infer"):
-                create_diagnosis_tab(app)
-
-            with gr.Tab("Runtime Settings", id="runtime") as runtime_tab:
-                create_runtime_settings_tab(runtime_tab)
-
-            with gr.Tab("Model Management", id="models"):
-                gr.Markdown(
-                    "### Model Management\n"
-                    "*Coming soon — will provide checkpoint listing and metrics comparison.*"
-                )
+        registry = HelpRegistry()
+        shell.build_shell(app, PAGES, help_registry=registry)
+        # Every help text, once, escaped: after every page has registered its own.
+        shell.help_texts(registry)
 
         # Runtime stack, always visible. Two jobs: say which torch/CUDA/PyG
         # combination is actually running, and make a degraded environment
@@ -255,8 +278,9 @@ MAX_UPLOAD_SIZE = "1mb"
 def mount_options() -> dict[str, Any]:
     """Everything `gr.mount_gradio_app` is given besides the app, the Blocks and the path.
 
-    The look: theme and CSS (there is no ``head`` or ``js``; if one is added, it
-    belongs here too, for the same reason).
+    The look: theme, CSS and ``head`` (the shared ⓘ and the shell's script,
+    `DASHBOARD_HEAD`); there is no ``js``. All of them belong here: Gradio 6
+    drops them from ``gr.Blocks``.
 
     The switches, each off whatever the environment says, because left to
     Gradio a ``GRADIO_*`` variable can turn it on:
@@ -278,6 +302,7 @@ def mount_options() -> dict[str, Any]:
     return {
         "theme": _dashboard_theme(),
         "css": DASHBOARD_CSS,
+        "head": DASHBOARD_HEAD,
         "run_history": False,
         "enable_monitoring": False,
         "mcp_server": False,
@@ -293,5 +318,5 @@ def mount_dashboard(app: FastAPI, path: str = "/ui") -> gr.Blocks:
     return blocks
 
 
-__all__ = ["DASHBOARD_CSS", "MAX_UPLOAD_SIZE", "create_gradio_app", "mount_dashboard",
-           "mount_options"]
+__all__ = ["DASHBOARD_CSS", "DASHBOARD_HEAD", "MAX_UPLOAD_SIZE", "PAGES", "create_gradio_app",
+           "mount_dashboard", "mount_options"]

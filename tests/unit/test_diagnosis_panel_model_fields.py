@@ -249,12 +249,17 @@ def test_the_paths_are_one_line_under_the_counts():
 
 
 def test_the_checkpoint_help_says_how_to_ask_for_automatic_selection(monkeypatch):
+    """The help sits behind the field's shared ⓘ (M5-2): registered for the
+    field's elem_id, and no longer in its ``info=``."""
     demo = _build_tab(monkeypatch)
     (field,) = [block for block in demo.blocks.values()
                 if isinstance(block, gr.Textbox) and block.label == "Checkpoint Path (optional)"]
 
-    assert "the served file" in field.info
-    assert "Clear it to auto-select" in field.info
+    title, text = dp.FIELD_HELP[field.elem_id]
+    assert title == field.label
+    assert "the served file" in text
+    assert "Clear it to auto-select" in text
+    assert not field.info
 
 
 def test_save_writes_what_the_fields_show_and_says_so(monkeypatch, tmp_path):

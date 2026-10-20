@@ -24,6 +24,7 @@ gr = pytest.importorskip("gradio")
 pd = pytest.importorskip("pandas")
 
 from src.webui.components import training_console as tc  # noqa: E402
+from src.webui.shell import standalone_context  # noqa: E402
 
 NO_CHANGE = gr.update()
 
@@ -147,7 +148,7 @@ def test_the_epoch_window_filters_rows_and_sends_no_x_lim(poll, monkeypatch):
 # --------------------------------------------------------------- the console's wiring
 def _training_tab():
     with gr.Blocks() as demo:
-        tc.create_training_tab()
+        tc.create_training_tab(standalone_context(demo))
     by_elem = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
     return demo, by_elem
 
@@ -203,8 +204,9 @@ def test_selecting_runtime_settings_refreshes_the_restart_lock(monkeypatch):
     from src.webui.app import create_gradio_app
 
     app = create_gradio_app()
+    # Runtime Settings is the page under ⚙ Settings (M5-2).
     tab = next(b for b in app.blocks.values()
-               if isinstance(b, gr.Tab) and b.label == "Runtime Settings")
+               if isinstance(b, gr.Tab) and b.elem_id == "shep-tab-settings")
     on_select = [fn for fn in app.fns.values() if (tab._id, "select") in fn.targets]
     assert len(on_select) == 1 and on_select[0].name == "_refresh_restart_lock"
     assert [o.elem_id for o in on_select[0].outputs] == ["runtime_restart", "runtime_restart_lock"]

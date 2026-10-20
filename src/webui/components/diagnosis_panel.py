@@ -65,6 +65,8 @@ from src.evaluation.caveats import (
     RELATION_DISPLAY_NAMES,
 )
 from src.utils.server_address import ServerAddressUnknownError, api_base_url
+from src.webui.components.renderers import IDENTITY_BANNERS
+from src.webui.components.renderers import NOT_A_MEDICAL_DEVICE as _NOT_A_MEDICAL_DEVICE
 from src.webui.operator_access import operator_access
 
 logger = logging.getLogger(__name__)
@@ -649,10 +651,9 @@ IDENTITY_NOTHING_CHECKED_LOADED = (
 IDENTITY_CHECKS_NOT_REPORTED = (
     "The response did not say what produced it or what was checked."
 )
-#: README's statement, carried by every report and identity block.
-NOT_A_MEDICAL_DEVICE = (
-    "Not a certified medical device; decision support for a qualified clinician."
-)
+#: README's statement, carried by every report and identity block (one place
+#: for the words: the shared renderers, which Model Facts also uses).
+NOT_A_MEDICAL_DEVICE = _NOT_A_MEDICAL_DEVICE
 
 #: The word for the demo answer (`served_identity` null: no pipeline is
 #: configured, nothing was served). It fills every identity cell and column.
@@ -701,37 +702,10 @@ _PATH_SETTING_KEYS = (
 
 #: (headline, detail) for each state a reader must not miss. Words carry the
 #: meaning; the tab adds an icon, the report a blockquote, neither relies on it.
-_IDENTITY_BANNERS = {
-    IDENTITY_DEMO: (
-        "DEMO ANSWER: not computed.",
-        "No pipeline is configured on this server, so these candidates are "
-        "illustrative, not computed from any model, graph or table. Nothing here "
-        "is a diagnosis.",
-    ),
-    IDENTITY_NOT_REPORTED: (
-        "WHAT PRODUCED THIS RESULT WAS NOT REPORTED.",
-        "The API's response carried no served identity, so these candidates "
-        "cannot be attributed to a model, graph or table.",
-    ),
-    "synthetic": (
-        "SYNTHETIC WORKSPACE: not a clinical result.",
-        "The served workspace's dataset record gives its origin as synthetic: a "
-        "generated stand-in, not a clinical knowledge graph. Results are for "
-        "testing only.",
-    ),
-    "no_model": (
-        "NO TRAINED MODEL: path-reasoning fallback.",
-        "No checkpoint is served, so candidates are ranked by path reasoning over "
-        "the knowledge graph alone: a disease with no qualifying path is not "
-        "scored, and scores are not comparable with GNN scores.",
-    ),
-    "no_sp": (
-        "NO SHORTEST-PATH TABLE: GNN score alone.",
-        "A trained model is served without a shortest-path table, so each score is "
-        "the GNN's alone (scoring mode gnn_only, mixing weight eta 1.0) and differs "
-        "from one computed with the table.",
-    ),
-}
+#: Defined once in the shared renderers (Model Facts' warnings say the same).
+_IDENTITY_BANNERS = IDENTITY_BANNERS
+assert set(_IDENTITY_BANNERS) >= {IDENTITY_DEMO, IDENTITY_NOT_REPORTED, "synthetic",
+                                  "no_model", "no_sp"}
 
 
 def _identity_of(container: Dict[str, Any]) -> Tuple[str, Optional[Dict[str, Any]]]:
@@ -2069,13 +2043,49 @@ def _on_load_status() -> Tuple[str, Dict[str, Any], Dict[str, Any]]:
 # =============================================================================
 # Tab builder (called from app.py)
 # =============================================================================
-def create_diagnosis_tab(blocks: gr.Blocks) -> None:
+#: The fields' help, behind the shared ⓘ (`src/webui/components/help.py`):
+#: ``{elem_id: (title, text)}``, registered by the tab builder. Only a
+#: state-bearing text stays in ``info=``.
+FIELD_HELP = {
+    "dx_data_dir": (
+        "Data Directory",
+        "Folder containing kg.json, node_features.pt, edge_indices.pt, etc.",
+    ),
+    "dx_checkpoint": (
+        "Checkpoint Path (optional)",
+        "Explicit .pt path; shows the served file while a pipeline is loaded. Clear it to "
+        "auto-select by architecture.",
+    ),
+    "dx_architecture": (
+        "Architecture",
+        "Which GNN to serve: the latest run under {data}/runs/<arch>/. 'auto' = latest "
+        "trained. Ignored if a checkpoint path is given.",
+    ),
+    "dx_hpo_terms": (
+        "HPO Terms",
+        "Paste HPO ids in any format — one per line, or comma/space-separated. Names and "
+        "stray punctuation are ignored; only HP:####### ids are used.",
+    ),
+    "dx_patient_id": (
+        "Patient ID",
+        "Optional identifier for this diagnosis session.",
+    ),
+    "dx_top_k": (
+        "Top-K results",
+        "Number of candidate diagnoses to return.",
+    ),
+}
+
+
+def create_diagnosis_tab(ctx: Any) -> None:
     """
     Build the Diagnosis Panel tab inside a gr.Blocks context.
 
+    ``ctx`` is the page context (`src/webui/shell.py`, the page contract). Its
     ``blocks`` is the enclosing app, which the model status and the Data
     Directory and Checkpoint fields refresh from on every page load
-    (`_on_load_status`).
+    (`_on_load_status`); the fields' help goes behind its shared ⓘ
+    (`FIELD_HELP`).
 
     Layout:
         Left column (input):
@@ -2089,6 +2099,8 @@ def create_diagnosis_tab(blocks: gr.Blocks) -> None:
             - Evidence detail panel (Markdown)
             - Full explanation accordion (Markdown)
     """
+    blocks = ctx.blocks
+    ctx.help.fields(FIELD_HELP)
 
     # Holds the full API result of the latest diagnosis so the candidate
     # dropdown and the export buttons reuse it (no re-running inference).
@@ -2107,21 +2119,19 @@ def create_diagnosis_tab(blocks: gr.Blocks) -> None:
             data_dir_input = gr.Textbox(
                 label="Data Directory",
                 value=saved_cfg.get("data_dir", "data/workspaces/default"),
-                info="Folder containing kg.json, node_features.pt, edge_indices.pt, etc.",
+                elem_id="dx_data_dir",
             )
             checkpoint_input = gr.Textbox(
                 label="Checkpoint Path (optional)",
                 value=saved_cfg.get("checkpoint_path") or "",
                 placeholder="(auto-detect from data directory)",
-                info="Explicit .pt path; shows the served file while a pipeline is "
-                "loaded. Clear it to auto-select by architecture.",
+                elem_id="dx_checkpoint",
             )
             arch_input = gr.Dropdown(
                 label="Architecture",
                 choices=["auto", "hgt", "gat", "sage"],
                 value="auto",
-                info="Which GNN to serve: the latest run under {data}/runs/<arch>/. "
-                "'auto' = latest trained. Ignored if a checkpoint path is given.",
+                elem_id="dx_architecture",
             )
 
         with gr.Row():
@@ -2144,11 +2154,7 @@ def create_diagnosis_tab(blocks: gr.Blocks) -> None:
                     "HP:0001263, HP:0002376   (commas / spaces are fine too)"
                 ),
                 lines=8,
-                info=(
-                    "Paste HPO ids in any format — one per line, or comma/space-"
-                    "separated. Names and stray punctuation are ignored; only "
-                    "HP:####### ids are used."
-                ),
+                elem_id="dx_hpo_terms",
             )
 
             clear_btn = gr.ClearButton(
@@ -2163,7 +2169,7 @@ def create_diagnosis_tab(blocks: gr.Blocks) -> None:
                     label="Patient ID",
                     value="",
                     placeholder="(auto-generated if blank)",
-                    info="Optional identifier for this diagnosis session.",
+                    elem_id="dx_patient_id",
                 )
                 top_k_input = gr.Slider(
                     label="Top-K results",
@@ -2171,7 +2177,7 @@ def create_diagnosis_tab(blocks: gr.Blocks) -> None:
                     maximum=20,
                     value=10,
                     step=1,
-                    info="Number of candidate diagnoses to return.",
+                    elem_id="dx_top_k",
                 )
 
             diagnose_btn = gr.Button(
@@ -2270,13 +2276,13 @@ def create_diagnosis_tab(blocks: gr.Blocks) -> None:
         fn=_on_reload_pipeline,
         inputs=[data_dir_input, checkpoint_input, arch_input],
         outputs=[config_status_md, config_msg, data_dir_input, checkpoint_input],
-    )
+    ).then(**ctx.chip_refresh)
 
     save_cfg_btn.click(
         fn=_on_save_config,
         inputs=[data_dir_input, checkpoint_input],
         outputs=[config_msg],
-    )
+    ).then(**ctx.chip_refresh)
 
     reset_btn.click(
         fn=_on_reset_defaults,

@@ -264,6 +264,9 @@ app.add_middleware(RefuseUnusedGradioRoutes, mount_path=DASHBOARD_PATH)
 _QUIET_PREFIXES = (
     "/ui/gradio_api/queue/",
     "/ui/gradio_api/heartbeat/",
+    # Events run without the queue (M5-2): the header chips' read on the
+    # shell's timer, every 5 s per open page, is a plain POST here.
+    "/ui/gradio_api/run/",
 )
 
 

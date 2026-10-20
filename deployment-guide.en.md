@@ -1897,7 +1897,7 @@ the read-only lists keep working.
 | Where | Controls |
 |---|---|
 | API | `POST /api/v1/pipeline/reload`, `POST /api/v1/pipeline/config`, `POST /api/v1/training/start`, `POST /api/v1/training/stop`, `GET /api/v1/training/checkpoints`, `GET /api/v1/workspaces/{name}/checkpoints` |
-| Dashboard | Diagnosis: Reload Pipeline and Save Config. Runtime Settings: Restart Backend and Apply Settings. Training Console: Start, Stop (the confirmed stop), Continue Training, Check checkpoint, the run list (Refresh, and changing the architecture) and Save Path |
+| Dashboard | Diagnosis: Reload Pipeline and Save Config. ⚙ Settings (Runtime Settings): Restart Backend and Apply Settings. Research › Training (the Training Console): Start, Stop (the confirmed stop), Continue Training, Check checkpoint, the run list (Refresh, and changing the architecture) and Save Path |
 
 The two checkpoint lists, and Check checkpoint, open checkpoint files, which SPEC_4 classes as
 checkpoint inspection (C3), so they are checked like the controls. The Test tab and Model
@@ -2037,6 +2037,102 @@ is read (§4.10, the route guard): the dashboard has no upload control (import s
 `SHEPHERD_INTAKE_DIR`), and another site's page could otherwise write up to 1000 files a request
 into Gradio's temporary directory. Gradio's limit of 1 MB per file stays as a second line of
 defence; it bounds each file, not their number.
+
+## 4.14 Finding your way in the dashboard (since M5-2, 2026-10-20)
+
+The dashboard at `/ui` is laid out in two levels, with two status chips in its header and one
+help control for every field. Nothing an operator sets changed; what moved is where things are.
+
+### Navigation
+
+| Where | What is there |
+|---|---|
+| **Diagnosis (clinical)** | The Diagnosis tab, as before. It is the first screen |
+| **Research (pre-clinical)** › Prepare › **Datasets** | The server's workspaces, read-only (below) |
+| **Research (pre-clinical)** › Prepare › **Training** | The Training Console, as before. It is the research page shown first |
+| **Research (pre-clinical)** › Evaluate › **Test**, **Models** | "being built in M5" for now |
+| **⚙ Settings**, at the right of the header | Runtime Settings, as before |
+
+- The selected stage (Diagnosis or Research) is filled and bold; the selected research page is
+  underlined and bold; Settings, when selected, has a light fill and an underline. Prepare and
+  Evaluate are group labels, not buttons.
+- No tab is ever hidden in a menu. In a narrow window, or at a large zoom, the chips and
+  Settings move onto a second header line, and the research pages wrap.
+- The browser tab's title says where you are, for example `Training · Research —
+  SHEPHERD-Advanced`. Reloading the page opens Diagnosis again: the address does not keep the
+  location.
+- In a window at least 1400 × 760 CSS pixels the page itself does not scroll; a region too long
+  for its space scrolls inside its own panel. Narrower, or in portrait, the regions stack and
+  the page scrolls. The theme's smallest text is 14 px.
+
+### The two chips in the header
+
+Both are read again for your own browser when the page loads, every 5 seconds, and after each
+operator control you use. They are displays: every control still checks its own request in the
+backend (§4.13).
+
+**Operator controls** says what D8 answers for this browser's requests:
+
+| Chip | Meaning |
+|---|---|
+| `🔒 Operator controls: on (this machine)` | D8 allows this browser's requests |
+| `Read-only: deployment mode not set to M1` | `SHEPHERD_DEPLOYMENT_MODE` is not exactly `M1` |
+| `Read-only: request not local` | The request did not arrive on this machine's loopback: use an SSH forward to `localhost` |
+| `Read-only: forwarded by a proxy` | The request carries a header a proxy adds |
+| `Read-only: not addressed to localhost` | The browser used another host name than `localhost`, `127.0.0.1` or `[::1]` |
+| `Read-only: sent from another origin` / `sent from another site` | The request came from another page |
+| `Read-only: request not readable` | The server could not read how the request arrived |
+
+Its ⓘ lists every operator control, how to reach them (the SSH forward of §4.13) and, when
+read-only, the full reason D8 gives. It never repeats a header's value.
+
+**GPU jobs** says which managed job holds the one GPU slot (§4.11):
+
+| Chip | Meaning |
+|---|---|
+| `GPU jobs: none` | No managed training or evaluation job is running. It never says "free": the lock is cooperative, and the resident inference service is outside it and may still hold GPU memory |
+| `GPU job: training (job runner)`, `GPU job: test run (job runner)` | A job this service started; `· stopping` while it stops |
+| `GPU job: train_model.py (CLI, pid 41822, since 09:58 UTC)` | A CLI holds the GPU lock, as its holder record describes it |
+| `GPU job: lock held, holder not described` | The lock is held, but no running process is described as its holder |
+| `GPU jobs: none in the job runner` | No GPU lock is configured (neither `SHEPHERD_GPU_LOCK_FILE` nor `SHEPHERD_WORKSPACES_ROOT`), so a CLI's job would not be seen |
+| `GPU jobs: not read` (grey) | The state could not be read. When the lock setting cannot be used, the ⓘ says so, naming the path only to a browser D8 allows |
+
+### Help: the ⓘ buttons
+
+The explanations that were printed under each field of Diagnosis, the Training Console and
+Runtime Settings are now behind a ⓘ after the field's name. Point at it, reach it with Tab, or
+click it: the help appears in a bubble you can move the pointer into. A click keeps it open; Esc
+or a click elsewhere closes it. What must stay visible is still printed: a refusal's reason, a
+job's state, the synthetic marker, an unverified source, and the Training Console's AMP refusal
+for HGT ("Disabled: HGT requires full float32 …").
+
+### Research › Prepare › Datasets
+
+A read-only list of the workspaces the server lists under `SHEPHERD_WORKSPACES_ROOT` (§4.12):
+the same list Training, Test and Models choose from. Each row shows the name; when it was built
+(UTC, from `workspace_build.json`), or "build time not recorded" with its sources' declared
+releases; the **dataset fingerprint**, the first 12 hex digits of the SHA-256 of its
+`split_manifest.json` (Copy gives all 64, and more digits are shown when two workspaces share
+the first 12); the origin (`synthetic` in amber); whether the dataset record is verified; the
+train and validation sample counts. The markers:
+
+- **serving reads this workspace**: the pipeline is serving from it;
+- **same dataset as served**: another workspace with the same full fingerprint;
+- **in your Training run bar**: this browser tab's choice for Training;
+- **not trainable: <why>**: listed, but training would refuse it, with the reason.
+
+Selecting a row shows its details: the full fingerprint with Copy, what the manifest binds
+(short digests), the seeds and split counts, the sources and the build record, and the
+workspace's path relative to the server's workspace root. No absolute server path is shown.
+
+**Use for training ›** opens Research › Training with that workspace in this browser tab's Data
+Directory (Data Paths is opened to show it). Nothing changes on the server; Start is still the
+control D8 checks. A workspace that is not trainable cannot be used.
+
+Nothing on this page is an operator control: it reads the workspaces' small JSON files, never a
+checkpoint, so a read-only browser sees the same page. With `SHEPHERD_WORKSPACES_ROOT` unset,
+the page says so. Datasets are still built on the server with the CLI
+(`scripts/build_knowledge_graph.py`, `scripts/preprocess_data.py`).
 
 ---
 

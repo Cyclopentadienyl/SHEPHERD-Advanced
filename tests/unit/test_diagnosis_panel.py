@@ -10,6 +10,7 @@ pytest.importorskip("gradio")
 import gradio as gr  # noqa: E402
 
 from src.webui.components import diagnosis_panel as dp  # noqa: E402
+from src.webui.shell import standalone_context  # noqa: E402
 
 
 # ------------------------------------------------------------------- HPO parsing
@@ -319,7 +320,7 @@ def _build_tab(monkeypatch):
     # Underneath both: any requests call, including a direct requests.get.
     monkeypatch.setattr(dp.requests.Session, "request", watched_session_request)
     with gr.Blocks() as demo:
-        dp.create_diagnosis_tab(demo)
+        dp.create_diagnosis_tab(standalone_context(demo))
     assert calls == [], f"the tab called the API while the app was being built: {calls}"
     return demo
 

@@ -630,6 +630,35 @@ def _export_metrics_csv() -> Optional[str]:
     return path
 
 
+def _workspace_field(name: Any) -> Optional[str]:
+    """The Data Directory text for the workspace the server lists as `name`
+    (Datasets › Use for training ›), or None when it is not listed: relative to
+    the project root with the display prefix when inside it, as the field shows
+    paths, else the resolved directory (the training process takes either)."""
+    from src.api.services.server_lists import ServerListRefused, resolve_workspace
+    from src.api.services.training_manager import PROJECT_ROOT
+
+    if not name:
+        return None
+    try:
+        path = resolve_workspace(name)
+    except ServerListRefused:
+        return None
+    try:
+        return DISPLAY_PREFIX + path.relative_to(PROJECT_ROOT.resolve()).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def _from_datasets(name: Any) -> Tuple[Any, Any]:
+    """Datasets › Use for training ›: this session's Data Directory and the
+    Data Paths section opened to show it; nothing changes on the server."""
+    value = _workspace_field(name)
+    if value is None:
+        return gr.update(), gr.update()
+    return gr.update(value=value), gr.Accordion(open=True)
+
+
 def _strip_display_prefix(path: str) -> str:
     """Strip the UI display prefix (``SHEPHERD-Advanced/...`` -> ``...``)."""
     p = (path or "").strip()
@@ -1274,15 +1303,189 @@ def _format_resources(resources: Dict[str, Any]) -> str:
     )
 
 
+#: The fields' help, behind the shared ⓘ (`src/webui/components/help.py`):
+#: ``{elem_id: (title, text)}``, registered by the tab builder. Only a
+#: state-bearing text stays in ``info=``.
+FIELD_HELP = {
+    "data_dir": (
+        "Data Directory (Workspace)",
+        "Workspace folder with kg.json, node_features.pt, edge_indices.pt, etc.",
+    ),
+    "run_name": (
+        "Run name (optional)",
+        "Each run is saved in a new folder of its own: "
+        "`<workspace>/runs/<architecture>/<date-time>_<name>_<id>/`. Letters, digits and "
+        "hyphens are kept; blank uses \"run\". The folder is shown in Status once training "
+        "starts.",
+    ),
+    "num_epochs": (
+        "Epochs",
+        "Smoke test: 2-5 | Quick: 10-50 | Full: 100-500",
+    ),
+    "learning_rate": (
+        "Learning Rate",
+        "Initial LR. Recommended: 1e-4 (GAT) | 5e-5 (HGT). Supports scientific notation (e.g."
+        " 5e-5).",
+    ),
+    "batch_size": (
+        "Batch Size",
+        "Samples per step. Larger = faster but more VRAM. 32 = safe default; 1024 for "
+        "large-VRAM GPUs (e.g. GB10); 2048 is experimental (HGT will OOM). Raise LR & warmup "
+        "with batch.",
+    ),
+    "conv_type": (
+        "GNN Conv Type",
+        "GAT: attention-based (default) | HGT: heterogeneous transformer (no AMP, high VRAM "
+        "requirements - batch size ≤16 for 16GB GPUs) | SAGE: mean aggregation",
+    ),
+    "device": (
+        "Device",
+        "auto: use GPU if available, otherwise CPU",
+    ),
+    "seed": (
+        "Seed",
+        "Random seed for reproducibility. Change to try different initializations.",
+    ),
+    "randomize_seed": (
+        "🎲 Randomize seed",
+        "On: the seed field is locked and a fresh random seed (0..2^32-1) is drawn on each "
+        "Start and shown here. Off: the entered seed is used.",
+    ),
+    "hidden_dim": (
+        "Hidden Dim",
+        "GNN embedding dimension. 256 balances quality/speed. 512 for large KGs.",
+    ),
+    "num_layers": (
+        "Num Layers",
+        "GNN message-passing depth. 3-4 typical. More layers = wider receptive field.",
+    ),
+    "dropout": (
+        "Dropout",
+        "Regularization. 0.1 typical. Increase to 0.2-0.3 if overfitting.",
+    ),
+    "weight_decay": (
+        "Weight Decay",
+        "L2 regularization. 0.01 typical for AdamW. Lower (1e-4) if underfitting.",
+    ),
+    "scheduler_type": (
+        "Scheduler",
+        "cosine: smooth decay (recommended) | onecycle: aggressive | linear: steady",
+    ),
+    "warmup_steps": (
+        "Warmup Steps",
+        "Steps to linearly ramp LR from 0. 500 typical. Set 0 to disable.",
+    ),
+    "min_lr_ratio": (
+        "Min LR Ratio",
+        "Floor of LR decay as a fraction of peak (must be > 0; onecycle uses 1/min_lr_ratio)."
+        " 0.01 = decay to 1% of peak; raise (e.g. 0.1) to keep learning in late epochs.",
+    ),
+    "early_stopping_patience": (
+        "Early Stopping Patience",
+        "Epochs without improvement before stopping. 10 is a good default.",
+    ),
+    "diagnosis_weight": (
+        "Diagnosis Weight",
+        "Primary task weight. Keep at 1.0 (anchor). Other weights are relative to this.",
+    ),
+    "link_prediction_weight": (
+        "Link Prediction Weight",
+        "KG structure learning. 0.3-0.5 typical. Higher improves KG representation.",
+    ),
+    "contrastive_weight": (
+        "Contrastive Weight",
+        "Phenotype-disease similarity learning. 0.2-0.5 typical.",
+    ),
+    "ortholog_weight": (
+        "Ortholog Weight",
+        "Cross-species gene mapping. 0.1-0.3 typical. Set 0 to disable.",
+    ),
+    "gradient_accumulation_steps": (
+        "Gradient Accumulation Steps",
+        "Simulate larger batch by accumulating N steps. Useful when VRAM-limited.",
+    ),
+    "max_grad_norm": (
+        "Max Grad Norm",
+        "Gradient clipping threshold. 1.0 typical. Prevents training instability.",
+    ),
+    "num_heads": (
+        "Attention Heads",
+        "Multi-head attention count. 8 typical. Must evenly divide hidden_dim.",
+    ),
+    "use_ortholog_gate": (
+        "Use Ortholog Gate",
+        "Learnable gate for cross-species gene signals. Disable if no ortholog data.",
+    ),
+    "amp_mode": (
+        "Mixed Precision (AMP)",
+        "Faster & less VRAM on modern GPUs. Off: full float32. float16: wider GPU support. "
+        "bfloat16: better numerical stability (RTX 30+, A100+).",
+    ),
+    "temperature": (
+        "Contrastive Temperature",
+        "Lower = sharper similarity. 0.07 typical for contrastive learning.",
+    ),
+    "label_smoothing": (
+        "Label Smoothing",
+        "Softens one-hot labels. 0.1 typical. Prevents overconfident predictions.",
+    ),
+    "margin": (
+        "Margin",
+        "Margin for ranking loss. 1.0 typical. Larger margin = stricter separation.",
+    ),
+    "num_neighbors_str": (
+        "Num Neighbors (comma-separated)",
+        "Neighbor samples per GNN layer (deepest to shallowest). E.g. '15, 10, 5'.",
+    ),
+    "max_subgraph_nodes": (
+        "Max Subgraph Nodes",
+        "Max nodes in sampled subgraph. Larger = more context but slower. 5000 typical.",
+    ),
+    "checkpoint_dropdown": (
+        "Run checkpoint",
+        "This architecture's runs, latest first. Click Refresh to update the list.",
+    ),
+    "manual_checkpoint": (
+        "Checkpoint path",
+        "A .pt file, in the run layout or not; checked the same way as a listed one.",
+    ),
+    "extend_epochs": (
+        "Extra epochs (extend a finished run)",
+        "Trained at the fixed rate shown in the check result.",
+    ),
+    "epoch_window": (
+        "Epoch Window",
+        "Limit charts to the most recent N epochs for detail.",
+    ),
+}
+
+
+#: The AMP radio's refusal under HGT: state, so visible text (``info=``), never
+#: behind the ⓘ.
+AMP_HGT_REFUSAL = "Disabled: HGT requires full float32 (pyg_lib limitation)."
+
+
+def _on_conv_type_change(ct):
+    """HGT requires float32: AMP off and locked, with the refusal shown; any
+    other architecture unlocks it and clears the refusal (``""``: Gradio 6.30
+    keeps an info sent as None)."""
+    if ct == "hgt":
+        return gr.update(value="Off", interactive=False, info=AMP_HGT_REFUSAL)
+    return gr.update(interactive=True, info="")
+
+
 # =============================================================================
 # Tab Builder
 # =============================================================================
-def create_training_tab() -> None:
+def create_training_tab(ctx: Any) -> None:
     """
     Build the Training Console tab content inside a gr.Blocks context.
 
     Must be called inside a `with gr.Tab(...)` or `with gr.Blocks()` context.
+    `ctx` is the page context (`src/webui/shell.py`, the page contract): the
+    fields' help goes behind its shared ⓘ (`FIELD_HELP`).
     """
+    ctx.help.fields(FIELD_HELP)
 
     with gr.Row():
         # =====================================================================
@@ -1292,24 +1495,17 @@ def create_training_tab() -> None:
             # -----------------------------------------------------------------
             # Data Paths
             # -----------------------------------------------------------------
-            with gr.Accordion("Data Paths", open=False):
+            with gr.Accordion("Data Paths", open=False) as data_paths:
                 saved_train_cfg = _load_training_config()
                 saved_data_dir = saved_train_cfg.get("data_dir", DEFAULT_WORKSPACE)
                 with gr.Group():
                     data_dir = gr.Textbox(
                         label="Data Directory (Workspace)",
-                        info="Workspace folder with kg.json, node_features.pt, edge_indices.pt, etc.",
                         value=f"{DISPLAY_PREFIX}{saved_data_dir}",
                         elem_id="data_dir",
                     )
                     run_name = gr.Textbox(
                         label="Run name (optional)",
-                        info=(
-                            "Each run is saved in a new folder of its own: "
-                            "`<workspace>/runs/<architecture>/<date-time>_<name>_<id>/`. "
-                            "Letters, digits and hyphens are kept; blank uses \"run\". "
-                            "The folder is shown in Status once training starts."
-                        ),
                         value="",
                         max_lines=1,
                         elem_id="run_name",
@@ -1326,55 +1522,42 @@ def create_training_tab() -> None:
             with gr.Group():
                 num_epochs = gr.Number(
                     label="Epochs",
-                    info="Smoke test: 2-5 | Quick: 10-50 | Full: 100-500",
                     value=100,
                     precision=0,
                     elem_id="num_epochs",
                 )
                 learning_rate = gr.Number(
                     label="Learning Rate",
-                    info="Initial LR. Recommended: 1e-4 (GAT) | 5e-5 (HGT). Supports scientific notation (e.g. 5e-5).",
                     value=1e-4,
                     precision=8,
                     elem_id="learning_rate",
                 )
                 batch_size = gr.Dropdown(
                     label="Batch Size",
-                    info=(
-                        "Samples per step. Larger = faster but more VRAM. 32 = safe "
-                        "default; 1024 for large-VRAM GPUs (e.g. GB10); 2048 is "
-                        "experimental (HGT will OOM). Raise LR & warmup with batch."
-                    ),
                     choices=["8", "16", "32", "64", "128", "256", "512", "1024", "2048"],
                     value="32",
                     elem_id="batch_size",
                 )
                 conv_type = gr.Radio(
                     label="GNN Conv Type",
-                    info="GAT: attention-based (default) | HGT: heterogeneous transformer (no AMP, high VRAM requirements - batch size ≤16 for 16GB GPUs) | SAGE: mean aggregation",
                     choices=["gat", "hgt", "sage"],
                     value="gat",
                     elem_id="conv_type",
                 )
                 device = gr.Radio(
                     label="Device",
-                    info="auto: use GPU if available, otherwise CPU",
                     choices=["auto", "cuda", "cpu"],
                     value="auto",
                     elem_id="device",
                 )
                 seed = gr.Number(
                     label="Seed",
-                    info="Random seed for reproducibility. Change to try different initializations.",
                     value=42,
                     precision=0,
                     elem_id="seed",
                 )
                 randomize_seed = gr.Checkbox(
                     label="🎲 Randomize seed",
-                    info="On: the seed field is locked and a fresh random seed "
-                         "(0..2^32-1) is drawn on each Start and shown here. "
-                         "Off: the entered seed is used.",
                     value=False,
                     elem_id="randomize_seed",
                 )
@@ -1386,14 +1569,12 @@ def create_training_tab() -> None:
                 with gr.Group():
                     hidden_dim = gr.Dropdown(
                         label="Hidden Dim",
-                        info="GNN embedding dimension. 256 balances quality/speed. 512 for large KGs.",
                         choices=["128", "256", "512"],
                         value="256",
                         elem_id="hidden_dim",
                     )
                     num_layers = gr.Slider(
                         label="Num Layers",
-                        info="GNN message-passing depth. 3-4 typical. More layers = wider receptive field.",
                         minimum=2,
                         maximum=8,
                         value=4,
@@ -1402,7 +1583,6 @@ def create_training_tab() -> None:
                     )
                     dropout = gr.Slider(
                         label="Dropout",
-                        info="Regularization. 0.1 typical. Increase to 0.2-0.3 if overfitting.",
                         minimum=0.0,
                         maximum=0.5,
                         value=0.1,
@@ -1411,7 +1591,6 @@ def create_training_tab() -> None:
                     )
                     weight_decay = gr.Slider(
                         label="Weight Decay",
-                        info="L2 regularization. 0.01 typical for AdamW. Lower (1e-4) if underfitting.",
                         minimum=1e-5,
                         maximum=0.1,
                         value=0.01,
@@ -1420,28 +1599,23 @@ def create_training_tab() -> None:
                     )
                     scheduler_type = gr.Dropdown(
                         label="Scheduler",
-                        info="cosine: smooth decay (recommended) | onecycle: aggressive | linear: steady",
                         choices=["cosine", "onecycle", "linear", "none"],
                         value="cosine",
                         elem_id="scheduler_type",
                     )
                     warmup_steps = gr.Number(
                         label="Warmup Steps",
-                        info="Steps to linearly ramp LR from 0. 500 typical. Set 0 to disable.",
                         value=500,
                         precision=0,
                         elem_id="warmup_steps",
                     )
                     min_lr_ratio = gr.Number(
                         label="Min LR Ratio",
-                        info="Floor of LR decay as a fraction of peak (must be > 0; onecycle uses 1/min_lr_ratio). "
-                             "0.01 = decay to 1% of peak; raise (e.g. 0.1) to keep learning in late epochs.",
                         value=0.01,
                         elem_id="min_lr_ratio",
                     )
                     early_stopping_patience = gr.Number(
                         label="Early Stopping Patience",
-                        info="Epochs without improvement before stopping. 10 is a good default.",
                         value=10,
                         precision=0,
                         elem_id="early_stopping_patience",
@@ -1451,7 +1625,6 @@ def create_training_tab() -> None:
                 with gr.Group():
                     diagnosis_weight = gr.Slider(
                         label="Diagnosis Weight",
-                        info="Primary task weight. Keep at 1.0 (anchor). Other weights are relative to this.",
                         minimum=0.0,
                         maximum=2.0,
                         value=1.0,
@@ -1460,7 +1633,6 @@ def create_training_tab() -> None:
                     )
                     link_prediction_weight = gr.Slider(
                         label="Link Prediction Weight",
-                        info="KG structure learning. 0.3-0.5 typical. Higher improves KG representation.",
                         minimum=0.0,
                         maximum=2.0,
                         value=0.5,
@@ -1469,7 +1641,6 @@ def create_training_tab() -> None:
                     )
                     contrastive_weight = gr.Slider(
                         label="Contrastive Weight",
-                        info="Phenotype-disease similarity learning. 0.2-0.5 typical.",
                         minimum=0.0,
                         maximum=2.0,
                         value=0.3,
@@ -1478,7 +1649,6 @@ def create_training_tab() -> None:
                     )
                     ortholog_weight = gr.Slider(
                         label="Ortholog Weight",
-                        info="Cross-species gene mapping. 0.1-0.3 typical. Set 0 to disable.",
                         minimum=0.0,
                         maximum=2.0,
                         value=0.2,
@@ -1493,40 +1663,34 @@ def create_training_tab() -> None:
                 with gr.Group():
                     gradient_accumulation_steps = gr.Number(
                         label="Gradient Accumulation Steps",
-                        info="Simulate larger batch by accumulating N steps. Useful when VRAM-limited.",
                         value=1,
                         precision=0,
                         elem_id="gradient_accumulation_steps",
                     )
                     max_grad_norm = gr.Number(
                         label="Max Grad Norm",
-                        info="Gradient clipping threshold. 1.0 typical. Prevents training instability.",
                         value=1.0,
                         elem_id="max_grad_norm",
                     )
                     num_heads = gr.Dropdown(
                         label="Attention Heads",
-                        info="Multi-head attention count. 8 typical. Must evenly divide hidden_dim.",
                         choices=["4", "8", "16"],
                         value="8",
                         elem_id="num_heads",
                     )
                     use_ortholog_gate = gr.Checkbox(
                         label="Use Ortholog Gate",
-                        info="Learnable gate for cross-species gene signals. Disable if no ortholog data.",
                         value=True,
                         elem_id="use_ortholog_gate",
                     )
                     amp_mode = gr.Radio(
                         label="Mixed Precision (AMP)",
-                        info="Faster & less VRAM on modern GPUs. Off: full float32. float16: wider GPU support. bfloat16: better numerical stability (RTX 30+, A100+).",
                         choices=["Off", "float16", "bfloat16"],
                         value="float16",
                         elem_id="amp_mode",
                     )
                     temperature = gr.Slider(
                         label="Contrastive Temperature",
-                        info="Lower = sharper similarity. 0.07 typical for contrastive learning.",
                         minimum=0.01,
                         maximum=1.0,
                         value=0.07,
@@ -1535,7 +1699,6 @@ def create_training_tab() -> None:
                     )
                     label_smoothing = gr.Slider(
                         label="Label Smoothing",
-                        info="Softens one-hot labels. 0.1 typical. Prevents overconfident predictions.",
                         minimum=0.0,
                         maximum=0.3,
                         value=0.1,
@@ -1544,7 +1707,6 @@ def create_training_tab() -> None:
                     )
                     margin = gr.Slider(
                         label="Margin",
-                        info="Margin for ranking loss. 1.0 typical. Larger margin = stricter separation.",
                         minimum=0.1,
                         maximum=3.0,
                         value=1.0,
@@ -1553,13 +1715,11 @@ def create_training_tab() -> None:
                     )
                     num_neighbors_str = gr.Textbox(
                         label="Num Neighbors (comma-separated)",
-                        info="Neighbor samples per GNN layer (deepest to shallowest). E.g. '15, 10, 5'.",
                         value="15, 10, 5",
                         elem_id="num_neighbors_str",
                     )
                     max_subgraph_nodes = gr.Number(
                         label="Max Subgraph Nodes",
-                        info="Max nodes in sampled subgraph. Larger = more context but slower. 5000 typical.",
                         value=5000,
                         precision=0,
                         elem_id="max_subgraph_nodes",
@@ -1602,7 +1762,6 @@ def create_training_tab() -> None:
                 with gr.Row():
                     checkpoint_dropdown = gr.Dropdown(
                         label="Run checkpoint",
-                        info="This architecture's runs, latest first. Click Refresh to update the list.",
                         choices=[],
                         value=None,
                         elem_id="checkpoint_dropdown",
@@ -1610,7 +1769,6 @@ def create_training_tab() -> None:
                     refresh_ckpt_btn = gr.Button("Refresh", size="sm", scale=0)
                 manual_checkpoint = gr.Textbox(
                     label="Checkpoint path",
-                    info="A .pt file, in the run layout or not; checked the same way as a listed one.",
                     value="",
                     max_lines=1,
                     visible=False,
@@ -1621,7 +1779,6 @@ def create_training_tab() -> None:
                 # or 0 means "not extending"; the run plan refuses below 1.
                 extend_epochs = gr.Number(
                     label="Extra epochs (extend a finished run)",
-                    info="Trained at the fixed rate shown in the check result.",
                     value=None,
                     precision=0,
                     visible=False,
@@ -1665,7 +1822,6 @@ def create_training_tab() -> None:
             with gr.Row():
                 epoch_window = gr.Dropdown(
                     label="Epoch Window",
-                    info="Limit charts to the most recent N epochs for detail.",
                     choices=["All", "Last 10", "Last 20", "Last 50", "Last 100"],
                     value="All",
                     elem_id="epoch_window",
@@ -1783,7 +1939,7 @@ def create_training_tab() -> None:
         fn=_with_series_sent(_on_start),
         inputs=all_params + [randomize_seed],
         outputs=btn_outputs + [seed, plot_series_sent],
-    ).then(**legend_step)
+    ).then(**legend_step).then(**ctx.chip_refresh)
     # Lock/grey the seed field while "Randomize seed" is on (Start draws + echoes
     # the actual seed used).
     randomize_seed.change(
@@ -1800,7 +1956,7 @@ def create_training_tab() -> None:
         fn=_on_stop,
         inputs=[],
         outputs=btn_outputs + [stop_confirm],
-    )
+    ).then(**ctx.chip_refresh)
     stop_keep_btn.click(fn=_on_stop_cancel, inputs=[], outputs=[stop_confirm])
     continue_inputs = [continue_source, checkpoint_dropdown, manual_checkpoint, device,
                        extend_epochs]
@@ -1814,7 +1970,7 @@ def create_training_tab() -> None:
         inputs=[data_dir, run_name, device, continue_source, checkpoint_dropdown,
                 manual_checkpoint, extend_epochs],
         outputs=btn_outputs + [continue_preview, extend_epochs, plot_series_sent],
-    ).then(**legend_step)
+    ).then(**legend_step).then(**ctx.chip_refresh)
     continue_source.change(
         fn=_toggle_continue_source,
         inputs=[continue_source],
@@ -1851,6 +2007,14 @@ def create_training_tab() -> None:
         inputs=[data_dir],
         outputs=[path_msg],
     )
+    # Datasets › Use for training › sets ctx.training_workspace; until the run
+    # bar (UI-C) reads it directly, it fills this session's Data Directory.
+    ctx.training_workspace.change(
+        fn=_from_datasets,
+        inputs=[ctx.training_workspace],
+        outputs=[data_dir, data_paths],
+        show_progress="hidden",
+    )
     reset_path_btn.click(
         fn=_reset_training_config,
         inputs=[],
@@ -1882,18 +2046,15 @@ def create_training_tab() -> None:
         outputs=[error_banner, error_dismiss_btn],
     )
 
-    # HGT requires float32 (AMP disabled) — update UI when conv type changes
-    def _on_conv_type_change(ct):
-        if ct == "hgt":
-            return gr.update(
-                value="Off",
-                interactive=False,
-                info="Disabled: HGT requires full float32 (pyg_lib limitation).",
-            )
-        return gr.update(
-            interactive=True,
-            info="Faster & less VRAM on modern GPUs. Off: full float32. float16: wider GPU support. bfloat16: better numerical stability (RTX 30+, A100+).",
-        )
+    # HGT requires float32 (AMP disabled) — update UI when conv type changes.
+    # The refusal is state, so it stays visible text in `info=`; the field's
+    # ordinary help is behind its ⓘ (FIELD_HELP), and "" clears the refusal
+    # (Gradio 6.30 keeps an info sent as None).
+    conv_type.change(
+        fn=_on_conv_type_change,
+        inputs=[conv_type],
+        outputs=[amp_mode],
+    )
 
     conv_type.change(
         fn=_on_conv_type_change,
@@ -1904,8 +2065,10 @@ def create_training_tab() -> None:
     # =========================================================================
     # Polling Timer (1.5 second interval)
     # =========================================================================
-    # The Training Console is the tab open at page load, so this timer ticks
-    # from the start (Gradio 6 does not tick a timer in a tab not yet opened).
+    # Gradio 6 does not tick a timer in a tab not yet opened, so this one starts
+    # when Research › Training is first opened (the page then mounts and stays
+    # mounted). The page contract's shared timers (`ctx.timer_fast`) are the
+    # ones outside gr.Tabs; UI-C moves this poll onto them.
     timer = gr.Timer(value=1.5)
     timer.tick(
         fn=_with_series_sent(_poll_status),

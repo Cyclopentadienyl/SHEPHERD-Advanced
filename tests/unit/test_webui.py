@@ -36,9 +36,10 @@ class TestGradioApp:
     def test_create_training_tab(self):
         """Training tab can be created inside a Blocks context."""
         from src.webui.components.training_console import create_training_tab
+        from src.webui.shell import standalone_context
 
         with gr.Blocks() as demo:
-            create_training_tab()
+            create_training_tab(standalone_context(demo))
 
         # If we get here without error, the tab was created successfully
         assert demo is not None

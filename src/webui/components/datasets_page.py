@@ -1,0 +1,367 @@
+"""
+Research › Prepare › Datasets: the server's workspaces, read-only (M5-2, UI-A).
+================================================================================
+`docs/working/PLAN_TEST_RESULTS.md` §6, "M5's boundaries": a read-only Datasets
+page over the server's workspace list. The same list Training, Test and Models
+choose from (`server_lists.list_workspaces`), drawn with the shared dataset
+renderer (`renderers.dataset_identity_html` and its pieces).
+
+- **Columns:** name, built, dataset fingerprint (12 hex in bold monospace, the
+  full value on Copy), origin, record, sources, train / val samples, in use. Below
+  1800 px the origin and the record fold into the name cell (CSS only).
+- **Markers:** "serving reads this workspace" (accent) from the status's
+  ``current_data_dir``; "same dataset as served" for another listed workspace
+  with the same **full** fingerprint; "in your Training run bar" (neutral,
+  outlined) from this browser session's run-bar selection
+  (`PageContext.training_workspace`); "not trainable: <why>" rows stay listed.
+- **Details** of the selected row: the full fingerprint with Copy, what the
+  manifest binds with short digests, the seeds and split counts, the sources and
+  the build record, and the path **relative to the server's workspace root**:
+  no absolute path is shown, and a server path in a reason is cut to that.
+- **"Use for training ›"** selects the workspace in this session's Training run
+  bar and opens Training; it changes nothing on the server (Start is the gated
+  act there).
+- The one line on building datasets: they are built on the server with the CLI.
+
+Nothing here is gated: it reads small JSON files (the manifest, the dataset
+record, the build record), never a checkpoint, so a read-only request sees the
+same page.
+
+Module: src/webui/components/datasets_page.py
+"""
+from __future__ import annotations
+
+import logging
+from dataclasses import asdict
+from pathlib import Path
+from typing import Any, Dict, Mapping, Optional, Tuple
+
+import gradio as gr
+
+from src.webui.components import renderers as r
+from src.webui.components.help import help_button
+from src.webui.components.served_status import read_status, serving_workspace
+from src.webui.shell import plain_html
+
+logger = logging.getLogger(__name__)
+
+#: The one line on building datasets (no building in the WebUI, BACKLOG 29).
+BUILD_LINE = (
+    "Datasets are built on the server with <code>scripts/build_knowledge_graph.py</code> and "
+    "<code>scripts/preprocess_data.py</code>."
+)
+FOOTNOTE = (
+    "“in your Training run bar” is this browser tab’s selection; nothing on the server "
+    "changes. “serving reads this workspace” is the pipeline status’s "
+    "<code>current_data_dir</code>; another workspace with the same full fingerprint reads "
+    "“same dataset as served”. A build time appears once a build records one "
+    "(<code>workspace_build.json</code>, outside the fingerprint)."
+)
+USE_NOTE = ("Selects it in your Training run bar (this browser tab) and opens Training. Nothing "
+            "changes on the server; Start is the gated act.")
+
+#: What the manifest binds, by its role names, in the order shown.
+_BOUND_ROLES = (("kg", "kg"), ("node_features", "node_features"), ("edge_indices", "edge_indices"),
+                ("num_nodes", "num_nodes"), ("train_samples", "train_samples"),
+                ("val_samples", "val_samples"), ("provenance", "record"))
+
+
+def redact(text: Any, root: Optional[Path]) -> str:
+    """`text` with the workspaces root cut off any path in it, so a reason
+    names a workspace's file relative to the root, never an absolute path."""
+    flat = " ".join(str(text or "").split())
+    if root is None:
+        return flat
+    prefix = str(root)
+    return flat.replace(prefix + "/", "").replace(prefix, "the workspaces root")
+
+
+def _root() -> Optional[Path]:
+    from src.config import server_settings
+
+    setting = server_settings.workspaces_root()
+    return setting.value if setting.available else None
+
+
+def read_datasets() -> Dict[str, Any]:
+    """The page's data for one session: the listing (as plain data, reasons cut
+    to the root), the serving workspace's name, and why none is listed."""
+    from src.api.services.server_lists import list_workspaces
+
+    listing = list_workspaces()
+    root = _root()
+    rows = []
+    for item in listing.items:
+        row = asdict(item)
+        row["not_trainable"] = redact(row["not_trainable"], root) if row["not_trainable"] else None
+        record = dict(row.get("dataset_record") or {})
+        if record.get("problem"):
+            record["problem"] = redact(record["problem"], root)
+        row["dataset_record"] = record
+        rows.append(row)
+    status, _problem = read_status()
+    serving = serving_workspace(status, listing.items) if status is not None else None
+    return {"rows": rows, "serving": serving,
+            "problem": redact(listing.problem, root) if listing.problem else None,
+            "status_read": status is not None}
+
+
+def _marks(row: Mapping[str, Any], data: Mapping[str, Any], run_bar: Optional[str]) -> str:
+    marks = []
+    serving_row = next((x for x in data.get("rows") or [] if x["name"] == data.get("serving")),
+                       None)
+    if row["name"] == data.get("serving"):
+        marks.append('<span class="shep-mark shep-mark-serve">serving reads this workspace</span>')
+    elif (serving_row is not None and r.is_digest(row.get("dataset_fingerprint"))
+          and row.get("dataset_fingerprint") == serving_row.get("dataset_fingerprint")):
+        marks.append('<span class="shep-mark shep-mark-serve-same">same dataset as served</span>')
+    if run_bar and row["name"] == run_bar:
+        marks.append('<span class="shep-mark shep-mark-outline">in your Training run bar</span>')
+    if not row.get("trainable"):
+        why = row.get("not_trainable") or "not trainable"
+        short = (r.short_reason(why, 60) if r.is_digest(row.get("dataset_fingerprint"))
+                 else "no readable split manifest")
+        marks.append(f'<span class="shep-mark shep-mark-grey" title="{r.e(why)}">'
+                     f'not trainable: {r.e(short)}</span>')
+    return "".join(marks) or '<span class="shep-muted">—</span>'
+
+
+def _record_cell(row: Mapping[str, Any]) -> str:
+    if r.record_verified(row):
+        return f'<span class="shep-ok-t">{r._CHECK} verified</span>'
+    return '<span class="shep-muted">not verified</span>'
+
+
+def _origin_cell(row: Mapping[str, Any]) -> str:
+    origin = r.origin_of(row)
+    if origin == "synthetic":
+        return r.chip("synthetic", "amber")
+    return r.e(origin) if origin else '<span class="shep-muted">—</span>'
+
+
+def _count(value: Any) -> str:
+    return f"{value:,}" if isinstance(value, int) and not isinstance(value, bool) else "—"
+
+
+def table_html(data: Mapping[str, Any], run_bar: Optional[str], selected: Optional[str]) -> str:
+    """The workspaces table; each row selects its details."""
+    rows = data.get("rows") or []
+    if not rows:
+        why = data.get("problem") or "No workspace is listed."
+        return f'<div class="shep-reason">{r.e(why)}</div>'
+    digits = r.distinguishing_digits(x.get("dataset_fingerprint") for x in rows)
+    body = []
+    for row in rows:
+        name = row["name"]
+        fingerprint = row.get("dataset_fingerprint")
+        built = r.built_text(row.get("build"))
+        built_cell = (r.e(built.replace("built ", "", 1)) if built
+                      else '<span class="shep-muted">not recorded</span>')
+        sources = r.sources_text(row.get("declared_releases"))
+        fp_cell = (f'<code class="shep-fpv" title="{r.e(fingerprint)}">{r.e(fingerprint[:digits])}'
+                   f'</code> ' + r.copy_button(fingerprint, "the full dataset fingerprint",
+                                               icon_only=True)
+                   if r.is_digest(fingerprint) else '<span class="shep-muted">—</span>')
+        on = name == selected
+        body.append(
+            f'<tr class="{"shep-on" if on else ""}" data-key="{r.e(name)}" tabindex="0" '
+            f'aria-selected="{"true" if on else "false"}">'
+            f'<td><div class="shep-w600">{r.e(name)}</div><div class="shep-ds-narrow shep-sub">'
+            f'{_origin_cell(row)} · {_record_cell(row)}</div></td>'
+            f'<td>{built_cell}</td>'
+            f'<td class="shep-nowrap">{fp_cell}</td>'
+            f'<td class="shep-ds-wide">{_origin_cell(row)}</td>'
+            f'<td class="shep-ds-wide">{_record_cell(row)}</td>'
+            f'<td>{r.e(sources) if sources else "<span class=shep-muted>—</span>"}</td>'
+            f'<td class="shep-num">{_count(row.get("train_samples"))}'
+            f'<div class="shep-sub">{_count(row.get("val_samples"))}</div></td>'
+            f'<td>{_marks(row, data, run_bar)}</td></tr>')
+    return (
+        '<div class="shep-tbl-wrap"><table class="shep-tbl shep-dstbl" aria-label="Workspaces">'
+        '<thead><tr><th scope="col">Name</th><th scope="col">Built</th>'
+        '<th scope="col">Dataset fingerprint</th><th scope="col" class="shep-ds-wide">Origin</th>'
+        '<th scope="col" class="shep-ds-wide">Record</th><th scope="col">Sources</th>'
+        '<th scope="col" class="shep-num">Train / val samples</th><th scope="col">In use</th>'
+        f'</tr></thead><tbody>{"".join(body)}</tbody></table></div>')
+
+
+def header_html(data: Mapping[str, Any]) -> str:
+    count = len(data.get("rows") or [])
+    return (f'<div class="shep-panel-hd"><h2>Datasets</h2><span class="shep-panel-right">'
+            f'server workspace list · {count} · read-only</span></div>'
+            '<p class="shep-intro">The same list Training, Test and Models choose from. Dataset '
+            'fingerprint: the SHA-256 of each workspace’s <code>split_manifest.json</code>'
+            f'{help_button("dataset-fingerprint", "Dataset fingerprint")}</p>')
+
+
+def manifest_facts(name: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """What the selected workspace's manifest binds and how it was split, read
+    once (`read_split_manifest`); or why it was not read (cut to the root)."""
+    from src.api.services.server_lists import ServerListRefused, resolve_workspace
+    from src.kg.artifacts import read_split_manifest
+
+    root = _root()
+    try:
+        manifest = read_split_manifest(resolve_workspace(name)).manifest
+    except (ServerListRefused, ValueError, OSError) as exc:
+        return None, redact(exc, root)
+
+    def at(*keys: str) -> Any:
+        value: Any = manifest
+        for key in keys:
+            value = value.get(key) if isinstance(value, Mapping) else None
+        return value
+
+    artifacts = at("artifacts") if isinstance(at("artifacts"), Mapping) else {}
+    return {
+        "bound": [(label, artifacts.get(role)) for role, label in _BOUND_ROLES],
+        "allocation_seed": at("allocation", "seed"),
+        "feature_seed": at("graph_export", "feature_seed"),
+        "train_diseases": at("realised", "train_diseases"),
+        "val_diseases": at("realised", "val_diseases"),
+    }, None
+
+
+def details_html(data: Mapping[str, Any], name: Optional[str]) -> str:
+    row = next((x for x in data.get("rows") or [] if x["name"] == name), None)
+    if row is None:
+        return ('<div class="shep-panel-hd"><h2>Details</h2></div><div class="shep-panel-bd">'
+                '<p class="shep-muted">Select a dataset to see what its manifest binds.</p></div>')
+    record = (f'<span class="shep-tag shep-tag-ok">{r._CHECK} record verified</span>'
+              if r.record_verified(row) else r.chip("record not verified", "grey"))
+    origin = r.origin_of(row)
+    head = (f'<div class="shep-panel-hd"><h2>{r.e(row["name"])}</h2>{record}'
+            f'<span class="shep-muted">{r.e(origin or "")}</span></div>')
+    fingerprint = row.get("dataset_fingerprint")
+    parts = []
+    if r.is_digest(fingerprint):
+        parts.append(
+            '<div class="shep-digest"><span class="shep-dl">Dataset fingerprint · SHA-256 of '
+            f'split_manifest.json</span><code class="shep-full">{r.e(fingerprint)}</code>'
+            f'{r.copy_button(fingerprint, "the full dataset fingerprint")}</div>')
+    facts, problem = manifest_facts(row["name"])
+    if facts is not None:
+        bound = "".join(
+            f'<span class="shep-k">{r.e(label)}</span><code>{r.e(r.short_hex(digest))}</code>'
+            for label, digest in facts["bound"])
+        parts.append('<div class="shep-card"><div class="shep-card-hd">What the manifest binds '
+                     '<span class="shep-muted">sha256, first 12 · full values in the manifest'
+                     f'</span></div><div class="shep-kv shep-kv-2">{bound}</div></div>')
+        split = []
+        if facts["allocation_seed"] is not None:
+            split.append(f"allocation seed {facts['allocation_seed']}")
+        if facts["feature_seed"] is not None:
+            split.append(f"feature seed {facts['feature_seed']}")
+        samples = (f"train {_count(row.get('train_samples'))} · val {_count(row.get('val_samples'))}")
+        if facts["train_diseases"] is not None:
+            samples += (f" · diseases (train / val) {_count(facts['train_diseases'])} / "
+                        f"{_count(facts['val_diseases'])}")
+        rows_kv = [("Split", r.e(" · ".join(split) or "not recorded")), ("Samples", r.e(samples))]
+    else:
+        parts.append(f'<div class="shep-reason">The manifest was not read: {r.e(problem)}</div>')
+        rows_kv = []
+    sources = r.sources_text(row.get("declared_releases"))
+    built = r.built_text(row.get("build"))
+    rows_kv += [
+        ("Sources", r.e(sources) if sources else
+         ('none (synthetic)' if origin == "synthetic" else '<span class="shep-muted">—</span>')),
+        ("Built", r.e(built.replace("built ", "", 1)) if built else "not recorded"),
+        ("Path", f'<code>{r.e(row["name"])}</code> <span class="shep-muted">(in the server’s '
+                 'workspace root)</span>'),
+    ]
+    if not row.get("trainable"):
+        rows_kv.append(("Not trainable", r.e(row.get("not_trainable") or "not trainable")))
+    cells = "".join(f'<span class="shep-k">{r.e(k)}</span><span class="shep-v">{v}</span>'
+                    for k, v in rows_kv)
+    parts.append(f'<div class="shep-kv">{cells}</div>')
+    return head + '<div class="shep-panel-bd">' + "".join(parts) + "</div>"
+
+
+#: Row clicks (and Enter on a focused row) become the table's click event.
+_ROWS_JS = r"""
+element.addEventListener('click', function (e) {
+  if (e.target.closest && e.target.closest('button')) { return; }
+  var row = e.target.closest ? e.target.closest('tr[data-key]') : null;
+  if (row) { trigger('click', {key: row.getAttribute('data-key')}); }
+});
+element.addEventListener('keydown', function (e) {
+  var row = e.target.closest ? e.target.closest('tr[data-key]') : null;
+  if (row && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); trigger('click', {key: row.getAttribute('data-key')}); }
+});
+"""
+
+
+def create_datasets_page(ctx: Any) -> None:
+    """Build Research › Prepare › Datasets (the page contract: `src/webui/shell.py`)."""
+    data_state = gr.State({"rows": [], "serving": None, "problem": None})
+    selected = gr.State(None)
+    with gr.Row(elem_classes=["shep-page", "shep-datasets"], equal_height=False):
+        with gr.Column(elem_classes=["shep-panel", "shep-ds-main"], scale=3):
+            header = plain_html(header_html({"rows": []}), elem_id="shep-ds-header")
+            table = plain_html('<div class="shep-muted">Reading the server’s workspace list…</div>',
+                               elem_id="shep-ds-table", js_on_load=_ROWS_JS)
+            plain_html(f'<div class="shep-reason">{BUILD_LINE}</div>'
+                       f'<p class="shep-note">{FOOTNOTE}</p>', elem_id="shep-ds-notes")
+        with gr.Column(elem_classes=["shep-panel", "shep-ds-details"], scale=2):
+            details = plain_html(details_html({}, None), elem_id="shep-ds-details")
+            with gr.Row(elem_classes=["shep-panel-ft"]):
+                use = gr.Button("Use for training ›", variant="primary", interactive=False,
+                                elem_id="shep-ds-use", scale=0)
+                plain_html(f'<span class="shep-note">{USE_NOTE}</span>',
+                           elem_id="shep-ds-use-note")
+
+    def _refresh(current, run_bar):
+        data = read_datasets()
+        names = [x["name"] for x in data["rows"]]
+        chosen = current if current in names else (names[0] if names else None)
+        return (data, chosen, header_html(data), table_html(data, run_bar, chosen),
+                details_html(data, chosen), _use_update(data, chosen))
+
+    refresh = {"fn": _refresh, "inputs": [selected, ctx.training_workspace],
+               "outputs": [data_state, selected, header, table, details, use],
+               "show_progress": "hidden"}
+    ctx.on_page_open("datasets", refresh)
+
+    def _select(data, run_bar, evt: gr.EventData):
+        raw = getattr(evt, "_data", None)
+        key = raw.get("key") if isinstance(raw, Mapping) else None
+        names = [x["name"] for x in data.get("rows") or []]
+        if key not in names:
+            return gr.update(), gr.update(), gr.update(), gr.update()
+        return key, table_html(data, run_bar, key), details_html(data, key), _use_update(data, key)
+
+    table.click(_select, inputs=[data_state, ctx.training_workspace],
+                outputs=[selected, table, details, use], show_progress="hidden")
+
+    def _use(data, name):
+        row = next((x for x in data.get("rows") or [] if x["name"] == name), None)
+        if row is None or not row.get("trainable"):
+            return (gr.update(), *ctx.no_nav())
+        return (name, *ctx.go("training"))
+
+    use.click(_use, inputs=[data_state, selected],
+              outputs=[ctx.training_workspace, *ctx.nav_outputs], show_progress="hidden")
+
+    def _run_bar_changed(data, name, run_bar):
+        return table_html(data, run_bar, name)
+
+    ctx.training_workspace.change(_run_bar_changed,
+                                  inputs=[data_state, selected, ctx.training_workspace],
+                                  outputs=[table], show_progress="hidden")
+
+
+def _use_update(data: Mapping[str, Any], name: Optional[str]) -> Any:
+    row = next((x for x in data.get("rows") or [] if x["name"] == name), None)
+    return gr.update(interactive=bool(row and row.get("trainable")))
+
+
+__all__ = [
+    "BUILD_LINE",
+    "create_datasets_page",
+    "details_html",
+    "header_html",
+    "manifest_facts",
+    "read_datasets",
+    "redact",
+    "table_html",
+]

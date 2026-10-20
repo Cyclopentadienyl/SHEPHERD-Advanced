@@ -1524,17 +1524,42 @@ contract and BACKLOG stay the record, and no new planning document is added.
     - **navigation in two levels**: "Diagnosis (clinical)" and "Research (pre-clinical)";
       under Research one row of tabs in two labelled groups, Prepare (Datasets, Training) and
       Evaluate (Test, Models); Settings at the header's right; Diagnosis is the first screen;
+      *as implemented (M5-2, 2026-10-20):* `src/webui/shell.py`, two `gr.Tabs` (so a cross-link
+      switches both levels from Python, `PageContext.go`) that wrap and never use an overflow
+      menu; Training is the default research page; the group labels are generated content, not
+      clickable, with the grouping in the tablist's accessible name; the browser title follows
+      the location; the header row holds the brand, two chips read per request (D8's answer for
+      that browser, never a header value; the GPU job from the job runner and the lock's holder
+      record, never "free") and Settings. The shell's docstring is the page contract the other
+      pages build on (one builder per page, one context: the shared ⓘ, the timers outside the
+      tabs, the chips, the shared model list, the served-model-changed trigger). Test and Models
+      hold a one-line body until they are built (deployment guide §4.14);
     - **the Diagnosis tab's "Model in use" card**, directly above Run Diagnosis, so the model
       is known before a diagnosis, with "Change model…": a drawer on the one shared model list
       and the one gated Load that Models also uses (one component, two views, no second
       implementation); it replaces the Model Configuration accordion and the header's
-      "Serving now" strip, so the identity is shown once;
+      "Serving now" strip, so the identity is shown once; *the shared component as implemented
+      (M5-2, 2026-10-20):* `src/webui/components/model_list.py`, with a clinical preset (the
+      latest four runs) and a research preset (every run). Listing opens checkpoints, so it is
+      checked by D8 like the Load; the Load is D8 on its own request, the item found again in
+      the server's list, one confirmation from → to with the changed rows marked, D8 again on
+      the confirm, the status read again (a model in use that changed since is said, never
+      reloaded over), the API's one reload (`run_reload`) with what the server resolves, the
+      served fingerprint checked against the one shown, and a usage history entry only for a
+      list ordered by a cohort version's score; the page stops waiting after 180 s and offers
+      "Read again". Placing it (the card's drawer, Models) is the Diagnosis and Models pages'
+      part;
     - **Run Diagnosis greyed out and not clickable while no model is loaded**, with a bubble on
       hover saying no model is loaded; the API's demo answer for API clients is unchanged;
     - **the dataset identity**: the workspace name, its build time and one fingerprint, the
       first 12 hex digits of the SHA-256 of its `split_manifest.json` (compared in full,
       never by the short form), which binds the graph files, both sample files and the dataset
-      record, so two different dataset builds always differ;
+      record, so two different dataset builds always differ; *as implemented (M5-2,
+      2026-10-20):* one renderer for every page (`src/webui/components/renderers.py`): 12 hex
+      shown, all 64 in the tooltip and on Copy, more digits when two listed workspaces share the
+      first 12, every comparison on the full digest; the same module draws a model row and the
+      Model Facts, with a checkpoint's recorded tests as a state from its ledger, never a
+      result's number;
     - **the build time is recorded from now on** (the owner, 2026-10-19): the workspace builder
       writes a `workspace_build.json` beside the manifest (`built_at` in UTC and the code
       revision), descriptive and not bound by the manifest, so two byte-identical builds keep
@@ -1545,7 +1570,13 @@ contract and BACKLOG stay the record, and no new planning document is added.
       beside another manifest reads "not recorded" (`read_workspace_build`); the server's
       workspace list shows it with the full fingerprint, the dataset record's origin and
       binding state, the declared releases, the sample counts and whether it is trainable;
-    - **a read-only Datasets page** over the server's workspace list;
+    - **a read-only Datasets page** over the server's workspace list; *as implemented (M5-2,
+      2026-10-20):* `src/webui/components/datasets_page.py`, on the server's list
+      (`list_workspaces`), with the markers "serving reads this workspace", "same dataset as
+      served" (the full fingerprint), "in your Training run bar" and "not trainable: <why>";
+      the details show the path relative to the workspace root, never an absolute path; "Use
+      for training ›" sets this browser session's workspace for Training and opens it, changing
+      nothing on the server. Nothing on it opens a checkpoint, so it is not gated;
     - **the charts**: axis-aware wheel zoom (over the X axis only X, over the Y axis only Y,
       inside the plot both, centred on the cursor), drag to pan, one-click and double-click
       reset, keyboard equivalents, and the view kept across the periodic refresh. Neither
@@ -1573,6 +1604,15 @@ contract and BACKLOG stay the record, and no new planning document is added.
     mouse, the keyboard and a click, can be dismissed, and stays readable when the pointer
     moves into the bubble. Long explanations go into the details area. A refusal's reason, a
     job's state, a synthetic workspace and an unverified source stay visible as short text.
+    *As implemented (M5-2, 2026-10-20):* `src/webui/components/help.py`, a registry of help
+    texts by component `elem_id` and one head script (the alternative, restyling Gradio's
+    `info=` in place, was not taken: Gradio 6.30 puts `info=` inside the field's label, and a
+    state-bearing text such as the HGT/AMP refusal travels in it). Every ordinary help text of
+    Diagnosis, the Training Console and Runtime Settings moved behind it; `info=` now carries
+    only texts that must stay visible. The texts are escaped once in Python and shown with
+    `textContent`; the bubble opens on hover, focus and click, stays open while the pointer is
+    in it, pins on click and closes on Esc or a click outside; the field's input is labelled by
+    its title and described by the help.
 - **The served identity is shown together, never merged.** The identity serving now and each
   result's own identity are kept apart. One shared block shows a readable summary by default;
   expanded, it shows either one in full, with its digests to copy. Beside a result, one of
