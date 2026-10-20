@@ -180,6 +180,52 @@ class TestOneRuleForTheRegistry:
             ss.check_registry_root(None)
 
 
+class TestADirectoryThatCannotBeChecked:
+    """A parent the service account may not enter (the guide's `mkdir -m 700`
+    for another account): `Path.is_dir` raises EACCES rather than answer. The
+    setting is refused with why, never a bare error (M5-1 review)."""
+
+    @pytest.fixture
+    def locked(self, tmp_path, monkeypatch):
+        locked = (tmp_path / "locked").resolve()
+        locked.mkdir()
+        original = Path.is_dir
+
+        def is_dir(self, *args, **kwargs):
+            if self == locked:
+                raise PermissionError(13, "Permission denied", str(self))
+            return original(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "is_dir", is_dir)
+        return locked
+
+    def test_the_rule_refuses_it_and_says_why(self, locked):
+        with pytest.raises(ss.DirectoryRefused,
+                           match=r"cannot be checked \(PermissionError: Permission denied\)"):
+            ss.check_operator_directory(locked, what="the registry", holds="x",
+                                        outside_repository=True)
+
+    @pytest.mark.parametrize("reader, key", [
+        (ss.workspaces_root, "WORKSPACES_ROOT"), (ss.cohort_registry, "REGISTRY"),
+        (ss.intake_directory, "INTAKE_DIR"),
+        (ss.training_evidence_dirs, "TRAINING_EVIDENCE_DIRS"),
+    ])
+    def test_each_setting_is_refused_not_raised(self, locked, reader, key):
+        setting = reader(_env(**{key: str(locked)}))
+        assert setting.value is None and "cannot be checked" in setting.problem
+
+    def test_a_status_view_still_reads_every_setting(self, locked):
+        settings = ss.all_settings(_env(REGISTRY=str(locked), WORKSPACES_ROOT=str(locked)))
+        assert len(settings) == 6
+        assert "cannot be checked" in settings[2].problem
+
+    def test_validate_registry_refuses_it_too(self, locked):
+        from src.evaluation.cohort_registry import RegistryRefused, validate_registry
+
+        with pytest.raises(RegistryRefused, match="cannot be checked"):
+            validate_registry(locked)
+
+
 # ---------------------------------------------------------------------------
 # The evidence directories
 # ---------------------------------------------------------------------------

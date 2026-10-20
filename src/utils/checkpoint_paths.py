@@ -285,9 +285,20 @@ def run_checkpoints(run_dir: PathLike) -> List[Path]:
     return sorted(directory.glob("*.pt")) if directory.is_dir() else []
 
 
+def _mtime(path: Path) -> float:
+    """A listed file's modification time, for ordering only; 0 when it cannot
+    be read: a link whose target is gone, or a checkpoint training removed
+    (beyond `save_top_k`) between the listing and this call. Such a file sorts
+    last and stays listed; a reader says what became of it."""
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
 def _run_recency(run_dir: Path) -> float:
     """When the run last wrote a checkpoint (0 for none)."""
-    return max((p.stat().st_mtime for p in run_checkpoints(run_dir)), default=0.0)
+    return max((_mtime(p) for p in run_checkpoints(run_dir)), default=0.0)
 
 
 def list_runs(data_dir: PathLike, conv_type: Optional[str] = None) -> List[Path]:
@@ -323,8 +334,7 @@ def list_run_checkpoints(
     caller, never from where it sits."""
     entries: List[Tuple[Path, Path]] = []
     for run in list_runs(data_dir, conv_type):
-        files = sorted(run_checkpoints(run),
-                       key=lambda p: (p.stat().st_mtime, p.name), reverse=True)
+        files = sorted(run_checkpoints(run), key=lambda p: (_mtime(p), p.name), reverse=True)
         entries.extend((run, path) for path in files)
     return entries
 
@@ -344,7 +354,14 @@ class ListedCheckpoint(NamedTuple):
     **A file the read refuses is listed, never dropped:** `problem` says why
     (a format `weights_only=True` refuses, a file gone since it was listed),
     and the digest and record are `None`. A file that loads as something other
-    than a checkpoint record keeps its digest and says so in `problem`.
+    than a checkpoint record keeps its digest and says so in `problem`. A file
+    that resolves outside the directory the caller bounds the listing by is
+    listed with `problem` and is not read at all (`read_run_checkpoints`'
+    `within`).
+
+    `size_bytes` is the file's size as listed (a `stat` beside the read,
+    descriptive only); `None` for a file not read because it is outside, or one
+    that cannot be found.
     """
 
     run_dir: Path
@@ -356,6 +373,7 @@ class ListedCheckpoint(NamedTuple):
     validation: Optional[Tuple[str, float]] = None
     dataset_fingerprint: Optional[str] = None
     problem: Optional[str] = None
+    size_bytes: Optional[int] = None
 
 
 #: How much of a refusal's text a listing keeps: its first line, bounded, so a
@@ -370,8 +388,28 @@ def _first_line(exc: BaseException) -> str:
     return f"{type(exc).__name__}: {text}" if text else type(exc).__name__
 
 
+def _outside(path: Path, within: Path) -> Optional[str]:
+    """Why `path` is not read under `within` (resolved), or `None` when it
+    resolves inside it."""
+    try:
+        resolved = path.resolve()
+    except (OSError, RuntimeError) as exc:  # a link loop: RuntimeError before 3.13
+        return f"cannot be resolved ({type(exc).__name__}), so it is not read"
+    if resolved == within or within not in resolved.parents:
+        return "resolves outside the workspace, so it is not read"
+    return None
+
+
+def _size(path: Path) -> Optional[int]:
+    try:
+        return path.stat().st_size
+    except OSError:
+        return None
+
+
 def read_run_checkpoints(
-    data_dir: PathLike, conv_type: Optional[str] = None
+    data_dir: PathLike, conv_type: Optional[str] = None, *,
+    within: Optional[PathLike] = None,
 ) -> List[ListedCheckpoint]:
     """The listing (`list_run_checkpoints`, same order), each file read once.
 
@@ -384,24 +422,39 @@ def read_run_checkpoints(
     as D8 says. `list_run_checkpoints` stays the read-free form, for a caller
     that only needs to know which files exist.
 
+    `within`, the workspace directory, bounds what is read: a file that
+    resolves outside it (a run or a checkpoint that is a link out of the
+    workspace) is listed with that reason and **never opened**, so nothing of
+    a file elsewhere is read or shown. The check runs before the read; the
+    server's list passes its workspace (`server_lists.list_checkpoints`).
+
     torch is imported only here, when a file is read, so this module stays
     importable without it.
     """
     from src.utils.checkpoint_io import read_checkpoint
 
+    bound = Path(within).resolve() if within is not None else None
     entries: List[ListedCheckpoint] = []
     for run, path in list_run_checkpoints(data_dir, conv_type):
+        outside = _outside(path, bound) if bound is not None else None
+        if outside is not None:
+            entries.append(ListedCheckpoint(
+                run, path, problem=f"{run.name}/{path.name} {outside}"))
+            continue
+        size = _size(path)
         try:
             read = read_checkpoint(path, map_location="cpu", weights_only=True)
         except Exception as exc:  # noqa: BLE001 — listed with its reason, never dropped
-            entries.append(ListedCheckpoint(run, path, problem=_first_line(exc)))
+            entries.append(ListedCheckpoint(run, path, problem=_first_line(exc),
+                                            size_bytes=size))
             continue
         meta = read.checkpoint
         if not isinstance(meta, dict):
             entries.append(ListedCheckpoint(
                 run, path, sha256=read.identity.sha256,
                 problem=(f"it loads as {type(meta).__name__}, not a checkpoint record, so it "
-                         "carries no metadata")))
+                         "carries no metadata"),
+                size_bytes=size))
             continue
         logs = meta.get("logs") if isinstance(meta.get("logs"), dict) else {}
         digests = meta.get("training_input_digests")
@@ -413,6 +466,7 @@ def read_run_checkpoints(
             logs=logs,
             validation=ranking_score_detail(logs),
             dataset_fingerprint=fingerprint if isinstance(fingerprint, str) else None,
+            size_bytes=size,
         ))
     return entries
 

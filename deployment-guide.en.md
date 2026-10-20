@@ -1532,7 +1532,7 @@ repository's `data/workspaces/` included.
 
 | Variable | Value | Unset or refused |
 |---|---|---|
-| `SHEPHERD_DEPLOYMENT_MODE` | `M1`, exactly (`m1`, ` M1` or `M2` are other values) | read-only: the operator controls are off |
+| `SHEPHERD_DEPLOYMENT_MODE` | `M1`, exactly (`m1`, ` M1` or `M2` are other values) | read-only: the operator controls are off, once D8's check applies it (not yet, see below) |
 | `SHEPHERD_WORKSPACES_ROOT` | absolute path of an existing directory; its subdirectories are the workspaces | no workspace is listed |
 | `SHEPHERD_REGISTRY` | the cohort registry (§4.9), the directory the commands take as `--registry`: absolute, existing, outside the repository | no cohort version is listed |
 | `SHEPHERD_INTAKE_DIR` | an existing directory outside the repository where you place `shepherd-cases/1` files to import; absolute | no import source is offered |
@@ -1550,6 +1550,10 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
   forwarding, operated by the owner or a designated technician (§4.9 question 3). It is one of the
   conditions an operator control checks, not an authorisation. D8 checks each request it handles
   for the others. Do not set it behind a reverse proxy or on a machine other people can log in to.
+- **The deployment mode is not applied yet.** D8's check, M5's next step, reads it and gates
+  every operator control with it. Until that step lands nothing reads it: training start and
+  stop, the pipeline reload and the configuration save stay as open as before M5-1, whatever the
+  variable says. Leaving it unset does not make this revision read-only.
 - **The workspaces root may be inside the repository**, as the usual `data/workspaces/` is, but
   only when you name it. A relative path, a missing directory and a file are refused.
 - **The registry and the intake directory hold patient-level data.** They follow the
@@ -1557,6 +1561,10 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
   the repository (through a symlink too) are refused. `--registry` on the command line and
   `SHEPHERD_REGISTRY` are checked by the same function. Create both where only the accounts that
   run the service and the commands can read them, for example `mkdir -m 700`.
+- **A directory the service account cannot reach** (a parent it may not enter) is refused as
+  "cannot be checked", with the error, and its feature is off. Inside the registry, a `versions/`
+  the service cannot read refuses the cohort list with that reason; a version, a `reports/` or a
+  run directory it cannot read is listed with the reason, and the rest of the list stands.
 - **Evidence directories**: an empty entry (a doubled or trailing separator) is skipped, never
   read as the working directory. A repeated one is kept once.
 
@@ -1575,25 +1583,33 @@ and a file, or a label, and the server finds that name in its own list again.
   - its **build time** from `workspace_build.json` (below), or "not recorded" with the reason;
   - its sources' declared releases, from the dataset record (none for a synthetic workspace);
   - its train and val sample counts;
-  - whether it is **trainable**, and why not: no `split_manifest.json`, a dataset record that is
-    not verified, or a file the manifest binds is missing. The list hashes no graph file. A
-    training run checks every file on the bytes it reads, and may still refuse.
-- **A workspace's checkpoints** (`GET /api/v1/workspaces/{name}/checkpoints`, optionally
-  `?architecture=gat`): the run layout's checkpoints, latest run first. Each file is read once,
-  weights only, and shows:
+  - whether it is **trainable**, and why not: no readable `split_manifest.json`, a dataset record
+    that is not verified, or a file the manifest binds is missing or cannot be checked. The list
+    hashes no graph file. A training run checks every file on the bytes it reads, and may still
+    refuse.
+- **A workspace's checkpoints**: the run layout's checkpoints of one listed workspace, every
+  architecture's or one's, latest run first. Each file is read once, weights only, and shows:
   - the SHA-256 of the bytes read;
   - the Trainer's validation figure: the trainer's top-20 selection metric, never a test result,
     and none when the file records none;
   - the dataset fingerprint the checkpoint records, and whether it is this workspace's now;
-  - for a file that cannot be read, why. No file is dropped.
+  - for a file that cannot be read, why (a link whose target is gone included). No file is
+    dropped;
+  - for a file that resolves outside the workspace (a run or a checkpoint that is a symlink out of
+    it), that reason only: it is never opened, so it shows no digest, size or record.
 
-  Listing opens every checkpoint, which SPEC_4 classes as checkpoint inspection (C3). Like
-  `GET /api/v1/training/checkpoints`, it is to be gated by D8's check with the other operator
-  controls, in M5's next step. It is not gated before that.
+  Each item names the workspace as the list does: for `current -> builds/2026-10-20`, it says
+  `current`. Listing opens every checkpoint, which SPEC_4 classes as checkpoint inspection (C3),
+  and D8 offers that only where the operator controls are. **No route offers this list yet.**
+  M5's next step mounts it as `GET /api/v1/workspaces/{name}/checkpoints` behind D8's check;
+  until then it exists only inside the service, for the dashboard of M5's UI step.
 - **The existing checkpoint list** (`GET /api/v1/training/checkpoints` and the Training
   Console's resume list) reads each file the same way. Each entry gains `sha256`, `validation`,
   `dataset_fingerprint` and `metadata_problem`, all from the one read. Before, it loaded each
-  file without keeping its digest, and dropped a load error without a word.
+  file without keeping its digest, and dropped a load error without a word. A file that is gone
+  by the time it is read (a link whose target was removed) has no size or time to show and is
+  left out of this list; it no longer fails the whole list. This list stays open until D8's
+  check, as before M5-1.
 - **Cohort versions** (`GET /api/v1/cohorts`): each version in the registry, by label and the
   SHA-256 of its `cohort.json`, with its role and whether that role offers ordering. It also shows
   its counts, the graph and dataset record it is bound to, and when it was imported. The list
@@ -1626,9 +1642,12 @@ Since M5-1, every build through the workspace writer (`scripts/build_knowledge_g
 - **It names the manifest it describes.** A record beside another manifest reads "not recorded",
   never another build's time. That happens after a rebuild that stopped after writing its
   manifest, or a rebuild by a revision older than M5-1, which does not write this file.
-- **A workspace built before M5-1 has none.** Its build time reads "build time not recorded",
-  shown with its sources' declared releases; never a file modification time. It does not need
-  rebuilding for that. A graph-only build (no `--generate-samples`) writes none.
+- **A workspace built before M5-1 has none.** Its build time reads "not recorded", shown with its
+  sources' declared releases; never a file modification time. It does not need rebuilding for
+  that. The reason says "built by a revision before M5-1, or its build stopped before writing
+  one": a first build stopped between the manifest and this file looks the same.
+- **A graph-only build** (no `--generate-samples`) writes neither a manifest nor this file. Its
+  build time reads "not recorded" because there is no `split_manifest.json` to describe.
 
 ---
 

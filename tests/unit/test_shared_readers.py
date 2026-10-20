@@ -334,10 +334,14 @@ class TestReadSplitManifest:
         with pytest.raises(ValueError, match="schema 2.*recorded no export recipe"):
             read_split_manifest(workspace)
 
-    @pytest.mark.parametrize("payload", [b"{ not json", b"\xff\xfe{}", b"[]"])
+    @pytest.mark.parametrize("payload", [b"{ not json", b"\xff\xfe{}", b"[]",
+                                         b"[" * 100_000],
+                             ids=["not-json", "not-utf8", "not-object", "nested-deeper"])
     def test_a_manifest_that_is_not_a_utf8_json_object_is_refused_by_name(
         self, workspace, payload
     ):
+        """Nesting deeper than the interpreter's limit (`RecursionError` from
+        `json`) is refused the same way, never a bare error (M5-1)."""
         from src.kg.artifacts import read_split_manifest
 
         path = workspace / "split_manifest.json"

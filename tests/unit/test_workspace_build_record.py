@@ -138,15 +138,37 @@ class TestTheReaderSaysNotRecorded:
         shutil.copytree(workspace, copy)
         return copy, file_sha256(copy / "split_manifest.json")
 
-    def test_absent_is_built_before_build_times_were_recorded(self, built, tmp_path):
-        """And never a modification time, whatever the files' times are."""
+    def test_absent_beside_a_manifest_names_both_causes(self, built, tmp_path):
+        """A revision before M5-1, or a build stopped between its manifest and
+        this record: the reader cannot tell which, and says both. Never a
+        modification time, whatever the files' times are."""
         workspace, digest = self._copy(built, tmp_path)
         (workspace / WORKSPACE_BUILD_FILENAME).unlink()
         os.utime(workspace / "split_manifest.json", (1_600_000_000, 1_600_000_000))
         read = read_workspace_build(workspace, digest)
         assert read.state == "not_recorded" and read.built_at is None
-        assert "built before build times were recorded" in read.reason
+        assert read.reason == (
+            "no workspace_build.json beside this split_manifest.json: it was built by a "
+            "revision before M5-1, or its build stopped before writing one")
         assert "2020" not in read.reason
+
+    def test_a_build_stopped_before_its_record_does_not_claim_an_older_revision(
+            self, tmp_path, monkeypatch):
+        """The first build of a workspace, stopped after its manifest: trainable,
+        and its reason is not "built before build times were recorded"."""
+        import src.kg.workspace as workspace_module
+
+        def stopped(workspace, **kwargs):
+            raise KeyboardInterrupt("stopped")
+
+        monkeypatch.setattr(workspace_module, "write_workspace_build", stopped)
+        with pytest.raises(KeyboardInterrupt):
+            _write(tmp_path / "ws")
+        read = read_workspace_build(tmp_path / "ws",
+                                    file_sha256(tmp_path / "ws" / "split_manifest.json"))
+        assert read.state == "not_recorded"
+        assert "its build stopped before writing one" in read.reason
+        assert "built before build times were recorded" not in read.reason
 
     def test_a_record_of_another_manifest_is_not_this_build(self, built, tmp_path):
         """A rebuild that stopped after its manifest, or one by a revision that
@@ -159,7 +181,31 @@ class TestTheReaderSaysNotRecorded:
     def test_without_a_manifest_nothing_is_paired(self, built, tmp_path):
         workspace, _ = self._copy(built, tmp_path)
         read = read_workspace_build(workspace, None)
-        assert read.state == "not_recorded" and "no readable split_manifest.json" in read.reason
+        assert read.state == "not_recorded" and read.reason == (
+            "there is no readable split_manifest.json for a workspace_build.json to describe")
+
+    @pytest.mark.parametrize("record", [None, b"[]", b"{not json"],
+                             ids=["absent", "not-an-object", "not-json"])
+    def test_without_a_manifest_the_record_is_not_read(self, tmp_path, monkeypatch, record):
+        """The missing manifest is the reason, whatever is or is not beside it;
+        the record is not even opened."""
+        import src.utils.fingerprint as fingerprint
+
+        if record is not None:
+            (tmp_path / WORKSPACE_BUILD_FILENAME).write_bytes(record)
+        monkeypatch.setattr(fingerprint, "read_once",
+                            lambda path: pytest.fail(f"{path} was read"))
+        read = read_workspace_build(tmp_path, None)
+        assert read.state == "not_recorded"
+        assert "no readable split_manifest.json" in read.reason
+
+    def test_a_graph_only_workspace_says_it_has_no_manifest(self, tmp_path):
+        """A graph-only build today writes neither file; it was not "built
+        before build times were recorded"."""
+        _write(tmp_path / "ws", samples=False)
+        read = read_workspace_build(tmp_path / "ws", None)
+        assert "no readable split_manifest.json" in read.reason
+        assert "M5-1" not in read.reason
 
     @pytest.mark.parametrize("content, fragment", [
         (b"\xff\xfe not utf-8", "not UTF-8 JSON"),

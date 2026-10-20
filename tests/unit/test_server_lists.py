@@ -16,7 +16,12 @@ The server's lists (M5-1): workspaces, their checkpoints, cohort versions.
   with why not otherwise;
 - **cohort versions carry aggregates, never a case identifier** (D7), and the
   report store's runs, whose kept and registered state comes only from the
-  reader given.
+  reader given;
+- **one unreadable entry never fails a list**: a malformed manifest, a file or
+  directory this account may not check, a checkpoint link whose target is gone;
+- **a checkpoint outside the workspace is listed and never opened**, and items
+  name the workspace as the server lists it;
+- **the checkpoint route is not mounted** until D8's check gates it (WP2).
 
 Module: tests/unit/test_server_lists.py
 """
@@ -121,6 +126,7 @@ class TestWorkspaces:
         assert item.dataset_fingerprint is None and not item.trainable
         assert "has no split_manifest.json" in item.not_trainable
         assert item.build["state"] == "not_recorded"
+        assert "no readable split_manifest.json" in item.build["reason"]
         assert item.dataset_record["binding"] is None
 
     def test_a_workspace_built_before_build_records(self, demo_workspace, tmp_path):
@@ -131,8 +137,9 @@ class TestWorkspaces:
         assert item.trainable  # a missing build record is descriptive only
         assert item.build == {
             "state": "not_recorded", "built_at": None, "code_revision": None,
-            "reason": ("no workspace_build.json: the workspace was built before build "
-                       "times were recorded")}
+            "reason": ("no workspace_build.json beside this split_manifest.json: it was "
+                       "built by a revision before M5-1, or its build stopped before "
+                       "writing one")}
 
     def test_a_build_record_of_another_manifest_is_not_shown(self, demo_workspace, tmp_path):
         root = tmp_path / "root"
@@ -181,6 +188,67 @@ class TestWorkspaces:
         assert "outside the workspaces root" in item.not_trainable
         with pytest.raises(sl.ServerListRefused, match="outside the workspaces root"):
             sl.resolve_workspace("away", environ=_roots(root))
+
+    def test_a_manifest_nested_too_deep_is_one_unreadable_workspace(self, demo_workspace,
+                                                                      tmp_path):
+        """`json` meets nesting deeper than the interpreter's limit with a
+        `RecursionError`; the reader refuses it like any malformed manifest, so
+        the other workspaces are still listed (M5-1 review)."""
+        root = tmp_path / "root"
+        _copy(demo_workspace, root / "good")
+        (root / "deep").mkdir()
+        (root / "deep" / "split_manifest.json").write_text("[" * 100_000, encoding="utf-8")
+        listing = sl.list_workspaces(environ=_roots(root))
+        assert listing.available
+        items = {item.name: item for item in listing.items}
+        assert items["good"].trainable
+        assert not items["deep"].trainable and "not UTF-8 JSON" in items["deep"].not_trainable
+        assert sl.list_checkpoints("deep", environ=_roots(root)).available
+
+    def test_a_bound_file_that_cannot_be_checked_is_not_trainable(
+            self, demo_workspace, tmp_path, monkeypatch):
+        """`Path.is_file` raises EACCES rather than answer (a link into a
+        directory this account may not enter): the workspace says so."""
+        root = tmp_path / "root"
+        ws = _copy(demo_workspace, root / "demo").resolve()
+        original = Path.is_file
+
+        def is_file(self, *args, **kwargs):
+            if self == ws / "node_features.pt":
+                raise PermissionError(13, "Permission denied", str(self))
+            return original(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "is_file", is_file)
+        (item,) = sl.list_workspaces(environ=_roots(root)).items
+        assert not item.trainable
+        assert item.not_trainable == ("files its split_manifest.json binds cannot be "
+                                      "checked (node_features.pt: PermissionError)")
+
+    def test_an_entry_that_cannot_be_checked_does_not_fail_the_list(
+            self, demo_workspace, tmp_path, monkeypatch):
+        """One entry the account may not check is listed with why; the rest of
+        the list stands."""
+        root = tmp_path / "root"
+        _copy(demo_workspace, root / "good")
+        locked = root / "locked"
+        locked.mkdir()
+        originals = {name: getattr(Path, name) for name in ("is_dir", "is_file")}
+
+        def refusing(name):
+            def check(self, *args, **kwargs):
+                if self == locked or locked in self.parents:
+                    raise PermissionError(13, "Permission denied", str(self))
+                return originals[name](self, *args, **kwargs)
+            return check
+
+        for name in originals:
+            monkeypatch.setattr(Path, name, refusing(name))
+        listing = sl.list_workspaces(environ=_roots(root))
+        assert listing.available
+        items = {item.name: item for item in listing.items}
+        assert set(items) == {"good", "locked"} and items["good"].trainable
+        assert not items["locked"].trainable
+        assert "Permission denied" in items["locked"].not_trainable
 
     def test_each_call_reads_the_setting_again(self, tmp_path, monkeypatch):
         first, second = tmp_path / "one", tmp_path / "two"
@@ -380,11 +448,100 @@ class TestResolveCheckpoint:
         write_checkpoint({"epoch": 1}, outside / "x.pt")
         (ws / "runs" / "gat").mkdir(parents=True)
         (ws / "runs" / "gat" / "20261020-000000_far_cccccc").symlink_to(outside.parent)
-        with pytest.raises(sl.ServerListRefused, match="outside the workspace"):
+        with pytest.raises(sl.ServerListRefused, match="outside the workspace 'demo'"):
             sl.resolve_checkpoint("demo", "gat", "20261020-000000_far_cccccc", "x.pt",
                                   environ=_roots(root))
         (item,) = sl.list_checkpoints("demo", environ=_roots(root)).items
         assert "outside the workspace" in item.problem
+        assert (item.sha256, item.size_bytes, item.epoch) == (None, None, None)
+
+
+class TestCheckpointsInAndOut:
+    """What the checkpoint list opens, and what it names (M5-1 review)."""
+
+    def test_a_file_linked_out_of_the_workspace_is_never_opened(
+            self, demo_workspace, tmp_path, monkeypatch):
+        import src.utils.checkpoint_io as checkpoint_io
+        from src.utils.checkpoint_io import write_checkpoint
+
+        root = tmp_path / "root"
+        ws = _copy(demo_workspace, root / "demo")
+        secret = tmp_path / "outside" / "secret.pt"
+        secret.parent.mkdir()
+        write_checkpoint({"epoch": 9, "logs": {"val_mrr": 0.9},
+                          "training_input_digests": {"split_manifest": "1" * 64}}, secret)
+        run = _run(ws, "gat", "20261020-000000_x_aaaaaa")
+        write_checkpoint({"epoch": 1}, run / "inside.pt")
+        (run / "link.pt").symlink_to(secret)
+
+        original = checkpoint_io.read_checkpoint
+        reads = []
+
+        def counting(path, **kwargs):
+            reads.append(Path(path).resolve())
+            return original(path, **kwargs)
+
+        monkeypatch.setattr(checkpoint_io, "read_checkpoint", counting)
+        items = {i.filename: i for i in sl.list_checkpoints("demo", environ=_roots(root)).items}
+        assert secret.resolve() not in reads and len(reads) == 1
+        link = items["link.pt"]
+        assert "resolves outside the workspace" in link.problem
+        assert (link.sha256, link.size_bytes, link.checkpoint_kind, link.epoch,
+                link.validation, link.dataset_fingerprint,
+                link.trained_on_this_dataset) == (None,) * 7
+        assert items["inside.pt"].problem is None and items["inside.pt"].sha256
+
+    def test_a_link_whose_target_is_gone_is_listed_with_its_problem(
+            self, demo_workspace, tmp_path):
+        from src.utils.checkpoint_io import write_checkpoint
+
+        root = tmp_path / "root"
+        ws = _copy(demo_workspace, root / "demo")
+        run = _run(ws, "gat", "20261020-000000_x_aaaaaa")
+        write_checkpoint({"epoch": 1}, run / "last.pt")
+        (run / "gone.pt").symlink_to(run / "removed.pt")
+        listing = sl.list_checkpoints("demo", environ=_roots(root))
+        assert listing.available
+        items = {i.filename: i for i in listing.items}
+        assert items["last.pt"].problem is None
+        assert items["gone.pt"].problem.startswith("FileNotFoundError")
+        assert items["gone.pt"].sha256 is None
+
+    def test_an_item_names_the_workspace_as_listed(self, demo_workspace, tmp_path):
+        """`current -> builds/2026-10-20`: the item says `current`, the name the
+        server lists, so it resolves again by its own name."""
+        from src.utils.checkpoint_io import write_checkpoint
+
+        root = tmp_path / "root"
+        ws = _copy(demo_workspace, root / "builds" / "2026-10-20")
+        (root / "current").symlink_to(ws)
+        run = _run(ws, "gat", "20261020-000000_x_aaaaaa")
+        write_checkpoint({"epoch": 1}, run / "last.pt")
+
+        (item,) = sl.list_checkpoints("current", environ=_roots(root)).items
+        assert item.workspace == "current"
+        assert sl.resolve_checkpoint(item.workspace, item.architecture, item.run,
+                                     item.filename, environ=_roots(root)) == run / "last.pt"
+        with pytest.raises(sl.ServerListRefused, match="in the workspace 'current'"):
+            sl.resolve_checkpoint("current", "gat", item.run, "missing.pt",
+                                  environ=_roots(root))
+
+    def test_runs_that_cannot_be_listed_say_why(self, demo_workspace, tmp_path, monkeypatch):
+        import src.utils.checkpoint_paths as checkpoint_paths
+
+        root = tmp_path / "root"
+        _copy(demo_workspace, root / "demo")
+
+        def refusing(*args, **kwargs):
+            raise PermissionError(13, "Permission denied", "runs/gat")
+
+        monkeypatch.setattr(checkpoint_paths, "list_runs", refusing)
+        listing = sl.list_checkpoints("demo", environ=_roots(root))
+        assert listing.items == ()
+        assert listing.problem == ("the runs of the workspace 'demo' cannot be listed "
+                                   "(PermissionError: Permission denied)")
+        with pytest.raises(sl.ServerListRefused, match="cannot be listed"):
+            sl.resolve_checkpoint("demo", "gat", "r", "x.pt", environ=_roots(root))
 
 
 # ---------------------------------------------------------------------------
@@ -497,6 +654,85 @@ class TestCohortVersions:
         assert listed.state is None and "outside" in listed.problem
 
 
+def _refuse_iterdir(monkeypatch, name):
+    """`iterdir` on a directory named `name` raises EACCES, as a directory
+    another account made with `mkdir -m 700` does."""
+    original = Path.iterdir
+
+    def iterdir(self):
+        if self.name == name:
+            raise PermissionError(13, "Permission denied", str(self))
+        return original(self)
+
+    monkeypatch.setattr(Path, "iterdir", iterdir)
+
+
+class TestUnreadableRegistryDirectories:
+    """One directory the service account may not read never fails the whole
+    cohort list with a bare error (M5-1 review)."""
+
+    def test_a_report_store_that_cannot_be_listed_is_that_versions_problem(
+            self, registered, tmp_path, monkeypatch):
+        cohort = _registry_copy(registered, tmp_path)
+        (cohort.version.directory / "reports").mkdir()
+        _refuse_iterdir(monkeypatch, "reports")
+        listing = sl.list_cohort_versions(environ={ss.ENV_REGISTRY: str(cohort.registry)})
+        assert listing.available
+        (item,) = listing.items
+        assert item.problem is None and item.manifest_sha256 is not None
+        assert item.reports == ()
+        assert "reports cannot be listed (PermissionError: Permission denied)" in (
+            item.reports_problem)
+
+    def test_versions_that_cannot_be_listed_say_why(self, registered, tmp_path, monkeypatch):
+        cohort = _registry_copy(registered, tmp_path)
+        _refuse_iterdir(monkeypatch, "versions")
+        listing = sl.list_cohort_versions(environ={ss.ENV_REGISTRY: str(cohort.registry)})
+        assert listing.items == ()
+        assert "versions cannot be listed (PermissionError" in listing.problem
+        assert "No version was read." in listing.problem
+
+    def test_a_version_that_cannot_be_checked_is_listed_with_why(
+            self, registered, tmp_path, monkeypatch):
+        import src.evaluation.cohort_registry as registry_module
+
+        cohort = _registry_copy(registered, tmp_path)
+        (cohort.registry / "versions" / "locked").mkdir()
+        original = registry_module.resolve_version
+
+        def resolve(registry, label):
+            if label == "locked":
+                raise PermissionError(13, "Permission denied", label)
+            return original(registry, label)
+
+        monkeypatch.setattr(registry_module, "resolve_version", resolve)
+        items = {item.label: item for item in sl.list_cohort_versions(
+            environ={ss.ENV_REGISTRY: str(cohort.registry)}).items}
+        assert items[cohort.version.manifest["label"]].problem is None
+        assert "cannot be read (PermissionError: Permission denied)" in items["locked"].problem
+
+    def test_a_run_that_cannot_be_checked_is_listed_with_why(
+            self, registered, tmp_path, monkeypatch):
+        from src.evaluation.cohort_registry import list_report_runs
+
+        cohort = _registry_copy(registered, tmp_path)
+        run = "20261020T120000Z-bbbbbbbbbbbb-00000002"
+        target = (cohort.version.directory / "reports" / run)
+        target.mkdir(parents=True)
+        resolved = target.resolve()
+        original = Path.is_dir
+
+        def is_dir(self, *args, **kwargs):
+            if self == resolved:
+                raise PermissionError(13, "Permission denied", str(self))
+            return original(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "is_dir", is_dir)
+        (listed,) = list_report_runs(cohort.version)
+        assert listed.directory is None
+        assert "cannot be checked (PermissionError: Permission denied)" in listed.problem
+
+
 class TestTheRegistryListing:
     """`list_versions` and `list_report_runs` in the registry module."""
 
@@ -564,8 +800,8 @@ class TestRoutes:
         assert response.json()["workspaces"] == []
         assert "SHEPHERD_WORKSPACES_ROOT is not set" in response.json()["problem"]
 
-    def test_workspaces_and_their_checkpoints(self, client, checkpoint_root, monkeypatch):
-        root, ws, digests = checkpoint_root
+    def test_workspaces(self, client, checkpoint_root, monkeypatch):
+        root, ws, _ = checkpoint_root
         monkeypatch.setenv(ss.ENV_WORKSPACES_ROOT, str(root))
         body = client.get("/api/v1/workspaces").json()
         assert body["problem"] is None
@@ -573,26 +809,38 @@ class TestRoutes:
         assert body["workspaces"][0]["dataset_fingerprint"] == file_sha256(
             ws / "split_manifest.json")
 
-        listed = client.get("/api/v1/workspaces/demo/checkpoints",
-                            params={"architecture": "gat"}).json()
+    def test_the_checkpoint_route_is_not_mounted_before_d8(self, client, checkpoint_root,
+                                                          monkeypatch):
+        """It opens every checkpoint (C3), which D8 offers only where the
+        operator controls are; D8's check is WP2's. Until WP2 mounts it with
+        that check, no route offers it (M5-1 review, P2)."""
+        root, _, _ = checkpoint_root
+        monkeypatch.setenv(ss.ENV_WORKSPACES_ROOT, str(root))
+        assert client.get("/api/v1/workspaces/demo/checkpoints").status_code == 404
+        from src.api.routes import lists
+
+        assert not any("checkpoints" in getattr(route, "path", "")
+                       for route in lists.router.routes)
+
+    def test_the_handler_wp2_mounts(self, checkpoint_root, monkeypatch):
+        from src.api.routes import lists
+
+        root, _, digests = checkpoint_root
+        monkeypatch.setenv(ss.ENV_WORKSPACES_ROOT, str(root))
+        listed = lists.get_workspace_checkpoints("demo", "gat")
         assert listed["problem"] is None
         assert {c["filename"]: c["sha256"] for c in listed["checkpoints"]} == {
             "best.pt": digests["trained"], "other.pt": digests["other"]}
 
-    @pytest.mark.parametrize("name", ["nope", ".cache", "%2E%2E"])
-    def test_a_request_names_only_a_listed_workspace(self, client, checkpoint_root,
-                                                     monkeypatch, name):
-        root, _, _ = checkpoint_root
-        monkeypatch.setenv(ss.ENV_WORKSPACES_ROOT, str(root))
-        response = client.get(f"/api/v1/workspaces/{name}/checkpoints")
-        assert response.status_code == 200
-        body = response.json()
-        assert body["checkpoints"] == [] and "is not a workspace" in body["problem"]
+    @pytest.mark.parametrize("name", ["nope", ".cache", "..", "../demo", "demo/"])
+    def test_the_handler_takes_only_a_listed_workspace(self, checkpoint_root, monkeypatch,
+                                                       name):
+        from src.api.routes import lists
 
-    def test_a_path_is_not_a_name(self, client, checkpoint_root, monkeypatch):
         root, _, _ = checkpoint_root
         monkeypatch.setenv(ss.ENV_WORKSPACES_ROOT, str(root))
-        assert client.get("/api/v1/workspaces/..%2Fdemo/checkpoints").status_code == 404
+        body = lists.get_workspace_checkpoints(name)
+        assert body["checkpoints"] == [] and "is not a workspace" in body["problem"]
 
     def test_cohorts(self, client, registered, tmp_path, monkeypatch):
         cohort = _registry_copy(registered, tmp_path)
@@ -605,5 +853,5 @@ class TestRoutes:
         from src.api.main import app
 
         paths = {getattr(route, "path", None) for route in app.routes}
-        assert {"/api/v1/workspaces", "/api/v1/cohorts",
-                "/api/v1/workspaces/{name}/checkpoints"} <= paths
+        assert {"/api/v1/workspaces", "/api/v1/cohorts"} <= paths
+        assert "/api/v1/workspaces/{name}/checkpoints" not in paths

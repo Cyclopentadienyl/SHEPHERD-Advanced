@@ -411,6 +411,23 @@ class TestTrainingAPIEndpoints:
         assert listed["last.pt"]["metadata_problem"] is None
         assert listed["broken.pt"]["sha256"] is None and listed["broken.pt"]["metadata_problem"]
 
+    def test_a_link_whose_target_is_gone_does_not_break_the_list(self, manager, tmp_dirs):
+        """A `.pt` link whose target is gone (or a checkpoint training removed
+        between the listing and its `stat`) used to fail the whole list with
+        `FileNotFoundError`. The file has no size or time to show, so this
+        list leaves it out, as before for a file gone since it was listed
+        (M5-1 review)."""
+        from src.utils.checkpoint_io import write_checkpoint
+
+        checkpoints = Path(tmp_dirs["checkpoint_dir"])
+        write_checkpoint({"epoch": 1}, checkpoints / "last.pt")
+        (checkpoints / "gone.pt").symlink_to(checkpoints / "removed.pt")
+        manager._config = {"data_dir": tmp_dirs["data_dir"]}
+
+        response = self.client.get("/api/v1/training/checkpoints")
+        assert response.status_code == 200
+        assert [c["filename"] for c in response.json()] == ["last.pt"]
+
     def test_start_training(self, sample_config):
         mock_proc = MagicMock()
         mock_proc.pid = 99999

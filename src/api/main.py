@@ -354,7 +354,8 @@ app.include_router(search.router, prefix="/api/v1", tags=["Search"])
 app.include_router(disease.router, prefix="/api/v1", tags=["Disease"])
 app.include_router(training.router, prefix="/api/v1", tags=["Training"])
 app.include_router(system.router, prefix="/api/v1", tags=["System"])
-# The server's lists (M5-1): workspaces, cohort versions, a workspace's checkpoints.
+# The server's lists (M5-1): workspaces and cohort versions. A workspace's
+# checkpoints are not mounted until D8's check gates them (WP2; routes/lists.py).
 app.include_router(lists.router, prefix="/api/v1", tags=["Lists"])
 
 

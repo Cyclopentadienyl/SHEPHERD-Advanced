@@ -1161,28 +1161,50 @@ class ListedRun(NamedTuple):
 _RUN_ID = re.compile(r"[0-9]{8}T[0-9]{6}Z-[0-9a-f]{12}-[0-9a-f]{8}")
 
 
+def _directory_entries(directory: Path, *, done: str) -> List[Path]:
+    """The entries of a registry directory a listing reads, none when it does
+    not exist, or a refusal when it cannot be listed: `Path.is_dir` and
+    `iterdir` raise on a directory this account may not enter (one the other
+    account made with ``mkdir -m 700``), and a list must say so rather than
+    fail with a bare error."""
+    try:
+        if not directory.is_dir():
+            return []
+        return list(directory.iterdir())
+    except OSError as exc:
+        raise RegistryRefused(
+            f"{directory} cannot be listed ({type(exc).__name__}: {exc.strerror or exc}). "
+            f"The account that runs this must be able to read it. {done}"
+        ) from None
+
+
 def list_versions(registry: Any) -> List[ListedVersion]:
     """Every entry under the registry's ``versions/``, by name, each read by
     `resolve_version` (the one reader) and kept as a value when it refuses, so
     an interrupted import is listed with its reason rather than hidden.
 
     Reads each ``cohort.json`` once, and nothing else; never a samples file.
+    An entry that cannot even be checked (a directory another account made
+    unreadable to this one) is listed with that reason too.
 
     Raises:
-        RegistryRefused: the registry root is refused (`validate_registry`), or
-            ``versions/`` resolves outside it or into the repository.
+        RegistryRefused: the registry root is refused (`validate_registry`);
+            ``versions/`` resolves outside it or into the repository, or cannot
+            be listed.
     """
     root = validate_registry(registry)
     versions = _registry_directory(root / VERSIONS_DIR, within=root,
                                    done="No version was read.")
-    if not versions.is_dir():
-        return []
+    entries = _directory_entries(versions, done="No version was read.")
     listed: List[ListedVersion] = []
-    for entry in sorted(versions.iterdir(), key=lambda p: p.name):
+    for entry in sorted(entries, key=lambda p: p.name):
         try:
             listed.append(ListedVersion(entry.name, resolve_version(root, entry.name), None))
         except (RegistryRefused, CohortVersionRefused) as exc:
             listed.append(ListedVersion(entry.name, None, str(exc)))
+        except OSError as exc:
+            listed.append(ListedVersion(entry.name, None, (
+                f"{entry} cannot be read ({type(exc).__name__}: {exc.strerror or exc}).")))
     return listed
 
 
@@ -1196,15 +1218,15 @@ def list_report_runs(version: CohortVersionRead) -> List[ListedRun]:
 
     Raises:
         RegistryRefused: ``reports/`` resolves outside the version directory, or
-            the version directory into the repository.
+            the version directory into the repository; or ``reports/`` cannot
+            be listed (made unreadable to this account by another).
     """
     directory = _registry_directory(version.directory, within=None, done="Nothing was read.")
     reports = _registry_directory(directory / REPORTS_DIR, within=directory,
                                   done="Nothing was read.")
-    if not reports.is_dir():
-        return []
     runs: List[ListedRun] = []
-    for entry in sorted(reports.iterdir(), key=lambda p: p.name, reverse=True):
+    for entry in sorted(_directory_entries(reports, done="Nothing was read."),
+                        key=lambda p: p.name, reverse=True):
         if not _RUN_ID.fullmatch(entry.name):
             runs.append(ListedRun(entry.name, None, (
                 f"{entry.name!r} in {reports} is not named as a run id, so it is not a "
@@ -1215,7 +1237,13 @@ def list_report_runs(version: CohortVersionRead) -> List[ListedRun]:
         except RegistryRefused as exc:
             runs.append(ListedRun(entry.name, None, str(exc)))
             continue
-        if not resolved.is_dir():
+        try:
+            is_directory = resolved.is_dir()
+        except OSError as exc:
+            runs.append(ListedRun(entry.name, None, (
+                f"{entry} cannot be checked ({type(exc).__name__}: {exc.strerror or exc})")))
+            continue
+        if not is_directory:
             runs.append(ListedRun(entry.name, None, f"{entry} is not a directory"))
             continue
         runs.append(ListedRun(entry.name, resolved, None))

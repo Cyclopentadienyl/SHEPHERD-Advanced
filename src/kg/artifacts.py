@@ -105,11 +105,13 @@ def read_split_manifest(data_dir: Path) -> ManifestRead:
         )
     read = read_once(manifest_path)
     identity = read.identity
+    # `RecursionError` is how `json` meets nesting deeper than the interpreter's
+    # limit: a file this revision cannot read, refused like any other (M5-1).
     try:
         text = read.data.decode("utf-8")
         del read
         manifest = json.loads(text)
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
         raise ValueError(f"{manifest_path} is not UTF-8 JSON ({exc}). {_REBUILD}") from exc
     if not isinstance(manifest, dict):
         raise ValueError(
@@ -664,16 +666,26 @@ def read_workspace_build(data_dir: Path, split_manifest_sha256: Optional[str]) -
     `recorded` only when the record is readable, has this revision's shape, and
     names this manifest; every other case is `not_recorded` with the reason. It
     never falls back to a file modification time.
+
+    Without a manifest the record is not read: a graph-only build writes
+    neither, and nothing could be paired with one. An absent record beside a
+    manifest has two causes this cannot tell apart (a build by a revision
+    before M5-1, or a build that stopped between the two files), and the
+    reason names both.
     """
     from src.utils.fingerprint import read_once
 
+    if split_manifest_sha256 is None:
+        return WorkspaceBuild("not_recorded", reason=(
+            f"there is no readable {MANIFEST_FILENAME} for a {WORKSPACE_BUILD_FILENAME} to "
+            "describe"))
     path = Path(data_dir) / WORKSPACE_BUILD_FILENAME
     try:
         read = read_once(path)
     except FileNotFoundError:
         return WorkspaceBuild("not_recorded", reason=(
-            f"no {WORKSPACE_BUILD_FILENAME}: the workspace was built before build times "
-            "were recorded"))
+            f"no {WORKSPACE_BUILD_FILENAME} beside this {MANIFEST_FILENAME}: it was built "
+            "by a revision before M5-1, or its build stopped before writing one"))
     except OSError as exc:
         return WorkspaceBuild("not_recorded", reason=(
             f"{WORKSPACE_BUILD_FILENAME} could not be read ({type(exc).__name__})"))
@@ -689,10 +701,6 @@ def read_workspace_build(data_dir: Path, split_manifest_sha256: Optional[str]) -
         return WorkspaceBuild("not_recorded", reason=(
             f"{WORKSPACE_BUILD_FILENAME} is not a build record this revision reads: "
             f"{'; '.join(problems)}"))
-    if split_manifest_sha256 is None:
-        return WorkspaceBuild("not_recorded", reason=(
-            f"there is no readable {MANIFEST_FILENAME} for {WORKSPACE_BUILD_FILENAME} to "
-            "describe"))
     if record["split_manifest_sha256"] != split_manifest_sha256:
         return WorkspaceBuild("not_recorded", reason=(
             f"{WORKSPACE_BUILD_FILENAME} describes another {MANIFEST_FILENAME} "

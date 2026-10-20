@@ -1325,8 +1325,9 @@ The reviewer's boundaries for M5, relayed by the owner. They narrow phase 2 abov
 contract and BACKLOG stay the record, and no new planning document is added.
 
 - **Deployment:** mode M1 (§4.9 question 3; D8 above). *Its setting (M5-1, 2026-10-20):*
-  `SHEPHERD_DEPLOYMENT_MODE`, read at each use; only the exact value `M1` enables operator
-  controls, and unset or anything else is read-only.
+  `SHEPHERD_DEPLOYMENT_MODE`, read at each use. D8's check (M5-1's next package) applies it: only
+  the exact value `M1` then enables operator controls, and unset or anything else is read-only.
+  Until that check lands nothing reads it, so it changes nothing.
 - **The default bind is `127.0.0.1`** (the reviewer's decisions, relayed by the owner, 2026-10-19; SPEC_4 B1, §3.1). Another address
   stays possible by explicit configuration, under SPEC_4's rules, and never lifts D8's checks on
   operator controls; a deployment that relied on the old `0.0.0.0` default gets migration notes.

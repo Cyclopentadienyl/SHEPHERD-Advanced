@@ -11,7 +11,7 @@ feature that needs it is off.
 
 | Variable | What it is | Unset |
 |---|---|---|
-| `SHEPHERD_DEPLOYMENT_MODE` | SPEC_4's deployment mode; only the exact value `M1` enables operator controls | read-only |
+| `SHEPHERD_DEPLOYMENT_MODE` | SPEC_4's deployment mode; only the exact value `M1` enables operator controls, once D8's check applies it (below) | read-only, once applied |
 | `SHEPHERD_WORKSPACES_ROOT` | the one workspace root: its subdirectories are the workspaces the server lists (SPEC_4 M1's "one explicit workspace namespace") | no workspace listed |
 | `SHEPHERD_REGISTRY` | the cohort registry (the `--registry` of the CLI) | no cohort feature |
 | `SHEPHERD_INTAKE_DIR` | where an operator places import sources | no import source |
@@ -38,6 +38,12 @@ authorisation: the check on each operator control (loopback arrival, no
 forwarding header, a loopback Host) is D8's, applied where the request is
 handled. Setting `M1` behind a reverse proxy or on a shared machine does not make
 those controls safe (SPEC_4 §3: loopback is not authorisation).
+
+**Not applied yet.** `deployment_mode()` is read by D8's check, M5-1's next
+package (WP2), which gates every operator control with it. Until that lands
+nothing else reads it: training start and stop, the pipeline reload and the
+configuration save stay as open as before M5-1, whatever the variable says, and
+leaving it unset protects nothing.
 
 Platform: nothing here is POSIX-only; `os.pathsep` is `;` on Windows.
 
@@ -135,7 +141,8 @@ def check_operator_directory(
     ("patient-level data"), which is why it must be absolute.
 
     Raises:
-        DirectoryRefused: naming the directory and which rule it fails.
+        DirectoryRefused: naming the directory and which rule it fails, or that
+            it cannot be checked (a parent the account cannot enter).
     """
     if not isinstance(path, (str, os.PathLike)):
         raise DirectoryRefused(f"{what} must be a path, got {path!r}")
@@ -159,7 +166,15 @@ def check_operator_directory(
                 f"{holds[:1].upper()}{holds[1:]} is never kept in the repository tree (D7); "
                 "give a directory outside it."
             )
-    if not resolved.is_dir():
+    try:
+        is_directory = resolved.is_dir()
+    except OSError as exc:  # `is_dir` answers False for a missing path, raises EACCES
+        raise DirectoryRefused(
+            f"{what} {given} cannot be checked ({type(exc).__name__}: "
+            f"{exc.strerror or exc}). The account that runs this must be able to reach it "
+            "and every directory above it."
+        ) from None
+    if not is_directory:
         raise DirectoryRefused(
             f"{what} {given} does not exist or is not a directory. The operator creates it; "
             "nothing creates one, so a mistyped path cannot become a directory nobody chose."

@@ -386,3 +386,91 @@ def test_importing_the_listing_does_not_import_torch():
             "sys.exit(1 if 'torch' in sys.modules else 0)")
     done = subprocess.run([sys.executable, "-c", code], cwd=str(Path(__file__).parents[2]))
     assert done.returncode == 0
+
+
+def test_a_link_whose_target_is_gone_is_listed_not_fatal(tmp_path):
+    """A `.pt` link whose target is gone, or a checkpoint training removes
+    beyond `save_top_k` between the listing and its `stat`, sorts last and stays
+    listed; the read says what became of it (M5-1 review)."""
+    from src.utils.checkpoint_paths import (
+        list_run_checkpoints,
+        list_runs,
+        read_run_checkpoints,
+    )
+
+    run = tmp_path / "runs" / "gat" / "20261001-000000_a_111111"
+    _write_checkpoint(run / "checkpoints" / "last.pt", {"epoch": 1})
+    (run / "checkpoints" / "gone.pt").symlink_to(run / "checkpoints" / "removed.pt")
+
+    assert list_runs(tmp_path) == [run]
+    assert [p.name for _, p in list_run_checkpoints(tmp_path)] == ["last.pt", "gone.pt"]
+    good, gone = read_run_checkpoints(tmp_path)
+    assert good.problem is None and good.sha256 is not None
+    assert gone.path.name == "gone.pt" and gone.sha256 is None
+    assert gone.problem.startswith("FileNotFoundError") and gone.size_bytes is None
+
+
+def test_the_size_is_the_listed_files(tmp_path):
+    from src.utils.checkpoint_paths import read_run_checkpoints
+
+    path = tmp_path / "runs" / "gat" / "20261001-000000_a_111111" / "checkpoints" / "last.pt"
+    _write_checkpoint(path, {"epoch": 1})
+    (entry,) = read_run_checkpoints(tmp_path)
+    assert entry.size_bytes == path.stat().st_size > 0
+
+
+class TestWithinBoundsWhatIsRead:
+    """`within`: a file that resolves outside the workspace is listed and never
+    opened, so nothing of a file elsewhere is read or shown (M5-1 review)."""
+
+    def _layout(self, tmp_path):
+        workspace = tmp_path / "ws"
+        run = workspace / "runs" / "gat" / "20261001-000000_a_111111" / "checkpoints"
+        _write_checkpoint(run / "inside.pt", {"epoch": 1})
+        elsewhere = tmp_path / "elsewhere"
+        _write_checkpoint(elsewhere / "secret.pt", {
+            "epoch": 9, "logs": {"val_mrr": 0.9},
+            "training_input_digests": {"split_manifest": "1" * 64}})
+        (run / "link.pt").symlink_to(elsewhere / "secret.pt")
+        far = workspace / "runs" / "sage" / "20261002-000000_b_222222"
+        far.parent.mkdir(parents=True)
+        far.symlink_to(elsewhere.parent / "far_run")
+        _write_checkpoint(elsewhere.parent / "far_run" / "checkpoints" / "far.pt", {"epoch": 2})
+        return workspace
+
+    def _reads(self, monkeypatch):
+        import src.utils.checkpoint_io as checkpoint_io
+
+        original = checkpoint_io.read_checkpoint
+        reads = []
+
+        def counting(path, **kwargs):
+            reads.append(Path(path).name)
+            return original(path, **kwargs)
+
+        monkeypatch.setattr(checkpoint_io, "read_checkpoint", counting)
+        return reads
+
+    def test_outside_entries_are_listed_and_never_opened(self, tmp_path, monkeypatch):
+        from src.utils.checkpoint_paths import read_run_checkpoints
+
+        workspace = self._layout(tmp_path)
+        reads = self._reads(monkeypatch)
+        entries = {e.path.name: e for e in read_run_checkpoints(workspace, within=workspace)}
+        assert set(entries) == {"inside.pt", "link.pt", "far.pt"}
+        assert reads == ["inside.pt"]
+        assert entries["inside.pt"].problem is None and entries["inside.pt"].sha256
+        for name in ("link.pt", "far.pt"):
+            entry = entries[name]
+            assert "resolves outside the workspace, so it is not read" in entry.problem
+            assert (entry.sha256, entry.epoch, entry.logs, entry.validation,
+                    entry.dataset_fingerprint, entry.size_bytes) == (None,) * 6
+
+    def test_without_within_every_file_is_read(self, tmp_path, monkeypatch):
+        """The training service's own listing is unchanged: it passes none."""
+        from src.utils.checkpoint_paths import read_run_checkpoints
+
+        workspace = self._layout(tmp_path)
+        reads = self._reads(monkeypatch)
+        read_run_checkpoints(workspace)
+        assert sorted(reads) == ["far.pt", "inside.pt", "link.pt"]

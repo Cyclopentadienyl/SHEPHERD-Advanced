@@ -5,8 +5,8 @@ The server's lists: workspaces, their checkpoints, cohort versions and their rep
 "checkpoints and cohorts are chosen from server-side lists, never from a path in a
 request". Functions over the server's settings (`src.config.server_settings`,
 read at each call, never from a request) and the disk, keeping no state between
-calls; the WebUI's handlers and the API's routes both call them, so the two
-cannot list different things.
+calls; the API's routes and the WebUI's handlers (from M5-2) both call them, so
+the two cannot list different things.
 
 **Items are identified by name and digest, never by a path.** A workspace is its
 directory name under ``SHEPHERD_WORKSPACES_ROOT`` and its dataset fingerprint
@@ -31,9 +31,17 @@ are present. The lists hash no graph file; a training run or a measurement
 checks every file on the bytes it reads, and may still refuse.
 
 **What the lists open.** The workspace and cohort lists read small JSON files.
-The checkpoint list opens every checkpoint, which SPEC_4 classes as checkpoint
-inspection (C3): a surface offering it over the network is gated by D8. No access
-check is made here; the gate belongs where a request is handled.
+The checkpoint list opens every checkpoint inside the workspace, which SPEC_4
+classes as checkpoint inspection (C3): a surface offering it over the network is
+gated by D8. A file that resolves outside the workspace is listed with that
+reason and never opened. No access check is made here; the gate belongs where a
+request is handled.
+
+**One unreadable entry never hides the rest.** A workspace, a version, a run or
+a checkpoint that cannot be read or checked (a malformed file, a directory
+another account made unreadable to this one) is listed with why; only a list
+that cannot be listed at all (its setting missing or refused, its directory
+unreadable) offers no item, and says why.
 
 **What a list does not say.** Whether a report was kept and whether it is
 registered is read by the registration's one helper, passed in as
@@ -130,7 +138,10 @@ class CheckpointItem:
     `dataset_fingerprint` is the dataset the checkpoint records it was trained
     on; `trained_on_this_dataset` compares it in full with the workspace's
     fingerprint now (`None` when either is unknown). A file that cannot be read
-    is listed with `problem`, never dropped.
+    is listed with `problem`, never dropped; one that resolves outside the
+    workspace is listed with `problem` and every field read from a file
+    (digest, size, record) `None`, since it was never opened. `workspace` is the
+    name the server lists, which `resolve_checkpoint` takes back.
     """
 
     workspace: str
@@ -210,11 +221,23 @@ def _workspace_root(environ: Optional[Mapping[str, str]]) -> Path:
     return setting.value
 
 
-def _workspace_entries(root: Path) -> List[Path]:
-    """The root's subdirectories, by name. A name starting with a dot is not a
-    workspace (a hidden directory, an editor's or a tool's)."""
+def _is_workspace_entry(entry: Path) -> bool:
+    """A subdirectory not named with a leading dot (a hidden directory, an
+    editor's or a tool's). An entry whose kind cannot be checked (a link into a
+    directory this account may not enter) is kept, so its item says why rather
+    than the whole list failing or the entry vanishing."""
+    if entry.name.startswith("."):
+        return False
     try:
-        entries = [p for p in root.iterdir() if not p.name.startswith(".") and p.is_dir()]
+        return entry.is_dir()
+    except OSError:
+        return True
+
+
+def _workspace_entries(root: Path) -> List[Path]:
+    """The root's subdirectories, by name."""
+    try:
+        entries = [p for p in root.iterdir() if _is_workspace_entry(p)]
     except OSError as exc:
         raise ServerListRefused(
             f"the workspaces root {root} cannot be listed ({type(exc).__name__}: {exc})"
@@ -276,13 +299,21 @@ def _workspace_item(root: Path, entry: Path) -> WorkspaceItem:
         releases = tuple({"role": source["role"], "declared_version": source["declared_version"]}
                          for source in record.record["sources"])
 
-    missing = [filename for filename in (*GRAPH_ARTIFACTS.values(), *_SAMPLE_FILES)
-               if not (resolved / filename).is_file()]
+    missing, unchecked = [], []
+    for filename in (*GRAPH_ARTIFACTS.values(), *_SAMPLE_FILES):
+        try:
+            if not (resolved / filename).is_file():
+                missing.append(filename)
+        except OSError as exc:  # `is_file` raises EACCES rather than answer
+            unchecked.append(f"{filename}: {type(exc).__name__}")
     if dataset["problem"] is not None:
         not_trainable: Optional[str] = dataset["problem"]
-    elif missing:
-        not_trainable = (f"files its split_manifest.json binds are missing "
-                         f"({', '.join(missing)})")
+    elif missing or unchecked:
+        not_trainable = "; ".join(
+            ([f"files its split_manifest.json binds are missing ({', '.join(missing)})"]
+             if missing else [])
+            + ([f"files its split_manifest.json binds cannot be checked "
+                f"({', '.join(unchecked)})"] if unchecked else []))
     else:
         not_trainable = None
 
@@ -316,16 +347,12 @@ def list_workspaces(*, environ: Optional[Mapping[str, str]] = None) -> Listing:
     return Listing(tuple(_workspace_item(root, entry) for entry in entries))
 
 
-def resolve_workspace(name: Any, *, environ: Optional[Mapping[str, str]] = None) -> Path:
-    """The resolved directory of the workspace the server lists as `name`.
-
-    Found by listing the root again, never by joining a request's text onto a
-    path, so only a listed name resolves; and the directory must resolve inside
-    the root.
-
-    Raises:
-        ServerListRefused: no workspace root, or `name` is not a listed workspace.
-    """
+def _find_workspace(name: Any, environ: Optional[Mapping[str, str]]) -> Tuple[str, Path]:
+    """The listed name and the resolved directory of the workspace the server
+    lists as `name`. The name is the list's own, which an item carries: a
+    workspace that is a link inside the root (``current -> builds/...``) is
+    named as listed, never by its target's directory name, so the item's name
+    resolves again."""
     root = _workspace_root(environ)
     for entry in _workspace_entries(root):
         if entry.name == name:
@@ -339,9 +366,22 @@ def resolve_workspace(name: Any, *, environ: Optional[Mapping[str, str]] = None)
                 raise ServerListRefused(
                     f"the workspace {entry.name!r} resolves outside the workspaces root "
                     f"{root}, so it is not in the server's one workspace namespace")
-            return resolved
+            return entry.name, resolved
     raise ServerListRefused(
         f"{_echo(name)} is not a workspace the server lists under {root}")
+
+
+def resolve_workspace(name: Any, *, environ: Optional[Mapping[str, str]] = None) -> Path:
+    """The resolved directory of the workspace the server lists as `name`.
+
+    Found by listing the root again, never by joining a request's text onto a
+    path, so only a listed name resolves; and the directory must resolve inside
+    the root.
+
+    Raises:
+        ServerListRefused: no workspace root, or `name` is not a listed workspace.
+    """
+    return _find_workspace(name, environ)[1]
 
 
 # ---------------------------------------------------------------------------
@@ -355,7 +395,10 @@ def list_checkpoints(
     one's, in the listing's order (latest run first, newest file first), each
     from one read of its file (`read_run_checkpoints`).
 
-    Opens every checkpoint (SPEC_4 C3).
+    Opens every checkpoint inside the workspace (SPEC_4 C3). One that
+    resolves outside it is listed with that reason and never opened
+    (`read_run_checkpoints`' `within`). Each item names the workspace as the
+    list does, so `resolve_checkpoint` finds it again by that name.
     """
     # TODO(WP2): a route or handler offering this list is gated by D8 (C3).
     from src.kg.artifacts import read_split_manifest
@@ -366,7 +409,7 @@ def list_checkpoints(
     )
 
     try:
-        path = resolve_workspace(workspace, environ=environ)
+        name, path = _find_workspace(workspace, environ)
         conv_type = normalize_conv_type(architecture) if architecture else None
     except ValueError as exc:  # ServerListRefused, or an unsupported architecture
         return Listing((), str(exc))
@@ -374,29 +417,22 @@ def list_checkpoints(
         fingerprint: Optional[str] = read_split_manifest(path).identity.sha256
     except (ValueError, OSError):
         fingerprint = None
+    try:
+        entries = read_run_checkpoints(path, conv_type, within=path)
+    except OSError as exc:  # a runs directory this account may not enter
+        return Listing((), (f"the runs of the workspace {name!r} cannot be listed "
+                            f"({type(exc).__name__}: {exc.strerror or exc})"))
 
     items = []
-    for entry in read_run_checkpoints(path, conv_type):
-        problem = entry.problem
-        try:
-            outside = not _inside(entry.path.resolve(), path)
-        except (OSError, RuntimeError):
-            outside = True
-        if outside:
-            problem = (f"{entry.run_dir.name}/{entry.path.name} resolves outside the workspace "
-                       f"{path.name}, so it is not offered")
-        try:
-            size: Optional[int] = entry.path.stat().st_size
-        except OSError:
-            size = None
+    for entry in entries:
         recorded = entry.dataset_fingerprint
         items.append(CheckpointItem(
-            workspace=path.name,
+            workspace=name,
             architecture=run_architecture(entry.run_dir),
             run=entry.run_dir.name,
             filename=entry.path.name,
             sha256=entry.sha256,
-            size_bytes=size,
+            size_bytes=entry.size_bytes,
             checkpoint_kind=(entry.checkpoint_kind
                              if isinstance(entry.checkpoint_kind, str) else None),
             epoch=_count(entry.epoch),
@@ -406,7 +442,7 @@ def list_checkpoints(
             trained_on_this_dataset=(recorded == fingerprint
                                      if recorded is not None and fingerprint is not None
                                      else None),
-            problem=problem,
+            problem=entry.problem,
         ))
     return Listing(tuple(items))
 
@@ -427,7 +463,7 @@ def resolve_checkpoint(
     """
     from src.utils.checkpoint_paths import list_run_checkpoints, normalize_conv_type
 
-    path = resolve_workspace(workspace, environ=environ)
+    name, path = _find_workspace(workspace, environ)
     # An empty name would be read as the default architecture; a request names one.
     if not (isinstance(architecture, str) and architecture.strip()):
         raise ServerListRefused(f"{_echo(architecture)} is not an architecture")
@@ -435,16 +471,28 @@ def resolve_checkpoint(
         conv_type = normalize_conv_type(architecture)
     except ValueError as exc:
         raise ServerListRefused(str(exc)) from None
-    for run_dir, checkpoint in list_run_checkpoints(path, conv_type):
+    try:
+        listed = list_run_checkpoints(path, conv_type)
+    except OSError as exc:  # a runs directory this account may not enter
+        raise ServerListRefused(
+            f"the runs of the workspace {name!r} cannot be listed "
+            f"({type(exc).__name__}: {exc.strerror or exc})") from None
+    for run_dir, checkpoint in listed:
         if run_dir.name == run and checkpoint.name == filename:
-            if not _inside(checkpoint.resolve(), path):
+            try:
+                resolved = checkpoint.resolve()
+            except (OSError, RuntimeError) as exc:  # a link loop: RuntimeError before 3.13
+                raise ServerListRefused(
+                    f"{run_dir.name}/{checkpoint.name} cannot be resolved "
+                    f"({type(exc).__name__}), so it is not offered") from None
+            if not _inside(resolved, path):
                 raise ServerListRefused(
                     f"{run_dir.name}/{checkpoint.name} resolves outside the workspace "
-                    f"{path.name}, so it is not offered")
+                    f"{name!r}, so it is not offered")
             return checkpoint
     raise ServerListRefused(
         f"no checkpoint {_echo(filename)} in run {_echo(run)} of {conv_type} is listed in "
-        f"the workspace {path.name!r}")
+        f"the workspace {name!r}")
 
 
 # ---------------------------------------------------------------------------

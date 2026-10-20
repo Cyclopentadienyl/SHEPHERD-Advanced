@@ -1883,7 +1883,7 @@ M5 的控制項只作用於伺服器列出的項目，從不作用於請求指�
 
 | 變數 | 值 | 未設定或被拒絕時 |
 |---|---|---|
-| `SHEPHERD_DEPLOYMENT_MODE` | 恰好是 `M1`（`m1`、` M1` 或 `M2` 都算其他值） | 唯讀：操作者控制項關閉 |
+| `SHEPHERD_DEPLOYMENT_MODE` | 恰好是 `M1`（`m1`、` M1` 或 `M2` 都算其他值） | 唯讀：操作者控制項關閉，待 D8 的檢查套用它之後（目前尚未，見下文） |
 | `SHEPHERD_WORKSPACES_ROOT` | 一個已存在目錄的絕對路徑；其子目錄就是各個 workspace | 不列出任何 workspace |
 | `SHEPHERD_REGISTRY` | cohort registry（§4.9），即各指令以 `--registry` 接收的目錄：絕對路徑、已存在、位於 repository 之外 | 不列出任何 cohort 版本 |
 | `SHEPHERD_INTAKE_DIR` | 位於 repository 之外的已存在目錄，你把要匯入的 `shepherd-cases/1` 檔案放在這裡；絕對路徑 | 不提供任何匯入來源 |
@@ -1900,12 +1900,19 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
 - **`M1`** 是 SPEC_4 的單一 workspace 部署：在本機上，或經由 SSH forwarding 存取，由 owner 或
   指定的技術人員操作（§4.9 問題 3）。它是操作者控制項檢查的條件之一，而不是授權。其餘條件由
   D8 在處理每個請求時檢查。不要在 reverse proxy 後面、或在其他人也能登入的機器上設定它。
+- **部署模式目前尚未套用。** M5 的下一步，D8 的檢查，會讀取它，並以它把關每個操作者控制項。
+  在那一步完成之前，沒有任何東西讀取它：訓練的啟動與停止、pipeline 重新載入與設定儲存都與
+  M5-1 之前一樣開放，不論這個變數的值為何。不設定它，並不會讓這個版本變成唯讀。
 - **workspace 根目錄可以位於 repository 內**，一般使用的 `data/workspaces/` 就是如此，但必須
   由你明確指定。相對路徑、不存在的目錄與檔案都會被拒絕。
 - **registry 與 intake 目錄存放病人層級的資料。** 兩者都遵循 registry 的規則（§4.9）：相對
   路徑、不存在的目錄，以及解析後落在 repository 內的路徑（包括經由 symlink）一律拒絕。命令列的
   `--registry` 與 `SHEPHERD_REGISTRY` 由同一個函式檢查。請把兩者建在只有執行服務與指令的帳號
   讀得到的地方，例如 `mkdir -m 700`。
+- **服務帳號無法到達的目錄**（它無權進入的上層目錄）會以「無法檢查」（cannot be checked）
+  拒絕並附上錯誤，其功能關閉。在 registry 內，服務讀不到的 `versions/` 會讓 cohort 清單附上
+  這個原因、不列出任何項目；讀不到的版本、`reports/` 或 run 目錄會附原因列出，清單的其餘部分
+  照常列出。
 - **證據目錄**：空的項目（重複或結尾的分隔符）會被略過，絕不會被當成工作目錄讀取。重複的項目
   只保留一次。
 
@@ -1923,24 +1930,29 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
   - 它的**建置時間**，來自 `workspace_build.json`（見下文），或附原因的「未記錄」；
   - 它的各來源宣告的版本，取自資料集紀錄（合成 workspace 沒有）；
   - 它的 train 與 val 樣本數；
-  - 它是否**可訓練**，以及不可訓練的原因：沒有 `split_manifest.json`、資料集紀錄未通過驗證，
-    或 manifest 綁定的某個檔案不存在。清單不計算任何圖檔案的雜湊。訓練執行時會以實際讀取的
-    位元組檢查每個檔案，仍可能拒絕。
-- **某個 workspace 的 checkpoint**（`GET /api/v1/workspaces/{name}/checkpoints`，可加
-  `?architecture=gat`）：run 版面中的 checkpoint，最新的 run 在前。每個檔案只讀取一次，且只
-  載入權重，並顯示：
+  - 它是否**可訓練**，以及不可訓練的原因：沒有可讀取的 `split_manifest.json`、資料集紀錄未
+    通過驗證，或 manifest 綁定的某個檔案不存在或無法檢查。清單不計算任何圖檔案的雜湊。訓練
+    執行時會以實際讀取的位元組檢查每個檔案，仍可能拒絕。
+- **某個 workspace 的 checkpoint**：某個已列出 workspace 的 run 版面中的 checkpoint，所有
+  架構或單一架構，最新的 run 在前。每個檔案只讀取一次，且只載入權重，並顯示：
   - 所讀位元組的 SHA-256；
   - Trainer 的驗證數字：trainer 的 top-20 選擇指標，絕不是測試結果；檔案沒有記錄時為無；
   - checkpoint 記錄的資料集指紋，以及它是否就是這個 workspace 目前的指紋；
-  - 無法讀取的檔案會附上原因。沒有任何檔案被略去。
+  - 無法讀取的檔案會附上原因（包括目標已不存在的連結）。沒有任何檔案被略去；
+  - 解析後落在 workspace 之外的檔案（以 symlink 指向 workspace 之外的 run 或 checkpoint）只
+    附上這個原因：它絕不會被開啟，因此不顯示 digest、大小或紀錄。
 
-  列出時會開啟每個 checkpoint，SPEC_4 將此歸類為 checkpoint 檢視（C3）。它與
-  `GET /api/v1/training/checkpoints` 一樣，將在 M5 的下一步與其他操作者控制項一起由 D8 的檢查
-  把關；在那之前尚未把關。
+  每個項目都以清單中的名稱指稱 workspace：對 `current -> builds/2026-10-20` 而言，它寫的是
+  `current`。列出時會開啟每個 checkpoint，SPEC_4 將此歸類為 checkpoint 檢視（C3），而 D8 只在
+  操作者控制項所在之處提供它。**目前沒有任何路由提供這份清單。** M5 的下一步會在 D8 的檢查
+  之後把它掛載為 `GET /api/v1/workspaces/{name}/checkpoints`；在那之前，它只存在於服務內部，
+  供 M5 的 UI 步驟的儀表板使用。
 - **既有的 checkpoint 清單**（`GET /api/v1/training/checkpoints` 與 Training Console 的
   resume 清單）以同樣的方式讀取每個檔案。每個項目新增 `sha256`、`validation`、
   `dataset_fingerprint` 與 `metadata_problem`，全部來自同一次讀取。以前它載入每個檔案卻不保留
-  digest，而且載入錯誤時一聲不響地略過。
+  digest，而且載入錯誤時一聲不響地略過。讀取時已經不存在的檔案（目標已被移除的連結）沒有
+  大小或時間可顯示，會從這份清單中略去；它不再讓整份清單失敗。這份清單與 M5-1 之前一樣保持
+  開放，直到 D8 的檢查完成。
 - **Cohort 版本**（`GET /api/v1/cohorts`）：registry 中的每個版本，以 label 及其 `cohort.json`
   的 SHA-256 識別，附上它的角色，以及這個角色是否提供排序。它也顯示版本的計數、所綁定的圖與
   資料集紀錄，以及匯入時間。清單絕不顯示病例識別碼或排除清單：D7 把它們留在這台機器上的
@@ -1971,9 +1983,11 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
 - **它指明自己描述的是哪一份 manifest。** 放在另一份 manifest 旁的紀錄會顯示「未記錄」，絕不
   顯示另一次建置的時間。這發生在寫完 manifest 後中斷的重建之後，或是由早於 M5-1、不寫這個檔案
   的版本所做的重建之後。
-- **M5-1 之前建置的 workspace 沒有這個檔案。** 它的建置時間顯示為「建置時間未記錄」，並附上
-  各來源宣告的版本；絕不使用檔案修改時間。不需要為此重建。只建圖的建置（沒有
-  `--generate-samples`）不寫這個檔案。
+- **M5-1 之前建置的 workspace 沒有這個檔案。** 它的建置時間顯示為「未記錄」，並附上各來源
+  宣告的版本；絕不使用檔案修改時間。不需要為此重建。原因寫的是「由 M5-1 之前的版本建置，或
+  其建置在寫入這個檔案之前就停止」：在 manifest 與這個檔案之間停止的首次建置看起來也一樣。
+- **只建圖的建置**（沒有 `--generate-samples`）既不寫 manifest，也不寫這個檔案。它的建置時間
+  顯示為「未記錄」，原因是沒有可描述的 `split_manifest.json`。
 
 ---
 
