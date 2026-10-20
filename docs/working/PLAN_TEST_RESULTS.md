@@ -1333,7 +1333,12 @@ contract and BACKLOG stay the record, and no new planning document is added.
   server-side since 6.20) and `process_recording` (deployment guide §4.10; BACKLOG item 34).
   CORS is tightened in the D8 batch: by default no cross-origin browser access is granted;
   administrative operations are still checked by D8 in the backend; the parent app keeps its
-  `CORSMiddleware`, with an empty allow list, so the mounted Gradio follows it. Platforms are
+  `CORSMiddleware`, with an empty allow list, so the mounted Gradio follows it. Until then the
+  CORS configuration is unchanged (`allow_origins=["*"]`, `allow_credentials=True`), but under
+  Starlette 1.9 it echoes every `Origin` with credentials allowed on every response (0.52.1 did
+  so only when a cookie was sent, and sent `*` otherwise), and since Gradio 6.25 `/ui` follows
+  the parent's policy: HTTP authentication or client certificates in front of the service are no
+  defence against other websites before the D8 batch (deployment guide §4.10). Platforms are
   accepted on the backends actually run: Linux x86_64 (the development environment) and Linux
   ARM64 (the homelab, checked by the reviewer); Windows browsers are in the browser checks, and
   a Windows backend is marked untested until one exists.

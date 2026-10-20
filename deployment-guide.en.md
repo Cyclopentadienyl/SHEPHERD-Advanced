@@ -1472,7 +1472,16 @@ The dashboard is mounted with these settings, whatever the `GRADIO_*` environmen
 | `ssr_mode=False` | Server-side rendering starts a Node.js process |
 | `analytics_enabled=False` | On the dashboard itself, since 2026-10-12: no usage analytics and no version check |
 
-CORS is not changed by this step; it is tightened together with D8.
+**CORS** is tightened together with D8. This step leaves its configuration as it was
+(`allow_origins=["*"]` with `allow_credentials=True`, `src/api/main.py`), but Starlette 1.9
+changes what that configuration sends: every cross-origin response now echoes the request's
+`Origin` with `Access-Control-Allow-Credentials: true`, where Starlette 0.52.1 did so only when
+the request carried a cookie and sent `*` otherwise. Since Gradio 6.25 a mounted app adds no CORS
+headers of its own when the parent app has a `CORSMiddleware`, so `/ui` follows the same policy.
+Until the D8 batch, HTTP authentication (Basic, Negotiate/Kerberos) or TLS client certificates
+in front of the service are therefore no defence against other websites: a page on any site,
+opened in a browser that holds those credentials, can read the responses of `/api/*` and
+`/ui/gradio_api/*`.
 
 ### The route guard
 

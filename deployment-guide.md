@@ -1831,7 +1831,13 @@ checkpoint 檔核對報告。
 | `ssr_mode=False` | 伺服器端渲染會啟動一個 Node.js 行程 |
 | `analytics_enabled=False` | 設在儀表板本身，自 2026-10-12 起：不送使用分析，也不檢查版本 |
 
-這一步不改 CORS；CORS 會與 D8 一起收緊。
+**CORS** 會與 D8 一起收緊。這一步不改它的設定（`src/api/main.py` 中的 `allow_origins=["*"]` 與
+`allow_credentials=True`），但 Starlette 1.9 改變了這個設定送出的內容：現在每個跨來源的回應都會
+回送請求的 `Origin`，並附上 `Access-Control-Allow-Credentials: true`；Starlette 0.52.1 只在請求
+帶有 cookie 時才這樣做，否則送 `*`。自 Gradio 6.25 起，上層 app 有 `CORSMiddleware` 時，掛載的
+app 不再加上自己的 CORS 標頭，因此 `/ui` 也遵循同一政策。在 D8 批次之前，服務前面的 HTTP 認證
+（Basic、Negotiate/Kerberos）或 TLS 用戶端憑證因此擋不住其他網站：任何網站的頁面，只要在持有
+這些憑證的瀏覽器中打開，都能讀取 `/api/*` 與 `/ui/gradio_api/*` 的回應。
 
 ### route guard
 
