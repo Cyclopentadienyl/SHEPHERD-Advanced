@@ -8,8 +8,11 @@ review closed it and found one P3, fixed in `2c94a4e`. **Its GB10 functional acc
 the scope agreed, passed at `2c94a4e`** (2026-10-17; 84 of 84 probes, demo and real data; the
 contract's §4, "M4's acceptance on the GB10"). Functional only: not model quality and not an
 institutional test. Merged into `main` by the owner (#126, `d2d31dd`, 2026-10-17). Phase 2 (M5)
-is not implemented; its boundaries are recorded (§6, "M5's boundaries", 2026-10-19), and it runs
-under deployment mode M1 (§4.9 question 3). §4 lists the decisions; phase 1
+is in progress on this branch, not yet reviewed or merged: M5-0 (`14176c3`, `84371dd`), M5-1
+(`85af1fa..bfc0b7c`) and M5-2 (`badf546..da2a8b1`) are pushed, and M5-3 is under way
+(`4c7d12f..5a2d639`: the shared follow-ups and the probe's M5 acceptance; then the internal
+review of all of M5 and its fixes). Each step's "as implemented" note is in D4, D5, D7, D8 and
+§6, "M5's boundaries" (2026-10-19). It runs under deployment mode M1 (§4.9 question 3). §4 lists the decisions; phase 1
 runs on the engineering defaults §4.9 records, each asked of the owner once, and an answer
 changes a default without adding a second path.
 
@@ -564,7 +567,7 @@ report is published, before its outcome file, `register_report` each registratio
 ledger, and `record_model_load` serves M5-2's Load from an ordered list. Automatic selection is
 kept away from the ledger by the import-linter contract `selection-ignores-test-results` (direct
 imports of the reload route and `checkpoint_paths`) and a behavioural test. Model Management and
-the Load control are M5-2's.
+the Load control are M5-2's (done: §6, "M5's boundaries", Model Management as implemented).
 
 ### D5 — The checkbox, reports and records
 
@@ -689,7 +692,10 @@ disagreement block, contested states and investigation notes are phase 2.
   and resolves it (`locate_store_report`). It then requires the report's cohort block to equal
   `cohort_version_block` of that version, and the run directory to be named for the measured
   checkpoint. A copy elsewhere, or a path off that structure, is refused before it is read,
-  saying to register the store's original. A registry moved as a whole still registers. The
+  saying to register the store's original. A registry moved as a whole still registers. A
+  copy of the whole registry cannot be told from a moved one, so it registers too, with its own
+  usage history and its own block: the copy is a second registry (owner question, BACKLOG item
+  37; deployment guide §4.9). The
   digest, checkpoint and ledger checks are unchanged.
 - **The block.** `scan_report_store` builds every stored report with `build_record`, groups the
   records by `record_key` and compares them with `differing_fields`, the comparison
@@ -710,9 +716,15 @@ disagreement block, contested states and investigation notes are phase 2.
   hooks are `--expect-checkpoint-sha256`, `--expect-version-sha256`, `--outcome FILE` (a new
   file: an existing one is refused, so no earlier run's outcome reads as this one's) and
   `registration.report_state` (kept and registered, read from disk).
-- **Not wired yet:** the contested state on the read-only route and the Diagnosis block, which
-  need the registry setting (M5-2, through `StoreScan.status`). The scan is not atomic with a
-  run publishing into the version (one writer).
+- **Where the contested state is shown (M5-2, 2026-10-21):** the Diagnosis card's "Recorded
+  tests: N · K contested", the model list's rows and Models' records read it from the version's
+  report store (`model_list.recorded_tests_for`, `scan_report_store`). With `SHEPHERD_REGISTRY`
+  unset, or a record's version not listed, they say "contested state not checked", never
+  uncontested; since the M5-3 review the contested and the uncheckable records are counted
+  apart ("3 · 1 contested · contested state of 1 not checked"). **Not wired:**
+  `GET /api/v1/evaluations/loaded-model` still returns its records with no contested state, so
+  an API client is not told that a record is contested (BACKLOG item 36). The scan is not atomic
+  with a run publishing into the version (one writer).
 
 **As implemented in M5-2 (2026-10-20), the Test page** (`src/webui/components/test_page.py`):
 each run directory of a version's store is listed with kept and registered from
@@ -950,8 +962,19 @@ Test-tab button is a Gradio callback, an HTTP endpoint reachable by anyone who r
   HTTP. Read-only routes stay open. A read-only status, `GET /api/v1/system/operator-access`,
   answers for the request that asks (for M5-2's chip). A reload D8 refuses no longer marks a
   real pipeline as requested. Tests call every gated route and every gated event through
-  Gradio's HTTP API, refused and allowed. The import, test start and cancel, registration and
-  load controls M5-2 adds are to take the same dependency or helper. *M5-2 (2026-10-20), the
+  Gradio's HTTP API, refused and allowed. *M5-2 changed the dashboard's set:* Diagnosis' Reload and
+  Save Config and the Training Console's path save are gone (the gated save function stays,
+  unused). "Change model…" and Models list and load through the shared model list, whose
+  listing, Load and confirmation each call the Gradio helper on their own request
+  (`model_list.list_models`, `request_load`, `finish_load`). The Diagnosis card and the Training
+  page open a checkpoint for display only for a request the helper allows. *M5-3 review
+  (2026-10-21):* a parent checkpoint typed in Continue… only locates a checkpoint the run bar's
+  workspace lists (`server_lists.locate_checkpoint`), as decided on 2026-10-19; until then the
+  typed path was opened as typed. **D8 cannot see framing**: a dashboard loaded inside another
+  site's frame makes same-origin requests D8 allows, so every response refuses to be framed
+  (`X-Frame-Options: DENY`, `Content-Security-Policy: frame-ancestors 'none'`,
+  `src/api/middleware/frame_guard.py`); "D8 protects the operator controls" holds with it.
+  *M5-2 (2026-10-20), the
   Test page:* listing the intake directory, Preview, Commit, Start, Cancel, Register, Add note
   and the checkpoint list each call the Gradio helper on their own request first and then the
   shared service in process (the job runner, the importer, the registration, the report store);
@@ -986,7 +1009,10 @@ gates phase 2; question 4 is answered:
      - only records of one cohort version with comparable scoring semantics are ordered
        together, and a contested record (D5) is left out;
      - "Load this model" from that list is offered, gated by D8 and recorded in the usage
-       history; no model is ever chosen automatically by its test score;
+       history; no model is ever chosen automatically by its test score; *as implemented
+       (M5-2, 2026-10-20):* Models' shared Load writes a `model_load` entry
+       (`record_model_load`) for a list ordered by test score, whether or not it took effect;
+       newest first writes none; the sentence below is shown wherever ordering is offered;
      - **a cohort whose scores were used to choose a model has taken part in model selection**,
        so it is no longer an independent final test for that model; a manual choice is no
        different, and its record in the usage history does not undo that. The UI says so where
@@ -1437,7 +1463,8 @@ the GB10").
      choice among server-listed workspaces is still to do;* *M5-1 (2026-10-20): the server
      lists the workspaces under `SHEPHERD_WORKSPACES_ROOT` and resolves one only by finding its
      name in that list (`src/api/services/server_lists.py`); moving the console onto it is
-     M5-2's;*
+     M5-2's; done in M5-2 (the Training page's run bar and Continue… list through it; §6, "M5's
+     boundaries");*
    - **training start's explicit `checkpoint_dir`**, honoured verbatim at the time, is restricted
      to directories the server resolves in this same change, since it shares the write path
      (contract M5). *Superseded by M3a-2:* every run writes into its own run directory, and what
@@ -1611,7 +1638,8 @@ contract and BACKLOG stay the record, and no new planning document is added.
     `.shepherd_training_config.json` are gone; the gated save function stays unused (nothing
     else calls it) for the owner's question "Save as the default dataset". "Continue…" is a
     drawer over the parameters: the run bar's workspace's checkpoints from the server's list (D8,
-    since listing opens them) or a typed path, the one check, the parent's recorded dataset
+    since listing opens them) or a typed path, which only locates a checkpoint that list holds
+    (since the M5-3 review; D8), the one check, the parent's recorded dataset
     fingerprint against the workspace's current one, and Continue Training disabled with the
     reason while they differ. The run view shows the job runner's latest run, or the run bar's
     workspace's latest (listed again every 10 seconds while the page is open): the used
@@ -1638,8 +1666,8 @@ contract and BACKLOG stay the record, and no new planning document is added.
       builder). A research page is read again only when it is the page shown (returning to
       Research refreshes that one page, never the other three, since Models' list opens every
       checkpoint). The page is always drawn light (Gradio's dark mode left its text unreadable on
-      the dashboard's colours) and Gradio's own footer is off. Test holds a one-line body until
-      it is built; Models is built (Model Management, above; deployment guide §4.14);
+      the dashboard's colours) and Gradio's own footer is off. Test and Models are built (the Test
+      tab and Model Management, above; deployment guide §4.14);
     - **the Diagnosis tab's "Model in use" card**, directly above Run Diagnosis, so the model
       is known before a diagnosis, with "Change model…": a drawer on the one shared model list
       and the one gated Load that Models also uses (one component, two views, no second
@@ -1815,6 +1843,38 @@ contract and BACKLOG stay the record, and no new planning document is added.
   - the layout is checked landscape and portrait, at high DPI and zoom, with long disease names,
     many results and warnings, recording the viewport and zoom used; neither content nor the
     main operations are clipped.
+  *Checked against the code (M5-3, 2026-10-21):*
+  - shared checks: the Test page's import calls `prepare_import`/`commit_import`
+    (`src/evaluation/cohort_registry.py`, as `scripts/import_cohort.py` does), Start test runs the
+    real `scripts/measure_scorer.py` through `TrainingManager.start_test`, and Register calls
+    `register_report`. Holds;
+  - exclusion, stop per type, never green: `src/utils/gpu_lock.py` and the job runner
+    (`tests/unit/test_job_runner.py`),
+    `test_training_page.py::test_a_failed_or_stopped_run_is_never_green`,
+    `test_webui_test_page.py::test_the_pill_is_never_green_for_a_failed_or_cancelled_run`, probe
+    W7, W8, W11. Holds;
+  - kept and registered from the publication contract: the runner reads the outcome file and
+    `registration.report_state`
+    (`test_kept_and_registered_come_from_the_disk_not_the_exit_status`; probe W8, W9). Holds;
+    since the M5-3 review a cancel cannot fall between publishing and the usage history, or
+    between a ledger record and its history entry (`src/utils/interrupts.py`);
+  - direct calls: every gated API route (`OPERATOR_ONLY`; probe W2, W5) and the M5-1 dashboard
+    events (`test_operator_access.py`) are called through Gradio's HTTP API. Of M5-2's events,
+    Test's Start and the model list's refresh are called that way in unit tests, and Training's
+    Stop, Test's Start and Register in the probe. Preview, Commit, Cancel, Add note, the intake
+    and checkpoint lists, and Load with its confirmation are refused in handler tests with a
+    read-only request; adding an HTTP call for each would complete this item;
+  - checked again at start: `--expect-checkpoint-sha256`/`--expect-version-sha256`
+    (`tests/integration/test_job_runner_measure.py`, probe W10), the dataset fingerprint at
+    training start, and the import's commit preparing again. Holds;
+  - no other model's records after a switch, states apart, *unverifiable* never 0: records are
+    found by full digest (`model_list.recorded_tests_for`, the read-only route), and Trainer
+    validation and Mode C sit in separate cards and columns. Holds; the API route carries no
+    contested state (D5);
+  - A's source kept: exports carry the result's own `served_identity`, and the badge compares the
+    whole identity (`test_a_result_older_than_a_load_says_how_many_parts_differ`). Holds;
+  - layout: **not yet recorded**. The screenshot matrix (1920×1080, 1707×870, 1536×760,
+    1440×900, 1280×720, 1080×1920, 200 % zoom; M1 and read-only) is M5-3's next step.
   The GPU acceptance uses the existing tools and a qualified model, centred on starting and
   stopping jobs, their exclusion, registration and UI operation; long training, S10 and the
   memory investigation are not rerun unless a related regression appears. *The probe's part,

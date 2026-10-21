@@ -309,3 +309,82 @@ def test_the_model_lists_workspace_select_reads_the_same_list_the_same_way(root,
     labels = {name: label for label, name in workspace_choices(listing["workspaces"])}
     assert labels["scratch_ws"] == "scratch_ws · no split manifest"
     assert str(root) not in repr(listing["workspaces"])
+
+
+#: A script left as a docstring only: it does nothing and exits 0.
+_PLANNED_STUB = "PLANNED — NOT YET IMPLEMENTED"
+
+
+def test_the_build_line_names_only_a_command_that_builds_a_dataset():
+    """M5-3 review ARCH-1: the page named ``scripts/preprocess_data.py``, an
+    empty placeholder that prints nothing and exits 0, as a dataset build tool.
+    Every script the line names exists and has a command-line entry; the
+    command that writes a trainable workspace is the one named."""
+    repo = Path(__file__).resolve().parents[2]
+    named = re.findall(r"scripts/[\w./-]+\.py", dsp.BUILD_LINE)
+    assert "scripts/build_knowledge_graph.py" in named
+    assert "--generate-samples" in dsp.BUILD_LINE
+    for script in named:
+        text = (repo / script).read_text(encoding="utf-8")
+        assert _PLANNED_STUB not in text, script
+        assert "def main(" in text and "argparse" in text, script
+
+
+def test_no_shipped_text_sends_an_operator_to_the_placeholder_script():
+    """The dashboard, the scripts and both deployment guides never tell anyone
+    to run the empty ``preprocess_data.py`` (only the file itself names it)."""
+    repo = Path(__file__).resolve().parents[2]
+    stub = repo / "scripts" / "preprocess_data.py"
+    assert _PLANNED_STUB in stub.read_text(encoding="utf-8")
+    places = [*(repo / "src").rglob("*.py"), *(repo / "scripts").rglob("*.py"),
+              repo / "deployment-guide.md", repo / "deployment-guide.en.md"]
+    naming = [str(p.relative_to(repo)) for p in places
+              if p != stub and "preprocess_data.py" in p.read_text(encoding="utf-8")]
+    assert naming == []
+
+
+def test_a_spaced_path_outside_the_root_is_replaced_whole(root):
+    """SECURITY-4, on the Datasets wording: nothing of the path's tail."""
+    out = dsp.redact("cannot read /mnt/clinic share/MRN 0012345/split_manifest.json now", root)
+    assert out == f"cannot read {dsp.OUTSIDE_PATH} now"
+    assert dsp.redact(f"{root}/my ws/split_manifest.json is missing", root) == (
+        "my ws/split_manifest.json is missing")
+
+
+def test_the_training_popover_and_datasets_show_one_details_body(root, monkeypatch):
+    """M5-3 review ARCH-4: Training kept its own copy of the details markup
+    (and imported the Datasets page for the manifest's facts); the copies
+    already differed (Datasets said the disease counts, Training did not).
+    Both now show the one body (`renderers.dataset_details_html`)."""
+    from src.webui.components import renderers as r
+    from src.webui.components import training_console as tc
+
+    _serving(monkeypatch, None)
+    data = dsp.read_datasets()
+    row = next(x for x in data["rows"] if x["name"] == "demo")
+    body = r.dataset_details_html(row, row["facts"], problem=row["facts_problem"])
+    assert "diseases (train / val)" in body and "What the manifest binds" in body
+    assert body in dsp.details_html(data, "demo")
+    state = tc._workspace_state("demo")
+    assert state["facts"] == row["facts"]
+    assert r.dataset_details_html(state["row"], state["facts"]) in tc.details_html(state)
+    assert body == r.dataset_details_html(state["row"], state["facts"])
+
+
+def test_no_page_reaches_into_another_page_or_the_renderers_private_names():
+    """The page contract (`src/webui/shell.py`): a page reaches nothing of
+    another page; shared pieces live in renderers.py and workspaces.py."""
+    import ast
+
+    pages = {"datasets_page", "diagnosis_panel", "training_console", "test_page",
+             "models_page", "runtime_settings"}
+    folder = Path(dsp.__file__).parent
+    for page in sorted(pages):
+        source = (folder / f"{page}.py").read_text(encoding="utf-8")
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                names = {node.module.rsplit(".", 1)[-1], *(a.name for a in node.names)}
+                assert not (names & (pages - {page})), (page, node.module)
+            if isinstance(node, ast.Attribute) and node.attr.startswith("_") \
+                    and isinstance(node.value, ast.Name) and node.value.id == "r":
+                raise AssertionError(f"{page} uses renderers.{node.attr}")

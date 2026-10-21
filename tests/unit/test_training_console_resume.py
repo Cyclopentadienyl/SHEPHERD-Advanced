@@ -194,6 +194,57 @@ def test_a_parent_the_list_no_longer_has_is_not_opened(checkpoints, monkeypatch)
     assert "Nothing to check" in text and opened == []
 
 
+@pytest.mark.parametrize("where", ["copy_outside", "server_file", "other_workspace"])
+def test_a_typed_path_only_locates_a_checkpoint_the_server_lists(checkpoints, monkeypatch,
+                                                                  tmp_path, where):
+    """D8 (2026-10-19): a typed parent "only locates an item the server lists
+    and is checked like the rest". A file the run bar's workspace does not
+    list, even the same bytes copied elsewhere, is refused unopened, for
+    Check checkpoint and Continue Training alike."""
+    import shutil
+
+    if where == "copy_outside":
+        typed = tmp_path / "elsewhere" / "last.pt"
+        typed.parent.mkdir()
+        shutil.copy2(checkpoints["paused"], typed)
+    elif where == "server_file":
+        typed = Path(__file__).resolve()
+    else:
+        other = checkpoints["root"] / "other" / "runs" / "gat" / PAUSED_RUN / "checkpoints"
+        other.mkdir(parents=True)
+        typed = other / "last.pt"
+        shutil.copy2(checkpoints["paused"], typed)
+    opened, started = [], []
+    monkeypatch.setattr(training_manager, "preview_continuation",
+                        lambda *a, **k: opened.append(a) or {"ok": False})
+    monkeypatch.setattr(training_manager, "start_training", _starts(started))
+    text, *_rest = _check(checkpoints, tc.CONTINUE_FROM_PATH, None, str(typed))
+    assert "Nothing to check" in text and "not a checkpoint the server lists" in text
+    assert str(typed) not in text
+    said, *_rest = _resume(checkpoints, tc.CONTINUE_FROM_PATH, None, str(typed))
+    assert "Not started: the typed path is not a checkpoint the server lists" in said
+    assert opened == [] and started == []
+
+
+def test_a_typed_path_of_a_listed_checkpoint_is_found_again_from_the_list(checkpoints,
+                                                                          monkeypatch):
+    """The typed path is only a locator: what is previewed and resumed is the
+    file the server's list resolves for it (its listed digest compared too)."""
+    seen = []
+    real = training_manager.preview_continuation
+    monkeypatch.setattr(training_manager, "preview_continuation",
+                        lambda parent, **k: seen.append(parent) or real(parent, **k))
+    relative = Path(checkpoints["paused"]).resolve()
+    text, _e, mode, _c = _check(checkpoints, tc.CONTINUE_FROM_PATH, None, f"  {relative}  ")
+    assert "Resume the original training" in text
+    assert seen and Path(seen[0]).resolve() == relative
+    parents = {key: dict(item) for key, item in checkpoints["parents"].items()}
+    parents[checkpoints["paused_key"]]["sha256"] = "0" * 64
+    text, *_rest = tc._on_check_continue(tc.CONTINUE_FROM_PATH, None, str(relative), "cpu",
+                                         None, checkpoints["state"], parents, {}, OP)
+    assert "changed since it was listed" in text
+
+
 def test_a_finished_checkpoint_offers_extend_and_says_why_it_cannot_resume(checkpoints):
     path = str(checkpoints["finished"])
     text, extend, _mode, _compare = _check(checkpoints, tc.CONTINUE_FROM_PATH, None, path)

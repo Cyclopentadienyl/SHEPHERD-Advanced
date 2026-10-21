@@ -61,6 +61,7 @@ from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from src.api.middleware.frame_guard import RefuseFraming
 from src.api.middleware.gradio_routes import RefuseUnusedGradioRoutes
 from src.api.middleware.server_address import RecordServerAddress
 from src.config.serving_device import requested_serving_device
@@ -256,6 +257,12 @@ DASHBOARD_PATH = "/ui"
 # inside the logging and each refusal is logged.
 app.add_middleware(RefuseUnusedGradioRoutes, mount_path=DASHBOARD_PATH)
 
+# No other page may frame the dashboard or the API (clickjacking): D8 sees the
+# request's arrival, not the frame it was made from, so this is the control
+# (`src/api/middleware/frame_guard.py`). Added after the guard above, so a
+# refusal carries the headers too.
+app.add_middleware(RefuseFraming)
+
 
 # =============================================================================
 # Request/Response Logging Middleware
@@ -414,8 +421,14 @@ try:
 
     mount_dashboard(app, DASHBOARD_PATH)
     logger.info(f"Gradio dashboard mounted at {DASHBOARD_PATH}")
+except ModuleNotFoundError as e:
+    if (e.name or "").split(".")[0] != "gradio":
+        logger.error(f"The dashboard could not be imported, so it is not mounted: {e}")
+    else:
+        logger.warning(f"Gradio not available, dashboard disabled: {e}")
 except ImportError as e:
-    logger.warning(f"Gradio not available, dashboard disabled: {e}")
+    # Not a missing Gradio: a defect (a circular import, say), said as one.
+    logger.error(f"The dashboard could not be imported, so it is not mounted: {e}")
 except Exception as e:
     logger.warning(f"Failed to mount Gradio dashboard: {e}")
 

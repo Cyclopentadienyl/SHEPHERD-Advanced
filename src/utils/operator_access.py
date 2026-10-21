@@ -84,10 +84,14 @@ FORWARDING_HEADERS: Tuple[str, ...] = (
     "true-client-ip",
 )
 
-#: The host names a loopback Host header may carry, before its port.
+#: The host names a loopback Host header may carry, before its port: **the
+#: check reads this set** (`_HOST` only splits a Host into its name and port).
 LOOPBACK_HOST_NAMES: Tuple[str, ...] = ("localhost", "127.0.0.1", "[::1]")
 
-_HOST = re.compile(r"^(localhost|127\.0\.0\.1|\[::1\])(?::([0-9]{1,5}))?$", re.IGNORECASE)
+#: A Host header split into its name (a bracketed IPv6 literal, or a name with no
+#: colon) and an optional port; whether the name is loopback is
+#: `LOOPBACK_HOST_NAMES`' to say.
+_HOST = re.compile(r"^(\[[^\]]*\]|[^:\[\]]+)(?::([0-9]{1,5}))?$")
 
 #: Each condition a decision can report, by the code `OperatorAccess.condition`
 #: carries (the UI's chip and the tests read the code, people read the reason).
@@ -241,7 +245,8 @@ def _check_request(scope: Any) -> OperatorAccess:
     hosts = _values(headers, "host")
     host = hosts[0].strip() if len(hosts) == 1 else None
     match = _HOST.match(host) if host is not None else None
-    if match is None or (match.group(2) is not None and int(match.group(2)) > 65535):
+    if (match is None or match.group(1).lower() not in LOOPBACK_HOST_NAMES
+            or (match.group(2) is not None and int(match.group(2)) > 65535)):
         return _refused("host_not_loopback", _HOST_NOT_LOOPBACK)
 
     origins = _values(headers, "origin")

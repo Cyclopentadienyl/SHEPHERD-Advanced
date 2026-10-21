@@ -23,7 +23,7 @@ it is shown, after each diagnosis, after a Load ("served model changed") and on
 - *stale*: the last good read is older than the result shown: grey, "read
   HH:MM:SS · older than this result";
 - *changed*: a read found something else served than this session's last read
-  did: the dismissable "Model changed at HH:MM — was …, now …";
+  did: the dismissable "Model changed at HH:MM UTC — was …, now …";
 - what is served: *no model loaded* (no pipeline: Run Diagnosis is disabled
   with its reason and a bubble), *no trained model* (a graph served for path
   reasoning: Run stays on), a model *supplied in memory*, or a checkpoint.
@@ -370,8 +370,9 @@ def parse_local(value: Any) -> Optional[datetime]:
 
 
 def hhmmss(value: Any) -> str:
-    moment = parse_local(value)
-    return moment.strftime("%H:%M:%S") if moment else "—"
+    """A local stamp as the dashboard shows a clock time ("15:50:35 UTC",
+    `renderers.clock_utc`), or "—"."""
+    return r.clock_utc(parse_local(value)) or "—"
 
 
 def advance(state: Optional[Mapping[str, Any]], status: Optional[Mapping[str, Any]],
@@ -401,7 +402,7 @@ def advance(state: Optional[Mapping[str, Any]], status: Optional[Mapping[str, An
     if previous is not None and new.get("key") != key:
         was, was_sha = served_kind(previous), served_checkpoint_sha(previous)
         is_sha = served_checkpoint_sha(status)
-        new["change"] = {"at": now.strftime("%H:%M"),
+        new["change"] = {"at": r.clock_utc(now, seconds=False),
                          "was": r.short_hex(was_sha) if was_sha else _kind_word(was),
                          "now": r.short_hex(is_sha) if is_sha else _kind_word(served_kind(status)),
                          "same_model": bool(was_sha) and was_sha == is_sha}
@@ -462,7 +463,7 @@ _SEP = '<span class="shep-sep" aria-hidden="true"> · </span>'
 
 
 def time_html(state: Mapping[str, Any], produced_at: Any = None) -> str:
-    """The title row's right side: "checked HH:MM:SS" while the card is current."""
+    """The title row's right side: "checked HH:MM:SS UTC" while the card is current."""
     if card_mode(state, produced_at) != "current":
         return ""
     return f'<span class="shep-dx-checked">checked {r.e(hhmmss(state.get("good_at")))}</span>'

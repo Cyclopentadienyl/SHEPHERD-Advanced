@@ -82,6 +82,7 @@ __all__ = [
     "list_cohort_versions",
     "list_intake_files",
     "list_workspaces",
+    "locate_checkpoint",
     "resolve_checkpoint",
     "resolve_cohort_version",
     "resolve_intake_file",
@@ -552,6 +553,46 @@ def resolve_checkpoint(
     raise ServerListRefused(
         f"no checkpoint {_echo(filename)} in run {_echo(run)} of {conv_type} is listed in "
         f"the workspace {name!r}")
+
+
+def locate_checkpoint(
+    workspace: Any, typed: Any, *, environ: Optional[Mapping[str, str]] = None,
+) -> Tuple[str, str, str]:
+    """``(architecture, run, filename)`` of the checkpoint the server lists in
+    `workspace` whose file is the one the operator `typed` (a path, relative to
+    this process's directory or absolute, compared after resolving both): a
+    typed path only *locates* a listed item, which `resolve_checkpoint` then
+    finds again by those names (`PLAN_TEST_RESULTS.md` D8, 2026-10-19). Reads
+    no file: the listing and the paths' resolution only.
+
+    Raises:
+        ServerListRefused: the workspace is not listed, or no checkpoint it
+            lists is that file (an unlisted file is never opened). The reason
+            does not repeat the typed path.
+    """
+    from src.utils.checkpoint_paths import list_run_checkpoints, run_architecture
+
+    name, path = _find_workspace(workspace, environ)
+    text = typed.strip() if isinstance(typed, str) else ""
+    if not text:
+        raise ServerListRefused("no checkpoint path was typed")
+    try:
+        wanted = Path(text).resolve()
+        listed = list_run_checkpoints(path)
+    except (OSError, RuntimeError, ValueError) as exc:  # RuntimeError: a link loop before 3.13
+        raise ServerListRefused(
+            f"the typed path or the runs of the workspace {name!r} cannot be resolved "
+            f"({type(exc).__name__})") from None
+    for run_dir, checkpoint in listed:
+        try:
+            found = checkpoint.resolve()
+        except (OSError, RuntimeError):
+            continue
+        if found == wanted and _inside(found, path):
+            return run_architecture(run_dir), run_dir.name, checkpoint.name
+    raise ServerListRefused(
+        f"the typed path is not a checkpoint the server lists in the workspace {name!r}: a "
+        "typed path only locates one of the run bar's workspace's listed checkpoints")
 
 
 # ---------------------------------------------------------------------------

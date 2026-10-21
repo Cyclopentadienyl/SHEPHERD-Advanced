@@ -83,7 +83,6 @@ import csv
 import io
 import json
 import logging
-import math
 import random
 import re
 from datetime import datetime
@@ -97,8 +96,13 @@ from src.config.runtime_presets import load_runtime_settings
 from src.webui.components import charts
 from src.webui.components import renderers as r
 from src.webui.components.chips import D8_SHORT, gpu_chip_from, read_lock
-from src.webui.components.help import copy_button, help_button
-from src.webui.components.workspaces import read_workspaces, redact, workspaces_root
+from src.webui.components.help import help_button
+from src.webui.components.workspaces import (
+    manifest_facts,
+    read_workspaces,
+    redact,
+    workspaces_root,
+)
 from src.webui.operator_access import operator_access
 
 logger = logging.getLogger(__name__)
@@ -123,7 +127,6 @@ def plain_html(value: Any = "", **kwargs: Any) -> Any:
 
 
 TRAINING_CONFIG_FILE = Path(".shepherd_training_config.json")
-DEFAULT_WORKSPACE = "data/workspaces/default"
 DISPLAY_PREFIX = "SHEPHERD-Advanced/"
 
 # Max seed value. trainer._set_seed calls np.random.seed(), whose legal range is
@@ -366,8 +369,6 @@ def _workspace_state(name: Optional[str], listed: Optional[Mapping[str, Any]] = 
     the selected item, what its manifest binds, the listed fingerprints (to say
     what a parent trained on) and its latest run. The full fingerprint kept
     here is the one Start sends."""
-    from src.webui.components.datasets_page import manifest_facts
-
     listed = listed if listed is not None else read_workspaces()
     rows = listed["rows"]
     state = _empty_workspace()
@@ -408,56 +409,16 @@ _NO = ('<svg class="shep-no" width="14" height="14" viewBox="0 0 16 16" aria-hid
 
 
 def details_html(ws: Mapping[str, Any]) -> str:
-    """The chip's "Details ›" popover: the full dataset fingerprint with Copy,
-    what the manifest binds (12 hex each), the split, the sources, the path
-    relative to the server's workspace root, and "All datasets ›"."""
+    """The chip's "Details ›" popover: the workspace's name and record, the
+    shared details body (`renderers.dataset_details_html`, as Research ›
+    Datasets shows it), and "All datasets ›"."""
     row = ws.get("row") or {}
     name = str(row.get("name") or "")
-    record = (f'<span class="shep-tag shep-tag-ok">{r._CHECK} record verified</span>'
-              if r.record_verified(row) else r.chip("record not verified", "grey"))
-    parts = [f'<div class="shep-pop-hd"><b>{r.e(name)}</b>{record}'
-             '<button type="button" class="shep-pop-x" data-act="close" '
-             'aria-label="Close the dataset details">×</button></div>']
-    fingerprint = row.get("dataset_fingerprint")
-    if r.is_digest(fingerprint):
-        parts.append('<div class="shep-digest"><span class="shep-dl">Dataset fingerprint · '
-                     f'SHA-256 of split_manifest.json</span><code class="shep-full">'
-                     f'{r.e(fingerprint)}</code>'
-                     f'{copy_button(fingerprint, "the full dataset fingerprint of " + name)}</div>')
-    facts = ws.get("facts")
-    rows_kv: List[Tuple[str, str]] = []
-    if facts:
-        bound = "".join(f'<span class="shep-k">{r.e(label)}</span><code>{r.e(r.short_hex(d))}</code>'
-                        for label, d in facts["bound"])
-        parts.append('<div class="shep-pop-sub">The manifest binds '
-                     '<span class="shep-muted">(sha256, first 12)</span></div>'
-                     f'<div class="shep-kv shep-kv-2">{bound}</div>')
-        split = []
-        if facts.get("allocation_seed") is not None:
-            split.append(f"allocation seed {facts['allocation_seed']}")
-        if facts.get("feature_seed") is not None:
-            split.append(f"feature seed {facts['feature_seed']}")
-        for label, key in (("train", "train_samples"), ("val", "val_samples")):
-            value = row.get(key)
-            if isinstance(value, int) and not isinstance(value, bool):
-                split.append(f"{label} {value:,}")
-        rows_kv.append(("Split", r.e(" · ".join(split) or "not recorded")))
-    elif row:
-        why = row.get("not_trainable") or "its split manifest was not read"
-        parts.append(f'<div class="shep-reason">The manifest was not read: {r.e(why)}</div>')
-    sources = r.sources_text(row.get("declared_releases"))
-    origin = r.origin_of(row)
-    rows_kv.append(("Sources", r.e(sources) if sources else
-                    ("none (synthetic)" if origin == "synthetic" else '<span class="shep-muted">—</span>')))
-    built = r.built_text(row.get("build"))
-    rows_kv.append(("Built", r.e(built.replace("built ", "", 1)) if built else "not recorded"))
-    rows_kv.append(("Path", f'<code>{r.e(name)}</code> <span class="shep-muted">(in the server’s '
-                            'workspace root)</span>'))
-    parts.append('<div class="shep-kv">' + "".join(
-        f'<span class="shep-k">{r.e(k)}</span><span class="shep-v">{v}</span>' for k, v in rows_kv)
-        + "</div>")
-    parts.append('<button type="button" class="shep-link" data-act="datasets">All datasets ›</button>')
-    return "".join(parts)
+    head = (f'<div class="shep-pop-hd"><b>{r.e(name)}</b>{r.record_chip(row)}'
+            '<button type="button" class="shep-pop-x" data-act="close" '
+            'aria-label="Close the dataset details">×</button></div>')
+    return (head + r.dataset_details_html(row, ws.get("facts"))
+            + '<button type="button" class="shep-link" data-act="datasets">All datasets ›</button>')
 
 
 def chip_html(ws: Optional[Mapping[str, Any]], *, in_use: bool = False) -> str:
@@ -615,7 +576,7 @@ def pill_state(status: Mapping[str, Any]) -> Tuple[str, str]:
 def pill_html(status: Mapping[str, Any]) -> str:
     state, words = pill_state(status)
     kind = PILL_KIND.get(state, "grey")
-    mark = {"ok": r._CHECK, "red": '<span class="shep-dot-r" aria-hidden="true"></span>',
+    mark = {"ok": r.CHECK, "red": '<span class="shep-dot-r" aria-hidden="true"></span>',
             "running": '<span class="shep-dot-w" aria-hidden="true"></span>'}.get(kind, "")
     return (f'<div class="shep-pill shep-pill-{kind}" data-state="{r.e(state)}" role="status">'
             f'{mark}<span>{r.e(words)}</span></div>')
@@ -1036,7 +997,7 @@ def run_head_html(run: Optional[RunRef], ws: Mapping[str, Any], *, operator: boo
         current = _fingerprint(ws)
         used = r.fingerprint_html(label, recorded, digits=ws.get("digits") or r.SHORT_HEX, copy=False)
         if r.is_digest(recorded) and current:
-            used += (f'<span class="shep-tag shep-tag-ok">{r._CHECK} same as the run bar</span>'
+            used += (f'<span class="shep-tag shep-tag-ok">{r.CHECK} same as the run bar</span>'
                      if recorded == current else
                      '<span class="shep-tag shep-tag-amber">≠ not the selected dataset</span>')
     return (f'<div class="shep-panel-hd shep-rv-hd"><h2>Run <code>{r.e(run["label"])}</code></h2>'
@@ -1808,7 +1769,7 @@ def compare_html(parent: Mapping[str, Any], ws: Mapping[str, Any]) -> str:
     now = (f'this workspace now: <b>{r.e(ws.get("name"))}</b> · '
            + r.fingerprint_html("dataset fingerprint", current, digits=digits, copy=False))
     if current and recorded == current:
-        return (f'<div class="shep-cmp shep-cmp-ok">{r._CHECK} The parent trained on this '
+        return (f'<div class="shep-cmp shep-cmp-ok">{r.CHECK} The parent trained on this '
                 f'workspace’s current dataset · {r.fingerprint_html("dataset fingerprint", recorded, digits=digits, copy=False)}</div>')
     listed = ws.get("listed") or []
     trained = r.trained_on_html(recorded, listed, digits=digits)
@@ -1834,7 +1795,7 @@ def _check_html(preview: Mapping[str, Any], source: str, *, differs: bool = Fals
                 f'continue.</div>{"".join(lines)}<p>{r.e(preview.get("reason"))}</p></div>')
     head = ('<div class="shep-check-h">⚠ Checkpoint read; cannot continue on the current '
             'dataset.</div>' if differs else
-            f'<div class="shep-check-h shep-ok-t">{r._CHECK} {r.e(preview["action"])}.</div>')
+            f'<div class="shep-check-h shep-ok-t">{r.CHECK} {r.e(preview["action"])}.</div>')
     lines.append(f"<p>Plan read from the checkpoint: {r.e(preview['action'])}.</p>")
     inherited = preview.get("inherited") or {}
     if inherited:
@@ -1916,19 +1877,38 @@ def _strip_display_prefix(path: str) -> str:
 def _parent_path(source: str, listed: Any, manual: Any, ws: Mapping[str, Any],
                  parents: Mapping[str, Any]) -> Tuple[Optional[str], Optional[str],
                                                       Optional[Mapping[str, Any]]]:
-    """``(path, why_not, listed_item)`` for the chosen parent: a listed one
-    resolved by the server from its list again (never a client path); a typed
-    one as typed (an operator's)."""
+    """``(path, why_not, listed_item)`` for the chosen parent, always one the
+    server lists in the run bar's workspace and resolved from that list again
+    (never a client path, `PLAN_TEST_RESULTS.md` D8, 2026-10-19): a listed one
+    by its names; a typed one only locates a listed checkpoint
+    (`server_lists.locate_checkpoint`), and any other file is refused unopened."""
+    from src.api.services.server_lists import (
+        ServerListRefused,
+        locate_checkpoint,
+        resolve_checkpoint,
+    )
+
     if source == CONTINUE_FROM_PATH:
-        path = _strip_display_prefix(manual or "")
-        return (path or None), (None if path else "enter a checkpoint path"), None
-    item = (parents or {}).get(listed) if listed else None
+        typed = _strip_display_prefix(manual or "")
+        if not typed:
+            return None, "enter a checkpoint path", None
+        if not ws.get("name"):
+            return None, "select a dataset in the run bar first", None
+        try:
+            architecture, run, filename = locate_checkpoint(ws.get("name"), typed)
+        except ServerListRefused as exc:
+            return None, redact(exc, workspaces_root()[0]), None
+        listed = f"{architecture}/{run}/{filename}"
+        item = (parents or {}).get(listed) or {"workspace": ws.get("name"),
+                                               "architecture": architecture, "run": run,
+                                               "filename": filename}
+    else:
+        item = (parents or {}).get(listed) if listed else None
     if not item:
         return None, "choose a checkpoint from the run list", None
     other = _other_workspace(item, ws)
     if other:
         return None, other.rstrip("."), None
-    from src.api.services.server_lists import ServerListRefused, resolve_checkpoint
 
     try:
         path = resolve_checkpoint(ws.get("name"), item["architecture"], item["run"],
@@ -2214,8 +2194,9 @@ FIELD_HELP = {
     "continue_source": (
         "Checkpoint source",
         "From run list: the run bar's workspace's runs, as the server lists them (listing "
-        "opens each checkpoint, an operator control). Manual path: a .pt file on the server, "
-        "in the run layout or not; it is checked the same way.",
+        "opens each checkpoint, an operator control). Manual path: the path of one of those "
+        "listed checkpoints, typed; it only finds a checkpoint the server lists in the run "
+        "bar's workspace (any other file is refused, unopened) and is checked the same way.",
     ),
     "checkpoint_dropdown": (
         "Run checkpoint",

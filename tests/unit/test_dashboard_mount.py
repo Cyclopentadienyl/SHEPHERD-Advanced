@@ -19,10 +19,11 @@ through Starlette's TestClient and checks what a browser and a script see:
   so it puts no file there.)
 
 **In a fresh interpreter.** `src.api.main` mounts the dashboard at import, and
-`src.webui` imports the API package back (its components use the API's
-services): when a test process happens to import `src.webui` first, the
-mount fails at import and the app has no /ui. The service always imports
-`src.api.main` first (``uvicorn src.api.main:app``), and so does this probe.
+`src.webui` imports the API's services. Until the M5-3 review (BACKLOG 35)
+importing `src.webui` first left an app without /ui; the package no longer
+builds the app on import (`tests/unit/test_api_import_order.py`), and this
+probe still imports `src.api.main` first, as the service does
+(``uvicorn src.api.main:app``).
 Gradio's URL fetch is replaced by a counter, so nothing here touches the network.
 
 Module: tests/unit/test_dashboard_mount.py

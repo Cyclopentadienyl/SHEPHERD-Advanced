@@ -39,23 +39,31 @@ Module: src/webui/components/datasets_page.py
 from __future__ import annotations
 
 import logging
-from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional
 
 import gradio as gr
 
 from src.webui.components import renderers as r
 from src.webui.components.help import help_button
 from src.webui.components.served_status import read_status, serving_workspace
-from src.webui.components.workspaces import OUTSIDE_PATH, ROOT_REFUSED, read_workspaces, redact
+from src.webui.components.workspaces import (
+    OUTSIDE_PATH,
+    ROOT_REFUSED,
+    manifest_facts,
+    read_workspaces,
+    redact,
+)
 from src.webui.shell import page_elem_id, plain_html
 
 logger = logging.getLogger(__name__)
 
-#: The one line on building datasets (no building in the WebUI, BACKLOG 29).
+#: The one line on building datasets (no building in the WebUI, BACKLOG 29):
+#: the command that writes a trainable workspace (graph, samples, manifest and
+#: dataset record), and the demo's.
 BUILD_LINE = (
-    "Datasets are built on the server with <code>scripts/build_knowledge_graph.py</code> and "
-    "<code>scripts/preprocess_data.py</code>."
+    "Datasets are built on the server with "
+    "<code>scripts/build_knowledge_graph.py --generate-samples</code> (the demo with "
+    "<code>scripts/setup_demo.py</code>)."
 )
 FOOTNOTE = (
     "“in your Training run bar” is this browser tab’s selection; nothing on the server "
@@ -66,12 +74,6 @@ FOOTNOTE = (
 )
 USE_NOTE = ("Selects it in your Training run bar (this browser tab) and opens Training. Nothing "
             "changes on the server; Start is the gated act.")
-
-#: What the manifest binds, by its role names, in the order shown.
-_BOUND_ROLES = (("kg", "kg"), ("node_features", "node_features"), ("edge_indices", "edge_indices"),
-                ("num_nodes", "num_nodes"), ("train_samples", "train_samples"),
-                ("val_samples", "val_samples"), ("provenance", "record"))
-
 
 def read_datasets() -> Dict[str, Any]:
     """The page's data for one session, read once per refresh: the server's
@@ -115,7 +117,7 @@ def _marks(row: Mapping[str, Any], data: Mapping[str, Any], run_bar: Optional[st
 
 def _record_cell(row: Mapping[str, Any]) -> str:
     if r.record_verified(row):
-        return f'<span class="shep-ok-t">{r._CHECK} verified</span>'
+        return f'<span class="shep-ok-t">{r.CHECK} verified</span>'
     return '<span class="shep-muted">not verified</span>'
 
 
@@ -124,10 +126,6 @@ def _origin_cell(row: Mapping[str, Any]) -> str:
     if origin == "synthetic":
         return r.chip("synthetic", "amber")
     return r.e(origin) if origin else '<span class="shep-muted">—</span>'
-
-
-def _count(value: Any) -> str:
-    return f"{value:,}" if isinstance(value, int) and not isinstance(value, bool) else "—"
 
 
 def table_html(data: Mapping[str, Any], run_bar: Optional[str], selected: Optional[str]) -> str:
@@ -162,8 +160,8 @@ def table_html(data: Mapping[str, Any], run_bar: Optional[str], selected: Option
             f'<td class="shep-ds-wide">{_origin_cell(row)}</td>'
             f'<td class="shep-ds-wide">{_record_cell(row)}</td>'
             f'<td class="shep-ds-src">{r.e(sources) if sources else "<span class=shep-muted>—</span>"}</td>'
-            f'<td class="shep-num">{_count(row.get("train_samples"))}'
-            f'<div class="shep-sub">{_count(row.get("val_samples"))}</div></td>'
+            f'<td class="shep-num">{r.count_text(row.get("train_samples"))}'
+            f'<div class="shep-sub">{r.count_text(row.get("val_samples"))}</div></td>'
             f'<td class="shep-ds-use">{_marks(row, data, run_bar)}</td></tr>')
     return (
         '<div class="shep-tbl-wrap"><table class="shep-tbl shep-dstbl" aria-label="Workspaces">'
@@ -181,34 +179,6 @@ def header_html(data: Mapping[str, Any]) -> str:
             '<p class="shep-intro">The same list Training, Test and Models choose from. Dataset '
             'fingerprint: the SHA-256 of each workspace’s <code>split_manifest.json</code>'
             f'{help_button("dataset-fingerprint", "Dataset fingerprint")}</p>')
-
-
-def manifest_facts(directory: Path, root: Optional[Path]
-                   ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
-    """What a listed workspace's manifest binds and how it was split, read once
-    (`read_split_manifest`) from its resolved directory; or why it was not read
-    (without an absolute path)."""
-    from src.kg.artifacts import read_split_manifest
-
-    try:
-        manifest = read_split_manifest(directory).manifest
-    except (ValueError, OSError) as exc:
-        return None, redact(exc, root)
-
-    def at(*keys: str) -> Any:
-        value: Any = manifest
-        for key in keys:
-            value = value.get(key) if isinstance(value, Mapping) else None
-        return value
-
-    artifacts = at("artifacts") if isinstance(at("artifacts"), Mapping) else {}
-    return {
-        "bound": [(label, artifacts.get(role)) for role, label in _BOUND_ROLES],
-        "allocation_seed": at("allocation", "seed"),
-        "feature_seed": at("graph_export", "feature_seed"),
-        "train_diseases": at("realised", "train_diseases"),
-        "val_diseases": at("realised", "val_diseases"),
-    }, None
 
 
 #: The bound files two workspaces share when they come from one graph build.
@@ -261,61 +231,18 @@ def comparison_html(row: Mapping[str, Any], rows: List[Mapping[str, Any]]) -> st
 
 
 def details_html(data: Mapping[str, Any], name: Optional[str]) -> str:
+    """The selected workspace's details: its name, record and origin, the
+    shared details body (`renderers.dataset_details_html`, as Training's
+    popover shows it) and how it compares with the other listed workspaces."""
     row = next((x for x in data.get("rows") or [] if x["name"] == name), None)
     if row is None:
         return ('<div class="shep-panel-hd"><h2>Details</h2></div><div class="shep-panel-bd">'
                 '<p class="shep-muted">Select a dataset to see what its manifest binds.</p></div>')
-    record = (f'<span class="shep-tag shep-tag-ok">{r._CHECK} record verified</span>'
-              if r.record_verified(row) else r.chip("record not verified", "grey"))
-    origin = r.origin_of(row)
-    head = (f'<div class="shep-panel-hd"><h2>{r.e(row["name"])}</h2>{record}'
-            f'<span class="shep-muted">{r.e(origin or "")}</span></div>')
-    fingerprint = row.get("dataset_fingerprint")
-    parts = []
-    if r.is_digest(fingerprint):
-        parts.append(
-            '<div class="shep-digest"><span class="shep-dl">Dataset fingerprint · SHA-256 of '
-            f'split_manifest.json</span><code class="shep-full">{r.e(fingerprint)}</code>'
-            f'{r.copy_button(fingerprint, "the full dataset fingerprint of " + str(row["name"]))}'
-            '</div>')
-    facts, problem = row.get("facts"), row.get("facts_problem")
-    if facts is not None:
-        bound = "".join(
-            f'<span class="shep-k">{r.e(label)}</span><code>{r.e(r.short_hex(digest))}</code>'
-            for label, digest in facts["bound"])
-        parts.append('<div class="shep-card"><div class="shep-card-hd">What the manifest binds '
-                     '<span class="shep-muted">sha256, first 12 · full values in the manifest'
-                     f'</span></div><div class="shep-kv shep-kv-2">{bound}</div></div>')
-        split = []
-        if facts["allocation_seed"] is not None:
-            split.append(f"allocation seed {facts['allocation_seed']}")
-        if facts["feature_seed"] is not None:
-            split.append(f"feature seed {facts['feature_seed']}")
-        samples = (f"train {_count(row.get('train_samples'))} · val {_count(row.get('val_samples'))}")
-        if facts["train_diseases"] is not None:
-            samples += (f" · diseases (train / val) {_count(facts['train_diseases'])} / "
-                        f"{_count(facts['val_diseases'])}")
-        rows_kv = [("Split", r.e(" · ".join(split) or "not recorded")), ("Samples", r.e(samples))]
-    else:
-        parts.append(f'<div class="shep-reason">The manifest was not read: '
-                     f'{r.e(problem or "it is not readable")}</div>')
-        rows_kv = []
-    sources = r.sources_text(row.get("declared_releases"))
-    built = r.built_text(row.get("build"))
-    rows_kv += [
-        ("Sources", r.e(sources) if sources else
-         ('none (synthetic)' if origin == "synthetic" else '<span class="shep-muted">—</span>')),
-        ("Built", r.e(built.replace("built ", "", 1)) if built else "not recorded"),
-        ("Path", f'<code>{r.e(row["name"])}</code> <span class="shep-muted">(in the server’s '
-                 'workspace root)</span>'),
-    ]
-    if not row.get("trainable"):
-        rows_kv.append(("Not trainable", r.e(row.get("not_trainable") or "not trainable")))
-    cells = "".join(f'<span class="shep-k">{r.e(k)}</span><span class="shep-v">{v}</span>'
-                    for k, v in rows_kv)
-    parts.append(f'<div class="shep-kv">{cells}</div>')
-    parts.append(comparison_html(row, list(data.get("rows") or [])))
-    return head + '<div class="shep-panel-bd">' + "".join(parts) + "</div>"
+    head = (f'<div class="shep-panel-hd"><h2>{r.e(row["name"])}</h2>{r.record_chip(row)}'
+            f'<span class="shep-muted">{r.e(r.origin_of(row) or "")}</span></div>')
+    body = r.dataset_details_html(row, row.get("facts"), problem=row.get("facts_problem"))
+    return (head + '<div class="shep-panel-bd">' + body
+            + comparison_html(row, list(data.get("rows") or [])) + "</div>")
 
 
 #: Row clicks (and Enter on a focused row) become the table's click event.
@@ -433,7 +360,6 @@ __all__ = [
     "create_datasets_page",
     "details_html",
     "header_html",
-    "manifest_facts",
     "read_datasets",
     "redact",
     "table_html",

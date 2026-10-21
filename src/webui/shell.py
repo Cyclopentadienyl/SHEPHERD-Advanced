@@ -53,8 +53,8 @@ Research › Models          ``models_page.create_models_page``            UI-D
 ⚙ Settings                 ``runtime_settings.create_runtime_settings_tab``  UI-A
 =========================  ============================================  =======
 
-(``test_page`` and ``models_page`` are created by UI-D; until then the shell
-shows their one-line temporary body, `TEMPORARY_BODY`.) **Registering a page**
+Every page id has its builder (one missing is a ``KeyError`` when the shell is
+built, never a placeholder). **Registering a page**
 is one line each in `src/webui/app.py`: its builder in ``PAGES`` (by the page
 ids here) and, when it has one, its style sheet in ``PAGE_CSS``. The context
 gives a page everything it shares, and a page reaches nothing else of another
@@ -90,10 +90,11 @@ page:
   **A listener costs one request per tick whatever it returns**, on every
   open page, whichever page is shown: returning ``gr.update()`` saves the
   work, not the request. So a poll goes on the slow timer unless it must be
-  fast (Training's run view is the one fast listener; Test reads its job on
-  the slow timer, and at once after Start, Cancel and Register). A page that
-  needs a fast poll only while something runs would need a timer of its own,
-  outside ``gr.Tabs`` and made active only then; none does yet;
+  fast (Training's run view is the one fast listener; Test reads its job and
+  Settings its restart lock on the slow timer, Test at once after Start,
+  Cancel and Register too). A page that needs a fast poll only while something
+  runs would need a timer of its own, outside ``gr.Tabs`` and made active only
+  then; no page has a timer of its own;
 - ``ctx.nav`` and ``ctx.research_nav``: the two ``gr.Tabs``; a cross-link returns
   ``ctx.go(page)`` for ``outputs=ctx.nav_outputs`` (both levels at once, and the
   research page shown, so only the target page refreshes; ``ctx.no_nav()``
@@ -116,12 +117,8 @@ page:
   served workspace); Diagnosis listens to its ``.change`` to re-read its card;
 - ``ctx.training_workspace``: this session's Training run-bar workspace (a
   ``gr.State``, a listed workspace name or None). Datasets' "Use for training ›"
-  sets it and opens Training; the run bar reads and writes it, and sets it to
-  None when the run bar's workspace is changed by hand to another. (Until UI-C's
-  run bar exists, the Training form's listeners do that with the Data
-  Directory, `training_console._from_datasets` and `_keep_or_clear_workspace`;
-  the run bar replaces both, with their test file
-  ``tests/unit/test_training_console_datasets_bridge.py``.)
+  sets it and opens Training; Training's run bar reads and writes it, and sets
+  it to None when the run bar's workspace is changed by hand to another.
 
 **Recognise a component by its ``elem_id``, never by identity.** Once an
 answer updates a component's properties, Gradio 6.30 keeps a rebuilt copy in
@@ -201,9 +198,6 @@ TITLES = {
 #: generated content with empty alternative text).
 RESEARCH_TABLIST_LABEL = ("Research pages: Prepare (Datasets, Training), "
                           "Evaluate (Test, Models)")
-
-#: The one-line body Test and Models hold until UI-D builds them.
-TEMPORARY_BODY = "being built in M5"
 
 #: The shared timers' periods, in seconds.
 FAST_SECONDS = 1.5
@@ -365,9 +359,9 @@ def build_shell(blocks: Any, pages: Dict[str, Callable[[PageContext], None]],
                 *, help_registry: Optional[HelpRegistry] = None) -> PageContext:
     """Lay out the header, the two navigation levels and every page.
 
-    `pages` maps a page id (clinical, datasets, training, test, models,
-    settings) to its builder; a missing Test or Models builder shows
-    `TEMPORARY_BODY`. Returns the context the pages were given."""
+    `pages` maps every page id (clinical, datasets, training, test, models,
+    settings) to its builder; a missing one is a ``KeyError``. Returns the
+    context the pages were given."""
     registry = help_registry or HelpRegistry()
     registry.topics(RENDERER_HELP)
     served_model_changed = gr.State(None)
@@ -405,12 +399,7 @@ def build_shell(blocks: Any, pages: Dict[str, Callable[[PageContext], None]],
                         with gr.Tab(LABELS[page], id=page, elem_id=page_elem_id(page),
                                     elem_classes=["shep-page-tab"]) as page_tab:
                             tabs[page] = page_tab
-                            builder = pages.get(page)
-                            if builder is None:
-                                gr.Markdown(f"{LABELS[page]}: {TEMPORARY_BODY}.",
-                                            elem_classes=["shep-temporary"])
-                            else:
-                                builder(ctx)
+                            pages[page](ctx)
             with gr.Tab(LABELS[SETTINGS], id=SETTINGS, alignment="right",
                         elem_id=tab_elem_id(SETTINGS), elem_classes=["shep-tab"]) as settings_tab:
                 tabs[SETTINGS] = settings_tab
@@ -553,7 +542,6 @@ __all__ = [
     "RESEARCH_TABLIST_LABEL",
     "SETTINGS",
     "SHELL_HEAD",
-    "TEMPORARY_BODY",
     "TEST",
     "TITLES",
     "TRAINING",

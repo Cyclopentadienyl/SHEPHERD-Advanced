@@ -50,10 +50,15 @@ pytest.importorskip("gradio")
 
 from src.utils.fingerprint import file_sha256  # noqa: E402
 from src.webui.components import diagnosis_card as card  # noqa: E402
+from tests.fixtures.clock_zone import local_zone, utc_clock  # noqa: E402,F401
 
 RUN = "20261017-091500_run_3fa9c1"
 NEWER = "20261018-091200_run_8c2e7a"
 NOW = datetime(2026, 10, 20, 10, 14, 5)
+
+
+# The local stamps below are written in UTC, the zone the card shows.
+pytestmark = pytest.mark.usefixtures("utc_clock")
 
 
 @pytest.fixture(scope="module")
@@ -276,7 +281,7 @@ def test_a_failed_read_keeps_the_last_known_status_grey_and_never_current(root):
     body = card.body_html(failed)
     assert "cannot check" in body and "timed out (5 s)" in body
     assert 'title="timed out after 5 s"' in body
-    assert "last known 10:14:05 · not current" in body
+    assert "last known 10:14:05 UTC · not current" in body
     assert "verified</span>" not in body          # no ✓ on a last known identity
     assert "Recorded tests: not read" in body
     assert card.time_html(failed) == ""
@@ -332,8 +337,8 @@ def test_another_served_identity_sets_the_change_notice(root):
                          now=datetime(2026, 10, 20, 10, 31, 12), operator=True, d8_short=None,
                          open_checkpoints=True)
     old, new = root["shas"]["model-05.pt"][:12], root["shas"]["model-12.pt"][:12]
-    assert later["change"] == {"at": "10:31", "was": old, "now": new, "same_model": False}
-    assert f"Model changed at 10:31</b> — was {old}, now {new}" in card.body_html(later)
+    assert later["change"] == {"at": "10:31 UTC", "was": old, "now": new, "same_model": False}
+    assert f"Model changed at 10:31 UTC</b> — was {old}, now {new}" in card.body_html(later)
     assert card.dismiss_change(later)["change"] is None
     # Another part of what is served (the SP table), same model: said so.
     sp = _status(root)
@@ -568,7 +573,23 @@ def test_details_open_at_the_section_asked_for(root):
 def test_details_of_a_failed_read_say_what_is_last_known(root):
     failed = card.advance(_state(root), None, "timed out (5 s)", now=NOW, operator=True,
                           d8_short=None, open_checkpoints=False)
-    assert "Last known at 10:14:05, not current: timed out (5 s)." in card.served_facts_html(failed)
+    assert "Last known at 10:14:05 UTC, not current: timed out (5 s)." in (
+        card.served_facts_html(failed))
     assert "could not be read: timed out (5 s)" in card.served_facts_html(
         card.advance(None, None, "timed out (5 s)", now=NOW, operator=True, d8_short=None,
                      open_checkpoints=False))
+
+
+def test_the_cards_times_are_utc_and_say_so_on_a_server_in_another_zone(root):
+    """M5-3 review UI-5: on a server whose zone is not UTC (the homelab),
+    Diagnosis showed its local time unlabeled ("checked 23:50:35") beside the
+    chip's "since 15:50 UTC" and the Test job's UTC times."""
+    with local_zone("Asia/Taipei"):
+        state = _state(root, now=datetime(2026, 10, 21, 23, 50, 35))
+        assert "checked 15:50:35 UTC" in card.time_html(state)
+        assert card.hhmmss("2026-10-21T23:50:30") == "15:50:30 UTC"
+        later = card.advance(state, _status(root, "model-12.pt", NEWER), None,
+                             now=datetime(2026, 10, 21, 23, 52, 0), operator=True,
+                             d8_short=None, open_checkpoints=True)
+        assert later["change"]["at"] == "15:52 UTC"
+        assert "Model changed at 15:52 UTC</b>" in card.body_html(later)

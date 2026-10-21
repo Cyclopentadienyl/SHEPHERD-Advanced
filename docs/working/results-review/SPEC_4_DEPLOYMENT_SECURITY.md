@@ -191,11 +191,11 @@ asks. The launcher's check also ran after its accelerator installs, and it read 
 | # | Item |
 |---|---|
 | A1 | Audit and convert every client-reachable `torch.load` (§2.1) |
-| A2 | Fix the launcher's misleading display (`shep_launch.py:323-333`) — see below |
+| A2 | Fix the launcher's misleading display (`shep_launch.py:323-333`) — see below. *Done in M5-1 (2026-10-20):* the launcher prints `Listening on : <host>:<port> (<reach>)` before the URLs, which name the loopback address a browser on the machine can open. No "Network UI" line is printed: a network bind needs `SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND=1`, and the operator controls stay refused off loopback (§3.1) |
 | A3 | Fix the unbounded eager export accumulation (`diagnosis_panel.py:487-496`) |
 | A4 | **Fix the systemd unit's invalid module path** (`app.main:app` → `src.api.main:app`) and any shipped command that cannot start as written. **Done for the unit:** module path, the project's interpreter in place of `/usr/bin/python`, `default.target` for a user unit, and a start through the launcher (`shep_launch.py --no-auto-install --no-browser -- --port 8264`), the path `launch_shepherd.sh` takes, so the service gets the saved allocator preset and the attention settings a manual start gets, after which the launcher execs into uvicorn (POSIX, `--no-browser`). A bare uvicorn start gets neither; `tests/unit/test_service_unit.py`. The bind address is the launcher's default and stays with C1. *Since M5-1 (2026-10-20):* the unit starts with `-- --host 127.0.0.1 --port 8264`, the bind stated where an operator would change it, and C1 is done (B1 below). **Still owed, on a deployment host:** a real systemd start, stop and crash restart, and a UI Restart Backend in the running service. Function-level tests and the container smoke do not stand in for them |
 
-**A2 in detail.** The launcher currently prints `127.0.0.1` while binding `0.0.0.0`. The fix is not
+**A2 in detail** (the record before M5-1, when the launcher bound `0.0.0.0` by default). The launcher then printed `127.0.0.1` while binding `0.0.0.0`. The fix is not
 to print `0.0.0.0` as a URL — that is not a browser destination either. Report the bind and the
 destinations as separate lines:
 
@@ -247,6 +247,11 @@ migration notes. LAN inference for several frontends is kept possible, not built
   with it (§6): the parent app's `CORSMiddleware` has an empty allow list, so no other origin may
   read a response, `/ui` included; Gradio's upload route, which the dashboard does not use, is
   refused in front of the mount, with its 1 MB per-file limit kept as a second line of defence.
+  *M5-3 review (2026-10-21):* D8 cannot see framing (a dashboard loaded in another site's frame
+  makes same-origin requests it allows), so every response refuses to be framed
+  (`X-Frame-Options: DENY`, `Content-Security-Policy: frame-ancestors 'none'`,
+  `src/api/middleware/frame_guard.py`); without it a framed dashboard would be open to
+  clickjacking (a click turned into Restart Backend or a Load).
 - **C1:** `src/api/__init__.py`'s usage example names `--host 127.0.0.1`, and the unit's comment
   no longer defers the bind. `scripts/setup_demo.py` already printed `--host 127.0.0.1` in both of
   its commands (since `0bc79d9`, 2026-09-09), and the instruction that omitted `--host` is gone,

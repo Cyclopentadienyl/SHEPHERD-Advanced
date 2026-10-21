@@ -84,7 +84,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, NamedTuple, Optional, Sequence, Tuple
 
@@ -101,6 +101,8 @@ from src.evaluation.caveats import (
 from src.webui.components import renderers as r
 from src.webui.components.chips import D8_SHORT
 from src.webui.components.help import help_button
+from src.webui.components.model_list import item_key
+from src.webui.components.workspaces import redact_paths
 from src.webui.operator_access import operator_access
 from src.webui.shell import page_elem_id, plain_html
 
@@ -264,10 +266,6 @@ TOPIC_HELP = {
 # ---------------------------------------------------------------------------
 e = r.e
 
-#: An absolute path in a text: POSIX (``/…``) or a drive letter (``C:\\…``), up
-#: to a space, a quote, a bracket, a comma or a semicolon. A NUL marks a root
-#: already replaced (`redact`).
-_ABSOLUTE = re.compile(r"""(?<![\w.:/\\\x00])(?:/[^\s'"(),;/]|[A-Za-z]:[\\/])[^\s'"(),;]*""")
 _RUN_ID = re.compile(r"^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z-([0-9a-f]{12})-[0-9a-f]{8}$")
 
 
@@ -300,19 +298,8 @@ def path_roots(environ: Optional[Mapping[str, str]] = None) -> List[Tuple[str, s
 def redact(text: Any, roots: Sequence[Tuple[str, str]]) -> str:
     """`text` with no absolute server path left: one under a named server
     directory is shown under its name (``<registry>/versions/…``), any other
-    as "a server path"."""
-    flat = str(text if text is not None else "")
-    marks: Dict[str, str] = {}
-    for index, (prefix, token) in enumerate(roots):
-        if not prefix:
-            continue
-        mark = f"\x00{index}\x00"
-        flat = re.sub(re.escape(prefix) + r"(?=$|[/\\\s'\"(),;:])", mark, flat)
-        marks[mark] = token
-    flat = _ABSOLUTE.sub(SERVER_PATH, flat)
-    for mark, token in marks.items():
-        flat = flat.replace(mark, token)
-    return flat
+    as "a server path" (the dashboard's one redaction, `redact_paths`)."""
+    return redact_paths(text, roots, other=SERVER_PATH)
 
 
 #: A string literal as Python's ``repr``/``ascii`` writes one: quoted, its
@@ -419,7 +406,7 @@ def utc_time(iso: Any) -> Optional[str]:
     except ValueError:
         return None
     # A time with no zone is the server's local time (`datetime.now()`).
-    return moment.astimezone(timezone.utc).strftime("%H:%M:%S UTC")
+    return r.clock_utc(moment)
 
 
 def _pill(status: str) -> str:
@@ -428,7 +415,7 @@ def _pill(status: str) -> str:
 
 
 #: A check mark that stays on its line (Gradio's base style makes an svg a block).
-OK_MARK = f'<span class="shep-ok-t">{r._CHECK}</span>'
+OK_MARK = f'<span class="shep-ok-t">{r.CHECK}</span>'
 
 
 def said(text: Any, tail: str) -> str:
@@ -758,7 +745,7 @@ def _refined_state(page: Mapping[str, Any], label: Any, run: Mapping[str, Any],
     if place.path is None or place.item is None:
         return None
     fresh = report_state(path, checkpoint=place.path, expected_sha256=state.get("report_sha256"))
-    beside = model_key(place.item)
+    beside = item_key(place.item)
     if place.item.get("workspace") != models.get("workspace"):
         beside += f" in workspace {place.item.get('workspace')}"
     return {**state, "kept": fresh.kept, "why_kept": fresh.why_kept,
@@ -872,10 +859,6 @@ def gpu_line(*, manager: Any = None, operator: bool = False) -> Tuple[str, str]:
 # ---------------------------------------------------------------------------
 # Choices
 # ---------------------------------------------------------------------------
-def model_key(item: Mapping[str, Any]) -> str:
-    return f"{item.get('architecture')}/{item.get('run')}/{item.get('filename')}"
-
-
 def model_choices(models: Mapping[str, Any]) -> List[Tuple[str, str]]:
     """The model select's options: the epoch first (what tells a run's
     checkpoints apart when the select is narrow and its text ends in an
@@ -890,7 +873,7 @@ def model_choices(models: Mapping[str, Any]) -> List[Tuple[str, str]]:
             label += " · metadata not readable"
         else:
             label += f" · model fingerprint {item['sha256'][:12]}"
-        choices.append((f"{label} · {item.get('filename')}", model_key(item)))
+        choices.append((f"{label} · {item.get('filename')}", item_key(item)))
     return choices
 
 
@@ -917,7 +900,7 @@ def find(rows: Sequence[Mapping[str, Any]], field: str, value: Any) -> Optional[
 
 
 def find_model(models: Mapping[str, Any], key: Any) -> Optional[Mapping[str, Any]]:
-    return next((i for i in models.get("items") or [] if model_key(i) == key), None)
+    return next((i for i in models.get("items") or [] if item_key(i) == key), None)
 
 
 def default_workspace(page: Mapping[str, Any], current: Any) -> Optional[str]:

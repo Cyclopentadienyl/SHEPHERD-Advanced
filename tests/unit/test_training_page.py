@@ -217,7 +217,7 @@ def test_the_chip_shows_the_dataset_and_its_details_escaped_without_a_path(root)
     assert fingerprint[:12] in html and 'data-copy="' + fingerprint + '"' in html
     assert "record verified" in html and "synthetic" in html
     assert 'data-act="details"' in html and 'data-act="datasets"' in html
-    assert "The manifest binds" in html and "allocation seed" in html
+    assert "What the manifest binds" in html and "allocation seed" in html
     assert "(in the server’s workspace root)" in html
     assert str(root) not in html
     # Running: the select is the job's, and says so.
@@ -415,6 +415,16 @@ def test_a_run_entry_leaving_its_workspace_or_not_a_directory_is_not_read(root, 
         assert tc.training_chart_csv({"run": run_id})["csv"] == ""
     # The listed run beside them still answers.
     assert tc.resolve_run("demo/gat/20261018-142000_run_d41f8b") is not None
+
+
+def test_an_architecture_that_is_not_one_never_lists_another_directory(root):
+    """M5-3 review ARCH-10 (d): the run id's architecture must be a supported
+    one. ``demo/../runs`` would otherwise list the workspace's own directory
+    (``runs/..``) and find ``runs`` there, inside the workspace, as a "run"."""
+    assert (root / "demo" / "runs").is_dir()
+    for run_id in ("demo/../runs", "demo/./gat", "demo/GAT/20261018-142000_run_d41f8b"):
+        assert tc.resolve_run(run_id) is None, run_id
+        assert tc.training_chart_series({"run": run_id, "rev": 1})["charts"] == []
 
 
 def test_the_series_function_returns_the_four_charts_of_a_listed_run(root):

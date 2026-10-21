@@ -13,6 +13,7 @@ pytest.importorskip("gradio")
 import gradio as gr  # noqa: E402
 
 from src.webui.components import diagnosis_panel as dp  # noqa: E402
+from tests.fixtures.clock_zone import utc_clock  # noqa: E402,F401
 
 
 # ------------------------------------------------------------------- HPO parsing
@@ -265,6 +266,10 @@ def _status_serving(identity, **extra):
     return status
 
 
+# The local stamps these tests write are in UTC, the zone the page shows.
+pytestmark = pytest.mark.usefixtures("utc_clock")
+
+
 @pytest.fixture
 def status_read(monkeypatch):
     """The card's status read, answered by the test (a list, popped in order;
@@ -393,8 +398,11 @@ def _build_tab(monkeypatch):
     monkeypatch.setattr(card, "read_status_within",
                         lambda *a, **k: calls.append("status") or (None, "x"))
     with gr.Blocks() as demo:
-        ctx = shell.build_shell(demo, {shell.CLINICAL: dp.create_diagnosis_tab,
-                                       shell.SETTINGS: lambda ctx: None})
+        # Every page needs a builder (a missing one is a KeyError): the others
+        # build nothing here.
+        ctx = shell.build_shell(demo, {**{page: (lambda ctx: None)
+                                          for page in (*shell.RESEARCH_PAGES, shell.SETTINGS)},
+                                       shell.CLINICAL: dp.create_diagnosis_tab})
     assert calls == [], f"the page called the API while the app was being built: {calls}"
     return demo, ctx
 
@@ -1158,7 +1166,8 @@ def test_a_stale_or_unreadable_status_never_leaves_equal_showing():
     good = _card(_status_serving(_served_identity()))
     stale = dp.compare_with_served(_produced("2026-07-07T16:00:30"), good)
     assert stale["state"] == "unknown"
-    assert "last read at 16:00:00, before this result was produced (16:00:30)" in stale["reason"]
+    assert ("last read at 16:00:00 UTC, before this result was produced (16:00:30 UTC)"
+            in stale["reason"])
     failed = _card(None, "timed out (5 s)", state=good)
     unknown = dp.compare_with_served(_produced(), failed)
     # The mockup's words, one level of parentheses (seen in review: "failed

@@ -214,7 +214,7 @@ def test_ordering_is_offered_only_for_a_listed_role_and_never_for_acceptance(wor
     assert offers == {MYGENE: True, INST: False, EXPLORE: False}   # listed, acceptance still off
     ctl = mp.controls(listing, data, mp.BY_SCORE, None, None, None, None)
     assert (ctl["order"], ctl["version"]) == (mp.BY_SCORE, MYGENE)
-    assert mp.version_choices(data) == [(f"{MYGENE} (role {RESEARCH_ROLE}) — {mp.ROLE_ON}", MYGENE)]
+    assert mp.version_choices(data) == [(f"{MYGENE} (role {RESEARCH_ROLE})", MYGENE)]
     html = mp.options_html(data, ctl)
     assert f"<b>{INST}</b> (role <code>{ACCEPTANCE_ROLE}</code>) — {e(mp.ROLE_NEVER)}" in html
     assert f"<b>{EXPLORE}</b> (role <code>exploration</code>) — {e(mp.ROLE_NOT_LISTED)}" in html
@@ -291,7 +291,9 @@ def test_the_order_is_d4s_with_its_groups_and_the_regime_on_each_ordered_row(wor
     assert keys[3] == [_key(world, n) for n in ("model-12.pt", "model-03.pt", "model-30.pt")]
     cells = view["cells"]
     first = cells[_key(world, "model-05.pt")]
-    assert "0.2310" in first and "#3 · D4 rule" in first
+    # "record #3", as Test and the records say it, never a bare "#3" that reads
+    # as a rank beside an ordering (M5-3 review UI-7).
+    assert "0.2310" in first and "record #3 · D4 rule" in first
     assert "CUDA · deterministic" in _text(first)
     assert "regime differs" not in first and "models-regime" not in first
     cpu = cells[_key(world, "model-20.pt")]
@@ -398,13 +400,31 @@ def test_a_key_the_page_holds_no_contested_state_for_is_not_ordered(world, monke
 def test_a_record_whose_version_the_registry_does_not_list_cannot_be_checked(world, monkeypatch):
     from src.evaluation.sidecar import KEY_FIELDS
 
-    resolver = mp._Versions([], None)
-    key = mp._key_text(tuple(world["det"][field] for field in KEY_FIELDS))
-    state = mp.contest_states([world["det"]], resolver)[key]
+    resolver = ml.CohortVersions([], None)
+    key = ml.key_text(tuple(world["det"][field] for field in KEY_FIELDS))
+    state = ml.contest_states([world["det"]], resolver)[key]
     assert state["state"] == "cannot_be_checked"
     assert "not one the server's registry lists" in state["problems"][0]
     # For a read-only request the reason's own words (which may name a path) stay out.
-    assert mp.contest_states([world["det"]], resolver, operator=False)[key]["problems"] == []
+    assert ml.contest_states([world["det"]], resolver, operator=False)[key]["problems"] == []
+
+
+def test_the_page_reads_no_ledger_and_scans_no_store_the_listing_already_read(world,
+                                                                              monkeypatch):
+    """M5-3 review ARCH-3: the shared listing read every ledger and scanned
+    every store for its rows, and Models read them all again. The page now
+    shows what the listing read, so the rows and the detail cannot disagree."""
+    import src.evaluation.report_store as report_store
+    import src.evaluation.sidecar as sidecar
+
+    listing = ml.list_models("demo", operator_request(monkeypatch))
+    assert listing["ledgers"] and listing["contest"]
+    monkeypatch.setattr(sidecar, "read_ledger",
+                        lambda *a, **k: pytest.fail("Models read a ledger again"))
+    monkeypatch.setattr(report_store, "scan_report_store",
+                        lambda *a, **k: pytest.fail("Models scanned a report store again"))
+    data = mp.read_page(listing)
+    assert data["ledgers"] == listing["ledgers"] and data["contest"] == listing["contest"]
 
 
 # --------------------------------------------------------------------------- the shared Load
@@ -482,7 +502,7 @@ def test_d4s_pick_comes_first_in_the_detail_before_a_newer_record(world, monkeyp
     key = _key(world, "model-08.pt")
     first = data["ledgers"][key]["records"][0]["registration"]["sequence"]
     later = newer["registration"]["sequence"]
-    assert later > first and f"#{first} · D4 rule" in view["cells"][key]
+    assert later > first and f"record #{first} · D4 rule" in view["cells"][key]
     records = mp.detail_parts(listing, data, key, ctl)["records"]
     assert records.index(f"registered #{first}") < records.index(f"registered #{later}")
     assert records.index("D4 rule picks this record") < records.index(f"registered #{later}")
@@ -625,6 +645,7 @@ def test_read_only_shows_the_model_in_use_from_the_ledger_and_opens_no_checkpoin
     header = mp.left_header_html(listing, data, "deployment_mode")
     assert "Model list unavailable: read-only, deployment mode not set to M1." in header
     assert e(mp.D8_CONDITIONS) in header and "shep-mp-ro" in header
+    assert "Nothing was done" not in header and "Refused" not in header      # said once (UI-6)
     assert "read-only, request not local." in mp.left_header_html(listing, data, "not_loopback")
     view, ordering = mp.shape(listing, data, mp.controls(listing, data, mp.BY_SCORE, MYGENE,
                                                          None, None, None))
@@ -730,7 +751,7 @@ def test_the_page_is_read_when_shown_and_shapes_the_shared_list(world, monkeypat
             "shep-mp-arch"} <= set(inputs)
     stale = _sync_states(demo)["stale"]
     assert stale in opened.outputs
-    out = opened.fn("demo", False, None, mp.BY_SCORE, MYGENE, "untruncated_mrr", None,
+    out = opened.fn("demo", False, None, None, None, mp.BY_SCORE, MYGENE, "untruncated_mrr", None,
                     mp.ALL_ARCHITECTURES, mp.RECORDS, "idle", operator_request(monkeypatch))
     assert len(out) == len(opened.outputs)
     by_output = dict(zip(map(id, opened.outputs), out, strict=True))
@@ -745,7 +766,7 @@ def test_the_page_is_read_when_shown_and_shapes_the_shared_list(world, monkeypat
     assert by_output[id(stale)] is False                   # read now: nothing is stale
     assert by_output[id(by_id["shep-mp-wsline"])] == mp.workspace_line_html(listing)
     # Shown while a Load runs: read now, and again once the Load has finished.
-    out = opened.fn("demo", False, None, mp.NEWEST, None, None, None, None, mp.RECORDS,
+    out = opened.fn("demo", False, None, None, None, mp.NEWEST, None, None, None, None, mp.RECORDS,
                     "loading", operator_request(monkeypatch))
     assert dict(zip(map(id, opened.outputs), out, strict=True))[id(stale)] == gr.update()
 
@@ -941,3 +962,64 @@ def test_the_app_registers_the_page_and_its_style_sheet():
     assert PAGES[shell.MODELS] is mp.create_models_page
     assert mp.PAGE_CSS in PAGE_CSS and mp.PAGE_CSS in dashboard_head()
     assert "#shep-page-models" in mp.PAGE_CSS
+
+
+def test_before_the_first_read_the_detail_never_says_nothing_is_in_use():
+    """M5-3 review UI-4: the page as built (and until its first listing came,
+    seconds with many checkpoints) said "nothing is in use for diagnosis"
+    while a model was served. Not read is said as not read."""
+    built = mp.detail_parts({}, {}, None, {})["header"]
+    assert "in use for diagnosis: not read yet" in built
+    assert "nothing is in use" not in built
+    assert "not read yet" in mp.detail_parts(ml.empty_listing(), {}, None, {})["header"]
+    read = {**ml.empty_listing(), "status_read": True, "status_problem": None}
+    assert "nothing is in use for diagnosis" in mp.detail_parts(read, {}, None, {})["header"]
+    served = {**read, "served_sha": "a" * 64}
+    assert "in use for diagnosis: model" in mp.detail_parts(served, {}, None, {})["header"]
+
+
+def test_the_list_header_is_never_a_scroll_region_of_its_own():
+    """M5-3 review UI-1: at 1536x760 the header (workspace, Order, the
+    independence note, one two-line radio option per cohort version, every
+    version without ordering) was capped and scrolled on its own above the
+    table's scroll region, cutting the amber note mid-sentence. The header and
+    the rows are now one column (``shep-model-main``) that scrolls as one
+    region when they do not both fit; the version is a one-line select, what
+    offers ordering is said once, and the versions without it are behind a
+    closed disclosure."""
+    demo, _ctx = _page()
+    by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
+    assert isinstance(by_id["shep-mp-version"], gr.Dropdown)
+    config = demo.get_config_file()
+
+    def find(node, wanted):
+        if node.get("id") == wanted:
+            return node
+        for child in node.get("children", []):
+            hit = find(child, wanted)
+            if hit:
+                return hit
+        return None
+
+    classes = {c["id"]: (c.get("props") or {}).get("elem_classes") or []
+               for c in config["components"]}
+    listing = find(config["layout"], by_id["shep-models-research"]._id)
+    (main,) = [c for c in listing["children"] if "shep-model-main" in classes[c["id"]]]
+    inside = [classes[c["id"]] for c in main["children"]]
+    assert [c for c in inside if "shep-model-head" in c or "shep-model-body" in c] == [
+        ["shep-model-head"], ["shep-model-body"]]
+    css = mp.PAGE_CSS
+    assert "fit-content(" not in css
+    head_rules = [rule for rule in css.split("}") if ".shep-model-head {" in rule]
+    assert head_rules and not [rule for rule in head_rules if "overflow" in rule]
+
+
+def test_the_version_options_are_one_line_and_the_role_clause_is_said_once(world, monkeypatch):
+    listing, data = _read(world, monkeypatch)
+    ctl = mp.controls(listing, data, mp.BY_SCORE, None, None, None, None)
+    assert all(mp.ROLE_ON not in label for label, _value in mp.version_choices(data))
+    html = mp.options_html(data, ctl)
+    assert html.count(e(mp.ROLE_ON)) == 1
+    assert '<details class="shep-mp-offd"><summary>2 cohort versions without ordering' in html
+    newest = mp.controls(listing, data, mp.NEWEST, None, None, None, None)
+    assert e(mp.ROLE_ON) not in mp.options_html(data, newest)

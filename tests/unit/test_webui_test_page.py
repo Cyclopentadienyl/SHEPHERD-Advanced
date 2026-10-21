@@ -304,7 +304,7 @@ def test_a_read_only_request_sees_the_versions_and_reports_and_no_checkpoint(sit
 def test_an_operator_lists_the_workspaces_checkpoints(site, monkeypatch):
     page, request = _page(monkeypatch)
     models = tp.read_models("demo", request)
-    assert [tp.model_key(i) for i in models["items"]] == [site.key]
+    assert [tp.item_key(i) for i in models["items"]] == [site.key]
     assert models["items"][0]["sha256"] == site.sha
     (label, key), = tp.model_choices(models)
     assert key == site.key and f"model fingerprint {site.sha[:12]}" in label
@@ -1298,3 +1298,57 @@ def test_the_ledger_order_is_the_file_then_the_workspace_the_run_read(site, monk
     elsewhere = dict(manifest, data_dir="/nowhere/ws", checkpoint_path="/nowhere/best.pt")
     place = tp.ledger_checkpoint(elsewhere, page, models_copy, "copy")
     assert place.workspaces == ("copy",) and place.item["workspace"] == "copy"
+
+
+@pytest.mark.parametrize("text, kept", [
+    ("Failed reading /mnt/clinic share/MRN 0012345/cases.json", "Failed reading "),
+    ("[Errno 2] No such file or directory: '/mnt/clinic share/MRN 0012345.json'",
+     "No such file or directory: '"),
+    ("/data/MRN 0012345.json could not be read", " could not be read"),
+    ('a "C:\\Users\\Jane Doe\\MRN 0012345\\x.json" link', 'a "'),
+])
+def test_a_path_with_spaces_outside_every_root_is_replaced_whole(text, kept):
+    """M5-3 review SECURITY-4: the path ended at its first space, so the rest
+    (``share/MRN 0012345/cases.json``) reached a read-only browser through the
+    job tail."""
+    out = tp.redact(text, [("/srv/registry", "<registry>")])
+    assert "0012345" not in out and "MRN" not in out and "Jane" not in out, out
+    assert tp.SERVER_PATH in out and kept in out, out
+
+
+def test_the_words_after_a_path_stay_and_two_paths_are_two():
+    roots = [("/srv/registry", "<registry>")]
+    assert tp.redact("/x/model.pt in 3.2 s", roots) == f"{tp.SERVER_PATH} in 3.2 s"
+    assert tp.redact("/etc/passwd and C:\\Users\\x end", roots) == (
+        f"{tp.SERVER_PATH} and {tp.SERVER_PATH} end")
+    assert tp.redact("see /srv/registry/versions/a b/r.json now", roots) == (
+        "see <registry>/versions/a b/r.json now")
+
+
+def test_the_test_page_and_datasets_share_one_redaction():
+    """M5-3 review ARCH-7: one pattern and one implementation for "no absolute
+    server path is shown" (they had already drifted apart)."""
+    from src.webui.components import workspaces
+
+    assert not hasattr(tp, "_ABSOLUTE")
+    text = "x /mnt/a b/c d"
+    assert tp.redact(text, []) == workspaces.redact_paths(text, [], other=tp.SERVER_PATH)
+    assert workspaces.redact(text, None) == workspaces.redact_paths(
+        text, [], other=workspaces.OUTSIDE_PATH)
+
+
+
+def test_a_refusal_worded_outside_the_known_forms_still_names_no_case_id():
+    """M5-3 review ARCH-10 (b): `case_free` knows the importer's present
+    wordings; a future one ("cases[2]: duplicate of case_id 'PAT-9'", which it
+    leaves as it is) is replaced by the problem's case index, so no case id
+    reaches the browser (D7)."""
+    from src.evaluation.cohort_registry import MalformedSource
+
+    problem = "cases[2]: duplicate of case_id 'PAT-9'"
+    assert tp.case_free(problem) == problem                # not a known wording
+    said = tp.import_refusal(MalformedSource("intake.json", [problem, "cases[0]: no terms"]))
+    assert "PAT-9" not in said and "case_id 'PAT" not in said
+    assert "cases[2]: a problem that names its case id" in said and "cases[0]: no terms" in said
+    unplaced = tp.import_refusal(MalformedSource("intake.json", ["duplicate case_id \"Q-1\""]))
+    assert "Q-1" not in unplaced and "a case: a problem that names its case id" in unplaced

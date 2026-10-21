@@ -104,6 +104,26 @@ def test_the_mode_is_read_at_each_check(monkeypatch):
     assert not check_operator_access(scope).allowed
 
 
+def test_the_host_check_reads_the_loopback_names(monkeypatch):
+    """M5-3 review ARCH-6: the set of loopback Host names was a constant the
+    check never read (a second copy in a regex); the check now reads it, so
+    editing the set changes what is allowed."""
+    from src.utils import operator_access
+
+    scope = http_scope(("127.0.0.1", 8264), host="127.0.0.1:8264")
+    assert check(scope).allowed
+    monkeypatch.setattr(operator_access, "LOOPBACK_HOST_NAMES", ("localhost", "[::1]"))
+    assert check(scope).condition == "host_not_loopback"
+    assert check(http_scope(("127.0.0.1", 8264), host="localhost:8264")).allowed
+
+
+@pytest.mark.parametrize("host", ["localhost:", "localhost:abc", "user@localhost",
+                                  "localhost.", "127.1", "[::1", "::1", "localhost:65536",
+                                  "[::2]:80", "localhost:80:80", ""])
+def test_a_host_that_only_looks_like_loopback_is_refused(host):
+    assert check(http_scope(("127.0.0.1", 8264), host=host)).condition == "host_not_loopback"
+
+
 class _Exploding(dict):
     def get(self, *args, **kwargs):
         raise RuntimeError("unreadable")
@@ -602,9 +622,13 @@ def _dashboard_calls():
     path = tc.CONTINUE_FROM_PATH
     # The Training page's handlers take the session's state (its run-bar
     # workspace, the drawer, the parent list): a fresh API session has no
-    # dataset selected, so Start, Continue…, Continue Training and the parent
-    # list stop before their service when allowed (no service, `None`), and
-    # say so; refused, they say "Refused" as the others do.
+    # dataset selected, so Start, Continue…, Check checkpoint, Continue
+    # Training and the parent list stop before their service when allowed (no
+    # service, `None`), and say so; refused, they say "Refused" as the others
+    # do. A typed path only locates a checkpoint the session's run-bar
+    # workspace lists (D8, 2026-10-19), and a State is the session's, never
+    # what a client posts, so a direct call opens no typed file at all
+    # (test_training_console_resume.py checks a listed one is previewed).
     return [
         (dp._on_change_model, [], None),
         (rs._on_restart, [], "restart"),
@@ -614,8 +638,8 @@ def _dashboard_calls():
         (tc._on_stop_request, [{}], "latest_snapshot"),
         (tc._on_continue_open, [{}, {}], None),
         (tc._refresh_checkpoints, [{}, {}, None], None),
-        (tc._on_check_continue, [path, None, "/srv/x.pt", "cpu", None, {}, {}, {}],
-         "preview_continuation"),
+        (tc._on_check_continue, [path, None, "/srv/x.pt", "cpu", None, {"name": "ws"}, {},
+                                 {}], None),
         (tc._on_resume, [{}, "cpu", path, None, "/srv/x.pt", None, {}, {}], None),
     ]
 

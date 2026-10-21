@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 import shutil
 from pathlib import Path
 
@@ -1077,3 +1078,56 @@ def test_a_process_state_deterministic_execution_cannot_trust_is_refused(
     assert "Nothing was read or written" in str(refused.value)
     assert _nothing_written(cohort)
     assert "CUBLAS_WORKSPACE_CONFIG" not in os.environ or state == "bad_cublas_config"
+
+
+def _cancel_inside(monkeypatch, module, name):
+    """`module.name` that sends this process a SIGINT (the runner's Cancel)
+    after it ran, and waits long enough for it to be delivered."""
+    import os
+    import signal
+    import time
+
+    real = getattr(module, name)
+
+    def cancelled(*args, **kwargs):
+        answer = real(*args, **kwargs)
+        os.kill(os.getpid(), signal.SIGINT)
+        time.sleep(0.2)                       # a held SIGINT is not delivered here
+        return answer
+
+    monkeypatch.setattr(module, name, cancelled)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
+def test_a_cancel_right_after_publishing_still_leaves_the_run_in_its_history(
+        cli, cohort, tmp_path, monkeypatch):
+    """M5-3 review EVAL-1: a Cancel landing between publishing the report and
+    appending it to the version's usage history kept the report out of the
+    history (D4, D7), and nothing said so. The three steps are one against a
+    cancel: the SIGINT is held until the history entry and the first outcome
+    file are written, then ends the run."""
+    _cancel_inside(monkeypatch, cli, "_publish_to_store")
+    out = tmp_path / "outcome.json"
+    with pytest.raises(KeyboardInterrupt):
+        cli.main(_argv(cohort, "--outcome", str(out)))
+    path, _ = _report(cohort)
+    entries = [e for e in _usage(cohort) if e.get("kind") == "test_run"]
+    assert [e.get("run_id") for e in entries] == [path.parent.name]
+    outcome = _outcome(out)
+    assert outcome["complete"] is False and outcome["run_id"] == path.parent.name
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
+def test_a_cancel_right_after_the_ledger_write_still_records_the_registration(
+        cli, cohort, monkeypatch):
+    """EVAL-1, the registration's half: the ledger record and its "registered"
+    history entry are written together, a cancel between them held."""
+    import src.evaluation.registration as registration
+
+    _cancel_inside(monkeypatch, registration, "write_ledger")
+    with pytest.raises(KeyboardInterrupt):
+        cli.main(_argv(cohort, "--record"))
+    ledger = json.loads((cohort.checkpoint.parent / LEDGER).read_text())
+    assert [r["registration"]["sequence"] for r in ledger["records"]] == [1]
+    kinds = [e.get("kind") for e in _usage(cohort)]
+    assert kinds.count("registered") == 1 and kinds.count("test_run") == 1

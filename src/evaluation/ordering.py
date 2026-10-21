@@ -59,10 +59,13 @@ from typing import (
     Tuple,
 )
 
-#: Roles for which ordering by test score is never offered, whatever the
-#: deployment lists (§4.9 question 1: until the institution's formal evaluation
-#: rules exist, ordering by the acceptance cohort's score *is* selecting by it).
-NEVER_ORDERED_ROLES: Tuple[str, ...] = ("institutional_acceptance",)
+from src.config.server_settings import NEVER_ORDERED_ROLES
+
+#: `NEVER_ORDERED_ROLES` (imported above): roles for which ordering by test
+#: score is never offered, whatever the deployment lists (§4.9 question 1:
+#: until the institution's formal evaluation rules exist, ordering by the
+#: acceptance cohort's score *is* selecting by it). The deployment settings'
+#: one constant, never a copy (M5-3 review ARCH-2).
 
 #: The metrics a Mode C record carries under metric schema 1
 #: (`src/evaluation/measurement.py`, `_authoritative`), the ones a list can be
@@ -139,15 +142,18 @@ class Ordering(NamedTuple):
 
 def ordering_offered(role: Any, ordering_roles: Collection[str]) -> Tuple[bool, str]:
     """Whether ordering by test score is offered for a cohort version of this
-    role, and why not when it is not."""
-    if role in NEVER_ORDERED_ROLES:
+    role (`server_settings.offers_ordering`, the one rule), and why not when it
+    is not."""
+    from src.config import server_settings
+
+    if server_settings.offers_ordering(role, ordering_roles):
+        return True, ""
+    if role in server_settings.NEVER_ORDERED_ROLES:
         return False, (f"ordering by test score is never offered for role {role!r}: until the "
                        "institution's formal evaluation rules exist, ordering by its score is "
                        "selecting by it")
-    if role not in set(ordering_roles or ()):
-        return False, (f"ordering by test score is not offered for role {role!r}: the "
-                       "deployment does not list it in SHEPHERD_ORDERING_ROLES")
-    return True, ""
+    return False, (f"ordering by test score is not offered for role {role!r}: the "
+                   "deployment does not list it in SHEPHERD_ORDERING_ROLES")
 
 
 def _sequence(record: Mapping[str, Any]) -> Optional[int]:

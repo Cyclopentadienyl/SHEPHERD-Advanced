@@ -105,6 +105,7 @@ from src.evaluation.sidecar import (
     write_ledger,
 )
 from src.utils.fingerprint import ReadIdentity
+from src.utils.interrupts import interrupt_deferred
 
 #: Whether a report was kept, as the publication contract defines it: its
 #: ``report.json`` is in the report store, holding the bytes the run published
@@ -503,23 +504,30 @@ def register_report(
     if outcome == "already_registered":
         return RegistrationResult(outcome, held, ledger_path)
 
-    try:
-        write_ledger(ledger_path, updated, expected_digest=digest_at_read)
-    except (OSError, ValueError) as exc:
-        raise refused(f"{report_path} is not registered: {exc}") from exc
+    # **The ledger record and its history entry are one step against a cancel**
+    # (M5-3 review EVAL-1, `interrupt_deferred`): a SIGINT arriving between them
+    # is held until both are written, so a registration never lacks its
+    # "registered" entry because of a cancel.
+    with interrupt_deferred():
+        try:
+            write_ledger(ledger_path, updated, expected_digest=digest_at_read)
+        except (OSError, ValueError) as exc:
+            raise refused(f"{report_path} is not registered: {exc}") from exc
 
-    # **In the version's usage history** (D4), after the ledger was written: a
-    # failure here does not undo the registration, so it is reported with it.
-    problem: Optional[str] = None
-    try:
-        record_registration(
-            stored.version, run_id=stored.run_id, report_sha256=source_digest,
-            checkpoint_sha256=digest, outcome=outcome,
-            sequence=held["registration"]["sequence"],
-        )
-    except (OSError, ValueError) as exc:
-        problem = (f"the registration was written to {ledger_path}, but the cohort version's "
-                   f"usage history could not be appended ({type(exc).__name__}: {exc})")
+        # **In the version's usage history** (D4), after the ledger was written:
+        # a failure here does not undo the registration, so it is reported with
+        # it.
+        problem: Optional[str] = None
+        try:
+            record_registration(
+                stored.version, run_id=stored.run_id, report_sha256=source_digest,
+                checkpoint_sha256=digest, outcome=outcome,
+                sequence=held["registration"]["sequence"],
+            )
+        except (OSError, ValueError) as exc:
+            problem = (f"the registration was written to {ledger_path}, but the cohort "
+                       f"version's usage history could not be appended "
+                       f"({type(exc).__name__}: {exc})")
     return RegistrationResult(outcome, held, ledger_path, differences, problem)
 
 

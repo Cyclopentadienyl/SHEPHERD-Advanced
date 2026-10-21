@@ -254,6 +254,20 @@ def test_a_row_whose_regime_differs_from_the_rest_is_marked():
     assert alone.regime_differs is False
 
 
+
+def test_with_no_single_most_common_regime_every_ordered_row_differs():
+    """M5-3 review ARCH-10 (a): `Row`'s rule when no regime is the most common
+    (two rows on two regimes, or two and two): each row is marked "regime
+    differs", never one of them as if the other were the norm."""
+    two = _order([_c(A, _record(A, mrr=0.6)),
+                  _c(B, _record(B, mrr=0.5, device="cpu", cuda_executed=False))])
+    assert [(r.checkpoint_sha256, r.regime_differs) for r in two.rows] == [(A, True), (B, True)]
+    four = _order([_c(A, _record(A, mrr=0.6)), _c(B, _record(B, mrr=0.5)),
+                   _c(C, _record(C, mrr=0.4, device="cpu", cuda_executed=False)),
+                   _c(D, _record(D, mrr=0.3, device="cpu", cuda_executed=False))])
+    assert all(r.regime_differs for r in four.rows)
+
+
 # ---------------------------------------------------------------------------
 # Automatic selection never reads test results
 # ---------------------------------------------------------------------------
@@ -295,3 +309,26 @@ def test_a_ledger_does_not_change_what_automatic_selection_chooses(tmp_path):
     write_ledger(checkpoints / LEDGER_FILENAME, ledger, None)
 
     assert without == chosen() == (best, best)
+
+
+def test_the_ordering_and_the_deployment_settings_ask_one_rule(monkeypatch):
+    """M5-3 review ARCH-2: the never-ordered roles and the "does this role
+    offer ordering" rule were defined twice, so a role added to one place
+    would be ordered by the other. D4's ordering asks the settings' rule."""
+    from src.config import server_settings
+    from src.evaluation import ordering
+
+    assert ordering.NEVER_ORDERED_ROLES is server_settings.NEVER_ORDERED_ROLES
+    for listed in ("", "mygene2", "mygene2, institutional_acceptance", "exploration"):
+        environ = {"SHEPHERD_ORDERING_ROLES": listed}
+        roles = server_settings.ordering_roles(environ).value
+        for role in ("mygene2", "institutional_acceptance", "exploration", None, ["x"]):
+            assert ordering_offered(role, roles)[0] == server_settings.role_offers_ordering(
+                role, environ), (listed, role)
+    # A role the owner adds to the never-ordered set is refused by both at once.
+    monkeypatch.setattr(server_settings, "NEVER_ORDERED_ROLES",
+                        ("institutional_acceptance", "screening"))
+    offered, why = ordering_offered("screening", ("screening",))
+    assert not offered and "never offered" in why
+    assert not server_settings.role_offers_ordering(
+        "screening", {"SHEPHERD_ORDERING_ROLES": "screening"})

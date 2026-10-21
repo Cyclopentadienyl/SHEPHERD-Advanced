@@ -975,8 +975,8 @@ def train(config: TrainConfig, explicit: Optional[Collection[str]] = None) -> Di
     data_dir = Path(config.data_dir)
     if not data_dir.exists():
         logger.error(f"Data directory not found: {data_dir}")
-        logger.info("Please run data preprocessing first:")
-        logger.info("  python scripts/preprocess_data.py")
+        logger.info("Build a workspace first:")
+        logger.info("  python scripts/build_knowledge_graph.py --generate-samples")
         return {}
 
     # An explicit run directory that holds files is refused here, before the

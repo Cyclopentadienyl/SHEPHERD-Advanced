@@ -13,9 +13,11 @@ Endpoints:
 
 **The two POSTs are operator controls** (D8, M5-1): each route takes the one
 D8 dependency (`src/api/operator_access.py`), and does its work through one
-function the Diagnosis tab's handlers call in process after their own check,
-`run_reload` and `write_ui_config`: one reload and one writer, two entrances,
-each judging its own request. The GETs stay open.
+function: `run_reload`, which the dashboard's shared Load
+(`src/webui/components/model_list.py`, "Change model…" and Research › Models)
+also calls in process after its own check, each entrance judging its own
+request; and `write_ui_config`, which only the route calls since M5-2 removed
+the Diagnosis tab's Save Config. The GETs stay open.
 
 Version: 1.0.0
 """
@@ -313,8 +315,9 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
 
 def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
     """
-    The one reload: the route above and the Diagnosis tab's Reload both call
-    this, each after D8's check on its own request. Synchronous; a caller on
+    The one reload: the route above and the dashboard's shared Load
+    (`model_list`'s confirmation) both call this, each after D8's check on its
+    own request. Synchronous; a caller on
     the event loop calls it without awaiting anything, so a reload never runs
     beside a diagnosis.
 
@@ -603,11 +606,9 @@ async def save_ui_config(config: UIConfigResponse) -> UIConfigResponse:
 
 
 def write_ui_config(config: UIConfigResponse, target: Optional[Path] = None) -> UIConfigResponse:
-    """The one writer of .shepherd_ui_config.json: the route above and the
-    Diagnosis tab's Save Config both call it, each after D8's check. `target`
-    is the file, `CONFIG_FILE` unless the caller names the copy of that path
-    it reads back (the dashboard reads the file directly at build time, before
-    the server serves, so it keeps its own name for it).
+    """The one writer of .shepherd_ui_config.json, called by the route above
+    after D8's check (the dashboard's Save Config was removed in M5-2). `target`
+    is the file, `CONFIG_FILE` unless a test names another one to write.
 
     **Written beside the target and renamed onto it**, so an interrupted write
     leaves the previous selection intact instead of a truncated file. This is

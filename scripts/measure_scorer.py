@@ -158,6 +158,7 @@ from src.evaluation.caveats import COHORT_ARGUMENT_HELP, SPLIT_ARGUMENT_HELP
 from src.evaluation.cohort import GENERATED_SPLITS, CohortProvenance, resolve_cohort
 from src.evaluation.cohort_registry import RANKS_FILE, REPORT_FILE, cohort_version_block
 from src.utils.gpu_lock import take_gpu_lock
+from src.utils.interrupts import interrupt_deferred
 
 if TYPE_CHECKING:
     from src.evaluation.cohort_registry import CohortVersionRead
@@ -1497,51 +1498,64 @@ def _run(args: argparse.Namespace) -> int:
             ) from exc
         raise
 
-    # **Publication is the first write**, so a failure in it is no refusal: the
-    # run measured, and what it published before failing may be on disk. It is
-    # re-raised saying so (`ReportNotWritten`), never as a ValueError or OSError,
-    # which the program entry prints as a refusal before anything was written.
-    try:
-        if inputs.version is None:
-            report_path, ranks_path = _publish_generated(result, args.output)
-            logger.info("Mode C -> %s, %s", report_path, ranks_path)
-        else:
-            run_id, report_path, report_sha256 = _publish_to_store(result, inputs)
-            logger.info("Mode C -> %s", report_path)
-    except (ValueError, OSError) as exc:
-        raise _publication_failure(exc, inputs, args.output) from exc
+    # **Publication, the usage history and the first outcome file are one step
+    # against a cancel** (M5-3 review EVAL-1, `interrupt_deferred`): a SIGINT
+    # (the job runner's Cancel) arriving among them is held until all three
+    # are done, then ends the run as before, so a kept report is never left out
+    # of its version's usage history by a cancel.
+    with interrupt_deferred():
+        # **Publication is the first write**, so a failure in it is no refusal:
+        # the run measured, and what it published before failing may be on
+        # disk. It is re-raised saying so (`ReportNotWritten`), never as a
+        # ValueError or OSError, which the program entry prints as a refusal
+        # before anything was written.
+        try:
+            if inputs.version is None:
+                report_path, ranks_path = _publish_generated(result, args.output)
+                logger.info("Mode C -> %s, %s", report_path, ranks_path)
+            else:
+                run_id, report_path, report_sha256 = _publish_to_store(result, inputs)
+                logger.info("Mode C -> %s", report_path)
+        except (ValueError, OSError) as exc:
+            raise _publication_failure(exc, inputs, args.output) from exc
 
-    # Nor is a failure after it (the console closed under the run, say): it is
-    # re-raised saying the report was written (`FailedAfterPublishing`).
-    try:
-        if inputs.version is not None:
-            # The run in its version's usage history (D4), the record, and what
-            # this run did so far (`--outcome`), the job runner's view, before
-            # anything else can fail. **Each is tried whatever the other did**:
-            # a failed outcome write must not keep a published run out of the
-            # history, nor a failed history append leave a published run with
-            # no outcome file. The first failure is then raised, saying both.
-            deterministic = bool(result.manifest.deterministic_algorithms)
-            history_failure: Optional[ValueError] = None
-            try:
-                _record_run(inputs, result, run_id, report_sha256, args.record)
-            except ValueError as exc:
-                history_failure = exc
-            if args.outcome is not None:
+        # Nor is a failure after it (the console closed under the run, say): it
+        # is re-raised saying the report was written (`FailedAfterPublishing`).
+        try:
+            if inputs.version is not None:
+                # The run in its version's usage history (D4), the record, and
+                # what this run did so far (`--outcome`), the job runner's view,
+                # before anything else can fail. **Each is tried whatever the
+                # other did**: a failed outcome write must not keep a published
+                # run out of the history, nor a failed history append leave a
+                # published run with no outcome file. The first failure is then
+                # raised, saying both.
+                deterministic = bool(result.manifest.deterministic_algorithms)
+                history_failure: Optional[ValueError] = None
                 try:
-                    _write_outcome(args.outcome, complete=False, inputs=inputs, run_id=run_id,
-                                   report_path=report_path, report_sha256=report_sha256,
-                                   deterministic=deterministic,
-                                   registration=_registration_outcome(args.record))
-                except (ValueError, OSError) as exc:
-                    raise ValueError(
-                        f"the --outcome file {args.outcome} could not be written "
-                        f"({type(exc).__name__}: {exc}); "
-                        + (f"and {history_failure}" if history_failure is not None
-                           else "this run is in its version's usage history")
-                    ) from exc
-            if history_failure is not None:
-                raise history_failure
+                    _record_run(inputs, result, run_id, report_sha256, args.record)
+                except ValueError as exc:
+                    history_failure = exc
+                if args.outcome is not None:
+                    try:
+                        _write_outcome(args.outcome, complete=False, inputs=inputs,
+                                       run_id=run_id, report_path=report_path,
+                                       report_sha256=report_sha256,
+                                       deterministic=deterministic,
+                                       registration=_registration_outcome(args.record))
+                    except (ValueError, OSError) as exc:
+                        raise ValueError(
+                            f"the --outcome file {args.outcome} could not be written "
+                            f"({type(exc).__name__}: {exc}); "
+                            + (f"and {history_failure}" if history_failure is not None
+                               else "this run is in its version's usage history")
+                        ) from exc
+                if history_failure is not None:
+                    raise history_failure
+        except (ValueError, OSError) as exc:
+            raise _failure_after_publishing(exc, inputs, report_path) from exc
+
+    try:
         print(f"\nMode C — {result.n_ranked} ranked, {result.n_ground_truth_absent} absent")
         for name, value in result.authoritative_metrics.items():
             print(f"  {name:38s} {value:.6f}")

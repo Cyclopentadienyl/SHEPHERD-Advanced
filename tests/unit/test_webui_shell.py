@@ -87,14 +87,19 @@ def test_the_research_tabs_sit_inside_research(built):
     assert find(research, ctx.research_nav._id) is not None
 
 
-def test_test_and_models_hold_the_temporary_body_until_built():
+def test_every_page_needs_its_builder_and_no_placeholder_is_left():
+    """M5-3 review ARCH-6: every page is built (UI-D shipped Test and Models),
+    so a missing builder is a KeyError when the shell is built, as Diagnosis'
+    and Settings' are, never a "being built in M5" body shown silently."""
     from src.webui.app import PAGES
 
-    pages = {k: v for k, v in PAGES.items() if k not in (shell.TEST, shell.MODELS)}
-    demo, _ctx = _built(pages)
-    bodies = [b.value for b in demo.blocks.values()
-              if isinstance(b, gr.Markdown) and "being built in M5" in str(b.value)]
-    assert bodies == ["Test: being built in M5.", "Models: being built in M5."]
+    for missing in (shell.TEST, shell.MODELS):
+        with pytest.raises(KeyError):
+            _built({k: v for k, v in PAGES.items() if k != missing})
+    assert not hasattr(shell, "TEMPORARY_BODY")
+    demo, _ctx = _built(dict(PAGES))
+    assert not [b for b in demo.blocks.values()
+                if isinstance(b, gr.Markdown) and "being built" in str(b.value)]
 
 
 def test_every_builder_gets_the_one_context_and_can_cross_link():
@@ -228,7 +233,8 @@ def test_on_page_open_runs_on_its_own_tab_for_a_first_level_page():
         ctx.on_page_open(shell.CLINICAL, {"fn": lambda: "x", "outputs": [box]})
         seen["ctx"] = ctx
 
-    pages = {shell.CLINICAL: clinical, shell.SETTINGS: lambda ctx: None}
+    pages = {**{page: (lambda ctx: None) for page in (*shell.RESEARCH_PAGES, shell.SETTINGS)},
+             shell.CLINICAL: clinical}
     demo, ctx = _built(pages)
     assert [fn for fn in demo.fns.values() if (ctx.tabs[shell.CLINICAL]._id, "select") in fn.targets
             and fn.outputs != [ctx.location]]
@@ -379,3 +385,18 @@ def test_plain_html_has_no_prose_css_and_no_default_click():
         block = shell.plain_html("<b>x</b>", elem_id="x", elem_classes="extra")
     assert block.apply_default_css is False and block.js_on_load is None
     assert block.elem_classes == ["shep-html", "extra"]
+
+
+def test_the_dead_code_the_m5_review_found_stays_gone():
+    """M5-3 review ARCH-6: a merge helper, a default workspace path, an
+    unused import, the temporary body's style and the style of an element the
+    dashboard no longer has, none of them referenced."""
+    from src.webui import app, style
+    from src.webui.components import help as help_module
+    from src.webui.components import training_console
+
+    assert not hasattr(help_module, "merge_help")
+    assert not hasattr(training_console, "DEFAULT_WORKSPACE")
+    assert "math" not in vars(training_console)
+    assert "status_display" not in app.DASHBOARD_CSS
+    assert "shep-temporary" not in style.SHELL_CSS

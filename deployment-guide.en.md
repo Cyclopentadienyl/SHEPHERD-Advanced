@@ -1140,8 +1140,10 @@ acceptance — and its result is recorded beside the checkpoint. The flow is:
 4. the Diagnosis page's "Model in use" card shows the loaded checkpoint's recorded tests as a
    state (since M5-2; the records themselves are listed under Research › Evaluate › Models).
 
-All of it runs on the machine, by the operator. No UI control and no API request imports,
-measures or records anything.
+The commands run on the machine, by the operator. Since M5-2 the dashboard's Research ›
+Evaluate › Test page runs the same import, measurement and registration from a browser, each an
+operator control D8 checks (§4.13, §4.14); no API request imports, measures or records
+anything.
 
 ### The registry
 
@@ -1387,8 +1389,11 @@ is given against the report, as before.
 ### What the Diagnosis page shows
 
 **Since M5-2 (2026-10-21) the Diagnosis page shows the loaded checkpoint's recorded tests as a
-state only**, on its "Model in use" card: "Recorded tests: 3 · 1 contested", "none in ledger",
-"no ledger", "ledger not readable" or "not read", the same words as the checkpoint's row in
+state only**, on its "Model in use" card: "Recorded tests: 3 · 1 contested", "3 · contested state
+not checked" (no registry is set, or no record's cohort version or report store can be read;
+never shown as uncontested), "3 · 1 contested · contested state of 1 not checked" (some
+records' state cannot be checked; counted apart), "none in ledger", "no ledger", "ledger not
+readable" or "not read", the same words as the checkpoint's row in
 "Change model…", found by the checkpoint's digest, not its file name (after another model is
 loaded the previous model's state is never shown). Its › opens Details at Evidence, where the same
 state stands beside the Trainer's validation figure ("Validation MRR (Trainer, top-20) … —
@@ -1398,7 +1403,8 @@ records themselves are listed under Research › Evaluate › Models.
 Until M5-2 the model status (Model Configuration) listed them in full under its "Serving" line,
 as **"Recorded test results (Mode C)"** for the loaded checkpoint (`sha256:<first 12>…`), read
 through `GET /api/v1/evaluations/loaded-model`, in the words below. The route is unchanged and
-still answers API clients with those records:
+still answers API clients with those records, without their contested state (only the
+dashboard reads D5's disagreement block, from the report store):
 
 - The records are introduced once, above the first, by **"Disease ranking by the model,
   approved scorer policy (Mode C)."** and the note **"This is the model's own Mode C disease
@@ -1474,7 +1480,10 @@ A copy anywhere else is refused before it is read: "… is not a report the regi
 store holds … Register the store's original instead". You can still read and share a copy, but
 you cannot register it. A link to a stored report counts as the stored original. A `report.json`
 in the store that is a link to a file elsewhere does not count. A registry moved as a whole
-still works, because no absolute path is stored as an identity. A generated split's report,
+still works, because no absolute path is stored as an identity. A copy of the whole registry
+looks the same as a moved one, so it registers too, but it is a second registry: it has its own
+usage history and its own disagreement block, and Research › Models and the job runner read only
+`SHEPHERD_REGISTRY`'s. Register from the registry the service uses (BACKLOG 37). A generated split's report,
 written to `--output`, is never in a store, so this is now why it is refused.
 
 **Runs that disagree block their key ("runs disagree — investigate").** The store's reports
@@ -1597,6 +1606,8 @@ The dashboard is mounted with these settings, whatever the `GRADIO_*` environmen
 | `mcp_server=False` | It would publish every dashboard event as an MCP tool. Its routes are absent |
 | `ssr_mode=False` | Server-side rendering starts a Node.js process |
 | `analytics_enabled=False` | On the dashboard itself, since 2026-10-12: no usage analytics and no version check |
+| `max_file_size="1mb"` | Gradio's per-file upload limit, a second line of defence behind the guard's refusal of the upload route (below; §4.13) |
+| `footer_links=[]` | Since M5-2: Gradio's footer (its API page, "Built with Gradio" and its own Settings, with a dark mode the dashboard's colours lack and the screen recorder) is not shown |
 
 **CORS** is tightened since M5-1, together with D8 (§4.13): **by default no cross-origin
 browser access is granted; administrative operations are still checked by D8 in the backend.**
@@ -1607,6 +1618,13 @@ that class, so `/ui` follows the same policy. Until M5-1 the configuration was
 request's `Origin` with `Access-Control-Allow-Credentials: true`: a page on any site, opened in a
 browser holding HTTP credentials or a client certificate for the service, could read the
 responses of `/api/*` and `/ui/gradio_api/*`. It no longer can.
+
+**Framing** is refused since M5-3: every response, the dashboard's and the API's, carries
+`X-Frame-Options: DENY` and `Content-Security-Policy: frame-ancestors 'none'`
+(`src/api/middleware/frame_guard.py`). D8 (§4.13) checks where a request arrives from, not the
+page it was made from: a dashboard loaded inside another site's frame makes same-origin requests
+that D8 allows, so without this an invisible frame laid over a hostile page could turn the
+operator's click into Restart Backend or a Load. No page frames the dashboard, its own included.
 
 ### The route guard
 
@@ -1620,9 +1638,9 @@ request (`src/api/middleware/gradio_routes.py`):
   inline, as if it were the dashboard's own page. Every spelling of a URL scheme is refused:
   upper or mixed case, percent-encoded, `//host`.
 - **`/ui/gradio_api/process_recording`**, which turns an uploaded screen recording into
-  temporary files and may run ffmpeg. The screen recorder in Gradio's Settings panel therefore
-  says "Failed to process recording. Saving original version." and saves the unprocessed
-  recording in the browser.
+  temporary files and may run ffmpeg. Gradio's Settings panel, whose
+  screen recorder posts there, is hidden since M5-2 with the rest of Gradio's footer; a recording
+  posted by any other means is refused like the rest.
 - **`/ui/gradio_api/upload`** and its progress stream `upload_progress` (since M5-1). The
   dashboard has no upload control, and another site's page can post files there with no
   preflight: Gradio writes up to 1000 files a request into its temporary directory and never
@@ -1640,8 +1658,9 @@ own server function and the browser saves it; no file is served for it.)
   colour). The Epoch Window now only filters rows; the x axis follows them. (Replaced in M5-2 by
   one zoomable figure without an Epoch Window: §4.14, Research › Prepare › Training.)
 - **Runtime Settings** refreshes the restart lock when its tab is opened: Gradio 6 does not run
-  a timer in a tab that has not been opened yet. The backend refuses a restart during training
-  either way.
+  a timer in a tab that has not been opened yet. Since M5-3 it then reads it again on the
+  dashboard's shared slow timer while the page is shown, and has no timer of its own. The backend
+  refuses a restart while any GPU job runs, training or a test run (§4.11), either way.
 
 ### Platforms
 
@@ -1682,8 +1701,9 @@ measure_scorer: refused: the GPU lock /srv/shepherd/workspaces/.shepherd-gpu.loc
 check the lock before starting a job and refuse the start with the same holder
 ("Nothing was started."); the job's own process then takes the lock itself.
 
-**Set the variable for the service and in the shell where you run the CLIs** (for example, load
-the same environment file the systemd unit uses). A CLI that does not see it runs without the
+**Set the variable for the service and in the shell where you run the CLIs** (for example, the
+same `Environment=` lines as the systemd unit, which reads no environment file of its own, or
+one file that both the unit's `EnvironmentFile=` and your shell read). A CLI that does not see it runs without the
 lock and logs `GPU lock not configured (...), so this run does not exclude other managed GPU
 jobs.`
 
@@ -1754,7 +1774,7 @@ Since M5-2, Research › Test starts and cancels test runs from the dashboard th
 
 ## 4.12 Server settings and the server's lists (since M5-1, 2026-10-20)
 
-M5's controls act on what the server lists, never on a path a request names (D7, D8). What the
+M5's controls act on what the server lists, never on a path a request names (`docs/working/PLAN_TEST_RESULTS.md` D7 and D8; D8 decides who may trigger an operator control, §4.13). What the
 server lists, and the deployment mode its operator controls depend on, come from **environment
 variables of the service**. Set them where the service starts (the shell that runs
 `launch_shepherd.sh`, or `Environment=` lines in the systemd unit) and restart it. Each is read
@@ -1769,7 +1789,7 @@ repository's `data/workspaces/` included.
 | `SHEPHERD_REGISTRY` | the cohort registry (§4.9), the directory the commands take as `--registry`: absolute, existing, outside the repository | no cohort version is listed |
 | `SHEPHERD_INTAKE_DIR` | an existing directory outside the repository where you place `shepherd-cases/1` files to import; absolute | no import source is offered |
 | `SHEPHERD_TRAINING_EVIDENCE_DIRS` | optional: R10 evidence directories, as `--training-evidence` takes them, separated by `:` (`;` on Windows); each absolute and existing | none; one bad entry refuses the whole setting |
-| `SHEPHERD_ORDERING_ROLES` | optional: cohort roles that offer ordering by test score (D4), comma-separated | none; `institutional_acceptance` is ignored even when listed (§4.9 question 1) |
+| `SHEPHERD_ORDERING_ROLES` | optional: cohort roles that offer ordering by test score (D4), comma-separated | none; `institutional_acceptance` is ignored even when listed (`docs/working/PLAN_TEST_RESULTS.md` §4.9 question 1) |
 
 ```bash
 export SHEPHERD_DEPLOYMENT_MODE=M1
@@ -1779,7 +1799,7 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
 ```
 
 - **`M1`** is SPEC_4's single-workspace deployment, reached on the machine or through SSH
-  forwarding, operated by the owner or a designated technician (§4.9 question 3). It is one of the
+  forwarding, operated by the owner or a designated technician (`docs/working/PLAN_TEST_RESULTS.md` §4.9 question 3). It is one of the
   conditions an operator control checks, not an authorisation. D8 checks each request it handles
   for the others. Do not set it behind a reverse proxy or on a machine other people can log in to.
 - **The deployment mode is applied by D8** (§4.13), on every operator control at the moment it
@@ -1893,7 +1913,7 @@ Since M5-1, every build through the workspace writer (`scripts/build_knowledge_g
 ## 4.13 Operator controls, the bind and CORS (since M5-1, 2026-10-20)
 
 M5 runs under SPEC_4's deployment mode **M1**: the owner or a designated technician operates the
-service on the machine, or from elsewhere through SSH forwarding (§4.9 question 3). Three things
+service on the machine, or from elsewhere through SSH forwarding (`docs/working/PLAN_TEST_RESULTS.md` §4.9 question 3). Three things
 changed together, and a deployment may need to act on each:
 
 - the operator controls are refused unless D8 allows the request;
@@ -1915,7 +1935,10 @@ the read-only lists keep working.
 | Dashboard | Diagnosis: Change model… (its list of checkpoints and its Load; since M5-2). ⚙ Settings (Runtime Settings): Restart Backend and Apply Settings. Research › Training: Start, Stop (its confirmation reads the run's last checkpoint), Continue… (it lists the parents), the parent list's Refresh, Check checkpoint and Continue Training |
 
 The two checkpoint lists, and Check checkpoint, open checkpoint files, which SPEC_4 classes as
-checkpoint inspection (C3), so they are checked like the controls. Research › Test (§4.14)
+checkpoint inspection (C3), so they are checked like the controls. So are the reads that open a
+checkpoint for display: the Diagnosis card's "trained on" line (the served checkpoint) and the
+Training page's run header (the run's checkpoint). A read-only browser is told "not shown ·
+reading the checkpoint is an operator control". Research › Test (§4.14)
 uses the same check for its import (the intake list, Preview and Commit), Start test, Cancel,
 Register this report, Add note and its model list, and Research › Models for its checkpoint
 list and its Load (§4.14). Everything else stays open:
@@ -1950,9 +1973,11 @@ A request whose arrival cannot be read is refused. The checks are in the backend
 button is only a display, and a direct call, to the API or to a dashboard event through Gradio's
 HTTP API (`/ui/gradio_api/...`, as `gradio_client` makes one), meets the same check. The
 dashboard's controls call the services in process; they never call the API over HTTP. The
-dashboard's Reload still runs where the API's reload runs, so it waits behind a running
-diagnosis as before; and it no longer gives up after 180 s, so a long reload is no longer shown
-as failed while it is still being published.
+dashboard's Load (Change model… and Research › Models) runs the API's reload function in
+process, where the API's reload runs, so it waits behind a running diagnosis as before. A
+reload still running after 180 s is no longer shown as failed: the page says "The page stopped
+waiting after 180 s; the server may still finish the reload." with Read again, and "The reload
+finished after the page stopped waiting." if its answer arrives later.
 
 **A refusal** is `403` from the API, with an `error` that names the condition that failed in
 words to act on and ends "Nothing was done."; it never repeats a header's value. The dashboard
@@ -2241,7 +2266,7 @@ workspace that is not trainable cannot be used. Choosing another dataset in the 
 Nothing on this page is an operator control: it reads the workspaces' small JSON files, never a
 checkpoint, so a read-only browser sees the same page. With `SHEPHERD_WORKSPACES_ROOT` unset,
 the page says so. Datasets are still built on the server with the CLI
-(`scripts/build_knowledge_graph.py`, `scripts/preprocess_data.py`).
+(`scripts/build_knowledge_graph.py --generate-samples`; the demo with `scripts/setup_demo.py`).
 
 ### Research › Prepare › Training
 
@@ -2299,7 +2324,9 @@ failed run's banner leaves its charts too little room.
 
 **Continue…** opens a drawer in place of the parameters: the checkpoints of the run bar's
 workspace, newest first (the server's list: an operator control, since listing opens every
-checkpoint), or a path typed by hand. **Check checkpoint** shows what continuing would do, and the
+checkpoint), or the path of one of those checkpoints typed by hand: since M5-3 a typed path only
+finds a checkpoint that list holds, and any other file is refused without being opened
+(`PLAN_TEST_RESULTS.md` D8). **Check checkpoint** shows what continuing would do, and the
 dataset fingerprint the parent recorded against the workspace's current one: ✓ the same, or amber
 when it differs (with the listed workspace it matches, or "matches no listed workspace"). While
 the drawer is open the run bar shows Start (disabled: "close Continue… to start a new run"),
@@ -2452,6 +2479,10 @@ name that the select cuts never hides it. Every run is shown, newest first. Colu
   ledger", "no ledger", "3 · 1 contested", …), never a number of a result.
 
 **Listing opens every checkpoint of the workspace**, so the list is an operator control (§4.13).
+Since M5-3 the server reads each checkpoint file once and again only when it changes (its
+device, inode, size, modification and change times), so opening the list again, or the re-read
+after a Load, opens no unchanged file; a load, a start or a measurement still checks the bytes it
+uses against the digest shown.
 A read-only browser gets no list: the page says why, naming the three conditions (deployment
 mode M1, a request on this machine's loopback, here or through an SSH forward, and no forwarding
 header), and shows instead **Recorded test results of the model in use**, read from the ledger

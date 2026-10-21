@@ -129,6 +129,7 @@ __all__ = [
     "intake_directory",
     "is_loopback_ip",
     "network_bind",
+    "offers_ordering",
     "ordering_roles",
     "role_offers_ordering",
     "startup_bind",
@@ -375,12 +376,25 @@ def ordering_roles(environ: Optional[Mapping[str, str]] = None) -> Setting:
     return Setting(ENV_ORDERING_ROLES, tuple(kept), None, note)
 
 
+def offers_ordering(role: Any, listed: Any) -> bool:
+    """**The one rule** for whether a cohort version of this role offers
+    ordering by test score, given the roles the deployment lists: a role that
+    is listed and is never one of `NEVER_ORDERED_ROLES` (§4.9 question 1).
+    Pure; D4's ordering (`src.evaluation.ordering.ordering_offered`) and every
+    page ask it, so a role added to the constant is refused everywhere at once
+    (M5-3 review ARCH-2)."""
+    if not isinstance(role, str) or role in NEVER_ORDERED_ROLES:
+        return False
+    try:
+        return role in set(listed or ())
+    except TypeError:  # an unhashable entry is no role
+        return False
+
+
 def role_offers_ordering(role: Any, environ: Optional[Mapping[str, str]] = None) -> bool:
-    """Whether a cohort version with this role offers ordering by test score:
-    listed in `SHEPHERD_ORDERING_ROLES`, and never `institutional_acceptance`.
-    The one predicate D4's ordering asks."""
-    return (isinstance(role, str) and role not in NEVER_ORDERED_ROLES
-            and role in ordering_roles(environ).value)
+    """Whether a cohort version with this role offers ordering by test score
+    under this deployment's `SHEPHERD_ORDERING_ROLES` (`offers_ordering`)."""
+    return offers_ordering(role, ordering_roles(environ).value)
 
 
 def all_settings(environ: Optional[Mapping[str, str]] = None) -> Tuple[Setting, ...]:

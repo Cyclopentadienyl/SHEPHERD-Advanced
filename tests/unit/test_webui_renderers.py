@@ -277,3 +277,18 @@ def test_the_run_suffix_and_a_validation_figure_by_its_name():
     assert "Validation Hits@10 (Trainer)" in r.validation_cell({"metric": "val_hits@10",
                                                                  "value": 0.5})
     assert "—" in r.validation_cell(None)
+
+
+def test_every_clock_time_is_utc_with_its_label():
+    """One form for every displayed clock time (M5-3 review UI-5): a naive
+    stamp is this server's local time, converted; an aware one converted."""
+    from datetime import datetime, timedelta, timezone
+
+    from tests.fixtures.clock_zone import local_zone
+
+    with local_zone("Asia/Taipei"):
+        assert r.clock_utc(datetime(2026, 10, 21, 23, 50, 35)) == "15:50:35 UTC"
+        assert r.clock_utc(datetime(2026, 10, 21, 23, 50, 35), seconds=False) == "15:50 UTC"
+        aware = datetime(2026, 10, 21, 12, 0, tzinfo=timezone(timedelta(hours=-5)))
+        assert r.clock_utc(aware) == "17:00:00 UTC"
+    assert r.clock_utc(None) is None

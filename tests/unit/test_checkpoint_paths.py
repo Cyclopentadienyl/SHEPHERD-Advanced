@@ -376,6 +376,88 @@ def test_the_read_is_weights_only_through_read_checkpoint(tmp_path, monkeypatch)
                             ("b.pt", {"map_location": "cpu", "weights_only": True})]
 
 
+def _counted_reads(monkeypatch):
+    import src.utils.checkpoint_io as checkpoint_io
+
+    seen = []
+    original = checkpoint_io.read_checkpoint
+
+    def spy(path, **kwargs):
+        seen.append(path.name)
+        return original(path, **kwargs)
+
+    monkeypatch.setattr(checkpoint_io, "read_checkpoint", spy)
+    return seen
+
+
+def test_a_second_listing_of_unchanged_files_opens_none_of_them(tmp_path, monkeypatch):
+    """M5-3 review UI-2: every opening of a model list read every checkpoint
+    of the workspace again. An unchanged file is now shown from its last read
+    (the same digest and record); a changed one is read again."""
+    from collections import OrderedDict
+
+    import src.utils.checkpoint_paths as cp
+    from src.utils.fingerprint import file_sha256
+
+    monkeypatch.setattr(cp, "_READS", OrderedDict())
+    monkeypatch.setattr(cp, "SETTLED_NS", 0)  # these files were written just now
+    run = tmp_path / "runs" / "gat" / "20261001-000000_a_111111" / "checkpoints"
+    _write_checkpoint(run / "a.pt", {"epoch": 1, "logs": {"val_mrr": 0.2}})
+    _write_checkpoint(run / "b.pt", {"epoch": 2})
+    seen = _counted_reads(monkeypatch)
+
+    first = cp.read_run_checkpoints(tmp_path, within=tmp_path)
+    assert sorted(seen) == ["a.pt", "b.pt"]
+    first_a = next(e for e in first if e.path.name == "a.pt")
+    first_a.logs["val_mrr"] = 99.0  # a caller's change never reaches the kept read
+    again = cp.read_run_checkpoints(tmp_path, within=tmp_path)
+    assert sorted(seen) == ["a.pt", "b.pt"], "an unchanged file was opened again"
+    assert [(e.path, e.sha256, e.epoch, e.size_bytes) for e in again] == [
+        (e.path, e.sha256, e.epoch, e.size_bytes) for e in first]
+    assert next(e for e in again if e.path.name == "a.pt").logs == {"val_mrr": 0.2}
+
+    _write_checkpoint(run / "a.pt", {"epoch": 3, "logs": {"val_mrr": 0.3, "val_loss": 1.0}})
+    changed = {e.path.name: e for e in cp.read_run_checkpoints(tmp_path, within=tmp_path)}
+    assert sorted(seen) == ["a.pt", "a.pt", "b.pt"]
+    assert changed["a.pt"].epoch == 3 and changed["a.pt"].sha256 == file_sha256(run / "a.pt")
+
+
+def test_a_file_changed_just_before_its_read_is_read_again_every_time(tmp_path, monkeypatch):
+    """A rewrite within one tick of the file system's clock could leave the
+    file's `stat` as it was, so a read is kept only for a file that had not
+    changed for `SETTLED_NS` before it."""
+    from collections import OrderedDict
+
+    import src.utils.checkpoint_paths as cp
+
+    monkeypatch.setattr(cp, "_READS", OrderedDict())
+    run = tmp_path / "runs" / "gat" / "20261001-000000_a_111111" / "checkpoints"
+    _write_checkpoint(run / "a.pt", {"epoch": 1})
+    seen = _counted_reads(monkeypatch)
+    cp.read_run_checkpoints(tmp_path)
+    cp.read_run_checkpoints(tmp_path)
+    assert seen == ["a.pt", "a.pt"]
+
+
+def test_the_kept_reads_are_bounded_and_an_outside_file_is_never_kept(tmp_path, monkeypatch):
+    from collections import OrderedDict
+
+    import src.utils.checkpoint_paths as cp
+
+    monkeypatch.setattr(cp, "_READS", OrderedDict())
+    monkeypatch.setattr(cp, "SETTLED_NS", 0)
+    monkeypatch.setattr(cp, "READS_KEPT", 2)
+    run = tmp_path / "ws" / "runs" / "gat" / "20261001-000000_a_111111" / "checkpoints"
+    for name in ("a.pt", "b.pt", "c.pt"):
+        _write_checkpoint(run / name, {"epoch": 1})
+    outside = tmp_path / "elsewhere.pt"
+    _write_checkpoint(outside, {"epoch": 9})
+    (run / "link.pt").symlink_to(outside)
+    cp.read_run_checkpoints(tmp_path / "ws", within=tmp_path / "ws")
+    assert len(cp._READS) == 2
+    assert all(not key.endswith("link.pt") for key in cp._READS)
+
+
 def test_importing_the_listing_does_not_import_torch():
     """`checkpoint_paths` promises no torch at import, so the API's lighter
     callers can import it; the read imports torch only when it runs."""

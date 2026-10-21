@@ -147,7 +147,10 @@ def test_a_read_only_request_lists_nothing_and_opens_nothing(root, serving, monk
     operator_mode(monkeypatch)
     listing = ml.list_models("demo", gradio_request(server=("192.0.2.10", 8264)))
     assert listing["refused"] is True and "loopback" in listing["problem"]
-    assert "Refused:" in ml.list_html(listing, None, ml.PRESETS["clinical"])
+    # A listing is no act (M5-3 review UI-6): the short line every page uses.
+    shown = ml.list_html(listing, None, ml.PRESETS["clinical"])
+    assert "Operator controls only: request not local." in shown
+    assert "Refused" not in shown and "Nothing was done" not in shown
 
 
 def test_an_operator_lists_the_serving_workspace_with_in_use_pinned(root, serving, monkeypatch):
@@ -195,15 +198,20 @@ def test_each_rows_recorded_tests_come_from_the_ledger_beside_it(root, serving, 
     assert f"sage/{RUNS[2][1]}/broken.pt" not in recorded          # unreadable: no state
 
 
-def test_contested_is_counted_from_the_report_store_and_unchecked_is_not_zero(
-        root, monkeypatch, tmp_path):
+def test_contested_and_unchecked_are_counted_apart_from_the_report_store(root, monkeypatch):
+    """A record contested in its version's report store is counted; one whose
+    state cannot be checked (its store, or a version the registry does not
+    list) is counted apart and never as uncontested, and never hides a known
+    contested one (M5-3 review EVAL-3: one uncheckable record turned
+    "2 · 1 contested" into "3 · contested state not checked")."""
+    import src.evaluation.report_store as report_store
     import src.evaluation.sidecar as sidecar
-    from src.config import server_settings
+    from src.webui.components import renderers as r
 
     sha = root["shas"]["model-12.pt"]
     records = [{"checkpoint_digest": sha, "cohort_role": "research_selection",
-                "cohort_digest": d, "measurement_semantics_digest": "m" * 64}
-               for d in ("1" * 64, "1" * 64, "2" * 64)]
+                "cohort_digest": d, "measurement_semantics_digest": "a" * 64}
+               for d in ("1" * 64, "1" * 64, "2" * 64, "3" * 64)]
     monkeypatch.setattr(sidecar, "read_ledger", lambda path: ({"records": records}, "x" * 64))
     monkeypatch.setattr(sidecar, "records_for", lambda ledger, digest: ledger["records"]
                         if digest == sha else [])
@@ -212,36 +220,45 @@ def test_contested_is_counted_from_the_report_store_and_unchecked_is_not_zero(
         def __init__(self, digest):
             self.identity = type("I", (), {"sha256": digest})()
 
-    class Listed:
-        def __init__(self, digest):
-            self.version = Version(digest)
+    class Versions:
+        def by_digest(self, digest):
+            if digest == "3" * 64:
+                return None, "its cohort version is not one the server's registry lists"
+            return Version(digest), None
+
+    class Status:
+        def __init__(self, state):
+            self.state, self.differing, self.disagreeing_runs, self.problems = state, (), (), ()
 
     class Scan:
+        reports: dict = {}
+
         def __init__(self, state):
             self._state = state
 
-        def state(self, key):
-            return self._state
+        def status(self, key):
+            return Status(self._state)
 
-    registry = tmp_path / "registry"
-    registry.mkdir()
-    monkeypatch.setattr(server_settings, "cohort_registry",
-                        lambda environ=None: server_settings.Setting("SHEPHERD_REGISTRY", registry))
-    import src.evaluation.cohort_registry as cohort_registry
-    import src.evaluation.report_store as report_store
-
-    monkeypatch.setattr(cohort_registry, "list_versions",
-                        lambda path: [Listed("1" * 64), Listed("2" * 64)])
+    monkeypatch.setattr(ml.CohortVersions, "listed",
+                        classmethod(lambda cls, environ=None: Versions()))
     states = {"1" * 64: "contested", "2" * 64: "uncontested"}
     monkeypatch.setattr(report_store, "scan_report_store",
                         lambda version: Scan(states[version.identity.sha256]))
     item = {"architecture": "gat", "run": RUNS[0][1], "filename": "model-12.pt",
             "sha256": sha, "problem": None}
     result = ml.recorded_tests_for(root["workspace"], [item])[ml.item_key(item)]
-    assert (result.state, result.count, result.contested) == ("records", 3, 2)
+    assert (result.state, result.count, result.contested, result.unchecked) == (
+        "records", 4, 2, 1)
+    assert r.recorded_tests_text(result) == (
+        "Recorded tests: 4 · 2 contested · contested state of 1 not checked")
     states["2" * 64] = "cannot_be_checked"
     result = ml.recorded_tests_for(root["workspace"], [item])[ml.item_key(item)]
-    assert (result.count, result.contested) == (3, None)       # never shown as zero
+    assert (result.count, result.contested, result.unchecked) == (4, 2, 2)
+    states["1" * 64] = "uncontested"
+    states["2" * 64] = "uncontested"
+    result = ml.recorded_tests_for(root["workspace"], [item])[ml.item_key(item)]
+    assert r.recorded_tests_text(result) == (
+        "Recorded tests: 4 · contested state of 1 not checked")
 
 
 # --------------------------------------------------------------------------- the Load
@@ -622,7 +639,8 @@ def test_the_list_redraws_when_the_page_changes_its_view(root, serving, monkeypa
     key, *_rest = redraw.fn(listing, gat, False, {"architecture": "gat"})
     assert key == gat
     assert handle.head_extra.value == "Full records" and handle.foot_extra.value == "Compare"
-    assert handle.refresh["inputs"] == [handle.workspace, handle.show_older, handle.view]
+    assert handle.refresh["inputs"] == [handle.workspace, handle.show_older, handle.view,
+                                        handle.listing, handle.selected]
 
 
 # --------------------------------------------------------------------------- the wiring
@@ -758,7 +776,7 @@ def test_a_direct_call_through_gradios_api_meets_the_same_check(root, serving, m
     def call(base_url):
         with TestClient(app, base_url=base_url) as client:
             started = client.post(f"/ui/gradio_api/call/{refresh.api_name}",
-                                  json={"data": [None, False, None]})
+                                  json={"data": [None, False, None, None, None]})
             assert started.status_code == 200, started.text
             stream = client.get(f"/ui/gradio_api/call/{refresh.api_name}/"
                                 f"{started.json()['event_id']}")
@@ -768,9 +786,56 @@ def test_a_direct_call_through_gradios_api_meets_the_same_check(root, serving, m
     # The outputs a client sees: the listing itself is session state (not
     # returned), then the workspace choice, the count, the rows, the facts.
     refused = call("http://192.0.2.10")
-    assert "Refused: " in json.dumps(refused) and "run_8c2e7a" not in json.dumps(refused)
+    assert "Operator controls only: request not local." in json.dumps(refused)
+    assert "run_8c2e7a" not in json.dumps(refused)
     listed = call(OPERATOR_BASE_URL)
     _state, _selected, workspace, count, rows = listed[:5]
     assert workspace["value"] == "demo" and "of 7 in 6 runs" in count
     assert "run 2026-10-18 09:12 · epoch 12" in rows
     assert handle.load_button is not None and handle.refresh["fn"] is refresh.fn
+
+
+def test_the_list_shows_no_absolute_server_path(root, serving, monkeypatch, tmp_path):
+    """M5-3 review SECURITY-3: a workspace that is a link out of the root was
+    refused with its absolute target and the root's path, which the list
+    printed escaped but not redacted (Datasets redacts the same reason)."""
+    outside = tmp_path / "outside" / "elsewhere_ws"
+    outside.mkdir(parents=True)
+    (root["root"] / "leaving_ws").symlink_to(outside)
+    listing = ml.list_models("leaving_ws", operator_request(monkeypatch))
+    assert listing["workspace"] == "leaving_ws" and listing["items"] == []
+    shown = (ml.list_html(listing, None, ml.PRESETS["clinical"])
+             + ml.count_line(listing, ml.PRESETS["clinical"], False) + repr(listing["problem"]))
+    assert listing["problem"] and "outside the workspaces root" in listing["problem"]
+    assert str(tmp_path) not in shown and str(root["root"]) not in shown, shown
+
+
+def test_a_selection_made_after_a_load_survives_the_lists_re_read(root, serving, monkeypatch):
+    """M5-3 review UI-3: the re-read chained after every Load reset the list,
+    dropping a row picked once the outcome was closed (its facts gone, Load
+    disabled, nothing said). A selection still listed in the same workspace
+    stays; one of another workspace, or no longer listed, does not."""
+    from src.webui.shell import standalone_context
+
+    with gr.Blocks() as demo:
+        ctx = standalone_context(demo)
+        handle = ctx.create_model_list("clinical")
+    refresh = handle.refresh
+    assert refresh["inputs"][-2:] == [handle.listing, handle.selected]
+    operator_mode(monkeypatch)
+    request = gradio_request()
+    before = ml.list_models("demo", request)
+    picked = f"gat/{RUNS[0][1]}/model-12.pt"
+    out = refresh["fn"]("demo", False, None, before, picked, request)
+    by = dict(zip(map(id, refresh["outputs"]), out, strict=True))
+    assert by[id(handle.selected)] == picked
+    assert by[id(handle.load_button)]["interactive"] is True
+    assert 'aria-pressed="true"' in by[id(handle.rows)]
+    assert "Select a model" not in by[id(handle.facts)]
+    elsewhere = ({**before, "workspace": "other"}, picked)
+    gone = (before, "gat/x/gone.pt")
+    for previous, key in (elsewhere, gone):
+        out = refresh["fn"]("demo", False, None, previous, key, request)
+        by = dict(zip(map(id, refresh["outputs"]), out, strict=True))
+        assert by[id(handle.selected)] is None
+        assert by[id(handle.load_button)]["interactive"] is False

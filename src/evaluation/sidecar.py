@@ -314,8 +314,9 @@ RECORD_EXCLUDED_FIELDS: Dict[str, str] = {
         "two runs; it does not make the second a contradiction"
     ),
     "source_artifact_digest": (
-        "the report's bytes, which differ between two runs of one measurement by "
-        "their paths and environment; it is what the duplicate rule adds to the "
+        "the report's bytes, which can differ between two runs of one measurement "
+        "(their paths, their environment) and can also be identical (the same run "
+        "repeated on one machine); it is what the duplicate rule adds to the "
         "corroborating reports"
     ),
     "corroborating_reports": "the ledger's own record of later agreeing reports",

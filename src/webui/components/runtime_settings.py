@@ -42,6 +42,7 @@ from src.config.runtime_presets import (
     save_runtime_settings,
 )
 from src.webui.operator_access import operator_access
+from src.webui.shell import SETTINGS as SETTINGS_PAGE
 
 
 def _active_env_override() -> str | None:
@@ -170,6 +171,16 @@ def _refresh_restart_lock(request: gr.Request):
     )
 
 
+def _poll_restart_lock(location, request: gr.Request):
+    """The shell's slow timer (``queue=False``): the lock and D8's answer read
+    again only while Settings is shown; on any other page, no work and no
+    change (M5-3 review ARCH-8: the page kept a queued 4 s timer of its own
+    that ticked on every page once Settings had been opened)."""
+    if location != SETTINGS_PAGE:
+        return (gr.update(),) * 4
+    return _refresh_restart_lock(request)
+
+
 #: The fields' help, behind the shared ⓘ (M5-2): ``{elem_id: (title, text)}``.
 #: The badges (impact, scope) and the Details stay visible on the page.
 FIELD_HELP = {
@@ -191,16 +202,14 @@ FIELD_HELP = {
 def create_runtime_settings_tab(ctx: Any) -> None:
     """Build the Runtime Settings page under ⚙ Settings (call inside its gr.Tab).
 
-    ``ctx`` is the page context (`src/webui/shell.py`). Selecting the Settings
-    tab (``ctx.tabs["settings"]``) refreshes the restart lock: Gradio 6 does not
-    tick a gr.Timer in a tab that has not been opened yet (gradio#11984,
-    #11993), so without this the first opening would show the lock as it was
-    when the dashboard was built, until the timer's first tick. The backend
-    refuses a restart during training either way (``restart_backend``); this
-    keeps the button and the note honest. The fields' help is behind the
+    ``ctx`` is the page context (`src/webui/shell.py`). The restart lock is
+    read each time the page is shown (``ctx.on_page_open``) and then on the
+    shell's slow timer while it is shown (`_poll_restart_lock`, ``queue=False``,
+    no work on another page); the page has no timer of its own. The backend
+    refuses a restart while any GPU job runs either way (``restart_backend``);
+    this keeps the button and the note honest. The fields' help is behind the
     shared ⓘ (`FIELD_HELP`); Apply and Restart refresh the header's chips.
     """
-    tab = ctx.tabs.get("settings")
     ctx.help.fields(FIELD_HELP)
     settings = load_runtime_settings()
     current_alloc = settings.get("allocator_preset", DEFAULT_ALLOCATOR)
@@ -266,9 +275,6 @@ def create_runtime_settings_tab(ctx: Any) -> None:
         "running; the page reconnects automatically a few seconds after a restart.",
         elem_classes=["shep-note"],
     )
-    # Keep the lock state live without manual refresh (cheap status read).
-    restart_lock_timer = gr.Timer(4.0)
-
     gr.Markdown("#### Memory")
     with gr.Group():
         allocator = gr.Dropdown(
@@ -323,9 +329,10 @@ def create_runtime_settings_tab(ctx: Any) -> None:
             )
 
     lock_outputs = [apply_btn, restart_btn, restart_lock_note, access_note]
-    restart_lock_timer.tick(fn=_refresh_restart_lock, outputs=lock_outputs)
-    if tab is not None:
-        tab.select(fn=_refresh_restart_lock, outputs=lock_outputs)
+    ctx.timer_slow.tick(fn=_poll_restart_lock, inputs=[ctx.location], outputs=lock_outputs,
+                        queue=False, show_progress="hidden")
+    ctx.on_page_open(SETTINGS_PAGE, {"fn": _refresh_restart_lock, "outputs": lock_outputs,
+                                     "queue": False, "show_progress": "hidden"})
     # After the click handler runs, kick off a browser-side poller that reloads
     # the page once the fresh backend is up (a new process means a new Gradio
     # session; without a reload the old page's pollers hang). The poller no-ops

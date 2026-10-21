@@ -80,11 +80,24 @@ Module: src/webui/components/model_list.py
 """
 from __future__ import annotations
 
+import contextlib
+import json
 import logging
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, NamedTuple, Optional, Sequence, Tuple
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    NamedTuple,
+    Optional,
+    Sequence,
+    Tuple,
+)
 
 import gradio as gr
 
@@ -153,98 +166,231 @@ def item_key(item: Mapping[str, Any]) -> str:
     return f"{item.get('architecture')}/{item.get('run')}/{item.get('filename')}"
 
 
-def recorded_tests_for(workspace_dir: Path, items: Sequence[Mapping[str, Any]], *,
-                       environ: Optional[Mapping[str, str]] = None) -> Dict[str, r.RecordedTests]:
-    """Each listed checkpoint's recorded tests, as states: its ledger beside the
-    checkpoint (read once per directory) and, for contested, the cohort version's
-    report store (scanned once per version). Never raises: a problem is a state."""
-    from src.evaluation.sidecar import LEDGER_FILENAME, read_ledger, record_key, records_for
+def key_text(key: Sequence[Any]) -> str:
+    """A ledger key (`record_key`'s tuple) as one comparable text."""
+    return json.dumps(list(key))
+
+
+class CohortVersions:
+    """The registry's versions resolved once per read, by label, each checked
+    against the digest the server's list gave it: the one place a record's
+    cohort version is found (the rows, Models and the Diagnosis card)."""
+
+    def __init__(self, versions: Sequence[Mapping[str, Any]],
+                 environ: Optional[Mapping[str, str]]) -> None:
+        from src.config import server_settings
+
+        self.listed = {v["sha256"]: v for v in versions if r.is_digest(v.get("sha256"))}
+        setting = server_settings.cohort_registry(environ)
+        self.registry = setting.value if setting.available else None
+        self.problem = None if setting.available else (setting.problem or "no cohort registry")
+        self._resolved: Dict[str, Any] = {}
+
+    @classmethod
+    def listed(cls, environ: Optional[Mapping[str, str]] = None) -> "CohortVersions":
+        """The versions the server's list offers now (`list_cohort_versions`);
+        none when it cannot be listed (every record then "cannot be checked")."""
+        from src.api.services.server_lists import list_cohort_versions
+
+        try:
+            items = list_cohort_versions(environ=environ).items
+        except Exception:  # noqa: BLE001 - contested then reads "cannot be checked"
+            logger.exception("The cohort versions could not be listed")
+            items = ()
+        return cls([{"label": i.label, "sha256": i.manifest_sha256} for i in items], environ)
+
+    def by_digest(self, digest: Any) -> Tuple[Any, Optional[str]]:
+        """``(version, None)`` or ``(None, why)`` for a cohort version digest."""
+        from src.evaluation.cohort_registry import resolve_version
+
+        if self.registry is None:
+            return None, f"no cohort registry: {self.problem}"
+        listed = self.listed.get(digest)
+        if listed is None:
+            return None, (f"its cohort version ({r.short_hex(digest)}) is not one the server's "
+                          "registry lists")
+        label = listed["label"]
+        if label not in self._resolved:
+            try:
+                version = resolve_version(self.registry, label)
+            except Exception as exc:  # noqa: BLE001 - a state, never a crash of the page
+                self._resolved[label] = (None, f"{label} cannot be read ({type(exc).__name__})")
+            else:
+                if version.identity.sha256 != digest:
+                    self._resolved[label] = (None, f"{label} changed since it was listed")
+                else:
+                    self._resolved[label] = (version, None)
+        return self._resolved[label]
+
+
+def ledger_records(workspace_dir: Path, items: Sequence[Mapping[str, Any]]
+                   ) -> Dict[str, Dict[str, Any]]:
+    """For each listed checkpoint with a digest, what the ledger beside it holds
+    for its weights, read through the one ledger reader (`read_ledger`, once per
+    directory) and `records_for`: ``state`` (``records``, ``none``,
+    ``no_ledger`` or ``not_read``), the records as the ledger holds them (kept
+    on the server, in the session's state; never sent to the browser as they
+    are), ``problem`` (naming the file, never its directory) and ``ledger``
+    (the ledger's resolved path, which only tells two ledgers apart).
+
+    The checkpoint file is never opened: its path is the run layout's, resolved
+    to find the directory its ledger is in, as registration writes it."""
+    from src.api.routes.evaluations import _ledger_problem
+    from src.evaluation.sidecar import LEDGER_FILENAME, read_ledger, records_for
     from src.utils.checkpoint_paths import RUN_CHECKPOINTS_DIRNAME, RUNS_DIRNAME
 
-    ledgers: Dict[Path, Tuple[Optional[dict], Optional[str], bool]] = {}
-    scans: Dict[str, Any] = {}
-    versions: Optional[Dict[str, Any]] = None
     workspace_dir = Path(workspace_dir).resolve()
-
-    def version_scan(digest: Any) -> Any:
-        nonlocal versions
-        if versions is None:
-            versions = {}
-            try:
-                from src.config import server_settings
-                from src.evaluation.cohort_registry import list_versions
-
-                setting = server_settings.cohort_registry(environ)
-                if setting.available:
-                    for listed in list_versions(setting.value):
-                        if listed.version is not None:
-                            versions[listed.version.identity.sha256] = listed.version
-            except Exception:  # noqa: BLE001 - contested then reads "not checked"
-                logger.exception("The cohort registry could not be listed")
-        if digest not in scans:
-            version = versions.get(digest)
-            if version is None:
-                scans[digest] = None
-            else:
-                try:
-                    from src.evaluation.report_store import scan_report_store
-
-                    scans[digest] = scan_report_store(version)
-                except Exception:  # noqa: BLE001
-                    logger.exception("A report store could not be scanned")
-                    scans[digest] = None
-        return scans[digest]
-
-    out: Dict[str, r.RecordedTests] = {}
+    read: Dict[Path, Tuple[Optional[dict], Optional[str], bool]] = {}
+    out: Dict[str, Dict[str, Any]] = {}
     for item in items:
-        sha = item.get("sha256")
-        if not r.is_digest(sha) or item.get("problem"):
+        if not loadable(item):
             continue
+        key = item_key(item)
         file = (workspace_dir / RUNS_DIRNAME / str(item.get("architecture")) / str(item.get("run"))
                 / RUN_CHECKPOINTS_DIRNAME / str(item.get("filename")))
         try:
             directory = file.resolve().parent
         except (OSError, RuntimeError):
-            out[item_key(item)] = r.RecordedTests("not_read", problem="cannot be resolved")
+            out[key] = {"state": "not_read", "records": [], "ledger": None,
+                        "problem": "the checkpoint's directory cannot be resolved"}
             continue
         if directory != workspace_dir and workspace_dir not in directory.parents:
-            out[item_key(item)] = r.RecordedTests("not_read", problem="outside the workspace")
+            out[key] = {"state": "not_read", "records": [], "ledger": None,
+                        "problem": "the checkpoint resolves outside the workspace"}
             continue
-        if directory not in ledgers:
+        ledger_path = directory / LEDGER_FILENAME
+        if directory not in read:
             try:
-                ledger, digest = read_ledger(directory / LEDGER_FILENAME)
-                ledgers[directory] = (ledger, None, digest is not None)
+                ledger, digest = read_ledger(ledger_path)
+                read[directory] = (ledger, None, digest is not None)
             except (OSError, ValueError) as exc:
-                ledgers[directory] = (None, type(exc).__name__, True)
-        ledger, problem, present = ledgers[directory]
+                read[directory] = (None, _ledger_problem(exc, ledger_path), True)
+        ledger, problem, present = read[directory]
         if problem is not None:
-            out[item_key(item)] = r.RecordedTests("not_read", problem=problem)
-            continue
-        if not present:
-            out[item_key(item)] = r.RecordedTests("no_ledger")
-            continue
-        records = records_for(ledger, sha)
-        if not records:
-            out[item_key(item)] = r.RecordedTests("none")
-            continue
-        contested: Optional[int] = 0
-        for record in records:
-            scan = version_scan(record.get("cohort_digest"))
-            try:
-                state = scan.state(record_key(record)) if scan is not None else None
-            except Exception:  # noqa: BLE001
-                state = None
-            if state == "contested":
-                contested = None if contested is None else contested + 1
-            elif state != "uncontested":
-                contested = None
-        out[item_key(item)] = r.RecordedTests("records", len(records), contested)
+            out[key] = {"state": "not_read", "records": [], "ledger": str(ledger_path),
+                        "problem": problem}
+        elif not present:
+            out[key] = {"state": "no_ledger", "records": [], "ledger": str(ledger_path),
+                        "problem": None}
+        else:
+            records = records_for(ledger, item["sha256"])
+            out[key] = {"state": "records" if records else "none", "records": records,
+                        "ledger": str(ledger_path), "problem": None}
     return out
 
 
+def contest_states(records: Iterable[Mapping[str, Any]], versions: CohortVersions, *,
+                   operator: bool = True) -> Dict[str, Dict[str, Any]]:
+    """Each record key's state in its cohort version's report store (D5), by
+    the key's text: one scan of each store (`scan_report_store`), then
+    `StoreScan.status`. A key whose state cannot be read is ``cannot_be_checked``,
+    never uncontested. For a contested key, the disagreeing runs' values of the
+    metrics that differ. `operator` False leaves out the problems' own words,
+    which may name a server path."""
+    from src.evaluation.report_store import scan_report_store
+    from src.evaluation.sidecar import record_key
+
+    keys: Dict[str, Tuple[Any, ...]] = {}
+    for record in records:
+        try:
+            key = record_key(dict(record))
+        except ValueError:
+            continue
+        keys[key_text(key)] = key
+    scans: Dict[str, Tuple[Any, Optional[str]]] = {}
+    out: Dict[str, Dict[str, Any]] = {}
+    for text, key in keys.items():
+        digest = key[2]
+        if digest not in scans:
+            version, why = versions.by_digest(digest)
+            if version is None:
+                scans[digest] = (None, why)
+            else:
+                try:
+                    scans[digest] = (scan_report_store(version), None)
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception("A report store could not be scanned")
+                    scans[digest] = (None, f"its report store could not be read "
+                                           f"({type(exc).__name__})")
+        scan, why = scans[digest]
+        if scan is None:
+            out[text] = {"state": "cannot_be_checked", "differing": [], "runs": [],
+                         "problems": [why] if operator else []}
+            continue
+        try:
+            status = scan.status(key)
+        except Exception as exc:  # noqa: BLE001
+            out[text] = {"state": "cannot_be_checked", "differing": [], "runs": [],
+                         "problems": [f"({type(exc).__name__})"] if operator else []}
+            continue
+        runs = []
+        if status.state == "contested":
+            for run_id, record in (scan.reports.get(tuple(key)) or {}).values():
+                if run_id in status.disagreeing_runs:
+                    metrics = record.get("metrics") if isinstance(record, Mapping) else None
+                    runs.append({"run": run_id, "values": {
+                        name: metrics.get(name) for name in status.differing
+                        if isinstance(metrics, Mapping) and name in metrics}})
+        out[text] = {"state": status.state, "differing": list(status.differing),
+                     "runs": sorted(runs, key=lambda run: run["run"]),
+                     "problems": list(status.problems) if operator else []}
+    return out
+
+
+def recorded_tests(ledgers: Mapping[str, Mapping[str, Any]],
+                   contest: Mapping[str, Mapping[str, Any]]) -> Dict[str, r.RecordedTests]:
+    """Each checkpoint's recorded tests as a state, from what `ledger_records`
+    and `contest_states` read: how many records, how many contested and how
+    many whose contested state cannot be checked, counted apart (M5-3 review
+    EVAL-3: one uncheckable record hid a known contested one)."""
+    from src.evaluation.sidecar import record_key
+
+    out: Dict[str, r.RecordedTests] = {}
+    for key, entry in ledgers.items():
+        if entry.get("state") != "records":
+            out[key] = r.RecordedTests(entry.get("state") or "not_read",
+                                       problem=entry.get("problem"))
+            continue
+        contested = unchecked = 0
+        for record in entry.get("records") or []:
+            try:
+                found = contest.get(key_text(record_key(dict(record))))
+            except ValueError:
+                found = None
+            state = (found or {}).get("state")
+            if state == "contested":
+                contested += 1
+            elif state != "uncontested":
+                unchecked += 1
+        out[key] = r.RecordedTests("records", len(entry.get("records") or []), contested,
+                                   unchecked=unchecked)
+    return out
+
+
+def read_recorded(workspace_dir: Path, items: Sequence[Mapping[str, Any]], *,
+                  environ: Optional[Mapping[str, str]] = None
+                  ) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]]]:
+    """``(ledgers, contest)`` for the listed checkpoints: the ledger beside each
+    (`ledger_records`, read once per directory) and every record key's state in
+    its cohort version's report store (`contest_states`, one scan per version).
+    The one read behind the rows, Models and the Diagnosis card."""
+    ledgers = ledger_records(workspace_dir, items)
+    records = [rec for entry in ledgers.values() for rec in entry["records"]]
+    contest = contest_states(records, CohortVersions.listed(environ)) if records else {}
+    return ledgers, contest
+
+
+def recorded_tests_for(workspace_dir: Path, items: Sequence[Mapping[str, Any]], *,
+                       environ: Optional[Mapping[str, str]] = None) -> Dict[str, r.RecordedTests]:
+    """Each listed checkpoint's recorded tests, as states (`read_recorded`,
+    then `recorded_tests`). Never raises: a problem is a state."""
+    return recorded_tests(*read_recorded(workspace_dir, items, environ=environ))
+
+
 def empty_listing(problem: Optional[str] = None) -> Dict[str, Any]:
-    return {"workspace": None, "items": [], "workspaces": [], "recorded": {},
-            "served_sha": None, "serving": None, "problem": problem}
+    return {"workspace": None, "items": [], "workspaces": [], "recorded": {}, "ledgers": {},
+            "contest": {}, "served_sha": None, "serving": None, "problem": problem,
+            "status_read": False}
 
 
 def list_models(workspace: Any, request: Any, *,
@@ -253,11 +399,11 @@ def list_models(workspace: Any, request: Any, *,
     opens checkpoints), then the server's lists and the status, as plain data
     for a `gr.State`. A refused request lists nothing and says why."""
     from src.api.services.server_lists import list_checkpoints
-    from src.webui.components.workspaces import read_workspaces
+    from src.webui.components.workspaces import read_workspaces, redact
 
     access = operator_access(request)
     if not access.allowed:
-        return {**empty_listing(access.refusal), "refused": True}
+        return {**empty_listing(access.refusal), "refused": True, "condition": access.condition}
     listed = read_workspaces(environ)
     rows, directories = listed["rows"], listed["directories"]
     status, status_problem = read_status()
@@ -267,19 +413,32 @@ def list_models(workspace: Any, request: Any, *,
                                                    (names[0] if names else None))
     listing = {**empty_listing(listed["problem"]), "workspaces": rows, "workspace": chosen,
                "served_sha": served_checkpoint_sha(status), "serving": serving,
-               "status_problem": status_problem}
+               "status_problem": status_problem, "status_read": True}
     if chosen is None:
         return listing
     checkpoints = list_checkpoints(chosen, environ=environ)
+    # No absolute server path in what the list shows (a workspace that is a
+    # link out of the root names its target; a read's error may name a file):
+    # the dashboard's one redaction, as Datasets says the same reasons.
+    root = listed["root"]
     items = [asdict(i) for i in checkpoints.items]
-    listing.update(items=items, problem=checkpoints.problem)
-    recorded: Dict[str, r.RecordedTests] = {}
+    for item in items:
+        if item.get("problem"):
+            item["problem"] = redact(item["problem"], root)
+    listing.update(items=items, problem=(redact(checkpoints.problem, root)
+                                         if checkpoints.problem else None))
+    # The ledgers beside the checkpoints and their records' contested states,
+    # read once for the rows and kept in the listing (server side, in the
+    # session's state) for a page that shows them (Models).
+    ledgers: Dict[str, Dict[str, Any]] = {}
+    contest: Dict[str, Dict[str, Any]] = {}
     try:
         if chosen in directories:
-            recorded = recorded_tests_for(directories[chosen], items, environ=environ)
+            ledgers, contest = read_recorded(directories[chosen], items, environ=environ)
     except Exception:  # noqa: BLE001 - the recorded tests then read "not read"
         logger.exception("Recorded tests could not be read")
-    listing["recorded"] = {k: v._asdict() for k, v in recorded.items()}
+    listing["recorded"] = {k: v._asdict() for k, v in recorded_tests(ledgers, contest).items()}
+    listing["ledgers"], listing["contest"] = ledgers, contest
     return listing
 
 
@@ -307,6 +466,26 @@ def shown_items(listing: Mapping[str, Any], view: Any = None) -> List[Mapping[st
     if architecture:
         items = [i for i in items if i.get("architecture") == architecture]
     return items
+
+
+def refused_line(listing: Mapping[str, Any]) -> str:
+    """Why a refused listing lists nothing, as every page says an operator
+    control that is off for this request: "Operator controls only: <the
+    condition D8 named, in short words>."."""
+    from src.webui.components.chips import D8_SHORT
+
+    return f"Operator controls only: {D8_SHORT.get(listing.get('condition'), 'request not readable')}."
+
+
+def kept_selection(previous: Any, listing: Mapping[str, Any], key: Any,
+                   view: Any = None) -> Optional[str]:
+    """The selection a new listing keeps: `key` when the listing is of the same
+    workspace as `previous` and still shows that checkpoint; else None."""
+    if not key or not isinstance(previous, Mapping) or listing.get("refused") \
+            or previous.get("workspace") != listing.get("workspace"):
+        return None
+    item = find_item(listing, key)
+    return key if item is not None and item in shown_items(listing, view) else None
 
 
 def _groups(items: Sequence[Mapping[str, Any]], view: Any
@@ -350,7 +529,9 @@ def list_html(listing: Mapping[str, Any], selected: Optional[str], preset: Prese
     (Models: every checkpoint, the model in use marked on its own row); the
     view's architecture, groups and extra column when it gives them."""
     if listing.get("refused"):
-        return f'<div class="shep-reason shep-reason-grey">{r.e(listing.get("problem"))}</div>'
+        # A listing is no act: the short line every page uses for an operator
+        # control off for this request, not "Refused … Nothing was done."
+        return f'<div class="shep-reason shep-reason-grey">{r.e(refused_line(listing))}</div>'
     items = shown_items(listing, view)
     if not items:
         return _no_items_html(listing, view)
@@ -930,7 +1111,7 @@ def finish_load(plan: Optional[Mapping[str, Any]], request: Any, *,
 def read_again() -> str:
     """"Read again" after the page stopped waiting: what is served now."""
     status, problem = read_status()
-    at = datetime.now().strftime("%H:%M:%S")
+    at = r.clock_utc(datetime.now())
     if status is None:
         return _outcome("grey", f"Status read again at {at}:", f"{problem}.")
     sha = served_checkpoint_sha(status)
@@ -1058,18 +1239,27 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
     ordering = gr.State(None)
     phase = gr.State("idle")
     show_older = gr.State(False)
+    # The table preset (Models) keeps its header and its rows in one column
+    # (``shep-model-main``), so the page can scroll them as one region when
+    # they do not fit together (M5-3 review UI-1); the drawer's rows need none.
     with gr.Column(elem_id=elem_id, elem_classes=["shep-model-list", f"shep-preset-{preset}"]):
-        with gr.Row(elem_classes=["shep-model-head"]):
-            workspace = gr.Dropdown(label="Workspace", choices=[], value=None,
-                                    elem_id=f"{elem_id}-workspace", interactive=True, scale=3)
-            count = plain_html("", elem_id=f"{elem_id}-count")
-            head_extra = head() if head is not None else None
-        with gr.Row(elem_classes=["shep-model-body"]):
-            rows = plain_html('<div class="shep-muted">The list is read when it is opened.</div>',
-                              elem_id=f"{elem_id}-rows", js_on_load=MODEL_LIST_JS,
-                              elem_classes=["shep-model-rows"])
-            facts = plain_html(facts_html(empty_listing(), None), elem_id=f"{elem_id}-facts",
-                               elem_classes=["shep-model-facts"])
+        main = (gr.Column(elem_classes=["shep-model-main"]) if chosen.layout == "table"
+                else contextlib.nullcontext())
+        with main:
+            with gr.Row(elem_classes=["shep-model-head"]):
+                workspace = gr.Dropdown(label="Workspace", choices=[], value=None,
+                                        elem_id=f"{elem_id}-workspace", interactive=True,
+                                        scale=3)
+                count = plain_html("", elem_id=f"{elem_id}-count")
+                head_extra = head() if head is not None else None
+            with gr.Row(elem_classes=["shep-model-body"]):
+                rows = plain_html(
+                    '<div class="shep-muted">The list is read when it is opened.</div>',
+                    elem_id=f"{elem_id}-rows", js_on_load=MODEL_LIST_JS,
+                    elem_classes=["shep-model-rows"])
+                facts = plain_html(facts_html(empty_listing(), None),
+                                   elem_id=f"{elem_id}-facts",
+                                   elem_classes=["shep-model-facts"])
         with gr.Row(elem_classes=["shep-model-foot"]):
             load_button = gr.Button("🔒 Load this model", variant="primary", interactive=False,
                                     elem_id=f"{elem_id}-load", scale=0)
@@ -1084,20 +1274,23 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
                                           elem_id=f"{elem_id}-reload")
                 keep_button = gr.Button("Keep", scale=0, elem_id=f"{elem_id}-keep")
 
-    def _refresh(name, older, current_view, request: gr.Request):
+    def _refresh(name, older, current_view, previous, key, request: gr.Request):
+        # A selection still listed in the same workspace stays selected (M5-3
+        # review UI-3: the re-read after a Load dropped a row picked meanwhile).
         data = list_models(name, request)
+        key = kept_selection(previous, data, key, current_view)
         choices = r.workspace_choices(data.get("workspaces") or [])
-        reason_html = (f'<div class="shep-reason shep-reason-grey">{r.e(data["problem"])}</div>'
-                       if data.get("refused") else "")
-        return (data, None, gr.update(choices=choices, value=data.get("workspace")),
+        # Reading the list is no act: a refused read says why in the list
+        # (`refused_line`); Load's reason is said when Load is clicked.
+        return (data, key, gr.update(choices=choices, value=data.get("workspace")),
                 count_line(data, chosen, older, current_view),
-                list_html(data, None, chosen, show_older=older, view=current_view),
-                facts_html(data, None), gr.update(interactive=False), reason_html,
-                note_html(current_view))
+                list_html(data, key, chosen, show_older=older, view=current_view),
+                facts_html(data, key), gr.update(interactive=loadable(find_item(data, key))),
+                "", note_html(current_view))
 
     refresh_outputs = [listing, selected, workspace, count, rows, facts, load_button, reason, note]
-    refresh = {"fn": _refresh, "inputs": [workspace, show_older, view], "outputs": refresh_outputs,
-               "show_progress": "minimal"}
+    refresh = {"fn": _refresh, "inputs": [workspace, show_older, view, listing, selected],
+               "outputs": refresh_outputs, "show_progress": "minimal"}
     workspace.input(**refresh)
 
     def _select(data, older, current_view, evt: gr.EventData):
@@ -1215,6 +1408,7 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
 
 
 __all__ = [
+    "CohortVersions",
     "FROM_CHANGED",
     "IN_USE_NOTE",
     "LoadStep",
@@ -1228,17 +1422,24 @@ __all__ = [
     "REST_TITLE",
     "TO_CHANGED",
     "confirmation_html",
+    "contest_states",
     "count_line",
     "create_model_list",
     "facts_html",
     "find_item",
     "finish_load",
     "item_key",
+    "kept_selection",
+    "ledger_records",
+    "key_text",
     "list_html",
     "list_models",
     "loadable",
     "note_html",
     "read_again",
+    "read_recorded",
+    "refused_line",
+    "recorded_tests",
     "recorded_tests_for",
     "request_load",
     "shown_items",

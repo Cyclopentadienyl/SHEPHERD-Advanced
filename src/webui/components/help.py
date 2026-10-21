@@ -460,17 +460,6 @@ button.shep-copy:hover { background: var(--shep-panel-2); }
 """
 
 
-def merge_help(*mappings: Mapping[str, Tuple[str, str]]) -> Dict[str, Tuple[str, str]]:
-    """One mapping from several, refusing a key given two different texts."""
-    merged: Dict[str, Tuple[str, str]] = {}
-    for mapping in mappings:
-        for key, value in mapping.items():
-            if key in merged and merged[key] != value:
-                raise ValueError(f"help {key!r} is given two different texts")
-            merged[key] = value
-    return merged
-
-
 def as_json_for_script(value: object) -> str:
     """JSON that is safe inside a ``<script>`` element (no ``</script>``)."""
     return (json.dumps(value, ensure_ascii=True)
@@ -486,7 +475,6 @@ __all__ = [
     "as_json_for_script",
     "copy_button",
     "help_button",
-    "merge_help",
     "registered_keys_in",
     "text_id",
 ]

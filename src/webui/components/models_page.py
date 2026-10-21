@@ -72,8 +72,9 @@ and after every Load. A Load marks the page's data stale ("Reload with …"
 clicked) and the page reads it again once the Load has finished, even when the
 listing the shared refresh reads afterwards is unchanged (a refused reload, the
 model in use reloaded): the usage history it wrote is then shown. The shared
-refresh clears the selection; after a Load the page selects the same checkpoint
-again while its row is shown, so Close returns to its detail. One listener
+refresh keeps a selection still listed in the same workspace (a row picked after
+the Load stays picked, M5-3 review UI-3); one it did not keep is selected again
+after a Load while its row is shown, so Close returns to its detail. One listener
 (`_sync`) answers a new listing, a selection and the controls, so its answers
 for one session never overlap.
 
@@ -90,7 +91,6 @@ import logging
 import re
 import time
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import gradio as gr
@@ -178,8 +178,8 @@ D8_CONDITIONS = ("Operator controls need this deployment set to M1, a request on
 LIST_IS_C3 = ("Listing opens checkpoint files, which SPEC_4 classes as checkpoint inspection "
               "(C3), so the list is served only where the operator controls are (D8).")
 LIST_C3_LINE = "🔒 Checkpoint list: operator controls only (D8 · SPEC_4 C3)"
-NO_LOAD_HERE = ("No validation (Trainer) figures and no load here: both need the checkpoint "
-                "files.")
+NO_LOAD_HERE = ("No validation figures here: they need the checkpoint files; Load is an "
+                "operator control.")
 RECORDS_MODEL_CHANGED = ("The model in use changed while its recorded results were read; open "
                          "the page again.")
 
@@ -358,10 +358,6 @@ def run_time(run_id: Any) -> Optional[str]:
     return f"{y}-{mo}-{d} {h}:{mi} UTC"
 
 
-def _key_text(key: Sequence[Any]) -> str:
-    return json.dumps(list(key))
-
-
 def listing_key(listing: Mapping[str, Any]) -> str:
     """What one listing is, as one comparable value (the page re-reads its own
     data only for a listing it has not read yet): the listing itself, compared
@@ -393,159 +389,7 @@ def read_versions(environ: Optional[Mapping[str, str]] = None) -> Dict[str, Any]
             "roles": list(roles.value or ()), "roles_note": roles.note}
 
 
-class _Versions:
-    """The registry's versions resolved once per read, by label, each checked
-    against the digest the server's list gave it."""
-
-    def __init__(self, versions: Sequence[Mapping[str, Any]],
-                 environ: Optional[Mapping[str, str]]) -> None:
-        from src.config import server_settings
-
-        self.listed = {v["sha256"]: v for v in versions if r.is_digest(v.get("sha256"))}
-        setting = server_settings.cohort_registry(environ)
-        self.registry = setting.value if setting.available else None
-        self.problem = None if setting.available else (setting.problem or "no cohort registry")
-        self._resolved: Dict[str, Any] = {}
-
-    def by_digest(self, digest: Any) -> Tuple[Any, Optional[str]]:
-        """``(version, None)`` or ``(None, why)`` for a cohort version digest."""
-        from src.evaluation.cohort_registry import resolve_version
-
-        if self.registry is None:
-            return None, f"no cohort registry: {self.problem}"
-        listed = self.listed.get(digest)
-        if listed is None:
-            return None, (f"its cohort version ({r.short_hex(digest)}) is not one the server's "
-                          "registry lists")
-        label = listed["label"]
-        if label not in self._resolved:
-            try:
-                version = resolve_version(self.registry, label)
-            except Exception as exc:  # noqa: BLE001 - a state, never a crash of the page
-                self._resolved[label] = (None, f"{label} cannot be read ({type(exc).__name__})")
-            else:
-                if version.identity.sha256 != digest:
-                    self._resolved[label] = (None, f"{label} changed since it was listed")
-                else:
-                    self._resolved[label] = (version, None)
-        return self._resolved[label]
-
-
-def ledger_records(workspace_dir: Path, items: Sequence[Mapping[str, Any]]
-                   ) -> Dict[str, Dict[str, Any]]:
-    """For each listed checkpoint with a digest, what the ledger beside it holds
-    for its weights, read through the one ledger reader (`read_ledger`, once per
-    directory) and `records_for`: ``state`` (``records``, ``none``,
-    ``no_ledger`` or ``not_read``), the records as the ledger holds them (kept
-    on the server, in the session's state; never sent to the browser as they
-    are), ``problem`` (naming the file, never its directory) and ``ledger``
-    (the ledger's resolved path, which only tells two ledgers apart).
-
-    The checkpoint file is never opened: its path is the run layout's, resolved
-    to find the directory its ledger is in, as registration writes it."""
-    from src.api.routes.evaluations import _ledger_problem
-    from src.evaluation.sidecar import LEDGER_FILENAME, read_ledger, records_for
-    from src.utils.checkpoint_paths import RUN_CHECKPOINTS_DIRNAME, RUNS_DIRNAME
-
-    workspace_dir = Path(workspace_dir).resolve()
-    read: Dict[Path, Tuple[Optional[dict], Optional[str], bool]] = {}
-    out: Dict[str, Dict[str, Any]] = {}
-    for item in items:
-        if not ml.loadable(item):
-            continue
-        key = ml.item_key(item)
-        file = (workspace_dir / RUNS_DIRNAME / str(item.get("architecture")) / str(item.get("run"))
-                / RUN_CHECKPOINTS_DIRNAME / str(item.get("filename")))
-        try:
-            directory = file.resolve().parent
-        except (OSError, RuntimeError):
-            out[key] = {"state": "not_read", "records": [], "ledger": None,
-                        "problem": "the checkpoint's directory cannot be resolved"}
-            continue
-        if directory != workspace_dir and workspace_dir not in directory.parents:
-            out[key] = {"state": "not_read", "records": [], "ledger": None,
-                        "problem": "the checkpoint resolves outside the workspace"}
-            continue
-        ledger_path = directory / LEDGER_FILENAME
-        if directory not in read:
-            try:
-                ledger, digest = read_ledger(ledger_path)
-                read[directory] = (ledger, None, digest is not None)
-            except (OSError, ValueError) as exc:
-                read[directory] = (None, _ledger_problem(exc, ledger_path), True)
-        ledger, problem, present = read[directory]
-        if problem is not None:
-            out[key] = {"state": "not_read", "records": [], "ledger": str(ledger_path),
-                        "problem": problem}
-        elif not present:
-            out[key] = {"state": "no_ledger", "records": [], "ledger": str(ledger_path),
-                        "problem": None}
-        else:
-            records = records_for(ledger, item["sha256"])
-            out[key] = {"state": "records" if records else "none", "records": records,
-                        "ledger": str(ledger_path), "problem": None}
-    return out
-
-
-def contest_states(records: Iterable[Mapping[str, Any]], versions: _Versions, *,
-                   operator: bool = True) -> Dict[str, Dict[str, Any]]:
-    """Each record key's state in its cohort version's report store (D5), by
-    the key's text: one scan of each store (`scan_report_store`), then
-    `StoreScan.status`. A key whose state cannot be read is ``cannot_be_checked``,
-    never uncontested. For a contested key, the disagreeing runs' values of the
-    metrics that differ. `operator` False leaves out the problems' own words,
-    which may name a server path."""
-    from src.evaluation.report_store import scan_report_store
-    from src.evaluation.sidecar import record_key
-
-    keys: Dict[str, Tuple[Any, ...]] = {}
-    for record in records:
-        try:
-            key = record_key(dict(record))
-        except ValueError:
-            continue
-        keys[_key_text(key)] = key
-    scans: Dict[str, Tuple[Any, Optional[str]]] = {}
-    out: Dict[str, Dict[str, Any]] = {}
-    for text, key in keys.items():
-        digest = key[2]
-        if digest not in scans:
-            version, why = versions.by_digest(digest)
-            if version is None:
-                scans[digest] = (None, why)
-            else:
-                try:
-                    scans[digest] = (scan_report_store(version), None)
-                except Exception as exc:  # noqa: BLE001
-                    logger.exception("A report store could not be scanned")
-                    scans[digest] = (None, f"its report store could not be read "
-                                           f"({type(exc).__name__})")
-        scan, why = scans[digest]
-        if scan is None:
-            out[text] = {"state": "cannot_be_checked", "differing": [], "runs": [],
-                         "problems": [why] if operator else []}
-            continue
-        try:
-            status = scan.status(key)
-        except Exception as exc:  # noqa: BLE001
-            out[text] = {"state": "cannot_be_checked", "differing": [], "runs": [],
-                         "problems": [f"({type(exc).__name__})"] if operator else []}
-            continue
-        runs = []
-        if status.state == "contested":
-            for run_id, record in (scan.reports.get(tuple(key)) or {}).values():
-                if run_id in status.disagreeing_runs:
-                    metrics = record.get("metrics") if isinstance(record, Mapping) else None
-                    runs.append({"run": run_id, "values": {
-                        name: metrics.get(name) for name in status.differing
-                        if isinstance(metrics, Mapping) and name in metrics}})
-        out[text] = {"state": status.state, "differing": list(status.differing),
-                     "runs": sorted(runs, key=lambda run: run["run"]),
-                     "problems": list(status.problems) if operator else []}
-    return out
-
-
-def usage_entries(versions: Sequence[Mapping[str, Any]], resolver: _Versions,
+def usage_entries(versions: Sequence[Mapping[str, Any]], resolver: ml.CohortVersions,
                   shas: Iterable[str]) -> Dict[str, Any]:
     """The entries of every listed cohort version's usage history that name one
     of these checkpoints, by checkpoint digest, newest first, each with its
@@ -588,11 +432,10 @@ def usage_entries(versions: Sequence[Mapping[str, Any]], resolver: _Versions,
 def read_page(listing: Mapping[str, Any], *, environ: Optional[Mapping[str, str]] = None
               ) -> Dict[str, Any]:
     """The page's data for one operator listing, read once per listing: the
-    cohort versions (WP1's list), each listed checkpoint's ledger records, every
-    record key's contested state, and the usage history entries that name a
-    listed checkpoint. Plain data for a `gr.State`."""
-    from src.api.services.server_lists import ServerListRefused, resolve_workspace
-
+    cohort versions (WP1's list) and the usage history entries that name a
+    listed checkpoint; each listed checkpoint's ledger records and every record
+    key's contested state come from the listing, which read them for its rows.
+    Plain data for a `gr.State`."""
     data: Dict[str, Any] = {"listing_key": listing_key(listing), "readonly": False}
     try:
         data.update(read_versions(environ))
@@ -601,21 +444,12 @@ def read_page(listing: Mapping[str, Any], *, environ: Optional[Mapping[str, str]
         data.update({"versions": [], "problem": "the cohort versions could not be listed",
                      "roles": [], "roles_note": None})
     items = list(listing.get("items") or [])
-    ledgers: Dict[str, Dict[str, Any]] = {}
-    workspace = listing.get("workspace")
-    if workspace and items:
-        try:
-            # The listed name found again by one listing of the root (never a
-            # path from the listing): the ledgers are beside its checkpoints.
-            ledgers = ledger_records(resolve_workspace(workspace, environ=environ), items)
-        except ServerListRefused:
-            ledgers = {}
-        except Exception:  # noqa: BLE001 - the list still shows; each row says "not read"
-            logger.exception("The ledgers could not be read")
-    data["ledgers"] = ledgers
-    resolver = _Versions(data["versions"], environ)
-    records = [rec for entry in ledgers.values() for rec in entry["records"]]
-    data["contest"] = contest_states(records, resolver, operator=True)
+    # The ledgers beside the listed checkpoints and their records' contested
+    # states, as the shared listing read them once for its own rows
+    # (`model_list.list_models`): never read a second time here.
+    data["ledgers"] = dict(listing.get("ledgers") or {})
+    data["contest"] = dict(listing.get("contest") or {})
+    resolver = ml.CohortVersions(data["versions"], environ)
     data["usage"] = usage_entries(data["versions"], resolver,
                                   (i.get("sha256") for i in items if ml.loadable(i)))
     return data
@@ -642,7 +476,7 @@ def read_readonly(*, environ: Optional[Mapping[str, str]] = None) -> Dict[str, A
 
     data: Dict[str, Any] = {"readonly": True, "listing_key": None}
     status, problem = read_status()
-    data["status_at"] = datetime.now().strftime("%H:%M:%S")
+    data["status_at"] = r.clock_utc(datetime.now())
     data["status_problem"] = problem
     data["served_sha"] = served_checkpoint_sha(status) if status is not None else None
     try:
@@ -663,7 +497,8 @@ def read_readonly(*, environ: Optional[Mapping[str, str]] = None) -> Dict[str, A
             versions = read_versions(environ)["versions"]
         except Exception:  # noqa: BLE001
             versions = []
-        contest = contest_states(keyed, _Versions(versions, environ), operator=False)
+        contest = ml.contest_states(keyed, ml.CohortVersions(versions, environ),
+                                    operator=False)
     data["contest"] = contest
     return data
 
@@ -864,7 +699,7 @@ def records_table_html(views: Sequence[Mapping[str, Any]], contest: Mapping[str,
         cohort = view.get("cohort") if isinstance(view.get("cohort"), Mapping) else {}
         metrics = view.get("metrics") if isinstance(view.get("metrics"), Mapping) else {}
         key = view.get("key")
-        state = contest.get(_key_text(key)) if key else None
+        state = contest.get(ml.key_text(key)) if key else None
         synthetic = (r.chip("synthetic", "amber") if view.get("dataset_origin") == "synthetic"
                      else "")
         role = cohort.get("role")
@@ -1042,7 +877,7 @@ def rank(listing: Mapping[str, Any], data: Mapping[str, Any], ctl: Mapping[str, 
             candidates, cohort_digest=entry["sha256"],
             scoring_semantics_digest=ctl.get("scoring") or "", metric=ctl["metric"],
             role=entry["role"], ordering_roles=data.get("roles") or (),
-            contested_state=lambda key: (contest.get(_key_text(key)) or {}).get(
+            contested_state=lambda key: (contest.get(ml.key_text(key)) or {}).get(
                 "state", "cannot_be_checked"))
     except ValueError as exc:
         return {"offered": False, "why": str(exc), "rows": [], "keys": keys, "outside": outside,
@@ -1104,7 +939,8 @@ def shape(listing: Mapping[str, Any], data: Mapping[str, Any], ctl: Mapping[str,
             sequence = row.chosen.get("registration", {}).get("sequence")
             rule = " · D4 rule" if row.others else ""
             cell = (f'<div class="shep-w600">{r.e(fmt_metric(metric, row.value))}</div>'
-                    f'<div class="shep-sub">#{r.e(sequence)}{r.e(rule)}</div>{_regime_cell(row)}')
+                    f'<div class="shep-sub">record #{r.e(sequence)}{r.e(rule)}</div>'
+                    f'{_regime_cell(row)}')
             ordered.extend(keys)
         elif row.state == "contested":
             cell = f'<span class="shep-amber-t">{r.e(row.label)}</span>'
@@ -1188,8 +1024,7 @@ def left_header_html(listing: Mapping[str, Any], data: Mapping[str, Any],
         return (f'<div class="shep-panel-hd"><h2>Models</h2></div>'
                 f'<div class="shep-mp-ro" role="status"><div class="shep-mp-refusal">'
                 f'<b>Model list unavailable: read-only, {r.e(short)}.</b>'
-                f'<span>{r.e(LIST_IS_C3)}</span><span>{r.e(LIST_C3_LINE)}</span>'
-                f'<span class="shep-sub">{r.e(listing.get("problem"))}</span></div>'
+                f'<span>{r.e(LIST_IS_C3)}</span><span>{r.e(LIST_C3_LINE)}</span></div>'
                 f'<div class="shep-reason">{r.e(D8_CONDITIONS)}</div></div>')
     return ('<div class="shep-panel-hd"><h2>Models</h2><span class="shep-panel-right">🔒 listed '
             'by the server (operator controls only)</span></div>')
@@ -1227,8 +1062,15 @@ def options_html(data: Mapping[str, Any], ctl: Mapping[str, Any],
                   "model-selection roles (SHEPHERD_ORDERING_ROLES)")
         parts.append(f'<div class="shep-reason">Ordering by test score is not offered: '
                      f'{r.e(r.short_reason(reason, 220))}</div>')
+    if ctl.get("order") == BY_SCORE and offered_versions(data):
+        parts.insert(0, f'<div class="shep-mp-roleon">Each version offered: {r.e(ROLE_ON)}.</div>')
     if ctl.get("order") == BY_SCORE and off:
-        parts.append('<div class="shep-mp-offs">' + "".join(off) + "</div>")
+        # Closed by default: a long registry's versions never push the order
+        # controls and the table out of view (M5-3 review UI-1).
+        count = len(off)
+        parts.append(f'<details class="shep-mp-offd"><summary>{count} cohort version'
+                     f'{"s" if count != 1 else ""} without ordering</summary>'
+                     '<div class="shep-mp-offs">' + "".join(off) + "</div></details>")
     return "".join(parts)
 
 
@@ -1258,8 +1100,9 @@ def independence_html(data: Mapping[str, Any]) -> str:
 
 
 def version_choices(data: Mapping[str, Any]) -> List[Tuple[str, str]]:
-    return [(f"{v['label']} (role {v['role']}) — {ROLE_ON}", v["label"])
-            for v in offered_versions(data)]
+    """The cohort version select's options, one line each: what offers ordering
+    is said once beside the select (`options_html`), not in every option."""
+    return [(f"{v['label']} (role {v['role']})", v["label"]) for v in offered_versions(data)]
 
 
 def scoring_choices(groups: Sequence[Tuple[str, int]]) -> List[Tuple[str, str]]:
@@ -1268,6 +1111,11 @@ def scoring_choices(groups: Sequence[Tuple[str, int]]) -> List[Tuple[str, str]]:
 
 
 def _served_line(listing: Mapping[str, Any]) -> str:
+    """What is served for diagnosis, as the listing's status read says it; "not
+    read yet" before any read (the page as built, before its first listing),
+    never "nothing is in use" (M5-3 review UI-4)."""
+    if not listing.get("status_read"):
+        return "in use for diagnosis: not read yet"
     served = listing.get("served_sha")
     if served:
         return (f'in use for diagnosis: model <code class="shep-fpv" title="{r.e(served)}">'
@@ -1375,7 +1223,7 @@ def _records_for_item(item: Mapping[str, Any], ledger: Optional[Mapping[str, Any
         if not version.get("offers") and version.get("role") == "institutional_acceptance":
             roles[str(version.get("sha256"))] = "ordering off: awaits the formal evaluation rules"
     contested = sum(1 for v in views
-                    if (contest.get(_key_text(v["key"])) or {}).get("state") == "contested")
+                    if (contest.get(ml.key_text(v["key"])) or {}).get("state") == "contested")
     return (records_block_html(views, contest, not_shown=not_shown, picks=picks, roles=roles),
             len(views) + not_shown, contested)
 
@@ -1531,9 +1379,10 @@ def create_models_page(ctx: Any) -> None:
                                                   elem_id="shep-mp-metric")
                     plain_html('<span class="shep-mp-lbl">on cohort version:</span>',
                                elem_id="shep-mp-on")
-                parts["version"] = gr.Radio(label="On cohort version", show_label=False,
-                                            container=False, choices=[], value=None,
-                                            interactive=True, elem_id="shep-mp-version")
+                    parts["version"] = gr.Dropdown(label="On cohort version",
+                                                   show_label=False, container=False,
+                                                   choices=[], value=None, interactive=True,
+                                                   elem_id="shep-mp-version")
                 parts["scoring"] = gr.Dropdown(label="Scoring semantics", choices=[], value=None,
                                                interactive=True, visible=False,
                                                elem_id="shep-mp-scoring")
@@ -1611,9 +1460,9 @@ def create_models_page(ctx: Any) -> None:
 
     shared_refresh = handle.refresh["fn"]
 
-    def _open(name, older, current_view, order, version, metric, scoring, arch, seg_value, phase,
-              request: gr.Request):
-        shared = shared_refresh(name, older, current_view, request)
+    def _open(name, older, current_view, previous, key, order, version, metric, scoring, arch,
+              seg_value, phase, request: gr.Request):
+        shared = shared_refresh(name, older, current_view, previous, key, request)
         listing = shared[0]
         data = read_for(listing)
         condition = operator_access(request).condition
@@ -1641,8 +1490,8 @@ def create_models_page(ctx: Any) -> None:
         """A new listing (a workspace chosen, the refresh after a Load), a
         selection, or a control changed. The page reads its own data again for
         a listing it has not read, and once after a Load has finished (the
-        listing may be unchanged); after a Load it selects the same checkpoint
-        again while its row is shown (the shared refresh cleared it)."""
+        listing may be unchanged); after a Load it selects the last checkpoint
+        again while its row is shown, when the shared refresh did not keep it."""
         ctl_values = (order, version, metric, scoring, arch)
         settled = phase != "loading"
         after_load = bool(stale) and settled
@@ -1704,12 +1553,22 @@ PAGE_CSS = f"""
 {_PAGE} {_LIST} {{
   display: grid !important; gap: 0 16px !important; width: 100%;
   grid-template-columns: minmax(0, 46fr) minmax(0, 54fr);
-  grid-template-rows: auto minmax(0, 1fr);
-  grid-template-areas: "head foot" "body foot";
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-areas: "main foot";
   padding: 0 !important; border: 0 !important; background: none !important;
 }}
-{_PAGE} {_LIST} > .shep-model-head {{
-  grid-area: head; display: grid !important; gap: 10px 10px !important; align-items: start;
+/* The list panel: its header (the workspace and architecture selects, the
+   order controls, the count) and the table, in one column (M5-3 review UI-1:
+   a header capped in its own scroll region cut off the independence note and
+   hid the order controls under a second scrollbar). */
+{_PAGE} {_LIST} > .shep-model-main {{
+  grid-area: main; min-height: 0; min-width: 0; display: flex !important;
+  flex-direction: column; flex-wrap: nowrap !important; gap: 0 !important;
+  background: var(--shep-panel); border: 1px solid var(--shep-border); border-radius: 10px;
+  padding: 0 !important; margin: 0 !important;
+}}
+{_PAGE} {_LIST} > .shep-model-main > .shep-model-head {{
+  flex: none; display: grid !important; gap: 10px 10px !important; align-items: start;
   align-content: start;
   /* The workspace select takes the row but what the architecture select needs
      for "All" or one architecture (the workspace value carries the name, the
@@ -1717,25 +1576,24 @@ PAGE_CSS = f"""
   grid-template-columns: minmax(0, 1fr) 128px;
   grid-template-rows: repeat(5, max-content);
   grid-template-areas: "lhd lhd" "ws arch" "wsline wsline" "ctl ctl" "count count";
-  background: var(--shep-panel); border: 1px solid var(--shep-border); border-bottom: 0;
-  border-radius: 10px 10px 0 0; padding: 0 16px 8px !important; margin: 0 !important;
+  background: none; border: 0; padding: 0 16px 8px !important; margin: 0 !important;
 }}
-{_PAGE} {_LIST} > .shep-model-head > * {{ min-width: 0 !important; }}
+{_PAGE} {_LIST} > .shep-model-main > .shep-model-head > * {{ min-width: 0 !important; }}
 {_PAGE} #shep-mp-hd {{ grid-area: lhd; margin: 0 -16px; width: calc(100% + 32px) !important; max-width: none; }}
-{_PAGE} {_LIST} > .shep-model-head > .form:has(#shep-models-research-workspace) {{ grid-area: ws; }}
-{_PAGE} {_LIST} > .shep-model-head > .form:has(#shep-mp-arch) {{ grid-area: arch; }}
+{_PAGE} {_LIST} .shep-model-head > .form:has(#shep-models-research-workspace) {{ grid-area: ws; }}
+{_PAGE} {_LIST} .shep-model-head > .form:has(#shep-mp-arch) {{ grid-area: arch; }}
 {_PAGE} #shep-mp-wsline {{ grid-area: wsline; margin-top: -4px; }}
 /* A value too long for its select ends in "…" before the chevron, never under it. */
-{_PAGE} #shep-models-research-workspace input, {_PAGE} #shep-mp-arch input {{
+{_PAGE} #shep-models-research-workspace input, {_PAGE} #shep-mp-arch input,
+{_PAGE} #shep-mp-version input {{
   padding-right: 24px !important; text-overflow: ellipsis;
 }}
 {_PAGE} .shep-mp-wsline {{ display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; font-size: 14px; color: var(--shep-text-2); }}
 {_PAGE} #shep-mp-controls {{ grid-area: ctl; gap: 8px !important; }}
 {_PAGE} #shep-models-research-count {{ grid-area: count; font-size: 14px; color: var(--shep-text-2); }}
-{_PAGE} {_LIST} > .shep-model-body {{
-  grid-area: body; min-height: 0; background: var(--shep-panel); border: 1px solid var(--shep-border);
-  border-top: 0; border-radius: 0 0 10px 10px; padding: 0 16px 12px !important; margin: 0 !important;
-  flex-wrap: nowrap !important;
+{_PAGE} {_LIST} > .shep-model-main > .shep-model-body {{
+  min-height: 0; background: none; border: 0; border-radius: 0 0 10px 10px;
+  padding: 0 16px 12px !important; margin: 0 !important; flex-wrap: nowrap !important;
 }}
 {_PAGE} #shep-models-research-rows {{ flex: 1 1 auto !important; min-width: 0; }}
 {_PAGE} #shep-models-research-facts {{ display: none !important; }}
@@ -1773,13 +1631,11 @@ PAGE_CSS = f"""
 {_PAGE} .shep-mp-opts-row {{ gap: 8px !important; align-items: center !important; flex-wrap: wrap !important; }}
 {_PAGE} .shep-mp-opts-row > * {{ flex: 0 0 auto !important; min-width: 0 !important; width: auto !important; margin: 0 !important; }}
 {_PAGE} .shep-mp-opts-row > .form {{ flex: 0 1 300px !important; border: 0 !important; background: none !important; }}
-{_PAGE} #shep-mp-version .wrap {{ flex-direction: column; align-items: flex-start; gap: 4px; }}
-{_PAGE} #shep-mp-version .wrap label {{
-  background: none !important; border: 0 !important; box-shadow: none !important;
-  padding: 2px 0 !important; color: var(--shep-text) !important; font-size: 15px;
-}}
-{_PAGE} #shep-mp-version .wrap label span {{ color: inherit !important; }}
-{_PAGE} #shep-mp-version .wrap label.selected {{ font-weight: 600; }}
+{_PAGE} .shep-mp-opts-row > #shep-mp-version {{ flex: 1 1 220px !important; min-width: 200px !important; max-width: 360px; }}
+{_PAGE} .shep-mp-roleon {{ font-size: 14px; color: var(--shep-text-2); padding: 0 10px; }}
+{_PAGE} .shep-mp-offd {{ font-size: 14px; color: var(--shep-text-2); padding: 0 10px; }}
+{_PAGE} .shep-mp-offd > summary {{ cursor: pointer; }}
+{_PAGE} .shep-mp-offd > .shep-mp-offs {{ padding: 6px 0 0; }}
 {_PAGE} .shep-mp-offs {{ display: flex; flex-direction: column; gap: 4px; padding: 0 10px; }}
 {_PAGE} .shep-mp-off {{ display: flex; gap: 8px; align-items: flex-start; font-size: 14px; color: var(--shep-muted); }}
 {_PAGE} .shep-mp-radio {{ flex: none; width: 14px; height: 14px; margin-top: 3px; border-radius: 50%;
@@ -1816,32 +1672,28 @@ PAGE_CSS = f"""
 {_PAGE} .shep-mp-ro {{ padding: 0 16px 8px; }}
 {_PAGE} .shep-mtbl td.shep-num .shep-sub {{ text-align: right; }}
 /* Read-only: no list, no workspace, no order; the reason is the header's. */
-{_PAGE} {_LIST}:has(.shep-mp-ro) > .shep-model-head > .form,
+{_PAGE} {_LIST}:has(.shep-mp-ro) .shep-model-head > .form,
 {_PAGE} {_LIST}:has(.shep-mp-ro) #shep-mp-wsline,
 {_PAGE} {_LIST}:has(.shep-mp-ro) #shep-mp-controls,
 {_PAGE} {_LIST}:has(.shep-mp-ro) #shep-models-research-count,
-{_PAGE} {_LIST}:has(.shep-mp-ro) > .shep-model-body {{ display: none !important; }}
-{_PAGE} {_LIST}:has(.shep-mp-ro) > .shep-model-head {{ grid-row: 1 / -1; border-bottom: 1px solid var(--shep-border); border-radius: 10px; align-content: start; }}
+{_PAGE} {_LIST}:has(.shep-mp-ro) > .shep-model-main > .shep-model-body {{ display: none !important; }}
 {_PAGE} {_LIST}:has(.shep-mp-ro) {{ grid-template-columns: minmax(0, 30fr) minmax(0, 70fr); }}
 @media (min-width: 1400px) and (min-height: 760px) {{
   {_PAGE} > .column {{ height: 100%; }}
   {_PAGE} .shep-models {{ height: 100%; min-height: 0; }}
   {_PAGE} {_LIST} {{ height: 100%; min-height: 0; }}
-  {_PAGE} #shep-models-research-rows {{ overflow: auto !important; min-height: 0; max-height: 100%; }}
+  {_PAGE} {_LIST} > .shep-model-main {{ height: 100%; overflow-y: auto; }}
   {_PAGE} #shep-mp-detail {{ overflow: hidden; display: flex !important; flex-direction: column; flex-wrap: nowrap !important; }}
   {_PAGE} #shep-mp-detail-bd {{ flex: 1 1 auto !important; overflow: auto !important; }}
-  {_PAGE} {_LIST} > .shep-model-body {{ overflow: hidden; display: flex !important; }}
-  /* The table's header sticks to the list region's top. */
+  /* The table's header sticks to the top of the region the rows scroll in. */
   {_PAGE} #shep-models-research-rows .shep-tbl-wrap {{ overflow: visible; }}
   /* Words break only where they must (a column is never narrower than its
      longest word, so "contested" stays one word); the table scrolls in its
      region rather than squeezing a word. */
   {_PAGE} .shep-mtbl td {{ overflow-wrap: break-word; }}
-  /* A short window: the list's controls take at most 60% of the panel (50%
-     below 900 px) and scroll in their own region, so the table always keeps
-     room of its own. */
-  {_PAGE} {_LIST} {{ grid-template-rows: fit-content(60%) minmax(0, 1fr); }}
-  {_PAGE} {_LIST} > .shep-model-head {{ min-height: 0; overflow: auto; }}
+  /* Below 1000 px the header and the table do not both fit: the list panel
+     scrolls as one region (the header first, then the rows under the table's
+     sticky header), never a header region above a table region. */
   /* The confirmation: its table scrolls inside, its buttons stay in view
      under it however short the window. */
   {_PAGE} {_LIST} > .shep-model-confirm-box {{
@@ -1850,19 +1702,23 @@ PAGE_CSS = f"""
   {_PAGE} {_LIST} > .shep-model-confirm-box > #shep-models-research-confirm {{ flex: 1 1 auto; min-height: 0; overflow: auto !important; }}
   {_PAGE} {_LIST} > .shep-model-confirm-box > .row {{ flex: none; }}
 }}
-@media (min-width: 1400px) and (min-height: 760px) and (max-height: 899px) {{
-  {_PAGE} {_LIST} {{ grid-template-rows: fit-content(50%) minmax(0, 1fr); }}
+@media (min-width: 1400px) and (min-height: 1000px) {{
+  /* Room for both: the header stays whole and the rows scroll in the region
+     under it (at least 240 px of it; a taller header scrolls the panel). */
+  {_PAGE} {_LIST} > .shep-model-main > .shep-model-body {{
+    flex: 1 1 auto !important; min-height: 240px; overflow: hidden; display: flex !important;
+  }}
+  {_PAGE} #shep-models-research-rows {{ overflow: auto !important; min-height: 0; max-height: 100%; }}
 }}
 @media (max-width: 1399px), (max-height: 759px) {{
   {_PAGE} {_LIST} {{
     grid-template-columns: minmax(0, 1fr); grid-template-rows: auto;
-    grid-template-areas: "head" "body" "foot" "confirm"; row-gap: 0 !important;
+    grid-template-areas: "main" "foot" "confirm"; row-gap: 0 !important;
   }}
   {_PAGE} {_LIST}:has(.shep-mp-ro) {{ grid-template-columns: minmax(0, 1fr); }}
-  {_PAGE} {_LIST}:has(.shep-mp-ro) > .shep-model-head {{ grid-row: auto; margin-bottom: 16px !important; }}
-  {_PAGE} {_LIST} > .shep-model-body {{ margin-bottom: 16px !important; }}
+  {_PAGE} {_LIST} > .shep-model-main {{ margin-bottom: 16px !important; }}
   {_PAGE} {_LIST} > .shep-model-confirm-box {{ grid-area: confirm; margin-top: 16px !important; overflow: visible; }}
-  {_PAGE} {_LIST} > .shep-model-head {{ grid-template-columns: minmax(0, 1fr); grid-template-rows: repeat(6, max-content); grid-template-areas: "lhd" "ws" "wsline" "arch" "ctl" "count"; }}
+  {_PAGE} {_LIST} > .shep-model-main > .shep-model-head {{ grid-template-columns: minmax(0, 1fr); grid-template-rows: repeat(6, max-content); grid-template-areas: "lhd" "ws" "wsline" "arch" "ctl" "count"; }}
   {_PAGE} .shep-mp-back {{ display: inline-flex; align-items: center; margin-left: auto; }}
 }}
 """
@@ -1884,12 +1740,10 @@ __all__ = [
     "PAGE_CSS",
     "PAGE_HELP",
     "READONLY_TITLE",
-    "contest_states",
     "controls",
     "create_models_page",
     "detail_parts",
     "independence_html",
-    "ledger_records",
     "left_header_html",
     "listing_key",
     "options_html",

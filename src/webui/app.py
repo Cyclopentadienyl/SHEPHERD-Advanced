@@ -123,32 +123,23 @@ DASHBOARD_CSS = """
         font-family: 'IBM Plex Sans', system-ui, sans-serif !important;
     }
 
-    /* Suppress Gradio's opacity/loading flash on polled components */
+    /* Suppress Gradio's opacity/loading flash on the polled resources line */
     #resource_display,
     #resource_display *,
-    #status_display,
-    #status_display *,
-    div:has(> #resource_display),
-    div:has(> #status_display) {
+    div:has(> #resource_display) {
         animation: none !important;
         transition: none !important;
         opacity: 1 !important;
     }
     #resource_display.pending,
     #resource_display.generating,
-    #status_display.pending,
-    #status_display.generating,
     div:has(> #resource_display).pending,
-    div:has(> #resource_display).generating,
-    div:has(> #status_display).pending,
-    div:has(> #status_display).generating {
+    div:has(> #resource_display).generating {
         opacity: 1 !important;
         pointer-events: auto !important;
     }
     #resource_display .eta-bar,
-    #status_display .eta-bar,
-    div:has(> #resource_display) .eta-bar,
-    div:has(> #status_display) .eta-bar {
+    div:has(> #resource_display) .eta-bar {
         display: none !important;
     }
 
@@ -232,8 +223,7 @@ def _dashboard_theme() -> gr.themes.Base:
 
 
 #: Each page's builder, by the shell's page ids (the page contract; a page's
-#: style sheet goes in `PAGE_CSS`). Test and Models are added by UI-D; until
-#: then the shell shows their temporary body.
+#: style sheet goes in `PAGE_CSS`).
 PAGES = {
     shell.CLINICAL: create_diagnosis_tab,
     shell.DATASETS: create_datasets_page,

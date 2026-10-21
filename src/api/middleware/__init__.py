@@ -9,6 +9,8 @@ Home for middleware this project defines, registered by ``src/api/main.py``.
 - ``gradio_routes.RefuseUnusedGradioRoutes`` refuses the two Gradio routes the
   dashboard does not use and upstream cannot switch off (``file=<URL>``, which
   Gradio fetches server-side, and ``process_recording``), before the body is read.
+- ``frame_guard.RefuseFraming`` says on every response that no page may frame it
+  (``X-Frame-Options: DENY``, ``frame-ancestors 'none'``): D8 cannot see framing.
 
 Still inline, and still to move here: ``src.api.main`` defines the
 request-logging middleware ``log_requests`` via ``@app.middleware("http")``

@@ -31,9 +31,13 @@ Module: src/utils/checkpoint_paths.py
 """
 from __future__ import annotations
 
+import copy
 import math
 import re
 import secrets
+import threading
+import time
+from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple, Union
@@ -407,11 +411,96 @@ def _size(path: Path) -> Optional[int]:
         return None
 
 
+#: Each listed file's last read in this process, by its path: the file's
+#: identity as `os.stat` gave it around that read, and what the read found
+#: (`ListedCheckpoint` without its two paths). Least recently listed first.
+_READS: "OrderedDict[str, Tuple[Tuple[int, ...], Dict[str, Any]]]" = OrderedDict()
+_READS_LOCK = threading.Lock()
+#: How many files' reads are kept (a few kilobytes each).
+READS_KEPT = 4096
+#: A file whose content or metadata changed less than this long before its
+#: read is read again at every listing: a rewrite within one tick of the file
+#: system's clock could leave its `stat` unchanged.
+SETTLED_NS = 2_000_000_000
+
+
+def _identity(path: Path) -> Optional[Tuple[int, ...]]:
+    """What tells one state of a file from another without reading it: its
+    device, inode, size, and modification and change times (the change time
+    moves with any write or metadata change and cannot be set back)."""
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+
+
+def _recalled(path: Path, identity: Optional[Tuple[int, ...]]) -> Optional[Dict[str, Any]]:
+    if identity is None:
+        return None
+    with _READS_LOCK:
+        kept = _READS.get(str(path))
+        if kept is None or kept[0] != identity:
+            return None
+        _READS.move_to_end(str(path))
+        fields = kept[1]
+    return {**fields, "logs": copy.deepcopy(fields["logs"])}
+
+
+def _remember(path: Path, before: Optional[Tuple[int, ...]], started_ns: int,
+              entry: ListedCheckpoint) -> None:
+    """Keep `entry` for `path` when the file did not change during the read
+    and had settled before it (`SETTLED_NS`)."""
+    if before is None or _identity(path) != before:
+        return
+    if max(before[3], before[4]) > started_ns - SETTLED_NS:
+        return
+    fields = entry._asdict()
+    del fields["run_dir"], fields["path"]
+    fields["logs"] = copy.deepcopy(fields["logs"])
+    with _READS_LOCK:
+        _READS[str(path)] = (before, fields)
+        _READS.move_to_end(str(path))
+        while len(_READS) > READS_KEPT:
+            _READS.popitem(last=False)
+
+
+def _read_one(run: Path, path: Path) -> ListedCheckpoint:
+    """One file's entry, from one read of its bytes."""
+    from src.utils.checkpoint_io import read_checkpoint
+
+    size = _size(path)
+    try:
+        read = read_checkpoint(path, map_location="cpu", weights_only=True)
+    except Exception as exc:  # noqa: BLE001 — listed with its reason, never dropped
+        return ListedCheckpoint(run, path, problem=_first_line(exc), size_bytes=size)
+    meta = read.checkpoint
+    if not isinstance(meta, dict):
+        return ListedCheckpoint(
+            run, path, sha256=read.identity.sha256,
+            problem=(f"it loads as {type(meta).__name__}, not a checkpoint record, so it "
+                     "carries no metadata"),
+            size_bytes=size)
+    logs = meta.get("logs") if isinstance(meta.get("logs"), dict) else {}
+    digests = meta.get("training_input_digests")
+    fingerprint = digests.get("split_manifest") if isinstance(digests, dict) else None
+    return ListedCheckpoint(
+        run, path, sha256=read.identity.sha256,
+        checkpoint_kind=meta.get("checkpoint_kind"),
+        epoch=meta.get("epoch"),
+        logs=logs,
+        validation=ranking_score_detail(logs),
+        dataset_fingerprint=fingerprint if isinstance(fingerprint, str) else None,
+        size_bytes=size,
+    )
+
+
 def read_run_checkpoints(
     data_dir: PathLike, conv_type: Optional[str] = None, *,
     within: Optional[PathLike] = None,
 ) -> List[ListedCheckpoint]:
-    """The listing (`list_run_checkpoints`, same order), each file read once.
+    """The listing (`list_run_checkpoints`, same order), each file read once,
+    and again only when it changes.
 
     Each file is loaded through `read_checkpoint` with `weights_only=True`
     (tensors and plain data only, contract decision 10) on the CPU, and what
@@ -422,17 +511,28 @@ def read_run_checkpoints(
     as D8 says. `list_run_checkpoints` stays the read-free form, for a caller
     that only needs to know which files exist.
 
+    **A file is not read again while it is unchanged** (M5-3 review, UI-2:
+    every opening of a model list read every checkpoint of the workspace, so
+    the lists slowed with every run). What a read found is kept in this
+    process by the file's path and its identity (`_identity`: device, inode,
+    size, modification and change times, taken before and after the read), and
+    a later listing that finds the same identity shows it without opening the
+    file; any write, replacement or metadata change reads it again, as does a
+    file that changed in the `SETTLED_NS` before its read. The bytes are still
+    checked where they are used: a load, a start or a measurement re-reads them
+    against the digest shown. The kept reads are shown only through the
+    callers that read them, which D8 gates as before.
+
     `within`, the workspace directory, bounds what is read: a file that
     resolves outside it (a run or a checkpoint that is a link out of the
     workspace) is listed with that reason and **never opened**, so nothing of
-    a file elsewhere is read or shown. The check runs before the read; the
-    server's list passes its workspace (`server_lists.list_checkpoints`).
+    a file elsewhere is read or shown. The check runs before the read (and
+    before a kept read is used); the server's list passes its workspace
+    (`server_lists.list_checkpoints`).
 
     torch is imported only here, when a file is read, so this module stays
     importable without it.
     """
-    from src.utils.checkpoint_io import read_checkpoint
-
     bound = Path(within).resolve() if within is not None else None
     entries: List[ListedCheckpoint] = []
     for run, path in list_run_checkpoints(data_dir, conv_type):
@@ -441,33 +541,15 @@ def read_run_checkpoints(
             entries.append(ListedCheckpoint(
                 run, path, problem=f"{run.name}/{path.name} {outside}"))
             continue
-        size = _size(path)
-        try:
-            read = read_checkpoint(path, map_location="cpu", weights_only=True)
-        except Exception as exc:  # noqa: BLE001 — listed with its reason, never dropped
-            entries.append(ListedCheckpoint(run, path, problem=_first_line(exc),
-                                            size_bytes=size))
+        identity = _identity(path)
+        kept = _recalled(path, identity)
+        if kept is not None:
+            entries.append(ListedCheckpoint(run, path, **kept))
             continue
-        meta = read.checkpoint
-        if not isinstance(meta, dict):
-            entries.append(ListedCheckpoint(
-                run, path, sha256=read.identity.sha256,
-                problem=(f"it loads as {type(meta).__name__}, not a checkpoint record, so it "
-                         "carries no metadata"),
-                size_bytes=size))
-            continue
-        logs = meta.get("logs") if isinstance(meta.get("logs"), dict) else {}
-        digests = meta.get("training_input_digests")
-        fingerprint = digests.get("split_manifest") if isinstance(digests, dict) else None
-        entries.append(ListedCheckpoint(
-            run, path, sha256=read.identity.sha256,
-            checkpoint_kind=meta.get("checkpoint_kind"),
-            epoch=meta.get("epoch"),
-            logs=logs,
-            validation=ranking_score_detail(logs),
-            dataset_fingerprint=fingerprint if isinstance(fingerprint, str) else None,
-            size_bytes=size,
-        ))
+        started_ns = time.time_ns()
+        entry = _read_one(run, path)
+        _remember(path, identity, started_ns, entry)
+        entries.append(entry)
     return entries
 
 

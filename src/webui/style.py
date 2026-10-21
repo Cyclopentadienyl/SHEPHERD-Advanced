@@ -158,7 +158,6 @@ body { color: var(--shep-text); }
 #shep-nav > .tabitem, #shep-research-nav > .tabitem { padding: 0 !important; border: 0 !important; background: none !important; }
 #shep-nav > .tabitem > .column, #shep-research-nav > .tabitem > .column { gap: var(--layout-gap); }
 #shep-tab-clinical > .column, #shep-tab-settings > .column, #shep-research-nav > .tabitem > .column { padding: 16px; }
-.shep-temporary { padding: 16px; color: var(--shep-muted); }
 
 /* ---------------------------------------------------------------- in-page segmented control (third style) */
 .shep-seg .wrap { display: inline-flex !important; gap: 2px !important; padding: 3px; border: 1px solid var(--shep-grey-200); border-radius: 8px; background: var(--shep-grey-50); }

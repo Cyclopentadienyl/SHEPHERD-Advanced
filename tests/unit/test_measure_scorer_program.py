@@ -765,6 +765,62 @@ def test_a_cancel_while_the_modules_load_is_the_same_line_and_ending(tmp_path):
     assert "measure_scorer: cancelled" in err and "Traceback" not in err, err
 
 
+def test_deterministic_turns_cudnn_benchmark_off_for_the_run_and_puts_it_back(cli, monkeypatch):
+    """M5-3 review ARCH-10 (c): torch's default is already off, so a run
+    asserting it off proves nothing; with benchmark left on by an in-process
+    caller, the deterministic settings turn it off for the run only."""
+    monkeypatch.delenv("CUBLAS_WORKSPACE_CONFIG", raising=False)
+    before = torch.backends.cudnn.benchmark
+    torch.backends.cudnn.benchmark = True
+    try:
+        with cli._execution_settings(True):
+            assert torch.backends.cudnn.benchmark is False
+            assert torch.backends.cudnn.deterministic is True
+        assert torch.backends.cudnn.benchmark is True
+        with cli._execution_settings(False):
+            assert torch.backends.cudnn.benchmark is True       # nothing changed without it
+    finally:
+        torch.backends.cudnn.benchmark = before
+
+
+@pytest.mark.skipif(not Path("/proc/self/maps").exists(), reason="reads /proc (Linux)")
+def test_a_cancel_while_the_real_program_imports_torch_prints_the_line_and_no_traceback():
+    """M5-3 review ARCH-9: the test above installs the handler itself, so a
+    broken guard in the program (``if __name__ == "main":``, say) passed every
+    test while the real Cancel printed a traceback again. This runs the real
+    program and sends SIGINT once torch's library is mapped into it, while
+    torch is still being imported (before ``--help`` could print anything)."""
+    import signal
+    import time
+
+    child = subprocess.Popen([sys.executable, str(REPO_ROOT / "scripts" / "measure_scorer.py"),
+                              "--help"], cwd=str(REPO_ROOT), stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, text=True)
+    try:
+        maps = Path(f"/proc/{child.pid}/maps")
+        deadline = time.monotonic() + 120
+        loading = False
+        while child.poll() is None and time.monotonic() < deadline:
+            try:
+                text = maps.read_text()
+            except OSError:
+                break
+            if "libtorch" in text or "torch/_C" in text:
+                loading = True
+                break
+            time.sleep(0.002)
+        assert loading, "torch was never seen loading in the program"
+        child.send_signal(signal.SIGINT)
+        out, err = child.communicate(timeout=120)
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait()
+    assert "usage:" not in out, "the signal arrived after the imports (the help was printed)"
+    assert child.returncode == -signal.SIGINT, err
+    assert "measure_scorer: cancelled" in err and "Traceback" not in err, err
+
+
 def test_the_loading_guard_comes_before_torch_and_the_run_unwinds_on_a_cancel(cli, monkeypatch):
     """Run as a program, the guard is installed before torch is imported; once
     `_run_as_program` starts, a cancel is a KeyboardInterrupt again, so the

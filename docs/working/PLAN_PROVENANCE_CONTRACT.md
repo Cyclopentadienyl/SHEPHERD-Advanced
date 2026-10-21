@@ -77,8 +77,8 @@ of them P2 and none P1, are fixed in `f3108c4`. The reviewer's code review of `5
 it (`2c94a4e`). **Its GB10 functional acceptance, within the scope agreed, passed at `2c94a4e`**
 (2026-10-17; §4, "M4's acceptance on the GB10"; evidence
 [`m4-acceptance-2026-10-17/`](m4-acceptance-2026-10-17/README.md)): 84 of 84 probes, demo and
-real data. The owner merged M4 into `main` afterwards (#126, `d2d31dd`, 2026-10-17). M5 is not
-implemented. Facts about the
+real data. The owner merged M4 into `main` afterwards (#126, `d2d31dd`, 2026-10-17). M5 is in progress on the branch, not yet reviewed or merged
+(`PLAN_TEST_RESULTS.md` §6, "M5's boundaries", with each step's "as implemented" note). Facts about the
 code are cited at `627ed08`, before M1;
 the code was unchanged at `463a0df`. §1 records decisions already made; §4 is the order of work.
 
@@ -3679,6 +3679,10 @@ deployment mode M1 under SPEC_4/D8, §4.9 question 3):
 - the model list;
 - the network-side restrictions those operations need;
 - the advanced ordering and arbitration.
+
+*In progress (2026-10-21):* M5-0 to M5-2 are on the branch and M5-3 is under way (the internal
+review of all of M5 and its fixes included). Each step is recorded where `PLAN_TEST_RESULTS.md`
+decides it (D4, D5, D7, D8, §6). Not yet reviewed.
 
 **Training start's explicit `checkpoint_dir`** is honoured verbatim today. **Superseded by M3a-2
 (2026-10-15):** every run writes into its own run directory, the listing moves with it, and an

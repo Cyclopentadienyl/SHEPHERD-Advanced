@@ -1076,7 +1076,18 @@ class TrainingManager:
             said += f"Whether the report at {report} is kept cannot be checked ({state.why_kept})."
         registration = (run_outcome or {}).get("registration")
         why = registration.get("why") if isinstance(registration, dict) else None
-        if registered is not True and isinstance(why, str) and why:
+        refused_itself = (isinstance(registration, dict) and registration.get("requested") is True
+                          and registration.get("registered") is False)
+        if registered is True and refused_itself and isinstance(why, str) and why:
+            # Repeated runs of one measurement on one machine can publish
+            # byte-identical reports, so the record found may be an earlier
+            # run's registration of the same bytes while this run's own was
+            # refused (M5-3 review EVAL-2): both are said, never the record alone.
+            said += (f" This run's own registration was refused: {why}"
+                     + ("" if why.endswith(".") else ".")
+                     + " The record found names the same report bytes, which an earlier run "
+                       "of this measurement registered; it says nothing of this run's refusal.")
+        elif registered is not True and isinstance(why, str) and why:
             said += f" The run said of its registration: {why}"
             said += "" if why.endswith(".") else "."
         if run_outcome is not None and run_outcome.get("complete") is False:

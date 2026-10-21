@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import html
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Callable, Mapping, NamedTuple, Optional
 
 import gradio as gr
@@ -128,7 +128,9 @@ def _since(started_at: Any) -> Optional[str]:
         return None
     if moment.tzinfo is None:
         return None
-    return moment.astimezone(timezone.utc).strftime("%H:%M UTC")
+    from src.webui.components.renderers import clock_utc
+
+    return clock_utc(moment, seconds=False)
 
 
 def _command(value: Any) -> str:

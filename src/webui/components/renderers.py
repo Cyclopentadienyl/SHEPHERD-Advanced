@@ -114,6 +114,9 @@ _VALIDATION_NOTE = "selection metric on val, not an independent test"
 _CHECK = ('<svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true" focusable="false">'
           '<path d="M3.2 8.6l3 3 6.6-7.4" fill="none" stroke="currentColor" stroke-width="2.2" '
           'stroke-linecap="round" stroke-linejoin="round"/></svg>')
+#: The dashboard's check mark (an inline svg that stays on its line), for a
+#: page's own "✓ …" (M5-3 review ARCH-4: pages used the private name).
+CHECK = _CHECK
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _RUN_TIME = re.compile(r"^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})")
@@ -182,6 +185,17 @@ def _get(item: Any, name: str, default: Any = None) -> Any:
     return getattr(item, name, default)
 
 
+def clock_utc(moment: Optional[datetime], *, seconds: bool = True) -> Optional[str]:
+    """"15:50:35 UTC" (or "15:50 UTC"): **the one form of every clock time the
+    dashboard shows** (M5-3 review UI-5: Diagnosis showed the server's local
+    time unlabeled beside "UTC" times elsewhere). A time with no zone is this
+    server's local time (`datetime.now()`, a naive ISO stamp) and is converted;
+    None for no time. Exports keep the result's own stamp."""
+    if moment is None:
+        return None
+    return moment.astimezone(timezone.utc).strftime("%H:%M:%S UTC" if seconds else "%H:%M UTC")
+
+
 def built_text(build: Optional[Mapping[str, Any]]) -> Optional[str]:
     """"built 2026-10-15 09:41 UTC" from a recorded build, else None."""
     if not isinstance(build, Mapping) or build.get("state") != "recorded":
@@ -222,6 +236,73 @@ def record_verified(item: Any) -> bool:
     return isinstance(record, Mapping) and record.get("binding") == "verified"
 
 
+def record_chip(item: Any) -> str:
+    """"✓ record verified" (the dataset record checked), or the grey "record not
+    verified"."""
+    if record_verified(item):
+        return f'<span class="shep-tag shep-tag-ok">{_CHECK} record verified</span>'
+    return chip("record not verified", "grey")
+
+
+def count_text(value: Any) -> str:
+    """A count with thousands separators, or "—" for none."""
+    return f"{value:,}" if isinstance(value, int) and not isinstance(value, bool) else "—"
+
+
+def dataset_details_html(row: Mapping[str, Any], facts: Optional[Mapping[str, Any]], *,
+                         problem: Optional[str] = None) -> str:
+    """**The one body of a workspace's details** (Research › Datasets' panel and
+    Training's "Details ›" popover, each with its own header; M5-3 review
+    ARCH-4): the full dataset fingerprint with Copy, what the manifest binds (12
+    hex each, `workspaces.manifest_facts`), the split's seeds, the samples, the
+    sources, the build time, the path relative to the server's workspace root,
+    and why the workspace is not trainable. `problem` says why the manifest was
+    not read (without a path); every value is escaped."""
+    name = str(row.get("name") or "")
+    parts = []
+    fingerprint = row.get("dataset_fingerprint")
+    if is_digest(fingerprint):
+        parts.append(
+            '<div class="shep-digest"><span class="shep-dl">Dataset fingerprint · SHA-256 of '
+            f'split_manifest.json</span><code class="shep-full">{e(fingerprint)}</code>'
+            f'{copy_button(fingerprint, "the full dataset fingerprint of " + name)}</div>')
+    rows_kv = []
+    if facts is not None:
+        bound = "".join(f'<span class="shep-k">{e(label)}</span><code>{e(short_hex(digest))}</code>'
+                        for label, digest in facts["bound"])
+        parts.append('<div class="shep-card"><div class="shep-card-hd">What the manifest binds '
+                     '<span class="shep-muted">sha256, first 12 · full values in the manifest'
+                     f'</span></div><div class="shep-kv shep-kv-2">{bound}</div></div>')
+        split = []
+        if facts.get("allocation_seed") is not None:
+            split.append(f"allocation seed {facts['allocation_seed']}")
+        if facts.get("feature_seed") is not None:
+            split.append(f"feature seed {facts['feature_seed']}")
+        samples = f"train {count_text(row.get('train_samples'))} · val {count_text(row.get('val_samples'))}"
+        if facts.get("train_diseases") is not None:
+            samples += (f" · diseases (train / val) {count_text(facts['train_diseases'])} / "
+                        f"{count_text(facts.get('val_diseases'))}")
+        rows_kv = [("Split", e(" · ".join(split) or "not recorded")), ("Samples", e(samples))]
+    else:
+        why = problem or row.get("not_trainable") or "it is not readable"
+        parts.append(f'<div class="shep-reason">The manifest was not read: {e(why)}</div>')
+    sources = sources_text(row.get("declared_releases"))
+    built = built_text(row.get("build"))
+    rows_kv += [
+        ("Sources", e(sources) if sources else
+         ("none (synthetic)" if origin_of(row) == "synthetic" else '<span class="shep-muted">—</span>')),
+        ("Built", e(built.replace("built ", "", 1)) if built else "not recorded"),
+        ("Path", f'<code>{e(name)}</code> <span class="shep-muted">(in the server’s '
+                 'workspace root)</span>'),
+    ]
+    if not row.get("trainable"):
+        rows_kv.append(("Not trainable", e(row.get("not_trainable") or "not trainable")))
+    cells = "".join(f'<span class="shep-k">{e(k)}</span><span class="shep-v">{v}</span>'
+                    for k, v in rows_kv)
+    parts.append(f'<div class="shep-kv">{cells}</div>')
+    return "".join(parts)
+
+
 def dataset_identity_html(item: Any, *, digits: int = SHORT_HEX, name: bool = True,
                           compact: bool = False) -> str:
     """One workspace's identity: name; "built … UTC" or "build time not recorded ·
@@ -242,10 +323,8 @@ def dataset_identity_html(item: Any, *, digits: int = SHORT_HEX, name: bool = Tr
     marks = []
     if origin_of(item) == "synthetic":
         marks.append(chip("synthetic", "amber"))
-    if record_verified(item):
-        marks.append(f'<span class="shep-tag shep-tag-ok">{_CHECK} record verified</span>')
-    elif _get(item, "dataset_fingerprint"):
-        marks.append(chip("record not verified", "grey"))
+    if record_verified(item) or _get(item, "dataset_fingerprint"):
+        marks.append(record_chip(item))
     if not _get(item, "trainable", False):
         why = str(_get(item, "not_trainable") or "not trainable")
         marks.append(chip(f"not trainable: {not_trainable_short(item)}", "grey", title=why))
@@ -310,15 +389,22 @@ class RecordedTests(NamedTuple):
     number of a result): `state` is ``records``, ``none`` (the ledger holds no
     record for these weights), ``no_ledger`` or ``not_read``; `count` the
     records for these weights; `contested` how many of them are contested in
-    their cohort version's report store (None when that could not be checked)."""
+    their cohort version's report store, and `unchecked` how many whose state
+    there could not be checked, counted apart, so a known contested record is
+    never hidden by another that cannot be checked (`contested` None: none of
+    them could be checked)."""
 
     state: str
     count: int = 0
     contested: Optional[int] = None
     problem: Optional[str] = None
+    unchecked: int = 0
 
 
 def recorded_tests_text(recorded: Optional[RecordedTests]) -> str:
+    """"Recorded tests: 3 · 1 contested · contested state of 1 not checked":
+    states, never a number of a result; an unchecked record is never shown as
+    uncontested."""
     if recorded is None:
         return "Recorded tests: not read"
     if recorded.state == "no_ledger":
@@ -327,12 +413,15 @@ def recorded_tests_text(recorded: Optional[RecordedTests]) -> str:
         return "Recorded tests: ledger not readable"
     if recorded.state == "none" or recorded.count == 0:
         return "Recorded tests: none in ledger"
-    text = f"Recorded tests: {recorded.count}"
-    if recorded.contested is None:
-        text += " · contested state not checked"
-    elif recorded.contested:
-        text += f" · {recorded.contested} contested"
-    return text
+    contested = recorded.contested or 0
+    unchecked = recorded.count if recorded.contested is None else recorded.unchecked
+    parts = [f"Recorded tests: {recorded.count}"]
+    if contested:
+        parts.append(f"{contested} contested")
+    if unchecked:
+        parts.append("contested state not checked" if unchecked >= recorded.count
+                     else f"contested state of {unchecked} not checked")
+    return " · ".join(parts)
 
 
 def run_label(architecture: Any, run: Any) -> str:
@@ -676,6 +765,7 @@ def model_facts_html(facts: ModelFacts, *, open_section: str = "identity") -> st
 
 
 __all__ = [
+    "CHECK",
     "IDENTITY_BANNERS",
     "MODEL_TABLE_COLUMNS",
     "ModelFacts",
@@ -684,6 +774,9 @@ __all__ = [
     "NO_SPLIT_MANIFEST",
     "RENDERER_HELP",
     "RecordedTests",
+    "clock_utc",
+    "count_text",
+    "dataset_details_html",
     "SHORT_HEX",
     "SYNTHETIC_FOR_TESTING",
     "built_text",
@@ -700,6 +793,7 @@ __all__ = [
     "model_table_row_html",
     "not_trainable_short",
     "origin_of",
+    "record_chip",
     "record_verified",
     "recorded_tests_cell",
     "recorded_tests_text",
