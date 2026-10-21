@@ -453,8 +453,20 @@ def test_extending_takes_the_restored_rate_and_says_so(parent):
 
     assert plan.mode == "extend" and (plan.start_epoch, plan.end_epoch) == (4, 7)
     assert plan.stage["schedule"]["lrs"] == [2e-5, 2e-5]
-    assert plan.action == ("Extend training by 3 epochs at a fixed rate of 2e-05, 2e-05 "
+    # Two parameter groups at one rate: the rate is said once (M5-3).
+    assert plan.action == ("Extend training by 3 epochs at a fixed rate of 2e-05 "
                            "(epochs 5-7, new target 7)")
+
+
+def test_extending_groups_at_different_rates_says_each(parent):
+    path, record = parent
+    finished = _finished(record, 2e-5)
+    finished["optimizer_state_dict"]["param_groups"][1]["lr"] = 1e-5
+    plan = _plan(finished, path, _request(record, extend_epochs=3))
+
+    assert plan.stage["schedule"]["lrs"] == [2e-5, 1e-5]
+    assert plan.action == ("Extend training by 3 epochs at fixed rates of 2e-05, 1e-05 (one per "
+                           "parameter group) (epochs 5-7, new target 7)")
 
 
 def test_a_zero_rate_is_replaced_only_by_an_explicit_rate(parent):

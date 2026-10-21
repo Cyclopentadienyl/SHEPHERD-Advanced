@@ -15,9 +15,10 @@ repeats no header value). It is a display: each control checks its own request.
 runner (`training_manager.active_job`) and, for a job started elsewhere, the GPU
 lock's descriptive holder record (`src/utils/gpu_lock.py`): "GPU jobs: none",
 "GPU job: training (job runner)", "GPU job: test run (job runner)", "GPU job:
-train_model.py (CLI, pid …, since …)", or grey "GPU jobs: not read". It never
-says "free": the lock is cooperative, and the resident inference service is
-outside it, which its ⓘ says.
+train_model.py (pid …, since …)" (what the holder record says: its command, pid
+and start; never "CLI", which the record does not say), or grey "GPU jobs: not
+read". It never says "free": the lock is cooperative, and the resident
+inference service is outside it, which its ⓘ says.
 
 **Nothing here raises and no exception text is shown**: a read that fails is the
 grey "not read" state with a fixed sentence. Every value from a file or a
@@ -171,14 +172,20 @@ def gpu_chip_from(active: Optional[Mapping[str, Any]], lock: Mapping[str, Any],
     holder = lock.get("holder")
     description = str(lock.get("description") or "")
     if isinstance(holder, Mapping) and lock.get("holder_alive") is not False:
-        parts = ["CLI"]
+        # What the holder record says, and only that: its command, pid and
+        # start. A formal CLI run and another server's job runner write the
+        # same record (the runner starts the same scripts), so the record does
+        # not say which it is, and neither does the chip (M5-3: a job of a
+        # second server on the same lock read "CLI").
+        parts = []
         pid = holder.get("pid")
         if isinstance(pid, int) and not isinstance(pid, bool):
             parts.append(f"pid {pid}")
         since = _since(holder.get("started_at"))
         if since:
             parts.append(f"since {since}")
-        text = f"GPU job: {_command(holder.get('command'))} ({', '.join(parts)})"
+        text = f"GPU job: {_command(holder.get('command'))}" + (f" ({', '.join(parts)})"
+                                                                  if parts else "")
     else:
         text = "GPU job: lock held, holder not described"
     return Chip("busy", text, f"Held by {description}.\n\n{GPU_SCOPE}" if description
@@ -260,6 +267,19 @@ CHIPS_PLACEHOLDER = chips_html(
     Chip("unread", GPU_NOT_READ, GPU_SCOPE))
 
 
+def chips_on_change(seen: Any, now: Any, request: Any) -> Any:
+    """The chips' update for a page's poll that read the GPU job state: both
+    chips read again, for this request and on this tick, when what the poll
+    read differs from what it read on its last tick (or it has not read it
+    yet); nothing sent otherwise. So the header follows a job's start or end on
+    the tick the page sees it (M5-3: "GPU jobs: none" stood beside Training's
+    run bar showing a test run, the two read on different timers), with no
+    timer and no request of its own."""
+    if seen is not None and seen == now:
+        return gr.update()
+    return read_chips(request)
+
+
 def read_chips(request: gr.Request) -> str:
     """Both chips for the request that asked: the shell's load, timer and
     after-gated-act step call this with ``queue=False``. Gradio passes the
@@ -289,6 +309,7 @@ __all__ = [
     "GPU_SCOPE",
     "chip_html",
     "chips_html",
+    "chips_on_change",
     "d8_chip",
     "gpu_chip_from",
     "read_chips",

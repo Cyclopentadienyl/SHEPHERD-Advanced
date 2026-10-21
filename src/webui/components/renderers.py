@@ -127,11 +127,22 @@ def e(value: Any) -> str:
     return html.escape("" if value is None else str(value), quote=True)
 
 
-def wrap_at_underscores(value: Any) -> str:
-    """Escaped text with a line-break opportunity after each underscore, for an
-    identifier shown in a narrow column (a role code: "research_selection"
-    wraps as "research_" / "selection", never inside a word)."""
-    return e(value).replace("_", "_<wbr>")
+def ident_html(value: Any) -> str:
+    """An identifier (a role code, a run, a checkpoint file name) in code style,
+    kept whole: never broken inside its name ("research_selection" is never
+    "research_" / "selection"), and where it does not fit it ends in an
+    ellipsis with its whole value as its title (``.shep-ident``,
+    `src/webui/style.py`)."""
+    text = e(value)
+    return f'<code class="shep-ident" title="{text}">{text}</code>'
+
+
+def word_groups(*groups: str) -> str:
+    """Escaped words kept in groups: a line breaks between groups, so no word
+    of a group is left alone on a line ("…: deployment mode not set" / "to
+    M1"); a group wider than its line still wraps inside itself (``.shep-wg``,
+    `src/webui/style.py`)."""
+    return " ".join(f'<span class="shep-wg">{e(group)}</span>' for group in groups if group)
 
 
 def is_digest(value: Any) -> bool:
@@ -692,10 +703,26 @@ def validation_text(validation: Optional[Tuple[str, float]]) -> str:
     return f"{label} {value:.4f} — {_VALIDATION_NOTE}"
 
 
-def _kv(rows: Iterable[Tuple[str, str]]) -> str:
-    cells = "".join(f'<span class="shep-k">{e(k)}</span><span class="shep-v">{v}</span>'
-                    for k, v in rows)
-    return f'<div class="shep-kv">{cells}</div>'
+def kv_cells(rows: Iterable[Tuple[str, str]], *, wide: Iterable[str] = ()) -> str:
+    """Label/value cells for a ``.shep-kv`` grid; a label in `wide` (a digest's,
+    whose full value is long) takes its own line over the whole grid, and its
+    value the line under it, as the mockup's Model Facts draws digests: a long
+    label folded into the label column took four or five lines (M5-3)."""
+    wide = set(wide)
+    return "".join(
+        f'<span class="shep-k shep-kv-wide">{e(k)}</span><span class="shep-v shep-kv-wide">{v}</span>'
+        if k in wide else f'<span class="shep-k">{e(k)}</span><span class="shep-v">{v}</span>'
+        for k, v in rows)
+
+
+def _kv(rows: Iterable[Tuple[str, str]], *, wide: Iterable[str] = ()) -> str:
+    return f'<div class="shep-kv">{kv_cells(rows, wide=wide)}</div>'
+
+
+#: The labels of Model Facts' digest rows (`kv_cells`' wide rows).
+FACTS_MODEL_FP = "Model fingerprint (checkpoint sha256)"
+FACTS_TRAINED_FP = ("Trained on: dataset fingerprint (split_manifest.json, from the checkpoint's "
+                    "record)")
 
 
 def model_facts_html(facts: ModelFacts, *, open_section: str = "identity") -> str:
@@ -714,20 +741,23 @@ def model_facts_html(facts: ModelFacts, *, open_section: str = "identity") -> st
                     + (f' <span class="shep-muted">(workspace {e(facts.workspace)})</span>'
                        if facts.workspace else ""))
     model_fp = (f'<code class="shep-full">{e(facts.model_fingerprint)}</code> '
-                + copy_button(facts.model_fingerprint, "the full model fingerprint")
+                + copy_button(facts.model_fingerprint, "the full model fingerprint", icon_only=True)
                 if facts.model_fingerprint else '<span class="shep-muted">not read</span>')
     data_fp = (f'<code class="shep-full">{e(facts.trained_on_fingerprint)}</code> '
-               + copy_button(facts.trained_on_fingerprint, "the full dataset fingerprint")
+               + copy_button(facts.trained_on_fingerprint, "the full dataset fingerprint",
+                             icon_only=True)
                if facts.trained_on_fingerprint else '<span class="shep-muted">not recorded</span>')
+    # The listed workspaces holding that dataset follow the label, as the
+    # mockup draws it, so the full fingerprint and its Copy keep one line.
+    trained_label = FACTS_TRAINED_FP + (f" · {', '.join(facts.trained_on_names)}"
+                                        if facts.trained_on_names else "")
     identity = _kv([
         ("Model", e(facts.name_line)),
         ("Run", f"<code>{e(facts.run)}</code>" if facts.run else "—"),
         ("Checkpoint file", location or "—"),
-        ("Model fingerprint (checkpoint sha256)", model_fp),
-        ("Trained on: dataset fingerprint (split_manifest.json, from the checkpoint's record)",
-         data_fp + (f' <span class="shep-muted">· {e(", ".join(facts.trained_on_names))}</span>'
-                    if facts.trained_on_names else "")),
-    ])
+        (FACTS_MODEL_FP, model_fp),
+        (trained_label, data_fp),
+    ], wide=(FACTS_MODEL_FP, trained_label))
     uses_text = f"{NOT_A_MEDICAL_DEVICE} {SYNTHETIC_FOR_TESTING}"
     trained = (", ".join(facts.trained_on_names) if facts.trained_on_names
                else "matches no listed workspace" if facts.trained_on_fingerprint
@@ -766,6 +796,8 @@ def model_facts_html(facts: ModelFacts, *, open_section: str = "identity") -> st
 
 __all__ = [
     "CHECK",
+    "FACTS_MODEL_FP",
+    "FACTS_TRAINED_FP",
     "IDENTITY_BANNERS",
     "MODEL_TABLE_COLUMNS",
     "ModelFacts",
@@ -786,7 +818,9 @@ __all__ = [
     "e",
     "facts_from_checkpoint",
     "fingerprint_html",
+    "ident_html",
     "is_digest",
+    "kv_cells",
     "model_facts_html",
     "model_name_line",
     "model_row_html",
@@ -808,6 +842,6 @@ __all__ = [
     "trained_on_html",
     "validation_cell",
     "validation_text",
+    "word_groups",
     "workspace_choices",
-    "wrap_at_underscores",
 ]

@@ -149,7 +149,7 @@ def test_a_tick_while_another_page_is_shown_reads_nothing(monkeypatch):
     monkeypatch.setattr(tc.training_manager, "get_system_resources",
                         lambda: pytest.fail("a tick on another page read the resources"))
     out = tc._poll("clinical", {}, {}, {}, [], gradio_request())
-    assert len(out) == len(tc.VIEW_KEYS) + 1 and all(u == gr.update() for u in out)
+    assert len(out) == len(tc.VIEW_KEYS) + 2 and all(u == gr.update() for u in out)
     assert tc._poll_resources("datasets") == gr.update()
 
 
@@ -323,9 +323,9 @@ def test_the_run_bars_actions_and_their_one_reason():
     assert test_run["start"] is False and test_run["cont"] is False
     assert "GPU job: test run (mygene2-2026-09 · 00:01:42)" in test_run["reason"]
     assert 'data-act="open-test"' in test_run["reason"]
-    cli = _view(gpu={"text": "GPU job: train_model.py (CLI, pid 41822, since 09:58 UTC)",
+    cli = _view(gpu={"text": "GPU job: train_model.py (pid 41822, since 09:58 UTC)",
                      "test": False})
-    assert "train_model.py (CLI, pid 41822" in cli["reason"] and "open-test" not in cli["reason"]
+    assert "train_model.py (pid 41822" in cli["reason"] and "open-test" not in cli["reason"]
 
     none = _view(ws={"row": None})
     assert none["start"] is False and "select a dataset" in none["reason"]
@@ -360,7 +360,7 @@ def test_the_gpu_line_comes_from_the_runner_and_the_lock_holder():
                        "started_at": "2026-10-20T09:58:00+00:00"},
             "description": "train_model.py (pid 41822)"}
     cli = tc._gpu_line(None, held, None, operator=False)
-    assert cli == {"text": "GPU job: train_model.py (CLI, pid 41822, since 09:58 UTC)",
+    assert cli == {"text": "GPU job: train_model.py (pid 41822, since 09:58 UTC)",
                    "test": False}
     assert tc._gpu_line(None, {"configured": True, "held": False}, None, operator=True) is None
     problem = tc._gpu_line(None, {"configured": True, "problem": "/srv/lock is a directory"},
@@ -573,12 +573,44 @@ def test_the_full_send_comes_every_few_ticks(root, monkeypatch, operator):
     sent_whole = []
     for tick in range(1, tc.FULL_SEND_TICKS * 2 + 1):
         out = tc._poll(shell.TRAINING, ws, {}, cache, [], operator)
-        cache = out[-1]
-        chip = dict(zip(tc.VIEW_KEYS, out[:-1]))["chip"]
+        cache = out[-2]
+        chip = dict(zip(tc.VIEW_KEYS, out[:-2]))["chip"]
         sent_whole.append(chip != gr.update())
     assert sent_whole[0] is True
     assert [i + 1 for i, whole in enumerate(sent_whole) if whole] == [
         1, tc.FULL_SEND_TICKS, tc.FULL_SEND_TICKS * 2]
+
+
+def test_the_header_chips_follow_the_gpu_slot_on_the_tick_that_sees_it_change(
+        root, monkeypatch, operator):
+    """M5-3: the chip read "GPU jobs: none" while the run bar showed a test
+    run (the chips on the slow timer, the run bar on the fast one). The fast
+    tick that sees the GPU slot change reads the chips again for its request;
+    a tick that sees no change sends nothing (no timer, no request of its own)."""
+    from src.webui.components import chips
+
+    monkeypatch.setattr(tc, "_get_pyg_warning", lambda: None)
+    monkeypatch.setattr(tc, "read_lock", lambda: {"configured": True, "held": False})
+    read = []
+    monkeypatch.setattr(chips, "read_chips", lambda request: read.append(1) or "<chips>")
+    status = {"status": "idle"}
+    monkeypatch.setattr(tc.training_manager, "get_status", lambda: dict(status))
+    monkeypatch.setattr(tc.training_manager, "get_test_status",
+                        lambda: {"status": "running", "inputs": {"version_label": "v"}})
+    demo, ctx, _by_id = _page()
+    poll_fn = next(fn for fn in demo.fns.values() if fn.fn.__name__ == "_poll")
+    assert poll_fn.outputs[-1] is ctx.chips
+    ws = tc._workspace_state("demo")
+    first = tc._poll(shell.TRAINING, ws, {}, {}, [], operator)
+    assert first[-1] == "<chips>" and len(read) == 1        # nothing seen before: read
+    same = tc._poll(shell.TRAINING, ws, {}, first[-2], [], operator)
+    assert same[-1] == gr.update() and len(read) == 1        # unchanged: nothing sent
+    status["gpu"] = {"job": {"job_type": "test", "status": "running",
+                             "start_time": "2026-10-21T18:25:13"}}
+    started = tc._poll(shell.TRAINING, ws, {}, same[-2], [], operator)
+    assert started[-1] == "<chips>" and len(read) == 2       # a test run took the slot
+    later = tc._poll(shell.TRAINING, ws, {}, started[-2], [], operator)
+    assert later[-1] == gr.update() and len(read) == 2       # its elapsed time is no change
 
 
 def test_a_running_jobs_dataset_is_shown_and_the_select_disabled(root, monkeypatch, operator):
@@ -905,7 +937,7 @@ def test_the_reason_lines_sentence_ends_once():
     test_run = _view(gpu={"text": "GPU job: test run (mygene2-2026-09 · 00:00:25)", "test": True})
     text = re.sub(r"<[^>]+>", "", test_run["reason"])
     assert text.endswith("(mygene2-2026-09 · 00:00:25) · Open Test ›") and ")." not in text
-    cli = _view(gpu={"text": "GPU job: train_model.py (CLI, pid 41822, since 09:58 UTC)",
+    cli = _view(gpu={"text": "GPU job: train_model.py (pid 41822, since 09:58 UTC)",
                      "test": False})
     assert re.sub(r"<[^>]+>", "", cli["reason"]).endswith("since 09:58 UTC).")
 
@@ -973,4 +1005,41 @@ def test_the_page_styles_hold_the_reviewed_layout():
         "{{", "{").replace("}}", "}") in narrow
     wide = css[css.index("@media (min-width: 1400px) and (min-height: 760px)"):]
     assert "#shep-train-runview { overflow-y: auto !important; }" in wide
-    assert "#shep-train-banner .shep-banner) #shep-train-runview > #shep-train-charts { min-height: 370px; }" in wide
+    # A failed run's banner takes height: the plots keep their minimum then too
+    # (M5-3: one minimum per plot box replaced the charts' 240/370 px).
+    assert "min-height: 370px" not in wide and "min-height: 240px" not in wide
+    assert f".shep-chart-plot {{ min-height: {tc.PLOT_MIN_HEIGHT + tc.PLOT_AXIS_ROOM}px; }}" in wide
+
+
+
+def test_the_continue_drawer_fits_and_says_the_plan_once():
+    """M5-3: at 1920 x 1080 the drawer scrolled (821 px in 684) with Extra
+    epochs off screen: an empty footer took room, the fields were looser than
+    the parameters', and the check's headline repeated the plan line."""
+    assert "#shep-train-drawer-why:not(:has(.shep-drawer-why)) { display: none !important; }" \
+        in tc.PAGE_CSS
+    assert "#shep-train-drawer-bd .block.padded { padding-top: 4px !important;" in tc.PAGE_CSS
+    preview = {"parent": "/w/demo/runs/gat/r/checkpoints/last.pt", "ok": True,
+               "action": "Extend training by 30 epochs at a fixed rate of 1e-05 (epochs 151-180, "
+                         "new target 180)", "sha256": "c" * 64, "inherited": {}}
+    check = tc._check_html(preview, tc.CONTINUE_FROM_LIST)
+    assert check.count("Extend training by 30 epochs") == 1
+    assert "Checkpoint read; it can continue on this workspace." in check
+
+
+def test_the_plots_keep_a_usable_minimum_with_the_toolbar_in_view():
+    """M5-3: at 1536 x 760 the plots were 70 to 100 px tall. Each plot box keeps
+    room for a plot area of PLOT_MIN_HEIGHT px; when that does not fit, the run
+    view scrolls inside with its top (header and snapshot) and the charts'
+    toolbar staying in view, and the resources line yielding below."""
+    assert tc.PLOT_MIN_HEIGHT >= 140
+    css = tc.PAGE_CSS
+    wide = css[css.index("@media (min-width: 1400px) and (min-height: 760px) {"):]
+    plot_box = tc.PLOT_MIN_HEIGHT + tc.PLOT_AXIS_ROOM
+    assert f"#shep-train-charts .shep-chart-plot {{ min-height: {plot_box}px; }}" in wide
+    assert "#shep-train-charts .shep-charts-grid { grid-auto-rows: minmax(min-content, 1fr); }" in wide
+    assert "#shep-train-runview > #shep-train-rv-top { position: sticky; top: 0;" in wide
+    assert ".shep-charts-bar { position: sticky; top: var(--shep-rv-top-h" in wide
+    _demo, _ctx, by_id = _page()
+    assert by_id["shep-train-run-head"].js_on_load == tc._RUN_HEAD_JS
+    assert "--shep-rv-top-h" in tc._RUN_HEAD_JS and "ResizeObserver" in tc._RUN_HEAD_JS

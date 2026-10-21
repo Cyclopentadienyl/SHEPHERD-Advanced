@@ -101,7 +101,11 @@ page:
   leaves them). Use the two together: ``go`` returns one value per output;
 - ``ctx.chips`` and ``ctx.chip_refresh``: the header's chips; chain
   ``.then(**ctx.chip_refresh)`` after every gated act (D8's answer and the GPU
-  jobs are read again for that request);
+  jobs are read again for that request). A poll that reads the GPU job state
+  (Training's run bar, Test's job) also outputs ``ctx.chips``, with
+  ``chips.chips_on_change(seen, now, request)``: the chips are read again on
+  the tick that sees the state change, so the header never lags the page, and
+  no timer or request is added;
 - ``ctx.create_model_list(preset, head=…, foot=…)``: the one shared model list
   and its Load (`src/webui/components/model_list.py`; ``"clinical"`` for
   Diagnosis' drawer: rows, "In use now" pinned, the latest 4 runs;
@@ -499,11 +503,37 @@ _SHELL_JS = r"""
     shell.classList.toggle('shep-nav-wrapped', need > shell.clientWidth);
     shell.style.setProperty('--shep-chips-h', chips.offsetHeight + 'px');
   }
+  // The layout rule's titled ellipsis, on every page: a select's value or a
+  // segmented control's label cut to an ellipsis has its whole text as its
+  // title, and loses the title when it fits again. Gradio sets a select's
+  // value without an event to listen for, so each element is looked at again
+  // on each layout pass (after the page changes) and when the pointer or the
+  // focus reaches it.
+  var TITLED = 'input[role="combobox"], .shep-seg label';
+  function titleOne(el) {
+    var box = el, text;
+    if (el.tagName === 'INPUT') { text = el.value || ''; }
+    else { box = el.querySelector('span') || el; text = (box.textContent || '').trim(); }
+    var want = text && box.scrollWidth > box.clientWidth + 1 ? text : '';
+    if (want) { if (el.getAttribute('title') !== want) { el.setAttribute('title', want); } }
+    else if (el.hasAttribute('title')) { el.removeAttribute('title'); }
+  }
+  function titles() {
+    var all = document.querySelectorAll(TITLED);
+    for (var i = 0; i < all.length; i++) { titleOne(all[i]); }
+  }
+  function titleAt(e) {
+    var el = e.target && e.target.closest ? e.target.closest(TITLED) : null;
+    if (el) { titleOne(el); }
+  }
+  document.addEventListener('mouseover', titleAt, true);
+  document.addEventListener('focusin', titleAt, true);
+  document.addEventListener('input', titleAt, true);
   var queued = false;
   function update() {
     if (queued) { return; }
     queued = true;
-    requestAnimationFrame(function () { queued = false; title(); labels(); layout(); });
+    requestAnimationFrame(function () { queued = false; title(); labels(); layout(); titles(); });
   }
   new MutationObserver(update).observe(document.documentElement,
     {childList: true, subtree: true, attributes: true, attributeFilter: ['aria-selected']});
@@ -516,7 +546,7 @@ _SHELL_JS = r"""
       if (chips && shell) { ro.observe(chips); ro.observe(shell); clearInterval(watch); }
     }, 200);
   }
-  window.ShepShell = {update: update, title: title};
+  window.ShepShell = {update: update, title: title, titles: titles};
 })();
 """
 

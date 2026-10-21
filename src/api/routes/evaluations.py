@@ -239,6 +239,10 @@ class RecordView(_Strict):
     relations: Dict[str, Literal["verified", "not_applicable"]]
     r10: R10View
     environment_class: str
+    deterministic_algorithms: Optional[bool] = Field(
+        ..., description="whether deterministic algorithms were on in the measuring run, as the "
+        "record's regime says (a CPU run's environment class does not carry it); null when the "
+        "record does not say")
     gpu: Optional[RecordGpu] = Field(..., description="null for a run off CUDA")
     dataset_origin: Literal["files", "synthetic"]
     scoring_semantics_digest: _Digest
@@ -360,6 +364,7 @@ def _record_view(record: Dict[str, Any]) -> RecordView:
             for scope in R10View.model_fields
         },
         environment_class=environment_class(record),
+        deterministic_algorithms=_recorded_determinism(record),
         gpu=_pick(_at(record, "environment", "facts", "gpu"), RecordGpu.model_fields),
         dataset_origin=_at(record, "dataset_record", "origin"),
         scoring_semantics_digest=_at(record, "scoring_semantics_digest"),
@@ -368,6 +373,15 @@ def _record_view(record: Dict[str, Any]) -> RecordView:
         n_corroborating=len(corroborating),
         source_artifact_digest=_at(record, "source_artifact_digest"),
     )
+
+
+def _recorded_determinism(record: Dict[str, Any]) -> Optional[bool]:
+    """The record's own setting for deterministic algorithms (its regime), or
+    None when it records none: read from the ledger, so it opens no checkpoint
+    and a read-only request sees what an operator sees (M5-3)."""
+    regime = record.get("regime")
+    flag = regime.get("deterministic_algorithms") if isinstance(regime, dict) else None
+    return flag if type(flag) is bool else None
 
 
 def _ledger_view(sha256: Optional[str] = None, problem: Optional[str] = None) -> LedgerView:

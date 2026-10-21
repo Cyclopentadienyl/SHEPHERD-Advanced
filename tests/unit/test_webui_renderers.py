@@ -264,10 +264,28 @@ def test_a_runs_start_time_is_kept_on_one_line_in_the_table():
     assert r.run_label("gat", "20261017-091500_run_3fa9c1") == "GAT · run 2026-10-17 09:15"
 
 
-def test_an_identifier_wraps_only_after_an_underscore_and_is_escaped():
-    assert r.wrap_at_underscores("research_selection") == "research_<wbr>selection"
-    assert r.wrap_at_underscores("a_<b>") == "a_<wbr>&lt;b&gt;"
-    assert r.wrap_at_underscores(None) == ""
+def test_an_identifier_is_kept_whole_with_its_value_as_title_and_is_escaped():
+    """M5-3: "research_" / "selection" broke a role code in two. An identifier
+    is one unbreakable code element (no break opportunity inside it), which
+    ends in a titled ellipsis where it does not fit."""
+    assert r.ident_html("research_selection") == (
+        '<code class="shep-ident" title="research_selection">research_selection</code>')
+    assert "<wbr>" not in r.ident_html("model-00-0.8500.pt")
+    assert r.ident_html('a_<b>"') == '<code class="shep-ident" title="a_&lt;b&gt;&quot;">a_&lt;b&gt;&quot;</code>'
+    assert r.ident_html(None) == '<code class="shep-ident" title=""></code>'
+    from src.webui.style import SHELL_CSS
+    rule = SHELL_CSS[SHELL_CSS.index("code.shep-ident {"):].split("}", 1)[0]
+    assert "white-space: nowrap" in rule and "text-overflow: ellipsis" in rule
+
+
+def test_word_groups_break_only_between_groups_and_are_escaped():
+    """M5-3: "…: deployment mode not set" / "to M1" left two words alone; each
+    group is one inline block, so a line breaks between groups."""
+    assert r.word_groups("🔒 Operator controls only:", "a<b>") == (
+        '<span class="shep-wg">🔒 Operator controls only:</span> <span class="shep-wg">a&lt;b&gt;</span>')
+    assert r.word_groups("one", "") == '<span class="shep-wg">one</span>'
+    from src.webui.style import SHELL_CSS
+    assert ".shep-wg { display: inline-block;" in SHELL_CSS
 
 
 def test_the_run_suffix_and_a_validation_figure_by_its_name():
@@ -292,3 +310,25 @@ def test_every_clock_time_is_utc_with_its_label():
         aware = datetime(2026, 10, 21, 12, 0, tzinfo=timezone(timedelta(hours=-5)))
         assert r.clock_utc(aware) == "17:00:00 UTC"
     assert r.clock_utc(None) is None
+
+
+
+def test_model_facts_digest_rows_take_a_line_over_their_full_value():
+    """M5-3: Model Facts scrolled at 1920 x 1080 (977 px in 895): a digest's
+    long label folded into the label column took four or five lines. Each
+    digest's label takes its own line, its full value and an icon-only Copy
+    the line under it; the trained-on workspaces follow the label."""
+    facts = r.ModelFacts(
+        name_line="GAT · run 2026-10-21 18:03 · epoch 2", run="gat/r", checkpoint_file="runs/x.pt",
+        workspace="demo", model_fingerprint="a" * 64, trained_on_fingerprint="b" * 64,
+        trained_on_names=("demo",), synthetic=True, sources="", validation=None, recorded=None,
+        warnings=())
+    html_ = r.model_facts_html(facts)
+    assert (f'<span class="shep-k shep-kv-wide">{r.FACTS_MODEL_FP}</span>'
+            f'<span class="shep-v shep-kv-wide"><code class="shep-full">{"a" * 64}</code>') in html_
+    assert f'<span class="shep-k shep-kv-wide">{r.e(r.FACTS_TRAINED_FP)} · demo</span>' in html_
+    assert html_.count("shep-copy shep-copy-icon") == 2
+    assert '<span class="shep-k">Model</span>' in html_       # short labels keep the grid
+    from src.webui.style import SHELL_CSS
+
+    assert ".shep-kv > .shep-kv-wide { grid-column: 1 / -1;" in SHELL_CSS

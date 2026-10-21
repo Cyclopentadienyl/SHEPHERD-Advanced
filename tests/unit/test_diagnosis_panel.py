@@ -304,15 +304,15 @@ def test_phenotype_change_clears_after_a_run():
     out = dp.phenotypes_changed(_sample_result(), None)
     assert "Inputs changed" in out["results_body"]
     assert out["results_state"] is None and out["selected"] is None and out["badge"] == ""
-    assert out["export_csv"] is dp._DOWNLOAD_DISABLED
-    assert out["export_report"] is dp._DOWNLOAD_DISABLED
+    assert out["export_csv"] is dp._EXPORTS_HIDDEN
+    assert out["export_report"] is dp._EXPORTS_HIDDEN
 
 
 def test_on_diagnose_no_hpo_disables_downloads(status_read):
     out = _run("no ids here")
     assert "No valid HPO terms found" in out["results_body"]
     assert out["results_state"] is None
-    assert out["export_csv"] is dp._DOWNLOAD_DISABLED and out["export_report"] is dp._DOWNLOAD_DISABLED
+    assert out["export_csv"] is dp._EXPORTS_HIDDEN and out["export_report"] is dp._EXPORTS_HIDDEN
     assert status_read["reads"] == []   # nothing was asked of the server
 
 
@@ -322,6 +322,9 @@ def test_on_diagnose_success_sets_download_values(monkeypatch, status_read):
     assert out["results_state"] is not None and out["results_state"].get("candidates")
     assert out["export_csv"] is not dp._DOWNLOAD_DISABLED
     assert out["export_report"] is not dp._DOWNLOAD_DISABLED
+    # A result shows the exports, which no result had shown (M5-3).
+    assert out["export_csv"]["visible"] is True and out["export_csv"]["interactive"] is True
+    assert out["export_report"]["visible"] is True and out["export_report"]["interactive"] is True
     assert out["selected"] == 1 and "Dravet syndrome" in out["details_hd"]
 
 
@@ -337,6 +340,25 @@ def test_on_diagnose_export_failure_still_shows_results(monkeypatch, status_read
     assert "could not be written" in out["results_body"]
     assert out["results_state"] is not None and out["results_state"].get("candidates")
     assert out["export_csv"] is dp._DOWNLOAD_DISABLED and out["export_report"] is dp._DOWNLOAD_DISABLED
+    # A result exists: its exports are shown, disabled, beside the reason.
+    assert dp._DOWNLOAD_DISABLED["visible"] is True
+
+
+def test_no_export_buttons_are_shown_before_a_result():
+    """M5-3: the first screen showed two disabled Export buttons; the mockup
+    shows none until a result exists. They are built hidden (kept mounted),
+    no result keeps them hidden, and their ⓘ is hidden with them."""
+    from src.webui import shell
+
+    pages = {page: (lambda ctx: None) for page in (*shell.RESEARCH_PAGES, shell.SETTINGS)}
+    with gr.Blocks() as blocks:
+        shell.build_shell(blocks, {**pages, shell.CLINICAL: dp.create_diagnosis_tab})
+    buttons = {c.elem_id: c for c in blocks.blocks.values()
+               if getattr(c, "elem_id", None) in ("shep-dx-export-csv", "shep-dx-export-md")}
+    assert set(buttons) == {"shep-dx-export-csv", "shep-dx-export-md"}
+    assert all(b.visible == "hidden" for b in buttons.values())
+    assert dp._EXPORTS_HIDDEN["visible"] == "hidden" and dp._EXPORTS_HIDDEN["value"] is None
+    assert "#shep-dx-results-ft:has(#shep-dx-export-csv.hidden) #shep-dx-exports-help" in dp.PAGE_CSS
 
 
 def test_a_blank_patient_id_is_sent_as_none(monkeypatch):
@@ -546,8 +568,8 @@ def _assert_refused_without_results(out):
     assert "After a diagnosis" in out["details_html"]["value"]
     assert dp.VIEW_OFF not in out["details_html"]["elem_classes"]
     assert out["results_state"] is None  # no earlier result passes as this one
-    assert out["export_csv"] is dp._DOWNLOAD_DISABLED
-    assert out["export_report"] is dp._DOWNLOAD_DISABLED
+    assert out["export_csv"] is dp._EXPORTS_HIDDEN
+    assert out["export_report"] is dp._EXPORTS_HIDDEN
 
 
 def test_one_hundred_repeats_then_another_is_refused_with_both_numbers(served):
@@ -1476,3 +1498,15 @@ def test_the_panel_no_longer_reads_a_model_version():
     from pathlib import Path
 
     assert "model_version" not in Path(dp.__file__).read_text(encoding="utf-8")
+
+
+
+def test_a_code_chip_in_this_result_is_text_in_its_line():
+    """M5-3: Gradio draws a Markdown code chip as an inline flex box, before
+    which a line may break, and the rule broke anywhere inside it: "Knowledge
+    graph (" / "kg.json)". The chip is inline text, breaking only where it
+    must."""
+    start = dp.PAGE_CSS.index("#shep-dx-id-result code {")
+    rule = dp.PAGE_CSS[start:dp.PAGE_CSS.index("}", start)]
+    assert "display: inline;" in rule and "word-break: normal" in rule
+    assert "break-all" not in rule

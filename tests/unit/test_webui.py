@@ -44,6 +44,21 @@ class TestGradioApp:
         # If we get here without error, the tab was created successfully
         assert demo is not None
 
+    def test_no_page_names_the_retired_training_console(self):
+        """The Training Console became Research › Training (M5-2); Settings
+        still named it (M5-3). No text the dashboard shows names it."""
+        from src.webui.app import create_gradio_app
+
+        app = create_gradio_app()
+        shown = []
+        for block in app.blocks.values():
+            for attribute in ("value", "label", "info"):
+                value = getattr(block, attribute, None)
+                if isinstance(value, str):
+                    shown.append(value)
+        assert not [text for text in shown if "Training Console" in text]
+        assert any("separate from Research › Training" in text for text in shown)
+
 
 # ==============================================================================
 # Helper Function Tests

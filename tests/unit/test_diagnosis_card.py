@@ -250,7 +250,11 @@ def test_a_read_only_request_opens_no_checkpoint_and_is_told_why(root, no_checkp
     assert card.TRAINED_NOT_SHOWN in body
     assert "not recorded" not in body
     assert card.change_button(state)["interactive"] is False
-    assert "Operator controls only: request not local" in card.change_reason_html(state)
+    # The reason is visible text in two word groups: a line breaks between
+    # them, never inside "request not local" (M5-3: "to M1" alone on a line).
+    assert card.change_reason_html(state) == (
+        '<p class="shep-dx-why"><span class="shep-wg">🔒 Operator controls only:</span> '
+        '<span class="shep-wg">request not local</span></p>')
 
 
 def test_the_timer_never_opens_a_checkpoint(root, no_checkpoint_opened):

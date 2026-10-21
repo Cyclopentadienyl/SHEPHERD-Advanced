@@ -267,22 +267,45 @@ def test_the_page_refreshes_when_opened_and_rows_select_their_details(root, monk
     _serving(monkeypatch, str(root / "demo"))
     demo, ctx, fns = _page()
     refresh = fns["_refresh"]
-    data, chosen, header, table, details, use = refresh.fn(None, None)
+    data, chosen, header, table, details, use, note = refresh.fn(None, None)
     assert chosen == data["rows"][0]["name"] and "server workspace list · 5 · read-only" in header
-    assert use["interactive"] is True
+    assert use["interactive"] is True and dsp.USE_NOTE in note
     select = fns["_select"]
 
     class Event:
         _data = {"key": "scratch_ws"}
 
-    key, table, details, use = select.fn(data, None, Event())
+    key, table, details, use, note = select.fn(data, None, Event())
     assert key == "scratch_ws" and use["interactive"] is False
     assert "Not trainable" in details
+    # Disabled, with the reason beside it as visible text (M5-3).
+    assert "Not available: scratch_ws is not trainable — no split manifest." in note
+    assert dsp.USE_NOTE not in note
 
     class Forged:
         _data = {"key": "../../etc"}
 
-    assert select.fn(data, None, Forged()) == (gr.update(),) * 4
+    assert select.fn(data, None, Forged()) == (gr.update(),) * 5
+
+
+def test_the_reason_beside_use_for_training_is_escaped_and_names_no_path(root, monkeypatch):
+    _serving(monkeypatch, None)
+    data = {"rows": [{"name": "<b>x", "trainable": False,
+                      "not_trainable": "files <i>its</i> manifest binds are missing",
+                      "manifest": "read", "dataset_fingerprint": "a" * 64}]}
+    note = dsp.use_note_html(data, "<b>x")
+    assert "<b>" not in note and "<i>" not in note and "&lt;b&gt;x" in note
+    assert "Select a dataset" in dsp.use_note_html(data, None)
+
+
+def test_the_build_line_is_one_paragraph_in_its_reason_row():
+    """M5-3: the reason row is a flex row, so the build line's text and code
+    chips, as its direct children, became four columns at 1536 x 760; the
+    line is one span, one flex item."""
+    import inspect
+
+    source = inspect.getsource(dsp.create_datasets_page)
+    assert '<div class="shep-reason"><span>{BUILD_LINE}</span></div>' in source
 
 
 def test_nothing_listed_says_why(monkeypatch):

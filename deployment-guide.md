@@ -2412,7 +2412,7 @@ CORS 只決定頁面能讀取什麼。不需要預檢的跨來源請求仍會抵
 |---|---|
 | `GPU jobs: none` | 沒有受管理的訓練或評估工作在執行。它從不說「free」：這個鎖是協作式的，常駐的推論服務不在鎖的範圍內，仍可能佔用 GPU 記憶體 |
 | `GPU job: training (job runner)`、`GPU job: test run (job runner)` | 本服務啟動的工作；停止中時加上 `· stopping` |
-| `GPU job: train_model.py (CLI, pid 41822, since 09:58 UTC)` | 某個 CLI 持有 GPU 鎖，依其持有者紀錄的自我描述顯示 |
+| `GPU job: train_model.py (pid 41822, since 09:58 UTC)` | 某個不是本服務啟動的行程持有 GPU 鎖（正式的 CLI，或同一把鎖上另一台伺服器的 job runner）；chip 只顯示其持有者紀錄所寫的內容：指令、pid 與開始時間 |
 | `GPU job: lock held, holder not described` | 鎖被持有，但沒有任何仍在執行的行程被描述為持有者 |
 | `GPU jobs: none in the job runner` | 沒有設定 GPU 鎖（`SHEPHERD_GPU_LOCK_FILE` 與 `SHEPHERD_WORKSPACES_ROOT` 都沒有設定），因此看不到 CLI 的工作 |
 | `GPU jobs: not read`（灰色） | 無法讀取狀態。鎖的設定無法使用時，ⓘ 會說明，但只對 D8 允許的瀏覽器顯示路徑 |
@@ -2517,7 +2517,8 @@ allocation seed differs …」。對任何瀏覽器都不會顯示伺服器的�
 
 **Use for training ›** 會打開 Research › Training，並在它的 run bar 中選好該 workspace，只對
 這個瀏覽器分頁有效。伺服器上什麼都不會改變；Start 仍是 D8 檢查的控制項。不可訓練的 workspace
-無法使用。在 run bar 中改選另一個資料集，「in your Training run bar」標記會隨之移到那一個。
+無法使用，按鈕旁的說明會寫出原因（「Not available: scratch_ws is not trainable — no split
+manifest.」）。在 run bar 中改選另一個資料集，「in your Training run bar」標記會隨之移到那一個。
 
 這個頁面上沒有任何操作者控制項：它只讀取 workspace 的小型 JSON 檔案，從不開啟 checkpoint，因此
 唯讀的瀏覽器看到的是同樣的頁面。沒有設定 `SHEPHERD_WORKSPACES_ROOT` 時，頁面會說明這一點。資料集
@@ -2544,8 +2545,8 @@ Training Console 現在是分成三部分的一個頁面：上方橫跨整頁的
   綠色。
 - **Run name**，接著是**一行原因**，說明某個動作為何停用：「Stop disabled: no training is
   running.」、對唯讀瀏覽器顯示 D8 的原因（「Operator controls only: request not local」），或
-  占用 GPU 的工作（「GPU job: test run (…) · Open Test ›」、「GPU job: train_model.py (CLI,
-  pid …, since …)」）。
+  占用 GPU 的工作（「GPU job: test run (…) · Open Test ›」、「GPU job: train_model.py (pid …,
+  since …)」）。
 - **🔒 Start、🔒 Continue…、🔒 Stop。** Stop 會先詢問：「Stop training now? The last saved
   checkpoint is from epoch N (last.pt). Progress since then is lost; you can continue from
   epoch N.」，按鈕為 **■ Stop training** 與 **Keep training**。這個詢問屬於提出它時正在執行的
@@ -2567,8 +2568,9 @@ Training Console 現在是分成三部分的一個頁面：上方橫跨整頁的
 Expert 收合。**Data Paths 與它的 Save Path 已移除**：workspace 由 run bar 選擇，儀表板不再
 讀取或寫入伺服器工作目錄中的 `.shepherd_training_config.json`（留在那裡的檔案會被忽略；是否
 提供「Save as the default dataset」是擁有者要決定的問題）。三個分組放不進視窗時（1920 × 1080
-放得下），參數在自己的欄內捲動；run bar 永遠不捲動，run 檢視只有在失敗 run 的橫幅讓圖表空間
-不足時才在自己的面板內捲動。
+放得下），參數在自己的欄內捲動；run bar 永遠不捲動。四張圖各自至少保留 140 px 的繪圖區：
+視窗太矮放不下時（例如 1536 × 760），run 檢視在自己的面板內捲動，其標題、run 的說明句與圖表
+工具列固定在頂端，資源列則在圖表下方。
 
 **Continue…** 會打開一個取代參數欄的抽屜：run bar 所選 workspace 的 checkpoint，最新的在前
 （伺服器的清單：列出時會開啟每個 checkpoint，所以是操作者控制項），或手動輸入其中某個
@@ -2707,8 +2709,10 @@ workspace 名稱，這些資訊也不會被遮住。所有 run 都會顯示，�
 訓練或量測時，仍會以所顯示的摘要檢查它所使用的位元組。唯讀的瀏覽器
 看不到清單：頁面會說明原因，並列出三個條件（部署模式 M1、請求經由本機的 loopback 抵達——在本機上或
 經由 SSH forward——且沒有轉發標頭），改為顯示 **Recorded test results of the model in use**：依模型指紋
-從正在服務的 checkpoint 旁的 ledger 讀取，不開啟任何 checkpoint。那裡沒有 Trainer 的驗證數值，也沒有
-Load。
+從正在服務的 checkpoint 旁的 ledger 讀取，不開啟任何 checkpoint。每筆紀錄的 regime（裝置，deterministic
+開或關）就是紀錄本身所寫的，與操作者看到的相同（為此 `GET /api/v1/evaluations/loaded-model` 會為每筆
+紀錄附上 `deterministic_algorithms`；CPU 紀錄單憑 environment class 看不出來）。那裡沒有 Trainer 的
+驗證數值，也沒有 Load。
 
 **Order: Newest first | By test score。** 只有角色列在 `SHEPHERD_ORDERING_ROLES`（§4.12）中的 cohort
 version 才提供依測試分數排序；其他 version 會列出並說明為何關閉，而 `institutional_acceptance` 一律

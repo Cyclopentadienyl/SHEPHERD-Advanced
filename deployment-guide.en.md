@@ -2141,7 +2141,7 @@ read-only, the full reason D8 gives. It never repeats a header's value.
 |---|---|
 | `GPU jobs: none` | No managed training or evaluation job is running. It never says "free": the lock is cooperative, and the resident inference service is outside it and may still hold GPU memory |
 | `GPU job: training (job runner)`, `GPU job: test run (job runner)` | A job this service started; `· stopping` while it stops |
-| `GPU job: train_model.py (CLI, pid 41822, since 09:58 UTC)` | A CLI holds the GPU lock, as its holder record describes it |
+| `GPU job: train_model.py (pid 41822, since 09:58 UTC)` | A process this service did not start holds the GPU lock (a formal CLI, or another server's job runner on the same lock); the chip says what its holder record says: the command, the pid and the start |
 | `GPU job: lock held, holder not described` | The lock is held, but no running process is described as its holder |
 | `GPU jobs: none in the job runner` | No GPU lock is configured (neither `SHEPHERD_GPU_LOCK_FILE` nor `SHEPHERD_WORKSPACES_ROOT`), so a CLI's job would not be seen |
 | `GPU jobs: not read` (grey) | The state could not be read. When the lock setting cannot be used, the ⓘ says so, naming the path only to a browser D8 allows |
@@ -2260,8 +2260,9 @@ reads the manifests when it is opened, not on each selection.
 
 **Use for training ›** opens Research › Training with that workspace chosen in its run bar, for
 this browser tab only. Nothing changes on the server; Start is still the control D8 checks. A
-workspace that is not trainable cannot be used. Choosing another dataset in the run bar moves the
-"in your Training run bar" marker to it.
+workspace that is not trainable cannot be used, and the line beside the button says why ("Not
+available: scratch_ws is not trainable — no split manifest."). Choosing another dataset in the run
+bar moves the "in your Training run bar" marker to it.
 
 Nothing on this page is an operator control: it reads the workspaces' small JSON files, never a
 checkpoint, so a read-only browser sees the same page. With `SHEPHERD_WORKSPACES_ROOT` unset,
@@ -2292,7 +2293,7 @@ a run.
 - **Run name**, then **one reason line** saying why an action is disabled: "Stop disabled: no
   training is running.", D8's reason for a read-only browser ("Operator controls only: request
   not local"), or the GPU job holding the slot ("GPU job: test run (…) · Open Test ›",
-  "GPU job: train_model.py (CLI, pid …, since …)").
+  "GPU job: train_model.py (pid …, since …)").
 - **🔒 Start, 🔒 Continue…, 🔒 Stop.** Stop asks first: "Stop training now? The last saved
   checkpoint is from epoch N (last.pt). Progress since then is lost; you can continue from epoch
   N." with **■ Stop training** and **Keep training**. The question belongs to the job it was
@@ -2319,8 +2320,10 @@ is the run bar's choice, and the dashboard no longer reads or writes
 `.shepherd_training_config.json` in the server's working directory (a file left there is
 ignored; whether to offer "Save as the default dataset" is an owner question). When the three
 groups do not fit the window (they fit at 1920 × 1080), the parameters scroll inside their
-column; the run bar never scrolls, and the run view scrolls inside its own panel only when a
-failed run's banner leaves its charts too little room.
+column; the run bar never scrolls. Each of the four plots keeps a plot area of at least 140 px:
+when the window is too short for that (1536 × 760, for example), the run view scrolls inside its
+own panel, with its header, the run's sentence and the chart toolbar staying at its top and the
+resources line below the plots.
 
 **Continue…** opens a drawer in place of the parameters: the checkpoints of the run bar's
 workspace, newest first (the server's list: an operator control, since listing opens every
@@ -2486,8 +2489,11 @@ uses against the digest shown.
 A read-only browser gets no list: the page says why, naming the three conditions (deployment
 mode M1, a request on this machine's loopback, here or through an SSH forward, and no forwarding
 header), and shows instead **Recorded test results of the model in use**, read from the ledger
-beside the served checkpoint by its model fingerprint, opening no checkpoint. There are no
-Trainer validation figures and no Load there.
+beside the served checkpoint by its model fingerprint, opening no checkpoint. Each record's
+regime (device, deterministic on or off) is the one the record holds, as an operator sees it
+(`GET /api/v1/evaluations/loaded-model` carries each record's `deterministic_algorithms` for
+this; a CPU record's environment class alone does not say it). There are no Trainer validation
+figures and no Load there.
 
 **Order: Newest first | By test score.** Ordering by test score is offered only for a cohort
 version whose role is in `SHEPHERD_ORDERING_ROLES` (§4.12); the other versions are listed with

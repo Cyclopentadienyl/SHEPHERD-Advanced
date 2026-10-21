@@ -103,14 +103,21 @@ def test_nothing_running_is_none_never_free():
     assert "resident inference service is outside the lock" in chip.detail
 
 
-def test_a_cli_holder_is_named_with_its_pid_and_start_time():
+def test_a_holder_outside_this_runner_is_named_by_what_its_record_says():
+    """Its command, pid and start time, from the holder record. Not "CLI": a
+    formal CLI run and another server's job runner on the same lock write the
+    same record, so the record does not say which it is (M5-3)."""
     holder = {"job_type": "training", "command": "train_model.py", "pid": 41822,
               "started_at": "2026-10-20T09:58:12+00:00"}
     lock = {**LOCK_FREE, "held": True, "holder": holder, "holder_alive": True,
             "description": "a training job (train_model.py, pid 41822, as it described itself)"}
     chip = c.gpu_chip_from(None, lock, operator=False)
-    assert chip.text == "GPU job: train_model.py (CLI, pid 41822, since 09:58 UTC)"
+    assert chip.text == "GPU job: train_model.py (pid 41822, since 09:58 UTC)"
+    assert "CLI" not in chip.text
     assert chip.detail.startswith("Held by a training job")
+    bare = c.gpu_chip_from(None, {**lock, "holder": {"command": "measure_scorer.py"}},
+                           operator=False)
+    assert bare.text == "GPU job: measure_scorer.py"
 
 
 def test_a_holder_that_exited_is_not_named_as_the_holder():
@@ -190,7 +197,7 @@ def test_the_chip_reads_a_real_lock_held_elsewhere(monkeypatch, tmp_path):
     try:
         chip = c.read_gpu_chip(Idle(), operator=True)
         since = datetime.now(timezone.utc).strftime("%H:")
-        assert chip.text.startswith(f"GPU job: train_model.py (CLI, pid {os.getpid()}, since {since}")
+        assert chip.text.startswith(f"GPU job: train_model.py (pid {os.getpid()}, since {since}")
         assert socket.gethostname() in chip.detail
     finally:
         lock.release()

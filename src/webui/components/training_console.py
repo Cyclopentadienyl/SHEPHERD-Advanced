@@ -95,7 +95,7 @@ from src.api.services.training_manager import training_manager
 from src.config.runtime_presets import load_runtime_settings
 from src.webui.components import charts
 from src.webui.components import renderers as r
-from src.webui.components.chips import D8_SHORT, gpu_chip_from, read_lock
+from src.webui.components.chips import D8_SHORT, chips_on_change, gpu_chip_from, read_lock
 from src.webui.components.help import help_button
 from src.webui.components.workspaces import (
     manifest_facts,
@@ -487,6 +487,20 @@ element.addEventListener('click', function (e) {
 #: a shorter one shows its summary line, so the charts keep their room.
 BANNER_OPEN_HEIGHT = 1000
 
+#: The run view's top (its header and the snapshot sentence) keeps its height
+#: in ``--shep-rv-top-h`` on the run view, so the charts' toolbar sticks right
+#: under it while the plots scroll (`PAGE_CSS`; a long run name or sentence may
+#: wrap). The toolbar then never moves under a pointer that scrolls over it.
+_RUN_HEAD_JS = r"""
+var view = element.closest('#shep-train-runview');
+var top = element.closest('#shep-train-rv-top');
+if (view && top && window.ResizeObserver) {
+  new ResizeObserver(function () {
+    view.style.setProperty('--shep-rv-top-h', top.offsetHeight + 'px');
+  }).observe(top);
+}
+"""
+
 #: The banner: Dismiss (`_TRIGGER_JS`) and its output tail's disclosure, sent
 #: open and closed here once per banner on a wide window under
 #: `BANNER_OPEN_HEIGHT` px; once the user opens or closes it, their choice
@@ -586,7 +600,9 @@ def _gpu_line(active: Optional[Mapping[str, Any]], lock: Optional[Mapping[str, A
               test: Optional[Mapping[str, Any]], *, operator: bool) -> Optional[Dict[str, Any]]:
     """The GPU job holding the one slot when it is not this page's training
     job, from the job runner (a test run) or the GPU lock's holder record (a
-    CLI, or a lock that cannot be used): ``{"text", "test"}`` or None."""
+    process this server did not start: a formal CLI, or another server's
+    runner on the same lock; or a lock that cannot be used): ``{"text",
+    "test"}`` or None."""
     if active and active.get("job_type") == "test":
         inputs = (test or {}).get("inputs") or {}
         label = inputs.get("version_label")
@@ -1270,6 +1286,12 @@ def render(ws: Optional[Mapping[str, Any]], mode: Optional[Mapping[str, Any]],
         ws_changed = True
     gpu = None if in_use else _gpu_view(active, cache, access.allowed)
     view = run_bar_view(status, ws, mode, access=access, active=active, gpu=gpu)
+    # What this render read of the GPU slot, for the header's chips
+    # (`chips_on_change`): the training state, the runner's job, the lock's
+    # line. Not the test run's line, whose elapsed time changes every tick.
+    job = active or {}
+    cache["gpu_seen"] = [s, job.get("job_type"), job.get("status"), job.get("start_time"),
+                         None if active or gpu is None else gpu.get("text")]
 
     # The run's checkpoint record (the used fingerprint, the snapshot): read
     # for an operator only, and again only when its last.pt changed; while
@@ -1370,18 +1392,22 @@ def _render_view(ws, mode, cache, dismissed, request: gr.Request):
 
 def _poll(location, ws, mode, cache, dismissed, request: gr.Request):
     """The shell's fast timer (``queue=False``): while Training is shown, what
-    changed in the run bar, the run view and the chart token; nothing while
+    changed in the run bar, the run view and the chart token, and the header's
+    chips when the GPU slot it read changed (`chips_on_change`); nothing while
     another page is shown."""
+    idle = tuple(gr.update() for _ in VIEW_KEYS) + (gr.update(), gr.update())
     if location != TRAINING:
-        return tuple(gr.update() for _ in VIEW_KEYS) + (gr.update(),)
+        return idle
     try:
         rendered = render(ws, mode, cache, dismissed, request)
     except Exception:  # noqa: BLE001 - a tick that raises would stop the page's updates
         logger.exception("The Training page could not be read")
-        return tuple(gr.update() for _ in VIEW_KEYS) + (gr.update(),)
+        return idle
     ticks = int((cache or {}).get("ticks") or 0) + 1
     rendered["cache"]["ticks"] = ticks
-    return view_updates(rendered, cache, full=ticks % FULL_SEND_TICKS == 0)
+    chips = chips_on_change((cache or {}).get("gpu_seen"), rendered["cache"].get("gpu_seen"),
+                            request)
+    return (*view_updates(rendered, cache, full=ticks % FULL_SEND_TICKS == 0), chips)
 
 
 # =============================================================================
@@ -1793,9 +1819,12 @@ def _check_html(preview: Mapping[str, Any], source: str, *, differs: bool = Fals
     if not preview.get("ok"):
         return ('<div class="shep-check shep-check-amber"><div class="shep-check-h">⚠ Cannot '
                 f'continue.</div>{"".join(lines)}<p>{r.e(preview.get("reason"))}</p></div>')
+    # The plan is said once, in the line under the headline (M5-3: the
+    # headline repeated it, two lines more in a drawer that must fit).
     head = ('<div class="shep-check-h">⚠ Checkpoint read; cannot continue on the current '
             'dataset.</div>' if differs else
-            f'<div class="shep-check-h shep-ok-t">{r.CHECK} {r.e(preview["action"])}.</div>')
+            f'<div class="shep-check-h shep-ok-t">{r.CHECK} Checkpoint read; it can continue '
+            'on this workspace.</div>')
     lines.append(f"<p>Plan read from the checkpoint: {r.e(preview['action'])}.</p>")
     inherited = preview.get("inherited") or {}
     if inherited:
@@ -2443,9 +2472,12 @@ def create_training_tab(ctx: Any) -> None:
 
             # ------------------------------------------------------- run view
             with gr.Column(elem_id="shep-train-runview", elem_classes=["shep-panel"], scale=22):
-                run_head = plain_html(run_head_html(None, {}, operator=False, snapshot=None),
-                                      elem_id="shep-train-run-head")
-                run_snap = plain_html("", elem_id="shep-train-run-snap")
+                # The header and the snapshot sentence: the run view's top, which
+                # stays while the plots scroll (at a wide size, `PAGE_CSS`).
+                with gr.Column(elem_id="shep-train-rv-top"):
+                    run_head = plain_html(run_head_html(None, {}, operator=False, snapshot=None),
+                                          elem_id="shep-train-run-head", js_on_load=_RUN_HEAD_JS)
+                    run_snap = plain_html("", elem_id="shep-train-run-snap")
                 figure = charts.chart_figure(
                     key="training", elem_id="shep-train-charts", series_fn=training_chart_series,
                     csv_fn=training_chart_csv, help_key="training-charts",
@@ -2480,8 +2512,8 @@ def create_training_tab(ctx: Any) -> None:
     ctx.page_tokens[TRAINING].change(**view_step)
 
     # The shell's timers (outside gr.Tabs), read-only polls without the queue.
-    ctx.timer_fast.tick(_poll, inputs=[ctx.location, *view_inputs], outputs=view_outputs,
-                        queue=False, show_progress="hidden")
+    ctx.timer_fast.tick(_poll, inputs=[ctx.location, *view_inputs],
+                        outputs=[*view_outputs, ctx.chips], queue=False, show_progress="hidden")
     ctx.timer_slow.tick(_poll_resources, inputs=[ctx.location], outputs=[resources],
                         queue=False, show_progress="hidden")
 
@@ -2593,6 +2625,12 @@ def create_training_tab(ctx: Any) -> None:
 #: This page's element id (`shell.page_elem_id`), the scope of `PAGE_CSS`.
 _PAGE = f"#shep-page-{TRAINING}"
 
+#: The smallest plot area the run view draws at a wide size (M5-3: about 70 to
+#: 100 px at 1536 x 760), and the room uPlot takes around it in the plot's box
+#: (the epoch axis, 30 px, and its margins).
+PLOT_MIN_HEIGHT = 140
+PLOT_AXIS_ROOM = 47
+
 #: The lock and the stop square drawn before a gated button's words (CSS only).
 _LOCK_MASK = ("url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E"
               "%3Crect x='3' y='7' width='10' height='7.5' rx='1.6'/%3E%3Cpath d='M5.2 7V5.2a2.8 2.8 0 0 1 "
@@ -2610,13 +2648,14 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} #shep-train-dataset > div:not(.wrap), {_PAGE} #run_name > label {{ display: flex !important; align-items: center; gap: 8px; }}
 {_PAGE} #shep-train-dataset span[id^="shep-lbl-"], {_PAGE} #run_name span[id^="shep-lbl-"] {{ position: static !important; display: block !important; width: 96px !important; height: auto !important; overflow: visible !important; clip: auto !important; clip-path: none !important; margin: 0 !important; padding: 0 !important; background: none !important; border: 0 !important; white-space: nowrap; font-size: 14px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--shep-text-2) !important; }}
 {_PAGE} #shep-train-dataset .wrap {{ width: clamp(220px, 16vw, 320px); min-width: 0 !important; }}
-{_PAGE} #shep-train-dataset input {{ text-overflow: ellipsis; flex: 1 1 auto !important; width: 0 !important; min-width: 0 !important; }}
+{_PAGE} #shep-train-dataset input {{ flex: 1 1 auto !important; width: 0 !important; min-width: 0 !important; }}
 {_PAGE} #shep-train-dataset .secondary-wrap {{ min-width: 0 !important; }}
 {_PAGE} #shep-train-dataset .icon-wrap {{ flex: none !important; }}
-/* The two selects drawn as fields: a border, the text clear of the chevron, grey while disabled. */
+/* The two selects drawn as fields: a border, the text clear of the chevron, grey while disabled
+   (a value too long ends in the shell's titled ellipsis, the rule for every select). */
 {_PAGE} #shep-train-dataset .wrap:has(> .wrap-inner), {_PAGE} #checkpoint_dropdown .wrap:has(> .wrap-inner) {{ border: 1px solid var(--shep-border-2) !important; border-radius: 8px !important; background: #fff !important; box-shadow: none !important; }}
 {_PAGE} #shep-train-dataset .wrap:has(> .wrap-inner):focus-within, {_PAGE} #checkpoint_dropdown .wrap:has(> .wrap-inner):focus-within {{ border-color: var(--shep-accent) !important; }}
-{_PAGE} #shep-train-dataset input, {_PAGE} #checkpoint_dropdown input {{ padding-right: 30px !important; text-overflow: ellipsis; }}
+{_PAGE} #shep-train-dataset input, {_PAGE} #checkpoint_dropdown input {{ padding-right: 30px !important; }}
 {_PAGE} #shep-train-dataset .icon-wrap, {_PAGE} #checkpoint_dropdown .icon-wrap {{ color: var(--shep-text-2) !important; }}
 {_PAGE} #shep-train-dataset .wrap:has(input:disabled), {_PAGE} #checkpoint_dropdown .wrap:has(input:disabled) {{ background: var(--shep-grey-50) !important; border-color: var(--shep-grey-200) !important; }}
 {_PAGE} #shep-train-dataset input:disabled, {_PAGE} #checkpoint_dropdown input:disabled {{ color: var(--shep-grey-600) !important; -webkit-text-fill-color: var(--shep-grey-600); cursor: not-allowed; }}
@@ -2706,13 +2745,14 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-cmp-grey {{ background: var(--shep-grey-50); border-color: var(--shep-grey-200); color: var(--shep-grey-800); }}
 {_PAGE} .shep-check-ok {{ background: #fff; }}
 {_PAGE} .shep-check-h {{ font-weight: 600; margin-bottom: 4px; }}
-{_PAGE} .shep-check code, {_PAGE} .shep-rv-snap code {{ overflow-wrap: anywhere; word-break: break-all; }}
+{_PAGE} .shep-check code, {_PAGE} .shep-rv-snap code {{ overflow-wrap: anywhere; word-break: normal; }}
 {_PAGE} .shep-inherit {{ margin-top: 8px; border: 1px solid var(--shep-border); border-radius: 8px; background: #fff; }}
 {_PAGE} .shep-inherit > summary {{ padding: 6px 10px; cursor: pointer; font-weight: 600; }}
 {_PAGE} .shep-inherit .shep-ftbl {{ margin: 0 10px 10px; width: calc(100% - 20px); }}
 {_PAGE} .shep-drawer-why {{ font-size: 15px; color: var(--shep-text-2); }}
 {_PAGE} .shep-drawer-why .shep-rb-why {{ text-align: left; flex-wrap: nowrap; align-items: flex-start; }}
-{_PAGE} #shep-train-drawer-why:has(.html-container:empty) {{ display: none !important; }}
+{_PAGE} #shep-train-drawer-why:not(:has(.shep-drawer-why)) {{ display: none !important; }}
+{_PAGE} #shep-train-rv-top {{ gap: 0 !important; flex: none !important; }}
 {_PAGE} .shep-rv-hd {{ gap: 6px 10px !important; }}
 {_PAGE} .shep-rv-hd h2 code {{ font-size: 15px; font-weight: 600; }}
 {_PAGE} .shep-rv-used {{ display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 15px; }}
@@ -2737,13 +2777,28 @@ PAGE_CSS = charts.CHART_CSS + f"""
   {_PAGE} #shep-train-params-bd .form > .block {{ padding-top: 4px !important; padding-bottom: 4px !important; }}
   {_PAGE} #shep-train-params-bd .form > .block [data-testid="block-info"] {{ margin-bottom: 4px !important; padding-top: 2px !important; padding-bottom: 2px !important; }}
   {_PAGE} #shep-train-params-bd .form > .block input[type="number"], {_PAGE} #shep-train-params-bd .form > .block input[type="text"] {{ padding-top: 6px !important; padding-bottom: 6px !important; }}
-  /* Never clipped: when the charts' minimum does not fit, the run view scrolls inside. A failed
-     run's banner takes height, so the charts then keep a usable minimum (plots of about 90 px). */
+  /* The Continue drawer as dense: it fits at 1920 x 1080 with Extra epochs on screen, as
+     drawn (M5-3: 821 px of content in 684); a shorter window scrolls its body inside. */
+  {_PAGE} #shep-train-drawer-bd {{ gap: 8px !important; }}
+  {_PAGE} #shep-train-drawer-bd .block.padded {{ padding-top: 4px !important; padding-bottom: 4px !important; }}
+  {_PAGE} #shep-train-drawer-bd [data-testid="block-info"] {{ margin-bottom: 4px !important; padding-top: 2px !important; padding-bottom: 2px !important; }}
+  {_PAGE} #shep-train-drawer-bd .wrap label {{ padding-top: 4px !important; padding-bottom: 4px !important; }}
+  {_PAGE} #shep-train-drawer-bd input[type="number"], {_PAGE} #shep-train-drawer-bd input[type="text"] {{ padding-top: 6px !important; padding-bottom: 6px !important; }}
+  {_PAGE} #shep-train-drawer-bd .shep-cmp, {_PAGE} #shep-train-drawer-bd .shep-check {{ padding: 8px 12px; }}
+  /* Never clipped, and never cramped: each of the four plots keeps a plot area of at least
+     PLOT_MIN_HEIGHT px whatever its title's keys take (the minimum is the plot box's, and each
+     box around it grows to hold its content). When that does not fit, the run view's body
+     scrolls inside: its header and the charts' toolbar stay at its top, and the resources line
+     yields below. */
   {_PAGE} #shep-train-runview {{ overflow-y: auto !important; }}
-  {_PAGE} #shep-train-runview > #shep-train-charts {{ flex: 1 1 auto !important; min-height: 240px; display: flex; flex-direction: column; }}
-  {_PAGE} #shep-train:has(#shep-train-banner .shep-banner) #shep-train-runview > #shep-train-charts {{ min-height: 370px; }}
-  {_PAGE} #shep-train-charts > .html-container {{ flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }}
-  {_PAGE} #shep-train-charts > .html-container > div {{ flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }}
+  {_PAGE} #shep-train-runview > #shep-train-charts {{ flex: 1 1 auto !important; min-height: auto; display: flex; flex-direction: column; }}
+  {_PAGE} #shep-train-charts .shep-chart-plot {{ min-height: {PLOT_MIN_HEIGHT + PLOT_AXIS_ROOM}px; }}
+  {_PAGE} #shep-train-charts .shep-charts, {_PAGE} #shep-train-charts .shep-charts-body, {_PAGE} #shep-train-charts .shep-charts-grid, {_PAGE} #shep-train-charts .shep-chart {{ min-height: auto; }}
+  {_PAGE} #shep-train-charts .shep-charts-grid {{ grid-auto-rows: minmax(min-content, 1fr); }}
+  {_PAGE} #shep-train-runview > #shep-train-rv-top {{ position: sticky; top: 0; z-index: 6; background: var(--shep-panel); }}
+  {_PAGE} #shep-train-charts .shep-charts-bar {{ position: sticky; top: var(--shep-rv-top-h, 92px); z-index: 5; background: var(--shep-panel); }}
+  {_PAGE} #shep-train-charts > .html-container {{ flex: 1 1 auto; min-height: auto; display: flex; flex-direction: column; }}
+  {_PAGE} #shep-train-charts > .html-container > div {{ flex: 1 1 auto; min-height: auto; display: flex; flex-direction: column; }}
   {_PAGE} .shep-rb-row1 {{ flex-wrap: nowrap !important; }}
   {_PAGE} #shep-train-chip {{ flex: 1 1 auto !important; }}
   {_PAGE} #shep-train-charts .shep-charts {{ flex: 1 1 auto; }}

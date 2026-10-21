@@ -400,3 +400,74 @@ def test_the_dead_code_the_m5_review_found_stays_gone():
     assert "math" not in vars(training_console)
     assert "status_display" not in app.DASHBOARD_CSS
     assert "shep-temporary" not in style.SHELL_CSS
+
+
+# --------------------------------------------------------------------------- M5-3 polish
+def _rule(css, selector):
+    """The declarations of the first rule whose selector list is `selector`."""
+    start = css.index(selector + " {")
+    return css[start + len(selector) + 2:css.index("}", start)]
+
+
+def _last_rule(css, selector):
+    """The declarations of the last rule whose selector list is `selector` (a
+    later rule overrides an earlier one)."""
+    start = css.rindex(selector + " {")
+    return css[start + len(selector) + 2:css.index("}", start)]
+
+
+def _wide(css):
+    """The wide layout's block (``@media (min-width: 1400px) and (min-height: 760px)``)."""
+    start = css.index("@media (min-width: 1400px) and (min-height: 760px) {")
+    return css[start:css.index("\n}\n", start)]
+
+
+def test_a_select_value_cut_to_an_ellipsis_carries_its_whole_text_as_title():
+    """M5-3: Training's dataset select, Test's workspace select and Models'
+    cohort-version select cut their values with no title. One rule for every
+    select: the value ends in an ellipsis, and the shell's head script gives a
+    value that does not fit its whole text as its title (and takes it away
+    when it fits), on each layout pass and when the pointer or focus arrives."""
+    from src.webui.style import SHELL_CSS
+
+    assert "text-overflow: ellipsis" in _rule(SHELL_CSS, '.gradio-container .wrap-inner input[role="combobox"]')
+    head = shell.SHELL_HEAD
+    assert "var TITLED = 'input[role=\"combobox\"], .shep-seg label';" in head
+    assert "box.scrollWidth > box.clientWidth + 1 ? text : ''" in head
+    assert "el.removeAttribute('title')" in head
+    for event in ("mouseover", "focusin", "input"):
+        assert f"document.addEventListener('{event}', titleAt, true);" in head
+    assert "layout(); titles();" in head
+
+
+def test_an_accordion_arrow_turns_inside_a_square_box():
+    """M5-3: the turned ▼ (taller than wide) spilled 3 px past the header."""
+    from src.webui.style import SHELL_CSS
+
+    rule = _rule(SHELL_CSS, ".gradio-container button.label-wrap > .icon")
+    assert "width: 22px" in rule and "height: 22px" in rule and "flex: none" in rule
+
+
+def test_a_segmented_control_keeps_one_row():
+    """M5-3: the candidate details' "Paths 5" wrapped to a second row. The
+    segments are grid columns up to their text: short labels stay whole, the
+    longest ends in a (titled) ellipsis."""
+    from src.webui.style import SHELL_CSS
+
+    rule = _last_rule(SHELL_CSS, ".shep-seg .wrap")
+    assert "display: inline-grid !important" in rule and "grid-auto-flow: column" in rule
+    assert "grid-auto-columns: minmax(0, max-content)" in rule
+    span = _last_rule(SHELL_CSS, ".shep-seg .wrap label span")
+    assert "text-overflow: ellipsis" in span and "white-space: nowrap" in span
+
+
+def test_a_panels_header_sticks_to_the_top_of_the_region_that_scrolls():
+    """M5-3: the Test Result panel's title scrolled away with the report."""
+    from src.webui.style import SHELL_CSS
+
+    wide = _wide(SHELL_CSS)
+    rule = _rule(wide, "  .shep-panel .shep-panel-hd")
+    assert "position: sticky" in rule and "top: 0" in rule and "background: var(--shep-panel)" in rule
+    # never at a narrow size, where the page scrolls
+    narrow = SHELL_CSS[SHELL_CSS.index("@media (max-width: 1399px), (max-height: 759px) {"):]
+    assert "position: sticky" not in narrow

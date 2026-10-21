@@ -99,7 +99,7 @@ from src.evaluation.caveats import (
     RELATION_DISPLAY_NAMES,
 )
 from src.webui.components import renderers as r
-from src.webui.components.chips import D8_SHORT
+from src.webui.components.chips import D8_SHORT, chips_on_change
 from src.webui.components.help import help_button
 from src.webui.components.model_list import item_key
 from src.webui.components.workspaces import redact_paths
@@ -978,7 +978,7 @@ def version_html(page: Mapping[str, Any], label: Optional[str],
     imported = str(version.get("imported_at") or "").replace("T", " ").replace("Z", " UTC")
     return (
         '<div class="shep-test-vd">'
-        f'<div>role <code>{e(version.get("role"))}</code> · {_count(counts.get("source_cases"))} '
+        f'<div>role {r.ident_html(version.get("role"))} · {_count(counts.get("source_cases"))} '
         f'source cases · {_count(counts.get("ranked_eligible"))} ranked-eligible'
         f'{" (" + e(reasons) + " excluded)" if reasons else ""}</div>'
         f'<div>{r.fingerprint_html("version", version.get("manifest_sha256"))} {chip}</div>'
@@ -1486,7 +1486,7 @@ def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
     counts = cohort.get("counts") if isinstance(cohort.get("counts"), Mapping) else {}
     deterministic = regime.get("deterministic_algorithms")
     line = (f'{e(cohort.get("label"))} (version <code>{e(str(record.get("cohort_digest") or "")[:12])}</code>, '
-            f'role <code>{e(record.get("cohort_role"))}</code>) · model '
+            f'role {r.ident_html(record.get("cohort_role"))}) · model '
             f'<code>{e(str(record.get("checkpoint_digest") or "")[:12])}</code> · '
             f'deterministic {"on" if deterministic is True else "off" if deterministic is False else "not recorded"}'
             f' · device <code>{e(regime.get("device"))}</code>')
@@ -2040,23 +2040,6 @@ element.addEventListener('click', function (e) {
 });
 """
 
-#: A select whose choice is longer than its box ends in an ellipsis (the page's
-#: CSS); its whole text is its title, set when the pointer or the focus reaches
-#: it (Gradio sets the input's value without an event to listen for). Once per
-#: page, on the page's own element.
-_TITLES_JS = r"""
-var page = element.closest('#shep-page-test');
-if (page && !page.hasAttribute('data-shep-titles')) {
-  page.setAttribute('data-shep-titles', '');
-  var title = function (e) {
-    var input = e.target.closest ? e.target.closest('.shep-test-select input') : null;
-    if (input) { input.title = input.value || ''; }
-  };
-  page.addEventListener('mouseover', title);
-  page.addEventListener('focusin', title);
-}
-"""
-
 #: When the import drawer opens, its title takes the focus: at narrow sizes the
 #: drawer is an overlay, and a keyboard or screen-reader user starts in it.
 _IMPORT_FOCUS_JS = r"""
@@ -2097,8 +2080,7 @@ def create_test_page(ctx: Any) -> None:
         # ------------------------------------------------------------ Cohort
         with gr.Column(elem_classes=["shep-panel", "shep-test-col"], elem_id="shep-test-cohort",
                        scale=11, min_width=320):
-            cohort_hd = plain_html(cohort_header_html({}), elem_id="shep-test-cohort-hd",
-                                   js_on_load=_TITLES_JS)
+            cohort_hd = plain_html(cohort_header_html({}), elem_id="shep-test-cohort-hd")
             with gr.Column(elem_classes=["shep-test-bd"]):
                 workspace = gr.Dropdown(label="Workspace", choices=[], value=None,
                                         elem_id="shep-test-workspace", interactive=True,
@@ -2497,8 +2479,9 @@ def create_test_page(ctx: Any) -> None:
         run started elsewhere), the report store too, and the report shown is
         chosen again (the ended run's, or the newest if the one shown is gone)."""
         if location != PAGE or not page:
-            return [gr.update()] * len(poll_outputs)
+            return [gr.update()] * (len(poll_outputs) + 1)
         job = read_job()
+        gpu = _gpu(page)
         seen = seen or {}
         ended = (seen.get("status") in _BUSY and job.get("status") not in _BUSY)
         changed = (job.get("job_id") != seen.get("job_id")
@@ -2507,11 +2490,14 @@ def create_test_page(ctx: Any) -> None:
         if changed:
             reports, run_id = _reports(page, models, label, current_report, job, request,
                                        prefer_outcome=ended)
-        new_seen = {"job_id": job.get("job_id"), "status": job.get("status")}
+        # The GPU line is the header's GPU chip read now: when it is not
+        # what this poll saw last, the chips are read again on this tick.
+        new_seen = {"job_id": job.get("job_id"), "status": job.get("status"), "gpu": list(gpu)}
         return [reports if changed else gr.update(), run_id if changed else gr.update(), new_seen,
-                *_job_outputs(page, models, binding, ws, label, key, job, _gpu(page)),
+                *_job_outputs(page, models, binding, ws, label, key, job, gpu),
                 *(_result_outputs(page, reports, models, run_id, job)
-                  if changed else [gr.update()] * len(result_outputs))]
+                  if changed else [gr.update()] * len(result_outputs)),
+                chips_on_change(seen.get("gpu"), new_seen["gpu"], request)]
 
     poll_inputs = [ctx.location, page_state, models_state, binding_state_, workspace, version,
                    model, job_state, selected_report, reports_state]
@@ -2520,8 +2506,8 @@ def create_test_page(ctx: Any) -> None:
     # tick whatever it then does, so one on the fast timer would cost every open
     # page 40 requests a minute even with no job. A test run's state and elapsed
     # time are read every 5 s; Start, Cancel and Register read it at once.
-    ctx.timer_slow.tick(_poll, inputs=poll_inputs, outputs=poll_outputs, queue=False,
-                        show_progress="hidden")
+    ctx.timer_slow.tick(_poll, inputs=poll_inputs, outputs=[*poll_outputs, ctx.chips],
+                        queue=False, show_progress="hidden")
 
     # ------------------------------------------------------------------ register and notes
     def _on_register(page, reports, models, ws, run_id, request: gr.Request):
@@ -2698,7 +2684,7 @@ PAGE_CSS = f"""
 {_PAGE} .shep-test-form > * {{ min-width: 180px !important; }}
 {_PAGE} #shep-test-start {{ width: 100%; }}
 {_PAGE} .shep-test-runft {{ padding: 0 16px 12px !important; gap: 10px !important; }}
-{_PAGE} .shep-test-select input {{ text-overflow: ellipsis; padding-right: 26px !important; }}
+{_PAGE} .shep-test-select input {{ padding-right: 26px !important; }}
 {_PAGE} .shep-test-rep-ended {{ cursor: default; }}
 {_PAGE} .shep-test-rep-old, {_PAGE} .shep-test-more-fewer {{ display: none !important; }}
 {_PAGE} .shep-test-all .shep-test-rep-old {{ display: grid !important; }}

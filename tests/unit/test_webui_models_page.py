@@ -55,6 +55,7 @@ gr = pytest.importorskip("gradio")
 from src.utils.fingerprint import file_sha256  # noqa: E402
 from src.webui.components import model_list as ml  # noqa: E402
 from src.webui.components import models_page as mp  # noqa: E402
+from src.webui.components import renderers as r  # noqa: E402
 from src.webui.components.renderers import e  # noqa: E402
 from tests.fixtures.model_records import (  # noqa: E402
     ACCEPTANCE_ROLE,
@@ -216,8 +217,8 @@ def test_ordering_is_offered_only_for_a_listed_role_and_never_for_acceptance(wor
     assert (ctl["order"], ctl["version"]) == (mp.BY_SCORE, MYGENE)
     assert mp.version_choices(data) == [(f"{MYGENE} (role {RESEARCH_ROLE})", MYGENE)]
     html = mp.options_html(data, ctl)
-    assert f"<b>{INST}</b> (role <code>{ACCEPTANCE_ROLE}</code>) — {e(mp.ROLE_NEVER)}" in html
-    assert f"<b>{EXPLORE}</b> (role <code>exploration</code>) — {e(mp.ROLE_NOT_LISTED)}" in html
+    assert f"<b>{INST}</b> (role {r.ident_html(ACCEPTANCE_ROLE)}) — {e(mp.ROLE_NEVER)}" in html
+    assert f"<b>{EXPLORE}</b> (role {r.ident_html("exploration")}) — {e(mp.ROLE_NOT_LISTED)}" in html
     assert e(mp.ROLE_NEVER_LISTED) in html                   # listed, and ignored
     assert mp.INDEPENDENCE_NOTE in mp.independence_html(data)  # wherever ordering is offered
     # A version the role does not offer cannot be asked for: it falls back.
@@ -232,7 +233,7 @@ def test_acceptance_is_said_ignored_only_when_the_setting_lists_it(world, monkey
     assert not data["roles_note"]
     html = mp.options_html(data, mp.controls(listing, data, mp.BY_SCORE, MYGENE, None, None,
                                              None))
-    assert f"<b>{INST}</b> (role <code>{ACCEPTANCE_ROLE}</code>) — {e(mp.ROLE_NEVER)}<" in html
+    assert f"<b>{INST}</b> (role {r.ident_html(ACCEPTANCE_ROLE)}) — {e(mp.ROLE_NEVER)}<" in html
     assert e(mp.ROLE_NEVER_LISTED) not in html and "ignored" not in html
 
 
@@ -486,10 +487,12 @@ def test_the_detail_keeps_validation_and_mode_c_apart(world, monkeypatch):
     assert records.count(note) == 1
     assert records.index(INST) < records.index(note) < records.index("contested #1")
     assert detail["seg"][0] == ("Recorded test results (Mode C) · 3 · 1 contested", mp.RECORDS)
-    # a role code wraps after an underscore in its narrow column, never mid-word
-    # (1440x900 drew "research_selectio" / "n")
-    assert "role <code>research_<wbr>selection</code>" in records
-    assert "role <code>institutional_<wbr>acceptance</code>" in records
+    # a role code is never broken inside its name in its narrow column: not
+    # "research_selectio" / "n" (1440x900), nor "research_" / "selection" (M5-3);
+    # it stays whole, in a titled ellipsis where it does not fit
+    assert f"role {r.ident_html('research_selection')}" in records
+    assert f"role {r.ident_html('institutional_acceptance')}" in records
+    assert "<wbr>" not in records
 
 
 def test_d4s_pick_comes_first_in_the_detail_before_a_newer_record(world, monkeypatch):
@@ -663,6 +666,33 @@ def test_a_route_records_regime_is_read_from_its_environment_class():
     assert (cpu["deterministic"], cpu["device"]) == (None, "cpu")
     other = mp.view_from_route({"environment_class": "something else"}, sha)
     assert (other["deterministic"], other["device"]) == (None, None)
+
+
+def test_a_route_records_own_determinism_setting_is_read_for_a_cpu_run():
+    """M5-3: read-only Models said "determinism not read" for CPU records that
+    the operator's view showed as "deterministic on". The route carries the
+    record's own setting (read from the ledger, no checkpoint opened), so
+    both read the same fact."""
+    from src.evaluation.sidecar import ENVIRONMENT_CLASSES
+
+    sha = "a" * 64
+    for flag in (True, False):
+        cpu = mp.view_from_route({"environment_class": ENVIRONMENT_CLASSES[2],
+                                  "deterministic_algorithms": flag}, sha)
+        assert (cpu["deterministic"], cpu["device"]) == (flag, "cpu")
+    assert mp.regime_text("cpu", True) != mp.regime_text("cpu", None)
+    unsaid = mp.view_from_route({"environment_class": ENVIRONMENT_CLASSES[2],
+                                 "deterministic_algorithms": None}, sha)
+    assert unsaid["deterministic"] is None
+
+
+def test_the_api_record_view_carries_the_records_own_determinism():
+    from src.api.routes.evaluations import _recorded_determinism
+
+    assert _recorded_determinism({"regime": {"deterministic_algorithms": True}}) is True
+    assert _recorded_determinism({"regime": {"deterministic_algorithms": False}}) is False
+    assert _recorded_determinism({"regime": {"deterministic_algorithms": "yes"}}) is None
+    assert _recorded_determinism({"regime": None}) is None and _recorded_determinism({}) is None
 
 
 def _served_read_only(world, monkeypatch, name="model-05.pt"):
@@ -1023,3 +1053,16 @@ def test_the_version_options_are_one_line_and_the_role_clause_is_said_once(world
     assert '<details class="shep-mp-offd"><summary>2 cohort versions without ordering' in html
     newest = mp.controls(listing, data, mp.NEWEST, None, None, None, None)
     assert e(mp.ROLE_ON) not in mp.options_html(data, newest)
+
+
+
+def test_the_list_panels_title_stays_while_the_panel_scrolls():
+    """M5-3: at 1440 x 900 the Models title scrolled away with the controls and
+    the rows. The header row draws no box at a wide size (its items are the
+    panel's grid items), so the title sticks to the panel's top, and the
+    table's header sticks under it."""
+    wide = mp.PAGE_CSS[mp.PAGE_CSS.index("@media (min-width: 1400px) and (min-height: 760px) {"):]
+    assert "> .shep-model-main > .shep-model-head {{ display: contents !important; }}".replace(
+        "{{", "{").replace("}}", "}") in wide
+    assert "#shep-mp-hd { position: sticky; top: 0; z-index: 45;" in wide
+    assert "#shep-models-research-rows .shep-tbl th { top: 48px; }" in wide

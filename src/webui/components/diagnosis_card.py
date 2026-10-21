@@ -632,7 +632,9 @@ def change_reason_html(state: Mapping[str, Any]) -> str:
     if state.get("operator") or state.get("ok") is None:
         return ""
     short = state.get("d8_short") or D8_SHORT["unreadable_request"]
-    return f'<p class="shep-dx-why">🔒 Operator controls only: {r.e(short)}</p>'
+    # Two word groups, so a line breaks between them and never leaves "to M1"
+    # alone on the second line (M5-3).
+    return f'<p class="shep-dx-why">{r.word_groups("🔒 Operator controls only:", short)}</p>'
 
 
 def details_visible(state: Mapping[str, Any]) -> bool:
@@ -676,15 +678,19 @@ def _replace_in_section(html_: str, section: str, old: str, new: str) -> str:
     return html_[:start] + html_[start:end].replace(old, new) + html_[end:]
 
 
-def _kv_rows(rows: List[Tuple[str, str]]) -> str:
-    return "".join(f'<span class="shep-k">{r.e(k)}</span><span class="shep-v">{v}</span>'
-                   for k, v in rows)
+def _kv_rows(rows: List[Tuple[str, str]], *, wide: bool = False) -> str:
+    """Model Facts' label/value cells (`renderers.kv_cells`); `wide`, for the
+    digest rows: each label on its own line over its full value."""
+    return r.kv_cells(rows, wide=[k for k, _v in rows] if wide else ())
 
 
 def _full(digest: Any, what: str) -> str:
+    """A full digest with an icon-only Copy, so it keeps one line in the
+    identity drawer (M5-3: Model Facts fits at 1920 x 1080)."""
     if not r.is_digest(digest):
         return '<span class="shep-muted">none</span>'
-    return f'<code class="shep-full">{r.e(digest)}</code> ' + copy_button(digest, what)
+    return f'<code class="shep-full">{r.e(digest)}</code> ' + copy_button(digest, what,
+                                                                         icon_only=True)
 
 
 def served_warnings(status: Mapping[str, Any]) -> List[Tuple[str, str]]:
@@ -791,7 +797,8 @@ def served_facts_html(state: Mapping[str, Any], *, open_section: str = "identity
         return note + (
             '<div class="shep-facts"><details class="shep-facts-sec" data-sec="identity" open>'
             '<summary><span class="shep-facts-n">1</span> Identity</summary>'
-            f'<div class="shep-facts-bd"><div class="shep-kv">{_kv_rows(rows)}</div></div></details>'
+            f'<div class="shep-facts-bd"><div class="shep-kv">{_kv_rows(rows[:2])}'
+            f'{_kv_rows(rows[2:], wide=True)}</div></div></details>'
             '<section class="shep-facts-sec shep-facts-warn" data-sec="warnings"><h4>'
             '<span class="shep-facts-n">5</span> Warnings</h4>'
             f'<div class="shep-facts-bd">{warn}{_structure_line(status)}</div></section></div>')
@@ -841,7 +848,8 @@ def served_facts_html(state: Mapping[str, Any], *, open_section: str = "identity
                                     f"Trained on: {r.e(words)}")
         html_ = _replace_in_section(html_, "data", _NOT_RECORDED,
                                     f'<span class="shep-muted">{r.e(short)}</span>')
-    html_ = _insert_after_section(html_, "identity", _kv_rows(served_rows), _ID_ANCHOR)
+    html_ = _insert_after_section(html_, "identity", _kv_rows(served_rows, wide=True),
+                                  _ID_ANCHOR)
     html_ = _insert_after_section(
         html_, "evidence",
         ' · <button type="button" class="shep-dx-link" data-key="models">Full records: '

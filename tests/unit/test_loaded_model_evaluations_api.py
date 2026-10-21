@@ -71,7 +71,7 @@ OTHER_CHECKPOINT = "c" * 64
 RESPONSE_KEYS = {"state", "checkpoint_sha256", "ledger", "records", "records_not_shown"}
 RECORD_VIEW_KEYS = {
     "cohort", "counts", "metrics", "n_ranked", "relations", "r10", "environment_class",
-    "gpu", "dataset_origin", "scoring_semantics_digest", "measurement_semantics_digest",
+    "deterministic_algorithms", "gpu", "dataset_origin", "scoring_semantics_digest", "measurement_semantics_digest",
     "registration", "n_corroborating", "source_artifact_digest",
 }
 
@@ -310,6 +310,7 @@ def test_the_loaded_checkpoints_records_are_shown(app, served, tmp_path):
         },
     }
     assert view["environment_class"] == "CUDA, deterministic algorithms on"
+    assert view["deterministic_algorithms"] is True     # the record's regime says so (M5-3)
     assert view["gpu"] == {"name": "NVIDIA GeForce RTX 4090", "driver": "560.35"}
     assert view["dataset_origin"] == "synthetic"
     assert view["scoring_semantics_digest"] == record["scoring_semantics_digest"]

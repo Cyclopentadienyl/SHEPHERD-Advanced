@@ -733,7 +733,36 @@ def test_a_poll_reads_the_store_again_only_when_the_job_changed(site, monkeypatc
     ended = poll.fn("test", page, {}, None, "demo", LABEL, None,
                     {"job_id": "test-1", "status": "running"}, None, {"label": LABEL},
                     _readonly())
-    assert reads == [LABEL] and ended[2] == {"job_id": "test-1", "status": "completed"}
+    assert reads == [LABEL] and ended[2] == {"job_id": "test-1", "status": "completed",
+                                             "gpu": ["none", "GPU jobs: none"]}
+
+
+def test_the_header_chips_follow_the_gpu_line_on_the_tick_that_sees_it_change(site, monkeypatch):
+    """M5-3: the header's chips are read again on the slow tick whose GPU line
+    (the GPU chip read now) is not the one this session saw last; an unchanged
+    tick sends nothing for them."""
+    from src.webui.components import chips
+
+    demo, ctx, _registry = _page_component()
+    poll = _named(demo, "_poll")
+    assert poll.outputs[-1] is ctx.chips
+    monkeypatch.setattr(tp, "read_job", lambda **k: {"status": "idle", "job_id": None, "log": []})
+    line = ["none", "GPU jobs: none"]
+    monkeypatch.setattr(tp, "gpu_line", lambda **k: tuple(line))
+    read = []
+    monkeypatch.setattr(chips, "read_chips", lambda request: read.append(1) or "<chips>")
+    monkeypatch.setattr(tp, "read_reports", lambda label, **k:
+                        {"label": label, "runs": [], "problem": None, "notes": []})
+    page = tp.read_page(_readonly())
+    seen = {"job_id": None, "status": "idle", "gpu": ["none", "GPU jobs: none"]}
+    same = poll.fn("test", page, {}, None, "demo", LABEL, None, seen, None, {"label": LABEL},
+                   _readonly())
+    assert same[-1] == gr.update() and read == []
+    line[:] = ["busy", "GPU job: training (job runner)"]
+    moved = poll.fn("test", page, {}, None, "demo", LABEL, None, seen, None, {"label": LABEL},
+                    _readonly())
+    assert moved[-1] == "<chips>" and read == [1]
+    assert moved[2]["gpu"] == ["busy", "GPU job: training (job runner)"]
 
 
 def test_the_report_of_a_run_that_has_just_ended_is_selected(site, monkeypatch):
@@ -1189,9 +1218,16 @@ def test_a_long_choice_ends_in_an_ellipsis_with_its_whole_text_as_title():
                     "shep-test-intake", "shep-test-role", "shep-test-partial"):
         assert "shep-test-select" in by_id[elem_id].elem_classes, elem_id
     # The ellipsis ends before the chevron Gradio draws over the input's right.
-    assert ".shep-test-select input { text-overflow: ellipsis; padding-right: 26px !important; }" \
-        in tp.PAGE_CSS
-    assert "input.title = input.value" in (by_id["shep-test-cohort-hd"].js_on_load or "")
+    assert ".shep-test-select input { padding-right: 26px !important; }" in tp.PAGE_CSS
+    # The titled ellipsis is the shell's one rule for every select (M5-3): the
+    # page's own hover script, which left a stale title when the value changed
+    # after the pointer had passed, is gone.
+    from src.webui import shell, style
+
+    assert '.gradio-container .wrap-inner input[role="combobox"] { text-overflow: ellipsis; }' \
+        in style.SHELL_CSS
+    assert 'input[role="combobox"]' in shell.SHELL_HEAD
+    assert not by_id["shep-test-cohort-hd"].js_on_load
     (label, _key), = tp.model_choices({"items": [{
         "architecture": "gat", "run": RUN, "filename": "best.pt", "epoch": 12, "sha256": "c" * 64}]})
     assert label.startswith("epoch 12 · GAT · run 2026-10-17 09:15") and label.endswith("· best.pt")

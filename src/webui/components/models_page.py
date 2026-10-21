@@ -548,7 +548,12 @@ def view_from_route(record: Mapping[str, Any], checkpoint_sha: Any) -> Dict[str,
     key = route_record_key(record, checkpoint_sha)
     view["key"] = list(key) if key else None
     klass = record.get("environment_class")
-    view["deterministic"] = (True if klass == ENVIRONMENT_CLASSES[0] else
+    # The record's own setting, which the route reads from the ledger (no
+    # checkpoint opened), so read-only shows what an operator sees; the CUDA
+    # classes carry it too, a CPU run's class does not (M5-3).
+    flag = record.get("deterministic_algorithms")
+    view["deterministic"] = (flag if type(flag) is bool else
+                             True if klass == ENVIRONMENT_CLASSES[0] else
                              False if klass == ENVIRONMENT_CLASSES[1] else None)
     view["device"] = ("cuda" if klass in ENVIRONMENT_CLASSES[:2] else
                       "cpu" if klass == ENVIRONMENT_CLASSES[2] else None)
@@ -708,7 +713,7 @@ def records_table_html(views: Sequence[Mapping[str, Any]], contest: Mapping[str,
                        f'<div class="shep-sub">(version <code>'
                        f'{r.e(r.short_hex(cohort.get("version_manifest_sha256")))}</code>) '
                        f'{synthetic}</div><div class="shep-sub">role '
-                       f'<code>{r.wrap_at_underscores(role)}</code>'
+                       f'{r.ident_html(role)}'
                        + (f" · {r.e(role_note)}" if role_note else "") + "</div>")
         mrr = fmt_metric("untruncated_mrr", metrics.get("untruncated_mrr"))
         main = (f'<tr class="shep-mp-main"><td>{cohort_cell}</td>'
@@ -1052,8 +1057,8 @@ def options_html(data: Mapping[str, Any], ctl: Mapping[str, Any],
             why = ROLE_NOT_LISTED
         off.append(f'<div class="shep-mp-off" title="{r.e(version.get("problem") or why)}">'
                    f'<span class="shep-mp-radio" aria-hidden="true"></span><span><b>'
-                   f'{r.e(version.get("label"))}</b> (role <code>{r.e(version.get("role"))}'
-                   f'</code>) — {r.e(why)}</span></div>')
+                   f'{r.e(version.get("label"))}</b> (role {r.ident_html(version.get("role"))}) '
+                   f'— {r.e(why)}</span></div>')
     if refused:
         parts.append(f'<div class="shep-reason shep-amber-t">Not ordered, so the list stays '
                      f'newest first: {r.e(r.short_reason(refused, 240))}</div>')
@@ -1152,9 +1157,10 @@ def detail_parts(listing: Mapping[str, Any], data: Mapping[str, Any], key: Any,
                f'cannot be loaded: {r.e(why)}</div>')
         return {"header": header, "top": top, "records": "", "usage": "", "seg": None}
     sha = item["sha256"]
+    run_ident = r.ident_html(f'{item.get("architecture")}/{item.get("run")}')
     ident = (f'<div class="shep-digest"><span class="shep-dl">Model fingerprint (checkpoint '
-             f'sha256) · <code>{r.e(item.get("architecture"))}/{r.e(item.get("run"))}</code> · '
-             f'{r.e(item.get("filename"))}{help_button("model-fingerprint", "Model fingerprint")}'
+             f'sha256) · {run_ident} · {r.ident_html(item.get("filename"))}'
+             f'{help_button("model-fingerprint", "Model fingerprint")}'
              f'</span><code class="shep-full">{r.e(sha)}</code>'
              f'{copy_button(sha, "the full model fingerprint")}</div>')
     trained = r.trained_on_html(item.get("dataset_fingerprint"), workspaces)
@@ -1583,10 +1589,11 @@ PAGE_CSS = f"""
 {_PAGE} {_LIST} .shep-model-head > .form:has(#shep-models-research-workspace) {{ grid-area: ws; }}
 {_PAGE} {_LIST} .shep-model-head > .form:has(#shep-mp-arch) {{ grid-area: arch; }}
 {_PAGE} #shep-mp-wsline {{ grid-area: wsline; margin-top: -4px; }}
-/* A value too long for its select ends in "…" before the chevron, never under it. */
+/* A value too long for its select ends in "…" before the chevron, never under it (the
+   titled ellipsis is the shell's rule for every select). */
 {_PAGE} #shep-models-research-workspace input, {_PAGE} #shep-mp-arch input,
 {_PAGE} #shep-mp-version input {{
-  padding-right: 24px !important; text-overflow: ellipsis;
+  padding-right: 24px !important;
 }}
 {_PAGE} .shep-mp-wsline {{ display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; font-size: 14px; color: var(--shep-text-2); }}
 {_PAGE} #shep-mp-controls {{ grid-area: ctl; gap: 8px !important; }}
@@ -1701,12 +1708,33 @@ PAGE_CSS = f"""
   }}
   {_PAGE} {_LIST} > .shep-model-confirm-box > #shep-models-research-confirm {{ flex: 1 1 auto; min-height: 0; overflow: auto !important; }}
   {_PAGE} {_LIST} > .shep-model-confirm-box > .row {{ flex: none; }}
+  /* The panel's title stays at its top however far the panel scrolls (M5-3:
+     at 1440 x 900 it scrolled away with the controls and the rows). The header
+     row's items are laid out in the panel's own grid (the row itself draws no
+     box), so the title sticks to the panel, not to the header row. */
+  {_PAGE} {_LIST} > .shep-model-main {{
+    display: grid !important; align-items: start; align-content: start; gap: 10px 10px !important;
+    grid-template-columns: minmax(0, 1fr) 128px;
+    grid-template-rows: repeat(5, max-content) auto;
+    grid-template-areas: "lhd lhd" "ws arch" "wsline wsline" "ctl ctl" "count count" "body body";
+    padding: 0 16px !important;
+  }}
+  {_PAGE} {_LIST} > .shep-model-main > .shep-model-head {{ display: contents !important; }}
+  {_PAGE} {_LIST} > .shep-model-main > .shep-model-body {{ grid-area: body; padding: 0 0 12px !important; }}
+  /* Above the field labels it passes over (Gradio draws them at z-index 40). */
+  {_PAGE} #shep-mp-hd {{ position: sticky; top: 0; z-index: 45; background: var(--shep-panel); border-radius: 10px 10px 0 0; }}
+  {_PAGE} {_LIST}:has(.shep-mp-ro) > .shep-model-main {{ row-gap: 0 !important; }}
+}}
+@media (min-width: 1400px) and (min-height: 760px) and (max-height: 999px) {{
+  /* The panel scrolls as one region: the table's header sticks under the title. */
+  {_PAGE} #shep-models-research-rows .shep-tbl th {{ top: 48px; }}
 }}
 @media (min-width: 1400px) and (min-height: 1000px) {{
   /* Room for both: the header stays whole and the rows scroll in the region
      under it (at least 240 px of it; a taller header scrolls the panel). */
+  {_PAGE} {_LIST} > .shep-model-main {{ grid-template-rows: repeat(5, max-content) minmax(240px, 1fr); }}
   {_PAGE} {_LIST} > .shep-model-main > .shep-model-body {{
-    flex: 1 1 auto !important; min-height: 240px; overflow: hidden; display: flex !important;
+    align-self: stretch; min-height: 0; overflow: hidden; display: flex !important;
   }}
   {_PAGE} #shep-models-research-rows {{ overflow: auto !important; min-height: 0; max-height: 100%; }}
 }}

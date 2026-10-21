@@ -98,10 +98,20 @@ def test_a_primary_buttons_text_has_at_least_four_and_a_half_to_one(background, 
     assert contrast(_effective(text), _effective(background)) >= 4.5
 
 
+#: The one rule every disabled button follows, primary, secondary or stop (M5-3:
+#: a secondary button faded by Gradio beside a grey primary one was a second
+#: disabled look, and the grey one read as almost enabled).
+DISABLED_BUTTONS = (".gradio-container button.primary:disabled, "
+                    ".gradio-container button.secondary:disabled, "
+                    ".gradio-container button.stop:disabled")
+
+
 def test_a_disabled_primary_button_is_grey_with_readable_grey_text():
     """Gradio draws a disabled primary button on the hover colour at half
-    opacity; the stylesheet draws it grey, opaque, with its text at 4.5:1."""
-    rule = _block(".gradio-container button.primary[disabled]")
+    opacity, and a secondary one faded; the stylesheet draws every disabled
+    button the same way: grey, opaque, with its text at 4.5:1."""
+    rule = _block(DISABLED_BUTTONS)
+    assert rule, "one rule draws every kind of disabled button"
     declarations = {name.strip(): value for name, _, value in
                     (part.partition(":") for part in rule.split(";")) if name.strip()}
     tokens = _tokens()

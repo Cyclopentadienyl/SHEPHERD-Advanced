@@ -218,8 +218,7 @@ def plan_continuation(
         run_stage = {"kind": "extension", "start_epoch": completed,
                      "target_epochs": extend_epochs, "schedule": schedule}
         start_epoch, end_epoch = completed, completed + extend_epochs
-        rates = ", ".join(f"{r:.3g}" for r in schedule["lrs"])
-        action = (f"Extend training by {extend_epochs} epochs at a fixed rate of {rates} "
+        action = (f"Extend training by {extend_epochs} epochs at {_rates_text(schedule['lrs'])} "
                   f"(epochs {completed + 1}-{completed + extend_epochs}, new target "
                   f"{completed + extend_epochs})")
 
@@ -297,6 +296,16 @@ def _check_amp_takes_effect_alike(
             f"{where} trained with mixed precision {'on' if recorded else 'off'} "
             f"({amp.get('dtype')}); on {device} it would be {'on' if here else 'off'}. "
             "Continue it on a device where mixed precision takes effect as it did.")
+
+
+def _rates_text(rates: List[float]) -> str:
+    """The extension's rate in words: one rate when every parameter group
+    holds the same ("a fixed rate of 1e-05"), each group's when they differ
+    (M5-3: two groups at one rate read "a fixed rate of 1e-05, 1e-05")."""
+    shown = [f"{rate:.3g}" for rate in rates]
+    if len(set(shown)) == 1:
+        return f"a fixed rate of {shown[0]}"
+    return f"fixed rates of {', '.join(shown)} (one per parameter group)"
 
 
 def _fixed_rates(

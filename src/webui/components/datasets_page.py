@@ -75,6 +75,20 @@ FOOTNOTE = (
 USE_NOTE = ("Selects it in your Training run bar (this browser tab) and opens Training. Nothing "
             "changes on the server; Start is the gated act.")
 
+
+def use_note_html(data: Mapping[str, Any], name: Optional[str]) -> str:
+    """The line beside "Use for training ›": what it does, or, when it is
+    disabled, why, as visible text (M5-3: a not-trainable row disabled it with
+    no reason beside it)."""
+    row = next((x for x in data.get("rows") or [] if x["name"] == name), None)
+    if row is None:
+        return '<span class="shep-note">Select a dataset to use it for training.</span>'
+    if not row.get("trainable"):
+        why = row.get("not_trainable") or "not trainable"
+        return (f'<span class="shep-note" title="{r.e(why)}">Not available: {r.e(row["name"])} is '
+                f'not trainable — {r.e(r.not_trainable_short(row, 120))}.</span>')
+    return f'<span class="shep-note">{USE_NOTE}</span>'
+
 def read_datasets() -> Dict[str, Any]:
     """The page's data for one session, read once per refresh: the server's
     workspaces as the dashboard shows them (`workspaces.read_workspaces`: every
@@ -268,25 +282,27 @@ def create_datasets_page(ctx: Any) -> None:
             header = plain_html(header_html({"rows": []}), elem_id="shep-ds-header")
             table = plain_html('<div class="shep-muted">Reading the server’s workspace list…</div>',
                                elem_id="shep-ds-table", js_on_load=_ROWS_JS)
-            plain_html(f'<div class="shep-reason">{BUILD_LINE}</div>'
+            # One paragraph: the build line's words and code chips are one flex
+            # item of the reason row (M5-3: each was its own column at 1536 px).
+            plain_html(f'<div class="shep-reason"><span>{BUILD_LINE}</span></div>'
                        f'<p class="shep-note">{FOOTNOTE}</p>', elem_id="shep-ds-notes")
         with gr.Column(elem_classes=["shep-panel", "shep-ds-details"], scale=10):
             details = plain_html(details_html({}, None), elem_id="shep-ds-details")
             with gr.Row(elem_classes=["shep-panel-ft"]):
                 use = gr.Button("Use for training ›", variant="primary", interactive=False,
                                 elem_id="shep-ds-use", scale=0)
-                plain_html(f'<span class="shep-note">{USE_NOTE}</span>',
-                           elem_id="shep-ds-use-note")
+                use_note = plain_html(use_note_html({}, None), elem_id="shep-ds-use-note")
 
     def _refresh(current, run_bar):
         data = read_datasets()
         names = [x["name"] for x in data["rows"]]
         chosen = current if current in names else (names[0] if names else None)
         return (data, chosen, header_html(data), table_html(data, run_bar, chosen),
-                details_html(data, chosen), _use_update(data, chosen))
+                details_html(data, chosen), _use_update(data, chosen),
+                use_note_html(data, chosen))
 
     refresh = {"fn": _refresh, "inputs": [selected, ctx.training_workspace],
-               "outputs": [data_state, selected, header, table, details, use],
+               "outputs": [data_state, selected, header, table, details, use, use_note],
                "show_progress": "hidden"}
     ctx.on_page_open("datasets", refresh)
 
@@ -295,11 +311,12 @@ def create_datasets_page(ctx: Any) -> None:
         key = raw.get("key") if isinstance(raw, Mapping) else None
         names = [x["name"] for x in data.get("rows") or []]
         if key not in names:
-            return gr.update(), gr.update(), gr.update(), gr.update()
-        return key, table_html(data, run_bar, key), details_html(data, key), _use_update(data, key)
+            return gr.update(), gr.update(), gr.update(), gr.update(), gr.update()
+        return (key, table_html(data, run_bar, key), details_html(data, key),
+                _use_update(data, key), use_note_html(data, key))
 
     table.click(_select, inputs=[data_state, ctx.training_workspace],
-                outputs=[selected, table, details, use], show_progress="hidden")
+                outputs=[selected, table, details, use, use_note], show_progress="hidden")
 
     def _use(data, name):
         row = next((x for x in data.get("rows") or [] if x["name"] == name), None)
@@ -363,4 +380,5 @@ __all__ = [
     "read_datasets",
     "redact",
     "table_html",
+    "use_note_html",
 ]

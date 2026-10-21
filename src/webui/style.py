@@ -166,6 +166,17 @@ body { color: var(--shep-text); }
 .shep-seg .wrap label.selected { background: #fff !important; border-color: var(--shep-grey-200) !important; box-shadow: 0 1px 2px rgba(20,24,40,.12) !important; font-weight: 600; color: var(--shep-text) !important; }
 .shep-seg .wrap label span { color: inherit !important; }
 .shep-seg .wrap label input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+/* One row, always (M5-3: the candidate details' "Paths 5" wrapped onto a second
+   row at 1536 x 760). The segments are grid columns sized up to their text: when
+   the row is short of room, the short labels stay whole and the longest gives
+   way, ending in an ellipsis with its whole text as its title (the shell's head
+   script). */
+.shep-seg .wrap {
+  display: inline-grid !important; grid-auto-flow: column; grid-auto-columns: minmax(0, max-content);
+  max-width: 100%; box-sizing: border-box;
+}
+.shep-seg .wrap label { min-width: 0 !important; }
+.shep-seg .wrap label span { margin-left: 0 !important; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---------------------------------------------------------------- primary buttons */
 /* White text on every primary button at a contrast of at least 4.5:1, at rest
@@ -180,9 +191,13 @@ body { color: var(--shep-text); }
   --button-primary-text-color: #ffffff;
   --button-primary-text-color-hover: #ffffff;
 }
-.gradio-container button.primary[disabled] {
+/* One disabled look for every button, primary, secondary or stop (M5-3: Gradio
+   fades a disabled secondary button to half opacity, so beside a grey primary
+   one a second style read as "almost enabled"). */
+.gradio-container button.primary:disabled, .gradio-container button.secondary:disabled, .gradio-container button.stop:disabled {
   background: var(--shep-grey-50) !important; border-color: var(--shep-grey-200) !important;
   color: var(--shep-grey-600) !important; opacity: 1 !important; filter: none !important; box-shadow: none !important;
+  cursor: not-allowed;
 }
 
 /* ---------------------------------------------------------------- field labels and checkboxes */
@@ -243,6 +258,27 @@ body { color: var(--shep-text); }
 .shep-mark-outline { background: #fff; border: 1px solid var(--shep-border-2); color: var(--shep-text-2); }
 .shep-mark-grey { background: var(--shep-grey-50); border: 1px solid var(--shep-grey-200); color: var(--shep-grey-800); }
 .shep-btn { height: 32px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--shep-border-2); background: #fff; font-size: 14px; cursor: pointer; }
+/* An identifier (a role code, a run, a checkpoint file) is never broken inside
+   its name: it stays whole, and in a place too narrow for it ends in an
+   ellipsis, its whole value in its title (`renderers.ident_html`). */
+.gradio-container code.shep-ident {
+  display: inline-block; max-width: 100%; vertical-align: bottom; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; word-break: normal;
+}
+/* Words kept in groups: a line breaks between groups, never leaving a word or
+   two of a group alone on a line (`renderers.word_groups`); a group wider than
+   its line still wraps inside itself. */
+.shep-wg { display: inline-block; max-width: 100%; }
+/* A select's value longer than its box ends in an ellipsis, and the shell's
+   head script gives it its whole value as its title (the layout rule's
+   titled ellipsis), on every page. */
+.gradio-container .wrap-inner input[role="combobox"] { text-overflow: ellipsis; }
+/* An accordion's ▼ turns in a square box, so turned it stays inside its header
+   (M5-3: a turned glyph, taller than wide, spilled 3 px past the button). */
+.gradio-container button.label-wrap > .icon {
+  flex: none; display: inline-flex !important; align-items: center; justify-content: center;
+  width: 22px; height: 22px; line-height: 1;
+}
 
 /* panels */
 .shep-panel { background: var(--shep-panel) !important; border: 1px solid var(--shep-border) !important; border-radius: 10px !important; padding: 0 !important; gap: 0 !important; overflow: hidden; flex-wrap: nowrap !important; }
@@ -259,6 +295,12 @@ body { color: var(--shep-text); }
 .shep-kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; font-size: 15px; align-items: baseline; }
 .shep-card .shep-kv { padding: 10px 12px; }
 .shep-kv-2 { grid-template-columns: max-content max-content max-content max-content; }
+/* A digest row (`renderers.kv_cells`): its label on a line of its own over the
+   whole grid, its full value with an icon-only Copy on the line under it. */
+.shep-kv > .shep-kv-wide { grid-column: 1 / -1; min-width: 0; }
+.shep-kv > .shep-k.shep-kv-wide { font-size: 14px; font-weight: 600; margin-bottom: -4px; }
+.shep-kv > .shep-v.shep-kv-wide { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; }
+.shep-kv > .shep-v.shep-kv-wide > code.shep-full { flex: 0 1 auto; min-width: 0; }
 .shep-k { color: var(--shep-text-2); }
 .shep-digest { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; align-items: center; }
 .shep-digest .shep-dl { grid-column: 1 / -1; font-size: 14px; font-weight: 600; color: var(--shep-text-2); }
@@ -348,6 +390,10 @@ button.shep-row {
   .shep-page > .shep-panel { min-height: 0; max-height: 100%; display: flex; flex-direction: column; }
   .shep-page > .shep-panel > .block { flex: none; }
   footer, #runtime_footer { flex: none; }
+  /* A panel's header stays where it is when its body scrolls (M5-3: the Test
+     Result panel's title scrolled away with the report): a header drawn inside
+     the region that scrolls sticks to that region's top. */
+  .shep-panel .shep-panel-hd { position: sticky; top: 0; z-index: 6; background: var(--shep-panel); }
 }
 /* Narrow: the regions stack, the page scrolls, nothing scrolls inside. */
 @media (max-width: 1399px), (max-height: 759px) {

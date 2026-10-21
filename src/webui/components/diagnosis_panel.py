@@ -33,7 +33,7 @@ scrolls.
   reads it (`_identity_rows`), the result's against the card's last read; a
   read that failed or is older than the result never leaves "equal" showing.
   The footer holds the exports (unchanged: CSV and report keep the result's own
-  identity) and the medical-device line, once.
+  identity; not shown until a result exists) and the medical-device line, once.
 - **The details** of the selected row: Evidence · Explanation · Matching
   phenotypes · Paths (in-page segments).
 - **Two drawers**, one open at a time: the identity drawer ("Model in use |
@@ -1033,7 +1033,12 @@ def _write_exports(result: Dict[str, Any]) -> Tuple[str, str]:
 # The page: help texts and fixed words
 # =============================================================================
 #: DownloadButton update for the "no downloadable result" state.
-_DOWNLOAD_DISABLED = gr.update(value=None, interactive=False)
+#: No result: the exports are not shown at all (the mockup's first screen has
+#: none), but stay mounted (``"hidden"``), so the next result only shows them.
+_EXPORTS_HIDDEN = gr.update(value=None, interactive=False, visible="hidden")
+#: A result whose export files could not be written (or that has no
+#: candidate): the exports are shown, disabled, beside the reason.
+_DOWNLOAD_DISABLED = gr.update(value=None, interactive=False, visible=True)
 
 #: The fields' help, behind the shared ⓘ (`src/webui/components/help.py`):
 #: ``{elem_id: (title, text)}``, registered by the tab builder. Only a
@@ -1706,7 +1711,7 @@ def _no_result_outputs(state: Mapping[str, Any], notice: Optional[str]) -> Dict[
         "results_hd": results_header_html(None), "badge": "",
         "results_body": empty_results_html(card.run_blocked(state), notice),
         "results_state": None, "selected": None,
-        "export_csv": _DOWNLOAD_DISABLED, "export_report": _DOWNLOAD_DISABLED,
+        "export_csv": _EXPORTS_HIDDEN, "export_report": _EXPORTS_HIDDEN,
         **details_outputs(None, None),
     }
 
@@ -1741,8 +1746,8 @@ def diagnose(phenotype_text: str, patient_id: str, top_k: Any, explanations: boo
     if candidates:
         try:
             csv_path, md_path = _write_exports(result)
-            csv_update = gr.update(value=csv_path, interactive=True)
-            md_update = gr.update(value=md_path, interactive=True)
+            csv_update = gr.update(value=csv_path, interactive=True, visible=True)
+            md_update = gr.update(value=md_path, interactive=True, visible=True)
         except Exception as exc:  # noqa: BLE001 — never let export break the result
             logger.warning("Export file generation failed: %s", exc)
             csv_update = md_update = _DOWNLOAD_DISABLED
@@ -2016,11 +2021,13 @@ def create_diagnosis_tab(ctx: Any) -> None:
                 results_body = plain_html(empty_results_html(), elem_id="shep-dx-results-body",
                                           js_on_load=MODEL_LIST_JS)
             with gr.Row(elem_id="shep-dx-results-ft", elem_classes=["shep-panel-ft"]):
+                # Not shown until a result exists (`_EXPORTS_HIDDEN`).
                 export_csv = gr.DownloadButton("⬇ Export CSV", size="sm", interactive=False,
-                                               scale=0, min_width=0, elem_id="shep-dx-export-csv")
+                                               scale=0, min_width=0, elem_id="shep-dx-export-csv",
+                                               visible="hidden")
                 export_report = gr.DownloadButton("⬇ Export report (.md)", size="sm",
                                                   interactive=False, scale=0, min_width=0,
-                                                  elem_id="shep-dx-export-md")
+                                                  elem_id="shep-dx-export-md", visible="hidden")
                 plain_html(help_button("dx-exports", "Exports"), elem_id="shep-dx-exports-help")
                 plain_html(f'<p class="shep-dx-device">{_e(NOT_A_MEDICAL_DEVICE)}</p>',
                            elem_id="shep-dx-device")
@@ -2346,6 +2353,8 @@ PAGE_CSS = f"""
 {_TAB} #shep-dx-results-ft {{ flex-wrap: wrap !important; gap: 8px 10px !important; }}
 {_TAB} #shep-dx-results-ft > * {{ flex: 0 0 auto !important; width: auto !important; }}
 {_TAB} #shep-dx-device {{ flex-basis: 100% !important; }}
+/* No result, no exports: their ⓘ goes with them (Gradio's "hidden" class). */
+{_TAB} #shep-dx-results-ft:has(#shep-dx-export-csv.hidden) #shep-dx-exports-help {{ display: none !important; }}
 {_TAB} .shep-dx-device {{ margin: 0; font-size: 14px; color: var(--shep-text-2); }}
 {_TAB} .shep-dx-det-hd {{ flex-direction: column; align-items: flex-start !important; gap: 2px !important; }}
 {_TAB} .shep-dx-det-hd h2 {{ display: flex; align-items: center; gap: 8px; overflow-wrap: anywhere; }}
@@ -2377,9 +2386,15 @@ PAGE_CSS = f"""
 {_TAB} .shep-dx-digests-h {{ margin: 4px 0 0; }}
 {_TAB} #shep-dx-id-result table {{ font-size: 14px; table-layout: fixed; width: 100%; }}
 {_TAB} #shep-dx-id-result td, {_TAB} #shep-dx-id-result th {{ overflow-wrap: anywhere; vertical-align: top; }}
-{_TAB} #shep-dx-id-result code {{ white-space: normal; word-break: break-all; }}
+/* A code chip is text in its line, breaking only where it must (M5-3: Gradio
+   draws a Markdown chip as an inline flex box, a box a line may break before,
+   which left "(" alone: "Knowledge graph (" / "kg.json)"). */
+{_TAB} #shep-dx-id-result code {{ display: inline; white-space: normal; word-break: normal;
+  overflow-wrap: anywhere; -webkit-box-decoration-break: clone; box-decoration-break: clone; }}
 {_TAB} #shep-dx-id-result p {{ font-size: 15px; }}
-{_TAB} .shep-dx-drawer .shep-kv {{ grid-template-columns: minmax(6em, 11em) minmax(0, 1fr); }}
+/* The labels of the drawers' Model Facts are short (a digest's long label takes a
+   line of its own, `renderers.kv_cells`), so the values get the width. */
+{_TAB} .shep-dx-drawer .shep-kv {{ grid-template-columns: minmax(6em, max-content) minmax(0, 1fr); }}
 {_TAB} .shep-dx-drawer .shep-k, {_TAB} .shep-dx-drawer .shep-v {{ min-width: 0; overflow-wrap: anywhere; }}
 {_TAB} .shep-dx-drawer .shep-facts-sum {{ overflow-wrap: anywhere; }}
 {_TAB} #shep-dx-change button.shep-row {{ display: block; }}

@@ -220,8 +220,8 @@ def create_runtime_settings_tab(ctx: Any) -> None:
     gr.Markdown(
         "### Runtime Settings\n"
         "These settings change **how computation runs on the hardware** — speed, "
-        "memory, and numerical precision — and are separate from the Training "
-        "Console (which configures the model). Changes take effect only after you "
+        "memory, and numerical precision — and are separate from Research › "
+        "Training (which configures the model). Changes take effect only after you "
         "click **Apply Settings**; items tagged **🔄 Restart required** also need a "
         "backend restart.\n\n"
         "_An explicit `PYTORCH_ALLOC_CONF` / `PYTORCH_CUDA_ALLOC_CONF` set in the "
