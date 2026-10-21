@@ -126,9 +126,13 @@ Contract M3c (what is served is identified) adds checks, not probes:
 
 M5's acceptance, carried by the same run where it can run headless (M5-3;
 functional only: not the dashboard's layout or a browser session, and no long
-training). A5 records the installed packages against the committed uv.lock, by
-name and version: a set that differs (a homelab's, say) is stated in the report
-and on the console, never hidden.
+training). A5 records the installed packages against the uv.lock beside the
+checkout, by name and version, and whether that lock is the one committed at
+the tested commit: versions that differ, a package installed more than once,
+and the packages outside the lock, the deploy scripts' (PyG, cuVS and what they
+require) told from the ones nothing installed requires (an older lock's
+leftovers). A set that differs (a homelab's, say) is stated in the report and
+on the console, never hidden, and said again beside the acceptance's verdict.
     Phase M, after T6, on the probe's own deployment under <work>/m5: a copy of
     the demo workspace under its own workspace root, M2's resumed checkpoint in
     a run there, T1's registry. The server's lists name the workspace, its
@@ -136,32 +140,41 @@ and on the console, never hidden.
     what they list (W1). The service, started as the launcher starts it in its
     own process on a free loopback port, in mode M1 and read-only: D8 allows a
     loopback request in M1 and refuses a forwarding header, a foreign Host, a
-    foreign Origin and a cross-site request, on a gated route, the gated
-    checkpoint list and a gated Gradio event alike (W2); no
-    Access-Control-Allow-Origin for a foreign Origin (W3); the route guard
-    refuses the file= URL forms it is sent (ten spellings; a listener the URLs
-    name sees no fetch), process_recording and uploads before the body is
-    read (W4); without M1
-    every operator control is refused and the read-only routes answer (W5). A
-    request off loopback is refused, asked of the application in this process
-    (W6). A busy GPU lock refuses the runner and both CLIs naming its holder,
-    and a killed holder releases it (W7). A test run through the job runner,
-    its inputs found in the server's lists: its outcome file, its report kept
-    and not registered as the publication contract says, its usage-history
-    entry (W8); that report registered from the store, a copy outside it
-    refused (W9); a run started for another model or cohort fails before
-    measuring, nothing kept (W10); a training job holds the lock, a test start,
-    a test cancel and the measurement CLI are refused, and its stop reaches
-    only it and ends it as stopped (W11).
+    foreign Origin and a cross-site request on every API route its dependency
+    gates and on three gated dashboard events (Training's Stop, Test's Start
+    and Register), nothing done either way (W2); no Access-Control-Allow-Origin
+    for a foreign Origin (W3); the route guard refuses the file= URL forms it
+    is sent (ten spellings), none reaching Gradio's URL fetch, counted in this
+    process, and process_recording and uploads before the body is read (W4);
+    without M1 every gated API route and those events are refused and the
+    read-only routes answer (W5). A request off loopback is refused, asked of
+    the application in this process (W6). A busy GPU lock refuses the runner
+    and both CLIs naming its holder, and a killed holder releases it (W7). A
+    test run through the job runner, its inputs found in the server's lists:
+    its outcome file, its report kept and not registered as the publication
+    contract says, its usage-history entry, a training stop meanwhile refused
+    (W8); that report registered from the store, a copy outside it refused
+    (W9); a run started for another model or cohort fails before measuring,
+    nothing kept (W10); a training job holds the lock, a test start, a test
+    cancel and the measurement CLI are refused, and its stop ends it as
+    stopped (W11).
     Phase R, after RT3 and before R8, which therefore covers them: the real
     workspace as the server lists it (RW1); a test run through the runner on
     it, on the device, kept and registered (RW2); a short training job on it
     started and stopped, other jobs refused while it runs (RW3).
-    Every M5 setting is the probe's own while these run (`_M5_SETTINGS`), so
-    the deployment's lock, root and registry are never used; run the
-    acceptance while no managed job runs. The job runner's own temporary files
-    (a training job's settings file, a test run's job directory) are made in
-    the system's temporary directory and removed when the job ends.
+    Every M5 setting is the probe's own while M5's probes run
+    (`_M5_SETTINGS`), so they never use the deployment's lock, root or
+    registry; W1 and RW1 state whether the lock the operator's settings name
+    was held meanwhile. The earlier measurement probes (M3, M7,
+    M11.measurement, T2, T4, R5, RT2) run measure_scorer in this process and
+    take whatever GPU lock the shell's settings name, as the CLI does. Run the
+    acceptance while no managed GPU job runs. The job runner's own temporary
+    files (a training job's settings file, a test run's job directory) are made
+    in the system's temporary directory and removed when the job ends.
+    Stop a run with Ctrl-C or SIGTERM (``kill <pid>``): the services and the
+    jobs it started are stopped on the way out. On Linux its services also end
+    with it after a SIGKILL; a runner job it started then keeps running until
+    stopped by its pid, which the GPU lock's holder record names.
 """
 from __future__ import annotations
 
@@ -603,28 +616,22 @@ def phase_environment(
         collected = installed_against_lock(project_root / "uv.lock")
         collected["temporary_directory"] = _socket_room()
         facts["installed_against_lock"] = collected
+        # **Stated, never hidden** (M5-3): a homelab whose packages moved away
+        # from the committed lock says so on the console too, here and again
+        # beside the acceptance's verdict at the end (`environment_verdict`).
+        print(f"         {lock_sentence(collected)}")
+        if collected["temporary_directory"]["socket_fits"] is False:
+            print("         a DataLoader worker's socket cannot be made under the temporary "
+                  "directory (its path is too long; see A5's facts): training with workers "
+                  "fails here; use a short TMPDIR, such as TMPDIR=/tmp")
         differ, outside = collected["version_differs"], collected["installed_not_in_lock"]
-        if differ or outside:
-            # **Stated, never hidden** (M5-3): a homelab whose packages
-            # moved away from the committed lock says so on the console too.
-            print("         installed packages against the committed uv.lock: "
-                  f"{len(differ)} version(s) differ"
-                  + (" (" + ", ".join(f"{d['name']} {d['installed']}, lock "
-                                       f"{'/'.join(d['locked'])}" for d in differ) + ")"
-                     if differ else "")
-                  + f"; {len(outside)} installed package(s) are not in the lock"
-                  + (" (" + ", ".join(f"{o['name']} {o['version']}" for o in outside) + ")"
-                     if outside else ""))
-        if not collected["temporary_directory"]["socket_fits"]:
-            print("         the temporary directory's path is too long for a DataLoader "
-                  "worker's socket under it (see A5's facts); training with workers fails here")
         said = ("the installed versions are the lock's" if not differ else
                 f"{len(differ)} installed version(s) differ from the lock")
         return f"{said}; {len(outside)} installed package(s) outside the lock", collected
 
     def _environment_record() -> None:
         report.run("A5", "environment",
-                   "the installed packages are recorded against the committed lock "
+                   "the installed packages are recorded against the lock "
                    "(informational)", _against_lock)
 
     if describe_only:
@@ -767,9 +774,68 @@ def _same_version(installed: str, locked: str) -> bool:
         return installed == locked
 
 
+#: What the deploy scripts install after ``uv sync``, outside the lock
+#: (deploy.sh, deploy.cmd): PyTorch Geometric and its native extensions, and
+#: cuVS. These and what they require are the expected part of "installed, not
+#: in the lock" (`installed_against_lock`).
+DEPLOY_INSTALLED_ROOTS: Tuple[str, ...] = (
+    "torch-geometric", "pyg-lib", "torch-scatter", "torch-sparse", "torch-cluster", "cuvs-cu13",
+)
+#: Why a package installed outside the lock is there, as A5 can tell.
+OUTSIDE_LOCK_DEPLOY = "deploy_scripts"
+OUTSIDE_LOCK_REQUIRED = "required_by_an_installed_package"
+OUTSIDE_LOCK_LEFTOVER = "required_by_nothing_installed"
+
+
+def _required_names(requirements: Any) -> set:
+    """The normalised names a distribution's ``Requires-Dist`` asks for here:
+    a requirement whose marker is false in this environment, or that only an
+    extra asks for, is left out."""
+    try:
+        from packaging.requirements import InvalidRequirement, Requirement
+    except ImportError:  # pragma: no cover - packaging is in the lock
+        return set()
+    names = set()
+    for text in requirements or ():
+        try:
+            requirement = Requirement(str(text))
+            if requirement.marker is not None and not requirement.marker.evaluate({"extra": ""}):
+                continue
+        except (InvalidRequirement, ValueError, TypeError):
+            continue
+        names.add(_normalised(requirement.name))
+    return names
+
+
+def _lock_at_tested_commit(lock_path: Path, data: bytes) -> Optional[bool]:
+    """Whether `data` (the lock as A5 read it) is the uv.lock committed at the
+    checkout's HEAD, as git hashes it (its attributes and clean filters
+    applied, so a line-ending conversion is no difference). False when the
+    commit holds another or none; None when git cannot say (no git, or not a
+    checkout)."""
+    import subprocess
+
+    def git(*args: str, given: Optional[bytes] = None) -> Optional[str]:
+        try:
+            done = subprocess.run(["git", *args], cwd=lock_path.parent, input=given,
+                                  capture_output=True, timeout=30)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return done.stdout.decode("ascii", "replace").strip() if done.returncode == 0 else None
+
+    if git("rev-parse", "--verify", "--quiet", "HEAD") is None:
+        return None
+    committed = git("rev-parse", "--verify", "--quiet", f"HEAD:./{lock_path.name}")
+    if committed is None:
+        return False
+    read = git("hash-object", "--stdin", f"--path={lock_path.name}", given=data)
+    return None if read is None else read == committed
+
+
 def installed_against_lock(lock_path: Path) -> Dict[str, Any]:
-    """This Python environment's installed distributions against the committed
-    lock (M5-3): what the probe ran with, **stated, never hidden**.
+    """This Python environment's installed distributions against the lock
+    beside this checkout (M5-3): what the probe ran with, **stated, never
+    hidden**.
 
     The homelab's check set had moved away from the lock M5-0 committed
     (huggingface-hub 1.33.0, click 8.5.0 and hf-xet 1.7.0 for 1.16.1, 8.3.3 and
@@ -778,13 +844,25 @@ def installed_against_lock(lock_path: Path) -> Dict[str, Any]:
     `uv.lock` (its digest recorded) and the distributions `importlib.metadata`
     finds on this interpreter's path:
 
+    - ``lock_is_the_committed_one``: whether the lock read is the one
+      committed at the tested commit (`_lock_at_tested_commit`); a lock made
+      again on this machine and not committed reads False, so "the installed
+      versions are the lock's" is never taken for the committed lock's;
     - ``version_differs``: installed under the lock's name with a version the
       lock does not pin (PEP 440 equality; a package the lock pins at several
-      versions, one per platform, matches any of them);
-    - ``installed_not_in_lock``: installed and not in the lock at all. The
-      packages a deploy script installs after the sync are among them by
-      design (PyTorch Geometric's extensions and their dependencies, cuVS);
-      anything else is a difference too, a leftover of an older lock included;
+      versions, one per platform, matches any of them), one entry per such
+      installed version;
+    - ``installed_more_than_once``: a name with more than one distribution on
+      the path (a stale ``.dist-info`` beside the current one, say): each
+      version is compared, and which one ``import`` finds is not told from
+      the metadata, so both are stated;
+    - ``installed_not_in_lock``: installed and not in the lock at all, each
+      with why it is there as far as the installed metadata tells:
+      `OUTSIDE_LOCK_DEPLOY` for what the deploy scripts install after the
+      sync and what that requires (`DEPLOY_INSTALLED_ROOTS`, followed through
+      ``Requires-Dist``), `OUTSIDE_LOCK_REQUIRED` for one another installed
+      package requires, and `OUTSIDE_LOCK_LEFTOVER` for one nothing installed
+      requires: a leftover of an older lock, or a hand install;
     - ``locked_not_installed``: in the lock and not installed (an extra not
       installed, a package for another platform). Names only.
 
@@ -809,49 +887,145 @@ def installed_against_lock(lock_path: Path) -> Dict[str, Any]:
     for package in lock.get("package", []):
         if isinstance(package, dict) and package.get("name") and package.get("version"):
             locked.setdefault(_normalised(str(package["name"])), set()).add(str(package["version"]))
-    installed: Dict[str, str] = {}
+    installed: Dict[str, List[str]] = {}
+    requires: Dict[str, set] = {}
     for distribution in metadata.distributions():
         name = distribution.metadata["Name"]
-        # The first a path lists is the one `import` finds.
-        if name and _normalised(name) not in installed:
-            installed[_normalised(name)] = str(distribution.version)
+        if not name:
+            continue
+        key = _normalised(name)
+        installed.setdefault(key, []).append(str(distribution.version))
+        requires.setdefault(key, set()).update(
+            _required_names(getattr(distribution, "requires", None)))
     differs = [
         {"name": name, "installed": version, "locked": sorted(locked[name])}
-        for name, version in sorted(installed.items())
-        if name in locked and not any(_same_version(version, pin) for pin in locked[name])
+        for name, versions in sorted(installed.items()) if name in locked
+        for version in sorted(set(versions))
+        if not any(_same_version(version, pin) for pin in locked[name])
     ]
+    # What the deploy scripts installed: their roots and, through
+    # Requires-Dist, what those require that the lock does not hold (a
+    # requirement the lock holds was installed by the sync).
+    outside = set(installed) - set(locked)
+    deployed: set = set()
+    pending = [name for name in DEPLOY_INSTALLED_ROOTS if name in outside]
+    while pending:
+        name = pending.pop()
+        if name not in deployed:
+            deployed.add(name)
+            pending.extend(sorted(requires.get(name, set()) & outside))
+    required = {wanted for name, names in requires.items() for wanted in names if wanted != name}
+
+    def why(name: str) -> str:
+        if name in deployed:
+            return OUTSIDE_LOCK_DEPLOY
+        return OUTSIDE_LOCK_REQUIRED if name in required else OUTSIDE_LOCK_LEFTOVER
+
     return {
         "lock_sha256": read.identity.sha256,
+        "lock_is_the_committed_one": _lock_at_tested_commit(lock_path, read.data),
         "lock_packages": len(locked),
         "installed_distributions": len(installed),
         "versions_match_lock": not differs,
         "version_differs": differs,
-        "installed_not_in_lock": [{"name": name, "version": version}
-                                  for name, version in sorted(installed.items())
+        "installed_more_than_once": [{"name": name, "versions": sorted(versions)}
+                                     for name, versions in sorted(installed.items())
+                                     if len(versions) > 1],
+        "installed_not_in_lock": [{"name": name, "version": "/".join(sorted(set(versions))),
+                                   "why": why(name)}
+                                  for name, versions in sorted(installed.items())
                                   if name not in locked],
         "locked_not_installed": sorted(name for name in locked if name not in installed),
     }
 
 
-#: The longest path an AF_UNIX socket may have here (`sun_path` less its
-#: terminator), where that is known.
-_AF_UNIX_PATH_MAX = {"linux": 107, "darwin": 103}
-#: What `multiprocessing` puts under the temporary directory for a listener
-#: socket (DataLoader workers sharing tensors): ``/pymp-XXXXXXXX/listener-XXXXXXXX``.
-_SOCKET_UNDER_TEMP = len("/pymp-12345678/listener-12345678")
+def lock_sentence(facts: Mapping[str, Any]) -> str:
+    """A5's record (`installed_against_lock`) as one console line: which lock,
+    the versions that differ, every package installed more than once, and the
+    packages outside the lock by why they are there, the deploy scripts' by
+    count and every other by name."""
+    committed = facts.get("lock_is_the_committed_one")
+    which = {True: "this checkout's uv.lock (the one committed at the tested commit)",
+             False: "this checkout's uv.lock, which is NOT the one committed at the tested "
+                    "commit"}.get(committed, "this checkout's uv.lock (whether it is the "
+                                             "committed one could not be read)")
+    differ = facts.get("version_differs") or []
+    parts = [f"{len(differ)} version(s) differ" + (
+        " (" + ", ".join(f"{d['name']} {d['installed']}, lock {'/'.join(d['locked'])}"
+                         for d in differ) + ")" if differ else "")]
+    twice = facts.get("installed_more_than_once") or []
+    if twice:
+        parts.append("installed more than once: " + ", ".join(
+            f"{t['name']} ({', '.join(t['versions'])})" for t in twice))
+    outside = facts.get("installed_not_in_lock") or []
+    by_why = {key: [o for o in outside if o.get("why") == key]
+              for key in (OUTSIDE_LOCK_DEPLOY, OUTSIDE_LOCK_REQUIRED, OUTSIDE_LOCK_LEFTOVER)}
+    said = f"{len(outside)} installed package(s) are not in the lock"
+    if outside:
+        said += ": " + "; ".join(text for text in (
+            f"{len(by_why[OUTSIDE_LOCK_DEPLOY])} from the deploy scripts (PyG, cuVS and what "
+            "they require)" if by_why[OUTSIDE_LOCK_DEPLOY] else "",
+            "required by nothing installed: " + ", ".join(
+                f"{o['name']} {o['version']}" for o in by_why[OUTSIDE_LOCK_LEFTOVER])
+            if by_why[OUTSIDE_LOCK_LEFTOVER] else "",
+            "required by another installed package: " + ", ".join(
+                f"{o['name']} {o['version']}" for o in by_why[OUTSIDE_LOCK_REQUIRED])
+            if by_why[OUTSIDE_LOCK_REQUIRED] else "",
+        ) if text)
+    parts.append(said)
+    return f"installed packages against {which}: " + "; ".join(parts)
 
 
-def _socket_room() -> Dict[str, Any]:
-    """Whether a DataLoader worker's socket fits under this process's temporary
-    directory: under a long one (a scratch path as ``TMPDIR``) training with
-    workers fails with ``OSError: AF_UNIX path too long`` (M5-0's audit). The
-    length only, never the path."""
+#: Run by `_socket_room` in a fresh interpreter: one AF_UNIX listener opened and
+#: closed as `multiprocessing` opens one for DataLoader workers sharing tensors
+#: (its resource sharer), under the temporary directory it is given. Whatever
+#: that Python does with a long one (3.12 fails; 3.13 falls back to /tmp), this
+#: is what it does.
+_SOCKET_CHECK = (
+    "import json\n"
+    "from multiprocessing.connection import Listener\n"
+    "try:\n"
+    "    Listener(family='AF_UNIX').close()\n"
+    "    said = {'fits': True}\n"
+    "except OSError as exc:\n"
+    "    said = {'fits': False, 'error': type(exc).__name__,\n"
+    "            'path_too_long': 'path too long' in str(exc)}\n"
+    "print(json.dumps(said))\n"
+)
+
+
+def _socket_room(python: Optional[str] = None) -> Dict[str, Any]:
+    """Whether a DataLoader worker's socket can be made under this process's
+    temporary directory: under a long one (a scratch path as ``TMPDIR``)
+    training with workers fails with ``OSError: AF_UNIX path too long`` on
+    Python 3.12 (M5-0's audit), while 3.13 puts its sockets under /tmp
+    instead. **Asked, not computed**: `python` (this interpreter by default,
+    the one the job runner starts) opens and closes one listener there, in a
+    process of its own (`_SOCKET_CHECK`). ``socket_fits`` is None when the
+    check could not run. The path's length only, never the path."""
+    import subprocess
     import tempfile
 
-    chars = len(os.fsencode(tempfile.gettempdir()))
-    limit = _AF_UNIX_PATH_MAX.get(sys.platform)
-    return {"path_bytes": chars, "socket_path_limit": limit,
-            "socket_fits": True if limit is None else chars + _SOCKET_UNDER_TEMP <= limit}
+    temp = tempfile.gettempdir()
+    facts: Dict[str, Any] = {"path_bytes": len(os.fsencode(temp)), "socket_fits": None,
+                             "refusal": None}
+    if sys.platform == "win32":  # pragma: no cover - no AF_UNIX listener there
+        return {**facts, "socket_fits": True, "checked": "not used on Windows"}
+    facts["checked"] = ("an AF_UNIX listener opened and closed under it, as multiprocessing "
+                        "opens one for DataLoader workers")
+    try:
+        done = subprocess.run([python or sys.executable, "-I", "-c", _SOCKET_CHECK],
+                              env={**os.environ, "TMPDIR": temp}, capture_output=True,
+                              text=True, timeout=120)
+        said = json.loads((done.stdout.strip().splitlines() or ["{}"])[-1])
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return {**facts, "checked": "the check could not run"}
+    if said.get("fits") is True:
+        return {**facts, "socket_fits": True}
+    if said.get("fits") is False:
+        return {**facts, "socket_fits": False, "refusal": (
+            "AF_UNIX path too long" if said.get("path_too_long") else str(said.get("error")))}
+    return {**facts, "checked": "the check could not run"}
 
 
 # =============================================================================
@@ -1772,7 +1946,7 @@ M2_DEMO_REQUIRED: Tuple[str, ...] = (
     # graph (T4); the read-only view for the served checkpoint and another (T5);
     # the overlap audit on the registered version (T6).
     "T1", "T2", "T3", "T4", "T5", "T6",
-    # M5's acceptance (M5-3): the environment against the committed lock (A5);
+    # M5's acceptance (M5-3): the environment against the lock (A5);
     # the server's lists (W1); D8 on the running service, CORS, the route
     # guard, read-only without M1 (W2-W5) and off loopback (W6); the GPU lock
     # (W7); a test run through the job runner, kept and registered as the
@@ -1810,6 +1984,8 @@ def m2_acceptance(report: Report, real_requested: bool) -> Dict[str, Any]:
     return {
         "demo": demo, "real_data": real,
         "complete": bool(demo["complete"] and real["complete"]),
+        # What the acceptance ran with, beside its verdict (A5).
+        "environment": environment_verdict(report),
         "scope": (
             "M2's source contract on this machine, through the production entry "
             "points. The real-data model is a short training that shows the "
@@ -1822,12 +1998,49 @@ def m2_acceptance(report: Report, real_requested: bool) -> Dict[str, Any]:
             "institutional test, which waits for real data, its terms and a "
             "pre-declared protocol. It carries M5's acceptance where it runs "
             "headless too (A5, W1-W11, RW1-RW3): the environment against the "
-            "committed lock, the server's lists, D8, CORS and the route guard on "
-            "the service started as the launcher starts it, the GPU lock, and test "
+            "lock beside the checkout, the server's lists, D8, CORS and the route "
+            "guard on the service started as the launcher starts it, the GPU lock, and test "
             "and training jobs through the job runner, started and stopped; not "
             "the dashboard's layout or a browser session, and no long training."
         ),
     }
+
+
+def environment_verdict(report: Report) -> Dict[str, Any]:
+    """A5's record in short, for the end of a run beside its verdict (the
+    report's `m2_acceptance` and the console's last lines): whether the lock
+    read is the committed one, and the names of what differs from it. A set
+    that differs is said again where the run ends, not only an hour earlier."""
+    a5 = next((probe for probe in report.probes if probe.probe_id == "A5"), None)
+    if a5 is None or a5.status != "passed":
+        return {"A5": a5.status if a5 is not None else "not run"}
+    facts = a5.facts
+    outside = facts.get("installed_not_in_lock") or []
+    return {
+        "A5": "passed",
+        "lock_sha256": facts.get("lock_sha256"),
+        "lock_is_the_committed_one": facts.get("lock_is_the_committed_one"),
+        "versions_match_lock": facts.get("versions_match_lock"),
+        "version_differs": [entry.get("name") for entry in facts.get("version_differs") or []],
+        "installed_more_than_once": [entry.get("name") for entry
+                                     in facts.get("installed_more_than_once") or []],
+        "not_in_lock": len(outside),
+        "not_in_lock_from_deploy_scripts": sum(
+            1 for entry in outside if entry.get("why") == OUTSIDE_LOCK_DEPLOY),
+        "not_in_lock_required_by_nothing_installed": [
+            entry.get("name") for entry in outside if entry.get("why") == OUTSIDE_LOCK_LEFTOVER],
+    }
+
+
+def environment_line(report: Report) -> Optional[str]:
+    """A5's record as the run's closing console line (None when A5 did not
+    run), so a set that differs from the lock is said where the run ends."""
+    a5 = next((probe for probe in report.probes if probe.probe_id == "A5"), None)
+    if a5 is None:
+        return None
+    if a5.status != "passed":
+        return f"A5, the installed packages against the lock: {a5.status} ({a5.detail})"
+    return "A5, " + lock_sentence(a5.facts)
 
 
 def _tested_commit() -> Dict[str, Any]:
@@ -2586,11 +2799,35 @@ M5_CHECKPOINT = "last.pt"
 #: The architecture of every demo run (`_DEMO_TRAINING`), and so of the runs'
 #: directory in the workspace.
 _M5_ARCHITECTURE = "gat"
-#: The gated Gradio event called directly through Gradio's HTTP API, as a
-#: script or `gradio_client` would: the Training page's Stop
-#: (`src/webui/components/training_console.py`), whose answer when allowed,
-#: with no training running, changes nothing ("Not stopped: ...").
-_GATED_EVENT = "_on_stop"
+#: D8's operator routes (`src/api/operator_access.py`: every state-changing
+#: route and the checkpoint lists), each with the status it answers when D8
+#: allows the probe's request. **Nothing runs either way**: a POST carries
+#: ``[]`` as its JSON body, well formed and of the wrong shape, so D8's
+#: dependency refuses it with 403 before the body is validated, and with D8
+#: allowing, a route with a body refuses it in validation (422) before its
+#: handler; the training stop answers 409 with no training running, and the
+#: lists only list. A route any other way gated (`_gated_api_routes`) is asked
+#: too, where D8 refuses only.
+OPERATOR_ROUTES: Tuple[Tuple[str, str, int], ...] = (
+    ("POST", "/api/v1/pipeline/reload", 422),
+    ("POST", "/api/v1/pipeline/config", 422),
+    ("POST", "/api/v1/training/start", 422),
+    ("POST", "/api/v1/training/stop", 409),
+    ("GET", "/api/v1/training/checkpoints", 200),
+    ("GET", "/api/v1/workspaces/{name}/checkpoints", 200),
+)
+#: The gated dashboard events called directly through Gradio's HTTP API, as a
+#: script or `gradio_client` would, each found by the handler it is registered
+#: with (its module under `src/webui/components` and its name; its API name is
+#: the dashboard's own, `_dashboard_events`), with the data sent and what its
+#: answer says when D8 allows: Training's confirmed Stop with no training
+#: running, Test's Start with no listed version chosen, Test's Register with
+#: no kept report chosen. Allowed or refused, nothing is done.
+GATED_EVENTS: Tuple[Tuple[str, str, Tuple[Any, ...], str], ...] = (
+    ("training_console", "_on_stop", ({},), "No training is running"),
+    ("test_page", "_on_start", ({}, {}, None, None, None, False, False), "Nothing was started."),
+    ("test_page", "_on_register", ({}, {}, {}, None, None), "Nothing was registered."),
+)
 #: The deployment settings M5's probes depend on: the server's settings
 #: (`src/config/server_settings.py`), the GPU lock's file, the serving device a
 #: test run is given, and the pipeline the service would build at startup.
@@ -2646,6 +2883,25 @@ def _deployment_settings(values: Mapping[str, Optional[str]]):
         apply(saved)
 
 
+def _deployment_gpu_lock() -> Dict[str, bool]:
+    """The GPU lock the operator's own settings name (this process's
+    environment, read before M5's settings are applied): whether one is
+    configured, and whether a job holds it now. M5's probes run on their own
+    lock, so a managed job holding the deployment's is not refused by them;
+    this states it, in the report as booleans and on the console naming the
+    holder (its description names a host, which the report never carries)."""
+    from src.utils.gpu_lock import lock_state
+
+    state = lock_state()
+    held_by = state.get("held_by")
+    if held_by:
+        print(f"   the deployment's GPU lock is held by {held_by} while M5's probes run on "
+              "their own lock: run the acceptance while no managed GPU job runs",
+              file=sys.stderr)
+    return {"configured": bool(state.get("configured")), "held": bool(held_by),
+            "unreadable": bool(state.get("problem"))}
+
+
 def _wait_for(condition: Callable[[], Any], timeout: float, interval: float = 0.2) -> Any:
     """`condition()` until it is true or `timeout` seconds have passed; its last value."""
     deadline = time.monotonic() + timeout
@@ -2692,6 +2948,63 @@ def _parse_response(raw: bytes) -> Tuple[Optional[int], Dict[str, str], bytes]:
         if sep:
             headers[name.strip().lower()] = value.strip()
     return status, headers, body
+
+
+def _with_parent_death_signal() -> Optional[Callable[[], None]]:
+    """On Linux, a ``preexec_fn`` after which the kernel sends the child SIGTERM
+    when the thread that started it ends, however it ends (SIGKILL and the
+    out-of-memory killer included), so a service this probe started never
+    outlives it. The probe starts its services from its main thread. None
+    elsewhere (macOS and Windows have no such request; there, stop the probe
+    with Ctrl-C)."""
+    if not sys.platform.startswith("linux"):
+        return None
+    import ctypes
+    import signal
+
+    libc = ctypes.CDLL(None, use_errno=True)      # loaded before the fork, not in the child
+    parent = os.getpid()
+
+    def _die_with_parent() -> None:
+        libc.prctl(1, int(signal.SIGTERM), 0, 0, 0)  # PR_SET_PDEATHSIG
+        if os.getppid() != parent:                  # the probe ended before the request
+            os._exit(1)
+
+    return _die_with_parent
+
+
+def _exit_on_signal(number: int, frame: Any) -> None:
+    """A termination signal ends the probe through `sys.exit`, so every
+    ``finally`` that stops its services and the jobs it started runs."""
+    print(f"\nsignal {number}: the probe stops its services and jobs, then exits",
+          file=sys.stderr)
+    sys.exit(128 + number)
+
+
+def _stop_on_termination_signals() -> None:
+    """SIGTERM (``kill <pid>``) and SIGHUP (a closed terminal) end the probe as
+    Ctrl-C does, through its ``finally`` blocks, instead of leaving the
+    services and runner jobs it started running. A signal already set to
+    something other than its default (SIGHUP ignored under ``nohup``, say) is
+    left as it is."""
+    import signal
+
+    for name in ("SIGTERM", "SIGHUP"):
+        number = getattr(signal, name, None)
+        if number is not None and signal.getsignal(number) is signal.SIG_DFL:
+            signal.signal(number, _exit_on_signal)
+
+
+@contextlib.contextmanager
+def _job_ended_on_exit(manager: Any, job_type: str):
+    """A job of `job_type` the runner `manager` still runs when this closes
+    (a probe that failed, timed out or was told to stop) is stopped, so the
+    probe never leaves one running on its workspace."""
+    try:
+        yield
+    finally:
+        if manager.get_job_status_word(job_type) in ("running", "stopping"):
+            manager.stop(job_type)
 
 
 class _ProbeServer:
@@ -2747,7 +3060,9 @@ class _ProbeServer:
             [sys.executable, "-m", DEFAULT_ENTRY, UVICORN_APP, "--host", "127.0.0.1",
              "--port", str(self.port), *UVICORN_FORCED_ARGS],
             cwd=project_root, env=self.environment(), stdin=subprocess.DEVNULL,
-            stdout=self._log, stderr=subprocess.STDOUT)
+            stdout=self._log, stderr=subprocess.STDOUT,
+            # **It ends with the probe**, even one ended by SIGKILL (Linux).
+            preexec_fn=_with_parent_death_signal())
 
     def wait_ready(self, timeout: float = _SERVICE_START_SECONDS) -> float:
         """Until /health answers 200; the seconds since the start. A port
@@ -2897,61 +3212,203 @@ def _asgi_body_requests(app: Any, method: str, path: str) -> Tuple[Optional[int]
     return status, asked["calls"]
 
 
-def _operator_requests(server: _ProbeServer, headers: Mapping[str, str]) -> Dict[str, Any]:
-    """What one shape of request meets on `server`: D8's own status for it, the
-    gated checkpoint list (it opens checkpoints), a gated state-changing route
-    (the training stop) and a gated Gradio event (Training's Stop)."""
+def _asgi_answer(app: Any, method: str, raw_path: str,
+                 root_path: str = "") -> Tuple[Optional[int], bytes]:
+    """`app` called in this process as an ASGI application for one request
+    with no body to `raw_path`, decoded as uvicorn decodes it: its status and
+    body."""
+    import asyncio
+    from urllib.parse import unquote
+
+    sent: List[Dict[str, Any]] = []
+
+    async def receive() -> Dict[str, Any]:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message: Dict[str, Any]) -> None:
+        sent.append(message)
+
+    scope = {
+        "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": method,
+        "scheme": "http", "path": unquote(raw_path), "raw_path": raw_path.encode("latin-1"),
+        "root_path": root_path, "query_string": b"", "server": ("127.0.0.1", 8264),
+        "client": ("127.0.0.1", 50000), "headers": [(b"host", b"127.0.0.1:8264")],
+    }
+    asyncio.run(app(scope, receive, send))
+    status = next((m.get("status") for m in sent if m.get("type") == "http.response.start"),
+                  None)
+    return status, b"".join(m.get("body", b"") for m in sent
+                            if m.get("type") == "http.response.body")
+
+
+def _url_fetches(app: Any, forms: Tuple[str, ...]) -> Dict[str, Any]:
+    """Each ``file=`` URL form sent to `app` in this process, GET and HEAD,
+    while Gradio's URL fetch (`gradio.routes.secure_url_stream_response`, the
+    name its ``file=`` route calls) is counted: how many requests reached it
+    (none when the route guard answers them first), the requests not answered
+    with the guard's refusal, and, as the control, how many one form sent to
+    the mounted dashboard directly, past the guard, reached it (one: the count
+    is where a fetch happens). Gradio refuses an address that is not public
+    itself, so nothing is fetched in either case."""
+    import gradio.routes as gradio_routes
+    from starlette.routing import Mount
+
+    from src.api.middleware.gradio_routes import REFUSALS
+
+    original = gradio_routes.secure_url_stream_response
+    reached: List[str] = []
+
+    async def counted(url: str, request: Any) -> Any:
+        reached.append(url)
+        return await original(url, request)
+
+    mount = next((route for route in app.routes if isinstance(route, Mount)
+                  and getattr(route.app, "blocks", None) is not None), None)
+    assert mount is not None, "the application mounts no dashboard"
+    not_the_guard = []
+    gradio_routes.secure_url_stream_response = counted
+    try:
+        for form in forms:
+            for method in ("GET", "HEAD"):
+                status, body = _asgi_answer(app, method, f"{mount.path}/gradio_api/{form}")
+                if status != 403 or (method == "GET" and body.decode(
+                        "utf-8", "replace") != REFUSALS["file-url"]):
+                    not_the_guard.append(f"{method} {status}")
+        through = len(reached)
+        _asgi_answer(mount.app, "GET", f"{mount.path}/gradio_api/{forms[0]}",
+                     root_path=mount.path)
+    finally:
+        gradio_routes.secure_url_stream_response = original
+    return {"through_the_guard": through, "past_the_guard_control": len(reached) - through,
+            "not_the_guard": not_the_guard}
+
+
+def _route_key(method: str, path: str) -> str:
+    return f"{method} {path}"
+
+
+def _gated_api_routes(app: Any) -> List[Tuple[str, str]]:
+    """Every API route of `app` that D8's dependency gates
+    (`require_operator_access` among its dependencies), as (method, path
+    template): a gated route added later is asked too, without a list here
+    to keep up."""
+    from fastapi.routing import APIRoute
+
+    from src.api.operator_access import require_operator_access
+
+    return sorted((method, route.path) for route in app.routes if isinstance(route, APIRoute)
+                  and any(dependency.call is require_operator_access
+                          for dependency in route.dependant.dependencies)
+                  for method in route.methods)
+
+
+def _dashboard(app: Any) -> Any:
+    """The dashboard's Gradio Blocks, as `app` mounts it."""
+    blocks = next((getattr(route.app, "blocks", None) for route in app.routes
+                   if getattr(getattr(route, "app", None), "blocks", None) is not None), None)
+    assert blocks is not None, "the application mounts no dashboard"
+    return blocks
+
+
+def _gated_events(app: Any) -> List[Tuple[str, str, List[Any], str]]:
+    """`GATED_EVENTS` as the dashboard `app` mounts registers them: (label,
+    API name, data, allowed answer). Each handler must be registered once,
+    with as many inputs as the data the probe sends it."""
+    found = []
+    for module, name, data, allowed in GATED_EVENTS:
+        matches = [dependency for dependency in _dashboard(app).fns.values()
+                   if getattr(dependency.fn, "__module__", None) == f"src.webui.components.{module}"
+                   and getattr(dependency.fn, "__name__", None) == name]
+        assert len(matches) == 1 and len(matches[0].inputs) == len(data), (
+            f"the dashboard registers {module}.{name} {len(matches)} time(s), or with other "
+            "inputs than the probe sends")
+        found.append((f"{module}.{name}", matches[0].api_name, list(data), allowed))
+    return found
+
+
+def _operator_requests(server: _ProbeServer, headers: Mapping[str, str],
+                       routes: List[Tuple[str, str]],
+                       events: List[Tuple[str, str, List[Any], str]]) -> Dict[str, Any]:
+    """What one shape of request meets on `server`: D8's own status for it,
+    each gated route in `routes` (a POST with ``[]`` as its JSON body, see
+    `OPERATOR_ROUTES`) and each gated dashboard event in `events`
+    (`_gated_events`)."""
     access = server.json("/api/v1/system/operator-access", headers)
-    listed = server.request("GET", f"/api/v1/workspaces/{M5_WORKSPACE}/checkpoints", headers)
-    stop = server.request("POST", "/api/v1/training/stop", headers)
-    event = server.event(_GATED_EVENT, [{}], headers)
-    return {"access": access, "listed": listed, "stop": stop, "event": event}
+    answers = {}
+    for method, path in routes:
+        target = re.sub(r"\{[^}]+\}", M5_WORKSPACE, path)
+        if method == "GET":
+            answers[_route_key(method, path)] = server.request(method, target, headers)
+        else:
+            answers[_route_key(method, path)] = server.request(
+                method, target, {"Content-Type": "application/json", **headers}, b"[]")
+    said = {label: server.event(api_name, data, headers)
+            for label, api_name, data, _ in events}
+    return {"access": access, "routes": answers, "events": said}
 
 
-def _check_allowed(seen: Mapping[str, Any], listed_sha: str, label: str) -> Dict[str, Any]:
-    """D8 allowed this request (`_operator_requests`), and each gated control
-    then ran: the list holds the listed checkpoint, the stop answered for the
-    runner (409, nothing running), the event ran its handler."""
+def _check_allowed(seen: Mapping[str, Any], listed_sha: str, label: str,
+                   events: List[Tuple[str, str, List[Any], str]]) -> Dict[str, Any]:
+    """D8 allowed this request (`_operator_requests`), and each operator route
+    then answered as its handler or its validation does (`OPERATOR_ROUTES`:
+    the list holds the listed checkpoint, the stop answered for the runner,
+    nothing running; a body of the wrong shape refused in validation), and
+    each event ran its handler, which did nothing."""
     access = seen["access"]
     assert access.get("enabled") is True and access.get("condition") == "enabled", (
         f"D8 refused {label}: {access.get('condition')}")
-    status, _, body = seen["listed"]
-    assert status == 200, f"the checkpoint list answered {status} to {label}"
-    items = json.loads(body).get("checkpoints") or []
-    assert any(entry.get("sha256") == listed_sha for entry in items), (
-        "the service's checkpoint list does not hold the listed checkpoint")
-    status, _, body = seen["stop"]
-    assert status == 409 and b"No training is running" in body, (
-        f"the training stop answered {status}: D8 did not let it run")
-    assert "Refused" not in seen["event"] and "No training is running" in seen["event"], (
-        "the Gradio event did not run its handler")
-    return {"condition": "enabled", "checkpoint_list": 200,
-            "training_stop": "ran (409: no training running)", "gradio_event": "ran"}
+    routes = {}
+    for method, path, expected in OPERATOR_ROUTES:
+        key = _route_key(method, path)
+        assert key in seen["routes"], f"{key} was not asked"
+        status, _, body = seen["routes"][key]
+        text = body.decode("utf-8", "replace")
+        assert status == expected and "Refused: " not in text, (
+            f"{key} answered {status} to {label}, not {expected}: D8 did not let it through")
+        if path.endswith("/{name}/checkpoints"):
+            items = json.loads(body).get("checkpoints") or []
+            assert any(entry.get("sha256") == listed_sha for entry in items), (
+                "the service's checkpoint list does not hold the listed checkpoint")
+        if path.endswith("/training/stop"):
+            assert "No training is running" in text, "the training stop did not answer for the runner"
+        routes[key] = status
+    for event_label, _, _, allowed in events:
+        said = seen["events"][event_label]
+        assert "Refused" not in said and allowed in said, (
+            f"the Gradio event {event_label} did not run its handler")
+    return {"condition": "enabled", "routes": routes,
+            "gradio_events": {event_label: "ran" for event_label, _, _, _ in events}}
 
 
 def _check_refused(seen: Mapping[str, Any], condition: str, values: Tuple[str, ...],
                    listed_sha: str) -> Dict[str, Any]:
-    """D8 refused this request for `condition`, and so did every gated control:
-    403 with D8's refusal (which says nothing was done) from the list and the
-    stop, the refusal from the event, no checkpoint shown, and no header value
-    (`values`) repeated anywhere."""
-    access, listed, stop, event = seen["access"], seen["listed"], seen["stop"], seen["event"]
+    """D8 refused this request for `condition`, and so did every gated
+    control asked: 403 with D8's refusal (which says nothing was done) from
+    every route, each of `OPERATOR_ROUTES` among them, the refusal from every
+    event, no checkpoint shown, and no header value (`values`) repeated
+    anywhere."""
+    access = seen["access"]
     assert access.get("enabled") is False and access.get("condition") == condition, (
         f"D8 answered {access.get('condition')}, not {condition}")
-    texts = [json.dumps(access), event]
-    for what, (status, _, body) in (("the checkpoint list", listed),
-                                    ("the training stop", stop)):
+    missing = [_route_key(method, path) for method, path, _ in OPERATOR_ROUTES
+               if _route_key(method, path) not in seen["routes"]]
+    assert not missing and seen["events"], f"not asked: {missing or 'any dashboard event'}"
+    texts = [json.dumps(access)]
+    for key, (status, _, body) in seen["routes"].items():
         text = body.decode("utf-8", "replace")
         texts.append(text)
         assert status == 403 and "Refused: " in text and "Nothing was done." in text, (
-            f"{what} answered {status}, not D8's refusal")
-        assert listed_sha not in text, f"{what} showed a checkpoint when refused"
-    assert "Refused: " in event and "Nothing was done." in event, (
-        "the Gradio event was not refused")
+            f"{key} answered {status}, not D8's refusal")
+        assert listed_sha not in text, f"{key} showed a checkpoint when refused"
+    for event_label, said in seen["events"].items():
+        texts.append(said)
+        assert "Refused: " in said and "Nothing was done." in said, (
+            f"the Gradio event {event_label} was not refused")
     assert not [value for value in values if any(value in text for text in texts)], (
         "a refusal repeated a header's value")
-    return {"condition": condition, "checkpoint_list": listed[0], "training_stop": stop[0],
-            "gradio_event": "refused"}
+    return {"condition": condition,
+            "routes": {key: answer[0] for key, answer in seen["routes"].items()},
+            "gradio_events": dict.fromkeys(seen["events"], "refused")}
 
 
 def _cors_grants(headers: Mapping[str, str]) -> List[str]:
@@ -3124,6 +3581,19 @@ def _exclusion_while_training(manager: Any, inputs: Any, pid: int, cli_argv: Lis
             "cli_exit": code}
 
 
+def _training_stop_does_not_reach_a_test_run(manager: Any) -> str:
+    """Right after `manager` started a test run: its training stop is refused,
+    saying it does not reach the test run, and the run is still running (the
+    caller then requires it to complete)."""
+    stopped = manager.stop_training()
+    error = str(stopped.get("error") or "")
+    assert not stopped.get("success") and "No training is running" in error \
+        and "does not reach" in error, "a training stop was not refused while a test run ran"
+    assert manager.get_job_status_word("test") in ("running", "completed"), (
+        f"the training stop reached the test run ({manager.get_job_status_word('test')})")
+    return "refused: a training stop does not reach a test run"
+
+
 def _stop_training_job(manager: Any, lock_path: Path) -> Dict[str, Any]:
     """The runner's training stop (SIGINT, then SIGTERM, then SIGKILL): the job
     ends as stopped, never completed, and the GPU lock is free once it has."""
@@ -3278,6 +3748,7 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
                                "reports": [{"kept": k, "registered": r}
                                            for k, r in zip(kept, registered, strict=True)]},
             "items_carry_no_server_path": True,
+            "deployment_gpu_lock": deployment_lock,
         }
 
     # ---- The service itself, both modes, started side by side
@@ -3303,10 +3774,27 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
                               "did not start; its log is under the work directory)")
         return server
 
+    def _controls() -> Tuple[List[Tuple[str, str]], List[Tuple[str, str, List[Any], str]]]:
+        """The gated routes and dashboard events W2 and W5 ask, from the
+        application as this process imports it (the service runs the same
+        code): D8's operator routes and any other route its dependency gates,
+        and `GATED_EVENTS` by their registered names."""
+        import src.api.main as api
+
+        if "controls" not in state:
+            routes = sorted({(method, path) for method, path, _ in OPERATOR_ROUTES}
+                            | set(_gated_api_routes(api.app)))
+            state["controls"] = (routes, _gated_events(api.app))
+        return state["controls"]
+
     def _d8_on_the_service() -> Tuple[str, Dict[str, Any]]:
         _need("listed_sha")
         server = _server("M1")
         port = server.port
+        routes, events = _controls()
+        # **Allowed, nothing done**: only D8's own operator routes, whose
+        # answers to the probe's requests run nothing (`OPERATOR_ROUTES`).
+        operator = [(method, path) for method, path, _ in OPERATOR_ROUTES]
         results: Dict[str, Any] = {}
         for label, headers in (
             ("loopback, no Origin (a command-line client)", {}),
@@ -3314,8 +3802,8 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
                                           "Origin": f"http://localhost:{port}",
                                           "Sec-Fetch-Site": "same-origin"}),
         ):
-            results[label] = _check_allowed(_operator_requests(server, headers),
-                                            state["listed_sha"], label)
+            results[label] = _check_allowed(_operator_requests(server, headers, operator, events),
+                                            state["listed_sha"], label, events)
         for label, headers, condition, values in (
             ("a forwarding header (X-Forwarded-For)", {"X-Forwarded-For": "203.0.113.9"},
              "forwarding_header", ("203.0.113.9",)),
@@ -3328,15 +3816,14 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
             ("cross-site, no Origin (another site's image or link)",
              {"Sec-Fetch-Site": "cross-site"}, "cross_site", ()),
         ):
-            results[label] = _check_refused(_operator_requests(server, headers), condition,
-                                            values, state["listed_sha"])
+            results[label] = _check_refused(_operator_requests(server, headers, routes, events),
+                                            condition, values, state["listed_sha"])
         return "allowed in M1 on loopback; refused, nothing done, for each other request", {
             "service": {"started_as": "uvicorn src.api.main:app on 127.0.0.1, "
                                       "--no-proxy-headers, SHEPHERD_DEPLOYMENT_MODE=M1",
                         "seconds_to_health": server.ready_seconds},
-            "gated": ["GET /api/v1/workspaces/{name}/checkpoints",
-                      "POST /api/v1/training/stop",
-                      f"Gradio event {_GATED_EVENT} (/ui/gradio_api/call)"],
+            "gated": {"api_routes": [_route_key(method, path) for method, path in routes],
+                      "gradio_events": [label for label, _, _, _ in events]},
             "requests": results,
             "refusals_repeat_no_header_value": True,
         }
@@ -3369,42 +3856,41 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
         }
 
     def _route_guard() -> Tuple[str, Dict[str, Any]]:
-        import socket
-
         import src.api.main as api
 
         server = _server("M1")
         own = f"127.0.0.1:{server.port}".encode()
-        # **A fetch would be seen**: every URL names a listener on this
-        # machine, which counts the connections it is offered.
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
-            listener.bind(("127.0.0.1", 0))
-            listener.listen(16)
-            listener.setblocking(False)
-            target = f"127.0.0.1:{listener.getsockname()[1]}"
-            forms = (f"file=http://{target}/probe.png", f"file=https://{target}/probe.json",
-                     f"file=HTTP://{target}/probe.png", f"file=%68ttp://{target}/probe.png",
-                     f"file=http:%2F%2F{target}/probe.txt", f"file=//{target}/probe.png",
-                     f"file=\\\\{target}/probe.png", f"file=/\\{target}/probe.png",
-                     f"file/http://{target}/probe.png",
-                     f"file=http://user:pw@{target}/probe.txt")
-            refused = 0
-            for form in forms:
-                for method in ("GET", "HEAD"):
-                    _check_guard_refusal(server.raw(
-                        f"{method} /ui/gradio_api/{form} HTTP/1.1\r\n".encode("latin-1")
-                        + b"Host: " + own + b"\r\nConnection: close\r\n\r\n"),
-                        None if method == "HEAD" else REFUSALS["file-url"],
-                        f"a file= URL form ({method})")
-                    refused += 1
-            fetched = 0
-            while True:
-                try:
-                    listener.accept()[0].close()
-                    fetched += 1
-                except (BlockingIOError, TimeoutError):
-                    break
-        assert fetched == 0, f"the service connected to the URL {fetched} time(s)"
+        # A documentation address (TEST-NET-2), never routed: the forms are
+        # spelled for the guard, not for a fetch to land anywhere.
+        target = "198.51.100.7"
+        forms = (f"file=http://{target}/probe.png", f"file=https://{target}/probe.json",
+                 f"file=HTTP://{target}/probe.png", f"file=%68ttp://{target}/probe.png",
+                 f"file=http:%2F%2F{target}/probe.txt", f"file=//{target}/probe.png",
+                 f"file=\\\\{target}/probe.png", f"file=/\\{target}/probe.png",
+                 f"file/http://{target}/probe.png",
+                 f"file=http://user:pw@{target}/probe.txt")
+        refused = 0
+        for form in forms:
+            for method in ("GET", "HEAD"):
+                _check_guard_refusal(server.raw(
+                    f"{method} /ui/gradio_api/{form} HTTP/1.1\r\n".encode("latin-1")
+                    + b"Host: " + own + b"\r\nConnection: close\r\n\r\n"),
+                    None if method == "HEAD" else REFUSALS["file-url"],
+                    f"a file= URL form ({method})")
+                refused += 1
+        # **No fetch, counted where a fetch happens**: in this process, the
+        # same forms through the application while Gradio's URL fetch is
+        # counted (a listener cannot tell: Gradio refuses a loopback or
+        # reserved address itself, before it connects).
+        fetches = _url_fetches(api.app, forms)
+        assert not fetches["not_the_guard"], (
+            f"in process, file= URL requests were answered otherwise than by the route guard: "
+            f"{fetches['not_the_guard']}")
+        assert fetches["through_the_guard"] == 0, (
+            f"{fetches['through_the_guard']} file= URL request(s) reached Gradio's URL fetch")
+        assert fetches["past_the_guard_control"] == 1, (
+            "the control sent past the route guard did not reach Gradio's URL fetch: the "
+            "count is not where a fetch happens")
         # The control: a local download in Gradio's own directory still works.
         from urllib.parse import quote
 
@@ -3439,7 +3925,9 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
             asked[path.rsplit("/", 1)[-1]] = calls
         return "each file= URL form sent, process_recording and upload refused, no body read", {
             "file_url_requests_refused": refused, "file_url_forms": len(forms),
-            "connections_to_the_url": fetched, "local_download_control": 200,
+            "url_fetches_through_the_guard": fetches["through_the_guard"],
+            "url_fetch_control_past_the_guard": fetches["past_the_guard_control"],
+            "local_download_control": 200,
             "body_routes_refused_with_close": bodies, "interim_100_continue": False,
             "upload_progress": 403, "in_process_body_requests": asked,
         }
@@ -3447,8 +3935,9 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
     def _read_only() -> Tuple[str, Dict[str, Any]]:
         _need("fingerprint")
         server = _server("read-only")
-        refused = _check_refused(_operator_requests(server, {}), "deployment_mode", (),
-                                 state["listed_sha"])
+        routes, events = _controls()
+        refused = _check_refused(_operator_requests(server, {}, routes, events),
+                                 "deployment_mode", (), state["listed_sha"])
         open_routes = {}
         for path in ("/health", "/ui/"):
             status = server.request("GET", path)[0]
@@ -3460,7 +3949,8 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
         labels = [v.get("label") for v in server.json("/api/v1/cohorts").get("versions") or []]
         assert M4_DEMO_LABEL in labels, "the cohort list does not hold T1's version"
         open_routes.update({"/api/v1/workspaces": 200, "/api/v1/cohorts": 200})
-        return "without M1 every operator control is refused; the read-only routes answer", {
+        return "without M1 every gated API route and the dashboard events asked are refused; " \
+               "the read-only routes answer", {
             "service": {"started_as": "uvicorn src.api.main:app on 127.0.0.1, "
                                       "--no-proxy-headers, SHEPHERD_DEPLOYMENT_MODE unset",
                         "seconds_to_health": server.ready_seconds},
@@ -3601,9 +4091,13 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
         before = _store_runs(reports)
         usage_before = len(read_usage_history(version)[0])
         manager = TrainingManager()
-        started = manager.start_test(inputs)
-        assert started.get("success"), "the runner refused the test run"
-        word = _job_ended(manager, "test", _TEST_RUN_SECONDS)
+        with _job_ended_on_exit(manager, "test"):
+            started = manager.start_test(inputs)
+            assert started.get("success"), "the runner refused the test run"
+            # **A stop reaches only its job type**, this way too: a training
+            # stop while the run runs is refused and the run completes.
+            not_reached = _training_stop_does_not_reach_a_test_run(manager)
+            word = _job_ended(manager, "test", _TEST_RUN_SECONDS)
         status = manager.get_test_status()
         log = "\n".join(manager.get_log("test")["lines"])
         if word != "completed" or status["exit_code"] != 0:
@@ -3653,6 +4147,7 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
                                      "device": entry.get("device"),
                                      "n_ranked": entry.get("n_ranked")},
                    "gpu_lock": "taken by the run itself, released at its end",
+                   "training_stop_while_it_ran": not_reached,
                }
 
     def _registered() -> Tuple[str, Dict[str, Any]]:
@@ -3717,9 +4212,10 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
                              ("cohort version", {"version_sha256": other_version})):
             before, usage_before = _store_runs(reports), len(read_usage_history(version)[0])
             manager = TrainingManager()
-            started = manager.start_test(dataclasses.replace(inputs, **change))
-            assert started.get("success"), "the runner refused the start itself"
-            word = _job_ended(manager, "test", _TEST_RUN_SECONDS)
+            with _job_ended_on_exit(manager, "test"):
+                started = manager.start_test(dataclasses.replace(inputs, **change))
+                assert started.get("success"), "the runner refused the start itself"
+                word = _job_ended(manager, "test", _TEST_RUN_SECONDS)
             outcome = manager.get_test_status()["outcome"] or {}
             log = "\n".join(manager.get_log("test")["lines"])
             if word != "failed":
@@ -3747,32 +4243,33 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
         config = {**_DEMO_TRAINING, "data_dir": str(state["workspace"]),
                   "run_dir": str(m5 / "jobs" / "stopped-training"), "num_epochs": 1000,
                   "device": device}
-        try:
+        with _job_ended_on_exit(manager, "training"):
             started, held = _start_training_job(manager, config, state["fingerprint"],
                                                 lock_path)
             outcome = m5 / "cli" / "outcome-while-training.json"
             refused = _exclusion_while_training(manager, inputs, started["pid"],
                                                 _cli_argv(inputs, outcome), outcome)
             stopped = _stop_training_job(manager, lock_path)
-        finally:
-            if manager.get_job_status_word("training") in ("running", "stopping"):
-                manager.stop("training")
         return "a training job held the lock; other jobs and the CLI refused; its stop ended " \
                "only it, as stopped", {**held, "while_it_ran": refused, "stop": stopped}
 
+    # Read under the operator's settings, before M5's own replace them.
+    deployment_lock = _deployment_gpu_lock()
     with _deployment_settings(settings):
         report.run("W1", "m2", "M5: the server lists workspaces, checkpoints and cohort "
                    "versions by name and digest, and resolves only what it lists", _listed)
         try:
             _start_services()
             report.run("W2", "m2", "M5: D8 on the running service allows M1 on loopback and "
-                       "refuses forwarded, foreign-Host, foreign-Origin and cross-site requests",
+                       "refuses forwarded, foreign-Host, foreign-Origin and cross-site requests "
+                       "on every gated API route and three gated dashboard events",
                        _d8_on_the_service)
             report.run("W3", "m2", "M5: no cross-origin browser access to /api or /ui", _cors)
-            report.run("W4", "m2", "M5: the route guard refuses file= URLs, process_recording "
-                       "and uploads before the body is read", _route_guard)
-            report.run("W5", "m2", "M5: without M1 the service is read-only for every "
-                       "operator control", _read_only)
+            report.run("W4", "m2", "M5: the route guard refuses file= URLs, never fetched, "
+                       "and process_recording and uploads before the body is read", _route_guard)
+            report.run("W5", "m2", "M5: without M1 the service refuses every gated API route "
+                       "and the gated dashboard events asked; the read-only routes answer",
+                       _read_only)
         finally:
             for server in servers.values():
                 server.stop()
@@ -3781,13 +4278,14 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
         report.run("W7", "m2", "M5: a busy GPU lock refuses the runner and the CLIs naming its "
                    "holder, and a killed holder releases it", _gpu_lock)
         report.run("W8", "m2", "M5: a test run through the job runner from the server's lists "
-                   "says kept and registered as the publication contract does", _test_job)
+                   "says kept and registered as the publication contract does; a training stop "
+                   "does not reach it", _test_job)
         report.run("W9", "m2", "M5: a report is registered only from the report store",
                    _registered)
         report.run("W10", "m2", "M5: a test run whose model or cohort is not the chosen one "
                    "fails before measuring, nothing kept", _start_checked_again)
-        report.run("W11", "m2", "M5: a training job holds the GPU; a stop reaches only its job "
-                   "type and ends it as stopped", _training_job)
+        report.run("W11", "m2", "M5: a training job holds the GPU; a test start, a test cancel "
+                   "and the CLI are refused meanwhile; its stop ends it as stopped", _training_job)
 
 
 def _m5_real(report: Report, runs: Path, real: Path, workspaces_root: Path, device: str,
@@ -3846,8 +4344,11 @@ def _m5_real(report: Report, runs: Path, real: Path, workspaces_root: Path, devi
                                   for entry in item.declared_releases},
             "samples": {"train": item.train_samples, "val": item.val_samples},
             "workspaces_listed": len(listing.items), "item_carries_no_server_path": True,
+            "deployment_gpu_lock": deployment_lock,
         }
 
+    # Read under the operator's settings, before M5's own replace them.
+    deployment_lock = _deployment_gpu_lock()
     report.run("RW1", "real", "M5: the server lists the real workspace by its dataset "
                "fingerprint", _listed)
 
@@ -3858,12 +4359,14 @@ def _m5_real(report: Report, runs: Path, real: Path, workspaces_root: Path, devi
         sha256 = _read_run_checkpoint(parent)["sha256"]
         before, usage_before = _store_runs(reports), len(read_usage_history(version)[0])
         manager = TrainingManager()
-        started = manager.start_test(TestRunInputs(
-            registry=registry, version_label=M4_REAL_LABEL,
-            version_sha256=version.identity.sha256, workspace=real, checkpoint=parent,
-            checkpoint_sha256=sha256, record=True))
-        assert started.get("success"), "the runner refused the test run"
-        word = _job_ended(manager, "test", _TEST_RUN_SECONDS)
+        with _job_ended_on_exit(manager, "test"):
+            started = manager.start_test(TestRunInputs(
+                registry=registry, version_label=M4_REAL_LABEL,
+                version_sha256=version.identity.sha256, workspace=real, checkpoint=parent,
+                checkpoint_sha256=sha256, record=True))
+            assert started.get("success"), "the runner refused the test run"
+            not_reached = _training_stop_does_not_reach_a_test_run(manager)
+            word = _job_ended(manager, "test", _TEST_RUN_SECONDS)
         status = manager.get_test_status()
         if word != "completed" or status["exit_code"] != 0:
             _job_said(manager, "test")
@@ -3891,6 +4394,7 @@ def _m5_real(report: Report, runs: Path, real: Path, workspaces_root: Path, devi
             "kept": True, "registered": True, "usage_history": ["test_run", "registered"],
             "device": new[0].get("device"), "n_ranked": new[0].get("n_ranked"),
             "gpu_lock": "taken by the run itself, released at its end",
+            "training_stop_while_it_ran": not_reached,
         }
 
     def _training_job() -> Tuple[str, Dict[str, Any]]:
@@ -3900,13 +4404,12 @@ def _m5_real(report: Report, runs: Path, real: Path, workspaces_root: Path, devi
         assert "m4" in state, "the cohort version (RT1) is not available"
         settings_now = dict(state["settings"])
         workers = int(settings_now.get("num_workers", TrainConfig.num_workers) or 0)
-        room = _socket_room()
-        assert workers == 0 or room["socket_fits"], (
-            f"the temporary directory's path is {room['path_bytes']} bytes: a DataLoader "
-            f"worker's socket under it exceeds the {room['socket_path_limit']} an AF_UNIX path "
-            "may have here, and this training (num_workers "
-            f"{workers}) would fail with 'AF_UNIX path too long'. Run the probe with a short "
-            "TMPDIR, such as TMPDIR=/tmp")
+        room = _socket_room() if workers else None
+        assert room is None or room["socket_fits"], (
+            f"a DataLoader worker's socket could not be made under the temporary directory "
+            f"(its path is {room['path_bytes']} bytes; {room['refusal'] or room['checked']}), "
+            f"so this training (num_workers {workers}) would fail with 'AF_UNIX path too long'. "
+            "Run the probe with a short TMPDIR, such as TMPDIR=/tmp")
         version, parent = state["m4"]["version"], state.get("parent", state.get("child"))
         inputs = TestRunInputs(
             registry=registry, version_label=M4_REAL_LABEL,
@@ -3919,7 +4422,7 @@ def _m5_real(report: Report, runs: Path, real: Path, workspaces_root: Path, devi
             settings_now.pop(continuation, None)
         config = {**settings_now, "data_dir": str(real), "run_dir": str(m5 / "stopped-training"),
                   "device": device}
-        try:
+        with _job_ended_on_exit(manager, "training"):
             started, held = _start_training_job(manager, config,
                                                 state["read"][MANIFEST_FILENAME], lock_path)
             outcome = m5 / "outcome-while-training.json"
@@ -3927,9 +4430,6 @@ def _m5_real(report: Report, runs: Path, real: Path, workspaces_root: Path, devi
                 manager, inputs, started["pid"],
                 build_test_argv(inputs, deployment_device(), outcome)[2:], outcome)
             stopped = _stop_training_job(manager, lock_path)
-        finally:
-            if manager.get_job_status_word("training") in ("running", "stopping"):
-                manager.stop("training")
         return "a short training job on the real workspace held the GPU and was stopped", {
             **held, "num_workers": workers, "while_it_ran": refused, "stop": stopped,
         }
@@ -5499,6 +5999,11 @@ def main(argv: Optional[List[str]] = None) -> int:
                                    "NOT COMPLETE (both parts must run and pass)"))
         if not acceptance["complete"]:
             failed += 1
+    # **What the run ran with, said again where it ends** (A5): a set that
+    # differs from the lock is not left on a line an hour up the console.
+    closing = environment_line(report)
+    if closing:
+        print(closing)
     # **Containment, not parent equality.** A report at `<work>/sub/report.json`
     # has a parent that is not `work`, and removing `work` would take the report
     # with it -- the first version of this check did exactly that.
@@ -5514,4 +6019,5 @@ def main(argv: Optional[List[str]] = None) -> int:
 if __name__ == "__main__":
     # Before main(): the environment phase is the first thing to import torch.
     ALLOCATOR.update(_apply_allocator())
+    _stop_on_termination_signals()
     sys.exit(main())

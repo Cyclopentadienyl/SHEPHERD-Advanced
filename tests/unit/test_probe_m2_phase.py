@@ -229,10 +229,27 @@ def test_the_demo_phase_passes_and_every_required_probe_runs(tmp_path, served_st
                                              "sha256": child, "listed_with_a_problem": False}
     assert facts["W1"]["workspaces"][0]["dataset_fingerprint"] == hashlib.sha256(
         (workspace / "split_manifest.json").read_bytes()).hexdigest()
-    # W2 and W5: every request shape was decided by the condition named for it.
+    # W2 and W5: every request shape was decided by the condition named for it,
+    # on every gated API route (D8's six) and the three gated dashboard events.
     assert sorted({seen["condition"] for seen in facts["W2"]["requests"].values()}) == [
         "cross_site", "enabled", "forwarding_header", "host_not_loopback", "origin_mismatch"]
+    operator = sorted(f"{method} {path}" for method, path, _ in probe.OPERATOR_ROUTES)
+    assert facts["W2"]["gated"]["api_routes"] == operator
+    assert len(facts["W2"]["gated"]["gradio_events"]) == 3
+    for seen in (*facts["W2"]["requests"].values(), facts["W5"]["loopback_request"]):
+        expected = 403 if seen["condition"] != "enabled" else None
+        assert sorted(seen["routes"]) == operator
+        assert expected is None or set(seen["routes"].values()) == {403}
+        assert len(seen["gradio_events"]) == 3
     assert facts["W5"]["loopback_request"]["condition"] == "deployment_mode"
+    # W4: no file= URL request reached Gradio's URL fetch; the control past the
+    # guard did, so the count is where a fetch happens.
+    assert (facts["W4"]["url_fetches_through_the_guard"],
+            facts["W4"]["url_fetch_control_past_the_guard"]) == (0, 1)
+    # W1: the deployment's own lock (none configured here) was read and stated.
+    assert facts["W1"]["deployment_gpu_lock"]["held"] is False
+    # W8: a training stop while the run ran was refused, and the run completed.
+    assert facts["W8"]["training_stop_while_it_ran"].startswith("refused")
     # Both services were stopped (uvicorn's own last words in each log).
     for mode in ("m1", "read-only"):
         assert "Finished server process" in (
@@ -349,6 +366,8 @@ def test_the_real_phase_passes_and_leaves_the_workspace_as_it_was(tmp_path, serv
     assert facts["RW1"]["dataset_record"] == {"binding": "verified", "origin": "files"}
     (rw2_record,) = _ledger_records(work / "real" / "initial" / "checkpoints")
     assert rw2_record["source_artifact_digest"] == facts["RW2"]["report_sha256"]
+    assert facts["RW2"]["training_stop_while_it_ran"].startswith("refused")
+    assert facts["RW1"]["deployment_gpu_lock"]["held"] is False
     assert facts["RW3"]["stop"]["status"] == "stopped"
     assert (work / "real" / "m5" / "gpu.lock").is_file()
     assert not list(root.glob(".shepherd-gpu.lock*"))
