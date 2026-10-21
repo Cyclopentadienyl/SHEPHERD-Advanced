@@ -1859,8 +1859,9 @@ checkpoint、cohort 版本與量測設定）下的報告，會用 ledger 所用�
 - 這個版本的每一次量測（`test_run`：時間、run id、checkpoint 與報告的 digest、Mode C 的指標、
   `n_ranked`、是否為確定性執行、裝置、是否要求 `--record`）；
 - 每一次寫入 ledger 的登錄（`registered`：結果與序號）；
-- 每一次從依該版本分數排序的清單載入的模型（`model_load`；由隨 M5 的 Model Management 頁面提供的
-  Load 控制項寫入）。
+- 每一次從依該版本分數排序的清單載入的模型（`model_load`：排序清單所用的指標與 scoring 分組，以及
+  載入是否生效並附原因；由儀表板唯一的 Load 在 Research › Models 依測試分數排序時使用而寫入，
+  §4.14）。
 
 它只保存彙總資料，不含任何 case id。量測會在報告發佈後、寫出 `--outcome` 檔之前，立即追加它的
 條目。若追加失敗，執行會以結束碼 1 停止（"measured, but the run did not finish"），說明報告已寫出、
@@ -2204,8 +2205,8 @@ M5 在 SPEC_4 的部署模式 **M1** 下執行：由 owner 或指定的技術人
 
 兩份 checkpoint 清單與 Check checkpoint 會開啟 checkpoint 檔案，SPEC_4 將此歸類為 checkpoint 檢視
 （C3），因此它們與控制項一樣受檢查。Research › Test（§4.14）對它的匯入（intake 清單、Preview 與
-Commit）、Start test、Cancel、Register this report、Add note 與模型清單使用同一個檢查；Model
-Management 也將使用它。其餘一切保持開放：診斷、HPO 與疾病查詢、pipeline 狀態與儲存的 UI 路徑、訓練狀態與指標、
+Commit）、Start test、Cancel、Register this report、Add note 與模型清單使用同一個檢查，Research ›
+Models 的 checkpoint 清單與 Load（§4.14）也一樣。其餘一切保持開放：診斷、HPO 與疾病查詢、pipeline 狀態與儲存的 UI 路徑、訓練狀態與指標、
 workspace 與 cohort 清單、已記錄的結果，以及系統頁面。
 
 ### 什麼時候允許一個請求
@@ -2335,7 +2336,7 @@ CORS 只決定頁面能讀取什麼。不需要預檢的跨來源請求仍會抵
 | **Research (pre-clinical)** › Prepare › **Datasets** | 伺服器的 workspace，唯讀（見下文） |
 | **Research (pre-clinical)** › Prepare › **Training** | Training Console，與以前相同。它是 Research 下最先顯示的頁面 |
 | **Research (pre-clinical)** › Evaluate › **Test** | 從伺服器的 intake 目錄匯入 cohort 版本、執行測試、保留並登錄其報告（見下文） |
-| **Research (pre-clinical)** › Evaluate › **Models** | 目前顯示「being built in M5」 |
+| **Research (pre-clinical)** › Evaluate › **Models** | 伺服器為某個 workspace 列出的 checkpoint、它們已記錄的測試結果、依測試分數排序與 Load（見下文） |
 | 頁首右側的 **⚙ Settings** | Runtime Settings，與以前相同。對唯讀的瀏覽器，Apply Settings 與 Restart Backend 會呈灰色不可用，原因寫在它們下方 |
 
 - 選中的階段（Diagnosis 或 Research）以填色加粗體顯示；選中的研究頁面以底線加粗體顯示；
@@ -2498,6 +2499,65 @@ Models 中提供依測試分數排序：`SHEPHERD_ORDERING_ROLES`，`institution
 「Operator controls only: <原因>」（筆記的 Who 與 What 欄位也一樣），checkpoint 清單也不顯示。每個控制項都在後端檢查它自己的
 請求（§4.13）。不會顯示伺服器的絕對路徑：registry、workspace 根目錄、intake 目錄、證據目錄或
 repository 之下的路徑以其名稱書寫（`<registry>/versions/…`），其他路徑寫作「a server path」。
+
+### Research › Evaluate › Models
+
+這是 Diagnosis 分頁「Change model…」所用的同一份模型清單的研究檢視，列出伺服器為某一個 workspace
+列出的 checkpoint（選擇 **Workspace**；**Architecture** 可縮小清單）。所有 run 都會顯示，最新的在前。
+各欄：
+
+- **Model**：架構、run 的開始時間、epoch；正在提供服務的 checkpoint 標示 **In use (Diagnosis)**
+  （以完整的模型指紋比對）；
+- **Fingerprints: model · dataset trained on**：模型指紋（checkpoint 的 SHA-256 的前 12 個十六進位
+  數字），下方是 checkpoint 所記錄的完整資料集指紋所對應的已列出 workspace，或「matches no listed
+  workspace」；`synthetic` 以琥珀色顯示；
+- **Validation MRR (Trainer, top-20)**：Trainer 自己在 val 樣本上的數值，也就是訓練用來挑選
+  checkpoint 的指標。它從來不是測試結果，也從不與測試結果放在同一欄；
+- **Recorded tests**：checkpoint 旁的 ledger 所記錄的內容，以狀態顯示（「none in ledger」、「no
+  ledger」、「3 · 1 contested」……），從不顯示某個結果的數值。
+
+**列出清單會開啟該 workspace 的每一個 checkpoint**，因此清單是操作者控制項（§4.13）。唯讀的瀏覽器
+看不到清單：頁面會說明原因，並列出三個條件（部署模式 M1、請求經由本機的 loopback 抵達——在本機上或
+經由 SSH forward——且沒有轉發標頭），改為顯示 **Recorded test results of the model in use**：依模型指紋
+從正在服務的 checkpoint 旁的 ledger 讀取，不開啟任何 checkpoint。那裡沒有 Trainer 的驗證數值，也沒有
+Load。
+
+**Order: Newest first | By test score。** 只有角色列在 `SHEPHERD_ORDERING_ROLES`（§4.12）中的 cohort
+version 才提供依測試分數排序；其他 version 會列出並說明為何關閉，而 `institutional_acceptance` 一律
+關閉（「awaits the institution's formal evaluation rules」），即使設定中列出它也一樣。選擇指標（Mode C
+MRR (untruncated)、Hits@k，或 mean rank——它以最低者在前排序）與 cohort version。其他 scoring
+semantics 下的紀錄從不與這些一起排序；當該 version 的紀錄分屬不止一種時，會出現 **Scoring
+semantics** 選項。凡是提供排序的地方，頁面都會說明：「A cohort version whose scores were used to
+choose a model is no longer an independent final test for that model.」系統從不依測試分數自動選擇
+模型。各分組：
+
+| 分組 | 內容 |
+|---|---|
+| Ordered by … on … · highest first | 每個 checkpoint 一個數值，依固定規則：它第一筆以 deterministic 環境登錄的紀錄，否則為它第一筆登錄的紀錄（有多筆時顯示 `#3 · D4 rule`）。每一列顯示該紀錄的數值環境（`CUDA · deterministic`），若不是多數已排序列共有的環境則標示 **regime differs** |
+| Contested on this version · not ordered | 規則選中的紀錄有爭議：該 version 的報告庫中同一鍵下的報告彼此不一致，或無法確認是否一致。它不參與排序，也從不以下一筆紀錄遞補 |
+| Not compared on this version · not ordered | 其他 scoring semantics 下的紀錄、分在兩個 ledger 中的紀錄、無法讀取的紀錄或 ledger，或無法讀取的 checkpoint；該列會說明是哪一種 |
+| Not tested on this cohort version · newest first | 在此 version 上沒有紀錄 |
+
+剛選擇另一個 workspace 時，它的各列可能短暫顯示在「Records not read yet」之下，直到頁面讀完它們的
+ledger。
+
+**選取一列**會顯示完整的模型指紋與 Copy、它在什麼資料上訓練（以及那是否為此 workspace 目前的資料
+集）、自成一張卡片的 Trainer 驗證數值、任何警告，以及兩個分段：
+
+- **Recorded test results (Mode C)**：ledger 為這組權重記錄的每一筆紀錄：cohort version 與其角色、
+  Mode C MRR 與 Hits@10、列出每一項排除的涵蓋率，以及 `registered #N` 或琥珀色的 `contested #N` 並
+  說明各次執行在哪裡不一致（或「contested status cannot be checked」，從不顯示為無爭議）、
+  deterministic 開或關；清單已排序時，標出固定規則選中哪一筆，以及其他紀錄與它的差異；接著是各項
+  關係、其他 Mode C 指標、以狀態顯示的 R10（*unverifiable* 是一個原因，從不是 0）、執行環境、資料集
+  與登錄資訊；
+- **Usage history**：每一個已列出的 cohort version 的使用紀錄中提及此 checkpoint 的項目：測試執行、
+  登錄，以及從已排序清單進行的載入，最新的在前。
+
+**🔒 Load this model** 是共用的 Load（與 Diagnosis 的「Change model…」相同的確認；確認開啟時會蓋住
+細節區，按 Close 回到細節區）。清單依測試分數排序時，按鈕旁的說明會指出這一點，而這次 Load 會以
+「依該指標排序的模型載入」寫入該 version 的使用紀錄，不論是否生效，並附上原因。從「Newest first」
+清單進行的 Load 不會在那裡寫入任何內容。頁面在顯示時、更換 workspace 時以及 Load 之後讀取；頁面上
+沒有任何東西依計時器執行。
 
 ---
 

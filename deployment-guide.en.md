@@ -1508,8 +1508,10 @@ per line, appended and never rewritten. It records:
   Mode C's metrics, `n_ranked`, whether it was deterministic, the device, whether `--record`
   was asked);
 - every registration that wrote a ledger (`registered`: outcome and sequence);
-- every model loaded from a list ordered by the version's score (`model_load`; written by the
-  Load control that comes with M5's Model Management page).
+- every model loaded from a list ordered by the version's score (`model_load`: the metric and
+  scoring group that ordered the list, and whether the load took effect, with why; written by
+  the dashboard's one Load when it is used from Research › Models ordered by test score,
+  §4.14).
 
 It holds aggregates only, no case id. The measurement appends its entry right after the report
 is published, before it writes its `--outcome` file. If that append fails, the run stops with
@@ -1902,7 +1904,8 @@ the read-only lists keep working.
 The two checkpoint lists, and Check checkpoint, open checkpoint files, which SPEC_4 classes as
 checkpoint inspection (C3), so they are checked like the controls. Research › Test (§4.14)
 uses the same check for its import (the intake list, Preview and Commit), Start test, Cancel,
-Register this report, Add note and its model list; Model Management is to use it too. Everything else stays open:
+Register this report, Add note and its model list, and Research › Models for its checkpoint
+list and its Load (§4.14). Everything else stays open:
 diagnosis, the HPO and disease lookups, the pipeline status and the saved UI paths, the training
 status and metrics, the workspace and cohort lists, the recorded results and the system pages.
 
@@ -2052,7 +2055,7 @@ help control for every field. Nothing an operator sets changed; what moved is wh
 | **Research (pre-clinical)** › Prepare › **Datasets** | The server's workspaces, read-only (below) |
 | **Research (pre-clinical)** › Prepare › **Training** | The Training Console, as before. It is the research page shown first |
 | **Research (pre-clinical)** › Evaluate › **Test** | Import a cohort version from the server's intake directory, run a test, keep and register its report (below) |
-| **Research (pre-clinical)** › Evaluate › **Models** | "being built in M5" for now |
+| **Research (pre-clinical)** › Evaluate › **Models** | The server's checkpoints of a workspace, their recorded test results, ordering by test score and Load (below) |
 | **⚙ Settings**, at the right of the header | Runtime Settings, as before. For a read-only browser, Apply Settings and Restart Backend are greyed out, with the reason written below them |
 
 - The selected stage (Diagnosis or Research) is filled and bold; the selected research page is
@@ -2243,6 +2246,71 @@ fields too), and the checkpoint list is not shown. Every control checks its own 
 backend (§4.13). No absolute server path is shown: a path under the registry, the workspaces
 root, the intake directory, an evidence directory or the repository is written under its name
 (`<registry>/versions/…`), any other as "a server path".
+
+### Research › Evaluate › Models
+
+The research view of the same model list the Diagnosis tab's "Change model…" uses, over the
+checkpoints the server lists for one workspace (choose the **Workspace**; **Architecture**
+narrows the list). Every run is shown, newest first. Columns:
+
+- **Model**: architecture, the run's start time, the epoch; **In use (Diagnosis)** on the
+  checkpoint being served (matched by its full model fingerprint);
+- **Fingerprints: model · dataset trained on**: the model fingerprint (12 hex digits of the
+  checkpoint's SHA-256) over the listed workspace whose full dataset fingerprint the checkpoint
+  records, or "matches no listed workspace"; `synthetic` in amber;
+- **Validation MRR (Trainer, top-20)**: the Trainer's own figure on the val samples, the metric
+  training selects by. It is never a test result and never shares a column with one;
+- **Recorded tests**: what the ledger beside the checkpoint holds, as a state ("none in
+  ledger", "no ledger", "3 · 1 contested", …), never a number of a result.
+
+**Listing opens every checkpoint of the workspace**, so the list is an operator control (§4.13).
+A read-only browser gets no list: the page says why, naming the three conditions (deployment
+mode M1, a request on this machine's loopback, here or through an SSH forward, and no forwarding
+header), and shows instead **Recorded test results of the model in use**, read from the ledger
+beside the served checkpoint by its model fingerprint, opening no checkpoint. There are no
+Trainer validation figures and no Load there.
+
+**Order: Newest first | By test score.** Ordering by test score is offered only for a cohort
+version whose role is in `SHEPHERD_ORDERING_ROLES` (§4.12); the other versions are listed with
+why they are off, and `institutional_acceptance` is always off ("awaits the institution's formal
+evaluation rules"), even when the setting names it. Choose the metric (Mode C MRR (untruncated),
+Hits@k, or mean rank, which is ordered lowest first) and the cohort version. Records under
+another scoring semantics are never ordered with these; when the version's records are under
+more than one, a **Scoring semantics** choice appears. Wherever ordering is offered the page
+says: "A cohort version whose scores were used to choose a model is no longer an independent
+final test for that model." No model is ever chosen automatically by its test score. The
+groups:
+
+| Group | What is in it |
+|---|---|
+| Ordered by … on … · highest first | One number per checkpoint, by a fixed rule: its first registered record from a deterministic regime, else its first registered record (`#3 · D4 rule` when it had several). Each row shows the record's regime (`CUDA · deterministic`), and **regime differs** where it is not the one most ordered rows share |
+| Contested on this version · not ordered | The record the rule picks is contested: reports under its key in the version's report store disagree, or that cannot be checked. It is not ordered, and the next record is never put in its place |
+| Not compared on this version · not ordered | Records under another scoring semantics, records in two ledgers, a record or a ledger that cannot be read, or a checkpoint that cannot be read; the row says which |
+| Not tested on this cohort version · newest first | No record on this version |
+
+Just after choosing another workspace, its rows may show for a moment under "Records not read
+yet", until the page has read their ledgers.
+
+**Selecting a row** shows its full model fingerprint with Copy, what it was trained on (and
+whether that is this workspace's current dataset), the Trainer's validation figure in its own
+card, any warning, and two segments:
+
+- **Recorded test results (Mode C)**: every record the ledger holds for these weights: the
+  cohort version and its role, Mode C MRR and Hits@10, coverage with every exclusion, and
+  `registered #N` or amber `contested #N` with what the runs disagree on (or "contested status
+  cannot be checked", never shown as uncontested), deterministic on or off; when the list is
+  ordered, which record the fixed rule picks and how the others differ from it; then the
+  relations, the other Mode C metrics, R10 as states (*unverifiable* is a reason, never 0), the
+  environment, the dataset and the registration;
+- **Usage history**: the entries that name this checkpoint in every listed cohort version's
+  usage history: test runs, registrations and loads from an ordered list, newest first.
+
+**🔒 Load this model** is the shared Load (the same confirmation as Diagnosis' "Change model…";
+it covers the detail while it is open, and Close returns to it). When the list is ordered by
+test score, the note beside the button says so, and the Load is written to that version's usage
+history as a model load ordered by that metric, whether or not it took effect, with why. A Load
+from the list newest first writes nothing there. The page is read when it is shown, when the
+workspace changes and after a Load; nothing on it runs on a timer.
 
 ---
 

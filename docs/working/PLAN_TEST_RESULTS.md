@@ -1555,7 +1555,27 @@ contract and BACKLOG stay the record, and no new planning document is added.
     Register, the D5 block and notes (D5 above); the import (D7 above). No absolute server path
     is shown;
   - **Model Management** on the shared model list, keeping Trainer validation figures and each
-    cohort's Mode C results apart;
+    cohort's Mode C results apart; *as implemented (M5-2, 2026-10-20):* Research › Models
+    (`src/webui/components/models_page.py`) places the research preset of the one shared list
+    and Load and shapes it through the list's view and ordering, drawing no row and loading
+    nothing itself. Ordering by test score is offered only for a version whose role WP1's list
+    says offers it (`SHEPHERD_ORDERING_ROLES`; `institutional_acceptance` listed, off, with its
+    reason) and comes from WP4's one function over the records each listed checkpoint's ledger
+    holds (`read_ledger`), one metric, one version and one scoring semantics (a second semantics
+    is a choice, never interleaved), each record key's state from the version's report store
+    (`scan_report_store`): groups "Ordered by …", "Contested on this version · not ordered",
+    "Not compared on this version · not ordered" and "Not tested on this cohort version · newest
+    first", the regime on each ordered row and "regime differs" where it is not the most common;
+    the independence sentence of §4.9 question 1 wherever ordering is offered; a refusal by the
+    function itself (records naming another role) said, the list left newest first. The detail
+    keeps the Trainer's figure in its own card and shows every record as the API's record view
+    (`_record_view`) with its contested state ("cannot be checked" is never uncontested), D4's
+    pick and the others' difference, and the checkpoint's entries in every listed version's
+    usage history. A Load from the ordered list passes the ordering to the shared Load, which
+    writes the `model_load` entry; newest first writes none. A request D8 refuses gets no list
+    (D8's three conditions named) and "Recorded test results of the model in use" from the API's
+    read-only route function, by the served digest, opening no checkpoint, with each record's
+    contested state from the report store (reasons naming no server path);
   - **D4 and D5 as planned:** ordering, disagreement and contested states, usage history, the
     deterministic-execution switch, with no change to scoring semantics;
   - **the Diagnosis tab's integration:** the shared layout, the identity display and the
@@ -1584,8 +1604,8 @@ contract and BACKLOG stay the record, and no new planning document is added.
       builder). A research page is read again only when it is the page shown (returning to
       Research refreshes that one page, never the other three, since Models' list opens every
       checkpoint). The page is always drawn light (Gradio's dark mode left its text unreadable on
-      the dashboard's colours) and Gradio's own footer is off. Test and Models hold a one-line
-      body until they are built (deployment guide §4.14);
+      the dashboard's colours) and Gradio's own footer is off. Test holds a one-line body until
+      it is built; Models is built (Model Management, above; deployment guide §4.14);
     - **the Diagnosis tab's "Model in use" card**, directly above Run Diagnosis, so the model
       is known before a diagnosis, with "Change model…": a drawer on the one shared model list
       and the one gated Load that Models also uses (one component, two views, no second
