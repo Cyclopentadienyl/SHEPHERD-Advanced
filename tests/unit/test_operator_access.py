@@ -440,7 +440,7 @@ def test_the_status_route_answers_for_the_request_that_asks(monkeypatch):
 #: Every state-changing Gradio handler, by module and name. Each takes a
 #: positional `gr.Request` (the one way Gradio passes it) and calls the helper.
 GATED_HANDLERS = {
-    "src.webui.components.diagnosis_panel": ("_on_reload_pipeline", "_on_save_config"),
+    "src.webui.components.diagnosis_panel": ("_on_change_model",),
     "src.webui.components.runtime_settings": ("_on_restart", "_on_apply"),
     "src.webui.components.training_console": (
         "_on_start", "_on_stop", "_on_resume", "_on_check_continue", "_refresh_checkpoints",
@@ -471,27 +471,20 @@ def test_every_gated_handler_takes_a_positional_gradio_request():
 
 def test_no_gated_handler_calls_the_api_over_http():
     """In process, never `_self_request`: the API would judge a loopback
-    self-call as local whoever clicked (D8)."""
+    self-call as local whoever clicked (D8). Diagnosis reloads through the
+    shared Load (`model_list`, UI-A's own tests) and writes no configuration:
+    its page calls neither route nor writer."""
+    from src.webui.components import diagnosis_card
     from src.webui.components import diagnosis_panel as dp
 
-    for name in ("_on_reload_pipeline", "_render_reload", "_reload_pipeline",
-                 "_on_save_config", "_save_config_to_file"):
+    for name in ("_on_change_model", "open_change"):
         source = inspect.getsource(getattr(dp, name))
         assert "_self_request" not in source and "/pipeline/reload" not in source, name
-
-
-def test_the_reload_handler_runs_the_reload_on_the_event_loop():
-    """``async`` with nothing awaited before the reload: it runs where the
-    route runs it, and waits behind a diagnosis, never beside one (BACKLOG 28);
-    only the rendering after it, which calls this server over HTTP, is moved to
-    a thread."""
-    from src.webui.components import diagnosis_panel as dp
-
-    assert inspect.iscoroutinefunction(dp._on_reload_pipeline)
-    source = inspect.getsource(dp._on_reload_pipeline)
-    body = source[source.index('"""', source.index('"""') + 3):]
-    assert body.count("await") == 1
-    assert body.index("_reload_pipeline(") < body.index("await anyio.to_thread.run_sync")
+    for module in (dp, diagnosis_card):
+        source = inspect.getsource(module)
+        for forbidden in ("run_reload(", "write_ui_config(", '"/api/v1/pipeline/reload',
+                          '"/api/v1/pipeline/config'):
+            assert forbidden not in source, (module.__name__, forbidden)
 
 
 @pytest.fixture(scope="module")
@@ -597,8 +590,7 @@ def _dashboard_calls():
 
     path = tc.CONTINUE_FROM_PATH
     return [
-        (dp._on_reload_pipeline, ["/srv/ws", "", "auto"], "reload"),
-        (dp._on_save_config, ["/srv/ws", ""], "write_ui_config"),
+        (dp._on_change_model, [], None),
         (rs._on_restart, [], "restart"),
         (rs._on_apply, ["cuda_async", False], "save_runtime_settings"),
         (tc._on_start, None, "start_training"),

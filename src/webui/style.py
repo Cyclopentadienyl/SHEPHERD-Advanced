@@ -168,6 +168,24 @@ body { color: var(--shep-text); }
 .shep-seg .wrap label span { color: inherit !important; }
 .shep-seg .wrap label input { position: absolute; opacity: 0; width: 1px; height: 1px; }
 
+/* ---------------------------------------------------------------- primary buttons */
+/* White text on every primary button at a contrast of at least 4.5:1, at rest
+   and on hover (the Soft theme's indigo-500 is 4.47:1 and its hover indigo-400
+   2.98:1). A disabled primary button is grey with grey text, never a faded
+   accent: it reads as off, and its words stay readable. */
+.gradio-container {
+  --button-primary-background-fill: var(--shep-accent);
+  --button-primary-background-fill-hover: var(--shep-accent-600);
+  --button-primary-border-color: var(--shep-accent);
+  --button-primary-border-color-hover: var(--shep-accent-600);
+  --button-primary-text-color: #ffffff;
+  --button-primary-text-color-hover: #ffffff;
+}
+.gradio-container button.primary[disabled] {
+  background: var(--shep-grey-50) !important; border-color: var(--shep-grey-200) !important;
+  color: var(--shep-grey-600) !important; opacity: 1 !important; filter: none !important; box-shadow: none !important;
+}
+
 /* ---------------------------------------------------------------- shared pieces */
 .shep-muted { color: var(--shep-muted); }
 .shep-note { font-size: 14px; color: var(--shep-muted); }

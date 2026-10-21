@@ -207,8 +207,8 @@ def test_on_page_open_runs_on_its_own_tab_for_a_first_level_page():
 
 def test_every_gated_act_is_followed_by_the_chips_read(built):
     """Training Start, Continue, Stop, Check checkpoint, Save Path and the run
-    list's Refresh, Diagnosis Reload and Save Config, Settings Apply and
-    Restart: each act's chain reads the chips again."""
+    list's Refresh, Diagnosis' Change model… (it lists checkpoints), Settings
+    Apply and Restart: each act's chain reads the chips again."""
     from src.webui.components.chips import read_chips
 
     demo, _ctx = built
@@ -225,7 +225,7 @@ def test_every_gated_act_is_followed_by_the_chips_read(built):
                 return True
         return False
 
-    names = {"_on_start", "_on_stop", "_on_resume", "_on_reload_pipeline", "_on_save_config",
+    names = {"_on_start", "_on_stop", "_on_resume", "_on_change_model",
              "_on_apply", "_on_restart", "_on_check_continue", "_save_training_config"}
     acts = [fn for fn in by_id.values() if fn.name in names
             or getattr(getattr(fn.fn, "__wrapped__", None), "__name__", None) in names]

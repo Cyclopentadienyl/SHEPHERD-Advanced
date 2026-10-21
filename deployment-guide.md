@@ -1135,8 +1135,10 @@ OBO 的 format version 冒充 release。
   判定、綁定狀態與來源；
 - 自 contract M3c 起，served identity（§4.7）：`dataset_record` 為 `verified`、來源
   `synthetic`，出現在每一個診斷回應與 API 的 pipeline 狀態裡；
-- Diagnosis 分頁：結果上方與模型狀態裡的 `SYNTHETIC WORKSPACE: not a clinical result.`
-  橫幅，以及結果「Produced by」那一行的 `dataset synthetic ✓`；
+- Diagnosis 頁面：結果上方的 `SYNTHETIC WORKSPACE: not a clinical result.` 橫幅、
+  「Model in use」卡片上琥珀色的 `synthetic data` 標籤（其 Details 裡也有同一個橫幅），以及
+  結果身分（「This result」）中 dataset record 那一列的 `verified · synthetic`（自 M5-2 起，
+  §4.14）；
 - 可下載的報告：「What produced this result」段落裡的同一個橫幅，以及檔名
   `diagnosis_SYNTHETIC_<patient>_<session>_report.md`；
 - CSV 匯出：每一列的 `served_dataset_origin` 都是 `synthetic`，檔名為
@@ -1416,17 +1418,17 @@ WebUI 顯示的是**結果自己的身分**，絕不是狀態的：
   result.`、`NO TRAINED MODEL: path-reasoning fallback.`、`NO SHORTEST-PATH TABLE: GNN
   score alone.`、`DEMO ANSWER: not computed.`，以及回應沒有這個欄位時（M3c 之前的伺服器）
   的 `WHAT PRODUCED THIS RESULT WAS NOT REPORTED.`。
-- 結果下方的 **「Produced by」一行**（digest 縮短顯示），以及一個預設收合的區塊
-  「What produced this result — full identity」，內含完整表格、宣稱界線與
-  "Not a certified medical device; decision support for a qualified clinician."。
-- **模型狀態**（Model Configuration）在「Serving」那一行顯示目前載入之 pipeline 的身分，
-  並另以一行列出正在服務的 workspace 與 checkpoint 檔。載入 pipeline 後，Data Directory
-  與 Checkpoint 欄位顯示這兩個路徑（自動選出的檔案也照實顯示），因此 Load / Reload 重新載入的
-  就是正在服務的 checkpoint 檔；清空 Checkpoint 欄位即讓伺服器重新自動選擇。有兩種情況不同：
-  沒有服務任何 checkpoint 時，Checkpoint 欄位是空白的，重新載入會自動選擇一個（workspace 裡
-  沒有時則被拒絕）；只以 `SHEPHERD_KG_PATH` 啟動時，Data Directory 是空白的，重新載入需要先
-  填入 workspace。未載入任何 pipeline 時，欄位顯示服務啟動時 Save Config 已儲存的路徑；新的
-  儲存自下次啟動起生效。
+- **結果上方的標記（badge）**（自 M5-2 起）把結果的整個身分逐項與「Model in use」卡片最近一次
+  讀到的使用中模型比對："Produced by the model in use"、"Produced by an earlier model or
+  pipeline — N parts differ ›"，或附一個原因的 "Cannot check against the model in use yet"。
+  它的 › 會在「This result」上打開身分抽屜：每一項與目前使用中的對照、可 Copy 的完整 digest、
+  宣稱界線與 "Not a certified medical device; decision support for a qualified clinician."
+  （§4.14「Diagnosis (clinical)」）。
+- **目前服務的是什麼**顯示在頁面的「Model in use」卡片上（§4.14）。自 M5-2 起，Model
+  Configuration 折疊區（其路徑欄位、Load / Reload、Save Config 與 Reset）以及頁首的
+  「Serving now」一行都已移除：操作者以卡片上的「🔒 Change model…」更換模型，它列出伺服器的
+  workspace 與其 checkpoint，只重新載入伺服器列出的項目。`POST /api/v1/pipeline/config`
+  仍保留給 API 用戶端，由 D8 檢查（§4.13）；儀表板不再寫入它。
 - **Markdown 報告**在候選之前有「What produced this result」段落：同樣的橫幅、一個
   Part | State | Value 表格（digest 完整寫出，`sha256:<64 hex>`）、宣稱界線與固定聲明。
   缺少的部分寫成它的狀態與原因，絕不留白。
@@ -1543,7 +1545,8 @@ CSV 仍然**只有一列標題**、沒有前言。原本的 15 個候選欄位�
    （Mode C），並保留完整報告；
 3. `--record`，或之後用 `scripts/record_evaluation.py --report`，把報告登錄到 checkpoint 旁的
    `evaluations.json`；
-4. Diagnosis 分頁的模型狀態顯示目前載入之 checkpoint 已登錄的結果。
+4. Diagnosis 頁面的「Model in use」卡片以狀態顯示目前載入之 checkpoint 已登錄的測試（自 M5-2
+   起；紀錄本身列在 Research › Evaluate › Models）。
 
 以上都由操作者在機器上執行。沒有任何 UI 控制項或 API 請求會匯入、量測或登錄任何東西。
 
@@ -1685,7 +1688,7 @@ recorded`（checkpoint 記錄了訓練輸入，而且完全沒有驗證的條目
 `--output` 會被拒絕。
 
 主控台會印出 Mode C 的指標、覆蓋率（`N ranked of M source cases; K excluded`，附各類別）、
-以 Diagnosis 分頁所用字句表示的四個 R10 標籤（`unverifiable` 附其原因）、一次標籤定義、報告路徑
+以 `src/evaluation/caveats.py` 共用字句表示的四個 R10 標籤（`unverifiable` 附其原因）、一次標籤定義、報告路徑
 與 run id。報告本身只保存狀態，不含任何說明文字。
 
 ### 登錄
@@ -1751,13 +1754,20 @@ recorded`（checkpoint 記錄了訓練輸入，而且完全沒有驗證的條目
 其他環節（例如 ledger）拒絕時，才會印出之後登錄用的指令；這個鍵下的執行結果不一致時則絕不印出。之後用
 `record_evaluation.py` 登錄時，仍照舊以指定的 checkpoint 檔核對報告。
 
-### Diagnosis 分頁顯示什麼
+### Diagnosis 頁面顯示什麼
 
-模型狀態（Model Configuration）在「Serving」那一行下方，為目前載入的 checkpoint
-（`sha256:<前 12 字元>…`）加上 **「Recorded test results (Mode C)」**。每次讀取狀態時，都透過
-`GET /api/v1/evaluations/loaded-model` 讀取，並以 checkpoint 的 digest 而不是檔名來找：換成另一個
-模型之後，絕不會顯示前一個模型的結果；連同 ledger 一起搬移且位元組不變的 checkpoint，仍找得到
-自己的結果。
+**自 M5-2 起（2026-10-21），Diagnosis 頁面只以狀態顯示目前載入之 checkpoint 已登錄的測試**，
+位於「Model in use」卡片上："Recorded tests: 3 · 1 contested"、"none in ledger"、"no ledger"、
+"ledger not readable" 或 "not read"，與該 checkpoint 在「Change model…」中那一列的用語相同，並以
+checkpoint 的 digest 而不是檔名來找（換成另一個模型之後，絕不會顯示前一個模型的狀態）。它的 ›
+會打開 Details 的 Evidence，同一個狀態在那裡與訓練器的驗證數值並列（"Validation MRR (Trainer,
+top-20) … — selection metric on val, not an independent test"）；頁面上不顯示任何 Mode C 數字。
+紀錄本身列在 Research › Evaluate › Models。
+
+在 M5-2 之前，模型狀態（Model Configuration）在「Serving」那一行下方，為目前載入的 checkpoint
+（`sha256:<前 12 字元>…`）完整列出 **「Recorded test results (Mode C)」**，透過
+`GET /api/v1/evaluations/loaded-model` 讀取，用語如下。這個 route 沒有改變，仍以這些紀錄回應
+API 用戶端：
 
 - 紀錄區塊開頭（第一筆紀錄之前）出現一次 **"Disease ranking by the model, approved scorer
   policy (Mode C)."** 與說明 **"This is the model's own Mode C disease ranking. Until B-1 ships,
@@ -1792,8 +1802,8 @@ recorded`（checkpoint 記錄了訓練輸入，而且完全沒有驗證的條目
 - **產生的 split 的報告與排名檔改為先寫入暫存檔再改名就位**（排名檔先）；已存在的 `--output`
   仍會被取代。
 - **ledger schema 3。** 既有的 schema 1 或 2 的 `evaluations.json` 會被拒絕——`--record`、
-  `record_evaluation.py`（`--report` 與 `--show`）以及模型狀態都會拒絕，模型狀態會回報 ledger
-  未讀取。沒有任何東西會遷移它，其結果也不會被帶過來：**請手動封存**，例如
+  `record_evaluation.py`（`--report` 與 `--show`）以及讀取已登錄結果的程式都會拒絕，後者會回報
+  ledger 未讀取（Diagnosis 卡片上為 "Recorded tests: ledger not readable"）。沒有任何東西會遷移它，其結果也不會被帶過來：**請手動封存**，例如
   `mv evaluations.json evaluations.v2.json`，以寫出它的版本讀取，並以這個版本重新量測需要的
   結果，再登錄新的報告（拒絕訊息也這麼說）。M4 之前寫出的報告同樣會被拒絕，並指示重新量測。
 - **`record_evaluation.py`** 接受 `--checkpoint FILE` 或 `--checkpoint-dir DIR`，恰好一個。不論
@@ -2201,7 +2211,7 @@ M5 在 SPEC_4 的部署模式 **M1** 下執行：由 owner 或指定的技術人
 | 位置 | 控制項 |
 |---|---|
 | API | `POST /api/v1/pipeline/reload`、`POST /api/v1/pipeline/config`、`POST /api/v1/training/start`、`POST /api/v1/training/stop`、`GET /api/v1/training/checkpoints`、`GET /api/v1/workspaces/{name}/checkpoints` |
-| 儀表板 | Diagnosis：Reload Pipeline 與 Save Config。⚙ Settings（Runtime Settings）：Restart Backend 與 Apply Settings。Research › Training（Training Console）：Start、Stop（確認後的停止）、Continue Training、Check checkpoint、run 清單（Refresh，以及切換架構）與 Save Path |
+| 儀表板 | Diagnosis：Change model…（其 checkpoint 清單與它的 Load；自 M5-2 起）。⚙ Settings（Runtime Settings）：Restart Backend 與 Apply Settings。Research › Training（Training Console）：Start、Stop（確認後的停止）、Continue Training、Check checkpoint、run 清單（Refresh，以及切換架構）與 Save Path |
 
 兩份 checkpoint 清單與 Check checkpoint 會開啟 checkpoint 檔案，SPEC_4 將此歸類為 checkpoint 檢視
 （C3），因此它們與控制項一樣受檢查。Research › Test（§4.14）對它的匯入（intake 清單、Preview 與
@@ -2332,7 +2342,7 @@ CORS 只決定頁面能讀取什麼。不需要預檢的跨來源請求仍會抵
 
 | 位置 | 內容 |
 |---|---|
-| **Diagnosis (clinical)** | Diagnosis 分頁，與以前相同。它是第一個畫面 |
+| **Diagnosis (clinical)** | 病患表型、結果與選中候選的細節，使用中的模型顯示在一張卡片上（見下文）。它是第一個畫面 |
 | **Research (pre-clinical)** › Prepare › **Datasets** | 伺服器的 workspace，唯讀（見下文） |
 | **Research (pre-clinical)** › Prepare › **Training** | Training Console，與以前相同。它是 Research 下最先顯示的頁面 |
 | **Research (pre-clinical)** › Evaluate › **Test** | 從伺服器的 intake 目錄匯入 cohort 版本、執行測試、保留並登錄其報告（見下文） |
@@ -2393,6 +2403,64 @@ CORS 只決定頁面能讀取什麼。不需要預檢的跨來源請求仍會抵
 泡泡會在 ⓘ 的下方或上方有空間的一側打開，而且永遠不會比視窗高：較長的文字在泡泡內捲動。必須
 一直可見的內容仍然直接印出：拒絕的原因、工作的狀態、合成資料的標記、未經驗證的來源，以及
 Training Console 對 HGT 的 AMP 拒絕（「Disabled: HGT requires full float32 …」）。
+
+### Diagnosis (clinical)
+
+第一個畫面分為三個面板：病患的表型、排名的候選，以及選中候選的細節（Evidence · Explanation ·
+Matching phenotypes · Paths）。選取一列（點擊，或在聚焦的列上按 Enter）就會在細節面板顯示該
+候選。視窗至少 1400 × 760 CSS 像素時，每個面板在自己內部捲動；視窗較窄或直向時，三個面板上下
+堆疊，由頁面捲動。
+
+**Patient ID** 留空時以「沒有 id」送出：伺服器為結果給它自己的 id（`patient_…`），因此不同
+瀏覽器的結果絕不會共用同一個（M5-2 之前，空白欄位會以 `webui_patient` 送出）。
+
+**「Model in use」卡片**是輸入面板的最後一項，Run Diagnosis 緊接在它下方：兩者跟在 Options
+後面；當輸入欄位需要捲動時（例如 1536 × 760），兩者固定在面板底部。卡片顯示：
+
+- 標題列 "MODEL IN USE ⓘ · checked HH:MM:SS ↻"：目前服務的內容會為這個瀏覽器讀取——頁面打開
+  時、Diagnosis 顯示期間每 5 秒、每次診斷之後、更換模型之後，以及按 ↻ 時；超過 5 秒的讀取顯示
+  為 "timed out (5 s)"；
+- 模型 "GAT · run 2026-10-17 09:15 · epoch 5"，以及 "model fingerprint <12 hex> ✓ verified"
+  （所服務之 checkpoint 檔的 SHA-256）；
+- "trained on <workspace> · dataset fingerprint <12 hex>"：checkpoint 記錄的訓練所用 dataset
+  （`training_input_digests.split_manifest`），以具有相同完整 fingerprint 的已列出 workspace
+  命名，或 "matches no listed workspace"；絕不是所服務 workspace 自己的 manifest。讀取它需要打開
+  checkpoint 檔，屬於操作者控制項（§4.13）：唯讀的瀏覽器看到 "not shown · reading the checkpoint
+  is an operator control"。若另一個瀏覽器更換了模型，這張卡片會顯示 "not read yet · read it"，
+  直到頁面再次打開或按下 "read it"（每 5 秒的讀取絕不打開 checkpoint）；
+- 只在成立時出現的標籤：`synthetic data`（琥珀色）、`no SP table`、`no trained model` 或
+  `GNN not loaded`（紅色）、`unverified`（琥珀色：圖未對照任何 workspace manifest 檢查）；
+- "Recorded tests: <狀態>"（§4.9），它的 › 會打開 Details 的 Evidence；"Details ›"；
+  "🔒 Change model…"。
+
+| 卡片顯示 | 意義 |
+|---|---|
+| "Model changed at HH:MM — was <舊>, now <新>"，附 × | 這次讀取發現的模型（或所服務內容的其他部分）與這個瀏覽器上一次讀取的不同（例如另一個瀏覽器做了 Change model）。× 可關閉它 |
+| 灰色："cannot check · <原因> · Retry"、"last known HH:MM:SS · not current" | 無法讀取目前服務的內容。顯示的是最後已知的狀態，沒有 ✓，標籤為灰色虛線 |
+| 灰色："read HH:MM:SS · older than this result" | 最後一次成功的讀取早於畫面上的結果 |
+| "No model loaded" 與 "🔒 Load a model…" | 沒有設定任何 pipeline。Run Diagnosis 呈灰色且無法點擊：滑鼠指向它，或以 Tab 移到它，會說明原因，下方也寫著 "Disabled: no model loaded. …"。API 用戶端此時提出請求，仍會得到 demo 回答 |
+| "No trained model · path reasoning only" 與紅色標籤 | 服務的是沒有訓練模型的圖。Run Diagnosis 仍可使用，結果帶有 `NO TRAINED MODEL: path-reasoning fallback.` |
+| "🔒 Change model…" 呈灰色，附 "Operator controls only: <原因>" | 唯讀的瀏覽器（§4.13）。它永遠看不到 checkpoint 清單 |
+
+結果上方的**標記（badge）**（§4.7）把結果的整個 served identity 與卡片最近一次的讀取比對，而
+卡片在每次診斷後都會再讀一次；讀取失敗或早於結果的讀取，絕不會顯示 "Produced by the model in
+use"。不論標記怎麼說，CSV 與報告都保留結果自己的身分。"Not a certified medical device; decision
+support for a qualified clinician." 位於結果的底部。
+
+**身分抽屜**蓋在細節面板上，有兩個檢視。"Model in use" 是所服務模型的資料，分五節（Identity，
+附完整 digest 與 Copy；Uses；Data；Evidence；Warnings，永遠展開）、結構 fingerprint 那一行，以及
+通往 Research › Models 完整紀錄的連結。"This result" 只顯示結果本身帶有的內容，每一項與目前使用
+中的對照。"Details ›" 與 "Recorded tests ›" 打開前者，標記打開後者。
+
+**🔒 Change model…**（操作者控制項）會打開一個蓋住結果與細節的抽屜：workspace 選單（伺服器的
+清單；預設選中正在服務的 workspace）、置頂的 "In use now"、最近四個 run（其餘在 "Show older
+runs"）、選中 checkpoint 的資料、"Compare in Research › Models ›"，以及 "🔒 Load this model" /
+Cancel。Load 只詢問一次（"Reload the pipeline with <12 hex> for every session?"，from → to，
+變更的列會標出），並以伺服器列出的 workspace 與 checkpoint 重新載入 pipeline。它會取代每個瀏覽器
+所服務的內容；已產生的結果保留自己的身分，重新載入期間診斷會等待。確認畫面打開期間以及重新載入
+期間，Run Diagnosis 停用："Disabled: finish or cancel the model change first."。Cancel 或 ×
+關閉抽屜而不重新載入。從 Research › Models 做的 Load 也會更新這張卡片。同一時間只會打開一個
+抽屜。
 
 ### Research › Prepare › Datasets
 

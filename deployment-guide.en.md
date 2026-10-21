@@ -646,9 +646,10 @@ wherever its record is shown:
 - since contract M3c, the served identity (§4.7): `dataset_record` `verified`
   with origin `synthetic`, in every diagnosis response and in the API's
   pipeline status;
-- the Diagnosis tab: a `SYNTHETIC WORKSPACE: not a clinical result.` banner
-  above the results and in the model status, and `dataset synthetic ✓` on the
-  result's "Produced by" line;
+- the Diagnosis page: a `SYNTHETIC WORKSPACE: not a clinical result.` banner
+  above the results, the amber `synthetic data` chip on the "Model in use" card
+  (the banner again in its Details), and `verified · synthetic` on the dataset
+  record's row of the result's identity ("This result"; since M5-2, §4.14);
 - the downloadable report: the same banner in its "What produced this result"
   section, and its file name, `diagnosis_SYNTHETIC_<patient>_<session>_report.md`;
 - the CSV export: `served_dataset_origin` `synthetic` on every row, and its file
@@ -988,22 +989,21 @@ The WebUI shows **the result's own identity**, never the status's:
   path-reasoning fallback.`, `NO SHORTEST-PATH TABLE: GNN score alone.`,
   `DEMO ANSWER: not computed.`, and `WHAT PRODUCED THIS RESULT WAS NOT
   REPORTED.` for a response without the field (a server from before M3c).
-- **A "Produced by" line** under the results, with shortened digests, and a
-  closed block, "What produced this result — full identity", holding the full
-  table, the claim boundary and "Not a certified medical device; decision
-  support for a qualified clinician."
-- **The model status** (Model Configuration) shows the loaded pipeline's
-  identity on its "Serving" line, and names the served workspace and
-  checkpoint file on one line. Once a pipeline is loaded, the Data Directory
-  and Checkpoint fields show those two paths, a file chosen automatically
-  included, so Load / Reload reloads the checkpoint file that is served;
-  clear the Checkpoint field to let the server choose again. Two cases
-  differ: with no checkpoint served the Checkpoint field is blank, and a
-  reload then chooses one automatically (or is refused when the workspace
-  has none); after a start from `SHEPHERD_KG_PATH` alone, Data Directory is
-  blank and a reload needs a workspace typed. With nothing loaded the fields
-  show the paths Save Config had stored when the service started; a Save
-  takes effect from the next start.
+- **A badge above the results** (since M5-2) compares the result's whole
+  identity, part by part, with the model in use as the "Model in use" card last
+  read it: "Produced by the model in use", "Produced by an earlier model or
+  pipeline — N parts differ ›", or "Cannot check against the model in use yet"
+  with its one reason. Its › opens the identity drawer on "This result": each
+  part beside what is in use now, the full digests with Copy, the claim
+  boundary and "Not a certified medical device; decision support for a
+  qualified clinician." (§4.14, "Diagnosis (clinical)").
+- **What is served now** is on the page's "Model in use" card (§4.14). Since
+  M5-2 the Model Configuration accordion (its path fields, Load / Reload, Save
+  Config and Reset) and the header's "Serving now" line are gone: an operator
+  changes the model with "🔒 Change model…" on the card, which lists the
+  server's workspaces and their checkpoints and reloads only what the server
+  lists. `POST /api/v1/pipeline/config` stays for API clients, checked by D8
+  (§4.13); the dashboard no longer writes it.
 - **The Markdown report** has a "What produced this result" section before the
   candidates: the same banners, a Part | State | Value table with digests in
   full (`sha256:<64 hex>`), the claim boundary and the fixed statement. An
@@ -1137,7 +1137,8 @@ acceptance — and its result is recorded beside the checkpoint. The flow is:
    C) and keeps the full report;
 3. `--record`, or later `scripts/record_evaluation.py --report`, registers the report in
    `evaluations.json` beside the checkpoint;
-4. the Diagnosis tab's model status shows the loaded checkpoint's recorded results.
+4. the Diagnosis page's "Model in use" card shows the loaded checkpoint's recorded tests as a
+   state (since M5-2; the records themselves are listed under Research › Evaluate › Models).
 
 All of it runs on the machine, by the operator. No UI control and no API request imports,
 measures or records anything.
@@ -1302,9 +1303,9 @@ hex>/`, a new directory for every run: `ranks.json` (per case, patient-level) an
 report is kept whether or not it is registered. `--output` is refused with `--cohort`.
 
 The console prints Mode C's metrics, the coverage (`N ranked of M source cases; K excluded`, with
-each category), the four R10 labels in the words the Diagnosis tab uses (an `unverifiable` label
-with its reason), the label definitions once, the report's path and the run id. The report itself
-keeps the states and holds no prose.
+each category), the four R10 labels in the shared words of `src/evaluation/caveats.py` (an
+`unverifiable` label with its reason), the label definitions once, the report's path and the run
+id. The report itself keeps the states and holds no prose.
 
 ### Record
 
@@ -1383,13 +1384,21 @@ the one published and something else refused it, such as the ledger, and never w
 its key disagree. A later registration with `record_evaluation.py` checks the checkpoint file it
 is given against the report, as before.
 
-### What the Diagnosis tab shows
+### What the Diagnosis page shows
 
-The model status (Model Configuration), under its "Serving" line, adds **"Recorded test results
-(Mode C)"** for the loaded checkpoint (`sha256:<first 12>…`). It is read through
-`GET /api/v1/evaluations/loaded-model` each time the status is read, and found by the checkpoint's
-digest, not its file name: after another model is loaded the previous model's results are never
-shown, and a checkpoint moved with its ledger and unchanged bytes still finds them.
+**Since M5-2 (2026-10-21) the Diagnosis page shows the loaded checkpoint's recorded tests as a
+state only**, on its "Model in use" card: "Recorded tests: 3 · 1 contested", "none in ledger",
+"no ledger", "ledger not readable" or "not read", the same words as the checkpoint's row in
+"Change model…", found by the checkpoint's digest, not its file name (after another model is
+loaded the previous model's state is never shown). Its › opens Details at Evidence, where the same
+state stands beside the Trainer's validation figure ("Validation MRR (Trainer, top-20) … —
+selection metric on val, not an independent test"); no Mode C number is shown on the page. The
+records themselves are listed under Research › Evaluate › Models.
+
+Until M5-2 the model status (Model Configuration) listed them in full under its "Serving" line,
+as **"Recorded test results (Mode C)"** for the loaded checkpoint (`sha256:<first 12>…`), read
+through `GET /api/v1/evaluations/loaded-model`, in the words below. The route is unchanged and
+still answers API clients with those records:
 
 - The records are introduced once, above the first, by **"Disease ranking by the model,
   approved scorer policy (Mode C)."** and the note **"This is the model's own Mode C disease
@@ -1430,8 +1439,9 @@ shown, and a checkpoint moved with its ledger and unchanged bytes still finds th
 - **A generated split's report and ranks are staged and renamed into place** (ranks first); an
   existing `--output` is still replaced.
 - **Ledger schema 3.** An existing `evaluations.json` of schema 1 or 2 is refused — by
-  `--record`, by `record_evaluation.py` (`--report` and `--show`) and by the model status, which
-  reports the ledger as not read. Nothing migrates it and its results are not carried over:
+  `--record`, by `record_evaluation.py` (`--report` and `--show`) and by the recorded-results
+  readers, which report the ledger as not read (on the Diagnosis card: "Recorded tests: ledger
+  not readable"). Nothing migrates it and its results are not carried over:
   **archive it by hand**, for example `mv evaluations.json evaluations.v2.json`, read it with the
   revision that wrote it, and re-measure what you need with this revision, then register the new
   reports (the refusal says the same). A report written before M4 is refused too, with an
@@ -1899,7 +1909,7 @@ the read-only lists keep working.
 | Where | Controls |
 |---|---|
 | API | `POST /api/v1/pipeline/reload`, `POST /api/v1/pipeline/config`, `POST /api/v1/training/start`, `POST /api/v1/training/stop`, `GET /api/v1/training/checkpoints`, `GET /api/v1/workspaces/{name}/checkpoints` |
-| Dashboard | Diagnosis: Reload Pipeline and Save Config. ⚙ Settings (Runtime Settings): Restart Backend and Apply Settings. Research › Training (the Training Console): Start, Stop (the confirmed stop), Continue Training, Check checkpoint, the run list (Refresh, and changing the architecture) and Save Path |
+| Dashboard | Diagnosis: Change model… (its list of checkpoints and its Load; since M5-2). ⚙ Settings (Runtime Settings): Restart Backend and Apply Settings. Research › Training (the Training Console): Start, Stop (the confirmed stop), Continue Training, Check checkpoint, the run list (Refresh, and changing the architecture) and Save Path |
 
 The two checkpoint lists, and Check checkpoint, open checkpoint files, which SPEC_4 classes as
 checkpoint inspection (C3), so they are checked like the controls. Research › Test (§4.14)
@@ -2051,7 +2061,7 @@ help control for every field. Nothing an operator sets changed; what moved is wh
 
 | Where | What is there |
 |---|---|
-| **Diagnosis (clinical)** | The Diagnosis tab, as before. It is the first screen |
+| **Diagnosis (clinical)** | Patient phenotypes, the results and the selected candidate's details, with the model in use on a card (below). It is the first screen |
 | **Research (pre-clinical)** › Prepare › **Datasets** | The server's workspaces, read-only (below) |
 | **Research (pre-clinical)** › Prepare › **Training** | The Training Console, as before. It is the research page shown first |
 | **Research (pre-clinical)** › Evaluate › **Test** | Import a cohort version from the server's intake directory, run a test, keep and register its report (below) |
@@ -2118,6 +2128,72 @@ The bubble opens below or above the ⓘ, wherever there is room, and is never ta
 window: a long text scrolls inside it. What must stay visible is still printed: a refusal's
 reason, a job's state, the synthetic marker, an unverified source, and the Training Console's
 AMP refusal for HGT ("Disabled: HGT requires full float32 …").
+
+### Diagnosis (clinical)
+
+The first screen, in three panels: the patient's phenotypes, the ranked candidates, and the
+selected candidate's details (Evidence · Explanation · Matching phenotypes · Paths). Selecting a
+row (a click, or Enter on a focused row) shows that candidate in the details panel. In a window
+at least 1400 × 760 CSS pixels each panel scrolls inside itself; narrower, or in portrait, the
+three panels stack and the page scrolls.
+
+**Patient ID** left blank is sent as no id: the server gives the result its own (`patient_…`), so
+results from different browsers never share one (before M5-2 a blank field was sent as
+`webui_patient`).
+
+**The "Model in use" card** is the last item of the input panel, with Run Diagnosis right below
+it: both follow Options, and stay pinned at the panel's bottom when the inputs need to scroll (at
+1536 × 760, for example). It shows:
+
+- the title row "MODEL IN USE ⓘ · checked HH:MM:SS ↻": what is served is read for this browser
+  when the page opens, every 5 seconds while Diagnosis is shown, after each diagnosis, after a
+  model change and with ↻; a read that takes more than 5 seconds is "timed out (5 s)";
+- the model, "GAT · run 2026-10-17 09:15 · epoch 5", and "model fingerprint <12 hex> ✓ verified"
+  (the SHA-256 of the checkpoint file served);
+- "trained on <workspace> · dataset fingerprint <12 hex>": the dataset the checkpoint records it
+  was trained on (`training_input_digests.split_manifest`), named by the listed workspaces with
+  that full fingerprint, or "matches no listed workspace"; never the served workspace's own
+  manifest. Reading it opens the checkpoint file, an operator control (§4.13): a read-only
+  browser sees "not shown · reading the checkpoint is an operator control". When another browser
+  has changed the model, this card says "not read yet · read it" until the page is opened again
+  or "read it" is clicked (the 5-second read never opens a checkpoint);
+- chips, only when true: `synthetic data` (amber), `no SP table`, `no trained model` or `GNN not
+  loaded` (red), `unverified` (amber: a graph checked against no workspace manifest);
+- "Recorded tests: <state>" (§4.9), whose › opens Details at Evidence; "Details ›"; "🔒 Change
+  model…".
+
+| The card shows | Meaning |
+|---|---|
+| "Model changed at HH:MM — was <old>, now <new>" with × | A read found another model, or another part of what is served, than this browser's previous read (another browser's Change model, for example). × dismisses it |
+| grey: "cannot check · <reason> · Retry", "last known HH:MM:SS · not current" | What is served could not be read. The lines shown are the last known state, without ✓, with grey dashed chips |
+| grey: "read HH:MM:SS · older than this result" | The last good read is older than the result shown |
+| "No model loaded" and "🔒 Load a model…" | No pipeline is configured. Run Diagnosis is greyed out and cannot be clicked: pointing at it, or reaching it with Tab, shows why, and "Disabled: no model loaded. …" is written under it. An API client asking now still gets the demo answer |
+| "No trained model · path reasoning only" and a red chip | A graph is served without a trained model. Run Diagnosis stays on, and the result carries `NO TRAINED MODEL: path-reasoning fallback.` |
+| "🔒 Change model…" greyed, "Operator controls only: <reason>" | A read-only browser (§4.13). It never sees the list of checkpoints |
+
+**The badge** above the results (§4.7) compares the result's whole served identity with the card's
+last read, and the card is read again after each diagnosis; a read that failed, or one older than
+the result, never shows "Produced by the model in use". The CSV and the report keep the result's
+own identity whatever the badge says. "Not a certified medical device; decision support for a
+qualified clinician." is at the foot of the results.
+
+**The identity drawer** opens over the details panel, with two views. "Model in use" is the
+served model's facts in five sections (Identity, with the full digests and Copy; Uses; Data;
+Evidence; Warnings, always open), the structural-fingerprint line and a link to the full records
+in Research › Models. "This result" shows only what the result carries, each part beside what is
+in use now. "Details ›" and "Recorded tests ›" open the first, the badge the second.
+
+**🔒 Change model…** (an operator control) opens a drawer over the results and the details: the
+workspace select (the server's list; the serving workspace is chosen first), "In use now" on top,
+the latest four runs ("Show older runs" for the rest), the selected checkpoint's facts, "Compare
+in Research › Models ›", and "🔒 Load this model" / Cancel. Load asks once ("Reload the pipeline
+with <12 hex> for every session?", from → to, with the changed rows marked) and reloads the
+pipeline with the workspace and checkpoint the server lists. It replaces what every browser is
+served; results already produced keep their own identity, and diagnoses wait while the pipeline
+reloads. While the confirmation is open, and while the reload runs, Run Diagnosis is disabled:
+"Disabled: finish or cancel the model change first." Cancel or × closes the drawer without
+reloading. A Load from Research › Models refreshes this card too. Only one drawer is open at a
+time.
 
 ### Research › Prepare › Datasets
 

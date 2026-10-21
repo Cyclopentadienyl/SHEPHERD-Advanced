@@ -1632,9 +1632,34 @@ contract and BACKLOG stay the record, and no new planning document is added.
       served-model-changed trigger set when any part of what is served changed, and a usage
       history entry only for a list ordered by a cohort version's score; the page stops waiting
       after 180 s, counting in that list's own confirmation, and offers "Read again". Placing it
-      (the card's drawer, Models) is the Diagnosis and Models pages' part;
+      (the card's drawer, Models) is the Diagnosis and Models pages' part; *the card and its
+      drawer as implemented (M5-2, UI-B, 2026-10-21):* `src/webui/components/diagnosis_card.py`
+      and `diagnosis_panel.py`. The card reads the status through the dashboard's one reader
+      with a 5 s limit, per browser session (on load, when Diagnosis is shown, on the shell's
+      5 s timer while it is shown, after each diagnosis, after a Load and on ↻), and names the
+      model, its fingerprint and the dataset the checkpoint records it was trained on (that
+      file alone read, only for a request D8 allows and only on a queued refresh; a read-only
+      request is told "not shown"), the mode chips only when true and the recorded tests as a
+      state from the ledger. Its states are words, not only colour: a change since this
+      session's last read (dismissable), cannot check and stale (grey, "last known", never
+      current), read-only (Change model… disabled with D8's reason), no model loaded, a graph
+      without a trained model, and a model change open. The results badge compares the
+      result's whole served identity, part by part, with the card's last read, read again
+      after each diagnosis; a failed or older read never shows "Produced by the model in use".
+      Change model… is D8 on its own request before the clinical list is read, and the drawer
+      holds UI-A's list and Load unchanged; the Model Configuration accordion, its saved
+      settings file read at build time and the "Serving now" strip are removed, and the page
+      calls neither reload nor configuration writer itself (`POST /pipeline/config` stays for
+      API clients). Diagnosis shows no Mode C number: the records are Models' (deployment guide
+      §4.14, "Diagnosis (clinical)");
     - **Run Diagnosis greyed out and not clickable while no model is loaded**, with a bubble on
-      hover saying no model is loaded; the API's demo answer for API clients is unchanged;
+      hover saying no model is loaded; the API's demo answer for API clients is unchanged; *as
+      implemented (M5-2, UI-B, 2026-10-21):* disabled when the card's last read succeeded and
+      found no pipeline (an unreadable status leaves it on; a graph without a trained model
+      too), and while this session's model change is open; a transparent shared ⓘ over the
+      button opens the bubble on hover and on keyboard focus, and the reason is also written
+      under it. A primary button's white text is at least 4.5:1 at rest and on hover (the
+      theme's own was 2.98:1 on hover), and a disabled one is grey, not a faded accent;
     - **the dataset identity**: the workspace name, its build time and one fingerprint, the
       first 12 hex digits of the SHA-256 of its `split_manifest.json` (compared in full,
       never by the short form), which binds the graph files, both sample files and the dataset
@@ -1686,9 +1711,17 @@ contract and BACKLOG stay the record, and no new planning document is added.
   scrolling. The layout follows the browser's usable width and height, not the monitor's
   resolution.
   - **Wide:** the Diagnosis tab is input, candidate list and the selected candidate's details;
-    selecting a candidate updates one fixed details area instead of adding content below.
+    selecting a candidate updates one fixed details area instead of adding content below. *As
+    implemented (M5-2, UI-B, 2026-10-21):* three panels, each scrolling inside itself; the card
+    and Run Diagnosis are the last item of the input panel's scroll body, sticky at its bottom,
+    and from 1707 × 870 up the input panel does not scroll in any one card state (checked in a
+    browser; a change notice together with a grey state can still scroll it a little at that
+    size); the identity drawer covers the details panel, the change-model drawer the
+    candidates and the details.
   - **Narrow or portrait:** candidates and details can be switched, and the necessary vertical
-    scrolling is allowed, without nested scroll containers.
+    scrolling is allowed, without nested scroll containers. *As implemented (M5-2, UI-B,
+    2026-10-21):* the panels stack (input, the card and Run, the results, the details) and only
+    the page scrolls, as the mockup draws it, rather than a switch between them.
   - **Help:** an ordinary field's help sits behind one shared "i" control that works with the
     mouse, the keyboard and a click, can be dismissed, and stays readable when the pointer
     moves into the bubble. Long explanations go into the details area. A refusal's reason, a

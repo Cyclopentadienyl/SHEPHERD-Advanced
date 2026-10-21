@@ -215,6 +215,8 @@ def test_runtime_endpoint_returns_the_report():
 # The WebUI surfaces
 # ---------------------------------------------------------------------------
 def _status(gnn_ready: bool) -> dict:
+    checkpoint = ({"state": "verified", "sha256": "a" * 64} if gnn_ready
+                  else {"state": "absent", "sha256": None})
     return {
         "initialized": True,
         "gnn_ready": gnn_ready,
@@ -222,79 +224,58 @@ def _status(gnn_ready: bool) -> dict:
         "scoring_mode": "gnn_plus_shortest_path" if gnn_ready else "path_reasoning_fallback",
         "kg_nodes": 100,
         "kg_edges": 200,
+        "served_identity": {"checkpoint": checkpoint,
+                            "graph": {"state": "verified", "kg_sha256": "b" * 64,
+                                      "split_manifest_sha256": "c" * 64},
+                            "shortest_paths": {"state": "verified" if gnn_ready else "absent"},
+                            "dataset_record": {"state": "verified", "origin": "files"}},
     }
 
 
-def test_banner_appears_only_when_the_gnn_is_absent():
+def _card(status):
+    from datetime import datetime
+
+    from src.webui.components import diagnosis_card as card
+
+    return card.advance(None, status, None, now=datetime(2026, 10, 20), operator=True,
+                        d8_short=None, open_checkpoints=False, facts=lambda s, **k: {
+                            "key": card.served_key(s), "operator": True, "workspaces": [],
+                            "serving": None, "item": None, "item_problem": None,
+                            "recorded": None, "trained": None})
+
+
+def test_the_card_says_path_reasoning_for_as_long_as_it_is_true():
+    """No GNN, no trained model: the Diagnosis card says so in red, every time
+    it is read (it is not a toast that is seen once), and not otherwise."""
     pytest.importorskip("gradio")
-    from src.webui.components import diagnosis_panel as panel
+    from src.webui.components import diagnosis_card as card
 
-    without = panel._format_pipeline_status(_status(False))
-    with_gnn = panel._format_pipeline_status(_status(True))
+    without = card.body_html(_card(_status(False)))
+    with_gnn = card.body_html(_card(_status(True)))
 
-    assert panel.GNN_UNAVAILABLE_BANNER.strip() in without
-    assert panel.GNN_UNAVAILABLE_BANNER.strip() not in with_gnn
+    assert "No trained model" in without and "path reasoning only" in without
+    assert "shep-tag-red" in without
+    assert "No trained model" not in with_gnn and "shep-tag-red" not in with_gnn
+    # A model reported without its GNN (defensive): red too.
+    broken = _status(True)
+    broken["gnn_ready"] = False
+    assert "GNN not loaded" in card.body_html(_card(broken))
 
 
-def test_reload_toasts_once_when_the_gnn_is_absent(monkeypatch):
-    """The toast belongs to the load action.
-
-    Attaching it to the status renderer would repeat it on every render, and a
-    toast that repeats is one people learn to dismiss unread.
-    """
+def test_reading_the_card_raises_no_toast(monkeypatch):
+    """The card is read on load, on the timer and after each diagnosis; a
+    warning toast there would repeat, and a toast that repeats is one people
+    learn to dismiss unread."""
     pytest.importorskip("gradio")
-    from src.webui.components import diagnosis_panel as panel
+    from src.webui.components import diagnosis_card as card
 
     warnings = []
-    monkeypatch.setattr(panel.gr, "Warning", lambda msg, **kw: warnings.append(msg))
-    monkeypatch.setattr(
-        panel, "_reload_pipeline", lambda *a, **k: {"success": True, "status": _status(False)}
-    )
+    monkeypatch.setattr(card, "logger", card.logger)
+    import gradio as gr
 
-    import asyncio
-
-    from tests.fixtures.operator_access import operator_request
-
-    asyncio.run(panel._on_reload_pipeline("data", "", "auto", operator_request(monkeypatch)))
-
-    assert len(warnings) == 1
-    assert "path-reasoning mode" in warnings[0]
-
-
-def test_rendering_the_status_does_not_toast(monkeypatch):
-    """Pins where the toast lives.
-
-    The status renderer also runs on the initial page render and on any later
-    re-render. If the toast were moved there it would repeat, and the previous
-    test would still pass because a single reload renders exactly once. This is
-    what actually holds the placement.
-    """
-    pytest.importorskip("gradio")
-    from src.webui.components import diagnosis_panel as panel
-
-    warnings = []
-    monkeypatch.setattr(panel.gr, "Warning", lambda msg, **kw: warnings.append(msg))
-
-    panel._format_pipeline_status(_status(False))
-
-    assert warnings == [], "the status renderer must not raise a toast; the load action does"
-
-
-def test_reload_is_quiet_when_the_gnn_loaded(monkeypatch):
-    pytest.importorskip("gradio")
-    from src.webui.components import diagnosis_panel as panel
-
-    warnings = []
-    monkeypatch.setattr(panel.gr, "Warning", lambda msg, **kw: warnings.append(msg))
-    monkeypatch.setattr(
-        panel, "_reload_pipeline", lambda *a, **k: {"success": True, "status": _status(True)}
-    )
-
-    import asyncio
-
-    from tests.fixtures.operator_access import operator_request
-
-    asyncio.run(panel._on_reload_pipeline("data", "", "auto", operator_request(monkeypatch)))
+    monkeypatch.setattr(gr, "Warning", lambda msg, **kw: warnings.append(msg))
+    card.body_html(_card(_status(False)))
+    card.served_facts_html(_card(_status(False)))
 
     assert warnings == []
 

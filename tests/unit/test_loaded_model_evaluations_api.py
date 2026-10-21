@@ -950,16 +950,16 @@ def test_an_answer_whose_fields_contradict_its_state_is_refused():
 
 
 # ---------------------------------------------------------------------------
-# 8. The real response through the real panel
+# 8. The real response through the real panel helpers
 # ---------------------------------------------------------------------------
-def test_the_model_status_shows_the_records_the_api_answers(app, served, tmp_path,
-                                                           monkeypatch):
-    """The panel's two reads, against the real application: the status names
-    the served checkpoint, the records answer echoes it, and the block shows
-    the record under the Serving line. The path fields are set from the same
-    status read, to the paths `publish_pipeline` recorded (BACKLOG 17, F5)."""
+def test_the_model_in_use_shows_the_records_the_api_answers(app, served, tmp_path,
+                                                            monkeypatch):
+    """The records block for the model in use, against the real application:
+    the status (the dashboard's one reader, in process) names the served
+    checkpoint, the records answer echoes it, and the block shows the record."""
     pytest.importorskip("gradio")
     from src.webui.components import diagnosis_panel as panel
+    from src.webui.components.served_status import read_status
 
     _, data_dir, checkpoint = served
     monkeypatch.setattr(app.app_state, "_current_data_dir", str(data_dir))
@@ -976,15 +976,13 @@ def test_the_model_status_shows_the_records_the_api_answers(app, served, tmp_pat
 
     monkeypatch.setattr(panel, "_self_request", self_request)
 
-    rendered, data_dir_field, checkpoint_field = panel._on_load_status()
+    status, problem = read_status()
+    block = panel._format_recorded_results(panel._get_loaded_model_evaluations(),
+                                           panel._served_checkpoint_sha(status))
 
-    assert calls == [("GET", "/api/v1/pipeline/status"), ("GET", ROUTE)]
-    assert "**Serving:**" in rendered
-    assert f"Workspace `{data_dir}` · Checkpoint file `{checkpoint}`" in rendered
-    assert data_dir_field["value"] == str(data_dir)
-    assert checkpoint_field["value"] == str(checkpoint)
-    block = rendered[rendered.index(f"**{panel.RECORDED_RESULTS_HEADING}**"):]
-    assert f"for checkpoint `sha256:{_sha(checkpoint)[:12]}…`" in block
+    assert problem is None and calls == [("GET", ROUTE)]
+    assert block.startswith(f"**{panel.RECORDED_RESULTS_HEADING}** for checkpoint "
+                            f"`sha256:{_sha(checkpoint)[:12]}…`")
     assert "**mygene2 · mygene2-2026-10**" in block
     assert "driver 570.1" in block
     assert panel.RECORDS_MODEL_CHANGED not in block

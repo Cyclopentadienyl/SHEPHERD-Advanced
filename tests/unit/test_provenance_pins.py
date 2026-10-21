@@ -192,8 +192,6 @@ ALLOWED = {
     ("src/retrieval/backends/base.py", "VectorIndexBase.load", "json.load"):
         (1, _NOT_INPUT.format(what="a retrieval index's id map (build_index.py is outside "
                                     "the pin)")),
-    ("src/webui/components/diagnosis_panel.py", "_load_saved_config", "json.load"):
-        (1, _NOT_INPUT.format(what="saved UI settings")),
     ("src/webui/components/training_console.py", "_load_training_config", "json.load"):
         (1, _NOT_INPUT.format(what="saved UI settings")),
     # --- The deployment probe: identification of files nobody parses there ---

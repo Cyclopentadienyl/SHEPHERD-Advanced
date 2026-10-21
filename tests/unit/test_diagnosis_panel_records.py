@@ -1,9 +1,11 @@
 """
-The model status shows the loaded model's recorded results (M4; PLAN_TEST_RESULTS D8).
-======================================================================================
-`_on_load_status` and `_on_reload_pipeline` append a "Recorded test results
-(Mode C)" block to the status Markdown, from one GET of
-`/api/v1/evaluations/loaded-model`. What is pinned here:
+The recorded results of the model in use, worded once (M4; PLAN_TEST_RESULTS D8).
+==================================================================================
+`_format_recorded_results` renders the "Recorded test results (Mode C)" block
+for the model in use from one GET of `/api/v1/evaluations/loaded-model`
+(`_get_loaded_model_evaluations`); its helpers are the one wording of a record
+(Diagnosis itself shows the recorded tests as a state only, since M5-2: the
+card and Model Facts). What is pinned here:
 
 - each state the API answers with renders its sentence, and an answer about
   another checkpoint than the status names is said to be one, never shown;
@@ -15,9 +17,8 @@ The model status shows the loaded model's recorded results (M4; PLAN_TEST_RESULT
   origin (synthetic called out), registration and corroboration;
 - the Mode C MRR is labelled apart from the trainer's "Val MRR", the §6 line is
   shown once for the block, and nothing says "nothing was checked";
-- a records read that fails never breaks the status, and with no pipeline loaded
-  nothing is looked up; the status stays one Markdown output of the load and
-  reload events.
+- a records read that fails is a state of the block, with its reason, never a
+  failure.
 
 The answers are built by the route's own conversion from records the sidecar
 builds, so these tests render the shape the API sends. The route itself is in
@@ -382,18 +383,26 @@ def test_two_imports_of_one_label_read_as_two_versions():
     ]
 
 
-def test_the_mode_c_mrr_is_labelled_apart_from_the_trainers_val_mrr(monkeypatch):
+def test_the_mode_c_mrr_is_labelled_apart_from_the_trainers_val_mrr():
+    """The Trainer's validation figure (Model Facts' Evidence, from the status)
+    and a recorded Mode C result never share a label."""
+    from datetime import datetime
+
+    from src.webui.components import diagnosis_card as card
+
     status = _loaded_status(checkpoint_meta={"epoch": 3, "params": 10, "device": "cpu",
                                              "val_mrr": 0.42})
-    monkeypatch.setattr(dp, "_get_pipeline_status", lambda: status)
-    monkeypatch.setattr(dp, "_get_loaded_model_evaluations",
-                        lambda: _answer("records", [_record()]))
+    state = card.advance(None, status, None, now=datetime(2026, 10, 20, 10, 0), operator=True,
+                         d8_short=None, open_checkpoints=False, facts=lambda s, **k: {
+                             "key": card.served_key(s), "operator": True, "workspaces": [],
+                             "serving": None, "item": None, "item_problem": None,
+                             "recorded": None, "trained": None})
+    facts = card.served_facts_html(state)
+    block = dp._format_recorded_results(_answer("records", [_record()]), CHECKPOINT_SHA)
 
-    rendered, _, _ = dp._on_load_status()
-
-    status_part, block = rendered.split(HEADING)
-    assert "Val MRR: 0.4200" in status_part
-    assert "Val MRR" not in block
+    assert "Validation MRR (Trainer, top-20) 0.4200 — selection metric on val" in facts
+    assert "Mode C" not in facts
+    assert "Val MRR" not in block and "Validation MRR" not in block
     assert "Mode C MRR (untruncated) 0.5000" in block
     metrics = _line(block, "**mygene2").split(" — ", 1)[1].split(", over")[0]
     assert all(part.startswith("Mode C ") for part in metrics.split(" · "))
@@ -468,7 +477,7 @@ def test_a_reply_of_another_shape_is_said_to_be_one(reply):
 
 
 # ---------------------------------------------------------------------------
-# 4. The read, and the status it sits under
+# 4. The read
 # ---------------------------------------------------------------------------
 class _Response:
     def __init__(self, body=None, status=200, json_error=None):
@@ -484,15 +493,13 @@ class _Response:
         return self._body
 
 
-def _serve(monkeypatch, status, evaluations):
-    """Answer the tab's GETs: the status, then the records (a reply, or an
-    exception to raise). Returns the list of calls."""
+def _serve(monkeypatch, evaluations):
+    """Answer the records GET (a reply, or an exception to raise). Returns the
+    list of calls."""
     calls = []
 
     def self_request(method, path, **kwargs):
         calls.append((method, path))
-        if path == "/api/v1/pipeline/status":
-            return _Response(status)
         if isinstance(evaluations, BaseException):
             raise evaluations
         return evaluations
@@ -501,30 +508,14 @@ def _serve(monkeypatch, status, evaluations):
     return calls
 
 
-def test_the_records_are_one_get_after_the_status(monkeypatch):
-    calls = _serve(monkeypatch, _loaded_status(), _Response(_answer("no_records")))
+def test_the_records_are_one_get(monkeypatch):
+    calls = _serve(monkeypatch, _Response(_answer("no_records")))
 
-    rendered, _, _ = dp._on_load_status()
+    rendered = dp._format_recorded_results(dp._get_loaded_model_evaluations(), CHECKPOINT_SHA)
 
-    assert isinstance(rendered, str)
-    assert calls == [("GET", "/api/v1/pipeline/status"),
-                     ("GET", "/api/v1/evaluations/loaded-model")]
-    assert rendered.startswith(dp._format_pipeline_status(_loaded_status()))
-    assert rendered.index("**Serving:**") < rendered.index(HEADING)
+    assert calls == [("GET", "/api/v1/evaluations/loaded-model")]
+    assert rendered.startswith(f"{HEADING} for checkpoint")
     assert rendered.endswith(RECORD_ABSENCE)
-
-
-@pytest.mark.parametrize("status", [
-    {"initialized": False},
-    {"initialized": False, "error": "API not reachable"},
-])
-def test_nothing_is_looked_up_without_a_loaded_pipeline(monkeypatch, status):
-    calls = _serve(monkeypatch, status, AssertionError("no records read is expected"))
-
-    rendered, _, _ = dp._on_load_status()
-
-    assert calls == [("GET", "/api/v1/pipeline/status")]
-    assert rendered == dp._format_pipeline_status(status)
 
 
 @pytest.mark.parametrize("failure, reason", [
@@ -536,15 +527,13 @@ def test_nothing_is_looked_up_without_a_loaded_pipeline(monkeypatch, status):
     (_Response(["not", "an", "object"]), "the API's reply was not an object"),
     (RuntimeError("boom"), "unexpected error: boom"),
 ])
-def test_a_records_read_that_fails_never_breaks_the_status(monkeypatch, failure, reason):
-    """The status is rendered whole, and the block says why the records are
-    missing. Catches a failure that would replace the status with an error."""
-    _serve(monkeypatch, _loaded_status(), failure)
+def test_a_records_read_that_fails_says_why(monkeypatch, failure, reason):
+    """The block says why the records are missing; nothing raises."""
+    _serve(monkeypatch, failure)
 
-    rendered, _, _ = dp._on_load_status()
+    rendered = dp._format_recorded_results(dp._get_loaded_model_evaluations(), CHECKPOINT_SHA)
 
-    assert rendered == (f"{dp._format_pipeline_status(_loaded_status())}\n\n"
-                        f"⚠️ {HEADING} could not be read: {dp._md_text(reason)}")
+    assert rendered == f"⚠️ {HEADING} could not be read: {dp._md_text(reason)}"
 
 
 def test_an_unknown_server_address_is_an_unavailable_answer(monkeypatch):
@@ -556,50 +545,3 @@ def test_an_unknown_server_address_is_an_unavailable_answer(monkeypatch):
 
     assert answer["state"] == "unavailable"
     assert "no TCP request has been recorded" in answer["error"]
-
-
-def _reload(monkeypatch, *fields):
-    """The Reload handler as Gradio runs it (``async``), for a request D8
-    allows (mode M1, loopback)."""
-    import asyncio
-
-    from tests.fixtures.operator_access import operator_request
-
-    return asyncio.run(dp._on_reload_pipeline(*fields, operator_request(monkeypatch)))
-
-
-def test_a_reload_shows_the_new_models_records(monkeypatch):
-    """The reload renders the candidate's status from its response; the records
-    read after it must be the new model's, or say that they are not."""
-    new_status = _loaded_status()
-    new_status["served_identity"]["checkpoint"]["sha256"] = OTHER_SHA
-    monkeypatch.setattr(dp, "_reload_pipeline",
-                        lambda *a, **k: {"success": True, "status": new_status})
-    monkeypatch.setattr(dp, "_get_loaded_model_evaluations",
-                        lambda: _answer("records", [_record(checkpoint=OTHER_SHA)], sha=OTHER_SHA))
-
-    status_md, *_ = _reload(monkeypatch, "data", "", "auto")
-
-    assert f"{HEADING} for checkpoint `sha256:{OTHER_SHA[:12]}…`" in status_md
-    assert "**mygene2 · mygene2-2026-10**" in status_md
-
-    monkeypatch.setattr(dp, "_get_loaded_model_evaluations",
-                        lambda: _answer("records", [_record()]))
-    status_md, *_ = _reload(monkeypatch, "data", "", "auto")
-
-    assert dp.RECORDS_MODEL_CHANGED in status_md
-    assert "**mygene2 · " not in status_md
-
-
-def test_a_refused_reload_reads_no_records(monkeypatch):
-    monkeypatch.setattr(dp, "_reload_pipeline",
-                        lambda *a, **k: {"success": False, "message": "refused"})
-
-    def no_read():
-        raise AssertionError("a refused reload shows its message, not records")
-
-    monkeypatch.setattr(dp, "_get_loaded_model_evaluations", no_read)
-
-    status_md, message, *_ = _reload(monkeypatch, "data", "", "auto")
-
-    assert status_md == "❌ refused" and message == "refused"

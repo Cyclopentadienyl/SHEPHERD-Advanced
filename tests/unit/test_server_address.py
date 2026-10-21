@@ -206,35 +206,13 @@ def test_the_diagnosis_tab_calls_the_recorded_address(monkeypatch):
     calls = _record_self_calls(monkeypatch, panel)
     record_server_address(("127.0.0.1", 8264))
 
-    panel._get_pipeline_status()
+    panel._get_loaded_model_evaluations()
     panel._call_diagnose(["HP:0001250"])
 
     assert [(method, url) for method, url, _ in calls] == [
-        ("GET", "http://127.0.0.1:8264/api/v1/pipeline/status"),
+        ("GET", "http://127.0.0.1:8264/api/v1/evaluations/loaded-model"),
         ("POST", "http://127.0.0.1:8264/api/v1/diagnose"),
     ]
-
-
-def test_the_reload_is_never_a_self_call(monkeypatch):
-    """Since D8 (M5-1) the tab's reload runs the route's own function in
-    process (`run_reload`), after the handler's own check: a self-call to
-    `/pipeline/reload` would reach the API as a loopback request, whoever
-    clicked, and the address it went to is whichever request came last."""
-    pytest.importorskip("gradio")
-    from src.api.routes import pipeline
-    from src.webui.components import diagnosis_panel as panel
-
-    calls = _record_self_calls(monkeypatch, panel)
-    record_server_address(("192.0.2.10", 8264))
-    ran = []
-    monkeypatch.setattr(pipeline, "run_reload",
-                        lambda request: ran.append(request.data_dir) or pipeline._refused(
-                            "stubbed", {}))
-
-    answer = panel._reload_pipeline("data/workspaces/default", "")
-
-    assert ran == ["data/workspaces/default"] and answer["success"] is False
-    assert calls == [], "the reload made an HTTP request"
 
 
 def test_the_tab_never_sends_its_self_calls_through_a_proxy(monkeypatch):
@@ -272,28 +250,34 @@ def test_the_tab_never_sends_its_self_calls_through_a_proxy(monkeypatch):
     assert sent[-1][1].get("http") == proxy, "control: the proxy variable is not live"
 
     sent.clear()
-    panel._get_pipeline_status()
+    panel._get_loaded_model_evaluations()
     panel._call_diagnose(["HP:0001250"])
 
     assert [url for url, _ in sent] == [
-        "http://192.0.2.10:8264/api/v1/pipeline/status",
+        "http://192.0.2.10:8264/api/v1/evaluations/loaded-model",
         "http://192.0.2.10:8264/api/v1/diagnose",
     ]
     assert all(not proxies.get("http") and not proxies.get("all") for _, proxies in sent)
 
 
+def _rendered(panel):
+    """The panel's one remaining GET (the recorded results of the model in
+    use), rendered as its block: a failure is said with its real reason."""
+    return panel._format_recorded_results(panel._get_loaded_model_evaluations(), None)
+
+
 def test_an_unknown_address_is_reported_not_disguised_as_not_loaded(monkeypatch):
     """Before this, any failure to read the status rendered as "Pipeline not
-    loaded", which is how the wrong port went unnoticed."""
+    loaded", which is how the wrong port went unnoticed. (The status itself is
+    read in process since M5-2; the panel's own GET keeps the rule.)"""
     pytest.importorskip("gradio")
     from src.webui.components import diagnosis_panel as panel
 
     calls = _record_self_calls(monkeypatch, panel)
 
-    status = panel._get_pipeline_status()
-    rendered = panel._format_pipeline_status(status)
+    rendered = _rendered(panel)
 
-    assert "Pipeline status unavailable" in rendered
+    assert "could not be read" in rendered
     assert "no TCP request has been recorded" in rendered
     assert "not loaded" not in rendered
     assert "no TCP request has been recorded" in panel._call_diagnose(["HP:0001250"])["error"]
@@ -307,9 +291,9 @@ def test_an_unreachable_api_is_reported_too(monkeypatch):
     _record_self_calls(monkeypatch, panel, error=panel.requests.ConnectionError("refused"))
     record_server_address(("127.0.0.1", 8264))
 
-    rendered = panel._format_pipeline_status(panel._get_pipeline_status())
+    rendered = _rendered(panel)
 
-    assert "Pipeline status unavailable:** API not reachable" in rendered
+    assert "could not be read: API not reachable" in rendered
     assert "not loaded" not in rendered
 
 
@@ -319,16 +303,16 @@ def test_an_unreachable_api_is_reported_too(monkeypatch):
 )
 def test_a_timeout_says_whether_the_connection_was_made(monkeypatch, error_name, reason):
     """A connect timeout never reached the server; a read timeout did, and is
-    what a status read sees while a reload holds the server."""
+    what a read sees while a reload holds the server."""
     pytest.importorskip("gradio")
     from src.webui.components import diagnosis_panel as panel
 
     _record_self_calls(monkeypatch, panel, error=getattr(panel.requests, error_name)("slow"))
     record_server_address(("127.0.0.1", 8264))
 
-    rendered = panel._format_pipeline_status(panel._get_pipeline_status())
+    rendered = _rendered(panel)
 
-    assert f"Pipeline status unavailable:** {reason}" in rendered
+    assert f"could not be read: {reason}" in rendered
 
 
 def test_an_api_that_answered_with_an_error_is_not_called_unreachable(monkeypatch):
@@ -339,7 +323,7 @@ def test_an_api_that_answered_with_an_error_is_not_called_unreachable(monkeypatc
     _record_self_calls(monkeypatch, panel, response=_Response(status=503))
     record_server_address(("127.0.0.1", 8264))
 
-    rendered = panel._format_pipeline_status(panel._get_pipeline_status())
+    rendered = _rendered(panel)
 
     assert "API error 503" in rendered
     assert "not reachable" not in rendered
@@ -353,7 +337,7 @@ def test_a_reply_that_is_not_json_is_named_as_such(monkeypatch):
     _record_self_calls(monkeypatch, panel, response=_Response(json_error=bad))
     record_server_address(("127.0.0.1", 8264))
 
-    rendered = panel._format_pipeline_status(panel._get_pipeline_status())
+    rendered = _rendered(panel)
 
     assert "the API's reply was not JSON" in rendered
     assert "not reachable" not in rendered
@@ -368,7 +352,7 @@ def test_a_request_that_was_never_sent_is_not_called_a_bad_reply(monkeypatch):
     _record_self_calls(monkeypatch, panel, error=panel.requests.exceptions.InvalidURL("bad"))
     record_server_address(("127.0.0.1", 8264))
 
-    rendered = panel._format_pipeline_status(panel._get_pipeline_status())
+    rendered = _rendered(panel)
 
     assert "unexpected error" in rendered
     assert "not JSON" not in rendered

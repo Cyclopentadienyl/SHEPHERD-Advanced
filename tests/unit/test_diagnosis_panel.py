@@ -1,5 +1,8 @@
 """
-Unit tests for the Diagnosis panel: tolerant HPO parsing and result export.
+Unit tests for the Diagnosis page: tolerant HPO parsing, result export, the
+handlers (Run Diagnosis, the phenotypes, the table and the details), the
+results badge, Run Diagnosis' states, Change model…'s D8 check, the identity
+drawer, and the page as built in the shell.
 """
 import os
 
@@ -10,7 +13,6 @@ pytest.importorskip("gradio")
 import gradio as gr  # noqa: E402
 
 from src.webui.components import diagnosis_panel as dp  # noqa: E402
-from src.webui.shell import standalone_context  # noqa: E402
 
 
 # ------------------------------------------------------------------- HPO parsing
@@ -240,72 +242,143 @@ def test_export_basename_falls_back_when_ids_missing():
     assert base == "diagnosis_webui_patient_run"
 
 
-# ------------------------------------------------------------------- stale-state clear
+# ------------------------------------------------------------------- the page's handlers
+def _no_model_status():
+    return {"initialized": False}
+
+
+def _loaded_status(**extra):
+    """A status serving `_served_identity()` (the records tests use it too)."""
+    status = {
+        "initialized": True, "gnn_ready": True, "sp_ready": True,
+        "scoring_mode": "gnn_plus_shortest_path", "kg_nodes": 10, "kg_edges": 20,
+        "served_identity": _served_identity(),
+    }
+    status.update(extra)
+    return status
+
+
+def _status_serving(identity, **extra):
+    status = {"initialized": True, "gnn_ready": True, "served_identity": identity,
+              "checkpoint_meta": {"epoch": 5}, "fingerprint_warnings": []}
+    status.update(extra)
+    return status
+
+
+@pytest.fixture
+def status_read(monkeypatch):
+    """The card's status read, answered by the test (a list, popped in order;
+    the last answer stays); returns the list of reads made."""
+    from src.webui.components import diagnosis_card as card
+
+    answers = [(_no_model_status(), None)]
+    reads = []
+
+    def read(seconds=card.STATUS_TIMEOUT_SECONDS, reader=None):
+        reads.append(seconds)
+        return answers.pop(0) if len(answers) > 1 else answers[0]
+
+    monkeypatch.setattr(card, "read_status_within", read)
+    monkeypatch.setattr(card, "served_facts", lambda status, **kw: {
+        "key": dp.card.served_key(status), "operator": kw.get("operator"), "workspaces": [],
+        "serving": None, "item": None, "item_problem": None, "recorded": None, "trained": None})
+    return {"answers": answers, "reads": reads}
+
+
+def _run(text, patient="", top_k=10, explanations=True, state=None, phase="idle", view=None,
+         request=None):
+    """Run Diagnosis as the page does; the outputs by name."""
+    return dp.diagnose(text, patient, top_k, explanations, state, phase, view or {}, request)
+
+
 def test_phenotype_change_noops_without_results():
-    out = dp._on_phenotype_change(None)
-    assert len(out) == 7
-    assert out[4] is None  # results_state stays cleared/None
-    # component outputs are gr.update() no-ops (leave UI untouched)
-    assert out[0] is not dp._DOWNLOAD_DISABLED
+    assert dp.phenotypes_changed(None, None) == {}
 
 
 def test_phenotype_change_clears_after_a_run():
-    out = dp._on_phenotype_change(_sample_result())
-    assert len(out) == 7
-    assert "Inputs changed" in out[0]
-    assert out[4] is None  # results_state cleared
-    assert out[5] is dp._DOWNLOAD_DISABLED and out[6] is dp._DOWNLOAD_DISABLED
+    out = dp.phenotypes_changed(_sample_result(), None)
+    assert "Inputs changed" in out["results_body"]
+    assert out["results_state"] is None and out["selected"] is None and out["badge"] == ""
+    assert out["export_csv"] is dp._DOWNLOAD_DISABLED
+    assert out["export_report"] is dp._DOWNLOAD_DISABLED
 
 
-# ------------------------------------------------------------------- diagnose download wiring
-def test_on_diagnose_no_hpo_disables_downloads():
-    out = dp._on_diagnose("no ids here", "", 10)
-    assert len(out) == 7
-    assert out[4] is None  # results_state
-    assert out[5] is dp._DOWNLOAD_DISABLED and out[6] is dp._DOWNLOAD_DISABLED
+def test_on_diagnose_no_hpo_disables_downloads(status_read):
+    out = _run("no ids here")
+    assert "No valid HPO terms found" in out["results_body"]
+    assert out["results_state"] is None
+    assert out["export_csv"] is dp._DOWNLOAD_DISABLED and out["export_report"] is dp._DOWNLOAD_DISABLED
+    assert status_read["reads"] == []   # nothing was asked of the server
 
 
-def test_on_diagnose_success_sets_download_values(monkeypatch):
+def test_on_diagnose_success_sets_download_values(monkeypatch, status_read):
     monkeypatch.setattr(dp, "_call_diagnose", lambda **kw: _sample_result())
-    out = dp._on_diagnose("HP:0001250", "", 10)
-    assert len(out) == 7
-    assert out[4] is not None and out[4].get("candidates")  # results_state populated
-    # downloads enabled with a real file value (not the disabled sentinel)
-    assert out[5] is not dp._DOWNLOAD_DISABLED and out[6] is not dp._DOWNLOAD_DISABLED
+    out = _run("HP:0001250")
+    assert out["results_state"] is not None and out["results_state"].get("candidates")
+    assert out["export_csv"] is not dp._DOWNLOAD_DISABLED
+    assert out["export_report"] is not dp._DOWNLOAD_DISABLED
+    assert out["selected"] == 1 and "Dravet syndrome" in out["details_hd"]
 
 
-def test_on_diagnose_export_failure_still_shows_results(monkeypatch):
+def test_on_diagnose_export_failure_still_shows_results(monkeypatch, status_read):
     monkeypatch.setattr(dp, "_call_diagnose", lambda **kw: _sample_result())
 
     def boom(_result):
         raise OSError("disk full")
 
     monkeypatch.setattr(dp, "_write_exports", boom)
-    out = dp._on_diagnose("HP:0001250", "", 10)
-    assert len(out) == 7
-    # results still shown, with a note; state still populated
-    assert "Dravet syndrome" in out[0] and "could not be written" in out[0]
-    assert out[4] is not None and out[4].get("candidates")
-    # downloads stay disabled (recoverable by re-running once disk is free)
-    assert out[5] is dp._DOWNLOAD_DISABLED and out[6] is dp._DOWNLOAD_DISABLED
+    out = _run("HP:0001250")
+    assert "Dravet syndrome" in out["results_body"]
+    assert "could not be written" in out["results_body"]
+    assert out["results_state"] is not None and out["results_state"].get("candidates")
+    assert out["export_csv"] is dp._DOWNLOAD_DISABLED and out["export_report"] is dp._DOWNLOAD_DISABLED
 
 
-# ------------------------------------------------------------ status on page load
+def test_a_blank_patient_id_is_sent_as_none(monkeypatch):
+    sent = []
+
+    class _Ok:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"candidates": []}
+
+    monkeypatch.setattr(dp, "_self_request",
+                        lambda method, path, **kw: sent.append(kw["json"]) or _Ok())
+    dp._call_diagnose(["HP:0001250"], patient_id="   ")
+    dp._call_diagnose(["HP:0001250"], patient_id="")
+    dp._call_diagnose(["HP:0001250"], patient_id=" pt_7 ")
+    assert [payload["patient_id"] for payload in sent] == [None, None, "pt_7"]
+
+
+def test_the_status_is_read_again_after_each_diagnosis(monkeypatch, status_read):
+    """The badge compares the result with a read made after it: one read per
+    diagnosis, within the 5 s limit, after the API answered."""
+    order = []
+    monkeypatch.setattr(dp, "_call_diagnose", lambda **kw: order.append("api") or _sample_result())
+    status_read["answers"][:] = [(_status_serving(_served_identity()), None)]
+    real = dp.card.read_status_within
+
+    def read(*a, **k):
+        order.append("status")
+        return real(*a, **k)
+
+    monkeypatch.setattr(dp.card, "read_status_within", read)
+    out = _run("HP:0001250")
+    assert order == ["api", "status"]
+    assert "shep-dx-badge-ok" in out["badge"]
+
+
+# ------------------------------------------------------------ the page as built
 def _build_tab(monkeypatch):
-    """Build the tab and fail if the build made any call to the API.
+    """Build the page in the real shell and fail if the build made any call to
+    the API or read the status: the app is built before the server serves, so a
+    read then would be stale on arrival."""
+    from src.webui import shell
+    from src.webui.components import diagnosis_card as card
 
-    Calls are recorded, not refused: the status helpers catch every exception, so
-    a fake that raised would be swallowed and the build would look clean. Three
-    layers are watched -- the status read itself, the HTTP helper under every call,
-    and requests' own Session.request beneath both -- so a status read or any other
-    HTTP call during the build is caught whether or not an address is recorded.
-    """
     calls = []
-    real_status = dp._get_pipeline_status
-
-    def watched_status():
-        calls.append("_get_pipeline_status")
-        return real_status()
 
     def watched_request(method, path, **kwargs):
         calls.append(f"{method} {path}")
@@ -315,61 +388,72 @@ def _build_tab(monkeypatch):
         calls.append(f"requests {method} {url}")
         raise AssertionError("no HTTP request is expected while the app is built")
 
-    monkeypatch.setattr(dp, "_get_pipeline_status", watched_status)
     monkeypatch.setattr(dp, "_self_request", watched_request)
-    # Underneath both: any requests call, including a direct requests.get.
     monkeypatch.setattr(dp.requests.Session, "request", watched_session_request)
+    monkeypatch.setattr(card, "read_status_within",
+                        lambda *a, **k: calls.append("status") or (None, "x"))
     with gr.Blocks() as demo:
-        dp.create_diagnosis_tab(standalone_context(demo))
-    assert calls == [], f"the tab called the API while the app was being built: {calls}"
-    return demo
+        ctx = shell.build_shell(demo, {shell.CLINICAL: dp.create_diagnosis_tab,
+                                       shell.SETTINGS: lambda ctx: None})
+    assert calls == [], f"the page called the API while the app was being built: {calls}"
+    return demo, ctx
 
 
-def test_the_model_status_is_not_read_while_the_app_is_built(monkeypatch):
-    """The app is built before the server serves, so a status read then was stale
-    on arrival -- and under the systemd unit it was also aimed at the wrong port.
-    `_build_tab` fails on any API call during the build; the placeholder stands
-    until the first page load reads the real status."""
-    demo = _build_tab(monkeypatch)
-
-    placeholders = [
-        block for block in demo.blocks.values()
-        if isinstance(block, gr.Markdown) and block.value == dp.STATUS_CHECKING
-    ]
-    assert len(placeholders) == 1
+def _named(demo, name):
+    found = [fn for fn in demo.fns.values() if fn.name == name]
+    assert found, name
+    return found
 
 
-def test_the_model_status_is_read_on_every_page_load(monkeypatch):
-    """One load event writes the status and the two path fields (BACKLOG 17,
-    F5), from the one status read `_on_load_status` makes."""
-    demo = _build_tab(monkeypatch)
-
-    on_load = [
-        fn for fn in demo.fns.values()
-        if fn.fn is dp._on_load_status and (demo._id, "load") in fn.targets
-    ]
-    assert len(on_load) == 1
-    status_md, data_dir, checkpoint = on_load[0].outputs
-    assert isinstance(status_md, gr.Markdown) and status_md.value == dp.STATUS_CHECKING
-    assert isinstance(data_dir, gr.Textbox) and data_dir.label == "Data Directory"
-    assert isinstance(checkpoint, gr.Textbox)
-    assert checkpoint.label == "Checkpoint Path (optional)"
+def test_the_model_in_use_is_not_read_while_the_app_is_built(monkeypatch):
+    """`_build_tab` fails on any read during the build; the card says it is
+    checking until the first page load reads the real status."""
+    demo, _ctx = _build_tab(monkeypatch)
+    bodies = [b for b in demo.blocks.values() if getattr(b, "elem_id", None) == "shep-dx-card-body"]
+    assert len(bodies) == 1 and "Checking the model in use" in bodies[0].value
 
 
-def test_the_reload_button_still_writes_the_same_status(monkeypatch):
-    """Reload already refreshed the status; the load event targets the same
-    component rather than a second copy of it. The path fields the page load
-    sets are the ones Reload sends and, after it, sets."""
-    demo = _build_tab(monkeypatch)
+def test_the_card_is_read_on_load_when_shown_after_a_load_and_on_the_timer(monkeypatch):
+    demo, ctx = _build_tab(monkeypatch)
+    refreshes = _named(demo, "_card_refresh")
+    targets = {t for fn in refreshes for t in fn.targets}
+    assert (demo._id, "load") in targets
+    assert (ctx.tabs["clinical"]._id, "select") in targets
+    assert (ctx.served_model_changed._id, "change") in targets
+    assert all(fn.queue is not False for fn in refreshes)   # may open the checkpoint list
+    (poll,) = _named(demo, "_card_poll")
+    assert poll.targets == [(ctx.timer_slow._id, "tick")]
+    assert poll.queue is False and poll.inputs[0] is ctx.location
 
-    (on_load,) = [fn for fn in demo.fns.values() if fn.fn is dp._on_load_status]
-    (on_reload,) = [fn for fn in demo.fns.values() if fn.fn is dp._on_reload_pipeline]
-    assert on_reload.outputs[0] is on_load.outputs[0]
-    _, data_dir, checkpoint = on_load.outputs
-    _, _, set_dir, set_checkpoint = on_reload.outputs
-    sent_dir, sent_checkpoint, _ = on_reload.inputs
-    assert set_dir is data_dir and set_checkpoint is checkpoint
-    assert sent_dir is data_dir and sent_checkpoint is checkpoint
+
+def test_change_model_asks_d8_then_reads_the_list_then_the_chips(monkeypatch):
+    from src.webui.components.chips import read_chips
+
+    demo, ctx = _build_tab(monkeypatch)
+    (opened,) = [fn for fn in demo.fns.values() if fn.fn is dp._on_change_model]
+    listing = next(fn for fn in demo.fns.values() if fn.trigger_after == opened._id)
+    assert listing.name == "_refresh" and listing.fn.__qualname__.startswith("create_model_list")
+    chips = next(fn for fn in demo.fns.values() if fn.trigger_after == listing._id)
+    assert chips.fn is read_chips
+
+
+def test_run_diagnosis_is_off_while_a_model_change_is_open(monkeypatch):
+    demo, _ctx = _build_tab(monkeypatch)
+    (changed,) = _named(demo, "_phase_changed")
+    assert changed.targets[0][1] == "change"
+    run = [b for b in demo.blocks.values() if getattr(b, "elem_id", None) == "shep-dx-run-btn"][0]
+    assert run in changed.outputs
+
+
+def test_the_page_css_is_registered_and_scoped_to_the_page():
+    from src.webui import app, shell
+
+    assert dp.PAGE_CSS in app.PAGE_CSS
+    assert dp._TAB == "#" + shell.tab_elem_id(shell.CLINICAL)
+    assert dp.CLINICAL == shell.CLINICAL
+    rules = [line for line in dp.PAGE_CSS.splitlines() if "{" in line and not line.startswith(("@", "}"))]
+    assert all(line.lstrip().startswith(dp._TAB) for line in rules), [
+        line for line in rules if not line.lstrip().startswith(dp._TAB)]
 
 
 # ------------------------------------------------- the phenotype list and the API
@@ -403,7 +487,7 @@ def _as_requests_response(response):
 
 
 @pytest.fixture
-def served(monkeypatch):
+def served(monkeypatch, status_read):
     """The panel's API calls reach the real app, which serves a real
     path-reasoning pipeline. Returns the payloads sent and the pipeline runs."""
     pytest.importorskip("fastapi")
@@ -434,21 +518,22 @@ def served(monkeypatch):
 
 
 def _assert_refused_without_results(out):
-    assert out[1] == "" and out[2] == ""
-    assert out[4] is None  # results_state cleared: no earlier result passes as this one
-    assert out[5] is dp._DOWNLOAD_DISABLED and out[6] is dp._DOWNLOAD_DISABLED
+    assert "After a diagnosis" in out["details_html"]["value"]
+    assert out["results_state"] is None  # no earlier result passes as this one
+    assert out["export_csv"] is dp._DOWNLOAD_DISABLED
+    assert out["export_report"] is dp._DOWNLOAD_DISABLED
 
 
 def test_one_hundred_repeats_then_another_is_refused_with_both_numbers(served):
     """Several ids to a line: the message counts entries, not lines."""
     text = "\n".join(" ".join([SEIZURE] * 10) for _ in range(10)) + f"\n{DELAY}"
 
-    out = dp._on_diagnose(text, "", 10)
+    out = _run(text)
 
     assert served["payloads"][0]["phenotypes"] == [SEIZURE] * 100 + [DELAY]
-    assert "Recognised 101 " + _TOO_MANY in out[0]
-    assert "at most 100" in out[0]
-    assert "was not shortened" in out[0]
+    assert "Recognised 101 " + _TOO_MANY in out["results_body"]
+    assert "at most 100" in out["results_body"]
+    assert "was not shortened" in out["results_body"]
     assert served["runs"] == 0  # the pipeline is never reached
     _assert_refused_without_results(out)
 
@@ -456,38 +541,38 @@ def test_one_hundred_repeats_then_another_is_refused_with_both_numbers(served):
 def test_one_hundred_and_one_distinct_ids_get_the_same_refusal(served):
     text = ", ".join(f"HP:{n:07d}" for n in range(1, 102))
 
-    out = dp._on_diagnose(text, "", 10)
+    out = _run(text)
 
-    assert "Recognised 101 " + _TOO_MANY in out[0]
+    assert "Recognised 101 " + _TOO_MANY in out["results_body"]
     assert served["runs"] == 0
     _assert_refused_without_results(out)
 
 
 def test_repeats_within_the_limit_are_sent_and_removed_by_the_service(served):
-    out = dp._on_diagnose(f"{SEIZURE} {SEIZURE} {DELAY}", "", 10)
+    out = _run(f"{SEIZURE} {SEIZURE} {DELAY}")
 
     assert served["payloads"][0]["phenotypes"] == [SEIZURE, SEIZURE, DELAY]
     assert served["runs"] == 1
-    assert out[4]["summary"].endswith("for 2 phenotypes (3 received)")
-    assert "Removed 1 repeated phenotype entry" in out[0]
+    assert out["results_state"]["summary"].endswith("for 2 phenotypes (3 received)")
+    assert "Removed 1 repeated phenotype entry" in out["results_body"]
 
 
 def test_a_corrected_list_shows_its_own_result_and_no_stale_error(served):
-    refused = dp._on_diagnose(" ".join([SEIZURE] * 101), "", 10)
-    assert _TOO_MANY in refused[0]
+    refused = _run(" ".join([SEIZURE] * 101))
+    assert _TOO_MANY in refused["results_body"]
 
-    out = dp._on_diagnose(f"{SEIZURE}\n{DELAY}", "", 10)
+    out = _run(f"{SEIZURE}\n{DELAY}")
 
-    assert _TOO_MANY not in out[0] and "Error" not in out[0]
-    assert out[4] is not None and out[4].get("candidates")
-    assert out[4]["summary"].endswith("for 2 phenotypes")
+    assert _TOO_MANY not in out["results_body"] and "Error" not in out["results_body"]
+    assert out["results_state"] is not None and out["results_state"].get("candidates")
+    assert out["results_state"]["summary"].endswith("for 2 phenotypes")
 
 
 def test_the_input_box_is_never_an_output(monkeypatch):
     """A refusal leaves the user's text where it was: the handler cannot write
     to the box it reads from."""
-    demo = _build_tab(monkeypatch)
-    (handler,) = [f for f in demo.fns.values() if f.fn is dp._on_diagnose]
+    demo, _ctx = _build_tab(monkeypatch)
+    (handler,) = _named(demo, "_run_diagnosis")
 
     phenotype_box = handler.inputs[0]
     assert isinstance(phenotype_box, gr.Textbox)
@@ -586,7 +671,7 @@ def test_a_confidence_refusal_is_not_presented_as_too_many_phenotypes():
     )
 
 
-def test_a_connection_failure_is_reported_without_raising(monkeypatch):
+def test_a_connection_failure_is_reported_without_raising(monkeypatch, status_read):
     import requests
 
     def unreachable(method, path, **kwargs):
@@ -594,9 +679,9 @@ def test_a_connection_failure_is_reported_without_raising(monkeypatch):
 
     monkeypatch.setattr(dp, "_self_request", unreachable)
 
-    out = dp._on_diagnose(SEIZURE, "", 10)
+    out = _run(SEIZURE)
 
-    assert "API server not reachable" in out[0]
+    assert "API server not reachable" in out["results_body"]
     _assert_refused_without_results(out)
 
 
@@ -612,10 +697,10 @@ def test_other_http_errors_keep_their_message(monkeypatch):
 
 
 def test_an_unknown_id_is_reported_and_not_counted(served):
-    out = dp._on_diagnose(f"{SEIZURE} {UNKNOWN} {DELAY}", "", 10)
+    out = _run(f"{SEIZURE} {UNKNOWN} {DELAY}")
 
-    assert f"Unknown phenotype: {UNKNOWN}" in out[0]
-    assert out[4]["summary"].endswith("for 2 phenotypes (3 received)")
+    assert f"Unknown phenotype: {UNKNOWN}" in out["results_body"]
+    assert out["results_state"]["summary"].endswith("for 2 phenotypes (3 received)")
 
 
 # -------------------------------------------- what produced the result (M3c)
@@ -834,9 +919,6 @@ def test_values_from_the_api_cannot_break_the_table():
     assert len(rows) == len(dp._IDENTITY_PARTS)
     assert all(len(row) == 3 for row in rows)
     assert "``a\\|b`c*d<script>``" in rows[3][2]
-    # Outside a table a code span keeps backslashes, so the pipe is not escaped.
-    summary = dp._identity_summary_md("served", identity)
-    assert "SP table ``a|b`c*d<scri…`` ✓" in summary
 
 
 # ------------------------------------------------------------------- the CSV
@@ -941,135 +1023,260 @@ def test_export_names_carry_synthetic_and_demo():
     assert dp._export_basename(_result_with(_path_only_identity())) == "diagnosis_pt_01_sess_abc"
 
 
-# ------------------------------------------------------------------- the tab
-def test_the_tab_shows_what_produced_the_result(monkeypatch):
+# ------------------------------------------------------------------- the page
+def test_the_page_shows_what_produced_the_result(monkeypatch, status_read):
     monkeypatch.setattr(dp, "_call_diagnose", lambda **kw: _sample_result())
 
-    shown = dp._on_diagnose("HP:0001250", "", 10)[0]
+    out = _run("HP:0001250")
 
-    # The banner, above the table.
-    assert shown.index("**SYNTHETIC WORKSPACE: not a clinical result.**") < shown.index("| Rank |")
-    # One summary line under the meta line, with short digests.
-    assert shown.index("candidates found in") < shown.index("**Produced by:**")
-    summary = shown[shown.index("**Produced by:**"):].splitlines()[0]
-    assert f"checkpoint `sha256:{CHECKPOINT_SHA[:12]}…` ✓" in summary
-    assert CHECKPOINT_SHA not in summary
-    assert "`gnn_plus_shortest_path`" in summary and "dataset synthetic ✓" in summary
-    # The full identity, one click away, closed, and the report's own table.
-    assert "<details><summary>" in shown and "<details open" not in shown
-    details = shown[shown.index("<details>"):shown.index("</details>")]
-    assert f"`sha256:{CHECKPOINT_SHA}`" in details
-    report = dp._build_results_report_md(_sample_result())
-    assert _table_rows(details) == _table_rows(_report_section(report))
-    assert _CLAIM_BOUNDARY in details and _NOT_A_DEVICE in details
+    body = out["results_body"]
+    # The banner, above the table; its detail behind the shared ⓘ.
+    assert body.index("SYNTHETIC WORKSPACE: not a clinical result.") < body.index("<table")
+    assert 'aria-describedby="shep-help-text-dx-banner-synthetic"' in body
+    # "This result" (the identity drawer): the result's own rows, as the
+    # report reads them, with full digests shortened in the table only.
+    shown = dp.result_identity_md(out["results_state"], out["card_state"])
+    for part, state, value in dp._identity_rows("served", _served_identity()):
+        assert f"| {part} | {dp._short_digests(f'{state} · {value}')} |" in shown
+    assert CHECKPOINT_SHA not in shown and f"{CHECKPOINT_SHA[:12]}…" in shown
+    assert _CLAIM_BOUNDARY in shown and _NOT_A_DEVICE in shown
+    digests = dp.result_digests_html(out["results_state"])
+    for digest in (CHECKPOINT_SHA, KG_SHA, MANIFEST_SHA, RECORD_SHA):
+        assert f'data-copy="{digest}"' in digests
 
 
-def test_the_tab_marks_the_demo_answer(monkeypatch):
+def test_the_page_marks_the_demo_answer(monkeypatch, status_read):
     monkeypatch.setattr(dp, "_call_diagnose", lambda **kw: _result_with(None))
 
-    shown = dp._on_diagnose("HP:0001250", "", 10)[0]
+    out = _run("HP:0001250")
 
-    assert shown.startswith("⚠️ **DEMO ANSWER: not computed.**")
-    assert "**Produced by:** demo answer" in shown
-
-
-def _details_block(shown):
-    return shown[shown.index("<details>"):shown.index("</details>")]
+    assert "DEMO ANSWER: not computed." in out["results_body"]
+    assert "shep-dx-banner-red" in out["results_body"]
+    assert "This is the demo answer" in out["badge"]
+    assert "Produced by the model in use" not in out["badge"]
 
 
-def test_the_tab_does_not_say_nothing_was_checked_without_an_identity(monkeypatch):
-    """Catches the tab's identity block claiming nothing was checked for a
-    response that carried no served identity: like the report, it says the
-    response did not say, under the same claim boundary."""
+def test_the_page_does_not_say_nothing_was_checked_without_an_identity(monkeypatch, status_read):
+    """Like the report, "This result" says the response did not say, under the
+    same claim boundary."""
     monkeypatch.setattr(dp, "_call_diagnose", lambda **kw: _without_an_identity("missing"))
 
-    shown = dp._on_diagnose("HP:0001250", "", 10)[0]
+    out = _run("HP:0001250")
+    shown = dp.result_identity_md(out["results_state"], out["card_state"])
 
     assert "nothing in it was checked" not in shown
-    details = _details_block(shown)
-    assert details.index(_CLAIM_BOUNDARY) < details.index(_CHECKS_NOT_REPORTED)
+    assert shown.index(_CLAIM_BOUNDARY) < shown.index(_CHECKS_NOT_REPORTED)
+    assert "did not say what produced it" in out["badge"]
 
 
-def test_the_demo_answer_still_says_nothing_was_checked(monkeypatch):
-    """Catches the not-reported wording spreading to the demo answer, where
-    nothing was served: its report and its tab block keep saying, in the same
-    words as before, that nothing in it was checked against a record."""
+def test_the_demo_answer_still_says_nothing_was_checked(monkeypatch, status_read):
     monkeypatch.setattr(dp, "_call_diagnose", lambda **kw: _result_with(None))
 
     report = _report_section(dp._build_results_report_md(_result_with(None)))
-    details = _details_block(dp._on_diagnose("HP:0001250", "", 10)[0])
+    out = _run("HP:0001250")
+    shown = dp.result_identity_md(out["results_state"], out["card_state"])
 
     assert dp.IDENTITY_NOTHING_CHECKED == _NOTHING_CHECKED
-    for text in (report, details):
+    for text in (report, shown):
         assert text.index(_CLAIM_BOUNDARY) < text.index(_NOTHING_CHECKED)
         assert _CHECKS_NOT_REPORTED not in text
 
 
-def test_the_tab_shows_the_served_pipelines_own_identity(served):
+def test_the_page_shows_the_served_pipelines_own_identity(served):
     """End to end through the real route: a path-reasoning pipeline over an
     in-memory graph says so beside its result, and in its export."""
-    out = dp._on_diagnose(f"{SEIZURE}\n{DELAY}", "", 10)
+    out = _run(f"{SEIZURE}\n{DELAY}")
 
-    identity = out[4]["served_identity"]
+    identity = out["results_state"]["served_identity"]
     assert identity["scoring_mode"] == "path_reasoning_fallback"
     assert identity["checkpoint"] == {"state": "absent", "sha256": None}
-    assert "**NO TRAINED MODEL: path-reasoning fallback.**" in out[0]
-    assert "no trained model (checkpoint absent)" in out[0]
-    assert "graph in memory (no file)" in out[0]
-    _, records, _ = _csv_records(dp._build_results_csv(out[4]))
+    assert "NO TRAINED MODEL: path-reasoning fallback." in out["results_body"]
+    shown = dp.result_identity_md(out["results_state"], out["card_state"])
+    assert "absent — no trained model is served" in shown
+    assert "none — the graph was supplied in memory" in shown
+    _, records, _ = _csv_records(dp._build_results_csv(out["results_state"]))
     assert {r["served_checkpoint_state"] for r in records} == {"absent"}
     assert {r["served_kg_state"] for r in records} == {"in_memory"}
 
 
-# ---------------------------------------------------------- the model status
-def _loaded_status(**extra):
-    status = {
-        "initialized": True, "gnn_ready": True, "sp_ready": True,
-        "scoring_mode": "gnn_plus_shortest_path", "kg_nodes": 10, "kg_edges": 20,
-        "served_identity": _served_identity(),
-    }
-    status.update(extra)
-    return status
+# -------------------------------------------------- the badge: the result against what is served
+_NOW = "2026-07-07T16:00:00"
 
 
-def test_the_model_status_shows_what_the_loaded_pipeline_serves():
-    rendered = dp._format_pipeline_status(_loaded_status())
+def _card(status=None, problem=None, *, at=_NOW, state=None, operator=True):
+    from datetime import datetime
 
-    serving = next(line for line in rendered.splitlines() if "**Serving:**" in line)
-    assert f"checkpoint `sha256:{CHECKPOINT_SHA[:12]}…` ✓" in serving
-    assert f"SP table `{BUILD_ID[:12]}…` ✓" in serving
-    assert _CLAIM_BOUNDARY in rendered
-    assert "SYNTHETIC WORKSPACE" in rendered
+    return dp.card.advance(state, status, problem, now=datetime.fromisoformat(at),
+                           operator=operator, d8_short=None if operator else "request not local",
+                           open_checkpoints=False, facts=lambda s, **k: {
+                               "key": dp.card.served_key(s), "operator": operator,
+                               "workspaces": [], "serving": None, "item": None,
+                               "item_problem": None, "recorded": None, "trained": None})
+
+
+def _produced(at="2026-07-07T15:59:59"):
+    result = _sample_result()
+    result["timestamp"] = at
+    return result
+
+
+def test_the_badge_says_equal_only_for_the_whole_identity_read_after_the_result():
+    state = _card(_status_serving(_served_identity()))
+    assert dp.compare_with_served(_produced(), state)["state"] == "equal"
+    assert "shep-dx-badge-ok" in dp.badge_html(_produced(), state)
+    # One part of the served identity differs (the SP table): never equal.
+    other = _served_identity()
+    other["shortest_paths"] = {"state": "absent", "build_id": None, "max_hops": None}
+    other["scoring_mode"] = "gnn_only"
+    other["settings"] = _settings(eta=1.0)
+    compared = dp.compare_with_served(_produced(), _card(_status_serving(other)))
+    assert compared["state"] == "differs"
+    assert compared["differ"] == ["Shortest-path table", "Scoring mode", "Mixing weight eta"]
+    badge = dp.badge_html(_produced(), _card(_status_serving(other)))
+    assert "Produced by an earlier model or pipeline" in badge and "3 parts differ" in badge
+
+
+def test_a_stale_or_unreadable_status_never_leaves_equal_showing():
+    good = _card(_status_serving(_served_identity()))
+    stale = dp.compare_with_served(_produced("2026-07-07T16:00:30"), good)
+    assert stale["state"] == "unknown"
+    assert "last read at 16:00:00, before this result was produced (16:00:30)" in stale["reason"]
+    failed = _card(None, "timed out (5 s)", state=good)
+    unknown = dp.compare_with_served(_produced(), failed)
+    assert unknown["state"] == "unknown" and "timed out (5 s)" in unknown["reason"]
+    for state, result in ((good, _produced("2026-07-07T16:00:30")), (failed, _produced())):
+        badge = dp.badge_html(result, state)
+        assert "Cannot check against the model in use yet" in badge
+        assert "shep-dx-badge-ok" not in badge and "shep-dx-badge-grey" in badge
+        assert "keeps its own identity" in badge
+
+
+def test_a_result_older_than_a_load_says_how_many_parts_differ():
+    load = _card(_status_serving(_served_identity()))
+    other = _served_identity()
+    other["checkpoint"] = {"state": "verified", "sha256": "b" * 64}
+    later = _card(_status_serving(other), state=load, at="2026-07-07T16:31:12")
+    assert dp.compare_with_served(_produced(), later)["differ"] == ["Checkpoint"]
+    assert "1 part differs" in dp.badge_html(_produced(), later)
+    shown = dp.result_identity_md(_produced(), later)
+    assert "1 of 10 parts differs" in shown and "status read 16:31:12" in shown
+    assert "· differs**" in shown and "= same" in shown
+
+
+# -------------------------------------------------- Run Diagnosis
+def test_run_is_greyed_with_a_bubble_and_a_reason_when_no_model_is_loaded():
+    from src.webui.components.help import text_id
+
+    run = dp.run_controls(_card(_no_model_status()), "idle")
+    assert run["run_btn"]["interactive"] is False
+    assert f'aria-describedby="{text_id("dx-run-no-model")}"' in run["run_cover"]
+    assert 'class="shep-i shep-i-cover"' in run["run_cover"]
+    assert dp.RUN_DISABLED_NO_MODEL in run["run_reason"]
+    read_only = dp.run_controls(_card(_no_model_status(), operator=False), "idle")
+    assert dp._e(dp.RUN_DISABLED_NO_MODEL_READ_ONLY) in read_only["run_reason"]
+    assert "dx-run-no-model" in dp.TOPIC_HELP
+
+
+def test_run_stays_on_for_path_reasoning_and_an_unreadable_status_but_not_a_model_change():
+    graph = _status_serving(_path_only_identity(), gnn_ready=False)
+    assert dp.run_controls(_card(graph), "idle")["run_btn"]["interactive"] is True
+    assert dp.run_controls(_card(None, "timed out (5 s)"), "idle")["run_cover"] == ""
+    for phase in ("confirming", "loading"):
+        change = dp.run_controls(_card(_status_serving(_served_identity())), phase)
+        assert change["run_btn"]["interactive"] is False
+        assert dp.RUN_DISABLED_CHANGE in change["run_reason"] and "dx-run-change" in change["run_cover"]
+
+
+# -------------------------------------------------- the card's outputs and the timer
+def test_the_card_sends_only_what_changed():
+    state = _card(_status_serving(_served_identity()))
+    first = dp.card_outputs(state, None, "idle")
+    assert {"card_body", "badge", "run_btn", "change_btn"} <= set(first)
+    again = dp.card_outputs(first["card_state"], None, "idle")
+    assert set(again) == {"card_state"}
+
+
+def test_the_timer_reads_only_while_diagnosis_is_shown_and_opens_no_checkpoint(monkeypatch):
+    seen = []
+
+    def read_card(state, request, *, open_checkpoints, reread=False, now=None):
+        seen.append(open_checkpoints)
+        return _card(_no_model_status())
+
+    monkeypatch.setattr(dp, "read_card", read_card)
+    assert dp.poll_card("datasets", None, None, "idle", {}, None) == {}
+    out = dp.poll_card("clinical", None, None, "idle", {}, None)
+    assert seen == [False] and "No model loaded" in out["card_body"]
+
+
+# -------------------------------------------------- Change model…
+def test_change_model_is_refused_with_the_reason_and_opens_nothing(monkeypatch):
+    from tests.fixtures.operator_access import gradio_request, operator_request
+
+    refused = dp.open_change(gradio_request())
+    assert "Refused: " in refused["change_reason"]
+    assert refused["change_drawer"]["visible"] is False
+    allowed = dp.open_change(operator_request(monkeypatch))
+    assert allowed["change_drawer"]["visible"] is True
+    assert allowed["identity_drawer"]["visible"] is False
+    outputs = dp._on_change_model(operator_request(monkeypatch))
+    assert len(outputs) == len(dp.CHANGE_OUTPUTS)
+
+
+def test_closing_the_change_drawer_drops_an_open_confirmation():
+    closed = dp.close_change("confirming")
+    assert closed["plan"] is None and closed["phase"] == "idle"
+    assert closed["confirm"]["visible"] is False and closed["change_drawer"]["visible"] is False
+
+
+# -------------------------------------------------- the candidates and the details
+def test_values_from_the_api_are_escaped_in_the_table_and_the_details():
+    result = _sample_result()
+    evil = "<img src=x onerror=alert(1)>"
+    result["candidates"][0].update(disease_name=evil, supporting_genes=[evil],
+                                   matching_phenotypes=[evil])
+    result["candidates"][0]["evidence_package"].update(summary=evil, direct_paths=[[evil, "b"]])
+    html = (dp.results_body_html(result, 1) + dp.details_header_html(result["candidates"][0])
+            + dp.evidence_html(result["candidates"][0]) + dp.paths_html(result["candidates"][0])
+            + dp.phenotypes_html(result["candidates"][0]))
+    assert "<img" not in html and "&lt;img src=x onerror=alert(1)&gt;" in html
+
+
+def test_the_sp_column_reads_a_dash_when_no_table_is_served():
+    result = _result_with(_gnn_only_identity())
+    result["candidates"][0]["sp_score"] = 0.0
+    assert ">0.000</td>" not in dp.results_body_html(result, 1).split("<tbody>")[1].split(
+        "</tr>")[0].replace(">0.720</td>", "")
+    assert "SP — (no table)" in dp.details_header_html(result["candidates"][0], True)
+    assert ">0.550</td>" in dp.results_body_html(_sample_result(), 1)
+
+
+def test_a_selected_row_shows_its_details_with_its_counts():
+    out = dp.select_candidate(_sample_result(), "evidence", "2")
+    assert out["selected"] == 2 and "Other disease" in out["details_hd"]
+    choices = dp.segment_choices(_sample_result()["candidates"][0])
+    assert choices == [("Evidence", "evidence"), ("Explanation", "explanation"),
+                       ("Matching phenotypes 1", "phenotypes"), ("Paths 1", "paths")]
+    assert dp.select_candidate(_sample_result(), "evidence", "99") == {}
+    paths = dp.details_outputs(_sample_result(), 1, "paths")
+    assert "MONDO:0011073" in paths["details_html"]["value"]
+    explanation = dp.details_outputs(_sample_result(), 1, "explanation")
+    assert explanation["details_md"]["visible"] is True
+    assert explanation["details_md"]["value"] == "Because ..."
+
+
+# -------------------------------------------------- the model in use (identity drawer)
+def test_the_model_in_use_shows_the_boundary_for_what_is_loaded():
+    html = dp.model_identity_html(_card(_status_serving(_served_identity())))
+    assert _CLAIM_BOUNDARY in html and _NOT_A_DEVICE in html
+    assert _NOTHING_CHECKED_LOADED not in html and "SYNTHETIC WORKSPACE" in html
 
 
 @pytest.mark.parametrize("name", ["path_only", "in_memory"])
-def test_a_status_with_nothing_marked_says_nothing_was_checked(name):
-    """Catches the model status showing the §6 line alone under an identity
-    with no part marked ✓, which reads as a claim that its graph file was
-    checked against a record; the report and the tab add the qualifier."""
-    rendered = dp._format_pipeline_status(_loaded_status(served_identity=_IDENTITIES[name]()))
-
-    serving = next(line for line in rendered.splitlines() if "**Serving:**" in line)
-    assert "✓" not in serving
-    after = rendered[rendered.index(serving):]
-    assert after.index(f"<sub>{_CLAIM_BOUNDARY}</sub>") < after.index(
-        f"<sub>{_NOTHING_CHECKED_LOADED}</sub>")
-    # Said of the loaded pipeline, not of a result: the status shows no result.
-    assert _NOTHING_CHECKED not in rendered
-    assert _CHECKS_NOT_REPORTED not in rendered
-
-
-@pytest.mark.parametrize("name", ["verified_synthetic", "verified_files", "gnn_only"])
-def test_a_status_with_a_verified_part_does_not_say_nothing_was_checked(name):
-    """Catches the qualifier being added to every status: where a part is
-    marked ✓, the §6 line refers to it and "nothing was checked" would be
-    false."""
-    rendered = dp._format_pipeline_status(_loaded_status(served_identity=_IDENTITIES[name]()))
-
-    assert f"<sub>{_CLAIM_BOUNDARY}</sub>" in rendered
-    assert "nothing in it was checked" not in rendered
-    assert _NOTHING_CHECKED_LOADED not in rendered
-    assert _CHECKS_NOT_REPORTED not in rendered
+def test_a_model_in_use_with_nothing_marked_says_nothing_was_checked(name):
+    html = dp.model_identity_html(_card(_status_serving(_IDENTITIES[name]())))
+    assert html.index(_CLAIM_BOUNDARY) < html.index(_NOTHING_CHECKED_LOADED)
+    assert _NOTHING_CHECKED not in html and _CHECKS_NOT_REPORTED not in html
 
 
 _STATUS_IDENTITIES = {
@@ -1079,39 +1286,25 @@ _STATUS_IDENTITIES = {
 
 
 @pytest.mark.parametrize("name", sorted(_STATUS_IDENTITIES))
-def test_the_status_and_the_report_agree_on_whether_anything_was_checked(name):
-    """Catches the model status deciding "nothing checked" by a rule of its own
-    (for example from the checkpoint alone): for every served identity it adds
-    the qualifier exactly when the report's identity table does."""
+def test_the_model_in_use_and_the_report_agree_on_whether_anything_was_checked(name):
+    """The drawer adds the qualifier exactly when the report's identity table
+    does, for every served identity (one rule, `_claim_boundary_lines`)."""
     make = _STATUS_IDENTITIES[name]
-    status = dp._format_pipeline_status(_loaded_status(served_identity=make()))
+    html = dp.model_identity_html(_card(_status_serving(make())))
     section = _report_section(dp._build_results_report_md(_result_with(make())))
     nothing_marked = "✓" not in "".join(row[1] for row in _table_rows(section))
 
     assert (_NOTHING_CHECKED in section) is nothing_marked
-    assert (_NOTHING_CHECKED_LOADED in status) is nothing_marked
-    assert _CLAIM_BOUNDARY in status and _CLAIM_BOUNDARY in section
+    assert (_NOTHING_CHECKED_LOADED in html) is nothing_marked
+    assert _CLAIM_BOUNDARY in html and _CLAIM_BOUNDARY in section
 
 
 def test_a_status_without_an_identity_says_so():
-    status = _loaded_status()
+    status = _status_serving(_served_identity())
     del status["served_identity"]
-
-    rendered = dp._format_pipeline_status(status)
-
-    assert "**Serving:** not reported" in rendered
-    assert "SYNTHETIC" not in rendered
-
-
-def test_fingerprint_warnings_are_named_for_what_they_compare():
-    rendered = dp._format_pipeline_status(_loaded_status(fingerprint_warnings=[
-        "Graph structure differs from the checkpoint's structural fingerprint.",
-        "Node count mismatch for 'gene': checkpoint expects 3, current data has 4",
-    ]))
-
-    assert "KG version mismatch" not in rendered
-    assert "structural fingerprint** (2 warnings;" in rendered
-    assert "not the graph's identity" in rendered
+    state = _card(status)
+    assert "The status did not say what is served." in dp.card.body_html(state)
+    assert _CHECKS_NOT_REPORTED in dp.model_identity_html(state)
 
 
 def test_the_panel_no_longer_reads_a_model_version():

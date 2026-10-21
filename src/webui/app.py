@@ -36,7 +36,7 @@ import gradio as gr
 
 from src.utils.version_checker import DEGRADED, NOTICE, format_runtime_line, probe_runtime
 from src.webui import shell
-from src.webui.components import datasets_page, models_page, test_page
+from src.webui.components import datasets_page, diagnosis_panel, models_page, test_page
 from src.webui.components.datasets_page import create_datasets_page
 from src.webui.components.diagnosis_panel import create_diagnosis_tab
 from src.webui.components.help import HELP_CSS, HELP_HEAD, HelpRegistry
@@ -190,6 +190,7 @@ DASHBOARD_CSS = """
 #: module's ``PAGE_CSS``, listed here beside its builder in `PAGES`.
 PAGE_CSS = (
     datasets_page.PAGE_CSS,
+    diagnosis_panel.PAGE_CSS,
     test_page.PAGE_CSS,
     models_page.PAGE_CSS,
 )
