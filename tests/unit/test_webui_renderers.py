@@ -241,7 +241,8 @@ def test_the_research_table_row_has_its_columns_and_escapes():
     assert row.startswith('<tr class="" data-key="gat/r/f.pt" tabindex="0" aria-selected="false"')
     cells = re.findall(r"<td[^>]*>(.*?)</td>", row)
     assert len(cells) == 5
-    assert "GAT · run 2026-10-17 09:15" in cells[0] and "epoch 5 · &lt;b&gt;x" in cells[0]
+    assert 'GAT · <span class="shep-nowrap">run 2026-10-17 09:15</span>' in cells[0]
+    assert "epoch 5 · &lt;b&gt;x" in cells[0]
     assert "In use (Diagnosis)" in cells[0] and "<b>x" not in row
     assert f'model <code class="shep-fpv" title="{SHA}">{SHA[:12]}</code>' in cells[1]
     assert "dataset <b>demo</b>" in cells[1] and "synthetic" in cells[1]
@@ -251,6 +252,22 @@ def test_the_research_table_row_has_its_columns_and_escapes():
     assert "matches no listed workspace" in unmatched and unmatched.count("<td") == 4
     broken = r.model_table_row_html(checkpoint(sha=None, problem="bad"), [])
     assert 'aria-disabled="true"' in broken and "metadata not readable · cannot be loaded" in broken
+
+
+def test_a_runs_start_time_is_kept_on_one_line_in_the_table():
+    """Models at 1440x900 broke "GAT · run 2026-10-" / "17 09:15": the start
+    time is one no-wrap span, so a line breaks after "GAT ·" only; a run not
+    named by its start time is its escaped name, free to wrap."""
+    assert r.run_label_html("gat", "20261017-091500_run_3fa9c1") == (
+        'GAT · <span class="shep-nowrap">run 2026-10-17 09:15</span>')
+    assert r.run_label_html(None, "my<run>") == "MODEL · run my&lt;run&gt;"
+    assert r.run_label("gat", "20261017-091500_run_3fa9c1") == "GAT · run 2026-10-17 09:15"
+
+
+def test_an_identifier_wraps_only_after_an_underscore_and_is_escaped():
+    assert r.wrap_at_underscores("research_selection") == "research_<wbr>selection"
+    assert r.wrap_at_underscores("a_<b>") == "a_<wbr>&lt;b&gt;"
+    assert r.wrap_at_underscores(None) == ""
 
 
 def test_the_run_suffix_and_a_validation_figure_by_its_name():

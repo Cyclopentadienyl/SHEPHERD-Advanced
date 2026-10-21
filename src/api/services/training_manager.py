@@ -950,9 +950,10 @@ class TrainingManager:
     def _ended_by_stop(returncode: Optional[int]) -> bool:
         """Whether a test run's exit status can be a stop's doing.
 
-        On POSIX, only a signal's: measure_scorer catches no KeyboardInterrupt,
-        so the stop's SIGINT ends it by SIGINT, as SIGTERM and SIGKILL end it
-        by theirs, and a status of 0 or more is the run's own ending. Windows
+        On POSIX, only a signal's: measure_scorer turns the stop's SIGINT into
+        one "cancelled" line and then ends itself by SIGINT (the signal's
+        default action, `_run_as_program`), as SIGTERM and SIGKILL end it by
+        theirs, and a status of 0 or more is the run's own ending. Windows
         has no signal statuses (CTRL_BREAK_EVENT and TerminateProcess end it
         with a positive code), so there any status but 0 is taken as the
         stop's. None (the process was not waited for) is taken as the stop's.

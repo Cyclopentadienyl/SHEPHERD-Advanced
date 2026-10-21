@@ -179,7 +179,8 @@ class TestOneVersion:
         assert item.label == "demo-test-1" and item.manifest_sha256 == cohort.version.identity.sha256
         runs = {r.run_id: r for r in item.reports}
         assert set(asked) == {name for name, r in runs.items() if r.problem is None}
-        assert runs["usage.jsonl"].problem is not None, "the store's own file is not a run"
+        assert (cohort.version.directory / "reports" / "usage.jsonl").is_file()
+        assert "usage.jsonl" not in runs, "the store's own file is not a run, so it is not listed"
 
     def test_a_listed_runs_report_path(self, store):
         cohort, environ = store

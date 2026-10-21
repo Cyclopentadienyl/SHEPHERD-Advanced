@@ -37,7 +37,7 @@ SHELL_CSS = """
   --shep-amber-50: #fff7e3; --shep-amber-100: #fdeab8; --shep-amber-300: #f0c252;
   --shep-amber-600: #c27c00; --shep-amber-800: #7a4600;
   --shep-green-50: #edf9f1; --shep-green-200: #a9dfbb; --shep-green-800: #126133;
-  --shep-grey-50: #f2f3f5; --shep-grey-200: #d9dce2; --shep-grey-600: #535a66; --shep-grey-800: #2f3540;
+  --shep-grey-50: #f2f3f5; --shep-grey-200: #d9dce2; --shep-grey-500: #737a87; --shep-grey-600: #535a66; --shep-grey-800: #2f3540;
   --shep-red-50: #fdf0f0; --shep-red-200: #f1b9b9; --shep-red-700: #a52222;
   --shep-mono: 'IBM Plex Mono', 'DejaVu Sans Mono', 'Liberation Mono', monospace;
   --shep-row1-h: 54px; --shep-brand-w: __BRAND__px;
@@ -184,6 +184,19 @@ body { color: var(--shep-text); }
 .gradio-container button.primary[disabled] {
   background: var(--shep-grey-50) !important; border-color: var(--shep-grey-200) !important;
   color: var(--shep-grey-600) !important; opacity: 1 !important; filter: none !important; box-shadow: none !important;
+}
+
+/* ---------------------------------------------------------------- field labels and checkboxes */
+/* A field's label chip (HPO terms, Patient ID, Workspace) is text: at least
+   4.5:1 on its chip (the Soft theme's indigo-500 on indigo-100 is 3.63:1). An
+   unchecked checkbox's border is what shows it is there: at least 3:1 against
+   its fill and what is around it (WCAG 1.4.11; the theme's grey-100 is 1.1:1,
+   and its hover grey-300 1.4:1). */
+.gradio-container {
+  --block-title-text-color: var(--shep-accent-text);
+  --block-label-text-color: var(--shep-accent-text);
+  --checkbox-border-color: var(--shep-grey-500);
+  --checkbox-border-color-hover: var(--shep-accent);
 }
 
 /* ---------------------------------------------------------------- shared pieces */

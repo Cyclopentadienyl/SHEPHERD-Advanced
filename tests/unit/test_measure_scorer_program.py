@@ -19,9 +19,12 @@ the tests and the deployment probe that call it in process; the script's entry
   its traceback;
 - a checkpoint that does not load as a weights-only checkpoint is refused
   naming the file, as the graph readers name a tensor file; a failed allocation
-  and the device's own errors are not converted.
+  and the device's own errors are not converted;
+- a cancel (SIGINT: the job runner's stop) is one line, no KeyboardInterrupt
+  traceback, and the process still ends by SIGINT, which is how the runner
+  tells a cancelled run from one that ended on its own.
 
-Two subprocess runs pin the `__main__` wiring and the closed console.
+Subprocess runs pin the `__main__` wiring, the closed console and the cancel.
 
 Module: tests/unit/test_measure_scorer_program.py
 """
@@ -594,3 +597,146 @@ def test_run_as_a_program_with_no_stdout_measures_and_exits_0(workspace, tmp_pat
     assert completed.returncode == 0, completed.stderr
     assert "Traceback" not in completed.stderr
     assert output.is_file()
+
+
+# ---------------------------------------------------------------------------
+# A cancel: one line, no traceback, and still ended by SIGINT
+# ---------------------------------------------------------------------------
+def test_a_cancel_is_one_line_and_ends_as_cancelled(cli, monkeypatch, capsys):
+    """In process: `main` interrupted is `CANCELLED_LINE` on stderr and
+    `_end_as_cancelled` (which ends the process by SIGINT), not a traceback."""
+    def interrupted(argv=None):
+        raise KeyboardInterrupt
+
+    ended = []
+    monkeypatch.setattr(cli, "main", interrupted)
+    monkeypatch.setattr(cli, "_end_as_cancelled", lambda: ended.append(True) or 130)
+    try:
+        status = cli._run_as_program([])
+    except KeyboardInterrupt:
+        pytest.fail("the cancel reached the caller as a KeyboardInterrupt (a traceback)")
+    assert status == 130 and ended == [True]
+    err = capsys.readouterr().err
+    assert _one_line(err, "measure_scorer: cancelled") == cli.CANCELLED_LINE
+    assert "KeyboardInterrupt" not in err
+
+
+_CANCELLED_CHILD = """
+import sys, time
+sys.path.insert(0, sys.argv[1])
+import scripts.measure_scorer as cli
+
+def measuring(args):
+    print("MEASURING", file=sys.stderr, flush=True)
+    time.sleep(120)
+    return 0
+
+cli._run = measuring
+sys.exit(cli._run_as_program(sys.argv[2:]))
+"""
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
+def test_run_as_a_program_a_cancel_prints_no_traceback_and_ends_by_sigint(tmp_path):
+    """The job runner's stop is SIGINT, and it reads a status of "ended by
+    SIGINT" as the cancel's doing (`TrainingManager._ended_by_stop`). The run,
+    under the GPU lock and its execution settings, is interrupted mid-run: one
+    line, no traceback, and the process ends by SIGINT."""
+    import signal
+    import time
+
+    from src.utils.gpu_lock import LOCK_FILE_ENV, WORKSPACES_ROOT_ENV
+
+    script = tmp_path / "child.py"
+    script.write_text(_CANCELLED_CHILD)
+    env = {k: v for k, v in os.environ.items() if k not in (LOCK_FILE_ENV, WORKSPACES_ROOT_ENV)}
+    child = subprocess.Popen(
+        [sys.executable, str(script), str(REPO_ROOT),
+         *_generated(tmp_path / "ws", tmp_path / "c.pt", tmp_path / "out" / "m.json")],
+        cwd=str(REPO_ROOT), env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        lines = []
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
+            line = child.stderr.readline()
+            lines.append(line)
+            if "MEASURING" in line or not line:
+                break
+        assert any("MEASURING" in line for line in lines), "".join(lines)
+        child.send_signal(signal.SIGINT)
+        _out, rest = child.communicate(timeout=60)
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait()
+    err = "".join(lines) + rest
+    assert child.returncode == -signal.SIGINT, err
+    assert _one_line(err, "measure_scorer: cancelled") == (
+        __import__("scripts.measure_scorer", fromlist=["CANCELLED_LINE"]).CANCELLED_LINE)
+    assert "KeyboardInterrupt" not in err
+
+
+_LOADING_CHILD = """
+import signal, sys, time
+sys.path.insert(0, sys.argv[1])
+import scripts.measure_scorer as cli
+
+# What the script installs, run as a program, before it imports torch.
+signal.signal(signal.SIGINT, cli._cancelled_while_loading)
+print("LOADING", file=sys.stderr, flush=True)
+time.sleep(120)
+"""
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
+def test_a_cancel_while_the_modules_load_is_the_same_line_and_ending(tmp_path):
+    """A Cancel right after Start lands while torch is still being imported,
+    before `_run_as_program`: the same one line, no traceback, ended by
+    SIGINT."""
+    import signal
+    import time
+
+    script = tmp_path / "child.py"
+    script.write_text(_LOADING_CHILD)
+    child = subprocess.Popen([sys.executable, str(script), str(REPO_ROOT)], cwd=str(REPO_ROOT),
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        lines = []
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
+            line = child.stderr.readline()
+            lines.append(line)
+            if "LOADING" in line or not line:
+                break
+        child.send_signal(signal.SIGINT)
+        _out, rest = child.communicate(timeout=60)
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait()
+    err = "".join(lines) + rest
+    assert child.returncode == -signal.SIGINT, err
+    assert "measure_scorer: cancelled" in err and "Traceback" not in err, err
+
+
+def test_the_loading_guard_comes_before_torch_and_the_run_unwinds_on_a_cancel(cli, monkeypatch):
+    """Run as a program, the guard is installed before torch is imported; once
+    `_run_as_program` starts, a cancel is a KeyboardInterrupt again, so the
+    run unwinds (staged files removed, the GPU lock released) before it ends."""
+    import signal
+
+    tree = ast.parse(Path(cli.__file__).read_text())
+    guard = next(i for i, node in enumerate(tree.body)
+                 if isinstance(node, ast.If) and "_cancelled_while_loading" in ast.unparse(node))
+    torch_import = next(i for i, node in enumerate(tree.body)
+                        if isinstance(node, ast.Import) and node.names[0].name == "torch")
+    assert guard < torch_import
+    seen = []
+    monkeypatch.setattr(cli, "main",
+                        lambda argv=None: seen.append(signal.getsignal(signal.SIGINT)) or 0)
+    previous = signal.signal(signal.SIGINT, cli._cancelled_while_loading)
+    try:
+        assert cli._run_as_program([]) == 0
+    finally:
+        signal.signal(signal.SIGINT, previous)
+    assert seen == [signal.default_int_handler]

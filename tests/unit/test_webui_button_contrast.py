@@ -1,13 +1,18 @@
 """
-Primary buttons keep their words readable (M5-2): text contrast at least 4.5:1.
-==============================================================================
+Primary buttons, field labels and checkboxes stay readable (M5-2, M5-3).
+=========================================================================
 The dashboard's theme (Gradio's Soft) draws a primary button white on indigo-500
 (4.47:1) and, on hover and when disabled, on indigo-400 (2.98:1, measured on
-Run Diagnosis). The shared stylesheet (`src/webui/style.py`) sets the primary
-button's colours from the dashboard's own tokens, and draws a disabled primary
-button grey with grey text. These tests compute the contrast (WCAG 2.x) of what
-a primary button actually gets: the stylesheet's value where it sets one, the
-theme's otherwise, so removing the stylesheet's rules fails them.
+Run Diagnosis); a field's label chip (HPO terms, Patient ID, Workspace)
+indigo-500 on indigo-100 (3.63:1); and an unchecked checkbox's border grey-100
+on a grey-50 fill (1.1:1 against the panel, so the box is nearly invisible;
+grey-300 on hover). The shared stylesheet (`src/webui/style.py`) sets these
+colours from the dashboard's own tokens and draws a disabled primary button
+grey with grey text. These tests compute the contrast (WCAG 2.x) of what each
+actually gets: the stylesheet's value where it sets one, the theme's
+otherwise, so removing the stylesheet's rules fails them. Text needs 4.5:1;
+the checkbox's border, a control's boundary, 3:1 against its fill and against
+every background a checkbox sits on (WCAG 1.4.11).
 
 Module: tests/unit/test_webui_button_contrast.py
 """
@@ -104,3 +109,29 @@ def test_a_disabled_primary_button_is_grey_with_readable_grey_text():
     text = _resolve(declarations["color"], tokens)
     assert contrast(text, background) >= 4.5
     assert "opacity" in declarations and declarations["opacity"].strip().startswith("1")
+
+
+def test_the_themes_own_label_chip_and_checkbox_border_are_below_the_threshold():
+    """Why the stylesheet sets them."""
+    assert contrast(_theme_value("block_title_text_color"),
+                    _theme_value("block_title_background_fill")) < 4.5
+    assert contrast(_theme_value("checkbox_border_color"), "#ffffff") < 3.0
+    assert contrast(_theme_value("checkbox_border_color_hover"), "#ffffff") < 3.0
+
+
+@pytest.mark.parametrize("text, fill", [
+    ("--block-title-text-color", "--block-title-background-fill"),
+    ("--block-label-text-color", "--block-label-background-fill"),
+])
+def test_a_field_labels_text_has_at_least_four_and_a_half_to_one_on_its_chip(text, fill):
+    assert contrast(_effective(text), _effective(fill)) >= 4.5
+
+
+@pytest.mark.parametrize("border", ["--checkbox-border-color", "--checkbox-border-color-hover"])
+def test_an_unchecked_checkboxs_border_shows_against_its_fill_and_every_background(border):
+    tokens = _tokens()
+    around = {"its fill": _effective("--checkbox-background-color"), "white": "#ffffff",
+              "panel": tokens["--shep-panel"], "panel-2": tokens["--shep-panel-2"],
+              "page": tokens["--shep-bg"]}
+    for name, colour in around.items():
+        assert contrast(_effective(border), colour) >= 3.0, name

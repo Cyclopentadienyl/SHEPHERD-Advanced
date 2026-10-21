@@ -2621,8 +2621,8 @@ checkpoint：run 標題顯示「not shown · reading the checkpoint is an operat
   可用，然後才是缺少某個選擇或另一個圖譜。工作卡片顯示狀態（Running、Completed、紅色的
   Failed、灰色的 Cancelled：失敗或取消的執行從不顯示為綠色）、已經過的時間、執行收到的輸入、
   以 UTC 表示的開始與結束時間（與報告列命名執行的方式相同），以及其輸出的最後 12 行（取消後
-  會收合，因為其 traceback 是預期中的；量測拒絕訊息中提到的病患 id 會被略去，D7）；狀態旁的
-  **🔒 Cancel** 只停止測試執行，從不停止訓練工作。在寬螢幕上，Start、其原因與工作卡片固定在
+  會收合，其最後一行說明執行已被取消，沒有 traceback；量測拒絕訊息中提到的病患 id 會被略去，
+  D7）；狀態旁的 **🔒 Cancel** 只停止測試執行，從不停止訓練工作。在寬螢幕上，Start、其原因與工作卡片固定在
   面板底部（上方的選擇會捲動），輸出則在卡片內、Cancel 所在那一行之下捲動，所以兩者都保持
   可見。執行結束後，卡片顯示 job runner 從磁碟讀到的結果：是否保留了報告、是否已
   登錄，並附上 job runner 的說明（執行沒有寫出 outcome 檔案時為「No report was published …」；
@@ -2638,8 +2638,9 @@ checkpoint：run 標題顯示「not shown · reading the checkpoint is an operat
   被移動過的 checkpoint 無法以這種方式找到；頁面會說明，機器上的
   `scripts/record_evaluation.py` 仍然可用。當報告所屬 key 下的多次執行不一致時，頁面顯示這個
   封鎖、Register 不可用，並列出與新增 **investigation notes**（誰、何時、發現了什麼；🔒 Add
-  note），與該 key 的報告保存在一起。筆記從不解除封鎖。筆記檔案無法讀取時，頁面會說明這一點
-  （可能缺少某則筆記），從不顯示「沒有保存筆記」。
+  note），與該 key 的報告保存在一起。筆記從不解除封鎖。在寬螢幕上，筆記表單（Who、What was
+  found、🔒 Add note）固定在面板底部、Register 之上，所以無論報告多長都保持可見。筆記檔案無法
+  讀取時，頁面會說明這一點（可能缺少某則筆記），從不顯示「沒有保存筆記」。
 
 **🔒 Import a new version…** 會在 Run 與 Result 上方打開一個抽屜：intake 目錄中的檔案
 （`SHEPHERD_INTAKE_DIR`，§4.12：其中的 `*.json` 檔案，依名稱、大小與修改時間列出；連結到目錄

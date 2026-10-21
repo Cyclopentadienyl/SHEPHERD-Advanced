@@ -706,6 +706,25 @@ def test_keep_closes_the_confirmation(root, serving, monkeypatch):
     assert out[id(handle.phase)] == "idle"
 
 
+def test_keep_changes_nothing_inside_the_box_it_hides_and_resets_it_next():
+    """A response that hides a column and updates a component inside it
+    leaves detached elements and listeners in the browser on every cycle
+    (Gradio 6.30, measured: about 113 elements and 2 listeners per
+    Load-then-Keep). Keep hides the box; the step after it empties the box and
+    puts Reload back, unless a Load has opened a confirmation meanwhile."""
+    demo, _ctx, handle, _ = _component()
+    keep = _named(demo, "_keep")
+    inside = {id(handle.confirm_html), id(handle.reload_button), id(handle.keep_button)}
+    assert id(handle.confirm) in set(map(id, keep.outputs))
+    assert not inside & set(map(id, keep.outputs))
+    after = _after(demo, keep)
+    assert after.name == "_after_keep" and after.inputs == [handle.plan]
+    assert after.outputs == [handle.confirm_html, handle.reload_button]
+    html_, reload_ = after.fn(None)
+    assert html_ == "" and reload_["visible"] is True
+    assert after.fn({"to": {"sha256": "a" * 64}}) == (gr.update(), gr.update())
+
+
 def test_both_presets_sit_in_one_page_each_counting_in_its_own_confirmation():
     demo, _ctx, clinical, research = _component(both=True)
     assert (clinical.elem_id, research.elem_id) == ("shep-models-clinical", "shep-models-research")

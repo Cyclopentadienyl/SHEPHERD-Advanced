@@ -74,7 +74,11 @@ page:
   are refreshed through ``ctx.page_tokens[page]`` (a `gr.State` the shell
   bumps from queued events, since Gradio 6.30 dispatches a State's ``.change``
   only from a queued event's answer; ``on_page_open`` listens to its
-  ``.change``). Diagnosis is shown at page load with no ``select``: read it on
+  ``.change``). **Once per opening**: the first opening of Research, and a
+  cross-link that switches both levels, fire Research's select and the inner
+  tab's (on mounting it, or on switching it); whichever runs first refreshes
+  the page, and the other finds it already shown (`_open_research`).
+  Diagnosis is shown at page load with no ``select``: read it on
   ``ctx.blocks.load`` too;
 - ``ctx.timer_fast`` (1.5 s) and ``ctx.timer_slow`` (5 s): the shared
   ``gr.Timer``\\ s, created outside ``gr.Tabs`` (a timer inside an unopened tab
@@ -82,7 +86,14 @@ page:
   listener takes ``ctx.location`` (a `gr.State`, the id of the page shown:
   ``clinical``, ``settings`` or a research page id) as an input and returns
   ``gr.update()``\\ s, doing no work, while its page is not shown. Read-only polls
-  use ``queue=False`` (``/ui/gradio_api/run/`` is kept out of the access log);
+  use ``queue=False`` (``/ui/gradio_api/run/`` is kept out of the access log).
+  **A listener costs one request per tick whatever it returns**, on every
+  open page, whichever page is shown: returning ``gr.update()`` saves the
+  work, not the request. So a poll goes on the slow timer unless it must be
+  fast (Training's run view is the one fast listener; Test reads its job on
+  the slow timer, and at once after Start, Cancel and Register). A page that
+  needs a fast poll only while something runs would need a timer of its own,
+  outside ``gr.Tabs`` and made active only then; none does yet;
 - ``ctx.nav`` and ``ctx.research_nav``: the two ``gr.Tabs``; a cross-link returns
   ``ctx.go(page)`` for ``outputs=ctx.nav_outputs`` (both levels at once, and the
   research page shown, so only the target page refreshes; ``ctx.no_nav()``
@@ -111,6 +122,13 @@ page:
   Directory, `training_console._from_datasets` and `_keep_or_clear_workspace`;
   the run bar replaces both, with their test file
   ``tests/unit/test_training_console_datasets_bridge.py``.)
+
+**Recognise a component by its ``elem_id``, never by identity.** Once an
+answer updates a component's properties, Gradio 6.30 keeps a rebuilt copy in
+the session under the same key (a new object, with a new ``_id``;
+``Blocks.postprocess_data``), and ``gr.EventData.target`` is that copy: a
+handler that must tell which component fired compares ``elem_id``, never the
+object or its ``_id``.
 
 **Layout classes.** A page's top ``gr.Row`` takes ``elem_classes=["shep-page"]``
 and each of its columns ``["shep-panel"]``: wide (at least 1400 × 760 CSS px)
@@ -306,19 +324,35 @@ def _shown(page: str) -> Callable[[], str]:
     return shown
 
 
-def _open_research(research_page: Any, *tokens: Any) -> Tuple[Any, ...]:
+#: The events that open a research page (Research's select and each research
+#: tab's) run one at a time, in the order they were sent, so the second of a
+#: pair sees the location the first set (`_open_research`).
+OPEN_PAGE_CONCURRENCY = "shep-open-research-page"
+
+
+def _open_research(location: Any, research_page: Any, *tokens: Any) -> Tuple[Any, ...]:
     """Research selected: the research page shown is the one to refresh (its
-    token bumped); the other pages' tokens stay, so they do no work."""
+    token bumped); the other pages' tokens stay, so they do no work.
+
+    **Once per opening.** On the first opening of Research, and on a
+    cross-link that changes the research page too, Gradio also fires the
+    inner tab's select (on mounting it, or on switching it). Whichever of the
+    two runs first refreshes the page and sets the location to it; the other
+    finds the page already shown (`location`) and leaves its token. The two
+    run one at a time (`OPEN_PAGE_CONCURRENCY`)."""
     page = research_page if research_page in RESEARCH_PAGES else DEFAULT_RESEARCH_PAGE
+    if location == page:
+        return (page, *(gr.update() for _ in tokens))
     bumped = tuple((t or 0) + 1 if p == page else gr.update()
                    for p, t in zip(RESEARCH_PAGES, tokens, strict=True))
     return (page, *bumped)
 
 
-def _open_page(page: str) -> Callable[[Any], Tuple[Any, Any, Any]]:
-    """A research page's tab selected: it is the page shown and is refreshed."""
-    def open_page(token: Any) -> Tuple[Any, Any, Any]:
-        return page, page, (token or 0) + 1
+def _open_page(page: str) -> Callable[[Any, Any], Tuple[Any, Any, Any]]:
+    """A research page's tab selected: it is the page shown and is refreshed,
+    unless it already is (Research's select refreshed it for this opening)."""
+    def open_page(location: Any, token: Any) -> Tuple[Any, Any, Any]:
+        return page, page, (gr.update() if location == page else (token or 0) + 1)
     open_page.__name__ = f"_open_{page}"
     return open_page
 
@@ -382,19 +416,22 @@ def build_shell(blocks: Any, pages: Dict[str, Callable[[PageContext], None]],
                 tabs[SETTINGS] = settings_tab
                 pages[SETTINGS](ctx)
     # Where this session is: the page shown, and the research page to refresh
-    # when Research is selected (only that one; Gradio also selects a research
-    # tab when it first mounts and when a cross-link switches to it). The
-    # events that bump a token go through the queue: Gradio 6.30 dispatches a
-    # State's ``.change`` only from a queued event's answer (an answer to a
-    # ``queue=False`` POST carries no changed states).
+    # when Research is selected (only that one, and once: Gradio also selects
+    # a research tab when it first mounts and when a cross-link switches to
+    # it; `_open_research`). The events that bump a token go through the
+    # queue: Gradio 6.30 dispatches a State's ``.change`` only from a queued
+    # event's answer (an answer to a ``queue=False`` POST carries no changed
+    # states).
     for tab in (CLINICAL, SETTINGS):
         tabs[tab].select(_shown(tab), None, [location], queue=False, show_progress="hidden")
     tokens = [page_tokens[page] for page in RESEARCH_PAGES]
-    tabs[RESEARCH].select(_open_research, [research_page, *tokens], [location, *tokens],
-                          show_progress="hidden")
+    one_at_a_time = {"concurrency_id": OPEN_PAGE_CONCURRENCY, "concurrency_limit": 1}
+    tabs[RESEARCH].select(_open_research, [location, research_page, *tokens],
+                          [location, *tokens], show_progress="hidden", **one_at_a_time)
     for page in RESEARCH_PAGES:
-        tabs[page].select(_open_page(page), [page_tokens[page]],
-                          [location, research_page, page_tokens[page]], show_progress="hidden")
+        tabs[page].select(_open_page(page), [location, page_tokens[page]],
+                          [location, research_page, page_tokens[page]], show_progress="hidden",
+                          **one_at_a_time)
     # The chips: on load, on the slow timer and after every gated act, each
     # read for the request that asked, with no queue (plain POST, no SSE).
     blocks.load(**ctx.chip_refresh)
@@ -509,6 +546,7 @@ __all__ = [
     "DEFAULT_RESEARCH_PAGE",
     "LABELS",
     "MODELS",
+    "OPEN_PAGE_CONCURRENCY",
     "PageContext",
     "RESEARCH",
     "RESEARCH_PAGES",

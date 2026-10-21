@@ -1234,7 +1234,10 @@ def list_report_runs(version: CohortVersionRead) -> List[ListedRun]:
     ``reports/`` is resolved inside the version directory, and each run
     directory inside ``reports/``, as `create_report_dir` checks them before it
     writes: one a link takes elsewhere, or an entry that is not a directory
-    named as a run id, is listed with its reason. Reads no file.
+    named as a run id, is listed with its reason. **The store's own files**
+    beside the runs, the usage history and the investigation notes
+    (`report_store.STORE_FILES`), are not runs and are not listed, so no
+    caller has to know the store's layout to skip them. Reads no file.
 
     Raises:
         RegistryRefused: ``reports/`` resolves outside the version directory, or
@@ -1244,9 +1247,13 @@ def list_report_runs(version: CohortVersionRead) -> List[ListedRun]:
     directory = _registry_directory(version.directory, within=None, done="Nothing was read.")
     reports = _registry_directory(directory / REPORTS_DIR, within=directory,
                                   done="Nothing was read.")
+    from src.evaluation.report_store import STORE_FILES
+
     runs: List[ListedRun] = []
     for entry in sorted(_directory_entries(reports, done="Nothing was read."),
                         key=lambda p: p.name, reverse=True):
+        if entry.name in STORE_FILES:
+            continue
         if not _RUN_ID.fullmatch(entry.name):
             runs.append(ListedRun(entry.name, None, (
                 f"{entry.name!r} in {reports} is not named as a run id, so it is not a "

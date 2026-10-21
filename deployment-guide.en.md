@@ -2379,9 +2379,9 @@ and register it. Three panels:
   graph. The job card shows the state (Running, Completed, Failed in red, Cancelled in grey:
   never green for a failed or cancelled run), the elapsed time, what the run was given, its
   start and end times in UTC (as the report rows name runs) and the last 12 lines of its output
-  (folded after a cancel, whose traceback is expected; a patient id a measurement refusal names
-  is left out, D7); **🔒 Cancel**, beside the state, stops the test run only, never a training
-  job. On a wide screen, Start, its reason and the job card stay at the foot of the panel (the
+  (folded after a cancel, whose last line says the run was cancelled, with no traceback; a
+  patient id a measurement refusal names is left out, D7); **🔒 Cancel**, beside the state,
+  stops the test run only, never a training job. On a wide screen, Start, its reason and the job card stay at the foot of the panel (the
   choices above scroll) and the output scrolls inside the card under the line with Cancel, so
   both stay in view. Once the run has ended, the card shows what the runner read
   from disk: whether a report was kept and whether it is registered, with the runner's sentence
@@ -2402,6 +2402,8 @@ and register it. Three panels:
   `scripts/record_evaluation.py` on the machine remains. While runs under the report's key
   disagree, the page shows the block, Register is off, and **investigation notes** (who, when,
   what; 🔒 Add note) are listed and kept with the key's reports. A note never lifts the block.
+  On a wide screen the note form (Who, What was found, 🔒 Add note) stays at the panel's foot,
+  above Register, so it is in view however long the report.
   When the notes file cannot be read, the page says so (a note may be missing), never "no
   note is kept".
 

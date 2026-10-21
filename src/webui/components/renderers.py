@@ -124,6 +124,13 @@ def e(value: Any) -> str:
     return html.escape("" if value is None else str(value), quote=True)
 
 
+def wrap_at_underscores(value: Any) -> str:
+    """Escaped text with a line-break opportunity after each underscore, for an
+    identifier shown in a narrow column (a role code: "research_selection"
+    wraps as "research_" / "selection", never inside a word)."""
+    return e(value).replace("_", "_<wbr>")
+
+
 def is_digest(value: Any) -> bool:
     return isinstance(value, str) and _HEX64.match(value) is not None
 
@@ -336,6 +343,18 @@ def run_label(architecture: Any, run: Any) -> str:
     return f"{arch} · run {started if started else run}"
 
 
+def run_label_html(architecture: Any, run: Any) -> str:
+    """`run_label` as HTML for a narrow cell: the run's start time ("run
+    2026-10-17 09:15") in one no-wrap span, so a line breaks after "GAT ·" and
+    never inside the date; a run not named by its start time is its escaped
+    name, free to wrap."""
+    started = run_started(run)
+    if not started:
+        return e(run_label(architecture, run))
+    arch = str(architecture or "").upper() or "MODEL"
+    return f'{e(arch)} · <span class="shep-nowrap">run {e(started)}</span>'
+
+
 def run_started(run: Any) -> Optional[str]:
     """"2026-10-17 09:15" from a run directory named by its start time, else None."""
     match = _RUN_TIME.match(str(run or ""))
@@ -468,8 +487,8 @@ def model_table_row_html(item: Any, workspaces: Sequence[Any], *,
     suffix = run_suffix(_get(item, "run"))
     epoch = _get(item, "epoch")
     epoch_text = str(epoch) if isinstance(epoch, int) and not isinstance(epoch, bool) else "—"
-    model = (f'<div class="shep-w600">{e(run_label(_get(item, "architecture"), _get(item, "run")))}'
-             f'</div><div class="shep-sub">epoch {e(epoch_text)}'
+    name = run_label_html(_get(item, "architecture"), _get(item, "run"))
+    model = (f'<div class="shep-w600">{name}</div><div class="shep-sub">epoch {e(epoch_text)}'
              f'{" · " + e(suffix) if suffix else ""}</div>{tag}')
     attrs = (f'class="{" ".join(classes)}" data-key="{e(key)}" tabindex="0" '
              f'aria-selected="{"true" if selected else "false"}"'
@@ -685,6 +704,7 @@ __all__ = [
     "recorded_tests_cell",
     "recorded_tests_text",
     "run_label",
+    "run_label_html",
     "run_started",
     "run_suffix",
     "short_hex",
@@ -695,4 +715,5 @@ __all__ = [
     "validation_cell",
     "validation_text",
     "workspace_choices",
+    "wrap_at_underscores",
 ]

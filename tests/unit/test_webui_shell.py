@@ -12,7 +12,8 @@ The dashboard's shell (M5-2, UI-A): navigation, the page contract, the head.
   a cross-link from any page, Diagnosis included, switches both levels
   (`go`); the shared timers are created outside ``gr.Tabs``; a research page
   refreshes when it is shown, and only it: its own tab, or Research while it
-  is the page shown (`on_page_open`, the page tokens); ``ctx.location`` says
+  is the page shown (`on_page_open`, the page tokens), once per opening even
+  when both selects fire; ``ctx.location`` says
   which page is shown; every gated act is followed by the chips' read;
 - **the browser title** follows the location;
 - **the head**: the shell's and every page's style sheet (`PAGE_CSS`) go in as
@@ -153,17 +154,18 @@ def test_a_research_page_refreshes_only_when_it_is_the_page_shown(built):
     tokens = [ctx.page_tokens[p] for p in shell.RESEARCH_PAGES]
     (research,) = [fn for fn in demo.fns.values()
                    if (ctx.tabs[shell.RESEARCH]._id, "select") in fn.targets]
-    assert research.inputs == [ctx.research_page, *tokens]
+    assert research.inputs == [ctx.location, ctx.research_page, *tokens]
     # queued: Gradio 6.30 dispatches a State's .change only from a queued answer
     assert research.outputs == [ctx.location, *tokens] and research.queue is not False
-    location, *bumped = research.fn("datasets", 0, 4, 0, 0)
+    location, *bumped = research.fn("clinical", "datasets", 0, 4, 0, 0)
     assert location == "datasets" and bumped == [1, gr.update(), gr.update(), gr.update()]
-    location, *bumped = research.fn(None, 0, 4, 0, 0)        # nothing chosen yet: Training
+    location, *bumped = research.fn("settings", None, 0, 4, 0, 0)  # nothing chosen yet: Training
     assert location == "training" and bumped == [gr.update(), 5, gr.update(), gr.update()]
     for page in shell.RESEARCH_PAGES:
         (own,) = [fn for fn in demo.fns.values() if (ctx.tabs[page]._id, "select") in fn.targets]
+        assert own.inputs == [ctx.location, ctx.page_tokens[page]]
         assert own.outputs == [ctx.location, ctx.research_page, ctx.page_tokens[page]]
-        assert own.fn(2) == (page, page, 3) and own.queue is not False
+        assert own.fn("clinical", 2) == (page, page, 3) and own.queue is not False
     # Datasets' refresh hangs on its token, not on any tab's select.
     from src.webui.components import datasets_page
 
@@ -173,6 +175,35 @@ def test_a_research_page_refreshes_only_when_it_is_the_page_shown(built):
     assert not [fn for fn in demo.fns.values() if fn.name == "_refresh"
                 and any(t[1] == "select" for t in fn.targets)]
     assert datasets_page.create_datasets_page in demo_builders()
+
+
+def test_a_research_page_refreshes_once_per_opening(built):
+    """The first opening of Research, and a cross-link that switches both
+    levels, fire Research's select and the inner tab's (Gradio mounts or
+    switches it): whichever runs first refreshes the page and sets the
+    location; the other finds the page shown and leaves its token. The two
+    run one at a time, in order, so the second sees what the first set."""
+    demo, ctx = built
+    (research,) = [fn for fn in demo.fns.values()
+                   if (ctx.tabs[shell.RESEARCH]._id, "select") in fn.targets]
+    inner = {page: next(fn for fn in demo.fns.values()
+                        if (ctx.tabs[page]._id, "select") in fn.targets)
+             for page in shell.RESEARCH_PAGES}
+    # first opening: Research's select, then Training's mount select
+    location, *bumped = research.fn("clinical", "training", 0, 0, 0, 0)
+    assert location == "training" and bumped[1] == 1
+    assert inner["training"].fn(location, 1) == ("training", "training", gr.update())
+    # the other order: the inner select first, then Research's
+    page, _, token = inner["models"].fn("clinical", 0)
+    assert (page, token) == ("models", 1)
+    assert research.fn(page, "models", 0, 0, 0, 1) == (
+        "models", gr.update(), gr.update(), gr.update(), gr.update())
+    # within Research, another page's tab still refreshes it
+    assert inner["test"].fn("training", 4) == ("test", "test", 5)
+    # returning to Research from another page refreshes the page shown
+    assert research.fn("settings", "test", 0, 0, 5, 0)[3] == 6
+    for fn in (research, *inner.values()):
+        assert fn.concurrency_id == shell.OPEN_PAGE_CONCURRENCY and fn.concurrency_limit == 1
 
 
 def demo_builders():

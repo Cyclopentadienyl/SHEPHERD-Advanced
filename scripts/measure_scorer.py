@@ -75,7 +75,15 @@ writing it, with a message naming it); 2 the command line was rejected; 3
 measured, but not registered: the registration was refused and the report is
 kept, or the report was no longer the one the run published
 (`ReportNotAsPublished`: it may be gone, so it is not called kept); the message
-says which, and `registration.report_state` reads whether it is kept. `main`
+says which, and `registration.report_state` reads whether it is kept. **A
+cancel** (SIGINT: the job runner's stop, or Ctrl+C) prints one line,
+`measure_scorer: cancelled ...`, and no traceback, then ends the process by
+SIGINT on POSIX (the signal's default action, raised again once the line is
+printed), so a parent reads "ended by SIGINT" as before; elsewhere it exits
+130. The run unwinds first: a staged file is removed, the GPU lock released,
+nothing more is written, and what it had published stays as it is. A cancel
+while the program's modules still load (`_cancelled_while_loading`) prints the
+same line and ends the same way. `main`
 itself raises its refusals, typed, for the tests and the deployment probe that
 call it.
 
@@ -95,11 +103,46 @@ import logging
 import os
 import platform
 import re
+import signal
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, NamedTuple, Optional, Sequence, Tuple
 
-import torch
+#: What a cancelled run prints, once, instead of a KeyboardInterrupt traceback.
+CANCELLED_LINE = (
+    "measure_scorer: cancelled by an interrupt (SIGINT); the run stopped where it was and "
+    "nothing more was written. The report store and the ledger say whether a report was "
+    "kept and registered."
+)
+
+
+def _end_as_cancelled() -> int:
+    """End the process as the interrupt would have, without its traceback: on
+    POSIX, SIGINT again with the default action, so the parent (the job
+    runner) reads the exit status as "ended by SIGINT"; elsewhere, 130
+    (128 + SIGINT, the shells' convention)."""
+    if os.name == "posix":
+        with contextlib.suppress(OSError, ValueError, AttributeError):
+            sys.stderr.flush()
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
+        os.kill(os.getpid(), signal.SIGINT)
+    return 130
+
+
+def _cancelled_while_loading(signum: int, frame: Any) -> None:
+    """SIGINT while this program's modules load, before `_run_as_program`
+    (importing torch takes seconds, and a Cancel right after Start lands
+    there): the same line and ending as a cancel during the run, not an
+    import's traceback. Nothing has been read or written yet."""
+    with contextlib.suppress(OSError, ValueError, AttributeError):
+        print(CANCELLED_LINE, file=sys.stderr)
+    raise SystemExit(_end_as_cancelled())
+
+
+if __name__ == "__main__":
+    signal.signal(signal.SIGINT, _cancelled_while_loading)
+
+import torch  # noqa: E402 - after the loading guard, which must cover this import
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -1593,15 +1636,25 @@ def _run_as_program(argv: Optional[List[str]] = None) -> int:
     ValueError that is really a bug becomes one line too, without its
     traceback; nothing had been written when it was raised. A failure in or
     after publication is neither (`ReportNotWritten`, `FailedAfterPublishing`)
-    and is printed in its own words, also with exit 1. Anything else keeps its
+    and is printed in its own words, also with exit 1. A cancel
+    (`KeyboardInterrupt`, from SIGINT) is `CANCELLED_LINE` and the process
+    ends by SIGINT (`_end_as_cancelled`). Anything else keeps its
     traceback -- an out-of-memory error, a regime mismatch -- and `SystemExit`
     (exit 2 for the command line, 1 for the device check) and the status `main`
     returns (3 for a refused registration) pass through as they are; stdout is
     settled first, so output a closed console could not take cannot turn that
     status into 120 at the interpreter's last flush.
     """
+    if signal.getsignal(signal.SIGINT) is _cancelled_while_loading:
+        # Loaded: a cancel is a KeyboardInterrupt again, so the run unwinds
+        # (a staged file removed, the GPU lock released) before it ends.
+        signal.signal(signal.SIGINT, signal.default_int_handler)
     try:
         status = main(argv)
+    except KeyboardInterrupt:
+        _settle_stdout()
+        print(CANCELLED_LINE, file=sys.stderr)
+        return _end_as_cancelled()
     except ReportNotWritten as exc:
         print(f"measure_scorer: measured, but the report was not written: {exc}",
               file=sys.stderr)

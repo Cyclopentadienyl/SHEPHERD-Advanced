@@ -1132,6 +1132,31 @@ def test_start_and_the_job_sit_in_the_run_panels_foot():
         assert z and int(z.group(1)) > 40, css[:40]
 
 
+def test_add_note_sits_at_the_result_panels_foot_outside_the_scrolling_report():
+    """While runs disagree, "Add note" is the one action left on the Result
+    panel (Register is off). At wide sizes the report scrolls inside its body;
+    the note form is a region of its own between that body and Register's
+    footer, so Add note is in view without scrolling the report."""
+    demo, _ctx, _registry = _page_component()
+    by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
+    panel = [getattr(c, "elem_id", None) or c.elem_classes[0]
+             for c in by_id["shep-test-result"].children]
+    assert panel == ["shep-test-bd", "shep-test-noteform", "shep-test-note-out", "shep-panel-ft"]
+    body = by_id["shep-test-result"].children[0]
+    assert [getattr(c, "elem_id", None) for c in body.children] == ["shep-test-result-body"]
+
+    def inside(block, elem_id):
+        return any(getattr(c, "elem_id", None) == elem_id or inside(c, elem_id)
+                   for c in getattr(block, "children", []))
+
+    for field in ("shep-test-note-who", "shep-test-note-what", "shep-test-note-add",
+                  "shep-test-note-reason"):
+        assert inside(by_id["shep-test-noteform"], field), field
+    wide = tp.PAGE_CSS.split("@media (max-width: 1399px)")[0]
+    wide = wide[wide.index("@media (min-width: 1400px)"):]
+    assert re.search(r"#shep-test-noteform \{[^}]*max-height: 50%[^}]*overflow: auto", wide)
+
+
 def test_opening_the_import_moves_the_focus_to_the_drawer():
     demo, _ctx, _registry = _page_component()
     current, js = _named(demo, "_on_open_import"), []

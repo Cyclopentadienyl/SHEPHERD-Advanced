@@ -791,6 +791,31 @@ class TestTheRegistryListing:
         cohort = _registry_copy(registered, tmp_path)
         assert list_report_runs(cohort.version) == []
 
+    def test_the_stores_own_files_are_not_runs_and_are_not_listed(self, registered, tmp_path):
+        """The usage history and the investigation notes live beside the run
+        directories (`report_store`): the listing leaves them out, so no
+        caller (the API's version list, the Test page) has to know the store's
+        layout to skip them; anything else that is not a run is still listed
+        with why."""
+        from datetime import UTC, datetime
+
+        from src.evaluation.cohort_registry import create_report_dir, list_report_runs
+        from src.evaluation.report_store import NOTES_FILE, STORE_FILES, USAGE_FILE
+
+        assert set(STORE_FILES) == {USAGE_FILE, NOTES_FILE}
+        cohort = _registry_copy(registered, tmp_path)
+        run_id, _directory = create_report_dir(cohort.version, "a" * 64,
+                                               datetime(2026, 10, 20, tzinfo=UTC))
+        reports = cohort.version.directory / "reports"
+        for name in (USAGE_FILE, NOTES_FILE, "stray.txt"):
+            (reports / name).write_text("{}\n")
+        listed = list_report_runs(cohort.version)
+        assert [run.run_id for run in listed] == ["stray.txt", run_id]
+        assert "not named as a run id" in listed[0].problem
+        (item,) = sl.list_cohort_versions(
+            environ={ss.ENV_REGISTRY: str(cohort.registry)}).items
+        assert [r.run_id for r in item.reports] == ["stray.txt", run_id]
+
     def test_the_run_id_pattern_matches_what_create_report_dir_makes(self, registered,
                                                                      tmp_path):
         from datetime import datetime, timezone

@@ -66,6 +66,9 @@ if TYPE_CHECKING:
 #: The two append-only files a report store keeps beside its run directories.
 USAGE_FILE = "usage.jsonl"
 NOTES_FILE = "notes.jsonl"
+#: Both: the store's own files, which are not runs
+#: (`cohort_registry.list_report_runs` leaves them out).
+STORE_FILES = (USAGE_FILE, NOTES_FILE)
 
 #: What the usage history records (D4): every measurement of the version, every
 #: registration of one of its reports, and every model loaded from a list
@@ -656,6 +659,7 @@ __all__ = [
     "CONTEST_STATES",
     "KeyStatus",
     "NOTES_FILE",
+    "STORE_FILES",
     "NotInReportStore",
     "StoreReport",
     "StoreScan",

@@ -38,7 +38,9 @@ docstring. Three panels, as the mockup draws them (``test-wide.png``,
   checkpoint holding the weights it measured, found by digest in the server's
   checkpoint list, never the report's recorded path); while runs under its key
   disagree, the block is shown and the button is off, and investigation notes
-  (who, when, what) are listed and added (gated) **without lifting the block**.
+  (who, when, what) are listed and added (gated) **without lifting the block**;
+  on a wide screen the note form stays at the panel's foot above Register,
+  outside the scrolling report, so "🔒 Add note" is in view without scrolling.
 
 **Import** (a drawer over Run and Result; D7): the files the operator placed
 in the server's intake directory (`server_lists.list_intake_files`; a request
@@ -559,14 +561,6 @@ def read_models(workspace: Any, request: Any, *,
             "problem": listing.problem, "refused": False}
 
 
-def _skippable(run_id: str) -> bool:
-    """The store's own files beside its run directories (the usage history,
-    the notes), which the run listing names as entries that are not runs."""
-    from src.evaluation.report_store import NOTES_FILE, USAGE_FILE
-
-    return run_id in (USAGE_FILE, NOTES_FILE)
-
-
 def read_reports(label: Any, *, environ: Optional[Mapping[str, str]] = None) -> Dict[str, Any]:
     """One cohort version's report store for one session: every run directory,
     newest first, with what it kept and whether its report is registered (the
@@ -618,8 +612,6 @@ def read_reports(label: Any, *, environ: Optional[Mapping[str, str]] = None) -> 
         notes_problems = [f"the investigation notes could not be read ({type(exc).__name__})"]
     runs = []
     for report in item.reports:
-        if _skippable(report.run_id):
-            continue
         view = by_run.get(report.run_id, {})
         digest = (report.state or {}).get("report_sha256")
         runs.append({
@@ -1327,8 +1319,9 @@ def job_body_html(job: Mapping[str, Any], roots: Sequence[Tuple[str, str]],
     # The output is the run's own; a refusal in it may name a case (D7).
     lines = [redact(case_free(line), roots) for line in job.get("log") or []]
     if lines and status == "cancelled":
-        # A cancel interrupts the run mid-step; its traceback is true but not
-        # news, so it is folded (open it to read it).
+        # A cancel interrupts the run mid-step; what it printed up to then, and
+        # its last line saying it was cancelled, are not news, so they are
+        # folded (open it to read it).
         body.append(f'<details class="shep-test-fold"><summary class="shep-sub">Output, last '
                     f'{len(lines)} lines (the interrupted run\'s)</summary>'
                     f'<pre class="shep-test-log">{e(chr(10).join(lines))}</pre></details>')
@@ -2217,15 +2210,24 @@ def create_test_page(ctx: Any) -> None:
                        scale=14, min_width=360):
             with gr.Column(elem_classes=["shep-test-bd", "shep-test-bd-flush"]):
                 result_out = plain_html(result_html({}, None, []), elem_id="shep-test-result-body")
-                with gr.Column(visible=False, elem_classes=["shep-test-noteform"]) as note_form:
-                    note_who = gr.Textbox(label="Who", elem_id="shep-test-note-who", max_lines=1)
+            # The investigation note form (shown while runs under the report's
+            # key disagree) is outside the scrolling body: on a wide screen it
+            # stays at the panel's foot, above Register, so Add note is in view
+            # however long the report (in a short window it takes at most half
+            # the panel and scrolls in its own region); narrow, it follows the
+            # report.
+            with gr.Column(visible=False, elem_classes=["shep-test-noteform"],
+                           elem_id="shep-test-noteform") as note_form:
+                with gr.Row(elem_classes=["shep-test-noterow"]):
+                    note_who = gr.Textbox(label="Who", elem_id="shep-test-note-who", max_lines=1,
+                                          scale=1, min_width=160)
                     note_what = gr.Textbox(label="What was found", elem_id="shep-test-note-what",
-                                           lines=2)
-                    with gr.Row(elem_classes=["shep-test-actions"]):
-                        note_btn = gr.Button("🔒 Add note", variant="secondary",
-                                             elem_id="shep-test-note-add", scale=0)
+                                           lines=2, scale=3, min_width=220)
+                with gr.Row(elem_classes=["shep-test-actions"]):
+                    note_btn = gr.Button("🔒 Add note", variant="secondary",
+                                         elem_id="shep-test-note-add", scale=0)
                     note_reason = plain_html("", elem_id="shep-test-note-reason")
-                note_out = plain_html("", elem_id="shep-test-note-out")
+            note_out = plain_html("", elem_id="shep-test-note-out")
             with gr.Row(elem_classes=["shep-panel-ft"]):
                 register = gr.Button("🔒 Register this report", variant="primary",
                                      interactive=False, elem_id="shep-test-register", scale=0)
@@ -2697,7 +2699,9 @@ PAGE_CSS = f"""
 {_PAGE} .shep-test-lines {{ overflow-wrap: anywhere; }}
 {_PAGE} .shep-test-lines .shep-v {{ min-width: 0; }}
 {_PAGE} .shep-test-notes ul {{ margin: 4px 0 0; padding-left: 18px; font-size: 15px; }}
-{_PAGE} .shep-test-noteform {{ padding: 0 16px 8px !important; gap: 6px !important; }}
+{_PAGE} .shep-test-noteform {{ padding: 10px 16px 8px !important; gap: 6px !important; border-top: 1px solid var(--shep-border); }}
+{_PAGE} .shep-test-noterow {{ gap: 10px !important; flex-wrap: wrap !important; align-items: flex-start !important; }}
+{_PAGE} .shep-test-noteform .shep-test-actions > .block {{ flex: 1 1 200px !important; min-width: 0 !important; }}
 {_PAGE} .shep-test-terms {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1px 12px; font-size: 14px; margin-top: 2px; }}
 {_PAGE} .shep-test-preview .shep-kv {{ padding: 10px 12px; overflow-wrap: anywhere; }}
 {_PAGE} .shep-test-preview .shep-notice, {_PAGE} .shep-test-preview .shep-reason {{ margin: 0 12px 10px; }}
@@ -2721,6 +2725,7 @@ PAGE_CSS = f"""
 {_PAGE} .shep-panel-ft > .block {{ flex: 1 1 200px !important; min-width: 0 !important; }}
 @media (min-width: 1400px) and (min-height: 760px) {{
   {_PAGE} .shep-test-col > .shep-test-bd {{ flex: 1 1 auto !important; min-height: 0; overflow: auto !important; flex-wrap: nowrap !important; }}
+  {_PAGE} #shep-test-noteform {{ max-height: 50%; overflow: auto !important; flex-wrap: nowrap !important; }}
   {_PAGE} #shep-test-run > .shep-test-bd {{ flex: 0 1 auto !important; }}
   {_PAGE} #shep-test-runft {{ flex: 0 0 auto !important; min-height: 0; max-height: 64%; flex-wrap: nowrap !important; padding-top: 10px !important; border-top: 1px solid var(--shep-border); }}
   {_PAGE} #shep-test-runft > * {{ flex-shrink: 0 !important; }}

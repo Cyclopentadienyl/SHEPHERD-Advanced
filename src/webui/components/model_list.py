@@ -1179,12 +1179,27 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
                  reload_button, keep_button],
         show_progress="hidden").then(**ctx.chip_refresh).then(**refresh)
 
+    # Keep (or Cancel, or Close after an outcome) in two steps: the first hides
+    # the confirmation box and drops the plan, and changes no component inside
+    # the box; the second empties the box and puts Reload back for the next
+    # Load. A response that hides a column and updates a component inside it
+    # leaves detached page elements and listeners in the browser on every
+    # cycle (Gradio 6.30, measured: about 113 elements and 2 listeners per
+    # Load-then-Keep), as Diagnosis' Cancel and × do (`reset_change`).
     def _keep():
-        return (None, gr.update(visible=False), "", "", "idle", gr.update(visible=True))
+        return None, gr.update(visible=False), "", "idle"
 
-    keep_button.click(_keep, inputs=None,
-                      outputs=[plan, confirm, confirm_html, reason, phase, reload_button],
-                      show_progress="hidden")
+    def _after_keep(current):
+        # Only while nothing was asked since: a Load clicked meanwhile has put
+        # its own confirmation in the box.
+        if current is not None:
+            return gr.update(), gr.update()
+        return "", gr.update(visible=True)
+
+    keep_button.click(_keep, inputs=None, outputs=[plan, confirm, reason, phase],
+                      show_progress="hidden").then(
+        _after_keep, inputs=[plan], outputs=[confirm_html, reload_button],
+        show_progress="hidden")
 
     def _read_again(evt: gr.EventData):
         raw = getattr(evt, "_data", None)

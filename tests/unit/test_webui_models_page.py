@@ -466,6 +466,10 @@ def test_the_detail_keeps_validation_and_mode_c_apart(world, monkeypatch):
     assert records.count(note) == 1
     assert records.index(INST) < records.index(note) < records.index("contested #1")
     assert detail["seg"][0] == ("Recorded test results (Mode C) · 3 · 1 contested", mp.RECORDS)
+    # a role code wraps after an underscore in its narrow column, never mid-word
+    # (1440x900 drew "research_selectio" / "n")
+    assert "role <code>research_<wbr>selection</code>" in records
+    assert "role <code>institutional_<wbr>acceptance</code>" in records
 
 
 def test_d4s_pick_comes_first_in_the_detail_before_a_newer_record(world, monkeypatch):

@@ -25,8 +25,9 @@ over ledgers written by the real registration (`register_report`):
 - `DiagnosisPipeline.served_checkpoint_read` returns the read exactly when the
   served identity reports the checkpoint verified.
 
-The panel's rendering of each state is in `test_diagnosis_panel_records.py`; one
-test here renders the real response through the real panel.
+On the dashboard, Research › Models' read-only view calls this route's handler
+in process (`models_page._route_records`, pinned in `test_webui_models_page.py`);
+Diagnosis shows the recorded tests as a state only (since M5-2).
 
 Module: tests/unit/test_loaded_model_evaluations_api.py
 """
@@ -53,7 +54,6 @@ from tests.fixtures.phenotype_kg import build_two_phenotype_kg  # noqa: E402
 from tests.fixtures.report_store import IMPORTED_AT, store_report  # noqa: E402
 from tests.unit.test_evaluation_sidecar import (  # noqa: E402
     cohort_version,
-    environment_block,
     r10_block,
     registered_report,
 )
@@ -947,42 +947,3 @@ def test_an_answer_whose_fields_contradict_its_state_is_refused():
     ):
         with pytest.raises(ValidationError):
             LoadedModelEvaluations(**{**good, **wrong})
-
-
-# ---------------------------------------------------------------------------
-# 8. The real response through the real panel helpers
-# ---------------------------------------------------------------------------
-def test_the_model_in_use_shows_the_records_the_api_answers(app, served, tmp_path,
-                                                            monkeypatch):
-    """The records block for the model in use, against the real application:
-    the status (the dashboard's one reader, in process) names the served
-    checkpoint, the records answer echoes it, and the block shows the record."""
-    pytest.importorskip("gradio")
-    from src.webui.components import diagnosis_panel as panel
-    from src.webui.components.served_status import read_status
-
-    _, data_dir, checkpoint = served
-    monkeypatch.setattr(app.app_state, "_current_data_dir", str(data_dir))
-    monkeypatch.setattr(app.app_state, "_current_checkpoint_path", str(checkpoint))
-    _register(_report_for(_sha(checkpoint), environment=environment_block(driver="570.1")),
-              checkpoint.parent, tmp_path / "reports")
-    client = _client(app)
-    calls = []
-
-    def self_request(method, path, **kwargs):
-        calls.append((method, path))
-        kwargs.pop("timeout", None)
-        return client.request(method, path, **kwargs)
-
-    monkeypatch.setattr(panel, "_self_request", self_request)
-
-    status, problem = read_status()
-    block = panel._format_recorded_results(panel._get_loaded_model_evaluations(),
-                                           panel._served_checkpoint_sha(status))
-
-    assert problem is None and calls == [("GET", ROUTE)]
-    assert block.startswith(f"**{panel.RECORDED_RESULTS_HEADING}** for checkpoint "
-                            f"`sha256:{_sha(checkpoint)[:12]}…`")
-    assert "**mygene2 · mygene2-2026-10**" in block
-    assert "driver 570.1" in block
-    assert panel.RECORDS_MODEL_CHANGED not in block

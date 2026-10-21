@@ -872,7 +872,8 @@ def records_table_html(views: Sequence[Mapping[str, Any]], contest: Mapping[str,
         cohort_cell = (f'<div class="shep-w600">{r.e(cohort.get("label"))}</div>'
                        f'<div class="shep-sub">(version <code>'
                        f'{r.e(r.short_hex(cohort.get("version_manifest_sha256")))}</code>) '
-                       f'{synthetic}</div><div class="shep-sub">role <code>{r.e(role)}</code>'
+                       f'{synthetic}</div><div class="shep-sub">role '
+                       f'<code>{r.wrap_at_underscores(role)}</code>'
                        + (f" · {r.e(role_note)}" if role_note else "") + "</div>")
         mrr = fmt_metric("untruncated_mrr", metrics.get("untruncated_mrr"))
         main = (f'<tr class="shep-mp-main"><td>{cohort_cell}</td>'
