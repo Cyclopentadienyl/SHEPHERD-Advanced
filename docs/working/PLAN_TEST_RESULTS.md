@@ -1817,7 +1817,31 @@ contract and BACKLOG stay the record, and no new planning document is added.
     main operations are clipped.
   The GPU acceptance uses the existing tools and a qualified model, centred on starting and
   stopping jobs, their exclusion, registration and UI operation; long training, S10 and the
-  memory investigation are not rerun unless a related regression appears.
+  memory investigation are not rerun unless a related regression appears. *The probe's part,
+  as implemented (M5-3, 2026-10-21):* the deployment probe's acceptance run
+  (`scripts/probe_deployment.py --m2-acceptance --device cuda`) carries M5's acceptance where
+  it runs headless, every probe required. A5 records the installed packages against the
+  committed `uv.lock` by name and version, so a set that differs from it (versions moved past
+  the lock, packages an older lock left behind) is stated, never hidden. On the demo, after
+  M4's T1–T6 and on the probe's own deployment under its work directory: the server's lists
+  by name and digest, resolving only what they list (W1); the service started as the
+  launcher starts it, in M1 and read-only, where D8 allows a loopback request and refuses a
+  forwarding header, a foreign Host, a foreign Origin and a cross-site request on a gated
+  route, the gated checkpoint list and a gated Gradio event alike, and every operator control
+  without M1 (W2, W5), with off loopback asked of the application in process (W6); no
+  cross-origin grant on `/api` or `/ui` (W3); the route guard refusing the `file=` URL forms
+  it tries with no fetch, `process_recording` and uploads before the body is read
+  (W4); a busy GPU lock refusing the runner and both CLIs naming its holder, released when the
+  holder is killed (W7); a test run through the job runner from the server's lists, its
+  outcome file, its report kept and not registered, its usage-history entry (W8), then
+  registered from the store, a copy outside it refused (W9); a start for another model or
+  cohort failing before measuring, nothing kept (W10); a training job holding the lock while
+  other jobs and the CLI are refused, its stop reaching only it and ending it as stopped
+  (W11). On the real workspace, before R8: the workspace as the server lists it, a test run
+  through the runner kept and registered, and a short training job started and stopped
+  (RW1–RW3). Every M5 setting is the probe's own while it runs; the deployment's lock, root
+  and registry are never used. Not the layout or a browser session, which the screenshots
+  and the owner's use cover.
 - **Two checkpoints:** the layout direction, confirmed once on a thin, operable prototype in the
   existing Gradio, showing representative wide and narrow layouts and the identity switch (a
   static image may help, but cannot stand in for zoom, scrolling and keyboard checks); then M5's

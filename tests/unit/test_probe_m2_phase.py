@@ -15,6 +15,12 @@ audit, each through its entry point. The tests check the probes' evidence
 against what those entry points left on disk, that the report carries no path,
 and that a registry inside the repository fails T1 in the probe's own words.
 
+M5's acceptance rides on them too (W1-W11 after T6, RW1-RW3 before R8): the
+service started as the launcher starts it, in M1 and read-only, the job runner
+running the real CLIs on CPU, the GPU lock. The phase tests require every one to
+pass and check its evidence against the disk; the helpers' own checks are shown
+to fire in tests/unit/test_probe_m5_acceptance.py.
+
 Module: tests/unit/test_probe_m2_phase.py
 """
 from __future__ import annotations
@@ -170,9 +176,13 @@ def test_the_demo_phase_passes_and_every_required_probe_runs(tmp_path, served_st
     assert facts["T1"]["counts"] == probe.M4_DEMO_COUNTS
     assert facts["T1"]["manifest_sha256"] == hashlib.sha256(
         (version / "cohort.json").read_bytes()).hexdigest()
-    # T2: the one kept report is what the one record names, beside the copy of
-    # D1's checkpoint (the bytes D1 trained), and R10's evidence was found.
-    (kept,) = (version / "reports").glob("*/report.json")
+    # T2: the one report kept for D1's weights is what the one record names,
+    # beside the copy of D1's checkpoint (the bytes D1 trained), and R10's
+    # evidence was found. (W8's run keeps another, for M2's resumed weights;
+    # a run directory is named for the checkpoint it measured.)
+    d1_sha = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
+    (kept,) = [path for path in (version / "reports").glob("*/report.json")
+               if f"-{d1_sha[:12]}-" in path.parent.name]
     checkpoints = tmp_path / "m4" / "checkpoints"
     (record,) = _ledger_records(checkpoints)
     assert record["source_artifact_digest"] == facts["T2"]["report_sha256"] == hashlib.sha256(
@@ -200,6 +210,49 @@ def test_the_demo_phase_passes_and_every_required_probe_runs(tmp_path, served_st
     assert facts["T6"]["cohort_version"]["manifest_sha256"] == facts["T1"]["manifest_sha256"]
     training = facts["T2"]["r10"]["training"]["disease_overlap"]
     assert facts["T6"]["overlap"] == f"{training['k']} of {training['n']}"
+
+    # ---- M5's acceptance (W1-W11), after T6, every probe passed, and its
+    # evidence holds no path.
+    m5 = _statuses(report, "W")
+    assert list(m5) == list(probe.M5_DEMO_PROBES)
+    assert {k: v[0] for k, v in m5.items()} == dict.fromkeys(m5, "passed"), (
+        {k: v[1] for k, v in m5.items() if v[0] != "passed"}
+    )
+    assert str(tmp_path) not in json.dumps({k: facts[k] for k in probe.M5_DEMO_PROBES})
+    # W1: the probe's own deployment; the listed checkpoint is a copy of M2's
+    # resumed weights, named by the digest of its bytes.
+    workspace = tmp_path / "m5" / "workspaces" / probe.M5_WORKSPACE
+    listed = (workspace / "runs" / "gat" / probe.M5_LISTED_RUN / "checkpoints"
+              / probe.M5_CHECKPOINT)
+    assert hashlib.sha256(listed.read_bytes()).hexdigest() == child
+    assert facts["W1"]["checkpoints"][0] == {"run": probe.M5_LISTED_RUN, "filename": "last.pt",
+                                             "sha256": child, "listed_with_a_problem": False}
+    assert facts["W1"]["workspaces"][0]["dataset_fingerprint"] == hashlib.sha256(
+        (workspace / "split_manifest.json").read_bytes()).hexdigest()
+    # W2 and W5: every request shape was decided by the condition named for it.
+    assert sorted({seen["condition"] for seen in facts["W2"]["requests"].values()}) == [
+        "cross_site", "enabled", "forwarding_header", "host_not_loopback", "origin_mismatch"]
+    assert facts["W5"]["loopback_request"]["condition"] == "deployment_mode"
+    # Both services were stopped (uvicorn's own last words in each log).
+    for mode in ("m1", "read-only"):
+        assert "Finished server process" in (
+            tmp_path / "m5" / f"service-{mode}" / "server.log").read_text()
+    # W8 and W9: the run's report is kept in T1's version, and the one record
+    # beside the listed checkpoint is built from those bytes; the usage history
+    # holds the run and its registration. W10 left no third report.
+    reports = sorted((version / "reports").glob("*/report.json"))
+    assert len(reports) == 2
+    (w8_report,) = [path for path in reports if f"-{child[:12]}-" in path.parent.name]
+    assert hashlib.sha256(w8_report.read_bytes()).hexdigest() == facts["W8"]["report_sha256"]
+    (w9_record,) = _ledger_records(listed.parent)
+    assert w9_record["source_artifact_digest"] == facts["W8"]["report_sha256"]
+    usage = [json.loads(line) for line in
+             (version / "reports" / "usage.jsonl").read_text().splitlines()]
+    assert [entry["kind"] for entry in usage
+            if entry.get("run_id") == w8_report.parent.name] == ["test_run", "registered"]
+    # W11: stopped, never completed; the lock is the probe's, under its root.
+    assert facts["W11"]["stop"]["status"] == "stopped"
+    assert (tmp_path / "m5" / "workspaces" / ".shepherd-gpu.lock").is_file()
 
 
 def test_the_real_phase_passes_and_leaves_the_workspace_as_it_was(tmp_path, served_state):
@@ -264,7 +317,7 @@ def test_the_real_phase_passes_and_leaves_the_workspace_as_it_was(tmp_path, serv
     # ---- Contract M4's flow on the (stand-in) real workspace: RT1-RT3 run
     # after R7 and before R8, whose comparison therefore covers them.
     order = [p.probe_id for p in report.probes]
-    assert order[order.index("R7") + 1:] == [*M4_REAL_PROBES, "R8"]
+    assert order[order.index("R7") + 1:] == [*M4_REAL_PROBES, *probe.M5_REAL_PROBES, "R8"]
     import json
 
     assert str(tmp_path) not in json.dumps({k: facts[k] for k in M4_REAL_PROBES})
@@ -283,6 +336,22 @@ def test_the_real_phase_passes_and_leaves_the_workspace_as_it_was(tmp_path, serv
     assert facts["RT3"]["state"] == "records"
     assert facts["RT3"]["checkpoint_sha256"] == facts["R4"]["child_sha256"]
     assert not list(real.rglob("evaluations.json")) and not (real / "registry").exists()
+
+    # ---- M5's acceptance on the (stand-in) real workspace, before R8: listed
+    # by its manifest's digest; RW2's record beside R3's checkpoint, under the
+    # work directory; RW3 stopped. The lock is the probe's own file, never one
+    # under the deployment's root.
+    import hashlib
+
+    assert str(tmp_path) not in json.dumps({k: facts[k] for k in probe.M5_REAL_PROBES})
+    assert facts["RW1"]["dataset_fingerprint"] == hashlib.sha256(
+        (real / "split_manifest.json").read_bytes()).hexdigest()
+    assert facts["RW1"]["dataset_record"] == {"binding": "verified", "origin": "files"}
+    (rw2_record,) = _ledger_records(work / "real" / "initial" / "checkpoints")
+    assert rw2_record["source_artifact_digest"] == facts["RW2"]["report_sha256"]
+    assert facts["RW3"]["stop"]["status"] == "stopped"
+    assert (work / "real" / "m5" / "gpu.lock").is_file()
+    assert not list(root.glob(".shepherd-gpu.lock*"))
 
 
 def test_an_architecture_other_than_the_reference_s_is_refused(tmp_path):

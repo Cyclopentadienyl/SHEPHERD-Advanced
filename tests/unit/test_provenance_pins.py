@@ -225,6 +225,16 @@ ALLOWED = {
     ("scripts/probe_deployment.py", "_training_settings", "read_once"):
         (1, _PROBE + "Phase R's training settings, parsed from the bytes of one read whose "
             "digest the report gives"),
+    # --- The deployment probe's M5 acceptance (M5-3): the lock and HTTP answers ---
+    ("scripts/probe_deployment.py", "installed_against_lock", "read_once"):
+        (1, _PROBE + "A5: the committed uv.lock, parsed from the bytes of one read whose "
+            "digest the report gives; the environment's description, not an input"),
+    ("scripts/probe_deployment.py", "_ProbeServer.json", "json.loads"):
+        (1, _PROBE + "M5: an HTTP answer of the service the probe started; not a file"),
+    ("scripts/probe_deployment.py", "_ProbeServer.event", "json.loads"):
+        (1, _PROBE + "M5: Gradio's HTTP answer naming a called event's id; not a file"),
+    ("scripts/probe_deployment.py", "_check_allowed", "json.loads"):
+        (1, _PROBE + "M5: the gated checkpoint list's HTTP answer; not a file"),
 }
 
 _MODULES = ("hashlib", "json", "torch")
