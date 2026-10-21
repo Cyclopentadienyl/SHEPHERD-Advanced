@@ -1564,8 +1564,10 @@ contract and BACKLOG stay the record, and no new planning document is added.
     holds (`read_ledger`), one metric, one version and one scoring semantics (a second semantics
     is a choice, never interleaved), each record key's state from the version's report store
     (`scan_report_store`): groups "Ordered by …", "Contested on this version · not ordered",
-    "Not compared on this version · not ordered" and "Not tested on this cohort version · newest
-    first", the regime on each ordered row and "regime differs" where it is not the most common;
+    "Contested status cannot be checked · not ordered" (a state that cannot be read is never
+    put under "Contested", nor ordered), "Not compared on this version · not ordered" and "Not
+    tested on this cohort version · newest first", the regime on each ordered row and "regime
+    differs" (with its ⓘ) where it is not the most common;
     the independence sentence of §4.9 question 1 wherever ordering is offered; a refusal by the
     function itself (records naming another role) said, the list left newest first. The detail
     keeps the Trainer's figure in its own card and shows every record as the API's record view
@@ -1575,7 +1577,12 @@ contract and BACKLOG stay the record, and no new planning document is added.
     writes the `model_load` entry; newest first writes none. A request D8 refuses gets no list
     (D8's three conditions named) and "Recorded test results of the model in use" from the API's
     read-only route function, by the served digest, opening no checkpoint, with each record's
-    contested state from the report store (reasons naming no server path);
+    contested state from the report store (reasons naming no server path). *Review fixes
+    (2026-10-21):* the page reads its data again after every Load, also one that leaves the
+    listing unchanged (a refused reload, the model in use loaded again), so the usage history
+    shows the entry that Load wrote, and selects the same checkpoint again after it; the
+    dataset identity under the workspace select; narrow, choosing a row scrolls to its detail;
+    the confirmation's buttons stay in view on a short window;
   - **D4 and D5 as planned:** ordering, disagreement and contested states, usage history, the
     deterministic-execution switch, with no change to scoring semantics;
   - **the Diagnosis tab's integration:** the shared layout, the identity display and the

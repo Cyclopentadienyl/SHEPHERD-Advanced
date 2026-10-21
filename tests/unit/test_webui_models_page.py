@@ -12,10 +12,12 @@ registry's report store (`tests/fixtures/model_records.py`):
 - **D4 through WP4's one function**: one record per checkpoint (the first
   registered deterministic one), comparable records only (one version, one
   scoring semantics, a second semantics offered as a choice), mean rank lower
-  first, the regime on each ordered row and "regime differs" where it does;
-  the groups "Ordered by …", "Contested on this version · not ordered", "Not
-  compared on this version · not ordered", "Not tested on this cohort version ·
-  newest first";
+  first, the regime on each ordered row (wrapping only after its dot) and
+  "regime differs" with its ⓘ where it does; the groups "Ordered by …",
+  "Contested on this version · not ordered", "Contested status cannot be
+  checked · not ordered", "Not compared on this version · not ordered", "Not
+  tested on this cohort version · newest first"; a role the setting no longer
+  lists refused by WP4's function itself;
 - **contested records left out (D5)**, and a state that cannot be checked
   never read as uncontested;
 - **the shared Load writes the usage history entry** for a Load from an ordered
@@ -27,16 +29,22 @@ registry's report store (`tests/fixtures/model_records.py`):
 - **read-only (D8)**: no list, D8's three conditions named, and "Recorded test
   results of the model in use" read by the API's read-only route function from
   the ledger beside the served checkpoint, by its digest, opening no
-  checkpoint; no server path;
-- **the wiring**: the page refreshes when it is shown, reads again only a new
-  listing, redraws on its controls and its selection; escaping.
+  checkpoint; no server path, even when a report store cannot be read; the
+  status unreadable said as such;
+- **the wiring**: the page refreshes when it is shown, reads again a new
+  listing and once after every Load (a Load that changed nothing listed
+  included), selects the same checkpoint again after a Load, redraws on its
+  controls and its selection, all through one listener; the dataset identity
+  under the workspace select; escaping.
 
 Module: tests/unit/test_webui_models_page.py
 """
 from __future__ import annotations
 
+import html as html_lib
 import json
 import os
+import re
 import shutil
 import time
 
@@ -187,6 +195,11 @@ def _read(world, monkeypatch):
     return listing, mp.read_page(listing)
 
 
+def _text(markup):
+    """What a reader sees of a cell: its text, entities as characters."""
+    return html_lib.unescape(re.sub(r"<[^>]+>", "", markup)).replace("\xa0", " ")
+
+
 def _ordered(world, monkeypatch, metric="untruncated_mrr", arch=None, scoring=None):
     listing, data = _read(world, monkeypatch)
     ctl = mp.controls(listing, data, mp.BY_SCORE, MYGENE, metric, scoring, arch)
@@ -209,6 +222,32 @@ def test_ordering_is_offered_only_for_a_listed_role_and_never_for_acceptance(wor
     assert mp.INDEPENDENCE_NOTE in mp.independence_html(data)  # wherever ordering is offered
     # A version the role does not offer cannot be asked for: it falls back.
     assert mp.controls(listing, data, mp.BY_SCORE, INST, None, None, None)["version"] == MYGENE
+
+
+def test_acceptance_is_said_ignored_only_when_the_setting_lists_it(world, monkeypatch):
+    """§4.9: "(listed …, and ignored)" is true only when the deployment lists
+    institutional_acceptance; otherwise the reason alone."""
+    monkeypatch.setenv("SHEPHERD_ORDERING_ROLES", RESEARCH_ROLE)
+    listing, data = _read(world, monkeypatch)
+    assert not data["roles_note"]
+    html = mp.options_html(data, mp.controls(listing, data, mp.BY_SCORE, MYGENE, None, None,
+                                             None))
+    assert f"<b>{INST}</b> (role <code>{ACCEPTANCE_ROLE}</code>) — {e(mp.ROLE_NEVER)}<" in html
+    assert e(mp.ROLE_NEVER_LISTED) not in html and "ignored" not in html
+
+
+def test_a_role_the_setting_no_longer_lists_is_refused_by_the_ordering_itself(world, monkeypatch):
+    """The version list said the role offers ordering, the setting read with
+    it does not list the role (it changed in between, say): WP4's function
+    re-checks the role against the setting, never against the version's own
+    role, and refuses; the list stays newest first and says why."""
+    listing, data = _read(world, monkeypatch)
+    data["roles"] = [ACCEPTANCE_ROLE]
+    ctl = mp.controls(listing, data, mp.BY_SCORE, MYGENE, None, None, None)
+    assert (ctl["order"], ctl["version"]) == (mp.BY_SCORE, MYGENE)
+    view, ordering = mp.shape(listing, data, ctl)
+    assert ordering is None and "groups" not in view and view["note"] == mp.LOAD_NOTE
+    assert f"not offered for role {RESEARCH_ROLE!r}" in view["refused"]
 
 
 def test_with_no_role_listed_the_list_is_newest_first_and_says_why(world, monkeypatch):
@@ -252,10 +291,20 @@ def test_the_order_is_d4s_with_its_groups_and_the_regime_on_each_ordered_row(wor
     assert keys[3] == [_key(world, n) for n in ("model-12.pt", "model-03.pt", "model-30.pt")]
     cells = view["cells"]
     first = cells[_key(world, "model-05.pt")]
-    assert "0.2310" in first and "#3 · D4 rule" in first and "CUDA · deterministic" in first
-    assert "regime differs" not in first
+    assert "0.2310" in first and "#3 · D4 rule" in first
+    assert "CUDA · deterministic" in _text(first)
+    assert "regime differs" not in first and "models-regime" not in first
     cpu = cells[_key(world, "model-20.pt")]
-    assert "CPU · deterministic" in cpu and "regime differs" in cpu
+    assert "CPU · deterministic" in _text(cpu) and "regime differs" in cpu
+    # The mark's explanation is a ⓘ beside it, reachable by keyboard and touch.
+    assert re.search(r"regime differs</span>\s*<button[^>]*data-help=\"models-regime\"", cpu), cpu
+    # The regime wraps after its dot (a narrow column never scrolls sideways),
+    # but never inside a word or between the device and its dot.
+    regime = re.search(r'<div class="shep-sub shep-mp-regime">(.*?)</div>', first).group(1)
+    assert regime == ('<span class="shep-nowrap">CUDA&nbsp;·</span> '
+                      '<span class="shep-nowrap">deterministic</span>')
+    assert "non-deterministic" in mp.regime_html("cuda:0", False)
+    assert '<span class="shep-nowrap">non-deterministic</span>' in mp.regime_html("cuda", False)
     assert "contested — not ordered" in cells[_key(world, "model-40.pt")]
     assert view["column"] == f"Mode C MRR, {MYGENE} · regime"
     # A checkpoint listed after the page read its records is never said untested.
@@ -314,9 +363,16 @@ def test_a_contested_state_that_cannot_be_checked_is_never_uncontested(world, mo
     monkeypatch.setattr(report_store, "scan_report_store", broken)
     listing, data, ctl, view, _ordering = _ordered(world, monkeypatch)
     assert {s["state"] for s in data["contest"].values()} == {"cannot_be_checked"}
-    assert [g["title"] for g in view["groups"]][:1] == [mp.GROUP_CONTESTED]
+    # Their own group: never ordered, and never under a heading that says the
+    # reports disagree when that is not known.
+    titles = [g["title"] for g in view["groups"]]
+    assert titles[:1] == [mp.GROUP_UNCHECKED] and mp.GROUP_CONTESTED not in titles
+    assert view["groups"][0]["keys"] == [_key(world, n) for n in (
+        "model-08.pt", "model-05.pt", "model-40.pt", "model-20.pt")]
     assert "contested status cannot be checked — not ordered" in view["cells"][
         _key(world, "model-05.pt")]
+    html = ml.list_html(listing, None, ml.PRESETS["research"], view=view)
+    assert mp.GROUP_UNCHECKED in html and mp.GROUP_CONTESTED not in html
     detail = mp.detail_parts(listing, data, _key(world, "model-05.pt"), ctl)
     assert "contested status cannot be checked" in detail["records"]
     assert "registered #3" in detail["records"] and "shep-tag-ok" not in detail["records"]
@@ -329,9 +385,14 @@ def test_a_key_the_page_holds_no_contested_state_for_is_not_ordered(world, monke
     data["contest"] = {}
     ctl = mp.controls(listing, data, mp.BY_SCORE, MYGENE, None, None, None)
     view, _ordering = mp.shape(listing, data, ctl)
-    assert [g["title"] for g in view["groups"]][:1] == [mp.GROUP_CONTESTED]
+    assert [g["title"] for g in view["groups"]][:1] == [mp.GROUP_UNCHECKED]
     assert "contested status cannot be checked — not ordered" in view["cells"][
         _key(world, "model-05.pt")]
+    # D5 in the detail too: every record says its state was not read, none is
+    # shown as uncontested (green).
+    records = mp.detail_parts(listing, data, _key(world, "model-05.pt"), ctl)["records"]
+    assert records.count("contested status cannot be checked: it was not read") == 3
+    assert "shep-tag-ok" not in records and "runs disagree" not in records
 
 
 def test_a_record_whose_version_the_registry_does_not_list_cannot_be_checked(world, monkeypatch):
@@ -381,6 +442,10 @@ def test_newest_first_gives_the_load_no_ordering(world, monkeypatch):
 def test_the_detail_keeps_validation_and_mode_c_apart(world, monkeypatch):
     listing, data, ctl, _view, _ordering = _ordered(world, monkeypatch)
     detail = mp.detail_parts(listing, data, _key(world, "model-05.pt"), ctl)
+    # The title names the row, focusable: narrow, choosing a row waits for this
+    # title before it scrolls to the detail and moves the focus there.
+    assert f'<h2 tabindex="-1" data-key="{e(_key(world, "model-05.pt"))}">' in detail["header"]
+    assert "h2[data-key]" in mp.SCROLL_JS and "shep-mp-back" in detail["header"]
     assert "not in use" in detail["header"]
     assert "in use for diagnosis: model" in detail["header"]
     assert world["shas"]["model-12.pt"][:12] in detail["header"]
@@ -396,6 +461,10 @@ def test_the_detail_keeps_validation_and_mode_c_apart(world, monkeypatch):
     # the acceptance record is contested, with what the runs say
     assert "contested #1" in records and "runs disagree — investigate" in records
     assert "0.2051" in records and "0.2077" in records
+    # the acceptance record's role says ordering is off for it, and only there
+    note = "ordering off: awaits the formal evaluation rules"
+    assert records.count(note) == 1
+    assert records.index(INST) < records.index(note) < records.index("contested #1")
     assert detail["seg"][0] == ("Recorded test results (Mode C) · 3 · 1 contested", mp.RECORDS)
 
 
@@ -457,6 +526,25 @@ def test_the_usage_history_segment_lists_this_checkpoints_entries_newest_first(w
     assert "not loaded: refused" in usage and "Test run" in usage
     assert "registration asked" in usage and MYGENE in usage
     assert other[:12] not in usage
+
+
+def test_a_long_usage_history_shows_the_latest_entries_and_says_how_many(world, monkeypatch):
+    """Long use: the usage history only grows; the detail draws the latest
+    `USAGE_SHOWN` entries of the checkpoint and says how many there are."""
+    sha = world["shas"]["model-05.pt"]
+    entries = [{"kind": "model_load", "checkpoint_sha256": sha, "version": MYGENE,
+                "at": f"2026-10-18T{n // 60:02d}:{n % 60:02d}:00Z", "metric": "untruncated_mrr",
+                "scoring_semantics_digest": "d" * 64, "loaded": True}
+               for n in range(mp.USAGE_SHOWN, -1, -1)]          # newest first, as read
+    usage = {"entries": {sha: entries}, "problems": [], "read_from": [MYGENE]}
+    html, count = mp.usage_html({"sha256": sha}, {"usage": usage})
+    assert count == mp.USAGE_SHOWN + 1 == 201
+    assert html.count('<tr><td class="shep-nowrap">') == mp.USAGE_SHOWN
+    assert f"The latest {mp.USAGE_SHOWN} of 201 entries are shown." in html
+    assert "2026-10-18 03:20 UTC" in html and "2026-10-18 00:00 UTC" not in html  # the oldest
+    html, count = mp.usage_html({"sha256": sha}, {"usage": {**usage, "entries": {
+        sha: entries[:mp.USAGE_SHOWN]}}})
+    assert count == mp.USAGE_SHOWN and "The latest" not in html
 
 
 def test_the_ledgers_states_are_said_and_name_no_directory(world, monkeypatch):
@@ -525,6 +613,9 @@ def test_read_only_shows_the_model_in_use_from_the_ledger_and_opens_no_checkpoin
     assert sha in parts["top"] and parts["seg"] is None
     records = parts["records"]
     assert "registered #3" in records and "contested #1" in records
+    # each record's determinism, from the environment class the route answers
+    assert 'registered #3</span> <span class="shep-sub">deterministic on</span>' in records
+    assert 'registered #2</span> <span class="shep-sub">deterministic off</span>' in records
     assert "runs disagree — investigate" in records and mp.NO_LOAD_HERE in records
     assert str(world["root"]) not in records and str(world["registry"]) not in records
     header = mp.left_header_html(listing, data, "deployment_mode")
@@ -534,6 +625,63 @@ def test_read_only_shows_the_model_in_use_from_the_ledger_and_opens_no_checkpoin
     view, ordering = mp.shape(listing, data, mp.controls(listing, data, mp.BY_SCORE, MYGENE,
                                                          None, None, None))
     assert ordering is None and view == {"note": ""}
+
+
+def test_a_route_records_regime_is_read_from_its_environment_class():
+    from src.evaluation.sidecar import ENVIRONMENT_CLASSES
+
+    sha = "a" * 64
+    det, nondet, cpu = (mp.view_from_route({"environment_class": c}, sha)
+                        for c in ENVIRONMENT_CLASSES)
+    assert (det["deterministic"], det["device"]) == (True, "cuda")
+    assert (nondet["deterministic"], nondet["device"]) == (False, "cuda")
+    assert (cpu["deterministic"], cpu["device"]) == (None, "cpu")
+    other = mp.view_from_route({"environment_class": "something else"}, sha)
+    assert (other["deterministic"], other["device"]) == (None, None)
+
+
+def _served_read_only(world, monkeypatch, name="model-05.pt"):
+    import src.api.main as api_main
+    from src.utils.fingerprint import ReadIdentity
+
+    checkpoint = world["paths"][name]
+    world["served"]["value"] = _status(world["workspace"], world["shas"][name])
+    monkeypatch.setattr(api_main.app_state, "pipeline", _ServedPipeline(
+        ReadIdentity(checkpoint.resolve(), world["shas"][name])))
+    monkeypatch.delenv("SHEPHERD_DEPLOYMENT_MODE", raising=False)
+
+
+def test_read_only_names_no_server_path_when_a_report_store_cannot_be_read(world, monkeypatch):
+    """A report in the version's store that cannot be read makes its keys'
+    state "cannot be checked", and the store's own words name the file by its
+    absolute path: the operator's view keeps them, a read-only request never
+    gets them (D8)."""
+    from src.evaluation.report_store import scan_report_store
+    from src.evaluation.sidecar import record_key
+    from tests.fixtures.report_store import store_bytes, version_of
+
+    _served_read_only(world, monkeypatch)
+    version = version_of(world["det_report"])
+    bad = store_bytes(world["registry"], b"{not json", version=version,
+                      checkpoint_sha256=world["shas"]["model-05.pt"])
+    status = scan_report_store(version).status(record_key(dict(world["det"])))
+    assert status.state == "cannot_be_checked" and str(bad) in " ".join(status.problems)
+    records = mp.readonly_parts(mp.read_readonly())["records"]
+    assert 'registered #3</span>' in records and "contested status cannot be checked" in records
+    assert str(world["registry"].parent) not in records and "report.json" not in records
+    assert "could not be read" not in records
+
+
+def test_read_only_says_when_what_is_served_cannot_be_read(world, monkeypatch):
+    _served_read_only(world, monkeypatch)
+    monkeypatch.setattr(mp, "read_status", lambda: (None, "the status could not be read"))
+    data = mp.read_readonly()
+    assert data["served_sha"] is None and data["answer"]["state"] == "records"
+    parts = mp.readonly_parts(data)
+    assert ("What is served cannot be read now (the status could not be read), so no recorded "
+            "result is shown.") in parts["top"]
+    assert mp.RECORDS_MODEL_CHANGED not in parts["records"]
+    assert "registered #" not in parts["records"] and mp.NO_LOAD_HERE in parts["records"]
 
 
 def test_read_only_never_shows_another_models_records(world, monkeypatch):
@@ -576,8 +724,10 @@ def test_the_page_is_read_when_shown_and_shapes_the_shared_list(world, monkeypat
     inputs = [getattr(i, "elem_id", None) for i in opened.inputs]
     assert {"shep-mp-order", "shep-mp-version", "shep-mp-metric", "shep-mp-scoring",
             "shep-mp-arch"} <= set(inputs)
+    stale = _sync_states(demo)["stale"]
+    assert stale in opened.outputs
     out = opened.fn("demo", False, None, mp.BY_SCORE, MYGENE, "untruncated_mrr", None,
-                    mp.ALL_ARCHITECTURES, mp.RECORDS, operator_request(monkeypatch))
+                    mp.ALL_ARCHITECTURES, mp.RECORDS, "idle", operator_request(monkeypatch))
     assert len(out) == len(opened.outputs)
     by_output = dict(zip(map(id, opened.outputs), out, strict=True))
     listing = out[0]
@@ -588,36 +738,172 @@ def test_the_page_is_read_when_shown_and_shapes_the_shared_list(world, monkeypat
     orderings = [v for v in out if isinstance(v, dict) and v.get("version") == MYGENE]
     assert orderings and orderings[0]["metric"] == "untruncated_mrr"
     assert by_output[id(by_id["shep-mp-order"])]["interactive"] is True
+    assert by_output[id(stale)] is False                   # read now: nothing is stale
+    assert by_output[id(by_id["shep-mp-wsline"])] == mp.workspace_line_html(listing)
+    # Shown while a Load runs: read now, and again once the Load has finished.
+    out = opened.fn("demo", False, None, mp.NEWEST, None, None, None, None, mp.RECORDS,
+                    "loading", operator_request(monkeypatch))
+    assert dict(zip(map(id, opened.outputs), out, strict=True))[id(stale)] == gr.update()
+
+
+def test_the_workspace_line_shows_the_dataset_identity_under_the_select(world, monkeypatch):
+    """A long workspace name is cut in the select; the dataset fingerprint and
+    "synthetic" are said again under it, by the shared renderer."""
+    from src.webui.components.renderers import dataset_identity_html
+
+    listing, _data = _read(world, monkeypatch)
+    row = next(w for w in listing["workspaces"] if w["name"] == "demo")
+    html = mp.workspace_line_html(listing)
+    assert html == (f'<div class="shep-mp-wsline">'
+                    f'{dataset_identity_html(row, name=False)}</div>')
+    assert row["dataset_fingerprint"][:12] in html and "synthetic" in html
+    assert "shep-ds-name" not in html                          # the select names it
+    assert mp.workspace_line_html({**listing, "workspace": "gone"}) == ""
+    assert mp.workspace_line_html({**listing, "refused": True}) == ""
+
+
+def _sync_states(demo):
+    """The one listener's States, by their place among its inputs."""
+    sync = _fn(demo, "_sync")
+    listing, data, stale, last, phase = sync.inputs[:5]
+    return {"fn": sync, "listing": listing, "data": data, "stale": stale, "last": last,
+            "phase": phase, "selected": sync.inputs[-2]}
+
+
+def _sync(states, monkeypatch, listing, data, *, trigger, stale=False, last=None, phase="idle",
+          order=mp.BY_SCORE, version=MYGENE, arch=mp.ALL_ARCHITECTURES, selected=None,
+          seg=mp.RECORDS):
+    sync = states["fn"]
+    out = sync.fn(listing, data, stale, last, phase, order, version, "untruncated_mrr", None,
+                  arch, selected, seg, operator_request(monkeypatch), gr.EventData(trigger, None))
+    assert len(out) == len(sync.outputs)
+    by = dict(zip(map(id, sync.outputs), out, strict=True))
+    return {name: by[id(states[name])] for name in ("stale", "last", "selected", "data")} | {
+        "page": out[3:], "by": by}
+
+
+def _session_copy(block):
+    """A control as an event names it once the page has updated it: Gradio
+    keeps a new instance in the session (`Blocks.postprocess_data`), built from
+    the same constructor arguments, with another ``_id``."""
+    copy = block.__class__(**{**block.constructor_args, "render": False})
+    assert copy._id != block._id and copy.elem_id == block.elem_id
+    return copy
 
 
 def test_a_listing_already_read_is_not_read_again(world, monkeypatch):
     demo, _ctx = _page()
-    recompute = _fn(demo, "_recompute")
+    states = _sync_states(demo)
+    by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
+    detail = [by_id[i] for i in ("shep-mp-detail-hd", "shep-mp-detail-top", "shep-mp-seg",
+                                 "shep-mp-records", "shep-mp-usage")]
     listing, data = _read(world, monkeypatch)
     monkeypatch.setattr(mp, "read_page", lambda listing: pytest.fail("read again"))
-    out = recompute.fn(listing, data, mp.NEWEST, None, None, None, None, None, mp.RECORDS,
-                       operator_request(monkeypatch))
-    assert all(v == gr.update() for v in out)
+    key = _key(world, "model-05.pt")
+    # A selection: the detail only, nothing read; the selection is remembered.
+    out = _sync(states, monkeypatch, listing, data, trigger=states["selected"], order=mp.NEWEST,
+                selected=key)
+    assert out["data"] == gr.update() and out["selected"] == gr.update()
+    assert out["stale"] == gr.update() and out["last"] == {"workspace": "demo", "key": key}
+    others = [o for o in states["fn"].outputs[3:] if o not in detail]
+    assert all(out["by"][id(o)] == gr.update() for o in others)
+    assert world["shas"]["model-05.pt"] in out["by"][id(by_id["shep-mp-detail-top"])]
+    # A control (as the session holds it): the view drawn again from the data
+    # held, nothing read.
+    out = _sync(states, monkeypatch, listing, data,
+                trigger=_session_copy(by_id["shep-mp-order"]))
+    view = out["page"][1]
+    assert out["data"] == gr.update() and view["groups"][0]["title"].startswith("Ordered by")
+    # A listing not read yet: read once.
     changed = {**listing, "served_sha": world["shas"]["model-05.pt"]}
     calls = []
     monkeypatch.setattr(mp, "read_page", lambda listing: calls.append(1) or data)
-    recompute.fn(changed, data, mp.NEWEST, None, None, None, None, None, mp.RECORDS,
-                 operator_request(monkeypatch))
+    _sync(states, monkeypatch, changed, data, trigger=states["listing"], order=mp.NEWEST)
     assert calls == [1]
+
+
+def test_after_a_load_the_page_reads_again_and_selects_the_same_checkpoint(world, monkeypatch):
+    """A Load from the ordered list that leaves the listing as it was (a
+    refused reload here; the model in use reloaded is another): the page reads
+    its own data again once the Load has finished, so the usage history shows
+    the entry that Load wrote, and selects the same checkpoint again (the
+    shared refresh cleared the selection), so Close returns to its detail."""
+    from src.api.routes.pipeline import PipelineReloadResponse, PipelineStatusResponse
+
+    demo, _ctx = _page()
+    states = _sync_states(demo)
+    listing, data, _ctl, _view, ordering = _ordered(world, monkeypatch)
+    key, sha = _key(world, "model-05.pt"), world["shas"]["model-05.pt"]
+    assert sha not in data["usage"]["entries"]
+    plan, _html = ml.request_load(listing, key, ordering, operator_request(monkeypatch))
+    served = world["shas"]["model-12.pt"]
+
+    def refused(request):
+        return PipelineReloadResponse(success=False, message="refused for this test",
+                                      status=PipelineStatusResponse(
+                                          **_status(world["workspace"], served)))
+
+    step = ml.finish_load(plan, operator_request(monkeypatch), reload=refused)
+    assert "Not reloaded" in step.confirm_html
+    after = ml.list_models("demo", operator_request(monkeypatch))       # the shared refresh
+    assert mp.listing_key(after) == data["listing_key"]                # nothing listed changed
+    reads = []
+    real = mp.read_page
+    monkeypatch.setattr(mp, "read_page", lambda listing: reads.append(1) or real(listing))
+    last = {"workspace": "demo", "key": key}
+    # Still loading: nothing is read yet, and the page stays stale.
+    out = _sync(states, monkeypatch, after, data, trigger=states["selected"], stale=True,
+                last=last, phase="loading")
+    assert reads == [] and out["stale"] == gr.update() and out["selected"] == gr.update()
+    # The Load has finished (the refresh cleared the selection): read once, the
+    # same checkpoint selected again, its usage history with the new entry.
+    out = _sync(states, monkeypatch, after, data, trigger=states["selected"], stale=True,
+                last=last, seg=mp.USAGE)
+    assert reads == [1] and out["stale"] is False
+    assert out["selected"] == key and out["last"] == last
+    entries = out["data"]["usage"]["entries"][sha]
+    assert [(e["kind"], e["loaded"], e["why"]) for e in entries] == [
+        ("model_load", False, "refused for this test")]
+    page = dict(zip(map(id, states["fn"].outputs[3:]), out["page"], strict=True))
+    by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
+    seg = page[id(by_id["shep-mp-seg"])]
+    assert seg["choices"][1] == ("Usage history · 1", mp.USAGE) and seg["value"] == mp.USAGE
+    usage = page[id(by_id["shep-mp-usage"])]
+    assert "not loaded: refused for this test" in usage["value"] and usage["visible"] is True
+    view = out["page"][1]
+    assert "redraw" in view and view["groups"][0]["title"].startswith("Ordered by")
+    # The selection it set comes back as a change: the detail only, no read.
+    again = _sync(states, monkeypatch, after, out["data"], trigger=states["selected"],
+                  last=last, selected=key)
+    assert reads == [1] and again["data"] == gr.update() and again["selected"] == gr.update()
+    # A checkpoint the view no longer shows is not selected again.
+    out = _sync(states, monkeypatch, after, data, trigger=states["selected"], stale=True,
+                last=last, arch="hgt")
+    assert reads == [1, 1] and out["selected"] == gr.update() and "redraw" not in out["page"][1]
 
 
 def test_controls_selection_and_segments_are_wired(world, monkeypatch):
     demo, _ctx = _page()
     by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
-    reorder = [fn for fn in demo.fns.values() if fn.name == "_reorder"]
-    triggers = {getattr(demo.blocks[t[0]], "elem_id", None) for fn in reorder for t in fn.targets}
-    assert triggers == {"shep-mp-order", "shep-mp-version", "shep-mp-metric", "shep-mp-scoring",
-                        "shep-mp-arch"}
-    assert all(t[1] == "input" for fn in reorder for t in fn.targets)
-    detail = _fn(demo, "_detail")
-    assert detail.outputs == [by_id["shep-mp-detail-hd"], by_id["shep-mp-detail-top"],
-                              by_id["shep-mp-seg"], by_id["shep-mp-records"],
-                              by_id["shep-mp-usage"]]
+    states = _sync_states(demo)
+    sync = states["fn"]
+    # One listener answers a new listing, a selection and the controls, so its
+    # answers for one session never overlap; the last trigger always runs.
+    assert {(demo.blocks[t[0]], t[1]) for t in sync.targets} == {
+        (states["listing"], "change"), (states["selected"], "change"),
+        *((by_id[c], "input") for c in ("shep-mp-order", "shep-mp-version", "shep-mp-metric",
+                                        "shep-mp-scoring", "shep-mp-arch"))}
+    assert sync.trigger_mode == "always_last"
+    assert sync.outputs[:3] == [states["stale"], states["last"], states["selected"]]
+    assert sync.outputs[-5:] == [by_id["shep-mp-detail-hd"], by_id["shep-mp-detail-top"],
+                                 by_id["shep-mp-seg"], by_id["shep-mp-records"],
+                                 by_id["shep-mp-usage"]]
+    assert not [fn for fn in demo.fns.values() if fn.name in ("_recompute", "_reorder", "_detail")]
+    # "Reload with …" marks the page's data stale, at once, beside the shared Load.
+    started = _fn(demo, "_load_started")
+    assert started.targets == [(by_id["shep-models-research-reload"]._id, "click")]
+    assert started.queue is False and started.outputs == [states["stale"]]
+    assert started.fn() is True
     segment = _fn(demo, "_segment")
     assert segment.queue is False
     records, usage = segment.fn(mp.USAGE)
@@ -631,9 +917,11 @@ def test_the_page_registers_its_help_and_every_i_it_draws(world, monkeypatch):
     registry = HelpRegistry()
     with gr.Blocks() as demo:
         mp.create_models_page(standalone_context(demo, registry))
-    listing, data, ctl, _view, _ordering = _ordered(world, monkeypatch)
+    listing, data, ctl, view, _ordering = _ordered(world, monkeypatch)
     detail = mp.detail_parts(listing, data, _key(world, "model-05.pt"), ctl)
-    rendered = "".join(detail[k] for k in ("top", "records", "usage")) + mp.options_html(data, ctl)
+    rendered = ("".join(detail[k] for k in ("top", "records", "usage")) + mp.options_html(data, ctl)
+                + "".join(view["cells"].values()) + mp.workspace_line_html(listing))
+    assert 'data-help="models-regime"' in rendered            # the "regime differs" ⓘ
     from src.webui.components.renderers import RENDERER_HELP
 
     registry.topics(RENDERER_HELP)

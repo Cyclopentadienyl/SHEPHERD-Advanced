@@ -2503,8 +2503,9 @@ repository 之下的路徑以其名稱書寫（`<registry>/versions/…`），�
 ### Research › Evaluate › Models
 
 這是 Diagnosis 分頁「Change model…」所用的同一份模型清單的研究檢視，列出伺服器為某一個 workspace
-列出的 checkpoint（選擇 **Workspace**；**Architecture** 可縮小清單）。所有 run 都會顯示，最新的在前。
-各欄：
+列出的 checkpoint（選擇 **Workspace**；**Architecture** 可縮小清單）。Workspace 選單下方會再次列出所選
+workspace 的資料集識別（建置時間、資料集指紋、`synthetic`、紀錄的狀態），因此即使選單截斷了很長的
+workspace 名稱，這些資訊也不會被遮住。所有 run 都會顯示，最新的在前。各欄：
 
 - **Model**：架構、run 的開始時間、epoch；正在提供服務的 checkpoint 標示 **In use (Diagnosis)**
   （以完整的模型指紋比對）；
@@ -2533,8 +2534,9 @@ choose a model is no longer an independent final test for that model.」系統�
 
 | 分組 | 內容 |
 |---|---|
-| Ordered by … on … · highest first | 每個 checkpoint 一個數值，依固定規則：它第一筆以 deterministic 環境登錄的紀錄，否則為它第一筆登錄的紀錄（有多筆時顯示 `#3 · D4 rule`）。每一列顯示該紀錄的數值環境（`CUDA · deterministic`），若不是多數已排序列共有的環境則標示 **regime differs** |
-| Contested on this version · not ordered | 規則選中的紀錄有爭議：該 version 的報告庫中同一鍵下的報告彼此不一致，或無法確認是否一致。它不參與排序，也從不以下一筆紀錄遞補 |
+| Ordered by … on … · highest first | 每個 checkpoint 一個數值，依固定規則：它第一筆以 deterministic 環境登錄的紀錄，否則為它第一筆登錄的紀錄（有多筆時顯示 `#3 · D4 rule`）。每一列顯示該紀錄的數值環境（`CUDA · deterministic`），若不是多數已排序列共有的環境則標示 **regime differs** 並附 ⓘ |
+| Contested on this version · not ordered | 規則選中的紀錄有爭議：該 version 的報告庫中同一鍵下的報告彼此不一致。它不參與排序，也從不以下一筆紀錄遞補 |
+| Contested status cannot be checked · not ordered | 無法讀出該鍵下的報告是否彼此一致（該 version 的報告庫或其中某份報告無法讀取；該 version 不在登錄庫的清單中）。它同樣不參與排序，也從不顯示為無爭議 |
 | Not compared on this version · not ordered | 其他 scoring semantics 下的紀錄、分在兩個 ledger 中的紀錄、無法讀取的紀錄或 ledger，或無法讀取的 checkpoint；該列會說明是哪一種 |
 | Not tested on this cohort version · newest first | 在此 version 上沒有紀錄 |
 
@@ -2554,10 +2556,15 @@ ledger。
   登錄，以及從已排序清單進行的載入，最新的在前。
 
 **🔒 Load this model** 是共用的 Load（與 Diagnosis 的「Change model…」相同的確認；確認開啟時會蓋住
-細節區，按 Close 回到細節區）。清單依測試分數排序時，按鈕旁的說明會指出這一點，而這次 Load 會以
-「依該指標排序的模型載入」寫入該 version 的使用紀錄，不論是否生效，並附上原因。從「Newest first」
-清單進行的 Load 不會在那裡寫入任何內容。頁面在顯示時、更換 workspace 時以及 Load 之後讀取；頁面上
+細節區，不論視窗多矮，它的按鈕都留在表格下方的可見範圍內；按 Close 回到細節區，且仍選取同一個
+checkpoint）。清單依測試分數排序時，按鈕旁的說明會指出這一點，而這次 Load 會以「依該指標排序的模型
+載入」寫入該 version 的使用紀錄，不論是否生效，並附上原因。從「Newest first」清單進行的 Load 不會在
+那裡寫入任何內容。頁面在顯示時、更換 workspace 時以及每一次 Load 之後讀取，包括沒有改變任何服務內容
+的 Load（重新載入被拒絕、再次載入正在使用的模型），因此使用紀錄會顯示該次 Load 寫入的項目；頁面上
 沒有任何東西依計時器執行。
+
+**窄版**（寬度低於 1400 或高度低於 760，各區域上下堆疊時），選取一列會捲動到它的細節區並把鍵盤焦點
+移到那裡；細節區標題列的 **↑ Back to the list** 會回到該列。
 
 ---
 

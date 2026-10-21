@@ -2251,7 +2251,9 @@ root, the intake directory, an evidence directory or the repository is written u
 
 The research view of the same model list the Diagnosis tab's "Change model…" uses, over the
 checkpoints the server lists for one workspace (choose the **Workspace**; **Architecture**
-narrows the list). Every run is shown, newest first. Columns:
+narrows the list). Under the workspace select, the chosen workspace's dataset identity is said
+again (build time, dataset fingerprint, `synthetic`, the record's state), so a long workspace
+name that the select cuts never hides it. Every run is shown, newest first. Columns:
 
 - **Model**: architecture, the run's start time, the epoch; **In use (Diagnosis)** on the
   checkpoint being served (matched by its full model fingerprint);
@@ -2283,8 +2285,9 @@ groups:
 
 | Group | What is in it |
 |---|---|
-| Ordered by … on … · highest first | One number per checkpoint, by a fixed rule: its first registered record from a deterministic regime, else its first registered record (`#3 · D4 rule` when it had several). Each row shows the record's regime (`CUDA · deterministic`), and **regime differs** where it is not the one most ordered rows share |
-| Contested on this version · not ordered | The record the rule picks is contested: reports under its key in the version's report store disagree, or that cannot be checked. It is not ordered, and the next record is never put in its place |
+| Ordered by … on … · highest first | One number per checkpoint, by a fixed rule: its first registered record from a deterministic regime, else its first registered record (`#3 · D4 rule` when it had several). Each row shows the record's regime (`CUDA · deterministic`), and **regime differs** with its ⓘ where it is not the one most ordered rows share |
+| Contested on this version · not ordered | The record the rule picks is contested: reports under its key in the version's report store disagree. It is not ordered, and the next record is never put in its place |
+| Contested status cannot be checked · not ordered | Whether the reports under that key disagree cannot be read (the version's report store, or a report in it, cannot be read; the version is not one the registry lists). It is not ordered either, and never shown as uncontested |
 | Not compared on this version · not ordered | Records under another scoring semantics, records in two ledgers, a record or a ledger that cannot be read, or a checkpoint that cannot be read; the row says which |
 | Not tested on this cohort version · newest first | No record on this version |
 
@@ -2306,11 +2309,18 @@ card, any warning, and two segments:
   usage history: test runs, registrations and loads from an ordered list, newest first.
 
 **🔒 Load this model** is the shared Load (the same confirmation as Diagnosis' "Change model…";
-it covers the detail while it is open, and Close returns to it). When the list is ordered by
-test score, the note beside the button says so, and the Load is written to that version's usage
-history as a model load ordered by that metric, whether or not it took effect, with why. A Load
-from the list newest first writes nothing there. The page is read when it is shown, when the
-workspace changes and after a Load; nothing on it runs on a timer.
+it covers the detail while it is open, its buttons stay in view under its table however short
+the window, and Close returns to the detail with the same checkpoint still selected). When the
+list is ordered by test score, the note beside the button says so, and the Load is written to
+that version's usage history as a model load ordered by that metric, whether or not it took
+effect, with why. A Load from the list newest first writes nothing there. The page is read when
+it is shown, when the workspace changes and after every Load, including one that changed nothing
+served (a refused reload, the model in use loaded again), so the usage history shows the entry
+that Load wrote; nothing on it runs on a timer.
+
+**Narrow** (below 1400 × 760, where the regions stack under one another), choosing a row scrolls
+to its detail and moves the keyboard focus there; **↑ Back to the list** in the detail's header
+returns to the row.
 
 ---
 
