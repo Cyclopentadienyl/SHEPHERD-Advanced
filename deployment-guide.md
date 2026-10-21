@@ -1962,13 +1962,15 @@ route。服務會在 Gradio 看到請求之前拒絕它們（`src/api/middleware
   寫進它的暫存目錄，而且從不刪除。
 
 拒絕的回應是 `403`，附一行原因與 `connection: close`。請求本體不會被讀取，請求日誌會像其他
-回應一樣記下這次拒絕。本機下載不受影響：Training Console 的 metrics CSV，以及 Diagnosis 分頁的
-CSV 與 Markdown 匯出照常下載，`HEAD` 與 `Range` 請求也一樣。
+回應一樣記下這次拒絕。本機下載不受影響：Diagnosis 分頁的 CSV 與 Markdown 匯出照常下載，
+`HEAD` 與 `Range` 請求也一樣。（自 M5-2 起，Training 頁面的 Export CSV 以文字經由頁面自己的
+server function 傳來，由瀏覽器存檔；伺服器不為它提供檔案。）
 
 ### 儀表板的其他變更
 
 - **Training Console 的圖表**外觀與以前相同（y 軸從 0 開始，每條數列維持自己的顏色）。Epoch
-  Window 現在只篩選資料列，x 軸隨之調整。
+  Window 現在只篩選資料列，x 軸隨之調整。（M5-2 以一張可縮放、沒有 Epoch Window 的圖取代：
+  §4.14，Research › Prepare › Training。）
 - **Runtime Settings** 在打開分頁時會重新整理重啟鎖定狀態：Gradio 6 不會在尚未打開過的分頁中
   執行 timer。不論如何，訓練進行中時後端都會拒絕重啟。
 
@@ -2142,12 +2144,12 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
   `current`。列出時會開啟每個 checkpoint，SPEC_4 將此歸類為 checkpoint 檢視（C3），而 D8 只在
   操作者控制項所在之處提供它：它以 `GET /api/v1/workspaces/{name}/checkpoints` 提供（例如
   `?architecture=gat` 只列一種架構），位於 D8 的檢查之後（§4.13），被拒絕的請求不會開啟任何檔案。
-- **既有的 checkpoint 清單**（`GET /api/v1/training/checkpoints` 與 Training Console 的
-  resume 清單）以同樣的方式讀取每個檔案。每個項目新增 `sha256`、`validation`、
-  `dataset_fingerprint` 與 `metadata_problem`，全部來自同一次讀取。以前它載入每個檔案卻不保留
+- **既有的 checkpoint 清單**（`GET /api/v1/training/checkpoints`；自 M5-2 起，Training
+  頁面的 parent 清單是上面那份依 workspace 的清單）以同樣的方式讀取每個檔案。每個項目新增
+  `sha256`、`validation`、`dataset_fingerprint` 與 `metadata_problem`，全部來自同一次讀取。以前它載入每個檔案卻不保留
   digest，而且載入錯誤時一聲不響地略過。讀取時已經不存在的檔案（目標已被移除的連結）沒有
   大小或時間可顯示，會從這份清單中略去；它不再讓整份清單失敗。自 M5-1 起，D8 像檢查控制項
-  一樣檢查它（§4.13），路由與 Training Console 的 run 清單都一樣。
+  一樣檢查它（§4.13）。
 - **Cohort 版本**（`GET /api/v1/cohorts`）：registry 中的每個版本，以 label 及其 `cohort.json`
   的 SHA-256 識別，附上它的角色，以及這個角色是否提供排序。它也顯示版本的計數、所綁定的圖與
   資料集紀錄，以及匯入時間。清單絕不顯示病例識別碼或排除清單：D7 把它們留在這台機器上的
@@ -2211,7 +2213,7 @@ M5 在 SPEC_4 的部署模式 **M1** 下執行：由 owner 或指定的技術人
 | 位置 | 控制項 |
 |---|---|
 | API | `POST /api/v1/pipeline/reload`、`POST /api/v1/pipeline/config`、`POST /api/v1/training/start`、`POST /api/v1/training/stop`、`GET /api/v1/training/checkpoints`、`GET /api/v1/workspaces/{name}/checkpoints` |
-| 儀表板 | Diagnosis：Change model…（其 checkpoint 清單與它的 Load；自 M5-2 起）。⚙ Settings（Runtime Settings）：Restart Backend 與 Apply Settings。Research › Training（Training Console）：Start、Stop（確認後的停止）、Continue Training、Check checkpoint、run 清單（Refresh，以及切換架構）與 Save Path |
+| 儀表板 | Diagnosis：Change model…（其 checkpoint 清單與它的 Load；自 M5-2 起）。⚙ Settings（Runtime Settings）：Restart Backend 與 Apply Settings。Research › Training：Start、Stop（它的確認會讀取該 run 最後的 checkpoint）、Continue…（它列出 parent）、parent 清單的 Refresh、Check checkpoint 與 Continue Training |
 
 兩份 checkpoint 清單與 Check checkpoint 會開啟 checkpoint 檔案，SPEC_4 將此歸類為 checkpoint 檢視
 （C3），因此它們與控制項一樣受檢查。Research › Test（§4.14）對它的匯入（intake 清單、Preview 與
@@ -2344,7 +2346,7 @@ CORS 只決定頁面能讀取什麼。不需要預檢的跨來源請求仍會抵
 |---|---|
 | **Diagnosis (clinical)** | 病患表型、結果與選中候選的細節，使用中的模型顯示在一張卡片上（見下文）。它是第一個畫面 |
 | **Research (pre-clinical)** › Prepare › **Datasets** | 伺服器的 workspace，唯讀（見下文） |
-| **Research (pre-clinical)** › Prepare › **Training** | Training Console，與以前相同。它是 Research 下最先顯示的頁面 |
+| **Research (pre-clinical)** › Prepare › **Training** | run bar、下一次 run 的參數、Continue… 與附圖表的 run 檢視（見下文）。它是 Research 下最先顯示的頁面 |
 | **Research (pre-clinical)** › Evaluate › **Test** | 從伺服器的 intake 目錄匯入 cohort 版本、執行測試、保留並登錄其報告（見下文） |
 | **Research (pre-clinical)** › Evaluate › **Models** | 伺服器為某個 workspace 列出的 checkpoint、它們已記錄的測試結果、依測試分數排序與 Load（見下文） |
 | 頁首右側的 **⚙ Settings** | Runtime Settings，與以前相同。對唯讀的瀏覽器，Apply Settings 與 Restart Backend 會呈灰色不可用，原因寫在它們下方 |
@@ -2493,17 +2495,90 @@ allocation seed differs …」。對任何瀏覽器都不會顯示伺服器的�
 `SHEPHERD_WORKSPACES_ROOT` 會說明被拒絕但不顯示它的路徑。頁面在打開時讀取 manifest，而不是每次
 選取時讀取。
 
-**Use for training ›** 會打開 Research › Training，並把該 workspace 填入這個瀏覽器分頁的 Data
-Directory（同時打開 Data Paths 以便看到）。伺服器上什麼都不會改變；Start 仍是 D8 檢查的控制項。
-不可訓練的 workspace 無法使用。位於 repository 內的 workspace 以相對於 repository 的方式顯示；
-位於 repository 之外的會是伺服器的絕對路徑，只提供給 D8 允許的瀏覽器（也就是能按 Start 的瀏覽
-器）：唯讀的瀏覽器會看到一則說明。在 Training 的 run bar 建好之前，選擇就存在 Data Directory
-裡：手動編輯它或按 Reset Default，會移除「in your Training run bar」標記，再次選擇該 workspace
-會重新填入欄位。
+**Use for training ›** 會打開 Research › Training，並在它的 run bar 中選好該 workspace，只對
+這個瀏覽器分頁有效。伺服器上什麼都不會改變；Start 仍是 D8 檢查的控制項。不可訓練的 workspace
+無法使用。在 run bar 中改選另一個資料集，「in your Training run bar」標記會隨之移到那一個。
 
 這個頁面上沒有任何操作者控制項：它只讀取 workspace 的小型 JSON 檔案，從不開啟 checkpoint，因此
 唯讀的瀏覽器看到的是同樣的頁面。沒有設定 `SHEPHERD_WORKSPACES_ROOT` 時，頁面會說明這一點。資料集
 仍在伺服器上以 CLI 建置（`scripts/build_knowledge_graph.py`、`scripts/preprocess_data.py`）。
+
+### Research › Prepare › Training
+
+Training Console 現在是分成三部分的一個頁面：上方橫跨整頁的 run bar、左側下一次 run 的參數
+（或取而代之的 Continue… 抽屜），以及右側的 run 檢視。訓練的執行方式沒有改變；改變的是頁面
+選擇資料集與顯示 run 的方式。
+
+**run bar** 永遠不捲動：
+
+- **Dataset**：伺服器的 workspace 清單，與 Datasets 的相同；每個選項列出 workspace 名稱、
+  資料集指紋的前 12 個十六進位數字與來源。選擇一個時會讀取它的 manifest 與紀錄，旁邊的 chip
+  顯示建置時間、資料集指紋（Copy 會複製完整的 64 個）、`synthetic`、紀錄是否通過驗證，以及
+  **Details ›**（manifest 綁定的內容、種子與數量、來源、相對於 workspace 根目錄的路徑、
+  **All datasets ›**）。頁面打開時選的是 Datasets 的 **Use for training ›** 所選的 workspace，
+  否則是這個分頁先前的選擇，否則是執行中工作的，否則是 serving 讀取的那一個（它可訓練時），
+  否則是第一個可訓練的。訓練工作執行期間，選單會停用並顯示該工作的資料集：「in use by the
+  running job」。
+- **狀態標籤**：`Idle`、`Starting`、`RUNNING · epoch 12/100 · batch 340/812 · 00:14:32`、
+  `Stopping`、`Completed`、`Stopped`（灰色）或 `FAILED`（紅色）。失敗或停止的 run 永遠不會是
+  綠色。
+- **Run name**，接著是**一行原因**，說明某個動作為何停用：「Stop disabled: no training is
+  running.」、對唯讀瀏覽器顯示 D8 的原因（「Operator controls only: request not local」），或
+  占用 GPU 的工作（「GPU job: test run (…) · Open Test ›」、「GPU job: train_model.py (CLI,
+  pid …, since …)」）。
+- **🔒 Start、🔒 Continue…、🔒 Stop。** Stop 會先詢問：「Stop training now? The last saved
+  checkpoint is from epoch N (last.pt). Progress since then is lost; you can continue from
+  epoch N.」，按鈕為 **■ Stop training** 與 **Keep training**。
+- **Start 會送出 chip 顯示的資料集指紋**，job runner 在做任何事之前會再讀一次 manifest：若
+  workspace 在這段時間內重建過，什麼都不會寫入或啟動，頁面會顯示「Not started: The dataset
+  changed since it was shown; select it again. Nothing was started.」。API 以選用的查詢參數
+  提供同樣的檢查，`POST /api/v1/training/start?expected_dataset_fingerprint=<64 個十六進位數字>`：
+  manifest 不同時以 409 拒絕，不是 64 個小寫十六進位數字的值在到達服務之前就以 422 拒絕；沒有
+  這個參數時與以前一樣不做檢查。
+- 失敗的 run 的**錯誤橫幅**橫跨整頁，附上 run 與其輸出的最後幾行；Dismiss 會在這個瀏覽器分頁
+  中隱藏它。
+
+**參數，「for the next run」**：欄位、分組、預設值與驗證都與以前相同，Basic 展開，Advanced 與
+Expert 收合。**Data Paths 與它的 Save Path 已移除**：workspace 由 run bar 選擇，儀表板不再
+讀取或寫入伺服器工作目錄中的 `.shepherd_training_config.json`（留在那裡的檔案會被忽略；是否
+提供「Save as the default dataset」是擁有者要決定的問題）。三個分組放不進視窗時（1920 × 1080
+放得下），參數在自己的欄內捲動；run bar 與圖表永遠不捲動。
+
+**Continue…** 會打開一個取代參數欄的抽屜：run bar 所選 workspace 的 checkpoint，最新的在前
+（伺服器的清單：列出時會開啟每個 checkpoint，所以是操作者控制項），或手動輸入的路徑。
+**Check checkpoint** 顯示繼續訓練會做什麼，並比較 parent 記錄的資料集指紋與 workspace 目前的
+指紋：相同時為 ✓，不同時為琥珀色（附上相符的已列出 workspace，或「matches no listed
+workspace」）。抽屜打開期間，run bar 顯示 Start（停用：「close Continue… to start a new
+run」）、**🔒 Continue Training**（資料集不同時停用，並附原因）與 **Cancel**。從清單選的
+checkpoint 會在伺服器的清單中重新找到，並以位元組比對清單所列的 digest（「The checkpoint
+changed since it was listed; refresh the list.」）；job runner 與訓練行程在啟動時仍會檢查
+一切。
+
+**run 檢視**顯示 job runner 最後啟動的 run；伺服器啟動後還沒有啟動過時，顯示 run bar 所選
+workspace 最新的 run。標題列出 run 名稱與這個 run 使用的資料集指紋，從它的 checkpoint 讀取：
+「✓ same as the run bar」、琥珀色的「≠ not the selected dataset」，或還沒有 checkpoint 時的
+「recorded at the first checkpoint」。快照句說明 run 如何結束，以及可從哪個 checkpoint 繼續，
+路徑相對於 workspace 根目錄。下方是一張共用 epoch 軸的四格圖：Loss（train，以及以虛線表示的
+validation）、MRR（validation，Trainer top-20）、Hits@K（validation，Trainer），以及對數軸的
+learning rate（0 或缺少的值為空隙）。圖下是資源列（GPU 與記憶體）。
+
+- **縮放與平移**：在圖上滾動滾輪會以指標為中心縮放；在 epoch 軸上只縮放 epoch（四張圖一起），
+  在數值軸上只縮放該圖的數值。拖曳可平移；雙擊或 **Reset view** 會重新容納全部資料；+ 與 −
+  可縮放。圖表取得焦點時：+ − x X y Y、方向鍵、0 與 End。新的 epoch 到來時、切換頁面時，以及在
+  同一個瀏覽器分頁中重新載入時，檢視範圍都會保留（最近顯示的 20 個 run）；縮放中時，
+  「N new epochs →」會以相同寬度跳到最新的 epoch。在窄視窗中滾輪捲動的是頁面，圖表上方的說明
+  會告訴你如何縮放。
+- **Export CSV** 由瀏覽器把 run 的 metrics log（epoch、split 與每個記錄的值）存成
+  `training_metrics_<architecture>_<run>.csv`。
+- 圖表經由頁面自己的 server function 讀取 run 的 metrics log，只針對伺服器列出的 run（從不
+  使用路徑），而且只在有新資料列時讀取。頁面顯示期間每 1.5 秒重新讀取一次，在其他頁面時完全
+  不讀。圖表函式庫是 uPlot 1.6.32，由儀表板自己提供（`src/webui/static/vendor/uplot-1.6.32/`，
+  MIT）；沒有任何東西來自 CDN。
+
+**唯讀的瀏覽器**看到同一個頁面，每個動作都停用並附上 D8 的原因，而且不會為它開啟任何
+checkpoint：run 標題顯示「not shown · reading the checkpoint is an operator control」，快照句
+只給出 run 的狀態，也不顯示 parent 清單。metrics、圖表與資料集紀錄對它的讀取方式與對操作者
+相同。
 
 ### Research › Evaluate › Test
 

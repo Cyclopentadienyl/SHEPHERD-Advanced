@@ -20,6 +20,8 @@ from __future__ import annotations
 import inspect
 import json
 
+from pathlib import Path
+
 import pytest
 
 gr = pytest.importorskip("gradio")
@@ -444,7 +446,7 @@ GATED_HANDLERS = {
     "src.webui.components.runtime_settings": ("_on_restart", "_on_apply"),
     "src.webui.components.training_console": (
         "_on_start", "_on_stop", "_on_resume", "_on_check_continue", "_refresh_checkpoints",
-        "_save_training_config"),
+        "_save_training_config", "_on_stop_request", "_on_continue_open"),
 }
 
 
@@ -575,6 +577,11 @@ def spies(monkeypatch, tmp_path):
     monkeypatch.setattr(training_manager, "stop_training",
                         recorder("stop_training", {"success": False, "error": "spy"}))
     monkeypatch.setattr(training_manager, "get_checkpoints", recorder("get_checkpoints", []))
+    from src.api.services import server_lists
+
+    monkeypatch.setattr(server_lists, "list_checkpoints",
+                        recorder("list_checkpoints", server_lists.Listing(())))
+    monkeypatch.setattr(training_manager, "latest_snapshot", recorder("latest_snapshot", None))
     monkeypatch.setattr(training_manager, "preview_continuation",
                         recorder("preview_continuation", {"ok": False, "reason": "spy"}))
     monkeypatch.setattr(tc, "TRAINING_CONFIG_FILE", tmp_path / "training.json")
@@ -589,17 +596,23 @@ def _dashboard_calls():
     from src.webui.components import training_console as tc
 
     path = tc.CONTINUE_FROM_PATH
+    # The Training page's handlers take the session's state (its run-bar
+    # workspace, the drawer, the parent list): a fresh API session has no
+    # dataset selected, so Start, Continue…, Continue Training and the parent
+    # list stop before their service when allowed (no service, `None`), and
+    # say so; refused, they say "Refused" as the others do.
     return [
         (dp._on_change_model, [], None),
         (rs._on_restart, [], "restart"),
         (rs._on_apply, ["cuda_async", False], "save_runtime_settings"),
-        (tc._on_start, None, "start_training"),
-        (tc._on_stop, [], "stop_training"),
-        (tc._refresh_checkpoints, ["/srv/ws", "gat"], "get_checkpoints"),
-        (tc._on_check_continue, [path, None, "/srv/x.pt", "cpu", None], "preview_continuation"),
-        (tc._on_resume, ["/srv/ws", "", "cpu", path, None, "/srv/x.pt", None],
+        (tc._on_start, None, None),
+        (tc._on_stop, [{}], "stop_training"),
+        (tc._on_stop_request, [{}], "latest_snapshot"),
+        (tc._on_continue_open, [{}, {}], None),
+        (tc._refresh_checkpoints, [{}, {}, None], None),
+        (tc._on_check_continue, [path, None, "/srv/x.pt", "cpu", None, {}, {}, {}],
          "preview_continuation"),
-        (tc._save_training_config, ["/srv/ws"], None),
+        (tc._on_resume, [{}, "cpu", path, None, "/srv/x.pt", None, {}, {}], None),
     ]
 
 
@@ -623,9 +636,8 @@ def test_a_direct_call_to_a_gated_event_meets_the_same_refusal(
             said = json.dumps(outputs, ensure_ascii=False)
             if fn.__name__ == "_refresh_checkpoints":
                 # A list cannot hold a sentence: it is emptied, and the
-                # refusal is the notice beside it.
-                assert outputs == [{"__type__": "update", "choices": [], "value": None}]
-                said = spies.pop()
+                # refusal is the note beside it.
+                assert {"__type__": "update", "choices": [], "value": None} in outputs
             assert "Refused: " in said, fn.__name__
     assert spies == [], "a refused event reached a service"
     assert not (tmp_path / "training.json").exists()
@@ -644,7 +656,8 @@ def test_a_direct_call_from_an_operator_on_loopback_reaches_each_service(
                 reached = [name for name in spies[len(before):]
                            if not name.startswith("warning: ")]
                 assert reached == [service], fn.__name__
-    assert json.loads((tmp_path / "training.json").read_text()) == {"data_dir": "/srv/ws"}
+            else:
+                assert spies[len(before):] == [], fn.__name__
 
 
 # --------------------------------------------------------------------------- CORS and uploads
@@ -666,17 +679,19 @@ def test_no_cross_origin_browser_access_is_granted(dashboard_app, base_url, monk
         assert preflight.status_code == 400
         assert "access-control-allow-origin" not in preflight.headers
     with _dashboard_client(dashboard_app, base_url) as client:
-        # A real file= download: the Training Console's metrics export.
-        from src.api.services.training_manager import training_manager
+        # A real file= download: a file in Gradio's own temporary directory,
+        # where a download (Diagnosis' exports) is placed. (The Training
+        # page's Export CSV is saved by the browser from a server function
+        # since M5-2, with no file on the server.)
+        import gradio.utils
 
-        monkeypatch.setattr(training_manager, "get_metrics_history",
-                            lambda: {"train": [{"epoch": 0, "total": 1.5}], "validation": []})
-        dashboard = _Dashboard(client, dashboard_app)
-        export = next(getattr(d.fn, "__wrapped__", d.fn) for d in dashboard.blocks.fns.values()
-                      if (d.api_name or "").startswith("_handle_export"))
-        (output,) = dashboard.call(export, [])
-        url = output.get("value", output)["url"]
-        path = url[url.index("/ui/gradio_api/file="):]
+        folder = Path(gradio.utils.get_upload_folder())
+        folder.mkdir(parents=True, exist_ok=True)
+        import uuid
+
+        exported = folder / f"cors-probe-{uuid.uuid4().hex}.csv"
+        exported.write_text("epoch,split,total\n1,train,1.5\n")
+        path = f"/ui/gradio_api/file={exported}"
         for url in ("/ui/config", path):
             response = client.get(url, headers=foreign)
             assert response.status_code == 200, url

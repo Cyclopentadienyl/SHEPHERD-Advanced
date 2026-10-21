@@ -206,9 +206,10 @@ def test_on_page_open_runs_on_its_own_tab_for_a_first_level_page():
 
 
 def test_every_gated_act_is_followed_by_the_chips_read(built):
-    """Training Start, Continue, Stop, Check checkpoint, Save Path and the run
-    list's Refresh, Diagnosis' Change model… (it lists checkpoints), Settings
-    Apply and Restart: each act's chain reads the chips again."""
+    """Training Start, Continue…, Continue Training, Stop (asking and
+    confirming), Check checkpoint and the parent list's Refresh, Diagnosis'
+    Change model… (it lists checkpoints), Settings Apply and Restart: each
+    act's chain reads the chips again."""
     from src.webui.components.chips import read_chips
 
     demo, _ctx = built
@@ -226,14 +227,15 @@ def test_every_gated_act_is_followed_by_the_chips_read(built):
         return False
 
     names = {"_on_start", "_on_stop", "_on_resume", "_on_change_model",
-             "_on_apply", "_on_restart", "_on_check_continue", "_save_training_config"}
+             "_on_apply", "_on_restart", "_on_check_continue", "_on_stop_request",
+             "_on_continue_open"}
     acts = [fn for fn in by_id.values() if fn.name in names
             or getattr(getattr(fn.fn, "__wrapped__", None), "__name__", None) in names]
     found = {fn.name if fn.name in names else fn.fn.__wrapped__.__name__ for fn in acts}
     assert found == names
     for fn in acts:
         assert chain_reads_chips(fn), fn.name
-    # the run list's Refresh (its conv_type listener refreshes on the slow timer)
+    # the Continue drawer's parent list Refresh
     from src.webui.components import training_console as tc
 
     refreshes = [fn for fn in by_id.values() if fn.fn is tc._refresh_checkpoints]

@@ -13,8 +13,10 @@ through Starlette's TestClient and checks what a browser and a script see:
 - the route guard: ``process_recording`` and ``upload`` are refused without
   their body being read (no temporary file), every URL form of ``file=`` is
   refused without any fetch, each refusal is in the request log, and a real
-  export (the Training Console's Export Metrics CSV, through Gradio's own API)
-  still downloads with GET, HEAD and Range.
+  download (a file in Gradio's own temporary directory, where the dashboard's
+  downloads are placed) still downloads with GET, HEAD and Range. (The Training
+  page's Export CSV is saved by the browser from a server function since M5-2,
+  so it puts no file there.)
 
 **In a fresh interpreter.** `src.api.main` mounts the dashboard at import, and
 `src.webui` imports the API package back (its components use the API's
@@ -59,7 +61,6 @@ import src.api.main as main          # the service's own import order
 import gradio.routes as gradio_routes
 from fastapi.responses import PlainTextResponse
 from fastapi.testclient import TestClient
-from src.api.services.training_manager import training_manager
 
 URL_FORMS = json.loads(sys.argv[1])
 result = {"errors": {}}
@@ -103,11 +104,6 @@ async def counted(scope, receive, send):
 def files(path):
     return sorted(str(p) for p in pathlib.Path(path).rglob("*") if p.is_file())
 
-
-training_manager.get_metrics_history = lambda: {
-    "train": [{"epoch": 0, "total": 1.5}, {"epoch": 1, "total": 1.2}],
-    "validation": [{"epoch": 0, "val_loss": 1.7}],
-}
 
 with TestClient(counted) as client:
     try:
@@ -183,15 +179,12 @@ with TestClient(counted) as client:
         result["errors"]["upload"] = repr(exc)
 
     try:
-        info = client.get("/ui/gradio_api/info").json()
-        api_name = [n for n in info["named_endpoints"] if n.startswith("/_handle_export")][0][1:]
-        event_id = client.post(f"/ui/gradio_api/call/{api_name}",
-                               json={"data": []}).json()["event_id"]
-        stream = client.get(f"/ui/gradio_api/call/{api_name}/{event_id}").text
-        data = [ln[len("data: "):] for ln in stream.splitlines() if ln.startswith("data: ")]
-        output = json.loads(data[-1])[0]
-        file_data = output.get("value", output)
-        path = file_data["url"][file_data["url"].index("/ui/gradio_api/file="):]
+        temp_dir = pathlib.Path(os.environ["GRADIO_TEMP_DIR"]) / "export-probe"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        exported = temp_dir / "metrics.csv"
+        exported.write_text("epoch,split,total,val_loss\n1,train,1.5,\n1,validation,,1.7\n")
+        file_data = {"path": str(exported)}
+        path = f"/ui/gradio_api/file={exported}"
         get, head = client.get(path), client.head(path)
         ranged = client.get(path, headers={"Range": "bytes=0-4"})
         result["export"] = {

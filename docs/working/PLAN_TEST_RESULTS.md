@@ -1593,7 +1593,33 @@ contract and BACKLOG stay the record, and no new planning document is added.
     from the server list; its controls in a top run bar; the dataset identity shown at all
     times; a start refused when that dataset changed after it was shown; and the metric charts
     replaced by zoomable ones, with the Epoch Window removed. Its parameter fields are not
-    redesigned;
+    redesigned; *as implemented (M5-2, 2026-10-21):* `src/webui/components/training_console.py`,
+    one page under the shell's contract. A run bar that never scrolls: the Dataset select over
+    the server's workspace list (the shared option label and dataset identity, a "Details ›"
+    popover with the full fingerprint, what the manifest binds and the path relative to the
+    workspace root), disabled and showing the running job's dataset while a training job runs;
+    the status pill (never green for a failed or stopped run); one reason line (D8's short words,
+    or the GPU job from the job runner and the lock's holder record, with "Open Test ›" for a
+    test run); 🔒 Start, 🔒 Continue… and 🔒 Stop with the code's stop confirmation; a failed
+    run's banner with its output tail. **Start sends the full dataset fingerprint the session
+    showed**, and `TrainingManager.start_training(…, expected_dataset_fingerprint=…)` reads the
+    manifest again through its one reader and refuses another one ("The dataset changed since
+    it was shown; select it again.") before a parent is read, a run named or anything written
+    or started; the API route takes the same check as an optional query parameter (409 on a
+    mismatch, 422 for a value that is not a full lowercase SHA-256), through the same service
+    call. The Data Paths section, its gated Save Path and the startup read of
+    `.shepherd_training_config.json` are gone; the gated save function stays unused (nothing
+    else calls it) for the owner's question "Save as the default dataset". "Continue…" is a
+    drawer over the parameters: the run bar's workspace's checkpoints from the server's list (D8,
+    since listing opens them) or a typed path, the one check, the parent's recorded dataset
+    fingerprint against the workspace's current one, and Continue Training disabled with the
+    reason while they differ. The run view shows the job runner's latest run, or the run bar's
+    workspace's latest: the used dataset fingerprint from its checkpoint (operators only; a
+    read-only request is told why it is not shown), the snapshot sentence, the shared chart
+    figure and the resources line. The page keeps its state in `gr.State` (the selection, the
+    drawer, the last values sent, the dismissed banners) and is refreshed by the shell's timers
+    (`queue=False`, no work while another page is shown), sending only what changed. The Datasets
+    page's temporary bridge into the old Data Directory is deleted;
   - **added at the owner's request (2026-10-19):**
     - **navigation in two levels**: "Diagnosis (clinical)" and "Research (pre-clinical)";
       under Research one row of tabs in two labelled groups, Prepare (Datasets, Training) and
@@ -1699,11 +1725,29 @@ contract and BACKLOG stay the record, and no new planning document is added.
       Gradio 5.29.1 nor 6.30.0 does this with its own components (tested in a browser: the
       native plots have no wheel or Y zoom, and `gr.Plot` rebuilds the chart on every data
       change), so a small vendored chart library (uPlot, MIT) with the project's own interaction
-      code is used, loading nothing from the network;
+      code is used, loading nothing from the network; *as implemented (M5-2, 2026-10-21):*
+      uPlot 1.6.32, byte-identical to its npm tarball with its licence and a README of digests
+      (`src/webui/static/vendor/uplot-1.6.32/`, a test checks each sha256 and that each file is
+      served), and one chart component: a Python builder (`src/webui/components/charts.py`,
+      one `gr.HTML` with a static template, its scripts only in that component's `head=`) and
+      one script (`src/webui/static/js/shep_charts.js`, `window.ShepCharts`) taking curve
+      groups as data, colours by label, the second series also dashed. The value is a small
+      token (the run and its row count); the data comes through the component's server function
+      for a run the server lists (never a path), rounded to about six significant digits, and
+      only when the token changed. The four charts share one epoch view and keep one value view
+      each; the view is kept per run in the browser tab across refreshes, page switches and a
+      reconnect reload, and while zoomed during a live run a button counts the new epochs. Two
+      uPlot 1.6.32 defects are worked around in our code (log-axis ticks for a minimum that is
+      not a power of ten; a locale `Intl` refuses), as is its leaked mouse listener. Checked in a
+      browser with controlled metrics: the gestures, a zoomed view held through polling, a
+      changing series set, a re-mount and a server restart, and a log grown to 5000 epochs with
+      flat listener, chart, canvas and observer counts;
     - **the Epoch Window's two defects** fixed with its removal: returning to "All" never
       cleared the locked range (Gradio drops `x_lim=None` from an update), and the refresh
       cache shared by every browser session left a reloaded page or a second browser showing
-      "IDLE" and empty charts.
+      "IDLE" and empty charts. *As implemented (M5-2, 2026-10-21):* the Epoch Window is
+      removed, and the poll cache, the banner and the last values sent are each browser
+      session's `gr.State`, so a reloaded page or a second browser shows the real state at once.
     Recorded for later, not in M5: dataset building and management in the WebUI, a release
     designation for diagnosis, model comparison and housekeeping, navigation follow-ups, and
     exporting and importing a model with its dataset (BACKLOG items 29 to 33).

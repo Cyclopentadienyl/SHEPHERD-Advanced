@@ -388,6 +388,15 @@ def _ledger_dir(job: _Job) -> Path:
         return checkpoint.parent
 
 
+def _recorded_dataset(record: Any) -> Optional[str]:
+    """The dataset fingerprint a checkpoint record names
+    (``training_input_digests["split_manifest"]``, as the shared listing reads
+    it, `checkpoint_paths.read_run_checkpoints`), or None."""
+    digests = record.get("training_input_digests") if isinstance(record, dict) else None
+    value = digests.get("split_manifest") if isinstance(digests, dict) else None
+    return value if isinstance(value, str) and _SHA256.fullmatch(value) else None
+
+
 def _signal_name(returncode: int) -> str:
     try:
         return signal.Signals(-returncode).name
@@ -543,6 +552,8 @@ class TrainingManager:
         self,
         config: Dict[str, Any],
         effective_rules: Optional[Callable[[Dict[str, Any]], List[str]]] = None,
+        *,
+        expected_dataset_fingerprint: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Start a training run as a subprocess.
@@ -552,11 +563,27 @@ class TrainingManager:
             effective_rules: for a run continued from a parent, rules checked on
                 the settings the run plan resolves (the API's cross-field
                 rules); a violation is refused with `invalid_settings`.
+            expected_dataset_fingerprint: the full dataset fingerprint (the
+                SHA-256 of the workspace's ``split_manifest.json``) the caller
+                showed when the run was asked for (M5-2: the Training run bar
+                sends the one it displayed; the API takes it as an optional
+                field). The manifest is read again first, and a different one is
+                refused (`dataset_refusal`) before anything is written or
+                started.
 
         Returns:
             Status dict with success/error info. Refused while any GPU job is
             running or stopping, or while the GPU lock is held elsewhere.
         """
+        # The dataset the caller showed, checked first: nothing is read from a
+        # parent, named, written or started for a dataset that changed since.
+        if expected_dataset_fingerprint is not None:
+            refusal = self.dataset_refusal(config.get("data_dir", ""),
+                                           expected_dataset_fingerprint)
+            if refusal:
+                return {"success": False, "error": refusal, "dataset_changed": True,
+                        "status": self.get_job_status_word("training")}
+
         # A run continued from a parent is decided by the parent's record
         # (contract M3a-3): refused here as the training process would refuse
         # it, and placed under the parent's architecture, which it inherits.
@@ -635,6 +662,30 @@ class TrainingManager:
                 "config_path": str(config_path),
                 "run_dir": str(run_dir),
             }
+
+    #: Said when the dataset changed between showing it and starting (M5-2).
+    DATASET_CHANGED = "The dataset changed since it was shown; select it again."
+
+    def dataset_refusal(self, data_dir: str, expected: Any) -> Optional[str]:
+        """Why a run on `data_dir` must not start for a caller that showed the
+        dataset fingerprint `expected`, or None: the workspace's
+        ``split_manifest.json`` is read again through its one reader
+        (`read_split_manifest`) and compared in full. A value that is not a
+        full SHA-256 hexdigest, or a manifest that cannot be read now, is
+        refused too: nothing then says the run would use what was shown."""
+        if not (isinstance(expected, str) and _SHA256.fullmatch(expected)):
+            return ("The dataset fingerprint sent with the start is not a full SHA-256 "
+                    "hexdigest, so the dataset cannot be checked. Nothing was started.")
+        from src.kg.artifacts import read_split_manifest
+
+        try:
+            current = read_split_manifest(self.workspace_path(data_dir)).identity.sha256
+        except (ValueError, OSError) as exc:
+            return (f"{self.DATASET_CHANGED} Its split_manifest.json cannot be read now "
+                    f"({type(exc).__name__}). Nothing was started.")
+        if current != expected:
+            return f"{self.DATASET_CHANGED} Nothing was started."
+        return None
 
     def stop_training(self) -> Dict[str, Any]:
         """
@@ -1153,14 +1204,18 @@ class TrainingManager:
 
         return result
 
-    def get_metrics_history(self) -> Dict[str, Any]:
+    def get_metrics_history(self, run_dir: Optional[Path] = None) -> Dict[str, Any]:
         """
         Read full metrics history from MetricsLogger JSON logs.
+
+        Args:
+            run_dir: the run whose log is read (M5-2: the Training page's run
+                view, a run the server lists); the run started last when None.
 
         Returns:
             Dict with 'train' and 'validation' metric lists.
         """
-        log_file = self._find_latest_log_file()
+        log_file = self.metrics_log_file(run_dir)
         if log_file is None:
             return {"train": [], "validation": []}
 
@@ -1193,11 +1248,19 @@ class TrainingManager:
 
     def _find_latest_log_file(self) -> Optional[Path]:
         """Find the most recently modified training log file."""
-        if self.log_dir is None or not self.log_dir.exists():
+        return self.metrics_log_file()
+
+    def metrics_log_file(self, run_dir: Optional[Path] = None) -> Optional[Path]:
+        """The most recently modified training log file of `run_dir` (the run
+        started last when None), or None. Lists the run's ``logs/`` only."""
+        from src.utils.checkpoint_paths import run_log_dir
+
+        log_dir = run_log_dir(run_dir) if run_dir is not None else self.log_dir
+        if log_dir is None or not log_dir.exists():
             return None
 
         log_files = sorted(
-            self.log_dir.glob("train_*.json"),
+            log_dir.glob("train_*.json"),
             key=lambda p: p.stat().st_mtime,
             reverse=True,
         )
@@ -1239,6 +1302,9 @@ class TrainingManager:
             snapshot = {
                 "checkpoint": str(last),
                 "readable": True,
+                # The dataset the run trained on, as the checkpoint records it
+                # (M5-2: the Training page's run view, for operators).
+                "dataset_fingerprint": _recorded_dataset(record),
                 "completed_epochs": progress.get("completed_epochs"),
                 "target_epochs": (int(stage.get("start_epoch", 0))
                                   + int(stage.get("target_epochs", 0))) if stage else None,
@@ -1306,6 +1372,9 @@ class TrainingManager:
                               + int(stage.get("target_epochs", 0))) if stage else None,
             "architecture": ((record.get("config") or {}).get("model_config") or {}).get(
                 "conv_type"),
+            # The dataset the parent trained on, as it records it (M5-2: the
+            # Continue drawer compares it with the workspace's current one).
+            "dataset_fingerprint": _recorded_dataset(record),
         }
         # The parent's own settings, with the request's fields over them; only
         # the request's fields count as set explicitly, so every other learning

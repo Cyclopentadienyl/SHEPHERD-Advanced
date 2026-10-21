@@ -192,8 +192,9 @@ ALLOWED = {
     ("src/retrieval/backends/base.py", "VectorIndexBase.load", "json.load"):
         (1, _NOT_INPUT.format(what="a retrieval index's id map (build_index.py is outside "
                                     "the pin)")),
-    ("src/webui/components/training_console.py", "_load_training_config", "json.load"):
-        (1, _NOT_INPUT.format(what="saved UI settings")),
+    ("src/webui/components/charts.py", "_versioned", "hashlib.sha256"):
+        (1, _NOT_INPUT.format(what="the dashboard's own chart script, its digest in the "
+                                   "script's URL so a browser never runs an old copy (M5-2)")),
     # --- The deployment probe: identification of files nobody parses there ---
     ("scripts/probe_deployment.py", "snapshot", "file_sha256"):
         (1, _PROBE + "An untouched-directory check (a location check, contract §2 rule "

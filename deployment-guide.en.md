@@ -1630,13 +1630,15 @@ request (`src/api/middleware/gradio_routes.py`):
 
 A refusal is `403` with a one-line reason and `connection: close`. The request body is not
 read, and the request log shows the refusal like any other response. Local downloads are not
-affected: the Training Console's metrics CSV and the Diagnosis tab's CSV and Markdown exports
-download as before, `HEAD` and `Range` requests included.
+affected: the Diagnosis tab's CSV and Markdown exports download as before, `HEAD` and `Range`
+requests included. (Since M5-2 the Training page's Export CSV comes as text through the page's
+own server function and the browser saves it; no file is served for it.)
 
 ### What else changed in the dashboard
 
 - **Training Console charts** look as before (the y axis starts at 0, each series keeps its
-  colour). The Epoch Window now only filters rows; the x axis follows them.
+  colour). The Epoch Window now only filters rows; the x axis follows them. (Replaced in M5-2 by
+  one zoomable figure without an Epoch Window: §4.14, Research › Prepare › Training.)
 - **Runtime Settings** refreshes the restart lock when its tab is opened: Gradio 6 does not run
   a timer in a tab that has not been opened yet. The backend refuses a restart during training
   either way.
@@ -1832,13 +1834,14 @@ and a file, or a label, and the server finds that name in its own list again.
   and D8 offers that only where the operator controls are: it is served as
   `GET /api/v1/workspaces/{name}/checkpoints` (`?architecture=gat`, say, for one architecture)
   behind D8's check (§4.13), and a refused request opens nothing.
-- **The existing checkpoint list** (`GET /api/v1/training/checkpoints` and the Training
-  Console's resume list) reads each file the same way. Each entry gains `sha256`, `validation`,
-  `dataset_fingerprint` and `metadata_problem`, all from the one read. Before, it loaded each
+- **The existing checkpoint list** (`GET /api/v1/training/checkpoints`; since M5-2 the
+  Training page's parent list is the per-workspace list above) reads each file the same way.
+  Each entry gains `sha256`, `validation`, `dataset_fingerprint` and `metadata_problem`, all
+  from the one read. Before, it loaded each
   file without keeping its digest, and dropped a load error without a word. A file that is gone
   by the time it is read (a link whose target was removed) has no size or time to show and is
   left out of this list; it no longer fails the whole list. Since M5-1 D8 checks it like the
-  controls (§4.13), the route and the Training Console's run list alike.
+  controls (§4.13).
 - **Cohort versions** (`GET /api/v1/cohorts`): each version in the registry, by label and the
   SHA-256 of its `cohort.json`, with its role and whether that role offers ordering. It also shows
   its counts, the graph and dataset record it is bound to, and when it was imported. The list
@@ -1909,7 +1912,7 @@ the read-only lists keep working.
 | Where | Controls |
 |---|---|
 | API | `POST /api/v1/pipeline/reload`, `POST /api/v1/pipeline/config`, `POST /api/v1/training/start`, `POST /api/v1/training/stop`, `GET /api/v1/training/checkpoints`, `GET /api/v1/workspaces/{name}/checkpoints` |
-| Dashboard | Diagnosis: Change model… (its list of checkpoints and its Load; since M5-2). ⚙ Settings (Runtime Settings): Restart Backend and Apply Settings. Research › Training (the Training Console): Start, Stop (the confirmed stop), Continue Training, Check checkpoint, the run list (Refresh, and changing the architecture) and Save Path |
+| Dashboard | Diagnosis: Change model… (its list of checkpoints and its Load; since M5-2). ⚙ Settings (Runtime Settings): Restart Backend and Apply Settings. Research › Training: Start, Stop (its confirmation reads the run's last checkpoint), Continue… (it lists the parents), the parent list's Refresh, Check checkpoint and Continue Training |
 
 The two checkpoint lists, and Check checkpoint, open checkpoint files, which SPEC_4 classes as
 checkpoint inspection (C3), so they are checked like the controls. Research › Test (§4.14)
@@ -2063,7 +2066,7 @@ help control for every field. Nothing an operator sets changed; what moved is wh
 |---|---|
 | **Diagnosis (clinical)** | Patient phenotypes, the results and the selected candidate's details, with the model in use on a card (below). It is the first screen |
 | **Research (pre-clinical)** › Prepare › **Datasets** | The server's workspaces, read-only (below) |
-| **Research (pre-clinical)** › Prepare › **Training** | The Training Console, as before. It is the research page shown first |
+| **Research (pre-clinical)** › Prepare › **Training** | The run bar, the parameters for the next run, Continue… and the run view with its charts (below). It is the research page shown first |
 | **Research (pre-clinical)** › Evaluate › **Test** | Import a cohort version from the server's intake directory, run a test, keep and register its report (below) |
 | **Research (pre-clinical)** › Evaluate › **Models** | The server's checkpoints of a workspace, their recorded test results, ordering by test score and Load (below) |
 | **⚙ Settings**, at the right of the header | Runtime Settings, as before. For a read-only browser, Apply Settings and Restart Backend are greyed out, with the reason written below them |
@@ -2230,19 +2233,100 @@ a path under the root is shown relative to it, any other one reads "a path outsi
 workspaces root", and a refused `SHEPHERD_WORKSPACES_ROOT` is said without its path. The page
 reads the manifests when it is opened, not on each selection.
 
-**Use for training ›** opens Research › Training with that workspace in this browser tab's Data
-Directory (Data Paths is opened to show it). Nothing changes on the server; Start is still the
-control D8 checks. A workspace that is not trainable cannot be used. A workspace inside the
-repository is shown relative to it; one outside it would be an absolute server path, which only a
-browser D8 allows is given (the one that can Start): a read-only browser sees a note instead.
-Until the Training run bar is built, the Data Directory is where the choice lives: editing it by
-hand, or Reset Default, removes the "in your Training run bar" marker, and choosing the
-workspace again fills the field again.
+**Use for training ›** opens Research › Training with that workspace chosen in its run bar, for
+this browser tab only. Nothing changes on the server; Start is still the control D8 checks. A
+workspace that is not trainable cannot be used. Choosing another dataset in the run bar moves the
+"in your Training run bar" marker to it.
 
 Nothing on this page is an operator control: it reads the workspaces' small JSON files, never a
 checkpoint, so a read-only browser sees the same page. With `SHEPHERD_WORKSPACES_ROOT` unset,
 the page says so. Datasets are still built on the server with the CLI
 (`scripts/build_knowledge_graph.py`, `scripts/preprocess_data.py`).
+
+### Research › Prepare › Training
+
+The Training Console is now one page in three parts: the run bar across the top, the parameters
+for the next run on the left (or the Continue… drawer in their place), and the run view on the
+right. How training runs did not change; what changed is how the page picks the dataset and shows
+a run.
+
+**The run bar** never scrolls:
+
+- **Dataset**: the server's workspace list, the same as Datasets'; each option names the
+  workspace, the first 12 hex digits of its dataset fingerprint and its origin. Choosing one reads
+  its manifest and record, and the chip beside it shows when it was built, the dataset fingerprint
+  (Copy gives all 64), `synthetic`, whether the record is verified and **Details ›** (what the
+  manifest binds, the seeds and counts, the sources, the path relative to the workspaces root,
+  **All datasets ›**). The page opens on the workspace Datasets' **Use for training ›** chose,
+  else this tab's earlier choice, else the running job's, else the one serving reads (when it is
+  trainable), else the first trainable one. While a training job runs, the select is disabled and
+  shows that job's dataset: "in use by the running job".
+- **The status pill**: `Idle`, `Starting`, `RUNNING · epoch 12/100 · batch 340/812 · 00:14:32`,
+  `Stopping`, `Completed`, `Stopped` (grey) or `FAILED` (red). A failed or stopped run is never
+  green.
+- **Run name**, then **one reason line** saying why an action is disabled: "Stop disabled: no
+  training is running.", D8's reason for a read-only browser ("Operator controls only: request
+  not local"), or the GPU job holding the slot ("GPU job: test run (…) · Open Test ›",
+  "GPU job: train_model.py (CLI, pid …, since …)").
+- **🔒 Start, 🔒 Continue…, 🔒 Stop.** Stop asks first: "Stop training now? The last saved
+  checkpoint is from epoch N (last.pt). Progress since then is lost; you can continue from epoch
+  N." with **■ Stop training** and **Keep training**.
+- **Start sends the dataset fingerprint the chip showed**, and the job runner reads the manifest
+  again before anything else: if the workspace was rebuilt in the meantime, nothing is written or
+  started, and the page says "Not started: The dataset changed since it was shown; select it
+  again. Nothing was started." The API takes the same check as an optional query parameter,
+  `POST /api/v1/training/start?expected_dataset_fingerprint=<64 hex digits>`: another manifest is
+  refused with 409, a value that is not 64 lowercase hex digits with 422 before the service is
+  reached; without it nothing is checked, as before.
+- A failed run's **error banner** spans the page, with the run and the last lines of its output;
+  Dismiss hides it for this browser tab.
+
+**Parameters, "for the next run"**: the same fields, groups, defaults and validation as before,
+Basic open, Advanced and Expert closed. **Data Paths and its Save Path are gone**: the workspace
+is the run bar's choice, and the dashboard no longer reads or writes
+`.shepherd_training_config.json` in the server's working directory (a file left there is
+ignored; whether to offer "Save as the default dataset" is an owner question). When the three
+groups do not fit the window (they fit at 1920 × 1080), the parameters scroll inside their
+column; the run bar and the charts never scroll.
+
+**Continue…** opens a drawer in place of the parameters: the checkpoints of the run bar's
+workspace, newest first (the server's list: an operator control, since listing opens every
+checkpoint), or a path typed by hand. **Check checkpoint** shows what continuing would do, and the
+dataset fingerprint the parent recorded against the workspace's current one: ✓ the same, or amber
+when it differs (with the listed workspace it matches, or "matches no listed workspace"). While
+the drawer is open the run bar shows Start (disabled: "close Continue… to start a new run"),
+**🔒 Continue Training** (disabled while the datasets differ, with the reason) and **Cancel**.
+A listed checkpoint is found again in the server's list and its bytes compared with the digest
+listed ("The checkpoint changed since it was listed; refresh the list."); the job runner and the
+training process still check everything at start.
+
+**The run view** shows the run the job runner started last or, before one since the server
+started, the latest run of the run bar's workspace. Its header names the run and the dataset
+fingerprint the run used, read from its checkpoint: "✓ same as the run bar", amber "≠ not the
+selected dataset", or "recorded at the first checkpoint" before there is one. The snapshot sentence
+says how the run ended and the checkpoint to continue from, as a path relative to the workspaces
+root. Below them, one figure of four charts sharing the epoch axis: Loss (train, and validation
+dashed), MRR (validation, Trainer top-20), Hits@K (validation, Trainer) and the learning rate on a
+log axis (a 0 or a missing value is a gap). Under it, the resources line (GPU and memory).
+
+- **Zoom and pan**: the wheel over a chart zooms around the pointer; over the epoch axis it zooms
+  only the epochs (the four charts follow), over a value axis only that chart's values. Drag pans;
+  a double-click or **Reset view** fits the data again; + and − zoom. With a chart focused: + − x
+  X y Y, the arrows, 0 and End. The view stays while new epochs arrive, across page switches and a
+  reload in the same browser tab (for the last 20 runs shown); while zoomed, "N new epochs →"
+  jumps to the latest at the same width. In a narrow window the wheel scrolls the page, and the
+  note above the charts says how to zoom.
+- **Export CSV** saves the run's metrics log (epoch, split and each logged value) from the browser
+  as `training_metrics_<architecture>_<run>.csv`.
+- The charts read the run's metrics log through the page's own server function, for a run the
+  server lists (never a path), and only when it has new rows. The page is read again every 1.5 s
+  while it is shown, and not at all on another page. The chart library is uPlot 1.6.32, served by
+  the dashboard itself (`src/webui/static/vendor/uplot-1.6.32/`, MIT); nothing comes from a CDN.
+
+**A read-only browser** sees the same page with every action disabled and D8's reason, and no
+checkpoint is opened for it: the run header says "not shown · reading the checkpoint is an
+operator control", the snapshot sentence gives only the run's state, and the parent list is not
+shown. The metrics, the charts and the dataset records are read for it as for an operator.
 
 ### Research › Evaluate › Test
 

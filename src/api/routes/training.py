@@ -32,7 +32,7 @@ import logging
 import re
 from typing import Annotated, Any, Dict, List, Literal, Mapping, Optional
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from src.api.operator_access import OPERATOR_ONLY
@@ -258,7 +258,13 @@ class CheckpointInfo(BaseModel):
 # Endpoints
 # =============================================================================
 @router.post("/training/start", response_model=Dict[str, Any], dependencies=OPERATOR_ONLY)
-async def start_training(request: TrainingStartRequest) -> Dict[str, Any]:
+async def start_training(
+    request: TrainingStartRequest,
+    expected_dataset_fingerprint: Annotated[Optional[str], Query(
+        pattern=r"^[0-9a-f]{64}$",
+        description="Refuse the start (409) unless the workspace's dataset fingerprint, the "
+                    "SHA-256 of its split_manifest.json, is still this one")] = None,
+) -> Dict[str, Any]:
     """
     Start a new training run.
 
@@ -268,12 +274,20 @@ async def start_training(request: TrainingStartRequest) -> Dict[str, Any]:
     defaults are the training script's own, and a run continued from a parent
     inherits every learning setting the caller did not set, and refuses one it
     set to another value.
+
+    ``expected_dataset_fingerprint`` (an optional query parameter, M5-2: a
+    precondition on the request, not a training setting, so it is not in the
+    body the training field spec pins) makes the start refuse (409) unless the
+    workspace's split manifest is still the one the caller showed. The
+    dashboard's Start always sends it, through this same service call.
     """
     config = request.model_dump(exclude_unset=True, exclude_none=True)
+    expected = expected_dataset_fingerprint
 
     # A continued run's cross-field rules apply to the settings it will use,
     # resolved from its parent by the shared run plan, inside the service.
-    result = training_manager.start_training(config, effective_rules=cross_field_errors)
+    result = training_manager.start_training(config, effective_rules=cross_field_errors,
+                                             expected_dataset_fingerprint=expected)
     # Each field's own type and range apply to every request, a value repeating
     # the parent's included; omitting a field inherits it.
 
