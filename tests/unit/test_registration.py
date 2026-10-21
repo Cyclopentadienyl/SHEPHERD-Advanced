@@ -1260,6 +1260,44 @@ def test_a_report_nested_too_deeply_to_build_is_refused_not_raised(tmp_path, che
     assert not (checkpoints / "evaluations.json").exists()
 
 
+def test_a_report_nested_too_deeply_is_refused_whatever_the_recursion_limit(tmp_path, checkpoints):
+    """The depth is counted, not recursed: a raised recursion limit (a library
+    may raise it) or a deep caller stack never changes the answer."""
+    import sys
+
+    from src.evaluation.sidecar import MAX_REPORT_DEPTH
+
+    report = _report(tmp_path)
+    deep = json.loads(report.read_text())
+    node = deep["manifest"]["r10"]
+    for _ in range(MAX_REPORT_DEPTH):
+        node["x"] = {}
+        node = node["x"]
+    report.write_text(json.dumps(deep))
+    before = sys.getrecursionlimit()
+    sys.setrecursionlimit(100_000)
+    try:
+        with pytest.raises(RegistrationRefused, match="nests too deeply to be read as a report"):
+            register_report(report, checkpoint=checkpoints / "best.pt", registered_at=WHEN)
+    finally:
+        sys.setrecursionlimit(before)
+    assert not (checkpoints / "evaluations.json").exists()
+
+
+def test_the_nesting_count_stops_exactly_at_its_limit():
+    from src.evaluation.sidecar import _nests_deeper_than
+
+    def nested(levels):
+        value = {}
+        for _ in range(levels - 1):
+            value = {"x": value}
+        return value
+
+    assert not _nests_deeper_than(nested(64), 64)
+    assert _nests_deeper_than(nested(65), 64)
+    assert _nests_deeper_than([[[]]], 2) and not _nests_deeper_than([[[]]], 3)
+
+
 def test_a_later_registration_still_names_a_missing_report_plainly(tmp_path, checkpoints):
     """A registration by hand has no run behind it: a missing report is the
     ordinary refusal, not a run's lost report."""

@@ -501,6 +501,32 @@ def _is_digest(value: Any) -> bool:
     )
 
 
+#: How deep a report may nest, counting each object and list as a level. The
+#: measurement writes 7 or 8; anything near this is a hand edit. Counted, not
+#: recursed, so the refusal never depends on the interpreter's recursion limit
+#: or on how deep the caller's stack already is.
+MAX_REPORT_DEPTH = 64
+
+
+class ReportNestsTooDeeply(RecursionError):
+    """A report nested deeper than `MAX_REPORT_DEPTH`. A `RecursionError`, so the
+    callers that refuse one (`register_report`, the report store's scan) read it
+    the same way as a copy that ran out of stack."""
+
+
+def _nests_deeper_than(value: Any, limit: int) -> bool:
+    stack = [(value, 1)]
+    while stack:
+        node, depth = stack.pop()
+        if depth > limit:
+            return True
+        if isinstance(node, dict):
+            stack.extend((child, depth + 1) for child in node.values())
+        elif isinstance(node, list):
+            stack.extend((child, depth + 1) for child in node)
+    return False
+
+
 def _mapping(value: Any, what: str) -> Dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"{what} is not an object")
@@ -536,6 +562,10 @@ def build_record(report: Dict[str, Any], source_digest: str) -> Dict[str, Any]:
         raise ValueError(
             f"this is a JSON {type(report).__name__}, not a measurement report (an "
             "object with a manifest)"
+        )
+    if _nests_deeper_than(report, MAX_REPORT_DEPTH):
+        raise ReportNestsTooDeeply(
+            f"it nests deeper than {MAX_REPORT_DEPTH} levels, which no measurement writes"
         )
     manifest = report.get("manifest")
     if not isinstance(manifest, dict):
@@ -989,12 +1019,14 @@ __all__ = [
     "KEY_FIELDS",
     "LEDGER_FILENAME",
     "LEDGER_SCHEMA_VERSION",
+    "MAX_REPORT_DEPTH",
     "NON_SEMANTIC_FIELDS",
     "RECORD_COMPARED_FIELDS",
     "RECORD_EXCLUDED_FIELDS",
     "REGIME_FIELDS",
     "REGISTERED_RELATIONS",
     "REGISTRATION_OUTCOMES",
+    "ReportNestsTooDeeply",
     "SCORING_SEMANTICS_FIELDS",
     "SEMANTIC_ARTIFACT_ROLES",
     "SEMANTIC_MANIFEST_FIELDS",
