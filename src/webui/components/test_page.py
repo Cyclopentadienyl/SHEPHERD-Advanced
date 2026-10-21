@@ -2215,14 +2215,16 @@ def create_test_page(ctx: Any) -> None:
             # stays at the panel's foot, above Register, so Add note is in view
             # however long the report (in a short window it takes at most half
             # the panel and scrolls in its own region); narrow, it follows the
-            # report.
+            # report. "What was found" grows to four lines, then scrolls inside
+            # itself, so a long note cannot push Add note out of that region
+            # either (unbounded, eight lines did at every wide size).
             with gr.Column(visible=False, elem_classes=["shep-test-noteform"],
                            elem_id="shep-test-noteform") as note_form:
                 with gr.Row(elem_classes=["shep-test-noterow"]):
                     note_who = gr.Textbox(label="Who", elem_id="shep-test-note-who", max_lines=1,
                                           scale=1, min_width=160)
                     note_what = gr.Textbox(label="What was found", elem_id="shep-test-note-what",
-                                           lines=2, scale=3, min_width=220)
+                                           lines=2, max_lines=4, scale=3, min_width=220)
                 with gr.Row(elem_classes=["shep-test-actions"]):
                     note_btn = gr.Button("🔒 Add note", variant="secondary",
                                          elem_id="shep-test-note-add", scale=0)

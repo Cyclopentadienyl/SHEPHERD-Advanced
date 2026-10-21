@@ -135,3 +135,51 @@ def test_an_unchecked_checkboxs_border_shows_against_its_fill_and_every_backgrou
               "page": tokens["--shep-bg"]}
     for name, colour in around.items():
         assert contrast(_effective(border), colour) >= 3.0, name
+
+
+#: Gradio 6.30's own hover rules for a checkbox and a radio (its frontend
+#: stylesheet): they ignore `disabled`, so a read-only box turned the accent on
+#: hover exactly like one that can be clicked.
+_GRADIO_HOVER = {
+    "checkbox": ".gradio-container-6-30-0 .gradio-style input[type=checkbox]:hover",
+    "radio": ".gradio-container-6-30-0 .gradio-style input[type=radio]:hover",
+}
+
+
+def _specificity(selector: str) -> tuple:
+    """(ids, classes + attributes + pseudo-classes, elements) of a selector
+    without pseudo-elements; `:not(x)` counts as x."""
+    ids = len(re.findall(r"#[\w-]+", selector))
+    classes = (len(re.findall(r"\.[A-Za-z_][\w-]*", selector))
+               + len(re.findall(r"\[[^\]]*\]", selector))
+               + len([p for p in re.findall(r":([\w-]+)", selector) if p != "not"]))
+    elements = len(re.findall(r"(?:^|[\s>+~])([A-Za-z][\w-]*)", selector))
+    return ids, classes, elements
+
+
+def _rules() -> list:
+    css = re.sub(r"/\*.*?\*/", "", style.SHELL_CSS, flags=re.S)
+    return [([part.strip() for part in selectors.split(",")], body)
+            for selectors, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css)]
+
+
+@pytest.mark.parametrize("kind", ["checkbox", "radio"])
+def test_a_disabled_unchecked_box_does_not_answer_hover(kind):
+    """Read-only, a disabled checkbox or radio keeps its resting border and
+    fill on hover (only the not-allowed cursor answers); the stylesheet's rule
+    outranks Gradio's hover rule, which ignores `disabled`. A checked one is
+    left to Gradio's checked look (`:not(:checked)`)."""
+    from pathlib import Path
+
+    gradio_css = "".join(path.read_text(encoding="utf-8") for path in
+                         (Path(gr.__file__).parent / "templates" / "frontend").rglob("*.css"))
+    assert _GRADIO_HOVER[kind] + "{border-color:var(--checkbox-border-color-hover)" in gradio_css
+
+    selector = f".gradio-container input[type={kind}]:disabled:not(:checked):hover"
+    bodies = [body for selectors, body in _rules() if selector in selectors]
+    assert bodies, f"no rule for {selector}"
+    declarations = {name.strip(): value.strip() for name, _, value in
+                    (part.partition(":") for part in ";".join(bodies).split(";")) if name.strip()}
+    assert declarations.get("border-color") == "var(--checkbox-border-color)"
+    assert declarations.get("background-color") == "var(--checkbox-background-color)"
+    assert _specificity(selector) > _specificity(_GRADIO_HOVER[kind])

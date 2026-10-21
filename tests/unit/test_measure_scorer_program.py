@@ -22,7 +22,10 @@ the tests and the deployment probe that call it in process; the script's entry
   and the device's own errors are not converted;
 - a cancel (SIGINT: the job runner's stop) is one line, no KeyboardInterrupt
   traceback, and the process still ends by SIGINT, which is how the runner
-  tells a cancelled run from one that ended on its own.
+  tells a cancelled run from one that ended on its own; what stdout's buffer
+  held is kept. Only the program's entry (`_exit_as_program`) ends the
+  process: an in-process caller of `_run_as_program` (these tests) gets the
+  KeyboardInterrupt back, so a Ctrl+C during them still lets pytest clean up.
 
 Subprocess runs pin the `__main__` wiring, the closed console and the cancel.
 
@@ -602,23 +605,60 @@ def test_run_as_a_program_with_no_stdout_measures_and_exits_0(workspace, tmp_pat
 # ---------------------------------------------------------------------------
 # A cancel: one line, no traceback, and still ended by SIGINT
 # ---------------------------------------------------------------------------
-def test_a_cancel_is_one_line_and_ends_as_cancelled(cli, monkeypatch, capsys):
-    """In process: `main` interrupted is `CANCELLED_LINE` on stderr and
-    `_end_as_cancelled` (which ends the process by SIGINT), not a traceback."""
-    def interrupted(argv=None):
-        raise KeyboardInterrupt
+def _interrupted(argv=None):
+    raise KeyboardInterrupt
 
-    ended = []
-    monkeypatch.setattr(cli, "main", interrupted)
-    monkeypatch.setattr(cli, "_end_as_cancelled", lambda: ended.append(True) or 130)
+
+def test_in_process_a_cancel_is_one_line_and_comes_back_to_the_caller(cli, monkeypatch, capsys):
+    """`_run_as_program` called in process (as these tests call it) and
+    interrupted: `CANCELLED_LINE` once, then the KeyboardInterrupt back to the
+    caller, whose cleanup runs. It never ends the caller's process: that is
+    the program entry's to do. `_end_as_cancelled` is left as it is; only
+    `os.kill` is recorded, so a self-kill fails this test instead of ending
+    pytest."""
+    import signal
+
+    kills = []
+    monkeypatch.setattr(cli, "main", _interrupted)
+    monkeypatch.setattr(os, "kill", lambda pid, sig: kills.append((pid, sig)))
+    previous = signal.getsignal(signal.SIGINT)
     try:
-        status = cli._run_as_program([])
-    except KeyboardInterrupt:
-        pytest.fail("the cancel reached the caller as a KeyboardInterrupt (a traceback)")
-    assert status == 130 and ended == [True]
+        with pytest.raises(KeyboardInterrupt):
+            cli._run_as_program([])
+    finally:
+        handler_after = signal.signal(signal.SIGINT, previous)
+    assert kills == [], "the in-process caller's own process was sent SIGINT"
+    assert handler_after is previous, "the caller's SIGINT handler was changed"
     err = capsys.readouterr().err
     assert _one_line(err, "measure_scorer: cancelled") == cli.CANCELLED_LINE
-    assert "KeyboardInterrupt" not in err
+
+
+def test_the_program_entry_ends_a_cancel_by_sigint_and_passes_a_status_on(cli, monkeypatch,
+                                                                          capsys):
+    """`__main__` is `_exit_as_program()`, the only place a cancel ends the
+    process (`_end_as_cancelled`, which ends it by SIGINT), after the one line;
+    any other outcome is `_run_as_program`'s status, unchanged."""
+    tree = ast.parse(Path(cli.__file__).read_text())
+    entry = [node for node in tree.body if isinstance(node, ast.If)
+             and ast.unparse(node.test) == "__name__ == '__main__'"][-1]
+    assert [ast.unparse(statement) for statement in entry.body] == ["_exit_as_program()"]
+
+    ended = []
+    monkeypatch.setattr(cli, "_end_as_cancelled", lambda: ended.append(True) or 130)
+    monkeypatch.setattr(cli, "main", _interrupted)
+    try:
+        with pytest.raises(SystemExit) as cancelled:
+            cli._exit_as_program([])
+    except KeyboardInterrupt:
+        pytest.fail("the cancel left the program entry as a KeyboardInterrupt (a traceback)")
+    assert cancelled.value.code == 130 and ended == [True]
+    err = capsys.readouterr().err
+    assert _one_line(err, "measure_scorer: cancelled") == cli.CANCELLED_LINE
+
+    monkeypatch.setattr(cli, "main", lambda argv=None: cli.EXIT_NOT_REGISTERED)
+    with pytest.raises(SystemExit) as finished:
+        cli._exit_as_program([])
+    assert finished.value.code == cli.EXIT_NOT_REGISTERED and ended == [True]
 
 
 _CANCELLED_CHILD = """
@@ -627,12 +667,13 @@ sys.path.insert(0, sys.argv[1])
 import scripts.measure_scorer as cli
 
 def measuring(args):
+    print("PRINTED BEFORE THE CANCEL")  # not flushed: stdout is a pipe, block-buffered
     print("MEASURING", file=sys.stderr, flush=True)
     time.sleep(120)
     return 0
 
 cli._run = measuring
-sys.exit(cli._run_as_program(sys.argv[2:]))
+cli._exit_as_program(sys.argv[2:])
 """
 
 
@@ -641,7 +682,10 @@ def test_run_as_a_program_a_cancel_prints_no_traceback_and_ends_by_sigint(tmp_pa
     """The job runner's stop is SIGINT, and it reads a status of "ended by
     SIGINT" as the cancel's doing (`TrainingManager._ended_by_stop`). The run,
     under the GPU lock and its execution settings, is interrupted mid-run: one
-    line, no traceback, and the process ends by SIGINT."""
+    line, no traceback, and the process ends by SIGINT. Stdout is buffered, as
+    on the runner's pipe (no PYTHONUNBUFFERED, which this sandbox sets): what
+    the run printed is still in the job's output, although that ending skips
+    the interpreter's last flush."""
     import signal
     import time
 
@@ -649,7 +693,8 @@ def test_run_as_a_program_a_cancel_prints_no_traceback_and_ends_by_sigint(tmp_pa
 
     script = tmp_path / "child.py"
     script.write_text(_CANCELLED_CHILD)
-    env = {k: v for k, v in os.environ.items() if k not in (LOCK_FILE_ENV, WORKSPACES_ROOT_ENV)}
+    env = {k: v for k, v in os.environ.items()
+           if k not in (LOCK_FILE_ENV, WORKSPACES_ROOT_ENV, "PYTHONUNBUFFERED")}
     child = subprocess.Popen(
         [sys.executable, str(script), str(REPO_ROOT),
          *_generated(tmp_path / "ws", tmp_path / "c.pt", tmp_path / "out" / "m.json")],
@@ -664,7 +709,7 @@ def test_run_as_a_program_a_cancel_prints_no_traceback_and_ends_by_sigint(tmp_pa
                 break
         assert any("MEASURING" in line for line in lines), "".join(lines)
         child.send_signal(signal.SIGINT)
-        _out, rest = child.communicate(timeout=60)
+        out, rest = child.communicate(timeout=60)
     finally:
         if child.poll() is None:
             child.kill()
@@ -674,6 +719,7 @@ def test_run_as_a_program_a_cancel_prints_no_traceback_and_ends_by_sigint(tmp_pa
     assert _one_line(err, "measure_scorer: cancelled") == (
         __import__("scripts.measure_scorer", fromlist=["CANCELLED_LINE"]).CANCELLED_LINE)
     assert "KeyboardInterrupt" not in err
+    assert out.splitlines() == ["PRINTED BEFORE THE CANCEL"], out
 
 
 _LOADING_CHILD = """

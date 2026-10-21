@@ -67,7 +67,7 @@ so a deterministic run is another key (D5).
 beside it, both staged and renamed into place; an existing `--output` is
 replaced, as it always was.
 
-Exit status, run as a program (`_run_as_program`): 0 measured (and, with
+Exit status, run as a program (`_exit_as_program`): 0 measured (and, with
 `--record`, registered or already held); 1 refused before anything was written,
 with one message and no traceback, or measured but the report could not be
 written, with a message saying what may be on disk (or the run failed after
@@ -76,16 +76,19 @@ measured, but not registered: the registration was refused and the report is
 kept, or the report was no longer the one the run published
 (`ReportNotAsPublished`: it may be gone, so it is not called kept); the message
 says which, and `registration.report_state` reads whether it is kept. **A
-cancel** (SIGINT: the job runner's stop, or Ctrl+C) prints one line,
+cancel** (SIGINT: the job runner's stop on POSIX, or Ctrl+C) prints one line,
 `measure_scorer: cancelled ...`, and no traceback, then ends the process by
 SIGINT on POSIX (the signal's default action, raised again once the line is
 printed), so a parent reads "ended by SIGINT" as before; elsewhere it exits
-130. The run unwinds first: a staged file is removed, the GPU lock released,
-nothing more is written, and what it had published stays as it is. A cancel
-while the program's modules still load (`_cancelled_while_loading`) prints the
-same line and ends the same way. `main`
-itself raises its refusals, typed, for the tests and the deployment probe that
-call it.
+130 (on Windows the runner's stop is CTRL_BREAK_EVENT, which this program does
+not catch). The run unwinds first: a staged file is removed, the GPU lock
+released, nothing more is written, and what it had published stays as it is.
+A cancel while the program's modules still load (`_cancelled_while_loading`)
+prints the same line and ends the same way. **Only the program ends itself**
+(`_exit_as_program`, the `__main__` entry): an in-process caller of
+`_run_as_program` (the tests) gets the line and then the KeyboardInterrupt
+back, so its own cleanup runs. `main` itself raises its refusals, typed, for
+the tests and the deployment probe that call it.
 
 **One managed GPU job at a time** (M5): `main` takes the deployment's GPU lock
 (`src/utils/gpu_lock.py`) before the device is resolved or anything is read and
@@ -120,7 +123,10 @@ def _end_as_cancelled() -> int:
     """End the process as the interrupt would have, without its traceback: on
     POSIX, SIGINT again with the default action, so the parent (the job
     runner) reads the exit status as "ended by SIGINT"; elsewhere, 130
-    (128 + SIGINT, the shells' convention)."""
+    (128 + SIGINT, the shells' convention). **Called only where this file runs
+    as the program** (`_exit_as_program`, `_cancelled_while_loading`), never
+    from a function an in-process caller runs: it would end that caller's
+    process, its cleanup and `finally` blocks unrun."""
     if os.name == "posix":
         with contextlib.suppress(OSError, ValueError, AttributeError):
             sys.stderr.flush()
@@ -1637,8 +1643,13 @@ def _run_as_program(argv: Optional[List[str]] = None) -> int:
     traceback; nothing had been written when it was raised. A failure in or
     after publication is neither (`ReportNotWritten`, `FailedAfterPublishing`)
     and is printed in its own words, also with exit 1. A cancel
-    (`KeyboardInterrupt`, from SIGINT) is `CANCELLED_LINE` and the process
-    ends by SIGINT (`_end_as_cancelled`). Anything else keeps its
+    (`KeyboardInterrupt`, from SIGINT) is `CANCELLED_LINE`, printed after
+    stdout is settled, and then **the KeyboardInterrupt goes on to the
+    caller**: `_exit_as_program` ends the process by SIGINT, and an in-process
+    caller (the tests) unwinds as it would from any interrupt, never killed
+    here. Stdout is settled first because that ending skips the
+    interpreter's last flush, which would lose what a pipe's buffer still
+    holds. Anything else keeps its
     traceback -- an out-of-memory error, a regime mismatch -- and `SystemExit`
     (exit 2 for the command line, 1 for the device check) and the status `main`
     returns (3 for a refused registration) pass through as they are; stdout is
@@ -1654,7 +1665,7 @@ def _run_as_program(argv: Optional[List[str]] = None) -> int:
     except KeyboardInterrupt:
         _settle_stdout()
         print(CANCELLED_LINE, file=sys.stderr)
-        return _end_as_cancelled()
+        raise
     except ReportNotWritten as exc:
         print(f"measure_scorer: measured, but the report was not written: {exc}",
               file=sys.stderr)
@@ -1673,5 +1684,18 @@ def _run_as_program(argv: Optional[List[str]] = None) -> int:
     return status
 
 
+def _exit_as_program(argv: Optional[List[str]] = None) -> None:
+    """The program's entry (`__main__`), and the only place a cancel ends the
+    process: `_run_as_program`'s status is the exit status, and its
+    KeyboardInterrupt (the cancel, whose line it has printed) ends the process
+    by SIGINT (`_end_as_cancelled`), so the job runner reads "ended by SIGINT"
+    as the cancel's doing. Raises `SystemExit`."""
+    try:
+        status = _run_as_program(argv)
+    except KeyboardInterrupt:
+        status = _end_as_cancelled()
+    sys.exit(status)
+
+
 if __name__ == "__main__":
-    sys.exit(_run_as_program())
+    _exit_as_program()

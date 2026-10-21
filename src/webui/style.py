@@ -198,6 +198,14 @@ body { color: var(--shep-text); }
   --checkbox-border-color: var(--shep-grey-500);
   --checkbox-border-color-hover: var(--shep-accent);
 }
+/* A disabled checkbox or radio (read-only) does not answer hover: Gradio 6.30's
+   own hover rule (.gradio-style input[type=checkbox]:hover, and radio's) ignores
+   disabled, so it would turn the accent like an enabled one. A checked one keeps
+   Gradio's checked look. */
+.gradio-container input[type=checkbox]:disabled:not(:checked):hover,
+.gradio-container input[type=radio]:disabled:not(:checked):hover {
+  border-color: var(--checkbox-border-color); background-color: var(--checkbox-background-color);
+}
 
 /* ---------------------------------------------------------------- shared pieces */
 .shep-muted { color: var(--shep-muted); }

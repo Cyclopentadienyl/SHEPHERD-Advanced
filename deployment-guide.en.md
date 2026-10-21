@@ -2403,7 +2403,8 @@ and register it. Three panels:
   disagree, the page shows the block, Register is off, and **investigation notes** (who, when,
   what; 🔒 Add note) are listed and kept with the key's reports. A note never lifts the block.
   On a wide screen the note form (Who, What was found, 🔒 Add note) stays at the panel's foot,
-  above Register, so it is in view however long the report.
+  above Register, so it is in view however long the report or the note (What was found grows
+  to four lines, then scrolls inside itself).
   When the notes file cannot be read, the page says so (a note may be missing), never "no
   note is kept".
 

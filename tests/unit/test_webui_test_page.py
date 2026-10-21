@@ -1157,6 +1157,19 @@ def test_add_note_sits_at_the_result_panels_foot_outside_the_scrolling_report():
     assert re.search(r"#shep-test-noteform \{[^}]*max-height: 50%[^}]*overflow: auto", wide)
 
 
+def test_a_long_note_scrolls_inside_what_was_found_and_leaves_add_note_in_view():
+    """"What was found" grows from two lines to at most four, then scrolls
+    inside itself. Unbounded (Gradio's default is 20 lines), an eight-line
+    note filled the note form's region (at most half the panel, wide) and
+    pushed Add note out of it at every wide size, squeezing the report above
+    to its title (measured in the browser at 1400x760, 1536x760, 1920x1080)."""
+    demo, _ctx, _registry = _page_component()
+    by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
+    what = by_id["shep-test-note-what"]
+    assert what.lines == 2
+    assert (what.max_lines or max(what.lines, 20)) <= 4
+
+
 def test_opening_the_import_moves_the_focus_to_the_drawer():
     demo, _ctx, _registry = _page_component()
     current, js = _named(demo, "_on_open_import"), []
