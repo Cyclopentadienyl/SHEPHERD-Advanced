@@ -43,14 +43,18 @@ it is shown, after each diagnosis, after a Load ("served model changed") and on
   checkpoint is an operator control (SPEC_4 C3, D8), so a read-only request
   sees "not shown · reading the checkpoint is an operator control". Only the
   served file is opened, on a queued refresh, once per served model per
-  session (the facts are kept while the served identity is the same); the
-  timer's read never opens a checkpoint;
+  session (what it records is kept while the served identity is the same);
+  the timer's read never opens a checkpoint;
 - the mode chips, only when true: amber "synthetic data", neutral "no SP
   table", red "no trained model" / "GNN not loaded", amber "unverified";
 - "Recorded tests: <state>" from the ledger beside the checkpoint and the
   cohort versions' report stores, by the shared model list's own reader
   (`model_list.recorded_tests_for`): a state, never a number of a result, the
-  same words as the checkpoint's row in "Change model…".
+  same words as the checkpoint's row in "Change model…". The recorded tests and
+  the listed workspaces (which name the datasets) are read again on every
+  queued refresh (Diagnosis shown, a diagnosis, a Load, ↻), so a test recorded
+  in Research › Test shows when Diagnosis is shown again; the timer's read
+  keeps them (it reads the status alone).
 
 **Details** (the identity drawer's "Model in use") is the shared Model Facts
 summary (`renderers.model_facts_html`) of the served checkpoint, with what only
@@ -65,6 +69,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -89,6 +94,14 @@ STATUS_TIMEOUT_SECONDS = 5.0
 TRAINED_NOT_SHOWN = "not shown · reading the checkpoint is an operator control"
 #: Said where it would be before a queued refresh has read it.
 TRAINED_NOT_READ_YET = "not read yet"
+#: The short words the card's Details use for the dataset fingerprint it has
+#: not read, by the trained-on state (the long words are on the Trained on line).
+_FINGERPRINT_NOT_READ = {"not_shown": "not shown", "pending": "not read yet"}
+
+#: The card's own short words for a failed read (the full reason is in the
+#: badge's line and in Details); a reason not listed is shown as it is.
+_CARD_PROBLEM = {STATUS_NOT_READ: "status not read"}
+_TIMED_OUT = re.compile(r"timed out \((?P<seconds>[0-9.]+) s\)")
 
 #: The card's ⓘ (registered by the page as a topic).
 CARD_HELP = (
@@ -97,15 +110,32 @@ CARD_HELP = (
     "(architecture, run, epoch), its model fingerprint, the dataset it records it was trained "
     "on, and the states that change results (synthetic data, no shortest-path table, no "
     "trained model, unverified parts). It is read when the page opens, every 5 s while "
-    "Diagnosis is shown, after each diagnosis, after a model change and with ↻. A read that "
-    "fails or is older than the result shown turns the card grey: what it shows is then the "
-    "last known state, not the current one.",
+    "Diagnosis is shown, after each diagnosis, after a model change and with ↻; the recorded "
+    "tests and the dataset names are read again each time Diagnosis is shown, after each "
+    "diagnosis, after a model change and with ↻. A read that fails or is older than the result "
+    "shown turns the card grey: what it shows is then the last known state, not the current "
+    "one.",
 )
 
 
 # ---------------------------------------------------------------------------
 # Reading the status, with a limit
 # ---------------------------------------------------------------------------
+def card_problem(problem: Any) -> str:
+    """A failed read's reason in the card's few words ("status not read",
+    "timed out (5 s)"), so its state row fits the input column."""
+    text = str(problem or STATUS_NOT_READ)
+    return _CARD_PROBLEM.get(text, text)
+
+
+def problem_sentence(problem: Any) -> str:
+    """A failed read's reason for a sentence in parentheses: "timed out after
+    5 s" (no parentheses inside), else the reason as it is."""
+    text = str(problem or STATUS_NOT_READ)
+    timed_out = _TIMED_OUT.fullmatch(text)
+    return f"timed out after {timed_out.group('seconds')} s" if timed_out else text
+
+
 def read_status_within(seconds: float = STATUS_TIMEOUT_SECONDS,
                        reader: Optional[Callable[[], Tuple[Optional[Dict[str, Any]],
                                                            Optional[str]]]] = None
@@ -259,13 +289,16 @@ def recorded_for(item: Mapping[str, Any], directory: Path, *,
 
 
 def served_facts(status: Mapping[str, Any], *, operator: bool, open_checkpoints: bool,
+                 trained: Optional[Mapping[str, Any]] = None,
                  environ: Optional[Mapping[str, str]] = None) -> Dict[str, Any]:
     """What the card adds to the status, as plain data: the listed workspaces
     (to name datasets), the serving workspace, the served checkpoint as an item
     of its runs, its recorded tests and the dataset it records it was trained
     on. `open_checkpoints` lets the served checkpoint be read (a queued
     refresh of a request D8 allows); otherwise the trained-on dataset is "not read yet"
-    (or "not shown" to a request D8 refuses)."""
+    (or "not shown" to a request D8 refuses). `trained` is what an earlier
+    read of the same served checkpoint found: it is used as it is, and the
+    checkpoint is not opened again."""
     from src.webui.components.served_status import serving_workspace
     from src.webui.components.workspaces import read_workspaces
 
@@ -293,6 +326,8 @@ def served_facts(status: Mapping[str, Any], *, operator: bool, open_checkpoints:
         facts["recorded"] = recorded_for(item, directories[facts["serving"]], environ=environ)
     if not operator:
         facts["trained"] = {"state": "not_shown", "fingerprint": None, "problem": None}
+    elif isinstance(trained, Mapping) and trained.get("state") in ("read", "not_read"):
+        facts["trained"] = dict(trained)
     elif open_checkpoints:
         try:
             facts["trained"] = trained_on_listed(item, environ=environ)
@@ -300,12 +335,12 @@ def served_facts(status: Mapping[str, Any], *, operator: bool, open_checkpoints:
             logger.exception("The checkpoint in use could not be read")
             facts["trained"] = {"state": "not_read", "fingerprint": None,
                                 "problem": "the checkpoint in use could not be read"}
-        if facts["trained"]["state"] == "read":
-            # The same bytes (the full digest matched): the status's own figures
-            # (the pipeline's read) stay; the file adds what only it records.
-            facts["item"] = {**item, "dataset_fingerprint": facts["trained"]["fingerprint"]}
     else:
         facts["trained"] = {"state": "pending", "fingerprint": None, "problem": None}
+    if facts["trained"]["state"] == "read":
+        # The same bytes (the full digest matched): the status's own figures
+        # (the pipeline's read) stay; the file adds what only it records.
+        facts["item"] = {**item, "dataset_fingerprint": facts["trained"]["fingerprint"]}
     return facts
 
 
@@ -348,10 +383,13 @@ def advance(state: Optional[Mapping[str, Any]], status: Optional[Mapping[str, An
     A failed read keeps the last known status (shown grey, never as current).
     A read that finds another served identity than this session's last read
     (`served_key`: every part, and the served workspace) sets the change
-    notice. What the card adds to the status (`served_facts`) is kept while
-    the served identity is the same and the request's D8 answer too, and read
-    again otherwise or when `reread` asks (↻); a trained-on dataset still to
-    be read is read when `open_checkpoints` allows it."""
+    notice. What the card adds to the status (`served_facts`) is read again
+    on every queued refresh (`open_checkpoints`: the listed workspaces, the
+    recorded tests), keeping what the served checkpoint records while the
+    served identity and the request's D8 answer are the same (the file is
+    opened once); ↻ (`reread`) reads that again too. The timer's read
+    (`open_checkpoints` False) keeps them all, as long as the served identity
+    and the D8 answer are the same."""
     facts = facts or served_facts
     new = dict(state) if isinstance(state, Mapping) else new_state()
     new.update(attempt_at=stamp(now), operator=operator, d8_short=d8_short)
@@ -368,12 +406,15 @@ def advance(state: Optional[Mapping[str, Any]], status: Optional[Mapping[str, An
                          "now": r.short_hex(is_sha) if is_sha else _kind_word(served_kind(status)),
                          "same_model": bool(was_sha) and was_sha == is_sha}
     kept = new.get("facts")
-    reuse = (not reread and isinstance(kept, Mapping) and kept.get("key") == key
-             and kept.get("operator") == operator
-             and not (open_checkpoints and (kept.get("trained") or {}).get("state") == "pending"))
+    same = (not reread and isinstance(kept, Mapping) and kept.get("key") == key
+            and kept.get("operator") == operator)
+    if same and not open_checkpoints:
+        found = dict(kept)
+    else:
+        found = facts(status, operator=operator, open_checkpoints=open_checkpoints,
+                      trained=kept.get("trained") if same else None)
     new.update(ok=True, problem=None, good_at=stamp(now), status=dict(status), key=key,
-               facts=dict(kept) if reuse else facts(status, operator=operator,
-                                                    open_checkpoints=open_checkpoints))
+               facts=found)
     return new
 
 
@@ -512,19 +553,20 @@ def body_html(state: Mapping[str, Any], produced_at: Any = None) -> str:
                      'aria-label="Dismiss the change notice">×</button></div>')
     retry = ('<button type="button" class="shep-btn shep-dx-retry" data-key="refresh">'
              '↻ Retry</button>')
+    # The failure in the card's few words (the full reason in its title, the
+    # badge's line and Details), Retry beside it: the row stays on one line
+    # in the 300-370 px column, and "last known" fits the next one.
+    problem = state.get("problem")
+    failed = (f'<div class="shep-dx-state"><span class="shep-tag shep-tag-grey">cannot check'
+              f'</span> <span title="{r.e(problem_sentence(problem))}">'
+              f'{r.e(card_problem(problem))}</span> {retry}</div>')
     if mode == "unknown":
-        parts.append(f'<div class="shep-dx-state"><span class="shep-tag shep-tag-grey">cannot check'
-                     f'</span> <span>{r.e(state.get("problem"))}</span> {retry}</div>'
-                     '<p class="shep-muted">Nothing is known yet about what is served.</p>')
+        parts.append(failed + '<p class="shep-muted">Nothing is known yet about what is served.</p>')
         return '<div class="shep-dx-card-bd shep-dx-card-grey">' + "".join(parts) + "</div>"
     grey = mode in ("cannot_check", "stale")
     if mode == "cannot_check":
-        # Retry beside the failure (as before any read succeeded): the
-        # "last known" row then fits a 320 px column on one line.
-        parts.append(f'<div class="shep-dx-state"><span class="shep-tag shep-tag-grey">cannot check'
-                     f'</span> <span>{r.e(state.get("problem"))}</span> {retry}</div>'
-                     f'<div class="shep-dx-state"><span class="shep-tag shep-tag-grey">last known '
-                     f'{r.e(hhmmss(state.get("good_at")))} · not current</span></div>')
+        parts.append(failed + '<div class="shep-dx-state"><span class="shep-tag shep-tag-grey">'
+                     f'last known {r.e(hhmmss(state.get("good_at")))} · not current</span></div>')
     elif mode == "stale":
         parts.append(f'<div class="shep-dx-state"><span class="shep-tag shep-tag-grey">read '
                      f'{r.e(hhmmss(state.get("good_at")))}</span> <span>older than this result'
@@ -618,6 +660,21 @@ def _insert_after_section(html_: str, section: str, extra: str, closing: str) ->
     return html_[:end] + extra + html_[end:]
 
 
+#: Model Facts' words for a dataset fingerprint the checkpoint does not record.
+_NOT_RECORDED = '<span class="shep-muted">not recorded</span>'
+
+
+def _replace_in_section(html_: str, section: str, old: str, new: str) -> str:
+    """Replace every `old` inside one Model Facts disclosure (found by its
+    ``data-sec``, up to its ``</details>``), and nowhere else."""
+    start = html_.find(f'data-sec="{section}"')
+    if start < 0:
+        return html_
+    end = html_.find("</details>", start)
+    end = len(html_) if end < 0 else end
+    return html_[:start] + html_[start:end].replace(old, new) + html_[end:]
+
+
 def _kv_rows(rows: List[Tuple[str, str]]) -> str:
     return "".join(f'<span class="shep-k">{r.e(k)}</span><span class="shep-v">{v}</span>'
                    for k, v in rows)
@@ -644,15 +701,33 @@ def served_warnings(status: Mapping[str, Any]) -> List[Tuple[str, str]]:
     return found
 
 
+#: The structural comparator's own words (`src.utils.fingerprint.verify_fingerprint`):
+#: its headline before the differences, and its answer for a checkpoint that
+#: records no structural fingerprint (nothing was compared). The tests run the
+#: comparator itself, so a change of its words is seen.
+_STRUCTURE_HEADLINE = "Graph structure differs from the checkpoint's structural fingerprint"
+_STRUCTURE_LEGACY = "Checkpoint does not contain a data fingerprint"
+
+
 def _structure_line(status: Mapping[str, Any]) -> str:
-    warnings = status.get("fingerprint_warnings") or []
+    """The structural fingerprint line: no warnings; not compared (the
+    checkpoint records no structural fingerprint); or what differs, counted
+    without the comparator's own headline."""
+    warnings = [str(w) for w in status.get("fingerprint_warnings") or []]
     gnn = "GNN loaded" if status.get("gnn_ready") else "GNN not loaded (path reasoning)"
     if not warnings:
         return f'<p class="shep-muted">Graph structural fingerprint: no warnings · {r.e(gnn)}</p>'
-    items = "".join(f"<li>{r.e(w)}</li>" for w in warnings[:3])
+    if len(warnings) == 1 and warnings[0].startswith(_STRUCTURE_LEGACY):
+        return (f'<p class="shep-warn"><b>⚠ Graph structure not compared</b> (the checkpoint records '
+                f'no structural fingerprint: legacy format) · {r.e(gnn)}</p>')
+    differences = [w for w in warnings if not w.startswith(_STRUCTURE_HEADLINE)]
+    items = "".join(f"<li>{r.e(w)}</li>" for w in differences[:3])
+    more = (f'<li class="shep-muted">and {len(differences) - 3} more (the server log lists them)'
+            '</li>' if len(differences) > 3 else "")
     return (f'<p class="shep-warn"><b>⚠ Graph structure differs from the checkpoint\'s structural '
-            f'fingerprint</b> ({len(warnings)}; node types and counts, edge-type count and '
-            f'feature sizes compared, not the graph\'s identity) · {r.e(gnn)}</p><ul>{items}</ul>')
+            f'fingerprint</b> ({len(differences)}; node types and counts, edge-type count and '
+            f'feature sizes compared, not the graph\'s identity) · {r.e(gnn)}</p>'
+            f'<ul class="shep-dx-list">{items}{more}</ul>')
 
 
 def _serving_note(status: Mapping[str, Any], facts: Mapping[str, Any],
@@ -752,14 +827,19 @@ def served_facts_html(state: Mapping[str, Any], *, open_section: str = "identity
                                    trained.get("fingerprint") if shown else None))
     html_ = r.model_facts_html(model_facts, open_section=open_section)
     if not shown:
-        # Model Facts reads an unknown trained-on dataset as "not recorded";
-        # here it was not read (D8, or not yet), which is said instead.
+        # Model Facts reads an unknown trained-on dataset as "not recorded"
+        # (in Identity, and twice in Data); here it was not read (D8, or not
+        # yet), which is said instead, everywhere in both sections.
         words = TRAINED_NOT_SHOWN if trained.get("state") == "not_shown" else \
             (TRAINED_NOT_READ_YET if trained.get("state") == "pending"
              else f"not read · {trained.get('problem') or 'not read'}")
-        html_ = html_.replace('<span class="shep-muted">not recorded</span>',
-                              f'<span class="shep-muted">{r.e(words)}</span>', 1)
-        html_ = html_.replace("Trained on not recorded", f"Trained on: {r.e(words)}", 1)
+        short = _FINGERPRINT_NOT_READ.get(trained.get("state"), "not read")
+        html_ = _replace_in_section(html_, "identity", _NOT_RECORDED,
+                                    f'<span class="shep-muted">{r.e(words)}</span>')
+        html_ = _replace_in_section(html_, "data", "Trained on not recorded",
+                                    f"Trained on: {r.e(words)}")
+        html_ = _replace_in_section(html_, "data", _NOT_RECORDED,
+                                    f'<span class="shep-muted">{r.e(short)}</span>')
     html_ = _insert_after_section(html_, "identity", _kv_rows(served_rows), _ID_ANCHOR)
     html_ = _insert_after_section(
         html_, "evidence",
@@ -778,6 +858,7 @@ __all__ = [
     "advance",
     "body_html",
     "card_mode",
+    "card_problem",
     "change_button",
     "change_reason_html",
     "details_visible",
@@ -785,6 +866,7 @@ __all__ = [
     "hhmmss",
     "parse_local",
     "new_state",
+    "problem_sentence",
     "read_status_within",
     "recorded_for",
     "run_blocked",

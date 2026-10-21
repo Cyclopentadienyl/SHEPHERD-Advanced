@@ -2431,12 +2431,14 @@ Matching phenotypes · Paths）。選取一列（點擊，或在聚焦的列上�
 - 只在成立時出現的標籤：`synthetic data`（琥珀色）、`no SP table`、`no trained model` 或
   `GNN not loaded`（紅色）、`unverified`（琥珀色：圖未對照任何 workspace manifest 檢查）；
 - "Recorded tests: <狀態>"（§4.9），它的 › 會打開 Details 的 Evidence；"Details ›"；
-  "🔒 Change model…"。
+  "🔒 Change model…"。紀錄的測試與 workspace 名稱會在每次顯示 Diagnosis、每次診斷後、更換模型後
+  以及按下 ↻ 時重新讀取（每 5 秒的讀取只讀目前服務的內容）：在 Research › Test 記錄的測試，回到
+  Diagnosis 時就會出現。
 
 | 卡片顯示 | 意義 |
 |---|---|
 | "Model changed at HH:MM — was <舊>, now <新>"，附 × | 這次讀取發現的模型（或所服務內容的其他部分）與這個瀏覽器上一次讀取的不同（例如另一個瀏覽器做了 Change model）。× 可關閉它 |
-| 灰色："cannot check · <原因> · Retry"、"last known HH:MM:SS · not current" | 無法讀取目前服務的內容。顯示的是最後已知的狀態，沒有 ✓，標籤為灰色虛線 |
+| 灰色："cannot check · <原因> · Retry"、"last known HH:MM:SS · not current" | 無法讀取目前服務的內容："status not read"（完整原因寫在標記下方那一行與 Details 中）或 "timed out (5 s)"。顯示的是最後已知的狀態，沒有 ✓，標籤為灰色虛線 |
 | 灰色："read HH:MM:SS · older than this result" | 最後一次成功的讀取早於畫面上的結果 |
 | "No model loaded" 與 "🔒 Load a model…" | 沒有設定任何 pipeline。Run Diagnosis 呈灰色且無法點擊：滑鼠指向它，或以 Tab 移到它，會說明原因，下方也寫著 "Disabled: no model loaded. …"。API 用戶端此時提出請求，仍會得到 demo 回答 |
 | "No trained model · path reasoning only" 與紅色標籤 | 服務的是沒有訓練模型的圖。Run Diagnosis 仍可使用，結果帶有 `NO TRAINED MODEL: path-reasoning fallback.` |
@@ -2448,19 +2450,22 @@ use"。不論標記怎麼說，CSV 與報告都保留結果自己的身分。"No
 support for a qualified clinician." 位於結果的底部。
 
 **身分抽屜**蓋在細節面板上，有兩個檢視。"Model in use" 是所服務模型的資料，分五節（Identity，
-附完整 digest 與 Copy；Uses；Data；Evidence；Warnings，永遠展開）、結構 fingerprint 那一行，以及
-通往 Research › Models 完整紀錄的連結。"This result" 只顯示結果本身帶有的內容，每一項與目前使用
-中的對照。"Details ›" 與 "Recorded tests ›" 打開前者，標記打開後者。
+附完整 digest 與 Copy；Uses；Data；Evidence；Warnings，永遠展開）、結構 fingerprint 那一行（列出
+並計數不同之處；checkpoint 沒有記錄結構 fingerprint 時為 "not compared"），以及通往 Research ›
+Models 完整紀錄的連結。"This result" 只顯示結果本身帶有的內容，每一項與目前使用中的對照。
+"Details ›" 與 "Recorded tests ›" 打開前者，標記打開後者；更換模型進行中（確認畫面打開，或正在
+重新載入）時，它們不會蓋掉 Change model 抽屜。
 
 **🔒 Change model…**（操作者控制項）會打開一個蓋住結果與細節的抽屜：workspace 選單（伺服器的
 清單；預設選中正在服務的 workspace）、置頂的 "In use now"、最近四個 run（其餘在 "Show older
 runs"）、選中 checkpoint 的資料、"Compare in Research › Models ›"，以及 "🔒 Load this model" /
 Cancel。Load 只詢問一次（"Reload the pipeline with <12 hex> for every session?"，from → to，
 變更的列會標出），並以伺服器列出的 workspace 與 checkpoint 重新載入 pipeline。它會取代每個瀏覽器
-所服務的內容；已產生的結果保留自己的身分，重新載入期間診斷會等待。確認畫面打開期間以及重新載入
-期間，Run Diagnosis 停用："Disabled: finish or cancel the model change first."。Cancel 或 ×
-關閉抽屜而不重新載入。從 Research › Models 做的 Load 也會更新這張卡片。同一時間只會打開一個
-抽屜。
+所服務的內容；已產生的結果保留自己的身分，重新載入期間診斷會等待。確認畫面打開期間，清單本身的
+底部列會隱藏，讓 from → to 各列與這句話保持在畫面內；"Keep <舊>" 會放棄這次確認。確認畫面打開
+期間以及重新載入期間，Run Diagnosis 停用："Disabled: finish or cancel the model change first."。
+Cancel 或 × 關閉抽屜而不重新載入；重新載入期間抽屜會保持打開，直到顯示其結果（重新載入無法中止）。
+從 Research › Models 做的 Load 也會更新這張卡片。同一時間只會打開一個抽屜。
 
 ### Research › Prepare › Datasets
 

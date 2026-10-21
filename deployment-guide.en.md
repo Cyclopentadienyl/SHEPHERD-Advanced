@@ -2160,12 +2160,14 @@ it: both follow Options, and stay pinned at the panel's bottom when the inputs n
 - chips, only when true: `synthetic data` (amber), `no SP table`, `no trained model` or `GNN not
   loaded` (red), `unverified` (amber: a graph checked against no workspace manifest);
 - "Recorded tests: <state>" (§4.9), whose › opens Details at Evidence; "Details ›"; "🔒 Change
-  model…".
+  model…". The recorded tests, and the workspace names, are read again each time Diagnosis is
+  shown, after each diagnosis, after a model change and with ↻ (the 5-second read reads only what
+  is served): a test recorded in Research › Test shows when you come back to Diagnosis.
 
 | The card shows | Meaning |
 |---|---|
 | "Model changed at HH:MM — was <old>, now <new>" with × | A read found another model, or another part of what is served, than this browser's previous read (another browser's Change model, for example). × dismisses it |
-| grey: "cannot check · <reason> · Retry", "last known HH:MM:SS · not current" | What is served could not be read. The lines shown are the last known state, without ✓, with grey dashed chips |
+| grey: "cannot check · <reason> · Retry", "last known HH:MM:SS · not current" | What is served could not be read: "status not read" (the full reason is in the badge's line and in Details) or "timed out (5 s)". The lines shown are the last known state, without ✓, with grey dashed chips |
 | grey: "read HH:MM:SS · older than this result" | The last good read is older than the result shown |
 | "No model loaded" and "🔒 Load a model…" | No pipeline is configured. Run Diagnosis is greyed out and cannot be clicked: pointing at it, or reaching it with Tab, shows why, and "Disabled: no model loaded. …" is written under it. An API client asking now still gets the demo answer |
 | "No trained model · path reasoning only" and a red chip | A graph is served without a trained model. Run Diagnosis stays on, and the result carries `NO TRAINED MODEL: path-reasoning fallback.` |
@@ -2179,9 +2181,12 @@ qualified clinician." is at the foot of the results.
 
 **The identity drawer** opens over the details panel, with two views. "Model in use" is the
 served model's facts in five sections (Identity, with the full digests and Copy; Uses; Data;
-Evidence; Warnings, always open), the structural-fingerprint line and a link to the full records
-in Research › Models. "This result" shows only what the result carries, each part beside what is
-in use now. "Details ›" and "Recorded tests ›" open the first, the badge the second.
+Evidence; Warnings, always open), the structural-fingerprint line (what differs, counted, or
+"not compared" when the checkpoint records no structural fingerprint) and a link to the full
+records in Research › Models. "This result" shows only what the result carries, each part beside
+what is in use now. "Details ›" and "Recorded tests ›" open the first, the badge the second; while
+a model change is open (its confirmation, or a reload running) they leave the Change model drawer
+in place.
 
 **🔒 Change model…** (an operator control) opens a drawer over the results and the details: the
 workspace select (the server's list; the serving workspace is chosen first), "In use now" on top,
@@ -2190,10 +2195,12 @@ in Research › Models ›", and "🔒 Load this model" / Cancel. Load asks once
 with <12 hex> for every session?", from → to, with the changed rows marked) and reloads the
 pipeline with the workspace and checkpoint the server lists. It replaces what every browser is
 served; results already produced keep their own identity, and diagnoses wait while the pipeline
-reloads. While the confirmation is open, and while the reload runs, Run Diagnosis is disabled:
-"Disabled: finish or cancel the model change first." Cancel or × closes the drawer without
-reloading. A Load from Research › Models refreshes this card too. Only one drawer is open at a
-time.
+reloads. While the confirmation is open the list's own footer is hidden, so the from → to rows
+and that sentence stay in view; "Keep <old>" drops the confirmation. While the confirmation is
+open, and while the reload runs, Run Diagnosis is disabled: "Disabled: finish or cancel the model
+change first." Cancel or × closes the drawer without reloading; while the reload runs the drawer
+stays open until its outcome is shown (a reload cannot be stopped). A Load from Research › Models
+refreshes this card too. Only one drawer is open at a time.
 
 ### Research › Prepare › Datasets
 

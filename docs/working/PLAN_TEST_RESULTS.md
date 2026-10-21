@@ -1640,10 +1640,12 @@ contract and BACKLOG stay the record, and no new planning document is added.
       model, its fingerprint and the dataset the checkpoint records it was trained on (that
       file alone read, only for a request D8 allows and only on a queued refresh; a read-only
       request is told "not shown"), the mode chips only when true and the recorded tests as a
-      state from the ledger. Its states are words, not only colour: a change since this
-      session's last read (dismissable), cannot check and stale (grey, "last known", never
-      current), read-only (Change model… disabled with D8's reason), no model loaded, a graph
-      without a trained model, and a model change open. The results badge compares the
+      state from the ledger (read again on every refresh but the 5 s timer's, so a test
+      recorded since shows when Diagnosis is shown again). Its states are words, not only
+      colour: a change since this session's last read (dismissable), cannot check and stale
+      (grey, "last known", never current), read-only (Change model… disabled with D8's
+      reason), no model loaded, a graph without a trained model, and a model change open (the
+      identity drawer never opens over it). The results badge compares the
       result's whole served identity, part by part, with the card's last read, read again
       after each diagnosis; a failed or older read never shows "Produced by the model in use".
       Change model… is D8 on its own request before the clinical list is read, and the drawer

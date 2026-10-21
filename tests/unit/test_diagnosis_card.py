@@ -17,15 +17,20 @@ Diagnosis: the "Model in use" card and its Details (M5-2, UI-B).
   it is not shown, and nothing is opened;
 - **the session's state**: a failed read keeps the last known status (grey,
   never current); another served identity than this session's last read sets
-  the change notice; what the card adds is kept while the served identity is
-  the same, read again on ↻;
+  the change notice; what the served checkpoint records is kept while the
+  served identity is the same (the file is opened once), read again on ↻; the
+  recorded tests and the listed workspaces are read again on every queued
+  refresh, never kept under a fresh "checked" time; the timer reads the status
+  alone;
 - **the card's states** (current, cannot check, stale, no model, no trained
   model) in words, the mode chips only when true, the recorded tests a state;
+  a failed read's reason in the card's few words, so its row fits the column;
   Run Diagnosis off only for a read that found no model;
 - **Details**: the shared Model Facts with what a served model adds (the
   served graph's and record's digests, the structural fingerprint and GNN
   line, the link to the full records), the trained-on dataset said "not shown"
-  to a read-only request, never "not recorded";
+  to a read-only request and "not read yet" before it is read, never "not
+  recorded", in every section; the structural warnings' list inside its box;
 - **escaped**: a workspace name with markup.
 
 Module: tests/unit/test_diagnosis_card.py
@@ -270,11 +275,35 @@ def test_a_failed_read_keeps_the_last_known_status_grey_and_never_current(root):
     assert card.card_mode(failed) == "cannot_check"
     body = card.body_html(failed)
     assert "cannot check" in body and "timed out (5 s)" in body
+    assert 'title="timed out after 5 s"' in body
     assert "last known 10:14:05 · not current" in body
     assert "verified</span>" not in body          # no ✓ on a last known identity
     assert "Recorded tests: not read" in body
     assert card.time_html(failed) == ""
     assert not card.run_blocked(failed)
+
+
+def test_a_failed_read_says_its_reason_in_few_words_on_the_card(root):
+    """Seen in review: the real reason ("the pipeline status could not be
+    read") wrapped the first grey row to three lines in the 300-320 px column
+    and scrolled the input body at 1707x870. The card says it short; the full
+    reason is in the row's title (and the badge's line and Details)."""
+    from src.webui.components.served_status import STATUS_NOT_READ
+
+    failed = card.advance(_state(root), None, STATUS_NOT_READ, now=NOW, operator=True,
+                          d8_short=None, open_checkpoints=False)
+    body = card.body_html(failed)
+    assert ">status not read</span>" in body and f'title="{STATUS_NOT_READ}"' in body
+    assert f">{STATUS_NOT_READ}<" not in body
+    first_row = body[body.index('class="shep-dx-state"'):body.index("</div>")]
+    assert "cannot check" in first_row and "↻ Retry" in first_row
+    never = card.advance(None, None, STATUS_NOT_READ, now=NOW, operator=True, d8_short=None,
+                         open_checkpoints=False)
+    assert ">status not read</span>" in card.body_html(never)
+    assert f"not current: {STATUS_NOT_READ}." in card.served_facts_html(failed)
+    assert card.card_problem("timed out (5 s)") == "timed out (5 s)"
+    assert card.problem_sentence("timed out (5 s)") == "timed out after 5 s"
+    assert card.problem_sentence(STATUS_NOT_READ) == STATUS_NOT_READ
 
 
 def test_a_read_older_than_the_result_is_stale(root):
@@ -316,7 +345,7 @@ def test_another_served_identity_sets_the_change_notice(root):
     assert "same model" in card.body_html(other)
 
 
-def test_what_the_card_adds_is_kept_while_the_same_thing_is_served(root):
+def test_what_the_checkpoint_records_is_kept_while_the_same_thing_is_served(root):
     calls = []
 
     def facts(status, **kwargs):
@@ -325,18 +354,64 @@ def test_what_the_card_adds_is_kept_while_the_same_thing_is_served(root):
 
     first = card.advance(None, _status(root), None, now=NOW, operator=True, d8_short=None,
                          open_checkpoints=True, facts=facts)
+    assert calls[-1]["trained"] is None
+    # A queued refresh reads the rest again, with what the checkpoint records
+    # carried (the file is not opened again).
     again = card.advance(first, _status(root), None, now=NOW, operator=True, d8_short=None,
                          open_checkpoints=True, facts=facts)
-    assert len(calls) == 1 and again["facts"] == first["facts"]
+    assert len(calls) == 2 and calls[-1]["trained"] == first["facts"]["trained"]
+    assert again["facts"] == first["facts"]
+    # The timer's read keeps it all: no listing, no ledger, no file.
+    ticked = card.advance(again, _status(root), None, now=NOW, operator=True, d8_short=None,
+                          open_checkpoints=False, facts=facts)
+    assert len(calls) == 2 and ticked["facts"] == first["facts"]
+    # ↻ reads the checkpoint again too.
     card.advance(again, _status(root), None, now=NOW, operator=True, d8_short=None,
                  open_checkpoints=True, reread=True, facts=facts)
-    assert len(calls) == 2
+    assert len(calls) == 3 and calls[-1]["trained"] is None
+    # Another D8 answer reads everything again.
+    card.advance(again, _status(root), None, now=NOW, operator=False, d8_short="x",
+                 open_checkpoints=True, facts=facts)
+    assert len(calls) == 4 and calls[-1]["trained"] is None
     # A pending trained-on dataset is read when a queued refresh may open files.
     pending = card.advance(None, _status(root), None, now=NOW, operator=True, d8_short=None,
                            open_checkpoints=False, facts=facts)
     filled = card.advance(pending, _status(root), None, now=NOW, operator=True, d8_short=None,
                           open_checkpoints=True, facts=facts)
     assert filled["facts"]["trained"]["state"] == "read"
+
+
+def test_a_queued_refresh_reads_the_recorded_tests_again_without_opening_the_checkpoint(
+        root, monkeypatch):
+    """Seen in review: a test recorded after the first read (Research › Test)
+    stayed "no ledger" under a fresh "checked HH:MM:SS" when Diagnosis was
+    shown again, after a diagnosis and on the timer, until ↻."""
+    from src.utils import checkpoint_io
+
+    first = _state(root)
+    assert "Recorded tests: no ledger" in card.body_html(first)
+    ledger = root["workspace"] / "runs" / "gat" / RUN / "checkpoints" / "evaluations.json"
+    ledger.write_text("{not json")
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("the checkpoint was opened again")
+
+    monkeypatch.setattr(checkpoint_io, "read_checkpoint", refuse)
+    later = NOW + timedelta(hours=3)
+    # The timer reads the status alone: its answer is the first read's.
+    ticked = card.advance(first, _status(root), None, now=later, operator=True, d8_short=None,
+                          open_checkpoints=False)
+    assert "Recorded tests: no ledger" in card.body_html(ticked)
+    # Diagnosis shown again (a queued refresh, not ↻): the ledger is read again.
+    shown = card.advance(ticked, _status(root), None, now=later, operator=True, d8_short=None,
+                         open_checkpoints=True)
+    body = card.body_html(shown)
+    assert "Recorded tests: ledger not readable" in body and "no ledger" not in body
+    assert "checked 13:14:05" in card.time_html(shown)
+    # What the checkpoint records is kept (it was not opened again).
+    assert shown["facts"]["trained"] == first["facts"]["trained"]
+    assert shown["facts"]["item"]["dataset_fingerprint"] == root["recorded"]
+    assert f">{root['recorded'][:12]}</code>" in body
 
 
 # --------------------------------------------------------------------------- the card's states
@@ -404,12 +479,50 @@ def test_details_add_what_a_served_model_has_to_model_facts(root):
     assert "TRAINED ON A DATASET NO LISTED WORKSPACE HOLDS" in warnings
 
 
+def _section(html, key):
+    start = html.index(f'data-sec="{key}"')
+    return html[start:html.index("</details>", start)]
+
+
 def test_details_for_a_read_only_request_say_not_shown_never_not_recorded(root,
                                                                           no_checkpoint_opened):
     html = card.served_facts_html(_state(root, operator=False))
     assert card.TRAINED_NOT_SHOWN in html
     assert "DATASET NOT RECORDED" not in html
     assert "Trained on not recorded" not in html
+    # Seen in review: the Data section kept "dataset fingerprint not recorded".
+    for key in ("identity", "data"):
+        assert "not recorded" not in _section(html, key), key
+    data = _section(html, "data")
+    assert f"Trained on: {card.TRAINED_NOT_SHOWN}" in data
+    assert 'dataset fingerprint</span> <span class="shep-muted">not shown</span>' in data
+
+
+def test_details_before_the_checkpoint_is_read_say_not_read_yet(root, no_checkpoint_opened):
+    html = card.served_facts_html(_state(root, open_checkpoints=False))
+    for key in ("identity", "data"):
+        assert "not recorded" not in _section(html, key), key
+    data = _section(html, "data")
+    assert f"Trained on: {card.TRAINED_NOT_READ_YET}" in data
+    assert 'dataset fingerprint</span> <span class="shep-muted">not read yet</span>' in data
+    assert "DATASET NOT RECORDED" not in html
+
+
+def test_details_say_not_recorded_when_the_checkpoint_records_no_dataset(root):
+    """"not recorded" stays where it is true: the checkpoint was read and
+    records no dataset fingerprint."""
+    from src.utils.checkpoint_io import write_checkpoint
+
+    run = "20261019-080000_run_0d0d0d"
+    directory = root["workspace"] / "runs" / "gat" / run / "checkpoints"
+    directory.mkdir(parents=True)
+    root["shas"]["model-01.pt"] = write_checkpoint({"checkpoint_kind": "weights", "epoch": 1},
+                                                   directory / "model-01.pt")
+    state = _state(root, status=_status(root, "model-01.pt", run))
+    assert state["facts"]["trained"] == {"state": "read", "fingerprint": None, "problem": None}
+    html = card.served_facts_html(state)
+    assert "not recorded" in _section(html, "identity") and "not recorded" in _section(html, "data")
+    assert "DATASET NOT RECORDED" in html
 
 
 def test_structural_warnings_are_named_for_what_they_compare(root):
@@ -418,6 +531,33 @@ def test_structural_warnings_are_named_for_what_they_compare(root):
     assert "structural fingerprint</b> (1; node types and counts" in html
     assert "not the graph's identity" in html and "Node count mismatch" in html
     assert "KG version mismatch" not in html
+    # The list takes the page's list class (its markers inside the amber box).
+    assert '<ul class="shep-dx-list"><li>Node count mismatch' in html
+
+
+def test_the_structural_line_counts_differences_and_says_when_nothing_was_compared(root):
+    """With the comparator's own answers (`verify_fingerprint`): its headline
+    is not counted or listed as a difference, and a checkpoint with no
+    structural fingerprint (seen in the demo workspace) is "not compared",
+    never "differs"."""
+    from src.utils.fingerprint import verify_fingerprint
+
+    differs = verify_fingerprint(
+        {"data_fingerprint": {"node_types": [], "node_counts": {"gene": 3}, "num_edge_types": 0,
+                              "feature_dims": {}}},
+        {"num_nodes_dict": {"gene": 4}})
+    assert len(differs) == 2                      # the headline and one difference
+    line = card._structure_line(_status(root, fingerprint_warnings=differs))
+    assert "structural fingerprint</b> (1; node types" in line
+    assert line.count("<li>") == 1 and "Node count mismatch for &#x27;gene&#x27;" in line
+    legacy = verify_fingerprint({}, {})
+    line = card._structure_line(_status(root, fingerprint_warnings=legacy))
+    assert "Graph structure not compared</b> (the checkpoint records no structural fingerprint" in line
+    assert "differs" not in line and "compared, not" not in line
+    many = [differs[0]] + [f"Node count mismatch for 't{i}': checkpoint expects 1, current data has 2"
+                           for i in range(5)]
+    line = card._structure_line(_status(root, fingerprint_warnings=many))
+    assert "(5; " in line and line.count("<li>") == 3 and "and 2 more" in line
 
 
 def test_details_open_at_the_section_asked_for(root):

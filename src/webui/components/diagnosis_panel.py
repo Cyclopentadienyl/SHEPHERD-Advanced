@@ -1585,8 +1585,8 @@ def compare_with_served(result: Mapping[str, Any], state: Mapping[str, Any]) -> 
                 "reason": f"The model in use has not been read yet. {keep}"}
     if mode in ("unknown", "cannot_check"):
         return {"state": "unknown", "total": total, "differ": [],
-                "reason": (f"The status read failed ({state.get('problem')}), so \"Produced by the "
-                           f"model in use\" is not shown. {keep}")}
+                "reason": (f"The status read failed ({card.problem_sentence(state.get('problem'))}), "
+                           f"so \"Produced by the model in use\" is not shown. {keep}")}
     if mode == "stale":
         return {"state": "unknown", "total": total, "differ": [],
                 "reason": (f"The status was last read at {card.hhmmss(state.get('good_at'))}, "
@@ -1810,15 +1810,42 @@ def details_footer_html(result: Optional[Mapping[str, Any]], rank: Any) -> str:
             f'{help_button("dx-candidate", "Candidate details")}</div>')
 
 
+#: The page's class that hides a view (`PAGE_CSS`), and the views' own classes
+#: (never empty: Gradio 6.30 ignores an update to no class at all).
+VIEW_OFF = "shep-dx-off"
+_HTML_VIEW = ("shep-html",)     # `shell.plain_html`'s class
+_MD_VIEW = ("shep-dx-md",)
+
+
+def view_update(shown: bool, *classes: str, value: Any = _MISSING, **props: Any) -> Dict[str, Any]:
+    """A view shown or hidden **by a class, never by ``visible``**: in Gradio
+    6.30, ``visible`` unmounts and re-mounts a component (and a column's
+    children), and switching it while the content changes leaves detached
+    page elements behind each time (measured after garbage collection: 77 and
+    114 per switch of the details' and the identity drawer's views, about 200
+    and 600 with each view in a column of its own); a class toggle keeps the
+    component mounted (flat). `classes` are the component's own (its update
+    replaces them all); `value` and `props` are sent only for a view that is
+    shown (a hidden view keeps its last content until it is shown again, with
+    its new content)."""
+    update = {"elem_classes": [*classes] if shown else [*classes, VIEW_OFF]}
+    if shown:
+        if value is not _MISSING:
+            update["value"] = value
+        update.update(props)
+    return gr.update(**update)
+
+
 def details_outputs(result: Optional[Mapping[str, Any]], rank: Any,
                     segment: str = "evidence") -> Dict[str, Any]:
-    """Everything the details panel shows for one candidate and segment."""
+    """Everything the details panel shows for one candidate and segment (each
+    view shown or hidden by `view_update`)."""
     candidate = _candidate(result, rank)
     if candidate is None:
         return {"details_hd": details_header_html(None),
-                "details_seg": gr.update(choices=list(SEGMENTS), value="evidence", visible=False),
-                "details_html": gr.update(value=details_empty_html(), visible=True),
-                "details_md": gr.update(value="", visible=False), "details_ft": ""}
+                "details_seg": view_update(False, "shep-seg"),
+                "details_html": view_update(True, *_HTML_VIEW, value=details_empty_html()),
+                "details_md": view_update(False, *_MD_VIEW), "details_ft": ""}
     segment = segment if segment in _SEGMENT_VALUES else "evidence"
     explanations = bool(result.get("_explanations", True))
     html_: Optional[str] = None
@@ -1835,10 +1862,10 @@ def details_outputs(result: Optional[Mapping[str, Any]], rank: Any,
         html_ = f'<p class="shep-muted">{why}</p>'
     return {
         "details_hd": details_header_html(candidate, _sp_absent(result)),
-        "details_seg": gr.update(choices=segment_choices(candidate), value=segment, visible=True),
-        "details_html": gr.update(value=html_ or "", visible=html_ is not None),
-        "details_md": gr.update(value=explanation if html_ is None else "",
-                                visible=html_ is None),
+        "details_seg": view_update(True, "shep-seg", value=segment,
+                                   choices=segment_choices(candidate)),
+        "details_html": view_update(html_ is not None, *_HTML_VIEW, value=html_),
+        "details_md": view_update(html_ is None, *_MD_VIEW, value=explanation),
         "details_ft": details_footer_html(result, rank),
     }
 
@@ -1938,15 +1965,18 @@ def identity_outputs(view: Mapping[str, Any], state: Mapping[str, Any],
     if not view.get("open"):
         return {"identity_drawer": gr.update(visible=False)}
     on_model = view.get("seg", "model") == "model"
+    # Each view shown or hidden by a class (`view_update`); a hidden one is
+    # not rendered.
     return {
         "identity_drawer": gr.update(visible=True),
         "identity_seg": gr.update(value="model" if on_model else "result"),
-        "id_model": gr.update(value=model_identity_html(state, view.get("section") or "identity")
-                              if on_model else "", visible=on_model),
-        "id_result_md": gr.update(value="" if on_model else result_identity_md(result, state),
-                                  visible=not on_model),
-        "id_result_html": gr.update(value="" if on_model else result_digests_html(result),
-                                    visible=not on_model),
+        "id_model": view_update(on_model, *_HTML_VIEW,
+                                value=model_identity_html(state, view.get("section") or "identity")
+                                if on_model else None),
+        "id_result_md": view_update(not on_model, *_MD_VIEW,
+                                    value=None if on_model else result_identity_md(result, state)),
+        "id_result_html": view_update(not on_model, *_HTML_VIEW,
+                                      value=None if on_model else result_digests_html(result)),
     }
 
 
@@ -2156,10 +2186,16 @@ def select_candidate(result: Any, segment: Any, key: Any) -> Dict[str, Any]:
 
 
 def open_identity(state: Any, result: Any, seg: str = "model",
-                  section: str = "identity") -> Dict[str, Any]:
+                  section: str = "identity", phase: Any = "idle") -> Dict[str, Any]:
     """Details › (Model in use, at Identity), Recorded tests › (at Evidence) or
     the badge (This result): the identity drawer, in the details column's
-    slot; the change-model drawer closes."""
+    slot; the change-model drawer closes. While a model change is open (its
+    confirmation, or a reload running: `phase` not idle) the change drawer
+    stays and the identity drawer does not open: the confirmation, and the
+    reload's outcome, are never hidden behind it (Run Diagnosis says to finish
+    or cancel the change first)."""
+    if phase not in (None, "idle"):
+        return {"change_drawer": gr.update(visible=True)}
     view = {"open": True, "seg": seg, "section": section}
     state = state if isinstance(state, Mapping) else card.new_state()
     return {"identity_view": view, "change_drawer": gr.update(visible=False),
@@ -2196,10 +2232,27 @@ def _on_change_model(request: gr.Request) -> Tuple[Any, ...]:
 
 def close_change(phase: Any) -> Dict[str, Any]:
     """Cancel or ×: the drawer closes and an open confirmation is dropped
-    (nothing was reloaded: the reload runs only on its own button)."""
-    return {"change_drawer": gr.update(visible=False), "plan": None,
-            "confirm": gr.update(visible=False), "confirm_html": "", "list_reason": "",
-            "phase": "idle"}
+    (nothing was reloaded: the reload runs only on its own button). While a
+    reload runs (`phase` "loading") the drawer stays: the reload cannot be
+    stopped, and its outcome must be seen. The confirmation box inside the
+    drawer is reset in a second step (`reset_change`): a response that hides a
+    column and updates a component inside it leaves detached page elements in
+    the browser (Gradio 6.30, measured), so this one changes no component in
+    the drawer; ``change_closed`` tells the second step that it closed."""
+    if phase == "loading":
+        return {"change_drawer": gr.update(visible=True), "change_closed": False}
+    return {"change_drawer": gr.update(visible=False), "plan": None, "phase": "idle",
+            "change_closed": True}
+
+
+def reset_change(closed: Any) -> Dict[str, Any]:
+    """After `close_change` closed the drawer (`closed`), inside the hidden
+    drawer: the confirmation box hidden and emptied, the list's reason
+    cleared. Nothing otherwise."""
+    if closed is not True:
+        return {}
+    return {"confirm": gr.update(visible=False), "confirm_html": "", "list_reason": "",
+            "change_closed": False}
 
 
 # =============================================================================
@@ -2232,6 +2285,7 @@ def create_diagnosis_tab(ctx: Any) -> None:
     selected = gr.State(None)
     card_state = gr.State(card.new_state())
     identity_view = gr.State({"open": False})
+    change_closed = gr.State(False)
 
     with gr.Row(elem_id="shep-dx", elem_classes=["shep-page", "shep-dx"], equal_height=False):
         # --- the input column ------------------------------------------------
@@ -2306,9 +2360,13 @@ def create_diagnosis_tab(ctx: Any) -> None:
                                             elem_id="shep-dx-identity-close",
                                             js_on_load=MODEL_LIST_JS)
             with gr.Column(elem_id="shep-dx-identity-bd", elem_classes=["shep-dx-scroll"]):
+                # The views are shown and hidden by a class, never `visible`
+                # (`view_update`).
                 id_model = plain_html("", elem_id="shep-dx-id-model", js_on_load=MODEL_LIST_JS)
-                id_result_md = gr.Markdown("", visible=False, elem_id="shep-dx-id-result")
-                id_result_html = plain_html("", visible=False, elem_id="shep-dx-id-digests")
+                id_result_md = gr.Markdown("", elem_id="shep-dx-id-result",
+                                           elem_classes=[*_MD_VIEW, VIEW_OFF])
+                id_result_html = plain_html("", elem_id="shep-dx-id-digests",
+                                            elem_classes=[VIEW_OFF])
         with gr.Column(visible=False, elem_id="shep-dx-change",
                        elem_classes=["shep-panel", "shep-dx-drawer"], min_width=0) as change_drawer:
             with gr.Row(elem_classes=["shep-dx-drawer-hd"], elem_id="shep-dx-change-hd"):
@@ -2358,14 +2416,17 @@ def create_diagnosis_tab(ctx: Any) -> None:
         # --- the selected candidate's details ----------------------------------
         with gr.Column(elem_id="shep-dx-details", elem_classes=["shep-panel"], min_width=0):
             details_hd = plain_html(details_header_html(None), elem_id="shep-dx-details-hd")
+            # The segmented control and the views are shown and hidden by a
+            # class, never `visible` (`view_update`).
             details_seg = gr.Radio(choices=list(SEGMENTS), value="evidence",
                                    label="Candidate details view", show_label=False,
-                                   container=False, visible=False, elem_classes=["shep-seg"],
+                                   container=False, elem_classes=["shep-seg", VIEW_OFF],
                                    elem_id="shep-dx-seg")
             with gr.Column(elem_id="shep-dx-details-bd", elem_classes=["shep-dx-scroll"]):
                 details_html = plain_html(details_empty_html(), elem_id="shep-dx-details-body",
                                           js_on_load=MODEL_LIST_JS)
-                details_md = gr.Markdown("", visible=False, elem_id="shep-dx-explanation")
+                details_md = gr.Markdown("", elem_id="shep-dx-explanation",
+                                         elem_classes=[*_MD_VIEW, VIEW_OFF])
             details_ft = plain_html("", elem_id="shep-dx-details-ft")
 
     named = {
@@ -2380,6 +2441,7 @@ def create_diagnosis_tab(ctx: Any) -> None:
         "id_result_md": id_result_md, "id_result_html": id_result_html,
         "change_drawer": change_drawer, "plan": handle.plan, "confirm": handle.confirm,
         "confirm_html": handle.confirm_html, "list_reason": handle.reason, "phase": handle.phase,
+        "change_closed": change_closed,
     }
 
     def outputs(*names: str) -> List[Any]:
@@ -2435,25 +2497,25 @@ def create_diagnosis_tab(ctx: Any) -> None:
         if key == "refresh":
             return mapped(refresh_card(state, result, phase, view, request, reread=True))
         if key == "evidence":
-            return mapped(open_identity(state, result, "model", "evidence"))
+            return mapped(open_identity(state, result, "model", "evidence", phase))
         return gr.skip()
 
     card_body.click(_card_link, inputs=card_inputs,
                     outputs=outputs(*dict.fromkeys(card_names + identity_names)),
                     show_progress="hidden")
 
-    def _open_details(state, result):
-        return mapped(open_identity(state, result, "model", "identity"))
+    def _open_details(state, result, phase):
+        return mapped(open_identity(state, result, "model", "identity", phase))
 
-    details_btn.click(_open_details, inputs=[card_state, results_state],
+    details_btn.click(_open_details, inputs=[card_state, results_state, handle.phase],
                       outputs=outputs(*identity_names), show_progress="hidden")
 
-    def _open_result(state, result, evt: gr.EventData):
+    def _open_result(state, result, phase, evt: gr.EventData):
         if _event_key(evt) != "result":
             return gr.skip()
-        return mapped(open_identity(state, result, "result"))
+        return mapped(open_identity(state, result, "result", phase=phase))
 
-    badge.click(_open_result, inputs=[card_state, results_state],
+    badge.click(_open_result, inputs=[card_state, results_state, handle.phase],
                 outputs=outputs(*identity_names), show_progress="hidden")
 
     def _switch_identity(state, result, seg, view):
@@ -2482,19 +2544,26 @@ def create_diagnosis_tab(ctx: Any) -> None:
     change_btn.click(_on_change_model, inputs=None, outputs=outputs(*CHANGE_OUTPUTS),
                      show_progress="hidden").then(**handle.refresh).then(**ctx.chip_refresh)
 
-    change_names = ("change_drawer", "plan", "confirm", "confirm_html", "list_reason", "phase")
+    change_names = ("change_drawer", "plan", "phase", "change_closed")
+    reset_names = ("confirm", "confirm_html", "list_reason", "change_closed")
+
+    def _reset_change(closed):
+        return mapped(reset_change(closed))
+
+    reset = {"fn": _reset_change, "inputs": [change_closed], "outputs": outputs(*reset_names),
+             "show_progress": "hidden"}
 
     def _close_change_drawer(phase, evt: gr.EventData):
         return mapped(close_change(phase)) if _event_key(evt) == "close" else gr.skip()
 
     change_close.click(_close_change_drawer, inputs=[handle.phase],
-                       outputs=outputs(*change_names), show_progress="hidden")
+                       outputs=outputs(*change_names), show_progress="hidden").then(**reset)
 
     def _cancel_change(phase):
         return mapped(close_change(phase))
 
     links["cancel"].click(_cancel_change, inputs=[handle.phase], outputs=outputs(*change_names),
-                          show_progress="hidden")
+                          show_progress="hidden").then(**reset)
 
     # --- Run Diagnosis, the phenotypes, the table, the segments
     result_names = ("results_hd", "badge", "results_body", "results_state", "selected",
@@ -2551,6 +2620,10 @@ _TAB = "#shep-tab-clinical"
 #: px from 1600, 300 px below; the candidates and the details share the rest
 #: 5:4. Wide, each panel scrolls inside and the input column's card and Run
 #: Diagnosis stick to the bottom of its scroll body; narrow, the panels stack.
+#: While the Load confirmation is open (UI-A's confirmation box is mounted only
+#: then) the list's footer is hidden and its rows give up their height to it
+#: (all of it below 820 px of height), so the from → to rows and the warning
+#: sentence are never scrolled out of view.
 PAGE_CSS = f"""
 {_TAB} {{ --dx-in-w: 300px; }}
 @media (min-width: 1600px) {{ {_TAB} {{ --dx-in-w: 320px; }} }}
@@ -2667,6 +2740,7 @@ PAGE_CSS = f"""
 {_TAB} .shep-dx-rank {{ font-size: 14px; font-weight: 600; color: var(--shep-accent-text); background: var(--shep-accent-50); border: 1px solid var(--shep-accent-100); border-radius: 6px; padding: 1px 7px; }}
 {_TAB} .shep-dx-det-sub {{ margin: 0; font-size: 14px; color: var(--shep-text-2); }}
 {_TAB} #shep-dx-seg {{ padding: 10px 16px 0 !important; }}
+{_TAB} .shep-dx-off {{ display: none !important; }}
 {_TAB} .shep-dx-ev-label {{ margin: 0 0 8px; }}
 {_TAB} .shep-dx-quote {{ margin: 0 0 12px; padding: 8px 12px; border-left: 3px solid var(--shep-border-2); background: var(--shep-panel-2); color: var(--shep-text-2); overflow-wrap: anywhere; }}
 {_TAB} .shep-dx-h {{ font-size: 15px; font-weight: 600; margin: 10px 0 4px; }}
@@ -2710,6 +2784,9 @@ PAGE_CSS = f"""
 {_TAB} #shep-dx-change .shep-model-foot > * {{ flex: 0 0 auto !important; width: auto !important; min-width: 0 !important; }}
 {_TAB} #shep-dx-change-note {{ flex: 1 1 280px !important; }}
 {_TAB} #shep-dx-change .shep-model-confirm-box > .row > button {{ flex: 0 0 auto !important; white-space: nowrap; }}
+{_TAB} #shep-dx-change .shep-model-list:has(.shep-model-confirm-box) > .shep-model-foot {{ display: none !important; }}
+{_TAB} #shep-dx-change .shep-confirm .shep-ftbl th, {_TAB} #shep-dx-change .shep-confirm .shep-ftbl td {{ padding-top: 5px; padding-bottom: 5px; }}
+{_TAB} #shep-dx-change .shep-confirm .shep-ftbl tbody th {{ white-space: nowrap; }}
 @media (min-width: 1400px) and (min-height: 760px) {{
   {_TAB} > .column {{ height: 100%; box-sizing: border-box; }}
   {_TAB} #shep-dx {{ height: 100%; }}
@@ -2726,6 +2803,10 @@ PAGE_CSS = f"""
   {_TAB} #shep-dx-change .shep-model-confirm-box {{ flex: 0 1 auto !important; min-height: 0; overflow: hidden; }}
   {_TAB} #shep-models-clinical-confirm {{ flex: 0 1 auto !important; min-height: 0; overflow: auto !important; }}
   {_TAB} #shep-dx-change .shep-model-confirm-box > .row {{ flex: none !important; }}
+  {_TAB} #shep-dx-change .shep-model-list:has(.shep-model-confirm-box) > .shep-model-body {{ min-height: 0 !important; }}
+}}
+@media (min-width: 1400px) and (min-height: 760px) and (max-height: 819px) {{
+  {_TAB} #shep-dx-change .shep-model-list:has(.shep-model-confirm-box) > .shep-model-body {{ display: none !important; }}
 }}
 @media (max-width: 1399px), (max-height: 759px) {{
   {_TAB} #shep-dx-input, {_TAB} #shep-dx-results, {_TAB} #shep-dx-details {{ flex: 1 1 auto !important; width: 100% !important; max-width: none !important; }}

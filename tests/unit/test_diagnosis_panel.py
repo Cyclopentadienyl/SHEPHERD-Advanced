@@ -456,6 +456,23 @@ def test_the_page_css_is_registered_and_scoped_to_the_page():
         line for line in rules if not line.lstrip().startswith(dp._TAB)]
 
 
+def test_the_page_css_hides_a_view_by_its_class_and_keeps_the_confirmation_in_view():
+    """The views are hidden by `VIEW_OFF` (never ``visible``), so the page's
+    stylesheet must hide that class. Seen in review: the Load confirmation's
+    from → to rows and its warning sentence scrolled out of view at 1707x870,
+    1440x900 and 1536x760 (checked in a browser at the wide sizes); while the
+    confirmation box is mounted the list's footer is hidden and the list gives
+    up its height to it (all of it below 820 px of height)."""
+    css = " ".join(dp.PAGE_CSS.split())
+    assert f"{dp._TAB} .{dp.VIEW_OFF} {{ display: none !important; }}" in css
+    confirming = f"{dp._TAB} #shep-dx-change .shep-model-list:has(.shep-model-confirm-box)"
+    assert f"{confirming} > .shep-model-foot {{ display: none !important; }}" in css
+    wide = css.index("@media (min-width: 1400px) and (min-height: 760px) {")
+    assert css.index(f"{confirming} > .shep-model-body {{ min-height: 0 !important; }}") > wide
+    low = css.index("@media (min-width: 1400px) and (min-height: 760px) and (max-height: 819px) {")
+    assert css.index(f"{confirming} > .shep-model-body {{ display: none !important; }}") > low
+
+
 # ------------------------------------------------- the phenotype list and the API
 # docs/working/PLAN_PHENOTYPE_NORMALISATION.md, N1 and decision W: the panel sends
 # what it parsed, repeats included; the service removes repeats and enforces the
@@ -519,6 +536,7 @@ def served(monkeypatch, status_read):
 
 def _assert_refused_without_results(out):
     assert "After a diagnosis" in out["details_html"]["value"]
+    assert dp.VIEW_OFF not in out["details_html"]["elem_classes"]
     assert out["results_state"] is None  # no earlier result passes as this one
     assert out["export_csv"] is dp._DOWNLOAD_DISABLED
     assert out["export_report"] is dp._DOWNLOAD_DISABLED
@@ -1143,7 +1161,14 @@ def test_a_stale_or_unreadable_status_never_leaves_equal_showing():
     assert "last read at 16:00:00, before this result was produced (16:00:30)" in stale["reason"]
     failed = _card(None, "timed out (5 s)", state=good)
     unknown = dp.compare_with_served(_produced(), failed)
-    assert unknown["state"] == "unknown" and "timed out (5 s)" in unknown["reason"]
+    # The mockup's words, one level of parentheses (seen in review: "failed
+    # (timed out (5 s))").
+    assert unknown["state"] == "unknown"
+    assert unknown["reason"].startswith("The status read failed (timed out after 5 s), so ")
+    from src.webui.components.served_status import STATUS_NOT_READ
+
+    unreadable = dp.compare_with_served(_produced(), _card(None, STATUS_NOT_READ, state=good))
+    assert f"The status read failed ({STATUS_NOT_READ}), so " in unreadable["reason"]
     for state, result in ((good, _produced("2026-07-07T16:00:30")), (failed, _produced())):
         badge = dp.badge_html(result, state)
         assert "Cannot check against the model in use yet" in badge
@@ -1226,7 +1251,64 @@ def test_change_model_is_refused_with_the_reason_and_opens_nothing(monkeypatch):
 def test_closing_the_change_drawer_drops_an_open_confirmation():
     closed = dp.close_change("confirming")
     assert closed["plan"] is None and closed["phase"] == "idle"
-    assert closed["confirm"]["visible"] is False and closed["change_drawer"]["visible"] is False
+    assert closed["change_drawer"]["visible"] is False and closed["change_closed"] is True
+    # Nothing inside the drawer is updated in the response that hides it (seen
+    # in review: +738 detached elements per open and Cancel); the second step
+    # resets the confirmation inside the hidden drawer.
+    assert set(closed) == {"change_drawer", "plan", "phase", "change_closed"}
+    reset = dp.reset_change(closed["change_closed"])
+    assert reset["confirm"]["visible"] is False and reset["confirm_html"] == ""
+    assert reset["list_reason"] == "" and reset["change_closed"] is False
+    assert dp.reset_change(False) == {}
+
+
+def test_a_running_reload_keeps_the_change_drawer_open():
+    """The reload cannot be stopped and its outcome must be seen: × and Cancel
+    keep the drawer, the plan and the phase while it runs."""
+    kept = dp.close_change("loading")
+    assert kept == {"change_drawer": kept["change_drawer"], "change_closed": False}
+    assert kept["change_drawer"]["visible"] is True
+    assert dp.reset_change(kept["change_closed"]) == {}
+
+
+@pytest.mark.parametrize("phase", ["confirming", "loading"])
+def test_details_never_hide_a_model_change_in_progress(phase):
+    """Seen in review: Details ›, Recorded tests › or the badge during a Load
+    confirmation hid the change drawer and kept the phase, so Run Diagnosis
+    stayed disabled ("finish or cancel the model change first") with no
+    model change on screen."""
+    state = _card(_status_serving(_served_identity()))
+    for seg, section in (("model", "identity"), ("model", "evidence"), ("result", "identity")):
+        out = dp.open_identity(state, _sample_result(), seg, section, phase)
+        assert out == {"change_drawer": out["change_drawer"]}
+        assert out["change_drawer"]["visible"] is True
+    opened = dp.open_identity(state, _sample_result(), "model", "identity", "idle")
+    assert opened["identity_view"]["open"] is True and opened["change_drawer"]["visible"] is False
+
+
+def test_the_page_passes_the_model_change_phase_to_the_identity_drawer(monkeypatch):
+    demo, _ctx = _build_tab(monkeypatch)
+    phases = {fn.name: fn for fn in demo.fns.values()
+              if fn.name in ("_open_details", "_open_result", "_card_link")}
+    assert set(phases) == {"_open_details", "_open_result", "_card_link"}
+    phase_states = [b for b in demo.blocks.values()
+                    if isinstance(b, gr.State) and b.value == "idle"]
+    for name, fn in phases.items():
+        assert any(i in phase_states for i in fn.inputs), name
+
+
+def test_closing_the_change_drawer_resets_it_in_a_second_step(monkeypatch):
+    demo, _ctx = _build_tab(monkeypatch)
+    drawer = next(b for b in demo.blocks.values() if getattr(b, "elem_id", None) == "shep-dx-change")
+    inside = {b for b in demo.blocks.values()
+              if getattr(b, "elem_id", None) in ("shep-models-clinical-confirm",
+                                                 "shep-models-clinical-reason")}
+    assert len(inside) == 2
+    for name in ("_close_change_drawer", "_cancel_change"):
+        (closing,) = _named(demo, name)
+        assert drawer in closing.outputs and not inside & set(closing.outputs), name
+        reset = next(fn for fn in demo.fns.values() if fn.trigger_after == closing._id)
+        assert reset.name == "_reset_change" and inside <= set(reset.outputs)
 
 
 # -------------------------------------------------- the candidates and the details
@@ -1261,8 +1343,82 @@ def test_a_selected_row_shows_its_details_with_its_counts():
     paths = dp.details_outputs(_sample_result(), 1, "paths")
     assert "MONDO:0011073" in paths["details_html"]["value"]
     explanation = dp.details_outputs(_sample_result(), 1, "explanation")
-    assert explanation["details_md"]["visible"] is True
+    assert dp.VIEW_OFF not in explanation["details_md"]["elem_classes"]
     assert explanation["details_md"]["value"] == "Because ..."
+    assert dp.VIEW_OFF in explanation["details_html"]["elem_classes"]
+
+
+#: What may still be shown or hidden with ``visible``: the two drawers (whole
+#: columns) and Details › (which changes only with what is served).
+_VISIBLE_ALLOWED = {"identity_drawer", "change_drawer", "details_btn"}
+
+
+def _shown(update):
+    return dp.VIEW_OFF not in update["elem_classes"]
+
+
+def _assert_views_switch_by_class(out):
+    """Seen in review: switching ``visible`` on single components (+77 and +114
+    detached elements per switch) and updating a component in the response
+    that hides its column (+738) leave detached page elements in Gradio 6.30.
+    The views are shown and hidden by a class instead, which keeps them
+    mounted, and a hidden view is not rendered."""
+    for name, value in out.items():
+        if not isinstance(value, dict):
+            continue
+        if "visible" in value:
+            assert name in _VISIBLE_ALLOWED, name
+        if "elem_classes" in value:
+            assert value["elem_classes"], name          # never empty (ignored by Gradio)
+            if not _shown(value):
+                assert set(value) == {"__type__", "elem_classes"}, (name, value)
+
+
+def test_the_details_switch_views_by_class():
+    result = _sample_result()
+    for rank in (None, 1, 2):
+        for segment in ("evidence", "explanation", "phenotypes", "paths"):
+            out = dp.details_outputs(result, rank, segment)
+            _assert_views_switch_by_class(out)
+            assert _shown(out["details_seg"]) is (rank is not None)
+            assert _shown(out["details_html"]) is not _shown(out["details_md"])
+            assert "shep-html" in out["details_html"]["elem_classes"]
+    _assert_views_switch_by_class(dp.select_candidate(result, "explanation", "1"))
+
+
+def test_the_identity_drawer_switches_views_by_class():
+    state = _card(_status_serving(_served_identity()))
+    result = _produced()
+    for seg in ("model", "result"):
+        view = {"open": True, "seg": seg, "section": "identity"}
+        out = dp.identity_outputs(view, state, result)
+        _assert_views_switch_by_class(out)
+        assert _shown(out["id_model"]) is (seg == "model")
+        assert _shown(out["id_result_md"]) is _shown(out["id_result_html"]) is (seg == "result")
+        _assert_views_switch_by_class(dp.card_outputs(state, result, "idle", view))
+    _assert_views_switch_by_class(dp.open_identity(state, result, "result"))
+
+
+def test_the_views_start_as_their_first_update_leaves_them(monkeypatch):
+    """The built components' classes are the ones `view_update` sends for the
+    first screen (no result): the segmented control and the explanation
+    hidden, the identity drawer on "Model in use"."""
+    demo, _ctx = _build_tab(monkeypatch)
+    by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
+    first = dp.details_outputs(None, None)
+    for elem_id, name in (("shep-dx-seg", "details_seg"), ("shep-dx-details-body", "details_html"),
+                          ("shep-dx-explanation", "details_md")):
+        assert list(by_id[elem_id].elem_classes) == first[name]["elem_classes"], elem_id
+    model = dp.identity_outputs({"open": True, "seg": "model"},
+                                _card(_status_serving(_served_identity())), None)
+    for elem_id, name in (("shep-dx-id-model", "id_model"), ("shep-dx-id-result", "id_result_md"),
+                          ("shep-dx-id-digests", "id_result_html")):
+        assert list(by_id[elem_id].elem_classes) == model[name]["elem_classes"], elem_id
+    for block in demo.blocks.values():
+        if getattr(block, "elem_id", "") in ("shep-dx-seg", "shep-dx-details-body",
+                                              "shep-dx-explanation", "shep-dx-id-model",
+                                              "shep-dx-id-result", "shep-dx-id-digests"):
+            assert block.visible is True
 
 
 # -------------------------------------------------- the model in use (identity drawer)
