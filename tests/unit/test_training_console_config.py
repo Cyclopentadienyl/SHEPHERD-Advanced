@@ -259,8 +259,8 @@ def test_on_start_says_the_runners_refusal(monkeypatch, listed):
                                                   "error": "The dataset changed since it was "
                                                            "shown; select it again."})
     out = tc._on_start(OP, WS, *_form(), False)
-    assert out[0] == ("Not started: The dataset changed since it was shown; select it "
-                      "again.")
+    assert out[0] == tc.notice_html("Not started: The dataset changed since it was shown; "
+                                    "select it again.")
 
 
 def test_nonnumeric_value_reports_friendly_error():

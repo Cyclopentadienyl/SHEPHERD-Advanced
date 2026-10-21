@@ -41,7 +41,8 @@
  * 1000x the data extent, data decades + 6 on a log axis), log axes computed
  * in log10 space with values <= 0 or missing as gaps, the view kept per run
  * in sessionStorage (the last 20 runs shown in the tab; a run not shown
- * before fits its data), and while zoomed during
+ * before fits its data, its epochs and every chart's values), whole epochs
+ * on the epoch axis and in the zoom note, and while zoomed during
  * a live run an overlay button "N new epochs ->". In the narrow layout the
  * wheel scrolls the page and a note says how to zoom.
  */
@@ -72,6 +73,15 @@
     return String(+v.toPrecision(4));
   }
   function fmtEpoch(v) { return v == null || !isFinite(v) ? "" : String(+v.toFixed(2)); }
+  // Epochs are whole: the axis steps by whole numbers (EPOCH_INCRS) and the
+  // zoom note names whole epochs.
+  function wholeEpoch(v) { return v == null || !isFinite(v) ? "" : String(Math.round(v)); }
+  var EPOCH_INCRS = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 2500, 5000,
+                     10000, 20000, 25000, 50000, 100000];
+  function epochAxis(axis) {
+    return Object.assign({}, axis, { size: 30, incrs: EPOCH_INCRS,
+                                     values: function (u, ticks) { return ticks.map(wholeEpoch); } });
+  }
 
   // ------------------------------------------------------------ log ticks (#1098)
   function logSplits(u, axisIdx, min, max) {
@@ -300,6 +310,21 @@
     } catch (err) { return null; }
   }
 
+  // A run other than the one shown: its own stored view, or auto-fit. Nothing
+  // of the run shown until now is carried over, neither the epoch view nor any
+  // chart's value view (the charts are kept when their ids are the same).
+  function enterRun(inst, run) {
+    if (inst.saveTimer) { writeView(inst); }            // the run shown until now keeps its last view
+    var kept = loadView(inst, run);
+    inst.xManual = !!(kept && kept.x);
+    inst.x = kept && kept.x ? kept.x : null;
+    inst.frozenLast = kept ? kept.frozenLast : null;
+    eachChart(inst, function (st) { st.yManual = false; st.y = null; });
+    inst.pendingYs = kept ? kept.ys || {} : {};
+    inst.run = run;
+    if (!kept) { saveView(inst); }
+  }
+
   // ------------------------------------------------------------ hit testing
   function zoneOf(st, clientX, clientY) {
     if (!st || !st.u) { return null; }
@@ -409,7 +434,7 @@
       scales: { x: { time: false, auto: false },
                 y: st.yLog ? { auto: false, distr: 3, log: 10 } : { auto: false } },
       axes: [
-        Object.assign({}, axis, { size: 30, values: function (u, ticks) { return ticks.map(fmtEpoch); } }),
+        epochAxis(axis),
         // Short plots (a laptop's 760 px) keep at least two or three labels.
         Object.assign({}, axis, { size: 64, space: function (u, i, min, max, dim) { return dim < 140 ? 22 : 32; },
                                   values: function (u, ticks) {
@@ -469,7 +494,7 @@
         if (ys[i] != null) { parts.push(st.labels[s - 1] + " " + fmt(ys[i]) + " at epoch " + fmtEpoch(xs[i])); break; }
       }
     }
-    var view = inst.xManual ? "Zoomed: epochs " + fmtEpoch(inst.x[0]) + " to " + fmtEpoch(inst.x[1]) + "."
+    var view = inst.xManual ? "Zoomed: epochs " + wholeEpoch(inst.x[0]) + " to " + wholeEpoch(inst.x[1]) + "."
       : "Showing all epochs.";
     var beyond = newEpochsBeyond(inst);
     if (beyond) { view += " " + beyond + " newer epochs are to the right of the view."; }
@@ -484,7 +509,7 @@
     if (note) {
       var any = inst.xManual;
       eachChart(inst, function (st) { any = any || st.yManual; });
-      var text = inst.xManual ? "zoomed: epochs " + fmtEpoch(inst.x[0]) + "–" + fmtEpoch(inst.x[1])
+      var text = inst.xManual ? "zoomed: epochs " + wholeEpoch(inst.x[0]) + "–" + wholeEpoch(inst.x[1])
         : any ? "zoomed: values" : "";
       if (note.textContent !== text) { note.textContent = text; }
       note.hidden = !text;
@@ -701,16 +726,7 @@
         setMessage(inst, (d && d.empty) || "This run is no longer listed.");
         return;
       }
-      if (d.run !== inst.run) {                             // a new run: fit it, or bring back its view
-        if (inst.saveTimer) { writeView(inst); }            // the run shown until now keeps its last view
-        var kept = loadView(inst, d.run);
-        inst.xManual = !!(kept && kept.x);
-        inst.x = kept && kept.x ? kept.x : null;
-        inst.frozenLast = kept ? kept.frozenLast : null;
-        inst.pendingYs = kept ? kept.ys || {} : {};
-        inst.run = d.run;
-        if (!kept) { saveView(inst); }
-      }
+      if (d.run !== inst.run) { enterRun(inst, d.run); }   // a new run: fit it, or bring back its view
       inst.rev = d.rev;
       apply(inst, d);
       if (inst.pendingYs) {
@@ -804,5 +820,6 @@
 
   window.ShepCharts = { mount: mount, logSplits: logSplits, stats: stats, view: view,
                         _inst: INST, _u: function (key, id) { var i = INST[key]; return i && i.charts[id] && i.charts[id].u; },
-                        _views: { write: writeView, load: loadView } };
+                        _views: { write: writeView, load: loadView, enter: enterRun },
+                        _epochs: { axis: epochAxis, label: wholeEpoch } };
 })();

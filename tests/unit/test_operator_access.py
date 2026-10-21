@@ -582,6 +582,10 @@ def spies(monkeypatch, tmp_path):
     monkeypatch.setattr(server_lists, "list_checkpoints",
                         recorder("list_checkpoints", server_lists.Listing(())))
     monkeypatch.setattr(training_manager, "latest_snapshot", recorder("latest_snapshot", None))
+    # A training job runs (a read, not a service: Stop's confirmation is
+    # asked for the job running now).
+    monkeypatch.setattr(training_manager, "get_status",
+                        lambda: {"status": "running", "job_id": "spy-job"})
     monkeypatch.setattr(training_manager, "preview_continuation",
                         recorder("preview_continuation", {"ok": False, "reason": "spy"}))
     monkeypatch.setattr(tc, "TRAINING_CONFIG_FILE", tmp_path / "training.json")

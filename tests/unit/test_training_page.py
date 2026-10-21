@@ -309,8 +309,11 @@ def test_the_run_bars_actions_and_their_one_reason():
     running = _view({"status": "running", "current_epoch": 3, "total_epochs": 12})
     assert (running["start"], running["cont"], running["stop"]) == (False, False, True)
     assert "a training job is running" in running["reason"] and running["progress"] == 0.25
-    confirming = _view({"status": "running"}, mode={"confirm": True})
+    confirming = _view({"status": "running", "job_id": "j1"}, mode={"confirm": "j1"})
     assert confirming["stop"] is False
+    # A confirmation asked for an earlier job is not this job's.
+    earlier = _view({"status": "running", "job_id": "j2"}, mode={"confirm": "j1"})
+    assert earlier["stop"] is True
 
     read_only = _view(access=_Access(False, "not_loopback"))
     assert not any(read_only[k] for k in ("start", "cont", "stop", "resume"))
@@ -643,3 +646,321 @@ def test_the_banner_escapes_the_output():
         {"error_message": "Process exited\n\n--- Last output ---\n<script>alert(1)</script>"},
         "<img src=x>")
     assert "<script>" not in html and "&lt;script&gt;" in html and "<img" not in html
+
+
+# --------------------------------------------------------------------------- M5-2 review fixes
+#: Markup a workspace or run name can hold; never sent to the browser as a tag.
+TAG = "<img src=x onerror=window.__xss=1>"
+_FORM = [""] + [100, 1e-4, "32", "gat", "cpu", 42, "256", 4, 0.1, 0.01, "cosine", 500, 0.01,
+                10, 1.0, 0.5, 0.3, 0.2, 1, 1.0, "8", True, "float16", 0.07, 0.1, 1.0,
+                "15, 10, 5", 5000]
+
+
+def _no_tag(html):
+    return "<img" not in html and "<b>odd" not in html
+
+
+def test_the_notice_escapes_the_server_text_it_carries(root, monkeypatch, operator):
+    """The run bar's notice is HTML: a workspace name, a path or the runner's
+    error in it is escaped (`notice_html`), for Start, Stop and Continue
+    Training alike."""
+    assert tc.notice_html("") == "" and tc.notice_html(None) == ""
+    assert tc.notice_html(TAG) == f'<span class="shep-notice-t">{tc.r.e(TAG)}</span>'
+    # Start: the runner's refusal, and a workspace that is not trainable.
+    monkeypatch.setattr(tc.training_manager, "start_training",
+                        lambda config, **k: {"success": False, "error": f"{TAG} refused"})
+    notice, _seed = tc._on_start(operator, tc._workspace_state("demo"), *_FORM, False)
+    assert _no_tag(notice) and "&lt;img src=x" in notice and "refused" in notice
+    odd = tc._workspace_state(ODD)
+    odd["row"] = {**odd["row"], "trainable": False, "not_trainable": "x", "manifest": "read"}
+    notice, _seed = tc._on_start(operator, odd, *_FORM, False)
+    assert _no_tag(notice) and "&lt;b&gt;odd&amp;name is not trainable" in notice
+    # Stop: the snapshot sentence names the checkpoint inside the workspace.
+    last = root / ODD / "runs" / "gat" / "r" / "checkpoints" / "last.pt"
+    monkeypatch.setattr(tc.training_manager, "stop_training", lambda: {
+        "success": True, "outcome": {"checkpoint": str(last), "readable": True,
+                                     "completed_epochs": 3, "target_epochs": 10, "end": None}})
+    notice, _mode = tc._on_stop(operator, {})
+    assert _no_tag(notice) and "&lt;b&gt;odd&amp;name/runs/gat/r/checkpoints/last.pt" in notice
+    # Continue Training: a listed parent the server no longer lists, in that workspace.
+    fp = odd["row"]["dataset_fingerprint"]
+    parents = {"gat/r/last.pt": {"workspace": ODD, "architecture": "gat", "run": "r",
+                                 "filename": "last.pt", "sha256": "c" * 64,
+                                 "dataset_fingerprint": fp}}
+    notice, _text, _extend, _mode = tc._on_resume(
+        tc._workspace_state(ODD), "cpu", tc.CONTINUE_FROM_LIST, "gat/r/last.pt", "", None,
+        parents, {}, operator)
+    assert "no longer listed" in notice and "&lt;b&gt;odd&amp;name" in notice and _no_tag(notice)
+
+
+def test_the_run_view_and_drawer_builders_escape_names_and_paths(root):
+    """The run header (workspace, run label), the drawer's note, the dataset
+    comparison and the check's checkpoint path, each with markup in a name."""
+    run = tc.RunRef(id=f"{ODD}/gat/{TAG}", label=f"gat/{TAG}", path=Path("/x"), workspace=ODD,
+                    latest=True)
+    ws = {"name": ODD, "row": {"name": ODD, "dataset_fingerprint": "a" * 64}, "digits": 12,
+          "listed": [{"name": ODD, "dataset_fingerprint": "a" * 64}]}
+    head = tc.run_head_html(run, ws, operator=True, snapshot={"readable": True,
+                                                               "dataset_fingerprint": "a" * 64})
+    assert _no_tag(head) and "latest in &lt;b&gt;odd&amp;name" in head and "&lt;img src=x" in head
+    note = tc._parents_note(ws, {"k": {}}, None)
+    assert _no_tag(note) and "&lt;b&gt;odd&amp;name’s runs" in note
+    for fingerprint in ("a" * 64, "e" * 64):          # the same dataset, and another
+        compare = tc.compare_html({"chosen": True, "fingerprint": fingerprint,
+                                   "source": tc.CONTINUE_FROM_LIST}, ws)
+        assert _no_tag(compare), fingerprint
+    assert "&lt;b&gt;odd&amp;name" in tc.compare_html(
+        {"chosen": True, "fingerprint": "e" * 64, "source": tc.CONTINUE_FROM_LIST}, ws)
+    preview = {"parent": str(root / ODD / "runs" / "gat" / TAG / "last.pt"), "ok": False,
+               "reason": f"refused: {TAG}", "sha256": "c" * 64}
+    check = tc._check_html(preview, tc.CONTINUE_FROM_LIST)
+    assert _no_tag(check) and "&lt;b&gt;odd&amp;name/runs/gat/&lt;img" in check
+
+
+def _rendered_for(status, mode, operator, monkeypatch, ws):
+    monkeypatch.setattr(tc.training_manager, "get_status", lambda: status)
+    return tc.render(ws, mode, {}, [], operator)["pieces"]
+
+
+def test_a_stop_confirmation_belongs_to_the_job_it_was_asked_for(root, monkeypatch, operator):
+    """Asked for job a1 and left unanswered when a1 completes: when b2 runs,
+    the run bar shows no confirmation and Stop is enabled; a "Stop training"
+    sent for a1 stops nothing while b2 runs."""
+    monkeypatch.setattr(tc, "_get_pyg_warning", lambda: None)
+    monkeypatch.setattr(tc.training_manager, "run_dir", None)
+    ws = tc._workspace_state("demo")
+    monkeypatch.setattr(tc.training_manager, "get_status",
+                        lambda: {"status": "running", "job_id": "a1"})
+    monkeypatch.setattr(tc.training_manager, "latest_snapshot", lambda *a: None)
+    _text, mode = tc._on_stop_request(operator, {})
+    assert mode["confirm"] == "a1"
+    asked = _rendered_for({"status": "running", "job_id": "a1"}, mode, operator, monkeypatch, ws)
+    assert "shep-rb-confirming" in asked["runbar"] and asked["stop"] is False
+    done = _rendered_for({"status": "completed", "job_id": "a1"}, mode, operator, monkeypatch, ws)
+    assert "shep-rb-confirming" not in done["runbar"]
+    other = _rendered_for({"status": "running", "job_id": "b2"}, mode, operator, monkeypatch, ws)
+    assert "shep-rb-confirming" not in other["runbar"] and other["stop"] is True
+    stops = []
+    monkeypatch.setattr(tc.training_manager, "stop_training",
+                        lambda: stops.append(1) or {"success": True, "outcome": None})
+    notice, closed = tc._on_stop(operator, mode)                       # b2 runs now
+    assert stops == [] and "Not stopped" in notice and closed["confirm"] is None
+    tc._on_stop(operator, {"confirm": "b2"})                          # asked for b2
+    tc._on_stop(operator, {})                                         # a direct call
+    assert stops == [1, 1]
+
+
+def test_start_and_continue_close_a_confirmation_left_from_an_earlier_job():
+    demo, _ctx, by_id = _page()
+    start = next(fn for fn in demo.fns.values()
+                 if (by_id["shep-train-start"]._id, "click") in fn.targets)
+    after = next(fn for fn in demo.fns.values() if fn.trigger_after == start._id)
+    assert after.fn is tc._on_stop_cancel
+    assert tc._on_stop_cancel({"confirm": "a1", "drawer": True}) == {"confirm": None,
+                                                                      "drawer": True}
+
+
+def _listing(items, problem=None):
+    from src.api.services import server_lists
+
+    return server_lists.Listing(tuple(items), problem)
+
+
+def _item(workspace, run="r", filename="last.pt", kind="training_state", epoch=3):
+    from src.api.services.server_lists import CheckpointItem
+
+    return CheckpointItem(workspace=workspace, architecture="gat", run=run, filename=filename,
+                          sha256="c" * 64, size_bytes=1, checkpoint_kind=kind, epoch=epoch,
+                          validation=None, dataset_fingerprint=None,
+                          trained_on_this_dataset=None, problem=None)
+
+
+def test_the_parent_list_follows_the_run_bars_workspace_while_the_drawer_is_open(
+        root, monkeypatch, operator):
+    """After the run bar's workspace changed with Continue… open, the list is
+    the new workspace's runs (D8 first; nothing listed with the drawer
+    closed), and the old check, comparison and Extra epochs are cleared."""
+    from src.api.services import server_lists
+
+    listed = []
+    monkeypatch.setattr(server_lists, "list_checkpoints",
+                        lambda name: listed.append(name) or _listing([_item(name)]))
+    ws = tc._workspace_state("resampled")
+    assert tc._relist_parents(operator, ws, {"drawer": False}) == (gr.update(),) * 6
+    assert listed == []
+    parents, select, note, compare, preview, extend = tc._relist_parents(
+        operator, ws, {"drawer": True})
+    assert listed == ["resampled"] and list(parents) == ["gat/r/last.pt"]
+    assert parents["gat/r/last.pt"]["workspace"] == "resampled"
+    assert select["value"] == "gat/r/last.pt" and "resampled’s runs" in note
+    assert compare == "" and tc._CONTINUE_PROMPT in preview
+    assert extend == gr.update(visible=False, value=None)
+    monkeypatch.delenv("SHEPHERD_DEPLOYMENT_MODE", raising=False)    # read-only from here
+    refused = tc._relist_parents(READ_ONLY, ws, {"drawer": True})
+    assert refused[0] == {} and refused[1] == gr.update(choices=[], value=None)
+    assert "Refused" in refused[2] and listed == ["resampled"]
+
+
+def test_a_parent_listed_for_another_workspace_is_never_continued_on_this_one(root):
+    """A list read for demo, the run bar now on resampled (a running job's
+    dataset, or a change the list did not follow): the reason says so, and
+    nothing is resolved in resampled under demo's names."""
+    item = {**_item("demo").__dict__}
+    parents = {"gat/r/last.pt": item}
+    ws = tc._workspace_state("resampled")
+    chosen = tc._chosen(tc.CONTINUE_FROM_LIST, "gat/r/last.pt", "", parents, ws)
+    assert chosen["workspace"] == "demo"
+    why = tc.continue_refusal(chosen, ws)
+    assert why.startswith("the run list shows demo’s runs, not resampled’s; refresh the list")
+    path, why, _item_ = tc._parent_path(tc.CONTINUE_FROM_LIST, "gat/r/last.pt", "", ws, parents)
+    assert path is None and "the run list shows demo’s runs" in why
+    assert tc.continue_refusal(chosen, tc._workspace_state("demo")) is None
+
+
+def test_a_workspace_change_relists_through_the_gated_path_then_reads_the_chips():
+    demo, ctx, _by_id = _page()
+    fns = list(demo.fns.values())
+    after = {fn.trigger_after: fn for fn in fns if fn.trigger_after is not None}
+    first = next(fn for fn in fns if (ctx.training_workspace._id, "change") in fn.targets)
+    chain, current = [], first
+    while current is not None:
+        chain.append(current.fn.__name__)
+        current = after.get(current._id)
+    assert chain == ["_on_training_workspace", "_relist_parents", "_on_parent_chosen",
+                     "_render_view", "read_chips"]
+    import inspect
+
+    assert "operator_access(request)" in inspect.getsource(tc._relist_parents)
+
+
+def test_the_run_view_lists_the_workspaces_runs_again_while_the_page_stays_open(
+        root, monkeypatch):
+    """A run started elsewhere (the CLI) is shown once it writes a checkpoint:
+    the latest run is listed again every `LATEST_READ_SECONDS`, not on every
+    tick, and not only when the page is opened."""
+    import os
+    import time
+
+    ws = tc._workspace_state("demo")
+    cache = {}
+    old = tc._current_run({"status": "idle"}, ws, cache)
+    assert old["id"] == "demo/gat/20261018-142000_run_d41f8b"
+    new = root / "demo" / "runs" / "gat" / "20261021-150000_run_dddddd"
+    (new / "checkpoints").mkdir(parents=True)
+    (new / "checkpoints" / "model-1-0.0100.pt").write_bytes(b"x")
+    later = time.time() + 5
+    os.utime(new / "checkpoints" / "model-1-0.0100.pt", (later, later))
+    listings = []
+    original = tc._latest_run
+    monkeypatch.setattr(tc, "_latest_run", lambda d: listings.append(d) or original(d))
+    assert tc._current_run({"status": "idle"}, ws, cache)["id"] == old["id"]   # within the interval
+    assert listings == []
+    cache["latest"][1] -= tc.LATEST_READ_SECONDS                                 # the interval passed
+    run = tc._current_run({"status": "idle"}, ws, cache)
+    assert run["id"] == "demo/gat/20261021-150000_run_dddddd" and run["latest"] is True
+    assert len(listings) == 1
+
+
+def test_a_live_run_reads_its_checkpoint_once_for_the_fingerprint(root, monkeypatch, operator):
+    """While the job runner's run is live, ``last.pt`` (rewritten each epoch,
+    read whole) is read once per run and session for the recorded dataset
+    fingerprint, which stays shown; after the run ends the snapshot is read."""
+    monkeypatch.setattr(tc, "_get_pyg_warning", lambda: None)
+    job_run = root / "demo" / "runs" / "gat" / "20261020-090000_run_live01"
+    (job_run / "checkpoints").mkdir(parents=True)
+    last = job_run / "checkpoints" / "last.pt"
+    last.write_bytes(b"epoch 1")
+    monkeypatch.setattr(tc.training_manager, "run_dir", job_run)
+    ws = tc._workspace_state("demo")
+    fp = ws["row"]["dataset_fingerprint"]
+    reads = []
+    monkeypatch.setattr(tc.training_manager, "latest_snapshot", lambda run_dir=None: reads.append(
+        run_dir) or {"readable": True, "dataset_fingerprint": fp, "completed_epochs": len(reads),
+                     "checkpoint": str(last)})
+    status = {"status": "running", "job_id": "j", "current_epoch": 2, "total_epochs": 9}
+    monkeypatch.setattr(tc.training_manager, "get_status", lambda: status)
+    cache = {}
+    for epoch in range(2, 6):
+        last.write_bytes(b"epoch %d" % epoch * epoch)                  # a new size each epoch
+        rendered = tc.render(ws, {}, cache, [], operator)
+        cache = rendered["cache"]
+        assert fp[:12] in rendered["pieces"]["head"] and "same as the run bar" in rendered["pieces"]["head"]
+    assert len(reads) == 1
+    status = {"status": "completed", "job_id": "j", "current_epoch": 9, "total_epochs": 9}
+    tc.render(ws, {}, cache, [], operator)
+    assert len(reads) == 2
+
+
+def test_the_reason_lines_sentence_ends_once():
+    test_run = _view(gpu={"text": "GPU job: test run (mygene2-2026-09 · 00:00:25)", "test": True})
+    text = re.sub(r"<[^>]+>", "", test_run["reason"])
+    assert text.endswith("(mygene2-2026-09 · 00:00:25) · Open Test ›") and ")." not in text
+    cli = _view(gpu={"text": "GPU job: train_model.py (CLI, pid 41822, since 09:58 UTC)",
+                     "test": False})
+    assert re.sub(r"<[^>]+>", "", cli["reason"]).endswith("since 09:58 UTC).")
+
+
+def test_a_parents_option_names_its_file_and_what_it_holds():
+    last = tc._parent_label(_item("demo").__dict__)
+    weights = tc._parent_label(_item("demo", filename="model-03-0.2.pt", kind="weights").__dict__)
+    assert "epoch 3 · last.pt (training state) · model fingerprint cccccccccccc" in last
+    assert "epoch 3 · model-03-0.2.pt (weights only)" in weights and last != weights
+    unknown = tc._parent_label({**_item("demo").__dict__, "checkpoint_kind": None, "epoch": None})
+    assert "· last.pt · model fingerprint" in unknown
+
+
+def test_continue_has_its_own_device_which_its_check_and_start_use():
+    demo, _ctx, by_id = _page()
+    device, own = by_id["device"], by_id["continue_device"]
+    for name in ("_on_check_continue", "_on_resume"):
+        fn = next(f for f in demo.fns.values() if f.fn is getattr(tc, name))
+        assert own in fn.inputs and device not in fn.inputs, name
+    opened = next(f for f in demo.fns.values()
+                  if (by_id["shep-train-continue"]._id, "click") in f.targets)
+    copy = next(f for f in demo.fns.values() if f.trigger_after == opened._id)
+    assert copy.fn is tc._continue_device and copy.inputs == [device] and copy.outputs == [own]
+    assert [tc._continue_device(v) for v in ("cpu", "cuda", "auto", None)] == [
+        "cpu", "cuda", "auto", "auto"]
+    assert "continue_device" in tc.FIELD_HELP
+
+
+def test_a_failed_runs_output_tail_is_a_disclosure_fitted_to_the_window():
+    html = tc._render_error_block("exit 1\n\n--- Last output ---\n" + "\n".join(
+        f"line {i}" for i in range(20)), run="gat/r")
+    assert '<details class="shep-banner-more" open><summary>Last output' in html
+    assert f"({tc.BANNER_TAIL_LINES} lines)" in html and "line 19" in html and "line 7" not in html
+    one = tc._render_error_block("exit 1\n\n--- Last output ---\nonly")
+    assert "(1 line)" in one
+    assert "<details" not in tc._render_error_block("exit 1")
+    assert "window.innerHeight < 1000" in tc._BANNER_JS and "data-tail" in tc._BANNER_JS
+    _demo, _ctx, by_id = _page()
+    assert by_id["shep-train-banner"].js_on_load == tc._BANNER_JS
+
+
+def _rules(css, needle):
+    """The CSS rules whose selector names `needle`, as (selector, body)."""
+    return [(sel.strip(), body) for sel, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css)
+            if needle in sel]
+
+
+def test_the_page_styles_hold_the_reviewed_layout():
+    css = tc.PAGE_CSS
+    # The build time wraps with the chip, never hidden.
+    assert not [b for _s, b in _rules(css, "shep-ds-built") if "display: none" in b]
+    # The selects: a border, the text clear of the chevron, grey while disabled.
+    assert any("border: 1px solid" in b for _s, b in _rules(css, "#shep-train-dataset .wrap:has"))
+    assert any("padding-right: 30px" in b for _s, b in _rules(css, "#checkpoint_dropdown input"))
+    assert any("grey" in b for _s, b in _rules(css, "input:disabled"))
+    # Disabled actions: neutral grey, full opacity.
+    disabled = [b for _s, b in _rules(css, ".shep-rb-row > button:disabled")]
+    assert disabled and "opacity: 1" in disabled[0] and "--shep-grey-50" in disabled[0]
+    # The reason line's icon stays beside its sentence.
+    why = [b for s, b in _rules(css, ".shep-rb-why") if s == f"{tc._PAGE} .shep-rb-why"]
+    assert any("flex-wrap: nowrap" in b for b in why) and not any("flex-wrap: wrap" in b for b in why)
+    # A failed run's tail: four lines at a time when wide, never an inner scroll when narrow.
+    narrow = css[css.index("@media (max-width: 1399px), (max-height: 759px)"):]
+    assert ".shep-banner-tail {{ max-height: none; overflow: visible; }}".replace(
+        "{{", "{").replace("}}", "}") in narrow
+    wide = css[css.index("@media (min-width: 1400px) and (min-height: 760px)"):]
+    assert "#shep-train-runview { overflow-y: auto !important; }" in wide
+    assert "#shep-train-banner .shep-banner) #shep-train-runview > #shep-train-charts { min-height: 370px; }" in wide

@@ -1614,12 +1614,13 @@ contract and BACKLOG stay the record, and no new planning document is added.
     since listing opens them) or a typed path, the one check, the parent's recorded dataset
     fingerprint against the workspace's current one, and Continue Training disabled with the
     reason while they differ. The run view shows the job runner's latest run, or the run bar's
-    workspace's latest: the used dataset fingerprint from its checkpoint (operators only; a
-    read-only request is told why it is not shown), the snapshot sentence, the shared chart
-    figure and the resources line. The page keeps its state in `gr.State` (the selection, the
-    drawer, the last values sent, the dismissed banners) and is refreshed by the shell's timers
-    (`queue=False`, no work while another page is shown), sending only what changed. The Datasets
-    page's temporary bridge into the old Data Directory is deleted;
+    workspace's latest (listed again every 10 seconds while the page is open): the used
+    dataset fingerprint from its checkpoint (operators only; a read-only request is told why it
+    is not shown), the snapshot sentence, the shared chart figure and the resources line. The
+    page keeps its state in `gr.State` (the selection, the drawer, the last values sent, the
+    dismissed banners) and is refreshed by the shell's timers (`queue=False`, no work while
+    another page is shown), sending only what changed. The Datasets page's temporary bridge into
+    the old Data Directory is deleted;
   - **added at the owner's request (2026-10-19):**
     - **navigation in two levels**: "Diagnosis (clinical)" and "Research (pre-clinical)";
       under Research one row of tabs in two labelled groups, Prepare (Datasets, Training) and

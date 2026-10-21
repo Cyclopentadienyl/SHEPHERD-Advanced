@@ -141,6 +141,9 @@ SEED_PARAM_INDEX = 7
 FULL_SEND_TICKS = 8
 #: The GPU lock is read at most this often per session (seconds).
 LOCK_READ_SECONDS = 5.0
+#: The run bar's workspace's runs are listed again at most this often per
+#: session (seconds), for the run view's "latest" run.
+LATEST_READ_SECONDS = 10.0
 #: Lines of a failed run's output the banner shows.
 BANNER_TAIL_LINES = 12
 
@@ -519,6 +522,32 @@ element.addEventListener('click', function (e) {
 });
 """
 
+#: A wide window at least this tall shows a failed run's output tail open;
+#: a shorter one shows its summary line, so the charts keep their room.
+BANNER_OPEN_HEIGHT = 1000
+
+#: The banner: Dismiss (`_TRIGGER_JS`) and its output tail's disclosure, sent
+#: open and closed here once per banner on a wide window under
+#: `BANNER_OPEN_HEIGHT` px; once the user opens or closes it, their choice
+#: holds for the banners that follow on this page.
+_BANNER_JS = _TRIGGER_JS + r"""
+function fitTail() {
+  var d = element.querySelector('details.shep-banner-more:not([data-fit])');
+  if (!d) { return; }
+  d.setAttribute('data-fit', '');
+  var chosen = element.getAttribute('data-tail');
+  var wide = false;
+  try { wide = window.matchMedia('(min-width: 1400px) and (min-height: 760px)').matches; } catch (err) { /* keep it open */ }
+  d.open = chosen ? chosen === 'open' : !(wide && window.innerHeight < __OPEN__);
+}
+element.addEventListener('click', function (e) {
+  var s = e.target.closest ? e.target.closest('details.shep-banner-more > summary') : null;
+  if (s) { element.setAttribute('data-tail', s.parentElement.open ? 'closed' : 'open'); }
+});
+new MutationObserver(fitTail).observe(element, {childList: true, subtree: true});
+fitTail();
+""".replace("__OPEN__", str(BANNER_OPEN_HEIGHT))
+
 
 # =============================================================================
 # Status, GPU jobs and the reason line
@@ -648,7 +677,7 @@ def run_bar_view(status: Mapping[str, Any], ws: Mapping[str, Any], mode: Mapping
         view["drawer_reason"] = view["reason"]
         return view
     if training_busy:
-        view["stop"] = s == "running" and not mode.get("confirm")
+        view["stop"] = s == "running" and not confirming(status, mode)
         view["reason"] = line(_NO, "Start and Continue… disabled: a training job is running."
                               if s == "running" else
                               "Stopping: the job is ending; Start and Continue… wait for it.")
@@ -657,9 +686,10 @@ def run_bar_view(status: Mapping[str, Any], ws: Mapping[str, Any], mode: Mapping
     if gpu:
         open_test = ('<button type="button" class="shep-link" data-act="open-test">Open Test ›</button>'
                      if gpu.get("test") else "")
+        # The sentence ends with its period, or with "· Open Test ›" instead.
         view["reason"] = (f'<span class="shep-rb-why"><span class="shep-tag shep-tag-accent">GPU</span>'
-                          f'<span>Start and Continue… disabled — {r.e(gpu["text"])}.</span>'
-                          f'{" · " + open_test if open_test else ""}</span>')
+                          f'<span>Start and Continue… disabled — {r.e(gpu["text"])}'
+                          f'{" · " + open_test if open_test else "."}</span></span>')
         view["drawer_reason"] = view["reason"]
         return view
     if not row:
@@ -686,10 +716,23 @@ def run_bar_view(status: Mapping[str, Any], ws: Mapping[str, Any], mode: Mapping
     return view
 
 
+def _other_workspace(item: Mapping[str, Any], ws: Mapping[str, Any]) -> Optional[str]:
+    """Why a listed parent is not the run bar's workspace's (the list was read
+    for another workspace than the one selected now), or None."""
+    listed = item.get("workspace")
+    if listed is None or listed == ws.get("name"):
+        return None
+    return (f"the run list shows {listed}’s runs, not {ws.get('name')}’s; refresh the list "
+            "(Refresh beside it).")
+
+
 def continue_refusal(parent: Mapping[str, Any], ws: Mapping[str, Any]) -> Optional[str]:
     """Why Continue Training is disabled for the chosen parent, or None."""
     if not parent.get("chosen"):
         return "choose a checkpoint first."
+    other = _other_workspace(parent, ws) if parent.get("source") == CONTINUE_FROM_LIST else None
+    if other:
+        return other
     if parent.get("refused"):
         return "the check says this checkpoint cannot be continued."
     recorded, current = parent.get("fingerprint"), _fingerprint(ws)
@@ -716,12 +759,18 @@ def _get_pyg_warning() -> Optional[str]:
 def _render_error_block(message: str, *, headline: str = "Training failed",
                         run: Optional[str] = None) -> str:
     """The red block: the headline, the run and where its log is, Dismiss,
-    and the output tail (monospace, escaped)."""
+    and the output tail (monospace, escaped) in a disclosure, open as sent;
+    the banner's script closes it on a wide window under `BANNER_OPEN_HEIGHT`
+    px tall, where it would squeeze the charts (`_BANNER_JS`)."""
     first, _sep, tail = str(message).partition("\n\n--- Last output ---\n")
     lines = tail.splitlines()[-BANNER_TAIL_LINES:] if tail else []
     where = (f'<span class="shep-banner-where">run <code>{r.e(run)}</code> · full log in its '
              '<code>logs/</code></span>' if run else "")
-    body = (f'<pre class="shep-banner-tail">{r.e(chr(10).join(lines))}</pre>' if lines else "")
+    count = f'{len(lines)} line{"" if len(lines) == 1 else "s"}'
+    body = ('<details class="shep-banner-more" open><summary>Last output '
+            f'<span class="shep-banner-n">({count})</span></summary>'
+            f'<pre class="shep-banner-tail">{r.e(chr(10).join(lines))}</pre></details>'
+            if lines else "")
     return ('<div class="shep-banner shep-banner-red" role="alert">'
             f'<div class="shep-banner-hd"><span class="shep-banner-h">⚠ {r.e(headline)}: '
             f'{r.e(first.strip())}</span>{where}'
@@ -835,12 +884,38 @@ def _runner_run(status: Mapping[str, Any], cache: Dict[str, Any]) -> Optional[Ru
     return RunRef(id=run_id, label=label, path=Path(run_dir), workspace=named[1], latest=False)
 
 
+def _latest_of(ws: Mapping[str, Any], cache: Dict[str, Any]) -> Optional[str]:
+    """The run bar's workspace's latest run ("<arch>/<run>"): first as its
+    selection read it, then listed again at most every `LATEST_READ_SECONDS`
+    per session, so a run started elsewhere (the CLI, the API, another
+    browser) is shown once it writes a checkpoint, while the page stays
+    open."""
+    name = ws.get("name")
+    if not name:
+        return None
+    now = datetime.now().timestamp()
+    held = cache.get("latest")
+    if held and held[0] == name and now - held[1] < LATEST_READ_SECONDS:
+        return held[2]
+    if held and held[0] == name:
+        from src.api.services.server_lists import ServerListRefused
+
+        try:
+            latest = _latest_run(_workspace_path(name))
+        except ServerListRefused:
+            latest = None
+    else:
+        latest = ws.get("latest_run")
+    cache["latest"] = [name, now, latest]
+    return latest
+
+
 def _current_run(status: Mapping[str, Any], ws: Mapping[str, Any],
                  cache: Dict[str, Any]) -> Optional[RunRef]:
     runner = _runner_run(status, cache)
     if runner is not None:
         return runner
-    latest = ws.get("latest_run")
+    latest = _latest_of(ws, cache)
     if latest and ws.get("name"):
         path = resolve_run(f"{ws['name']}/{latest}")
         if path is not None:
@@ -904,6 +979,21 @@ def _snapshot_for(run: RunRef, cache: Dict[str, Any]) -> Optional[Dict[str, Any]
         return held[1]
     snapshot = training_manager.latest_snapshot(run["path"]) if key[1] is not None else None
     cache["snapshot"] = [key, snapshot]
+    return snapshot
+
+
+def _used_while_live(run: RunRef, cache: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """While the job runner's run is live: only what the run view's header
+    needs, the dataset fingerprint the run records. It is fixed for a run, so
+    it is read from the run's first saved state once per run and session and
+    then kept (``last.pt`` is rewritten every epoch and read whole); the live
+    snapshot sentence names the newest file without reading it."""
+    held = cache.get("used")
+    if held and held[0] == run["id"]:
+        return {"readable": True, "dataset_fingerprint": held[1]}
+    snapshot = _snapshot_for(run, cache)
+    if snapshot and snapshot.get("readable", True):
+        cache["used"] = [run["id"], snapshot.get("dataset_fingerprint")]
     return snapshot
 
 
@@ -1221,8 +1311,14 @@ def render(ws: Optional[Mapping[str, Any]], mode: Optional[Mapping[str, Any]],
     view = run_bar_view(status, ws, mode, access=access, active=active, gpu=gpu)
 
     # The run's checkpoint record (the used fingerprint, the snapshot): read
-    # for an operator only, and again only when its last.pt changed.
-    snapshot = _snapshot_for(run, cache) if run is not None and access.allowed else None
+    # for an operator only, and again only when its last.pt changed; while
+    # the job runner's run is live, its recorded fingerprint only, once.
+    if run is None or not access.allowed:
+        snapshot = None
+    elif in_use and not run.get("latest"):
+        snapshot = _used_while_live(run, cache)
+    else:
+        snapshot = _snapshot_for(run, cache)
     banner_html, banner_key = _build_error_banner_payload(
         status if s == "failed" else {}, _get_pyg_warning(), run=run["label"] if run else None)
     if banner_html and not access.allowed:
@@ -1238,7 +1334,7 @@ def render(ws: Optional[Mapping[str, Any]], mode: Optional[Mapping[str, Any]],
     classes = ["shep-runbar"]
     if mode.get("drawer"):
         classes.append("shep-rb-drawer")
-    if mode.get("confirm") and s == "running":
+    if confirming(status, mode):
         classes.append("shep-rb-confirming")
     page = ["shep-page", "shep-train-page"] + (["shep-train-drawer-open"] if mode.get("drawer") else [])
     pieces = {
@@ -1399,6 +1495,15 @@ def _act(evt: Any) -> Optional[str]:
     return data.get("act") if isinstance(data, Mapping) else None
 
 
+def notice_html(text: Any) -> str:
+    """The run bar's notice (an HTML component): the one place a handler's
+    sentence becomes markup. The sentence carries server text (a workspace or
+    run name, a path, the job runner's error), so it is escaped whole; ``""``
+    for no notice."""
+    said = "" if text is None else str(text)
+    return f'<span class="shep-notice-t">{r.e(said)}</span>' if said else ""
+
+
 def _on_banner_click(dismissed, cache, evt: gr.EventData):
     """Dismiss: this session hides this banner until its content changes."""
     key = (cache or {}).get("banner_key")
@@ -1423,11 +1528,19 @@ def _on_start(request: gr.Request, ws, *args):
     values in `_collect_config`'s order after the directory, then "Randomize
     seed".
 
-    Returns the notice and the seed field (echoing a drawn seed).
+    Returns the notice (`notice_html`) and the seed field (echoing a drawn
+    seed).
     """
     access = operator_access(request)
     if not access.allowed:
-        return access.refusal, gr.update()
+        return notice_html(access.refusal), gr.update()
+    said, seed = _start(ws, args)
+    return notice_html(said), seed
+
+
+def _start(ws, args) -> Tuple[str, Any]:
+    """Start's work after D8: ``(sentence, seed update)``, the sentence plain
+    text ("" once started)."""
     randomize = bool(args[-1])
     row = (ws or {}).get("row") or {}
     fingerprint = _fingerprint(ws)
@@ -1459,17 +1572,38 @@ def _on_start(request: gr.Request, ws, *args):
     return f"Not started: {result.get('error', 'unknown error')}", gr.update()
 
 
+def _running_job(status: Mapping[str, Any]) -> Optional[str]:
+    """The id of the training job running now (the one Stop would stop), or
+    None when none is running."""
+    if (status.get("status") or "idle") != "running":
+        return None
+    return str(status.get("job_id") or "running")
+
+
+def confirming(status: Mapping[str, Any], mode: Mapping[str, Any]) -> bool:
+    """Whether the run bar shows Stop's confirmation: only for the job it was
+    asked for, while that job runs. A confirmation left unanswered when its
+    job ended (completed, failed, or stopped elsewhere) is never shown for, or
+    applied to, the next job."""
+    asked = mode.get("confirm")
+    return isinstance(asked, str) and asked == _running_job(status)
+
+
 def _on_stop_request(request: gr.Request, mode):
     """Stop's first step: say what stopping loses before it happens. It reads
     the run's checkpoint, so D8 is checked first (refused: nothing is read).
+    The confirmation is recorded for the job running now (its id).
 
     Returns the confirmation's text and the session's mode.
     """
     access = operator_access(request)
     mode = dict(mode or {})
+    mode["confirm"] = None
     if not access.allowed:
-        mode["confirm"] = False
-        return access.refusal, mode
+        return notice_html(access.refusal), mode
+    job = _running_job(training_manager.get_status())
+    if job is None:
+        return notice_html("Nothing to stop: no training job is running."), mode
     snapshot = training_manager.latest_snapshot()
     if snapshot and snapshot.get("readable", True) and snapshot.get("completed_epochs"):
         name = Path(str(snapshot["checkpoint"])).name
@@ -1479,31 +1613,38 @@ def _on_stop_request(request: gr.Request, mode):
     else:
         text = ("<b>Stop training now?</b> No checkpoint has been saved yet, so all progress "
                 "of this run is lost and nothing can be continued.")
-    mode["confirm"] = True
+    mode["confirm"] = job
     return f'<div class="shep-rb-confirm-q">{text}</div>', mode
 
 
 def _on_stop_cancel(mode):
+    """Keep training (and any Start: a confirmation left from an earlier job
+    is closed)."""
     mode = dict(mode or {})
-    mode["confirm"] = False
+    mode["confirm"] = None
     return mode
 
 
 def _on_stop(request: gr.Request, mode):
     """The confirmed Stop: an operator control (D8), checked on this event's
-    own request; refused, nothing is stopped.
+    own request; refused, nothing is stopped. A confirmation asked for another
+    job than the one running now stops nothing (it described that job).
 
     Returns the notice and the session's mode (the confirmation closed).
     """
     mode = dict(mode or {})
-    mode["confirm"] = False
+    asked = mode.get("confirm")
+    mode["confirm"] = None
     access = operator_access(request)
     if not access.allowed:
-        return access.refusal, mode
+        return notice_html(access.refusal), mode
+    if isinstance(asked, str) and asked != _running_job(training_manager.get_status()):
+        return notice_html("Not stopped: the training job you asked to stop is no longer the "
+                           "one running; click Stop again if this one should stop."), mode
     result = training_manager.stop_training()
     if result.get("success"):
-        return "Stopped. " + _snapshot_sentence(result.get("outcome")), mode
-    return f"Not stopped: {result.get('error', 'unknown error')}", mode
+        return notice_html("Stopped. " + _snapshot_sentence(result.get("outcome"))), mode
+    return notice_html(f"Not stopped: {result.get('error', 'unknown error')}"), mode
 
 
 # --------------------------------------------------------------------------- Continue…
@@ -1515,11 +1656,20 @@ CONTINUE_FROM_PATH = "Manual path"
 _CONTINUE_PROMPT = "Select a checkpoint, then click <b>Check checkpoint</b>."
 
 
+#: What a checkpoint file holds, as its record says (`checkpoint_kind`).
+CHECKPOINT_KINDS = {"training_state": "training state", "weights": "weights only"}
+
+
 def _parent_label(item: Mapping[str, Any]) -> str:
+    """A parent's option: the run, the epoch, the file and what it holds
+    (a run's ``last.pt`` and its model file of the same epoch differ there),
+    and its model fingerprint."""
     epoch = item.get("epoch")
     parts = [r.run_label(item.get("architecture"), item.get("run"))]
-    parts.append(f"epoch {epoch}" if isinstance(epoch, int) and not isinstance(epoch, bool)
-                 else str(item.get("filename")))
+    if isinstance(epoch, int) and not isinstance(epoch, bool):
+        parts.append(f"epoch {epoch}")
+    kind = CHECKPOINT_KINDS.get(item.get("checkpoint_kind") or "")
+    parts.append(f"{item.get('filename')} ({kind})" if kind else str(item.get("filename")))
     if item.get("problem") or not r.is_digest(item.get("sha256")):
         parts.append("metadata not readable")
     else:
@@ -1570,9 +1720,10 @@ def _on_continue_open(request: gr.Request, ws, mode):
     access = operator_access(request)
     mode = dict(mode or {})
     if not access.allowed:
-        return access.refusal, mode, gr.update(), gr.update(), gr.update(), gr.update()
+        return (notice_html(access.refusal), mode, gr.update(), gr.update(), gr.update(),
+                gr.update())
     parents, problem = _list_parents(ws or {})
-    mode.update(drawer=True, confirm=False, parent={})
+    mode.update(drawer=True, confirm=None, parent={})
     update = _parents_update(parents)
     first = update.get("value") if isinstance(update, dict) else None
     mode["parent"] = _chosen(CONTINUE_FROM_LIST, first, "", parents, ws)
@@ -1587,10 +1738,34 @@ def _refresh_checkpoints(request: gr.Request, ws, mode, current):
     routes; refused, the list is emptied, nothing is opened, and the note says
     why."""
     access = operator_access(request)
+    return _parents_listed(access, ws, current)
+
+
+def _parents_listed(access: Any, ws: Optional[Mapping[str, Any]], current: Any):
+    """The parent list for `ws` as D8 allows it: ``(parents, select, note)``."""
     if not access.allowed:
         return {}, gr.update(choices=[], value=None), f'<span class="shep-muted">{r.e(access.refusal)}</span>'
     parents, problem = _list_parents(ws or {})
     return parents, _parents_update(parents, current), _parents_note(ws or {}, parents, problem)
+
+
+def _relist_parents(request: gr.Request, ws, mode):
+    """The run bar's workspace changed (chosen by hand, or by Datasets' "Use
+    for training ›") while Continue… is open: the parent list becomes the new
+    workspace's runs, through the Refresh's path (it opens every checkpoint,
+    so D8 first, on this event's own request; refused, the list is emptied
+    and the note says why), and the last check, the comparison and the Extra
+    epochs, which were about the old list, are cleared. With the drawer
+    closed nothing is listed (it lists when opened).
+
+    Returns the parents (state), the parent select, its note, the
+    comparison, the check's text and the Extra epochs field."""
+    access = operator_access(request)
+    if not (mode or {}).get("drawer"):
+        return (gr.update(),) * 6
+    parents, select, note = _parents_listed(access, ws, None)
+    return (parents, select, note, "", f'<p class="shep-note">{_CONTINUE_PROMPT}</p>',
+            gr.update(visible=False, value=None))
 
 
 def _on_continue_close(mode):
@@ -1612,7 +1787,8 @@ def _chosen(source: str, listed: Any, manual: Any, parents: Mapping[str, Any],
     if not item:
         return {"chosen": False, "source": source}
     return {"chosen": True, "source": source, "fingerprint": item.get("dataset_fingerprint"),
-            "run_label": f"{item.get('architecture')}/{item.get('run')}", "key": listed}
+            "run_label": f"{item.get('architecture')}/{item.get('run')}", "key": listed,
+            "workspace": item.get("workspace")}
 
 
 def compare_html(parent: Mapping[str, Any], ws: Mapping[str, Any]) -> str:
@@ -1709,6 +1885,11 @@ def _on_manual_changed(source):
     return _on_continue_selection_changed()
 
 
+def _continue_device(device):
+    """Continue…'s Device starts from the Parameters' each time it opens."""
+    return device if device in ("auto", "cuda", "cpu") else "auto"
+
+
 def _on_continue_device_changed():
     """The device is part of the check (mixed precision takes effect only on
     CUDA): the last check no longer describes what Continue will do. The Extra
@@ -1744,6 +1925,9 @@ def _parent_path(source: str, listed: Any, manual: Any, ws: Mapping[str, Any],
     item = (parents or {}).get(listed) if listed else None
     if not item:
         return None, "choose a checkpoint from the run list", None
+    other = _other_workspace(item, ws)
+    if other:
+        return None, other.rstrip("."), None
     from src.api.services.server_lists import ServerListRefused, resolve_checkpoint
 
     try:
@@ -1820,12 +2004,20 @@ def _on_resume(ws, device, source, listed, manual, extend_epochs, parents, mode,
     comes from the checkpoint, so the training form's values are not used.
     The job runner and the training process each check again.
 
-    Returns the notice, the check's text, the extend-epochs update and the
-    session's mode (the drawer closed once started).
+    Returns the notice (`notice_html`), the check's text, the extend-epochs
+    update and the session's mode (the drawer closed once started).
     """
     access = operator_access(request)
     if not access.allowed:
-        return access.refusal, gr.update(), gr.update(), gr.update()
+        return notice_html(access.refusal), gr.update(), gr.update(), gr.update()
+    said, text, extend, mode = _resume(ws, device, source, listed, manual, extend_epochs,
+                                       parents, mode)
+    return notice_html(said), text, extend, mode
+
+
+def _resume(ws, device, source, listed, manual, extend_epochs, parents, mode):
+    """Continue Training's work after D8: ``(sentence, check text, Extra
+    epochs update, mode)``, the sentence plain text ("" once started)."""
     mode = dict(mode or {})
     row = (ws or {}).get("row") or {}
     fingerprint = _fingerprint(ws)
@@ -1863,7 +2055,7 @@ def _on_resume(ws, device, source, listed, manual, extend_epochs, parents, mode,
         config["extend_epochs"] = preview["stage"]["target_epochs"]
     result = training_manager.start_training(config, expected_dataset_fingerprint=fingerprint)
     if result.get("success"):
-        mode.update(drawer=False, parent={})
+        mode.update(drawer=False, parent={}, confirm=None)
         return "", text, _extra_epochs_update(preview), mode
     return f"Not started: {result.get('error', 'unknown error')}", text, _extra_epochs_update(preview), mode
 
@@ -1917,7 +2109,8 @@ FIELD_HELP = {
     ),
     "device": (
         "Device",
-        "auto: use GPU if available, otherwise CPU. Continue Training uses this device too.",
+        "auto: use GPU if available, otherwise CPU. Continue… has its own Device field, which "
+        "starts from this one.",
     ),
     "seed": (
         "Seed",
@@ -2034,6 +2227,13 @@ FIELD_HELP = {
         "Checkpoint path",
         "A .pt file, in the run layout or not; checked the same way as a listed one.",
     ),
+    "continue_device": (
+        "Device",
+        "Where the continued run trains: auto uses the GPU if available, otherwise CPU. Check "
+        "checkpoint and Continue Training use it; mixed precision takes effect only on CUDA, so "
+        "the check says when the checkpoint's setting would not hold on this device. Each time "
+        "Continue… opens it starts from the Parameters' Device.",
+    ),
     "extend_epochs": (
         "Extra epochs",
         "Extend a finished run by this many epochs, trained at the fixed rate shown in the "
@@ -2129,7 +2329,7 @@ def create_training_tab(ctx: Any) -> None:
                                              elem_classes=["shep-gated"])
                 stop_keep_btn = gr.Button("Keep training", scale=0, elem_id="shep-train-stop-keep")
             notice = plain_html("", elem_id="shep-train-notice")
-        banner = plain_html("", elem_id="shep-train-banner", js_on_load=_TRIGGER_JS)
+        banner = plain_html("", elem_id="shep-train-banner", js_on_load=_BANNER_JS)
 
         with gr.Row(elem_id="shep-train-page", elem_classes=["shep-page", "shep-train-page"],
                     equal_height=False) as page:
@@ -2242,6 +2442,10 @@ def create_training_tab(ctx: Any) -> None:
                                                      elem_id="shep-train-refresh")
                     manual_checkpoint = gr.Textbox(label="Checkpoint path", value="", max_lines=1,
                                                    visible=False, elem_id="manual_checkpoint")
+                    # The device is part of the check, so it is here, not only
+                    # in the parameters the drawer covers.
+                    continue_device = gr.Radio(label="Device", choices=["auto", "cuda", "cpu"],
+                                               value="auto", elem_id="continue_device")
                     check_continue_btn = gr.Button("Check checkpoint", size="sm", scale=0,
                                                    elem_id="shep-train-check",
                                                    elem_classes=["shep-gated"])
@@ -2304,9 +2508,20 @@ def create_training_tab(ctx: Any) -> None:
     dataset.input(_on_dataset, inputs=[dataset, mode],
                   outputs=[ws, chip, ctx.training_workspace, mode, notice],
                   show_progress="hidden").then(**view_step)
+    # The session's workspace changed (a hand choice above writes it, and so
+    # does Datasets' "Use for training ›"): with Continue… open, the parent
+    # list follows it (a gated listing, then the chosen parent, the run bar
+    # and the chips again).
+    chosen_step = {"fn": _on_parent_chosen,
+                   "inputs": [continue_source, checkpoint_dropdown, manual_checkpoint, parents, ws,
+                              mode], "outputs": [mode, compare], "show_progress": "hidden"}
     ctx.training_workspace.change(_on_training_workspace, inputs=[ctx.training_workspace, ws, mode],
                                   outputs=[ws, dataset, chip, mode],
-                                  show_progress="hidden").then(**view_step)
+                                  show_progress="hidden").then(
+        _relist_parents, inputs=[ws, mode],
+        outputs=[parents, checkpoint_dropdown, parents_note, compare, continue_preview,
+                 extend_epochs], show_progress="hidden").then(**chosen_step).then(
+        **view_step).then(**ctx.chip_refresh)
     def _on_chip_click(evt: gr.EventData):
         """The chip's "All datasets ›": Research › Datasets."""
         return ctx.go("datasets") if _act(evt) == "datasets" else ctx.no_nav()
@@ -2321,8 +2536,11 @@ def create_training_tab(ctx: Any) -> None:
                  show_progress="hidden")
 
     # Start, Stop.
+    # Start also closes a Stop confirmation left from an earlier job.
     start_btn.click(_on_start, inputs=[ws, *form, randomize_seed], outputs=[notice, seed],
-                    show_progress="hidden").then(**view_step).then(**ctx.chip_refresh)
+                    show_progress="hidden").then(
+        _on_stop_cancel, inputs=[mode], outputs=[mode], show_progress="hidden").then(
+        **view_step).then(**ctx.chip_refresh)
     randomize_seed.change(fn=_seed_field_lock, inputs=[randomize_seed], outputs=[seed])
     stop_btn.click(_on_stop_request, inputs=[mode], outputs=[stop_text, mode],
                    show_progress="hidden").then(**view_step).then(**ctx.chip_refresh)
@@ -2336,9 +2554,8 @@ def create_training_tab(ctx: Any) -> None:
                    outputs=[notice, mode, parents, checkpoint_dropdown, parents_note,
                             continue_preview],
                    show_progress="hidden").then(
-        _on_parent_chosen, inputs=[continue_source, checkpoint_dropdown, manual_checkpoint,
-                                   parents, ws, mode], outputs=[mode, compare],
-        show_progress="hidden").then(**view_step).then(**ctx.chip_refresh)
+        _continue_device, inputs=[device], outputs=[continue_device],
+        show_progress="hidden").then(**chosen_step).then(**view_step).then(**ctx.chip_refresh)
     for closer in (cancel_btn, close_btn):
         closer.click(_on_continue_close, inputs=[mode], outputs=[mode],
                      show_progress="hidden").then(**view_step)
@@ -2347,13 +2564,13 @@ def create_training_tab(ctx: Any) -> None:
                            show_progress="hidden").then(**ctx.chip_refresh)
     check_continue_btn.click(
         _on_check_continue,
-        inputs=[continue_source, checkpoint_dropdown, manual_checkpoint, device, extend_epochs,
-                ws, parents, mode],
+        inputs=[continue_source, checkpoint_dropdown, manual_checkpoint, continue_device,
+                extend_epochs, ws, parents, mode],
         outputs=[continue_preview, extend_epochs, mode, compare],
         show_progress="hidden").then(**view_step).then(**ctx.chip_refresh)
     resume_btn.click(
         _on_resume,
-        inputs=[ws, device, continue_source, checkpoint_dropdown, manual_checkpoint,
+        inputs=[ws, continue_device, continue_source, checkpoint_dropdown, manual_checkpoint,
                 extend_epochs, parents, mode],
         outputs=[notice, continue_preview, extend_epochs, mode],
         show_progress="hidden").then(**view_step).then(**ctx.chip_refresh)
@@ -2369,7 +2586,7 @@ def create_training_tab(ctx: Any) -> None:
                                outputs=[extend_epochs, continue_preview])
     manual_checkpoint.change(fn=_on_manual_changed, inputs=[continue_source],
                              outputs=[extend_epochs, continue_preview])
-    device.change(fn=_on_continue_device_changed, inputs=[], outputs=[continue_preview])
+    continue_device.change(fn=_on_continue_device_changed, inputs=[], outputs=[continue_preview])
     # The session's record of the chosen parent (the run bar's actions).
     chosen_inputs = [continue_source, checkpoint_dropdown, manual_checkpoint, parents, ws, mode]
     for component in (continue_source, checkpoint_dropdown, manual_checkpoint):
@@ -2411,19 +2628,29 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} #shep-train-dataset, {_PAGE} #run_name {{ flex: 0 0 auto !important; width: auto !important; }}
 {_PAGE} #shep-train-dataset > div:not(.wrap), {_PAGE} #run_name > label {{ display: flex !important; align-items: center; gap: 8px; }}
 {_PAGE} #shep-train-dataset span[id^="shep-lbl-"], {_PAGE} #run_name span[id^="shep-lbl-"] {{ position: static !important; display: block !important; width: 96px !important; height: auto !important; overflow: visible !important; clip: auto !important; clip-path: none !important; margin: 0 !important; padding: 0 !important; background: none !important; border: 0 !important; white-space: nowrap; font-size: 14px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--shep-text-2) !important; }}
-{_PAGE} #shep-train-dataset .wrap {{ width: clamp(240px, 22vw, 440px); min-width: 0 !important; }}
+{_PAGE} #shep-train-dataset .wrap {{ width: clamp(220px, 16vw, 320px); min-width: 0 !important; }}
 {_PAGE} #shep-train-dataset input {{ text-overflow: ellipsis; flex: 1 1 auto !important; width: 0 !important; min-width: 0 !important; }}
 {_PAGE} #shep-train-dataset .secondary-wrap {{ min-width: 0 !important; }}
 {_PAGE} #shep-train-dataset .icon-wrap {{ flex: none !important; }}
+/* The two selects drawn as fields: a border, the text clear of the chevron, grey while disabled. */
+{_PAGE} #shep-train-dataset .wrap:has(> .wrap-inner), {_PAGE} #checkpoint_dropdown .wrap:has(> .wrap-inner) {{ border: 1px solid var(--shep-border-2) !important; border-radius: 8px !important; background: #fff !important; box-shadow: none !important; }}
+{_PAGE} #shep-train-dataset .wrap:has(> .wrap-inner):focus-within, {_PAGE} #checkpoint_dropdown .wrap:has(> .wrap-inner):focus-within {{ border-color: var(--shep-accent) !important; }}
+{_PAGE} #shep-train-dataset input, {_PAGE} #checkpoint_dropdown input {{ padding-right: 30px !important; text-overflow: ellipsis; }}
+{_PAGE} #shep-train-dataset .icon-wrap, {_PAGE} #checkpoint_dropdown .icon-wrap {{ color: var(--shep-text-2) !important; }}
+{_PAGE} #shep-train-dataset .wrap:has(input:disabled), {_PAGE} #checkpoint_dropdown .wrap:has(input:disabled) {{ background: var(--shep-grey-50) !important; border-color: var(--shep-grey-200) !important; }}
+{_PAGE} #shep-train-dataset input:disabled, {_PAGE} #checkpoint_dropdown input:disabled {{ color: var(--shep-grey-600) !important; -webkit-text-fill-color: var(--shep-grey-600); cursor: not-allowed; }}
+{_PAGE} #shep-train-dataset .wrap:has(input:disabled) .icon-wrap {{ color: var(--shep-grey-600) !important; }}
 {_PAGE} #run_name .input-container {{ width: 260px; }}
 {_PAGE} #run_name input {{ border: 1px solid var(--shep-border-2) !important; border-radius: 8px; padding: 6px 10px !important; background: #fff; }}
 {_PAGE} #run_name input:disabled {{ background: var(--shep-grey-50); color: var(--shep-muted); }}
 {_PAGE} .shep-rb-row > button {{ flex: none !important; width: auto !important; min-width: max-content !important; padding: 0 14px !important; height: 40px; white-space: nowrap; }}
-{_PAGE} #shep-train-chip {{ flex: 1 1 360px !important; container-type: inline-size; container-name: shep-chip; position: relative; z-index: 20; }}
-@container shep-chip (max-width: 799px) {{
-  {_PAGE} .shep-rb-chip .shep-ds-built, {_PAGE} .shep-rb-chip .shep-ds-built + .shep-sep {{ display: none; }}
-}}
-{_PAGE} .shep-rb-chip {{ display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 15px; position: relative; }}
+{_PAGE} #shep-train-chip {{ flex: 1 1 360px !important; position: relative; z-index: 20; }}
+{_PAGE} .shep-rb-chip {{ display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 15px; position: relative; }}
+/* The identity's parts wrap one by one (never hidden): "built …", the fingerprint, then the marks with "Details ›". */
+{_PAGE} .shep-rb-chip > .shep-ds {{ display: contents; }}
+{_PAGE} .shep-rb-chip .shep-ds-marks {{ display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }}
+{_PAGE} .shep-rb-chip > .shep-ds > .shep-sep {{ margin: 0 -2px; }}
+{_PAGE} .shep-rb-chip > .shep-ds > .shep-sep:has(+ .shep-ds-marks) {{ display: none; }}
 {_PAGE} .shep-rb-inuse {{ color: var(--shep-text-2); font-size: 14px; }}
 {_PAGE} .shep-link {{ border: 0; background: none; padding: 0; color: var(--shep-accent-text); font-size: 15px; cursor: pointer; font-weight: 500; }}
 {_PAGE} .shep-link:hover {{ text-decoration: underline; }}
@@ -2446,13 +2673,18 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-dot-w {{ background: #fff; }}
 {_PAGE} #shep-train-reason {{ flex: 1 1 260px !important; }}
 {_PAGE} .shep-rb-reason {{ display: flex; align-items: center; justify-content: flex-end; gap: 12px; flex-wrap: wrap; }}
-{_PAGE} .shep-rb-why {{ display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 15px; color: var(--shep-text-2); text-align: right; }}
+{_PAGE} .shep-rb-why {{ display: inline-flex; align-items: flex-start; gap: 6px; flex-wrap: nowrap; font-size: 15px; color: var(--shep-text-2); text-align: right; }}
+{_PAGE} .shep-rb-why > svg, {_PAGE} .shep-rb-why > .shep-tag {{ flex: none; margin-top: 3px; }}
+{_PAGE} .shep-rb-why > .shep-tag {{ margin-top: 0; }}
+{_PAGE} .shep-rb-why > span:not(.shep-tag) {{ min-width: 0; }}
+{_PAGE} .shep-rb-why .shep-link {{ white-space: nowrap; }}
 {_PAGE} .shep-rb-progress {{ flex: 1 1 160px; max-width: 380px; height: 8px; border-radius: 4px; background: var(--shep-grey-200); overflow: hidden; }}
 {_PAGE} .shep-rb-progress > i {{ display: block; height: 100%; background: var(--shep-accent); }}
 {_PAGE} .shep-gated::before {{ content: ""; display: inline-block; width: 12px; height: 12px; margin-right: 6px; background: currentColor; -webkit-mask: {_LOCK_MASK} center / contain no-repeat; mask: {_LOCK_MASK} center / contain no-repeat; opacity: .85; }}
 {_PAGE} button.primary:not(:disabled) {{ background: var(--shep-accent) !important; border-color: var(--shep-accent) !important; color: #fff !important; }}
 {_PAGE} button.primary:not(:disabled):hover {{ background: var(--shep-accent-600) !important; border-color: var(--shep-accent-600) !important; }}
 {_PAGE} #shep-train-stop:not(:disabled) {{ color: var(--shep-red-700) !important; border-color: var(--shep-red-200) !important; background: #fff !important; }}
+{_PAGE} .shep-rb-row > button:disabled {{ background: var(--shep-grey-50) !important; border: 1px solid var(--shep-grey-200) !important; color: var(--shep-grey-600) !important; opacity: 1 !important; box-shadow: none !important; cursor: not-allowed; }}
 {_PAGE} .shep-drawer-only, {_PAGE} #shep-train-continues {{ display: none !important; }}
 {_PAGE} .shep-rb-drawer .shep-drawer-only {{ display: inline-flex !important; }}
 {_PAGE} .shep-rb-drawer #shep-train-continue, {_PAGE} .shep-rb-drawer #shep-train-stop, {_PAGE} .shep-rb-drawer #run_name {{ display: none !important; }}
@@ -2465,14 +2697,17 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-rb-confirm-q {{ background: var(--shep-red-50); border: 1px solid var(--shep-red-200); border-radius: 8px; padding: 8px 12px; font-size: 15px; }}
 {_PAGE} #shep-train-notice:empty, {_PAGE} #shep-train-notice .html-container:empty {{ display: none; }}
 {_PAGE} #shep-train-notice:has(.html-container:empty), {_PAGE} #shep-train-banner:not(:has(.shep-banner)) {{ display: none !important; }}
-{_PAGE} #shep-train-notice {{ font-size: 15px; color: var(--shep-amber-800); }}
+{_PAGE} #shep-train-notice {{ font-size: 15px; color: var(--shep-amber-800); overflow-wrap: anywhere; }}
 {_PAGE} .shep-banner {{ border-radius: 8px; border: 1px solid; padding: 10px 14px; margin-bottom: 6px; font-size: 15px; }}
 {_PAGE} .shep-banner-red {{ background: var(--shep-red-50); border-color: var(--shep-red-200); border-left: 4px solid var(--shep-red-700); color: var(--shep-red-700); }}
 {_PAGE} .shep-banner-amber {{ background: var(--shep-amber-50); border-color: var(--shep-amber-300); border-left: 4px solid var(--shep-amber-600); color: var(--shep-amber-800); }}
 {_PAGE} .shep-banner-hd {{ display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }}
 {_PAGE} .shep-banner-h {{ font-weight: 600; overflow-wrap: anywhere; }}
 {_PAGE} .shep-banner-where {{ margin-left: auto; color: var(--shep-text-2); font-size: 14px; }}
-{_PAGE} .shep-banner-tail {{ margin: 8px 0 0; padding: 8px 10px; background: #fff; border: 1px solid var(--shep-red-200); border-radius: 6px; color: var(--shep-text); font-family: var(--shep-mono); font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 9.5em; overflow: auto; }}
+{_PAGE} .shep-banner-more {{ margin-top: 6px; }}
+{_PAGE} .shep-banner-more > summary {{ cursor: pointer; font-size: 14px; font-weight: 600; color: var(--shep-red-700); width: max-content; max-width: 100%; }}
+{_PAGE} .shep-banner-n {{ font-weight: 400; color: var(--shep-text-2); }}
+{_PAGE} .shep-banner-tail {{ margin: 6px 0 0; padding: 6px 10px; background: #fff; border: 1px solid var(--shep-red-200); border-radius: 6px; color: var(--shep-text); font-family: var(--shep-mono); font-size: 14px; line-height: 1.35; white-space: pre-wrap; overflow-wrap: anywhere; max-height: calc(4 * 1.35em + 14px); overflow: auto; }}
 {_PAGE} #shep-train-params-bd, {_PAGE} #shep-train-drawer-bd {{ padding: 4px 16px 12px !important; gap: 10px !important; }}
 {_PAGE} #shep-train-drawer {{ display: none !important; }}
 {_PAGE} .shep-train-drawer-open #shep-train-drawer {{ display: flex !important; }}
@@ -2521,7 +2756,11 @@ PAGE_CSS = charts.CHART_CSS + f"""
   {_PAGE} #shep-train-params-bd .form > .block {{ padding-top: 4px !important; padding-bottom: 4px !important; }}
   {_PAGE} #shep-train-params-bd .form > .block [data-testid="block-info"] {{ margin-bottom: 4px !important; padding-top: 2px !important; padding-bottom: 2px !important; }}
   {_PAGE} #shep-train-params-bd .form > .block input[type="number"], {_PAGE} #shep-train-params-bd .form > .block input[type="text"] {{ padding-top: 6px !important; padding-bottom: 6px !important; }}
+  /* Never clipped: when the charts' minimum does not fit, the run view scrolls inside. A failed
+     run's banner takes height, so the charts then keep a usable minimum (plots of about 90 px). */
+  {_PAGE} #shep-train-runview {{ overflow-y: auto !important; }}
   {_PAGE} #shep-train-runview > #shep-train-charts {{ flex: 1 1 auto !important; min-height: 240px; display: flex; flex-direction: column; }}
+  {_PAGE} #shep-train:has(#shep-train-banner .shep-banner) #shep-train-runview > #shep-train-charts {{ min-height: 370px; }}
   {_PAGE} #shep-train-charts > .html-container {{ flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }}
   {_PAGE} #shep-train-charts > .html-container > div {{ flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }}
   {_PAGE} .shep-rb-row1 {{ flex-wrap: nowrap !important; }}
@@ -2549,6 +2788,7 @@ PAGE_CSS = charts.CHART_CSS + f"""
   {_PAGE} #shep-train-chip {{ flex: 1 1 240px !important; }}
   {_PAGE} .shep-rb-reason {{ justify-content: flex-start; }}
   {_PAGE} .shep-rb-why {{ text-align: left; }}
+  {_PAGE} .shep-banner-tail {{ max-height: none; overflow: visible; }}
 }}
 @media (max-width: 1199px) {{
   {_PAGE} #shep-train-reason {{ flex: 1 1 100% !important; order: 10; }}

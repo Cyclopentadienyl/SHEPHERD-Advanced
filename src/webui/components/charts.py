@@ -230,7 +230,9 @@ def chart_figure(*, key: str, elem_id: str, series_fn: Callable[[Any], Any],
 
 #: The figure's look, for the head's ``<style>`` (a page that draws a figure
 #: puts it in its ``PAGE_CSS``): text never under 14 px, the axes included
-#: (they are drawn at 14 px by the module).
+#: (they are drawn at 14 px by the module). The buttons' rules name the
+#: figure too (two classes): Gradio's own ``.gradio-container-<version>
+#: button { padding: 0; font-size: 100% }`` outranks a single class.
 CHART_CSS = """
 .shep-figure > .html-container { padding: 0 !important; }
 .shep-charts { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; }
@@ -240,11 +242,11 @@ CHART_CSS = """
 .shep-charts-hint, .shep-charts-narrow { font-size: 14px; color: var(--shep-text-2); }
 .shep-charts-narrow { display: none; }
 .shep-charts-tools { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.shep-charts-btn { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--shep-border-2); background: #fff; color: var(--shep-text); font-size: 14px; font-weight: 500; cursor: pointer; white-space: nowrap; }
-.shep-charts-btn:hover, .shep-charts-icon:hover { background: var(--shep-panel-2); }
-.shep-charts-btn:disabled { opacity: .6; cursor: progress; }
+.shep-charts .shep-charts-btn { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--shep-border-2); background: #fff; color: var(--shep-text); font-size: 14px; font-weight: 500; cursor: pointer; white-space: nowrap; }
+.shep-charts .shep-charts-btn:hover, .shep-charts .shep-charts-icon:hover { background: var(--shep-panel-2); }
+.shep-charts .shep-charts-btn:disabled { opacity: .6; cursor: progress; }
 .shep-charts-modebar { display: inline-flex; border: 1px solid var(--shep-border-2); border-radius: 8px; overflow: hidden; }
-.shep-charts-icon { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 32px; border: 0; background: #fff; color: var(--shep-text-2); cursor: pointer; }
+.shep-charts .shep-charts-icon { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 32px; border: 0; background: #fff; color: var(--shep-text-2); cursor: pointer; }
 .shep-charts-icon + .shep-charts-icon { border-left: 1px solid var(--shep-border-2); }
 .shep-charts-btn:focus-visible, .shep-charts-icon:focus-visible, .shep-chart-plot:focus-visible, .shep-charts-new:focus-visible { outline: 2px solid var(--shep-accent); outline-offset: 2px; }
 .shep-charts-body { position: relative; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
@@ -266,7 +268,7 @@ CHART_CSS = """
 .shep-chart-tip[hidden] { display: none; }
 .shep-chart-tip .shep-tip-hd { font-weight: 600; }
 .shep-chart-tip .shep-sw { width: 10px; height: 10px; border: 0; background: currentColor; margin-right: 6px; border-radius: 2px; }
-.shep-charts-new { position: absolute; top: 2px; right: 2px; z-index: 4; height: 30px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--shep-accent-100); background: #fff; color: var(--shep-accent-text); font-size: 14px; font-weight: 600; cursor: pointer; box-shadow: 0 2px 8px rgba(20,24,40,.12); }
+.shep-charts .shep-charts-new { position: absolute; top: 2px; right: 2px; z-index: 4; height: 30px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--shep-accent-100); background: #fff; color: var(--shep-accent-text); font-size: 14px; font-weight: 600; cursor: pointer; box-shadow: 0 2px 8px rgba(20,24,40,.12); }
 .shep-charts-new[hidden] { display: none; }
 .shep-charts-msg { position: absolute; inset: 40% 0 auto 0; text-align: center; font-size: 15px; color: var(--shep-muted); pointer-events: none; }
 .shep-charts-msg[hidden] { display: none; }

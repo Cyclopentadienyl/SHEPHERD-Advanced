@@ -2528,21 +2528,27 @@ Training Console 現在是分成三部分的一個頁面：上方橫跨整頁的
   pid …, since …)」）。
 - **🔒 Start、🔒 Continue…、🔒 Stop。** Stop 會先詢問：「Stop training now? The last saved
   checkpoint is from epoch N (last.pt). Progress since then is lost; you can continue from
-  epoch N.」，按鈕為 **■ Stop training** 與 **Keep training**。
+  epoch N.」，按鈕為 **■ Stop training** 與 **Keep training**。這個詢問屬於提出它時正在執行的
+  工作：若該工作在你回答前結束，詢問就會關閉，之後啟動的工作不會顯示它；對已不是目前執行中的
+  工作按下 **■ Stop training** 不會停止任何東西（「Not stopped: …; click Stop again」）。
 - **Start 會送出 chip 顯示的資料集指紋**，job runner 在做任何事之前會再讀一次 manifest：若
   workspace 在這段時間內重建過，什麼都不會寫入或啟動，頁面會顯示「Not started: The dataset
   changed since it was shown; select it again. Nothing was started.」。API 以選用的查詢參數
   提供同樣的檢查，`POST /api/v1/training/start?expected_dataset_fingerprint=<64 個十六進位數字>`：
   manifest 不同時以 409 拒絕，不是 64 個小寫十六進位數字的值在到達服務之前就以 422 拒絕；沒有
   這個參數時與以前一樣不做檢查。
-- 失敗的 run 的**錯誤橫幅**橫跨整頁，附上 run 與其輸出的最後幾行；Dismiss 會在這個瀏覽器分頁
-  中隱藏它。
+- 失敗的 run 的**錯誤橫幅**橫跨整頁，附上 run 與其輸出的最後幾行，放在「Last output (N lines)」
+  之下：視窗高度至少 1000 px 時展開，較矮的視窗則收合成這一行，讓圖表保有空間（你展開或收合
+  後，在這個頁面中會保持）；一次顯示四行，其餘在框內捲動（窄視窗中全部顯示）。Dismiss 會在這個
+  瀏覽器分頁中隱藏橫幅。run bar 中的每則通知都把名稱與路徑當作文字顯示，不論 workspace 或 run
+  名稱含有什麼字元。
 
 **參數，「for the next run」**：欄位、分組、預設值與驗證都與以前相同，Basic 展開，Advanced 與
 Expert 收合。**Data Paths 與它的 Save Path 已移除**：workspace 由 run bar 選擇，儀表板不再
 讀取或寫入伺服器工作目錄中的 `.shepherd_training_config.json`（留在那裡的檔案會被忽略；是否
 提供「Save as the default dataset」是擁有者要決定的問題）。三個分組放不進視窗時（1920 × 1080
-放得下），參數在自己的欄內捲動；run bar 與圖表永遠不捲動。
+放得下），參數在自己的欄內捲動；run bar 永遠不捲動，run 檢視只有在失敗 run 的橫幅讓圖表空間
+不足時才在自己的面板內捲動。
 
 **Continue…** 會打開一個取代參數欄的抽屜：run bar 所選 workspace 的 checkpoint，最新的在前
 （伺服器的清單：列出時會開啟每個 checkpoint，所以是操作者控制項），或手動輸入的路徑。
@@ -2552,10 +2558,15 @@ workspace」）。抽屜打開期間，run bar 顯示 Start（停用：「close 
 run」）、**🔒 Continue Training**（資料集不同時停用，並附原因）與 **Cancel**。從清單選的
 checkpoint 會在伺服器的清單中重新找到，並以位元組比對清單所列的 digest（「The checkpoint
 changed since it was listed; refresh the list.」）；job runner 與訓練行程在啟動時仍會檢查
-一切。
+一切。每個項目列出 run、epoch、檔案以及它保存的內容（`last.pt (training state)`，或模型檔
+`(weights only)`，後者無法繼續訓練）。抽屜有自己的 **Device**（auto、cuda 或 cpu），每次打開時
+從參數的 Device 開始，Check checkpoint 與 Continue Training 使用的就是它。抽屜打開期間若 run
+bar 的資料集改變（手動選擇，或從 Datasets 的「Use for training ›」），清單會以同樣的方式重新
+讀取，改為該 workspace 的 run。
 
 **run 檢視**顯示 job runner 最後啟動的 run；伺服器啟動後還沒有啟動過時，顯示 run bar 所選
-workspace 最新的 run。標題列出 run 名稱與這個 run 使用的資料集指紋，從它的 checkpoint 讀取：
+workspace 最新的 run（頁面開著時每 10 秒重新列出一次，所以從 CLI 啟動的 run 在寫下第一個
+checkpoint 後就會出現）。標題列出 run 名稱與這個 run 使用的資料集指紋，從它的 checkpoint 讀取：
 「✓ same as the run bar」、琥珀色的「≠ not the selected dataset」，或還沒有 checkpoint 時的
 「recorded at the first checkpoint」。快照句說明 run 如何結束，以及可從哪個 checkpoint 繼續，
 路徑相對於 workspace 根目錄。下方是一張共用 epoch 軸的四格圖：Loss（train，以及以虛線表示的
@@ -2565,7 +2576,8 @@ learning rate（0 或缺少的值為空隙）。圖下是資源列（GPU 與記�
 - **縮放與平移**：在圖上滾動滾輪會以指標為中心縮放；在 epoch 軸上只縮放 epoch（四張圖一起），
   在數值軸上只縮放該圖的數值。拖曳可平移；雙擊或 **Reset view** 會重新容納全部資料；+ 與 −
   可縮放。圖表取得焦點時：+ − x X y Y、方向鍵、0 與 End。新的 epoch 到來時、切換頁面時，以及在
-  同一個瀏覽器分頁中重新載入時，檢視範圍都會保留（最近顯示的 20 個 run）；縮放中時，
+  同一個瀏覽器分頁中重新載入時，檢視範圍都會保留（最近顯示的 20 個 run）；之前沒顯示過的 run
+  會容納它的資料，包括 epoch 與每張圖的數值。epoch 軸以整數 epoch 計。縮放中時，
   「N new epochs →」會以相同寬度跳到最新的 epoch。在窄視窗中滾輪捲動的是頁面，圖表上方的說明
   會告訴你如何縮放。
 - **Export CSV** 由瀏覽器把 run 的 metrics log（epoch、split 與每個記錄的值）存成

@@ -2270,7 +2270,10 @@ a run.
   "GPU job: train_model.py (CLI, pid …, since …)").
 - **🔒 Start, 🔒 Continue…, 🔒 Stop.** Stop asks first: "Stop training now? The last saved
   checkpoint is from epoch N (last.pt). Progress since then is lost; you can continue from epoch
-  N." with **■ Stop training** and **Keep training**.
+  N." with **■ Stop training** and **Keep training**. The question belongs to the job it was
+  asked for: if that job ends before you answer, it closes, and a job started later never shows
+  it; **■ Stop training** answered for a job that is no longer the one running stops nothing
+  ("Not stopped: …; click Stop again").
 - **Start sends the dataset fingerprint the chip showed**, and the job runner reads the manifest
   again before anything else: if the workspace was rebuilt in the meantime, nothing is written or
   started, and the page says "Not started: The dataset changed since it was shown; select it
@@ -2278,8 +2281,12 @@ a run.
   `POST /api/v1/training/start?expected_dataset_fingerprint=<64 hex digits>`: another manifest is
   refused with 409, a value that is not 64 lowercase hex digits with 422 before the service is
   reached; without it nothing is checked, as before.
-- A failed run's **error banner** spans the page, with the run and the last lines of its output;
-  Dismiss hides it for this browser tab.
+- A failed run's **error banner** spans the page, with the run and the last lines of its output
+  under "Last output (N lines)": open in a window at least 1000 px tall, closed to that one line
+  in a shorter one so the charts keep their room (opening or closing it holds for this page);
+  four lines show at a time, the rest scroll in the box (in a narrow window all of them show).
+  Dismiss hides the banner for this browser tab. Every notice in the run bar shows names and
+  paths as text, whatever characters a workspace or run name holds.
 
 **Parameters, "for the next run"**: the same fields, groups, defaults and validation as before,
 Basic open, Advanced and Expert closed. **Data Paths and its Save Path are gone**: the workspace
@@ -2287,7 +2294,8 @@ is the run bar's choice, and the dashboard no longer reads or writes
 `.shepherd_training_config.json` in the server's working directory (a file left there is
 ignored; whether to offer "Save as the default dataset" is an owner question). When the three
 groups do not fit the window (they fit at 1920 × 1080), the parameters scroll inside their
-column; the run bar and the charts never scroll.
+column; the run bar never scrolls, and the run view scrolls inside its own panel only when a
+failed run's banner leaves its charts too little room.
 
 **Continue…** opens a drawer in place of the parameters: the checkpoints of the run bar's
 workspace, newest first (the server's list: an operator control, since listing opens every
@@ -2298,24 +2306,32 @@ the drawer is open the run bar shows Start (disabled: "close Continue… to star
 **🔒 Continue Training** (disabled while the datasets differ, with the reason) and **Cancel**.
 A listed checkpoint is found again in the server's list and its bytes compared with the digest
 listed ("The checkpoint changed since it was listed; refresh the list."); the job runner and the
-training process still check everything at start.
+training process still check everything at start. Each entry names the run, the epoch, the file
+and what it holds (`last.pt (training state)`, a model file `(weights only)`, which cannot be
+continued). The drawer has its own **Device** (auto, cuda or cpu), which starts from the
+parameters' Device each time it opens and is what Check checkpoint and Continue Training use.
+When the run bar's dataset changes while the drawer is open (by hand, or with Datasets'
+"Use for training ›"), the list becomes that workspace's runs, read again the same way.
 
 **The run view** shows the run the job runner started last or, before one since the server
-started, the latest run of the run bar's workspace. Its header names the run and the dataset
-fingerprint the run used, read from its checkpoint: "✓ same as the run bar", amber "≠ not the
-selected dataset", or "recorded at the first checkpoint" before there is one. The snapshot sentence
-says how the run ended and the checkpoint to continue from, as a path relative to the workspaces
-root. Below them, one figure of four charts sharing the epoch axis: Loss (train, and validation
-dashed), MRR (validation, Trainer top-20), Hits@K (validation, Trainer) and the learning rate on a
-log axis (a 0 or a missing value is a gap). Under it, the resources line (GPU and memory).
+started, the latest run of the run bar's workspace (listed again every 10 seconds while the page
+is open, so a run started from the CLI appears once it writes its first checkpoint). Its header
+names the run and the dataset fingerprint the run used, read from its checkpoint: "✓ same as the
+run bar", amber "≠ not the selected dataset", or "recorded at the first checkpoint" before there
+is one. The snapshot sentence says how the run ended and the checkpoint to continue from, as a
+path relative to the workspaces root. Below them, one figure of four charts sharing the epoch
+axis: Loss (train, and validation dashed), MRR (validation, Trainer top-20), Hits@K (validation,
+Trainer) and the learning rate on a log axis (a 0 or a missing value is a gap). Under it, the
+resources line (GPU and memory).
 
 - **Zoom and pan**: the wheel over a chart zooms around the pointer; over the epoch axis it zooms
   only the epochs (the four charts follow), over a value axis only that chart's values. Drag pans;
   a double-click or **Reset view** fits the data again; + and − zoom. With a chart focused: + − x
   X y Y, the arrows, 0 and End. The view stays while new epochs arrive, across page switches and a
-  reload in the same browser tab (for the last 20 runs shown); while zoomed, "N new epochs →"
-  jumps to the latest at the same width. In a narrow window the wheel scrolls the page, and the
-  note above the charts says how to zoom.
+  reload in the same browser tab (for the last 20 runs shown); a run not shown before fits its
+  data, its epochs and every chart's values. The epoch axis counts whole epochs. While zoomed,
+  "N new epochs →" jumps to the latest at the same width. In a narrow window the wheel scrolls
+  the page, and the note above the charts says how to zoom.
 - **Export CSV** saves the run's metrics log (epoch, split and each logged value) from the browser
   as `training_metrics_<architecture>_<run>.csv`.
 - The charts read the run's metrics log through the page's own server function, for a run the

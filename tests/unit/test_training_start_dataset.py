@@ -226,8 +226,8 @@ def test_the_run_bars_start_sends_what_it_showed_and_the_runner_refuses_a_rebuil
                    "15, 10, 5", 5000]
     with patch("subprocess.Popen") as popen:
         notice, _seed = tc._on_start(gradio_request(), state, *form, False)
-    assert notice == ("Not started: The dataset changed since it was shown; select it again. "
-                      "Nothing was started.")
+    assert notice == tc.notice_html("Not started: The dataset changed since it was shown; "
+                                    "select it again. Nothing was started.")
     popen.assert_not_called()
     assert fresh.run_dir is None
 

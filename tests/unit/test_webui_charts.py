@@ -298,3 +298,59 @@ def test_each_run_keeps_its_own_view_in_the_tab():
     assert res["a"]["x"] == [3, 9] and res["b"]["x"] is None and res["never"] is None
     assert res["aAfter20"] is None and res["r19"]["x"] == [19, 24]
     assert res["corrupt"] is None and res["blocked"] is None and res["threw"] is False
+
+
+@pytest.mark.skipif(NODE is None, reason="Node is not installed")
+def test_a_run_shown_next_fits_every_chart_unless_it_has_its_own_view():
+    """A value-axis zoom on run A is never applied to run B (same chart ids):
+    entering B clears every chart's value view and the epoch view; going back
+    to A brings A's stored views back."""
+    out = _node(
+        "const vm=require('vm');const fs=require('fs');"
+        "const m=new Map();const store={getItem:k=>m.has(k)?m.get(k):null,setItem:(k,v)=>m.set(k,String(v))};"
+        "const ctx={window:{sessionStorage:store},console,JSON,Array,Object,setTimeout,clearTimeout};vm.createContext(ctx);"
+        f"vm.runInContext(fs.readFileSync({json.dumps(str(STATIC / charts.MODULE))},'utf8'),ctx);"
+        "const V=ctx.window.ShepCharts._views;"
+        "const st=(id)=>({id,yManual:true,y:[0.6,1.2],data:[[]]});"
+        "const inst={key:'training',run:'ws/gat/a',xManual:true,x:[3,9],frozenLast:9,"
+        "            charts:{loss:st('loss'),lr:st('lr')},order:['loss','lr'],saveTimer:null};"
+        "V.write(inst);"
+        "V.enter(inst,'ws/gat/b');"
+        "const b={run:inst.run,x:inst.x,xManual:inst.xManual,pending:inst.pendingYs,"
+        "         loss:[inst.charts.loss.yManual,inst.charts.loss.y],lr:[inst.charts.lr.yManual,inst.charts.lr.y]};"
+        "V.enter(inst,'ws/gat/a');"
+        "const a={x:inst.x,xManual:inst.xManual,pending:inst.pendingYs};"
+        "clearTimeout(inst.saveTimer);"
+        "console.log(JSON.stringify({b,a}));")
+    res = json.loads(out)
+    assert res["b"] == {"run": "ws/gat/b", "x": None, "xManual": False, "pending": {},
+                        "loss": [False, None], "lr": [False, None]}
+    assert res["a"] == {"x": [3, 9], "xManual": True,
+                        "pending": {"loss": [0.6, 1.2], "lr": [0.6, 1.2]}}
+
+
+@pytest.mark.skipif(NODE is None, reason="Node is not installed")
+def test_the_epoch_axis_and_zoom_note_name_whole_epochs():
+    out = _node(
+        "const vm=require('vm');const fs=require('fs');"
+        "const ctx={window:{},console};vm.createContext(ctx);"
+        f"vm.runInContext(fs.readFileSync({json.dumps(str(STATIC / charts.MODULE))},'utf8'),ctx);"
+        "const E=ctx.window.ShepCharts._epochs;"
+        "const a=E.axis({font:'f'});"
+        "console.log(JSON.stringify({incrs:a.incrs||null,font:a.font,ticks:a.values(null,[1,2,10]),"
+        "                            labels:[1.3,2.5,59.999,null].map(E.label)}));")
+    res = json.loads(out)
+    assert res["incrs"] and res["incrs"][0] == 1 and all(float(v).is_integer() for v in res["incrs"])
+    assert res["font"] == "f" and res["ticks"] == ["1", "2", "10"]
+    assert res["labels"] == ["1", "3", "60", ""]
+    assert "epochAxis(axis)," in MODULE_JS                    # the chart's epoch axis
+    assert '"zoomed: epochs " + wholeEpoch(inst.x[0])' in MODULE_JS
+
+
+def test_the_figures_buttons_keep_their_padding_under_gradios_button_rule():
+    """Gradio's ``.gradio-container-<version> button { padding: 0 }`` (a
+    class and an element) outranks a one-class rule: the figure's button
+    rules name the figure too."""
+    for cls in ("shep-charts-btn", "shep-charts-icon", "shep-charts-new"):
+        assert re.search(rf"^\.shep-charts \.{cls} \{{", charts.CHART_CSS, re.M), cls
+        assert not re.search(rf"^\.{cls} \{{", charts.CHART_CSS, re.M), cls

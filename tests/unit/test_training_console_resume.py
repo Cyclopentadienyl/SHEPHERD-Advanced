@@ -236,7 +236,8 @@ def test_continue_training_is_refused_when_the_parents_dataset_is_not_the_worksp
     out = tc._on_resume(other, "cpu", tc.CONTINUE_FROM_LIST, checkpoints["paused_key"], "", None,
                         checkpoints["parents"], {}, OP)
     assert started == []
-    assert out[0] == "Not started: the parent’s dataset is not this workspace’s current one."
+    assert out[0] == tc.notice_html(
+        "Not started: the parent’s dataset is not this workspace’s current one.")
     assert "cannot continue on the current dataset" in out[1]
     assert tc.continue_refusal(out[3]["parent"], other) is not None
     compare = tc.compare_html(out[3]["parent"], other)
@@ -244,15 +245,25 @@ def test_continue_training_is_refused_when_the_parents_dataset_is_not_the_worksp
 
 
 def test_stop_says_what_it_loses_before_it_happens(checkpoints, monkeypatch):
+    monkeypatch.setattr(training_manager, "get_status",
+                        lambda: {"status": "running", "job_id": "j1"})
     monkeypatch.setattr(training_manager, "run_dir", checkpoints["paused"].parent.parent)
     text, mode = tc._on_stop_request(OP, {})
-    assert mode["confirm"] is True
+    assert mode["confirm"] == "j1"                          # asked for the job running now
     assert "epoch 1" in text and "Progress since then is lost" in text
     assert str(checkpoints["root"]) not in text            # the file's name, not its path
 
     monkeypatch.setattr(training_manager, "run_dir", checkpoints["ws"] / "no-run")
     text, _mode = tc._on_stop_request(OP, {})
     assert "No checkpoint has been saved yet" in text
+
+    # Nothing running: nothing is asked, and no checkpoint is read.
+    monkeypatch.setattr(training_manager, "get_status", lambda: {"status": "completed",
+                                                                  "job_id": "j1"})
+    monkeypatch.setattr(training_manager, "latest_snapshot",
+                        lambda *a: pytest.fail("read a checkpoint with nothing to stop"))
+    text, mode = tc._on_stop_request(OP, {"confirm": "j0"})
+    assert mode["confirm"] is None and "no training job is running" in text
 
 
 def test_a_stopped_run_shows_stopped_and_where_it_can_be_continued(checkpoints):
@@ -379,7 +390,7 @@ def test_the_service_still_refuses_extend_epochs_for_an_unfinished_parent(checkp
 def test_every_selection_change_clears_the_check_and_extra_epochs():
     """Each component that is part of the check is wired to clear it: the
     source, the run list and the typed path (each only when it is the source),
-    and the device (the check only)."""
+    and the drawer's own device (the check only)."""
     import gradio as gr
 
     with gr.Blocks() as demo:
@@ -397,7 +408,7 @@ def test_every_selection_change_clears_the_check_and_extra_epochs():
         ("continue_source", "change"): ("_on_continue_selection_changed", both),
         ("checkpoint_dropdown", "change"): ("_on_listed_changed", both),
         ("manual_checkpoint", "change"): ("_on_manual_changed", both),
-        ("device", "change"): ("_on_continue_device_changed", ["continue_preview"]),
+        ("continue_device", "change"): ("_on_continue_device_changed", ["continue_preview"]),
     }
 
 
