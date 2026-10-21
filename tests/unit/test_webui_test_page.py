@@ -201,6 +201,14 @@ def test_the_batch_size_shown_is_the_measurements_default():
     assert args.batch_size == tp.BATCH_SIZE_SHOWN
 
 
+def test_a_cancelled_runs_output_is_folded_and_a_failed_runs_shown():
+    job = {"status": "cancelled", "inputs": {}, "log": ["Traceback", "KeyboardInterrupt"]}
+    html = tp.job_html(job, [], ("none", ""))
+    assert '<details class="shep-test-fold">' in html and "KeyboardInterrupt" in html
+    failed = tp.job_html(dict(job, status="failed"), [], ("none", ""))
+    assert "<details" not in failed and "KeyboardInterrupt" in failed
+
+
 def test_the_pill_is_never_green_for_a_failed_or_cancelled_run():
     for status, kind in (("completed", "ok"), ("failed", "red"), ("cancelled", "grey"),
                          ("running", "accent"), ("idle", "grey")):
@@ -606,7 +614,30 @@ def test_commit_refuses_inputs_that_changed_since_the_preview(site, monkeypatch)
     done, said, _ = tp.commit_import_ui(preview, "demo", "cases.json", "demo-test-2", "demo",
                                         "keep", request)
     assert done is False and "the inputs changed since the preview" in said
+    assert said.endswith("Nothing was written.") and said.count("Nothing was written.") == 1
     assert not (site.registry / "versions" / "demo-test-2").exists()
+
+
+def test_a_commit_refused_after_the_source_copy_was_kept_says_so(site, monkeypatch):
+    """The importer's refusal from the commit itself is said as it is: one
+    raised after the source copy was written says what was written, and the
+    page never adds "Nothing was written." to it."""
+    import src.evaluation.cohort_registry as cohort_registry
+
+    request = operator_request(monkeypatch)
+    preview, _ = tp.preview_import("demo", "cases.json", "demo-test-2", "demo", "keep", request)
+
+    def taken(*_a, **_k):
+        raise cohort_registry.CohortVersionRefused(
+            f"{site.registry}/versions/demo-test-2 was created by another import while this one "
+            "ran, so the label 'demo-test-2' is taken. Only the source copy was written (under "
+            f"{site.registry}/sources, named by its digest, which is harmless to keep).")
+
+    monkeypatch.setattr(cohort_registry, "commit_import", taken)
+    done, said, _ = tp.commit_import_ui(preview, "demo", "cases.json", "demo-test-2", "demo",
+                                        "keep", request)
+    assert done is False and "Only the source copy was written" in said
+    assert "Nothing was written" not in said
 
 
 def test_the_intake_note_names_what_is_not_offered_without_its_path(site):
@@ -673,7 +704,7 @@ def test_the_page_is_read_when_shown_and_polled_only_while_shown(monkeypatch):
     assert selects == [], "a poll never touches a select"
     monkeypatch.setattr(tp, "read_job", lambda **k: pytest.fail("polled while not shown"))
     quiet = poll.fn("clinical", {"access": {}}, {}, None, "demo", LABEL, None,
-                    {"status": "running"}, None, {})
+                    {"status": "running"}, None, {}, None)
     assert all(update == gr.update() for update in quiet)
 
 
@@ -696,10 +727,12 @@ def test_a_poll_reads_the_store_again_only_when_the_job_changed(site, monkeypatc
                         {"label": label, "runs": [], "problem": None, "notes": []})
     page = tp.read_page(_readonly())
     unchanged = poll.fn("test", page, {}, None, "demo", LABEL, None,
-                        {"job_id": "test-1", "status": "completed"}, None, {"label": LABEL})
+                        {"job_id": "test-1", "status": "completed"}, None, {"label": LABEL},
+                        _readonly())
     assert reads == [] and unchanged[0] == gr.update()
     ended = poll.fn("test", page, {}, None, "demo", LABEL, None,
-                    {"job_id": "test-1", "status": "running"}, None, {"label": LABEL})
+                    {"job_id": "test-1", "status": "running"}, None, {"label": LABEL},
+                    _readonly())
     assert reads == [LABEL] and ended[2] == {"job_id": "test-1", "status": "completed"}
 
 
@@ -718,11 +751,28 @@ def test_the_report_of_a_run_that_has_just_ended_is_selected(site, monkeypatch):
     page = tp.read_page(_readonly())
     reports = tp.read_reports(LABEL)
     ended = poll.fn("test", page, {}, None, "demo", LABEL, None,
-                    {"job_id": "test-2", "status": "running"}, other, reports)
+                    {"job_id": "test-2", "status": "running"}, other, reports, _readonly())
     assert ended[1] == site.run_id
     seen = poll.fn("test", page, {}, None, "demo", LABEL, None,
-                   {"job_id": "test-2", "status": "completed"}, other, reports)
+                   {"job_id": "test-2", "status": "completed"}, other, reports, _readonly())
     assert seen[1] == gr.update(), "the operator's choice stands once the end was seen"
+
+
+def test_a_poll_that_sees_the_job_change_chooses_again_when_the_shown_report_is_gone(site,
+                                                                                    monkeypatch):
+    """A run started elsewhere changes the job: the store is read again, and a
+    report this session showed that is gone from it gives way to the newest."""
+    demo, ctx, _registry = _page_component()
+    poll = _named(demo, "_poll")
+    job = {"status": "running", "job_id": "test-3", "inputs": {}, "log": [], "outcome": None}
+    monkeypatch.setattr(tp, "read_job", lambda **k: dict(job))
+    monkeypatch.setattr(tp, "gpu_line", lambda **k: ("busy", "GPU job: test run (job runner)"))
+    page = tp.read_page(_readonly())
+    gone = "20261001T000000Z-" + "a" * 12 + "-" + "b" * 8
+    out = poll.fn("test", page, {}, None, "demo", LABEL, None,
+                  {"job_id": "test-2", "status": "completed"}, gone, {"label": LABEL},
+                  _readonly())
+    assert out[1] == site.run_id
 
 
 def test_the_import_is_one_at_a_time_and_there_is_no_upload():
@@ -758,15 +808,22 @@ def test_the_page_is_registered_with_its_style_sheet():
 def test_a_direct_call_through_gradios_api_meets_the_same_check(site, monkeypatch):
     """The start event called as `gradio_client` would: refused off loopback
     before anything is started; from loopback under M1 the lists it starts
-    from are this session's state, never what the client posts (a forged page
-    naming a version and a model starts nothing)."""
+    from are this session's state, never what the client posts: the handler
+    is given the session's own (empty) page and model list, not the forged
+    ones, and a forged workspace, version and model are refused as choices the
+    session was never offered. Nothing is started either way."""
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
     manager = FakeManager()
     real = tp.start_test_run
-    monkeypatch.setattr(tp, "start_test_run",
-                        lambda *a, **k: real(*a, **{**k, "manager": manager}))
+    given = []
+
+    def spy(*a, **k):
+        given.append((a[0], a[1]))
+        return real(*a, **{**k, "manager": manager})
+
+    monkeypatch.setattr(tp, "start_test_run", spy)
     demo, _ctx, _registry = _page_component()
     app = FastAPI()
     gr.mount_gradio_app(app, demo, path="/ui")
@@ -774,19 +831,432 @@ def test_a_direct_call_through_gradios_api_meets_the_same_check(site, monkeypatc
     operator_mode(monkeypatch)
     forged_page = tp.read_page(operator_request(monkeypatch))
     forged_models = tp.read_models("demo", operator_request(monkeypatch))
+    assert forged_page["versions"] and forged_models["items"]
 
-    def call(base_url):
+    def call(base_url, choices):
         with TestClient(app, base_url=base_url) as client:
             started = client.post(f"/ui/gradio_api/call/{start.api_name}",
-                                  json={"data": [forged_page, forged_models, None, None,
-                                                 None, True, False]})
+                                  json={"data": [forged_page, forged_models, *choices,
+                                                 True, False]})
             assert started.status_code == 200, started.text
             stream = client.get(f"/ui/gradio_api/call/{start.api_name}/"
                                 f"{started.json()['event_id']}")
         lines = stream.text.splitlines()
-        return json.dumps(json.loads(lines[lines.index("event: complete") + 1][len("data:"):]))
+        event = next(x for x in lines if x.startswith("event: ") and x != "event: heartbeat")
+        return event, lines[lines.index(event) + 1][len("data:"):]
 
-    refused = call("http://192.0.2.10")
-    assert "Refused: " in refused and manager.started == []
-    loopback = call(OPERATOR_BASE_URL)
-    assert "Choose a cohort version the server lists" in loopback and manager.started == []
+    event, refused = call("http://192.0.2.10", [None, None, None])
+    assert event == "event: complete" and "Refused: " in refused
+    event, loopback = call(OPERATOR_BASE_URL, [None, None, None])
+    assert event == "event: complete" and "Choose a cohort version the server lists" in loopback
+    assert given and all(page == {} and models.get("items") == [] for page, models in given), \
+        "the handler was given what the client posted"
+    event, forged = call(OPERATOR_BASE_URL, ["demo", LABEL, site.key])
+    assert event == "event: error" and "not in the list of choices" in forged
+    assert manager.started == []
+
+
+# --------------------------------------------------------------------------- review fixes (2026-10-21)
+def _source(site, name, edit):
+    """A copy of the intake source with `edit` applied to its cases."""
+    source = json.loads((site.intake / "cases.json").read_text())
+    edit(source["cases"])
+    (site.intake / name).write_text(json.dumps(source))
+    return source["cases"]
+
+
+def test_a_malformed_source_is_refused_naming_no_case(site, monkeypatch):
+    """D7: the importer lists a malformed source's problems by case index and
+    case id; the page shows them by index only and says where the ids are."""
+    request = operator_request(monkeypatch)
+
+    def edit(cases):
+        repeated = cases[2]["case_id"]
+        cases[0] = {k: v for k, v in cases[0].items() if k != "phenotypes"}
+        cases[0]["case_id"] = "MRN-0012345"
+        cases[1] = dict(cases[1], case_id="MRN-7654321", disease=12)
+        cases.append(dict(cases[3], case_id=repeated))
+        cases.append(dict(cases[4], case_id="MRN\x07bell"))
+
+    cases = _source(site, "bad.json", edit)
+    preview, refusal = tp.preview_import("demo", "bad.json", "v-bad", "demo", "keep", request)
+    assert preview is None
+    for case_id in ("MRN-0012345", "MRN-7654321", cases[2]["case_id"], "bell", "case_id '"):
+        assert case_id not in refusal, case_id
+    assert "(4 problems)" in refusal and "cases[0]: missing ['phenotypes']" in refusal
+    assert "cases[1]: disease is a number" in refusal
+    assert f"cases[{len(cases) - 2}]: case_id repeats cases[2]" in refusal
+    assert f"cases[{len(cases) - 1}]: case_id is not printable text" in refusal
+    assert "scripts/import_cohort.py" in refusal and refusal.endswith("Nothing was written.")
+    assert "MRN" not in tp._outcome_box("amber", refusal, tp.path_roots())
+
+
+def test_a_long_list_of_problems_is_cut_and_counted(site, monkeypatch):
+    def edit(cases):
+        for index in range(12):
+            cases[index] = {k: v for k, v in cases[index].items() if k != "phenotypes"}
+
+    _source(site, "many.json", edit)
+    _preview, refusal = tp.preview_import("demo", "many.json", "v-bad", "demo", "keep",
+                                          operator_request(monkeypatch))
+    assert "(12 problems)" in refusal and "cases[9]: missing" in refusal
+    assert "cases[10]" not in refusal and "… 2 more" in refusal
+
+
+def test_commit_meeting_a_malformed_source_names_no_case(site, monkeypatch):
+    request = operator_request(monkeypatch)
+    preview, _ = tp.preview_import("demo", "cases.json", "demo-test-2", "demo", "keep", request)
+    assert preview is not None
+    _source(site, "cases.json", lambda cases: cases.__setitem__(
+        1, dict(cases[1], case_id="MRN-7654321", disease=12)))
+    done, said, label = tp.commit_import_ui(preview, "demo", "cases.json", "demo-test-2", "demo",
+                                            "keep", request)
+    assert done is False and label is None
+    assert "MRN-7654321" not in said and "cases[1]: disease is a number" in said
+    assert not (site.registry / "versions" / "demo-test-2").exists()
+
+
+def test_the_job_output_names_no_case():
+    """The measurement refuses a sample by its patient id; the job card shows
+    the refusal without it (D7)."""
+    from src.evaluation.measurement import _assert_ids_in_range
+
+    with pytest.raises(ValueError) as refused:
+        _assert_ids_in_range([SimpleNamespace(patient_id="MRN-9", phenotype_ids=[],
+                                              disease_id=0)], 10, 10)
+    text = f"ValueError: {refused.value}"
+    assert "MRN-9" in text and "MRN-9" not in tp.case_free(text)
+    job = {"status": "failed", "inputs": {}, "error_message": text, "log": ["Traceback", text]}
+    html = tp.job_html(job, [], ("none", ""))
+    assert "MRN-9" not in html and "a sample has no phenotypes" in html
+
+
+def test_notes_that_cannot_be_read_are_said_never_no_note(site, monkeypatch):
+    other = _disagreeing_copy(site)
+    request = operator_request(monkeypatch)
+    done, _said = tp.add_note(tp.read_reports(LABEL), other, "Dr A", "compared", request)
+    assert done
+    notes = site.reports / "notes.jsonl"
+    notes.write_bytes(notes.read_bytes() + b"\xff\xfe broken\n")
+    reports = tp.read_reports(LABEL)
+    assert reports["notes"] == [] and reports["notes_problems"]
+    # Through the page's own wiring: choosing the report renders the block.
+    demo, _ctx, _registry = _page_component()
+    monkeypatch.setattr(tp, "read_job", lambda **k: {"status": "idle", "inputs": None,
+                                                    "outcome": None, "log": []})
+    page = tp.read_page(request)
+    out = _named(demo, "_on_report").fn(page, reports, {}, {},
+                                        SimpleNamespace(_data={"key": other}), request)
+    html = out[3]
+    assert "No investigation note is kept" not in html
+    assert "The investigation notes cannot all be read" in html and str(site.root) not in html
+
+
+def _point_report_at_site(site):
+    """The kept report as if measured on the site's own demo workspace (the
+    module's measurement ran on the tree the site was copied from)."""
+    path = site.reports / site.run_id / "report.json"
+    report = json.loads(path.read_text())
+    report["manifest"]["data_dir"] = str(site.demo)
+    report["manifest"]["checkpoint_path"] = str(site.checkpoint)
+    path.write_text(json.dumps(report, indent=2, sort_keys=True))
+
+
+def test_register_from_a_copy_files_beside_the_checkpoint_the_run_read(site, monkeypatch):
+    """The page shows a copy of the workspace the run measured: Register files
+    the record beside the file the run read (where the list looks), so the
+    list says registered and the same report is not filed in a second ledger."""
+    _point_report_at_site(site)
+    shutil.copytree(site.demo, site.ws / "copy", symlinks=True)
+    page, request = _page(monkeypatch)
+    demo_ledger = site.checkpoint.parent / "evaluations.json"
+    copy_ledger = (site.ws / "copy" / site.checkpoint.relative_to(site.demo)).parent / \
+        "evaluations.json"
+    models_copy = tp.read_models("copy", request)
+    refined = tp.refine_registration(page, tp.read_reports(LABEL), site.run_id, models_copy,
+                                     request=request)
+    state = tp.find(refined["runs"], "run_id", site.run_id)["state"]
+    assert state["registered"] == "not_registered"
+    assert state["checked_beside"] == f"gat/{RUN}/best.pt in workspace demo"
+    done, said = tp.register_selected(page, refined, models_copy, "copy", site.run_id, request)
+    assert done is True and said.startswith("Registered as record 1.")
+    assert demo_ledger.exists() and not copy_ledger.exists()
+    reports = tp.read_reports(LABEL)
+    assert tp.find(reports["runs"], "run_id", site.run_id)["state"]["registered"] == "registered"
+    assert tp.register_state(page, reports, site.run_id) == (False, "Already registered.")
+
+
+def test_every_row_says_not_registered_for_an_operator_and_keeps_it(site, monkeypatch):
+    """The list's "cannot be checked" is asked again for every row from the
+    session's checkpoint listing (no checkpoint opened), so an unregistered
+    report reads "not registered" whichever row is selected; a row whose
+    place needs another workspace's listing keeps the list's answer."""
+    from src.api.services import server_lists
+
+    _point_report_at_site(site)
+    page, request = _page(monkeypatch)
+    models = tp.read_models("demo", request)
+    shutil.copytree(site.demo, site.ws / "copy", symlinks=True)
+    models_copy = tp.read_models("copy", request)
+    page = tp.read_page(request)
+    monkeypatch.setattr(server_lists, "list_checkpoints",
+                        lambda *a, **k: pytest.fail("a row opened another workspace's checkpoints"))
+    reports = tp.read_reports(LABEL)
+    rows = tp.refine_rows(page, reports, models)
+    state = tp.find(rows["runs"], "run_id", site.run_id)["state"]
+    assert state["registered"] == "not_registered" and state["checked_beside"] == f"gat/{RUN}/best.pt"
+    html = tp.reports_html(rows, None, models=models)
+    assert "report kept · not registered" in html and "cannot be checked from the list" not in html
+    from_copy = tp.refine_rows(page, reports, models_copy)
+    assert tp.find(from_copy["runs"], "run_id", site.run_id)["state"]["registered"] == \
+        "cannot_be_checked"
+    readonly = tp.read_page(_readonly())
+    assert tp.refine_rows(readonly, reports, models) is reports
+
+
+def test_a_refused_report_lookup_is_said_not_raised(site, monkeypatch):
+    """A report gone from the store between the list and Register is said
+    ("Nothing was registered."), never a page error."""
+    page, request = _page(monkeypatch)
+    models = tp.read_models("demo", request)
+    reports = tp.read_reports(LABEL)
+    shutil.rmtree(site.reports / site.run_id)
+    done, said = tp.register_selected(page, reports, models, "demo", site.run_id, request)
+    assert done is False and said.endswith("Nothing was registered.")
+
+
+def test_the_jobs_times_are_utc_as_the_report_rows_are():
+    import os
+    import time
+
+    before = os.environ.get("TZ")
+    os.environ["TZ"] = "Asia/Taipei"
+    time.tzset()
+    try:
+        job = {"status": "completed", "start_time": "2026-10-21T10:06:07",
+               "end_time": "2026-10-21T10:07:30", "outcome": None,
+               "inputs": {"version_label": LABEL, "checkpoint_sha256": "a" * 64}}
+        assert "ended 02:07:30 UTC" in tp.job_head_html(job)
+        assert "started 02:06:07 UTC" in tp.job_body_html(job, [], ("none", ""))
+        running = dict(job, status="running", end_time=None)
+        assert "started 02:06:07 UTC" in tp.reports_html({"label": LABEL, "runs": []}, None,
+                                                          job=running)
+    finally:
+        if before is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = before
+        time.tzset()
+
+
+def test_a_busy_gpu_is_the_start_reason_before_any_choice(site, monkeypatch):
+    page, request = _page(monkeypatch)
+    models = tp.read_models("demo", request)
+    busy = ("busy", "GPU job: test run (job runner)")
+    for ws, label, key in ((None, None, None), ("demo", LABEL, None)):
+        allowed, why = tp.start_state(page, models, ws, label, key, None, busy)
+        assert allowed is False and why.startswith("Disabled: GPU job: test run (job runner).")
+    allowed, why = tp.start_state(page, models, "demo", LABEL, None, None, ("unread", ""))
+    assert why.startswith("Disabled: the GPU lock cannot be read")
+
+
+def _runs(n):
+    return [{"run_id": f"202610{20 - i // 24:02d}T{23 - i % 24:02d}0000Z-{'a' * 12}-{i:08x}",
+             "when": f"run {i}", "sha12": "a" * 12, "state": {"kept": "kept",
+                                                            "registered": "not_registered"}}
+            for i in range(n)]
+
+
+def test_a_long_report_list_shows_the_newest_and_keeps_the_selected():
+    runs = _runs(20)
+    reports = {"label": LABEL, "runs": runs}
+    html = tp.reports_html(reports, runs[15]["run_id"])
+    old = re.findall(r'class="shep-test-rep[^"]*shep-test-rep-old"[^>]*data-key="([^"]+)"', html)
+    assert old == [x["run_id"] for i, x in enumerate(runs) if i >= tp.ROWS_SHOWN and i != 15]
+    assert f'data-key="{runs[15]["run_id"]}"' in html
+    assert "Show all 20 reports ›" in html and f"Show the newest {tp.ROWS_SHOWN} only" in html
+    short = tp.reports_html({"label": LABEL, "runs": runs[:tp.ROWS_SHOWN]}, None)
+    assert "shep-test-rep-old" not in short and "Show all" not in short
+
+
+def test_a_run_that_ended_with_no_report_is_a_row_until_the_next():
+    cancelled = {"status": "cancelled", "start_time": "2026-10-21T02:00:00",
+                 "end_time": "2026-10-21T02:01:00",
+                 "inputs": {"version_label": LABEL, "checkpoint_sha256": "b" * 64},
+                 "outcome": {"report_dir": None, "kept": False, "registered": False}}
+    html = tp.reports_html({"label": LABEL, "runs": []}, None, job=cancelled)
+    assert 'data-status="cancelled"' in html and "interrupted: cancelled" in html
+    assert "no report kept" in html and "No run has kept a report" not in html
+    failed = dict(cancelled, status="failed", exit_meaning="refused before anything was written")
+    assert "failed (refused before anything was written)" in tp.reports_html(
+        {"label": LABEL, "runs": []}, None, job=failed)
+    runs = _runs(1)
+    listed = dict(cancelled, outcome={"report_dir": f"/x/{runs[0]['run_id']}", "kept": False})
+    assert 'data-status="cancelled"' not in tp.reports_html({"label": LABEL, "runs": runs}, None,
+                                                            job=listed)
+    other = dict(cancelled, inputs={"version_label": "another", "checkpoint_sha256": "b" * 64})
+    assert 'data-status' not in tp.reports_html({"label": LABEL, "runs": []}, None, job=other)
+
+
+def test_the_r10_help_sits_beside_the_r10_lines(site):
+    reports = tp.read_reports(LABEL)
+    html = tp.result_html(reports, site.run_id, [])
+    label = html[html.index('class="shep-test-label"'):]
+    label = label[:label.index("</div>")]
+    assert "Help: R10 labels" not in label and "Help: Mode C result" in label
+    r10 = html[html.index(">R10, training"):]
+    assert r10.index("Help: R10 labels") < r10.index('class="shep-v"')
+
+
+def test_start_and_the_job_sit_in_the_run_panels_foot():
+    """Start and the job card are one region after the choices: at wide sizes
+    it keeps to the panel's foot (the choices scroll) and the job's output
+    scrolls inside its card under the title row with Cancel."""
+    demo, _ctx, _registry = _page_component()
+    by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
+    foot = [getattr(c, "elem_id", None) for c in by_id["shep-test-runft"].children]
+    assert foot == ["shep-test-start", "shep-test-start-reason", "shep-test-action",
+                    "shep-test-jobcard"]
+    wide, narrow = tp.PAGE_CSS.split("@media (max-width: 1399px)")
+    wide = wide[wide.index("@media (min-width: 1400px)"):]
+    assert "#shep-test-runft {" in wide and "#shep-test-jobcard > .shep-test-job-top { position: sticky" in wide
+    # The region never shrinks below its content (the choices shrink and
+    # scroll); past its cap the job card scrolls inside.
+    assert "#shep-test-runft { flex: 0 0 auto !important;" in wide and "max-height: 64%" in wide
+    assert "{ position: fixed !important;" in narrow.split(".shep-test-drawer ", 1)[1]
+    assert re.search(r"\.shep-test-drawer > \.shep-test-bd \{[^}]*overflow: auto", narrow)
+    # Over the panels, Gradio's own field labels included (position: relative;
+    # z-index: 40 in 6.30), which would otherwise show through the drawer.
+    for css in (wide, narrow):
+        z = re.search(r"\.shep-test-drawer \{[^}]*z-index: (\d+)", css)
+        assert z and int(z.group(1)) > 40, css[:40]
+
+
+def test_opening_the_import_moves_the_focus_to_the_drawer():
+    demo, _ctx, _registry = _page_component()
+    current, js = _named(demo, "_on_open_import"), []
+    for _ in range(4):
+        nxt = [d for d in demo.fns.values() if d.trigger_after == current._id]
+        if not nxt:
+            break
+        current = nxt[0]
+        js.append(current.js or "")
+    assert any("#shep-test-import-title h2" in text and ".focus(" in text for text in js)
+
+
+def test_a_long_choice_ends_in_an_ellipsis_with_its_whole_text_as_title():
+    demo, _ctx, _registry = _page_component()
+    by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
+    for elem_id in ("shep-test-workspace", "shep-test-version", "shep-test-model",
+                    "shep-test-intake", "shep-test-role", "shep-test-partial"):
+        assert "shep-test-select" in by_id[elem_id].elem_classes, elem_id
+    # The ellipsis ends before the chevron Gradio draws over the input's right.
+    assert ".shep-test-select input { text-overflow: ellipsis; padding-right: 26px !important; }" \
+        in tp.PAGE_CSS
+    assert "input.title = input.value" in (by_id["shep-test-cohort-hd"].js_on_load or "")
+    (label, _key), = tp.model_choices({"items": [{
+        "architecture": "gat", "run": RUN, "filename": "best.pt", "epoch": 12, "sha256": "c" * 64}]})
+    assert label.startswith("epoch 12 · GAT · run 2026-10-17 09:15") and label.endswith("· best.pt")
+
+
+def test_a_read_only_request_cannot_type_a_note(site, monkeypatch):
+    _disagreeing_copy(site)
+    demo, _ctx, _registry = _page_component()
+    monkeypatch.setattr(tp, "read_job", lambda **k: {"status": "idle", "inputs": None,
+                                                    "outcome": None, "log": []})
+    page = tp.read_page(_readonly())
+    reports = tp.read_reports(LABEL)
+    out = _named(demo, "_on_report").fn(page, reports, {}, {},
+                                        SimpleNamespace(_data={"key": site.run_id}), _readonly())
+    note_btn, note_who, note_what, note_reason = out[-4:]
+    assert note_who == gr.update(interactive=False) and note_what == gr.update(interactive=False)
+    assert note_btn == gr.update(interactive=False) and "Operator controls only" in note_reason
+
+
+def test_the_answer_asked_for_a_chosen_report_stays_with_it(site, monkeypatch):
+    """A row whose place needs another workspace's listing is asked when it is
+    chosen; the answer is kept in the session's reports, so choosing another
+    row does not turn it back into "cannot be checked"."""
+    _point_report_at_site(site)
+    shutil.copytree(site.demo, site.ws / "copy", symlinks=True)
+    page, request = _page(monkeypatch)
+    models_copy = tp.read_models("copy", request)
+    monkeypatch.setattr(tp, "read_job", lambda **k: {"status": "idle", "inputs": None,
+                                                    "outcome": None, "log": []})
+    demo, _ctx, _registry = _page_component()
+    reports = tp.read_reports(LABEL)
+    out = _named(demo, "_on_report").fn(page, reports, models_copy, {},
+                                        SimpleNamespace(_data={"key": site.run_id}), request)
+    kept = tp.find(out[1]["runs"], "run_id", site.run_id)["state"]
+    assert kept["registered"] == "not_registered"
+    assert "report kept · not registered" in tp.reports_html(out[1], None, models=models_copy)
+
+
+def test_another_workspaces_checkpoints_are_listed_only_for_the_asking_request(site, monkeypatch):
+    """Asking a chosen report's registration may list another workspace's
+    checkpoints (it opens them, C3): D8 is asked on the triggering request,
+    as the model list asks it; a refused request, or none, lists nothing and
+    the list's answer stands. Each pass lists that workspace once."""
+    from src.api.services import server_lists
+
+    _point_report_at_site(site)
+    shutil.copytree(site.demo, site.ws / "copy", symlinks=True)
+    page, request = _page(monkeypatch)
+    models_copy = tp.read_models("copy", request)
+    real, listed = server_lists.list_checkpoints, []
+    monkeypatch.setattr(server_lists, "list_checkpoints",
+                        lambda name, **k: listed.append(name) or real(name, **k))
+    monkeypatch.setattr(tp, "read_job", lambda **k: {"status": "idle", "inputs": None,
+                                                    "outcome": None, "log": []})
+    demo, _ctx, _registry = _page_component()
+    reports = tp.read_reports(LABEL)
+    for asking in (_readonly(), None):
+        out = _named(demo, "_on_report").fn(page, reports, models_copy, {},
+                                            SimpleNamespace(_data={"key": site.run_id}), asking)
+        assert listed == []
+        assert tp.find(out[1]["runs"], "run_id", site.run_id)["state"]["registered"] == \
+            "cannot_be_checked"
+    _named(demo, "_on_report").fn(page, reports, models_copy, {},
+                                  SimpleNamespace(_data={"key": site.run_id}), request)
+    assert listed == ["demo"]
+    # No listed file holds the weights: the list's answer stands, and the
+    # choice still lists the other workspace once, not once per output built.
+    listed.clear()
+    monkeypatch.setattr(server_lists, "list_checkpoints",
+                        lambda name, **k: listed.append(name) or server_lists.Listing((), None))
+    out = _named(demo, "_on_report").fn(page, reports, dict(models_copy, items=[]), {},
+                                        SimpleNamespace(_data={"key": site.run_id}), request)
+    assert listed == ["demo"], "listed once for the choice, never again for the same pass"
+    assert tp.find(out[1]["runs"], "run_id", site.run_id)["state"]["registered"] == \
+        "cannot_be_checked"
+
+
+def test_the_ledger_order_is_the_file_then_the_workspace_the_run_read(site, monkeypatch):
+    """`ledger_checkpoint`: (1) the file the run read when it is listed, even
+    when another listed copy comes first in its workspace; (2) else a copy in
+    the workspace the run measured, before (3) the workspace the page shows."""
+    _point_report_at_site(site)
+    manifest = json.loads((site.reports / site.run_id / "report.json").read_text())["manifest"]
+    newer = site.demo / "runs" / "gat" / "20261019-080000_run_aaaaaa" / "checkpoints"
+    newer.mkdir(parents=True)
+    shutil.copy2(site.checkpoint, newer / "best.pt")
+    page, request = _page(monkeypatch)
+    models = tp.read_models("demo", request)
+    assert models["items"][0]["run"] == "20261019-080000_run_aaaaaa", "the newer copy lists first"
+    place = tp.ledger_checkpoint(manifest, page, models, "demo")
+    assert place.path.resolve() == site.checkpoint.resolve() and place.workspaces == ("demo",)
+    # The file the run read is gone from the list: the measured workspace's
+    # copy, before the copy in the workspace the page shows.
+    shutil.rmtree(newer.parent)
+    site.checkpoint.rename(site.checkpoint.with_name("renamed.pt"))
+    shutil.copytree(site.demo, site.ws / "copy", symlinks=True)
+    page = tp.read_page(request)
+    models_copy = tp.read_models("copy", request)
+    place = tp.ledger_checkpoint(manifest, page, models_copy, "copy")
+    assert place.workspaces == ("demo", "copy") and place.item["workspace"] == "demo"
+    assert place.path.resolve() == site.checkpoint.with_name("renamed.pt").resolve()
+    assert tp.ledger_checkpoint(manifest, page, models_copy, "copy", read_others=False).unread
+    # A run measured on no listed workspace: the page's own workspace.
+    elsewhere = dict(manifest, data_dir="/nowhere/ws", checkpoint_path="/nowhere/best.pt")
+    place = tp.ledger_checkpoint(elsewhere, page, models_copy, "copy")
+    assert place.workspaces == ("copy",) and place.item["workspace"] == "copy"

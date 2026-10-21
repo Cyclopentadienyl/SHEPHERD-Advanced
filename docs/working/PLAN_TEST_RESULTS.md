@@ -724,7 +724,14 @@ holding the weights the report measured, found by full digest in the workspace's
 (never the report's recorded path), after the report's bytes are compared with the digest shown;
 the one function checks the store, the version, the block and the checkpoint's bytes again. For
 the selected report, an operator's page asks `report_state` again with that listed file, so "not
-registered" is said for the ledger a registration from the page would write.
+registered" is said for the ledger a registration from the page would write. *Review fixes
+(2026-10-21):* Register and that answer find the listed file in one order: the file the run read
+when it is listed with those weights (the ledger `stored_report_state` reads), then a listed copy
+in the workspace the run measured, then one in the workspace shown, so a report measured on one
+workspace is not filed beside a copy in another (a digest with records in two ledgers is left
+out of D4's ordering). Every row is asked again from the session's checkpoint listing; another
+workspace is listed only for the selected report, D8 asked on that request. Notes that cannot be
+read are said, never shown as "no note".
 
 ### D6 — How a test cohort is imported, identified and versioned
 
@@ -799,7 +806,11 @@ two about the data (questions 3 and 4).
   that leaves the directory; the preview and the commit run `prepare_import` and
   `commit_import` in the service (on the CPU; the graph is read), one at a time, and the page
   keeps the manifest's aggregates only, so no case id reaches the browser; Commit prepares again
-  and commits under the preview id shown. There is no upload component.
+  and commits under the preview id shown. There is no upload component. *Review fixes
+  (2026-10-21):* a source refused as malformed (`MalformedSource`, whose problems name case ids)
+  is shown by case index only, at most ten problems, with the command-line preview named for
+  the ids; the job card's output tail and error line leave out the patient id a measurement
+  refusal names.
 - **They are stored outside the repository tree**, at a path set by server configuration and
   never by a request (SPEC_4: a client-supplied path is not trusted). *As implemented in M4:*
   phase 1 is CLI only, so the registry is the operator's `--registry DIR` on the machine: an

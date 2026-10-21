@@ -2170,7 +2170,14 @@ and register it. Three panels:
   directory of the version's report store, newest first: when it ran, on which model, whether a
   report was kept, whether it is registered, and "runs disagree — investigate" when reports
   under its key disagree (D5). A run that kept no report says so; a test running now is the top
-  row.
+  row, and the last test run on this server that ended with nothing in the store (cancelled
+  before its run directory, or failed) stays a row until the next start or a restart. The
+  newest 8 reports are listed, and the selected one; **Show all N reports** lists the rest
+  (this browser tab keeps the choice). For an operator, each row's registration is checked in
+  the ledger beside the listed checkpoint, in the workspace shown, that holds the weights it
+  measured, so a report left to register reads "not registered" whichever row is selected; one
+  whose checkpoint is listed only in another workspace says "registration cannot be checked
+  from the list" until it is selected.
 - **Run.** The model: the workspace's checkpoints from the server's list, by run, epoch, file
   and model fingerprint. Listing them opens every checkpoint, so it is an operator control: a
   read-only browser is not shown it, and the page lists them once per workspace (↻ reads the
@@ -2180,12 +2187,17 @@ and register it. Three panels:
   **🔒 Start test** starts the real `measure_scorer.py` through the job runner (§4.11), with the
   workspace, version and checkpoint the server finds again in its lists, and **the full model
   fingerprint and version digest the page showed as the expected ones**: the run refuses before
-  measuring when the file or the version it reads holds other bytes. Start says why it is off
-  (a choice missing, another graph, or "Disabled: GPU job: … One managed GPU job at a time
-  (training or evaluation)."). The job card shows the state (Running, Completed, Failed in red,
-  Cancelled in grey: never green for a failed or cancelled run), the elapsed time, what the run
-  was given and the last 12 lines of its output; **🔒 Cancel**, beside the state, stops the test
-  run only, never a training job. Once the run has ended, the card shows what the runner read
+  measuring when the file or the version it reads holds other bytes. Start says why it is off:
+  a GPU job first ("Disabled: GPU job: … One managed GPU job at a time (training or
+  evaluation)."), since no choice enables it while one runs, then a choice missing or another
+  graph. The job card shows the state (Running, Completed, Failed in red, Cancelled in grey:
+  never green for a failed or cancelled run), the elapsed time, what the run was given, its
+  start and end times in UTC (as the report rows name runs) and the last 12 lines of its output
+  (folded after a cancel, whose traceback is expected; a patient id a measurement refusal names
+  is left out, D7); **🔒 Cancel**, beside the state, stops the test run only, never a training
+  job. On a wide screen, Start, its reason and the job card stay at the foot of the panel (the
+  choices above scroll) and the output scrolls inside the card under the line with Cancel, so
+  both stay in view. Once the run has ended, the card shows what the runner read
   from disk: whether a report was kept and whether it is registered, with the runner's sentence
   ("No report was published …" when the run wrote no outcome file; after a cancel, what was
   left). While the page is shown it reads the job every 5 seconds; the report of a run that has
@@ -2197,11 +2209,15 @@ and register it. Three panels:
   measured). **🔒 Register this report** registers a kept report through the one registration
   function (§4.9): the server finds the report in the version's store, checks that its bytes
   are the ones shown, finds where its ledger goes from its own checkpoint list (the listed file
-  holding the weights, by full digest, never the path the report records) and registers it. A
+  holding the weights, by full digest, never the path the report records: the file the run read
+  when it is listed with those weights, which is where the list looks, else another listed copy
+  in the workspace the run measured, else one in the workspace shown) and registers it. A
   checkpoint moved since the run is not found that way; the page says so, and
   `scripts/record_evaluation.py` on the machine remains. While runs under the report's key
   disagree, the page shows the block, Register is off, and **investigation notes** (who, when,
   what; 🔒 Add note) are listed and kept with the key's reports. A note never lifts the block.
+  When the notes file cannot be read, the page says so (a note may be missing), never "no
+  note is kept".
 
 **🔒 Import a new version…** opens a drawer over Run and Result: the file in the intake directory
 (`SHEPHERD_INTAKE_DIR`, §4.12: its `*.json` files by name, size and modification time; one that
@@ -2212,17 +2228,21 @@ policy. **🔒 Preview** runs the importer in the service, on the CPU (it reads 
 graph), and writes nothing. The preview shows the counts, the exclusion reasons and their
 counts, the unmappable terms with how many cases list each, and what the version binds; **case
 ids are not sent to the browser** (the command-line preview on the machine lists them, and the
-committed version records them). **🔒 Commit as version …** prepares again from the same inputs
-and commits under the preview id shown: a form changed since the preview, or a source or graph
-changed since, is refused. One preview or commit runs at a time; after a commit the drawer
-closes and the new version is chosen.
+committed version records them). A file that does not fit `shepherd-cases/1` is refused with its
+problems listed by case index (at most 10), never by case id; the command-line preview
+(`scripts/import_cohort.py`) lists each one with its case id. **🔒 Commit as version …**
+prepares again from the same inputs and commits under the preview id shown: a form changed
+since the preview, or a source or graph changed since, is refused. One preview or commit runs
+at a time; after a commit the drawer closes and the new version is chosen. Below 1400 × 760 the
+drawer is an overlay at the right that scrolls inside, and the keyboard focus moves to its
+title.
 
 A **read-only browser** sees the versions, their reports and states, the job and the results:
-every control is disabled with "Operator controls only: <reason>", and the checkpoint list is not
-shown. Every control checks its own request in the backend (§4.13). No absolute server path is
-shown: a path under the registry, the workspaces root, the intake directory, an evidence
-directory or the repository is written under its name (`<registry>/versions/…`), any other as
-"a server path".
+every control is disabled with "Operator controls only: <reason>" (the note's Who and What
+fields too), and the checkpoint list is not shown. Every control checks its own request in the
+backend (§4.13). No absolute server path is shown: a path under the registry, the workspaces
+root, the intake directory, an evidence directory or the repository is written under its name
+(`<registry>/versions/…`), any other as "a server path".
 
 ---
 

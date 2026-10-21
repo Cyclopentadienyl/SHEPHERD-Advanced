@@ -2440,7 +2440,13 @@ Directory（同時打開 Data Paths 以便看到）。伺服器上什麼都不�
   對照這個 workspace 的圖譜映射（「bound to this graph」，或「mapped against another graph」，
   執行時會被拒絕）。其下是該版本 report store 的每一個執行目錄，最新的在前：何時執行、用哪個
   模型、是否保留了報告、是否已登錄；當同一個 key 下的報告不一致時顯示「runs disagree —
-  investigate」（D5）。沒有保留報告的執行會說明這一點；目前正在執行的測試位於最上方一列。
+  investigate」（D5）。沒有保留報告的執行會說明這一點；目前正在執行的測試位於最上方一列，而這台
+  伺服器上最後一次結束時 store 中什麼也沒有的測試執行（在建立執行目錄之前就被取消，或失敗）會
+  保留為一列，直到下一次啟動或重新啟動伺服器。清單列出最新的 8 份報告以及選取的那一份；
+  **Show all N reports** 會列出其餘的（這個瀏覽器分頁會記住這個選擇）。對操作者而言，每一列的
+  登錄狀態都是在所顯示的 workspace 中、持有它所量測權重的已列出 checkpoint 旁的帳本中檢查，因此
+  尚待登錄的報告無論選取哪一列都顯示「not registered」；其 checkpoint 只列在另一個 workspace 的
+  報告，在被選取之前顯示「registration cannot be checked from the list」。
 - **Run。** 模型：伺服器清單中該 workspace 的 checkpoint，依執行、epoch、檔案與模型指紋列出。
   列出它們會開啟每一個 checkpoint，因此這是操作者控制項：唯讀的瀏覽器不會看到它，而且頁面對
   每個 workspace 只列出一次（↻ 會重新讀取清單）。接著是執行時會尋找的 R10 證據（被量測的
@@ -2449,11 +2455,15 @@ Directory（同時打開 Data Paths 以便看到）。伺服器上什麼都不�
   `SHEPHERD_DEVICE`）。**🔒 Start test** 透過 job runner（§4.11）啟動真正的
   `measure_scorer.py`，使用伺服器在自己的清單中重新找到的 workspace、版本與 checkpoint，並以
   **頁面顯示過的完整模型指紋與版本 digest 作為預期值**：執行時讀到的檔案或版本若是其他位元組，
-  會在量測之前拒絕。Start 會說明它為何不可用（缺少某個選擇、另一個圖譜，或「Disabled: GPU
-  job: … One managed GPU job at a time (training or evaluation).」）。工作卡片顯示狀態
-  （Running、Completed、紅色的 Failed、灰色的 Cancelled：失敗或取消的執行從不顯示為綠色）、
-  已經過的時間、執行收到的輸入，以及其輸出的最後 12 行；狀態旁的 **🔒 Cancel** 只停止測試執行，
-  從不停止訓練工作。執行結束後，卡片顯示 job runner 從磁碟讀到的結果：是否保留了報告、是否已
+  會在量測之前拒絕。Start 會說明它為何不可用：先說 GPU 工作（「Disabled: GPU job: … One
+  managed GPU job at a time (training or evaluation).」），因為工作執行期間任何選擇都無法讓它
+  可用，然後才是缺少某個選擇或另一個圖譜。工作卡片顯示狀態（Running、Completed、紅色的
+  Failed、灰色的 Cancelled：失敗或取消的執行從不顯示為綠色）、已經過的時間、執行收到的輸入、
+  以 UTC 表示的開始與結束時間（與報告列命名執行的方式相同），以及其輸出的最後 12 行（取消後
+  會收合，因為其 traceback 是預期中的；量測拒絕訊息中提到的病患 id 會被略去，D7）；狀態旁的
+  **🔒 Cancel** 只停止測試執行，從不停止訓練工作。在寬螢幕上，Start、其原因與工作卡片固定在
+  面板底部（上方的選擇會捲動），輸出則在卡片內、Cancel 所在那一行之下捲動，所以兩者都保持
+  可見。執行結束後，卡片顯示 job runner 從磁碟讀到的結果：是否保留了報告、是否已
   登錄，並附上 job runner 的說明（執行沒有寫出 outcome 檔案時為「No report was published …」；
   取消後說明留下了什麼）。頁面顯示時每 5 秒讀取一次工作狀態；剛結束的執行的報告會被選取。
 - **Result。** 選取的報告，以帳本將會保存的紀錄形式顯示：對已排名案例的 Mode C 指標、含每一類
@@ -2461,11 +2471,14 @@ Directory（同時打開 Data Paths 以便看到）。伺服器上什麼都不�
   以及是否已登錄（對操作者而言，是在清單中持有它所量測權重的 checkpoint 旁的帳本中檢查）。
   **🔒 Register this report** 透過唯一的登錄函式（§4.9）登錄一份已保留的報告：伺服器在版本的
   store 中找到報告、確認其位元組就是顯示過的那些、從它自己的 checkpoint 清單找出帳本應在的
-  位置（以完整 digest 找到持有該權重的已列出檔案，從不使用報告記錄的路徑），然後登錄。執行之後
+  位置（以完整 digest 找到持有該權重的已列出檔案，從不使用報告記錄的路徑：若執行讀取的那個
+  檔案以這些權重列出，就用它，這也是清單查看的地方；否則用執行所量測的 workspace 中另一個已
+  列出的副本；再否則用所顯示 workspace 中的副本），然後登錄。執行之後
   被移動過的 checkpoint 無法以這種方式找到；頁面會說明，機器上的
   `scripts/record_evaluation.py` 仍然可用。當報告所屬 key 下的多次執行不一致時，頁面顯示這個
   封鎖、Register 不可用，並列出與新增 **investigation notes**（誰、何時、發現了什麼；🔒 Add
-  note），與該 key 的報告保存在一起。筆記從不解除封鎖。
+  note），與該 key 的報告保存在一起。筆記從不解除封鎖。筆記檔案無法讀取時，頁面會說明這一點
+  （可能缺少某則筆記），從不顯示「沒有保存筆記」。
 
 **🔒 Import a new version…** 會在 Run 與 Result 上方打開一個抽屜：intake 目錄中的檔案
 （`SHEPHERD_INTAKE_DIR`，§4.12：其中的 `*.json` 檔案，依名稱、大小與修改時間列出；連結到目錄
@@ -2474,12 +2487,15 @@ Models 中提供依測試分數排序：`SHEPHERD_ORDERING_ROLES`，`institution
 以及遺失 term 的政策。**🔒 Preview** 在服務內以 CPU 執行匯入程式（它會讀取 workspace 的圖譜），
 不寫入任何東西。預覽顯示各項數量、排除原因及其數量、無法映射的 term 及列出每個 term 的案例數，
 以及版本綁定的內容；**案例 id 不會傳送到瀏覽器**（機器上的命令列預覽會列出它們，提交後的版本
-會記錄它們）。**🔒 Commit as version …** 以相同的輸入重新準備，並在顯示過的 preview id 下提交：
+會記錄它們）。不符合 `shepherd-cases/1` 的檔案會被拒絕，其問題依案例索引列出（最多 10 項），
+從不依案例 id；機器上的命令列預覽（`scripts/import_cohort.py`）會連同案例 id 列出每一項。
+**🔒 Commit as version …** 以相同的輸入重新準備，並在顯示過的 preview id 下提交：
 預覽之後表單有變更，或之後來源或圖譜有變更，都會被拒絕。一次只執行一個預覽或提交；提交之後
-抽屜會關閉，並選取新的版本。
+抽屜會關閉，並選取新的版本。寬度或高度低於 1400 × 760 時，抽屜是右側的覆蓋層，在其內部捲動，
+鍵盤焦點會移到它的標題。
 
 **唯讀的瀏覽器**可以看到各版本、它們的報告與狀態、工作與結果：每個控制項都不可用，並寫明
-「Operator controls only: <原因>」，checkpoint 清單也不顯示。每個控制項都在後端檢查它自己的
+「Operator controls only: <原因>」（筆記的 Who 與 What 欄位也一樣），checkpoint 清單也不顯示。每個控制項都在後端檢查它自己的
 請求（§4.13）。不會顯示伺服器的絕對路徑：registry、workspace 根目錄、intake 目錄、證據目錄或
 repository 之下的路徑以其名稱書寫（`<registry>/versions/…`），其他路徑寫作「a server path」。
 
