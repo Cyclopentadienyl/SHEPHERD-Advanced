@@ -13,7 +13,8 @@ workspace (SPEC_4 C3), so it is an operator control: D8's helper is asked on the
 triggering request first, and a read-only request gets the reason and no list.
 Each row's recorded tests are a state read from the ledger beside the
 checkpoint (`read_ledger`, `records_for`) and, for contested, from the cohort
-version's report store (`scan_report_store`): never a number of a result. An
+version's report store (`record_states.contest_states`, the one implementation
+the API's route shares): never a number of a result. An
 unreadable entry is greyed "metadata not readable · cannot be loaded". "In use"
 is matched by the **full** model fingerprint the status serves and marks the
 checkpoint only.
@@ -93,7 +94,6 @@ Module: src/webui/components/model_list.py
 from __future__ import annotations
 
 import contextlib
-import json
 import logging
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -102,7 +102,6 @@ from typing import (
     Any,
     Callable,
     Dict,
-    Iterable,
     List,
     Mapping,
     NamedTuple,
@@ -113,6 +112,9 @@ from typing import (
 
 import gradio as gr
 
+# D5's state of a record key: one implementation, shared with the API's route
+# (BACKLOG 36).
+from src.api.services.record_states import CohortVersions, contest_states, key_text
 from src.webui.components import renderers as r
 from src.webui.components.served_status import (
     read_status,
@@ -178,63 +180,6 @@ def item_key(item: Mapping[str, Any]) -> str:
     return f"{item.get('architecture')}/{item.get('run')}/{item.get('filename')}"
 
 
-def key_text(key: Sequence[Any]) -> str:
-    """A ledger key (`record_key`'s tuple) as one comparable text."""
-    return json.dumps(list(key))
-
-
-class CohortVersions:
-    """The registry's versions resolved once per read, by label, each checked
-    against the digest the server's list gave it: the one place a record's
-    cohort version is found (the rows, Models and the Diagnosis card)."""
-
-    def __init__(self, versions: Sequence[Mapping[str, Any]],
-                 environ: Optional[Mapping[str, str]]) -> None:
-        from src.config import server_settings
-
-        self.listed = {v["sha256"]: v for v in versions if r.is_digest(v.get("sha256"))}
-        setting = server_settings.cohort_registry(environ)
-        self.registry = setting.value if setting.available else None
-        self.problem = None if setting.available else (setting.problem or "no cohort registry")
-        self._resolved: Dict[str, Any] = {}
-
-    @classmethod
-    def listed(cls, environ: Optional[Mapping[str, str]] = None) -> "CohortVersions":
-        """The versions the server's list offers now (`list_cohort_versions`);
-        none when it cannot be listed (every record then "cannot be checked")."""
-        from src.api.services.server_lists import list_cohort_versions
-
-        try:
-            items = list_cohort_versions(environ=environ).items
-        except Exception:  # noqa: BLE001 - contested then reads "cannot be checked"
-            logger.exception("The cohort versions could not be listed")
-            items = ()
-        return cls([{"label": i.label, "sha256": i.manifest_sha256} for i in items], environ)
-
-    def by_digest(self, digest: Any) -> Tuple[Any, Optional[str]]:
-        """``(version, None)`` or ``(None, why)`` for a cohort version digest."""
-        from src.evaluation.cohort_registry import resolve_version
-
-        if self.registry is None:
-            return None, f"no cohort registry: {self.problem}"
-        listed = self.listed.get(digest)
-        if listed is None:
-            return None, (f"its cohort version ({r.short_hex(digest)}) is not one the server's "
-                          "registry lists")
-        label = listed["label"]
-        if label not in self._resolved:
-            try:
-                version = resolve_version(self.registry, label)
-            except Exception as exc:  # noqa: BLE001 - a state, never a crash of the page
-                self._resolved[label] = (None, f"{label} cannot be read ({type(exc).__name__})")
-            else:
-                if version.identity.sha256 != digest:
-                    self._resolved[label] = (None, f"{label} changed since it was listed")
-                else:
-                    self._resolved[label] = (version, None)
-        return self._resolved[label]
-
-
 def ledger_records(workspace_dir: Path, items: Sequence[Mapping[str, Any]]
                    ) -> Dict[str, Dict[str, Any]]:
     """For each listed checkpoint with a digest, what the ledger beside it holds
@@ -288,64 +233,6 @@ def ledger_records(workspace_dir: Path, items: Sequence[Mapping[str, Any]]
             records = records_for(ledger, item["sha256"])
             out[key] = {"state": "records" if records else "none", "records": records,
                         "ledger": str(ledger_path), "problem": None}
-    return out
-
-
-def contest_states(records: Iterable[Mapping[str, Any]], versions: CohortVersions, *,
-                   operator: bool = True) -> Dict[str, Dict[str, Any]]:
-    """Each record key's state in its cohort version's report store (D5), by
-    the key's text: one scan of each store (`scan_report_store`), then
-    `StoreScan.status`. A key whose state cannot be read is ``cannot_be_checked``,
-    never uncontested. For a contested key, the disagreeing runs' values of the
-    metrics that differ. `operator` False leaves out the problems' own words,
-    which may name a server path."""
-    from src.evaluation.report_store import scan_report_store
-    from src.evaluation.sidecar import record_key
-
-    keys: Dict[str, Tuple[Any, ...]] = {}
-    for record in records:
-        try:
-            key = record_key(dict(record))
-        except ValueError:
-            continue
-        keys[key_text(key)] = key
-    scans: Dict[str, Tuple[Any, Optional[str]]] = {}
-    out: Dict[str, Dict[str, Any]] = {}
-    for text, key in keys.items():
-        digest = key[2]
-        if digest not in scans:
-            version, why = versions.by_digest(digest)
-            if version is None:
-                scans[digest] = (None, why)
-            else:
-                try:
-                    scans[digest] = (scan_report_store(version), None)
-                except Exception as exc:  # noqa: BLE001
-                    logger.exception("A report store could not be scanned")
-                    scans[digest] = (None, f"its report store could not be read "
-                                           f"({type(exc).__name__})")
-        scan, why = scans[digest]
-        if scan is None:
-            out[text] = {"state": "cannot_be_checked", "differing": [], "runs": [],
-                         "problems": [why] if operator else []}
-            continue
-        try:
-            status = scan.status(key)
-        except Exception as exc:  # noqa: BLE001
-            out[text] = {"state": "cannot_be_checked", "differing": [], "runs": [],
-                         "problems": [f"({type(exc).__name__})"] if operator else []}
-            continue
-        runs = []
-        if status.state == "contested":
-            for run_id, record in (scan.reports.get(tuple(key)) or {}).values():
-                if run_id in status.disagreeing_runs:
-                    metrics = record.get("metrics") if isinstance(record, Mapping) else None
-                    runs.append({"run": run_id, "values": {
-                        name: metrics.get(name) for name in status.differing
-                        if isinstance(metrics, Mapping) and name in metrics}})
-        out[text] = {"state": status.state, "differing": list(status.differing),
-                     "runs": sorted(runs, key=lambda run: run["run"]),
-                     "problems": list(status.problems) if operator else []}
     return out
 
 
@@ -1589,7 +1476,6 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
 
 
 __all__ = [
-    "CohortVersions",
     "FROM_CHANGED",
     "IN_USE_NOTE",
     "LoadStep",
@@ -1603,7 +1489,6 @@ __all__ = [
     "REST_TITLE",
     "TO_CHANGED",
     "confirmation_html",
-    "contest_states",
     "count_line",
     "create_model_list",
     "facts_html",
@@ -1612,7 +1497,6 @@ __all__ = [
     "item_key",
     "kept_selection",
     "ledger_records",
-    "key_text",
     "list_html",
     "list_models",
     "load_answered_js",

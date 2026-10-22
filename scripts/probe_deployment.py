@@ -2587,13 +2587,15 @@ def _import_version(registry: Path, data_dir: Path, source: Path, label: str) ->
 def _measure_cohort(checkpoint: Path, data_dir: Path, registry: Path, label: str,
                     device: str, *extra: str) -> int:
     """The production measurement entry point on a registered cohort version
-    (contract M4): `--cohort` with `--registry`, and `extra` (`--record`)."""
+    (contract M4): `--cohort` with `--registry`, and `extra` (`--record`), with
+    that registry as the deployment's (`_registry_setting`)."""
     import scripts.measure_scorer as measure_scorer
 
-    return measure_scorer.main([
-        "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
-        "--cohort", label, "--registry", str(registry), "--device", device, *extra,
-    ])
+    with _registry_setting(registry):
+        return measure_scorer.main([
+            "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
+            "--cohort", label, "--registry", str(registry), "--device", device, *extra,
+        ])
 
 
 def _kept_report(registry: Path, label: str) -> Tuple[Path, Dict[str, Any], Any, int]:
@@ -2881,6 +2883,18 @@ def _deployment_settings(values: Mapping[str, Optional[str]]):
         yield
     finally:
         apply(saved)
+
+
+@contextlib.contextmanager
+def _registry_setting(registry: Path):
+    """`SHEPHERD_REGISTRY` naming the probe's own registry while this is open,
+    then put back, through `_deployment_settings`; the other M5 settings stay
+    as they are. A ``--cohort`` run measures, and a report is registered, only
+    in the deployment's registry (BACKLOG 37), and for M4's probes that is the
+    probe's."""
+    current = {name: os.environ.get(name) for name in _M5_SETTINGS}
+    with _deployment_settings({**current, "SHEPHERD_REGISTRY": str(registry)}):
+        yield
 
 
 def _deployment_gpu_lock() -> Dict[str, bool]:
@@ -4295,9 +4309,11 @@ def _m5_real(report: Report, runs: Path, real: Path, workspaces_root: Path, devi
     it, a test run through the job runner on the device, and a short training
     job started and stopped through it (no long training). Everything the runs
     write is under --work-dir: the GPU lock is a file there, the registry is
-    RT1's, the runs' directories and ledgers are beside R3's checkpoint or
-    under <work>/real/m5. The deployment's own root, lock and registry are
-    never used; the root is only read, to list."""
+    RT1's (named as `SHEPHERD_REGISTRY` while they run: a test run measures
+    only in the deployment's registry, BACKLOG 37), the runs' directories and
+    ledgers are beside R3's checkpoint or under <work>/real/m5. The
+    deployment's own root, lock and registry are never used; the root is only
+    read, to list."""
     from src.api.services import server_lists
     from src.api.services.training_manager import (
         TestRunInputs,
@@ -4316,7 +4332,8 @@ def _m5_real(report: Report, runs: Path, real: Path, workspaces_root: Path, devi
     lock_path = m5 / "gpu.lock"
     registry = runs / "m4" / "registry"
     reports = registry / "versions" / M4_REAL_LABEL / "reports"
-    settings = {"SHEPHERD_GPU_LOCK_FILE": str(lock_path), "SHEPHERD_DEVICE": device}
+    settings = {"SHEPHERD_GPU_LOCK_FILE": str(lock_path), "SHEPHERD_DEVICE": device,
+                "SHEPHERD_REGISTRY": str(registry)}
 
     def _listed() -> Tuple[str, Dict[str, Any]]:
         from dataclasses import asdict
@@ -4886,8 +4903,9 @@ def phase_m2_demo(
         assert "report" in m4, "the measurement (T2) is not available"
         before = snapshot(measured.parent, include_dirs=True)
         # The later registration in the form measure_scorer prints for it:
-        # `--report` and `--checkpoint FILE`, the file the run measured.
-        with _logged(record_evaluation.logger) as said:
+        # `--report` and `--checkpoint FILE`, the file the run measured, with
+        # the probe's registry as the deployment's.
+        with _logged(record_evaluation.logger) as said, _registry_setting(registry):
             code = record_evaluation.main(["--report", str(m4["report"]),
                                            "--checkpoint", str(measured)])
         assert code == 0, f"registering the same report again exited {code}"
@@ -4902,21 +4920,41 @@ def phase_m2_demo(
         # Since M5-1 a report is registered only from the registry's report
         # store (D5, 2026-10-19): a copy outside it is refused for where it is,
         # before it is read, saying to register the store's original.
-        refuses(lambda: record_evaluation.main(["--report", str(damaged),
-                                                "--checkpoint", str(measured)]),
-                SystemExit, ("is not a report the registry's report store holds",
-                             "Nothing was written"))
+        with _registry_setting(registry):
+            refuses(lambda: record_evaluation.main(["--report", str(damaged),
+                                                    "--checkpoint", str(measured)]),
+                    SystemExit, ("is not a report the registry's report store holds",
+                                 "Nothing was written"))
         assert_untouched(before, measured.parent, "a refused registration", include_dirs=True)
-        return "already registered and a damaged copy outside the store refused; the ledger " \
-               "unchanged", {
+        # **A copy of the whole registry is not the deployment's** (BACKLOG 37):
+        # its report, the same bytes in the same structure, is refused before
+        # anything in the copy is read, and the copy's usage history is untouched.
+        whole = m4_dir / "registry-copy"
+        shutil.copytree(registry, whole, symlinks=True)
+        copy_before = snapshot(whole, include_dirs=True)
+        with _registry_setting(registry):
+            refuses(lambda: record_evaluation.main([
+                "--report", str(whole / m4["report"].relative_to(registry)),
+                "--checkpoint", str(measured)]),
+                SystemExit, ("is not registered: the registry", "is not the deployment's",
+                             "Nothing was written"))
+        assert_untouched(before, measured.parent, "a registration from a copied registry",
+                         include_dirs=True)
+        assert_untouched(copy_before, whole, "a registration from a copied registry",
+                         include_dirs=True)
+        return "already registered, a damaged copy outside the store and a copied registry " \
+               "refused; the ledger unchanged", {
                    "same_report_again": "already_registered", "damaged_copy": "refused",
                    "damaged_copy_refused_as": "not in the registry's report store",
-                   "damaged_copy_bytes": len(data) // 2, "ledger_unchanged": True,
+                   "damaged_copy_bytes": len(data) // 2,
+                   "registry_copy": "refused: not the deployment's registry",
+                   "ledger_unchanged": True,
                }
 
     report.run("T3", "m2",
                "M4: the same report again is already registered, a damaged copy outside the "
-               "report store refused, the ledger unchanged", _registered_again)
+               "report store and a copy of the whole registry refused, the ledger unchanged",
+               _registered_again)
 
     def _other_graph_refused() -> Tuple[str, Dict[str, Any]]:
         from src.evaluation.cohort_registry import CohortBindingMismatch

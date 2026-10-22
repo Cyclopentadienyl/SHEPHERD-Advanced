@@ -118,8 +118,14 @@ def flow(tmp_path_factory):
 
 
 @pytest.fixture
-def cohort(flow, tmp_path):
-    return copy_registered_cohort(flow.cohort, tmp_path / "root")
+def cohort(flow, tmp_path, monkeypatch):
+    """A copy of the imported cohort, its registry the deployment's
+    (`SHEPHERD_REGISTRY`, inherited by a command run as printed): a
+    ``--cohort`` run measures, and a report is registered, only there
+    (BACKLOG 37)."""
+    copied = copy_registered_cohort(flow.cohort, tmp_path / "root")
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(copied.registry))
+    return copied
 
 
 def _measure(cohort, *extra, data_dir=None, checkpoint=None, label=LABEL):
@@ -891,11 +897,12 @@ def test_r10_missing_or_altered_evidence_is_unverifiable(cohort, case):
     assert r10[kept]["evidence"]["state"] == "found"
 
 
-def test_r10_a_cohort_of_validation_cases_overlaps_validation_entirely(tmp_path):
+def test_r10_a_cohort_of_validation_cases_overlaps_validation_entirely(tmp_path, monkeypatch):
     """A source built from the workspace's own val cases: every test case's
     phenotype set is a validation case's (k = n), and the allocation keeps its
     diseases out of training."""
     cohort = build_registered_cohort(tmp_path / "root", source="val_cases")
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(cohort.registry))
 
     assert _measure(cohort) == 0
 

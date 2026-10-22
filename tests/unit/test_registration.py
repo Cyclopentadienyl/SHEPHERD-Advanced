@@ -27,7 +27,8 @@ phase 1 step 2). What is pinned here:
   - **since M5-1 (D5, 2026-10-19)**: only a report the registry's report store
     holds is registered, found through the registry's structure (a copy, a path
     off that structure, a link out of the store refused; a registry moved as a
-    whole, a link to a stored report accepted), naming its version exactly and
+    whole once `SHEPHERD_REGISTRY` names its new place, a link to a stored
+    report accepted), naming its version exactly and
     kept in a run directory named for its checkpoint; runs that disagree under
     one key block every registration under it, checked or unchecked, a store
     that cannot be checked refuses too, and a note does not lift the block; a
@@ -77,6 +78,15 @@ DIGEST = hashlib.sha256(WEIGHTS).hexdigest()
 
 def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+@pytest.fixture(autouse=True)
+def _deployment_registry(tmp_path, monkeypatch):
+    """``tmp_path/registry``, where `_report` keeps its reports, is the
+    deployment's registry (`SHEPHERD_REGISTRY`): a report is registered only
+    from it (BACKLOG 37)."""
+    (tmp_path / "registry").mkdir(exist_ok=True)
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(tmp_path / "registry"))
 
 
 @pytest.fixture
@@ -427,17 +437,29 @@ def test_a_path_that_is_not_the_stores_structure_is_refused(tmp_path, checkpoint
     assert not (checkpoints / "evaluations.json").exists()
 
 
-def test_a_registry_moved_as_a_whole_still_registers(tmp_path, checkpoints):
-    """No absolute path is an identity: the registry is found from the report's
-    path where it now is, and its version is the same version by digest."""
+def test_a_registry_moved_as_a_whole_registers_once_the_setting_names_its_new_place(
+    tmp_path, checkpoints, monkeypatch
+):
+    """The registry is found from the report's path where it now is, and its
+    version is the same version by digest; **it is the deployment's once
+    `SHEPHERD_REGISTRY` names its new place** (BACKLOG 37). Before that it is
+    refused, saying the setting resolves elsewhere, and nothing is written."""
     import shutil
+
+    from src.evaluation.registration import NotFromTheDeploymentRegistry
 
     report = _report(tmp_path)
     moved = tmp_path / "elsewhere" / "registry"
     moved.parent.mkdir()
     shutil.move(str(tmp_path / "registry"), str(moved))
+    (tmp_path / "registry").mkdir()               # the setting's old place, now empty
     relative = report.relative_to(tmp_path / "registry")
 
+    with pytest.raises(NotFromTheDeploymentRegistry, match="is not the deployment's"):
+        _register(moved / relative, checkpoints, beside=True)
+    assert not (checkpoints / "evaluations.json").exists()
+
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(moved))
     result = _register(moved / relative, checkpoints, beside=True)
 
     assert result.outcome == "registered"
@@ -1443,3 +1465,190 @@ def test_report_state_without_a_checkpoint_never_guesses_a_ledger(tmp_path, chec
     gone.unlink()
     state = report_state(gone)
     assert (state.kept, state.registered) == ("not_kept", "cannot_be_checked")
+
+
+# ---------------------------------------------------------------------------
+# The report that was shown (the M5 review's P2-1)
+# ---------------------------------------------------------------------------
+def _usage(tmp_path) -> bytes:
+    """The version's usage history as bytes ("" when there is none)."""
+    files = list((tmp_path / "registry").glob("versions/*/reports/usage.jsonl"))
+    return files[0].read_bytes() if files else b""
+
+
+def test_the_digest_shown_is_compared_on_the_read_registered_before_it_is_parsed(
+    tmp_path, checkpoints
+):
+    """`expected_report_sha256`: other bytes than the ones shown are refused
+    from the digest of the one read, before they are decoded -- a plain
+    refusal, not `ReportNotAsPublished`, which belongs to a run's own report
+    -- and nothing is written; the digest shown registers."""
+    report = _report(tmp_path)
+    usage_before = _usage(tmp_path)
+
+    with pytest.raises(RegistrationRefused) as refused:
+        register_report(report, checkpoint_dir=checkpoints, expected_report_sha256="0" * 64)
+    assert not isinstance(refused.value, ReportNotAsPublished)
+    said = str(refused.value)
+    assert f"{report} is not the report that was shown: it now holds bytes {_sha(report)[:12]}" in said
+    assert "0" * 12 + "... was shown" in said and "select it again" in said
+    assert said.endswith("Nothing was written.")      # the directory is not searched yet
+    assert not (checkpoints / "evaluations.json").exists()
+    assert _usage(tmp_path) == usage_before
+
+    damaged = report.read_bytes()[:20]
+    shown = _sha(report)
+    report.write_bytes(damaged)
+    with pytest.raises(RegistrationRefused, match="is not the report that was shown") as refused:
+        register_report(report, checkpoint_dir=checkpoints, expected_report_sha256=shown)
+    assert "not a measurement report" not in str(refused.value), "it was parsed"
+
+
+def test_the_digest_shown_registers_the_report_it_names(tmp_path, checkpoints):
+    report = _report(tmp_path)
+
+    result = register_report(report, checkpoint_dir=checkpoints,
+                             expected_report_sha256=_sha(report), registered_at=WHEN)
+
+    assert result.outcome == "registered"
+    assert result.record["source_artifact_digest"] == _sha(report)
+
+
+@pytest.mark.parametrize("digest", ["ABC", "A" * 64, "a" * 63, 123, b"0" * 64])
+def test_a_digest_that_is_not_a_sha256_is_a_callers_error(tmp_path, checkpoints, digest):
+    report = _report(tmp_path)
+    with pytest.raises(TypeError, match="64 lowercase hex"):
+        register_report(report, checkpoint_dir=checkpoints, expected_report_sha256=digest)
+    assert not (checkpoints / "evaluations.json").exists()
+
+
+def test_a_run_and_a_shown_digest_together_are_a_callers_error(tmp_path, checkpoints):
+    """`measured` carries the digest its run published; a second one would be
+    two answers to one question."""
+    report = _report(tmp_path)
+    with pytest.raises(TypeError, match="measured carries the digest"):
+        register_report(report, measured=_measured(report, checkpoints),
+                        expected_report_sha256=_sha(report))
+
+
+# ---------------------------------------------------------------------------
+# Only from the deployment's registry (BACKLOG 37; the M5 review's P2-7)
+# ---------------------------------------------------------------------------
+def _whole_copy(tmp_path) -> Path:
+    import shutil
+
+    copy = tmp_path / "registry-copy"
+    shutil.copytree(tmp_path / "registry", copy, symlinks=True)
+    return copy
+
+
+def test_a_copy_of_the_whole_registry_is_refused_before_anything_in_it_is_read(
+    tmp_path, checkpoints, monkeypatch
+):
+    """The reviewer's counter-example: a copy holds the same bytes in the same
+    structure, so only where it is tells it apart. Refused from the path's shape
+    (its `cohort.json` never resolved), nothing written beside the checkpoint,
+    nothing appended to the copy's usage history; the original registers."""
+    from src.evaluation import cohort_registry
+    from src.evaluation.registration import NotFromTheDeploymentRegistry
+
+    report = _report(tmp_path)
+    copy = _whole_copy(tmp_path)
+    in_copy = copy / report.relative_to(tmp_path / "registry")
+    copy_before = {p: p.read_bytes() for p in copy.rglob("*") if p.is_file()}
+    resolved = []
+    real = cohort_registry.resolve_version
+    monkeypatch.setattr(cohort_registry, "resolve_version",
+                        lambda *a, **k: resolved.append(a) or real(*a, **k))
+
+    with pytest.raises(NotFromTheDeploymentRegistry) as refused:
+        _register(in_copy, checkpoints, beside=True)
+
+    said = str(refused.value)
+    assert f"{in_copy} is not registered: the registry {copy} is not the deployment's" in said
+    assert (f"SHEPHERD_REGISTRY ({tmp_path / 'registry'}) resolves to "
+            f"{(tmp_path / 'registry').resolve()}") in said
+    assert "Nothing was written" in said and "is a copy" not in said
+    assert resolved == [], "something in the copy was read"
+    assert not (checkpoints / "evaluations.json").exists()
+    assert {p: p.read_bytes() for p in copy.rglob("*") if p.is_file()} == copy_before
+    assert _register(report, checkpoints, beside=True).outcome == "registered"
+
+
+def test_a_runs_own_report_in_another_registry_is_not_called_lost(tmp_path, checkpoints,
+                                                                 monkeypatch):
+    """For `--record`, the run's report is where it published it: the refusal is
+    of the registry, not `ReportNotAsPublished`."""
+    from src.evaluation.registration import NotFromTheDeploymentRegistry
+
+    report = _report(tmp_path)
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(_whole_copy(tmp_path)))
+    with pytest.raises(NotFromTheDeploymentRegistry) as refused:
+        _register(report, checkpoints)
+    assert not isinstance(refused.value, ReportNotAsPublished)
+
+
+@pytest.mark.parametrize("setting, said", [
+    (None, "SHEPHERD_REGISTRY is not set here, so which registry is the deployment's cannot "
+           "be told"),
+    ("relative/registry", "SHEPHERD_REGISTRY is refused: the registry 'relative/registry' is "
+                          "not an absolute path"),
+], ids=["unset", "refused"])
+def test_with_no_usable_setting_every_registration_is_refused_saying_so(
+    tmp_path, checkpoints, monkeypatch, setting, said
+):
+    """A fresh shell without the service's settings: refused, never "any
+    registry", with words true on the command line (nothing about features
+    that are off) and nothing written."""
+    report = _report(tmp_path)
+    if setting is None:
+        monkeypatch.delenv("SHEPHERD_REGISTRY")
+    else:
+        monkeypatch.setenv("SHEPHERD_REGISTRY", setting)
+
+    with pytest.raises(RegistrationRefused) as refused:
+        _register(report, checkpoints, beside=True)
+
+    assert said in str(refused.value)
+    assert "features" not in str(refused.value)
+    assert not (checkpoints / "evaluations.json").exists()
+
+
+def test_a_link_to_the_deployments_registry_is_that_registry(tmp_path, checkpoints,
+                                                             monkeypatch):
+    """Compared by resolved path: the setting through a link, or the report
+    reached through one, names the same registry."""
+    report = _report(tmp_path)
+    alias = tmp_path / "alias"
+    alias.symlink_to(tmp_path / "registry", target_is_directory=True)
+
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(alias))
+    assert _register(report, checkpoints, beside=True).outcome == "registered"
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(tmp_path / "registry"))
+    through = alias / report.relative_to(tmp_path / "registry")
+    assert _register(through, checkpoints, beside=True).outcome == "already_registered"
+
+
+def test_the_settings_passed_say_which_registry_is_the_deployments(tmp_path, checkpoints,
+                                                                   monkeypatch):
+    """`environ` (the page's settings) is read, not the process's."""
+    report = _report(tmp_path)
+    monkeypatch.delenv("SHEPHERD_REGISTRY")
+
+    result = _register(report, checkpoints, beside=True,
+                       environ={"SHEPHERD_REGISTRY": str(tmp_path / "registry")})
+
+    assert result.outcome == "registered"
+
+
+def test_record_evaluation_refuses_a_report_in_a_copy_of_the_registry(tmp_path, checkpoints):
+    import scripts.record_evaluation as record_evaluation
+
+    report = _report(tmp_path)
+    in_copy = _whole_copy(tmp_path) / report.relative_to(tmp_path / "registry")
+
+    with pytest.raises(SystemExit) as refused:
+        record_evaluation.main(["--report", str(in_copy), "--checkpoint-dir", str(checkpoints)])
+
+    assert "is not the deployment's" in str(refused.value.code)
+    assert not (checkpoints / "evaluations.json").exists()

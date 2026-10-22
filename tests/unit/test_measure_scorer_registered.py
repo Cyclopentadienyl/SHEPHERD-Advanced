@@ -56,8 +56,13 @@ def base(tmp_path_factory):
 
 
 @pytest.fixture
-def cohort(base, tmp_path):
-    return copy_registered_cohort(base, tmp_path / "root")
+def cohort(base, tmp_path, monkeypatch):
+    """A copy of the built cohort, its registry the deployment's
+    (`SHEPHERD_REGISTRY`): a ``--cohort`` run measures, and a report is
+    registered, only there (BACKLOG 37)."""
+    copied = copy_registered_cohort(base, tmp_path / "root")
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(copied.registry))
+    return copied
 
 
 @pytest.fixture
@@ -292,13 +297,14 @@ def test_the_r10_block_is_compute_r10_over_the_checkpoints_record(cli, cohort):
     ("graph_only", "not_recorded", "not_recorded", 0),
 ])
 def test_r10_states_follow_what_the_checkpoint_records(
-    cli, tmp_path, record, training, validation, val_opens
+    cli, tmp_path, monkeypatch, record, training, validation, val_opens
 ):
     """A pipeline record finds both scopes in the workspace; with no validation
     recorded, validation is `no_validation_inputs_recorded` and `val` is never
     read; a graph-only record is not the pipeline's, so both scopes are
     unverifiable and no candidate is read. Never a count without evidence."""
     cohort = build_registered_cohort(tmp_path / "root", training_record=record)
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(cohort.registry))
 
     with count_opens() as opens:
         assert cli.main(_argv(cohort)) == 0
@@ -501,7 +507,7 @@ def test_the_register_later_command_quotes_each_path_for_every_shell():
 
 @pytest.mark.parametrize("record", ["pipeline", "graph_only"])
 def test_the_console_gives_each_r10_label_in_the_caveats_words_and_the_definitions_once(
-    cli, tmp_path, capsys, record
+    cli, tmp_path, monkeypatch, capsys, record
 ):
     """Finding 9: each label's state is rendered through `R10_STATE_TEXT`, an
     unverifiable one through its scope's `R10_UNVERIFIABLE_REASON`, with no
@@ -516,6 +522,7 @@ def test_the_console_gives_each_r10_label_in_the_caveats_words_and_the_definitio
     )
 
     cohort = build_registered_cohort(tmp_path / "root", training_record=record)
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(cohort.registry))
 
     assert cli.main(_argv(cohort)) == 0
 
@@ -1131,3 +1138,121 @@ def test_a_cancel_right_after_the_ledger_write_still_records_the_registration(
     assert [r["registration"]["sequence"] for r in ledger["records"]] == [1]
     kinds = [e.get("kind") for e in _usage(cohort)]
     assert kinds.count("registered") == 1 and kinds.count("test_run") == 1
+
+
+# ---------------------------------------------------------------------------
+# Only in the deployment's registry (BACKLOG 37; the M5 review's P2-7)
+# ---------------------------------------------------------------------------
+def _nothing_before_the_lock(cli, monkeypatch):
+    """The lock and the device, each failing the test if reached."""
+    monkeypatch.setattr(cli, "take_gpu_lock",
+                        lambda *a, **k: pytest.fail("the GPU lock was taken"))
+    monkeypatch.setattr(cli, "_resolve_device",
+                        lambda *a, **k: pytest.fail("the device was resolved"))
+
+
+def _tree(directory: Path):
+    return {p: p.read_bytes() for p in sorted(directory.rglob("*")) if p.is_file()}
+
+
+@pytest.mark.parametrize("record", [False, True], ids=["measure", "record"])
+def test_a_cohort_run_in_a_copy_of_the_registry_is_refused_before_the_lock_and_any_input(
+    cli, cohort, tmp_path, monkeypatch, capsys, record
+):
+    """D7 and D4: every run on a cohort version is in the usage history the
+    deployment reads. A run measuring a copy -- with or without `--record` --
+    is refused before the GPU lock is taken, the device resolved or any input
+    read, and the copy is left as it was (no run directory, no usage entry)."""
+    copy = tmp_path / "registry-copy"
+    shutil.copytree(cohort.registry, copy, symlinks=True)
+    before = _tree(copy)
+    _nothing_before_the_lock(cli, monkeypatch)
+    argv = ["--checkpoint", str(cohort.checkpoint), "--data-dir", str(cohort.data_dir),
+            "--cohort", cohort.version.manifest["label"], "--registry", str(copy),
+            "--device", "cpu", *(["--record"] if record else [])]
+
+    with count_opens() as opens:
+        assert cli._run_as_program(argv) == 1
+
+    err = capsys.readouterr().err
+    assert err.startswith("measure_scorer: refused: --cohort measures a version of the "
+                          f"deployment's registry only, and the registry {copy.resolve()} is "
+                          "not the deployment's")
+    assert f"SHEPHERD_REGISTRY ({cohort.registry}) resolves to {cohort.registry.resolve()}" in err
+    assert "Nothing was read or written." in err and "cannot be registered" not in err
+    assert not [p for p, n in opens.counts.items() if n and (
+        str(copy) in p or str(cohort.data_dir) in p or str(cohort.checkpoint) in p)]
+    assert _tree(copy) == before
+    assert _nothing_written(cohort)
+
+
+def test_with_the_setting_unset_a_cohort_run_is_refused_saying_how_to_set_it(
+    cli, cohort, monkeypatch, capsys
+):
+    """A fresh SSH shell: which registry is the deployment's cannot be told, so
+    the run is refused before anything, in words true there (no "features ...
+    are off", no "cannot be registered later")."""
+    monkeypatch.delenv("SHEPHERD_REGISTRY")
+    _nothing_before_the_lock(cli, monkeypatch)
+
+    assert cli._run_as_program(_argv(cohort)) == 1
+
+    err = capsys.readouterr().err
+    assert ("SHEPHERD_REGISTRY is not set here, so which registry is the deployment's cannot be "
+            "told. Set SHEPHERD_REGISTRY in this environment to the value the service's "
+            "environment gives it") in err
+    assert "features" not in err and "cannot be registered" not in err
+    assert _nothing_written(cohort)
+
+
+def test_a_registry_named_through_a_link_to_the_deployments_is_measured(
+    cli, cohort, tmp_path, capsys
+):
+    """Compared by resolved path: `--registry` through a link to the
+    deployment's registry is that registry, and its report registers."""
+    alias = tmp_path / "registry-link"
+    alias.symlink_to(cohort.registry, target_is_directory=True)
+    argv = ["--checkpoint", str(cohort.checkpoint), "--data-dir", str(cohort.data_dir),
+            "--cohort", cohort.version.manifest["label"], "--registry", str(alias),
+            "--device", "cpu", "--record"]
+
+    assert cli.main(argv) == 0
+
+    assert "Registered as record 1" in capsys.readouterr().out
+    assert len(_reports(cohort)) == 1
+
+
+def test_a_registry_that_stops_being_the_deployments_during_the_run_offers_no_command(
+    cli, cohort, tmp_path, monkeypatch, capsys
+):
+    """The critic's case: `SHEPHERD_REGISTRY` names a link retargeted after the
+    run was allowed to start. The registration refuses it as not the
+    deployment's registry (exit 3), the report is kept, and no register-later
+    command is printed: it would be refused the same way."""
+    from src.evaluation import registration
+
+    link = tmp_path / "deployment-link"
+    link.symlink_to(cohort.registry, target_is_directory=True)
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(link))
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    real = registration.register_report
+
+    def retargeted_then_registered(*args, **kwargs):
+        link.unlink()
+        link.symlink_to(elsewhere, target_is_directory=True)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(registration, "register_report", retargeted_then_registered)
+    outcome = tmp_path / "outcome.json"
+
+    assert cli.main(_argv(cohort, "--record", "--outcome", str(outcome))) == 3
+
+    path, _ = _report(cohort)
+    err = capsys.readouterr().err
+    assert "NOT REGISTERED." in err and "is not the deployment's" in err
+    assert f"report is kept at {path}" in err
+    assert "No register-later command is offered" in err
+    assert "record_evaluation.py" not in err and "Register it later" not in err
+    assert json.loads(outcome.read_text())["registration"]["outcome"] == "refused"
+    assert not (cohort.checkpoint.parent / LEDGER).exists()

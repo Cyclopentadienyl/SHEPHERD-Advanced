@@ -81,9 +81,12 @@ def built(tmp_path_factory):
     intake = base / "intake"
     intake.mkdir()
     shutil.copy2(cohort.source, intake / "cases.json")
-    code = measure_scorer.main(["--checkpoint", str(checkpoints / "best.pt"), "--data-dir",
-                                str(demo), "--cohort", LABEL, "--registry",
-                                str(cohort.registry), "--device", "cpu"])
+    # The registry is the deployment's while the run measures (BACKLOG 37).
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("SHEPHERD_REGISTRY", str(cohort.registry))
+        code = measure_scorer.main(["--checkpoint", str(checkpoints / "best.pt"),
+                                    "--data-dir", str(demo), "--cohort", LABEL, "--registry",
+                                    str(cohort.registry), "--device", "cpu"])
     assert code == 0
     return SimpleNamespace(base=base, sha=cohort.checkpoint_sha256,
                            version_sha=cohort.version.identity.sha256)
@@ -510,6 +513,102 @@ def test_a_report_that_changed_since_it_was_shown_is_not_registered(site, monkey
     done, said = tp.register_selected(page, reports, models, "demo", site.run_id, request)
     assert done is False and "changed since it was shown" in said
     assert not (site.checkpoint.parent / "evaluations.json").exists()
+
+
+def _usage_lines(site):
+    usage = site.reports / "usage.jsonl"
+    return usage.read_bytes() if usage.exists() else b""
+
+
+def _replaced_after_the_check(site, monkeypatch, replacement: bytes, how: str):
+    """Replace the shown report's bytes right after the page's own comparison,
+    when the ledger's checkpoint has been found (`ledger_checkpoint` returns),
+    in place or by an atomic rename: the window between the page's read and the
+    registration's (the M5 review's P2-1)."""
+    import os
+
+    path = site.reports / site.run_id / "report.json"
+    real = tp.ledger_checkpoint
+
+    def found_then_replaced(*args, **kwargs):
+        place = real(*args, **kwargs)
+        if how == "overwrite":
+            path.write_bytes(replacement)
+        else:
+            staged = path.with_name("report.json.staged")
+            staged.write_bytes(replacement)
+            os.replace(staged, path)
+        return place
+
+    monkeypatch.setattr(tp, "ledger_checkpoint", found_then_replaced)
+
+
+@pytest.mark.parametrize("how", ["overwrite", "rename"])
+def test_a_valid_report_swapped_in_after_the_check_is_refused_by_the_registration(
+    site, monkeypatch, how
+):
+    """The reviewer's counter-example (P2-1): another valid report of the same
+    checkpoint and version, its MRR moved by 0.0004, swapped in after the page
+    compared the shown digest. The registration compares that digest again on
+    the one read it parses (`expected_report_sha256`) and refuses: no ledger,
+    and the version's usage history unchanged."""
+    page, request = _page(monkeypatch)
+    models = tp.read_models("demo", request)
+    reports = tp.read_reports(LABEL)
+    path = site.reports / site.run_id / "report.json"
+    replacement = json.loads(path.read_bytes())
+    replacement["authoritative_metrics"]["untruncated_mrr"] += 0.0004
+    usage_before = _usage_lines(site)
+    _replaced_after_the_check(site, monkeypatch,
+                              json.dumps(replacement, indent=2, sort_keys=True).encode(), how)
+
+    done, said = tp.register_selected(page, reports, models, "demo", site.run_id, request)
+
+    assert done is False
+    assert f"{path} is not the report that was shown" in said
+    assert "select it again" in said and "Nothing was written to " in said
+    assert not (site.checkpoint.parent / "evaluations.json").exists()
+    assert _usage_lines(site) == usage_before
+
+
+def test_damaged_bytes_swapped_in_after_the_check_are_refused_before_they_are_parsed(
+    site, monkeypatch
+):
+    """The digest refuses them, never the parser: the message is the shown
+    report's, not "not a measurement report"."""
+    page, request = _page(monkeypatch)
+    models = tp.read_models("demo", request)
+    reports = tp.read_reports(LABEL)
+    usage_before = _usage_lines(site)
+    _replaced_after_the_check(site, monkeypatch, b"{not json", "overwrite")
+
+    done, said = tp.register_selected(page, reports, models, "demo", site.run_id, request)
+
+    assert done is False and "is not the report that was shown" in said
+    assert "not a measurement report" not in said
+    assert not (site.checkpoint.parent / "evaluations.json").exists()
+    assert _usage_lines(site) == usage_before
+
+
+def test_register_takes_the_deployments_registry_from_the_settings_it_was_given(
+    site, monkeypatch
+):
+    """The settings the page found the report by (`environ`) say which registry
+    is the deployment's for the registration too: with the process's own
+    `SHEPHERD_REGISTRY` unset, the settings passed are used, and the report
+    registers (BACKLOG 37)."""
+    import os
+
+    page, request = _page(monkeypatch)
+    models = tp.read_models("demo", request)
+    reports = tp.read_reports(LABEL)
+    environ = dict(os.environ)
+    monkeypatch.delenv("SHEPHERD_REGISTRY")
+
+    done, said = tp.register_selected(page, reports, models, "demo", site.run_id, request,
+                                      environ=environ)
+
+    assert done is True and said.startswith("Registered as record 1."), said
 
 
 def test_no_listed_checkpoint_with_the_weights_no_registration(site, monkeypatch):

@@ -62,8 +62,10 @@ refuses gets no list: the page says why (the three conditions of an operator
 request) and shows "Recorded test results of the model in use", read by the
 API's own read-only route function (`get_loaded_model_evaluations`): the ledger
 beside the served checkpoint, filtered by the served digest, **opening no
-checkpoint**, with each record's contested state from the report store. Its
-reasons name no server path.
+checkpoint**, with each record's contested state as that route answers it (the
+one implementation, `record_states.contest_states`; never computed again here,
+so this view and an API client cannot disagree). Its reasons name no server
+path.
 
 **Per browser session:** the page's data, its controls and the selection are
 `gr.State` or component values; nothing here is module state. Nothing ticks: the
@@ -88,12 +90,15 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import re
 import time
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import gradio as gr
+
+from src.api.services.record_states import CohortVersions, key_text
 
 # D3's label, the pre-B-1 note, R10's and the relations' words: rendered, never reworded.
 from src.evaluation.caveats import (
@@ -389,7 +394,7 @@ def read_versions(environ: Optional[Mapping[str, str]] = None) -> Dict[str, Any]
             "roles": list(roles.value or ()), "roles_note": roles.note}
 
 
-def usage_entries(versions: Sequence[Mapping[str, Any]], resolver: ml.CohortVersions,
+def usage_entries(versions: Sequence[Mapping[str, Any]], resolver: CohortVersions,
                   shas: Iterable[str]) -> Dict[str, Any]:
     """The entries of every listed cohort version's usage history that name one
     of these checkpoints, by checkpoint digest, newest first, each with its
@@ -449,7 +454,7 @@ def read_page(listing: Mapping[str, Any], *, environ: Optional[Mapping[str, str]
     # (`model_list.list_models`): never read a second time here.
     data["ledgers"] = dict(listing.get("ledgers") or {})
     data["contest"] = dict(listing.get("contest") or {})
-    resolver = ml.CohortVersions(data["versions"], environ)
+    resolver = CohortVersions(data["versions"], environ)
     data["usage"] = usage_entries(data["versions"], resolver,
                                   (i.get("sha256") for i in items if ml.loadable(i)))
     return data
@@ -457,9 +462,11 @@ def read_page(listing: Mapping[str, Any], *, environ: Optional[Mapping[str, str]
 
 def _route_records() -> Dict[str, Any]:
     """The API's read-only route for the served model's recorded results
-    (`get_loaded_model_evaluations`), called in this process: the ledger beside
-    the served checkpoint, filtered by the served digest, opening no checkpoint.
-    Its handler has no ``await``, so it runs to completion here."""
+    (`get_loaded_model_evaluations`), called in this process on an event loop
+    of its own: the ledger beside the served checkpoint, filtered by the served
+    digest, opening no checkpoint, each record with its D5 state. The handler
+    takes the served identity before its one ``await``, which reads the files
+    in the threadpool, and runs to completion here."""
     from fastapi.encoders import jsonable_encoder
 
     from src.api.routes import evaluations
@@ -467,13 +474,12 @@ def _route_records() -> Dict[str, Any]:
     return jsonable_encoder(asyncio.run(evaluations.get_loaded_model_evaluations()))
 
 
-def read_readonly(*, environ: Optional[Mapping[str, str]] = None) -> Dict[str, Any]:
+def read_readonly() -> Dict[str, Any]:
     """The read-only view's data: the status (for the served digest and the
     time it was read), the route's answer for the served model, and each of its
-    records' contested states (with no problem text: no server path reaches a
-    read-only request)."""
-    from src.evaluation.sidecar import KEY_FIELDS
-
+    records' D5 states **as the route answered them** (with no problem text: no
+    server path reaches a read-only request), read with the service's own
+    settings."""
     data: Dict[str, Any] = {"readonly": True, "listing_key": None}
     status, problem = read_status()
     data["status_at"] = r.clock_utc(datetime.now())
@@ -486,19 +492,23 @@ def read_readonly(*, environ: Optional[Mapping[str, str]] = None) -> Dict[str, A
         answer = {"state": "unavailable"}
     data["answer"] = answer
     records = answer.get("records") if isinstance(answer.get("records"), list) else []
-    keyed = []
+    # **Each record's D5 state as the route answered it** (`record_states.
+    # contest_states`, the one implementation), never computed a second time
+    # here, so this view and an API client cannot disagree (BACKLOG 36). A
+    # record without one reads "cannot be checked" where it is shown
+    # (`contest_html`), never uncontested. The route gives null for every value
+    # that is not a finite number, so it is passed on as NaN and shown "not a
+    # finite number", never "not reported": the report may hold NaN or text.
+    contest: Dict[str, Dict[str, Any]] = {}
     for record in records:
         key = route_record_key(record, answer.get("checkpoint_sha256"))
-        if key is not None:
-            keyed.append(dict(zip(KEY_FIELDS, key, strict=True)))
-    contest: Dict[str, Dict[str, Any]] = {}
-    if keyed:
-        try:
-            versions = read_versions(environ)["versions"]
-        except Exception:  # noqa: BLE001
-            versions = []
-        contest = ml.contest_states(keyed, ml.CohortVersions(versions, environ),
-                                    operator=False)
+        state = record.get("contest") if isinstance(record, Mapping) else None
+        if key is None or not isinstance(state, Mapping):
+            continue
+        runs = [{**run, "values": {name: (math.nan if value is None else value)
+                                   for name, value in (run.get("values") or {}).items()}}
+                for run in state.get("runs") or [] if isinstance(run, Mapping)]
+        contest[key_text(key)] = {**state, "runs": runs, "problems": []}
     data["contest"] = contest
     return data
 
@@ -633,6 +643,17 @@ def r10_html(r10: Any) -> str:
     return "".join(lines)
 
 
+def _contested_value(name: str, value: Any) -> str:
+    """A disagreeing run's value as `contest_html` shows it: null is "not
+    reported"; a value that is not a finite number (NaN, infinity, text, an
+    object: a hand edit) is "not a finite number", never formatted as one."""
+    if value is None:
+        return "not reported"
+    if not _number(value) or not math.isfinite(value):
+        return "not a finite number"
+    return fmt_metric(name, value)
+
+
 def contest_html(state: Optional[Mapping[str, Any]], *, ordered_out: bool = False) -> str:
     """A record's D5 state beside it: contested (with what the runs disagree on)
     or "cannot be checked"; nothing for an uncontested key."""
@@ -646,7 +667,7 @@ def contest_html(state: Optional[Mapping[str, Any]], *, ordered_out: bool = Fals
         values = []
         names = state.get("differing") or []
         for name in names:
-            per_run = [f"{fmt_metric(name, run['values'][name])} (run "
+            per_run = [f"{_contested_value(name, run['values'][name])} (run "
                        f"{run_time(run['run']) or run['run']})"
                        for run in state.get("runs") or [] if name in (run.get("values") or {})]
             if per_run:
@@ -704,7 +725,7 @@ def records_table_html(views: Sequence[Mapping[str, Any]], contest: Mapping[str,
         cohort = view.get("cohort") if isinstance(view.get("cohort"), Mapping) else {}
         metrics = view.get("metrics") if isinstance(view.get("metrics"), Mapping) else {}
         key = view.get("key")
-        state = contest.get(ml.key_text(key)) if key else None
+        state = contest.get(key_text(key)) if key else None
         synthetic = (r.chip("synthetic", "amber") if view.get("dataset_origin") == "synthetic"
                      else "")
         role = cohort.get("role")
@@ -882,7 +903,7 @@ def rank(listing: Mapping[str, Any], data: Mapping[str, Any], ctl: Mapping[str, 
             candidates, cohort_digest=entry["sha256"],
             scoring_semantics_digest=ctl.get("scoring") or "", metric=ctl["metric"],
             role=entry["role"], ordering_roles=data.get("roles") or (),
-            contested_state=lambda key: (contest.get(ml.key_text(key)) or {}).get(
+            contested_state=lambda key: (contest.get(key_text(key)) or {}).get(
                 "state", "cannot_be_checked"))
     except ValueError as exc:
         return {"offered": False, "why": str(exc), "rows": [], "keys": keys, "outside": outside,
@@ -1229,7 +1250,7 @@ def _records_for_item(item: Mapping[str, Any], ledger: Optional[Mapping[str, Any
         if not version.get("offers") and version.get("role") == "institutional_acceptance":
             roles[str(version.get("sha256"))] = "ordering off: awaits the formal evaluation rules"
     contested = sum(1 for v in views
-                    if (contest.get(ml.key_text(v["key"])) or {}).get("state") == "contested")
+                    if (contest.get(key_text(v["key"])) or {}).get("state") == "contested")
     return (records_block_html(views, contest, not_shown=not_shown, picks=picks, roles=roles),
             len(views) + not_shown, contested)
 

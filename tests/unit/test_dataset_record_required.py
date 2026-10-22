@@ -190,6 +190,8 @@ def test_measurement_refuses_before_a_checkpoint_or_model(
     else:
         cohort = copy_registered_cohort(registered_base, tmp_path / "root")
         data_dir, checkpoint = cohort.data_dir, cohort.checkpoint
+        # The deployment's registry: a --cohort run measures only there (BACKLOG 37).
+        monkeypatch.setenv("SHEPHERD_REGISTRY", str(cohort.registry))
     tamper(data_dir)
 
     def forbidden(*args, **kwargs):

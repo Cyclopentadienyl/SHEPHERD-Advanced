@@ -1845,8 +1845,10 @@ def register_selected(page: Mapping[str, Any], reports: Mapping[str, Any],
     found from the server's checkpoint list (`ledger_checkpoint`: the listed
     file holding the weights the report measured, by full digest, the file the
     run read first), never the report's recorded path; then the one
-    registration function, which checks the store, the version, D5's block and
-    the checkpoint's bytes again."""
+    registration function, given the digest shown, which it compares on the
+    bytes it registers before parsing them, and which checks the deployment's
+    registry, the store, the version, D5's block and the checkpoint's bytes
+    again."""
     from src.api.services.server_lists import ServerListRefused, resolve_report
     from src.evaluation.registration import RegistrationRefused, corroboration_note, register_report
     from src.evaluation.report_store import read_report
@@ -1885,7 +1887,13 @@ def register_selected(page: Mapping[str, Any], reports: Mapping[str, Any],
                        "since the run can be registered on the machine with "
                        "scripts/record_evaluation.py --report … --checkpoint ….")
     try:
-        result = register_report(path, checkpoint=checkpoint)
+        # **Bound to the report shown** (the M5 review's P2-1): the digest shown
+        # is compared again on the one read the registration parses and
+        # registers, so a file replaced after the comparison above is refused
+        # there; and the settings this report was found by say which registry is
+        # the deployment's.
+        result = register_report(path, checkpoint=checkpoint, expected_report_sha256=shown,
+                                 environ=environ)
     except RegistrationRefused as exc:
         return False, str(exc)
     sequence = result.record.get("registration", {}).get("sequence")

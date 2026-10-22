@@ -17,9 +17,16 @@ that keeps the key's reports, which a copy elsewhere cannot give.
 registry's own structure -- ``<registry>/versions/<label>/reports/<run id>/
 report.json``, read from the report's resolved path -- and resolves that
 version (`resolve_version`), refusing whatever does not fit rather than
-guessing or falling back to a copy. Nothing in it is an absolute path kept as
-an identity: a registry moved as a whole is found where it now is, and its
-version is the same version by the digest of its ``cohort.json``.
+guessing or falling back to a copy.
+
+**And only from the deployment's registry** (BACKLOG 37): the registry that
+structure names must be the one ``SHEPHERD_REGISTRY`` names, compared by
+resolved path (`server_settings.deployment_registry_refusal`), checked before
+anything in it is read. A copy of the whole registry holds the same bytes and
+would pass every check above while keeping its own disagreement block and usage
+history, which the service never reads. A registry moved as a whole still works
+once ``SHEPHERD_REGISTRY`` names its new place; its version is the same version
+by the digest of its ``cohort.json``.
 
 **Disagreement is found with the ledger's own comparison** (`scan_report_store`).
 Every report the store keeps is built into a record by `build_record`, grouped
@@ -90,6 +97,13 @@ class NotInReportStore(ValueError):
     def __init__(self, message: str, why: str = "") -> None:
         super().__init__(message)
         self.why = why
+
+
+class NotTheDeploymentRegistry(ValueError):
+    """The registry a report is kept in, or a ``--cohort`` run would measure in,
+    is not the deployment's (`server_settings.deployment_registry_refusal`:
+    compared by resolved path with ``SHEPHERD_REGISTRY``, which may also be
+    unset or refused). Nothing in that registry was read."""
 
 
 class _NotTheExpectedBytes(Exception):
@@ -207,12 +221,16 @@ def store_report_parts(report_path: Any) -> Tuple[Path, str, str, Path]:
     raise NotInReportStore(_not_in_store(given, why), why)
 
 
-def locate_store_report(report_path: Any) -> StoreReport:
+def locate_store_report(report_path: Any, *,
+                        environ: Optional[Mapping[str, str]] = None) -> StoreReport:
     """The report store holding this report: its registry and version, found
     through the registry's structure and resolved, never guessed.
 
     The path's shape names the registry, the label and the run
-    (`store_report_parts`); the version is then resolved there
+    (`store_report_parts`). **That registry must be the deployment's**
+    (`deployment_registry_refusal`, with ``SHEPHERD_REGISTRY`` read from
+    `environ`, `os.environ` when `None`), checked from the path's shape before
+    anything in it is read. The version is then resolved there
     (`resolve_version`: the registry absolute, outside the repository and
     existing; the version's ``cohort.json`` read once and checked; its directory
     checked against the registry). That the file sits in the store is not proof
@@ -221,12 +239,18 @@ def locate_store_report(report_path: Any) -> StoreReport:
 
     Raises:
         NotInReportStore: the path is not shaped as a store report.
+        NotTheDeploymentRegistry: the registry that shape names is not the
+            deployment's, or which one is cannot be told.
         RegistryRefused, CohortVersionRefused: the registry or version that
             shape names cannot be read (`resolve_version`).
     """
+    from src.config.server_settings import deployment_registry_refusal
     from src.evaluation.cohort_registry import resolve_version
 
     root, label, run_id, resolved = store_report_parts(report_path)
+    why = deployment_registry_refusal(root, environ)
+    if why is not None:
+        raise NotTheDeploymentRegistry(why)
     version = resolve_version(root, label)
     if resolved.parent.parent.parent != version.directory:
         why = (f"the version {label!r} resolves to {version.directory}, not the directory it "
@@ -661,6 +685,7 @@ __all__ = [
     "NOTES_FILE",
     "STORE_FILES",
     "NotInReportStore",
+    "NotTheDeploymentRegistry",
     "StoreReport",
     "StoreScan",
     "USAGE_FILE",

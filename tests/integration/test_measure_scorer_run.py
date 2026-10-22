@@ -25,6 +25,7 @@ Module: tests/integration/test_measure_scorer_run.py
 import hashlib
 import json
 import math
+import os
 import re
 import subprocess
 import sys
@@ -73,6 +74,9 @@ def measured(tmp_path_factory):
             "--record",
         ],
         cwd=str(REPO_ROOT),
+        # The registry is the deployment's: a --cohort run measures only there
+        # (BACKLOG 37).
+        env={**os.environ, "SHEPHERD_REGISTRY": str(cohort.registry)},
         capture_output=True,
         text=True,
         timeout=RUN_TIMEOUT_SECONDS,

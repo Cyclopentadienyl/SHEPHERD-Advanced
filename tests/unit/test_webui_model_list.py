@@ -239,7 +239,9 @@ def test_contested_and_unchecked_are_counted_apart_from_the_report_store(root, m
         def status(self, key):
             return Status(self._state)
 
-    monkeypatch.setattr(ml.CohortVersions, "listed",
+    from src.api.services.record_states import CohortVersions
+
+    monkeypatch.setattr(CohortVersions, "listed",
                         classmethod(lambda cls, environ=None: Versions()))
     states = {"1" * 64: "contested", "2" * 64: "uncontested"}
     monkeypatch.setattr(report_store, "scan_report_store",

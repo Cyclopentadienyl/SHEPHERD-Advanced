@@ -399,15 +399,58 @@ def test_a_key_the_page_holds_no_contested_state_for_is_not_ordered(world, monke
 
 
 def test_a_record_whose_version_the_registry_does_not_list_cannot_be_checked(world, monkeypatch):
+    from src.api.services.record_states import CohortVersions, contest_states, key_text
     from src.evaluation.sidecar import KEY_FIELDS
 
-    resolver = ml.CohortVersions([], None)
-    key = ml.key_text(tuple(world["det"][field] for field in KEY_FIELDS))
-    state = ml.contest_states([world["det"]], resolver)[key]
+    resolver = CohortVersions([], None)
+    key = key_text(tuple(world["det"][field] for field in KEY_FIELDS))
+    state = contest_states([world["det"]], resolver)[key]
     assert state["state"] == "cannot_be_checked"
     assert "not one the server's registry lists" in state["problems"][0]
     # For a read-only request the reason's own words (which may name a path) stay out.
-    assert ml.contest_states([world["det"]], resolver, operator=False)[key]["problems"] == []
+    assert contest_states([world["det"]], resolver, operator=False)[key]["problems"] == []
+
+
+@pytest.mark.parametrize("value, shown", [
+    (float("nan"), "not a finite number"), (None, "not reported"),
+    ("0.3402", "not a finite number"), ({"k": 1}, "not a finite number"),
+], ids=["nan", "null", "text", "object"])
+def test_a_disagreeing_value_that_is_not_a_finite_number_leaves_the_record_contested(
+    world, monkeypatch, value, shown
+):
+    """The critic's break (P2-6): a report under model-40's contested key whose
+    MRR is NaN, null, text or an object. The operator's view and the read-only
+    view (the API's answer) both say "runs disagree"; the value is never
+    formatted as a number: the operator's view says "not reported" for null and
+    "not a finite number" otherwise, and the read-only view, which gets null
+    for every value that is not a finite number, says "not a finite number"."""
+    from src.api.services.record_states import CohortVersions, contest_states, key_text
+    from src.evaluation.sidecar import read_ledger, record_key
+    from tests.fixtures.report_store import store_bytes, version_of
+
+    checkpoint = world["paths"]["model-40.pt"]
+    ledger, _ = read_ledger(checkpoint.parent / "evaluations.json")
+    (record,) = [r for r in ledger["records"] if r["checkpoint_digest"] == world["shas"]["model-40.pt"]]
+    kept = next(world["registry"].glob(f"versions/*/reports/*-{world['shas']['model-40.pt'][:12]}-*/report.json"))
+    report = json.loads(kept.read_bytes())
+    report["authoritative_metrics"]["untruncated_mrr"] = value
+    store_bytes(world["registry"], json.dumps(report, sort_keys=True, allow_nan=True).encode(),
+                version=version_of(kept), checkpoint_sha256=world["shas"]["model-40.pt"])
+
+    operator = contest_states([record], CohortVersions.listed())[key_text(record_key(record))]
+    assert operator["state"] == "contested"
+    operator_html = mp.contest_html(operator)
+    assert "runs disagree — investigate" in operator_html and f"{shown} (run" in operator_html
+    assert "nan" not in operator_html.lower().replace("not a finite number", "")
+
+    _served_read_only(world, monkeypatch, name="model-40.pt")
+    data = mp.read_readonly()
+    (view,) = data["answer"]["records"]
+    assert view["contest"]["state"] == "contested"
+    readonly_html = mp.contest_html(data["contest"][key_text(record_key(record))])
+    assert "runs disagree — investigate" in readonly_html
+    assert "not a finite number (run" in readonly_html
+    assert "contested #" in mp.readonly_parts(data)["records"]
 
 
 def test_the_page_reads_no_ledger_and_scans_no_store_the_listing_already_read(world,

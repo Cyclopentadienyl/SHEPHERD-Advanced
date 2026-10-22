@@ -20,8 +20,10 @@ over ledgers written by the real registration (`register_report`):
 - two imports of one label are shown as two versions, by their manifest digests;
 - aggregates only: no path, no case id, no rank in any answer, and no query
   parameter selects anything;
-- the route reads the ledger once and opens nothing else, writes nothing, and is
-  mounted outside the C3 `pipeline` router;
+- the route reads the ledger once and, for each record's D5 state, each report
+  its version's store keeps once (BACKLOG 36), opens nothing else, writes
+  nothing, and is mounted outside the C3 `pipeline` router; its one ``await``
+  comes after the identity is taken;
 - `DiagnosisPipeline.served_checkpoint_read` returns the read exactly when the
   served identity reports the checkpoint verified.
 
@@ -72,7 +74,7 @@ RESPONSE_KEYS = {"state", "checkpoint_sha256", "ledger", "records", "records_not
 RECORD_VIEW_KEYS = {
     "cohort", "counts", "metrics", "n_ranked", "relations", "r10", "environment_class",
     "deterministic_algorithms", "gpu", "dataset_origin", "scoring_semantics_digest", "measurement_semantics_digest",
-    "registration", "n_corroborating", "source_artifact_digest",
+    "registration", "n_corroborating", "source_artifact_digest", "contest",
 }
 
 
@@ -116,10 +118,13 @@ def _register(report, checkpoint_dir, registry, *, beside=True, indent=2,
     function, from the registry's report store, the only place a report is
     registered from since M5-1: kept in a new run directory of its version under
     `registry` (`tests/fixtures/report_store.py`), its cohort block naming that
-    version's digest."""
+    version's digest, with `registry` as the deployment's (`environ`, BACKLOG
+    37)."""
     path = store_report(registry, report, indent=indent, imported_at=imported_at)
+    environ = {"SHEPHERD_REGISTRY": str(registry)}
     if beside:
-        return register_report(path, checkpoint_dir=checkpoint_dir, registered_at=WHEN)
+        return register_report(path, checkpoint_dir=checkpoint_dir, registered_at=WHEN,
+                               environ=environ)
     # As `--record` registers: the run's read of the checkpoint and the digest
     # of the report it published, so nothing is hashed against the directory.
     measured = MeasuredRun(
@@ -127,7 +132,7 @@ def _register(report, checkpoint_dir, registry, *, beside=True, indent=2,
                      report["manifest"]["artifact_digests"]["checkpoint"]),
         hashlib.sha256(path.read_bytes()).hexdigest(),
     )
-    return register_report(path, measured=measured, registered_at=WHEN)
+    return register_report(path, measured=measured, registered_at=WHEN, environ=environ)
 
 
 def _version_digest(registry: Path, label: str = "mygene2-2026-10") -> str:
@@ -267,8 +272,9 @@ def test_no_ledger_beside_the_checkpoint(app, served):
     }
 
 
-def test_the_loaded_checkpoints_records_are_shown(app, served, tmp_path):
+def test_the_loaded_checkpoints_records_are_shown(app, served, tmp_path, monkeypatch):
     pipeline, _, checkpoint = served
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(tmp_path / "reports"))
     digest = _sha(checkpoint)
     report = _report_for(digest, r10=_r10_with_paths(tmp_path))
     result = _register(report, checkpoint.parent, tmp_path / "reports")
@@ -319,6 +325,8 @@ def test_the_loaded_checkpoints_records_are_shown(app, served, tmp_path):
     assert view["n_corroborating"] == 0
     (kept,) = (tmp_path / "reports").glob("versions/*/reports/*/report.json")
     assert view["source_artifact_digest"] == _sha(kept) == record["source_artifact_digest"]
+    # D5's state, read from the version's report store (BACKLOG 36): one report.
+    assert view["contest"] == {"state": "uncontested", "differing": [], "runs": []}
 
 
 def test_no_path_case_id_or_rank_reaches_the_response(app, served, tmp_path):
@@ -829,10 +837,13 @@ def test_a_reload_landing_mid_request_cannot_mix_two_models(app, served, tmp_pat
     assert body["state"] == "records"
 
 
-def test_the_handler_awaits_nothing():
+def test_the_handler_awaits_nothing_before_the_identity_is_taken():
     """FastAPI runs a plain `def` route in a thread pool, where a reload's
     assignments could interleave with it; an `await` would yield to one. Neither
-    may happen between reading the pipeline and taking its identity."""
+    may happen between reading the pipeline and taking its identity. Its one
+    ``await`` comes after `served_checkpoint_read()` and hands the file reads
+    (the ledger and the report stores, BACKLOG 36) to the thread pool with the
+    read already taken."""
     from src.api.routes import evaluations
 
     handler = evaluations.get_loaded_model_evaluations
@@ -840,7 +851,11 @@ def test_the_handler_awaits_nothing():
     tree = ast.parse(textwrap.dedent(inspect.getsource(handler)))
     awaits = [node for node in ast.walk(tree)
               if isinstance(node, (ast.Await, ast.AsyncFor, ast.AsyncWith))]
-    assert awaits == []
+    (identity,) = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
+                   and getattr(node.func, "attr", None) == "served_checkpoint_read"]
+    (only,) = awaits
+    assert only.lineno > identity.lineno
+    assert ast.unparse(only) == "await run_in_threadpool(_recorded_results, read)"
 
 
 # ---------------------------------------------------------------------------
@@ -872,15 +887,21 @@ def test_no_query_parameter_selects_anything(app, served, tmp_path):
 
 def test_the_ledger_is_read_once_and_nothing_else_is_opened_or_written(app, served,
                                                                        tmp_path, monkeypatch):
-    """D8: the view reads the ledger and opens no checkpoint. No `torch.load`, no
-    directory hash (`find_checkpoint`), no write."""
+    """D8: the view reads the ledger, and for D5's state each report the
+    record's version store keeps (BACKLOG 36), once each, and opens no
+    checkpoint. No `torch.load`, no directory hash (`find_checkpoint`), no
+    write, the report store's usage history included."""
     import src.evaluation.sidecar as sidecar
     import src.utils.fingerprint as fingerprint
 
     _, _, checkpoint = served
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(tmp_path / "reports"))
     _register(_report_for(_sha(checkpoint)), checkpoint.parent, tmp_path / "reports")
     ledger = checkpoint.parent / "evaluations.json"
+    (kept,) = (tmp_path / "reports").glob("versions/*/reports/*/report.json")
     before = {path.name: path.stat().st_mtime_ns for path in checkpoint.parent.iterdir()}
+    store_before = {path: path.stat().st_mtime_ns
+                    for path in (tmp_path / "reports").rglob("*") if path.is_file()}
     ledger_bytes = ledger.read_bytes()
 
     def forbidden(*args, **kwargs):
@@ -893,9 +914,13 @@ def test_the_ledger_is_read_once_and_nothing_else_is_opened_or_written(app, serv
         body = _get(app)
 
     assert body["state"] == "records"
+    assert body["records"][0]["contest"]["state"] == "uncontested"
     assert opens.opens(ledger) == 1
+    assert opens.opens(kept) == 1
     assert opens.opens(checkpoint) == 0
     assert {path.name: path.stat().st_mtime_ns for path in checkpoint.parent.iterdir()} == before
+    assert {path: path.stat().st_mtime_ns for path in (tmp_path / "reports").rglob("*")
+            if path.is_file()} == store_before
     assert ledger.read_bytes() == ledger_bytes
 
 
@@ -948,3 +973,129 @@ def test_an_answer_whose_fields_contradict_its_state_is_refused():
     ):
         with pytest.raises(ValidationError):
             LoadedModelEvaluations(**{**good, **wrong})
+
+
+# ---------------------------------------------------------------------------
+# 8. Each record's D5 state (BACKLOG 36; the M5 review's P2-6)
+# ---------------------------------------------------------------------------
+def _registered_with_registry(served, tmp_path, monkeypatch):
+    """One report of the served weights registered, its registry the
+    deployment's (`SHEPHERD_REGISTRY`), as the service is configured."""
+    _, _, checkpoint = served
+    registry = tmp_path / "reports"
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(registry))
+    result = _register(_report_for(_sha(checkpoint)), checkpoint.parent, registry)
+    (kept,) = registry.glob("versions/*/reports/*/report.json")
+    return registry, kept, result.record
+
+
+def _disagreeing(kept: Path, value) -> Path:
+    """Another report under the same key, kept in the same store, whose MRR is
+    `value`: a hand edit D5 admits can happen to plain files (NaN, null, text
+    and an object included)."""
+    from tests.fixtures.report_store import store_bytes, version_of
+
+    report = json.loads(kept.read_bytes())
+    report["authoritative_metrics"]["untruncated_mrr"] = value
+    data = json.dumps(report, indent=2, sort_keys=True, allow_nan=True).encode()
+    return store_bytes(kept.parents[4], data, version=version_of(kept),
+                       checkpoint_sha256=report["manifest"]["artifact_digests"]["checkpoint"])
+
+
+def _operator_state(record):
+    """The dashboard's state for the same record: the one implementation."""
+    from src.api.services.record_states import CohortVersions, contest_states, key_text
+    from src.evaluation.sidecar import record_key
+
+    return contest_states([record], CohortVersions.listed())[key_text(record_key(record))]
+
+
+def test_a_contested_record_is_marked_with_what_differs_and_names_no_path(
+    app, served, tmp_path, monkeypatch
+):
+    """The reviewer's counter-example: a record registered before another run
+    under its key disagreed stays, marked contested, with the fields and the
+    runs (ids, never a path), as the dashboard shows it."""
+    registry, kept, record = _registered_with_registry(served, tmp_path, monkeypatch)
+    other = _disagreeing(kept, 0.4321)
+
+    body = _get(app)
+
+    (view,) = body["records"]
+    assert view["contest"]["state"] == "contested"
+    assert view["contest"]["differing"] == ["untruncated_mrr"]
+    runs = {run["run"]: run["values"] for run in view["contest"]["runs"]}
+    assert runs == {kept.parent.name: {"untruncated_mrr": record["metrics"]["untruncated_mrr"]},
+                    other.parent.name: {"untruncated_mrr": 0.4321}}
+    assert str(tmp_path) not in json.dumps(body)
+    operator = _operator_state(record)
+    assert {k: operator[k] for k in ("state", "differing", "runs")} == view["contest"]
+
+
+@pytest.mark.parametrize("value", [float("nan"), None, "0.5", {"k": 1}],
+                         ids=["nan", "null", "text", "object"])
+def test_a_contested_state_is_never_downgraded_by_a_value_it_cannot_show(
+    app, served, tmp_path, monkeypatch, value
+):
+    """The critic's break: a disagreeing report holding NaN, null, text or an
+    object is still contested for the dashboard, so the route says contested
+    too -- the value shown as null -- never "cannot be checked"."""
+    registry, kept, record = _registered_with_registry(served, tmp_path, monkeypatch)
+    other = _disagreeing(kept, value)
+
+    (view,) = _get(app)["records"]
+
+    assert _operator_state(record)["state"] == "contested"
+    assert view["contest"]["state"] == "contested"
+    runs = {run["run"]: run["values"] for run in view["contest"]["runs"]}
+    assert runs[other.parent.name] == {"untruncated_mrr": None}
+
+
+def test_a_contested_state_whose_details_cannot_be_shown_stays_contested(
+    app, served, tmp_path, monkeypatch
+):
+    """Whatever fails the view's validation in a contested state's details (a
+    run with no id, here), the state is shown contested without them."""
+    import src.api.services.record_states as record_states
+
+    registry, kept, record = _registered_with_registry(served, tmp_path, monkeypatch)
+    _disagreeing(kept, 0.4321)
+    real = record_states.contest_states
+
+    def runs_without_ids(*args, **kwargs):
+        found = real(*args, **kwargs)
+        for state in found.values():
+            for run in state["runs"]:
+                run["run"] = None
+        return found
+
+    monkeypatch.setattr(record_states, "contest_states", runs_without_ids)
+    (view,) = _get(app)["records"]
+    assert view["contest"] == {"state": "contested", "differing": [], "runs": []}
+
+
+@pytest.mark.parametrize("case", ["no_registry", "unreadable_report", "unlisted_version"])
+def test_a_state_that_cannot_be_read_is_cannot_be_checked_never_uncontested(
+    app, served, tmp_path, monkeypatch, case
+):
+    """No registry configured, a report in the store that cannot be read, or a
+    version the server's registry does not list: "cannot_be_checked", with no
+    server path in the answer, and never a 500."""
+    from tests.fixtures.report_store import store_bytes, version_of
+
+    registry, kept, record = _registered_with_registry(served, tmp_path, monkeypatch)
+    if case == "no_registry":
+        monkeypatch.delenv("SHEPHERD_REGISTRY")
+    elif case == "unreadable_report":
+        store_bytes(registry, b"{damaged", version=version_of(kept),
+                    checkpoint_sha256=record["checkpoint_digest"])
+    else:
+        other = tmp_path / "other-registry"
+        other.mkdir()
+        monkeypatch.setenv("SHEPHERD_REGISTRY", str(other))
+
+    body = _get(app)
+
+    (view,) = body["records"]
+    assert view["contest"] == {"state": "cannot_be_checked", "differing": [], "runs": []}
+    assert str(tmp_path) not in json.dumps(body)

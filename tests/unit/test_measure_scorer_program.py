@@ -80,8 +80,13 @@ def base(tmp_path_factory):
 
 
 @pytest.fixture
-def cohort(base, tmp_path):
-    return copy_registered_cohort(base, tmp_path / "root")
+def cohort(base, tmp_path, monkeypatch):
+    """A copy of the built cohort, its registry the deployment's
+    (`SHEPHERD_REGISTRY`, inherited by a program started from here): a
+    ``--cohort`` run measures only there (BACKLOG 37)."""
+    copied = copy_registered_cohort(base, tmp_path / "root")
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(copied.registry))
+    return copied
 
 
 def _generated(data_dir, checkpoint, output, device="cpu"):

@@ -67,6 +67,9 @@ def cohort(tmp_path_factory):
 
 def _run(cohort, monkeypatch, **change):
     monkeypatch.setenv("SHEPHERD_DEVICE", "cpu")
+    # The service's registry setting, which the run inherits: it measures only
+    # in the deployment's registry (BACKLOG 37).
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(cohort.registry))
     monkeypatch.delenv(LOCK_FILE_ENV, raising=False)
     monkeypatch.setenv(WORKSPACES_ROOT_ENV, str(cohort.data_dir.parent))
     fields = {"registry": cohort.registry, "version_label": LABEL,

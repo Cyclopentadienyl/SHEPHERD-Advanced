@@ -1557,6 +1557,18 @@ registry 是**由你建立**的目錄，每個指令都以**位於 repository �
 替你建立它，也沒有任何請求指定它。各指令以 `--registry` 接收它；服務則從 `SHEPHERD_REGISTRY`
 讀取（§4.12），以同一個規則檢查。
 
+**各指令也需要 `SHEPHERD_REGISTRY`**（自 M5 審查起，BACKLOG 37）：報告只從部署的 registry 登錄
+（`--record`、`record_evaluation.py --report`、Test 頁面），`measure_scorer.py --cohort` 也只在
+部署的 registry 中量測，也就是 `SHEPHERD_REGISTRY` 所指名的那一個。兩者以解析後的路徑比較，所以
+經由指向該目錄的連結給出的 `--registry` 會被接受；registry 的副本，或經由 bind mount 或另一個
+掛載點到達的同一個目錄，則是另一個 registry，在讀取其中任何東西之前就會被拒絕。這個變數未設定時，
+每個這類指令都會被拒絕，並說明要像服務的環境那樣設定它。請在執行指令的 shell 中，從服務讀取的
+同一個檔案設定它（§4.11）：
+
+```
+measure_scorer: refused: --cohort measures a version of the deployment's registry only, and SHEPHERD_REGISTRY is not set here, so which registry is the deployment's cannot be told. Set SHEPHERD_REGISTRY in this environment to the value the service's environment gives it (deployment guide §4.11: one file that both the service and this shell read). [...] Nothing was read or written.
+```
+
 registry 之下的目錄也會檢查。每一個目錄（`sources/`、`versions/`、版本目錄、其 `reports/` 與每個
 run 目錄）在寫入任何東西、或從中讀取版本之前，都會再解析一次；若某個連結把它帶進 repository，
 或帶到它所屬目錄之外——registry，或對 `reports/` 與 run 目錄而言是該版本自己的目錄——就拒絕。
@@ -1834,10 +1846,14 @@ API 用戶端，但不附它們的爭議（contested）狀態（D5 的不一致�
 放在其他任何地方的副本，在讀取之前就會被拒絕：「… is not a report the registry's report store
 holds … Register the store's original instead」。副本仍可閱讀與分享，但不能登錄。指向存放處中
 報告的連結，視為存放處中的原件；存放處中那個本身是連結、指向別處檔案的 `report.json` 則不算。
-整個搬移的 registry 仍可使用，因為沒有任何絕對路徑被存成身分。整個 registry 的副本看起來與
-搬移過的相同，因此也能登錄，但它是第二個 registry：有自己的使用紀錄與自己的不一致封鎖，而
-Research › Models 與 job runner 只讀取 `SHEPHERD_REGISTRY` 的。請從服務所使用的 registry 登錄
-（BACKLOG 37）。產生的 split 的報告寫在
+**registry 必須是部署的 registry**（自 M5 審查起，BACKLOG 37）：整個 registry 的副本以相同的結構
+持有相同的位元組，但它會有自己的使用紀錄與自己的不一致封鎖，而 Research › Models 與 job runner
+從不讀取它們，所以副本中的報告會被拒絕（「… is not registered: the registry … is not the
+deployment's: SHEPHERD_REGISTRY (…) resolves to …」）。整個搬移的 registry，在服務與你的 shell
+中的 `SHEPHERD_REGISTRY` 都指名它的新位置之後，便可再次使用；沒有任何絕對路徑被存成身分。如果
+`--record` 發現它的 registry 已不再是部署的 registry（執行期間連結被改指向別處），執行會以 exit 3
+結束、保留報告，且不提供稍後登錄的命令，因為那個命令也會以同樣的原因被拒絕。這項檢查攔下的是
+誤用的 registry；刻意把這個變數設成副本後執行的指令，就會使用那個副本。產生的 split 的報告寫在
 `--output`，從不在存放處中，所以現在它是因為這個原因被拒絕。
 
 **結果不一致的執行會封鎖其鍵（"runs disagree — investigate"）。** 存放處中同一個鍵（同一個
@@ -2031,6 +2047,14 @@ measure_scorer: refused: the GPU lock /srv/shepherd/workspaces/.shepherd-gpu.loc
 shell 讀取的檔案）。看不到這個變數的 CLI 會在沒有鎖的情況下執行，並記錄
 `GPU lock not configured (...), so this run does not exclude other managed GPU jobs.`
 
+**那個 shell 中也必須設定 `SHEPHERD_REGISTRY`**（自 M5 審查起，BACKLOG 37）：
+`measure_scorer.py --cohort`、`--record` 與 `record_evaluation.py --report` 只在它所指名的
+registry 中運作，它未設定時一律拒絕（§4.9）。`EnvironmentFile=` 的讀法和 shell 不同：systemd
+會保留值中間的空白，也會保留不是出現在值開頭的引號（systemd.exec(5)），所以像
+`SHEPHERD_REGISTRY=/srv/my cohorts` 這樣的一行，服務與 source 這個檔案的 shell 會得到兩個不同的
+值。請使用不含空白與引號的路徑。兩者不同時會被拒絕，絕不會猜測：拒絕訊息會列出設定的值，以及它
+解析成的路徑。
+
 持有者在持有鎖期間會把自己的描述寫在 `<鎖檔>.json`（工作類型、命令、pid、主機、開始時間），
 供上面的訊息使用。這個檔案只是描述：鎖是鎖檔上的 `flock`。被強制結束的工作留下的描述檔無害：
 下一個持有者一取得鎖就會移除它；而所描述的行程已經結束的描述檔，絕不會被當成持有者說出來
@@ -2100,7 +2124,7 @@ M5 的控制項只作用於伺服器列出的項目，從不作用於請求指�
 |---|---|---|
 | `SHEPHERD_DEPLOYMENT_MODE` | 恰好是 `M1`（`m1`、` M1` 或 `M2` 都算其他值） | 唯讀：每個操作者控制項都被拒絕（D8，§4.13） |
 | `SHEPHERD_WORKSPACES_ROOT` | 一個已存在目錄的絕對路徑；其子目錄就是各個 workspace | 不列出任何 workspace |
-| `SHEPHERD_REGISTRY` | cohort registry（§4.9），即各指令以 `--registry` 接收的目錄：絕對路徑、已存在、位於 repository 之外 | 不列出任何 cohort 版本 |
+| `SHEPHERD_REGISTRY` | cohort registry（§4.9），即各指令以 `--registry` 接收的目錄：絕對路徑、已存在、位於 repository 之外；服務與各指令唯一從中登錄報告、在其中進行 `--cohort` 量測的 registry | 不列出任何 cohort 版本；每次登錄與 `--cohort` 量測都被拒絕 |
 | `SHEPHERD_INTAKE_DIR` | 位於 repository 之外的已存在目錄，你把要匯入的 `shepherd-cases/1` 檔案放在這裡；絕對路徑 | 不提供任何匯入來源 |
 | `SHEPHERD_TRAINING_EVIDENCE_DIRS` | 選填：R10 證據目錄，與 `--training-evidence` 接收的相同，以 `:` 分隔（Windows 為 `;`）；每一個都必須是已存在的絕對路徑 | 無；只要有一個項目不合格，整個設定就被拒絕 |
 | `SHEPHERD_ORDERING_ROLES` | 選填：提供依測試分數排序（D4）的 cohort 角色，以逗號分隔 | 無；`institutional_acceptance` 即使列出也會被忽略（`docs/working/PLAN_TEST_RESULTS.md` §4.9 問題 1） |

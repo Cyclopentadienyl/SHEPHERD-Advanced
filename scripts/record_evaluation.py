@@ -23,7 +23,12 @@ measurement printed as `Report:`. A copy elsewhere is refused, saying to
 register the store's original: only the store shows whether another run under
 the report's key disagrees, and while one does, nothing under that key is
 registered ("runs disagree — investigate"). The registry is found from the
-report's own path, so a registry moved as a whole still works.
+report's own path and **must be the deployment's**: the one `SHEPHERD_REGISTRY`
+names, compared by resolved path, so set the variable in this shell as the
+service's environment sets it (deployment guide §4.11). With the variable unset,
+and for a report in another directory (a copy of the registry, say), the
+registration is refused before anything in that registry is read. A registry
+moved as a whole still works once `SHEPHERD_REGISTRY` names its new place.
 
 **The ledger has to be beside the weights.** Name the checkpoint with exactly one
 of `--checkpoint FILE`, which must hold the bytes the report measured (any file
@@ -97,8 +102,9 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
                         help="A measurement report of a registered cohort version in the "
                              "registry's report store, "
                              "<registry>/versions/<label>/reports/<run id>/report.json, as "
-                             "scripts/measure_scorer.py keeps it; a copy elsewhere is "
-                             "refused. One record is derived from its manifest.")
+                             "scripts/measure_scorer.py keeps it, in the deployment's "
+                             "registry (SHEPHERD_REGISTRY, which must be set here); a copy "
+                             "elsewhere is refused. One record is derived from its manifest.")
     parser.add_argument("--show", default=None, metavar="CHECKPOINT_DIGEST",
                         help="Print what the ledger holds for one checkpoint digest. "
                              "An empty result means this ledger holds no record for "

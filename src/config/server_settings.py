@@ -13,7 +13,7 @@ feature that needs it is off.
 |---|---|---|
 | `SHEPHERD_DEPLOYMENT_MODE` | SPEC_4's deployment mode; only the exact value `M1` enables operator controls, which D8's check then allows request by request (below) | read-only |
 | `SHEPHERD_WORKSPACES_ROOT` | the one workspace root: its subdirectories are the workspaces the server lists (SPEC_4 M1's "one explicit workspace namespace") | no workspace listed |
-| `SHEPHERD_REGISTRY` | the cohort registry (the `--registry` of the CLI) | no cohort feature |
+| `SHEPHERD_REGISTRY` | the cohort registry (the `--registry` of the CLI), the only one reports are registered from and cohort versions measured in (`deployment_registry_refusal`) | no cohort feature; every registration and `--cohort` measurement refused |
 | `SHEPHERD_INTAKE_DIR` | where an operator places import sources | no import source |
 | `SHEPHERD_TRAINING_EVIDENCE_DIRS` | R10 evidence directories, `os.pathsep`-separated (optional) | none |
 | `SHEPHERD_ORDERING_ROLES` | cohort roles that offer ordering by test score, comma-separated | none |
@@ -125,6 +125,7 @@ __all__ = [
     "check_registry_root",
     "cohort_registry",
     "deployment_mode",
+    "deployment_registry_refusal",
     "inherited_socket_bind",
     "intake_directory",
     "is_loopback_ip",
@@ -301,6 +302,56 @@ def cohort_registry(environ: Optional[Mapping[str, str]] = None) -> Setting:
         check=check_registry_root,
         consequence="The features that read the cohort registry are off until it is corrected.",
     )
+
+
+def deployment_registry_refusal(registry: Path,
+                                environ: Optional[Mapping[str, str]] = None) -> Optional[str]:
+    """`None` when `registry`, a registry root already resolved, is the
+    deployment's registry -- the directory `SHEPHERD_REGISTRY` names, resolved
+    by the registry rule (`check_registry_root`) -- or why it is not, as a
+    clause with no closing full stop, for the caller to put in its own sentence.
+
+    **The one rule for which registry a report is registered from and a cohort
+    version is measured in** (D5, D7, BACKLOG 37): `locate_store_report` asks it
+    for every registration, the UI's included, and `measure_scorer.py` for every
+    ``--cohort`` run, before either reads anything in the registry. Another
+    directory keeps its own report store, disagreement block and usage history,
+    which the service never reads.
+
+    **Compared as resolved paths** (`Path.resolve()` on both sides): a link to
+    the configured directory is that directory. Never by device and inode
+    (`os.path.samefile`), which can be 0 for every file on some Windows volumes
+    (WebDAV), where every directory would then compare equal and a copy would
+    pass (cpython issue 78116). The cost falls on the safe side: the same
+    directory reached through a bind mount or another mount resolves to another
+    path and is refused, and the refusal names the path to use.
+
+    **Unset, every such use is refused**: a shell without the service's settings
+    (a fresh SSH session) cannot tell which registry is the deployment's, and
+    accepting any would be the bypass this rule closes. It reads this process's
+    environment (or `environ`): a command run with the variable set to another
+    directory on purpose uses that one. Like the store's other rules, it
+    catches a registry reached by mistake; it does not make the store
+    tamper-proof (D2).
+    """
+    raw = _raw(environ, ENV_REGISTRY)
+    if raw is None:
+        return (f"{ENV_REGISTRY} is not set here, so which registry is the deployment's cannot "
+                f"be told. Set {ENV_REGISTRY} in this environment to the value the service's "
+                "environment gives it (deployment guide §4.11: one file that both the service "
+                "and this shell read)")
+    try:
+        configured = check_registry_root(raw)
+    except DirectoryRefused as exc:
+        return f"{ENV_REGISTRY} is refused: {str(exc).rstrip().rstrip('.')}"
+    if Path(registry) != configured:
+        return (f"the registry {registry} is not the deployment's: {ENV_REGISTRY} ({raw}) resolves "
+                f"to {configured}. Registries are compared by resolved path, so another "
+                "directory is another registry whatever it holds, a copy of this one or the "
+                "same directory reached through a bind mount or another mount. Use the path "
+                f"under {configured}, or, if {registry} is now the deployment's registry, set "
+                f"{ENV_REGISTRY} to it for the service and here")
+    return None
 
 
 def intake_directory(environ: Optional[Mapping[str, str]] = None) -> Setting:

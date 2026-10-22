@@ -1153,6 +1153,20 @@ the repository (through a symlink too) are refused. Nothing creates it for you, 
 names it. The commands take it as `--registry`; the service reads it from `SHEPHERD_REGISTRY`
 (§4.12), checked by the same rule.
 
+**The commands need `SHEPHERD_REGISTRY` too** (since the M5 review, BACKLOG 37): a report is
+registered (`--record`, `record_evaluation.py --report`, the Test page), and `measure_scorer.py
+--cohort` measures, only in the deployment's registry, the one `SHEPHERD_REGISTRY` names. The
+two are compared as resolved paths, so `--registry` through a link to that directory is
+accepted, while a copy of the registry, or the same directory reached through a bind mount or
+another mount, is another registry and is refused before anything in it is read. With the
+variable unset, every such command is refused, saying to set it as the service's environment
+sets it. Set it in the shell where you run the commands, from the same file the service reads
+(§4.11):
+
+```
+measure_scorer: refused: --cohort measures a version of the deployment's registry only, and SHEPHERD_REGISTRY is not set here, so which registry is the deployment's cannot be told. Set SHEPHERD_REGISTRY in this environment to the value the service's environment gives it (deployment guide §4.11: one file that both the service and this shell read). [...] Nothing was read or written.
+```
+
 The directories below it are checked too. Each one (`sources/`, `versions/`, a version's
 directory, its `reports/` and each run directory) is resolved again just before anything is
 written into it or a version is read from it. It is refused when a link takes it into the
@@ -1479,11 +1493,17 @@ both go through the one registration function. The exit codes above are unchange
 A copy anywhere else is refused before it is read: "… is not a report the registry's report
 store holds … Register the store's original instead". You can still read and share a copy, but
 you cannot register it. A link to a stored report counts as the stored original. A `report.json`
-in the store that is a link to a file elsewhere does not count. A registry moved as a whole
-still works, because no absolute path is stored as an identity. A copy of the whole registry
-looks the same as a moved one, so it registers too, but it is a second registry: it has its own
-usage history and its own disagreement block, and Research › Models and the job runner read only
-`SHEPHERD_REGISTRY`'s. Register from the registry the service uses (BACKLOG 37). A generated split's report,
+in the store that is a link to a file elsewhere does not count. **The registry must be the
+deployment's** (since the M5 review, BACKLOG 37): a copy of the whole registry holds the same
+bytes in the same structure, but it would keep its own usage history and its own disagreement
+block, which Research › Models and the job runner never read, so its reports are refused ("…
+is not registered: the registry … is not the deployment's: SHEPHERD_REGISTRY (…) resolves to …").
+A registry moved as a whole works again once `SHEPHERD_REGISTRY` names its new place, for the
+service and in your shell; no absolute path is stored as an identity. If `--record` finds its
+registry is no longer the deployment's (a link retargeted during the run), the run exits 3,
+keeps its report and offers no register-later command, since that command would be refused the
+same way. The check catches a registry reached by mistake; a command run with the variable set to
+a copy on purpose uses that copy. A generated split's report,
 written to `--output`, is never in a store, so this is now why it is refused.
 
 **Runs that disagree block their key ("runs disagree — investigate").** The store's reports
@@ -1707,6 +1727,15 @@ one file that both the unit's `EnvironmentFile=` and your shell read). A CLI tha
 lock and logs `GPU lock not configured (...), so this run does not exclude other managed GPU
 jobs.`
 
+**`SHEPHERD_REGISTRY` is required in that shell as well** (since the M5 review, BACKLOG 37):
+`measure_scorer.py --cohort`, `--record` and `record_evaluation.py --report` work only in the
+registry it names and refuse while it is unset (§4.9). An `EnvironmentFile=` is not read the way
+a shell reads it: systemd keeps interior whitespace and keeps quotes that do not open the value
+(systemd.exec(5)), so a line such as `SHEPHERD_REGISTRY=/srv/my cohorts` gives the service and a
+shell that sources the file two different values. Use a path without spaces or quotes. A
+difference is refused, never guessed: the refusal shows the value as set and the path it
+resolves to.
+
 The holder describes itself in `<lock file>.json` (job type, command, pid, host, start time)
 while it holds the lock, for the message above. That file is descriptive only: the lock is the
 `flock` on the lock file. One left behind by a killed job is harmless: the next holder removes
@@ -1786,7 +1815,7 @@ repository's `data/workspaces/` included.
 |---|---|---|
 | `SHEPHERD_DEPLOYMENT_MODE` | `M1`, exactly (`m1`, ` M1` or `M2` are other values) | read-only: every operator control is refused (D8, §4.13) |
 | `SHEPHERD_WORKSPACES_ROOT` | absolute path of an existing directory; its subdirectories are the workspaces | no workspace is listed |
-| `SHEPHERD_REGISTRY` | the cohort registry (§4.9), the directory the commands take as `--registry`: absolute, existing, outside the repository | no cohort version is listed |
+| `SHEPHERD_REGISTRY` | the cohort registry (§4.9), the directory the commands take as `--registry`: absolute, existing, outside the repository; the only registry reports are registered from and `--cohort` runs measure in, for the service and the commands alike | no cohort version is listed; every registration and `--cohort` measurement is refused |
 | `SHEPHERD_INTAKE_DIR` | an existing directory outside the repository where you place `shepherd-cases/1` files to import; absolute | no import source is offered |
 | `SHEPHERD_TRAINING_EVIDENCE_DIRS` | optional: R10 evidence directories, as `--training-evidence` takes them, separated by `:` (`;` on Windows); each absolute and existing | none; one bad entry refuses the whole setting |
 | `SHEPHERD_ORDERING_ROLES` | optional: cohort roles that offer ordering by test score (D4), comma-separated | none; `institutional_acceptance` is ignored even when listed (`docs/working/PLAN_TEST_RESULTS.md` §4.9 question 1) |

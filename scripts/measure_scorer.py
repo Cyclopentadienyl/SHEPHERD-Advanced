@@ -45,6 +45,18 @@ the exit status below). Each run is appended to the version's usage history
 right after its report is published (`src/evaluation/report_store.py`), so a
 run from the command line counts as one started from the Test tab.
 
+**Only in the deployment's registry** (D7, BACKLOG 37): a `--cohort` run is
+refused before the GPU lock is taken, the device resolved or anything read,
+unless `--registry`, resolved, is the directory `SHEPHERD_REGISTRY` names,
+resolved (`server_settings.deployment_registry_refusal`, the rule every
+registration applies). So every run on a cohort version is in the usage history
+the service reads, and its report in the store a registration accepts; a copy
+of the registry keeps its own. Unset, every `--cohort` run is refused saying to
+set it here as the service's environment sets it. The variable is read from
+this process's environment, so a command run with it set to another directory
+on purpose measures there (D2: the rule catches a registry named by mistake; it
+is not tamper-proof).
+
 **For a job that chose its inputs beforehand** (M5's job runner):
 `--expect-checkpoint-sha256` and `--expect-version-sha256` refuse the run before
 anything is measured when the checkpoint or the version's `cohort.json` read now
@@ -1156,7 +1168,11 @@ def _register(
     A refusal returns `EXIT_NOT_REGISTERED` with the reason. When the report is
     still the one published, it is kept and the command that registers it later
     is printed -- unless runs under its key disagree (`RunsDisagree`, D5), when
-    no later registration under that key would be accepted either; when the
+    no later registration under that key would be accepted either, or its
+    registry is no longer the deployment's (`NotFromTheDeploymentRegistry`: the
+    registry or `SHEPHERD_REGISTRY` resolves elsewhere than when the run was
+    allowed to start, a link retargeted during the run, say), when that command
+    would be refused the same way; when the
     file no longer holds it -- replaced, changed, damaged, removed, unreadable
     or no longer in the store (`ReportNotAsPublished`) -- the run's own report
     may be gone, and the operator is told to re-measure. A registration that
@@ -1165,6 +1181,7 @@ def _register(
     """
     from src.evaluation.registration import (
         MeasuredRun,
+        NotFromTheDeploymentRegistry,
         RegistrationRefused,
         ReportNotAsPublished,
         RunsDisagree,
@@ -1192,6 +1209,16 @@ def _register(
             f"\nNOT REGISTERED. {exc}\n"
             f"The measurement succeeded and its report is kept at {report_path}, where the "
             "investigation can read it beside the others.",
+            file=sys.stderr,
+        )
+        return EXIT_NOT_REGISTERED, _registration_outcome(
+            True, registered=False, outcome="refused", why=str(exc))
+    except NotFromTheDeploymentRegistry as exc:
+        print(
+            f"\nNOT REGISTERED. {exc}\n"
+            f"The measurement succeeded and its report is kept at {report_path}. No "
+            "register-later command is offered: from that registry it would be refused the "
+            "same way.",
             file=sys.stderr,
         )
         return EXIT_NOT_REGISTERED, _registration_outcome(
@@ -1430,6 +1457,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     args = parse_args(argv)
     _check_outcome_target(args.outcome)
+    _refuse_another_registry(args)
     # **One managed GPU job at a time** (M5): the deployment's GPU lock, taken
     # before the device is resolved or anything is read, and held until this
     # returns; the kernel releases it however the process ends. A busy lock is
@@ -1441,6 +1469,30 @@ def main(argv: Optional[List[str]] = None) -> int:
                        "measure_scorer.py", log=logger):
         with _execution_settings(args.deterministic):
             return _run(args)
+
+
+def _refuse_another_registry(args: argparse.Namespace) -> None:
+    """**A `--cohort` run measures in the deployment's registry only** (D7,
+    BACKLOG 37), checked before the GPU lock, the device or any input: the
+    registry rule first (`validate_registry`, its own refusal), then the rule
+    every registration applies (`deployment_registry_refusal`: `--registry`
+    and `SHEPHERD_REGISTRY` compared by resolved path; unset, refused). A run
+    in another directory -- a copy of the registry, say -- would be in that
+    copy's usage history only, which the service never reads, and its report
+    could not be registered. A generated split has no registry."""
+    if args.cohort is None:
+        return
+    from src.config.server_settings import deployment_registry_refusal
+    from src.evaluation.cohort_registry import validate_registry
+    from src.evaluation.report_store import NotTheDeploymentRegistry
+
+    why = deployment_registry_refusal(validate_registry(args.registry))
+    if why is not None:
+        raise NotTheDeploymentRegistry(
+            f"--cohort measures a version of the deployment's registry only, and {why}. Every "
+            "run on a cohort version belongs in its usage history, the deployment registry's "
+            "(D4, D7), and only a report kept there can be registered. Nothing was read or "
+            "written.")
 
 
 def _run(args: argparse.Namespace) -> int:

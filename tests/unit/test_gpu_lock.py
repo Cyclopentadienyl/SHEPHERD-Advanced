@@ -434,11 +434,20 @@ def _measure_argv(root: Path, workspace: str = "ws_b"):
             str(root / workspace), "--cohort", "c1", "--registry", str(root / "registry")]
 
 
-def test_measure_scorer_refuses_a_busy_lock_before_anything_is_read(root, capsys):
+def _deployment_registry(root: Path, monkeypatch) -> None:
+    """The (empty) registry `_measure_argv` names, made and named as the
+    deployment's (`SHEPHERD_REGISTRY`): measure_scorer refuses any other before
+    it takes the lock (BACKLOG 37), so these tests reach the lock's checks."""
+    (root / "registry").mkdir(exist_ok=True)
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(root / "registry"))
+
+
+def test_measure_scorer_refuses_a_busy_lock_before_anything_is_read(root, monkeypatch, capsys):
     """Before the device is resolved (no CUDA here, so `auto` would refuse with
     another message) and before any input is read (none of them exist)."""
     import scripts.measure_scorer as ms
 
+    _deployment_registry(root, monkeypatch)
     with GpuLock(root / LOCK_FILE_NAME, job_type="training", command="train_model.py").acquire():
         status = ms._run_as_program(_measure_argv(root))
     err = capsys.readouterr().err
@@ -446,7 +455,8 @@ def test_measure_scorer_refuses_a_busy_lock_before_anything_is_read(root, capsys
     assert err.startswith("measure_scorer: refused: the GPU lock ")
     assert "is held by a training job (train_model.py" in err
     assert err.rstrip().endswith("Nothing was written.")
-    assert [p.name for p in root.iterdir()] == [LOCK_FILE_NAME], "nothing else was written"
+    assert sorted(p.name for p in root.iterdir()) == sorted([LOCK_FILE_NAME, "registry"])
+    assert list((root / "registry").iterdir()) == [], "nothing else was written"
 
 
 def test_measure_scorer_holds_the_lock_for_its_run_and_releases_it(root, monkeypatch):
@@ -460,6 +470,7 @@ def test_measure_scorer_holds_the_lock_for_its_run_and_releases_it(root, monkeyp
         raise RuntimeError("the run failed")
 
     monkeypatch.setattr(ms, "_run", run)
+    _deployment_registry(root, monkeypatch)
     with pytest.raises(RuntimeError):
         ms.main(_measure_argv(root))
     assert seen["held_by"] and seen["record"]["job_type"] == "test"
@@ -471,6 +482,7 @@ def test_measure_scorer_refuses_an_unusable_setting(root, monkeypatch, capsys):
     import scripts.measure_scorer as ms
 
     monkeypatch.setenv(LOCK_FILE_ENV, "gpu.lock")
+    _deployment_registry(root, monkeypatch)
     assert ms._run_as_program(_measure_argv(root)) == 1
     assert "is not an absolute path" in capsys.readouterr().err
 
@@ -501,6 +513,7 @@ def test_a_lock_file_that_cannot_be_opened_refuses_both_clis(tmp_path, monkeypat
     with caplog.at_level(logging.ERROR):
         assert tm.main() == 1
     assert f"the GPU lock {dangling} cannot be opened" in caplog.text
+    _deployment_registry(tmp_path, monkeypatch)
     assert ms._run_as_program(_measure_argv(tmp_path)) == 1
     err = capsys.readouterr().err
     assert f"refused: the GPU lock {dangling} cannot be opened" in err

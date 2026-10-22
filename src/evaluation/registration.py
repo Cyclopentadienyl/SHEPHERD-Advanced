@@ -15,8 +15,15 @@ refused, saying to register the store's original, and nothing guesses where a
 copy came from. Its place is not taken as proof: the report must name that
 version exactly (`cohort_version_block`, the block the measurement writes from
 the same version), its run directory must be named for the checkpoint it
-measured, and the checkpoint checks below still hold. A registry moved as a
-whole still works: nothing compares an absolute path.
+measured, and the checkpoint checks below still hold.
+
+**And only from the deployment's registry** (BACKLOG 37): the registry the
+report's path names must be the one ``SHEPHERD_REGISTRY`` names, compared by
+resolved path (`server_settings.deployment_registry_refusal`), so a copy of the
+whole registry -- the same bytes, its own disagreement block and usage history
+-- is refused before anything in it is read (`NotFromTheDeploymentRegistry`).
+Unset, every registration is refused saying to set it. A registry moved as a
+whole still works once ``SHEPHERD_REGISTRY`` names its new place.
 
 **While runs under the report's key disagree, nothing under the key is
 registered** (D5), checked or unchecked, the same report again included: the
@@ -54,6 +61,12 @@ here, as for any registration, and refused unless those are its bytes and it
 measured that checkpoint, so a file replaced between the publication and this
 read is never registered in the run's name (the reviewer's P2 of 2026-10-17).
 
+**A registration from the Test page is bound to the report it showed**
+(``expected_report_sha256``, the M5 review's P2-1): the digest shown is
+compared on the one read registered here, before its bytes are decoded, so a
+file replaced after it was shown -- by another valid report or damaged bytes
+-- is refused and never parsed.
+
 **A registration is in the version's usage history** (D4): a ledger written is
 appended there by this function, so a registration from the command line counts
 as one from the Test tab. If that append fails after the ledger was written, the
@@ -61,7 +74,9 @@ result says so (`usage_history_problem`) rather than claiming either.
 
 **Every expected failure is one refusal** (`RegistrationRefused`) whose message
 names the file and says nothing was written: a missing or damaged report, a file
-that is not a report or not in a report store, a generated split's report, a
+that is not a report or not in a report store, a report in a registry other
+than the deployment's (`NotFromTheDeploymentRegistry`), a report that is no
+longer the one shown, a generated split's report, a
 report that does not name the version it is kept under, runs that disagree
 (`RunsDisagree`) or a store that cannot be checked
 (`DisagreementNotChecked`), a ledger this revision does not read, a
@@ -82,10 +97,11 @@ import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, NamedTuple, Optional, Tuple
+from typing import Any, Dict, Mapping, NamedTuple, Optional, Tuple
 
 from src.evaluation.report_store import (
     NotInReportStore,
+    NotTheDeploymentRegistry,
     _NotTheExpectedBytes,
     locate_store_report,
     read_report,
@@ -118,9 +134,21 @@ REGISTERED_STATES: Tuple[str, ...] = ("registered", "not_registered", "cannot_be
 
 _SAYS_NOTHING_WRITTEN = re.compile(r"\s*Nothing was written\.?\s*$")
 
+#: A report digest as the lists show it: 64 lowercase hexadecimal digits.
+_SHA256 = re.compile(r"[0-9a-f]{64}")
+
 
 class RegistrationRefused(ValueError):
     """A report was not registered, and nothing was written."""
+
+
+class NotFromTheDeploymentRegistry(RegistrationRefused):
+    """The report is kept in a registry other than the deployment's -- the one
+    ``SHEPHERD_REGISTRY`` names, compared by resolved path -- or the variable is
+    unset or refused, so which registry is the deployment's cannot be told
+    (`server_settings.deployment_registry_refusal`). Nothing in that registry
+    was read. A run's own report stays where it was published, but no command
+    to register it from there is offered: it would be refused the same way."""
 
 
 class ReportNotAsPublished(RegistrationRefused):
@@ -236,7 +264,9 @@ def register_report(
     checkpoint: Optional[Path] = None,
     checkpoint_dir: Optional[Path] = None,
     measured: Optional[MeasuredRun] = None,
+    expected_report_sha256: Optional[str] = None,
     registered_at: Optional[str] = None,
+    environ: Optional[Mapping[str, str]] = None,
 ) -> RegistrationResult:
     """Register one measurement report in the ledger beside the checkpoint it
     measured.
@@ -246,7 +276,10 @@ def register_report(
     `locate_store_report`), naming that version exactly and measured on the
     checkpoint its run directory is named for; and **no report in the store
     under its key may disagree with another** (D5), nor may that be uncheckable
-    (`RunsDisagree`, `DisagreementNotChecked`).
+    (`RunsDisagree`, `DisagreementNotChecked`). **The registry must be the
+    deployment's**: the one ``SHEPHERD_REGISTRY`` names, read from ``environ``
+    (`os.environ` when `None`), compared by resolved path before anything in the
+    registry is read (`NotFromTheDeploymentRegistry`, also when it is unset).
 
     **The ledger is always beside the checkpoint file's resolved path**
     (``Path(file).resolve().parent / "evaluations.json"``, M4 decision 15): the
@@ -277,6 +310,15 @@ def register_report(
       run's name. The ledger goes beside the read's path, which the run resolved
       when it read it.
 
+    ``expected_report_sha256``: the digest of the report as it was shown when it
+    was chosen (the Test page's Register), with ``checkpoint`` or
+    ``checkpoint_dir``. The one read below is compared with it **before its
+    bytes are decoded**, so a file replaced or changed after it was shown -- by
+    another valid report or damaged bytes -- is refused and never parsed, the
+    check ``measured`` makes with the digest its run published. Not with
+    ``measured``, which carries its own; that, or a value that is not 64
+    lowercase hex digits, is a caller's error (``TypeError``).
+
     ``registered_at`` is the time the registration is made, now in UTC unless a
     caller passes one.
 
@@ -296,6 +338,14 @@ def register_report(
         )
     if measured is not None and not isinstance(measured, MeasuredRun):
         raise TypeError("measured is the run's MeasuredRun")
+    if expected_report_sha256 is not None:
+        if measured is not None:
+            raise TypeError("measured carries the digest of the report its run published; "
+                            "expected_report_sha256 is for a report chosen by the digest shown")
+        if (not isinstance(expected_report_sha256, str)
+                or _SHA256.fullmatch(expected_report_sha256) is None):
+            raise TypeError("expected_report_sha256 is a SHA-256 in 64 lowercase hex digits")
+    expected = measured.report_sha256 if measured is not None else expected_report_sha256
     report_path = Path(report_path)
     # Known up front for a named file or a run's read; for a directory, once the
     # file in it is.
@@ -343,7 +393,16 @@ def register_report(
     # **Only from the report store** (D5, 2026-10-19): the version is found
     # through the registry's structure and resolved, or the report is refused.
     try:
-        stored = locate_store_report(report_path)
+        stored = locate_store_report(report_path, environ=environ)
+    except NotTheDeploymentRegistry as exc:
+        # A refusal of where the report is kept, not of the report: a run's own
+        # report stays as it was published (not `ReportNotAsPublished`).
+        raise refused(
+            f"{report_path} is not registered: {exc}. A report is registered only from the "
+            "deployment's registry (D5): another registry keeps its own report store, "
+            "disagreement block and usage history, which the service never reads.",
+            NotFromTheDeploymentRegistry,
+        ) from None
     except NotInReportStore as exc:
         if measured is not None:
             # The run published its report into the store at this very path, so
@@ -364,10 +423,16 @@ def register_report(
         ) from exc
 
     try:
-        report, source_digest = read_report(
-            stored.path, measured.report_sha256 if measured is not None else None
-        )
+        report, source_digest = read_report(stored.path, expected)
     except _NotTheExpectedBytes as exc:
+        if measured is None:
+            # Compared on the bytes just read, before they are decoded: the file
+            # no longer holds the report that was shown and chosen.
+            raise refused(
+                f"{report_path} is not the report that was shown: it now holds bytes "
+                f"{exc.sha256[:12]}..., and {expected[:12]}... was shown. It was replaced or "
+                "changed after it was shown; select it again."
+            ) from None
         # Compared on the bytes just read, before they are decoded: whatever the
         # file now holds -- another report or damaged JSON -- it is not the
         # report this run wrote, so nothing it says is registered in its name.
@@ -714,7 +779,7 @@ def report_state(
     return ReportState(kept, why_kept, "not_registered", looked, digest, None, ledger_path)
 
 
-__all__ = ["DisagreementNotChecked", "KEPT_STATES", "MeasuredRun", "REGISTERED_STATES",
-           "RegistrationRefused", "RegistrationResult", "ReportNotAsPublished", "ReportState",
-           "RunsDisagree", "corroboration_note", "key_refusal", "register_report",
-           "report_state"]
+__all__ = ["DisagreementNotChecked", "KEPT_STATES", "MeasuredRun",
+           "NotFromTheDeploymentRegistry", "REGISTERED_STATES", "RegistrationRefused",
+           "RegistrationResult", "ReportNotAsPublished", "ReportState", "RunsDisagree",
+           "corroboration_note", "key_refusal", "register_report", "report_state"]

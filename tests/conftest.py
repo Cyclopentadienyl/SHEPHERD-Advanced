@@ -9,6 +9,7 @@ from src.config.server_settings import (
     ENV_ACCEPT_UNAUTHENTICATED_NETWORK_BIND,
     ENV_BIND_HOST,
     ENV_DEPLOYMENT_MODE,
+    ENV_REGISTRY,
 )
 from src.utils.gpu_lock import LOCK_FILE_ENV, WORKSPACES_ROOT_ENV
 
@@ -47,3 +48,16 @@ def _no_deployment_access_settings(monkeypatch):
     monkeypatch.delenv(ENV_ACCEPT_UNAUTHENTICATED_NETWORK_BIND, raising=False)
     monkeypatch.setenv(ENV_BIND_HOST, "")
     monkeypatch.delenv(ENV_BIND_HOST)
+
+
+@pytest.fixture(autouse=True)
+def _no_deployment_registry(monkeypatch):
+    """Every test starts with no deployment registry.
+
+    A report is registered, and a ``--cohort`` run measures, only in the
+    registry `SHEPHERD_REGISTRY` names (BACKLOG 37); a suite run from the shell
+    the guide prepares (§4.11) would otherwise refuse every test's own registry
+    as not the deployment's, and see "unset" nowhere. A test that registers or
+    measures names its own registry with `monkeypatch` (or `environ=`), and its
+    child processes inherit only what it set."""
+    monkeypatch.delenv(ENV_REGISTRY, raising=False)

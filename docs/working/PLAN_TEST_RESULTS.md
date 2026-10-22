@@ -8,7 +8,7 @@ review closed it and found one P3, fixed in `2c94a4e`. **Its GB10 functional acc
 the scope agreed, passed at `2c94a4e`** (2026-10-17; 84 of 84 probes, demo and real data; the
 contract's §4, "M4's acceptance on the GB10"). Functional only: not model quality and not an
 institutional test. Merged into `main` by the owner (#126, `d2d31dd`, 2026-10-17). Phase 2 (M5)
-is implemented on this branch, not yet reviewed or merged: M5-0 (`14176c3`, `84371dd`), M5-1 (`85af1fa..bfc0b7c`), M5-2 (`badf546..da2a8b1`) and M5-3 (`4c7d12f..b2db17d`: the shared follow-ups, the probe's M5 acceptance, the internal review of all of M5 — 42 findings, none P1, every P2 fixed — and two UI polishes from the acceptance screenshots) are pushed; full suite 5116 passed, 14 skipped. Delivered for the reviewer's review on 2026-10-22; the GB10 acceptance (the probe's M5 phase) follows. Each step's "as implemented" note is in D4, D5, D7, D8 and
+is implemented on this branch, reviewed once and not merged: M5-0 (`14176c3`, `84371dd`), M5-1 (`85af1fa..bfc0b7c`), M5-2 (`badf546..da2a8b1`) and M5-3 (`4c7d12f..b2db17d`: the shared follow-ups, the probe's M5 acceptance, the internal review of all of M5 — 42 findings, none P1, every P2 fixed — and two UI polishes from the acceptance screenshots) are pushed; full suite 5116 passed, 14 skipped. Delivered for the reviewer's review on 2026-10-22, which found no P1 and seven P2, now fixed on this branch (implemented, not yet reviewed; P2-1, P2-6 and P2-7, the evaluation boundaries, are under D5 below); the reviewer's incremental review of the fixes is next, and the GB10 acceptance (the probe's M5 phase) after it, neither passed yet. Each step's "as implemented" note is in D4, D5, D7, D8 and
 §6, "M5's boundaries" (2026-10-19). It runs under deployment mode M1 (§4.9 question 3). §4 lists the decisions; phase 1
 runs on the engineering defaults §4.9 records, each asked of the owner once, and an answer
 changes a default without adding a second path.
@@ -584,9 +584,11 @@ The owner's semantics, followed as stated:
   registration function on a report the store holds. Its place in the store is not taken as
   proof: the source is located through the registry's own structure and refused when that
   cannot be established, never guessed and never falling back to a copy; the digest,
-  checkpoint and cohort checks all stay; and a registry moved as a whole still works, so no
-  original absolute path becomes a permanent identity. A copy can still be shared and read; it
-  is not an entry point for registration. No database, signature or second writer is added.
+  checkpoint and cohort checks all stay; and a registry moved as a whole still works once
+  `SHEPHERD_REGISTRY` names its new place, so no original absolute path becomes a permanent
+  identity. A copy can still be shared and read; it is not an entry point for registration,
+  since only the deployment's registry, the one `SHEPHERD_REGISTRY` names, is (compared by
+  resolved path; the M5 review's P2-7, 2026-10-22). No database, signature or second writer is added.
   This narrows M4's `record_evaluation.py --report`, which accepted a report anywhere.
 - **No status gate.** Revision 1 required a candidate→baseline promotion before recording; that
   is dropped. A cohort version is usable once it is imported and verified. "Baseline" may be
@@ -689,11 +691,32 @@ disagreement block, contested states and investigation notes are phase 2.
   and resolves it (`locate_store_report`). It then requires the report's cohort block to equal
   `cohort_version_block` of that version, and the run directory to be named for the measured
   checkpoint. A copy elsewhere, or a path off that structure, is refused before it is read,
-  saying to register the store's original. A registry moved as a whole still registers. A
-  copy of the whole registry cannot be told from a moved one, so it registers too, with its own
-  usage history and its own block: the copy is a second registry (owner question, BACKLOG item
-  37; deployment guide §4.9). The
+  saying to register the store's original. The
   digest, checkpoint and ledger checks are unchanged.
+- **Only the deployment's registry** (the M5 review's P2-7, BACKLOG 37; implemented
+  2026-10-22, not yet reviewed). A copy of the whole registry holds the same bytes in the same
+  structure, so it used to register too, with its own usage history and its own block. Now the
+  registry a report's path names must be the one `SHEPHERD_REGISTRY` names, both resolved
+  (`server_settings.deployment_registry_refusal`; never device and inode, which can be 0 for
+  every file on some Windows volumes): `locate_store_report` checks it before anything in the
+  registry is read, and `register_report` refuses otherwise with `NotFromTheDeploymentRegistry`,
+  the Test page, `--record` and `record_evaluation.py` alike. Unset, every registration is
+  refused saying to set it as the service's environment sets it. A link to the deployment's
+  registry is that registry; the same directory reached through a bind mount resolves elsewhere
+  and is refused, the message naming the path to use. A registry moved as a whole registers once
+  `SHEPHERD_REGISTRY` names its new place. **`measure_scorer.py --cohort` measures only there
+  too**, refused before the GPU lock, the device or any input (D7: every run on the acceptance
+  cohort is in its usage history, D4), so the "cannot be registered later" cases are gone;
+  `--record` whose registry stops being the deployment's during the run (a link retargeted)
+  offers no register-later command. The command line reads the variable from its own shell, so
+  a command run with it set to another directory on purpose uses that one: the rule catches a
+  registry reached by mistake, as D2 says of the store's other rules, and is not tamper-proof.
+- **The report that was shown** (the M5 review's P2-1; implemented 2026-10-22, not yet
+  reviewed). `register_report(..., expected_report_sha256=...)` compares the digest shown on
+  the one read it registers, before the bytes are decoded (M4's compare-before-parse,
+  `read_report`), and refuses other bytes, another valid report or damaged ones, with "… is not
+  the report that was shown … select it again", nothing written; the Test page's Register passes
+  the digest it showed and the settings it found the report by.
 - **The block.** `scan_report_store` builds every stored report with `build_record`, groups the
   records by `record_key` and compares them with `differing_fields`, the comparison
   `append_record` now uses too. A contested key refuses every registration under it
@@ -718,10 +741,19 @@ disagreement block, contested states and investigation notes are phase 2.
   report store (`model_list.recorded_tests_for`, `scan_report_store`). With `SHEPHERD_REGISTRY`
   unset, or a record's version not listed, they say "contested state not checked", never
   uncontested; since the M5-3 review the contested and the uncheckable records are counted
-  apart ("3 · 1 contested · contested state of 1 not checked"). **Not wired:**
-  `GET /api/v1/evaluations/loaded-model` still returns its records with no contested state, so
-  an API client is not told that a record is contested (BACKLOG item 36). The scan is not atomic
-  with a run publishing into the version (one writer).
+  apart ("3 · 1 contested · contested state of 1 not checked"). **Since the M5 review's P2-6
+  (BACKLOG 36; implemented 2026-10-22, not yet reviewed)** `GET /api/v1/evaluations/loaded-model`
+  gives each record it shows its state (`contest`: uncontested, contested with the differing
+  fields and runs, or cannot_be_checked) from the same function the dashboard uses
+  (`src/api/services/record_states.contest_states`, moved there from the dashboard's model list
+  so that the API imports no UI module), computed for the records shown only, without the
+  problems' words, in the thread pool once the served identity is taken; the read-only Models
+  view shows the route's answer and computes nothing itself, so an API client and the dashboard
+  cannot disagree. A contested state is never downgraded by a value it cannot show: a run's
+  value that is not a finite number is null in the route (and "not a finite number" on the
+  page), and a contested state whose details fail validation is shown contested without them.
+  Neither Models nor the API shows the investigation notes D5 keeps with a key (BACKLOG 40). The
+  scan is not atomic with a run publishing into the version (one writer).
 
 **As implemented in M5-2 (2026-10-20), the Test page** (`src/webui/components/test_page.py`):
 each run directory of a version's store is listed with kept and registered from
@@ -731,7 +763,8 @@ investigation notes kept with the key (who, when, what) are listed and added, ga
 nothing. Register calls `register_report` (store only) with the checkpoint the server lists
 holding the weights the report measured, found by full digest in the workspace's checkpoint list
 (never the report's recorded path), after the report's bytes are compared with the digest shown;
-the one function checks the store, the version, the block and the checkpoint's bytes again. For
+the one function checks the store, the version, the block and the checkpoint's bytes again, and,
+since the M5 review's P2-1, compares the digest shown on the one read it registers (above). For
 the selected report, an operator's page asks `report_state` again with that listed file, so "not
 registered" is said for the ledger a registration from the page would write. *Review fixes
 (2026-10-21):* Register and that answer find the listed file in one order: the file the run read
@@ -1601,7 +1634,8 @@ contract and BACKLOG stay the record, and no new planning document is added.
     writes the `model_load` entry; newest first writes none. A request D8 refuses gets no list
     (D8's three conditions named) and "Recorded test results of the model in use" from the API's
     read-only route function, by the served digest, opening no checkpoint, with each record's
-    contested state from the report store (reasons naming no server path). *Review fixes
+    contested state as that route answers it (reasons naming no server path; since the M5
+    review's P2-6, D5). *Review fixes
     (2026-10-21):* the page reads its data again after every Load, also one that leaves the
     listing unchanged (a refused reload, the model in use loaded again), so the usage history
     shows the entry that Load wrote, and selects the same checkpoint again after it; the
@@ -1866,8 +1900,9 @@ contract and BACKLOG stay the record, and no new planning document is added.
     training start, and the import's commit preparing again. Holds;
   - no other model's records after a switch, states apart, *unverifiable* never 0: records are
     found by full digest (`model_list.recorded_tests_for`, the read-only route), and Trainer
-    validation and Mode C sit in separate cards and columns. Holds; the API route carries no
-    contested state (D5);
+    validation and Mode C sit in separate cards and columns. Holds; since the M5 review's P2-6
+    the API route carries each record's contested state too, from the function the dashboard
+    uses (D5);
   - A's source kept: exports carry the result's own `served_identity`, and the badge compares the
     whole identity (`test_a_result_older_than_a_load_says_how_many_parts_differ`). Holds;
   - layout: **not yet recorded**. The screenshot matrix (1920×1080, 1707×870, 1536×760,
