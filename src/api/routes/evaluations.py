@@ -305,7 +305,8 @@ class ContestRun(_Strict):
     run: _Text
     values: Dict[str, Optional[_Metric]] = Field(
         ..., description="null where the run's report holds no finite number for the field "
-        "(null, NaN, infinity or text, after a hand edit); the run still disagrees")
+        "(null, NaN, infinity, text, or an integer too large for a float, after a hand edit); "
+        "the run still disagrees")
 
 
 class RecordContest(_Strict):
@@ -540,8 +541,9 @@ def _contest_states(records: List[Dict[str, Any]]) -> Callable[[Dict[str, Any]],
     A record with no state read is ``cannot_be_checked``, never uncontested and
     never a 500 that would take the model status with it. **A contested state
     is never downgraded** by how its details can be shown: a run's value that
-    is not a finite number is null, and a contested state whose fields or runs
-    still fail validation is shown contested without them."""
+    is not a finite number is null (`_finite_or_null`), and a contested state
+    whose fields or runs still cannot be carried is shown contested without
+    them."""
     from src.api.services.record_states import CohortVersions, contest_states, key_text
     from src.evaluation.report_store import CONTEST_STATES
     from src.evaluation.sidecar import record_key
@@ -555,21 +557,35 @@ def _contest_states(records: List[Dict[str, Any]]) -> Callable[[Dict[str, Any]],
             got = None
         if not isinstance(got, dict) or got.get("state") not in CONTEST_STATES:
             return RecordContest(state="cannot_be_checked", differing=[], runs=[])
-        runs = [{"run": run.get("run"),
-                 "values": {name: (float(value) if type(value) in (int, float)
-                                   and math.isfinite(value) else None)
-                            for name, value in (run.get("values") or {}).items()}}
-                for run in got.get("runs") or [] if isinstance(run, dict)]
         try:
+            runs = [{"run": run.get("run"),
+                     "values": {name: _finite_or_null(value)
+                                for name, value in (run.get("values") or {}).items()}}
+                    for run in got.get("runs") or [] if isinstance(run, dict)]
             return RecordContest(state=got["state"], differing=got.get("differing") or [],
                                  runs=runs)
-        except ValueError as exc:  # pydantic's ValidationError: a detail the view refuses
-            logger.warning("A record's D5 details are not shown: %s", exc)
+        except Exception as exc:  # noqa: BLE001 -- pydantic's ValidationError included
+            logger.warning("A record's D5 details are not shown: %s: %s",
+                           type(exc).__name__, exc)
             if got["state"] == "contested":
                 return RecordContest(state="contested", differing=[], runs=[])
             return RecordContest(state="cannot_be_checked", differing=[], runs=[])
 
     return state
+
+
+def _finite_or_null(value: Any) -> Optional[float]:
+    """A disagreeing run's value as the view carries it: a finite number as a
+    float; null for anything else a hand-edited report may hold there (null,
+    NaN, infinity, text, an object, a boolean, or an integer too large for a
+    float, which `math.isfinite` cannot take)."""
+    if type(value) not in (int, float):
+        return None
+    try:
+        number = float(value)
+    except OverflowError:
+        return None
+    return number if math.isfinite(number) else None
 
 
 def _nothing_to_look_up(state: str) -> LoadedModelEvaluations:

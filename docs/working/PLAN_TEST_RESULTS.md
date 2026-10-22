@@ -751,7 +751,8 @@ disagreement block, contested states and investigation notes are phase 2.
   view shows the route's answer and computes nothing itself, so an API client and the dashboard
   cannot disagree. A contested state is never downgraded by a value it cannot show: a run's
   value that is not a finite number is null in the route (and "not a finite number" on the
-  page), and a contested state whose details fail validation is shown contested without them.
+  page), and a contested state whose details cannot be carried (they fail validation, or cannot
+  be built) is shown contested without them.
   Neither Models nor the API shows the investigation notes D5 keeps with a key (BACKLOG 40). The
   scan is not atomic with a run publishing into the version (one writer).
 

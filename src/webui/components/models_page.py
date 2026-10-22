@@ -646,10 +646,15 @@ def r10_html(r10: Any) -> str:
 def _contested_value(name: str, value: Any) -> str:
     """A disagreeing run's value as `contest_html` shows it: null is "not
     reported"; a value that is not a finite number (NaN, infinity, text, an
-    object: a hand edit) is "not a finite number", never formatted as one."""
+    object, an integer too large for a float: a hand edit) is "not a finite
+    number", never formatted as one."""
     if value is None:
         return "not reported"
-    if not _number(value) or not math.isfinite(value):
+    try:
+        finite = _number(value) and math.isfinite(value)
+    except OverflowError:  # an integer too large for a float
+        finite = False
+    if not finite:
         return "not a finite number"
     return fmt_metric(name, value)
 

@@ -1032,14 +1032,16 @@ def test_a_contested_record_is_marked_with_what_differs_and_names_no_path(
     assert {k: operator[k] for k in ("state", "differing", "runs")} == view["contest"]
 
 
-@pytest.mark.parametrize("value", [float("nan"), None, "0.5", {"k": 1}],
-                         ids=["nan", "null", "text", "object"])
+@pytest.mark.parametrize("value", [float("nan"), None, "0.5", {"k": 1}, 10**400, -10**400],
+                         ids=["nan", "null", "text", "object", "huge_int", "huge_negative_int"])
 def test_a_contested_state_is_never_downgraded_by_a_value_it_cannot_show(
     app, served, tmp_path, monkeypatch, value
 ):
     """The critic's break: a disagreeing report holding NaN, null, text or an
     object is still contested for the dashboard, so the route says contested
-    too -- the value shown as null -- never "cannot be checked"."""
+    too -- the value shown as null -- never "cannot be checked". The
+    verification's break: an integer too large for a float (``10**400``), which
+    `math.isfinite` cannot take, is null too, never a 500."""
     registry, kept, record = _registered_with_registry(served, tmp_path, monkeypatch)
     other = _disagreeing(kept, value)
 
@@ -1051,25 +1053,30 @@ def test_a_contested_state_is_never_downgraded_by_a_value_it_cannot_show(
     assert runs[other.parent.name] == {"untruncated_mrr": None}
 
 
+@pytest.mark.parametrize("break_run", [
+    lambda run: run.__setitem__("run", None),
+    lambda run: run.__setitem__("values", [0.4321]),
+], ids=["run_without_id", "values_not_a_mapping"])
 def test_a_contested_state_whose_details_cannot_be_shown_stays_contested(
-    app, served, tmp_path, monkeypatch
+    app, served, tmp_path, monkeypatch, break_run
 ):
-    """Whatever fails the view's validation in a contested state's details (a
-    run with no id, here), the state is shown contested without them."""
+    """Whatever fails in carrying a contested state's details -- the view's
+    validation (a run with no id) or building them at all (values that are not
+    a mapping) -- the state is shown contested without them, never a 500."""
     import src.api.services.record_states as record_states
 
     registry, kept, record = _registered_with_registry(served, tmp_path, monkeypatch)
     _disagreeing(kept, 0.4321)
     real = record_states.contest_states
 
-    def runs_without_ids(*args, **kwargs):
+    def broken_runs(*args, **kwargs):
         found = real(*args, **kwargs)
         for state in found.values():
             for run in state["runs"]:
-                run["run"] = None
+                break_run(run)
         return found
 
-    monkeypatch.setattr(record_states, "contest_states", runs_without_ids)
+    monkeypatch.setattr(record_states, "contest_states", broken_runs)
     (view,) = _get(app)["records"]
     assert view["contest"] == {"state": "contested", "differing": [], "runs": []}
 

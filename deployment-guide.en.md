@@ -1416,9 +1416,12 @@ records themselves are listed under Research › Evaluate › Models.
 
 Until M5-2 the model status (Model Configuration) listed them in full under its "Serving" line,
 as **"Recorded test results (Mode C)"** for the loaded checkpoint (`sha256:<first 12>…`), read
-through `GET /api/v1/evaluations/loaded-model`, in the words below. The route is unchanged and
-still answers API clients with those records, without their contested state (only the
-dashboard reads D5's disagreement block, from the report store):
+through `GET /api/v1/evaluations/loaded-model`, in the words below. The route still answers API
+clients with those records, and since the M5 review (BACKLOG 36) each record carries its D5
+state (`contest`: `uncontested`; `contested`, with the fields and the runs that differ;
+`cannot_be_checked`, never to be read as uncontested), from the dashboard's own implementation
+over the service's `SHEPHERD_REGISTRY`, without the reasons' own words, which may name a server
+path. D5's investigation notes are not shown (BACKLOG 40):
 
 - The records are introduced once, above the first, by **"Disease ranking by the model,
   approved scorer policy (Mode C)."** and the note **"This is the model's own Mode C disease

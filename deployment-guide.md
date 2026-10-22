@@ -1780,8 +1780,11 @@ top-20) … — selection metric on val, not an independent test"）；頁面上
 
 在 M5-2 之前，模型狀態（Model Configuration）在「Serving」那一行下方，為目前載入的 checkpoint
 （`sha256:<前 12 字元>…`）完整列出 **「Recorded test results (Mode C)」**，透過
-`GET /api/v1/evaluations/loaded-model` 讀取，用語如下。這個 route 沒有改變，仍以這些紀錄回應
-API 用戶端，但不附它們的爭議（contested）狀態（D5 的不一致封鎖只由儀表板從報告存放處讀取）：
+`GET /api/v1/evaluations/loaded-model` 讀取，用語如下。這個 route 仍以這些紀錄回應 API 用戶端，
+且自 M5 審查起（BACKLOG 36）每筆紀錄都附上它的 D5 狀態（`contest`：`uncontested`；`contested`，
+附上不一致的欄位與各次執行；`cannot_be_checked`，絕不視為沒有爭議），由儀表板本身的實作依服務的
+`SHEPHERD_REGISTRY` 算出，但不附原因本身的文字，因為那些文字可能指名伺服器上的路徑。D5 的調查
+備註（investigation notes）不會顯示（BACKLOG 40）：
 
 - 紀錄區塊開頭（第一筆紀錄之前）出現一次 **"Disease ranking by the model, approved scorer
   policy (Mode C)."** 與說明 **"This is the model's own Mode C disease ranking. Until B-1 ships,

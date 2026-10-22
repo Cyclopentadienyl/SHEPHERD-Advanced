@@ -414,12 +414,15 @@ def test_a_record_whose_version_the_registry_does_not_list_cannot_be_checked(wor
 @pytest.mark.parametrize("value, shown", [
     (float("nan"), "not a finite number"), (None, "not reported"),
     ("0.3402", "not a finite number"), ({"k": 1}, "not a finite number"),
-], ids=["nan", "null", "text", "object"])
+    (10**400, "not a finite number"), (-10**400, "not a finite number"),
+], ids=["nan", "null", "text", "object", "huge_int", "huge_negative_int"])
 def test_a_disagreeing_value_that_is_not_a_finite_number_leaves_the_record_contested(
     world, monkeypatch, value, shown
 ):
     """The critic's break (P2-6): a report under model-40's contested key whose
-    MRR is NaN, null, text or an object. The operator's view and the read-only
+    MRR is NaN, null, text, an object or an integer too large for a float (the
+    verification's break: `math.isfinite` cannot take it, and an
+    `OverflowError` took the page with it). The operator's view and the read-only
     view (the API's answer) both say "runs disagree"; the value is never
     formatted as a number: the operator's view says "not reported" for null and
     "not a finite number" otherwise, and the read-only view, which gets null
