@@ -174,14 +174,17 @@ on the console, never hidden, and said again beside the acceptance's verdict.
     as long, no pause, a new run), so it ends only by the probe's stop. **One
     bracket covers the whole check**: that the job runs and is the lock's
     recorded holder is checked before a test start is tried and after the
-    measurement CLI is, and the answers between are judged only then. A job
-    that ended meanwhile fails the probe as one that could not hold the lock,
-    or, when the runner says a stop ended it, as the test cancel reaching
-    training; never as a pass or a skip (review of 8242b47, W11/RW3;
-    root-cause round, W11-1, W11-2). A test run that a start not refused began
-    is stopped. Telling whether the job still runs needs `os.waitid` (not on
-    Windows, nor on macOS before Python 3.13), without which W11 and RW3 fail
-    saying so before they start a job (W11-4).
+    measurement CLI is, and the answers between are judged only then. The
+    runner's record of training, read after each action, says what reached
+    it: the first action after which the runner says a stop was asked of it
+    fails as reaching training, and a job that ended with no stop asked fails
+    naming the action during which it ended and how the runner says it ended
+    (a crash and a signal sent outside the runner's stop look alike there);
+    never as a pass or a skip (review of 8242b47, W11/RW3; root-cause round,
+    W11-1, W11-2, and its verification). A test run that a start not refused
+    began is stopped. Telling whether the job still runs needs `os.waitid` (not
+    on Windows, nor on macOS before Python 3.13), without which W11 and RW3
+    fail saying so before they start a job (W11-4).
     Every M5 setting is the probe's own while M5's probes run
     (`_M5_SETTINGS`), so they never use the deployment's lock, root or
     registry; W1 and RW1 state whether the lock the operator's settings name
@@ -3776,31 +3779,59 @@ def _exclusion_while_training(manager: Any, inputs: Any, pid: int, cli_argv: Lis
     holder is checked before anything is tried and once more after the CLI,
     and every answer between is observed, not judged, until then. A job holds
     the lock from its start to its end, so running and named both times means
-    it held it throughout and every answer is the product's. A job that ended
-    meanwhile (it cannot by itself, `_held_config`; a crash or a stop can) is
-    attributed from the runner's own record: training reads "stopping" or
+    it held it throughout and every answer is the product's.
+
+    **What reached training is read from the runner's own record after each
+    action** (verification of W11-1, P-1): training's status word and whether
+    its process runs, right after the test start (with the stop of a test run
+    it began), the test cancel and the CLI. The runner says "stopping" or
     "stopped" only after a stop was asked of it (`TrainingManager._stop`,
-    `_final_status`), and the one stop tried here is the test cancel, which
-    then reached training; any other ending is a job that could not hold the
+    `_final_status`), so the first action after which it says so is the one
+    that reached training, whether the job then ended or not. A job that
+    ended with no stop asked (it cannot end by itself, `_held_config`) is said
+    with the action during which it was first seen ended and how the runner
+    says it ended. That record does not tell a crash from a signal sent
+    outside the runner's stop (the trainer ends a SIGINT as a failure with
+    exit code 1, as it ends a crash), so no cause is claimed. A job that
+    still runs but is no longer the lock's recorded holder could not hold the
     lock. Never a pass or a skip, and never read as a start or the lock
     failing to refuse.
     """
+    from src.api.services.training_manager import BUSY_STATUSES, RESULT_WAIT_SECONDS
+
     before = _holding_job(manager, pid)
     assert not before, (f"the training job could not hold the GPU lock for the check: "
                         f"before a test start was tried, {before}")
-    # Observed, not judged yet. A test run that a start not refused began is
+    # Observed, not judged yet: after each action, training's status word and
+    # whether its process runs. A test run that a start not refused began is
     # stopped before the cancel is tried, whatever its answer turns out to mean.
+    seen: List[Tuple[str, str, bool]] = []
+
+    def observe(action: str) -> None:
+        seen.append((action, manager.get_job_status_word("training"), _job_runs(pid)))
+
     with _job_ended_on_exit(manager, "test"):
         started = manager.start_test(inputs)
+    observe("the test start")
     cancelled = manager.cancel_test()
-    after_cancel = manager.get_job_status_word("training")
+    observe("the test cancel")
     code, said = _cli_measure(cli_argv)
+    observe("the measurement CLI")
     after = _holding_job(manager, pid)
+    if after and not _job_runs(pid):
+        # Ended: how, once the runner's monitor has recorded it.
+        _wait_for(lambda: manager.get_job_status_word("training") not in BUSY_STATUSES,
+                  RESULT_WAIT_SECONDS)
+        observe("the measurement CLI")
+    reached = [(action, word) for action, word, _ in seen if word in ("stopping", "stopped")]
+    assert not reached, (f"{reached[0][0]} reached training: the runner says {reached[0][1]} "
+                         "right after it, which only a stop asked of the runner gives")
     if after:
-        now = manager.get_job_status_word("training")
-        assert not {after_cancel, now} & {"stopping", "stopped"}, (
-            f"the cancel reached training: the runner says {now}, which only a stop gives, and "
-            "the test cancel was the one stop tried")
+        ended = [action for action, word, runs in seen if not runs or word != "running"]
+        assert not ended, (
+            f"the training job ended during {ended[0]} with no stop asked of the runner "
+            f"({_how_training_ended(manager)}): a crash, or a signal sent outside the runner's "
+            "stop, which its record does not tell apart; the exclusion was not exercised")
         raise AssertionError(f"the training job could not hold the GPU lock for the check: "
                              f"after a test start, a test cancel and the measurement CLI (exit "
                              f"{code}) were tried, {after}, so the exclusion was not exercised")
@@ -3809,7 +3840,6 @@ def _exclusion_while_training(manager: Any, inputs: Any, pid: int, cli_argv: Lis
         and "Nothing was started." in start_error, "a test start was not refused"
     assert not cancelled.get("success") and "No test run is running" in cancel_error \
         and "does not reach" in cancel_error, "a test cancel was not refused"
-    assert after_cancel == "running", "the cancel reached training"
     assert code == 1 and "a training job" in said and _names_pid(said, pid) \
         and "Nothing was written." in said, (
             f"the measurement CLI was not refused by the lock naming the training job "
@@ -3819,6 +3849,18 @@ def _exclusion_while_training(manager: Any, inputs: Any, pid: int, cli_argv: Lis
             "test_cancel": "refused: a test cancel does not reach training",
             "measurement_cli": "refused by the GPU lock, naming the training job's process",
             "cli_exit": code}
+
+
+def _how_training_ended(manager: Any) -> str:
+    """How the runner `manager` says its latest training job ended: its
+    status word and exit status, a signal named as the runner names it."""
+    from src.api.services.training_manager import _signal_name
+
+    status = manager.get_status()
+    code = status.get("exit_code")
+    how = ("its exit status not recorded" if code is None
+           else f"ended by {_signal_name(code)}" if code < 0 else f"exit code {code}")
+    return f"the runner says {status.get('status')}, {how}"
 
 
 def _training_stop_does_not_reach_a_test_run(manager: Any) -> str:

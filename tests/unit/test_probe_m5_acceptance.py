@@ -25,12 +25,14 @@ job, that what they rest on holds and that their checks fire:
 - W11's and RW3's training job must run and be the lock's recorded holder
   before a test start is tried and after the measurement CLI is, one bracket
   around the whole check, shown on the real job runner: a job that ended at
-  any step fails as one that could not hold the lock, never as a start, a
-  cancel or the lock failing to refuse; a test cancel that stops training
-  fails as reaching it; a test run a start not refused began is stopped; the
-  job is held by configuration in the one function that starts it, whatever
-  its settings say, and without os.waitid no job is started (review of
-  8242b47, W11/RW3; root-cause round, W11-1, W11-2, W11-4);
+  any step fails naming the action during which it ended and how the runner
+  says it ended, never as a start, a cancel, a stop reaching training or the
+  lock failing to refuse; a test start, a test cancel or the CLI after which
+  the runner says training was stopped fails as that action reaching it; a
+  test run a start not refused began is stopped; the job is held by
+  configuration in the one function that starts it, whatever its settings
+  say, and without os.waitid no job is started (review of 8242b47, W11/RW3;
+  root-cause round, W11-1, W11-2, W11-4, and its verification);
 - phases M and R name the probe's own GPU lock, and the operator's lock is
   still stated and its settings put back (P2-4).
 
@@ -975,9 +977,11 @@ def held(probe, monkeypatch, tmp_path):
     """The real job runner, its training job a real child holding the test's
     GPU lock (started as the runner starts every job, `_spawn_locked`), and a
     measurement CLI refused by the lock naming its holder while it is held,
-    measuring (exit 0) once it is free. `ends_job` ends the training job as
-    a crash does (SIGKILL), waiting until the runner's monitor has recorded
-    it; `during_cli`, when set, runs as the CLI starts."""
+    measuring (exit 0) once it is free. `ends_job` ends the training job by
+    a signal sent outside the runner's stop (SIGKILL, as a crash or the
+    out-of-memory killer does, unless another is given), waiting until the
+    runner's monitor has recorded it; `during_cli`, when set, runs as the CLI
+    starts."""
     import signal
     import time
 
@@ -999,8 +1003,8 @@ def held(probe, monkeypatch, tmp_path):
             "the training job's stand-in did not take the GPU lock")
         time.sleep(0.05)
 
-    def ends_job():
-        os.kill(pid, signal.SIGKILL)
+    def ends_job(number=signal.SIGKILL):
+        os.kill(pid, number)
         assert job.done.wait(timeout=30), "the runner did not record the job's end"
 
     state = {"manager": manager, "pid": pid, "ends_job": ends_job, "during_cli": None,
@@ -1087,16 +1091,23 @@ def test_a_job_that_ended_before_the_check_fails_as_could_not_hold(probe, held):
 
 
 @WAITID
-@pytest.mark.parametrize("moment", ["as the test start is tried", "after a refused start",
-                                    "after the cancel", "while the CLI is tried"])
-def test_a_job_that_ends_during_the_check_fails_as_could_not_hold(probe, held, moment):
-    """Root-cause round, W11-1: one bracket around the whole check. However the
-    job ends between the two holder checks (here as a crash does, so nothing
-    asked it to stop), every answer meanwhile is judged only after the second
-    check, and the failure says the job could not hold the lock: never "a test
-    start was not refused", "a test cancel was not refused", "the cancel
-    reached training" or the lock failing to refuse. A test run the free slot
-    let a start begin is stopped before the cancel is tried."""
+@pytest.mark.parametrize("moment, during", [
+    ("as the test start is tried", "the test start"),
+    ("after a refused start", "the test start"),
+    ("after the cancel", "the test cancel"),
+    ("while the CLI is tried", "the measurement CLI"),
+])
+def test_a_job_that_ends_during_the_check_is_said_with_when_and_how(probe, held, moment,
+                                                                      during):
+    """Root-cause round, W11-1, and its verification, P-1: one bracket around
+    the whole check. However the job ends between the two holder checks (here
+    by a signal sent outside the runner's stop, so nothing asked the runner to
+    stop it), every answer meanwhile is judged only after the second check,
+    and the failure names the action during which the runner's record first
+    showed it ended, and how it says it ended: never "a test start was not
+    refused", "a test cancel was not refused", a stop reaching training or
+    the lock failing to refuse. A test run the free slot let a start begin is
+    stopped before the cancel is tried."""
     if moment == "as the test start is tried":
         _before(held, "start_test", held["ends_job"])
     elif moment == "after a refused start":
@@ -1108,34 +1119,68 @@ def test_a_job_that_ends_during_the_check_fails_as_could_not_hold(probe, held, m
     with pytest.raises(AssertionError) as failed:
         _exclusion(probe, held)
     said = str(failed.value)
-    assert said.startswith("the training job could not hold the GPU lock for the check: after "
-                           "a test start, a test cancel and the measurement CLI"), said
-    assert "its process had ended (the runner says failed)" in said and "not exercised" in said
+    assert said == (f"the training job ended during {during} with no stop asked of the runner "
+                    "(the runner says failed, ended by SIGKILL): a crash, or a signal sent "
+                    "outside the runner's stop, which its record does not tell apart; the "
+                    "exclusion was not exercised"), said
+    assert held["cli_calls"] == 1
     word = held["manager"].get_job_status_word("test")
     assert word == ("cancelled" if moment == "as the test start is tried" else "idle"), word
 
 
 @WAITID
-@pytest.mark.parametrize("answer", ["stopped, saying so", "stopped, claiming a refusal"])
-def test_a_test_cancel_that_stops_training_fails_as_reaching_it(probe, held, answer):
-    """The counter-example the attribution exists for: the test cancel, the one
-    stop the check tries, ends the training job (a product defect). The
-    runner's own record says a stop ended it ("stopped", which only a stop
-    gives), so it fails as the cancel reaching training, never as a job that
-    could not hold the lock, whatever the cancel answered."""
-    manager = held["manager"]
+def test_a_cancel_that_signals_training_itself_is_said_as_ending_it_then(probe, held):
+    """Verification of W11-1, P-1, its case (b): a test cancel that signals the
+    training job's process itself, as the runner's stop would but without
+    asking it (a product defect the runner's record cannot attribute), once
+    read as a job that could not hold the lock. It is said as ended during
+    the test cancel with no stop asked, the signal named as the runner records
+    it."""
+    import signal
 
-    def cancel():
-        stopped = manager.stop("training")
-        if answer == "stopped, saying so":
-            return stopped
-        return {"success": False, "error": "No test run is running: the GPU job running is "
-                                           "training, which this stop does not reach"}
-
-    manager.cancel_test = cancel
-    with pytest.raises(AssertionError, match="the cancel reached training: the runner says "
-                                             "stopped"):
+    _after(held, "cancel_test", lambda: held["ends_job"](signal.SIGINT))
+    with pytest.raises(AssertionError) as failed:
         _exclusion(probe, held)
+    said = str(failed.value)
+    assert said.startswith("the training job ended during the test cancel with no stop asked of "
+                           "the runner (the runner says failed, ended by SIGINT)"), said
+    assert "could not hold" not in said
+
+
+@WAITID
+@pytest.mark.parametrize("action, answer", [
+    ("the test start", "answered as it does"),
+    ("the test cancel", "stopped, saying so"),
+    ("the test cancel", "stopped, claiming a refusal"),
+    ("the measurement CLI", "answered as it does"),
+])
+def test_an_action_that_stops_training_fails_as_reaching_it(probe, held, action, answer):
+    """The counter-example the attribution exists for: one of the check's
+    actions ends the training job through the runner's own stop (a product
+    defect: a new job replacing the old, a cancel reaching the other job
+    type). The runner's own record says a stop ended it ("stopped", which only
+    a stop asked of it gives) right after that action and not before, so it
+    fails as that action reaching training, never as a job that could not
+    hold the lock or as another action, whatever the action answered. The
+    check still observes every action before it judges any."""
+    manager = held["manager"]
+    if action == "the test start":
+        _before(held, "start_test", lambda: manager.stop("training"))
+    elif action == "the measurement CLI":
+        held["during_cli"] = lambda: manager.stop("training")
+    else:
+        def cancel():
+            stopped = manager.stop("training")
+            if answer == "stopped, saying so":
+                return stopped
+            return {"success": False, "error": "No test run is running: the GPU job running "
+                                               "is training, which this stop does not reach"}
+
+        manager.cancel_test = cancel
+    with pytest.raises(AssertionError) as failed:
+        _exclusion(probe, held)
+    assert str(failed.value) == (f"{action} reached training: the runner says stopped right "
+                                 "after it, which only a stop asked of the runner gives")
     assert held["cli_calls"] == 1
 
 

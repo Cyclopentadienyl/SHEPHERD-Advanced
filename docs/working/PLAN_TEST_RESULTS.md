@@ -2099,9 +2099,12 @@ contract and BACKLOG stay the record, and no new planning document is added.
   applied where both probes start their job (`_held_config`: no pause, no parent and no
   extension either, whatever the settings name), and one bracket covers the whole check: the
   start, the cancel, the training status and the CLI are observed, the job is checked again,
-  and only then is any answer judged, so a job that ended at any step fails as one that could
-  not hold the lock, or, when the runner says a stop ended it, as the test cancel reaching
-  training; without `os.waitid` W11 and RW3 fail before they start a job. M4's flow names the
+  and only then is any answer judged. The runner's record of training, read after the start,
+  the cancel and the CLI, says what reached it: the first of them after which the runner says
+  a stop was asked of it fails as reaching training, and a job that ended with no stop asked
+  fails naming the action during which it ended and how the runner says it ended (a crash and
+  a signal sent outside the runner's stop look alike there); without `os.waitid` W11 and RW3
+  fail before they start a job. M4's flow names the
   probe's registry as the deployment's once for T1–T6 and once for RT1–RT3, not per call, so
   T5 and RT3 read the loaded-model route's D5 state from the probe's report store and require
   their record uncontested, observing P2-6 end to end (before, they accepted "cannot be checked"
