@@ -2083,7 +2083,8 @@ contract and BACKLOG stay the record, and no new planning document is added.
   the workspace as the server lists it, a test run through the runner kept and registered,
   and a training job started and stopped (RW1–RW3). Every M5 setting is the probe's own
   while M5's probes run, so they never use the deployment's lock, root or registry (W1 and RW1
-  state whether the deployment's lock was held meanwhile). Not the layout or a browser
+  read the deployment's lock once, as M5's probes begin, and state whether a job holds it
+  then). Not the layout or a browser
   session, which the screenshots and the owner's use cover. *After the review of `8242b47`
   (implemented, its incremental review next):* W11's and RW3's training job holds the GPU by
   configuration (a million epochs, early stopping as long), and that it runs and is the lock's

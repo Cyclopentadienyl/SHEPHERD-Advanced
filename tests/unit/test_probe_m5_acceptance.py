@@ -15,7 +15,8 @@ job, that what they rest on holds and that their checks fire:
   is said, as the Python that runs the jobs answers it, and RW3 stops early;
 - the M5 settings are the probe's own while it runs and are put back, so an
   operator's shell holding the deployment's settings changes nothing; the
-  deployment's own lock is read and stated;
+  deployment's own lock is read and stated, once in each phase and as it is
+  at that moment, as the probe's docstring says (verification of INT-2, P-2);
 - the service is started as the launcher starts it, with the probe's settings,
   and ends with the probe; SIGTERM ends the probe through its cleanups;
 - D8's, CORS's and the route guard's checks each fail on the answer they exist
@@ -644,9 +645,9 @@ def test_a_training_stop_is_required_not_to_reach_a_test_run(probe):
 
 @pytest.mark.skipif(sys.platform == "win32", reason="the holder is a POSIX process here")
 def test_the_deployment_s_own_lock_is_read_and_stated(probe, tmp_path, monkeypatch, capsys):
-    """M5's probes run on their own lock; whether the lock the operator's
-    settings name is held meanwhile is stated, the holder named on the
-    console only."""
+    """M5's probes run on their own lock; whether a job holds the lock the
+    operator's settings name when it is read is stated, the holder named on
+    the console only."""
     import subprocess
 
     from src.utils.gpu_lock import WORKSPACES_ROOT_ENV
@@ -668,6 +669,30 @@ def test_the_deployment_s_own_lock_is_read_and_stated(probe, tmp_path, monkeypat
         holder.stdin.close()
         holder.stdout.close()
     assert probe._deployment_gpu_lock()["held"] is False
+
+
+def test_the_deployment_s_lock_is_read_once_per_phase_as_the_docstring_says(probe):
+    """Verification of INT-2, P-2: the deployment's lock is read once in
+    phase M (W1) and once in phase R (RW1), each time saying whether a job
+    holds it at that moment, so the probe's docstring says so, and not that
+    those reads tell whether a job held it meanwhile: a job that ran during
+    the training probes and ended before W1 is not seen."""
+    import ast
+
+    tree = ast.parse((REPO / "scripts" / "probe_deployment.py").read_text(encoding="utf-8"))
+    readers = sorted(function.name for function in ast.walk(tree)
+                     if isinstance(function, ast.FunctionDef)
+                     for node in ast.walk(function)
+                     if isinstance(node, ast.Call)
+                     and getattr(node.func, "id", None) == "_deployment_gpu_lock")
+    assert readers == ["_m5_demo", "_m5_real"]
+    said = " ".join(probe.__doc__.split())
+    assert ("The deployment's lock is only read, once at W1 and once at RW1, to say whether a "
+            "job holds it at that moment; a job that ran during the training probes and ended "
+            "before is not seen") in said
+    assert ("W1 and RW1 read the lock the operator's settings name once, as M5's probes begin, "
+            "and state whether a job holds it then") in said
+    assert "held it meanwhile" not in said and "was held meanwhile" not in said
 
 
 def test_rw3_stops_before_training_when_no_worker_socket_can_be_made(

@@ -187,22 +187,25 @@ on the console, never hidden, and said again beside the acceptance's verdict.
     fail saying so before they start a job (W11-4).
     Every M5 setting is the probe's own while M5's probes run
     (`_M5_SETTINGS`), so they never use the deployment's lock, root or
-    registry; W1 and RW1 state whether the lock the operator's settings name
-    was held meanwhile. **The earlier measurement probes** (M3, M7,
-    M11.measurement, T2, T4, R5, RT2) run measure_scorer in this process, which
-    refuses without a configured GPU lock (P2-4), so phases M and R name a lock
-    of the probe's own, under a workspaces root of its own,
-    `<work>/probe-gpu-lock/` (`_probes_own_gpu_lock`); they therefore do not
-    exclude a deployment job that runs meanwhile. **The
-    training probes take no GPU lock at all**, not even the probe's own (D1,
-    M2, M9, R3 and R4 train; M5, M10 and M11.training are refused before they
-    do): they call the production trainer in this process, and `train()`
-    takes no lock, only the program entries do (`src/utils/gpu_lock.py`), so
-    they exclude nothing either; the deployment's lock is only read, at W1 and
-    RW1, to say whether a job held it meanwhile (root-cause round, INT-2). Run the
-    acceptance while no managed GPU job runs. The job runner's own temporary
-    files (a training job's settings file, a test run's job directory) are made
-    in the system's temporary directory and removed when the job ends.
+    registry; W1 and RW1 read the lock the operator's settings name once, as
+    M5's probes begin, and state whether a job holds it then. **The earlier
+    measurement probes** (M3, M7, M11.measurement, T2, T4, R5, RT2) run
+    measure_scorer in this process, which refuses without a configured GPU
+    lock (P2-4), so phases M and R name a lock of the probe's own, under a
+    workspaces root of its own, `<work>/probe-gpu-lock/`
+    (`_probes_own_gpu_lock`); they therefore do not exclude a deployment job
+    that runs meanwhile. **The training probes take
+    no GPU lock at all**, not even the probe's own (D1, M2, M9, R3 and R4
+    train; M5, M10 and M11.training are refused before they do): they call
+    the production trainer in this process, and `train()` takes no lock, only
+    the program entries do (`src/utils/gpu_lock.py`), so they exclude nothing
+    either. The deployment's lock is only read, once at W1 and once at RW1, to
+    say whether a job holds it at that moment; a job that ran during the
+    training probes and ended before is not seen (root-cause round, INT-2, and
+    its verification). Run the acceptance while no managed GPU job runs. The
+    job runner's own temporary files (a training job's settings file, a test
+    run's job directory) are made in the system's temporary directory and
+    removed when the job ends.
     Stop a run with Ctrl-C or SIGTERM (``kill <pid>``): the services and the
     jobs it started are stopped on the way out. On Linux its services also end
     with it after a SIGKILL; **a runner job it started then keeps running**,
