@@ -466,6 +466,24 @@ def test_the_unit_runs_the_project_interpreter_in_the_user_manager():
     assert _directive("WantedBy") == "default.target"
 
 
+def test_the_unit_names_each_setting_the_operator_sets_for_the_service():
+    """Round 3 of the review fixes, P3-7: the unit offered only the deployment
+    mode, whose comment read as if M1 alone enabled training and the lists,
+    while the workspaces root (the GPU lock's one name) and the registry,
+    which the deployment guide tells the CLI shell to copy from the unit,
+    had no line. Each is there to set, commented, named by the settings'
+    own constants, and the M1 comment says it is not enough."""
+    from src.config import server_settings  # imports nothing of the application
+
+    text = _unit_text()
+    for name in (server_settings.ENV_DEPLOYMENT_MODE, server_settings.ENV_WORKSPACES_ROOT,
+                 server_settings.ENV_REGISTRY):
+        assert re.search(rf"^#?Environment={name}=\S", text, flags=re.MULTILINE), \
+            f"the unit has no Environment={name}= line"
+    assert "M1 is necessary, not sufficient" in text
+    assert server_settings.GPU_LOCK_FILE_NAME in text
+
+
 def test_the_unit_leaves_the_allocator_to_the_saved_preset():
     # A value here would be an explicit override, kept on every start and
     # restart, and the preset saved in Runtime Settings would never apply.
