@@ -796,7 +796,14 @@ in the workspace the run measured, then one in the workspace shown, so a report 
 workspace is not filed beside a copy in another (a digest with records in two ledgers is left
 out of D4's ordering). Every row is asked again from the session's checkpoint listing; another
 workspace is listed only for the selected report, D8 asked on that request. Notes that cannot be
-read are said, never shown as "no note".
+read are said, never shown as "no note". *Since the root-cause round (2026-10-22, P2-5-F2;
+implemented, not reviewed):* every event that writes the session's selection (the version's
+reports, the report shown, and the list and result drawn from them) runs in one queued group of
+one (`SELECTION_CONCURRENCY`: page open, workspace, version, a report's row, the read after an
+act or an import), first asked first run, each from what the one before it wrote; Gradio orders
+no two events of a session otherwise, so an answer that ended late wrote back the selection it
+started from. The 5-second poll writes no selection: on the tick that sees the job change it
+hands the store's re-read to that group (BACKLOG 46).
 
 ### D6 — How a test cohort is imported, identified and versioned
 
@@ -1933,7 +1940,11 @@ contract and BACKLOG stay the record, and no new planning document is added.
       follow):* a reply is drawn only if it answers the newest request and the token the
       component holds now, so a late reply no longer brings a run back after the selection was
       cleared, or after A shown, B pending and A again (the sequence number alone was never
-      advanced by a clear or by a return to the run drawn). Found while fixing it and fixed in
+      advanced by a clear or by a return to the run drawn). Each condition has its own job,
+      pinned by its own scenarios since the root-cause round (P2-5-F1; implemented): the token
+      held now drops a reply for a token no longer asked, and the sequence number lets the
+      newer of two calls for the same token win, since the server's answer can change between
+      them (the run no longer listed, more rows read). Found while fixing it and fixed in
       the same change: Gradio 6.30's client answers a failed server call with `undefined`, which
       the chart read as "This run is no longer listed."; it is now a failure, retried every 3 s up
       to 20 times for each token (the budget was shared by every run) and said ("The charts could

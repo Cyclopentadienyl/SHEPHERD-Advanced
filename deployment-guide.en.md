@@ -2585,7 +2585,9 @@ and register it. Three panels:
   from disk: whether a report was kept and whether it is registered, with the runner's sentence
   ("No report was published …" when the run wrote no outcome file; after a cancel, what was
   left). While the page is shown it reads the job every 5 seconds; the report of a run that has
-  just ended is selected.
+  just ended is selected. A choice made while the page reads the version's store again (after
+  the job changed, an act or an import) applies once that read has ended; the read never
+  undoes it.
 - **Result.** The selected report as the record the ledger would hold: the Mode C metrics over
   the cases ranked, coverage with each exclusion, the relations, R10 in words (*unverifiable* is
   never a 0), the environment, the dataset origin, and whether it is registered (for an

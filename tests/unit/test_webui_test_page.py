@@ -27,9 +27,12 @@ Research › Evaluate › Test (M5-2, UI-D): import, run, keep and register.
   shown; values are escaped;
 - **the page's wiring**: refreshed when the page is shown; polled on the
   shell's slow timer with ``queue=False``, doing work only while it is shown
-  and never touching a select (no listener on the fast timer); the report of
-  a run that has just ended selected; the import's preview and commit one at
-  a time; field help registered with titles equal to the labels; its style
+  and never touching a select or the selection (no listener on the fast
+  timer), the store's re-read after a job change handed to a queued listener;
+  every write of the selection in one queued group of one, so a late answer
+  never writes back the selection it started from (the page served by Gradio,
+  one read held); the report of a run that has just ended selected; the
+  import's preview and commit one at a time; field help registered with titles equal to the labels; its style
   sheet registered and never under 14 px; the batch size shown is the
   measurement's default.
 
@@ -37,10 +40,14 @@ Module: tests/unit/test_webui_test_page.py
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import re
 import shutil
+import threading
+import time
+import uuid
 from types import SimpleNamespace
 
 import pytest
@@ -976,9 +983,11 @@ def test_the_page_is_read_when_shown_and_polled_only_while_shown(monkeypatch):
     assert poll.inputs[0] is ctx.location
     selects = [b for b in poll.outputs if isinstance(b, (gr.Dropdown, gr.Checkbox))]
     assert selects == [], "a poll never touches a select"
+    selection = _named(demo, "_on_report").outputs[:2]
+    assert not [b for b in poll.outputs if b in selection], "a poll never writes the selection"
     monkeypatch.setattr(tp, "read_job", lambda **k: pytest.fail("polled while not shown"))
     quiet = poll.fn("clinical", {"access": {}}, {}, None, "demo", LABEL, None,
-                    {"status": "running"}, None, {}, None)
+                    {"status": "running"}, None)
     assert all(update == gr.update() for update in quiet)
 
 
@@ -989,9 +998,16 @@ def test_no_listener_of_the_page_sends_a_request_on_the_fast_timer():
     assert not [fn for fn in demo.fns.values() if (ctx.timer_fast._id, "tick") in fn.targets]
 
 
-def test_a_poll_reads_the_store_again_only_when_the_job_changed(site, monkeypatch):
+def test_a_poll_hands_the_store_read_over_only_when_the_job_changed(site, monkeypatch):
+    """The poll never reads the store: on the tick that sees the job change it
+    gives the hidden hand-off a new value naming what the session saw before,
+    and the hand-off's listener reads the store again, for the version the
+    session's reports were read for (not the select as the poll saw it)."""
     demo, ctx, _registry = _page_component()
-    poll = _named(demo, "_poll")
+    poll, after = _named(demo, "_poll"), _named(demo, "_after_job_change")
+    handoff = poll.outputs[-2]
+    assert isinstance(handoff, gr.JSON) and not isinstance(handoff, gr.State)
+    assert (handoff._id, "change") in after.targets
     manager = FakeManager({"status": "completed", "job_id": "test-1", "inputs": {},
                            "outcome": None})
     monkeypatch.setattr(tp, "read_job", lambda **k: {**manager.get_test_status(), "log": []})
@@ -1001,14 +1017,18 @@ def test_a_poll_reads_the_store_again_only_when_the_job_changed(site, monkeypatc
                         {"label": label, "runs": [], "problem": None, "notes": []})
     page = tp.read_page(_readonly())
     unchanged = poll.fn("test", page, {}, None, "demo", LABEL, None,
-                        {"job_id": "test-1", "status": "completed"}, None, {"label": LABEL},
-                        _readonly())
-    assert reads == [] and unchanged[0] == gr.update()
-    ended = poll.fn("test", page, {}, None, "demo", LABEL, None,
-                    {"job_id": "test-1", "status": "running"}, None, {"label": LABEL},
-                    _readonly())
-    assert reads == [LABEL] and ended[2] == {"job_id": "test-1", "status": "completed",
-                                             "gpu": ["none", "GPU jobs: none"]}
+                        {"job_id": "test-1", "status": "completed"}, _readonly())
+    assert reads == [] and unchanged[-2] == gr.update()
+    ended = poll.fn("test", page, {}, None, "demo", "the select as the poll saw it", None,
+                    {"job_id": "test-1", "status": "running"}, _readonly())
+    assert reads == [] and ended[0] == {"job_id": "test-1", "status": "completed",
+                                        "gpu": ["none", "GPU jobs: none"]}
+    assert ended[-2]["seen"] == {"job_id": "test-1", "status": "running"}
+    again = poll.fn("test", page, {}, None, "demo", LABEL, None,
+                    {"job_id": "test-1", "status": "running"}, _readonly())
+    assert again[-2]["at"] != ended[-2]["at"], "each hand-off is a new value"
+    out = after.fn(page, {}, None, {"label": LABEL}, ended[-2], _readonly())
+    assert reads == [LABEL] and out[0]["label"] == LABEL
 
 
 def test_the_header_chips_follow_the_gpu_line_on_the_tick_that_sees_it_change(site, monkeypatch):
@@ -1029,23 +1049,22 @@ def test_the_header_chips_follow_the_gpu_line_on_the_tick_that_sees_it_change(si
                         {"label": label, "runs": [], "problem": None, "notes": []})
     page = tp.read_page(_readonly())
     seen = {"job_id": None, "status": "idle", "gpu": ["none", "GPU jobs: none"]}
-    same = poll.fn("test", page, {}, None, "demo", LABEL, None, seen, None, {"label": LABEL},
-                   _readonly())
+    same = poll.fn("test", page, {}, None, "demo", LABEL, None, seen, _readonly())
     assert same[-1] == gr.update() and read == []
     line[:] = ["busy", "GPU job: training (job runner)"]
-    moved = poll.fn("test", page, {}, None, "demo", LABEL, None, seen, None, {"label": LABEL},
-                    _readonly())
+    moved = poll.fn("test", page, {}, None, "demo", LABEL, None, seen, _readonly())
     assert moved[-1] == "<chips>" and read == [1]
-    assert moved[2]["gpu"] == ["busy", "GPU job: training (job runner)"]
+    assert moved[0]["gpu"] == ["busy", "GPU job: training (job runner)"]
 
 
 def test_the_report_of_a_run_that_has_just_ended_is_selected(site, monkeypatch):
-    """A run this session saw running ends with a report: the poll selects it,
-    even over the report the operator had chosen; once seen ended, the
-    choice is the operator's again."""
+    """A run this session saw running ends with a report: the read the poll
+    hands over selects it, even over the report the operator had chosen; once
+    seen ended, the poll hands nothing over, and a read then (after an act)
+    keeps the operator's choice."""
     other = _disagreeing_copy(site)
     demo, ctx, _registry = _page_component()
-    poll = _named(demo, "_poll")
+    poll, after = _named(demo, "_poll"), _named(demo, "_after_job_change")
     job = {"status": "completed", "job_id": "test-2", "inputs": {}, "log": [],
            "outcome": {"report_dir": str(site.reports / site.run_id), "kept": True,
                        "registered": False, "summary": "kept"}}
@@ -1053,12 +1072,16 @@ def test_the_report_of_a_run_that_has_just_ended_is_selected(site, monkeypatch):
     monkeypatch.setattr(tp, "gpu_line", lambda **k: ("none", "GPU jobs: none"))
     page = tp.read_page(_readonly())
     reports = tp.read_reports(LABEL)
-    ended = poll.fn("test", page, {}, None, "demo", LABEL, None,
-                    {"job_id": "test-2", "status": "running"}, other, reports, _readonly())
+    handoff = poll.fn("test", page, {}, None, "demo", LABEL, None,
+                      {"job_id": "test-2", "status": "running"}, _readonly())[-2]
+    ended = after.fn(page, {}, other, reports, handoff, _readonly())
     assert ended[1] == site.run_id
-    seen = poll.fn("test", page, {}, None, "demo", LABEL, None,
-                   {"job_id": "test-2", "status": "completed"}, other, reports, _readonly())
-    assert seen[1] == gr.update(), "the operator's choice stands once the end was seen"
+    quiet = poll.fn("test", page, {}, None, "demo", LABEL, None,
+                    {"job_id": "test-2", "status": "completed"}, _readonly())
+    assert quiet[-2] == gr.update(), "nothing is handed over once the end was seen"
+    seen = after.fn(page, {}, other, reports, {"seen": {"job_id": "test-2",
+                                                        "status": "completed"}}, _readonly())
+    assert seen[1] == other, "the operator's choice stands once the end was seen"
 
 
 def test_a_poll_that_sees_the_job_change_chooses_again_when_the_shown_report_is_gone(site,
@@ -1066,15 +1089,15 @@ def test_a_poll_that_sees_the_job_change_chooses_again_when_the_shown_report_is_
     """A run started elsewhere changes the job: the store is read again, and a
     report this session showed that is gone from it gives way to the newest."""
     demo, ctx, _registry = _page_component()
-    poll = _named(demo, "_poll")
+    poll, after = _named(demo, "_poll"), _named(demo, "_after_job_change")
     job = {"status": "running", "job_id": "test-3", "inputs": {}, "log": [], "outcome": None}
     monkeypatch.setattr(tp, "read_job", lambda **k: dict(job))
     monkeypatch.setattr(tp, "gpu_line", lambda **k: ("busy", "GPU job: test run (job runner)"))
     page = tp.read_page(_readonly())
     gone = "20261001T000000Z-" + "a" * 12 + "-" + "b" * 8
-    out = poll.fn("test", page, {}, None, "demo", LABEL, None,
-                  {"job_id": "test-2", "status": "completed"}, gone, {"label": LABEL},
-                  _readonly())
+    handoff = poll.fn("test", page, {}, None, "demo", LABEL, None,
+                      {"job_id": "test-2", "status": "completed"}, _readonly())[-2]
+    out = after.fn(page, {}, gone, {"label": LABEL}, handoff, _readonly())
     assert out[1] == site.run_id
 
 
@@ -1085,6 +1108,224 @@ def test_the_import_is_one_at_a_time_and_there_is_no_upload():
     assert preview.concurrency_limit == commit.concurrency_limit == 1
     kinds = {type(b).__name__ for b in demo.blocks.values()}
     assert not kinds & {"File", "UploadButton", "Files"}
+
+
+def test_every_write_of_the_selection_is_in_one_queued_group_of_one():
+    """The session's selection (the version's reports, the report shown) is
+    written only by queued listeners of `SELECTION_CONCURRENCY`, one at a
+    time: page open, the workspace, the version, a report's row, the read
+    after each act and after an import, and the poll's hand-off. The version
+    writes the select too (a workspace's event asked before it set it)."""
+    demo, _ctx, _registry = _page_component()
+    selected_report, reports_state = _named(demo, "_on_report").outputs[:2]
+    writers = [fn for fn in demo.fns.values()
+               if selected_report in fn.outputs or reports_state in fn.outputs]
+    assert sorted(fn.name for fn in writers) == sorted(
+        ["_refresh", "_on_workspace", "_on_version", "_on_report", "_after_act", "_after_act",
+         "_after_act", "_after_act", "_after_commit", "_after_job_change"])
+    for fn in writers:
+        assert fn.queue is not False, fn.name
+        assert (fn.concurrency_id, fn.concurrency_limit) == (tp.SELECTION_CONCURRENCY, 1), fn.name
+    version = _named(demo, "_on_version")
+    assert version.inputs[4] in version.outputs
+
+
+class _Session:
+    """One browser session, spoken as Gradio 6.30's client speaks to the
+    queue: an event joins with the values its non-State inputs had when it
+    was asked (a State input is the session's, read when the event starts),
+    and the answers come on the session's one event stream, which closes
+    when nothing of the session is pending (closing it earlier would cancel
+    them)."""
+
+    def __init__(self, base, demo):
+        import httpx
+
+        self.base, self.demo = base, demo
+        self.session = uuid.uuid4().hex
+        self.client = httpx.Client(timeout=60)
+        self.done, self.order, self.cond = {}, [], threading.Condition()
+        self.reader = None
+
+    def _read(self):
+        try:
+            with self.client.stream("GET", f"{self.base}/queue/data",
+                                    params={"session_hash": self.session}) as stream:
+                for line in stream.iter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    msg = json.loads(line[len("data:"):])
+                    if msg.get("msg") == "process_completed":
+                        with self.cond:
+                            self.done[msg["event_id"]] = msg
+                            self.order.append(msg["event_id"])
+                            self.cond.notify_all()
+        except Exception:  # noqa: BLE001 - `wait` reads again while something is pending
+            pass
+
+    def join(self, fn, data, event_data=None):
+        answer = self.client.post(f"{self.base}/queue/join", json={
+            "data": data, "fn_index": fn._id, "session_hash": self.session,
+            "event_data": event_data, "trigger_id": None})
+        answer.raise_for_status()
+        if self.reader is None or not self.reader.is_alive():
+            self.reader = threading.Thread(target=self._read, daemon=True)
+            self.reader.start()
+        return answer.json()["event_id"]
+
+    def wait(self, *events, timeout=60.0):
+        deadline = time.monotonic() + timeout
+        with self.cond:
+            while not all(e in self.done for e in events):
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    return False
+                if not self.reader.is_alive():
+                    self.reader = threading.Thread(target=self._read, daemon=True)
+                    self.reader.start()
+                self.cond.wait(min(left, 0.1))
+        for e in events:
+            assert self.done[e].get("success"), self.done[e]
+        return True
+
+    def state(self, block):
+        return self.demo._queue.server_app.state_holder[self.session][block._id]
+
+    def close(self):
+        self.client.close()
+
+
+@contextlib.contextmanager
+def _served(demo):
+    """The page's Blocks mounted on a FastAPI app as the dashboard mounts it
+    (``/ui``), served by uvicorn on a free loopback port; yields the base of
+    Gradio's API."""
+    import uvicorn
+    from fastapi import FastAPI
+
+    app = FastAPI()
+    gr.mount_gradio_app(app, demo, path="/ui")
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning"))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 30
+    while not server.started:
+        assert time.monotonic() < deadline and thread.is_alive(), "the server did not start"
+        time.sleep(0.05)
+    port = server.servers[0].sockets[0].getsockname()[1]
+    try:
+        yield f"http://127.0.0.1:{port}/ui/gradio_api"
+    finally:
+        server.should_exit = True
+        thread.join(10)
+
+
+def test_a_late_read_never_writes_back_the_selection_it_started_from(site, monkeypatch):
+    """P2-5-F2, through the page served by Gradio: one session, an event that
+    writes the selection held inside its store read (the slow part: it builds
+    every kept report) while the operator acts. With the read the poll hands
+    over after the job changed held, a report's row clicked meanwhile stays
+    chosen, and a version chosen meanwhile is the one whose reports the
+    session holds; with a workspace's event held, a version chosen meanwhile
+    is the one the select ends on. Each listener being its own group, the
+    held event ended last and wrote back the selection it started from: the
+    click undone, the select over another version's reports."""
+    from tests.fixtures.registered_cohort import import_version
+
+    other_label = "demo-test-2"
+    import_version(site.registry, site.demo, site.intake / "cases.json", label=other_label)
+    other = _disagreeing_copy(site)
+    job = {"status": "completed", "job_id": "test-9", "inputs": {}, "log": [], "outcome": None}
+    monkeypatch.setattr(tp, "read_job", lambda **k: dict(job))
+    monkeypatch.setattr(tp, "gpu_line", lambda **k: ("none", "GPU jobs: none"))
+    real = tp.read_reports
+    hold, entered, release = threading.Event(), threading.Event(), threading.Event()
+
+    def read_reports(label, **kwargs):
+        if hold.is_set():
+            hold.clear()
+            entered.set()
+            assert release.wait(30), "never released"
+        return real(label, **kwargs)
+
+    monkeypatch.setattr(tp, "read_reports", read_reports)
+    demo, _ctx, _registry = _page_component()
+    refresh, on_workspace, on_version, on_report, after = (
+        _named(demo, n) for n in ("_refresh", "_on_workspace", "_on_version", "_on_report",
+                                  "_after_job_change"))
+    selected_report, reports_state = on_report.outputs[:2]
+    version_select = next(b for b in demo.blocks.values()
+                          if getattr(b, "elem_id", None) == "shep-test-version")
+
+    def held(first, act):
+        """`first` asked and held in its store read; `act` asked meanwhile and
+        left 1.5 s to finish before `first` goes on (in the group it cannot:
+        `first` was asked first)."""
+        hold.set()
+        entered.clear()
+        release.clear()
+        events = [first()]
+        assert entered.wait(30), "the held event did not start"
+        events.append(act())
+        browser.wait(events[1], timeout=1.5)
+        release.set()
+        assert browser.wait(*events)
+
+    def shown():
+        """The version select as the browser shows it: the operator's own
+        picks and the answers that write it, in the order they came."""
+        value = None
+        for event in browser.order:
+            if isinstance(event, tuple):                  # ("picked", label)
+                value = event[1]
+                continue
+            data, fn = browser.done[event]["output"]["data"], asked[event]
+            if version_select in fn.outputs:
+                value = data[fn.outputs.index(version_select)]["value"]
+        return value
+
+    def pick(label):
+        with browser.cond:
+            browser.order.append(("picked", label))
+        return join(on_version, [None, None, None, "demo", label, None, None])
+
+    asked = {}
+
+    def join(fn, data, event_data=None):
+        event = browser.join(fn, data, event_data)
+        asked[event] = fn
+        return event
+
+    with _served(demo) as base:
+        browser = _Session(base, demo)
+        assert browser.wait(join(refresh, [None, None, None, None, None]))
+        assert browser.wait(pick(LABEL))
+        runs = [r["run_id"] for r in browser.state(reports_state)["runs"]]
+        assert sorted(runs) == sorted([site.run_id, other]) and runs[0] == site.run_id
+        assert browser.state(selected_report) == site.run_id and shown() == LABEL
+        handoff = {"seen": {"job_id": "test-9", "status": "running"}, "at": 1}
+        read_again = lambda: join(after, [None, None, None, None, handoff])  # noqa: E731
+
+        # a report's row clicked while the hand-off's read is held
+        held(read_again, lambda: join(on_report, [None] * 4, {"key": other}))
+        assert browser.state(selected_report) == other, "the click was undone"
+        assert browser.state(reports_state)["label"] == LABEL == shown()
+
+        # another version chosen while the hand-off's read is held
+        held(read_again, lambda: pick(other_label))
+        assert shown() == other_label
+        assert browser.state(reports_state)["label"] == other_label, \
+            "the select shows one version and the session holds another's reports"
+        assert browser.state(selected_report) is None
+
+        # a version chosen while a workspace's event (asked with the version
+        # shown then) is held: the select ends on the version chosen
+        held(lambda: join(on_workspace, [None, "demo", other_label, None, None, None]),
+             lambda: pick(LABEL))
+        assert browser.state(reports_state)["label"] == LABEL
+        assert shown() == LABEL, "the select shows one version and the session holds another's"
+        assert browser.state(selected_report) == site.run_id
+        browser.close()
 
 
 def test_the_field_help_is_registered_with_the_labels():
