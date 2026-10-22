@@ -64,6 +64,18 @@ refreshed when it is shown (``ctx.on_page_open``) and by the shell's timers
 ``ctx.timer_slow`` for the resources line), both ``queue=False``, doing no work
 while another page is shown (``ctx.location``). Each tick sends only what
 changed, and everything again every `FULL_SEND_TICKS` ticks.
+**The fast poll writes no session selection** (the run bar's workspace,
+``ws`` and ``ctx.training_workspace``): when it sees a training job running
+in another workspace than the session's, it hands that over to a queued
+render through a hidden component's ``.change`` (`FOLLOW_ID`), which reads
+the session's workspace and the job again at its own turn and follows the job
+only if it still runs there. Every listener that writes the run bar's
+workspace (page open, then its render; the select; Datasets' "Use for
+training ›" and the change of ``ctx.training_workspace`` it makes; every
+render of the run bar, the hand-off's included) is in one queued group of one
+(``ctx.training_workspace_writes``), first asked first run, so a workspace
+chosen after a job ended is never set back by a render that read the job
+running.
 
 **D8:** Start, Continue…, Continue Training, Check checkpoint, the parent list
 and Stop (its confirmation reads the run's checkpoint) call the Gradio helper
@@ -87,6 +99,7 @@ import json
 import logging
 import random
 import re
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
@@ -1377,6 +1390,20 @@ def _poll_resources(location: Any = TRAINING) -> Any:
 VIEW_KEYS = ("ws", "dataset", "chip", "pill", "reason", "start", "cont", "stop", "resume",
              "runbar", "page", "run_name", "banner", "head", "snap", "charts", "drawer_reason",
              "training_workspace")
+#: The pieces that are the session's selection (the run bar's workspace), not
+#: display: written only by a queued render (`_render_view`), and only when it
+#: changed them (a running job's dataset: `render`'s ``ws_changed``).
+SELECTION_KEYS = ("ws", "training_workspace")
+#: The pieces the fast poll writes (`_poll`): the rest. Display only: a tick
+#: that crosses a queued render can send an older piece, which a later tick
+#: replaces (when the piece changes again, or at the next whole send,
+#: `FULL_SEND_TICKS`).
+POLL_KEYS = tuple(key for key in VIEW_KEYS if key not in SELECTION_KEYS)
+#: The hidden component the fast poll hands a running job's workspace over
+#: through (`_poll`): not a ``gr.State``, because the answer to a
+#: ``queue=False`` request dispatches a component's ``.change``, never a
+#: State's.
+FOLLOW_ID = "shep-train-follow"
 
 
 def _gpu_view(active, cache: Dict[str, Any], operator: bool) -> Optional[Dict[str, Any]]:
@@ -1494,19 +1521,20 @@ def _update_for(key: str, value: Any) -> Any:
 
 
 def view_updates(rendered: Mapping[str, Any], cache_before: Optional[Mapping[str, Any]], *,
-                 full: bool = False) -> Tuple[Any, ...]:
-    """The outputs for `VIEW_KEYS` and the cache: a piece that equals what
-    this session was last sent is ``gr.update()`` (nothing sent), unless
-    `full`."""
+                 full: bool = False, keys: Sequence[str] = VIEW_KEYS) -> Tuple[Any, ...]:
+    """The outputs for `keys` (`VIEW_KEYS` for a queued render, `POLL_KEYS`
+    for the poll) and the cache: a piece that equals what this session was
+    last sent is ``gr.update()`` (nothing sent), unless `full`."""
     sent = dict((cache_before or {}).get("sent") or {})
     pieces = rendered["pieces"]
     cache = dict(rendered["cache"])
     out = []
-    for key in VIEW_KEYS:
+    for key in keys:
         value = pieces[key]
-        if key in ("ws", "training_workspace"):
-            # The session's own state is written only when this render changed
-            # it (a running job's dataset), never back over a newer selection.
+        if key in SELECTION_KEYS:
+            # The session's selection is written only when this render changed
+            # it (a running job's dataset); a queued render's turn in the run
+            # bar's workspace group keeps it from writing back an older one.
             out.append(value if rendered.get("ws_changed") else gr.update())
             continue
         comparable = json.dumps(value, sort_keys=True, default=str)
@@ -1529,10 +1557,14 @@ def _render_view(ws, mode, cache, dismissed, request: gr.Request):
 
 def _poll(location, ws, mode, cache, dismissed, request: gr.Request):
     """The shell's fast timer (``queue=False``): while Training is shown, what
-    changed in the run bar, the run view and the chart token, and the header's
-    chips when the GPU slot it read changed (`chips_on_change`); nothing while
-    another page is shown."""
-    idle = tuple(gr.update() for _ in VIEW_KEYS) + (gr.update(), gr.update())
+    changed in the run bar, the run view and the chart token (`POLL_KEYS`),
+    and the header's chips when the GPU slot it read changed
+    (`chips_on_change`); nothing while another page is shown. It writes no
+    session selection: when its render found a training job running in
+    another workspace than the session's (``ws_changed``), it gives the follow
+    token (`FOLLOW_ID`) a new value, and the queued render that token's change
+    runs follows the job at its own turn, if the job still runs there."""
+    idle = tuple(gr.update() for _ in POLL_KEYS) + (gr.update(), gr.update(), gr.update())
     if location != TRAINING:
         return idle
     try:
@@ -1544,7 +1576,11 @@ def _poll(location, ws, mode, cache, dismissed, request: gr.Request):
     rendered["cache"]["ticks"] = ticks
     chips = chips_on_change((cache or {}).get("gpu_seen"), rendered["cache"].get("gpu_seen"),
                             request)
-    return (*view_updates(rendered, cache, full=ticks % FULL_SEND_TICKS == 0), chips)
+    # Each hand-off is a new value (its own time), so its .change always fires.
+    follow = ({"workspace": rendered["pieces"]["ws"].get("name"), "at": time.monotonic_ns()}
+              if rendered["ws_changed"] else gr.update())
+    return (*view_updates(rendered, cache, full=ticks % FULL_SEND_TICKS == 0, keys=POLL_KEYS),
+            follow, chips)
 
 
 # =============================================================================
@@ -2687,26 +2723,46 @@ def create_training_tab(ctx: Any) -> None:
                     runbar, page, run_name, banner, run_head, run_snap, figure, drawer_reason,
                     ctx.training_workspace, cache]
     view_inputs = [ws, mode, cache, dismissed]
+    # Every render of the run bar may write its workspace (a running job's
+    # dataset), so every one is in the group of the workspace's writers
+    # (`shell.TRAINING_SELECTION_CONCURRENCY`): it runs after those asked
+    # before it, from what they wrote.
+    in_order = ctx.training_workspace_writes
     view_step = {"fn": _render_view, "inputs": view_inputs, "outputs": view_outputs,
-                 "show_progress": "hidden"}
+                 "show_progress": "hidden", **in_order}
+    # In the group an event can wait as long as the one before it runs, and with
+    # Gradio's defaults the browser does not send a listener's trigger while its
+    # event waits (an input's "once" is dropped; a change's "always_last" is sent
+    # once, with the first trigger's data): with "multiple" each choice of the
+    # workspace joins, and the last one asked is the one that stays.
+    every_one = {"trigger_mode": "multiple"}
+    # The fast poll's hand-off of a running job's workspace (`_poll`).
+    follow = gr.JSON(value=None, visible=False, elem_id=FOLLOW_ID)
 
-    # The page shown: the list read again, then the run bar whole.
+    # The page shown: the list read again, then the run bar whole, in that order.
     ctx.on_page_open(TRAINING, {
         "fn": _open, "inputs": [ws, ctx.training_workspace],
         "outputs": [ws, dataset, chip, ctx.training_workspace, cache, resources],
-        "show_progress": "hidden"})
-    ctx.page_tokens[TRAINING].change(**view_step)
+        "show_progress": "hidden", **in_order}).then(**view_step)
 
     # The shell's timers (outside gr.Tabs), read-only polls without the queue.
+    # The fast one writes every piece but the session's selection (`POLL_KEYS`)
+    # and hands a running job's workspace to a queued render. That render reads
+    # everything at its turn, so the follow token's default trigger
+    # ("always_last") is the one wanted: tokens given while one render waits
+    # need one more render, not one each.
     ctx.timer_fast.tick(_poll, inputs=[ctx.location, *view_inputs],
-                        outputs=[*view_outputs, ctx.chips], queue=False, show_progress="hidden")
+                        outputs=[*(view_outputs[VIEW_KEYS.index(key)] for key in POLL_KEYS),
+                                 cache, follow, ctx.chips],
+                        queue=False, show_progress="hidden")
+    follow.change(**view_step)
     ctx.timer_slow.tick(_poll_resources, inputs=[ctx.location], outputs=[resources],
                         queue=False, show_progress="hidden")
 
     # The run bar's dataset.
     dataset.input(_on_dataset, inputs=[dataset, mode],
                   outputs=[ws, chip, ctx.training_workspace, mode, notice],
-                  show_progress="hidden").then(**view_step)
+                  show_progress="hidden", **in_order, **every_one).then(**view_step)
     # The session's workspace changed (a hand choice above writes it, and so
     # does Datasets' "Use for training ›"): with Continue… open, the parent
     # list follows it (a gated listing, then the chosen parent, the run bar
@@ -2716,7 +2772,7 @@ def create_training_tab(ctx: Any) -> None:
                               mode], "outputs": [mode, compare], "show_progress": "hidden"}
     ctx.training_workspace.change(_on_training_workspace, inputs=[ctx.training_workspace, ws, mode],
                                   outputs=[ws, dataset, chip, mode],
-                                  show_progress="hidden").then(
+                                  show_progress="hidden", **in_order, **every_one).then(
         _relist_parents, inputs=[ws, mode],
         outputs=[parents, checkpoint_dropdown, parents_note, compare, continue_preview,
                  extend_epochs], show_progress="hidden").then(**chosen_step).then(

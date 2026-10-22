@@ -33,7 +33,9 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -42,6 +44,7 @@ gr = pytest.importorskip("gradio")
 from src.webui import shell  # noqa: E402
 from src.webui.components import training_console as tc  # noqa: E402
 from tests.fixtures.operator_access import gradio_request, operator_mode  # noqa: E402
+from tests.fixtures.served_page import ServedSession, served  # noqa: E402
 
 ODD = "<b>odd&name"
 
@@ -151,7 +154,7 @@ def test_a_tick_while_another_page_is_shown_reads_nothing(monkeypatch):
     monkeypatch.setattr(tc.training_manager, "get_system_resources",
                         lambda: pytest.fail("a tick on another page read the resources"))
     out = tc._poll("clinical", {}, {}, {}, [], gradio_request())
-    assert len(out) == len(tc.VIEW_KEYS) + 2 and all(u == gr.update() for u in out)
+    assert len(out) == len(tc.POLL_KEYS) + 3 and all(u == gr.update() for u in out)
     assert tc._poll_resources("datasets") == gr.update()
 
 
@@ -577,8 +580,8 @@ def test_the_full_send_comes_every_few_ticks(root, monkeypatch, operator):
     sent_whole = []
     for tick in range(1, tc.FULL_SEND_TICKS * 2 + 1):
         out = tc._poll(shell.TRAINING, ws, {}, cache, [], operator)
-        cache = out[-2]
-        chip = dict(zip(tc.VIEW_KEYS, out[:-2]))["chip"]
+        cache = out[-3]
+        chip = dict(zip(tc.POLL_KEYS, out[:-3]))["chip"]
         sent_whole.append(chip != gr.update())
     assert sent_whole[0] is True
     assert [i + 1 for i, whole in enumerate(sent_whole) if whole] == [
@@ -607,13 +610,13 @@ def test_the_header_chips_follow_the_gpu_slot_on_the_tick_that_sees_it_change(
     ws = tc._workspace_state("demo")
     first = tc._poll(shell.TRAINING, ws, {}, {}, [], operator)
     assert first[-1] == "<chips>" and len(read) == 1        # nothing seen before: read
-    same = tc._poll(shell.TRAINING, ws, {}, first[-2], [], operator)
+    same = tc._poll(shell.TRAINING, ws, {}, first[-3], [], operator)
     assert same[-1] == gr.update() and len(read) == 1        # unchanged: nothing sent
     status["gpu"] = {"job": {"job_type": "test", "status": "running",
                              "start_time": "2026-10-21T18:25:13"}}
-    started = tc._poll(shell.TRAINING, ws, {}, same[-2], [], operator)
+    started = tc._poll(shell.TRAINING, ws, {}, same[-3], [], operator)
     assert started[-1] == "<chips>" and len(read) == 2       # a test run took the slot
-    later = tc._poll(shell.TRAINING, ws, {}, started[-2], [], operator)
+    later = tc._poll(shell.TRAINING, ws, {}, started[-3], [], operator)
     assert later[-1] == gr.update() and len(read) == 2       # its elapsed time is no change
 
 
@@ -630,6 +633,247 @@ def test_a_running_jobs_dataset_is_shown_and_the_select_disabled(root, monkeypat
     assert rendered["pieces"]["dataset"][1:] == ("resampled", False)
     assert "in use by the running job" in rendered["pieces"]["chip"]
     assert rendered["pieces"]["stop"] is True and rendered["pieces"]["start"] is False
+
+
+# --------------------------------------------------------------------------- the run bar's workspace, in order
+RUNNING = {"status": "running", "job_id": "j", "current_epoch": 1, "total_epochs": 4,
+           "gpu": {"job": {"job_type": "training", "status": "running"}}}
+ENDED = {"status": "completed", "job_id": "j", "current_epoch": 4, "total_epochs": 4}
+
+
+def _job_in_resampled(root, monkeypatch):
+    """The job runner as the page reads it, its training job's run in
+    ``resampled``: ``job.status`` is what it says (idle at first), and while
+    ``job.hold`` is set the next read is held right after it was taken (the
+    read a tick's or a render's view is computed from) until ``job.release``.
+    Nothing is served."""
+    from src.webui.components import datasets_page, served_status
+
+    monkeypatch.setattr(served_status, "read_status", lambda: (None, "not read"))
+    monkeypatch.setattr(datasets_page, "read_status", lambda: (None, "not read"))
+    monkeypatch.setattr(tc, "_get_pyg_warning", lambda: None)
+    monkeypatch.setattr(tc, "lock_state", lambda: {"configured": True, "held_by": None})
+    job_run = root / "resampled" / "runs" / "gat" / "20261020-090000_run_bbbbbb"
+    job_run.mkdir(parents=True)
+    monkeypatch.setattr(tc.training_manager, "run_dir", job_run)
+    job = SimpleNamespace(status={"status": "idle"}, hold=threading.Event(),
+                          entered=threading.Event(), release=threading.Event())
+
+    def get_status():
+        now = json.loads(json.dumps(job.status))
+        if job.hold.is_set():
+            job.hold.clear()
+            job.entered.set()
+            assert job.release.wait(30), "never released"
+        return now
+
+    monkeypatch.setattr(tc.training_manager, "get_status", get_status)
+    return job
+
+
+def _datasets_and_training():
+    """Datasets and Training in one Blocks, as the app builds them: both write
+    the session's run-bar workspace (``ctx.training_workspace``)."""
+    from src.webui.components import datasets_page
+
+    with gr.Blocks() as demo:
+        ctx = shell.standalone_context(demo)
+        datasets_page.create_datasets_page(ctx)
+        tc.create_training_tab(ctx)
+    fns = list(demo.fns.values())
+    named = {}
+    for fn in fns:
+        named.setdefault(fn.name, fn)
+    by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
+    return demo, ctx, named, by_id
+
+
+def _after(demo, fn, name):
+    """The step chained after `fn` (``.then``) whose function is `name`."""
+    current = fn
+    while current is not None:
+        current = next((d for d in demo.fns.values() if d.trigger_after == current._id), None)
+        if current is not None and current.name == name:
+            return current
+    raise AssertionError(f"no {name} after {fn.name}")
+
+
+def test_every_write_of_the_run_bars_workspace_is_in_one_queued_group_of_one():
+    """F7: the session's run-bar workspace (Training's ``ws`` and
+    ``ctx.training_workspace``) is written only by queued listeners of
+    `shell.TRAINING_SELECTION_CONCURRENCY`, one at a time: Datasets' "Use for
+    training ›", the page open, the select, the change of
+    ``training_workspace`` and every render of the run bar. The fast poll
+    writes neither: it hands a running job's workspace over through a hidden
+    component (not a State, whose change a ``queue=False`` answer never
+    dispatches) that runs the queued render. The operator's choices join
+    every time they are asked; the page open's render is chained after it,
+    not a second listener on the opening (the two ran in either order)."""
+    demo, ctx, named, by_id = _datasets_and_training()
+    poll = named["_poll"]
+    selection = (poll.inputs[1], ctx.training_workspace)
+    writers = [fn for fn in demo.fns.values() if set(selection) & set(fn.outputs)]
+    assert {fn.name for fn in writers} == {"_use", "_open", "_on_dataset",
+                                           "_on_training_workspace", "_render_view"}
+    for fn in writers:
+        assert fn.queue is not False, fn.name
+        assert (fn.concurrency_id, fn.concurrency_limit) == (
+            shell.TRAINING_SELECTION_CONCURRENCY, 1), fn.name
+    for name in ("_on_dataset", "_on_training_workspace"):
+        assert named[name].trigger_mode == "multiple", name
+    follow = by_id[tc.FOLLOW_ID]
+    assert poll.queue is False and not set(selection) & set(poll.outputs)
+    assert follow in poll.outputs and not isinstance(follow, gr.State)
+    handed = [fn for fn in demo.fns.values() if (follow._id, "change") in fn.targets]
+    assert [fn.name for fn in handed] == ["_render_view"]
+    opening = [fn for fn in demo.fns.values()
+               if (ctx.page_tokens[shell.TRAINING]._id, "change") in fn.targets]
+    assert [fn.name for fn in opening] == ["_open"]
+    assert _after(demo, opening[0], "_render_view").trigger_after == opening[0]._id
+
+
+def test_the_poll_hands_a_running_jobs_workspace_over_and_writes_no_selection(
+        root, monkeypatch, operator):
+    """F7: a tick that finds a training job running in another workspace
+    than the session's writes no selection (its pieces are `POLL_KEYS`) and
+    gives the follow token a new value each time, naming that workspace; the
+    queued render follows the job. With the job no longer running, a tick
+    hands nothing over and a render writes no selection."""
+    job = _job_in_resampled(root, monkeypatch)
+    job.status = dict(RUNNING)
+    ws = tc._workspace_state("demo")
+    out = tc._poll(shell.TRAINING, ws, {}, {}, [], operator)
+    assert len(out) == len(tc.POLL_KEYS) + 3 and "ws" not in tc.POLL_KEYS
+    assert "training_workspace" not in tc.POLL_KEYS
+    follow = out[-2]
+    assert follow["workspace"] == "resampled"
+    again = tc._poll(shell.TRAINING, ws, {}, out[-3], [], operator)
+    assert again[-2]["at"] != follow["at"], "each hand-off is a new value"
+    view = dict(zip(tc.VIEW_KEYS, tc._render_view(ws, {}, {}, [], operator)[:-1], strict=True))
+    assert view["ws"]["name"] == "resampled" == view["training_workspace"]
+    job.status = dict(ENDED)
+    assert tc._poll(shell.TRAINING, ws, {}, {}, [], operator)[-2] == gr.update()
+    view = dict(zip(tc.VIEW_KEYS, tc._render_view(ws, {}, {}, [], operator)[:-1], strict=True))
+    assert view["ws"] == gr.update() and view["training_workspace"] == gr.update()
+
+
+def test_a_late_tick_never_writes_back_the_workspace_it_started_from(root, monkeypatch):
+    """F7, through the pages served by Gradio, one session: the fast tick's
+    read of the job runner is held (the job running in ``resampled``, the
+    session on ``demo``); meanwhile the job ends and Datasets' "Use for
+    training ›" chooses ``other``. Released, the tick hands its view over
+    and the queued render it runs, reading the job ended, leaves the choice.
+    When the tick wrote the session's workspace itself, it wrote back the
+    job's over the choice. Positive control: a job running in another
+    workspace still moves the session's workspace on the next tick, through
+    the hand-off and not the tick's own answer."""
+    shutil.copytree(root / "demo", root / "other")
+    job = _job_in_resampled(root, monkeypatch)
+    demo, ctx, named, by_id = _datasets_and_training()
+    poll, opened, choose, use, select = (named[n] for n in (
+        "_poll", "_open", "_on_dataset", "_use", "_select"))
+    ws = poll.inputs[1]
+    follow = by_id[tc.FOLLOW_ID]
+    hand_over = next(fn for fn in demo.fns.values() if (follow._id, "change") in fn.targets)
+    from_datasets = named["_on_training_workspace"]
+    datasets_open = next(fn for fn in demo.fns.values()
+                         if (ctx.page_tokens[shell.DATASETS]._id, "change") in fn.targets)
+
+    with served(demo) as base:
+        browser = ServedSession(base, demo)
+        assert browser.wait(browser.join(opened, [None, None]))
+        assert browser.wait(browser.join(_after(demo, opened, "_render_view"), [None] * 4))
+        assert browser.wait(browser.join(choose, ["demo", None]))
+        assert browser.state(ws)["name"] == "demo"
+        browser.set_state(ctx.location, shell.TRAINING)
+
+        def tick(answers):
+            answers.append(browser.predict(poll, [None] * 5))
+
+        job.status = dict(RUNNING)
+        job.hold.set()
+        answers = []
+        ticking = threading.Thread(target=tick, args=(answers,), daemon=True)
+        ticking.start()
+        assert job.entered.wait(30), "the tick's read did not start"
+        job.status = dict(ENDED)
+        # Datasets: the page read, the row chosen, "Use for training ›", and
+        # the change of the session's workspace that its answer makes.
+        browser.set_state(ctx.location, shell.DATASETS)
+        assert browser.wait(browser.join(datasets_open, [None, None]))
+        assert browser.wait(browser.join(select, [None, None], {"key": "other"}))
+        assert browser.wait(browser.join(use, [None, None]))
+        assert browser.state(ctx.training_workspace) == "other"
+        assert browser.wait(browser.join(from_datasets, [None, None, None]))
+        assert browser.wait(browser.join(_after(demo, from_datasets, "_render_view"), [None] * 4))
+        assert browser.state(ws)["name"] == "other"
+        job.release.set()
+        ticking.join(30)
+        (answer,) = answers
+        token = answer[poll.outputs.index(follow)]
+        if isinstance(token, dict) and token.get("__type__") != "update":
+            assert browser.wait(browser.join(hand_over, [None] * 4))
+        assert browser.state(ws)["name"] == "other", \
+            "the tick wrote back the job's workspace over the one chosen"
+        assert browser.state(ctx.training_workspace) == "other"
+
+        # Positive control: a job running in another workspace moves it.
+        browser.set_state(ctx.location, shell.TRAINING)
+        job.status = dict(RUNNING)
+        answer = browser.predict(poll, [None] * 5)
+        token = answer[poll.outputs.index(follow)]
+        assert token["workspace"] == "resampled"
+        assert browser.state(ws)["name"] == "other", "the tick wrote the selection itself"
+        assert browser.wait(browser.join(hand_over, [None] * 4))
+        assert browser.state(ws)["name"] == "resampled"
+        assert browser.state(ctx.training_workspace) == "resampled"
+        browser.close()
+
+
+def test_a_workspace_chosen_while_a_render_waits_is_applied_after_it(root, monkeypatch):
+    """F7, through the pages served by Gradio, one session: the render the
+    poll handed a running job's workspace to is held in its read of the job
+    runner (the job running in ``resampled``); meanwhile the job ends and
+    Datasets' "Use for training ›" chooses ``other``. In the group the choice
+    waits for the render and is applied after it, so the session ends on
+    ``other``. With each listener its own group, the choice was applied
+    first and the held render, ending last, wrote back the job's workspace."""
+    shutil.copytree(root / "demo", root / "other")
+    job = _job_in_resampled(root, monkeypatch)
+    demo, ctx, named, by_id = _datasets_and_training()
+    opened, choose, use, select = (named[n] for n in ("_open", "_on_dataset", "_use",
+                                                       "_select"))
+    ws = named["_poll"].inputs[1]
+    follow = by_id[tc.FOLLOW_ID]
+    hand_over = next(fn for fn in demo.fns.values() if (follow._id, "change") in fn.targets)
+    from_datasets = named["_on_training_workspace"]
+    datasets_open = next(fn for fn in demo.fns.values()
+                         if (ctx.page_tokens[shell.DATASETS]._id, "change") in fn.targets)
+
+    with served(demo) as base:
+        browser = ServedSession(base, demo)
+        assert browser.wait(browser.join(opened, [None, None]))
+        assert browser.wait(browser.join(choose, ["demo", None]))
+        assert browser.wait(browser.join(datasets_open, [None, None]))
+        assert browser.wait(browser.join(select, [None, None], {"key": "other"}))
+        assert browser.state(ws)["name"] == "demo"
+
+        job.status = dict(RUNNING)
+        job.hold.set()
+        render = browser.join(hand_over, [None] * 4)
+        assert job.entered.wait(30), "the render's read did not start"
+        job.status = dict(ENDED)
+        chosen = browser.join(use, [None, None])
+        browser.wait(chosen, timeout=1.5)
+        job.release.set()
+        assert browser.wait(render, chosen)
+        # The change of the session's workspace that the choice's answer makes.
+        assert browser.wait(browser.join(from_datasets, [None, None, None]))
+        assert browser.wait(browser.join(_after(demo, from_datasets, "_render_view"), [None] * 4))
+        browser.close()
+        assert browser.state(ctx.training_workspace) == "other"
+        assert browser.state(ws)["name"] == "other", \
+            "a render that read the job running wrote back its workspace over the choice"
 
 
 def test_a_read_only_request_sees_every_action_disabled_and_no_checkpoint(root, monkeypatch):

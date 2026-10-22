@@ -27,7 +27,9 @@ renderer (`renderers.dataset_identity_html` and its pieces).
   root", and a refused root setting is said without its path.
 - **"Use for training ›"** selects the workspace in this session's Training run
   bar and opens Training; it changes nothing on the server (Start is the gated
-  act there).
+  act there). It is queued in the group of every writer of that workspace
+  (`PageContext.training_workspace_writes`), after any render of Training's run
+  bar asked before it.
 - The one line on building datasets: they are built on the server with the CLI.
 
 Nothing here is gated: it reads small JSON files (the manifest, the dataset
@@ -325,7 +327,8 @@ def create_datasets_page(ctx: Any) -> None:
         return (name, *ctx.go("training"))
 
     use.click(_use, inputs=[data_state, selected],
-              outputs=[ctx.training_workspace, *ctx.nav_outputs], show_progress="hidden")
+              outputs=[ctx.training_workspace, *ctx.nav_outputs], show_progress="hidden",
+              **ctx.training_workspace_writes)
 
     def _run_bar_changed(data, name, run_bar):
         return table_html(data, run_bar, name)

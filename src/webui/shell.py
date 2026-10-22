@@ -79,7 +79,9 @@ page:
   tab's (on mounting it, or on switching it); whichever runs first refreshes
   the page, and the other finds it already shown (`_open_research`).
   Diagnosis is shown at page load with no ``select``: read it on
-  ``ctx.blocks.load`` too;
+  ``ctx.blocks.load`` too. It returns the event, so a page chains a step
+  after it with ``.then`` (never a second listener on the same opening: the
+  two would run in either order);
 - ``ctx.timer_fast`` (1.5 s) and ``ctx.timer_slow`` (5 s): the shared
   ``gr.Timer``\\ s, created outside ``gr.Tabs`` (a timer inside an unopened tab
   never ticks in Gradio 6.30), so **they tick whichever page is shown**: a
@@ -121,8 +123,12 @@ page:
   served workspace); Diagnosis listens to its ``.change`` to re-read its card;
 - ``ctx.training_workspace``: this session's Training run-bar workspace (a
   ``gr.State``, a listed workspace name or None). Datasets' "Use for training ›"
-  sets it and opens Training; Training's run bar reads and writes it, and sets
-  it to None when the run bar's workspace is changed by hand to another.
+  sets it and opens Training; Training's run bar reads it and writes the
+  workspace it shows (the page open's, a hand choice, a running job's).
+  **Every listener that writes it** (and Training's own record of its run
+  bar's workspace) takes ``**ctx.training_workspace_writes``: one queued group
+  of one (`TRAINING_SELECTION_CONCURRENCY`), first asked first run, so none
+  writes back a workspace it started from over one chosen meanwhile.
 
 **Recognise a component by its ``elem_id``, never by identity.** Once an
 answer updates a component's properties, Gradio 6.30 keeps a rebuilt copy in
@@ -276,18 +282,25 @@ class PageContext:
         return {"fn": read_chips, "inputs": None, "outputs": [self.chips], "queue": False,
                 "show_progress": "hidden"}
 
-    def on_page_open(self, page: str, kwargs: Dict[str, Any]) -> None:
+    @property
+    def training_workspace_writes(self) -> Dict[str, Any]:
+        """Keyword arguments for every listener that writes
+        ``training_workspace`` (or Training's own record of its run bar's
+        workspace): one queued group of one (`TRAINING_SELECTION_CONCURRENCY`)."""
+        return {"concurrency_id": TRAINING_SELECTION_CONCURRENCY, "concurrency_limit": 1}
+
+    def on_page_open(self, page: str, kwargs: Dict[str, Any]) -> Any:
         """Run an event (``fn``, ``inputs``, ``outputs``, …) each time `page` is
         shown: Diagnosis' or Settings' tab ``select``; for a research page, the
         change of its token, which the shell bumps when its tab is selected and
         when Research is selected while it is the page shown (returning to
-        Research shows that page as it is now, and only that page)."""
+        Research shows that page as it is now, and only that page). Returns the
+        event, so a step can follow it (``.then``)."""
         if page in RESEARCH_PAGES:
-            self.page_tokens[page].change(**kwargs)
-        elif page in self.tabs:
-            self.tabs[page].select(**kwargs)
-        else:
-            raise ValueError(f"no page {page!r}")
+            return self.page_tokens[page].change(**kwargs)
+        if page in self.tabs:
+            return self.tabs[page].select(**kwargs)
+        raise ValueError(f"no page {page!r}")
 
     def create_model_list(self, preset: str = "clinical", **kwargs: Any) -> Any:
         """The one shared model list and its Load, built here (`model_list`)."""
@@ -326,6 +339,18 @@ def _shown(page: str) -> Callable[[], str]:
 #: tab's) run one at a time, in the order they were sent, so the second of a
 #: pair sees the location the first set (`_open_research`).
 OPEN_PAGE_CONCURRENCY = "shep-open-research-page"
+
+#: The one queued group of every listener that writes a session's Training
+#: run-bar workspace (``PageContext.training_workspace`` and Training's own
+#: record of it; `PageContext.training_workspace_writes`): Datasets' "Use for
+#: training ›" and, on Training, the page open, the select, the change of
+#: ``training_workspace`` and every render of the run bar, the one the fast
+#: poll hands a running job's workspace to included. Gradio 6.30 reads a
+#: ``gr.State`` when an event starts and writes it when the event ends and
+#: orders no two events otherwise, so a late one wrote back the workspace it
+#: started from. The group is the server's, as the Test page's selection group
+#: is: two sessions' events wait for each other too.
+TRAINING_SELECTION_CONCURRENCY = "shep-training-selection"
 
 
 def _open_research(location: Any, research_page: Any, *tokens: Any) -> Tuple[Any, ...]:

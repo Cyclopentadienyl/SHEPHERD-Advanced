@@ -40,14 +40,11 @@ Module: tests/unit/test_webui_test_page.py
 """
 from __future__ import annotations
 
-import contextlib
 import hashlib
 import json
 import re
 import shutil
 import threading
-import time
-import uuid
 from types import SimpleNamespace
 
 import pytest
@@ -62,6 +59,7 @@ from tests.fixtures.operator_access import (  # noqa: E402
     operator_mode,
     operator_request,
 )
+from tests.fixtures.served_page import ServedSession, served  # noqa: E402
 
 RUN = "20261017-091500_run_3fa9c1"
 LABEL = "demo-test-1"
@@ -1291,95 +1289,6 @@ def test_every_write_of_the_selection_is_in_one_queued_group_of_one():
     assert [fn.name for fn in demo.fns.values() if job_state in fn.inputs] == ["_poll"]
 
 
-class _Session:
-    """One browser session, spoken as Gradio 6.30's client speaks to the
-    queue: an event joins with the values its non-State inputs had when it
-    was asked (a State input is the session's, read when the event starts),
-    and the answers come on the session's one event stream, which closes
-    when nothing of the session is pending (closing it earlier would cancel
-    them)."""
-
-    def __init__(self, base, demo):
-        import httpx
-
-        self.base, self.demo = base, demo
-        self.session = uuid.uuid4().hex
-        self.client = httpx.Client(timeout=60)
-        self.done, self.order, self.cond = {}, [], threading.Condition()
-        self.reader = None
-
-    def _read(self):
-        try:
-            with self.client.stream("GET", f"{self.base}/queue/data",
-                                    params={"session_hash": self.session}) as stream:
-                for line in stream.iter_lines():
-                    if not line.startswith("data:"):
-                        continue
-                    msg = json.loads(line[len("data:"):])
-                    if msg.get("msg") == "process_completed":
-                        with self.cond:
-                            self.done[msg["event_id"]] = msg
-                            self.order.append(msg["event_id"])
-                            self.cond.notify_all()
-        except Exception:  # noqa: BLE001 - `wait` reads again while something is pending
-            pass
-
-    def join(self, fn, data, event_data=None):
-        answer = self.client.post(f"{self.base}/queue/join", json={
-            "data": data, "fn_index": fn._id, "session_hash": self.session,
-            "event_data": event_data, "trigger_id": None})
-        answer.raise_for_status()
-        if self.reader is None or not self.reader.is_alive():
-            self.reader = threading.Thread(target=self._read, daemon=True)
-            self.reader.start()
-        return answer.json()["event_id"]
-
-    def wait(self, *events, timeout=60.0):
-        deadline = time.monotonic() + timeout
-        with self.cond:
-            while not all(e in self.done for e in events):
-                left = deadline - time.monotonic()
-                if left <= 0:
-                    return False
-                if not self.reader.is_alive():
-                    self.reader = threading.Thread(target=self._read, daemon=True)
-                    self.reader.start()
-                self.cond.wait(min(left, 0.1))
-        for e in events:
-            assert self.done[e].get("success"), self.done[e]
-        return True
-
-    def state(self, block):
-        return self.demo._queue.server_app.state_holder[self.session][block._id]
-
-    def close(self):
-        self.client.close()
-
-
-@contextlib.contextmanager
-def _served(demo):
-    """The page's Blocks mounted on a FastAPI app as the dashboard mounts it
-    (``/ui``), served by uvicorn on a free loopback port; yields the base of
-    Gradio's API."""
-    import uvicorn
-    from fastapi import FastAPI
-
-    app = FastAPI()
-    gr.mount_gradio_app(app, demo, path="/ui")
-    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning"))
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-    deadline = time.monotonic() + 30
-    while not server.started:
-        assert time.monotonic() < deadline and thread.is_alive(), "the server did not start"
-        time.sleep(0.05)
-    port = server.servers[0].sockets[0].getsockname()[1]
-    try:
-        yield f"http://127.0.0.1:{port}/ui/gradio_api"
-    finally:
-        server.should_exit = True
-        thread.join(10)
-
 
 def test_a_late_read_never_writes_back_the_selection_it_started_from(site, monkeypatch):
     """P2-5-F2, through the page served by Gradio: one session, an event that
@@ -1457,8 +1366,8 @@ def test_a_late_read_never_writes_back_the_selection_it_started_from(site, monke
         asked[event] = fn
         return event
 
-    with _served(demo) as base:
-        browser = _Session(base, demo)
+    with served(demo) as base:
+        browser = ServedSession(base, demo)
         assert browser.wait(join(refresh, [None, None, None, None, None]))
         assert browser.wait(pick(LABEL))
         runs = [r["run_id"] for r in browser.state(reports_state)["runs"]]
@@ -1521,17 +1430,13 @@ def test_an_ended_run_is_handed_over_once_and_a_click_after_it_stays(site, monke
     after_act = next(fn for fn in demo.fns.values() if fn.name == "_after_act")
     selected_report = on_report.outputs[0]
 
-    with _served(demo) as base:
-        browser = _Session(base, demo)
+    with served(demo) as base:
+        browser = ServedSession(base, demo)
 
         def tick():
             """The slow timer's request, as the browser sends it (queue=False);
             returns the hand-off it wrote."""
-            answer = browser.client.post(f"{base}/run/predict", json={
-                "data": [None, None, None], "fn_index": poll._id,
-                "session_hash": browser.session, "event_data": None, "trigger_id": None})
-            answer.raise_for_status()
-            return answer.json()["data"][poll.outputs.index(after.inputs[-1])]
+            return browser.predict(poll, [None, None, None])[poll.outputs.index(after.inputs[-1])]
 
         def hand_over(change):
             """The hand-off's listener, joined as the browser joins it."""
@@ -1539,7 +1444,7 @@ def test_an_ended_run_is_handed_over_once_and_a_click_after_it_stays(site, monke
 
         running = {"job_id": "test-9", "status": "running"}
         assert browser.wait(browser.join(refresh, [None] * 5))
-        browser.demo._queue.server_app.state_holder[browser.session][ctx.location._id] = tp.PAGE
+        browser.set_state(ctx.location, tp.PAGE)
         newest = browser.state(selected_report)
         assert newest == site.run_id != other
         # The page open does not write what the session saw of the job: the
@@ -1599,8 +1504,8 @@ def test_a_late_reload_never_writes_back_another_workspaces_checkpoints(site, mo
         _named(demo, n) for n in ("_refresh", "_on_workspace", "_on_model_reload"))
     models_state = reload_.outputs[0]
 
-    with _served(demo) as base:
-        browser = _Session(base, demo)
+    with served(demo) as base:
+        browser = ServedSession(base, demo)
         assert browser.wait(browser.join(refresh, [None] * 5))
         listing = browser.state(models_state)
         assert listing["workspace"] == "demo" and listing["items"], listing
