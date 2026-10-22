@@ -5261,7 +5261,9 @@ def phase_m2_demo(
         # measured checkpoint's record is not shown for it.
         other = measured.with_name("other.pt")
         shutil.copyfile(state["child"], other)
-        served_other, beside = _serve_and_view(sound, other, file_sha256(other), device)
+        # Its digest through the run reader, as T2's copy's (`_read_run_checkpoint`).
+        served_other, beside = _serve_and_view(sound, other, _read_run_checkpoint(other)["sha256"],
+                                               device)
         assert served_other != served, "the other checkpoint is the measured one"
         assert beside.get("state") == "no_records", (
             f"the view's state for another checkpoint is {beside.get('state')}")
