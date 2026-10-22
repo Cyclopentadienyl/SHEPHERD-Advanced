@@ -397,6 +397,20 @@ def test_not_configured_is_refused_never_run_unlocked(monkeypatch, tmp_path, cap
     assert list((tmp_path / "registry").iterdir()) == [], "a refused CLI wrote something"
 
 
+def test_every_program_entry_says_a_lock_not_configured_is_refused():
+    """Round 3 of the review fixes, P3-5: the refusal above is what each
+    program entry that takes the lock says it does, never a run without the
+    lock. measure_scorer.py's own docstring still said "With no lock
+    configured the log says so and the run goes on" after P2-4 had made it a
+    refusal; the lock-free mode is gone from the code's texts too."""
+    repo = Path(__file__).resolve().parents[2]
+    for name in _lock_takers(repo, "scripts"):
+        text = " ".join((repo / name).read_text(encoding="utf-8").split())
+        assert f"not configured ({WORKSPACES_ROOT_ENV}, the lock's one name, not set)" in text, \
+            f"{name} does not say a lock that is not configured is refused"
+        assert "the run goes on" not in text, f"{name} describes a run without the lock"
+
+
 @POSIX
 def test_a_shell_without_the_settings_is_refused_while_the_deployment_is_busy(root, tmp_path):
     """The reviewer's counter-example (review of 8242b47, P2-4): the deployment's

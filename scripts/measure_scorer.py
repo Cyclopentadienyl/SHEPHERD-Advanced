@@ -107,8 +107,10 @@ the tests and the deployment probe that call it.
 
 **One managed GPU job at a time** (M5): `main` takes the deployment's GPU lock
 (`src/utils/gpu_lock.py`) before the device is resolved or anything is read and
-holds it until it returns; a busy lock is a refusal naming its holder (exit 1,
-nothing written). With no lock configured the log says so and the run goes on.
+holds it until it returns; a busy lock is a refusal naming its holder, and so
+is a lock that is not configured (SHEPHERD_WORKSPACES_ROOT, the lock's one
+name, not set) or set but unusable, each with exit 1 and nothing written
+(review of 8242b47, P2-4).
 
 Module: scripts/measure_scorer.py
 """
