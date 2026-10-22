@@ -1710,8 +1710,9 @@ One lock file per deployment, whatever the workspace:
 
 | Settings | Lock file |
 |---|---|
-| `SHEPHERD_GPU_LOCK_FILE=/absolute/path` | that file; its directory must exist (nothing creates it) |
-| otherwise `SHEPHERD_WORKSPACES_ROOT=/absolute/root` | `<root>/.shepherd-gpu.lock` |
+| `SHEPHERD_WORKSPACES_ROOT=/absolute/root` | `<root>/.shepherd-gpu.lock`, whatever else is set: **the root is the lock's one identity** (since the root-cause round of 2026-10-22) |
+| `SHEPHERD_GPU_LOCK_FILE=/absolute/path` beside the root | accepted only when it names that same file; another file refuses every job, naming both settings and saying to remove `SHEPHERD_GPU_LOCK_FILE` (it used to win over the root) |
+| `SHEPHERD_GPU_LOCK_FILE=/absolute/path`, no root | that file; its directory must exist (nothing creates it) |
 | neither | **not configured**: every managed job is refused (since the review of 8242b47): the CLIs exit 1 before anything is read, the service refuses every start, each saying how to configure the lock |
 
 A setting that is set but unusable (a relative path, a directory that does not exist, a path
@@ -1736,11 +1737,16 @@ same `Environment=` lines as the systemd unit, which reads no environment file o
 one file that both the unit's `EnvironmentFile=` and your shell read). A CLI that sees neither
 variable is refused, exit 1, with nothing written (`train_model: refused: neither
 SHEPHERD_GPU_LOCK_FILE nor SHEPHERD_WORKSPACES_ROOT is set, so the GPU lock is not configured
-...`); so is `setup_demo.py --train-model`, which trains through the same trainer. **If the
-service names a lock file (`SHEPHERD_GPU_LOCK_FILE`), the shell must name the same file**:
-`SHEPHERD_WORKSPACES_ROOT` alone names `<root>/.shepherd-gpu.lock`, another file, and the two
-jobs would not exclude each other. `SHEPHERD_GPU_LOCK_FILE` may name any absolute path whose
-directory exists only on a machine where no service runs.
+...`); so is `setup_demo.py --train-model`, which trains through the same trainer. **Give the
+shell the service's workspaces root**: every process that names the root takes
+`<root>/.shepherd-gpu.lock`, the service, your shell and its CLIs alike, and a lock file set
+beside the root that names another file is refused rather than used (it used to win, so a
+service with a lock file and a shell with only the root locked two files and ran side by side).
+What one environment variable cannot settle, since each process reads its own: a process that
+names another root, or a lock file and no root, takes another lock. A service configured with
+`SHEPHERD_GPU_LOCK_FILE` and no root lists no workspace, so its dashboard starts no job, but
+`POST /api/v1/training/start` takes a workspace path and runs one; for such a service give the
+shell the same lock file and no root.
 
 **`SHEPHERD_REGISTRY` is required in that shell as well** (since the M5 review, BACKLOG 37):
 `measure_scorer.py --cohort`, `--record` and `record_evaluation.py --report` work only in the
@@ -1772,9 +1778,14 @@ What the lock does and does not guarantee:
   for that process too, but when the job is killed (or exits without releasing), that process
   keeps the lock until it exits; the refusal then says the recorded holder has exited. **A job
   the service starts leads its own process group** (since the review of 8242b47), and a stop and
-  the runner end the whole group, those processes included (below). A CLI you start in an
-  interactive shell leads its own group there (job control): `kill -TERM -- -<pid>` ends it with
-  its workers, while `kill -9 <pid>` alone leaves them to end by themselves.
+  the runner end the whole group, those processes included (below). A training CLI
+  (`train_model.py`, `setup_demo.py --train-model`) whose main process alone is ended, by
+  `kill <pid>` or `kill -9 <pid>`, leaves its forked DataLoader workers holding the lock until
+  they notice (torch's 5 s watchdog plus the sample in progress, longer if one hangs);
+  `kill -INT <pid>` (Ctrl-C's signal, the runner's own graceful step) releases it at once, even
+  sent to the main process alone, and `kill -TERM -- -<pid>` ends the whole group when the CLI
+  leads one (a CLI started in an interactive shell does, through job control).
+  `measure_scorer.py` forks no workers.
 - **Keep the lock file on a local filesystem.**
 - **Windows** uses `msvcrt.locking` on the file's first byte; a Windows backend is untested.
   There DataLoader workers are spawned, not forked, and do not inherit the lock's handle; the
@@ -1821,26 +1832,39 @@ cohort version, the same CLI an operator runs). One job at a time:
   staged files (`*.tmp`) may be left: the run directory and, for a run that was registering its
   report, the checkpoint's directory, where its ledger is.
 - **Runtime Settings' Restart Backend** is refused while any job runs, training or a test run
-  (its note now says "A GPU job (training or a test run) is in progress").
+  (its note now says "A GPU job (training or a test run) is in progress"). After its short delay
+  it closes the job runner's GPU slot, only if no job holds it and in the same step as that
+  check, and keeps it closed until the process is replaced: a job started during the delay
+  aborts the restart, and a start asked for after that is refused, never orphaned by the restart
+  (since the root-cause round of 2026-10-22).
 - **Stopping the backend stops its job** (the owner's decision of 2026-10-22). Because a job
-  leads its own process group, a Ctrl-C or a hangup of the terminal the backend runs in, or a
-  SIGTERM sent to the backend alone, no longer reaches the job itself; the backend stops it
-  instead, as a stop above does, starting when the signal arrives, for a backend started from a
-  terminal (the launcher, which waits for the server through a Ctrl-C, or uvicorn by hand) or
-  sent SIGTERM outside systemd; under systemd, stopping the unit signals every process of the
-  service anyway. Open dashboard tabs do not hold this up: uvicorn waits for every open
-  connection before it finishes shutting down, and each tab keeps one open (its session
-  heartbeat), so the backend ends those streams at the same signal. Another connection that does
-  not close (a client that never finishes its request) keeps the backend waiting ("Waiting for
-  connections to close") with the job already stopped; a second Ctrl-C ends that wait, and the
-  backend still waits for the job's stop before it exits. A backend that is killed (SIGKILL, the
+  leads its own process group, a Ctrl-C, a Ctrl-\ or a hangup of the terminal the backend runs
+  in, or a SIGTERM sent to the backend alone, no longer reaches the job itself; the backend stops
+  it instead, as a stop above does, starting when the signal arrives (a Ctrl-\ is routed there
+  too since the root-cause round of 2026-10-22: it used to leave the job training with the lock;
+  the backend still ends by it, after the job's stop). Under systemd the unit's
+  `KillMode=mixed` sends the stop's SIGTERM to the server alone (the launcher execs into it),
+  which stops its job the same way, and systemd SIGKILLs what is left only once the server has
+  exited, within `TimeoutStopSec=150`, which covers the backend's longest stop of its job; the
+  unit used to SIGTERM the job's processes directly, ahead of the backend's graceful stop. When
+  the server crashes, systemd SIGKILLs the job's processes. **From the signal on, the job
+  runner's GPU slot is closed**: a start still under way (a request in flight, a dashboard event
+  already queued) is refused ("The backend is stopping; nothing was started."), so no job can be
+  running while the backend waits. Open dashboard tabs do not hold this up: uvicorn waits for
+  every open connection before it finishes shutting down, and each tab keeps one open (its
+  session heartbeat), so the backend ends those streams at the same signal. Another connection
+  that does not close (a client that never finishes its request) keeps the backend waiting
+  ("Waiting for connections to close") with the job already stopped; a second Ctrl-C ends that
+  wait, and the backend still waits for the job's stop before it exits. A backend that is killed (SIGKILL, the
   out-of-memory killer) leaves the job running and holding the lock; the GPU chip names it; stop
   it with `kill -INT <pid>` or `kill -TERM -- -<pid>`. **Do not run the backend with
   `--reload`**: uvicorn's reloader restarts the server on every saved source file, and each
   restart's shutdown would stop a running training. The commands `setup_demo.py` prints have no
   `--reload`, and `python -m src.api.main` no longer reloads.
 - `GET /api/v1/training/status` adds `job_id`, `end_time`, `exit_code` and `gpu`: the job holding
-  the GPU, of either type, and the lock (`configured`, `path`, `source`, `held_by`, `problem`).
+  the GPU, of either type, and the lock (`configured`, `path`, `source`, `held_by` with the
+  holder's own record `holder` and `holder_alive`, `problem`, and `unset` when neither setting
+  is set), the same reading the GPU chip shows.
   A test run holding the GPU shows there, never as training.
 
 Since M5-2, Research › Test starts and cancels test runs from the dashboard through this runner
@@ -1883,10 +1907,11 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
   read-only for them. Diagnosis, the status pages and the read-only lists work either way.
 - **The workspaces root may be inside the repository**, as the usual `data/workspaces/` is, but
   only when you name it. A relative path, a missing directory and a file are refused.
-- **The GPU lock follows these settings** (§4.11): with the root set and no
-  `SHEPHERD_GPU_LOCK_FILE`, the lock is `<root>/.shepherd-gpu.lock`. A shell where you run the
-  formal CLIs needs the same setting (if the service names a lock file, that same file), and
-  with neither set every training and test run is refused.
+- **The GPU lock follows these settings** (§4.11): with the root set, the lock is
+  `<root>/.shepherd-gpu.lock`, the lock's one identity, and a `SHEPHERD_GPU_LOCK_FILE` beside it
+  must name that same file or every training and test run is refused. A shell where you run the
+  formal CLIs needs the same root (for a service with a lock file and no root, that same file and
+  no root), and with neither set every training and test run is refused.
 - **The registry and the intake directory hold patient-level data.** They follow the
   registry's rule (§4.9): a relative path, a missing directory, and a path that resolves inside
   the repository (through a symlink too) are refused. `--registry` on the command line and

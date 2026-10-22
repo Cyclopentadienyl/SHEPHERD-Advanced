@@ -1563,7 +1563,8 @@ contract and BACKLOG stay the record, and no new planning document is added.
   uvicorn with `--no-proxy-headers`; migration notes in the deployment guide (§4.13).
 - **One GPU lock for managed training and evaluation jobs** (the reviewer's decisions, relayed by the owner, 2026-10-19). Jobs the
   WebUI or the API start and the formal training and evaluation CLIs (`train_model.py`,
-  `measure_scorer.py`) take the same lock, one per deployment whatever the workspace; a busy
+  `measure_scorer.py`) take the same lock, one per deployment whatever the workspace (since the
+  root-cause round, the deployment's workspaces root is its one identity, below); a busy
   lock is refused with who holds it, never queued. The lock covers the working process's whole
   life, with tests for a stop, an abnormal exit and a parent and child process. What is claimed
   is exactly that: managed training and evaluation jobs exclude each other. `flock` is
@@ -1599,22 +1600,62 @@ contract and BACKLOG stay the record, and no new planning document is added.
   group is recorded only for a process it started, with a pid above 1, that leads it. On Windows
   a stop that cannot send CTRL_BREAK_EVENT (no console) goes on to TerminateProcess; DataLoader
   workers are spawned there and do not inherit the lock's handle; a Job Object is not added
-  while the Windows backend is untested. A CLI killed by hand with `kill -9 <pid>` still leaves
-  its forked workers to end by themselves (a worker's PR_SET_PDEATHSIG, the critic's optional
+  while the Windows backend is untested. A training CLI (`train_model.py`, `setup_demo.py
+  --train-model`) whose main process alone is ended, by `kill <pid>` or `kill -9 <pid>`, leaves
+  its forked DataLoader workers holding the lock until they notice (torch's 5 s watchdog plus
+  the sample in progress, longer if one hangs); `kill -INT <pid>` releases it at once, even sent
+  to the main process alone, and `kill -TERM -- -<pid>` ends the whole group when the CLI leads
+  one; `measure_scorer.py` forks no workers (a worker's PR_SET_PDEATHSIG, the critic's optional
   measure, is not added). **Stopping the backend stops its jobs** (the owner's decision,
   2026-10-22): the backend stops the runner's active job (`TrainingManager.end_active_job`,
   bounded by the stop's escalation) from the shutdown signal on: `src/api/main.py` wraps the
-  server's SIGINT and SIGTERM handlers and routes a hangup to the SIGTERM one, so the stop
-  starts at the signal, not after uvicorn's wait for open connections, which an open dashboard
-  tab's heartbeat stream held until the tab was closed (found by the verification of the fix,
-  2026-10-22), and the dashboard's heartbeat streams end at the same signal; the lifespan's
-  shutdown waits for that stop and stops a job started meanwhile. The launcher in its browser
+  server's SIGINT and SIGTERM handlers and routes a hangup and a Ctrl-\ (SIGQUIT) to the
+  SIGTERM one, so the stop starts at the signal, not after uvicorn's wait for open connections,
+  which an open dashboard tab's heartbeat stream held until the tab was closed (found by the
+  verification of the fix, 2026-10-22), and the dashboard's heartbeat streams end at the same
+  signal; the stop closes the job runner's GPU slot first, so no job starts while the backend
+  waits for its connections, and the lifespan's shutdown waits for that stop. The launcher in its browser
   mode waits for the server through a Ctrl-C; a second Ctrl-C ends uvicorn's wait for
   connections and the backend still waits for the job's stop; SIGKILL or the out-of-memory
   killer still leave the job running, and `--reload` is gone from the printed commands and from
   `python -m src.api.main`, since each reload's shutdown would stop a training. Tests:
   `tests/unit/test_job_process_group.py`, `tests/unit/test_backend_shutdown.py`,
   `tests/integration/test_backend_stops_its_job.py`, `tests/unit/test_gpu_lock.py`.
+  *Root-cause round (2026-10-22; implemented, not reviewed):* **the workspaces root is the
+  lock's one identity** (P24-S1). The location's one rule had two sources with a precedence
+  (`SHEPHERD_GPU_LOCK_FILE` won over the root), so a service with a lock file and the root and a
+  shell given only the root both counted as configured, locked two files and ran side by side.
+  Now, with `SHEPHERD_WORKSPACES_ROOT` set, the lock is `<root>/.shepherd-gpu.lock` whatever else
+  is set; `SHEPHERD_GPU_LOCK_FILE` beside it is accepted only when it names that same file, and
+  another file is a setting problem naming both and saying to remove the file setting (the
+  runner, the CLIs and the chip refuse; nothing is picked); with no root, the lock file names
+  the lock. The probe's own lock unsets the operator's root meanwhile, as the tests do. The limit
+  that remains is inherent to a cooperative lock named by each process's environment: a process
+  that names another root, or a lock file and no root, takes another file. That includes a
+  service configured with a lock file and no root: it lists no workspace, so the dashboard
+  starts no job there, but `POST /api/v1/training/start` takes a workspace path and runs one, so
+  a shell given only a root does not exclude it (BACKLOG records the complete form). **One
+  reader of the lock's state** (P24-S3): `gpu_lock.lock_state` alone turns the location and the
+  probe into a status (with the holder's record), the chip reads it, and "not configured" is
+  the setting's structural `unset`, never its words. **The GPU slot has a closed state**
+  (P23-1): the backend's stop closes it at the signal (`TrainingManager.close`, which returns the
+  job holding it read in the same step), so a start still under way is refused ("The backend is
+  stopping; nothing was started.") by every route; Restart Backend closes it only when idle and
+  keeps it closed through the exec. **The signals a job no longer gets are defined once**
+  (P23-2): `training_manager.JOB_DETACHED_SIGNALS`, beside the spawn; the backend and the probe
+  route each of them, Ctrl-\ (SIGQUIT) included, which used to leave the job training with the
+  lock (the backend still ends by SIGQUIT, after the job's stop). **The systemd unit hands its
+  stop to the backend** (P23-3): `KillMode=mixed` (SIGTERM to the server, the main process since
+  the launcher execs into it; SIGKILL to what is left once it exits) and `TimeoutStopSec=150`,
+  which covers `END_ACTIVE_JOB_SECONDS` (110 s), checked against the runner's constants by a
+  test. **One wording for a CLI killed by hand** (P23-4, above), and `build_knowledge_graph.py`'s
+  printed training step says the lock this shell takes, or the rule's own refusal (INT-3).
+  Tests: `tests/unit/test_gpu_lock.py` (the cross-process service/shell case through the
+  runner's start check and `train_model.py`), `tests/unit/test_webui_chips.py`,
+  `tests/unit/test_backend_shutdown.py`, `tests/unit/test_backend_control.py`,
+  `tests/unit/test_service_unit.py`, `tests/unit/test_probe_m5_acceptance.py`,
+  `tests/unit/test_data_pipeline.py`, `tests/integration/test_backend_stops_its_job.py` (a start
+  under way at SIGTERM refused; Ctrl-\; the unit's start and stop).
 - **Gradio 6.30.0 is M5's first commit** (the owner, 2026-10-20, with the reviewer's
   boundaries). The smallest dependency change: `gradio==6.30.0`, and in `uv.lock` only what it
   forces (gradio-client, starlette, huggingface-hub; brotli and hf-gradio new). The mount

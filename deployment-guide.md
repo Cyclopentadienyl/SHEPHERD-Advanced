@@ -2032,8 +2032,9 @@ server function 傳來，由瀏覽器存檔；伺服器不為它提供檔案。�
 
 | 設定 | 鎖檔 |
 |---|---|
-| `SHEPHERD_GPU_LOCK_FILE=/絕對路徑` | 該檔案；所在目錄必須已存在（不會自動建立） |
-| 否則 `SHEPHERD_WORKSPACES_ROOT=/絕對路徑的根目錄` | `<根目錄>/.shepherd-gpu.lock` |
+| `SHEPHERD_WORKSPACES_ROOT=/絕對路徑的根目錄` | `<根目錄>/.shepherd-gpu.lock`，不論還設定了什麼：**根目錄是這把鎖唯一的身分**（自 2026-10-22 的根因修正輪起） |
+| 根目錄旁另設 `SHEPHERD_GPU_LOCK_FILE=/絕對路徑` | 只有指向同一個檔案時才接受；指向別的檔案時拒絕所有工作，訊息會列出兩個設定並說明要移除 `SHEPHERD_GPU_LOCK_FILE`（以前它會蓋過根目錄） |
+| `SHEPHERD_GPU_LOCK_FILE=/絕對路徑`，沒有根目錄 | 該檔案；所在目錄必須已存在（不會自動建立） |
 | 兩者皆未設定 | **未設定鎖**：所有受管理的工作都會被拒絕（自 8242b47 的審查起）：CLI 在讀取任何東西之前以結束碼 1 結束，服務拒絕每一次啟動，並各自說明如何設定這把鎖 |
 
 設定了卻無法使用的值（相對路徑、不存在的目錄、服務帳號無權進入的目錄底下的路徑）會拒絕所有
@@ -2055,10 +2056,14 @@ measure_scorer: refused: the GPU lock /srv/shepherd/workspaces/.shepherd-gpu.loc
 `Environment=` 行——unit 本身不讀取任何環境檔——或一個同時由 unit 的 `EnvironmentFile=` 與你的
 shell 讀取的檔案）。兩個變數都看不到的 CLI 會被拒絕，結束碼 1，不寫出任何東西（`train_model:
 refused: neither SHEPHERD_GPU_LOCK_FILE nor SHEPHERD_WORKSPACES_ROOT is set, so the GPU lock is not
-configured ...`）；`setup_demo.py --train-model` 透過同一個訓練器訓練，同樣如此。**若服務指定了鎖檔
-（`SHEPHERD_GPU_LOCK_FILE`），shell 必須指定同一個檔案**：只設定 `SHEPHERD_WORKSPACES_ROOT` 指的是
-`<根目錄>/.shepherd-gpu.lock`，是另一個檔案，兩邊的工作就不會互斥。只有在沒有執行服務的機器上，
-`SHEPHERD_GPU_LOCK_FILE` 才可以指定任何所在目錄已存在的絕對路徑。
+configured ...`）；`setup_demo.py --train-model` 透過同一個訓練器訓練，同樣如此。**請給 shell
+與服務相同的 workspace 根目錄**：每個指定了這個根目錄的行程——服務、你的 shell 與其中的 CLI——
+都取 `<根目錄>/.shepherd-gpu.lock`；在根目錄旁另設、卻指向別的檔案的鎖檔會被拒絕而不是被採用
+（以前它會勝出，所以設定了鎖檔的服務與只設定根目錄的 shell 會鎖住兩個檔案、並排執行）。單靠環境
+變數無法解決的情況（每個行程讀的是自己的環境）：指定了另一個根目錄、或只指定鎖檔而沒有根目錄的
+行程，取的是另一把鎖。只設定 `SHEPHERD_GPU_LOCK_FILE`、沒有根目錄的服務不會列出任何
+workspace，所以它的儀表板不會啟動工作，但 `POST /api/v1/training/start` 接受 workspace 路徑並會
+執行工作；對這樣的服務，請給 shell 同一個鎖檔，且不要設定根目錄。
 
 **那個 shell 中也必須設定 `SHEPHERD_REGISTRY`**（自 M5 審查起，BACKLOG 37）：
 `measure_scorer.py --cohort`、`--record` 與 `record_evaluation.py --report` 只在它所指名的
@@ -2083,9 +2088,13 @@ registry 中運作，它未設定時一律拒絕（§4.9）。`EnvironmentFile=`
   產生、卻沒有啟動新程式的行程——例如 `fork` 啟動方式下的 DataLoader worker——與工作共用這把鎖：
   工作正常結束時，鎖也會一併對該行程釋放；但工作被強制結束（或未釋放就結束）時，該行程會保有
   鎖直到它自己結束；這時拒絕訊息會說明所記錄的持有者已經結束。**服務啟動的工作各自是自己行程群組
-  的 leader**（自 8242b47 的審查起），停止與 job runner 會結束整個群組，包括這些行程（見下）。你在
-  互動式 shell 中啟動的 CLI 在那裡也是自己群組的 leader（job control）：`kill -TERM -- -<pid>`
-  會連同它的 worker 一起結束它，而只用 `kill -9 <pid>` 則會讓 worker 自行結束。
+  的 leader**（自 8242b47 的審查起），停止與 job runner 會結束整個群組，包括這些行程（見下）。
+  訓練 CLI（`train_model.py`、`setup_demo.py --train-model`）若只有主行程被結束——`kill <pid>`
+  或 `kill -9 <pid>`——它 fork 出的 DataLoader worker 會保有鎖，直到它們察覺為止（torch 的 5 秒
+  watchdog 加上正在處理的樣本，若有 worker 卡住則更久）；`kill -INT <pid>`（Ctrl-C 的訊號，也是
+  runner 自己的正常停止步驟）即使只送給主行程也會立即釋放鎖，而當 CLI 是自己群組的 leader 時
+  （在互動式 shell 中啟動的 CLI 透過 job control 就是），`kill -TERM -- -<pid>` 會結束整個群組。
+  `measure_scorer.py` 不會 fork 任何 worker。
 - **鎖檔請放在本機檔案系統上。**
 - **Windows** 使用 `msvcrt.locking` 鎖住檔案的第一個位元組；Windows 後端尚未測試。在那裡
   DataLoader worker 是以 spawn 而非 fork 產生，不會繼承鎖的 handle；系統釋放已結束行程的檔案鎖可能
@@ -2124,12 +2133,20 @@ Training Console 與訓練 API 背後的服務現在執行兩種工作，各自�
   說明留下了什麼；遭 SIGTERM 或 SIGKILL 結束時，還會指出暫存檔（`*.tmp`）可能留在哪裡：執行目錄，
   以及正在登錄報告的執行所屬 checkpoint 的目錄（其 ledger 所在處）。
 - **Runtime Settings 的 Restart Backend** 在任何工作執行中時都會被拒絕，不論是訓練或測試執行
-  （提示文字現在是 "A GPU job (training or a test run) is in progress"）。
+  （提示文字現在是 "A GPU job (training or a test run) is in progress"）。在短暫延遲之後，它只在
+  沒有工作占用時、並在與這個檢查同一步中關閉 job runner 的 GPU 槽位，並保持關閉直到行程被替換：
+  延遲期間啟動的工作會讓重啟中止，之後才要求的啟動會被拒絕，絕不會因重啟而成為孤兒（自
+  2026-10-22 的根因修正輪起）。
 - **停止後端就會停止它的工作**（owner 的決定，2026-10-22）。因為工作是自己行程群組的 leader，在
-  執行後端的終端機按 Ctrl-C、終端機掛斷，或只對後端送 SIGTERM，都不再直接到達工作本身；改由後端在
-  訊號到達時就開始像上面的停止一樣停止它——適用於從終端機啟動的後端（launcher 會在 Ctrl-C 時等待伺服器
-  結束，或手動執行的 uvicorn），以及在 systemd 之外收到 SIGTERM 的後端；在 systemd 下，停止 unit
-  本來就會對服務的每個行程送出訊號。開著的儀表板分頁不會拖延它：uvicorn 結束前會等待每個開著的連線，
+  執行後端的終端機按 Ctrl-C、Ctrl-\、終端機掛斷，或只對後端送 SIGTERM，都不再直接到達工作本身；改由
+  後端在訊號到達時就開始像上面的停止一樣停止它（自 2026-10-22 的根因修正輪起，Ctrl-\ 也會導向這裡：
+  以前它會讓工作帶著鎖繼續訓練；後端在工作停止之後仍以這個訊號結束）。在 systemd 下，unit 的
+  `KillMode=mixed` 只把停止的 SIGTERM 送給伺服器（launcher 會 exec 成伺服器），伺服器以同樣方式停止
+  它的工作，systemd 要等伺服器結束後才對剩下的行程送 SIGKILL，且在 `TimeoutStopSec=150` 之內——
+  這涵蓋後端停止工作的最長時間；以前 unit 會在後端的正常停止之前，直接對工作的行程送 SIGTERM。伺服器
+  當掉時，systemd 會對工作的行程送 SIGKILL。**從訊號起，job runner 的 GPU 槽位就關閉**：仍在進行中的
+  啟動（傳送中的請求、已排入佇列的儀表板事件）會被拒絕（"The backend is stopping; nothing was
+  started."），所以後端等待期間不可能有工作在執行。開著的儀表板分頁不會拖延它：uvicorn 結束前會等待每個開著的連線，
   而每個分頁都保有一個（它的 session heartbeat），所以後端在同一個訊號就結束這些串流。其他不會關閉的
   連線（例如一個永遠沒送完請求的客戶端）會讓後端繼續等待（"Waiting for connections to close"），
   但工作已經停止；第二次 Ctrl-C 會結束這個等待，而後端仍會等工作的停止完成才退出。後端被直接結束
@@ -2138,7 +2155,9 @@ Training Console 與訓練 API 背後的服務現在執行兩種工作，各自�
   reloader 每次儲存原始碼都會重啟伺服器，每次重啟的關閉程序都會停止正在進行的訓練。
   `setup_demo.py` 印出的命令不再含 `--reload`，`python -m src.api.main` 也不再自動重新載入。
 - `GET /api/v1/training/status` 新增 `job_id`、`end_time`、`exit_code` 與 `gpu`：占用 GPU 的
-  工作（任一類型），以及鎖的狀態（`configured`、`path`、`source`、`held_by`、`problem`）。占用
+  工作（任一類型），以及鎖的狀態（`configured`、`path`、`source`、`held_by` 及持有者自己的紀錄
+  `holder` 與 `holder_alive`、`problem`，以及兩個設定都沒有時的 `unset`），與 GPU chip 顯示的是同一份
+  讀取結果。占用
   GPU 的測試執行會顯示在這裡，絕不會顯示成訓練。
 
 自 M5-2 起，Research › Test 透過這個 job runner 從儀表板啟動與取消測試執行（§4.14）；沒有任何 API
@@ -2179,9 +2198,10 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
   其他值時，每個控制項都被拒絕，部署對它們而言是唯讀的。診斷、狀態頁面與唯讀清單不受影響。
 - **workspace 根目錄可以位於 repository 內**，一般使用的 `data/workspaces/` 就是如此，但必須
   由你明確指定。相對路徑、不存在的目錄與檔案都會被拒絕。
-- **GPU 鎖跟著這些設定走**（§4.11）：設定了根目錄而沒有 `SHEPHERD_GPU_LOCK_FILE` 時，鎖是
-  `<根目錄>/.shepherd-gpu.lock`。執行正式 CLI 的 shell 需要相同的設定（若服務指定了鎖檔，就是同一個
-  檔案）；兩者都沒有設定時，每個訓練與測試執行都會被拒絕。
+- **GPU 鎖跟著這些設定走**（§4.11）：設定了根目錄時，鎖是 `<根目錄>/.shepherd-gpu.lock`，這是
+  這把鎖唯一的身分；在它旁邊另設的 `SHEPHERD_GPU_LOCK_FILE` 必須指向同一個檔案，否則每個訓練與測試
+  執行都會被拒絕。執行正式 CLI 的 shell 需要相同的根目錄（若服務只指定鎖檔而沒有根目錄，就是同一個
+  鎖檔、且不設定根目錄）；兩者都沒有設定時，每個訓練與測試執行都會被拒絕。
 - **registry 與 intake 目錄存放病人層級的資料。** 兩者都遵循 registry 的規則（§4.9）：相對
   路徑、不存在的目錄，以及解析後落在 repository 內的路徑（包括經由 symlink）一律拒絕。命令列的
   `--registry` 與 `SHEPHERD_REGISTRY` 由同一個函式檢查。請把兩者建在只有執行服務與指令的帳號
