@@ -1785,7 +1785,7 @@ What the lock does and does not guarantee:
   sent to the main process alone, and `kill -TERM -- -<pid>` ends the whole group when the CLI
   leads one (a CLI started in an interactive shell does, through job control).
   `measure_scorer.py` forks no workers.
-- **Keep the lock file on a local filesystem.**
+- **Keep the workspaces root, where the lock file is, on a local filesystem.**
 - **Windows** uses `msvcrt.locking` on the file's first byte; a Windows backend is untested.
   There DataLoader workers are spawned, not forked, and do not inherit the lock's handle; the
   system's release of a dead process's file lock can be delayed; a stop sends CTRL_BREAK_EVENT

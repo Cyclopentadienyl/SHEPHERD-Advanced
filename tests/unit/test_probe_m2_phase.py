@@ -309,13 +309,12 @@ def test_the_demo_phase_passes_and_every_required_probe_runs(tmp_path, served_st
 
 def _operator_shell(monkeypatch, base):
     """The deployment's settings as the shell the guide prepares holds them
-    (§4.11): its registry and its workspace root, the lock under that root,
-    each an empty directory under `base`."""
+    (§4.11): its registry and its workspace root, which names the lock, each
+    an empty directory under `base`."""
     (base / "registry").mkdir(parents=True)
     (base / "workspaces").mkdir()
     monkeypatch.setenv("SHEPHERD_REGISTRY", str(base / "registry"))
     monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(base / "workspaces"))
-    monkeypatch.setenv("SHEPHERD_GPU_LOCK_FILE", str(base / "workspaces" / ".shepherd-gpu.lock"))
 
 
 @pytest.mark.parametrize("shell", ["fresh", "operator"])

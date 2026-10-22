@@ -2095,7 +2095,7 @@ registry 中運作，它未設定時一律拒絕（§4.9）。`EnvironmentFile=`
   runner 自己的正常停止步驟）即使只送給主行程也會立即釋放鎖，而當 CLI 是自己群組的 leader 時
   （在互動式 shell 中啟動的 CLI 透過 job control 就是），`kill -TERM -- -<pid>` 會結束整個群組。
   `measure_scorer.py` 不會 fork 任何 worker。
-- **鎖檔請放在本機檔案系統上。**
+- **工作區根目錄（鎖檔所在之處）請放在本機檔案系統上。**
 - **Windows** 使用 `msvcrt.locking` 鎖住檔案的第一個位元組；Windows 後端尚未測試。在那裡
   DataLoader worker 是以 spawn 而非 fork 產生，不會繼承鎖的 handle；系統釋放已結束行程的檔案鎖可能
   有延遲；停止時對工作的主控台行程群組送出 CTRL_BREAK_EVENT，沒有主控台、無法送出的後端會改用

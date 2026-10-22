@@ -63,8 +63,9 @@ itself; a description whose process has exited is never named as the holder.
   the main process alone, and `kill -TERM -- -<pid>` ends the whole group
   when the CLI leads one (a job of an interactive shell). `measure_scorer.py`
   forks no workers.
-- **Local machine.** The lock file belongs on a local filesystem; the liveness
-  hint in the message is only given for a holder on this host.
+- **Local machine.** The lock file, so the workspaces root, belongs on a local
+  filesystem; the liveness hint in the message is only given for a holder on
+  this host.
 
 Module: src/utils/gpu_lock.py
 """
