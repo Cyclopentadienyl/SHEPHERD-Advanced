@@ -2646,8 +2646,9 @@ Training Console 現在是分成三部分的一個頁面：上方橫跨整頁的
   發布的 workspace 也會在那裡被拒絕，在讀取圖譜與樣本之前：這次執行會失敗，輸出中有
   `train_model: refused: The dataset changed since it was shown; select it again. …`，結束碼 1，
   不建立 run 目錄。這兩處檢查都由 manifest 讀取器自己在解碼檔案之前完成（於根因修正輪實作），
-  所以已無法解析或已不存在的 manifest 也以同樣的文字拒絕；正是所顯示的那份、但現在讀不了的
-  manifest，則以讀不了為由拒絕。
+  訓練行程在這之前不檢查 workspace 的任何東西，所以已無法解析或已不存在的 manifest（連整個
+  workspace 都不在了也一樣）也以同樣的文字拒絕；正是所顯示的那份、但現在讀不了的 manifest，
+  則以讀不了為由拒絕。
 - 失敗的 run 的**錯誤橫幅**橫跨整頁。標題（"Training failed: Process exited with code 1"）
   之下是 run 印出的最後一行錯誤（"Last error printed: TrainingDeviceUnavailable: --device auto
   requires CUDA, …"），對唯讀瀏覽器與輸出一樣經過遮蔽。run 旁邊只在有日誌時說明日誌在哪裡（它的
@@ -2674,14 +2675,17 @@ checkpoint 的路徑：自 M5-3 起，手動輸入的路徑只會找到該清單
 workspace」）。抽屜打開期間，run bar 顯示 Start（停用：「close Continue… to start a new
 run」）、**🔒 Continue Training**（資料集不同時停用，並附原因）與 **Cancel**。從清單選的
 checkpoint 會在伺服器的清單中重新找到。**繼續訓練所用的就是所顯示的模型指紋**（於根因修正輪
-實作）：從清單選的 checkpoint 是清單上的指紋，手動輸入的路徑則是 Check checkpoint 顯示的指紋。
-Check checkpoint 與 Continue Training 都會送出它，job runner 的預覽在讀取檔案時、載入之前比對：
-不是那個檔案就以「The checkpoint changed since it was chosen; choose it again. It holds … now
-(chosen: …).」拒絕（重新整理清單，或對手動輸入的路徑再按一次 Check）。接著 job runner 把它
+實作）。從清單選的 checkpoint，Check checkpoint 與 Continue Training 都送出清單上的指紋；手動
+輸入的路徑，則由 Check checkpoint 讀取檔案並顯示它的指紋，Continue Training 再送出所顯示的那個。
+job runner 的預覽在讀取檔案時、載入之前比對：不是那個檔案就以「The checkpoint changed since it
+was chosen. It holds … now (chosen: …).」拒絕，並依指紋顯示的地方說明該怎麼做：從清單選的是
+「Refresh the list, then choose it again.」（在清單重新讀取之前，同一個選項送出的仍是清單上的
+指紋），手動輸入的路徑是「Click Check checkpoint to read the file there now.」。接著 job runner 把它
 所決定的 parent 的 digest 交給訓練行程（`train_model.py --expect-resume-sha256`，每個繼續訓練的
 run 都會帶）：run 放在 parent 架構之下的位置與它的設定都來自那次讀取，啟動之後才被替換的檔案
 會在載入之前被訓練行程拒絕（`train_model: refused: The checkpoint changed since it was
-chosen; …`，結束碼 1，不建立 run 目錄）。API 也以選用的查詢參數接受 parent 的 digest，
+chosen; choose it again. …`，結束碼 1，不建立 run 目錄；Continue… 打開時會重新列出
+checkpoint）。API 也以選用的查詢參數接受 parent 的 digest，
 `expected_parent_sha256=<64 個十六進位數字>`，與 `resume_from` 一起使用（不是該檔案時 409，
 格式錯誤時 422）；沒有這個參數時，訓練行程仍綁定在 runner 讀到的 parent。job runner 與訓練
 行程在啟動時仍會檢查其他一切。每個項目列出 run、epoch、檔案以及它保存的內容

@@ -2418,8 +2418,9 @@ a run.
   graph and the samples are read: the run fails with `train_model: refused: The dataset changed
   since it was shown; select it again. …` in its output, exit 1, and no run directory. Both
   checks are the manifest reader's own, made before the file is decoded (implemented in the
-  root-cause round), so a manifest that no longer parses, or is gone, is refused in the same
-  words; a manifest that is the one shown but cannot be read now is refused as such.
+  root-cause round), and the process checks nothing about the workspace before it, so a
+  manifest that no longer parses, or is gone (its whole workspace included), is refused in the
+  same words; a manifest that is the one shown but cannot be read now is refused as such.
 - A failed run's **error banner** spans the page. Under its headline ("Training failed: Process
   exited with code 1") is the last error line the run printed ("Last error printed:
   TrainingDeviceUnavailable: --device auto requires CUDA, …"), redacted for a read-only browser
@@ -2453,16 +2454,20 @@ when it differs (with the listed workspace it matches, or "matches no listed wor
 the drawer is open the run bar shows Start (disabled: "close Continue… to start a new run"),
 **🔒 Continue Training** (disabled while the datasets differ, with the reason) and **Cancel**.
 A listed checkpoint is found again in the server's list. **The model fingerprint shown is the one
-continued from** (implemented in the root-cause round): the list's for a listed checkpoint, the
-one Check checkpoint showed for a typed path. Check checkpoint and Continue Training send it, and
-the job runner's preview compares it on its read of the file, before loading it: another file is
-refused with "The checkpoint changed since it was chosen; choose it again. It holds … now
-(chosen: …)." (Refresh the list, or check the typed path again.) The job runner then gives the
+continued from** (implemented in the root-cause round). For a listed checkpoint, Check checkpoint
+and Continue Training send the list's fingerprint; for a typed path, Check checkpoint reads the
+file and shows its fingerprint, and Continue Training sends the one shown. The job runner's
+preview compares it on its read of the file, before loading it: another file is refused with
+"The checkpoint changed since it was chosen. It holds … now (chosen: …)." and what to do for
+where it was shown: "Refresh the list, then choose it again." for a listed checkpoint (the same
+option sends the list's fingerprint again until the list is read again), "Click Check checkpoint
+to read the file there now." for a typed path. The job runner then gives the
 training process the digest of the parent it decided on (`train_model.py
 --expect-resume-sha256`, always, for every continued run): the run's placement under the
 parent's architecture and its settings come from that read, and a file replaced after the start
 is refused by the process before it is loaded (`train_model: refused: The checkpoint changed
-since it was chosen; …`, exit 1, no run directory). The API takes the parent's digest as an
+since it was chosen; choose it again. …`, exit 1, no run directory; Continue… lists the
+checkpoints again when it opens). The API takes the parent's digest as an
 optional query parameter too, `expected_parent_sha256=<64 hex digits>` beside `resume_from`
 (409 when it is not the file's, 422 when malformed); without it the process is still bound to
 the parent the runner read. The job runner and the training process still check everything

@@ -1729,10 +1729,15 @@ contract and BACKLOG stay the record, and no new planning document is added.
     *Root-cause round (implemented, not yet reviewed):* the comparison is the manifest reader's
     own (P22-S2): `read_split_manifest(…, expected_sha256=)` compares the digest of its one read
     before the bytes are decoded and raises the one `DatasetChanged`, also for a manifest that
-    is gone, and both the runner's check and the process call it, so a manifest torn or of
-    another schema is said as changed by both instead of a traceback in the process. A continued
+    is gone, and both the runner's check and the process call it, the process checking nothing
+    about the workspace before it, so a manifest torn, of another schema or gone with its whole
+    workspace is said as changed by both instead of a traceback or "build training data" advice
+    in the process. A continued
     run is bound to the parent shown the same way (P22-S1): `read_checkpoint(…,
-    expected_sha256=)` compares before torch loads the file (`CheckpointChanged`);
+    expected_sha256=)` compares before torch loads the file (`CheckpointChanged`, which carries
+    the facts while each caller words the refusal, the console with the action for where the
+    fingerprint was shown; early stopping's best weights a parent names are read through it
+    too);
     `preview_continuation(expected_sha256=)` is the one comparison of a caller's digest (the
     Continue drawer sends the run list's model fingerprint, or the one a typed path's Check
     showed, and deletes its own comparison; the API takes an optional `expected_parent_sha256`);
