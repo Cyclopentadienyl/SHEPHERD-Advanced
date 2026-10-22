@@ -27,8 +27,10 @@ Research › Evaluate › Test (M5-2, UI-D): import, run, keep and register.
   shown; values are escaped;
 - **the page's wiring**: refreshed when the page is shown; polled on the
   shell's slow timer with ``queue=False``, doing work only while it is shown
-  and never touching a select or the selection (no listener on the fast
-  timer), the store's re-read after a job change handed to a queued listener;
+  and never touching a select, the selection or Start (no listener on the fast
+  timer), the one writer of what the session saw of the job, each change
+  handed once to a queued listener, the only one that chooses an ended run's
+  report;
   every write of the selection in one queued group of one, so a late answer
   never writes back the selection it started from (the page served by Gradio,
   one read held); the report of a run that has just ended selected; the

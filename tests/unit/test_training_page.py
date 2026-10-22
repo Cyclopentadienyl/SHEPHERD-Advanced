@@ -20,7 +20,11 @@ Research › Prepare › Training (M5-2, UI-C): the run bar, the run view, the d
   the chart token (rows counted again only when the log changed) and the
   server functions (a run the server lists, never a path);
 - **what a tick sends**: only what changed, everything every few ticks, and
-  never the session's selection back over a newer one;
+  never the session's selection: a running job's workspace goes to a queued
+  render, and every writer of the run bar's workspace (Datasets' "Use for
+  training" included) is in one queued group, so a late tick or render never
+  writes back the workspace it started from (the pages served by Gradio, one
+  read held);
 - **the banner**: escaped, red for a failure, amber for PyG, dismissed per
   session; no absolute path for a read-only request (each text redacted
   before it is escaped); the last error line the run printed under the
