@@ -51,7 +51,7 @@ def _no_deployment_gpu_lock(monkeypatch, tmp_path_factory):
 def _gpu_slot_open():
     """Every test starts with the job runner's GPU slot open.
 
-    An application's shutdown closes the slot for good (root-cause review,
+    An application's shutdown closes the slot (root-cause review,
     P23-1: once the backend begins to stop, no job starts), and the runner is
     a process-wide singleton that a later test reuses, through an in-process
     client that runs no startup of its own, say. Reopened only where the

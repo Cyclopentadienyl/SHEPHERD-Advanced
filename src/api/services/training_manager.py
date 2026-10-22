@@ -618,7 +618,7 @@ class TrainingManager:
     STOPPING = "The backend is stopping; nothing was started."
 
     def close(self) -> Optional[Dict[str, Any]]:
-        """**Close the GPU slot for good: the backend is stopping** (root-cause
+        """**Close the GPU slot: the backend is stopping** (root-cause
         review, P23-1). From here on every start is refused, by whichever
         route it comes (`_slot_refusal_locked`), and the job holding the slot,
         if any, is returned as `active_job` describes it, **read under the same

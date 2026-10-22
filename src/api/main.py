@@ -403,8 +403,8 @@ def _stop_the_active_job() -> None:
 
 
 def _open_the_gpu_slot() -> None:
-    """At startup: the job runner's GPU slot open. A shutdown closes it for
-    good (`_stop_the_active_job`); the runner is a process-wide singleton, so
+    """At startup: the job runner's GPU slot open. A shutdown closes it
+    (`_stop_the_active_job`), and the runner is a process-wide singleton, so
     an in-process client's next lifespan would otherwise find it closed."""
     from src.api.services.training_manager import training_manager
 
