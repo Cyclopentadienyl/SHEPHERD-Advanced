@@ -269,8 +269,9 @@ class _ShutdownSignals:
     heartbeat streams end (`_end_dashboard_streams`), so an open tab holds up
     neither the job nor the backend. The thread is not a daemon, so the
     interpreter waits for it before it exits, after a forced quit too.
-    `end_jobs`, at the lifespan's end, waits for it, then does the same
-    itself, which finds the slot already closed and empty after a signal.
+    `end_jobs`, at the lifespan's end, waits for it and does not repeat it;
+    it closes the slot and stops the job itself only when no signal began
+    the shutdown.
 
     Installed only in the main thread, where a server sets its handlers (an
     in-process test client runs the lifespan elsewhere), and only when
@@ -354,12 +355,17 @@ class _ShutdownSignals:
         _end_dashboard_streams(self._application)
 
     def end_jobs(self) -> None:
-        """At the lifespan's end: the stop a signal began waited for, then the
-        slot closed and its job stopped here, which only a shutdown that no
-        signal began relies on (after a signal the slot is closed already, so
-        no job started meanwhile). Blocks; call it from a thread."""
+        """At the lifespan's end, **one stop per shutdown** (round 3 of the
+        review fixes, P3-4): the stop a signal began is waited for, never
+        repeated; only when no signal began the shutdown are the slot closed
+        and its job stopped here. After a signal's `close` no job can start,
+        so the only job that can still hold the slot is the one that stop
+        ended or gave up on (one that SIGKILL cannot end) and said so; a
+        second stop would only wait `END_ACTIVE_JOB_SECONDS` more for it.
+        Blocks; call it from a thread."""
         if self._stopping is not None:
             self._stopping.join()
+            return
         _stop_the_active_job()
 
     def restore(self) -> None:

@@ -304,10 +304,10 @@ def test_the_first_shutdown_signal_starts_the_job_s_stop_in_a_thread(server_sign
             assert calls["streams"] == 4
         finally:
             calls["release"].set()
-            signals.end_jobs()          # waits for the stop, then stops what holds the slot
+            signals.end_jobs()          # waits for the stop and does not repeat it (P3-4)
             signals.restore()
         assert not signals._stopping.is_alive()
-        assert calls["stops"] == ["backend-stops-its-job", "MainThread"]
+        assert calls["stops"] == ["backend-stops-its-job"]
 
     _in_the_event_loop(scenario)
     assert signal.getsignal(signal.SIGINT) == server.handle_exit
@@ -450,6 +450,70 @@ def test_without_a_signal_the_lifespan_s_end_stops_the_job_itself(server_signals
 
     _in_the_event_loop(scenario)
     assert calls["stops"] == ["MainThread"] and calls["streams"] == 0 and server.seen == []
+
+
+class _Unkillable(FakeProcess):
+    """A job SIGKILL cannot end (a process stuck in the driver, D state)."""
+
+    def kill(self) -> None:
+        self.signals.append("SIGKILL")
+
+
+@POSIX
+def test_one_stop_per_shutdown_a_job_sigkill_cannot_end_is_not_waited_for_twice(
+        monkeypatch, tmp_path):
+    """Round 3 of the review fixes, P3-4: the signal's stop gives up on a job
+    SIGKILL cannot end ("did not end after SIGKILL") with the job still
+    holding the slot. The lifespan's end then waits for that stop and
+    returns; it used to stop again, which waited `END_ACTIVE_JOB_SECONDS`
+    more, so the backend spent two bounds on its job against the one the
+    systemd unit's TimeoutStopSec covers. Through the real signal path:
+    the server's SIGTERM handler wrapped, the signal delivered, the real
+    `_stop_the_active_job` in its thread, then `end_jobs`."""
+    import src.api.main as api
+
+    for name, seconds in (("STOP_GRACE_SECONDS", 0.2), ("TERMINATE_GRACE_SECONDS", 0.2),
+                          ("KILL_GRACE_SECONDS", 0.2), ("RESULT_WAIT_SECONDS", 0.3)):
+        monkeypatch.setattr(tm, name, seconds)
+    monkeypatch.setattr(tm, "END_ACTIVE_JOB_SECONDS", 0.9)
+    manager = tm.TrainingManager()
+    monkeypatch.setattr(tm, "training_manager", manager)
+    stuck = _Unkillable(pid=4321, ignore_sigint=True, ignore_terminate=True)
+    with patch("subprocess.Popen", return_value=stuck):
+        assert manager.start_training({"data_dir": str(tmp_path)})["success"]
+    calls = []
+    end_active_job = manager.end_active_job
+
+    def counted():
+        calls.append(threading.current_thread().name)
+        return end_active_job()
+
+    monkeypatch.setattr(manager, "end_active_job", counted)
+    server = _Server()
+    previous = signal.getsignal(signal.SIGTERM)
+    signal.signal(signal.SIGTERM, server.handle_exit)
+
+    async def scenario():
+        signals = api._ShutdownSignals(api.app)
+        signals.install()
+        try:
+            started = time.monotonic()
+            await _delivered(signal.SIGTERM)
+            signals.end_jobs()
+            return time.monotonic() - started
+        finally:
+            signals.restore()
+
+    try:
+        took = _in_the_event_loop(scenario)
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+        stuck.finish(-9)
+        manager._last["training"].done.wait(10)
+    assert server.seen == ["SIGTERM"]
+    assert calls == ["backend-stops-its-job"], "the lifespan's end stopped the job again"
+    assert stuck.signals == ["SIGINT", "SIGTERM", "SIGKILL"], stuck.signals
+    assert took < 0.9 + 0.5, f"{took:.2f} s: more than one END_ACTIVE_JOB_SECONDS"
 
 
 @POSIX

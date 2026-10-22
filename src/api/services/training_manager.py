@@ -146,7 +146,8 @@ OUTPUT_GRACE_SECONDS = 5.0
 #: how (and to read what a test run left) before answering.
 RESULT_WAIT_SECONDS = 60.0
 #: The longest `end_active_job` takes, so the longest a stopping backend
-#: spends on its job: a stop's whole escalation, then the wait for its monitor
+#: spends on its job, which it stops once per shutdown (`src.api.main`'s
+#: `end_jobs`; P3-4): a stop's whole escalation, then the wait for its monitor
 #: (or, for a job an operator is already stopping, the same bound). The
 #: systemd unit's TimeoutStopSec covers it (scripts/service/systemd/
 #: shepherd.service; root-cause review, P23-3), so the service manager's
@@ -1223,10 +1224,11 @@ class TrainingManager:
         2026-10-22): the job holding the GPU slot, whatever its type, stopped
         through `stop` (SIGINT, then SIGTERM, then SIGKILL to its group), or,
         when an operator's stop is already ending it, waited for, bounded by
-        the same escalation. `src.api.main` calls it, after closing the slot
-        (`close`), when a shutdown signal arrives and again at the lifespan's
-        end, so a backend stopped by Ctrl-C, a closed terminal, SIGTERM or the
-        service manager ends its job, open connections or not. Returns what
+        the same escalation. `src.api.main` calls it once per shutdown, after
+        closing the slot (`close`): when a shutdown signal arrives, or at the
+        lifespan's end when no signal began it, so a backend stopped by
+        Ctrl-C, a closed terminal, SIGTERM or the service manager ends its
+        job, open connections or not. Returns what
         happened, or None when no job held the slot. Blocks; call it from a
         thread."""
         with self._lock:
