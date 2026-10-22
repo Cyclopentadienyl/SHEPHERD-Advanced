@@ -77,14 +77,17 @@ reads "a server path" (`redact`).
 seen are `gr.State`; the job is polled on the shell's slow timer (outside the
 tabs, ``queue=False``, every 5 s), doing work only while this page is shown,
 and never touching a select or the selection. Nothing here is module state.
-**Every write of the selection** (the version's reports, the report shown, and
-the list and result drawn from them) runs in one queued group of one
-(`SELECTION_CONCURRENCY`): page open, the workspace, the version, a report's
-row, the read after an act or an import, and the read after the poll saw the
-job change (the poll hands that over through a hidden component's
-``.change``). So each starts from the selection the one before it wrote, in
-the order they were asked, and a late answer never writes back a selection
-it started from over one chosen meanwhile.
+**Every write of the selection** (the checkpoint listing, the version's
+reports, the report shown, and the list and result drawn from them) runs in
+one queued group of one (`SELECTION_CONCURRENCY`): page open, the workspace,
+the version, a report's row, ↻, the read after an act or an import, and the
+read after the poll saw the job change (the poll hands that over through a
+hidden component's ``.change``). Every choice joins it, also one made while
+an earlier one waits. So each starts from the selection the one before it
+wrote, in the order they were asked, and a late answer never writes back a
+selection it started from over one chosen meanwhile. The report of a run
+that has just ended is chosen once for that run, however many reads see the
+end: the group keeps which run it chose it for.
 
 Module: src/webui/components/test_page.py
 """
@@ -135,8 +138,9 @@ PROBLEMS_SHOWN = 10
 #: the selected report are always shown).
 ROWS_SHOWN = 8
 #: The one queued group of every listener that writes the session's selection
-#: (``reports_state``, ``selected_report`` and the list and result drawn from
-#: them): one event at a time, first asked, first run (`create_test_page`).
+#: (``models_state``, ``reports_state``, ``selected_report``, ``end_shown`` and
+#: the list and result drawn from them): one event at a time, first asked,
+#: first run (`create_test_page`).
 SELECTION_CONCURRENCY = "shep-test-selection"
 
 #: What replaces an absolute path that is under no named server directory.
@@ -2085,6 +2089,8 @@ def create_test_page(ctx: Any) -> None:
     reports_state = gr.State(dict(_EMPTY_REPORTS))
     selected_report = gr.State(None)
     job_state = gr.State({})
+    # The job whose ended run's report the selection has chosen (`_job_read_again`).
+    end_shown = gr.State(None)
     preview_state = gr.State(None)
 
     with gr.Row(elem_classes=["shep-page", "shep-test"], elem_id="shep-test-row", equal_height=False):
@@ -2347,13 +2353,22 @@ def create_test_page(ctx: Any) -> None:
     # them), so an event that ended late would write back the selection it
     # started from over one chosen meanwhile. Every listener that writes the
     # selection is therefore in one group of one: the page open, the
-    # workspace, the version, a report's row, the read after an act or an
+    # workspace, the version, a report's row, ↻, the read after an act or an
     # import, and the read after the poll saw the job change. They run first
     # asked, first run, each from what the one before it wrote, and the
     # browser takes a select's value when the event is asked. The group is
     # the server's, as the import's is: two sessions' events wait for each
     # other too.
     one_at_a_time = {"concurrency_id": SELECTION_CONCURRENCY, "concurrency_limit": 1}
+    # In the group an event can wait as long as the one before it runs, and
+    # with Gradio's defaults the browser does not send a listener's trigger
+    # while its event waits: a click's or an input's ("once") is dropped; a
+    # change's ("always_last") is sent once the wait ends, only the last, with
+    # the values shown then (a select set back to the first pick by its
+    # answer) and the first trigger's data. A second row or version chosen,
+    # or a hand-off followed by another, would be lost; with "multiple" each
+    # joins, and the last one asked is the one that stays.
+    every_one = {"trigger_mode": "multiple"}
 
     # ------------------------------------------------------------------ page open
     def _refresh(ws, label, key, current_models, current_report, request: gr.Request):
@@ -2403,7 +2418,7 @@ def create_test_page(ctx: Any) -> None:
                     outputs=[models_state, binding_state_, reports_state, selected_report,
                              preview_state, drawer, *cohort_outputs, *run_outputs,
                              *result_outputs],
-                    show_progress="minimal", **one_at_a_time) \
+                    show_progress="minimal", **one_at_a_time, **every_one) \
         .then(**ctx.chip_refresh)
 
     def _on_version(page, binding, models, ws, label, key, current_report, request: gr.Request):
@@ -2425,7 +2440,7 @@ def create_test_page(ctx: Any) -> None:
                           selected_report],
                   outputs=[reports_state, selected_report, version, version_info, *run_outputs,
                            *result_outputs],
-                  show_progress="hidden", **one_at_a_time)
+                  show_progress="hidden", **one_at_a_time, **every_one)
 
     def _on_model(page, models, binding, ws, label, key):
         if not page:
@@ -2443,9 +2458,14 @@ def create_test_page(ctx: Any) -> None:
         key = key if find_model(models, key) is not None else None
         return [models, *_run_outputs(page, models, binding, ws, label, key, read_job(), _gpu(page))]
 
+    # In the selection's group: the listing it writes is the one the rows'
+    # registration and Start are asked from. A second ↻ while one waits is
+    # dropped (a click's "once"), which loses nothing: the one waiting lists
+    # when it runs.
     model_reload.click(_on_model_reload,
                        inputs=[page_state, binding_state_, workspace, version, model, models_state],
-                       outputs=[models_state, *run_outputs], show_progress="minimal") \
+                       outputs=[models_state, *run_outputs], show_progress="minimal",
+                       **one_at_a_time) \
         .then(**ctx.chip_refresh)
 
     def _on_report(page, reports, models, job_seen, evt: gr.EventData, request: gr.Request):
@@ -2459,7 +2479,7 @@ def create_test_page(ctx: Any) -> None:
 
     reports_list.click(_on_report, inputs=[page_state, reports_state, models_state, job_state],
                        outputs=[selected_report, reports_state, *result_outputs],
-                       show_progress="hidden", **one_at_a_time)
+                       show_progress="hidden", **one_at_a_time, **every_one)
 
     # ------------------------------------------------------------------ the job
     def _job_outputs(page, models, binding, ws, label, key, job, gpu):
@@ -2471,30 +2491,37 @@ def create_test_page(ctx: Any) -> None:
 
     job_outputs = [start, start_reason, job_head, job_out, cancel, cancel_reason]
 
-    def _job_read_again(page, models, current_report, reports, seen, request):
+    def _job_read_again(page, models, current_report, reports, seen, shown, request):
         """The selection read again after the job changed, in the selection's
         group: the job, then the reports of the version the session's reports
         were read for (the version shown: an event asked before this one may
         have changed it since this one was asked), and the report to show
-        chosen again (the ended run's if a run `seen` running has ended)."""
+        chosen again: the ended run's if a run `seen` running has ended and
+        it was not chosen for that run already (`shown`, the job it was last
+        chosen for, which only this group writes; returned updated). What
+        the session saw of the job cannot say that alone: the group's reads
+        write it too, so one that ends late writes back the job it read, and
+        the poll then sees the same end again and hands it over again."""
         job = read_job()
-        ended = (seen or {}).get("status") in _BUSY and job.get("status") not in _BUSY
+        ended = ((seen or {}).get("status") in _BUSY and job.get("status") not in _BUSY
+                 and job.get("job_id") != shown)
         label = (reports or {}).get("label")
         reports, run_id = _reports(page, models, label, current_report, job, request,
                                    prefer_outcome=ended)
-        return job, label, reports, run_id
+        return job, label, reports, run_id, (job.get("job_id") if ended else shown)
 
-    def _after_act(page, models, binding, ws, key, current_report, reports, seen,
+    def _after_act(page, models, binding, ws, key, current_report, reports, seen, shown,
                    request: gr.Request):
-        job, label, reports, run_id = _job_read_again(page, models, current_report, reports,
-                                                      seen, request)
-        return [reports, run_id, {"job_id": job.get("job_id"), "status": job.get("status")},
+        job, label, reports, run_id, shown = _job_read_again(page, models, current_report,
+                                                             reports, seen, shown, request)
+        return [reports, run_id, shown, {"job_id": job.get("job_id"), "status": job.get("status")},
                 *_job_outputs(page, models, binding, ws, label, key, job, _gpu(page)),
                 *_result_outputs(page, reports, models, run_id, job)]
 
-    after_outputs = [reports_state, selected_report, job_state, *job_outputs, *result_outputs]
+    after_outputs = [reports_state, selected_report, end_shown, job_state, *job_outputs,
+                     *result_outputs]
     after_inputs = [page_state, models_state, binding_state_, workspace, model,
-                    selected_report, reports_state, job_state]
+                    selected_report, reports_state, job_state, end_shown]
 
     def _on_start(page, models, ws, label, key, rec, det, request: gr.Request):
         result = start_test_run(page, models, ws, label, key, rec, det, request)
@@ -2557,20 +2584,21 @@ def create_test_page(ctx: Any) -> None:
     ctx.timer_slow.tick(_poll, inputs=poll_inputs, outputs=[*poll_outputs, ctx.chips],
                         queue=False, show_progress="hidden")
 
-    def _after_job_change(page, models, current_report, reports, change, request: gr.Request):
+    def _after_job_change(page, models, current_report, reports, shown, change,
+                          request: gr.Request):
         """The poll's hand-off: the selection read again in its group after
         the job changed (`change` names what the session saw before)."""
         if not page or not isinstance(change, Mapping):
-            return [gr.update()] * (2 + len(result_outputs))
-        job, _label, reports, run_id = _job_read_again(page, models, current_report, reports,
-                                                       change.get("seen"), request)
-        return [reports, run_id, *_result_outputs(page, reports, models, run_id, job)]
+            return [gr.update()] * (3 + len(result_outputs))
+        job, _label, reports, run_id, shown = _job_read_again(
+            page, models, current_report, reports, change.get("seen"), shown, request)
+        return [reports, run_id, shown, *_result_outputs(page, reports, models, run_id, job)]
 
     job_changed.change(_after_job_change,
                        inputs=[page_state, models_state, selected_report, reports_state,
-                               job_changed],
-                       outputs=[reports_state, selected_report, *result_outputs],
-                       show_progress="hidden", **one_at_a_time)
+                               end_shown, job_changed],
+                       outputs=[reports_state, selected_report, end_shown, *result_outputs],
+                       show_progress="hidden", **one_at_a_time, **every_one)
 
     # ------------------------------------------------------------------ register and notes
     def _on_register(page, reports, models, ws, run_id, request: gr.Request):

@@ -797,13 +797,16 @@ workspace is not filed beside a copy in another (a digest with records in two le
 out of D4's ordering). Every row is asked again from the session's checkpoint listing; another
 workspace is listed only for the selected report, D8 asked on that request. Notes that cannot be
 read are said, never shown as "no note". *Since the root-cause round (2026-10-22, P2-5-F2;
-implemented, not reviewed):* every event that writes the session's selection (the version's
-reports, the report shown, and the list and result drawn from them) runs in one queued group of
-one (`SELECTION_CONCURRENCY`: page open, workspace, version, a report's row, the read after an
-act or an import), first asked first run, each from what the one before it wrote; Gradio orders
-no two events of a session otherwise, so an answer that ended late wrote back the selection it
-started from. The 5-second poll writes no selection: on the tick that sees the job change it
-hands the store's re-read to that group (BACKLOG 46).
+implemented, not reviewed):* every event that writes the session's selection (the checkpoint
+listing, the version's reports, the report shown, and the list and result drawn from them) runs
+in one queued group of one (`SELECTION_CONCURRENCY`: page open, workspace, version, a report's
+row, ↻, the read after an act or an import), first asked first run, each from what the one
+before it wrote; Gradio orders no two events of a session otherwise, so an answer that ended late
+wrote back the selection it started from. Every choice joins it, also one made while an earlier
+one waits (`trigger_mode="multiple"`: Gradio's default drops it). The 5-second poll writes no
+selection: on the tick that sees the job change it hands the store's re-read to that group, and
+the group chooses an ended run's report once for that run, however often the end is handed over
+(BACKLOG 46).
 
 ### D6 — How a test cohort is imported, identified and versioned
 

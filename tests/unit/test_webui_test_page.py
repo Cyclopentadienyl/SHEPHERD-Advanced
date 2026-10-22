@@ -1027,7 +1027,7 @@ def test_a_poll_hands_the_store_read_over_only_when_the_job_changed(site, monkey
     again = poll.fn("test", page, {}, None, "demo", LABEL, None,
                     {"job_id": "test-1", "status": "running"}, _readonly())
     assert again[-2]["at"] != ended[-2]["at"], "each hand-off is a new value"
-    out = after.fn(page, {}, None, {"label": LABEL}, ended[-2], _readonly())
+    out = after.fn(page, {}, None, {"label": LABEL}, None, ended[-2], _readonly())
     assert reads == [LABEL] and out[0]["label"] == LABEL
 
 
@@ -1061,7 +1061,9 @@ def test_the_report_of_a_run_that_has_just_ended_is_selected(site, monkeypatch):
     """A run this session saw running ends with a report: the read the poll
     hands over selects it, even over the report the operator had chosen; once
     seen ended, the poll hands nothing over, and a read then (after an act)
-    keeps the operator's choice."""
+    keeps the operator's choice. It is chosen once for that run: a second
+    hand-off of the same end (the poll saw it again, a late read having
+    written back the job it read) keeps the operator's choice too."""
     other = _disagreeing_copy(site)
     demo, ctx, _registry = _page_component()
     poll, after = _named(demo, "_poll"), _named(demo, "_after_job_change")
@@ -1074,13 +1076,16 @@ def test_the_report_of_a_run_that_has_just_ended_is_selected(site, monkeypatch):
     reports = tp.read_reports(LABEL)
     handoff = poll.fn("test", page, {}, None, "demo", LABEL, None,
                       {"job_id": "test-2", "status": "running"}, _readonly())[-2]
-    ended = after.fn(page, {}, other, reports, handoff, _readonly())
-    assert ended[1] == site.run_id
+    ended = after.fn(page, {}, other, reports, None, handoff, _readonly())
+    assert ended[1] == site.run_id and ended[2] == "test-2"
+    again = after.fn(page, {}, other, reports, ended[2], handoff, _readonly())
+    assert again[1] == other and again[2] == "test-2", "chosen once for a run"
     quiet = poll.fn("test", page, {}, None, "demo", LABEL, None,
                     {"job_id": "test-2", "status": "completed"}, _readonly())
     assert quiet[-2] == gr.update(), "nothing is handed over once the end was seen"
-    seen = after.fn(page, {}, other, reports, {"seen": {"job_id": "test-2",
-                                                        "status": "completed"}}, _readonly())
+    seen = after.fn(page, {}, other, reports, None, {"seen": {"job_id": "test-2",
+                                                              "status": "completed"}},
+                    _readonly())
     assert seen[1] == other, "the operator's choice stands once the end was seen"
 
 
@@ -1097,7 +1102,7 @@ def test_a_poll_that_sees_the_job_change_chooses_again_when_the_shown_report_is_
     gone = "20261001T000000Z-" + "a" * 12 + "-" + "b" * 8
     handoff = poll.fn("test", page, {}, None, "demo", LABEL, None,
                       {"job_id": "test-2", "status": "completed"}, _readonly())[-2]
-    out = after.fn(page, {}, gone, {"label": LABEL}, handoff, _readonly())
+    out = after.fn(page, {}, gone, {"label": LABEL}, None, handoff, _readonly())
     assert out[1] == site.run_id
 
 
@@ -1111,21 +1116,31 @@ def test_the_import_is_one_at_a_time_and_there_is_no_upload():
 
 
 def test_every_write_of_the_selection_is_in_one_queued_group_of_one():
-    """The session's selection (the version's reports, the report shown) is
-    written only by queued listeners of `SELECTION_CONCURRENCY`, one at a
-    time: page open, the workspace, the version, a report's row, the read
-    after each act and after an import, and the poll's hand-off. The version
-    writes the select too (a workspace's event asked before it set it)."""
+    """The session's selection (the checkpoint listing, the version's
+    reports, the report shown, the run its report was chosen for) is written
+    only by queued listeners of `SELECTION_CONCURRENCY`, one at a time: page
+    open, the workspace, the version, a report's row, ↻, the read after each
+    act and after an import, and the poll's hand-off. The version writes the
+    select too (a workspace's event asked before it set it). A choice the
+    operator makes and the poll's hand-off join every time they are asked
+    ("multiple"): with Gradio's defaults the browser drops a second trigger of
+    a listener whose event waits ("once") or asks it again with the first
+    one's data ("always_last"), and in the group an event waits."""
     demo, _ctx, _registry = _page_component()
     selected_report, reports_state = _named(demo, "_on_report").outputs[:2]
-    writers = [fn for fn in demo.fns.values()
-               if selected_report in fn.outputs or reports_state in fn.outputs]
+    models_state = _named(demo, "_on_model_reload").outputs[0]
+    end_shown = _named(demo, "_after_job_change").outputs[2]
+    selection = (models_state, reports_state, selected_report, end_shown)
+    writers = [fn for fn in demo.fns.values() if set(selection) & set(fn.outputs)]
     assert sorted(fn.name for fn in writers) == sorted(
-        ["_refresh", "_on_workspace", "_on_version", "_on_report", "_after_act", "_after_act",
-         "_after_act", "_after_act", "_after_commit", "_after_job_change"])
+        ["_refresh", "_on_workspace", "_on_version", "_on_report", "_on_model_reload",
+         "_after_act", "_after_act", "_after_act", "_after_act", "_after_commit",
+         "_after_job_change"])
     for fn in writers:
         assert fn.queue is not False, fn.name
         assert (fn.concurrency_id, fn.concurrency_limit) == (tp.SELECTION_CONCURRENCY, 1), fn.name
+    for name in ("_on_workspace", "_on_version", "_on_report", "_after_job_change"):
+        assert _named(demo, name).trigger_mode == "multiple", name
     version = _named(demo, "_on_version")
     assert version.inputs[4] in version.outputs
 
@@ -1304,7 +1319,7 @@ def test_a_late_read_never_writes_back_the_selection_it_started_from(site, monke
         assert sorted(runs) == sorted([site.run_id, other]) and runs[0] == site.run_id
         assert browser.state(selected_report) == site.run_id and shown() == LABEL
         handoff = {"seen": {"job_id": "test-9", "status": "running"}, "at": 1}
-        read_again = lambda: join(after, [None, None, None, None, handoff])  # noqa: E731
+        read_again = lambda: join(after, [None] * 5 + [handoff])  # noqa: E731
 
         # a report's row clicked while the hand-off's read is held
         held(read_again, lambda: join(on_report, [None] * 4, {"key": other}))
@@ -1326,6 +1341,124 @@ def test_a_late_read_never_writes_back_the_selection_it_started_from(site, monke
         assert shown() == LABEL, "the select shows one version and the session holds another's"
         assert browser.state(selected_report) == site.run_id
         browser.close()
+
+
+def test_an_ended_run_is_chosen_once_however_often_the_poll_sees_the_end(site, monkeypatch):
+    """Through the page served by Gradio: an act's read is held in its store
+    read (it read the job, still running, before it) while the run ends with
+    the older report. The poll (``queue=False``) sees the end and hands it
+    over; the act then writes back the job it read, so the next tick sees the
+    same end and hands it over again. The first hand-off chooses the ended
+    run's report; a report clicked after it stays chosen through the second.
+    Decided only from what the session saw of the job, which the poll and the
+    group's reads both write, the second hand-off chose the ended run's
+    report again over the click."""
+    other = _disagreeing_copy(site)
+    job = {"status": "running", "job_id": "test-9", "inputs": {}, "log": [], "outcome": None}
+    monkeypatch.setattr(tp, "read_job", lambda **k: dict(job))
+    monkeypatch.setattr(tp, "gpu_line", lambda **k: ("none", "GPU jobs: none"))
+    real = tp.read_reports
+    hold, entered, release = threading.Event(), threading.Event(), threading.Event()
+
+    def read_reports(label, **kwargs):
+        if hold.is_set():
+            hold.clear()
+            entered.set()
+            assert release.wait(30), "never released"
+        return real(label, **kwargs)
+
+    monkeypatch.setattr(tp, "read_reports", read_reports)
+    demo, ctx, _registry = _page_component()
+    refresh, on_report, poll, after = (
+        _named(demo, n) for n in ("_refresh", "_on_report", "_poll", "_after_job_change"))
+    after_act = next(fn for fn in demo.fns.values() if fn.name == "_after_act")
+    selected_report = on_report.outputs[0]
+
+    with _served(demo) as base:
+        browser = _Session(base, demo)
+
+        def tick():
+            """The slow timer's request, as the browser sends it (queue=False);
+            returns the hand-off it wrote."""
+            answer = browser.client.post(f"{base}/run/predict", json={
+                "data": [None, None, None, None, "demo", LABEL, None, None],
+                "fn_index": poll._id, "session_hash": browser.session, "event_data": None,
+                "trigger_id": None})
+            answer.raise_for_status()
+            return answer.json()["data"][poll.outputs.index(after.inputs[-1])]
+
+        assert browser.wait(browser.join(refresh, [None] * 5))
+        browser.demo._queue.server_app.state_holder[browser.session][ctx.location._id] = tp.PAGE
+        newest = browser.state(selected_report)
+        assert newest == site.run_id != other
+        assert tick().get("__type__") == "update", "nothing changed since the page was read"
+
+        hold.set()
+        act = browser.join(after_act, [None, None, None, "demo", None, None, None, None, None])
+        assert entered.wait(30), "the act's read did not start"
+        job.update(status="completed", outcome={"report_dir": str(site.reports / other),
+                                                "kept": True, "registered": False,
+                                                "summary": "kept"})
+        first = tick()
+        assert first["seen"] == {"job_id": "test-9", "status": "running"}
+        handed = browser.join(after, [None] * 5 + [first])
+        release.set()
+        assert browser.wait(act, handed)
+        assert browser.state(selected_report) == other, "the ended run's report is chosen"
+
+        assert browser.wait(browser.join(on_report, [None] * 4, {"key": newest}))
+        second = tick()
+        assert second["seen"] == {"job_id": "test-9", "status": "running"}, \
+            "the act wrote back the job it read, so the poll saw the end again"
+        assert browser.wait(browser.join(after, [None] * 5 + [second]))
+        browser.close()
+        assert browser.state(selected_report) == newest, \
+            "the click was undone by a second hand-off of the same end"
+
+
+def test_a_late_reload_never_writes_back_another_workspaces_checkpoints(site, monkeypatch):
+    """Through the page served by Gradio, for an operator: ↻ held in its
+    checkpoint listing while another workspace is chosen. The listing the
+    session keeps (each row's registration and Start are asked from it) is the
+    workspace chosen last. With ↻ in its own group the workspace's event ran
+    beside it, and ↻ ended last and wrote back the first workspace's
+    listing."""
+    shutil.copytree(site.demo, site.ws / "other", symlinks=True)
+    operator_mode(monkeypatch)
+    job = {"status": "idle", "job_id": None, "inputs": {}, "log": [], "outcome": None}
+    monkeypatch.setattr(tp, "read_job", lambda **k: dict(job))
+    monkeypatch.setattr(tp, "gpu_line", lambda **k: ("none", "GPU jobs: none"))
+    real = tp.read_models
+    hold, entered, release = threading.Event(), threading.Event(), threading.Event()
+
+    def read_models(name, request, **kwargs):
+        if hold.is_set():
+            hold.clear()
+            entered.set()
+            assert release.wait(30), "never released"
+        return real(name, request, **kwargs)
+
+    monkeypatch.setattr(tp, "read_models", read_models)
+    demo, _ctx, _registry = _page_component()
+    refresh, on_workspace, reload_ = (
+        _named(demo, n) for n in ("_refresh", "_on_workspace", "_on_model_reload"))
+    models_state = reload_.outputs[0]
+
+    with _served(demo) as base:
+        browser = _Session(base, demo)
+        assert browser.wait(browser.join(refresh, [None] * 5))
+        listing = browser.state(models_state)
+        assert listing["workspace"] == "demo" and listing["items"], listing
+        hold.set()
+        reloaded = browser.join(reload_, [None, None, "demo", LABEL, None, None])
+        assert entered.wait(30), "the reload did not start"
+        chosen = browser.join(on_workspace, [None, "other", LABEL, None, None, None])
+        browser.wait(chosen, timeout=1.5)
+        release.set()
+        assert browser.wait(reloaded, chosen)
+        browser.close()
+        assert browser.state(models_state)["workspace"] == "other", \
+            "the reload wrote back the first workspace's checkpoints"
 
 
 def test_the_field_help_is_registered_with_the_labels():
