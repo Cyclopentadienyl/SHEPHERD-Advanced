@@ -102,6 +102,34 @@ def _ledger_records(directory):
     return json.loads((directory / "evaluations.json").read_text())["records"]
 
 
+def test_the_probes_reload_is_bound_to_the_digest_it_expects(tmp_path, served_state,
+                                                            monkeypatch):
+    """The verification of EB-1 (R-6): the acceptance's reloads (T5, RT3) go
+    through the precondition the dashboard's Load uses, so a GB10 run exercises
+    it. The digest expected is served (the positive control); another is refused
+    by the reload itself, before anything is published -- the pipeline served
+    before stays the same object -- never published and then caught by the
+    status's digest afterwards."""
+    import hashlib
+
+    from tests.fixtures.synthetic_workspace import build_workspace
+
+    probe = _probe()
+    for name in ("SHEPHERD_KG_PATH", "SHEPHERD_DATA_DIR", "SHEPHERD_CHECKPOINT_PATH"):
+        monkeypatch.delenv(name, raising=False)
+    data_dir, checkpoint = build_workspace(tmp_path / "ws")
+    expected = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
+
+    served, answer = probe._serve_and_view(data_dir, checkpoint, expected, "cpu")
+    assert served == expected and answer["checkpoint_sha256"] == expected
+    serving = served_state.app_state.pipeline
+
+    with pytest.raises(AssertionError, match="the reload naming the checkpoint was refused: "
+                                             ".* is not the model that was shown"):
+        probe._serve_and_view(data_dir, checkpoint, "a" * 64, "cpu")
+    assert served_state.app_state.pipeline is serving
+
+
 def test_the_m4_probes_are_required_in_both_parts():
     probe = _probe()
     assert set(M4_DEMO_PROBES) <= set(probe.M2_DEMO_REQUIRED)

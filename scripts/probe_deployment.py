@@ -106,9 +106,10 @@ entry point, and the registry, the kept reports and the ledgers are all under
     is already registered and a damaged copy is refused, the ledger unchanged
     (T3); the version imported against M1's same-shaped workspace is refused by
     the measurement before the checkpoint is read (T4); served through the
-    reload route, the measured checkpoint's record shown by the read-only view
-    for the digest the status reports, and none for M2's checkpoint served
-    beside the same ledger (T5); the overlap audit in registered mode (T6).
+    reload route, bound to the digest expected (as the dashboard's Load binds
+    it), the measured checkpoint's record shown by the read-only view for the
+    digest the status reports, and none for M2's checkpoint served beside the
+    same ledger (T5); the overlap audit in registered mode (T6).
     Phase R, after R7: N of the real workspace's val cases written back as a
     source through the real graph's ids, imported with no exclusions (RT1);
     the checkpoint R4 trained measured on it with --record, training disease
@@ -2733,14 +2734,18 @@ def _observing_checkpoint_reads(observed: List[str]):
         checkpoint_io.read_checkpoint = original
 
 
-def _serve_and_view(data_dir: Path, checkpoint: Path, device: str) -> Tuple[str, Dict[str, Any]]:
+def _serve_and_view(data_dir: Path, checkpoint: Path, expected_sha256: str,
+                    device: str) -> Tuple[str, Dict[str, Any]]:
     """`checkpoint` served through the production reload, named explicitly
-    (E4's route, which publishes what it built), then the status and the loaded
-    model's recorded results read as the Diagnosis panel reads them: two GETs
-    on the application, status first.
+    (E4's route, which publishes what it built) and **bound to the digest the
+    probe expects** (`expected_checkpoint_sha256`, compared on the build's own
+    checkpoint read before anything is published, as the dashboard's Load binds
+    it), then the status and the loaded model's recorded results read as the
+    Diagnosis panel reads them: two GETs on the application, status first.
 
-    Returns the digest the status reports for the served checkpoint and the
-    records answer, whose echoed digest must be that one.
+    Returns the digest the status reports for the served checkpoint, which
+    must be the one expected, and the records answer, whose echoed digest must
+    be that one.
     """
     import asyncio
 
@@ -2750,8 +2755,9 @@ def _serve_and_view(data_dir: Path, checkpoint: Path, device: str) -> Tuple[str,
     from src.api.routes.pipeline import PipelineReloadRequest, reload_pipeline
 
     result = asyncio.run(reload_pipeline(PipelineReloadRequest(
-        data_dir=str(data_dir), checkpoint_path=str(checkpoint), device=device)))
-    assert result.success, "the reload naming the checkpoint was refused"
+        data_dir=str(data_dir), checkpoint_path=str(checkpoint), device=device,
+        expected_checkpoint_sha256=expected_sha256)))
+    assert result.success, f"the reload naming the checkpoint was refused: {result.message}"
     # Not entered as a context, which would run the application's lifespan and
     # build a pipeline from any SHEPHERD_* configuration in the environment over
     # the one just published; the requests alone reach the routes.
@@ -2766,6 +2772,7 @@ def _serve_and_view(data_dir: Path, checkpoint: Path, device: str) -> Tuple[str,
         f"{evaluations.status_code}")
     served = (status.json().get("served_identity") or {}).get("checkpoint") or {}
     assert served.get("state") == "verified", "the status does not identify the served checkpoint"
+    assert served.get("sha256") == expected_sha256, "the status reports another checkpoint served"
     answer = evaluations.json()
     assert answer.get("checkpoint_sha256") == served["sha256"], (
         "the recorded results are for another checkpoint than the status reports")
@@ -5125,16 +5132,15 @@ def phase_m2_demo(
     def _read_only_view() -> Tuple[str, Dict[str, Any]]:
         assert "record" in m4, "the measurement (T2) is not available"
         assert "child" in state, "the resumed checkpoint (M2) is not available"
-        served, answer = _serve_and_view(sound, measured, device)
-        assert served == m4["checkpoint_sha256"], "the status reports another checkpoint served"
+        served, answer = _serve_and_view(sound, measured, m4["checkpoint_sha256"], device)
         shown = _the_view_shows(answer, m4["record"], m4["ledger_sha256"],
                                 ("training", "validation"))
         # **Another model, beside the same ledger**: found by digest, so the
         # measured checkpoint's record is not shown for it.
         other = measured.with_name("other.pt")
         shutil.copyfile(state["child"], other)
-        served_other, beside = _serve_and_view(sound, other, device)
-        assert served_other not in (None, served), "the other checkpoint is the measured one"
+        served_other, beside = _serve_and_view(sound, other, file_sha256(other), device)
+        assert served_other != served, "the other checkpoint is the measured one"
         assert beside.get("state") == "no_records", (
             f"the view's state for another checkpoint is {beside.get('state')}")
         assert beside.get("records") == [] and beside.get("records_not_shown") == 0, (
@@ -5143,7 +5149,8 @@ def phase_m2_demo(
             "the view read another ledger for the other checkpoint")
         return "the served checkpoint's record shown; none for another beside the same ledger", {
             "served": "reloaded through the reload route's handler with the checkpoint named "
-                      "explicitly; read through GET /api/v1/pipeline/status and GET "
+                      "explicitly and bound to its digest (expected_checkpoint_sha256); read "
+                      "through GET /api/v1/pipeline/status and GET "
                       "/api/v1/evaluations/loaded-model",
             "measured": shown,
             "other": {"state": beside["state"], "checkpoint_sha256": served_other,
@@ -5509,13 +5516,13 @@ def phase_m2_real(
     def _real_view() -> Tuple[str, Dict[str, Any]]:
         assert "record" in state.get("m4", {}), "the measurement (RT2) is not available"
         m4 = state["m4"]
-        served, answer = _serve_and_view(real, state["child"], device)
-        assert served == m4["checkpoint_sha256"], "the status reports another checkpoint served"
+        served, answer = _serve_and_view(real, state["child"], m4["checkpoint_sha256"], device)
         shown = _the_view_shows(answer, m4["record"], m4["ledger_sha256"],
                                 ("training", "validation"))
         return "the served real checkpoint's record is shown by the read-only view", {
             "served": "reloaded through the reload route's handler with R4's checkpoint named "
-                      "explicitly (R6 builds its pipeline without publishing or keeping it); "
+                      "explicitly and bound to its digest (expected_checkpoint_sha256; R6 "
+                      "builds its pipeline without publishing or keeping it); "
                       "read through GET /api/v1/pipeline/status and GET "
                       "/api/v1/evaluations/loaded-model",
             **shown,
