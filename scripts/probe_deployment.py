@@ -165,9 +165,10 @@ on the console, never hidden, and said again beside the acceptance's verdict.
     **W11's and RW3's training job holds the GPU by configuration**
     (`_HOLD_EPOCHS` epochs, early stopping as long), so it ends only by the
     probe's stop; that it runs and is the lock's recorded holder is checked
-    before and after the measurement CLI is tried, and a job that ended
-    meanwhile fails the probe as one that could not hold the lock, never as a
-    pass or a skip (review of 8242b47, W11/RW3). Telling whether it still
+    before a test start is tried and after the measurement CLI is, and a job
+    that ended meanwhile fails the probe as one that could not hold the lock,
+    never as a pass or a skip (review of 8242b47, W11/RW3); a test run that a
+    start not refused began is stopped. Telling whether it still
     runs needs `os.waitid` (not on Windows, nor on macOS before Python 3.13),
     without which W11 and RW3 fail saying so.
     Every M5 setting is the probe's own while M5's probes run
@@ -3674,22 +3675,31 @@ def _exclusion_while_training(manager: Any, inputs: Any, pid: int, cli_argv: Lis
     start on the same runner is refused for the slot, a test cancel does not
     reach training, and the measurement CLI, another process, is refused by
     the lock naming the job's own process. Nothing is started or written."""
-    started = manager.start_test(inputs)
-    assert not started.get("success") and "Training is already running" in started["error"] \
-        and "Nothing was started." in started["error"], "a test start was not refused"
+    # **The job holds the lock for the whole check**, checked before anything
+    # is tried and after the CLI (review of 8242b47, W11/RW3): it holds the
+    # lock from its start to its end, so running and named as the holder both
+    # times means it held it throughout. A job that ended (it cannot by
+    # itself, `_HOLD_EPOCHS`; a crash can) is said as a job that could not
+    # hold the lock, never read as a start or the lock failing to refuse, and
+    # never a pass or a skip.
+    before = _holding_job(manager, pid)
+    assert not before, (f"the training job could not hold the GPU lock for the check: "
+                        f"before a test start was tried, {before}")
+    # A test run that a start not refused began is stopped, whatever ends
+    # the check; a start not refused because the job had just ended is said
+    # as the job not holding.
+    with _job_ended_on_exit(manager, "test"):
+        started = manager.start_test(inputs)
+        if started.get("success"):
+            ended = _holding_job(manager, pid)
+            assert not ended, (f"the training job could not hold the GPU lock for the check: "
+                               f"while a test start was tried, {ended}")
+        assert not started.get("success") and "Training is already running" in started["error"] \
+            and "Nothing was started." in started["error"], "a test start was not refused"
     cancelled = manager.cancel_test()
     assert not cancelled.get("success") and "No test run is running" in cancelled["error"] \
         and "does not reach" in cancelled["error"], "a test cancel was not refused"
     assert manager.get_job_status_word("training") == "running", "the cancel reached training"
-    # **The job holds the lock for the whole of the CLI's attempt**, checked
-    # before and after it (review of 8242b47, W11/RW3): it holds the lock from
-    # its start to its end, so running and named as the holder both times
-    # means it held it throughout. A job that ended meanwhile cannot by itself
-    # (`_HOLD_EPOCHS`), and is said as a job that could not hold the lock,
-    # never read as the lock failing, and never a pass or a skip.
-    before = _holding_job(manager, pid)
-    assert not before, (f"the training job could not hold the GPU lock for the check: "
-                        f"before the measurement CLI was tried, {before}")
     code, said = _cli_measure(cli_argv)
     after = _holding_job(manager, pid)
     assert not after, (f"the training job could not hold the GPU lock for the check: while "

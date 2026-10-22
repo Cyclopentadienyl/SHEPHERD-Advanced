@@ -25,8 +25,9 @@ Purpose:
       the DataLoader workers it forks, which share the GPU lock's open file,
       end with it: after its main process ends the monitor ends what is left
       of the group, and only then records how the job ended and frees the
-      slot. The backend's shutdown stops the job it runs (`end_active_job`,
-      called by `src.api.main`'s lifespan)
+      slot. A backend being stopped stops the job it runs (`end_active_job`,
+      called by `src.api.main` at the shutdown signal and at the lifespan's
+      end)
     - Reads training metrics from MetricsLogger's JSON log files, and, once a
       test run has ended, what it published (its `--outcome` file) and whether
       that report is kept and registered (the registration's one helper)
@@ -1118,9 +1119,10 @@ class TrainingManager:
         2026-10-22): the job holding the GPU slot, whatever its type, stopped
         through `stop` (SIGINT, then SIGTERM, then SIGKILL to its group), or,
         when an operator's stop is already ending it, waited for, bounded by
-        the same escalation. `src.api.main`'s lifespan calls it at shutdown, so
-        a backend stopped by Ctrl-C, a closed terminal or SIGTERM ends its job
-        as systemd ending the service does. Returns what happened, or None
+        the same escalation. `src.api.main` calls it when a shutdown signal
+        arrives and again at the lifespan's end, so a backend stopped by
+        Ctrl-C, a closed terminal or SIGTERM ends its job as systemd ending the
+        service does, open connections or not. Returns what happened, or None
         when no job held the slot. Blocks; call it from a thread."""
         with self._lock:
             job = self._active

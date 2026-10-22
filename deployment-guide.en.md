@@ -1821,11 +1821,16 @@ cohort version, the same CLI an operator runs). One job at a time:
   (its note now says "A GPU job (training or a test run) is in progress").
 - **Stopping the backend stops its job** (the owner's decision of 2026-10-22). Because a job
   leads its own process group, a Ctrl-C or a hangup of the terminal the backend runs in, or a
-  SIGTERM sent to the backend alone, no longer reaches the job itself; the backend's shutdown
-  stops it instead, as a stop above does, for a backend started from a terminal (the launcher,
-  which waits for the server through a Ctrl-C, or uvicorn by hand) or sent SIGTERM outside
-  systemd; under systemd, stopping the unit signals every process of the service anyway. A
-  shutdown that does not run (a second Ctrl-C, which makes uvicorn quit at once, SIGKILL, the
+  SIGTERM sent to the backend alone, no longer reaches the job itself; the backend stops it
+  instead, as a stop above does, starting when the signal arrives, for a backend started from a
+  terminal (the launcher, which waits for the server through a Ctrl-C, or uvicorn by hand) or
+  sent SIGTERM outside systemd; under systemd, stopping the unit signals every process of the
+  service anyway. Open dashboard tabs do not hold this up: uvicorn waits for every open
+  connection before it finishes shutting down, and each tab keeps one open (its session
+  heartbeat), so the backend ends those streams at the same signal. Another connection that does
+  not close (a client that never finishes its request) keeps the backend waiting ("Waiting for
+  connections to close") with the job already stopped; a second Ctrl-C ends that wait, and the
+  backend still waits for the job's stop before it exits. A backend that is killed (SIGKILL, the
   out-of-memory killer) leaves the job running and holding the lock; the GPU chip names it; stop
   it with `kill -INT <pid>` or `kill -TERM -- -<pid>`. **Do not run the backend with
   `--reload`**: uvicorn's reloader restarts the server on every saved source file, and each

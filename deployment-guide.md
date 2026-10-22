@@ -2124,14 +2124,17 @@ Training Console 與訓練 API 背後的服務現在執行兩種工作，各自�
 - **Runtime Settings 的 Restart Backend** 在任何工作執行中時都會被拒絕，不論是訓練或測試執行
   （提示文字現在是 "A GPU job (training or a test run) is in progress"）。
 - **停止後端就會停止它的工作**（owner 的決定，2026-10-22）。因為工作是自己行程群組的 leader，在
-  執行後端的終端機按 Ctrl-C、終端機掛斷，或只對後端送 SIGTERM，都不再直接到達工作本身；改由後端的
-  關閉程序像上面的停止一樣停止它——適用於從終端機啟動的後端（launcher 會在 Ctrl-C 時等待伺服器結束，
-  或手動執行的 uvicorn），以及在 systemd 之外收到 SIGTERM 的後端；在 systemd 下，停止 unit 本來就會
-  對服務的每個行程送出訊號。沒有執行關閉程序的情況（第二次 Ctrl-C 讓 uvicorn 立刻退出、SIGKILL、
-  記憶體不足被系統結束）會讓工作繼續執行並保有鎖；GPU chip 會指出它；請用 `kill -INT <pid>` 或
-  `kill -TERM -- -<pid>` 停止它。**不要以 `--reload` 執行後端**：uvicorn 的 reloader 每次儲存原始碼
-  都會重啟伺服器，每次重啟的關閉程序都會停止正在進行的訓練。`setup_demo.py` 印出的命令不再含
-  `--reload`，`python -m src.api.main` 也不再自動重新載入。
+  執行後端的終端機按 Ctrl-C、終端機掛斷，或只對後端送 SIGTERM，都不再直接到達工作本身；改由後端在
+  訊號到達時就開始像上面的停止一樣停止它——適用於從終端機啟動的後端（launcher 會在 Ctrl-C 時等待伺服器
+  結束，或手動執行的 uvicorn），以及在 systemd 之外收到 SIGTERM 的後端；在 systemd 下，停止 unit
+  本來就會對服務的每個行程送出訊號。開著的儀表板分頁不會拖延它：uvicorn 結束前會等待每個開著的連線，
+  而每個分頁都保有一個（它的 session heartbeat），所以後端在同一個訊號就結束這些串流。其他不會關閉的
+  連線（例如一個永遠沒送完請求的客戶端）會讓後端繼續等待（"Waiting for connections to close"），
+  但工作已經停止；第二次 Ctrl-C 會結束這個等待，而後端仍會等工作的停止完成才退出。後端被直接結束
+  （SIGKILL、記憶體不足被系統結束）會讓工作繼續執行並保有鎖；GPU chip 會指出它；請用
+  `kill -INT <pid>` 或 `kill -TERM -- -<pid>` 停止它。**不要以 `--reload` 執行後端**：uvicorn 的
+  reloader 每次儲存原始碼都會重啟伺服器，每次重啟的關閉程序都會停止正在進行的訓練。
+  `setup_demo.py` 印出的命令不再含 `--reload`，`python -m src.api.main` 也不再自動重新載入。
 - `GET /api/v1/training/status` 新增 `job_id`、`end_time`、`exit_code` 與 `gpu`：占用 GPU 的
   工作（任一類型），以及鎖的狀態（`configured`、`path`、`source`、`held_by`、`problem`）。占用
   GPU 的測試執行會顯示在這裡，絕不會顯示成訓練。

@@ -1580,11 +1580,16 @@ contract and BACKLOG stay the record, and no new planning document is added.
   while the Windows backend is untested. A CLI killed by hand with `kill -9 <pid>` still leaves
   its forked workers to end by themselves (a worker's PR_SET_PDEATHSIG, the critic's optional
   measure, is not added). **Stopping the backend stops its jobs** (the owner's decision,
-  2026-10-22): the lifespan's shutdown in `src/api/main.py` stops the runner's active job
-  (`TrainingManager.end_active_job`, bounded by the stop's escalation), a hangup is routed to
-  uvicorn's orderly shutdown, and the launcher in its browser mode waits for the server through
-  a Ctrl-C; a forced quit (a second Ctrl-C), SIGKILL or the out-of-memory killer still leave
-  the job running, and `--reload` is gone from the printed commands and from
+  2026-10-22): the backend stops the runner's active job (`TrainingManager.end_active_job`,
+  bounded by the stop's escalation) from the shutdown signal on: `src/api/main.py` wraps the
+  server's SIGINT and SIGTERM handlers and routes a hangup to the SIGTERM one, so the stop
+  starts at the signal, not after uvicorn's wait for open connections, which an open dashboard
+  tab's heartbeat stream held until the tab was closed (found by the verification of the fix,
+  2026-10-22), and the dashboard's heartbeat streams end at the same signal; the lifespan's
+  shutdown waits for that stop and stops a job started meanwhile. The launcher in its browser
+  mode waits for the server through a Ctrl-C; a second Ctrl-C ends uvicorn's wait for
+  connections and the backend still waits for the job's stop; SIGKILL or the out-of-memory
+  killer still leave the job running, and `--reload` is gone from the printed commands and from
   `python -m src.api.main`, since each reload's shutdown would stop a training. Tests:
   `tests/unit/test_job_process_group.py`, `tests/unit/test_backend_shutdown.py`,
   `tests/integration/test_backend_stops_its_job.py`, `tests/unit/test_gpu_lock.py`.
@@ -1973,9 +1978,10 @@ contract and BACKLOG stay the record, and no new planning document is added.
   session, which the screenshots and the owner's use cover. *After the review of `8242b47`
   (implemented, its incremental review next):* W11's and RW3's training job holds the GPU by
   configuration (a million epochs, early stopping as long), and that it runs and is the lock's
-  recorded holder is checked before and after the measurement CLI is tried, so a job that
-  ended meanwhile fails the probe as one that could not hold the lock, never as a pass, a skip
-  or the lock failing (W11/RW3: on the reviewer's CPU the demo job stopped early within a
+  recorded holder is checked before a test start is tried and after the measurement CLI is, so
+  a job that ended meanwhile fails the probe as one that could not hold the lock, never as a
+  pass, a skip, or a start or the lock failing to refuse, and a test run that a start not
+  refused began is stopped (W11/RW3: on the reviewer's CPU the demo job stopped early within a
   second and released the lock before the CLI ran); without `os.waitid` (Windows, macOS before
   Python 3.13) they fail saying so. The earlier measurement probes take a lock of the probe's
   own under its work directory, since a CLI now refuses without one, and so do not exclude a

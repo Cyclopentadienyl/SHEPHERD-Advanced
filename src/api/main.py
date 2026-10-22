@@ -57,11 +57,12 @@ import time
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, NamedTuple, Optional
+from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple
 
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.routing import Mount
 
 from src.api.middleware.frame_guard import RefuseFraming
 from src.api.middleware.gradio_routes import RefuseUnusedGradioRoutes
@@ -148,15 +149,23 @@ async def lifespan(app: FastAPI):
     2026-10-22): each GPU job leads its own process group (review of 8242b47,
     P2-3), so a Ctrl-C or a hangup of the terminal the backend runs in no
     longer reaches it, and neither does a SIGTERM sent to the backend alone.
-    So shutdown stops the job the runner holds (`end_active_job`: SIGINT,
-    then SIGTERM, then SIGKILL to its group), and a hangup (SIGHUP, a closed
-    terminal), which uvicorn does not handle, is routed to the server's own
-    SIGTERM handler for as long as the application runs, so it shuts down
-    the same way (`_hangup_as_termination`). Not covered: a shutdown that
-    never reaches the lifespan's end (uvicorn's forced quit on a second
-    Ctrl-C, a SIGKILL or the out-of-memory killer); the job then keeps
-    running and keeps the GPU lock until it is stopped by its pid. Under
-    systemd the unit's stop signals every process of the service anyway.
+    So the backend stops the job its runner holds (`end_active_job`: SIGINT,
+    then SIGTERM, then SIGKILL to its group) **from the signal on**, and ends
+    the dashboard's heartbeat streams at the same signal (`_ShutdownSignals`):
+    uvicorn waits for every open connection to close before it runs the
+    lifespan's end, and an open dashboard tab keeps one open, so a stop begun
+    there waited for every tab to be closed. A hangup (SIGHUP, a closed
+    terminal), which uvicorn does not handle, is routed to its SIGTERM
+    handler while the application runs, so it shuts down the same way. The
+    lifespan's end waits for that stop, then stops a job that holds the slot
+    still (one started while the connections closed, or any when no signal
+    began the shutdown). A second Ctrl-C (uvicorn's forced quit, which stops
+    waiting for connections and skips the lifespan's shutdown event) leaves
+    no job either: the stop began at the first, and the backend waits for it
+    before it exits. Not covered: a SIGKILL or the out-of-memory killer; the
+    job then keeps running and keeps the GPU lock until it is stopped by its
+    pid. Under systemd the unit's stop signals every process of the service
+    anyway.
     """
     _check_startup_bind()
 
@@ -208,7 +217,8 @@ async def lifespan(app: FastAPI):
         logger.error(f"Startup failed: {e}")
         app_state.is_ready = False
 
-    hangup = _hangup_as_termination()
+    shutdown_signals = _ShutdownSignals(app)
+    shutdown_signals.install()
     try:
         yield
     finally:
@@ -216,32 +226,128 @@ async def lifespan(app: FastAPI):
         logger.info("Shutting down SHEPHERD-Advanced API...")
         app_state.is_ready = False
         try:
-            await asyncio.to_thread(_stop_the_active_job)
+            await asyncio.to_thread(shutdown_signals.end_jobs)
         finally:
-            if hangup is not None:
-                signal.signal(signal.SIGHUP, hangup)
+            shutdown_signals.restore()
 
 
-def _hangup_as_termination() -> Optional[Any]:
-    """Route SIGHUP to the handler the server set for SIGTERM (uvicorn's
-    orderly shutdown), so a backend whose terminal is closed shuts down as it
-    does on SIGTERM and stops its job; returns the handler replaced, which
-    shutdown puts back, or None when nothing was changed.
+class _ShutdownSignals:
+    """**The job's stop starts at the signal that stops the backend**
+    (verification of the owner's decision, 2026-10-22). uvicorn's shutdown
+    waits for every open connection to close ("Waiting for connections to
+    close") before it runs the lifespan's end, and each open dashboard tab
+    keeps one open: Gradio's session heartbeat, which the dashboard asks for
+    because it keeps session state, and which mounted ends only when the tab
+    is closed. A stop begun at the lifespan's end left the job training, and
+    holding the GPU lock, until every tab was closed; a SIGTERM or a closed
+    terminal has no second signal to force the shutdown on.
 
-    Only in the main thread (where a server sets its handlers; an in-process
-    test client runs the lifespan elsewhere), only where SIGHUP still has its
-    default action (one ignored under ``nohup``, or handled by someone else,
-    is left as it is), and only when SIGTERM has a handler to route it to."""
-    hangup = getattr(signal, "SIGHUP", None)
-    if hangup is None or threading.current_thread() is not threading.main_thread():
-        return None
-    if signal.getsignal(hangup) is not signal.SIG_DFL:
-        return None
-    termination = signal.getsignal(signal.SIGTERM)
-    if not callable(termination):
-        return None
-    signal.signal(hangup, termination)
-    return signal.SIG_DFL
+    So, while the application runs, the server's handlers for SIGINT and
+    SIGTERM (and SIGBREAK on Windows) are wrapped, and SIGHUP, which uvicorn
+    does not handle, gets the SIGTERM handler, wrapped the same way. Each runs
+    the server's handler as before (a second Ctrl-C is still uvicorn's forced
+    quit), then hands the event loop `begin`: the first time, the job's stop
+    starts in a thread of its own, and every time, the dashboard's heartbeat
+    streams end (`_end_dashboard_streams`), so an open tab holds up neither
+    the job nor the backend. The thread is not a daemon, so the interpreter
+    waits for it before it exits, after a forced quit too. `end_jobs`, at the
+    lifespan's end, waits for it, then stops a job that holds the slot still.
+
+    Installed only in the main thread, where a server sets its handlers (an
+    in-process test client runs the lifespan elsewhere), and only when
+    SIGTERM has a handler to route to (a server's); SIGINT's default handler
+    (no server set it) is not wrapped, and SIGHUP is taken only where it
+    still has its default action (one ignored under ``nohup``, or handled by
+    someone else, is left as it is). `restore` puts back each handler
+    replaced here that is still the one installed here (after a forced quit
+    uvicorn has already put back its own).
+    """
+
+    def __init__(self, application: FastAPI) -> None:
+        self._application = application
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        #: signal -> (the handler it had, the one installed here)
+        self._installed: Dict[int, Tuple[Any, Callable[[int, Any], None]]] = {}
+        self._stopping: Optional[threading.Thread] = None
+
+    def install(self) -> None:
+        """Wrap the server's handlers; in the event loop, at startup."""
+        if threading.current_thread() is not threading.main_thread():
+            return
+        termination = signal.getsignal(signal.SIGTERM)
+        if not callable(termination):
+            return
+        self._loop = asyncio.get_running_loop()
+        for name in ("SIGINT", "SIGTERM", "SIGBREAK"):
+            number = getattr(signal, name, None)
+            if number is None:
+                continue
+            server_handler = signal.getsignal(number)
+            if callable(server_handler) and server_handler is not signal.default_int_handler:
+                self._wrap(number, server_handler, replaced=server_handler)
+        hangup = getattr(signal, "SIGHUP", None)
+        if hangup is not None and signal.getsignal(hangup) is signal.SIG_DFL:
+            self._wrap(hangup, termination, replaced=signal.SIG_DFL)
+
+    def _wrap(self, number: int, server_handler: Callable[[int, Any], Any],
+              replaced: Any) -> None:
+        def handler(signum: int, frame: Any) -> None:
+            try:
+                server_handler(signum, frame)
+            finally:
+                self._hand_to_the_loop()
+
+        signal.signal(number, handler)
+        self._installed[number] = (replaced, handler)
+
+    def _hand_to_the_loop(self) -> None:
+        """In the signal handler, only a callback handed to the event loop
+        (`call_soon_threadsafe` also wakes it): a thread started or a lock
+        taken here could wait on one the interrupted main thread holds."""
+        try:
+            self._loop.call_soon_threadsafe(self.begin)
+        except RuntimeError:  # the event loop has closed: nothing is served
+            pass
+
+    def begin(self) -> None:
+        """In the event loop: the job's stop started (once), the dashboard's
+        heartbeat streams ended."""
+        if self._stopping is None:
+            self._stopping = threading.Thread(target=_stop_the_active_job, daemon=False,
+                                              name="backend-stops-its-job")
+            self._stopping.start()
+        _end_dashboard_streams(self._application)
+
+    def end_jobs(self) -> None:
+        """At the lifespan's end: the stop a signal began waited for, then a
+        job that holds the slot still stopped (one started while the
+        connections closed, or any when no signal began the shutdown).
+        Blocks; call it from a thread."""
+        if self._stopping is not None:
+            self._stopping.join()
+        _stop_the_active_job()
+
+    def restore(self) -> None:
+        """Put back each handler replaced here that is still ours; at the
+        lifespan's end, in the event loop."""
+        for number, (replaced, installed) in self._installed.items():
+            if signal.getsignal(number) is installed:
+                signal.signal(number, replaced)
+        self._installed.clear()
+
+
+def _end_dashboard_streams(application: FastAPI) -> None:
+    """End the session heartbeat streams of the dashboard mounted at
+    `DASHBOARD_PATH`, as Gradio's own server does when it stops
+    (`Blocks._end_streaming_responses` sets the served app's `stop_event`;
+    mounted, nothing sets it). Each open tab keeps one, which otherwise ends
+    only when the tab is closed. In the event loop; with no dashboard
+    mounted, there is nothing to end."""
+    for route in application.routes:
+        if isinstance(route, Mount) and route.path == DASHBOARD_PATH:
+            stop_event = getattr(route.app, "stop_event", None)
+            if stop_event is not None:
+                stop_event.set()
 
 
 def _stop_the_active_job() -> None:

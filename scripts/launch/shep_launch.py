@@ -52,12 +52,13 @@ def serve(cmd: List[str]) -> int:
     its exit status.
 
     **A Ctrl-C waits for the server, never kills it.** The server is in this
-    terminal's process group and gets the same SIGINT; its shutdown stops the
-    GPU job it runs, which leads a process group of its own and so no longer
-    gets the terminal's signal (`src/api/main.py`, review of 8242b47).
+    terminal's process group and gets the same SIGINT; it then stops the GPU
+    job it runs, which leads a process group of its own and so no longer gets
+    the terminal's signal (`src/api/main.py`, review of 8242b47).
     `subprocess.run` would kill the server 0.25 s after the first Ctrl-C,
-    before that shutdown ends, and leave the job running. A second Ctrl-C
-    makes uvicorn quit at once, without its shutdown.
+    before that stop ends, and leave the job running. A second Ctrl-C makes
+    uvicorn stop waiting for open connections; the server still waits for the
+    job's stop before it exits.
     """
     log("$ " + " ".join(cmd))
     process = subprocess.Popen(cmd)
