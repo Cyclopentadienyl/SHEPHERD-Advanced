@@ -21,10 +21,11 @@ the package's scratch browser checks):
   of ten, the locale guard for ``en-US@posix``);
 - **replies and the pending cue** (in Node, the real module mounted with
   Gradio 6.30's props, watch and server-function semantics emulated,
-  `tests/fixtures/chart_host.cjs`): a reply is drawn only for what the token
-  asks now (the reviewer's P2-5: a selection cleared or changed, back to the
-  run drawn included), a failed call is retried and said, never "no longer
-  listed", and the figure is busy only while another run loads.
+  `tests/fixtures/chart_host.cjs`, and the installed Gradio is that 6.30.0):
+  a reply is drawn only for what the token asks now (the reviewer's P2-5: a
+  selection cleared or changed, back to the run drawn included), a failed
+  call is retried and said, never "no longer listed", and the figure is busy
+  only while another run loads.
 
 Module: tests/unit/test_webui_charts.py
 """
@@ -412,6 +413,15 @@ def test_a_reply_is_drawn_only_for_what_the_token_asks_for_now(scenario):
 def test_every_scenario_of_the_host_is_run():
     names = re.findall(r"^S\.(\w+) = ", CHART_HOST.read_text(encoding="utf-8"), re.M)
     assert sorted(names) == sorted(REPLY_SCENARIOS)
+
+
+def test_the_host_emulates_the_installed_gradio():
+    """chart_host.cjs copies Gradio 6.30.0's props, watch and component_server
+    behaviour (``props`` replaced before the watch is queued, a failed call
+    resolving ``undefined``); an upgrade must re-check that copy against the
+    new bundle before this test is moved to the new version."""
+    assert gr.__version__ == "6.30.0"
+    assert "gradio 6.30.0's" in CHART_HOST.read_text(encoding="utf-8")
 
 
 def test_the_figures_buttons_keep_their_padding_under_gradios_button_rule():
