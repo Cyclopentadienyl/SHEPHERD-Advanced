@@ -1720,6 +1720,15 @@ side (a service with no root lists no workspace, but `POST /api/v1/training/star
 workspace path). Remove it from the service's environment and from your shell; where it was the
 only setting, every job is now refused as not configured until the root is set.
 
+**Upgrade only while no training or test run is running** (since round 3 of the review fixes,
+2026-10-22), from a shell or from the service: a job started by an earlier build is not seen by
+this build's lock. A build from `main` takes no GPU lock at all, and an M5 build from before the
+root-cause round may hold the file `SHEPHERD_GPU_LOCK_FILE` named, which this build does not
+check. Stopping the service for the upgrade stops the jobs it started; for a CLI started from a
+shell, check first with `pgrep -af 'train_model.py|measure_scorer.py|setup_demo.py'` (or
+`nvidia-smi`). After the upgrade, remove `SHEPHERD_GPU_LOCK_FILE` from the service's environment
+and from your shells.
+
 A root that is set but unusable (a relative path, a directory that does not exist, a path under a
 directory the service account may not search) refuses every job rather than running it unlocked,
 and the status shows why (`gpu.lock.problem`).
@@ -1738,8 +1747,9 @@ check the lock before starting a job and refuse the start with the same holder
 ("Nothing was started."); the job's own process then takes the lock itself.
 
 **Set the root for the service and in the shell where you run the CLIs** (for example, the
-same `Environment=` lines as the systemd unit, which reads no environment file of its own, or
-one file that both the unit's `EnvironmentFile=` and your shell read). A CLI that sees no root
+`Environment=` lines you set in the systemd unit (§4.12; its template has a commented line for
+the root and one for the registry), which reads no environment file of its own, or one file that
+both the unit's `EnvironmentFile=` and your shell read). A CLI that sees no root
 is refused, exit 1, with nothing written (`train_model: refused: SHEPHERD_WORKSPACES_ROOT is not
 set, so the GPU lock is not configured ...`); so is `setup_demo.py --train-model`, which trains
 through the same trainer. **Give the shell the service's workspaces root**: every process that
@@ -1762,7 +1772,10 @@ while it holds the lock, for the message above. That file is descriptive only: t
 it as soon as it holds the lock, and a description whose process has exited is never named as the
 holder (the refusal says instead that the lock is held by a process that inherited its descriptor,
 or by a new holder that has not described itself). **Never delete the lock file while a job
-runs**: a new file would be a second lock.
+runs**: a new file would be a second lock. Git ignores it and its description wherever a root in
+the checkout puts them (since round 3 of the review fixes), so `git clean -fd` and `git stash -u`
+leave them alone; `git clean -x` and `git stash -a`, which remove ignored files too, still delete
+it, so do not run them in the deploy checkout while a job runs.
 
 What the lock does and does not guarantee:
 
@@ -1835,15 +1848,25 @@ cohort version, the same CLI an operator runs). One job at a time:
   it closes the job runner's GPU slot, only if no job holds it and in the same step as that
   check, and keeps it closed until the process is replaced: a job started during the delay
   aborts the restart, and a start asked for after that is refused, never orphaned by the restart
-  (since the root-cause round of 2026-10-22). A stop of the backend begun during the delay
-  (Ctrl-C, `systemctl stop`) aborts the restart too, so the stopping backend is never replaced
-  by a new one that would serve on.
+  (since the root-cause round of 2026-10-22). A stop of the backend begun before the process is
+  replaced (Ctrl-C, `systemctl stop`) aborts the restart too: its signal is recorded before
+  anything else, and the restart's last check and its exec are one step (since round 3 of the
+  review fixes). One case no check can close: a stop signal that arrives as the exec is made,
+  before its handler has recorded it, is lost with the old process, and the new one serves on;
+  under systemd the unit then SIGKILLs the whole service, a job started meanwhile included, after
+  `TimeoutStopSec`, and in a terminal a second Ctrl-C stops the new backend.
 - **Stopping the backend stops its job** (the owner's decision of 2026-10-22). Because a job
   leads its own process group, a Ctrl-C, a Ctrl-\ or a hangup of the terminal the backend runs
   in, or a SIGTERM sent to the backend alone, no longer reaches the job itself; the backend stops
   it instead, as a stop above does, starting when the signal arrives (a Ctrl-\ is routed there
   too since the root-cause round of 2026-10-22: it used to leave the job training with the lock;
-  the backend still ends by it, after the job's stop). Under systemd the unit's
+  the backend still ends by it, after the job's stop). **The process that was started is the
+  server on every POSIX start path** (since round 3 of the review fixes): `launch_shepherd.sh`
+  execs the launcher, and the launcher execs into uvicorn, in its browser mode too (the browser is
+  opened by a helper of its own), so a SIGTERM sent to the PID you or a supervisor started is the
+  server's; a launcher waiting beside the server used to end alone, and the server served on with
+  its job. On Windows the launcher waits beside the server, and the stop goes through the
+  console's Ctrl-C or Ctrl-Break. Under systemd the unit's
   `KillMode=mixed` sends the stop's SIGTERM to the server alone (the launcher execs into it),
   which stops its job the same way, and systemd SIGKILLs what is left only once the server has
   exited, within `TimeoutStopSec=150`, which covers the backend's longest stop of its job; the

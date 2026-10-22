@@ -2041,6 +2041,13 @@ server function 傳來，由瀏覽器存檔；伺服器不為它提供檔案。�
 workspace 路徑）。請從服務的環境與你的 shell 中移除它；原本只設定它的地方，在設定根目錄之前，
 每個工作都會以「未設定鎖」被拒絕。
 
+**請只在沒有任何訓練或測試執行進行中時升級**（自審查修正第三輪起，2026-10-22），不論工作是從
+shell 或從服務啟動：這個版本的鎖看不到較早版本所啟動的工作。來自 `main` 的版本完全不取 GPU 鎖，
+而根因修正輪之前的 M5 版本可能持有 `SHEPHERD_GPU_LOCK_FILE` 所指名的檔案，這個版本不會檢查它。
+為升級而停止服務會停止它所啟動的工作；從 shell 啟動的 CLI，請先用
+`pgrep -af 'train_model.py|measure_scorer.py|setup_demo.py'`（或 `nvidia-smi`）確認。升級之後，
+請從服務的環境與你的 shell 中移除 `SHEPHERD_GPU_LOCK_FILE`。
+
 設定了卻無法使用的根目錄（相對路徑、不存在的目錄、服務帳號無權進入的目錄底下的路徑）會拒絕
 所有工作，而不是在沒有鎖的情況下執行，狀態也會說明原因（`gpu.lock.problem`）。
 
@@ -2056,9 +2063,9 @@ measure_scorer: refused: the GPU lock /srv/shepherd/workspaces/.shepherd-gpu.loc
 先檢查鎖，並以同樣的占用者拒絕這次啟動（"Nothing was started."）；工作自己的行程隨後再自行
 取鎖。
 
-**請在服務與執行 CLI 的 shell 中設定同一個根目錄**（例如與 systemd unit 相同的
-`Environment=` 行——unit 本身不讀取任何環境檔——或一個同時由 unit 的 `EnvironmentFile=` 與你的
-shell 讀取的檔案）。看不到根目錄的 CLI 會被拒絕，結束碼 1，不寫出任何東西（`train_model:
+**請在服務與執行 CLI 的 shell 中設定同一個根目錄**（例如你在 systemd unit 中設定的
+`Environment=` 行（§4.12；unit 的範本為根目錄與 registry 各留有一行註解掉的設定）——unit 本身不讀取
+任何環境檔——或一個同時由 unit 的 `EnvironmentFile=` 與你的 shell 讀取的檔案）。看不到根目錄的 CLI 會被拒絕，結束碼 1，不寫出任何東西（`train_model:
 refused: SHEPHERD_WORKSPACES_ROOT is not set, so the GPU lock is not configured ...`）；
 `setup_demo.py --train-model` 透過同一個訓練器訓練，同樣如此。**請給 shell 與服務相同的
 workspace 根目錄**：每個指定了這個根目錄的行程——服務、你的 shell 與其中的 CLI——都取
@@ -2077,6 +2084,9 @@ registry 中運作，它未設定時一律拒絕（§4.9）。`EnvironmentFile=`
 供上面的訊息使用。這個檔案只是描述：鎖是鎖檔上的 `flock`。被強制結束的工作留下的描述檔無害：
 下一個持有者一取得鎖就會移除它；而所描述的行程已經結束的描述檔，絕不會被當成持有者說出來
 （拒絕訊息會改為說明：鎖由繼承了其描述子的行程持有，或由尚未描述自己的新持有者持有）。**工作執行中絕不要刪除鎖檔**：新建的檔案會成為第二把鎖。
+不論根目錄位於檢出目錄中的何處，git 都會忽略鎖檔及其描述檔（自審查修正第三輪起），所以
+`git clean -fd` 與 `git stash -u` 不會動到它們；但 `git clean -x` 與 `git stash -a` 連被忽略的檔案
+也會移除，仍會刪掉它，所以工作執行中請勿在部署的檢出目錄執行它們。
 
 這把鎖保證什麼、不保證什麼：
 
@@ -2136,12 +2146,20 @@ Training Console 與訓練 API 背後的服務現在執行兩種工作，各自�
   （提示文字現在是 "A GPU job (training or a test run) is in progress"）。在短暫延遲之後，它只在
   沒有工作占用時、並在與這個檢查同一步中關閉 job runner 的 GPU 槽位，並保持關閉直到行程被替換：
   延遲期間啟動的工作會讓重啟中止，之後才要求的啟動會被拒絕，絕不會因重啟而成為孤兒（自
-  2026-10-22 的根因修正輪起）。延遲期間開始的後端停止（Ctrl-C、`systemctl stop`）也會讓重啟中止，
-  所以正在停止的後端絕不會被一個會繼續服務的新行程取代。
+  2026-10-22 的根因修正輪起）。在行程被替換之前開始的後端停止（Ctrl-C、`systemctl stop`）也會讓
+  重啟中止：它的訊號會先被記錄下來，而重啟的最後檢查與 exec 是同一步（自審查修正第三輪起）。只有
+  一種情況是任何檢查都無法避免的：在 exec 進行的那一刻到達、其處理函式還來不及記錄的停止訊號，會隨
+  舊行程一起遺失，新行程則繼續服務；在 systemd 下，unit 會在 `TimeoutStopSec` 之後對整個服務送
+  SIGKILL（包括這期間啟動的工作），在終端機中則再按一次 Ctrl-C 即可停止新的後端。
 - **停止後端就會停止它的工作**（owner 的決定，2026-10-22）。因為工作是自己行程群組的 leader，在
   執行後端的終端機按 Ctrl-C、Ctrl-\、終端機掛斷，或只對後端送 SIGTERM，都不再直接到達工作本身；改由
   後端在訊號到達時就開始像上面的停止一樣停止它（自 2026-10-22 的根因修正輪起，Ctrl-\ 也會導向這裡：
-  以前它會讓工作帶著鎖繼續訓練；後端在工作停止之後仍以這個訊號結束）。在 systemd 下，unit 的
+  以前它會讓工作帶著鎖繼續訓練；後端在工作停止之後仍以這個訊號結束）。**在每一種 POSIX 啟動方式下，
+  被啟動的行程就是伺服器**（自審查修正第三輪起）：`launch_shepherd.sh` 以 exec 執行 launcher，
+  launcher 再 exec 成 uvicorn，瀏覽器模式也是如此（瀏覽器由另一個獨立的輔助行程開啟），所以送給你或
+  監管程式所啟動之 PID 的 SIGTERM 就是送給伺服器；以前在伺服器旁等待的 launcher 會獨自結束，伺服器則
+  帶著它的工作繼續服務。在 Windows 上，launcher 在伺服器旁等待，停止要透過主控台的 Ctrl-C 或
+  Ctrl-Break。在 systemd 下，unit 的
   `KillMode=mixed` 只把停止的 SIGTERM 送給伺服器（launcher 會 exec 成伺服器），伺服器以同樣方式停止
   它的工作，systemd 要等伺服器結束後才對剩下的行程送 SIGKILL，且在 `TimeoutStopSec=150` 之內——
   這涵蓋後端停止工作的最長時間；以前 unit 會在後端的正常停止之前，直接對工作的行程送 SIGTERM。伺服器

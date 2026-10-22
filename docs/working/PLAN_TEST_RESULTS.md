@@ -1646,7 +1646,8 @@ contract and BACKLOG stay the record, and no new planning document is added.
   verification of the fix, 2026-10-22), and the dashboard's heartbeat streams end at the same
   signal; the stop closes the job runner's GPU slot first, so no job starts while the backend
   waits for its connections, and the lifespan's shutdown waits for that stop. The launcher in its browser
-  mode waits for the server through a Ctrl-C; a second Ctrl-C ends uvicorn's wait for
+  mode waits for the server through a Ctrl-C (since round 3 of the review fixes it waits beside
+  the server only on Windows, and becomes the server on POSIX, below); a second Ctrl-C ends uvicorn's wait for
   connections and the backend still waits for the job's stop; SIGKILL or the out-of-memory
   killer still leave the job running, and `--reload` is gone from the printed commands and from
   `python -m src.api.main`, since each reload's shutdown would stop a training. Tests:
@@ -1689,6 +1690,48 @@ contract and BACKLOG stay the record, and no new planning document is added.
   `tests/unit/test_service_unit.py`, `tests/unit/test_probe_m5_acceptance.py`,
   `tests/unit/test_data_pipeline.py`, `tests/integration/test_backend_stops_its_job.py` (a start
   under way at SIGTERM refused; Ctrl-\; the unit's start and stop).
+  *Round 3 of the review fixes (2026-10-22; implemented, not reviewed):* **one stop of the job
+  per shutdown** (P3-4): the lifespan's end waits for the stop a signal began and no longer stops
+  again, which for a job SIGKILL cannot end waited a second `END_ACTIVE_JOB_SECONDS`; the backend
+  now spends at most the one bound `TimeoutStopSec=150` covers. **Restart Backend's last check and
+  its exec are one step** (P3-3): `TrainingManager.exec_if_closed_for_restart` runs the exec under
+  the runner's lock only while the restart still owns the closed slot and no shutdown signal has
+  been recorded, and the backend's signal handler records the stop before anything else
+  (`record_stop_signal`, a plain store), so a stop whose thread has not yet closed the slot refuses
+  the exec too. The one residual no check can close: a stop signal whose handler had not recorded
+  it when that check ran is lost with the old image (systemd then SIGKILLs the service after
+  `TimeoutStopSec`; in a terminal a second Ctrl-C stops the new backend). **The PID that was
+  started is the server on every POSIX start path** (P3-2): `launch_shepherd.sh` execs the
+  launcher, and the launcher execs into uvicorn in its browser mode too, the browser opened by a
+  helper (a new interpreter that forks once and exits, so the server has no child of the start);
+  chosen over a forwarding path in the waiting launcher, which would have been a second mechanism
+  for the same rule and could not reach the script's case. `serve` waits beside the server only on
+  Windows, where exec changes the PID; there Ctrl-C and Ctrl-Break reach the server through the
+  console, and a SIGTERM is TerminateProcess, which nothing can pass on. **The shutdown's
+  fallbacks say so** (F4): a warning when the server's SIGTERM handler cannot be wrapped in the
+  main thread (the job's stop and the closed slot then begin only at the lifespan's end, after
+  every open connection), a debug line off the main thread, and a warning when the mounted
+  dashboard has no `stop_event`. **Why the dashboard's streams are ended through `stop_event`,
+  not uvicorn's `timeout_graceful_shutdown`**: setting the served Gradio app's `stop_event` is
+  what Gradio's own server does when it stops (`Blocks._end_streaming_responses`), and it ends the
+  heartbeat streams only. `timeout_graceful_shutdown` (unset by default: no bound) cancels every
+  request still in flight once it runs out, real unfinished requests included, which the backend
+  deliberately waits for (`test_the_job_stops_at_the_signal_while_a_connection_holds_the_backend`),
+  and holds the exit for its whole length whenever a tab is open. It could only bound what is
+  left of the drain, as a complement; for the service, systemd's `TimeoutStopSec` already bounds
+  it. **The operator's files:** the unit template offers commented `SHEPHERD_WORKSPACES_ROOT` and
+  `SHEPHERD_REGISTRY` lines and says M1 is necessary, not sufficient (P3-7); `.gitignore` ignores
+  everything under `data/workspaces/` but its `.gitkeep`, and the lock's name anywhere, so
+  `git clean -fd` or `git stash -u` no longer delete a held lock (P3-8); `measure_scorer.py`'s
+  docstring states the lock rule as implemented (P3-5). **An upgrade precondition** (P3-1): a job
+  started by an earlier build is not seen by this build's lock (a build from `main` takes none; an
+  M5 build from before the root-cause round may hold the file `SHEPHERD_GPU_LOCK_FILE` named), so
+  the deployment guide (§4.11) says to upgrade only while no training or test run is running and
+  to remove `SHEPHERD_GPU_LOCK_FILE` afterwards; no check of the retired name is put back into the
+  code. Tests: `tests/unit/test_backend_shutdown.py`, `tests/unit/test_backend_control.py`,
+  `tests/unit/test_service_unit.py`, `tests/unit/test_launcher_browser_wait.py`,
+  `tests/unit/test_gpu_lock.py`, `tests/integration/test_backend_stops_its_job.py`
+  (`launcher-sigterm`, `script-sigterm`).
 - **Gradio 6.30.0 is M5's first commit** (the owner, 2026-10-20, with the reviewer's
   boundaries). The smallest dependency change: `gradio==6.30.0`, and in `uv.lock` only what it
   forces (gradio-client, starlette, huggingface-hub; brotli and hf-gradio new). The mount
