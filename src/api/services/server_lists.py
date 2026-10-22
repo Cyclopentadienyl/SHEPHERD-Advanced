@@ -514,8 +514,9 @@ def resolve_checkpoint(
     """The path of the checkpoint the server lists as `run`/`filename` of
     `architecture` in `workspace`, found in the listing again; reads no file.
 
-    The caller checks the bytes it then reads against the digest it was shown
-    (a measurement's expected checkpoint digest, a load's served identity).
+    The caller's reader compares the bytes it reads with the digest it was
+    shown (a measurement's `--expect-checkpoint-sha256`, a load's
+    `expected_checkpoint_sha256`), on that read.
 
     Raises:
         ServerListRefused: the workspace or the checkpoint is not listed, or the

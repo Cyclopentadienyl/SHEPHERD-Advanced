@@ -16,8 +16,10 @@ D8 dependency (`src/api/operator_access.py`), and does its work through one
 function: `run_reload`, which the dashboard's shared Load
 (`src/webui/components/model_list.py`, "Change model…" and Research › Models)
 also calls in process after its own check, each entrance judging its own
-request; and `write_ui_config`, which only the route calls since M5-2 removed
-the Diagnosis tab's Save Config. The GETs stay open.
+request (the Load binds it to the model fingerprint it showed,
+`expected_checkpoint_sha256`, which an API client can pass too); and
+`write_ui_config`, which only the route calls since M5-2 removed the Diagnosis
+tab's Save Config. The GETs stay open.
 
 Version: 1.0.0
 """
@@ -106,6 +108,16 @@ class PipelineReloadRequest(BaseModel):
         "it (contract M3c); 'cuda' or 'cuda:N'; 'cpu' for development. Null falls "
         "back to SHEPHERD_DEVICE first. The served identity records what was asked "
         "for and what took effect.",
+    )
+    expected_checkpoint_sha256: Optional[str] = Field(
+        None,
+        pattern=r"^[0-9a-f]{64}$",
+        description="The model fingerprint the caller was shown (the checkpoint's "
+        "SHA-256, 64 lowercase hex). When given, the reload serves only those "
+        "bytes: the build's own checkpoint read is compared with it before "
+        "anything is published, and other bytes are refused with the running "
+        "pipeline still serving. Null keeps the reload unbound (automatic "
+        "selection serves what it reads).",
     )
 
 
@@ -322,7 +334,11 @@ def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
     beside a diagnosis.
 
     Builds the replacement first and swaps it in only once it is complete and
-    verified; a rejected candidate leaves the running pipeline serving.
+    verified; a rejected candidate leaves the running pipeline serving. **A
+    caller that was shown a model binds the reload to it**
+    (`expected_checkpoint_sha256`): the build's own checkpoint read is compared
+    with it before publication, so the bytes served are the bytes confirmed or
+    nothing changes.
     """
     data_dir = request.data_dir
 
@@ -491,6 +507,26 @@ def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
             f"Check server logs.{_still_serving()}", files
         )
 
+    # The digest of the build's own single checkpoint read: the model it serves.
+    served_sha = ((candidate.config.get("served_identity") or {}).get("checkpoint")
+                  or {}).get("sha256")
+
+    # **The model the caller was shown is a precondition of this reload**, compared
+    # on that read before anything is published. A file rewritten after the
+    # caller hashed it (a training run renames a new `last.pt` into place every
+    # epoch, and the build reads the whole graph before the checkpoint) is
+    # refused here and never served; there is no "reloaded, but with other
+    # bytes" to report afterwards. Without an expectation the reload is unbound,
+    # as before: automatic selection serves what the build read (19.1, below).
+    expected = request.expected_checkpoint_sha256
+    if expected is not None and served_sha != expected:
+        held = served_sha[:12] if isinstance(served_sha, str) else "no model"
+        return _refused(
+            f"{checkpoint_path} is not the model that was shown: it holds {held} "
+            f"now, not {expected[:12]}. Nothing was published; read it again to "
+            f"see what it holds.{_still_serving()}", files
+        )
+
     if selected is not None:
         # **The metric reported is the served read's** (contract M3c, BACKLOG
         # 19.2), from the checkpoint metadata the build took from the bytes it
@@ -507,8 +543,6 @@ def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
         # against the others. Either way the loaded file's metric, if its
         # metadata has one, is shown as the loaded file's, never as a winner.
         detail = ranking_score_detail(candidate.config.get("checkpoint_meta"))
-        served_identity = candidate.config.get("served_identity") or {}
-        served_sha = (served_identity.get("checkpoint") or {}).get("sha256")
         scored_sha = scored_digests.get(str(selected))
         replaced = scored_sha is not None and scored_sha != served_sha
         if str(selected) not in scored_paths:

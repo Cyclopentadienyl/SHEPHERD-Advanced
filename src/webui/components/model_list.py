@@ -57,9 +57,12 @@ components (a filter, links) in the list's header and footer rows.
    confirmation was shown is said with the new values, and nothing is
    reloaded until the operator confirms what is shown. Then WP2's one reload
    (`run_reload`, in process, on the event loop as the API route runs it) with
-   the workspace and the checkpoint the server resolves from the item; the
-   served model fingerprint is compared with the one shown (the file can still
-   change in the instant between); a usage history entry (WP4
+   the workspace and the checkpoint the server resolves from the item, **bound
+   to the model fingerprint shown** (`expected_checkpoint_sha256`): the file
+   can still change between this hash and the reload's own read, seconds later
+   (the build reads the workspace's graph first), and the reload compares its
+   read with the fingerprint before it publishes anything, so other bytes are
+   refused, never served; a usage history entry (WP4
    `record_model_load`) only when the list was ordered by a cohort version's
    score; then the chips and the "served model changed" trigger
    (`PageContext.served_model_changed`), set whenever any part of what is
@@ -691,8 +694,8 @@ def _target_now(item: Mapping[str, Any], workspace: Any, *,
     checkpoint = resolve_checkpoint(workspace, item.get("architecture"), item.get("run"),
                                     item.get("filename"), environ=environ)
     # The one comparison of a file's bytes with a digest (`checkpoint_matches`,
-    # the registration's): it records nothing; the reload's own read is what
-    # the served identity, checked after it, names.
+    # the registration's): it records nothing. It decides what is shown; the
+    # reload compares its own read with the digest shown before it publishes.
     try:
         same = r.is_digest(item.get("sha256")) and checkpoint_matches(checkpoint, item["sha256"])
     except OSError as exc:
@@ -912,8 +915,9 @@ def finish_load(plan: Optional[Mapping[str, Any]], request: Any, *,
     """Step 2, synchronous (the caller runs it on the event loop, as the API
     route runs its reload): D8 on this request; what is served and what would be
     loaded both read again, and the confirmation shown again with a notice when
-    either changed; WP2's reload with what the server resolves from the item;
-    the served fingerprint checked against the one shown; the usage history."""
+    either changed; WP2's reload with what the server resolves from the item,
+    bound to the model fingerprint shown (other bytes are refused by the
+    reload's own read, and nothing is published); the usage history."""
     from src.api.services.server_lists import ServerListRefused
 
     access = operator_access(request)
@@ -977,27 +981,20 @@ def finish_load(plan: Optional[Mapping[str, Any]], request: Any, *,
     run = reload if reload is not None else pipeline_routes.run_reload
     try:
         answer = jsonable_encoder(run(pipeline_routes.PipelineReloadRequest(
-            data_dir=str(directory), checkpoint_path=str(checkpoint))))
+            data_dir=str(directory), checkpoint_path=str(checkpoint),
+            expected_checkpoint_sha256=plan["to"]["sha256"])))
     except Exception as exc:  # noqa: BLE001 - a reload that raises is a refused reload
         logger.exception("Pipeline reload failed")
         answer = {"success": False, "message": f"Reload failed ({type(exc).__name__})."}
     after = answer.get("status")
     served = served_checkpoint_sha(after)
     changed = isinstance(after, Mapping) and served_key(after) != now_key
-    expected = plan["to"]["sha256"]
     if not answer.get("success"):
         why = str(answer.get("message") or "the reload was refused")
         note = _record_usage(plan, False, why, environ)
         return LoadStep(None, _outcome("grey", "Not reloaded; the model in use is unchanged.",
                                        why + (f" Also, {note}." if note else "")),
                         "", served if isinstance(after, Mapping) else now_sha, changed)
-    if served != expected:
-        why = (f"the file's bytes changed since the list was read: the server now serves "
-               f"{r.short_hex(served)}, not {r.short_hex(expected)}")
-        note = _record_usage(plan, False, why, environ)
-        return LoadStep(None, _outcome("amber", "Reloaded, but not with the model shown.",
-                                       why + "." + (f" Also, {note}." if note else "")),
-                        "", served, changed or not isinstance(after, Mapping))
     note = _record_usage(plan, True, None, environ)
     text = f"The model in use for every session is now {r.short_hex(served)}."
     if plan.get("ordering") and note is None:

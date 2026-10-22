@@ -24,9 +24,10 @@ The shared model list and the one Load (M5-2, UI-A).
   column rebuilt from the plan's own listing) or of what would be loaded (the
   file's bytes, the workspace's graph or SP table) is said with the new values
   and nothing is reloaded; WP2's reload with the workspace and the checkpoint
-  the server resolves (never a client path); the served fingerprint checked
-  against the one shown; "served model changed" set when any part of what is
-  served changed; a usage history entry only when the list was ordered by a
+  the server resolves (never a client path), bound to the model fingerprint
+  shown: through the real `run_reload`, bytes that replace the file after the
+  Load hashed it are refused on the reload's own read and never served;
+  "served model changed" set when any part of what is served changed; a usage history entry only when the list was ordered by a
   cohort version's score, and not when that version changed since;
 - **the wiring**: Load and Reload refresh the chips, Reload sets the "served
   model changed" trigger and the phase and re-reads the list, Keep closes the
@@ -473,7 +474,7 @@ def test_load_finds_the_item_in_the_servers_list_again(root, serving, monkeypatc
     assert plan is None and "Refused: " in html and "is listed in the workspace" in html
 
 
-def test_the_reload_gets_what_the_server_resolves_and_the_served_fingerprint_is_checked(
+def test_the_reload_gets_what_the_server_resolves_and_the_fingerprint_shown(
         root, serving, monkeypatch):
     from src.api.routes.pipeline import PipelineReloadResponse, PipelineStatusResponse
 
@@ -491,19 +492,130 @@ def test_the_reload_gets_what_the_server_resolves_and_the_served_fingerprint_is_
     expected = (root["workspace"] / "runs" / "gat" / RUNS[0][1] / "checkpoints" / "model-12.pt")
     assert Path(request.data_dir) == root["workspace"].resolve()
     assert Path(request.checkpoint_path) == expected
+    assert request.expected_checkpoint_sha256 == root["shas"]["model-12.pt"]
     assert step.changed is True and step.served == root["shas"]["model-12.pt"]
     assert "Reloaded." in step.confirm_html and step.plan is None
 
 
-def test_other_bytes_served_than_shown_are_said(root, serving, monkeypatch):
-    from src.api.routes.pipeline import PipelineReloadResponse, PipelineStatusResponse
+#: The run the real reload's workspace keeps its model in.
+BUILT_RUN = "20261015-000000_run_aaaaaa"
 
-    plan = _plan(root, monkeypatch)
-    step = ml.finish_load(plan, operator_request(monkeypatch), reload=lambda request: (
-        PipelineReloadResponse(success=True, message="ok", status=PipelineStatusResponse(
-            **_status(root, served="model-08.pt")))))
-    assert "Reloaded, but not with the model shown." in step.confirm_html
-    assert step.changed is True
+
+@pytest.fixture
+def buildable(tmp_path, monkeypatch):
+    """A workspaces root whose one workspace (``data``) the real reload builds:
+    a graph, and a model trained on it as ``last.pt`` of a run, the file a
+    running training job rewrites every epoch. Nothing is served yet; the
+    device is the CPU."""
+    import src.api.main as api_main
+    from tests.fixtures.synthetic_workspace import build_workspace
+
+    for field in ("pipeline", "kg", "_current_data_dir", "_current_checkpoint_path"):
+        monkeypatch.setattr(api_main.app_state, field, None, raising=False)
+    monkeypatch.setattr(api_main.app_state, "is_ready", False, raising=False)
+    for name in ("SHEPHERD_KG_PATH", "SHEPHERD_DATA_DIR", "SHEPHERD_CHECKPOINT_PATH",
+                 "SHEPHERD_REGISTRY"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("SHEPHERD_DEVICE", "cpu")
+    root = tmp_path / "root"
+    data_dir, checkpoint = build_workspace(root)
+    last = data_dir / "runs" / "gat" / BUILT_RUN / "checkpoints" / "last.pt"
+    last.parent.mkdir(parents=True)
+    shutil.copyfile(checkpoint, last)
+    monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(root))
+    return {"api": api_main, "data_dir": data_dir, "last": last, "source": checkpoint}
+
+
+def _shifted(source, shift):
+    """The bytes of `source`'s model with every weight moved by `shift`: another
+    model the build accepts (the same architecture, trained on the same graph)."""
+    import io
+
+    import torch
+
+    contents = torch.load(source, map_location="cpu", weights_only=False)
+    contents["state_dict"] = {name: value + shift if value.is_floating_point() else value
+                              for name, value in contents["state_dict"].items()}
+    buffer = io.BytesIO()
+    torch.save(contents, buffer)
+    return buffer.getvalue()
+
+
+@pytest.mark.parametrize("how", ["rename", "rewrite"])
+def test_bytes_replaced_before_the_reloads_own_read_are_refused_never_served(
+        buildable, monkeypatch, tmp_path, how):
+    """EB-1, through the real `run_reload` and `build_pipeline`. A model loaded
+    as shown is served (the positive control). Then another model is listed and
+    confirmed, and the file is replaced after the Load hashed it, while the build
+    reads the workspace's graph and before it reads the checkpoint, as a
+    training run's next epoch renames a new ``last.pt`` into place (and once in
+    place). The reload compares its own read with the fingerprint shown: nothing
+    is published, the model in use stays, the page says not reloaded and why,
+    and the usage history records the load as not made. Catches the reload
+    given no fingerprint (or not comparing it) and a check after publication."""
+    import src.evaluation.cohort_registry as cohort_registry
+    import src.evaluation.report_store as report_store
+    from src.config import server_settings
+    from tests.fixtures.replacement import replace_after_read, replace_file
+
+    api, last = buildable["api"], buildable["last"]
+    written = []
+    monkeypatch.setattr(report_store, "record_model_load",
+                        lambda version, **fields: written.append(fields))
+    version = type("V", (), {"identity": type("I", (), {"sha256": "c" * 64})()})()
+    monkeypatch.setattr(cohort_registry, "resolve_version", lambda registry, label: version)
+    registry = tmp_path / "registry"
+    registry.mkdir()
+    monkeypatch.setattr(server_settings, "cohort_registry",
+                        lambda environ=None: server_settings.Setting("SHEPHERD_REGISTRY", registry))
+    ordering = {"version": "mygene2-2026-09", "version_sha256": "c" * 64,
+                "metric": "untruncated_mrr", "scoring_semantics_digest": "s" * 64}
+    published = []
+    publish = api.publish_pipeline
+
+    def spy(bundle):
+        published.append(bundle.config["served_identity"]["checkpoint"]["sha256"])
+        return publish(bundle)
+
+    monkeypatch.setattr(api, "publish_pipeline", spy)
+
+    def plan_for_last():
+        listing = ml.list_models("data", operator_request(monkeypatch))
+        plan, html = ml.request_load(listing, f"gat/{BUILT_RUN}/last.pt", ordering,
+                                     operator_request(monkeypatch))
+        assert plan is not None, html
+        return plan
+
+    first = file_sha256(last)
+    loaded = ml.finish_load(plan_for_last(), operator_request(monkeypatch))
+    assert "Reloaded." in loaded.confirm_html, loaded.confirm_html
+    assert published == [first] and loaded.served == first
+    serving = api.app_state.pipeline
+    assert serving.served_identity().checkpoint.sha256 == first
+
+    replace_file(last, _shifted(buildable["source"], 1.0), how)
+    shown = file_sha256(last)
+    plan = plan_for_last()
+    assert plan["to"]["sha256"] == shown
+    other = _shifted(buildable["source"], 2.0)
+    swap = replace_after_read(monkeypatch, after=buildable["data_dir"] / "kg.json",
+                              target=last, data=other, how=how)
+    step = ml.finish_load(plan, operator_request(monkeypatch))
+
+    assert swap.fired == 1
+    held = file_sha256(last)
+    assert held not in (first, shown)
+    assert published == [first]
+    assert api.app_state.pipeline is serving
+    assert serving.served_identity().checkpoint.sha256 == first
+    assert "Not reloaded; the model in use is unchanged." in step.confirm_html
+    assert "is not the model that was shown" in step.confirm_html
+    assert f"it holds {held[:12]} now, not {shown[:12]}" in step.confirm_html
+    assert "Reloaded" not in step.confirm_html.replace("Not reloaded", "")
+    assert step.served == first and step.changed is False and step.plan is None
+    assert [entry["loaded"] for entry in written] == [True, False]
+    assert written[-1]["checkpoint_sha256"] == shown
+    assert "is not the model that was shown" in written[-1]["why"]
 
 
 def test_a_refused_reload_leaves_the_model_in_use_and_says_so(root, serving, monkeypatch):

@@ -2543,7 +2543,12 @@ Models 完整紀錄的連結。"This result" 只顯示結果本身帶有的內�
 清單；預設選中正在服務的 workspace）、置頂的 "In use now"、最近四個 run（其餘在 "Show older
 runs"）、選中 checkpoint 的資料、"Compare in Research › Models ›"，以及 "🔒 Load this model" /
 Cancel。Load 只詢問一次（"Reload the pipeline with <12 hex> for every session?"，from → to，
-變更的列會標出），並以伺服器列出的 workspace 與 checkpoint 重新載入 pipeline。它會取代每個瀏覽器
+變更的列會標出），並以伺服器列出的 workspace 與 checkpoint 重新載入 pipeline。**重新載入只服務
+問句中的那個模型**：它在發布任何東西之前，把自己讀到的 checkpoint 與那個指紋比對，因此期間被改寫
+的檔案（執行中的訓練工作每個 epoch 都會改寫它的 `last.pt`，而重新載入會先讀圖譜）不會改變任何
+東西，結果是 "Not reloaded; the model in use is unchanged." 加上原因。API 以重新載入請求的選用
+欄位 `expected_checkpoint_sha256` 提供同樣的檢查（64 個小寫十六進位數字，否則 422）：其他位元組
+會被拒絕，正在服務的 pipeline 照常服務；沒有這個欄位時與以前一樣不做檢查。它會取代每個瀏覽器
 所服務的內容；已產生的結果保留自己的身分，重新載入期間診斷會等待。確認畫面打開期間，清單本身的
 底部列會隱藏，讓 from → to 各列與這句話保持在畫面內；"Keep <舊>" 會放棄這次確認。確認畫面打開
 期間，Run Diagnosis 停用："Disabled: finish or cancel the model change first."。按下

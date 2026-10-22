@@ -2298,8 +2298,14 @@ workspace select (the server's list; the serving workspace is chosen first), "In
 the latest four runs ("Show older runs" for the rest), the selected checkpoint's facts, "Compare
 in Research › Models ›", and "🔒 Load this model" / Cancel. Load asks once ("Reload the pipeline
 with <12 hex> for every session?", from → to, with the changed rows marked) and reloads the
-pipeline with the workspace and checkpoint the server lists. It replaces what every browser is
-served; results already produced keep their own identity, and diagnoses wait while the pipeline
+pipeline with the workspace and checkpoint the server lists. **The reload serves only the model
+the question named**: it compares its own read of the checkpoint with that fingerprint before
+anything is published, so a file rewritten in the meantime (a running training job rewrites its
+`last.pt` every epoch, and the reload reads the graph first) changes nothing, and the outcome is
+"Not reloaded; the model in use is unchanged." with the reason. The API takes the same check as
+an optional field of the reload request, `expected_checkpoint_sha256` (64 lowercase hex digits,
+else 422): other bytes are refused and the running pipeline goes on serving; without it nothing
+is checked, as before. It replaces what every browser is served; results already produced keep their own identity, and diagnoses wait while the pipeline
 reloads. While the confirmation is open the list's own footer is hidden, so the from → to rows
 and that sentence stay in view; "Keep <old>" drops the confirmation. While the confirmation is
 open, Run Diagnosis is disabled: "Disabled: finish or cancel the model change first." Once

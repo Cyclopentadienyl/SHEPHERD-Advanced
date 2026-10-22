@@ -24,7 +24,8 @@ pinned here:
 - the reload route reports the metric of the checkpoint it served, from the
   build's own read (BACKLOG 19.2), calls it "best" only when the scan ranked the
   file by it, and says so when the file it chose was replaced before that read
-  (19.1).
+  (19.1); a reload given the model fingerprint its caller was shown serves
+  those bytes or nothing (EB-1).
 
 The device rule itself (`resolve_serving_device`) is in
 `test_serving_device.py`.
@@ -1082,3 +1083,53 @@ def test_an_unreplaced_selection_reports_its_metric_and_no_replacement(api, work
     assert "replaced" not in result.selection_reason
     assert result.status.served_identity.checkpoint.sha256 == _sha(selected)
     assert opens.opens(selected) == 2
+
+
+def test_a_reload_bound_to_the_fingerprint_shown_serves_those_bytes_or_nothing(
+    api, workspace, tmp_path, monkeypatch
+):
+    """EB-1, the API's half: ``POST /pipeline/reload`` takes the model
+    fingerprint its caller was shown (`expected_checkpoint_sha256`) and compares
+    the build's own checkpoint read with it before anything is published. The
+    fingerprint shown is served (the positive control); a file replaced after
+    the caller hashed it, between the build's graph read and its checkpoint
+    read, is refused with the running pipeline still serving; a value that is
+    not a lowercase SHA-256 is refused before anything runs. Without the field
+    the reload is unbound, as `test_the_reported_metric_is_the_loaded_files_*`
+    pins."""
+    from fastapi.testclient import TestClient
+
+    from tests.fixtures.operator_access import OPERATOR_BASE_URL, operator_mode
+    from tests.fixtures.replacement import replace_after_read
+
+    data_dir, checkpoint = workspace
+    shown = _sha(checkpoint)
+    operator_mode(monkeypatch)
+    client = TestClient(api.app, base_url=OPERATOR_BASE_URL)
+    body = {"data_dir": str(data_dir), "checkpoint_path": str(checkpoint)}
+
+    malformed = client.post("/api/v1/pipeline/reload",
+                            json={**body, "expected_checkpoint_sha256": shown.upper()})
+    assert malformed.status_code == 422 and api.app_state.pipeline is None
+
+    bound = client.post("/api/v1/pipeline/reload",
+                        json={**body, "expected_checkpoint_sha256": shown})
+    assert bound.status_code == 200 and bound.json()["success"] is True, bound.text
+    serving = api.app_state.pipeline
+    assert serving.served_identity().checkpoint.sha256 == shown
+
+    replacement = _with_val_mrr(checkpoint, tmp_path / "b.pt", 0.5, shift=1.0)
+    swap = replace_after_read(monkeypatch, after=data_dir / "kg.json", target=checkpoint,
+                              data=replacement.read_bytes(), how="rename")
+    refused = client.post("/api/v1/pipeline/reload",
+                          json={**body, "expected_checkpoint_sha256": shown})
+    answer = refused.json()
+
+    assert swap.fired == 1 and refused.status_code == 200
+    assert answer["success"] is False
+    assert answer["message"] == (
+        f"{checkpoint} is not the model that was shown: it holds "
+        f"{_sha(replacement)[:12]} now, not {shown[:12]}. Nothing was published; read it "
+        "again to see what it holds. The previously loaded pipeline is still being served.")
+    assert api.app_state.pipeline is serving
+    assert answer["status"]["served_identity"]["checkpoint"]["sha256"] == shown
