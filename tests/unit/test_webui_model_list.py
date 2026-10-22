@@ -620,6 +620,57 @@ def test_bytes_replaced_before_the_reloads_own_read_are_refused_never_served(
     assert "is not the model that was shown" in written[-1]["why"]
 
 
+@pytest.mark.parametrize("bytes_now", ["torn", "another graph", "not a dict", "gone"])
+def test_any_other_bytes_at_the_shown_file_are_refused_as_not_the_model_shown(
+        buildable, monkeypatch, tmp_path, bytes_now):
+    """Root-cause round 3 (INT-R1), through the real `run_reload` and
+    `build_pipeline`: whatever replaced the confirmed file after the Load
+    hashed it -- torn bytes, a checkpoint recorded for another graph, a pickle
+    that is not a checkpoint, or nothing -- is refused on the build's one
+    checkpoint read before torch parses it, as "not the model that was shown":
+    never as unreadable, another graph's or not a checkpoint. No model is
+    built, nothing is published, the model in use stays, and the usage history
+    records the load as not made, with that reason."""
+    from tests.unit.test_served_identity import (
+        change_after_the_graph_read,
+        never_parsed_or_built,
+        not_the_shown_bytes,
+    )
+
+    api, last = buildable["api"], buildable["last"]
+    _version, ordering, written = _ordered_by_a_version(monkeypatch, tmp_path)
+
+    def plan_for_last():
+        listing = ml.list_models("data", operator_request(monkeypatch))
+        plan, html = ml.request_load(listing, f"gat/{BUILT_RUN}/last.pt", ordering,
+                                     operator_request(monkeypatch))
+        assert plan is not None, html
+        return plan
+
+    shown = file_sha256(last)
+    loaded = ml.finish_load(plan_for_last(), operator_request(monkeypatch))
+    assert "Reloaded." in loaded.confirm_html, loaded.confirm_html
+    serving = api.app_state.pipeline
+    plan = plan_for_last()
+    data = not_the_shown_bytes(last, bytes_now)
+    fired = change_after_the_graph_read(monkeypatch, buildable["data_dir"], last, data)
+    never_parsed_or_built(monkeypatch)
+
+    step = ml.finish_load(plan, operator_request(monkeypatch))
+
+    assert fired, "the build never read the graph"
+    held = (f"it is gone; {shown[:12]} was shown" if data is None
+            else f"it holds {file_sha256(last)[:12]} now, not {shown[:12]}")
+    assert "Not reloaded; the model in use is unchanged." in step.confirm_html
+    assert f"is not the model that was shown: {held}. Nothing was published" in \
+        step.confirm_html, step.confirm_html
+    assert api.app_state.pipeline is serving
+    assert step.served == shown and step.changed is False and step.plan is None
+    assert [entry["loaded"] for entry in written] == [True, False]
+    assert written[-1]["checkpoint_sha256"] == shown
+    assert "is not the model that was shown" in written[-1]["why"]
+
+
 def test_a_refused_reload_leaves_the_model_in_use_and_says_so(root, serving, monkeypatch):
     from src.api.routes.pipeline import PipelineReloadResponse, PipelineStatusResponse
 

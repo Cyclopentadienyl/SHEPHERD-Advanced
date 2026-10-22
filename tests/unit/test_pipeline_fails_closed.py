@@ -159,7 +159,7 @@ class TestARequestedModelIsBuiltOrRefused:
         data_dir, checkpoint = workspace
         monkeypatch.setattr(
             DiagnosisPipeline, "_load_model_from_checkpoint",
-            lambda self, checkpoint_path, device: None,
+            lambda self, checkpoint_path, device, *, expected_sha256=None: None,
         )
 
         with pytest.raises(PipelineBuildError, match="no node embeddings"):

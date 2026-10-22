@@ -2762,7 +2762,7 @@ def _serve_and_view(data_dir: Path, checkpoint: Path, expected_sha256: str,
     """`checkpoint` served through the production reload, named explicitly
     (E4's route, which publishes what it built) and **bound to the digest the
     probe expects** (`expected_checkpoint_sha256`, compared on the build's own
-    checkpoint read before anything is published, as the dashboard's Load binds
+    checkpoint read before the bytes are parsed, as the dashboard's Load binds
     it), then the status and the loaded model's recorded results read as the
     Diagnosis panel reads them: two GETs on the application, status first.
     Called inside an M4 flow, so the route reads the probe's registry as the

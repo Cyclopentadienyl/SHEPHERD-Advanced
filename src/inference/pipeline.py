@@ -58,7 +58,7 @@ from src.kg.artifacts import (
     verify_graph_source_read,
 )
 from src.kg.storage.file_storage import read_graph_artifacts
-from src.utils.checkpoint_io import read_checkpoint
+from src.utils.checkpoint_io import CheckpointChanged, read_checkpoint
 from src.kg.phenotype_normalisation import (
     PHENOTYPE_NORMALISATION_VERSION,
     normalise_phenotypes,
@@ -400,6 +400,7 @@ class DiagnosisPipeline:
         data_dir: Optional[str] = None,
         graph: Optional["GraphRead"] = None,
         device: Optional[str] = None,
+        expected_checkpoint_sha256: Optional[str] = None,
     ):
         """
         Initialize the diagnosis pipeline.
@@ -435,8 +436,22 @@ class DiagnosisPipeline:
                 or None / "auto" for CUDA, refused without it
                 (`resolve_serving_device`). A model supplied in memory stays
                 on its own device when this is None.
+            expected_checkpoint_sha256: The SHA-256 the checkpoint at
+                `checkpoint_path` must have (the model a caller was shown, a
+                bound reload). Compared on the one checkpoint read before the
+                bytes are parsed (`read_checkpoint(expected_sha256=)`): other
+                bytes, a checkpoint or not, or no file raise `CheckpointChanged`
+                unchanged, and nothing about them is built. Only with
+                `checkpoint_path` and no `model`; None reads unbound.
         """
         from src.kg.graph import GraphRead
+
+        if expected_checkpoint_sha256 is not None and (checkpoint_path is None
+                                                       or model is not None):
+            raise ValueError(
+                "expected_checkpoint_sha256 binds the checkpoint read from "
+                "checkpoint_path; give checkpoint_path= and no model="
+            )
 
         if graph is not None:
             if kg is not None:
@@ -535,6 +550,7 @@ class DiagnosisPipeline:
             graph_data=graph_data,
             data_dir=data_dir,
             device=device,
+            expected_checkpoint_sha256=expected_checkpoint_sha256,
         )
 
         logger.info(
@@ -587,6 +603,7 @@ class DiagnosisPipeline:
         graph_data: Optional[Dict[str, Any]],
         data_dir: Optional[str],
         device: Optional[str],
+        expected_checkpoint_sha256: Optional[str] = None,
     ) -> None:
         """
         Initialize GNN model and precompute node embeddings for inference.
@@ -703,7 +720,7 @@ class DiagnosisPipeline:
         # not load raises out of here (`_load_model_from_checkpoint`).
         if self.model is None and checkpoint_path is not None:
             self.model = self._load_model_from_checkpoint(
-                checkpoint_path, device
+                checkpoint_path, device, expected_sha256=expected_checkpoint_sha256
             )
 
         # Step 3: Precompute node embeddings
@@ -1033,6 +1050,8 @@ class DiagnosisPipeline:
         self,
         checkpoint_path: str,
         device: Optional[str],
+        *,
+        expected_sha256: Optional[str] = None,
     ) -> Any:
         """
         Load ShepherdGNN model from a training checkpoint.
@@ -1041,7 +1060,14 @@ class DiagnosisPipeline:
         - Trainer format: key "model_state_dict"
         - ModelCheckpoint callback format: key "state_dict"
 
+        With `expected_sha256` (a bound reload) the one read is compared with it
+        before torch parses the bytes, and the reader decides when the file is
+        gone: there is no existence check first.
+
         Raises:
+            CheckpointChanged: `expected_sha256` is given and the read has other
+                bytes, or there is no file; raised unchanged, before anything is
+                parsed, so the caller can say the file is not the model shown.
             PipelineBuildError: if the graph was not verified from a workspace,
                 or the checkpoint is missing, cannot be read, is not a training
                 checkpoint, was not trained on this graph (M2.4), or does not
@@ -1065,7 +1091,7 @@ class DiagnosisPipeline:
                 "memory: nothing shows the checkpoint was trained on it. Build "
                 "the pipeline from the workspace (graph= and data_dir=)."
             )
-        if not ckpt_path.exists():
+        if expected_sha256 is None and not ckpt_path.exists():
             raise PipelineBuildError(
                 f"Checkpoint {ckpt_path} does not exist. It was requested, so no "
                 "pipeline is built without it."
@@ -1089,10 +1115,19 @@ class DiagnosisPipeline:
         # without a reload, would otherwise move the lookup to another run's
         # directory while the digest stayed this model's. Messages keep the path
         # as it was given, which is what the operator named.
+        #
+        # **The model a caller was shown is compared on this read** (a bound
+        # reload, `expected_sha256`), before torch parses the bytes: a file
+        # rewritten, torn, of another graph or removed since it was shown is
+        # `CheckpointChanged`, never parsed, never built and never called
+        # unreadable, so it is not reworded below.
         try:
             checkpoint_read = read_checkpoint(
-                ckpt_path.resolve(), map_location="cpu", weights_only=True
+                ckpt_path.resolve(), map_location="cpu", weights_only=True,
+                expected_sha256=expected_sha256,
             )
+        except CheckpointChanged:
+            raise
         except Exception as exc:  # noqa: BLE001 — any unreadable file is the same refusal
             raise PipelineBuildError(
                 f"Checkpoint {ckpt_path} could not be read "
@@ -2177,6 +2212,7 @@ def create_diagnosis_pipeline(
     data_dir: Optional[str] = None,
     graph: Optional["GraphRead"] = None,
     device: Optional[str] = None,
+    expected_checkpoint_sha256: Optional[str] = None,
 ) -> DiagnosisPipeline:
     """
     Factory function to create a diagnosis pipeline.
@@ -2191,6 +2227,8 @@ def create_diagnosis_pipeline(
         graph: The `GraphRead` `KnowledgeGraph.read_json` returned, passed
             whole, so the composition can be checked
         device: Device for GNN inference
+        expected_checkpoint_sha256: The SHA-256 the checkpoint read must have
+            (`DiagnosisPipeline`)
 
     Returns:
         Configured DiagnosisPipeline instance
@@ -2204,4 +2242,5 @@ def create_diagnosis_pipeline(
         data_dir=data_dir,
         graph=graph,
         device=device,
+        expected_checkpoint_sha256=expected_checkpoint_sha256,
     )

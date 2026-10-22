@@ -199,7 +199,7 @@ class TestTheClinicalPathIsAGraphConsumer:
         import src.inference.pipeline as pipeline
         from src.utils.fingerprint import ReadIdentity
 
-        def _model_built(self, checkpoint_path, device):
+        def _model_built(self, checkpoint_path, device, *, expected_sha256=None):
             reached.append("model")
             self._checkpoint_identity = ReadIdentity(
                 path=Path(checkpoint_path), sha256="c" * 64)

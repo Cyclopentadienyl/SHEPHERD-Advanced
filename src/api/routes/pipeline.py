@@ -114,10 +114,10 @@ class PipelineReloadRequest(BaseModel):
         pattern=r"^[0-9a-f]{64}$",
         description="The model fingerprint the caller was shown (the checkpoint's "
         "SHA-256, 64 lowercase hex). When given, the reload serves only those "
-        "bytes: the build's own checkpoint read is compared with it before "
-        "anything is published, and other bytes are refused with the running "
-        "pipeline still serving. Null keeps the reload unbound (automatic "
-        "selection serves what it reads).",
+        "bytes: the build's own checkpoint read is compared with it before the "
+        "bytes are parsed, and other bytes, or no file, are refused as not the "
+        "model that was shown, with the running pipeline still serving. Null "
+        "keeps the reload unbound (automatic selection serves what it reads).",
     )
 
 
@@ -336,9 +336,11 @@ def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
     Builds the replacement first and swaps it in only once it is complete and
     verified; a rejected candidate leaves the running pipeline serving. **A
     caller that was shown a model binds the reload to it**
-    (`expected_checkpoint_sha256`): the build's own checkpoint read is compared
-    with it before publication, so the bytes served are the bytes confirmed or
-    nothing changes.
+    (`expected_checkpoint_sha256`): the build's one checkpoint read is compared
+    with it before torch parses the bytes (`read_checkpoint(expected_sha256=)`,
+    inside the build), so the bytes served are the bytes confirmed or nothing
+    changes, and other bytes -- a checkpoint or not, or no file -- are refused
+    as not the model that was shown.
     """
     data_dir = request.data_dir
 
@@ -451,7 +453,11 @@ def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
         if selected is not None:
             checkpoint_path = str(selected)
 
-    if not checkpoint_path or not Path(checkpoint_path).exists():
+    # **With an expectation, the build's read decides whether the file is
+    # there**: a file removed since it was shown is not the model shown
+    # (`CheckpointChanged`, below), not "no checkpoint found, train a model".
+    expected = request.expected_checkpoint_sha256
+    if not checkpoint_path or (expected is None and not Path(checkpoint_path).exists()):
         # If checkpoints exist outside the run layout, say so: they are not
         # selected automatically (decision 9: no runtime fallback), so guide the
         # user rather than contradict files_found.
@@ -486,13 +492,31 @@ def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
     # the served pipeline exactly as it was, whereas freeing first buys headroom
     # by making every later failure unrecoverable.
     from src.api.main import build_pipeline, publish_pipeline
+    from src.utils.checkpoint_io import CheckpointChanged
 
+    # **The model the caller was shown is a precondition of this reload**,
+    # compared on the build's one checkpoint read before torch parses the bytes.
+    # A file rewritten after the caller hashed it (a training run renames a new
+    # `last.pt` into place every epoch, and the build reads the whole graph
+    # before the checkpoint), torn, of another graph, or removed, is refused as
+    # what it is -- not the model that was shown -- before any model is built
+    # from it; there is no "reloaded, but with other bytes" to report afterwards.
+    # Without an expectation the reload is unbound, as before: automatic
+    # selection serves what the build read (19.1, below).
     try:
         candidate = build_pipeline(
             kg_path=kg_path,
             checkpoint_path=checkpoint_path,
             data_dir=data_dir,
             device=device,
+            expected_checkpoint_sha256=expected,
+        )
+    except CheckpointChanged as exc:
+        held = (f"it holds {exc.found[:12]} now, not {exc.expected[:12]}"
+                if exc.found is not None else f"it is gone; {exc.expected[:12]} was shown")
+        return _refused(
+            f"{checkpoint_path} is not the model that was shown: {held}. Nothing was "
+            f"published; read it again to see what it holds.{_still_serving()}", files
         )
     except Exception as e:
         logger.error(f"Pipeline reload failed: {e}")
@@ -507,25 +531,10 @@ def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
             f"Check server logs.{_still_serving()}", files
         )
 
-    # The digest of the build's own single checkpoint read: the model it serves.
+    # The digest of the build's own single checkpoint read: the model it serves
+    # (19.1's note below compares the scan's read with it).
     served_sha = ((candidate.config.get("served_identity") or {}).get("checkpoint")
                   or {}).get("sha256")
-
-    # **The model the caller was shown is a precondition of this reload**, compared
-    # on that read before anything is published. A file rewritten after the
-    # caller hashed it (a training run renames a new `last.pt` into place every
-    # epoch, and the build reads the whole graph before the checkpoint) is
-    # refused here and never served; there is no "reloaded, but with other
-    # bytes" to report afterwards. Without an expectation the reload is unbound,
-    # as before: automatic selection serves what the build read (19.1, below).
-    expected = request.expected_checkpoint_sha256
-    if expected is not None and served_sha != expected:
-        held = served_sha[:12] if isinstance(served_sha, str) else "no model"
-        return _refused(
-            f"{checkpoint_path} is not the model that was shown: it holds {held} "
-            f"now, not {expected[:12]}. Nothing was published; read it again to "
-            f"see what it holds.{_still_serving()}", files
-        )
 
     if selected is not None:
         # **The metric reported is the served read's** (contract M3c, BACKLOG

@@ -534,7 +534,8 @@ def resolve_checkpoint(
 
     The caller's reader compares the bytes it reads with the digest it was
     shown (a measurement's `--expect-checkpoint-sha256`, a load's
-    `expected_checkpoint_sha256`), on that read.
+    `expected_checkpoint_sha256`), on that read, before the bytes are parsed
+    (`read_checkpoint(expected_sha256=)`).
 
     Raises:
         ServerListRefused: the workspace or the checkpoint is not listed, or the

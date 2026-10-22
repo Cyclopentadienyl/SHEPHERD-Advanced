@@ -1852,9 +1852,13 @@ contract and BACKLOG stay the record, and no new planning document is added.
       request's `expected_checkpoint_sha256` is compared on the build's own checkpoint read
       before publication, so bytes rewritten after the confirmation are refused, never served,
       and the after-the-fact "Reloaded, but not with the model shown." is gone; the API route
-      takes the same optional field), the served-model-changed trigger set when any part of
-      what is served changed, and a usage history entry only for a list ordered by a cohort
-      version's score; the page stops waiting
+      takes the same optional field; *since round 3 of the review fixes, INT-R1, implemented:*
+      the comparison is that read's own, before torch parses the bytes
+      (`read_checkpoint(expected_sha256=)` inside the build), so a file rewritten, torn, of
+      another graph or removed is refused as "not the model that was shown" before any model is
+      built from it, and the comparison after the build is deleted), the served-model-changed
+      trigger set when any part of what is served changed, and a usage history entry only for
+      a list ordered by a cohort version's score; the page stops waiting
       after 180 s, counting in that list's own confirmation, and offers "Read again". Placing it
       (the card's drawer, Models) is the Diagnosis and Models pages' part; *the card and its
       drawer as implemented (M5-2, UI-B, 2026-10-21):* `src/webui/components/diagnosis_card.py`

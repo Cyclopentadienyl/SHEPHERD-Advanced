@@ -61,8 +61,9 @@ components (a filter, links) in the list's header and footer rows.
    to the model fingerprint shown** (`expected_checkpoint_sha256`): the file
    can still change between this hash and the reload's own read, seconds later
    (the build reads the workspace's graph first), and the reload compares its
-   read with the fingerprint before it publishes anything, so other bytes are
-   refused, never served; a usage history entry (WP4
+   read with the fingerprint before the bytes are parsed, so other bytes, or
+   none, are refused as not the model shown, never served; a usage history
+   entry (WP4
    `record_model_load`) only when the list was ordered by a cohort version's
    score; then the chips and the "served model changed" trigger
    (`PageContext.served_model_changed`), set whenever any part of what is
@@ -695,7 +696,7 @@ def _target_now(item: Mapping[str, Any], workspace: Any, *,
                                     item.get("filename"), environ=environ)
     # The one comparison of a file's bytes with a digest (`checkpoint_matches`,
     # the registration's): it records nothing. It decides what is shown; the
-    # reload compares its own read with the digest shown before it publishes.
+    # reload compares its own read with the digest shown before it parses it.
     try:
         same = r.is_digest(item.get("sha256")) and checkpoint_matches(checkpoint, item["sha256"])
     except OSError as exc:

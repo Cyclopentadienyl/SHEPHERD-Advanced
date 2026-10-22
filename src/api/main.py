@@ -714,6 +714,7 @@ def build_pipeline(
     checkpoint_path: Optional[str] = None,
     data_dir: Optional[str] = None,
     device: Optional[str] = None,
+    expected_checkpoint_sha256: Optional[str] = None,
 ) -> Optional[PipelineBundle]:
     """
     Build a diagnosis pipeline without publishing it.
@@ -740,6 +741,10 @@ def build_pipeline(
         checkpoint_path: Path to trained model checkpoint (overrides env var)
         data_dir: Path to processed data directory (overrides env var)
         device: Inference device (overrides env var)
+        expected_checkpoint_sha256: The checkpoint's SHA-256 a caller was shown
+            (a bound reload); the build's one checkpoint read is compared with
+            it before the bytes are parsed, and other bytes, or no file, raise
+            `CheckpointChanged` (`DiagnosisPipeline`). None at startup.
 
     Returns:
         The built pipeline and the paths it was built from, or None if the
@@ -837,6 +842,7 @@ def build_pipeline(
             checkpoint_path=checkpoint_path,
             data_dir=data_dir,
             device=device,
+            expected_checkpoint_sha256=expected_checkpoint_sha256,
         )
         # Read the configuration back **before returning**, not after publishing.
         # It is the last thing that can fail, and a caller that published first
