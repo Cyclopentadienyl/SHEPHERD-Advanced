@@ -2945,7 +2945,14 @@ def _probes_own_gpu_lock(work: Path):
     in the operator's shell; the deployment's lock is never taken, so those
     probes do not exclude a deployment job running meanwhile. M5's probes name
     theirs (`_M5_SETTINGS`). The operator's lock settings are kept for
-    `_deployment_gpu_lock`."""
+    `_deployment_gpu_lock`.
+
+    **The operator's workspaces root is unset meanwhile**: with a root set,
+    the root names the lock and a lock file naming another is refused
+    (`server_settings.gpu_lock_location`, root-cause review P24-S1), so the
+    probe's own lock is a lock file with no root, as the tests' is. Nothing
+    these phases run reads the root from the environment: the probe takes the
+    real one from ``--workspaces-root`` and lists it through ``environ=``."""
     global _OPERATOR_LOCK_SETTINGS
     from src.utils.gpu_lock import LOCK_FILE_ENV, WORKSPACES_ROOT_ENV
 
@@ -2953,6 +2960,7 @@ def _probes_own_gpu_lock(work: Path):
     _OPERATOR_LOCK_SETTINGS = {name: value for name, value in saved.items()
                                if value is not None}
     os.environ[LOCK_FILE_ENV] = str(work / PROBE_GPU_LOCK)
+    os.environ.pop(WORKSPACES_ROOT_ENV, None)
     try:
         yield
     finally:

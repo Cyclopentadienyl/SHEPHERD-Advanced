@@ -81,8 +81,9 @@ def test_without_a_request_it_fails_closed(monkeypatch):
 
 
 # --------------------------------------------------------------------------- GPU jobs
-LOCK_FREE = {"configured": True, "problem": None, "held": False, "holder": None,
-             "holder_alive": None, "description": None}
+LOCK_FREE = {"configured": True, "path": "/srv/ws/.shepherd-gpu.lock",
+             "source": "under SHEPHERD_WORKSPACES_ROOT", "held_by": None, "holder": None,
+             "holder_alive": None, "problem": None, "unset": False}
 
 
 @pytest.mark.parametrize("job_type, status, text", [
@@ -109,8 +110,8 @@ def test_a_holder_outside_this_runner_is_named_by_what_its_record_says():
     same record, so the record does not say which it is (M5-3)."""
     holder = {"job_type": "training", "command": "train_model.py", "pid": 41822,
               "started_at": "2026-10-20T09:58:12+00:00"}
-    lock = {**LOCK_FREE, "held": True, "holder": holder, "holder_alive": True,
-            "description": "a training job (train_model.py, pid 41822, as it described itself)"}
+    lock = {**LOCK_FREE, "holder": holder, "holder_alive": True,
+            "held_by": "a training job (train_model.py, pid 41822, as it described itself)"}
     chip = c.gpu_chip_from(None, lock, operator=False)
     assert chip.text == "GPU job: train_model.py (pid 41822, since 09:58 UTC)"
     assert "CLI" not in chip.text
@@ -122,11 +123,11 @@ def test_a_holder_outside_this_runner_is_named_by_what_its_record_says():
 
 def test_a_holder_that_exited_is_not_named_as_the_holder():
     holder = {"command": "train_model.py", "pid": 41822, "started_at": "2026-10-20T09:58:12Z"}
-    lock = {**LOCK_FREE, "held": True, "holder": holder, "holder_alive": False,
-            "description": "a process other than the one its description names"}
+    lock = {**LOCK_FREE, "holder": holder, "holder_alive": False,
+            "held_by": "a process other than the one its description names"}
     chip = c.gpu_chip_from(None, lock, operator=True)
     assert chip.text == "GPU job: lock held, holder not described"
-    lock = {**LOCK_FREE, "held": True, "holder": None, "description": "a process that has not described itself"}
+    lock = {**LOCK_FREE, "holder": None, "held_by": "a process that has not described itself"}
     assert c.gpu_chip_from(None, lock, operator=True).text == (
         "GPU job: lock held, holder not described")
 
@@ -135,9 +136,11 @@ def test_a_lock_not_configured_says_so_and_that_jobs_are_refused(monkeypatch):
     """Review of 8242b47, P2-4: with neither lock setting set every job is
     refused, and the chip says so to every request (no path in it); it used to
     read "none in the job runner", as if jobs ran unlocked."""
+    from src.utils.gpu_lock import lock_state
+
     monkeypatch.delenv("SHEPHERD_GPU_LOCK_FILE", raising=False)
     monkeypatch.delenv("SHEPHERD_WORKSPACES_ROOT", raising=False)
-    lock = c.read_lock()
+    lock = lock_state()
     assert lock["unset"] is True and lock["configured"] is False and lock["problem"]
     for operator in (True, False):
         chip = c.gpu_chip_from(None, lock, operator=operator)
@@ -145,6 +148,35 @@ def test_a_lock_not_configured_says_so_and_that_jobs_are_refused(monkeypatch):
         assert chip.detail.startswith("The GPU lock is not configured: neither "
                                       "SHEPHERD_GPU_LOCK_FILE nor SHEPHERD_WORKSPACES_ROOT is set")
         assert "refuses every training and test run" in chip.detail
+        assert read_gpu_chip_now(operator) == chip
+
+
+def read_gpu_chip_now(operator: bool) -> c.Chip:
+    """The chip as the header reads it, through the lock's one status reader."""
+    class Idle:
+        def active_job(self):
+            return None
+
+    return c.read_gpu_chip(Idle(), operator=operator)
+
+
+def test_the_chip_reads_the_lock_s_one_status_reader(monkeypatch, tmp_path):
+    """Root-cause review, P24-S3: the chip turns no location or probe outcome
+    into a state of its own; it reads `lock_state`, so a state the lock rule
+    adds (here a lock file beside the root that names another file) reaches
+    the chip as the runner sees it."""
+    from src.utils import gpu_lock
+
+    assert c.read_gpu_chip.__kwdefaults__["lock_reader"] is gpu_lock.lock_state
+    assert not hasattr(c, "read_lock"), "a second reader of the lock's state"
+    other = tmp_path / "locks"
+    other.mkdir()
+    monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(tmp_path))
+    monkeypatch.setenv("SHEPHERD_GPU_LOCK_FILE", str(other / "gpu.lock"))
+    for operator in (True, False):
+        chip = read_gpu_chip_now(operator)
+        assert (chip.kind, chip.text) == ("unread", "GPU jobs: not read")
+        assert ("two different GPU lock files" in chip.detail) is operator
 
 
 def test_a_lock_that_cannot_be_used_names_its_path_only_to_an_operator():
@@ -183,8 +215,7 @@ def test_a_runner_that_raises_reads_not_read_with_no_exception_text():
 
 def test_a_holder_records_text_is_escaped_in_the_chip():
     holder = {"command": "<img src=x onerror=alert(1)>", "pid": 1, "started_at": None}
-    lock = {**LOCK_FREE, "held": True, "holder": holder, "holder_alive": None,
-            "description": "<b>x</b>"}
+    lock = {**LOCK_FREE, "holder": holder, "holder_alive": None, "held_by": "<b>x</b>"}
     html = c.chip_html(c.gpu_chip_from(None, lock, operator=True), which="gpu")
     assert "<img" not in html and "&lt;img src=x" in html and "<b>x</b>" not in html
 

@@ -1112,24 +1112,35 @@ def test_the_probe_s_own_lock_is_named_and_the_operator_s_is_still_stated(probe,
     """Review of 8242b47, P2-4: the formal entry points the probe runs in its
     own process refuse without a lock, so phases M and R name one of the
     probe's own under the work directory; W1 and RW1 still state the
-    operator's lock, and the operator's settings come back afterwards."""
-    from src.utils.gpu_lock import LOCK_FILE_ENV, WORKSPACES_ROOT_ENV, GpuLock, lock_location
+    operator's lock, and the operator's settings come back afterwards.
 
-    operator_lock = tmp_path / "deployment.lock"
-    monkeypatch.setenv(LOCK_FILE_ENV, str(operator_lock))
+    The operator's shell names the deployment's root, as the guide prepares
+    it: the probe's own lock file is the one in effect only because the root
+    is unset meanwhile, since a lock file beside a root that names another is
+    refused (root-cause review, P24-S1)."""
+    from src.utils.gpu_lock import (
+        LOCK_FILE_ENV,
+        LOCK_FILE_NAME,
+        WORKSPACES_ROOT_ENV,
+        GpuLock,
+        lock_location,
+    )
+
+    operator_lock = tmp_path / LOCK_FILE_NAME
+    monkeypatch.delenv(LOCK_FILE_ENV)
     monkeypatch.setenv(WORKSPACES_ROOT_ENV, str(tmp_path))
     work = tmp_path / "work"
     work.mkdir()
     with GpuLock(operator_lock, job_type="training", command="deployment-job").acquire():
         with probe._probes_own_gpu_lock(work):
+            assert WORKSPACES_ROOT_ENV not in os.environ
             assert lock_location().path == work / probe.PROBE_GPU_LOCK
             assert probe._deployment_gpu_lock() == {"configured": True, "held": True,
                                                     "unreadable": False}
     assert "deployment-job" in capsys.readouterr().err
-    assert os.environ[LOCK_FILE_ENV] == str(operator_lock)
+    assert LOCK_FILE_ENV not in os.environ
     assert os.environ[WORKSPACES_ROOT_ENV] == str(tmp_path)
     assert probe._OPERATOR_LOCK_SETTINGS is None
-    monkeypatch.delenv(LOCK_FILE_ENV)
     monkeypatch.delenv(WORKSPACES_ROOT_ENV)
     with probe._probes_own_gpu_lock(work):
         assert probe._deployment_gpu_lock() == {"configured": False, "held": False,

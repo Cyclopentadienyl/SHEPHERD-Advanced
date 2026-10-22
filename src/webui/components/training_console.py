@@ -95,9 +95,10 @@ import gradio as gr
 
 from src.api.services.training_manager import training_manager
 from src.config.runtime_presets import load_runtime_settings
+from src.utils.gpu_lock import lock_state
 from src.webui.components import charts
 from src.webui.components import renderers as r
-from src.webui.components.chips import D8_SHORT, chips_on_change, gpu_chip_from, read_lock
+from src.webui.components.chips import D8_SHORT, chips_on_change, gpu_chip_from
 from src.webui.components.help import help_button
 from src.webui.components.workspaces import (
     manifest_facts,
@@ -1388,7 +1389,7 @@ def _gpu_view(active, cache: Dict[str, Any], operator: bool) -> Optional[Dict[st
     held = cache.get("lock")
     if not held or now - held[0] >= LOCK_READ_SECONDS:
         try:
-            lock = read_lock()
+            lock = lock_state()
         except Exception:  # noqa: BLE001 - a lock that cannot be read is said, not raised
             lock = {"configured": True, "problem": "it could not be read just now"}
         held = [now, lock]

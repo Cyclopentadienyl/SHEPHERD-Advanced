@@ -36,6 +36,7 @@ from typing import Any, Callable, Mapping, NamedTuple, Optional
 
 import gradio as gr
 
+from src.utils.gpu_lock import lock_state
 from src.utils.operator_access import CONDITIONS, OperatorAccess
 from src.webui.components.help import help_button
 
@@ -148,14 +149,14 @@ def _command(value: Any) -> str:
 
 def gpu_chip_from(active: Optional[Mapping[str, Any]], lock: Mapping[str, Any],
                   *, operator: bool) -> Chip:
-    """The GPU chip from the runner's active job and the lock as read now.
-
-    `lock` holds ``configured``, ``problem``, ``unset`` (the problem is that
-    neither lock setting is set), ``held`` (whether someone holds
-    it at this instant), ``holder`` (its description record, or None),
-    ``holder_alive`` (True, False, or None when that cannot be told) and
-    ``description`` (`describe_holder`'s words). `operator` says whether the
-    asking request may see a server path.
+    """The GPU chip from the runner's active job and the lock as
+    `src.utils.gpu_lock.lock_state` reads it now, the one place that turns the
+    lock's location and probe into a status (root-cause review, P24-S3): its
+    ``problem``, ``unset`` (the problem is that neither lock setting is set),
+    ``held_by`` (who holds it at this instant, in words; None when free),
+    ``holder`` (the holder's description record, or None) and
+    ``holder_alive`` (True, False, or None when that cannot be told).
+    `operator` says whether the asking request may see a server path.
     """
     if active:
         job_type = active.get("job_type")
@@ -172,10 +173,10 @@ def gpu_chip_from(active: Optional[Mapping[str, Any]], lock: Mapping[str, Any],
         if operator:
             detail += f" {lock['problem']}"
         return Chip("unread", GPU_NOT_READ, f"{detail}\n\n{GPU_SCOPE}")
-    if not lock.get("held"):
+    description = str(lock.get("held_by") or "")
+    if not description:
         return Chip("none", GPU_NONE, GPU_SCOPE)
     holder = lock.get("holder")
-    description = str(lock.get("description") or "")
     if isinstance(holder, Mapping) and lock.get("holder_alive") is not False:
         # What the holder record says, and only that: its command, pid and
         # start. A formal CLI run and another server's job runner write the
@@ -193,45 +194,11 @@ def gpu_chip_from(active: Optional[Mapping[str, Any]], lock: Mapping[str, Any],
                                                                   if parts else "")
     else:
         text = "GPU job: lock held, holder not described"
-    return Chip("busy", text, f"Held by {description}.\n\n{GPU_SCOPE}" if description
-                else GPU_SCOPE)
-
-
-def read_lock(environ: Optional[Mapping[str, str]] = None) -> dict:
-    """The GPU lock as the chip needs it, read now (`gpu_chip_from`)."""
-    from src.utils.gpu_lock import (
-        GpuLockMisconfigured,
-        GpuLockNotConfigured,
-        describe_holder,
-        holder_alive,
-        lock_location,
-        probe,
-        read_holder,
-    )
-
-    state = {"configured": False, "problem": None, "unset": False, "held": False,
-             "holder": None, "holder_alive": None, "description": None}
-    try:
-        location = lock_location(environ)
-    except GpuLockNotConfigured as exc:
-        return {**state, "problem": str(exc), "unset": True}
-    except (GpuLockMisconfigured, OSError) as exc:
-        return {**state, "problem": str(exc)}
-    state["configured"] = True
-    try:
-        held_by = probe(location.path)
-    except OSError as exc:
-        return {**state, "problem": f"the GPU lock {location.path} cannot be checked ({exc})"}
-    if held_by is None:
-        return state
-    holder = read_holder(location.path)
-    return {**state, "held": True, "holder": holder,
-            "holder_alive": holder_alive(holder) if holder is not None else None,
-            "description": describe_holder(holder)}
+    return Chip("busy", text, f"Held by {description}.\n\n{GPU_SCOPE}")
 
 
 def read_gpu_chip(manager: Any, *, operator: bool,
-                  lock_reader: Callable[[], dict] = read_lock) -> Chip:
+                  lock_reader: Callable[[], dict] = lock_state) -> Chip:
     """The GPU chip, read now; the grey "not read" state when anything fails."""
     try:
         return gpu_chip_from(manager.active_job(), lock_reader(), operator=operator)
@@ -320,5 +287,4 @@ __all__ = [
     "gpu_chip_from",
     "read_chips",
     "read_gpu_chip",
-    "read_lock",
 ]

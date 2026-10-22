@@ -8,16 +8,21 @@ per deployment, whatever the workspace (`docs/working/PLAN_TEST_RESULTS.md` §6,
 (`scripts/train_model.py`, `scripts/measure_scorer.py`) take the same lock. A
 busy lock is refused, naming its holder; nothing is queued.
 
-**Where it is.** `SHEPHERD_GPU_LOCK_FILE`, an absolute path whose directory
-exists, when it is set; otherwise `.shepherd-gpu.lock` directly under
-`SHEPHERD_WORKSPACES_ROOT`, the one workspace root, so two workspaces share one
-lock. The rule is the server settings' (`server_settings.gpu_lock_location`),
-the one reader of both variables. **With neither set the lock is not
-configured and every managed job is refused** (review of 8242b47, P2-4): a
-formal CLI exits before it reads anything and the runner refuses a start, each
-saying how to configure it; nothing runs without excluding the others. A
-setting that is set but unusable (relative, or its directory missing) is
-refused too, never replaced by the other one or by a default.
+**Where it is.** **The workspaces root is the lock's identity**: with
+`SHEPHERD_WORKSPACES_ROOT` set, `.shepherd-gpu.lock` directly under it, so two
+workspaces share one lock and every process that names the deployment's root
+takes the same file; `SHEPHERD_GPU_LOCK_FILE` beside it is accepted only when
+it names that file, and another file is refused naming both. With no root
+set, `SHEPHERD_GPU_LOCK_FILE`, an absolute path whose directory exists. The
+rule is the server settings' (`server_settings.gpu_lock_location`), the one
+reader of both variables. **With neither set the lock is not configured and
+every managed job is refused** (review of 8242b47, P2-4): a formal CLI exits
+before it reads anything and the runner refuses a start, each saying how to
+configure it; nothing runs without excluding the others. A setting that is set
+but unusable (relative, or its directory missing) is refused too, never
+replaced by the other one or by a default. What the environment cannot
+settle: a process that names another root, or a lock file and no root, takes
+another file.
 
 **What the lock is.** An exclusive, non-blocking `fcntl.flock` on the lock file
 on POSIX; `msvcrt.locking` on the file's first byte on Windows (untested there,
@@ -140,14 +145,15 @@ def lock_location(environ: Mapping[str, str] | None = None) -> LockLocation:
     through the server settings' one rule (`server_settings.gpu_lock_location`).
 
     Raises:
-        GpuLockNotConfigured: neither setting is set.
+        GpuLockNotConfigured: neither setting is set (the setting's `unset`).
         GpuLockMisconfigured: a setting is set but is not an absolute path,
             names a directory that does not exist, or names a path this account
-            cannot check.
+            cannot check; or the lock file named beside the workspaces root is
+            not the one under it.
     """
     setting = server_settings.gpu_lock_location(environ)
     if setting.value is None:
-        if setting.problem == server_settings.GPU_LOCK_NOT_CONFIGURED:
+        if setting.unset:
             raise GpuLockNotConfigured(setting.problem)
         raise GpuLockMisconfigured(setting.problem)
     source = LOCK_FILE_ENV if setting.variable == LOCK_FILE_ENV else f"under {WORKSPACES_ROOT_ENV}"
@@ -190,11 +196,6 @@ def _holder_alive(holder: Mapping[str, Any]) -> bool | None:
     except OSError:
         return None
     return True
-
-
-#: Whether a holder description's process still runs (True, False, or None
-#: when that cannot be told): the header's GPU chip (M5-2) asks it too.
-holder_alive = _holder_alive
 
 
 def describe_holder(holder: Mapping[str, Any] | None) -> str:
@@ -379,8 +380,8 @@ class GpuLock(AbstractContextManager):
         self.release()
 
 
-def probe(path: Path) -> str | None:
-    """None when nobody holds the lock at this instant, else who holds it.
+def _held(path: Path) -> bool:
+    """Whether someone holds the lock at this instant.
 
     Opens the file read-only and creates nothing; takes the lock for an instant
     and gives it back when it is free. A taker that meets that instant tries
@@ -392,15 +393,21 @@ def probe(path: Path) -> str | None:
     try:
         fd = os.open(path, os.O_RDONLY)
     except FileNotFoundError:
-        return None
+        return False
     os.set_inheritable(fd, False)
     try:
         if _try_lock(fd):
             _unlock(fd)
-            return None
-        return describe_holder(read_holder(path))
+            return False
+        return True
     finally:
         os.close(fd)
+
+
+def probe(path: Path) -> str | None:
+    """None when nobody holds the lock at this instant, else who holds it
+    (`describe_holder`). Raises `OSError` as `_held` does."""
+    return describe_holder(read_holder(path)) if _held(path) else None
 
 
 def take_gpu_lock(job_type: str, command: str, *, log: logging.Logger | None = None,
@@ -424,13 +431,22 @@ def take_gpu_lock(job_type: str, command: str, *, log: logging.Logger | None = N
 
 
 def lock_state(environ: Mapping[str, str] | None = None) -> dict[str, Any]:
-    """The lock as a status shows it: `configured`, `path`, `source` (the
-    setting that names it), who holds it at this instant (`held_by`, None when
-    free), and `problem` when it is not configured or cannot be used or
-    checked, in which case every job is refused rather than started unlocked;
-    `unset` says the problem is that neither setting is set."""
+    """The lock as a status shows it, read now: **the one place where the
+    location and the probe become a status** (root-cause review, P24-S3); the
+    job runner's start check and status, the dashboard's GPU chip and the
+    probe read this.
+
+    `configured`, `path`, `source` (the setting that names it), who holds it at
+    this instant (`held_by`, `describe_holder`'s words, None when free) with
+    the holder's own description record (`holder`, None when free or not
+    described) and whether its process still runs (`holder_alive`: True,
+    False, or None when that cannot be told), and `problem` when it is not
+    configured or cannot be used or checked, in which case every job is
+    refused rather than started unlocked; `unset` says the problem is that
+    neither setting is set (the setting's own `unset`, never its words)."""
     state: dict[str, Any] = {"configured": False, "path": None, "source": None,
-                             "held_by": None, "problem": None, "unset": False}
+                             "held_by": None, "holder": None, "holder_alive": None,
+                             "problem": None, "unset": False}
     try:
         location = lock_location(environ)
     except GpuLockNotConfigured as exc:
@@ -441,9 +457,13 @@ def lock_state(environ: Mapping[str, str] | None = None) -> dict[str, Any]:
         return {**state, "problem": f"the GPU lock's location cannot be checked ({exc})"}
     state.update(source=location.source, configured=True, path=str(location.path))
     try:
-        state["held_by"] = probe(location.path)
+        held = _held(location.path)
     except OSError as exc:
-        state["problem"] = f"the GPU lock {location.path} cannot be checked ({exc})"
+        return {**state, "problem": f"the GPU lock {location.path} cannot be checked ({exc})"}
+    if held:
+        holder = read_holder(location.path)
+        state.update(held_by=describe_holder(holder), holder=holder,
+                     holder_alive=_holder_alive(holder) if holder is not None else None)
     return state
 
 
@@ -459,7 +479,6 @@ __all__ = [
     "GRACE_SECONDS",
     "WORKSPACES_ROOT_ENV",
     "describe_holder",
-    "holder_alive",
     "holder_path",
     "lock_location",
     "lock_state",

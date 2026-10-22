@@ -357,14 +357,15 @@ def test_the_gpu_line_comes_from_the_runner_and_the_lock_holder():
                          "status": "running"}, None,
                         {"inputs": {"version_label": "mygene2-2026-09"}}, operator=True)
     assert test["test"] is True and test["text"].startswith("GPU job: test run (mygene2-2026-09 · ")
-    held = {"configured": True, "problem": None, "held": True, "holder_alive": True,
+    held = {"configured": True, "problem": None, "holder_alive": True,
             "holder": {"command": "train_model.py", "pid": 41822,
                        "started_at": "2026-10-20T09:58:00+00:00"},
-            "description": "train_model.py (pid 41822)"}
+            "held_by": "train_model.py (pid 41822)"}
     cli = tc._gpu_line(None, held, None, operator=False)
     assert cli == {"text": "GPU job: train_model.py (pid 41822, since 09:58 UTC)",
                    "test": False}
-    assert tc._gpu_line(None, {"configured": True, "held": False}, None, operator=True) is None
+    assert tc._gpu_line(None, {"configured": True, "held_by": None}, None,
+                        operator=True) is None
     problem = tc._gpu_line(None, {"configured": True, "problem": "/srv/lock is a directory"},
                            None, operator=False)
     assert problem["text"] == "the GPU lock cannot be used"            # no path to read-only
@@ -593,7 +594,7 @@ def test_the_header_chips_follow_the_gpu_slot_on_the_tick_that_sees_it_change(
     from src.webui.components import chips
 
     monkeypatch.setattr(tc, "_get_pyg_warning", lambda: None)
-    monkeypatch.setattr(tc, "read_lock", lambda: {"configured": True, "held": False})
+    monkeypatch.setattr(tc, "lock_state", lambda: {"configured": True, "held_by": None})
     read = []
     monkeypatch.setattr(chips, "read_chips", lambda request: read.append(1) or "<chips>")
     status = {"status": "idle"}
