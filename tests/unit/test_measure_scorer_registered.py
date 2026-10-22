@@ -1222,6 +1222,73 @@ def test_a_registry_named_through_a_link_to_the_deployments_is_measured(
     assert len(_reports(cohort)) == 1
 
 
+@pytest.mark.parametrize("when", ["the lock is taken", "the device comes up"])
+@pytest.mark.parametrize("record", [False, True], ids=["measure", "record"])
+def test_a_registry_link_retargeted_after_the_check_does_not_move_the_run(
+    cli, cohort, tmp_path, monkeypatch, capsys, when, record
+):
+    """EB-2: the root checked is the root the run reads and writes through.
+    `--registry` names a link to the deployment's registry (not the link
+    `SHEPHERD_REGISTRY` names), and the link is retargeted to a copy after the
+    check: while the GPU lock is taken, or while the device is resolved. The
+    run measures the deployment's version: its report and its usage-history
+    entry are there, the copy is left as it was, and the register-later
+    command names the deployment registry's report (with `--record`, the
+    report registers). Catches `--registry` resolved again for the read."""
+    import contextlib
+
+    from src.evaluation.report_store import read_usage_history
+
+    copy = tmp_path / "registry-copy"
+    shutil.copytree(cohort.registry, copy, symlinks=True)
+    before = _tree(copy)
+    alias = tmp_path / "registry-link"
+    alias.symlink_to(cohort.registry, target_is_directory=True)
+    retargeted = []
+
+    def retarget():
+        alias.unlink()
+        alias.symlink_to(copy, target_is_directory=True)
+        retargeted.append(when)
+
+    if when == "the lock is taken":
+        take = cli.take_gpu_lock
+
+        @contextlib.contextmanager
+        def lock_then_retarget(*args, **kwargs):
+            with take(*args, **kwargs):
+                retarget()
+                yield
+
+        monkeypatch.setattr(cli, "take_gpu_lock", lock_then_retarget)
+    else:
+        resolve = cli._resolve_device
+
+        def retarget_then_resolve(*args, **kwargs):
+            retarget()
+            return resolve(*args, **kwargs)
+
+        monkeypatch.setattr(cli, "_resolve_device", retarget_then_resolve)
+    argv = ["--checkpoint", str(cohort.checkpoint), "--data-dir", str(cohort.data_dir),
+            "--cohort", cohort.version.manifest["label"], "--registry", str(alias),
+            "--device", "cpu", *(["--record"] if record else [])]
+
+    assert cli.main(argv) == 0
+
+    out = capsys.readouterr().out
+    assert retargeted == [when] and alias.resolve() == copy.resolve()
+    (report,) = _reports(cohort)
+    entries, problems = read_usage_history(cohort.version)
+    runs = [e for e in entries if e["kind"] == "test_run"]
+    assert problems == [] and [e["run_id"] for e in runs] == [report.parent.name]
+    assert _tree(copy) == before
+    if record:
+        assert "Registered as record 1" in out
+    else:
+        assert f'record_evaluation.py --report "{report}"' in out
+        assert str(copy) not in out
+
+
 def test_a_registry_that_stops_being_the_deployments_during_the_run_offers_no_command(
     cli, cohort, tmp_path, monkeypatch, capsys
 ):

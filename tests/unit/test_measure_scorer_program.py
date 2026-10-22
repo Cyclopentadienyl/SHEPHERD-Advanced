@@ -671,7 +671,7 @@ import sys, time
 sys.path.insert(0, sys.argv[1])
 import scripts.measure_scorer as cli
 
-def measuring(args):
+def measuring(args, *, registry):
     print("PRINTED BEFORE THE CANCEL")  # not flushed: stdout is a pipe, block-buffered
     print("MEASURING", file=sys.stderr, flush=True)
     time.sleep(120)

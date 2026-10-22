@@ -1561,7 +1561,9 @@ registry 是**由你建立**的目錄，每個指令都以**位於 repository �
 （`--record`、`record_evaluation.py --report`、Test 頁面），`measure_scorer.py --cohort` 也只在
 部署的 registry 中量測，也就是 `SHEPHERD_REGISTRY` 所指名的那一個。兩者以解析後的路徑比較，所以
 經由指向該目錄的連結給出的 `--registry` 會被接受；registry 的副本，或經由 bind mount 或另一個
-掛載點到達的同一個目錄，則是另一個 registry，在讀取其中任何東西之前就會被拒絕。這個變數未設定時，
+掛載點到達的同一個目錄，則是另一個 registry，在讀取其中任何東西之前就會被拒絕。
+`measure_scorer.py --cohort` 只在獲准開始時解析一次 `--registry`，之後都經由那個目錄讀寫：在它取得
+GPU 鎖或啟動裝置期間被改指向別處的連結，不會讓這次執行搬到別的目錄。這個變數未設定時，
 每個這類指令都會被拒絕，並說明要像服務的環境那樣設定它。請在執行指令的 shell 中，從服務讀取的
 同一個檔案設定它（§4.11）：
 

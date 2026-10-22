@@ -1159,7 +1159,10 @@ registered (`--record`, `record_evaluation.py --report`, the Test page), and `me
 --cohort` measures, only in the deployment's registry, the one `SHEPHERD_REGISTRY` names. The
 two are compared as resolved paths, so `--registry` through a link to that directory is
 accepted, while a copy of the registry, or the same directory reached through a bind mount or
-another mount, is another registry and is refused before anything in it is read. With the
+another mount, is another registry and is refused before anything in it is read. A
+`measure_scorer.py --cohort` run resolves `--registry` once, when it is allowed to start, and
+reads and writes through that directory: a link retargeted while the run takes the GPU lock or
+starts the device does not move it. With the
 variable unset, every such command is refused, saying to set it as the service's environment
 sets it. Set it in the shell where you run the commands, from the same file the service reads
 (§4.11):

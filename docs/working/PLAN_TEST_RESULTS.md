@@ -706,8 +706,13 @@ disagreement block, contested states and investigation notes are phase 2.
   and is refused, the message naming the path to use. A registry moved as a whole registers once
   `SHEPHERD_REGISTRY` names its new place. **`measure_scorer.py --cohort` measures only there
   too**, refused before the GPU lock, the device or any input (D7: every run on the acceptance
-  cohort is in its usage history, D4), so the "cannot be registered later" cases are gone;
-  `--record` whose registry stops being the deployment's during the run (a link retargeted)
+  cohort is in its usage history, D4), so the "cannot be registered later" cases are gone.
+  *Since the review of `8242b47` (EB-2 of the root-cause round; implemented, its incremental
+  review next):* the root checked is the root the run reads and writes through
+  (`_refuse_another_registry` returns it and `main` passes it to the run), so a `--registry`
+  link retargeted while the lock is taken or the device starts cannot move the measurement, its
+  report or its usage-history entry into another directory. `--record` whose deployment
+  registry stops being the one `SHEPHERD_REGISTRY` names during the run (that link retargeted)
   offers no register-later command. The command line reads the variable from its own shell, so
   a command run with it set to another directory on purpose uses that one: the rule catches a
   registry reached by mistake, as D2 says of the store's other rules, and is not tamper-proof.

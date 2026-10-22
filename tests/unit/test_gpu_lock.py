@@ -559,7 +559,7 @@ def test_measure_scorer_holds_the_lock_for_its_run_and_releases_it(root, monkeyp
 
     seen = {}
 
-    def run(args):
+    def run(args, *, registry):
         seen["held_by"] = probe(root / LOCK_FILE_NAME)
         seen["record"] = json.loads(holder_path(root / LOCK_FILE_NAME).read_text())
         raise RuntimeError("the run failed")
