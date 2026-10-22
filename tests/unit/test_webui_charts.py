@@ -18,7 +18,13 @@ the package's scratch browser checks):
   finite, a chart's scale "linear" or "log" only;
 - **the module's lifecycle and the two 1.6.32 workarounds** (static, and in
   Node where it is installed: the log ticks for a minimum that is not a power
-  of ten, the locale guard for ``en-US@posix``).
+  of ten, the locale guard for ``en-US@posix``);
+- **replies and the pending cue** (in Node, the real module mounted with
+  Gradio 6.30's props, watch and server-function semantics emulated,
+  `tests/fixtures/chart_host.cjs`): a reply is drawn only for what the token
+  asks now (the reviewer's P2-5: a selection cleared or changed, back to the
+  run drawn included), a failed call is retried and said, never "no longer
+  listed", and the figure is busy only while another run loads.
 
 Module: tests/unit/test_webui_charts.py
 """
@@ -345,6 +351,67 @@ def test_the_epoch_axis_and_zoom_note_name_whole_epochs():
     assert res["labels"] == ["1", "3", "60", ""]
     assert "epochAxis(axis)," in MODULE_JS                    # the chart's epoch axis
     assert '"zoomed: epochs " + wholeEpoch(inst.x[0])' in MODULE_JS
+
+
+def test_the_loading_line_is_one_constant_and_the_busy_figure_is_hidden_by_visibility():
+    """The line "Charts loading…" is said by the template before the module
+    mounts and by `CHART_CSS` while the module marks the figure busy: one
+    constant.
+    The busy figure is hidden with ``visibility`` (``display: none`` would
+    give the ResizeObserver 0 x 0 and a new run's charts would never be
+    created), set as an attribute (``aria-busy``), not a class."""
+    template = _figure().html_template
+    assert f'<div class="shep-charts-msg">{charts.LOADING}</div>' in template
+    assert f'.shep-charts-body::after {{ content: "{charts.LOADING}";' in charts.CHART_CSS
+    assert "@LOADING@" not in charts.CHART_CSS and '"' not in charts.LOADING
+    busy = [line for line in charts.CHART_CSS.splitlines() if 'aria-busy="true"' in line]
+    assert len(busy) == 3 and all("display" not in line for line in busy)
+    assert "visibility: hidden" in busy[0]
+    for part in ("grid", "new", "zoom", "msg"):
+        assert f'.shep-charts[aria-busy="true"] .shep-charts-{part}' in busy[0]
+    assert 'inst.root.setAttribute("aria-busy", v)' in MODULE_JS
+    assert "classList" not in MODULE_JS[MODULE_JS.index("function setPending"):
+                                        MODULE_JS.index("function refresh")]
+
+
+# --------------------------------------------------------------------------- replies and the selection
+CHART_HOST = Path(__file__).resolve().parent.parent / "fixtures" / "chart_host.cjs"
+REPLY_SCENARIOS = [
+    # positive controls
+    "control_new_epochs_are_drawn", "control_switch_runs", "control_superseded_rev_is_dropped",
+    "control_real_not_listed", "control_zoom_survives_clear_and_return",
+    # a reply for what the token no longer asks for is never drawn (P2-5)
+    "reviewer_pending_then_cleared", "shown_A_pending_B_back_to_A", "shown_A_pending_B_then_cleared",
+    "cleared_A_pending_B_pending_A_reply_late", "pending_cleared_then_same_run_again",
+    "reply_queued_before_the_watch_callback", "superseded_failure_after_clear_is_ignored",
+    "superseded_failure_after_switch_back_is_ignored", "export_names_the_run_shown",
+    # busy only while another run loads; never on a retry or new epochs of the run drawn
+    "pending_while_another_run_loads", "pending_stays_while_no_reply_comes",
+    "pending_replaces_the_cleared_line", "pending_on_first_load", "pending_view_buttons_do_nothing",
+    "new_epochs_never_mark_pending", "retry_keeps_trying_again",
+    # a failed call is a failure (retried, said), never "no longer listed" or another run's curves
+    "failed_call_is_not_not_listed", "rejected_call_is_a_failure",
+    "rejected_call_after_clear_is_ignored", "rejected_call_after_switch_back_is_ignored",
+    "failed_switch_does_not_keep_old_run",
+    "retry_budget_is_per_token", "failed_new_epochs_keep_the_run", "retry_cancelled_by_switch",
+    # nothing drawn: nothing of the last run stays, and its last view is kept
+    "cleared_hides_zoom_note", "cleared_keeps_last_zoom_of_run",
+]
+
+
+@pytest.mark.skipif(NODE is None, reason="Node is not installed")
+@pytest.mark.parametrize("scenario", REPLY_SCENARIOS)
+def test_a_reply_is_drawn_only_for_what_the_token_asks_for_now(scenario):
+    result = subprocess.run([NODE, str(CHART_HOST), str(STATIC / charts.MODULE), scenario],
+                            capture_output=True, encoding="utf-8", timeout=60)
+    assert result.stdout, result.stderr
+    out = json.loads(result.stdout)[scenario]
+    assert out.pop("ok") is True, out
+
+
+def test_every_scenario_of_the_host_is_run():
+    names = re.findall(r"^S\.(\w+) = ", CHART_HOST.read_text(encoding="utf-8"), re.M)
+    assert sorted(names) == sorted(REPLY_SCENARIOS)
 
 
 def test_the_figures_buttons_keep_their_padding_under_gradios_button_rule():

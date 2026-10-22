@@ -2686,6 +2686,10 @@ learning rate（0 或缺少的值為空隙）。圖下是資源列（GPU 與記�
   使用路徑），而且只在有新資料列時讀取。頁面顯示期間每 1.5 秒重新讀取一次，在其他頁面時完全
   不讀。圖表函式庫是 uPlot 1.6.32，由儀表板自己提供（`src/webui/static/vendor/uplot-1.6.32/`，
   MIT）；沒有任何東西來自 CDN。
+- 載入另一個 run 的圖表時，圖區顯示「Charts loading…」，不會把前一個 run 的圖表放在新 run 的名稱
+  之下；選擇改變之後才到的回應一律不畫。所要求 run 的圖表讀取失敗時（伺服器無法連線或發生錯誤），
+  圖區顯示「The charts could not be loaded. Trying again…」，每 3 秒重試一次，最多 20 次；已畫出的
+  run 在重新要求較新 epoch 的期間保留它的圖表。
 
 **唯讀的瀏覽器**看到同一個頁面，每個動作都停用並附上 D8 的原因，而且不會為它開啟任何
 checkpoint：run 標題顯示「not shown · reading the checkpoint is an operator control」，快照句

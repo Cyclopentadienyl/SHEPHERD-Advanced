@@ -2463,6 +2463,12 @@ resources line (GPU and memory).
   server lists (never a path), and only when it has new rows. The page is read again every 1.5 s
   while it is shown, and not at all on another page. The chart library is uPlot 1.6.32, served by
   the dashboard itself (`src/webui/static/vendor/uplot-1.6.32/`, MIT); nothing comes from a CDN.
+- While another run's charts load, the figure says "Charts loading…" instead of showing the
+  previous run's charts under the new run's name, and an answer that arrives after the selection
+  changed is never drawn. If the charts of the run asked for cannot be read (the server
+  unreachable, or an error), the figure says "The charts could not be loaded. Trying again…" and
+  asks again every 3 s, up to 20 times; a run already drawn keeps its charts while its newer
+  epochs are asked for again.
 
 **A read-only browser** sees the same page with every action disabled and D8's reason, and no
 checkpoint is opened for it: the run header says "not shown · reading the checkpoint is an

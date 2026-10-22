@@ -23,11 +23,24 @@
  *   from contentRect, a 0-width report skipped while hidden, a detached
  *   element destroys the instance); uPlot.destroy() on teardown; uPlot's own
  *   mousedown/mouseup binding disabled (1.6.32 leaks a document listener when
- *   a chart is destroyed mid-press); stale fetch replies dropped by a sequence
- *   number; watch('value', refresh) plus one refresh() now (updates that came
- *   while the head was loading are not replayed). A chart is created once per
- *   chart and series set, then updated by setData(data, false) with the
- *   stored view applied.
+ *   a chart is destroyed mid-press); watch('value', refresh) plus one
+ *   refresh() now (updates that came while the head was loading are not
+ *   replayed). A chart is created once per chart and series set, then updated
+ *   by setData(data, false) with the stored view applied.
+ *
+ * Replies (Gradio 6.30's server functions cannot be cancelled, and a failed
+ * request resolves undefined instead of rejecting): a reply is drawn only if
+ * it answers the newest request (a sequence number) and the token the
+ * component holds now (`stillAsked`), so a late reply never brings back a run
+ * after the selection was cleared or changed, even back to the run drawn. A
+ * failed call is retried (each token has its own retries) and never read as
+ * "no longer listed"; another run's curves never stay under it. While the
+ * reply for a run other than the one drawn is outstanding, the root is
+ * aria-busy="true" and CHART_CSS hides the figure with `visibility` (the
+ * charts are kept, and the ResizeObserver still measures them) and says
+ * "Charts loading…"; a retry and new epochs of the run drawn never set it.
+ * The toolbar's view buttons do nothing meanwhile (they would change the
+ * hidden run's view).
  *
  * Two uPlot 1.6.32 defects are worked around here: log axes get their own
  * tick splits (`logSplits`: 1.6.32's logAxisSplits hangs or throws for a
@@ -643,7 +656,7 @@
     });
     on("keydown", function (e) {
       var plot = e.target && e.target.closest ? e.target.closest(".shep-chart-plot") : null;
-      if (!plot || e.ctrlKey || e.metaKey || e.altKey) { return; }
+      if (!plot || e.ctrlKey || e.metaKey || e.altKey || pending(inst)) { return; }
       var st = chartOf(inst, plot);
       if (!st || !st.u) { return; }
       var k = e.key, handled = true;
@@ -666,9 +679,10 @@
       var btn = e.target && e.target.closest ? e.target.closest("[data-chart-act]") : null;
       if (!btn || !root.contains(btn)) { return; }
       var act = btn.getAttribute("data-chart-act");
+      if (act === "csv") { exportCsv(inst, btn); return; }
+      if (pending(inst)) { return; }                     // the view drawn is hidden: not another run's
       if (act === "reset") { reset(inst); return; }
       if (act === "follow") { follow(inst); return; }
-      if (act === "csv") { exportCsv(inst, btn); return; }
       var f = act === "zoom-in" ? KEY_ZOOM : 1 / KEY_ZOOM;
       var first = inst.charts[inst.order[0]];
       if (!first) { return; }
@@ -704,26 +718,60 @@
     return t && typeof t === "object" ? t : {};
   }
 
-  function refresh(inst) {
+  // Whether the component still asks for what request `t` was sent for: its
+  // token now, not the one saved with the request. Gradio replaces
+  // props.value before it calls the watch callbacks, so a reply that comes
+  // after the selection changed (another run, the run drawn again, or none)
+  // is never drawn, whatever the refresh for that change did.
+  function stillAsked(inst, t) {
+    var now = token(inst);
+    return now.run === t.run && now.rev === t.rev;
+  }
+
+  // No run drawn: the run drawn until now keeps its last view (written now,
+  // as when another run is entered) and nothing of it stays on screen, its
+  // zoom note and new-epochs button included.
+  function leaveRun(inst) {
+    if (inst.saveTimer) { writeView(inst); }
+    inst.run = null; inst.rev = null;
+    inst.x = null; inst.xManual = false; inst.frozenLast = null;
+    buildCards(inst, []);
+    updateToolbar(inst);
+  }
+
+  // The pending cue: the run drawn never stands for another run asked.
+  function setPending(inst, on) {
+    var v = on ? "true" : "false";
+    if (inst.root.getAttribute("aria-busy") !== v) { inst.root.setAttribute("aria-busy", v); }
+  }
+  function pending(inst) { return inst.root.getAttribute("aria-busy") === "true"; }
+
+  function refresh(inst, retrying) {
     if (inst.destroyed) { return; }
+    clearTimeout(inst.retryTimer);                          // this refresh replaces a retry
+    if (!retrying) { inst.retries = 0; }                    // each token has its own retries
     var t = token(inst);
     if (!t.run) {
-      if (inst.run !== null) { inst.run = null; inst.rev = null; buildCards(inst, []); updateToolbar(inst); }
+      setPending(inst, false);
+      if (inst.run !== null) { leaveRun(inst); }
       setMessage(inst, t.empty || inst.root.getAttribute("data-empty") || "");
       return;
     }
-    if (t.run === inst.run && t.rev === inst.rev && !inst.failed) { return; }
+    if (t.run === inst.run && t.rev === inst.rev && !inst.failed) { setPending(inst, false); return; }
     var my = ++inst.seq;
     var fn = inst.root.getAttribute("data-series-fn");
     if (!fn || !inst.server || typeof inst.server[fn] !== "function") { return; }
+    setPending(inst, t.run !== inst.run && !retrying);      // a retry keeps its "Trying again…"
     Promise.resolve(inst.server[fn](t)).then(function (d) {
-      if (inst.destroyed || my !== inst.seq) { return; }   // unmounted, or a newer reply is coming
+      // unmounted, a newer request sent, or no longer what the token asks for
+      if (inst.destroyed || my !== inst.seq || !stillAsked(inst, t)) { return; }
+      setPending(inst, false);
+      if (d == null) { throw new Error("no reply"); }       // a failed call: never "no longer listed"
       inst.failed = false;
       inst.retries = 0;
-      if (!d || d.run !== t.run) {                          // the run is no longer the one listed
-        inst.run = null; inst.rev = null;
-        buildCards(inst, []);
-        setMessage(inst, (d && d.empty) || "This run is no longer listed.");
+      if (d.run !== t.run) {                                // the run is no longer the one listed
+        leaveRun(inst);
+        setMessage(inst, d.empty || "This run is no longer listed.");
         return;
       }
       if (d.run !== inst.run) { enterRun(inst, d.run); }   // a new run: fit it, or bring back its view
@@ -736,11 +784,14 @@
         applyView(inst);
       }
     }).catch(function () {
-      if (inst.destroyed || my !== inst.seq) { return; }
+      if (inst.destroyed || my !== inst.seq || !stillAsked(inst, t)) { return; }
+      setPending(inst, false);
+      if (inst.run !== null && inst.run !== t.run) { leaveRun(inst); }  // never another run's curves
       inst.failed = true;
-      if ((inst.retries = (inst.retries || 0) + 1) <= RETRY_MAX) {
-        clearTimeout(inst.retryTimer);
-        inst.retryTimer = setTimeout(function () { refresh(inst); }, RETRY_MS);
+      var again = (inst.retries = (inst.retries || 0) + 1) <= RETRY_MAX;
+      if (again) { inst.retryTimer = setTimeout(function () { refresh(inst, true); }, RETRY_MS); }
+      if (inst.run === null) {
+        setMessage(inst, again ? "The charts could not be loaded. Trying again…" : "The charts could not be loaded.");
       }
     });
   }

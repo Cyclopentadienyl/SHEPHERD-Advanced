@@ -37,6 +37,17 @@ id against what the server lists (never a path), and returns `figure_payload`
 (plain lists, values rounded to `SIGNIFICANT` significant digits, non-finite
 values as gaps) or, for Export CSV, ``{"filename", "csv"}``.
 
+**Replies and the pending cue** (the module): a reply is drawn only if it
+answers the newest request and the token the component holds now, so a late
+reply never brings back a run after the selection was cleared or changed. A
+failed call (6.30's client answers it with ``undefined``) is retried, never
+read as "no longer listed". While the reply for a run other than the one
+drawn is outstanding, the module marks the figure ``aria-busy="true"`` and
+`CHART_CSS` hides the figure with ``visibility`` (never ``display``, which
+would give the ResizeObserver 0 x 0 and leave a new run's charts uncreated)
+and says `LOADING`, the template's own first line; a retry and new epochs of
+the run drawn never mark it.
+
 Module: src/webui/components/charts.py
 """
 from __future__ import annotations
@@ -71,6 +82,10 @@ LOCALE_GUARD = "js/shep_charts_locale.js"
 
 #: Values are sent rounded to this many significant digits.
 SIGNIFICANT = 6
+
+#: What the figure says while it loads: the template's line until the module
+#: mounts, and over the hidden figure while the module marks it busy (`CHART_CSS`).
+LOADING = "Charts loading…"
 
 
 def _versioned(relative: str) -> str:
@@ -175,7 +190,7 @@ NARROW_NOTE = ("The wheel scrolls the page here; zoom with + and −, drag to pa
 def figure_template(*, series_fn: str, csv_fn: Optional[str], help_key: Optional[str],
                     help_title: str, empty: str) -> str:
     """The component's static template: the toolbar, the grid the module
-    fills, the "new epochs" overlay and a message line."""
+    fills, the "new epochs" overlay and a message line (`LOADING` at first)."""
     from html import escape
 
     help_html = help_button(help_key, help_title) if help_key else ""
@@ -202,7 +217,7 @@ def figure_template(*, series_fn: str, csv_fn: Optional[str], help_key: Optional
         '<div class="shep-charts-body">'
         '<div class="shep-charts-grid"></div>'
         '<button type="button" class="shep-charts-new" data-chart-act="follow" hidden></button>'
-        '<div class="shep-charts-msg">Charts loading…</div>'
+        f'<div class="shep-charts-msg">{escape(LOADING)}</div>'
         '</div></div>')
 
 
@@ -232,7 +247,11 @@ def chart_figure(*, key: str, elem_id: str, series_fn: Callable[[Any], Any],
 #: puts it in its ``PAGE_CSS``): text never under 14 px, the axes included
 #: (they are drawn at 14 px by the module). The buttons' rules name the
 #: figure too (two classes): Gradio's own ``.gradio-container-<version>
-#: button { padding: 0; font-size: 100% }`` outranks a single class.
+#: button { padding: 0; font-size: 100% }`` outranks a single class. While
+#: the module marks the figure busy (``aria-busy="true"``) its grid, overlay,
+#: zoom note and message are hidden with ``visibility`` and the body says
+#: `LOADING` (filled in for ``@LOADING@``); in the narrow layout the body keeps
+#: room for that line.
 CHART_CSS = """
 .shep-figure > .html-container { padding: 0 !important; }
 .shep-charts { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; }
@@ -272,6 +291,8 @@ CHART_CSS = """
 .shep-charts-new[hidden] { display: none; }
 .shep-charts-msg { position: absolute; inset: 40% 0 auto 0; text-align: center; font-size: 15px; color: var(--shep-muted); pointer-events: none; }
 .shep-charts-msg[hidden] { display: none; }
+.shep-charts[aria-busy="true"] .shep-charts-grid, .shep-charts[aria-busy="true"] .shep-charts-new, .shep-charts[aria-busy="true"] .shep-charts-zoom, .shep-charts[aria-busy="true"] .shep-charts-msg { visibility: hidden; }
+.shep-charts[aria-busy="true"] .shep-charts-body::after { content: "@LOADING@"; position: absolute; inset: 40% 0 auto 0; text-align: center; font-size: 15px; color: var(--shep-muted); pointer-events: none; }
 @media (max-width: 1399px), (max-height: 759px) {
   .shep-charts { height: auto; }
   .shep-charts-hint { display: none; }
@@ -280,14 +301,16 @@ CHART_CSS = """
   .shep-chart-plot { flex: none; height: 260px; touch-action: pan-y; }
   .shep-chart-plot .u-wrap { touch-action: pan-y; }
   .shep-charts-msg { position: static; padding: 24px 0; }
+  .shep-charts[aria-busy="true"] .shep-charts-body { min-height: 72px; }
 }
-"""
+""".replace("@LOADING@", LOADING)
 
 
 __all__ = [
     "CHART_CSS",
     "CHART_HEAD",
     "GESTURES",
+    "LOADING",
     "NARROW_NOTE",
     "SIGNIFICANT",
     "STATIC_DIR",

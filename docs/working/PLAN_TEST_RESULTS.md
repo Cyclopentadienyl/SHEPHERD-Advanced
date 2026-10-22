@@ -1839,7 +1839,27 @@ contract and BACKLOG stay the record, and no new planning document is added.
       not a power of ten; a locale `Intl` refuses), as is its leaked mouse listener. Checked in a
       browser with controlled metrics: the gestures, a zoomed view held through polling, a
       changing series set, a re-mount and a server restart, and a log grown to 5000 epochs with
-      flat listener, chart, canvas and observer counts;
+      flat listener, chart, canvas and observer counts. *As fixed after the reviewer's review of
+      M5 (2026-10-22, its P2-5; implemented, the incremental review and the GB10 acceptance to
+      follow):* a reply is drawn only if it answers the newest request and the token the
+      component holds now, so a late reply no longer brings a run back after the selection was
+      cleared, or after A shown, B pending and A again (the sequence number alone was never
+      advanced by a clear or by a return to the run drawn). Found while fixing it and fixed in
+      the same change: Gradio 6.30's client answers a failed server call with `undefined`, which
+      the chart read as "This run is no longer listed."; it is now a failure, retried every 3 s up
+      to 20 times for each token (the budget was shared by every run) and said ("The charts could
+      not be loaded. Trying again…") unless the run is already drawn; another run's curves never
+      stay under the run asked for, a clear leaves no zoom note, and a zoom made within 250 ms of
+      a clear is kept for its run. While the reply for a run other than the one drawn is
+      outstanding the figure is busy (`aria-busy`, hidden with `visibility` so its charts are
+      kept and measured, the toolbar's view buttons idle) and says "Charts loading…"; never for a
+      retry or for new epochs of the run drawn. Checked again in a browser (Chromium, a scratch
+      app whose server function is delayed or fails on demand): the cue, A pending then cleared,
+      A to B pending to A, the chart, run label and Export CSV agreeing, new epochs without the
+      cue, a failed call and its retry, the narrow layout and a server restart; `8242b47` fails
+      the same check (A drawn after the clear, B drawn under A, "no longer listed" for a failed
+      call). Left as it is: the run drawn whose newer rows keep failing until its retries are
+      spent stays at its older epochs without saying so (BACKLOG item 41);
     - **the Epoch Window's two defects** fixed with its removal: returning to "All" never
       cleared the locked range (Gradio drops `x_lim=None` from an update), and the refresh
       cache shared by every browser session left a reloaded page or a second browser showing
