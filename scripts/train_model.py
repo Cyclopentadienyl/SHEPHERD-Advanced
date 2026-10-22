@@ -126,7 +126,7 @@ from src.kg.data_loader import (
     create_diagnosis_dataloader,
 )
 from src.models.gnn.shepherd_gnn import ShepherdGNN, ShepherdGNNConfig, create_model
-from src.evaluation.cohort import resolve_cohort, verify_cohort_reads
+from src.evaluation.cohort import verify_cohort_reads
 from src.utils.gpu_lock import GpuLockMisconfigured, take_gpu_lock
 # The refusals of a dataset or a resume parent that is not the one chosen,
 # raised by their readers themselves (`expected_sha256=`); `main` says each once.
@@ -598,12 +598,17 @@ def read_training_inputs(
     from src.kg.storage.file_storage import read_graph_artifacts, read_samples
 
     # The manifest first, so a dataset that is not the one shown is said as
-    # changed before any other refusal about its files (P22-S2).
+    # changed before any other refusal about its files (P22-S2); its absence is
+    # the reader's own refusal.
     manifest = read_split_manifest(data_dir, expected_sha256=expected_manifest_sha256)
     logger.info(f"Dataset fingerprint (split_manifest.json sha256): {manifest.identity.sha256}")
-    # Stat only: a missing split is named before the graph and samples are read.
+    # Stat only: a missing split is named before the graph and the samples are
+    # read. The samples alone: the manifest is not looked at by path again
+    # after its read (contract M2.1), which `resolve_cohort` would do.
     for split in TRAINING_SPLITS:
-        resolve_cohort(data_dir, split)
+        samples_path = data_dir / f"{split}_samples.json"
+        if not samples_path.is_file():
+            raise ValueError(f"{samples_path} does not exist")
     graph = read_graph_artifacts(data_dir, map_location="cpu")
     samples = {
         split: read_samples(data_dir, split, training_fields=True)
