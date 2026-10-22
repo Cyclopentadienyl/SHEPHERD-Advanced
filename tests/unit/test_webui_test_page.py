@@ -360,6 +360,97 @@ def test_a_disagreeing_key_is_shown_runs_disagree_and_cannot_be_registered(site,
     assert tp.notes_visible(reports, site.run_id)
 
 
+def _uncomparable_copy(site):
+    """A copy of the kept report under a new run id that `build_record` refuses
+    (its metrics removed by hand) while its manifest still names its key."""
+    source = site.reports / site.run_id
+    copy = site.reports / f"20261020T170000Z-{site.sha[:12]}-0badf00d"
+    shutil.copytree(source, copy)
+    report = json.loads((copy / "report.json").read_text())
+    del report["authoritative_metrics"]
+    (copy / "report.json").write_text(json.dumps(report, indent=2, sort_keys=True))
+    return copy.name
+
+
+def _unreadable_copy(site):
+    """A run directory whose report.json is not JSON: its key cannot be told."""
+    copy = site.reports / f"20261020T160000Z-{site.sha[:12]}-0dead0ff"
+    copy.mkdir()
+    (copy / "report.json").write_text("not a report")
+    return copy.name
+
+
+def _cohorts_route_runs(label):
+    """``GET /api/v1/cohorts`` through the real route: each run of `label`'s
+    store as the open route lists it, by run id."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from src.api.routes import lists
+
+    app = FastAPI()
+    app.include_router(lists.router, prefix="/api/v1")
+    body = TestClient(app).get("/api/v1/cohorts").json()
+    (version,) = [v for v in body["versions"] if v["label"] == label]
+    return {run["run_id"]: run for run in version["reports"]}
+
+
+#: Each case: how the store is changed, and the D5 state every run with a report
+#: then has (the run ids are the original's and the added copy's).
+D5_CASES = {
+    "uncontested": (lambda site, mp: None, "uncontested"),
+    "contested": (lambda site, mp: _disagreeing_copy(site), "contested"),
+    "a report that cannot be compared": (lambda site, mp: _uncomparable_copy(site),
+                                         "cannot_be_checked"),
+    "a report whose key cannot be told": (lambda site, mp: _unreadable_copy(site),
+                                          "cannot_be_checked"),
+    "a store that cannot be scanned": (lambda site, mp: mp.setattr(
+        __import__("src.evaluation.report_store", fromlist=["x"]), "scan_report_store",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("unreadable"))),
+        "cannot_be_checked"),
+}
+
+
+@pytest.mark.parametrize("case", list(D5_CASES))
+def test_the_cohort_route_and_the_test_page_give_each_run_the_same_d5_state(
+        site, monkeypatch, case):
+    """EB-3: D5's state of each run's key is part of the one run listing both
+    surfaces share (`server_lists._report_items`), so ``GET /api/v1/cohorts``
+    and the Test page say the same for every run: uncontested, contested, or
+    cannot be checked -- a report the scan could not compare, one whose key
+    cannot be told (named by its run id, never recovered from a problem's
+    words), and every run of a store that cannot be scanned; never no state
+    for a run with a report. The open route carries no problem's words; the
+    Test page keeps them for the operator. Catches a route without the state,
+    and a page that judges it on its own."""
+    change, expected = D5_CASES[case]
+    added = change(site, monkeypatch)
+    route = _cohorts_route_runs(LABEL)
+    page = {run["run_id"]: run for run in tp.read_reports(LABEL)["runs"]}
+
+    with_report = [site.run_id] + ([added] if isinstance(added, str) else [])
+    assert sorted(route) == sorted(page) == sorted(with_report)
+    for run_id in with_report:
+        shown, listed = page[run_id]["contest"], route[run_id]["contest"]
+        assert shown["state"] == listed["state"] == expected, (run_id, shown, listed)
+        assert shown["differing"] == listed["differing"]
+        assert shown["disagreeing_runs"] == listed["disagreeing_runs"]
+        assert listed["problems"] == []
+        assert bool(shown["problems"]) == (expected == "cannot_be_checked")
+    assert str(site.root) not in json.dumps([run["contest"] for run in route.values()])
+    if case == "contested":
+        assert "untruncated_mrr" in route[added]["contest"]["differing"]
+        assert sorted(route[added]["contest"]["disagreeing_runs"]) == sorted(with_report)
+    if case == "a report whose key cannot be told":
+        assert page[added]["key"] is None and "could not be read" in page[added]["unbuilt"]
+        assert tp.register_state({"access": {"allowed": True}}, tp.read_reports(LABEL),
+                                 site.run_id)[0] is False
+    if case == "a report that cannot be compared":
+        assert page[added]["key"] == page[site.run_id]["key"]
+        assert "cannot be compared" in page[added]["unbuilt"]
+        assert page[added]["record"] is None and page[site.run_id]["record"] is not None
+
+
 def test_the_result_shows_aggregates_and_states_never_a_case_or_a_path(site):
     reports = tp.read_reports(LABEL)
     html = tp.result_html(reports, site.run_id, tp.path_roots())

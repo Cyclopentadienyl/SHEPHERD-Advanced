@@ -14,9 +14,10 @@ docstring. Three panels, as the mockup draws them (``test-wide.png``,
   and whether its report is registered (the registration's one helper,
   `server_lists.stored_report_state`, asked again for an operator beside the
   listed checkpoint Register would use: `refine_rows`, `ledger_checkpoint`)
-  and D5's state of its key (`scan_report_store`: "runs disagree —
-  investigate"); a running test, or the last one that ended with nothing in
-  the store, is the top row;
+  and D5's state of its key ("runs disagree — investigate"), both from the
+  server's one run listing that ``GET /api/v1/cohorts`` shares
+  (`server_lists.version_item`); a running test, or the last one that ended
+  with nothing in the store, is the top row;
 - **Run**: the model (WP1's checkpoint list of the workspace, by name and model
   fingerprint: listing opens every checkpoint, so it is an operator control and
   a read-only request is not shown it), the R10 evidence the server's setting
@@ -553,48 +554,33 @@ def read_models(workspace: Any, request: Any, *,
 
 def read_reports(label: Any, *, environ: Optional[Mapping[str, str]] = None) -> Dict[str, Any]:
     """One cohort version's report store for one session: every run directory,
-    newest first, with what it kept and whether its report is registered (the
-    registration's one helper), the D5 state of its key (`scan_report_store`,
-    which builds each report into the record the ledger would hold, read once)
-    and the investigation notes kept with the key. Opens no checkpoint."""
+    newest first, with what it kept, whether its report is registered and the
+    D5 state of its key, as the server's one run listing gives them
+    (`server_lists.version_item`, the listing ``GET /api/v1/cohorts`` shares,
+    here with the problems' words for the operator); each run's key and record
+    (the record the ledger would hold) from the same one scan of the store,
+    found by the run's id; and the investigation notes kept with the key. The
+    version is read once. Opens no checkpoint."""
     from src.api.services.server_lists import (
         ServerListRefused,
-        cohort_version_item,
+        read_report_store,
         resolve_cohort_version,
         stored_report_state,
+        version_item,
     )
-    from src.evaluation.report_store import read_investigation_notes, scan_report_store
+    from src.evaluation.report_store import read_investigation_notes
 
     empty = {"label": label, "runs": [], "problem": None, "notes": [], "notes_problems": [],
              "version_sha256": None}
     if not label:
         return empty
     try:
-        item = cohort_version_item(label, environ=environ, report_state=stored_report_state)
         version = resolve_cohort_version(label, environ=environ)
     except ServerListRefused as exc:
         return {**empty, "problem": str(exc)}
-    by_run: Dict[str, Dict[str, Any]] = {}
-    try:
-        scan = scan_report_store(version)
-    except Exception as exc:  # noqa: BLE001 - the block then reads "cannot be checked"
-        logger.exception("The report store could not be scanned")
-        scan, scan_problem = None, f"the report store could not be compared ({type(exc).__name__})"
-    else:
-        scan_problem = None
-        for key, reports in scan.reports.items():
-            status = scan.status(key)._asdict()
-            # By the report's digest: byte-identical copies under other runs
-            # are one report in the scan, and a run's own digest names its record.
-            records = {digest: record for digest, (_run, record) in reports.items()}
-            for run in scan.runs.get(key, ()):
-                by_run[run] = {"key": list(key), "records": records, "contest": status}
-        for key, problems in scan.unbuilt.items():
-            status = scan.status(key)._asdict()
-            for problem in problems:
-                for name in _runs_named(problem):
-                    by_run.setdefault(name, {"key": list(key), "records": {},
-                                             "contest": status, "unbuilt": problem})
+    store = read_report_store(version)
+    item = version_item(version, report_state=stored_report_state, store=store, operator=True,
+                        environ=environ)
     notes, notes_problems = [], []
     try:
         notes, notes_problems = read_investigation_notes(version)
@@ -602,15 +588,18 @@ def read_reports(label: Any, *, environ: Optional[Mapping[str, str]] = None) -> 
         notes_problems = [f"the investigation notes could not be read ({type(exc).__name__})"]
     runs = []
     for report in item.reports:
-        view = by_run.get(report.run_id, {})
+        placed = store.scan.run_key(report.run_id) if store.scan is not None else None
+        key, unbuilt = placed if placed is not None else (None, None)
+        # By the report's digest: byte-identical copies under other runs are one
+        # report in the scan, and a run's own digest names its record.
         digest = (report.state or {}).get("report_sha256")
+        built = store.scan.reports.get(key, {}).get(digest) if key is not None else None
         runs.append({
             "run_id": report.run_id, "when": run_time(report.run_id),
             "sha12": run_sha12(report.run_id), "state": report.state,
-            "problem": report.problem, "key": view.get("key"),
-            "record": (view.get("records") or {}).get(digest),
-            "contest": view.get("contest"), "unbuilt": view.get("unbuilt"),
-            "unplaced": list(scan.unplaced) if scan is not None else [scan_problem],
+            "problem": report.problem, "key": list(key) if key is not None else None,
+            "record": built[1] if built is not None else None,
+            "contest": report.contest, "unbuilt": unbuilt,
         })
     return {"label": item.label, "version_sha256": item.manifest_sha256, "runs": runs,
             "problem": item.reports_problem, "notes": notes, "notes_problems": notes_problems}
@@ -831,11 +820,6 @@ def refine_rows(page: Mapping[str, Any], reports: Mapping[str, Any], models: Map
         logger.warning("The registration of %d report(s) of %s could not be read again",
                        failed, reports.get("label"))
     return {**reports, "runs": runs}
-
-
-def _runs_named(problem: str) -> List[str]:
-    """The run ids a scan problem names (its report's path)."""
-    return re.findall(r"\d{8}T\d{6}Z-[0-9a-f]{12}-[0-9a-f]{8}", problem)
 
 
 def read_job(*, manager: Any = None) -> Dict[str, Any]:
@@ -1465,7 +1449,8 @@ def result_html(reports: Mapping[str, Any], run_id: Optional[str],
         parts.append(_reason_html(redact(run["problem"], roots)))
     if record is None:
         if state.get("kept") == "kept":
-            why = run.get("unbuilt") or "; ".join(run.get("unplaced") or []) or (
+            why = run.get("unbuilt") or "; ".join(
+                (run.get("contest") or {}).get("problems") or []) or (
                 "the report store's comparison did not read it")
             parts.append(_reason_html("This report cannot be shown or compared: "
                                       + redact(why, roots)))

@@ -757,7 +757,18 @@ disagreement block, contested states and investigation notes are phase 2.
   cannot disagree. A contested state is never downgraded by a value it cannot show: a run's
   value that is not a finite number is null in the route (and "not a finite number" on the
   page), and a contested state whose details cannot be carried (they fail validation, or cannot
-  be built) is shown contested without them.
+  be built) is shown contested without them. *Since the review of `8242b47` (EB-3 and EB-4 of
+  the root-cause round; implemented, its incremental review next):* **the runs too.** D5's
+  state of each run's key is part of the one run listing (`server_lists._report_items`, from
+  one scan of the version's store), so `GET /api/v1/cohorts` carries it (`contest`, without the
+  problems' words) and Research › Test shows the same state from the same listing instead of
+  its own join; the scan names every report it read by its run id (`StoreScan.run_key`,
+  `run_status`), so a report whose key cannot be told is "cannot be checked" on both, never no
+  state, and no run id is read out of a problem's words. The cost is one scan of each listed
+  version's store per request of the open route. The loaded-model route finds a record's
+  version by reading each version manifest once (`CohortVersions.listed` on `list_versions`),
+  and its docstring says what it reads: the ledger, the manifests and the shown records'
+  stores.
   Neither Models nor the API shows the investigation notes D5 keeps with a key (BACKLOG 40). The
   scan is not atomic with a run publishing into the version (one writer).
 

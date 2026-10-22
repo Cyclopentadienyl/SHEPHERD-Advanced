@@ -1956,7 +1956,14 @@ and a file, or a label, and the server finds that name in its own list again.
   measured bytes) is not looked for, and the reason names the ledger that was. A report that
   names its checkpoint by a relative path, or that cannot be read, has no ledger to look in:
   `registered` is then `cannot_be_checked` too, saying why. A checkpoint moved since the run is
-  looked for where the run read it.
+  looked for where the run read it. Each run also carries D5's state of its report's key
+  (`contest`: `uncontested`; `contested`, with the fields and the runs that differ;
+  `cannot_be_checked`, never to be read as uncontested), the same state Research › Test shows
+  for that run, without the reasons' own words, which may name a server path (since the
+  root-cause round of the review fixes). A run whose report cannot be read or compared is
+  `cannot_be_checked` (unless the reports under its key already disagree), and so is every run
+  of a store that cannot be scanned. Each request scans every listed version's report store
+  once.
 
 ### The build time: `workspace_build.json`
 

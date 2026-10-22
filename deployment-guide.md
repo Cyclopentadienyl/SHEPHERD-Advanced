@@ -2239,7 +2239,12 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
   `not_registered`：登錄在同一份權重的其他副本旁邊的紀錄（`record_evaluation --checkpoint` 接受
   任何位元組相同的檔案）不會被查找，原因會指出查過的是哪一份 ledger。以相對路徑記錄 checkpoint 的
   報告，或無法讀取的報告，沒有可查的 ledger：這時 `registered` 同樣為 `cannot_be_checked`，並說明
-  原因。執行之後被移走的 checkpoint，會在執行讀取它的位置查找。
+  原因。執行之後被移走的 checkpoint，會在執行讀取它的位置查找。每個 run 也帶有它的報告所屬 key 的
+  D5 狀態（`contest`：`uncontested`；`contested`，附上不同的欄位與 run；`cannot_be_checked`，絕不能
+  當成 uncontested 解讀），與 Research › Test 對那個 run 顯示的狀態相同，但不含原因本身的文字，
+  因為它可能指出伺服器路徑（自審查修正的根因回合起）。報告無法讀取或無法比較的 run 是
+  `cannot_be_checked`（除非它的 key 底下的報告已經不一致），無法掃描的報告庫中的每個 run 也是。
+  每個請求會把每個列出版本的報告庫掃描一次。
 
 ### 建置時間：`workspace_build.json`
 

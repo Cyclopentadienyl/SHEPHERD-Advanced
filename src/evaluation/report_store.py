@@ -284,10 +284,13 @@ class StoreScan(NamedTuple):
     ``reports`` maps a key to its distinct reports, by the report's digest, as
     ``(run id, record)``: byte-identical copies are one report, compared once.
     ``runs`` maps a key to every run directory holding a readable report under
-    it, copies included. ``unbuilt`` maps
-    a key to the problems of reports under it that cannot be compared;
-    ``unplaced`` holds the problems of reports whose key cannot be told, which
-    leave every key of the version unable to be checked.
+    it, copies included. ``unbuilt`` maps a key to the reports under it that
+    cannot be compared, as ``(run id, problem)``; ``unplaced`` holds the reports
+    whose key cannot be told, as ``(run id, problem)`` (the run id None when the
+    store itself could not be listed), which leave every key of the version
+    unable to be checked. **Every report the scan read is named by its run id**,
+    so a run's state is found by its id (`run_status`), never by reading ids out
+    of a problem's words.
     """
 
     version: "CohortVersionRead"
@@ -318,7 +321,8 @@ class StoreScan(NamedTuple):
         if differing:
             return KeyStatus("contested", run_ids, tuple(differing),
                              tuple(sorted(disagreeing)))
-        problems = tuple(self.unbuilt.get(tuple(key), ())) + self.unplaced
+        problems = (tuple(problem for _run, problem in self.unbuilt.get(tuple(key), ()))
+                    + self._unplaced_problems())
         if problems:
             return KeyStatus("cannot_be_checked", run_ids, problems=problems)
         return KeyStatus("uncontested", run_ids)
@@ -326,6 +330,40 @@ class StoreScan(NamedTuple):
     def state(self, key: Tuple[Any, ...]) -> str:
         """The key's state alone, one of `CONTEST_STATES` (for D4's ordering)."""
         return self.status(key).state
+
+    def _unplaced_problems(self) -> Tuple[str, ...]:
+        return tuple(problem for _run, problem in self.unplaced)
+
+    def run_key(self, run_id: str) -> Optional[Tuple[Optional[Tuple[Any, ...]], Optional[str]]]:
+        """Where the scan placed the report in run directory `run_id`:
+        ``(key, None)`` for a report it built, ``(key, problem)`` for one under
+        a key it could not compare, ``(None, problem)`` for one whose key cannot
+        be told; None when it read no report there (no ``report.json``: an
+        interrupted or refused run)."""
+        for key, run_ids in self.runs.items():
+            if run_id in run_ids:
+                return tuple(key), None
+        for key, entries in self.unbuilt.items():
+            for run, problem in entries:
+                if run == run_id:
+                    return tuple(key), problem
+        for run, problem in self.unplaced:
+            if run == run_id:
+                return None, problem
+        return None
+
+    def run_status(self, run_id: str) -> Optional[KeyStatus]:
+        """D5's state of the key the report in run directory `run_id` is under
+        (`status`); ``cannot_be_checked`` for a report whose key cannot be told,
+        with the store's unplaced problems; None when the scan read no report
+        there."""
+        placed = self.run_key(run_id)
+        if placed is None:
+            return None
+        key, _problem = placed
+        if key is None:
+            return KeyStatus("cannot_be_checked", (run_id,), problems=self._unplaced_problems())
+        return self.status(key)
 
 
 def scan_report_store(
@@ -358,8 +396,8 @@ def scan_report_store(
     from src.evaluation.sidecar import build_record, record_key, report_key
 
     grouped: Dict[Tuple[Any, ...], Dict[str, Tuple[str, Dict[str, Any]]]] = {}
-    unbuilt: Dict[Tuple[Any, ...], List[str]] = {}
-    unplaced: List[str] = []
+    unbuilt: Dict[Tuple[Any, ...], List[Tuple[str, str]]] = {}
+    unplaced: List[Tuple[Optional[str], str]] = []
 
     runs: Dict[Tuple[Any, ...], List[str]] = {}
 
@@ -378,15 +416,15 @@ def scan_report_store(
         if reports is not None:
             names = sorted(entry.name for entry in reports.iterdir())
     except (RegistryRefused, OSError) as exc:
-        unplaced.append(f"the report store of {version.manifest.get('label')!r} could not be "
-                        f"listed ({type(exc).__name__}: {exc})")
+        unplaced.append((None, f"the report store of {version.manifest.get('label')!r} could "
+                               f"not be listed ({type(exc).__name__}: {exc})"))
     for name in names:
         if not is_run_id(name) or (known is not None and name == known[0]):
             continue
         try:
             run_dir = report_run_directory(reports, name)
         except RegistryRefused as exc:
-            unplaced.append(str(exc))
+            unplaced.append((name, str(exc)))
             continue
         if not run_dir.is_dir():
             continue
@@ -394,13 +432,13 @@ def scan_report_store(
         if not os.path.lexists(path):
             continue
         if path.is_symlink():
-            unplaced.append(f"{path} is a link, so the report it reaches is not one this store "
-                            "keeps")
+            unplaced.append((name, f"{path} is a link, so the report it reaches is not one this "
+                                   "store keeps"))
             continue
         try:
             report, digest = read_report(path)
         except (OSError, ValueError) as exc:
-            unplaced.append(f"{path} could not be read: {type(exc).__name__}: {exc}")
+            unplaced.append((name, f"{path} could not be read: {type(exc).__name__}: {exc}"))
             continue
         try:
             record = build_record(report, digest)
@@ -412,9 +450,9 @@ def scan_report_store(
                        + ("it nests too deeply to be read" if isinstance(exc, RecursionError)
                           else str(exc)))
             if key is None:
-                unplaced.append(problem)
+                unplaced.append((name, problem))
             else:
-                unbuilt.setdefault(key, []).append(problem)
+                unbuilt.setdefault(key, []).append((name, problem))
             continue
         del report
         add(name, record)

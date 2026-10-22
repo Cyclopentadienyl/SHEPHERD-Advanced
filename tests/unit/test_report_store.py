@@ -157,7 +157,7 @@ def test_a_report_json_that_is_a_link_cannot_be_checked(tmp_path):
     scan = scan_report_store(version_of(first))
 
     assert scan.state(_key(first)) == "contested", "the second stored report still disagrees"
-    assert any(str(linked) in p and "is a link" in p for p in scan.unplaced)
+    assert any(str(linked) in p and "is a link" in p for _run, p in scan.unplaced)
     other_key = scan.status(("a" * 64, "r", "b" * 64, "c" * 64))
     assert other_key.state == "cannot_be_checked", "the link could be under any key"
 
@@ -177,6 +177,40 @@ def test_a_report_that_parses_but_cannot_be_compared_affects_only_its_own_key(tm
     assert any(str(stale) in p and "python_seed" in p
                for p in scan.status(_key(first)).problems)
     assert scan.state(_key(other_key)) == "uncontested"
+
+
+def test_every_report_the_scan_read_is_named_by_its_run_id(tmp_path):
+    """EB-3: a report that cannot be compared and one whose key cannot be told
+    are named by their run ids, so a run's state is found by its id
+    (`run_key`, `run_status`), never read out of a problem's words: the one
+    built is under its key; the one that cannot be compared under its key with
+    its own problem; the one whose key cannot be told has no key and cannot be
+    checked; a run directory with no report has no state."""
+    first = _stored(tmp_path)
+    version = version_of(first)
+    old = registered_report()
+    old["manifest"]["python_seed"] = 0
+    stale = store_report(tmp_path / "registry", old)
+    broken = store_bytes(tmp_path / "registry", b"{broken", version=version)
+    interrupted = first.parents[1] / new_run_id("c" * 64)
+    interrupted.mkdir()
+
+    scan = scan_report_store(version)
+
+    key = _key(first)
+    (unbuilt,) = scan.unbuilt[key]
+    assert unbuilt[0] == stale.parent.name and "python_seed" in unbuilt[1]
+    (unplaced,) = scan.unplaced
+    assert unplaced[0] == broken.parent.name and str(broken) in unplaced[1]
+    assert scan.run_key(first.parent.name) == (key, None)
+    assert scan.run_key(stale.parent.name) == (key, unbuilt[1])
+    assert scan.run_key(broken.parent.name) == (None, unplaced[1])
+    assert scan.run_key(interrupted.name) is None and scan.run_status(interrupted.name) is None
+    assert scan.run_status(first.parent.name) == scan.status(key)
+    assert scan.run_status(stale.parent.name).state == "cannot_be_checked"
+    lost = scan.run_status(broken.parent.name)
+    assert (lost.state, lost.run_ids, lost.problems) == (
+        "cannot_be_checked", (broken.parent.name,), (unplaced[1],))
 
 
 def test_a_report_nested_too_deeply_to_copy_cannot_be_checked_and_does_not_crash(tmp_path):

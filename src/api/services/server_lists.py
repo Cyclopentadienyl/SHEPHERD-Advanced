@@ -48,6 +48,16 @@ registered is read by the registration's one helper, passed in as
 `report_state` (`stored_report_state` is that helper for a run directory);
 nothing here infers either from which files exist.
 
+**D5's state of each run's key** (`ReportItem.contest`) comes with the run's
+state, from one scan of the version's store (`read_report_store`,
+`scan_report_store`'s `StoreScan.run_status`): the one run listing that
+`GET /api/v1/cohorts` and the Test page share, so the two cannot disagree about
+a run, and neither judges D5 itself. The open route's listing leaves out the
+problems' words, which may name a server path; the Test page's keeps them for
+the operator. A version whose runs' states are read is scanned once per call:
+each kept report read once more, on an open route (the trade BACKLOG 36
+accepted for the loaded-model view).
+
 **Import sources** (M5-2, the Test page; D7): the ``*.json`` files the operator
 placed directly in ``SHEPHERD_INTAKE_DIR`` (`list_intake_files`), by file name;
 a request names one and `resolve_intake_file` finds it in that listing again,
@@ -63,11 +73,14 @@ Module: src/api/services/server_lists.py
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, List, Mapping, NamedTuple, Optional, Tuple
 
 from src.config import server_settings
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "CheckpointItem",
@@ -76,6 +89,7 @@ __all__ = [
     "Listing",
     "ReportItem",
     "ServerListRefused",
+    "StoreRead",
     "WorkspaceItem",
     "cohort_version_item",
     "list_checkpoints",
@@ -83,6 +97,7 @@ __all__ = [
     "list_intake_files",
     "list_workspaces",
     "locate_checkpoint",
+    "read_report_store",
     "resolve_checkpoint",
     "resolve_cohort_version",
     "resolve_intake_file",
@@ -90,6 +105,7 @@ __all__ = [
     "resolve_workspace",
     "resolve_workspaces",
     "stored_report_state",
+    "version_item",
 ]
 
 #: The files an intake listing offers: shepherd-cases/1 sources are JSON.
@@ -186,11 +202,16 @@ class CheckpointItem:
 class ReportItem:
     """One run directory of a version's report store. `state` is what the
     report-state reader says of it (kept, registered); `None`, with `problem`,
-    when it was not read."""
+    when it was not read. `contest` is D5's state of the key its report is
+    under, read with `state` (`_run_contest`): ``state`` (uncontested,
+    contested, cannot_be_checked), ``differing``, ``disagreeing_runs`` and
+    ``problems`` (empty but on an operator's listing); `None` when the run's
+    state was not read or it kept no report."""
 
     run_id: str
     state: Optional[Dict[str, Any]]
     problem: Optional[str]
+    contest: Optional[Dict[str, Any]] = None
 
 
 @dataclass(frozen=True)
@@ -599,15 +620,67 @@ def locate_checkpoint(
 # ---------------------------------------------------------------------------
 # Cohort versions and their reports
 # ---------------------------------------------------------------------------
+class StoreRead(NamedTuple):
+    """A version's report store as one scan read it (`scan_report_store`'s
+    `StoreScan`), or why it could not be scanned (`problem`)."""
+
+    scan: Optional[Any]
+    problem: Optional[str]
+
+
+def read_report_store(version: Any) -> StoreRead:
+    """One scan of `version`'s report store (`scan_report_store`): each kept
+    report read once and built into the record the ledger would hold. A scan
+    that fails is its reason, never an exception, so every run is still listed,
+    its key's state "cannot be checked"."""
+    from src.evaluation.report_store import scan_report_store
+
+    try:
+        return StoreRead(scan_report_store(version), None)
+    except Exception as exc:  # noqa: BLE001 - the runs' states then read "cannot be checked"
+        logger.exception("A report store could not be scanned")
+        return StoreRead(None, f"the report store could not be compared ({type(exc).__name__})")
+
+
+#: Why a kept report has no key state of its own: the scan did not read it (it
+#: was written after the scan, before its state was read).
+_NOT_COMPARED = "the report store's comparison did not read it"
+
+
+def _run_contest(store: StoreRead, run_id: str, state: Mapping[str, Any],
+                 operator: bool) -> Optional[Dict[str, Any]]:
+    """D5's state of the key run `run_id`'s report is under, from the store's
+    one scan (`StoreScan.run_status`, which finds the run by its id). A report
+    the scan read but could not place is ``cannot_be_checked``, and so is one it
+    did not read, or every run of a store that could not be scanned: never no
+    state while a report may be kept. None for a run that kept none. `operator`
+    False leaves out the problems' words, which may name a server path."""
+    status = store.scan.run_status(run_id) if store.scan is not None else None
+    if status is None:
+        if state.get("kept") == "not_kept":
+            return None
+        return {"state": "cannot_be_checked", "differing": [], "disagreeing_runs": [],
+                "problems": [store.problem or _NOT_COMPARED] if operator else []}
+    return {"state": status.state, "differing": list(status.differing),
+            "disagreeing_runs": list(status.disagreeing_runs),
+            "problems": list(status.problems) if operator else []}
+
+
 def _report_items(
-    version: Any, report_state: Optional[ReportStateReader]
+    version: Any, report_state: Optional[ReportStateReader], *,
+    store: Optional[StoreRead] = None, operator: bool = False,
 ) -> Tuple[Tuple[ReportItem, ...], Optional[str]]:
+    """The version's runs, newest first. Given `report_state`, each with what
+    it kept, whether its report is registered, and D5's state of its key from
+    one scan of the store (`store`, made here when not given)."""
     from src.evaluation.cohort_registry import RegistryRefused, list_report_runs
 
     try:
         runs = list_report_runs(version)
     except RegistryRefused as exc:
         return (), str(exc)
+    if report_state is not None and store is None:
+        store = read_report_store(version)
     items = []
     for run in runs:
         if run.problem is not None:
@@ -617,15 +690,20 @@ def _report_items(
                 "kept and registered are not read here: no report-state reader was given")))
         else:
             try:
-                items.append(ReportItem(run.run_id, dict(report_state(run.directory)), None))
+                state = dict(report_state(run.directory))
             except Exception as exc:  # noqa: BLE001 — one unreadable run must not hide the rest
                 items.append(ReportItem(run.run_id, None, (
                     f"its state could not be read ({type(exc).__name__}: {exc})")))
+                continue
+            items.append(ReportItem(run.run_id, state, None,
+                                    _run_contest(store, run.run_id, state, operator)))
     return tuple(items), None
 
 
 def _version_item(listed: Any, report_state: Optional[ReportStateReader],
-                  environ: Optional[Mapping[str, str]]) -> CohortVersionItem:
+                  environ: Optional[Mapping[str, str]], *,
+                  store: Optional[StoreRead] = None,
+                  operator: bool = False) -> CohortVersionItem:
     if listed.version is None:
         return CohortVersionItem(listed.label, None, None, False, None, None, None, None,
                                  None, None, listed.problem)
@@ -633,7 +711,8 @@ def _version_item(listed: Any, report_state: Optional[ReportStateReader],
     source = _as_dict(manifest.get("source")) or {}
     imported = _as_dict(manifest.get("imported")) or {}
     role = manifest.get("role")
-    reports, reports_problem = _report_items(listed.version, report_state)
+    reports, reports_problem = _report_items(listed.version, report_state, store=store,
+                                             operator=operator)
     return CohortVersionItem(
         label=listed.label,
         manifest_sha256=listed.version.identity.sha256,
@@ -682,8 +761,10 @@ def list_cohort_versions(
 
     `report_state`, given a run directory, says what that run kept and whether
     its report is registered: the registration's one helper
-    (`stored_report_state`, which the API route passes). Without it, each run
-    is listed with no state and says so.
+    (`stored_report_state`, which the API route passes). With it, each run
+    also carries D5's state of its key, without the problems' words (one scan
+    of each version's store). Without it, each run is listed with no state and
+    says so, and no store is scanned.
 
     No registry configured, or one refused: no item, and why.
     """
@@ -740,18 +821,30 @@ def cohort_version_item(
     report_state: Optional[ReportStateReader] = None,
 ) -> CohortVersionItem:
     """One cohort version as `list_cohort_versions` lists it, with its report
-    store's runs and, given `report_state`, what each kept and whether its
-    report is registered: for a page that shows one version's reports without
-    reading every other version's.
+    store's runs and, given `report_state`, what each kept, whether its report
+    is registered and D5's state of its key: for a page that shows one
+    version's reports without reading every other version's.
 
     Raises:
         ServerListRefused: as `resolve_cohort_version`.
     """
+    return version_item(resolve_cohort_version(label, environ=environ),
+                        report_state=report_state, environ=environ)
+
+
+def version_item(version: Any, *, report_state: Optional[ReportStateReader] = None,
+                 store: Optional[StoreRead] = None, operator: bool = False,
+                 environ: Optional[Mapping[str, str]] = None) -> CohortVersionItem:
+    """A cohort version already read (`resolve_cohort_version`), listed as
+    `list_cohort_versions` lists it. `store` is that version's one scan
+    (`read_report_store`), for a caller that shows the scan's records too, so
+    the store is scanned once; made here when not given. `operator` keeps the
+    problems' words in each run's D5 state, for an operator's page (the Test
+    page); the open route's listing leaves them out."""
     from src.evaluation.cohort_registry import ListedVersion
 
-    version = resolve_cohort_version(label, environ=environ)
     return _version_item(ListedVersion(version.manifest.get("label"), version, None),
-                         report_state, environ)
+                         report_state, environ, store=store, operator=operator)
 
 
 def resolve_report(label: Any, run_id: Any, *,
