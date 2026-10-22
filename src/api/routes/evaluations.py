@@ -11,8 +11,10 @@ Endpoint:
 **Its own router, outside `pipeline.router`.** SPEC_4's C3 class covers the
 reload, the UI configuration and checkpoint inspection; a deployment applying
 B2 by unmounting or protecting that router as a whole keeps this view, which
-reads the ledger and, for each record it shows, the report store of the
-record's cohort version, and nothing else (D8).
+reads the ledger, the registry's version manifests (each ``cohort.json`` once,
+to find each shown record's version by the cohort digest its key carries) and
+the report store of each shown record's version; no checkpoint, and no write
+(D8).
 
 **Found by the served read, filtered by its digest.** Application state is read
 once, and both the ledger's directory and the digest the ledger is filtered by
@@ -42,7 +44,8 @@ query parameter, no path, no digest.
 whether the reports its cohort version's store keeps under the record's key
 agree, from the one implementation the dashboard shows too
 (`src.api.services.record_states.contest_states`, computed for the records shown
-only, one scan per version, the versions the server's registry lists). A record
+only: the registry's version manifests read once each, then one scan of each
+shown record's version store, no other store listed). A record
 registered before its key's runs came to disagree stays, marked ``contested``;
 one whose state cannot be read (no registry configured, a version the registry
 does not list, an unreadable report) is ``cannot_be_checked``, never

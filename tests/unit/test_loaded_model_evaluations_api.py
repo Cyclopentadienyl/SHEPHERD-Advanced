@@ -20,10 +20,12 @@ over ledgers written by the real registration (`register_report`):
 - two imports of one label are shown as two versions, by their manifest digests;
 - aggregates only: no path, no case id, no rank in any answer, and no query
   parameter selects anything;
-- the route reads the ledger once and, for each record's D5 state, each report
-  its version's store keeps once (BACKLOG 36), opens nothing else, writes
-  nothing, and is mounted outside the C3 `pipeline` router; its one ``await``
-  comes after the identity is taken;
+- the route opens the ledger once, each version manifest of the registry once
+  (to find a record's version by its cohort digest; the version found is that
+  read) and, for each record's D5 state, each report its version's store keeps
+  once (BACKLOG 36); it opens no other file, lists no other version's store,
+  writes nothing, and is mounted outside the C3 `pipeline` router; its one
+  ``await`` comes after the identity is taken;
 - `DiagnosisPipeline.served_checkpoint_read` returns the read exactly when the
   served identity reports the checkpoint verified.
 
@@ -885,20 +887,35 @@ def test_no_query_parameter_selects_anything(app, served, tmp_path):
     assert "requestBody" not in operation["get"]
 
 
-def test_the_ledger_is_read_once_and_nothing_else_is_opened_or_written(app, served,
-                                                                       tmp_path, monkeypatch):
-    """D8: the view reads the ledger, and for D5's state each report the
-    record's version store keeps (BACKLOG 36), once each, and opens no
-    checkpoint. No `torch.load`, no directory hash (`find_checkpoint`), no
-    write, the report store's usage history included."""
+def test_the_route_opens_the_ledger_the_manifests_and_the_shown_versions_reports_only(
+        app, served, tmp_path, monkeypatch):
+    """D8 and EB-4: everything one request opens, under the test's directories.
+    The ledger, once; each version manifest of the registry,
+    ``versions/*/cohort.json``, once (to find the record's version by the cohort
+    digest its key carries; the version found is that read, never read again);
+    and, for D5's state, each report the record's version store keeps, once
+    (BACKLOG 36). Nothing else: no checkpoint, and no other version's store, not
+    even listed, although an unrelated version keeps a report beside it. No
+    `torch.load`, no directory hash (`find_checkpoint`), no write, the report
+    store's usage history included."""
+    import copy
+
     import src.evaluation.sidecar as sidecar
     import src.utils.fingerprint as fingerprint
+    from tests.fixtures.report_store import store_bytes, store_version
 
     _, _, checkpoint = served
-    monkeypatch.setenv("SHEPHERD_REGISTRY", str(tmp_path / "reports"))
-    _register(_report_for(_sha(checkpoint)), checkpoint.parent, tmp_path / "reports")
+    registry = tmp_path / "reports"
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(registry))
+    _register(_report_for(_sha(checkpoint)), checkpoint.parent, registry)
     ledger = checkpoint.parent / "evaluations.json"
-    (kept,) = (tmp_path / "reports").glob("versions/*/reports/*/report.json")
+    (kept,) = registry.glob("versions/*/reports/*/report.json")
+    unrelated = copy.deepcopy(cohort_version())
+    unrelated["label"] = "unrelated-2026-11"
+    other = store_version(registry, unrelated)
+    store_bytes(registry, b"{}", version=other)
+    manifests = sorted(registry.glob("versions/*/cohort.json"))
+    assert len(manifests) == 2
     before = {path.name: path.stat().st_mtime_ns for path in checkpoint.parent.iterdir()}
     store_before = {path: path.stat().st_mtime_ns
                     for path in (tmp_path / "reports").rglob("*") if path.is_file()}
@@ -915,9 +932,13 @@ def test_the_ledger_is_read_once_and_nothing_else_is_opened_or_written(app, serv
 
     assert body["state"] == "records"
     assert body["records"][0]["contest"]["state"] == "uncontested"
-    assert opens.opens(ledger) == 1
-    assert opens.opens(kept) == 1
+    here = str(tmp_path.resolve())
+    opened = {path: n for path, n in opens.counts.items() if n and path.startswith(here)}
+    assert opened == {str(ledger.resolve()): 1, str(kept.resolve()): 1,
+                      **{str(manifest.resolve()): 1 for manifest in manifests}}
     assert opens.opens(checkpoint) == 0
+    assert opens.listed(other.directory / "reports") == 0
+    assert opens.listed(kept.parents[1]) == 1
     assert {path.name: path.stat().st_mtime_ns for path in checkpoint.parent.iterdir()} == before
     assert {path: path.stat().st_mtime_ns for path in (tmp_path / "reports").rglob("*")
             if path.is_file()} == store_before

@@ -13,9 +13,10 @@ and Diagnosis card all take a record's state from `contest_states`, so an API
 client and the dashboard cannot disagree about a record. The read-only Models
 view shows the route's answer and computes nothing itself.
 
-Read at each call, with no cache: one scan of each named version's report store
-(`scan_report_store`), the versions the server's registry lists
-(`CohortVersions.listed`).
+Read at each call, with no cache: the registry's version manifests, each
+``cohort.json`` once (`CohortVersions.listed`, to find a record's version by the
+cohort digest its key carries), and one scan of each named version's report
+store (`scan_report_store`).
 
 Module: src/api/services/record_states.py
 """
@@ -42,10 +43,16 @@ def key_text(key: Sequence[Any]) -> str:
 
 
 class CohortVersions:
-    """The registry's versions resolved once per read, by label, each checked
-    against the digest the server's list gave it: the one place a record's
-    cohort version is found (the route, the rows, Models and the Diagnosis
-    card)."""
+    """The registry's versions by the digest of their ``cohort.json``: the one
+    place a record's cohort version is found (the route, the rows, Models and
+    the Diagnosis card).
+
+    Two ways in. `listed` reads the registry's versions now, each manifest once
+    (`cohort_registry.list_versions`), and keeps each read: the digest a record
+    is matched by and the version returned for it come from that one read.
+    The constructor takes versions a server's list gave earlier (label and
+    digest each, Models' page data); each is read again on first use and
+    checked against the digest it was given."""
 
     def __init__(self, versions: Sequence[Mapping[str, Any]],
                  environ: Optional[Mapping[str, str]]) -> None:
@@ -59,16 +66,29 @@ class CohortVersions:
 
     @classmethod
     def listed(cls, environ: Optional[Mapping[str, str]] = None) -> "CohortVersions":
-        """The versions the server's list offers now (`list_cohort_versions`);
-        none when it cannot be listed (every record then "cannot be checked")."""
-        from src.api.services.server_lists import list_cohort_versions
+        """The versions the server's registry holds now, each ``cohort.json``
+        read once and nothing else (`list_versions`: no report store is listed
+        here), kept as read; none when they cannot be listed (every record then
+        "cannot be checked")."""
+        from src.evaluation.cohort_registry import RegistryRefused, list_versions
 
+        found = cls((), environ)
+        if found.registry is None:
+            return found
         try:
-            items = list_cohort_versions(environ=environ).items
+            entries = list_versions(found.registry)
+        except RegistryRefused:  # the listing's own refusal: nothing is listed
+            return found
         except Exception:  # noqa: BLE001 - contested then reads "cannot be checked"
             logger.exception("The cohort versions could not be listed")
-            items = ()
-        return cls([{"label": i.label, "sha256": i.manifest_sha256} for i in items], environ)
+            return found
+        for entry in entries:
+            if entry.version is None:
+                continue
+            digest = entry.version.identity.sha256
+            found.listed[digest] = {"label": entry.label, "sha256": digest}
+            found._resolved[entry.label] = (entry.version, None)
+        return found
 
     def by_digest(self, digest: Any) -> Tuple[Any, Optional[str]]:
         """``(version, None)`` or ``(None, why)`` for a cohort version digest."""
@@ -82,6 +102,7 @@ class CohortVersions:
             return None, (f"its cohort version ({shown}) is not one the server's registry "
                           "lists")
         label = listed["label"]
+        # Read by `listed` already, or once here for a version a list gave earlier.
         if label not in self._resolved:
             try:
                 version = resolve_version(self.registry, label)
