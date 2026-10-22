@@ -8,10 +8,7 @@ review closed it and found one P3, fixed in `2c94a4e`. **Its GB10 functional acc
 the scope agreed, passed at `2c94a4e`** (2026-10-17; 84 of 84 probes, demo and real data; the
 contract's §4, "M4's acceptance on the GB10"). Functional only: not model quality and not an
 institutional test. Merged into `main` by the owner (#126, `d2d31dd`, 2026-10-17). Phase 2 (M5)
-is in progress on this branch, not yet reviewed or merged: M5-0 (`14176c3`, `84371dd`), M5-1
-(`85af1fa..bfc0b7c`) and M5-2 (`badf546..da2a8b1`) are pushed, and M5-3 is under way
-(`4c7d12f..5a2d639`: the shared follow-ups and the probe's M5 acceptance; then the internal
-review of all of M5 and its fixes). Each step's "as implemented" note is in D4, D5, D7, D8 and
+is implemented on this branch, not yet reviewed or merged: M5-0 (`14176c3`, `84371dd`), M5-1 (`85af1fa..bfc0b7c`), M5-2 (`badf546..da2a8b1`) and M5-3 (`4c7d12f..b2db17d`: the shared follow-ups, the probe's M5 acceptance, the internal review of all of M5 — 42 findings, none P1, every P2 fixed — and two UI polishes from the acceptance screenshots) are pushed; full suite 5116 passed, 14 skipped. Delivered for the reviewer's review on 2026-10-22; the GB10 acceptance (the probe's M5 phase) follows. Each step's "as implemented" note is in D4, D5, D7, D8 and
 §6, "M5's boundaries" (2026-10-19). It runs under deployment mode M1 (§4.9 question 3). §4 lists the decisions; phase 1
 runs on the engineering defaults §4.9 records, each asked of the owner once, and an answer
 changes a default without adding a second path.
