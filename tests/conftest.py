@@ -3,6 +3,8 @@ Shared fixtures for every test, unit and integration.
 
 Module: tests/conftest.py
 """
+import sys
+
 import pytest
 
 from src.config.server_settings import (
@@ -43,6 +45,22 @@ def _no_deployment_gpu_lock(monkeypatch, tmp_path_factory):
     """
     monkeypatch.setenv(LOCK_FILE_ENV, str(tmp_path_factory.mktemp("gpu-lock") / "gpu.lock"))
     monkeypatch.delenv(WORKSPACES_ROOT_ENV, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _gpu_slot_open():
+    """Every test starts with the job runner's GPU slot open.
+
+    An application's shutdown closes the slot for good (root-cause review,
+    P23-1: once the backend begins to stop, no job starts), and the runner is
+    a process-wide singleton that a later test reuses, through an in-process
+    client that runs no startup of its own, say. Reopened only where the
+    runner's module is imported already, so nothing is imported for a test
+    that does not use it.
+    """
+    module = sys.modules.get("src.api.services.training_manager")
+    if module is not None:
+        module.training_manager.open()
 
 
 @pytest.fixture(autouse=True)

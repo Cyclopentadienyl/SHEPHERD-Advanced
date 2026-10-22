@@ -25,9 +25,9 @@ Purpose:
       the DataLoader workers it forks, which share the GPU lock's open file,
       end with it: after its main process ends the monitor ends what is left
       of the group, and only then records how the job ended and frees the
-      slot. A backend being stopped stops the job it runs (`end_active_job`,
-      called by `src.api.main` at the shutdown signal and at the lifespan's
-      end)
+      slot. A backend being stopped closes the slot, so nothing starts from
+      then on, and stops the job it runs (`close`, `end_active_job`, called by
+      `src.api.main` at the shutdown signal and at the lifespan's end)
     - Reads training metrics from MetricsLogger's JSON log files, and, once a
       test run has ended, what it published (its `--outcome` file) and whether
       that report is kept and registered (the registration's one helper)
@@ -559,6 +559,9 @@ class TrainingManager:
         self._lock = threading.Lock()
         #: The job holding the one GPU slot, until its monitor has finished.
         self._active: Optional[_Job] = None
+        #: The slot is closed once the backend begins to stop (`close`): no
+        #: job starts from then on, whatever the request (P23-1).
+        self._closed = False
         #: The latest job of each type, kept after it ends.
         self._last: Dict[str, _Job] = {}
         self._report_state: ReportStateReader = report_state or _registration_report_state
@@ -593,16 +596,56 @@ class TrainingManager:
         job = self._last.get(job_type)
         return job.status if job is not None else "idle"
 
+    #: Every start's refusal once the slot is closed.
+    STOPPING = "The backend is stopping; nothing was started."
+
+    def close(self) -> Optional[Dict[str, Any]]:
+        """**Close the GPU slot for good: the backend is stopping** (root-cause
+        review, P23-1). From here on every start is refused, by whichever
+        route it comes (`_slot_refusal_locked`), and the job holding the slot,
+        if any, is returned as `active_job` describes it, **read under the same
+        lock acquisition**: a start either took the slot before this, and is
+        the job returned, which the caller stops, or comes after it and is
+        refused. So no job can start while the backend waits for its
+        connections to close, and none outlives it. `src.api.main` closes it
+        at the shutdown signal and at the lifespan's end."""
+        with self._lock:
+            self._closed = True
+            return self._describe_active_locked()
+
+    def close_if_idle(self) -> bool:
+        """Close the slot, as `close` does, only when no job holds it, in one
+        step under the lock; False (and the slot left open) when one does.
+        Restart Backend closes it this way before it replaces the process
+        image, so a job started during its delay is either seen here or
+        refused, never orphaned by the exec."""
+        with self._lock:
+            if self._active is not None:
+                return False
+            self._closed = True
+            return True
+
+    def open(self) -> None:
+        """Open the slot again: at the application's startup (the runner is a
+        process-wide singleton, which an in-process client's next lifespan
+        reuses), and when Restart Backend's exec has failed and the process
+        goes on serving."""
+        with self._lock:
+            self._closed = False
+
     def _slot_refusal_locked(self, wanted: JobType) -> Optional[str]:
         """Why `wanted` cannot start now, or None. Called under the lock.
 
-        **Busy means running or stopping, for any type**, so a start while a
-        stop is still waiting for its process is refused, and the process that
-        stop is ending can never be replaced under it. Then the deployment's
-        GPU lock: a job started elsewhere (a CLI over SSH) is refused here,
-        naming its holder, and a lock setting that cannot be used refuses
-        every start rather than running unlocked.
+        **A closed slot refuses first** (`close`): the backend is stopping, so
+        nothing starts, by any route. **Busy means running or stopping, for
+        any type**, so a start while a stop is still waiting for its process
+        is refused, and the process that stop is ending can never be replaced
+        under it. Then the deployment's GPU lock: a job started elsewhere (a
+        CLI over SSH) is refused here, naming its holder, and a lock setting
+        that cannot be used refuses every start rather than running unlocked.
         """
+        if self._closed:
+            return self.STOPPING
         active = self._active
         if active is not None and active.status in BUSY_STATUSES:
             doing = "is already running" if active.status == "running" else "is still stopping"
@@ -677,12 +720,15 @@ class TrainingManager:
     def active_job(self) -> Optional[Dict[str, Any]]:
         """The job holding the GPU slot (running or stopping), or None."""
         with self._lock:
-            job = self._active
-            if job is None:
-                return None
-            return {"job_type": job.kind.name, "job_id": job.job_id, "status": job.status,
-                    "pid": job.process.pid if job.process else None,
-                    "start_time": job.started.isoformat()}
+            return self._describe_active_locked()
+
+    def _describe_active_locked(self) -> Optional[Dict[str, Any]]:
+        job = self._active
+        if job is None:
+            return None
+        return {"job_type": job.kind.name, "job_id": job.job_id, "status": job.status,
+                "pid": job.process.pid if job.process else None,
+                "start_time": job.started.isoformat()}
 
     def gpu_state(self) -> Dict[str, Any]:
         """The GPU slot as both job types' statuses show it: the job holding it,
@@ -1145,11 +1191,12 @@ class TrainingManager:
         2026-10-22): the job holding the GPU slot, whatever its type, stopped
         through `stop` (SIGINT, then SIGTERM, then SIGKILL to its group), or,
         when an operator's stop is already ending it, waited for, bounded by
-        the same escalation. `src.api.main` calls it when a shutdown signal
-        arrives and again at the lifespan's end, so a backend stopped by
-        Ctrl-C, a closed terminal or SIGTERM ends its job as systemd ending the
-        service does, open connections or not. Returns what happened, or None
-        when no job held the slot. Blocks; call it from a thread."""
+        the same escalation. `src.api.main` calls it, after closing the slot
+        (`close`), when a shutdown signal arrives and again at the lifespan's
+        end, so a backend stopped by Ctrl-C, a closed terminal, SIGTERM or the
+        service manager ends its job, open connections or not. Returns what
+        happened, or None when no job held the slot. Blocks; call it from a
+        thread."""
         with self._lock:
             job = self._active
             if job is None:

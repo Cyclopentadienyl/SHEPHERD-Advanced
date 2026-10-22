@@ -87,10 +87,10 @@ else:
 
 logger = logging.getLogger(__name__)
 
-#: An explicit lock file (absolute; its directory must exist).
+#: An explicit lock file (absolute; its directory must exist): the lock where no
+#: workspace root is set, and beside one only when it names the root's own.
 LOCK_FILE_ENV = server_settings.ENV_GPU_LOCK_FILE
-#: The one workspace root; the lock lives directly under it when no explicit
-#: file is named.
+#: The one workspace root; when it is set, the lock is directly under it.
 WORKSPACES_ROOT_ENV = server_settings.ENV_WORKSPACES_ROOT
 LOCK_FILE_NAME = server_settings.GPU_LOCK_FILE_NAME
 HOLDER_SUFFIX = ".json"

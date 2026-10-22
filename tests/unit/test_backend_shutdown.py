@@ -107,6 +107,89 @@ def test_a_job_an_operator_is_already_stopping_is_waited_for(monkeypatch, tmp_pa
     assert stubborn.signals.count("SIGINT") == 1, "shutdown started a second stop"
 
 
+# --------------------------------------------------------------------------- the closed slot
+class _Popens:
+    """`subprocess.Popen` replaced: every call recorded, each given a stand-in."""
+
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, argv, **kwargs):
+        self.calls.append(argv)
+        return FakeProcess(pid=4000 + len(self.calls))
+
+
+@pytest.fixture
+def test_inputs(tmp_path):
+    registry = tmp_path / "registry"
+    registry.mkdir()
+    workspace = tmp_path / "workspaces" / "ws"
+    return tm.TestRunInputs(
+        registry=registry, version_label="mygene2-2026-10", version_sha256="e" * 64,
+        workspace=workspace, checkpoint=workspace / "runs" / "gat" / "r" / "checkpoints" / "b.pt",
+        checkpoint_sha256="c" * 64)
+
+
+def test_once_the_backend_stops_no_job_starts_by_any_route(monkeypatch, tmp_path, test_inputs):
+    """Root-cause review, P23-1: "closed" is a state of the one GPU slot. The
+    shutdown's stop closes it before anything else (`_stop_the_active_job`),
+    so a start still under way when the backend began to stop (a request in
+    flight on a kept-alive connection, a queued dashboard event) is refused
+    there, training and test runs alike, and nothing is spawned; it used to be
+    accepted, and the job trained, holding the GPU lock, while uvicorn waited
+    for the other connections."""
+    import src.api.main as api
+
+    manager = tm.TrainingManager()
+    monkeypatch.setattr(tm, "training_manager", manager)
+    spawned = _Popens()
+    monkeypatch.setattr("subprocess.Popen", spawned)
+    api._stop_the_active_job()                       # what the signal's thread runs first
+    for started in (manager.start_training({"data_dir": str(tmp_path / "ws")}),
+                    manager.start_test(test_inputs)):
+        assert started["success"] is False
+        assert started["error"] == "The backend is stopping; nothing was started."
+    assert spawned.calls == [] and manager.active_job() is None
+    manager.open()                                   # the next startup's
+    assert manager.start_training({"data_dir": str(tmp_path / "ws")})["success"]
+    assert len(spawned.calls) == 1
+    manager.end_active_job()
+
+
+def test_closing_reads_the_job_holding_the_slot_in_the_same_step(monkeypatch, tmp_path):
+    """A start that took the slot before the close is the job the close
+    returns, which the shutdown stops; there is no moment in between where a
+    job could start unseen."""
+    manager = tm.TrainingManager()
+    monkeypatch.setattr("subprocess.Popen", _Popens())
+    started = manager.start_training({"data_dir": str(tmp_path / "ws")})
+    closed = manager.close()
+    assert closed["job_id"] == started["job_id"] and closed["status"] == "running"
+    assert manager.close_if_idle() is False
+    assert manager.end_active_job()["status"] == "stopped"
+    assert manager.close() is None and manager.close_if_idle() is True
+
+
+@POSIX
+def test_the_application_s_shutdown_leaves_the_slot_closed_and_its_startup_opens_it(
+        monkeypatch, tmp_path):
+    """No signal began this shutdown (an in-process client): the lifespan's
+    end closes the slot itself; the next startup opens it again."""
+    from fastapi.testclient import TestClient
+
+    import src.api.main as api
+
+    manager = tm.TrainingManager()
+    monkeypatch.setattr(tm, "training_manager", manager)
+    monkeypatch.setattr("subprocess.Popen", _Popens())
+    with TestClient(api.app):
+        pass
+    refused = manager.start_training({"data_dir": str(tmp_path / "ws")})
+    assert refused["error"] == "The backend is stopping; nothing was started."
+    with TestClient(api.app):
+        assert manager.start_training({"data_dir": str(tmp_path / "ws")})["success"]
+
+
 # --------------------------------------------------------------------------- the lifespan
 @POSIX
 def test_the_application_s_shutdown_stops_the_job_its_runner_holds(monkeypatch):

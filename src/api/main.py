@@ -156,13 +156,16 @@ async def lifespan(app: FastAPI):
     lifespan's end, and an open dashboard tab keeps one open, so a stop begun
     there waited for every tab to be closed. A hangup (SIGHUP, a closed
     terminal), which uvicorn does not handle, is routed to its SIGTERM
-    handler while the application runs, so it shuts down the same way. The
-    lifespan's end waits for that stop, then stops a job that holds the slot
-    still (one started while the connections closed, or any when no signal
-    began the shutdown). A second Ctrl-C (uvicorn's forced quit, which stops
-    waiting for connections and skips the lifespan's shutdown event) leaves
-    no job either: the stop began at the first, and the backend waits for it
-    before it exits. Not covered: a SIGKILL or the out-of-memory killer; the
+    handler while the application runs, so it shuts down the same way. **The
+    stop closes the job runner's GPU slot first** (`TrainingManager.close`,
+    root-cause review P23-1), so no job starts while uvicorn waits for its
+    connections: a start still under way at the signal is refused, by every
+    route. The lifespan's end waits for that stop, then closes the slot and
+    stops its job itself when no signal began the shutdown (an in-process
+    client, a server off the main thread). A second Ctrl-C (uvicorn's forced
+    quit, which stops waiting for connections and skips the lifespan's
+    shutdown event) leaves no job either: the stop began at the first, and
+    the backend waits for it before it exits. Not covered: a SIGKILL or the out-of-memory killer; the
     job then keeps running and keeps the GPU lock until it is stopped by its
     pid. Under systemd the unit's stop signals every process of the service
     anyway.
@@ -217,6 +220,7 @@ async def lifespan(app: FastAPI):
         logger.error(f"Startup failed: {e}")
         app_state.is_ready = False
 
+    _open_the_gpu_slot()
     shutdown_signals = _ShutdownSignals(app)
     shutdown_signals.install()
     try:
@@ -247,11 +251,13 @@ class _ShutdownSignals:
     does not handle, gets the SIGTERM handler, wrapped the same way. Each runs
     the server's handler as before (a second Ctrl-C is still uvicorn's forced
     quit), then hands the event loop `begin`: the first time, the job's stop
-    starts in a thread of its own, and every time, the dashboard's heartbeat
-    streams end (`_end_dashboard_streams`), so an open tab holds up neither
-    the job nor the backend. The thread is not a daemon, so the interpreter
-    waits for it before it exits, after a forced quit too. `end_jobs`, at the
-    lifespan's end, waits for it, then stops a job that holds the slot still.
+    starts in a thread of its own (it closes the GPU slot, then stops the job
+    that held it: `_stop_the_active_job`), and every time, the dashboard's
+    heartbeat streams end (`_end_dashboard_streams`), so an open tab holds up
+    neither the job nor the backend. The thread is not a daemon, so the
+    interpreter waits for it before it exits, after a forced quit too.
+    `end_jobs`, at the lifespan's end, waits for it, then does the same
+    itself, which finds the slot already closed and empty after a signal.
 
     Installed only in the main thread, where a server sets its handlers (an
     in-process test client runs the lifespan elsewhere), and only when
@@ -319,10 +325,10 @@ class _ShutdownSignals:
         _end_dashboard_streams(self._application)
 
     def end_jobs(self) -> None:
-        """At the lifespan's end: the stop a signal began waited for, then a
-        job that holds the slot still stopped (one started while the
-        connections closed, or any when no signal began the shutdown).
-        Blocks; call it from a thread."""
+        """At the lifespan's end: the stop a signal began waited for, then the
+        slot closed and its job stopped here, which only a shutdown that no
+        signal began relies on (after a signal the slot is closed already, so
+        no job started meanwhile). Blocks; call it from a thread."""
         if self._stopping is not None:
             self._stopping.join()
         _stop_the_active_job()
@@ -351,12 +357,16 @@ def _end_dashboard_streams(application: FastAPI) -> None:
 
 
 def _stop_the_active_job() -> None:
-    """At shutdown: the job runner's active job stopped, or one an operator is
-    already stopping waited for (`TrainingManager.end_active_job`), bounded by
-    the stop's escalation; said in the log either way."""
+    """At shutdown: the job runner's GPU slot closed, so no job starts from
+    here on, whatever request is still being handled (root-cause review,
+    P23-1), and the job that held it stopped, or one an operator is already
+    stopping waited for (`TrainingManager.close`, `end_active_job`), bounded
+    by the stop's escalation; said in the log either way. The slot is closed
+    and its job read in one step, so a start either came first and is the
+    job stopped here, or comes after and is refused."""
     from src.api.services.training_manager import training_manager
 
-    active = training_manager.active_job()
+    active = training_manager.close()
     if active is None:
         return
     logger.warning("The backend is stopping, so it stops the %s job %s it runs (pid %s): "
@@ -371,6 +381,15 @@ def _stop_the_active_job() -> None:
     else:
         logger.warning("The %s job %s: %s", ended["job_type"], ended["job_id"],
                        ended.get("error") or f"still {ended.get('status')}")
+
+
+def _open_the_gpu_slot() -> None:
+    """At startup: the job runner's GPU slot open. A shutdown closes it for
+    good (`_stop_the_active_job`); the runner is a process-wide singleton, so
+    an in-process client's next lifespan would otherwise find it closed."""
+    from src.api.services.training_manager import training_manager
+
+    training_manager.open()
 
 
 def _check_startup_bind() -> None:

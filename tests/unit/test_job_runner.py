@@ -51,7 +51,8 @@ def _no_lock_settings(monkeypatch):
 
 def _lock_under(monkeypatch, root: Path) -> None:
     """The lock under the workspaces root `root`, the deployment's default:
-    the conftest's own file is unset, since an explicit file wins."""
+    the conftest's own file is unset, since beside the root it names another
+    file and is refused (root-cause review, P24-S1)."""
     monkeypatch.delenv(LOCK_FILE_ENV, raising=False)
     monkeypatch.setenv(WORKSPACES_ROOT_ENV, str(root))
 

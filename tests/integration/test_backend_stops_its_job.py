@@ -130,10 +130,10 @@ class _Backend:
         self.port = _free_port()
         self._log = None
 
-    def start(self) -> "_Backend":
+    def start(self, *, with_job: bool = True) -> "_Backend":
         from tests.fixtures.trainable_workspace import write_trainable_workspace
 
-        data = write_trainable_workspace(self.tmp_path / "case")
+        self.data = write_trainable_workspace(self.tmp_path / "case")
         env = {k: v for k, v in os.environ.items()
                if k not in (WORKSPACES_ROOT_ENV, "SHEPHERD_KG_PATH", "SHEPHERD_CHECKPOINT_PATH",
                             "SHEPHERD_BIND_HOST")}
@@ -154,16 +154,22 @@ class _Backend:
         port = self.port
         _wait(lambda: _request(port, "GET", "/health", timeout=5)[0] == 200, 240,
               "the backend to answer")
-        status, started = _request(port, "POST", "/api/v1/training/start", body=dict(
-            data_dir=str(data), run_name="held", device="cpu", num_epochs=10000,
-            early_stopping_patience=10000, hidden_dim=32, num_heads=2, num_layers=1,
-            conv_type="gat", batch_size=2, num_workers=0, use_amp=False))
+        if not with_job:
+            return self
+        status, started = _request(port, "POST", "/api/v1/training/start",
+                                   body=self.training_request())
         assert status == 200 and started["success"], started
         self.job_pid = job_pid = started["pid"]
         assert os.getpgid(job_pid) == job_pid != pid, "the job leads its own group"
         _wait(lambda: f"pid {job_pid}" in (probe(self.lock) or ""), 180,
               "the job to take the lock")
         return self
+
+    def training_request(self) -> dict:
+        """A training job held by its epochs, on the test's workspace."""
+        return dict(data_dir=str(self.data), run_name="held", device="cpu", num_epochs=10000,
+                    early_stopping_patience=10000, hidden_dim=32, num_heads=2, num_layers=1,
+                    conv_type="gat", batch_size=2, num_workers=0, use_amp=False)
 
     def send(self, number: int) -> None:
         """The terminal's signal: its foreground group only, which the job is not in."""
@@ -256,4 +262,68 @@ def test_the_job_stops_at_the_signal_while_a_connection_holds_the_backend(tmp_pa
     finally:
         if client is not None:
             client.close()
+        backend.stop()
+
+
+def _training_start_in_flight(port: int, body: dict) -> tuple:
+    """A training start whose headers and first byte of body have arrived (the
+    request is under way) and whose rest is sent later: the connection and the
+    rest of its body."""
+    payload = json.dumps(body).encode()
+    client = socket.create_connection(("127.0.0.1", port), timeout=60)
+    client.sendall(f"POST /api/v1/training/start HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n"
+                   f"Content-Type: application/json\r\nContent-Length: {len(payload)}\r\n"
+                   "\r\n".encode() + payload[:1])
+    return client, payload[1:]
+
+
+def _response(client: socket.socket) -> tuple:
+    """The status and body of the one response on `client` (the server closes
+    a connection once it is shutting down)."""
+    received = b""
+    while True:
+        chunk = client.recv(65536)
+        if not chunk:
+            break
+        received += chunk
+    head, _, body = received.partition(b"\r\n\r\n")
+    return int(head.split()[1]), body
+
+
+def test_a_start_under_way_when_the_backend_begins_to_stop_is_refused(tmp_path):
+    """Root-cause review, P23-1: once the backend begins to stop, no job
+    starts. A training start under way at the SIGTERM (its request partly
+    received), completed while uvicorn waits for another connection that does
+    not close, used to be answered 200 and its job trained, holding the GPU
+    lock, until that connection closed; a second SIGTERM did not help. It is
+    refused (409, "The backend is stopping; nothing was started."), no process
+    is started and the lock stays free; the backend ends once the other
+    connection closes."""
+    backend = _Backend(tmp_path, "uvicorn")
+    hanging = in_flight = None
+    try:
+        backend.start(with_job=False)
+        hanging = _unfinished_request(backend.port)
+        in_flight, rest = _training_start_in_flight(backend.port, backend.training_request())
+        time.sleep(0.5)                 # both requests' headers read: under way
+        backend.send(signal.SIGTERM)
+        _wait(lambda: "Waiting for connections to close" in backend.said(), 60,
+              "the backend to wait for its connections")
+        in_flight.sendall(rest)
+        status, body = _response(in_flight)
+        backend.job_pid = (json.loads(body) or {}).get("pid")   # to be stopped if started
+        assert status == 409, body
+        assert json.loads(body)["error"] == "The backend is stopping; nothing was started."
+        said = backend.said()
+        assert "Starting training job" not in said, said[-3000:]
+        assert probe(backend.lock) is None, "a job took the GPU lock after the signal"
+        assert backend.process.poll() is None, "the backend did not wait for the connection"
+        hanging.close()
+        hanging = None
+        backend.process.wait(timeout=120)
+        assert probe(backend.lock) is None
+    finally:
+        for client in (hanging, in_flight):
+            if client is not None:
+                client.close()
         backend.stop()

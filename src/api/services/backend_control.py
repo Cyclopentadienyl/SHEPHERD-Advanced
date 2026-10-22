@@ -20,7 +20,9 @@ Purpose:
 Safety:
     A restart is REFUSED while a GPU job (training or a test run) is in
     progress — the UI also greys the button out, but this server-side guard is
-    the real safety net.
+    the real safety net. After its delay the restart closes the job runner's
+    GPU slot only if it is still idle, in one step (`close_if_idle`), and
+    keeps it closed through the exec, so no job can start in between.
 
 Allocator re-resolution:
     The launcher records HOW ``PYTORCH_ALLOC_CONF`` was set via the
@@ -139,21 +141,26 @@ def restart_backend(
 
     def _worker() -> None:
         time.sleep(delay)
-        # Re-check after the delay: a job may have started (via the REST API
-        # or another tab) during the window. Aborting here prevents orphaning a
-        # live job subprocess. Fail closed if the status can't be read.
-        if is_training_active(default_on_error=True):
+        # **The GPU slot is closed before the image is replaced** (root-cause
+        # review, P23-1): checked idle and closed in one step under the job
+        # runner's lock, so a job started during the delay (through the REST
+        # API or another tab) is seen here and the restart aborted, and one
+        # asked for after it is refused at the slot; none is orphaned by the
+        # exec. The slot stays closed through execve, which does not return;
+        # it is opened again only when execve fails and this process serves on.
+        if not training_manager.close_if_idle():
             logger.warning(
                 "Backend restart aborted: a GPU job became active during the "
                 "restart delay."
             )
             return
-        env = resolve_restart_env(dict(os.environ))
-        logger.info("Restarting backend: %s", " ".join(argv))
         try:
+            env = resolve_restart_env(dict(os.environ))
+            logger.info("Restarting backend: %s", " ".join(argv))
             _execv(executable, argv, env)
         except Exception:  # noqa: BLE001 — log and leave the process running
             logger.exception("Backend restart failed (execve)")
+            training_manager.open()
 
     scheduler = _scheduler or (
         lambda fn: threading.Thread(
