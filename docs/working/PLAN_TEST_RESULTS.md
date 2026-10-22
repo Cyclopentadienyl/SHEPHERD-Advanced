@@ -1641,7 +1641,8 @@ contract and BACKLOG stay the record, and no new planning document is added.
   (P23-1): the backend's stop closes it at the signal (`TrainingManager.close`, which returns the
   job holding it read in the same step), so a start still under way is refused ("The backend is
   stopping; nothing was started.") by every route; Restart Backend closes it only when idle and
-  keeps it closed through the exec. **The signals a job no longer gets are defined once**
+  open (a stop begun during its delay owns the slot and aborts the restart; a failed exec opens
+  only the restart's own close) and keeps it closed through the exec. **The signals a job no longer gets are defined once**
   (P23-2): `training_manager.JOB_DETACHED_SIGNALS`, beside the spawn; the backend and the probe
   route each of them, Ctrl-\ (SIGQUIT) included, which used to leave the job training with the
   lock (the backend still ends by SIGQUIT, after the job's stop). **The systemd unit hands its

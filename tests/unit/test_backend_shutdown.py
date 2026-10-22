@@ -167,7 +167,10 @@ def test_closing_reads_the_job_holding_the_slot_in_the_same_step(monkeypatch, tm
     assert closed["job_id"] == started["job_id"] and closed["status"] == "running"
     assert manager.close_if_idle() is False
     assert manager.end_active_job()["status"] == "stopped"
-    assert manager.close() is None and manager.close_if_idle() is True
+    assert manager.close() is None
+    assert manager.close_if_idle() is False, "a restart closed a slot the stop owns"
+    manager.open()
+    assert manager.close_if_idle() is True
 
 
 @POSIX

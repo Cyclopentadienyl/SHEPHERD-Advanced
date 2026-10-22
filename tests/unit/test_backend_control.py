@@ -251,6 +251,49 @@ def test_a_failed_exec_opens_the_slot_again(runner, tmp_path):
     assert _start(runner, tmp_path)["success"], "the process serves on, so jobs start"
 
 
+def _the_backend_stops(monkeypatch, runner):
+    """The backend's own stop, as its shutdown signal runs it
+    (`src.api.main._stop_the_active_job`), on the test's runner."""
+    import src.api.main as api
+    import src.api.services.training_manager as tm
+
+    monkeypatch.setattr(tm, "training_manager", runner)
+    api._stop_the_active_job()
+
+
+def test_a_stop_during_the_restart_delay_is_never_overridden_by_the_exec(
+        monkeypatch, runner, tmp_path):
+    """Verification of P23-1, T2-V2: Restart Backend is clicked, and the
+    backend begins to stop (Ctrl-C, ``systemctl stop``) before its delay has
+    passed. The stop owns the closed slot, so the restart is aborted: no exec
+    replaces the stopping process (a new image would serve on and ignore the
+    stop), and the slot stays closed. It used to exec, and a failed exec
+    opened the slot the stop had closed."""
+    executed = []
+    worker_box = []
+    assert bc.restart_backend(delay=0, _scheduler=worker_box.append,
+                              _execv=lambda *a: executed.append(a))["success"]
+    _the_backend_stops(monkeypatch, runner)
+    worker_box[0]()
+    assert executed == [], "execve was called while the backend stops"
+    assert _start(runner, tmp_path)["error"] == "The backend is stopping; nothing was started."
+
+
+def test_a_failed_exec_never_opens_a_slot_the_stop_closed_meanwhile(
+        monkeypatch, runner, tmp_path):
+    """The other order: the restart closed the slot, then the backend began
+    to stop while the exec ran, and the exec failed. The failed exec opens
+    only its own close, so the stop's stays and nothing starts."""
+    def execv(executable, argv, env):
+        _the_backend_stops(monkeypatch, runner)
+        raise OSError("exec format error")
+
+    worker_box = []
+    assert bc.restart_backend(delay=0, _scheduler=worker_box.append, _execv=execv)["success"]
+    worker_box[0]()
+    assert _start(runner, tmp_path)["error"] == "The backend is stopping; nothing was started."
+
+
 def test_restart_backend_schedules_and_execs(monkeypatch, runner):
     monkeypatch.setattr(bc, "is_training_active", lambda **_: False)
     monkeypatch.setattr(bc.sys, "executable", "/usr/bin/python")

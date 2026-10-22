@@ -577,9 +577,11 @@ class TrainingManager:
         self._lock = threading.Lock()
         #: The job holding the one GPU slot, until its monitor has finished.
         self._active: Optional[_Job] = None
-        #: The slot is closed once the backend begins to stop (`close`): no
-        #: job starts from then on, whatever the request (P23-1).
-        self._closed = False
+        #: Who closed the slot, None while it is open: `CLOSED_BY_STOP` once
+        #: the backend begins to stop (`close`), `CLOSED_BY_RESTART` while
+        #: Restart Backend replaces the process (`close_if_idle`). No job starts
+        #: while it is closed, whatever the request (P23-1).
+        self._closed_by: Optional[str] = None
         #: The latest job of each type, kept after it ends.
         self._last: Dict[str, _Job] = {}
         self._report_state: ReportStateReader = report_state or _registration_report_state
@@ -616,6 +618,9 @@ class TrainingManager:
 
     #: Every start's refusal once the slot is closed.
     STOPPING = "The backend is stopping; nothing was started."
+    #: Who closed the slot (`_closed_by`): the backend's stop, or a restart.
+    CLOSED_BY_STOP = "stop"
+    CLOSED_BY_RESTART = "restart"
 
     def close(self) -> Optional[Dict[str, Any]]:
         """**Close the GPU slot: the backend is stopping** (root-cause
@@ -626,30 +631,38 @@ class TrainingManager:
         the job returned, which the caller stops, or comes after it and is
         refused. So no job can start while the backend waits for its
         connections to close, and none outlives it. `src.api.main` closes it
-        at the shutdown signal and at the lifespan's end."""
+        at the shutdown signal and at the lifespan's end. **The stop owns the
+        slot from then on**, also when a restart closed it first, so a failed
+        exec does not open it again (`open`)."""
         with self._lock:
-            self._closed = True
+            self._closed_by = self.CLOSED_BY_STOP
             return self._describe_active_locked()
 
     def close_if_idle(self) -> bool:
-        """Close the slot, as `close` does, only when no job holds it, in one
-        step under the lock; False (and the slot left open) when one does.
-        Restart Backend closes it this way before it replaces the process
-        image, so a job started during its delay is either seen here or
-        refused, never orphaned by the exec."""
+        """Close the slot for a restart only when it is idle and open, in one
+        step under the lock; False, and the slot left as it is, when a job
+        holds it or it is closed already (the backend is stopping, or another
+        restart runs: verification of P23-1, T2-V2). Restart Backend closes
+        it this way before it replaces the process image, so a job started
+        during its delay is either seen here or refused, never orphaned by the
+        exec, and a stop begun during the delay is never overridden by the
+        exec."""
         with self._lock:
-            if self._active is not None:
+            if self._active is not None or self._closed_by is not None:
                 return False
-            self._closed = True
+            self._closed_by = self.CLOSED_BY_RESTART
             return True
 
-    def open(self) -> None:
-        """Open the slot again: at the application's startup (the runner is a
-        process-wide singleton, which an in-process client's next lifespan
-        reuses), and when Restart Backend's exec has failed and the process
-        goes on serving."""
+    def open(self, closed_by: Optional[str] = None) -> None:
+        """Open the slot again. At the application's startup, whoever closed
+        it (the runner is a process-wide singleton, which an in-process
+        client's next lifespan reuses). With `closed_by`, only while that
+        closer still owns it: Restart Backend's failed exec passes
+        `CLOSED_BY_RESTART`, so it reopens its own close and never a stop's
+        that came meanwhile, and the process serves on."""
         with self._lock:
-            self._closed = False
+            if closed_by is None or self._closed_by == closed_by:
+                self._closed_by = None
 
     def _slot_refusal_locked(self, wanted: JobType) -> Optional[str]:
         """Why `wanted` cannot start now, or None. Called under the lock.
@@ -662,7 +675,7 @@ class TrainingManager:
         CLI over SSH) is refused here, naming its holder, and a lock setting
         that cannot be used refuses every start rather than running unlocked.
         """
-        if self._closed:
+        if self._closed_by is not None:
             return self.STOPPING
         active = self._active
         if active is not None and active.status in BUSY_STATUSES:

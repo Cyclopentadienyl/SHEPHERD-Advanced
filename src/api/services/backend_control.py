@@ -21,8 +21,9 @@ Safety:
     A restart is REFUSED while a GPU job (training or a test run) is in
     progress — the UI also greys the button out, but this server-side guard is
     the real safety net. After its delay the restart closes the job runner's
-    GPU slot only if it is still idle, in one step (`close_if_idle`), and
-    keeps it closed through the exec, so no job can start in between.
+    GPU slot only if it is still idle and open, in one step (`close_if_idle`),
+    and keeps it closed through the exec, so no job can start in between; a
+    backend that began to stop meanwhile is not restarted.
 
 Allocator re-resolution:
     The launcher records HOW ``PYTORCH_ALLOC_CONF`` was set via the
@@ -142,16 +143,19 @@ def restart_backend(
     def _worker() -> None:
         time.sleep(delay)
         # **The GPU slot is closed before the image is replaced** (root-cause
-        # review, P23-1): checked idle and closed in one step under the job
-        # runner's lock, so a job started during the delay (through the REST
-        # API or another tab) is seen here and the restart aborted, and one
-        # asked for after it is refused at the slot; none is orphaned by the
-        # exec. The slot stays closed through execve, which does not return;
-        # it is opened again only when execve fails and this process serves on.
+        # review, P23-1): checked idle and open, and closed, in one step under
+        # the job runner's lock, so a job started during the delay (through
+        # the REST API or another tab) is seen here and the restart aborted,
+        # and one asked for after it is refused at the slot; none is orphaned
+        # by the exec. A slot the backend's stop closed during the delay
+        # aborts the restart too, so the exec never overrides a shutdown
+        # (T2-V2). The slot stays closed through execve, which does not
+        # return; only a failed execve opens it again, and only the close
+        # this restart made, never a stop's that came meanwhile.
         if not training_manager.close_if_idle():
             logger.warning(
-                "Backend restart aborted: a GPU job became active during the "
-                "restart delay."
+                "Backend restart aborted: a GPU job became active, or the backend "
+                "began to stop, during the restart delay."
             )
             return
         try:
@@ -160,7 +164,7 @@ def restart_backend(
             _execv(executable, argv, env)
         except Exception:  # noqa: BLE001 — log and leave the process running
             logger.exception("Backend restart failed (execve)")
-            training_manager.open()
+            training_manager.open(closed_by=training_manager.CLOSED_BY_RESTART)
 
     scheduler = _scheduler or (
         lambda fn: threading.Thread(

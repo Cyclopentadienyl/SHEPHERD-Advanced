@@ -1836,7 +1836,9 @@ cohort version, the same CLI an operator runs). One job at a time:
   it closes the job runner's GPU slot, only if no job holds it and in the same step as that
   check, and keeps it closed until the process is replaced: a job started during the delay
   aborts the restart, and a start asked for after that is refused, never orphaned by the restart
-  (since the root-cause round of 2026-10-22).
+  (since the root-cause round of 2026-10-22). A stop of the backend begun during the delay
+  (Ctrl-C, `systemctl stop`) aborts the restart too, so the stopping backend is never replaced
+  by a new one that would serve on.
 - **Stopping the backend stops its job** (the owner's decision of 2026-10-22). Because a job
   leads its own process group, a Ctrl-C, a Ctrl-\ or a hangup of the terminal the backend runs
   in, or a SIGTERM sent to the backend alone, no longer reaches the job itself; the backend stops
