@@ -1725,7 +1725,21 @@ contract and BACKLOG stay the record, and no new planning document is added.
     --expect-dataset-sha256`, an argument, neither a configuration key nor a recorded setting,
     compared inside `read_training_inputs` before the graph and the samples are read), so a
     workspace republished after the runner's check is refused (`DatasetChanged`, exit 1, no
-    run directory) rather than trained on (`tests/unit/test_training_dataset_expected.py`). The Data Paths section, its gated Save Path and the startup read of
+    run directory) rather than trained on (`tests/unit/test_training_dataset_expected.py`).
+    *Root-cause round (implemented, not yet reviewed):* the comparison is the manifest reader's
+    own (P22-S2): `read_split_manifest(…, expected_sha256=)` compares the digest of its one read
+    before the bytes are decoded and raises the one `DatasetChanged`, also for a manifest that
+    is gone, and both the runner's check and the process call it, so a manifest torn or of
+    another schema is said as changed by both instead of a traceback in the process. A continued
+    run is bound to the parent shown the same way (P22-S1): `read_checkpoint(…,
+    expected_sha256=)` compares before torch loads the file (`CheckpointChanged`);
+    `preview_continuation(expected_sha256=)` is the one comparison of a caller's digest (the
+    Continue drawer sends the run list's model fingerprint, or the one a typed path's Check
+    showed, and deletes its own comparison; the API takes an optional `expected_parent_sha256`);
+    and `start_training` always hands the process `--expect-resume-sha256` with the digest of its
+    own preview read, the read its placement, cross-field verdict and extend mode came from, so a
+    parent replaced after the start is refused before it is loaded, never continued from or placed
+    under another architecture's runs (`tests/unit/test_training_parent_expected.py`). The Data Paths section, its gated Save Path and the startup read of
     `.shepherd_training_config.json` are gone; the gated save function stays unused (nothing
     else calls it) for the owner's question "Save as the default dataset". "Continue…" is a
     drawer over the parameters: the run bar's workspace's checkpoints from the server's list (D8,

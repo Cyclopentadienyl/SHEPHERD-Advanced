@@ -2637,14 +2637,17 @@ Training Console 現在是分成三部分的一個頁面：上方橫跨整頁的
   工作按下 **■ Stop training** 不會停止任何東西（「Not stopped: …; click Stop again」）。
 - **Start 會送出 chip 顯示的資料集指紋**，job runner 在做任何事之前會再讀一次 manifest：若
   workspace 在這段時間內重建過，什麼都不會寫入或啟動，頁面會顯示「Not started: The dataset
-  changed since it was shown; select it again. Nothing was started.」。API 以選用的查詢參數
+  changed since it was shown; select it again. Its split_manifest.json holds … now (shown: …).
+  Nothing was started.」。API 以選用的查詢參數
   提供同樣的檢查，`POST /api/v1/training/start?expected_dataset_fingerprint=<64 個十六進位數字>`：
   manifest 不同時以 409 拒絕，不是 64 個小寫十六進位數字的值在到達服務之前就以 422 拒絕；沒有
   這個參數時與以前一樣不做檢查。**訓練行程會在它自己讀取 manifest 時再檢查一次**
   （`train_model.py --expect-dataset-sha256`，自 8242b47 的審查起），所以在 runner 檢查之後才重新
   發布的 workspace 也會在那裡被拒絕，在讀取圖譜與樣本之前：這次執行會失敗，輸出中有
   `train_model: refused: The dataset changed since it was shown; select it again. …`，結束碼 1，
-  不建立 run 目錄。
+  不建立 run 目錄。這兩處檢查都由 manifest 讀取器自己在解碼檔案之前完成（於根因修正輪實作），
+  所以已無法解析或已不存在的 manifest 也以同樣的文字拒絕；正是所顯示的那份、但現在讀不了的
+  manifest，則以讀不了為由拒絕。
 - 失敗的 run 的**錯誤橫幅**橫跨整頁。標題（"Training failed: Process exited with code 1"）
   之下是 run 印出的最後一行錯誤（"Last error printed: TrainingDeviceUnavailable: --device auto
   requires CUDA, …"），對唯讀瀏覽器與輸出一樣經過遮蔽。run 旁邊只在有日誌時說明日誌在哪裡（它的
@@ -2670,10 +2673,19 @@ checkpoint 的路徑：自 M5-3 起，手動輸入的路徑只會找到該清單
 指紋：相同時為 ✓，不同時為琥珀色（附上相符的已列出 workspace，或「matches no listed
 workspace」）。抽屜打開期間，run bar 顯示 Start（停用：「close Continue… to start a new
 run」）、**🔒 Continue Training**（資料集不同時停用，並附原因）與 **Cancel**。從清單選的
-checkpoint 會在伺服器的清單中重新找到，並以位元組比對清單所列的 digest（「The checkpoint
-changed since it was listed; refresh the list.」）；job runner 與訓練行程在啟動時仍會檢查
-一切。每個項目列出 run、epoch、檔案以及它保存的內容（`last.pt (training state)`，或模型檔
-`(weights only)`，後者無法繼續訓練）。抽屜有自己的 **Device**（auto、cuda 或 cpu），每次打開時
+checkpoint 會在伺服器的清單中重新找到。**繼續訓練所用的就是所顯示的模型指紋**（於根因修正輪
+實作）：從清單選的 checkpoint 是清單上的指紋，手動輸入的路徑則是 Check checkpoint 顯示的指紋。
+Check checkpoint 與 Continue Training 都會送出它，job runner 的預覽在讀取檔案時、載入之前比對：
+不是那個檔案就以「The checkpoint changed since it was chosen; choose it again. It holds … now
+(chosen: …).」拒絕（重新整理清單，或對手動輸入的路徑再按一次 Check）。接著 job runner 把它
+所決定的 parent 的 digest 交給訓練行程（`train_model.py --expect-resume-sha256`，每個繼續訓練的
+run 都會帶）：run 放在 parent 架構之下的位置與它的設定都來自那次讀取，啟動之後才被替換的檔案
+會在載入之前被訓練行程拒絕（`train_model: refused: The checkpoint changed since it was
+chosen; …`，結束碼 1，不建立 run 目錄）。API 也以選用的查詢參數接受 parent 的 digest，
+`expected_parent_sha256=<64 個十六進位數字>`，與 `resume_from` 一起使用（不是該檔案時 409，
+格式錯誤時 422）；沒有這個參數時，訓練行程仍綁定在 runner 讀到的 parent。job runner 與訓練
+行程在啟動時仍會檢查其他一切。每個項目列出 run、epoch、檔案以及它保存的內容
+（`last.pt (training state)`，或模型檔 `(weights only)`，後者無法繼續訓練）。抽屜有自己的 **Device**（auto、cuda 或 cpu），每次打開時
 從參數的 Device 開始，Check checkpoint 與 Continue Training 使用的就是它。抽屜打開期間若 run
 bar 的資料集改變（手動選擇，或從 Datasets 的「Use for training ›」），清單會以同樣的方式重新
 讀取，改為該 workspace 的 run。

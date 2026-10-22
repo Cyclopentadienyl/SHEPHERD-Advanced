@@ -2408,14 +2408,18 @@ a run.
 - **Start sends the dataset fingerprint the chip showed**, and the job runner reads the manifest
   again before anything else: if the workspace was rebuilt in the meantime, nothing is written or
   started, and the page says "Not started: The dataset changed since it was shown; select it
-  again. Nothing was started." The API takes the same check as an optional query parameter,
+  again. Its split_manifest.json holds … now (shown: …). Nothing was started." The API takes the
+  same check as an optional query parameter,
   `POST /api/v1/training/start?expected_dataset_fingerprint=<64 hex digits>`: another manifest is
   refused with 409, a value that is not 64 lowercase hex digits with 422 before the service is
   reached; without it nothing is checked, as before. **The training process checks it again on
   its own manifest read** (`train_model.py --expect-dataset-sha256`, since the review of
   8242b47), so a workspace republished after the runner's check is refused there too, before the
   graph and the samples are read: the run fails with `train_model: refused: The dataset changed
-  since it was shown; select it again. …` in its output, exit 1, and no run directory.
+  since it was shown; select it again. …` in its output, exit 1, and no run directory. Both
+  checks are the manifest reader's own, made before the file is decoded (implemented in the
+  root-cause round), so a manifest that no longer parses, or is gone, is refused in the same
+  words; a manifest that is the one shown but cannot be read now is refused as such.
 - A failed run's **error banner** spans the page. Under its headline ("Training failed: Process
   exited with code 1") is the last error line the run printed ("Last error printed:
   TrainingDeviceUnavailable: --device auto requires CUDA, …"), redacted for a read-only browser
@@ -2448,9 +2452,21 @@ dataset fingerprint the parent recorded against the workspace's current one: ✓
 when it differs (with the listed workspace it matches, or "matches no listed workspace"). While
 the drawer is open the run bar shows Start (disabled: "close Continue… to start a new run"),
 **🔒 Continue Training** (disabled while the datasets differ, with the reason) and **Cancel**.
-A listed checkpoint is found again in the server's list and its bytes compared with the digest
-listed ("The checkpoint changed since it was listed; refresh the list."); the job runner and the
-training process still check everything at start. Each entry names the run, the epoch, the file
+A listed checkpoint is found again in the server's list. **The model fingerprint shown is the one
+continued from** (implemented in the root-cause round): the list's for a listed checkpoint, the
+one Check checkpoint showed for a typed path. Check checkpoint and Continue Training send it, and
+the job runner's preview compares it on its read of the file, before loading it: another file is
+refused with "The checkpoint changed since it was chosen; choose it again. It holds … now
+(chosen: …)." (Refresh the list, or check the typed path again.) The job runner then gives the
+training process the digest of the parent it decided on (`train_model.py
+--expect-resume-sha256`, always, for every continued run): the run's placement under the
+parent's architecture and its settings come from that read, and a file replaced after the start
+is refused by the process before it is loaded (`train_model: refused: The checkpoint changed
+since it was chosen; …`, exit 1, no run directory). The API takes the parent's digest as an
+optional query parameter too, `expected_parent_sha256=<64 hex digits>` beside `resume_from`
+(409 when it is not the file's, 422 when malformed); without it the process is still bound to
+the parent the runner read. The job runner and the training process still check everything
+else at start. Each entry names the run, the epoch, the file
 and what it holds (`last.pt (training state)`, a model file `(weights only)`, which cannot be
 continued). The drawer has its own **Device** (auto, cuda or cpu), which starts from the
 parameters' Device each time it opens and is what Check checkpoint and Continue Training use.
