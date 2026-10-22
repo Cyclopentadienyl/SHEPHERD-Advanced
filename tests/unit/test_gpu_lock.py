@@ -397,6 +397,32 @@ def test_not_configured_is_refused_never_run_unlocked(monkeypatch, tmp_path, cap
     assert list((tmp_path / "registry").iterdir()) == [], "a refused CLI wrote something"
 
 
+def test_git_ignores_the_lock_file_wherever_a_root_in_the_checkout_puts_it():
+    """Round 3 of the review fixes, P3-8: the usual root is the checkout's
+    `data/workspaces`, where the ignore rules listed extensions, so the lock
+    file (which has none) was untracked: `git clean -fd` or `git stash -u`
+    deleted it while a job held it, and the next taker made a second lock.
+    Asked of git itself, with the paths built from the lock's name: ignored
+    under the usual root, under any other root in the checkout, its holder's
+    description too, and so is anything else a workspace gains; the
+    structure marker stays tracked."""
+    import shutil
+
+    if shutil.which("git") is None or not (REPO / ".git").exists():
+        pytest.skip("not a git checkout")
+    paths = [f"{root}/{name}" for root in ("data/workspaces", "data/other-root", "srv/ws")
+             for name in (LOCK_FILE_NAME, f"{LOCK_FILE_NAME}.json")]
+    paths += ["data/workspaces/a-new-kind-of-file", "data/workspaces/ws/runs/r/notes.txt"]
+    git = ["git", "-c", "core.excludesFile=", "check-ignore", "--no-index"]
+    asked = subprocess.run([*git, "--verbose", "--non-matching", *paths], cwd=REPO,
+                           capture_output=True, text=True)
+    not_ignored = [line.split("\t", 1)[1] for line in asked.stdout.splitlines()
+                   if line.startswith("::")]
+    assert asked.returncode == 0 and not_ignored == [], (not_ignored, asked.stderr)
+    kept = subprocess.run([*git, "data/workspaces/.gitkeep"], cwd=REPO, capture_output=True)
+    assert kept.returncode == 1, "the structure marker is ignored"
+
+
 def test_every_program_entry_says_a_lock_not_configured_is_refused():
     """Round 3 of the review fixes, P3-5: the refusal above is what each
     program entry that takes the lock says it does, never a run without the

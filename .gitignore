@@ -40,13 +40,16 @@ data/raw/**/*.owl
 data/raw/**/*.json.gz
 data/raw/**/*.csv.gz
 
-# Workspaces - all generated files ignored, keep structure marker
-data/workspaces/**/*.pt
-data/workspaces/**/*.pkl
-data/workspaces/**/*.npy
-data/workspaces/**/*.json
-data/workspaces/**/checkpoints/
+# Workspaces - all generated files ignored, keep structure marker. Everything
+# in it, not a list of extensions: the GPU lock file under the usual root has
+# none, and an untracked lock is removed by `git clean -fd` or `git stash -u`
+# while a job holds it (a new file would be a second lock).
+data/workspaces/*
 !data/workspaces/.gitkeep
+
+# The GPU lock and its holder's description, wherever a workspaces root inside
+# the checkout puts them (server_settings.GPU_LOCK_FILE_NAME).
+.shepherd-gpu.lock*
 
 # Legacy processed/ (remove once fully migrated)
 data/processed/
