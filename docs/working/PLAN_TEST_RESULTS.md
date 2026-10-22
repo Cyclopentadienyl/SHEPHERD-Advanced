@@ -2094,7 +2094,22 @@ contract and BACKLOG stay the record, and no new planning document is added.
   second and released the lock before the CLI ran); without `os.waitid` (Windows, macOS before
   Python 3.13) they fail saying so. The earlier measurement probes take a lock of the probe's
   own under its work directory, since a CLI now refuses without one, and so do not exclude a
-  deployment job running meanwhile.
+  deployment job running meanwhile. *Since the review of `8242b47` (INT-1, W11-1, W11-2, W11-4
+  and INT-2 of the root-cause round; implemented, its incremental review next):* the hold is
+  applied where both probes start their job (`_held_config`: no pause, no parent and no
+  extension either, whatever the settings name), and one bracket covers the whole check: the
+  start, the cancel, the training status and the CLI are observed, the job is checked again,
+  and only then is any answer judged, so a job that ended at any step fails as one that could
+  not hold the lock, or, when the runner says a stop ended it, as the test cancel reaching
+  training; without `os.waitid` W11 and RW3 fail before they start a job. M4's flow names the
+  probe's registry as the deployment's once for T1–T6 and once for RT1–RT3, not per call, so
+  T5 and RT3 read the loaded-model route's D5 state from the probe's report store and require
+  their record uncontested, observing P2-6 end to end (before, they accepted "cannot be checked"
+  from a fresh shell, and from the operator's shell listed the deployment's registry). The
+  training probes (D1, M2, M9, R3, R4) take no GPU lock at all, not even the probe's own: they
+  call the production trainer in process, and `train()` takes no lock, only the program entries
+  do (`train_model.py`, `measure_scorer.py`, `setup_demo.py --train-model`); they exclude
+  nothing either, so the acceptance is run while no managed GPU job runs.
 - **Two checkpoints:** the layout direction, confirmed once on a thin, operable prototype in the
   existing Gradio, showing representative wide and narrow layouts and the identity switch (a
   static image may help, but cannot stand in for zoom, scrolling and keyboard checks); then M5's
