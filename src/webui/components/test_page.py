@@ -75,19 +75,24 @@ reads "a server path" (`redact`).
 
 **Per browser session**: every listing, selection, preview and the job last
 seen are `gr.State`; the job is polled on the shell's slow timer (outside the
-tabs, ``queue=False``, every 5 s), doing work only while this page is shown,
-and never touching a select or the selection. Nothing here is module state.
+tabs, ``queue=False``, every 5 s), doing work only while this page is shown.
+The poll writes the job card and what the session saw of the job
+(``job_state``, which nothing else writes), never a select, the selection or
+what is drawn from it (Start and its reason included). Nothing here is module
+state.
 **Every write of the selection** (the checkpoint listing, the version's
-reports, the report shown, and the list and result drawn from them) runs in
-one queued group of one (`SELECTION_CONCURRENCY`): page open, the workspace,
-the version, a report's row, ↻, the read after an act or an import, and the
-read after the poll saw the job change (the poll hands that over through a
-hidden component's ``.change``). Every choice joins it, also one made while
-an earlier one waits. So each starts from the selection the one before it
-wrote, in the order they were asked, and a late answer never writes back a
-selection it started from over one chosen meanwhile. The report of a run
-that has just ended is chosen once for that run, however many reads see the
-end: the group keeps which run it chose it for.
+reports, the report shown, and the list, the result, Start and its reason
+drawn from them) runs in one queued group of one (`SELECTION_CONCURRENCY`):
+page open, the workspace, the version, the model, a report's row, ↻, the read
+after an act or an import, and the read after the poll saw the job or the GPU
+line change (the poll hands that over through a hidden component's
+``.change``, naming what it saw before and what it sees now). Every choice
+joins it, also one made while an earlier one waits. So each starts from the
+selection the one before it wrote, in the order they were asked, and a late
+answer never writes back a selection it started from over one chosen
+meanwhile. The report of a run that has just ended is chosen once for that
+run: only the poll's hand-off of that end chooses it, and the poll, the one
+writer of what the session saw of the job, hands each change over once.
 
 Module: src/webui/components/test_page.py
 """
@@ -138,9 +143,9 @@ PROBLEMS_SHOWN = 10
 #: the selected report are always shown).
 ROWS_SHOWN = 8
 #: The one queued group of every listener that writes the session's selection
-#: (``models_state``, ``reports_state``, ``selected_report``, ``end_shown`` and
-#: the list and result drawn from them): one event at a time, first asked,
-#: first run (`create_test_page`).
+#: (``models_state``, ``reports_state``, ``selected_report`` and the list, the
+#: result, Start and its reason drawn from them): one event at a time, first
+#: asked, first run (`create_test_page`).
 SELECTION_CONCURRENCY = "shep-test-selection"
 
 #: What replaces an absolute path that is under no named server directory.
@@ -2094,9 +2099,8 @@ def create_test_page(ctx: Any) -> None:
     binding_state_ = gr.State(None)
     reports_state = gr.State(dict(_EMPTY_REPORTS))
     selected_report = gr.State(None)
+    # What this session saw of the job: the poll's alone (`_poll`).
     job_state = gr.State({})
-    # The job whose ended run's report the selection has chosen (`_job_read_again`).
-    end_shown = gr.State(None)
     preview_state = gr.State(None)
 
     with gr.Row(elem_classes=["shep-page", "shep-test"], elem_id="shep-test-row", equal_height=False):
@@ -2253,14 +2257,26 @@ def create_test_page(ctx: Any) -> None:
     def _gpu(page: Mapping[str, Any]) -> Tuple[str, str]:
         return gpu_line(operator=bool((page.get("access") or {}).get("allowed")))
 
-    def _run_outputs(page, models, binding, ws, label, key, job, gpu):
-        roots = page.get("roots") or []
+    def _start_outputs(page, models, binding, ws, label, key, gpu):
+        """Start and its reason, from the selection (`start_outputs`)."""
         allowed = bool((page.get("access") or {}).get("allowed"))
         can_start, why = start_state(page, models, ws, label, key, binding, gpu)
+        return [gr.update(interactive=can_start),
+                _reason_html(why, kind="lock" if not allowed else "")]
+
+    def _card_outputs(page, job, gpu):
+        """The job card and Cancel, from the job alone (`card_outputs`)."""
+        roots = page.get("roots") or []
+        allowed = bool((page.get("access") or {}).get("allowed"))
         status = job.get("status") or "idle"
         can_cancel = allowed and status == "running"
         cancel_why = (operator_only(page.get("access") or {})
                       if not allowed and status == "running" else None)
+        return [job_head_html(job), job_body_html(job, roots, gpu),
+                gr.update(interactive=can_cancel), _reason_html(cancel_why, kind="lock")]
+
+    def _run_outputs(page, models, binding, ws, label, key, job, gpu):
+        allowed = bool((page.get("access") or {}).get("allowed"))
         return [
             run_header_html(ws, label),
             _dd(model_choices(models), key, interactive=allowed and bool(models.get("items"))),
@@ -2268,18 +2284,19 @@ def create_test_page(ctx: Any) -> None:
             model_html(page, models, key),
             evidence_html(page, ws),
             fixed_html(page),
-            gr.update(interactive=can_start),
-            _reason_html(why, kind="lock" if not allowed else ""),
-            job_head_html(job),
-            job_body_html(job, roots, gpu),
-            gr.update(interactive=can_cancel),
-            _reason_html(cancel_why, kind="lock"),
+            *_start_outputs(page, models, binding, ws, label, key, gpu),
+            *_card_outputs(page, job, gpu),
             gr.update(interactive=allowed),
             gr.update(interactive=allowed),
         ]
 
-    run_outputs = [run_hd, model, model_reload, model_info, evidence, fixed, start, start_reason,
-                   job_head, job_out, cancel, cancel_reason, record, deterministic]
+    # Start and its reason depend on the selection: only the selection's group
+    # writes them. The job card and Cancel depend on the job alone: the poll
+    # writes them too.
+    start_outputs = [start, start_reason]
+    card_outputs = [job_head, job_out, cancel, cancel_reason]
+    run_outputs = [run_hd, model, model_reload, model_info, evidence, fixed, *start_outputs,
+                   *card_outputs, record, deterministic]
 
     def _result_outputs(page, reports, models, run_id, job):
         """The list, the result and its controls for `reports` as this session
@@ -2358,9 +2375,10 @@ def create_test_page(ctx: Any) -> None:
     # concurrency group by default, and a queue=False request runs beside
     # them), so an event that ended late would write back the selection it
     # started from over one chosen meanwhile. Every listener that writes the
-    # selection is therefore in one group of one: the page open, the
-    # workspace, the version, a report's row, ↻, the read after an act or an
-    # import, and the read after the poll saw the job change. They run first
+    # selection, or Start and its reason drawn from it, is therefore in one
+    # group of one: the page open, the workspace, the version, the model, a
+    # report's row, ↻, the read after an act or an import, and the read after
+    # the poll saw the job or the GPU line change. They run first
     # asked, first run, each from what the one before it wrote, and the
     # browser takes a select's value when the event is asked. The group is
     # the server's, as the import's is: two sessions' events wait for each
@@ -2388,13 +2406,11 @@ def create_test_page(ctx: Any) -> None:
         gpu = _gpu(page)
         reports, run_id = _reports(page, models, label, current_report, job, request)
         return [page, models, binding, reports, run_id,
-                {"job_id": job.get("job_id"), "status": job.get("status")},
                 *_cohort_outputs(page, binding, ws, label),
                 *_run_outputs(page, models, binding, ws, label, key, job, gpu),
                 *_result_outputs(page, reports, models, run_id, job)]
 
-    state_outputs = [page_state, models_state, binding_state_, reports_state, selected_report,
-                     job_state]
+    state_outputs = [page_state, models_state, binding_state_, reports_state, selected_report]
     ctx.on_page_open(PAGE, {
         "fn": _refresh,
         "inputs": [workspace, version, model, models_state, selected_report],
@@ -2453,9 +2469,11 @@ def create_test_page(ctx: Any) -> None:
             return [gr.update()] * len(run_outputs)
         return _run_outputs(page, models, binding, ws, label, key, read_job(), _gpu(page))
 
+    # In the selection's group: Start and its reason are written there only,
+    # so a read handed over before this choice cannot write them back after it.
     model.input(_on_model, inputs=[page_state, models_state, binding_state_, workspace, version,
                                    model],
-                outputs=run_outputs, show_progress="hidden")
+                outputs=run_outputs, show_progress="hidden", **one_at_a_time, **every_one)
 
     def _on_model_reload(page, binding, ws, label, key, current_models, request: gr.Request):
         if not page:
@@ -2474,7 +2492,7 @@ def create_test_page(ctx: Any) -> None:
                        **one_at_a_time) \
         .then(**ctx.chip_refresh)
 
-    def _on_report(page, reports, models, job_seen, evt: gr.EventData, request: gr.Request):
+    def _on_report(page, reports, models, evt: gr.EventData, request: gr.Request):
         raw = getattr(evt, "_data", None)
         key = raw.get("key") if isinstance(raw, Mapping) else None
         if not page or find(reports.get("runs") or [], "run_id", key) is None:
@@ -2483,51 +2501,42 @@ def create_test_page(ctx: Any) -> None:
         reports = refine_registration(page, reports, key, models, request=request)
         return [key, reports, *_result_outputs(page, reports, models, key, read_job())]
 
-    reports_list.click(_on_report, inputs=[page_state, reports_state, models_state, job_state],
+    reports_list.click(_on_report, inputs=[page_state, reports_state, models_state],
                        outputs=[selected_report, reports_state, *result_outputs],
                        show_progress="hidden", **one_at_a_time, **every_one)
 
     # ------------------------------------------------------------------ the job
-    def _job_outputs(page, models, binding, ws, label, key, job, gpu):
-        """What a poll or an act's read may change: Start and its reason, the
-        job card and Cancel. Never a select (a poll arriving while the operator
-        chooses would undo the choice)."""
-        full = _run_outputs(page, models, binding, ws, label, key, job, gpu)
-        return [full[run_outputs.index(c)] for c in job_outputs]
-
-    job_outputs = [start, start_reason, job_head, job_out, cancel, cancel_reason]
-
-    def _job_read_again(page, models, current_report, reports, seen, shown, request):
-        """The selection read again after the job changed, in the selection's
-        group: the job, then the reports of the version the session's reports
-        were read for (the version shown: an event asked before this one may
-        have changed it since this one was asked), and the report to show
-        chosen again: the ended run's if a run `seen` running has ended and
-        it was not chosen for that run already (`shown`, the job it was last
-        chosen for, which only this group writes; returned updated). What
-        the session saw of the job cannot say that alone: the group's reads
-        write it too, so one that ends late writes back the job it read, and
-        the poll then sees the same end again and hands it over again."""
+    def _job_read_again(page, models, current_report, reports, request, *, ended=None):
+        """The selection read again in its group, after an act or the poll's
+        hand-off: the job, then the reports of the version the session's
+        reports were read for (the version shown: an event asked before this
+        one may have changed it since this one was asked), and the report to
+        show chosen again. `ended` is the run whose end the poll handed over
+        (`_after_job_change` decides it, and nothing else does): its report is
+        chosen, over the one chosen, while the job read now is still that run."""
         job = read_job()
-        ended = ((seen or {}).get("status") in _BUSY and job.get("status") not in _BUSY
-                 and job.get("job_id") != shown)
         label = (reports or {}).get("label")
+        prefer = ended is not None and job.get("job_id") == ended
         reports, run_id = _reports(page, models, label, current_report, job, request,
-                                   prefer_outcome=ended)
-        return job, label, reports, run_id, (job.get("job_id") if ended else shown)
+                                   prefer_outcome=prefer)
+        return job, label, reports, run_id
 
-    def _after_act(page, models, binding, ws, key, current_report, reports, seen, shown,
+    def _after_act(page, models, binding, ws, key, current_report, reports,
                    request: gr.Request):
-        job, label, reports, run_id, shown = _job_read_again(page, models, current_report,
-                                                             reports, seen, shown, request)
-        return [reports, run_id, shown, {"job_id": job.get("job_id"), "status": job.get("status")},
-                *_job_outputs(page, models, binding, ws, label, key, job, _gpu(page)),
+        """The read after Start, Cancel, Register or a note: the job card shows
+        the job at once. It decides no end: an ended run's report is chosen by
+        the poll's hand-off of that end, on its next tick."""
+        job, label, reports, run_id = _job_read_again(page, models, current_report, reports,
+                                                      request)
+        gpu = _gpu(page)
+        return [reports, run_id, *_start_outputs(page, models, binding, ws, label, key, gpu),
+                *_card_outputs(page, job, gpu),
                 *_result_outputs(page, reports, models, run_id, job)]
 
-    after_outputs = [reports_state, selected_report, end_shown, job_state, *job_outputs,
+    after_outputs = [reports_state, selected_report, *start_outputs, *card_outputs,
                      *result_outputs]
     after_inputs = [page_state, models_state, binding_state_, workspace, model,
-                    selected_report, reports_state, job_state, end_shown]
+                    selected_report, reports_state]
 
     def _on_start(page, models, ws, label, key, rec, det, request: gr.Request):
         result = start_test_run(page, models, ws, label, key, rec, det, request)
@@ -2557,31 +2566,32 @@ def create_test_page(ctx: Any) -> None:
               **one_at_a_time) \
         .then(**ctx.chip_refresh)
 
-    def _poll(location, page, models, binding, ws, label, key, seen, request: gr.Request):
-        """The job, read again while this page is shown. It never writes the
-        selection: when the job's state changed since this session last saw it
-        (the run it saw running has ended, or a run started elsewhere), it
-        hands the selection over to `_after_job_change`, in the selection's
-        group, naming what this session saw before."""
+    def _poll(location, page, seen, request: gr.Request):
+        """The job, read again while this page is shown: the job card, Cancel
+        and what this session saw of the job (``job_state``, which only this
+        poll writes, one tick after the other: a timer's tick is not sent while
+        the one before is pending). Nothing it writes is drawn from the
+        selection: when the job or the GPU line (Start's first reason) is not
+        what it saw on its last tick, it hands the read over to
+        `_after_job_change`, in the selection's group, naming what it saw then
+        and what it sees now. So each change is handed over once."""
         if location != PAGE or not page:
             return [gr.update()] * (len(poll_outputs) + 1)
         job = read_job()
         gpu = _gpu(page)
         seen = seen or {}
-        changed = (job.get("job_id") != seen.get("job_id")
-                   or job.get("status") != seen.get("status"))
-        # The GPU line is the header's GPU chip read now: when it is not
-        # what this poll saw last, the chips are read again on this tick.
         new_seen = {"job_id": job.get("job_id"), "status": job.get("status"), "gpu": list(gpu)}
         # Each hand-off is a new value (its own time), so its .change always fires.
         handoff = ({"seen": {"job_id": seen.get("job_id"), "status": seen.get("status")},
-                    "at": time.monotonic_ns()} if changed else gr.update())
-        return [new_seen, *_job_outputs(page, models, binding, ws, label, key, job, gpu), handoff,
+                    "now": {"job_id": job.get("job_id"), "status": job.get("status")},
+                    "at": time.monotonic_ns()} if new_seen != seen else gr.update())
+        # The GPU line is the header's GPU chip read now: when it is not
+        # what this poll saw last, the chips are read again on this tick.
+        return [new_seen, *_card_outputs(page, job, gpu), handoff,
                 chips_on_change(seen.get("gpu"), new_seen["gpu"], request)]
 
-    poll_outputs = [job_state, *job_outputs, job_changed]
-    poll_inputs = [ctx.location, page_state, models_state, binding_state_, workspace, version,
-                   model, job_state]
+    poll_outputs = [job_state, *card_outputs, job_changed]
+    poll_inputs = [ctx.location, page_state, job_state]
 
     # The slow timer only: a listener on a shell timer sends a request on every
     # tick whatever it then does, so one on the fast timer would cost every open
@@ -2590,20 +2600,27 @@ def create_test_page(ctx: Any) -> None:
     ctx.timer_slow.tick(_poll, inputs=poll_inputs, outputs=[*poll_outputs, ctx.chips],
                         queue=False, show_progress="hidden")
 
-    def _after_job_change(page, models, current_report, reports, shown, change,
+    def _after_job_change(page, models, binding, ws, key, current_report, reports, change,
                           request: gr.Request):
-        """The poll's hand-off: the selection read again in its group after
-        the job changed (`change` names what the session saw before)."""
+        """The poll's hand-off, in the selection's group: Start and its reason
+        from the selection as it is now, and the reports read again. The one
+        place an end is decided: when the poll saw a run busy (``seen``) and
+        now sees it no longer busy (``now``), that run's report is chosen."""
         if not page or not isinstance(change, Mapping):
-            return [gr.update()] * (3 + len(result_outputs))
-        job, _label, reports, run_id, shown = _job_read_again(
-            page, models, current_report, reports, change.get("seen"), shown, request)
-        return [reports, run_id, shown, *_result_outputs(page, reports, models, run_id, job)]
+            return [gr.update()] * (2 + len(start_outputs) + len(result_outputs))
+        seen, now = change.get("seen") or {}, change.get("now") or {}
+        ended = (now.get("job_id") if seen.get("status") in _BUSY
+                 and now.get("status") not in _BUSY else None)
+        job, label, reports, run_id = _job_read_again(page, models, current_report, reports,
+                                                      request, ended=ended)
+        return [reports, run_id,
+                *_start_outputs(page, models, binding, ws, label, key, _gpu(page)),
+                *_result_outputs(page, reports, models, run_id, job)]
 
     job_changed.change(_after_job_change,
-                       inputs=[page_state, models_state, selected_report, reports_state,
-                               end_shown, job_changed],
-                       outputs=[reports_state, selected_report, end_shown, *result_outputs],
+                       inputs=[page_state, models_state, binding_state_, workspace, model,
+                               selected_report, reports_state, job_changed],
+                       outputs=[reports_state, selected_report, *start_outputs, *result_outputs],
                        show_progress="hidden", **one_at_a_time, **every_one)
 
     # ------------------------------------------------------------------ register and notes
