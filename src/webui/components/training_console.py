@@ -2105,6 +2105,16 @@ def _preview_for(parent: str, device: Optional[str], extend_epochs,
         expected_sha256=expected_sha256)
 
 
+def _changed_parent_action(source: str) -> str:
+    """What to do when the service refuses the parent as changed (its
+    ``changed``), for where its fingerprint was shown: a listed parent's is
+    the run list's, which choosing the same option sends again until the list
+    is read again; a typed path's is its last Check's."""
+    if source == CONTINUE_FROM_PATH:
+        return "Click Check checkpoint to read the file there now."
+    return "Refresh the list, then choose it again."
+
+
 def _checked(source, listed, manual, device, extend_epochs, ws, parents, mode, *,
              starting: bool = False):
     """The check every Check and Continue Training runs: the parent resolved,
@@ -2116,7 +2126,9 @@ def _checked(source, listed, manual, device, extend_epochs, ws, parents, mode, *
     the run list's, which its option names, for a listed parent; for a typed
     path, the one its last Check read and showed for that same file, when
     Continue Training (`starting`) follows it (a Check is what shows it). The
-    record keeps the digest shown, which Continue Training sends to the start."""
+    record keeps the digest shown, which Continue Training sends to the start.
+    A refusal as changed gets the action for that source
+    (`_changed_parent_action`)."""
     path, why, item = _parent_path(source, listed, manual, ws or {}, parents or {})
     record = dict((mode or {}).get("parent") or _chosen(source, listed, manual, parents, ws))
     if path is None:
@@ -2127,6 +2139,8 @@ def _checked(source, listed, manual, device, extend_epochs, ws, parents, mode, *
     else:
         shown = (item or {}).get("sha256")
     preview = _preview_for(path, device, extend_epochs, expected_sha256=shown)
+    if preview.get("changed"):
+        preview = {**preview, "reason": f"{preview['reason']} {_changed_parent_action(source)}"}
     recorded = preview.get("dataset_fingerprint") or (item or {}).get("dataset_fingerprint")
     record.update(chosen=True, checked=True, refused=not preview.get("ok"), fingerprint=recorded,
                   sha256=shown or preview.get("sha256"), path=path)
@@ -2227,7 +2241,10 @@ def _resume(ws, device, source, listed, manual, extend_epochs, parents, mode):
     if result.get("success"):
         mode.update(drawer=False, parent={}, confirm=None)
         return "", text, _extra_epochs_update(preview), mode
-    return f"Not started: {result.get('error', 'unknown error')}", text, _extra_epochs_update(preview), mode
+    error = result.get("error", "unknown error")
+    if result.get("parent_changed"):  # changed after this check's own read
+        error = f"{error} {_changed_parent_action(source)}"
+    return f"Not started: {error}", text, _extra_epochs_update(preview), mode
 
 
 def _toggle_continue_source(source):

@@ -48,17 +48,25 @@ class CheckpointRead(NamedTuple):
 
 
 class CheckpointChanged(ValueError):
-    """The file is not the checkpoint a caller chose: `read_checkpoint` was
-    given the SHA-256 chosen (``expected_sha256``) and its one read has other
-    bytes, or finds no file. The message is the single wording of this refusal:
-    the job runner's preview of a parent and the training process that
-    continues from it both say it (root-cause round, P22-S1). A ``ValueError``,
-    like the reader's other refusals."""
+    """The file is not the checkpoint a caller expects: `read_checkpoint` was
+    given its SHA-256 (``expected_sha256``) and its one read has other bytes
+    (``found``), or finds no file (``found`` is None); raised before anything
+    is unpickled (root-cause round, P22-S1). A ``ValueError``, like the
+    reader's other refusals.
 
-    def __init__(self, expected: str, found: Optional[str]) -> None:
-        now = f"It holds {found[:12]}... now" if found is not None else "It is gone"
-        super().__init__(f"The checkpoint changed since it was chosen; choose it again. "
-                         f"{now} (chosen: {expected[:12]}...).")
+    It carries the facts (``path``, ``expected``, ``found``) and its message
+    states only them. What the difference means and what to do depend on
+    where the expectation came from (a parent the operator chose from a list
+    or by a typed path, a file a parent's record names), so each caller words
+    its own refusal from these fields."""
+
+    def __init__(self, path: str | Path, expected: str, found: Optional[str]) -> None:
+        self.path = Path(path)
+        self.expected = expected
+        self.found = found
+        held = (f"holds {found[:12]}..., not the {expected[:12]}... expected"
+                if found is not None else f"is gone; {expected[:12]}... was expected")
+        super().__init__(f"{self.path} {held}.")
 
 
 def read_checkpoint(
@@ -72,9 +80,9 @@ def read_checkpoint(
     buffer is released when this returns; the loaded checkpoint is the caller's.
 
     **`expected_sha256` compares before it loads** (the checkpoint a caller
-    chose): other bytes, a valid checkpoint or not, raise `CheckpointChanged`
+    expects): other bytes, a valid checkpoint or not, raise `CheckpointChanged`
     and are never unpickled; a missing file raises the same, since the bytes
-    chosen are no longer there. As `read_split_manifest` and `read_report` do.
+    expected are no longer there. As `read_split_manifest` and `read_report` do.
 
     Raises:
         FileNotFoundError: if there is no file at `path` and nothing is expected.
@@ -90,11 +98,11 @@ def read_checkpoint(
     except FileNotFoundError:
         if expected_sha256 is None:
             raise
-        raise CheckpointChanged(expected_sha256, None) from None
+        raise CheckpointChanged(path, expected_sha256, None) from None
     if expected_sha256 is not None and read.sha256 != expected_sha256:
         found = read.sha256
         del read
-        raise CheckpointChanged(expected_sha256, found)
+        raise CheckpointChanged(path, expected_sha256, found)
     return CheckpointRead(
         torch.load(BytesIO(read.data), map_location=map_location, weights_only=weights_only),
         read.identity,

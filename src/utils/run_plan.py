@@ -393,6 +393,12 @@ def _locate_best_weights(
                            "sha256": parent_sha256, "path": parent_path})
         return {"kind": "self"}, best_k
     path = resolve_recorded_file(source["file"], checkpoint_dir)
+    if not source.get("sha256"):
+        # The digest is what the file is read against (`train_model.plan_from_parent`).
+        raise RunPlanRefused(
+            f"{where} names {source['file']} as early stopping's best weights without the "
+            "SHA-256 it was written with, so the file cannot be checked; choose another "
+            "checkpoint.")
     if not path.is_file():
         raise RunPlanRefused(
             f"{where} names {source['file']} as early stopping's best weights, and it is "

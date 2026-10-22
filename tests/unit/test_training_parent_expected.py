@@ -13,7 +13,8 @@ recorded, under the first parent's architecture directory.
 
 Now the parent's SHA-256 is bound to every read the run rests on, by the one
 reader (`read_checkpoint(expected_sha256=)`, compared before the file is
-loaded, `CheckpointChanged` its single sentence):
+loaded; `CheckpointChanged` carries the facts, and each caller words its own
+refusal from them, with the action for where the fingerprint was shown):
 
 - the console records the digest shown (the run list's; a typed path's
   Check) and sends it; it compares nothing itself;
@@ -33,7 +34,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import shutil
 import subprocess
 import sys
@@ -53,7 +53,15 @@ from tests.fixtures.operator_access import (  # noqa: E402
 )
 
 REPO = Path(__file__).resolve().parents[2]
-CHANGED = "The checkpoint changed since it was chosen; choose it again."
+#: The refusal's lead, the job runner's preview's and the training process's.
+CHANGED = "The checkpoint changed since it was chosen"
+#: The training process's refusal: the lead, its action, then the reader's facts.
+PROCESS_CHANGED = f"train_model: refused: {CHANGED}; choose it again."
+#: The console's action, for where the fingerprint was shown: the run list's
+#: digest is sent again until the list is read again; a typed path's is its
+#: last Check's (verification of the root-cause round, P3-3).
+REFRESH = "Refresh the list, then choose it again."
+CHECK_AGAIN = "Click Check checkpoint to read the file there now."
 TINY = {"device": "cpu", "hidden_dim": 16, "num_heads": 2, "num_layers": 1, "num_workers": 0,
         "use_amp": False, "batch_size": 4, "num_epochs": 2, "warmup_steps": 1,
         "pause_after_epoch": 1}
@@ -166,9 +174,9 @@ def test_a_parent_replaced_after_the_runners_preview_is_refused_by_the_process(
     assert started["success"], started
     job, log = _wait(manager)
     assert job.status == "failed" and job.exit_code == 1, log[-3000:]
-    assert f"train_model: refused: {CHANGED}" in log, log[-3000:]
+    assert PROCESS_CHANGED in log, log[-3000:]
     other = _sha(case["parents"][swapped])
-    assert f"It holds {other[:12]}... now (chosen: {shown[:12]}...). Nothing was written." in log
+    assert f"holds {other[:12]}..., not the {shown[:12]}... expected. Nothing was written." in log
     assert "Traceback" not in log and "Resume parent accepted" not in log
     assert not Path(started["run_dir"]).exists(), "a refused run left its directory"
     assert set((case["ws"] / "runs").rglob("*")) == before
@@ -184,7 +192,7 @@ def test_without_a_callers_digest_the_process_is_bound_to_the_runners_preview(ca
     assert started["success"], started
     assert seen["argv"][4:6] == ["--expect-resume-sha256", shown]
     job, log = _wait(manager)
-    assert job.exit_code == 1 and f"train_model: refused: {CHANGED}" in log, log[-3000:]
+    assert job.exit_code == 1 and PROCESS_CHANGED in log, log[-3000:]
     assert not Path(started["run_dir"]).exists()
 
 
@@ -196,8 +204,8 @@ def test_the_runners_preview_refuses_a_parent_that_is_not_the_one_shown(case, mo
         result = manager.start_training(
             {"data_dir": str(case["ws"]), "resume_from": str(case["parents"]["a"])},
             expected_parent_sha256=shown)
-    assert result["success"] is False and result["error"].startswith(CHANGED)
-    assert f"(chosen: {shown[:12]}...)" in result["error"]
+    assert result["success"] is False and result["error"].startswith(f"{CHANGED}. It holds ")
+    assert f"(chosen: {shown[:12]}...)" in result["error"] and result["parent_changed"] is True
     popen.assert_not_called()
     assert manager.run_dir is None
 
@@ -221,8 +229,8 @@ def test_the_preview_is_the_one_comparison_of_a_callers_digest(case):
     assert malformed["ok"] is False and "not a full SHA-256" in malformed["reason"]
     parent.unlink()
     gone = manager.preview_continuation(str(parent), device="cpu", expected_sha256=shown)
-    assert gone == {"ok": False, "parent": str(parent),
-                    "reason": f"{CHANGED} It is gone (chosen: {shown[:12]}...)."}
+    assert gone == {"ok": False, "changed": True, "parent": str(parent),
+                    "reason": f"{CHANGED}. It is gone (chosen: {shown[:12]}...)."}
 
 
 @pytest.mark.parametrize("how", ["torn", "other-checkpoint", "gone"])
@@ -240,12 +248,17 @@ def test_the_reader_compares_before_it_loads(case, monkeypatch, how):
         _swap(case, "same")()
     else:
         parent.unlink()
+    found = None if how == "gone" else _sha(parent)
     monkeypatch.setattr(torch, "load", lambda *a, **k: pytest.fail("loaded"))
-    with pytest.raises(checkpoint_io.CheckpointChanged, match=re.escape(CHANGED)) as refused:
+    with pytest.raises(checkpoint_io.CheckpointChanged) as refused:
         checkpoint_io.read_checkpoint(parent, map_location="cpu", weights_only=True,
                                       expected_sha256=shown)
     assert isinstance(refused.value, ValueError)
-    assert ("It is gone" in str(refused.value)) == (how == "gone")
+    changed = refused.value
+    assert (changed.path, changed.expected, changed.found) == (parent, shown, found)
+    # The facts only: what to do is each caller's, by where the digest came from.
+    assert str(changed).startswith(str(parent)) and "choose" not in str(changed)
+    assert ("is gone" in str(changed)) == (how == "gone")
 
 
 # --------------------------------------------------------------------------- the CLI
@@ -261,7 +274,7 @@ def test_the_cli_refuses_another_parent_before_anything_is_written(case, tmp_pat
                 str(case["parents"]["a"]), "--run-dir", str(tmp_path / "run"),
                 "--expect-resume-sha256", shown)
     assert done.returncode == 1, done.stderr[-2000:]
-    assert f"train_model: refused: {CHANGED}" in done.stderr and "Traceback" not in done.stderr
+    assert PROCESS_CHANGED in done.stderr and "Traceback" not in done.stderr
     assert not (tmp_path / "run").exists()
 
 
@@ -323,8 +336,8 @@ def test_an_api_start_is_bound_to_the_parent_with_or_without_the_parameter(case,
     started = client.post("/api/v1/training/start", json=body)
     assert started.status_code == 200, started.text
     job, log = _wait(fresh)
-    assert job.exit_code == 1 and f"train_model: refused: {CHANGED}" in log, log[-3000:]
-    assert f"(chosen: {shown[:12]}...)" in log
+    assert job.exit_code == 1 and PROCESS_CHANGED in log, log[-3000:]
+    assert f"not the {shown[:12]}... expected" in log
     assert not Path(started.json()["run_dir"]).exists()
 
 
@@ -402,6 +415,7 @@ def test_continue_sends_the_parent_shown_and_the_preview_refuses_another(console
     assert len(console["started"]) == 1, "another parent was started"
     assert "this checkpoint cannot be continued" in said
     assert CHANGED in text and f"(chosen: {shown[:12]}...)" in text
+    assert (REFRESH if source == "list" else CHECK_AGAIN) in text
     assert mode["parent"]["refused"] is True and mode["parent"]["sha256"] == shown
 
 
@@ -427,6 +441,62 @@ def test_a_listed_parent_whose_bytes_changed_since_it_was_listed_is_refused(cons
     shown = _sha(console["parents"]["a"])
     _swap(console, "other")()
     text, _e, mode, _c = _check(console, tc.CONTINUE_FROM_LIST)
-    assert CHANGED in text and f"(chosen: {shown[:12]}...)" in text
+    assert CHANGED in text and f"(chosen: {shown[:12]}...)" in text and REFRESH in text
     assert "data/runs/gat/" in text, "the refused check names the file"
     assert mode["parent"]["refused"] is True
+
+
+def test_a_listed_parent_refused_as_changed_is_shown_again_by_refresh(console):
+    """The action said is the one that helps (verification P3-3): choosing
+    the same option from the same list sends the list's digest again and is
+    refused again; Refresh reads the list again, and the file there now is
+    checked and shown."""
+    tc = console["tc"]
+    _swap(console, "same")()
+    text, _e, mode, _c = _check(console, tc.CONTINUE_FROM_LIST)
+    assert CHANGED in text and REFRESH in text
+    mode, _compare = tc._on_parent_chosen(tc.CONTINUE_FROM_LIST, console["key"], "",
+                                          console["listed"], console["state"],
+                                          {**mode, "drawer": True})
+    again, _e, mode, _c = _check(console, tc.CONTINUE_FROM_LIST, mode=mode)
+    assert CHANGED in again and REFRESH in again
+    refreshed, _problem = tc._list_parents(console["state"])
+    now = _sha(console["parents"]["a"])
+    assert refreshed[console["key"]]["sha256"] == now
+    text, _e, mode, _c = tc._on_check_continue(tc.CONTINUE_FROM_LIST, console["key"], "", "cpu",
+                                               None, console["state"], refreshed, {}, OP)
+    assert "Checkpoint read; it can continue" in text and mode["parent"]["sha256"] == now
+
+
+def test_a_typed_parent_changed_after_the_consoles_check_is_refused_by_the_start(case,
+                                                                              monkeypatch):
+    """Continue Training on a typed path without a Check first: the console's
+    own check reads and records the file, and the start's preview compares
+    that digest. A file replaced between the two is refused by the start,
+    with the typed path's action, and nothing is spawned."""
+    from src.webui.components import training_console as tc
+
+    operator_mode(monkeypatch)
+    ws = tc._workspace_state("data")
+    parents, _problem = tc._list_parents(ws)
+    key = next(k for k in parents if "_a_" in k and k.endswith("/last.pt"))
+    manager = tm.TrainingManager()
+    monkeypatch.setattr(tc, "training_manager", manager)
+    real = manager.preview_continuation
+    sent = []
+
+    def preview(parent, **kwargs):
+        sent.append(kwargs.get("expected_sha256"))
+        result = real(parent, **kwargs)
+        if len(sent) == 1:
+            _swap(case, "same")()
+        return result
+
+    monkeypatch.setattr(manager, "preview_continuation", preview)
+    shown = _sha(case["parents"]["a"])
+    with patch.object(tm.subprocess, "Popen") as popen:
+        said, *_rest = tc._on_resume(ws, "cpu", tc.CONTINUE_FROM_PATH, key,
+                                     str(case["parents"]["a"]), None, parents, {}, OP)
+    assert sent == [None, shown]
+    assert CHANGED in said and CHECK_AGAIN in said, said
+    popen.assert_not_called()

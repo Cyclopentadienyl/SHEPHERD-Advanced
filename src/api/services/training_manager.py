@@ -727,7 +727,8 @@ class TrainingManager:
                 parameter). Compared by this start's own preview of the parent
                 (`preview_continuation(expected_sha256=)`, the one place a
                 caller's digest is compared); a different file is refused
-                before anything is written or started. **Whether or not it is
+                before anything is written or started (``parent_changed:
+                True``, for a caller to add what to do). **Whether or not it is
                 given, the training process is bound to the parent this start
                 decided on** (`--expect-resume-sha256` with the digest of that
                 preview's read, root-cause round P22-S1): the run's placement
@@ -768,6 +769,7 @@ class TrainingManager:
                 expected_sha256=expected_parent_sha256)
             if not preview["ok"]:
                 return {"success": False, "error": preview["reason"],
+                        "parent_changed": preview.get("changed", False),
                         "status": self.get_job_status_word("training")}
             parent_sha256 = preview["sha256"]
             errors = effective_rules(preview["learning_settings"]) if effective_rules else []
@@ -1632,8 +1634,9 @@ class TrainingManager:
         caller's digest of the parent is compared** (root-cause round,
         P22-S1), by the read itself before the file is loaded
         (`read_checkpoint(expected_sha256=)`); other bytes, or none, are
-        refused with `CheckpointChanged`'s sentence, the training process's
-        own.
+        refused as changed (``changed: True``, so a caller can add what to do
+        for where it showed the fingerprint: the console's "refresh the list"
+        or "check it again").
 
         `requested` is a training request's own fields, set explicitly: a
         learning setting among them that differs from the parent's is refused
@@ -1668,7 +1671,11 @@ class TrainingManager:
             read = read_checkpoint(path, map_location="cpu", weights_only=True,
                                    expected_sha256=expected_sha256)
         except CheckpointChanged as exc:
-            return {"ok": False, "parent": str(path), "reason": str(exc)}
+            now = (f"It holds {exc.found[:12]}... now" if exc.found is not None
+                   else "It is gone")
+            return {"ok": False, "changed": True, "parent": str(path),
+                    "reason": f"The checkpoint changed since it was chosen. {now} "
+                              f"(chosen: {exc.expected[:12]}...)."}
         except Exception as exc:  # noqa: BLE001 - a refusal to show
             return {"ok": False, "parent": str(path),
                     "reason": f"{path.name} cannot be read as a checkpoint "

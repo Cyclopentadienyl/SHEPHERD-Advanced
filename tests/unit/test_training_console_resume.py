@@ -179,13 +179,16 @@ def test_the_listed_and_the_typed_checkpoint_go_through_one_check(checkpoints):
 def test_a_listed_parent_whose_bytes_changed_since_it_was_listed_is_refused(checkpoints):
     """The list carries each file's digest; the check sends it to the
     service's preview, which compares it on its read (a `last.pt` rewritten
-    since the listing is not what was shown; root-cause round, P22-S1)."""
+    since the listing is not what was shown; root-cause round, P22-S1). The
+    action is the list's: the same option sends the same digest until the list
+    is read again."""
     parents = {key: dict(item) for key, item in checkpoints["parents"].items()}
     parents[checkpoints["paused_key"]]["sha256"] = "0" * 64
     text, _e, mode, _c = tc._on_check_continue(
         tc.CONTINUE_FROM_LIST, checkpoints["paused_key"], "", "cpu", None, checkpoints["state"],
         parents, {}, OP)
-    assert "The checkpoint changed since it was chosen; choose it again." in text
+    assert "The checkpoint changed since it was chosen." in text
+    assert "Refresh the list, then choose it again." in text
     assert mode["parent"]["refused"] is True
 
 

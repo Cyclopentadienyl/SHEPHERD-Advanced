@@ -717,8 +717,9 @@ def plan_from_parent(
     early stopping's best weights when the parent names a file for them.
 
     That file is read once, with the safe loader, and accepted only with the
-    SHA-256 the parent recorded for it: the weights a run restores at its end
-    are the ones its record names, or the run is refused.
+    SHA-256 the parent recorded for it, which the reader compares before it
+    loads the file (`read_checkpoint(expected_sha256=)`): the weights a run
+    restores at its end are the ones its record names, or the run is refused.
     """
     from src.utils.run_plan import RunPlanRefused, plan_continuation
     from src.utils.checkpoint_io import read_checkpoint
@@ -738,13 +739,16 @@ def plan_from_parent(
     best_weights = None
     if (plan.best_weights or {}).get("kind") == "file":
         source = plan.best_weights
-        read = read_checkpoint(source["path"], map_location="cpu", weights_only=True)
-        if read.identity.sha256 != source["sha256"]:
+        try:
+            read = read_checkpoint(source["path"], map_location="cpu", weights_only=True,
+                                   expected_sha256=source["sha256"])
+        except CheckpointChanged as exc:
+            now = (f"the file there now has {exc.found}" if exc.found is not None
+                   else "there is no file there now")
             raise RunPlanRefused(
                 f"The parent names {source['path'].name} as early stopping's best weights "
-                f"with SHA-256 {source['sha256']}; the file there now has "
-                f"{read.identity.sha256}. Put the recorded file back or choose another "
-                "checkpoint.")
+                f"with SHA-256 {source['sha256']}; {now}. Put the recorded file back or "
+                "choose another checkpoint.") from None
         best_weights = read.checkpoint["state_dict"]
     return plan, best_weights
 
@@ -1360,9 +1364,13 @@ def _train_main(args: argparse.Namespace) -> int:
         metrics = train(config, explicit, expected_dataset_sha256=args.expect_dataset_sha256,
                         expected_resume_sha256=args.expect_resume_sha256)
         return 0 if metrics else 1
-    except (DatasetChanged, CheckpointChanged) as exc:  # a refusal, said once, not a
-        # failure with a traceback
+    except DatasetChanged as exc:  # a refusal, said once, not a failure with a traceback
         logger.error(f"train_model: refused: {exc} Nothing was written.")
+        return 1
+    except CheckpointChanged as exc:  # the resume parent's read, the one `train` makes
+        # with an expectation (`--expect-resume-sha256`); the reader states the facts
+        logger.error("train_model: refused: The checkpoint changed since it was chosen; "
+                     f"choose it again. {exc} Nothing was written.")
         return 1
     except KeyboardInterrupt:
         logger.info("Training interrupted by user")
