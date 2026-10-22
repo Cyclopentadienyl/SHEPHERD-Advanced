@@ -686,90 +686,107 @@ def test_register_is_refused_for_a_read_only_request(site, monkeypatch):
     assert not (site.checkpoint.parent / "evaluations.json").exists()
 
 
-def test_a_report_that_changed_since_it_was_shown_is_not_registered(site, monkeypatch):
-    page, request = _page(monkeypatch)
-    models = tp.read_models("demo", request)
-    reports = tp.read_reports(LABEL)
-    path = site.reports / site.run_id / "report.json"
-    path.write_text(path.read_text() + "\n")
-    done, said = tp.register_selected(page, reports, models, "demo", site.run_id, request)
-    assert done is False and "changed since it was shown" in said
-    assert not (site.checkpoint.parent / "evaluations.json").exists()
-
-
 def _usage_lines(site):
     usage = site.reports / "usage.jsonl"
     return usage.read_bytes() if usage.exists() else b""
 
 
-def _replaced_after_the_check(site, monkeypatch, replacement: bytes, how: str):
-    """Replace the shown report's bytes right after the page's own comparison,
-    when the ledger's checkpoint has been found (`ledger_checkpoint` returns),
-    in place or by an atomic rename: the window between the page's read and the
-    registration's (the M5 review's P2-1)."""
+def _swap(path, replacement: bytes, how: str):
+    """Replace a report's bytes in place or by an atomic rename."""
     import os
 
-    path = site.reports / site.run_id / "report.json"
-    real = tp.ledger_checkpoint
-
-    def found_then_replaced(*args, **kwargs):
-        place = real(*args, **kwargs)
-        if how == "overwrite":
-            path.write_bytes(replacement)
-        else:
-            staged = path.with_name("report.json.staged")
-            staged.write_bytes(replacement)
-            os.replace(staged, path)
-        return place
-
-    monkeypatch.setattr(tp, "ledger_checkpoint", found_then_replaced)
+    if how == "overwrite":
+        path.write_bytes(replacement)
+    else:
+        staged = path.with_name("report.json.staged")
+        staged.write_bytes(replacement)
+        os.replace(staged, path)
 
 
-@pytest.mark.parametrize("how", ["overwrite", "rename"])
-def test_a_valid_report_swapped_in_after_the_check_is_refused_by_the_registration(
-    site, monkeypatch, how
-):
+def _another_valid_report(path) -> bytes:
     """The reviewer's counter-example (P2-1): another valid report of the same
-    checkpoint and version, its MRR moved by 0.0004, swapped in after the page
-    compared the shown digest. The registration compares that digest again on
-    the one read it parses (`expected_report_sha256`) and refuses: no ledger,
-    and the version's usage history unchanged."""
-    page, request = _page(monkeypatch)
-    models = tp.read_models("demo", request)
-    reports = tp.read_reports(LABEL)
-    path = site.reports / site.run_id / "report.json"
+    checkpoint and version, its MRR moved by 0.0004."""
     replacement = json.loads(path.read_bytes())
     replacement["authoritative_metrics"]["untruncated_mrr"] += 0.0004
-    usage_before = _usage_lines(site)
-    _replaced_after_the_check(site, monkeypatch,
-                              json.dumps(replacement, indent=2, sort_keys=True).encode(), how)
-
-    done, said = tp.register_selected(page, reports, models, "demo", site.run_id, request)
-
-    assert done is False
-    assert f"{path} is not the report that was shown" in said
-    assert "select it again" in said and "Nothing was written to " in said
-    assert not (site.checkpoint.parent / "evaluations.json").exists()
-    assert _usage_lines(site) == usage_before
+    return json.dumps(replacement, indent=2, sort_keys=True).encode()
 
 
-def test_damaged_bytes_swapped_in_after_the_check_are_refused_before_they_are_parsed(
-    site, monkeypatch
+def _never_decoded(monkeypatch):
+    """Fail the test if a report's bytes are decoded as JSON by the one
+    report reader (`read_report`), the page's or the registration's."""
+    import src.evaluation.report_store as report_store
+
+    class Undecoded:
+        def __getattr__(self, name):
+            return getattr(json, name)
+
+        @staticmethod
+        def loads(*args, **kwargs):
+            pytest.fail("a report that is not the one shown was decoded")
+
+    monkeypatch.setattr(report_store, "json", Undecoded())
+
+
+@pytest.mark.parametrize("bytes_now", ["another valid report", "damaged bytes"])
+@pytest.mark.parametrize("how", ["overwrite", "rename"])
+def test_a_report_swapped_after_it_was_shown_is_refused_by_the_registration_alone(
+    site, monkeypatch, how, bytes_now
 ):
-    """The digest refuses them, never the parser: the message is the shown
-    report's, not "not a measurement report"."""
+    """Round 3 of the review fixes (F2): Register has one read and one judge.
+    The reviewer's swaps (P2-1) -- another valid report of the same checkpoint
+    and version, or damaged bytes, put in place by an overwrite or a rename
+    after the report was shown and before Register -- are refused by the
+    registration's own comparison, on the one read it would register, before
+    the bytes are decoded, in its words ("not the report that was shown ...
+    select it again"): never the page's own "changed since it was shown",
+    never a parse error. No ledger is written and the usage history is
+    unchanged."""
     page, request = _page(monkeypatch)
     models = tp.read_models("demo", request)
     reports = tp.read_reports(LABEL)
+    path = site.reports / site.run_id / "report.json"
+    shown = tp.find(reports["runs"], "run_id", site.run_id)["state"]["report_sha256"]
     usage_before = _usage_lines(site)
-    _replaced_after_the_check(site, monkeypatch, b"{not json", "overwrite")
+    _swap(path, _another_valid_report(path) if bytes_now == "another valid report"
+          else b"{not json", how)
+    _never_decoded(monkeypatch)
 
     done, said = tp.register_selected(page, reports, models, "demo", site.run_id, request)
 
-    assert done is False and "is not the report that was shown" in said
-    assert "not a measurement report" not in said
+    now = hashlib.sha256(path.read_bytes()).hexdigest()
+    assert done is False
+    assert said.startswith(
+        f"{path} is not the report that was shown: it now holds bytes {now[:12]}..., and "
+        f"{shown[:12]}... was shown. It was replaced or changed after it was shown; select it "
+        "again. Nothing was written."), said
     assert not (site.checkpoint.parent / "evaluations.json").exists()
     assert _usage_lines(site) == usage_before
+
+
+def test_the_bytes_registered_are_the_bytes_shown_whatever_replaces_them_after_that_read(
+    site, monkeypatch
+):
+    """The one read is the judge and the source: a report replaced right after
+    the registration read it is registered as the bytes it read and compared
+    with the digest shown, never refused by a second read and never recorded
+    under the new bytes."""
+    from tests.fixtures.replacement import replace_after_read
+
+    page, request = _page(monkeypatch)
+    models = tp.read_models("demo", request)
+    reports = tp.read_reports(LABEL)
+    path = site.reports / site.run_id / "report.json"
+    shown = tp.find(reports["runs"], "run_id", site.run_id)["state"]["report_sha256"]
+    swap = replace_after_read(monkeypatch, after=path, target=path,
+                              data=_another_valid_report(path), how="rename")
+
+    done, said = tp.register_selected(page, reports, models, "demo", site.run_id, request)
+
+    assert swap.fired == 1
+    assert done is True and said.startswith("Registered as record 1."), said
+    ledger = json.loads((site.checkpoint.parent / "evaluations.json").read_text())
+    assert [r["source_artifact_digest"] for r in ledger["records"]] == [shown]
+    assert hashlib.sha256(path.read_bytes()).hexdigest() != shown
 
 
 def test_register_takes_the_deployments_registry_from_the_settings_it_was_given(
@@ -800,9 +817,11 @@ def test_no_listed_checkpoint_with_the_weights_no_registration(site, monkeypatch
     site.checkpoint.rename(other)
     other.write_bytes(other.read_bytes() + b"x")
     models = tp.read_models("demo", request)
+    usage_before = _usage_lines(site)
     done, said = tp.register_selected(page, reports, models, "demo", site.run_id, request)
     assert done is False and "No checkpoint the server lists (demo) holds the weights" in said
-    assert "Nothing was registered." in said
+    assert said.endswith("--report … --checkpoint …. Nothing was written."), said
+    assert _usage_lines(site) == usage_before
 
 
 def test_a_disagreeing_keys_report_is_refused_by_the_one_registration(site, monkeypatch):
@@ -1661,6 +1680,32 @@ def test_register_from_a_copy_files_beside_the_checkpoint_the_run_read(site, mon
     reports = tp.read_reports(LABEL)
     assert tp.find(reports["runs"], "run_id", site.run_id)["state"]["registered"] == "registered"
     assert tp.register_state(page, reports, site.run_id) == (False, "Already registered.")
+
+
+def test_a_report_changed_since_the_list_is_never_placed_from_its_new_bytes(site, monkeypatch):
+    """Round 3 of the review fixes (F2): the selected report's registration is
+    asked again with the ledger placed from the bytes the list showed (the
+    report read bound to their digest), so a report replaced since the list was
+    read is never decoded to place a ledger, and the list's own answer stands.
+    The control: the same report unchanged reads "not registered" beside the
+    file the run read."""
+    _point_report_at_site(site)
+    page, request = _page(monkeypatch)
+    models = tp.read_models("demo", request)
+    reports = tp.read_reports(LABEL)
+    assert tp.find(reports["runs"], "run_id", site.run_id)["state"]["registered"] == \
+        "cannot_be_checked"
+    control = tp.refine_registration(page, reports, site.run_id, models, request=request)
+    state = tp.find(control["runs"], "run_id", site.run_id)["state"]
+    assert state["registered"] == "not_registered" and state["checked_beside"] == \
+        f"gat/{RUN}/best.pt"
+
+    path = site.reports / site.run_id / "report.json"
+    _swap(path, _another_valid_report(path), "rename")
+    _never_decoded(monkeypatch)
+
+    assert tp.refine_registration(page, reports, site.run_id, models,
+                                  request=request) is reports
 
 
 def test_every_row_says_not_registered_for_an_operator_and_keeps_it(site, monkeypatch):

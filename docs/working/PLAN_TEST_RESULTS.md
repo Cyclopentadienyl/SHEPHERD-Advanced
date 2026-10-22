@@ -721,7 +721,9 @@ disagreement block, contested states and investigation notes are phase 2.
   the one read it registers, before the bytes are decoded (M4's compare-before-parse,
   `read_report`), and refuses other bytes, another valid report or damaged ones, with "… is not
   the report that was shown … select it again", nothing written; the Test page's Register passes
-  the digest it showed and the settings it found the report by.
+  the digest it showed and the settings it found the report by. Since round 3 of the review
+  fixes (F2, implemented) that read is the page's only one and its comparison the only judge:
+  the page no longer reads the report first, and the ledger's place comes from the same read.
 - **The block.** `scan_report_store` builds every stored report with `build_record`, groups the
   records by `record_key` and compares them with `differing_fields`, the comparison
   `append_record` now uses too. A contested key refuses every registration under it
@@ -783,11 +785,13 @@ each run directory of a version's store is listed with kept and registered from
 `stored_report_state` and its key's state from `scan_report_store`; a contested key reads "runs
 disagree — investigate" with the fields that differ, its reports' Register is off, and the
 investigation notes kept with the key (who, when, what) are listed and added, gated, lifting
-nothing. Register calls `register_report` (store only) with the checkpoint the server lists
-holding the weights the report measured, found by full digest in the workspace's checkpoint list
-(never the report's recorded path), after the report's bytes are compared with the digest shown;
-the one function checks the store, the version, the block and the checkpoint's bytes again, and,
-since the M5 review's P2-1, compares the digest shown on the one read it registers (above). For
+nothing. Register calls `register_report` (store only), which, since the M5 review's P2-1,
+compares the digest shown on the one read it registers (above), and files the record beside the
+checkpoint the server lists holding the weights the report measured, found by full digest in the
+workspace's checkpoint list (never the report's recorded path); the one function checks the
+store, the version, the block and the checkpoint's bytes again. *Since round 3 of the review
+fixes (F2), implemented:* the page reads and compares no report itself; the listed file is found
+from the registration's own read (`place`, the page's placement passed in). For
 the selected report, an operator's page asks `report_state` again with that listed file, so "not
 registered" is said for the ledger a registration from the page would write. *Review fixes
 (2026-10-21):* Register and that answer find the listed file in one order: the file the run read

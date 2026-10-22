@@ -65,7 +65,10 @@ read is never registered in the run's name (the reviewer's P2 of 2026-10-17).
 (``expected_report_sha256``, the M5 review's P2-1): the digest shown is
 compared on the one read registered here, before its bytes are decoded, so a
 file replaced after it was shown -- by another valid report or damaged bytes
--- is refused and never parsed.
+-- is refused and never parsed. **That read is the page's only one** (round 3
+of the review fixes, F2): where the ledger goes is found from it too, by the
+page's own placement passed in (``place``), so the page neither reads nor
+judges the report itself.
 
 **A registration is in the version's usage history** (D4): a ledger written is
 appended there by this function, so a registration from the command line counts
@@ -97,7 +100,7 @@ import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Mapping, NamedTuple, Optional, Tuple
+from typing import Any, Callable, Dict, Mapping, NamedTuple, Optional, Tuple
 
 from src.evaluation.report_store import (
     NotInReportStore,
@@ -264,6 +267,7 @@ def register_report(
     checkpoint: Optional[Path] = None,
     checkpoint_dir: Optional[Path] = None,
     measured: Optional[MeasuredRun] = None,
+    place: Optional[Callable[[Mapping[str, Any]], Path]] = None,
     expected_report_sha256: Optional[str] = None,
     registered_at: Optional[str] = None,
     environ: Optional[Mapping[str, str]] = None,
@@ -289,8 +293,8 @@ def register_report(
     never reads, and a second ledger for the same weights. Nothing creates a
     directory for a ledger.
 
-    Exactly one of ``checkpoint``, ``checkpoint_dir`` and ``measured`` says which
-    file that is:
+    Exactly one of ``checkpoint``, ``checkpoint_dir``, ``measured`` and ``place``
+    says which file that is:
 
     - ``checkpoint_dir`` (``record_evaluation.py --checkpoint-dir``): a file in
       that directory whose bytes are the report's checkpoint must exist
@@ -309,15 +313,24 @@ def register_report(
       checkpoint's on another cohort version -- is refused, never filed in the
       run's name. The ledger goes beside the read's path, which the run resolved
       when it read it.
+    - ``place`` (the Test page's Register): a callable given the report's
+      manifest as parsed here, from the one read compared with
+      ``expected_report_sha256``, which returns the checkpoint file the ledger
+      goes beside, found the caller's way (the page: in the server's lists),
+      or raises ``ValueError`` saying why it names none, which is refused.
+      That file must then hold the report's checkpoint bytes
+      (`checkpoint_matches`), as with ``checkpoint``. Called after the report,
+      its version, its run directory and D5's block have been checked, so a
+      refused report lists nothing. The caller never reads the report itself.
 
     ``expected_report_sha256``: the digest of the report as it was shown when it
-    was chosen (the Test page's Register), with ``checkpoint`` or
-    ``checkpoint_dir``. The one read below is compared with it **before its
-    bytes are decoded**, so a file replaced or changed after it was shown -- by
-    another valid report or damaged bytes -- is refused and never parsed, the
-    check ``measured`` makes with the digest its run published. Not with
-    ``measured``, which carries its own; that, or a value that is not 64
-    lowercase hex digits, is a caller's error (``TypeError``).
+    was chosen (the Test page's Register), with ``checkpoint``,
+    ``checkpoint_dir`` or ``place``. The one read below is compared with it
+    **before its bytes are decoded**, so a file replaced or changed after it
+    was shown -- by another valid report or damaged bytes -- is refused and
+    never parsed, the check ``measured`` makes with the digest its run
+    published. Not with ``measured``, which carries its own; that, or a value
+    that is not 64 lowercase hex digits, is a caller's error (``TypeError``).
 
     ``registered_at`` is the time the registration is made, now in UTC unless a
     caller passes one.
@@ -328,13 +341,13 @@ def register_report(
     when the ledger was written and the version's usage history could not be
     appended, why (`RegistrationResult.usage_history_problem`). Every
     expected failure raises ``RegistrationRefused``; a call naming none, or more
-    than one, of ``checkpoint``, ``checkpoint_dir`` and ``measured`` is a
-    caller's error (``TypeError``).
+    than one, of ``checkpoint``, ``checkpoint_dir``, ``measured`` and ``place``
+    is a caller's error (``TypeError``).
     """
-    named = [arg for arg in (checkpoint, checkpoint_dir, measured) if arg is not None]
+    named = [arg for arg in (checkpoint, checkpoint_dir, measured, place) if arg is not None]
     if len(named) != 1:
         raise TypeError(
-            "register_report takes exactly one of checkpoint, checkpoint_dir and measured"
+            "register_report takes exactly one of checkpoint, checkpoint_dir, measured and place"
         )
     if measured is not None and not isinstance(measured, MeasuredRun):
         raise TypeError("measured is the run's MeasuredRun")
@@ -347,8 +360,8 @@ def register_report(
             raise TypeError("expected_report_sha256 is a SHA-256 in 64 lowercase hex digits")
     expected = measured.report_sha256 if measured is not None else expected_report_sha256
     report_path = Path(report_path)
-    # Known up front for a named file or a run's read; for a directory, once the
-    # file in it is.
+    # Known up front for a named file or a run's read; for a directory or a
+    # placement, once the file is found.
     ledger_path: Optional[Path] = None
     if checkpoint is not None:
         ledger_path = _ledger_beside(checkpoint)
@@ -375,7 +388,7 @@ def register_report(
         checkpoint_dir = Path(checkpoint_dir).resolve()
         if not checkpoint_dir.is_dir():
             raise not_a_directory(checkpoint_dir)
-    elif not ledger_path.parent.is_dir():
+    elif ledger_path is not None and not ledger_path.parent.is_dir():
         raise not_a_directory(ledger_path.parent)
 
     # **For a run's own report, every way of not getting back the published
@@ -478,7 +491,9 @@ def register_report(
             f"differing in: {', '.join(fields)}. A report is registered only under the "
             "version it measured."
         )
-    # Released before anything else is read: the record holds what is kept of it.
+    # Released before anything else is read: the record holds what is kept of
+    # it, and a placement the manifest it is given.
+    placed_from = report["manifest"] if place is not None else None
     del report
     digest = record["checkpoint_digest"]
     # **Its run directory is named for the checkpoint it measured**
@@ -530,6 +545,17 @@ def register_report(
                 "wrong address."
             )
     else:
+        if place is not None:
+            # **Where the ledger goes, found from this read** (the Test page's
+            # Register): the caller is given the manifest parsed from the bytes
+            # just compared with the digest shown, never a read of its own, and
+            # the file it names is checked below as a named file is.
+            try:
+                checkpoint = Path(place(placed_from))
+            except ValueError as exc:
+                raise refused(str(exc)) from exc
+            del placed_from
+            ledger_path = _ledger_beside(checkpoint)
         checkpoint = Path(checkpoint)
         if not checkpoint.exists():
             raise refused(f"{checkpoint} does not exist.")

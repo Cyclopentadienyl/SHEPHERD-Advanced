@@ -739,7 +739,9 @@ def _refined_state(page: Mapping[str, Any], label: Any, run: Mapping[str, Any],
     "cannot be checked", or no listed file holds the weights, or finding it
     would list another workspace and `read_others` is False). `path`: the
     report as the store's listing names it (`resolve_report` finds it when it
-    is not given)."""
+    is not given). The place is found from the bytes the list showed: the
+    report is read bound to their digest, and other bytes raise before they
+    are parsed, so the list's answer stands for a report changed since."""
     from src.api.services.server_lists import resolve_report
     from src.evaluation.registration import report_state
     from src.evaluation.report_store import read_report
@@ -749,7 +751,7 @@ def _refined_state(page: Mapping[str, Any], label: Any, run: Mapping[str, Any],
     state = run.get("state") or {}
     if path is None:
         path = resolve_report(label, run.get("run_id"), environ=environ)
-    report, _digest = read_report(path)
+    report, _digest = read_report(path, state.get("report_sha256"))
     manifest = report.get("manifest") if isinstance(report, Mapping) else None
     place = ledger_checkpoint(manifest or {}, page, models, models.get("workspace"),
                               read_others=read_others, cache=cache, environ=environ)
@@ -1844,59 +1846,55 @@ def register_selected(page: Mapping[str, Any], reports: Mapping[str, Any],
                       models: Mapping[str, Any], workspace: Any, run_id: Any, request: Any, *,
                       environ: Optional[Mapping[str, str]] = None) -> Tuple[bool, str]:
     """"Register this report": D8 on this request; the run's report found in
-    the version's listed report store, and its bytes compared with the digest
-    shown (a report changed since is said, never registered); the ledger's place
-    found from the server's checkpoint list (`ledger_checkpoint`: the listed
-    file holding the weights the report measured, by full digest, the file the
-    run read first), never the report's recorded path; then the one
-    registration function, given the digest shown, which it compares on the
-    bytes it registers before parsing them, and which checks the deployment's
-    registry, the store, the version, D5's block and the checkpoint's bytes
-    again."""
+    the version's listed report store; then the one registration function,
+    given the digest shown, which compares it on the one read it registers,
+    before parsing it (a report changed since it was shown is refused there,
+    in its words, and never parsed), and which finds the ledger's place from
+    that same read through this page's placement (`ledger_checkpoint`: the
+    listed file holding the weights the report measured, by full digest, the
+    file the run read first; never the report's recorded path), then checks
+    the deployment's registry, the store, the version, D5's block and the
+    checkpoint's bytes again. The page reads and judges no report itself
+    (round 3 of the review fixes, F2)."""
     from src.api.services.server_lists import ServerListRefused, resolve_report
     from src.evaluation.registration import RegistrationRefused, corroboration_note, register_report
-    from src.evaluation.report_store import read_report
 
     access = operator_access(request)
     if not access.allowed:
         return False, access.refusal
     label = reports.get("label")
     run = find(reports.get("runs") or [], "run_id", run_id)
-    if run is None or (run.get("state") or {}).get("kept") != "kept":
+    state = (run or {}).get("state") or {}
+    shown = state.get("report_sha256")
+    # A kept report is listed with its digest; without one there is nothing to
+    # bind the registration to, and it is never registered unbound.
+    if run is None or state.get("kept") != "kept" or not r.is_digest(shown):
         return False, "Select a kept report of the version first. Nothing was registered."
-    shown = (run.get("state") or {}).get("report_sha256")
     try:
         path = resolve_report(label, run_id, environ=environ)
-        report, digest = read_report(path)
     except ServerListRefused as exc:
         return False, said(exc, "Nothing was registered.")
-    except (OSError, ValueError) as exc:
-        return False, f"The report could not be read ({type(exc).__name__}: {exc}). Nothing was registered."
-    if digest != shown:
-        return False, (f"The report of run {run_id} changed since it was shown (it now holds "
-                       f"{digest[:12]}…, it showed {str(shown)[:12]}…). Nothing was registered; "
-                       "select it again.")
-    manifest = report.get("manifest") if isinstance(report, Mapping) else None
-    digests = manifest.get("artifact_digests") if isinstance(manifest, Mapping) else None
-    checkpoint_sha = digests.get("checkpoint") if isinstance(digests, Mapping) else None
-    if not r.is_digest(checkpoint_sha):
-        return False, "The report names no checkpoint digest, so it is not registered. Nothing was written."
-    place = ledger_checkpoint(manifest, page, models, workspace, environ=environ)
-    checkpoint = place.path
-    if checkpoint is None:
-        where = ", ".join(place.workspaces) or "no listed workspace"
-        return False, (f"No checkpoint the server lists ({where}) holds the weights this report "
-                       f"measured (model {checkpoint_sha[:12]}…), so where its ledger goes cannot be "
-                       "found from the server's lists. Nothing was registered. A checkpoint moved "
-                       "since the run can be registered on the machine with "
-                       "scripts/record_evaluation.py --report … --checkpoint ….")
+
+    def beside(manifest: Mapping[str, Any]) -> Path:
+        """The ledger's place, from the manifest the registration parsed from
+        the bytes it compared with the digest shown."""
+        place = ledger_checkpoint(manifest, page, models, workspace, environ=environ)
+        if place.path is None:
+            where = ", ".join(place.workspaces) or "no listed workspace"
+            measured = manifest["artifact_digests"]["checkpoint"]
+            raise ValueError(
+                f"No checkpoint the server lists ({where}) holds the weights this report "
+                f"measured (model {measured[:12]}…), so where its ledger goes cannot be found "
+                "from the server's lists. A checkpoint moved since the run can be registered "
+                "on the machine with scripts/record_evaluation.py --report … --checkpoint ….")
+        return place.path
+
     try:
         # **Bound to the report shown** (the M5 review's P2-1): the digest shown
-        # is compared again on the one read the registration parses and
-        # registers, so a file replaced after the comparison above is refused
-        # there; and the settings this report was found by say which registry is
-        # the deployment's.
-        result = register_report(path, checkpoint=checkpoint, expected_report_sha256=shown,
+        # is compared on the one read the registration parses and registers,
+        # and the ledger is placed from that read; the settings this report was
+        # found by say which registry is the deployment's.
+        result = register_report(path, place=beside, expected_report_sha256=shown,
                                  environ=environ)
     except RegistrationRefused as exc:
         return False, str(exc)
