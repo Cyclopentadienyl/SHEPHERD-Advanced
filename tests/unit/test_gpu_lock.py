@@ -640,21 +640,41 @@ def _calls_to(path: Path, names) -> int:
         getattr(node.func, "id", None) in names or getattr(node.func, "attr", None) in names))
 
 
+def _lock_takers(root: Path, under: str) -> list:
+    """The Python files under `root / under`, at any depth, whose code calls
+    `take_gpu_lock` or `GpuLock`, each by its path from `root`. Every
+    directory is searched the same way, so a taker below scripts/
+    (scripts/launch/, scripts/spikes/) is found as one in src/ is."""
+    return sorted(path.relative_to(root).as_posix() for path in (root / under).rglob("*.py")
+                  if _calls_to(path, {"take_gpu_lock", "GpuLock"}))
+
+
+def test_a_lock_taker_below_the_top_directory_is_found(tmp_path):
+    """Verification of INT-2, P-3: the taker search once read scripts/ alone,
+    not the directories below it, so a new entry under scripts/launch/ would
+    have gone unnoticed. A call in a string is not a take."""
+    (tmp_path / "scripts" / "launch").mkdir(parents=True)
+    (tmp_path / "scripts" / "launch" / "entry.py").write_text(
+        "from src.utils.gpu_lock import take_gpu_lock\n"
+        "lock = take_gpu_lock('training', 'entry.py')\n", encoding="utf-8")
+    (tmp_path / "scripts" / "top.py").write_text("said = 'take_gpu_lock()'\n", encoding="utf-8")
+    assert _lock_takers(tmp_path, "scripts") == ["scripts/launch/entry.py"]
+
+
 def test_the_program_entries_take_the_lock_and_the_module_names_each_one():
     """Root-cause round, INT-2: the lock is taken by program entries only,
     never by the production code they call (`train()` takes none, so an
     in-process caller such as the deployment probe's training probes holds no
     lock), and this module's docstring, the one place that says who takes it,
-    names every entry that does (it once left out setup_demo.py)."""
+    names every entry that does (it once left out setup_demo.py), by its path
+    from the checkout."""
     repo = Path(__file__).resolve().parents[2]
-    takers = sorted(path.name for path in (repo / "scripts").glob("*.py")
-                    if _calls_to(path, {"take_gpu_lock", "GpuLock"}))
-    assert takers == ["measure_scorer.py", "setup_demo.py", "train_model.py"]
+    takers = _lock_takers(repo, "scripts")
+    assert takers == ["scripts/measure_scorer.py", "scripts/setup_demo.py",
+                      "scripts/train_model.py"]
     for name in takers:
-        assert f"`scripts/{name}" in gpu_lock.__doc__, f"{name} is not named as a taker"
-    in_src = sorted(path.relative_to(repo).as_posix() for path in (repo / "src").rglob("*.py")
-                    if path.name != "gpu_lock.py"
-                    and _calls_to(path, {"take_gpu_lock", "GpuLock"}))
+        assert f"`{name}" in gpu_lock.__doc__, f"{name} is not named as a taker"
+    in_src = [name for name in _lock_takers(repo, "src") if name != "src/utils/gpu_lock.py"]
     assert in_src == [], f"production code takes the lock itself: {in_src}"
 
 
