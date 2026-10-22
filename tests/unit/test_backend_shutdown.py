@@ -537,6 +537,83 @@ def test_not_the_main_thread_nothing_is_installed(server_signals):
     assert signal.getsignal(signal.SIGHUP) is signal.SIG_DFL
 
 
+def _lifespan_in_the_main_thread(api) -> None:
+    """The application's real lifespan, run as uvicorn runs it: in an event
+    loop in the main thread, started and ended at once."""
+    async def scenario():
+        async with api.lifespan(api.app):
+            pass
+
+    _in_the_event_loop(scenario)
+
+
+@POSIX
+def test_a_backend_that_cannot_attach_to_the_server_s_signals_says_so(monkeypatch, caplog):
+    """Round 3 of the review fixes, F4: in the main thread with no server's
+    SIGTERM handler to wrap, the stop at the signal and the closed slot fall
+    back to the lifespan's end, after every open connection has closed. That
+    is a warning in the log; it used to be silent. With the server's handler
+    in place nothing is said (the control)."""
+    import src.api.main as api
+
+    monkeypatch.setattr(tm, "training_manager", tm.TrainingManager())
+    for name in ("SHEPHERD_KG_PATH", "SHEPHERD_CHECKPOINT_PATH", "SHEPHERD_BIND_HOST"):
+        monkeypatch.delenv(name, raising=False)
+    previous = signal.getsignal(signal.SIGTERM)
+    server = _Server()
+    try:
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
+        with caplog.at_level("WARNING", logger=api.logger.name):
+            _lifespan_in_the_main_thread(api)
+        said = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+        assert any("cannot attach to the server's shutdown signals" in m
+                   and "only at the lifespan's end" in m for m in said), said
+        caplog.clear()
+        signal.signal(signal.SIGTERM, server.handle_exit)
+        with caplog.at_level("WARNING", logger=api.logger.name):
+            _lifespan_in_the_main_thread(api)
+        assert not any("cannot attach" in r.getMessage() for r in caplog.records)
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
+def test_off_the_main_thread_the_backend_says_why_it_takes_no_signal(monkeypatch, caplog):
+    """An in-process client runs the lifespan off the main thread, where no
+    signal can be taken: a debug line, not a warning (the tests' logs stay
+    quiet), and never nothing."""
+    from fastapi.testclient import TestClient
+
+    import src.api.main as api
+
+    monkeypatch.setattr(tm, "training_manager", tm.TrainingManager())
+    with caplog.at_level("DEBUG", logger=api.logger.name):
+        with TestClient(api.app):
+            pass
+    said = [(r.levelname, r.getMessage()) for r in caplog.records
+            if "off the main thread" in r.getMessage()]
+    assert [level for level, _ in said] == ["DEBUG"], said
+    assert not any("cannot attach" in r.getMessage() for r in caplog.records)
+
+
+def test_a_dashboard_with_no_stop_event_is_a_warning_not_a_silent_no_op(caplog):
+    """F4: the dashboard's `stop_event` is the served Gradio app's attribute.
+    A mounted app without it (a Gradio that renamed it) leaves every open tab
+    holding the shutdown, and the log says so."""
+    from fastapi import FastAPI
+    from starlette.applications import Starlette
+
+    import src.api.main as api
+
+    parent = FastAPI()
+    parent.mount(api.DASHBOARD_PATH, Starlette())
+    with caplog.at_level("WARNING", logger=api.logger.name):
+        api._end_dashboard_streams(parent)
+        api._end_dashboard_streams(FastAPI())       # nothing mounted: nothing said
+    said = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert len(said) == 1 and "has no stop_event" in said[0], said
+    assert "holds the backend's shutdown until it is closed" in said[0]
+
+
 def test_the_dashboard_s_heartbeat_streams_are_ended_as_gradio_s_own_server_ends_them():
     """The served dashboard's `stop_event` (Gradio's own server sets it when
     it stops, `Blocks._end_streaming_responses`; mounted, nothing did) is set,

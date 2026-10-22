@@ -274,11 +274,14 @@ class _ShutdownSignals:
 
     Installed only in the main thread, where a server sets its handlers (an
     in-process test client runs the lifespan elsewhere), and only when
-    SIGTERM has a handler to route to (a server's); a handler that is not the
-    server's is not wrapped (SIGINT's default handler, which no server set,
-    or one of someone else's), and a routed signal is taken only where it
-    still has its default action (SIGHUP ignored under ``nohup`` is left as
-    it is). `restore` puts back each
+    SIGTERM has a handler to route to (a server's); **neither fallback is
+    silent** (round 3 of the review fixes, F4): in the main thread a SIGTERM
+    with no server's handler is a warning, since the job's stop and the
+    closed slot then wait for the lifespan's end, and off it a debug line. A
+    handler that is not the server's is not wrapped (SIGINT's default
+    handler, which no server set, or one of someone else's), and a routed
+    signal is taken only where it still has its default action (SIGHUP
+    ignored under ``nohup`` is left as it is). `restore` puts back each
     handler replaced here that is still the one installed here (after a
     forced quit uvicorn has already put back its own).
     """
@@ -298,9 +301,17 @@ class _ShutdownSignals:
         from src.api.services.training_manager import JOB_DETACHED_SIGNALS
 
         if threading.current_thread() is not threading.main_thread():
+            logger.debug("The application runs off the main thread (an in-process client), "
+                         "so the shutdown signals are not taken here: the lifespan's end "
+                         "stops the job.")
             return
         termination = signal.getsignal(signal.SIGTERM)
         if not callable(termination):
+            logger.warning(
+                "The backend cannot attach to the server's shutdown signals (SIGTERM has no "
+                "handler of the server's: %r), so a stop of the backend begins the job's stop, "
+                "and closes the GPU slot, only at the lifespan's end, after every open "
+                "connection has closed (an open dashboard tab holds it).", termination)
             return
         self._loop = asyncio.get_running_loop()
         for name in JOB_DETACHED_SIGNALS:
@@ -366,12 +377,17 @@ def _end_dashboard_streams(application: FastAPI) -> None:
     (`Blocks._end_streaming_responses` sets the served app's `stop_event`;
     mounted, nothing sets it). Each open tab keeps one, which otherwise ends
     only when the tab is closed. In the event loop; with no dashboard
-    mounted, there is nothing to end."""
+    mounted, there is nothing to end; a dashboard with no `stop_event` (a
+    Gradio that renamed it) is a warning, never a silent no-op."""
     for route in application.routes:
         if isinstance(route, Mount) and route.path == DASHBOARD_PATH:
             stop_event = getattr(route.app, "stop_event", None)
-            if stop_event is not None:
-                stop_event.set()
+            if stop_event is None:
+                logger.warning("The dashboard mounted at %s has no stop_event to end its "
+                               "heartbeat streams with, so each open dashboard tab holds the "
+                               "backend's shutdown until it is closed.", DASHBOARD_PATH)
+                return
+            stop_event.set()
 
 
 def _stop_the_active_job() -> None:
