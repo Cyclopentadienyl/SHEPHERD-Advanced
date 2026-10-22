@@ -230,11 +230,12 @@ def server_signals(monkeypatch):
     import src.api.main as api
 
     server = _Server()
-    names = ("SIGINT", "SIGTERM", "SIGHUP")
+    names = ("SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT")
     previous = {name: signal.getsignal(getattr(signal, name)) for name in names}
     signal.signal(signal.SIGINT, server.handle_exit)
     signal.signal(signal.SIGTERM, server.handle_exit)
     signal.signal(signal.SIGHUP, signal.SIG_DFL)
+    signal.signal(signal.SIGQUIT, signal.SIG_DFL)
     calls = {"stops": [], "streams": 0, "release": threading.Event()}
 
     def stop_the_active_job():
@@ -329,6 +330,53 @@ def test_a_hangup_alone_shuts_down_as_sigterm_does(server_signals):
 
     _in_the_event_loop(scenario)
     assert signal.getsignal(signal.SIGHUP) is signal.SIG_DFL
+
+
+@POSIX
+def test_a_ctrl_backslash_shuts_down_as_sigterm_does(server_signals):
+    """Root-cause review, P23-2: SIGQUIT, the terminal's other terminating
+    signal, reached the job while it shared the backend's group; it no longer
+    does, and it was routed nowhere, so the backend dumped core and the job
+    trained on with the lock. It goes to the server's SIGTERM handler, which
+    records it (uvicorn raises it again once it has shut down), and starts
+    the job's stop; it is put back at its default afterwards."""
+    api, server, calls = server_signals
+
+    async def scenario():
+        signals = api._ShutdownSignals(api.app)
+        signals.install()
+        try:
+            # Checked first: delivered unrouted, it would end this process.
+            assert signal.getsignal(signal.SIGQUIT) is not signal.SIG_DFL, "Ctrl-\\ not routed"
+            await _delivered(signal.SIGQUIT)
+            assert server.seen == ["SIGQUIT"], "Ctrl-\\ did not reach the server's handler"
+            assert calls["stops"] == ["backend-stops-its-job"] and calls["streams"] == 1
+        finally:
+            calls["release"].set()
+            signals.end_jobs()
+            signals.restore()
+
+    _in_the_event_loop(scenario)
+    assert signal.getsignal(signal.SIGQUIT) is signal.SIG_DFL
+
+
+@POSIX
+def test_every_signal_a_job_no_longer_gets_is_routed_to_the_shutdown(server_signals):
+    """One definition, beside the spawn (`JOB_DETACHED_SIGNALS`): the backend
+    takes every one of them present here, never a list of its own."""
+    api, server, calls = server_signals
+    present = {getattr(signal, name) for name in tm.JOB_DETACHED_SIGNALS
+               if hasattr(signal, name)}
+
+    async def scenario():
+        signals = api._ShutdownSignals(api.app)
+        signals.install()
+        try:
+            assert set(signals._installed) == present
+        finally:
+            signals.restore()
+
+    _in_the_event_loop(scenario)
 
 
 @POSIX

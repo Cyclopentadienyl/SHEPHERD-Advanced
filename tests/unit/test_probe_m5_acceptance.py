@@ -495,12 +495,17 @@ def _stop(pid: int) -> None:
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
-def test_sigterm_ends_the_probe_through_its_cleanups(probe):
-    """`kill <pid>` (SIGTERM) runs the probe's `finally` blocks, which stop
-    the services and jobs it started, as Ctrl-C does; without the handler the
-    process ends at once and a child it started keeps running."""
+@pytest.mark.parametrize("name", ["SIGTERM", "SIGHUP", "SIGQUIT"])
+def test_a_termination_signal_ends_the_probe_through_its_cleanups(probe, name):
+    """`kill <pid>` (SIGTERM), a closed terminal (SIGHUP) and its Ctrl-\\
+    (SIGQUIT) run the probe's `finally` blocks, which stop the services and
+    jobs it started (`_job_ended_on_exit`), as Ctrl-C does; without the
+    handler the process ends at once and a child it started keeps running.
+    SIGQUIT did, until the signals were taken from the runner's one list of
+    those a job no longer gets (root-cause review, P23-2)."""
     import signal
 
+    number = getattr(signal, name)
     parent, child = _run_parent(
         "probe._stop_on_termination_signals()\n"
         f"started = subprocess.Popen([sys.executable, '-c', {_CHILD!r}],\n"
@@ -512,13 +517,38 @@ def test_sigterm_ends_the_probe_through_its_cleanups(probe):
         "    started.kill(); started.wait()\n"
         "    print('cleaned up', flush=True)\n")
     try:
-        parent.send_signal(signal.SIGTERM)
+        parent.send_signal(number)
         said, _ = parent.communicate(timeout=60)
-        assert parent.returncode == 128 + signal.SIGTERM and "cleaned up" in said
+        assert parent.returncode == 128 + number and "cleaned up" in said
         assert _gone(child)
     finally:
         _stop(child)
         _stop(parent.pid)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
+def test_the_probe_routes_exactly_the_signals_a_runner_job_no_longer_gets(probe):
+    """One definition, beside the spawn (`JOB_DETACHED_SIGNALS`): each of them
+    at its default action ends the probe through its cleanups; Ctrl-C keeps
+    Python's own handler, which does already."""
+    import signal
+
+    from src.api.services.training_manager import JOB_DETACHED_SIGNALS
+
+    present = [getattr(signal, name) for name in JOB_DETACHED_SIGNALS if hasattr(signal, name)]
+    saved = {number: signal.getsignal(number) for number in present}
+    try:
+        for number in present:
+            if number != signal.SIGINT:
+                signal.signal(number, signal.SIG_DFL)
+        probe._stop_on_termination_signals()
+        for number in present:
+            expected = (signal.default_int_handler if number == signal.SIGINT
+                        else probe._exit_on_signal)
+            assert signal.getsignal(number) is expected, signal.Signals(number).name
+    finally:
+        for number, handler in saved.items():
+            signal.signal(number, handler)
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")

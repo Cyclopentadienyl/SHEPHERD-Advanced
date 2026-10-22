@@ -3110,14 +3110,20 @@ def _exit_on_signal(number: int, frame: Any) -> None:
 
 
 def _stop_on_termination_signals() -> None:
-    """SIGTERM (``kill <pid>``) and SIGHUP (a closed terminal) end the probe as
-    Ctrl-C does, through its ``finally`` blocks, instead of leaving the
-    services and runner jobs it started running. A signal already set to
-    something other than its default (SIGHUP ignored under ``nohup``, say) is
-    left as it is."""
+    """Every signal that no longer reaches a runner job because the job leads
+    its own process group (`JOB_DETACHED_SIGNALS`, the runner's one
+    definition: SIGTERM from ``kill <pid>``, SIGHUP from a closed terminal,
+    SIGQUIT from its Ctrl-\\, SIGBREAK on Windows) ends the probe as Ctrl-C
+    does, through its ``finally`` blocks, instead of leaving the services and
+    runner jobs it started running (root-cause review, P23-2: a Ctrl-\\ left
+    W11's or RW3's job holding the lock). Ctrl-C itself already does
+    (``KeyboardInterrupt``). A signal already set to something other than
+    its default (SIGHUP ignored under ``nohup``, say) is left as it is."""
     import signal
 
-    for name in ("SIGTERM", "SIGHUP"):
+    from src.api.services.training_manager import JOB_DETACHED_SIGNALS
+
+    for name in JOB_DETACHED_SIGNALS:
         number = getattr(signal, name, None)
         if number is not None and signal.getsignal(number) is signal.SIG_DFL:
             signal.signal(number, _exit_on_signal)

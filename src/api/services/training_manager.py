@@ -153,6 +153,16 @@ _SHA256 = re.compile(r"[0-9a-f]{64}")
 #: stand-in that is not one (a test's) has no group and is signalled through
 #: its own methods.
 _POPEN = subprocess.Popen
+#: **The signals that no longer reach a job because it leads its own process
+#: group** (`_spawn_locked`; root-cause review, P23-2), by name, defined once
+#: here where the decoupling is made: a terminal's Ctrl-C (SIGINT), Ctrl-\
+#: (SIGQUIT) and hangup (SIGHUP), a SIGTERM sent to the hosting process
+#: alone, and on Windows Ctrl-Break (SIGBREAK). Each process that hosts the
+#: runner routes every one it does not handle otherwise to its own orderly
+#: shutdown, which stops the job: the backend (`src.api.main`'s
+#: `_ShutdownSignals`) and the deployment probe
+#: (`_stop_on_termination_signals`). A name the platform lacks is skipped.
+JOB_DETACHED_SIGNALS: Tuple[str, ...] = ("SIGINT", "SIGQUIT", "SIGHUP", "SIGTERM", "SIGBREAK")
 #: How long the monitor lets a job's group settle after its main process was
 #: waited for (workers a SIGTERM to the group has just reached, or that a
 #: DataLoader is ending) before it says that processes remain and ends them.
@@ -692,8 +702,9 @@ class TrainingManager:
                 # child calls setpgid(0, 0) before it runs the script, so every
                 # process it forks (DataLoader workers, which share the GPU
                 # lock's open file) is in the group a stop and the monitor end,
-                # never the backend's. On Windows CREATE_NEW_PROCESS_GROUP,
-                # which CTRL_BREAK_EVENT is sent to.
+                # never the backend's; so `JOB_DETACHED_SIGNALS` no longer
+                # reach it, and its host routes them. On Windows
+                # CREATE_NEW_PROCESS_GROUP, which CTRL_BREAK_EVENT is sent to.
                 **({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
                    if sys.platform == "win32" else {"process_group": 0}),
             )

@@ -2,11 +2,13 @@
 Stopping the backend stops its jobs (the owner's decision of 2026-10-22)
 =======================================================================
 Each GPU job now leads its own process group (review of 8242b47, P2-3), so a
-Ctrl-C or a hangup of the terminal the backend runs in, or a SIGTERM sent to
-the backend alone, no longer reaches the job. The backend stops the job its
-runner holds (`end_active_job`) from the signal on (`src.api.main`'s
-`_ShutdownSignals`), and a hangup, which uvicorn does not handle, is routed to
-its orderly shutdown.
+Ctrl-C, a Ctrl-\\ or a hangup of the terminal the backend runs in, or a SIGTERM
+sent to the backend alone, no longer reaches the job. The backend stops the
+job its runner holds (`end_active_job`) from the signal on (`src.api.main`'s
+`_ShutdownSignals`), and a hangup and a Ctrl-\\ (SIGQUIT), which uvicorn does
+not handle, are routed to its orderly shutdown (root-cause review, P23-2).
+From the signal on the GPU slot is closed, so a start still under way is
+refused (P23-1).
 
 End to end: the real backend (`python -m uvicorn src.api.main:app`, as
 setup_demo prints it, and the launcher in its browser mode, which waits beside
@@ -118,6 +120,12 @@ def _wait(condition, seconds: float, what: str):
     raise AssertionError(f"timed out waiting for {what}")
 
 
+def _no_core_file() -> None:
+    import resource
+
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+
+
 class _Backend:
     """The real backend, started as `started_by` starts it, in a session of its
     own, with a real training job of its runner holding the GPU lock."""
@@ -147,8 +155,11 @@ class _Backend:
             argv = [sys.executable, str(REPO / "scripts" / "launch" / "shep_launch.py"),
                     "--no-auto-install", "--", "--port", str(self.port)]
         self._log = (self.tmp_path / "backend.log").open("w")
+        # No core file: a backend that ends by SIGQUIT (Ctrl-\) would write one
+        # into the repository, its working directory.
         self.process = subprocess.Popen(argv, cwd=str(REPO), env=env, stdout=self._log,
-                                        stderr=subprocess.STDOUT, start_new_session=True)
+                                        stderr=subprocess.STDOUT, start_new_session=True,
+                                        preexec_fn=_no_core_file)
         pid = self.process.pid
         assert pid > 1 and os.getpgid(pid) == pid != os.getpgrp()
         port = self.port
@@ -202,12 +213,15 @@ class _Backend:
     pytest.param("uvicorn", signal.SIGINT, False, id="uvicorn-ctrl-c"),
     pytest.param("uvicorn", signal.SIGHUP, False, id="uvicorn-terminal-closed"),
     pytest.param("uvicorn", signal.SIGTERM, False, id="uvicorn-sigterm"),
+    # Ctrl-\ (root-cause review, P23-2): it used to orphan the job
+    pytest.param("uvicorn", signal.SIGQUIT, False, id="uvicorn-ctrl-backslash"),
     # Ctrl-C with the launcher (its browser mode) waiting beside the server
     pytest.param("launcher", signal.SIGINT, False, id="launcher-ctrl-c"),
     # A dashboard tab open: its heartbeat stream held open, as the browser holds it
     pytest.param("uvicorn", signal.SIGINT, True, id="uvicorn-ctrl-c-tab-open"),
     pytest.param("uvicorn", signal.SIGHUP, True, id="uvicorn-terminal-closed-tab-open"),
     pytest.param("uvicorn", signal.SIGTERM, True, id="uvicorn-sigterm-tab-open"),
+    pytest.param("uvicorn", signal.SIGQUIT, True, id="uvicorn-ctrl-backslash-tab-open"),
     pytest.param("launcher", signal.SIGINT, True, id="launcher-ctrl-c-tab-open"),
 ])
 def test_the_backend_stopped_from_its_terminal_stops_the_job_it_runs(tmp_path, started_by, sig,
@@ -221,6 +235,8 @@ def test_the_backend_stopped_from_its_terminal_stops_the_job_it_runs(tmp_path, s
         backend.send(sig)
         backend.process.wait(timeout=120)
         backend.assert_the_job_ended_with_it()
+        if sig == signal.SIGQUIT:       # its meaning kept: the backend still ends by it
+            assert backend.process.returncode == -signal.SIGQUIT
     finally:
         if tab is not None:
             tab.close()
