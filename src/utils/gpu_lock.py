@@ -5,8 +5,15 @@ Managed training and evaluation jobs exclude each other through one lock file
 per deployment, whatever the workspace (`docs/working/PLAN_TEST_RESULTS.md` §6,
 "M5's boundaries"). The jobs the WebUI or the API start through the job runner
 (`src/api/services/training_manager.py`) and the formal CLIs
-(`scripts/train_model.py`, `scripts/measure_scorer.py`) take the same lock. A
-busy lock is refused, naming its holder; nothing is queued.
+(`scripts/train_model.py`, `scripts/measure_scorer.py`,
+`scripts/setup_demo.py --train-model`) take the same lock. A busy lock is
+refused, naming its holder; nothing is queued. **A program entry takes it**,
+in its `main`, before it reads its inputs or writes anything; the production
+code it calls takes none (`train()`, measure_scorer's run), so a caller that
+trains or measures through that code in its own process is not a managed job
+and excludes nothing unless its own entry takes the lock. The deployment
+probe's in-process training probes are such callers: they take no lock, so
+its acceptance is run while no managed GPU job runs.
 
 **Where it is.** **The workspaces root is the lock's one name**:
 `.shepherd-gpu.lock` directly under `SHEPHERD_WORKSPACES_ROOT`, so two

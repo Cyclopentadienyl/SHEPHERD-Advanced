@@ -190,8 +190,14 @@ on the console, never hidden, and said again beside the acceptance's verdict.
     refuses without a configured GPU lock (P2-4), so phases M and R name a lock
     of the probe's own, under a workspaces root of its own,
     `<work>/probe-gpu-lock/` (`_probes_own_gpu_lock`); they therefore do not
-    exclude a deployment job that runs meanwhile. Run the
-    acceptance while no managed GPU job runs. The job runner's own temporary
+    exclude a deployment job that runs meanwhile. **The
+    training probes take no GPU lock at all**, not even the probe's own (D1,
+    M2, M9, R3 and R4 train; M5 and M11.training are refused before they do):
+    they call the production trainer in this process, and `train()` takes no
+    lock, only the program entries do (`src/utils/gpu_lock.py`), so they
+    exclude nothing either; the deployment's lock is only read, at W1 and RW1
+    (root-cause round, INT-2). Run the acceptance while no managed GPU job
+    runs. The job runner's own temporary
     files (a training job's settings file, a test run's job directory) are made
     in the system's temporary directory and removed when the job ends.
     Stop a run with Ctrl-C or SIGTERM (``kill <pid>``): the services and the

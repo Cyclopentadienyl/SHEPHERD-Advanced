@@ -630,6 +630,34 @@ def test_the_lock_settings_of_the_shell_never_reach_the_suite(tmp_path):
     assert list(tmp_path.iterdir()) == [], "no lock file in the shell's root"
 
 
+# --------------------------------------------------------------------------- who takes it
+def _calls_to(path: Path, names) -> int:
+    """How many calls in `path`'s code (not its strings) are to one of `names`."""
+    import ast
+
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    return sum(1 for node in ast.walk(tree) if isinstance(node, ast.Call) and (
+        getattr(node.func, "id", None) in names or getattr(node.func, "attr", None) in names))
+
+
+def test_the_program_entries_take_the_lock_and_the_module_names_each_one():
+    """Root-cause round, INT-2: the lock is taken by program entries only,
+    never by the production code they call (`train()` takes none, so an
+    in-process caller such as the deployment probe's training probes holds no
+    lock), and this module's docstring, the one place that says who takes it,
+    names every entry that does (it once left out setup_demo.py)."""
+    repo = Path(__file__).resolve().parents[2]
+    takers = sorted(path.name for path in (repo / "scripts").glob("*.py")
+                    if _calls_to(path, {"take_gpu_lock", "GpuLock"}))
+    assert takers == ["measure_scorer.py", "setup_demo.py", "train_model.py"]
+    for name in takers:
+        assert f"`scripts/{name}" in gpu_lock.__doc__, f"{name} is not named as a taker"
+    in_src = sorted(path.relative_to(repo).as_posix() for path in (repo / "src").rglob("*.py")
+                    if path.name != "gpu_lock.py"
+                    and _calls_to(path, {"take_gpu_lock", "GpuLock"}))
+    assert in_src == [], f"production code takes the lock itself: {in_src}"
+
+
 # --------------------------------------------------------------------------- the CLIs
 def _measure_argv(root: Path, workspace: str = "ws_b"):
     return ["--checkpoint", str(root / workspace / "best.pt"), "--data-dir",
