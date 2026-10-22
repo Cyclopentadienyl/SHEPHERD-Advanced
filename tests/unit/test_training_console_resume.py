@@ -5,8 +5,9 @@ Covers the Continue drawer's read path aligning with the run layout (contract
 M3a-2) and the server's lists (M5-2): the parent list is the run bar's
 workspace's runs only, through the shared listing; a listed parent is resolved
 by the server from its list again (never a client path) and its bytes compared
-with the digest listed; the listed and the typed checkpoint go through one
-check; Continue Training sends only operational fields and the dataset
+with the digest listed, by the service's preview (P22-S1); the listed and the
+typed checkpoint go through one check; Continue Training sends only
+operational fields, the dataset fingerprint and the parent's model
 fingerprint the session showed.
 """
 from pathlib import Path
@@ -176,14 +177,16 @@ def test_the_listed_and_the_typed_checkpoint_go_through_one_check(checkpoints):
 
 
 def test_a_listed_parent_whose_bytes_changed_since_it_was_listed_is_refused(checkpoints):
-    """The list carries each file's digest; the check reads the file again and
-    compares (a `last.pt` rewritten since the listing is not what was shown)."""
+    """The list carries each file's digest; the check sends it to the
+    service's preview, which compares it on its read (a `last.pt` rewritten
+    since the listing is not what was shown; root-cause round, P22-S1)."""
     parents = {key: dict(item) for key, item in checkpoints["parents"].items()}
     parents[checkpoints["paused_key"]]["sha256"] = "0" * 64
     text, _e, mode, _c = tc._on_check_continue(
         tc.CONTINUE_FROM_LIST, checkpoints["paused_key"], "", "cpu", None, checkpoints["state"],
         parents, {}, OP)
-    assert "changed since it was listed" in text and mode["parent"]["refused"] is True
+    assert "The checkpoint changed since it was chosen; choose it again." in text
+    assert mode["parent"]["refused"] is True
 
 
 def test_a_parent_the_list_no_longer_has_is_not_opened(checkpoints, monkeypatch):
@@ -229,20 +232,19 @@ def test_a_typed_path_only_locates_a_checkpoint_the_server_lists(checkpoints, mo
 def test_a_typed_path_of_a_listed_checkpoint_is_found_again_from_the_list(checkpoints,
                                                                           monkeypatch):
     """The typed path is only a locator: what is previewed and resumed is the
-    file the server's list resolves for it (its listed digest compared too)."""
+    file the server's list resolves for it. Its Check is what shows its model
+    fingerprint (the run list is hidden while a typed path is the source), and
+    the session records that one for Continue Training (P22-S1)."""
     seen = []
     real = training_manager.preview_continuation
     monkeypatch.setattr(training_manager, "preview_continuation",
-                        lambda parent, **k: seen.append(parent) or real(parent, **k))
+                        lambda parent, **k: seen.append((parent, k)) or real(parent, **k))
     relative = Path(checkpoints["paused"]).resolve()
     text, _e, mode, _c = _check(checkpoints, tc.CONTINUE_FROM_PATH, None, f"  {relative}  ")
     assert "Resume the original training" in text
-    assert seen and Path(seen[0]).resolve() == relative
-    parents = {key: dict(item) for key, item in checkpoints["parents"].items()}
-    parents[checkpoints["paused_key"]]["sha256"] = "0" * 64
-    text, *_rest = tc._on_check_continue(tc.CONTINUE_FROM_PATH, None, str(relative), "cpu",
-                                         None, checkpoints["state"], parents, {}, OP)
-    assert "changed since it was listed" in text
+    assert seen and Path(seen[0][0]).resolve() == relative
+    assert seen[0][1]["expected_sha256"] is None
+    assert mode["parent"]["sha256"] == checkpoints["parents"][checkpoints["paused_key"]]["sha256"]
 
 
 def test_a_finished_checkpoint_offers_extend_and_says_why_it_cannot_resume(checkpoints):
@@ -269,9 +271,11 @@ def test_continue_sends_only_operational_fields_and_never_bypasses_the_check(
         "data_dir", "run_name", "device", "resume_from", "compile"}
     assert started[0]["resume_from"] == str(checkpoints["paused"])
     assert started[0]["data_dir"] == str(checkpoints["ws"].resolve())
-    # The start carries the dataset fingerprint the run bar showed.
+    # The start carries the dataset fingerprint the run bar showed and the
+    # parent's model fingerprint the run list showed (P22-S1).
     assert started[0]["__kwargs__"] == {
-        "expected_dataset_fingerprint": checkpoints["state"]["row"]["dataset_fingerprint"]}
+        "expected_dataset_fingerprint": checkpoints["state"]["row"]["dataset_fingerprint"],
+        "expected_parent_sha256": checkpoints["parents"][checkpoints["paused_key"]]["sha256"]}
 
 
 def test_continue_training_is_refused_when_the_parents_dataset_is_not_the_workspaces(

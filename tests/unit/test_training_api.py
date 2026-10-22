@@ -213,12 +213,15 @@ class TestTrainingManagerStartStop:
     def test_a_continued_run_is_placed_under_its_parents_architecture(self, tmp_path):
         manager = TrainingManager()
         mock_proc = FakeProcess(pid=3)
-        preview = {"ok": True, "architecture": "hgt"}
+        preview = {"ok": True, "architecture": "hgt", "sha256": "c" * 64}
         with patch.object(manager, "preview_continuation", return_value=preview), \
-                patch("subprocess.Popen", return_value=mock_proc):
+                patch("subprocess.Popen", return_value=mock_proc) as popen:
             result = manager.start_training({"data_dir": str(tmp_path / "ws"),
                                              "resume_from": "p.pt"})
         assert Path(result["run_dir"]).parent == tmp_path / "ws" / "runs" / "hgt"
+        # The process is bound to the parent this placement was decided on (P22-S1).
+        argv = popen.call_args[0][0]
+        assert argv[argv.index("--expect-resume-sha256") + 1] == "c" * 64
 
 
 class TestTrainingManagerMetrics:

@@ -700,6 +700,7 @@ class TrainingManager:
         effective_rules: Optional[Callable[[Dict[str, Any]], List[str]]] = None,
         *,
         expected_dataset_fingerprint: Optional[str] = None,
+        expected_parent_sha256: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Start a training run as a subprocess.
@@ -720,6 +721,19 @@ class TrainingManager:
                 P2-2), so a manifest replaced after this check is refused
                 there, before the graph and samples are read and before
                 anything is written, never trained on.
+            expected_parent_sha256: for a run continued from a parent, the
+                SHA-256 of the parent the caller showed (the Continue drawer's
+                model fingerprint; the API takes it as an optional query
+                parameter). Compared by this start's own preview of the parent
+                (`preview_continuation(expected_sha256=)`, the one place a
+                caller's digest is compared); a different file is refused
+                before anything is written or started. **Whether or not it is
+                given, the training process is bound to the parent this start
+                decided on** (`--expect-resume-sha256` with the digest of that
+                preview's read, root-cause round P22-S1): the run's placement
+                under the parent's architecture, the cross-field verdict and the
+                extend mode come from that read, and a file replaced after it is
+                refused by the process before it is loaded.
 
         Returns:
             Status dict with success/error info. Refused while any GPU job is
@@ -737,17 +751,25 @@ class TrainingManager:
         # A run continued from a parent is decided by the parent's record
         # (contract M3a-3): refused here as the training process would refuse
         # it, and placed under the parent's architecture, which it inherits.
-        # The process decides again on the bytes it restores. Read before the
-        # lock, so the status stays readable meanwhile.
+        # The process decides again on the same bytes: it is given the digest
+        # of this read and refuses any other (P22-S1). Read before the lock, so
+        # the status stays readable meanwhile.
         architecture = config.get("conv_type")
+        parent_sha256 = None
+        if expected_parent_sha256 is not None and not config.get("resume_from"):
+            return {"success": False, "status": self.get_job_status_word("training"),
+                    "error": "A parent's model fingerprint was sent, but this request "
+                             "continues no checkpoint (resume_from). Nothing was started."}
         if config.get("resume_from"):
             preview = self.preview_continuation(
                 config["resume_from"], device=config.get("device", "auto"),
                 extend_epochs=config.get("extend_epochs"),
-                requested={k: v for k, v in config.items() if k != "resume_from"})
+                requested={k: v for k, v in config.items() if k != "resume_from"},
+                expected_sha256=expected_parent_sha256)
             if not preview["ok"]:
                 return {"success": False, "error": preview["reason"],
                         "status": self.get_job_status_word("training")}
+            parent_sha256 = preview["sha256"]
             errors = effective_rules(preview["learning_settings"]) if effective_rules else []
             if errors:
                 return {"success": False, "invalid_settings": True,
@@ -798,9 +820,12 @@ class TrainingManager:
                 raise
 
             cmd = [sys.executable, str(PROJECT_ROOT / kind.script), "--config", str(config_path)]
-            # The process's own check on its one manifest read (P2-2): an
-            # argument, not a configuration key, since it is a precondition of
-            # this job and not a setting the run records.
+            # The process's own checks on its one read of the parent (P22-S1)
+            # and of the manifest (P2-2): arguments, not configuration keys,
+            # since they are preconditions of this job and not settings the run
+            # records.
+            if parent_sha256 is not None:
+                cmd += ["--expect-resume-sha256", parent_sha256]
             if expected_dataset_fingerprint is not None:
                 cmd += ["--expect-dataset-sha256", expected_dataset_fingerprint]
             job, error = self._spawn_locked(kind, cmd, inputs={"config_path": str(config_path)},
@@ -1597,9 +1622,18 @@ class TrainingManager:
         extend_epochs: Optional[int] = None,
         requested: Optional[Dict[str, Any]] = None,
         extend_if_finished: bool = False,
+        expected_sha256: Optional[str] = None,
     ) -> Dict[str, Any]:
         """What starting from `parent_path` would do, for the console to show
         before start (contract M3a-3, M3a-4).
+
+        `expected_sha256` is the parent's SHA-256 a caller showed (the run
+        list's or an earlier Check's model fingerprint): **the one place a
+        caller's digest of the parent is compared** (root-cause round,
+        P22-S1), by the read itself before the file is loaded
+        (`read_checkpoint(expected_sha256=)`); other bytes, or none, are
+        refused with `CheckpointChanged`'s sentence, the training process's
+        own.
 
         `requested` is a training request's own fields, set explicitly: a
         learning setting among them that differs from the parent's is refused
@@ -1614,20 +1648,29 @@ class TrainingManager:
         (`src.utils.run_plan.plan_continuation`), on the parent's own
         record read with the safe loader. A preview is not the check: the
         training process reads the parent again, checks it against the
-        workspace's data and graph (M2.3) and decides again on those bytes.
+        workspace's data and graph (M2.3) and decides again on those bytes;
+        `start_training` binds it to this preview's read.
         """
         from src.utils.run_plan import OPERATIONAL_FIELDS, RunPlanRefused, plan_continuation
-        from src.utils.checkpoint_io import read_checkpoint
+        from src.utils.checkpoint_io import CheckpointChanged, read_checkpoint
 
+        if expected_sha256 is not None and not (
+                isinstance(expected_sha256, str) and _SHA256.fullmatch(expected_sha256)):
+            return {"ok": False,
+                    "reason": "The parent's model fingerprint sent is not a full SHA-256 "
+                              "hexdigest, so the checkpoint cannot be checked."}
         path = Path(parent_path)
         if not path.is_absolute():
             path = PROJECT_ROOT / path
-        if not path.is_file():
-            return {"ok": False, "reason": f"{path} does not exist."}
+        if expected_sha256 is None and not path.is_file():
+            return {"ok": False, "parent": str(path), "reason": f"{path} does not exist."}
         try:
-            read = read_checkpoint(path, map_location="cpu", weights_only=True)
+            read = read_checkpoint(path, map_location="cpu", weights_only=True,
+                                   expected_sha256=expected_sha256)
+        except CheckpointChanged as exc:
+            return {"ok": False, "parent": str(path), "reason": str(exc)}
         except Exception as exc:  # noqa: BLE001 - a refusal to show
-            return {"ok": False,
+            return {"ok": False, "parent": str(path),
                     "reason": f"{path.name} cannot be read as a checkpoint "
                               f"({type(exc).__name__}: {exc})."}
         record = read.checkpoint if isinstance(read.checkpoint, dict) else {}

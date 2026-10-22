@@ -1900,18 +1900,20 @@ def _on_continue_close(mode):
 def _chosen(source: str, listed: Any, manual: Any, parents: Mapping[str, Any],
             ws: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
     """The chosen parent as the session records it: whether one is chosen,
-    its recorded dataset fingerprint when the list says it, and the run it
-    continues (for the run bar's line)."""
+    its recorded dataset fingerprint when the list says it, the model
+    fingerprint shown for it (``sha256``: the list's; none yet for a typed
+    path, whose Check shows one, `_checked`), and the run it continues (for
+    the run bar's line)."""
     if source == CONTINUE_FROM_PATH:
         path = _strip_display_prefix(manual or "")
         return {"chosen": bool(path), "source": source, "fingerprint": None,
-                "run_label": None}
+                "run_label": None, "sha256": None}
     item = (parents or {}).get(listed) if listed else None
     if not item:
         return {"chosen": False, "source": source}
     return {"chosen": True, "source": source, "fingerprint": item.get("dataset_fingerprint"),
             "run_label": f"{item.get('architecture')}/{item.get('run')}", "key": listed,
-            "workspace": item.get("workspace")}
+            "workspace": item.get("workspace"), "sha256": item.get("sha256")}
 
 
 def compare_html(parent: Mapping[str, Any], ws: Mapping[str, Any]) -> str:
@@ -2089,32 +2091,45 @@ def _parent_path(source: str, listed: Any, manual: Any, ws: Mapping[str, Any],
     return str(path), None, item
 
 
-def _preview_for(parent: str, device: Optional[str], extend_epochs) -> Dict[str, Any]:
+def _preview_for(parent: str, device: Optional[str], extend_epochs,
+                 expected_sha256: Optional[str] = None) -> Dict[str, Any]:
     """The service's preview, with Extra epochs only for a finished
     checkpoint: the field is the console's, and for any other checkpoint a
     value in it is one left from an earlier selection, not a request. The API
-    and the CLI send `extend_epochs` as given and are refused as before."""
+    and the CLI send `extend_epochs` as given and are refused as before.
+    `expected_sha256` is the model fingerprint shown, which the service
+    compares on its read."""
     epochs = int(extend_epochs) if extend_epochs else None
     return training_manager.preview_continuation(
-        parent, device=device or "auto", extend_epochs=epochs, extend_if_finished=True)
+        parent, device=device or "auto", extend_epochs=epochs, extend_if_finished=True,
+        expected_sha256=expected_sha256)
 
 
-def _checked(source, listed, manual, device, extend_epochs, ws, parents, mode):
+def _checked(source, listed, manual, device, extend_epochs, ws, parents, mode, *,
+             starting: bool = False):
     """The check every Check and Continue Training runs: the parent resolved,
-    the preview, the listed digest compared with the bytes read, the dataset
-    compared. Returns (preview or None, why_not, the session's parent record)."""
+    the preview of the parent shown, the dataset compared. Returns (preview or
+    None, why_not, the session's parent record).
+
+    **The model fingerprint shown goes to the service's preview, which
+    compares it on its read** (root-cause round, P22-S1; no comparison here):
+    the run list's, which its option names, for a listed parent; for a typed
+    path, the one its last Check read and showed for that same file, when
+    Continue Training (`starting`) follows it (a Check is what shows it). The
+    record keeps the digest shown, which Continue Training sends to the start."""
     path, why, item = _parent_path(source, listed, manual, ws or {}, parents or {})
     record = dict((mode or {}).get("parent") or _chosen(source, listed, manual, parents, ws))
     if path is None:
         record.update(refused=True, checked=True)
         return None, why, record
-    preview = _preview_for(path, device, extend_epochs)
-    if item is not None and preview.get("sha256") and item.get("sha256") \
-            and preview["sha256"] != item["sha256"]:
-        preview = {**preview, "ok": False,
-                   "reason": "The checkpoint changed since it was listed; refresh the list."}
+    if source == CONTINUE_FROM_PATH:
+        shown = record.get("sha256") if starting and record.get("path") == path else None
+    else:
+        shown = (item or {}).get("sha256")
+    preview = _preview_for(path, device, extend_epochs, expected_sha256=shown)
     recorded = preview.get("dataset_fingerprint") or (item or {}).get("dataset_fingerprint")
-    record.update(chosen=True, checked=True, refused=not preview.get("ok"), fingerprint=recorded)
+    record.update(chosen=True, checked=True, refused=not preview.get("ok"), fingerprint=recorded,
+                  sha256=shown or preview.get("sha256"), path=path)
     return preview, None, record
 
 
@@ -2149,11 +2164,13 @@ def _on_resume(ws, device, source, listed, manual, extend_epochs, parents, mode,
     """Continue Training: an operator control (D8, checked first on this
     event's own request; refused, nothing is opened or started), then the same
     check as the preview, the dataset comparison, then the job runner's start
-    with the full dataset fingerprint this session showed.
+    with the full dataset fingerprint and the parent's model fingerprint this
+    session showed.
 
     Only operational fields are sent (contract M3a-3): every learning setting
     comes from the checkpoint, so the training form's values are not used.
-    The job runner and the training process each check again.
+    The job runner and the training process each check again, the process on
+    the parent the runner decided on (P22-S1).
 
     Returns the notice (`notice_html`), the check's text, the extend-epochs
     update and the session's mode (the drawer closed once started).
@@ -2174,7 +2191,8 @@ def _resume(ws, device, source, listed, manual, extend_epochs, parents, mode):
     fingerprint = _fingerprint(ws)
     if not row or not fingerprint:
         return "Not started: select a dataset first.", gr.update(), gr.update(), mode
-    preview, why, record = _checked(source, listed, manual, device, extend_epochs, ws, parents, mode)
+    preview, why, record = _checked(source, listed, manual, device, extend_epochs, ws, parents,
+                                    mode, starting=True)
     mode["parent"] = record
     if preview is None:
         return f"Not started: {why}.", gr.update(), gr.update(visible=False, value=None), mode
@@ -2204,7 +2222,8 @@ def _resume(ws, device, source, listed, manual, extend_epochs, parents, mode):
     }
     if preview["mode"] == "extend":
         config["extend_epochs"] = preview["stage"]["target_epochs"]
-    result = training_manager.start_training(config, expected_dataset_fingerprint=fingerprint)
+    result = training_manager.start_training(config, expected_dataset_fingerprint=fingerprint,
+                                             expected_parent_sha256=record["sha256"])
     if result.get("success"):
         mode.update(drawer=False, parent={}, confirm=None)
         return "", text, _extra_epochs_update(preview), mode

@@ -264,6 +264,10 @@ async def start_training(
         pattern=r"^[0-9a-f]{64}$",
         description="Refuse the start (409) unless the workspace's dataset fingerprint, the "
                     "SHA-256 of its split_manifest.json, is still this one")] = None,
+    expected_parent_sha256: Annotated[Optional[str], Query(
+        pattern=r"^[0-9a-f]{64}$",
+        description="With resume_from: refuse the start (409) unless the parent checkpoint "
+                    "still has this SHA-256 (the model fingerprint shown)")] = None,
 ) -> Dict[str, Any]:
     """
     Start a new training run.
@@ -280,14 +284,21 @@ async def start_training(
     body the training field spec pins) makes the start refuse (409) unless the
     workspace's split manifest is still the one the caller showed. The
     dashboard's Start always sends it, through this same service call.
+
+    ``expected_parent_sha256`` (optional, the same kind of precondition, for a
+    run continued from ``resume_from``) makes the start refuse (409) unless the
+    parent is still the checkpoint the caller showed. Without it the training
+    process is still bound to the parent the service decided on (root-cause
+    round, P22-S1): a file replaced after that is refused before it is loaded.
     """
     config = request.model_dump(exclude_unset=True, exclude_none=True)
-    expected = expected_dataset_fingerprint
 
     # A continued run's cross-field rules apply to the settings it will use,
     # resolved from its parent by the shared run plan, inside the service.
-    result = training_manager.start_training(config, effective_rules=cross_field_errors,
-                                             expected_dataset_fingerprint=expected)
+    result = training_manager.start_training(
+        config, effective_rules=cross_field_errors,
+        expected_dataset_fingerprint=expected_dataset_fingerprint,
+        expected_parent_sha256=expected_parent_sha256)
     # Each field's own type and range apply to every request, a value repeating
     # the parent's included; omitting a field inherits it.
 

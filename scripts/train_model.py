@@ -31,6 +31,9 @@ Usage:
     (`--expect-dataset-sha256`, M5's job runner does): a workspace whose
     split_manifest.json, as this run reads it, has other bytes is refused with
     exit 1 and nothing written, before the graph and the samples are read.
+    Likewise a resume parent chosen beforehand (`--expect-resume-sha256`, which
+    the job runner always passes for a continued run): other bytes at --resume
+    are refused with exit 1 and nothing written, before they are loaded.
 
 Dependencies:
     - argparse: CLI argument parsing
@@ -125,9 +128,10 @@ from src.kg.data_loader import (
 from src.models.gnn.shepherd_gnn import ShepherdGNN, ShepherdGNNConfig, create_model
 from src.evaluation.cohort import resolve_cohort, verify_cohort_reads
 from src.utils.gpu_lock import GpuLockMisconfigured, take_gpu_lock
-# The refusal of a dataset that is not the one shown, raised by the manifest
-# reader itself (`read_split_manifest(expected_sha256=)`); `main` says it once.
+# The refusals of a dataset or a resume parent that is not the one chosen,
+# raised by their readers themselves (`expected_sha256=`); `main` says each once.
 from src.kg.artifacts import DatasetChanged
+from src.utils.checkpoint_io import CheckpointChanged
 
 if TYPE_CHECKING:
     from src.kg.artifacts import DatasetRecord, ManifestRead
@@ -251,8 +255,9 @@ _SHA256_RE = re.compile(r"[0-9a-f]{64}")
 
 
 def _sha256_arg(value: str) -> str:
-    """argparse type for --expect-dataset-sha256: 64 lowercase hexadecimal
-    digits, the form the server's lists show a dataset fingerprint in."""
+    """argparse type for --expect-dataset-sha256 and --expect-resume-sha256:
+    64 lowercase hexadecimal digits, the form the server's lists show a
+    dataset or model fingerprint in."""
     if not _SHA256_RE.fullmatch(value):
         raise argparse.ArgumentTypeError(
             f"{value!r} is not a SHA-256 (64 lowercase hexadecimal digits)")
@@ -410,6 +415,15 @@ def parse_args() -> argparse.Namespace:
              "run was chosen). Without it the run trains on the manifest it reads and records "
              "that one",
     )
+    parser.add_argument(
+        "--expect-resume-sha256",
+        type=_sha256_arg,
+        default=None,
+        metavar="HEX",
+        help="With --resume (or resume_from): refuse before anything is written unless the "
+             "parent checkpoint, as this run reads it, has this SHA-256 (the model fingerprint "
+             "of the parent chosen). Compared before the file is loaded",
+    )
 
     # Misc
     parser.add_argument(
@@ -497,8 +511,8 @@ def load_config_with_explicit(args: argparse.Namespace) -> Tuple[TrainConfig, Se
         config.seed = args.seed
 
     for name, value in vars(args).items():
-        if name in ("config", "debug", "expect_dataset_sha256") or value is None \
-                or value is False:
+        if name in ("config", "debug", "expect_dataset_sha256", "expect_resume_sha256") \
+                or value is None or value is False:
             continue
         explicit.add(_FLAG_FIELDS.get(name, name))
     return config, explicit
@@ -622,10 +636,18 @@ def read_training_inputs(
 
 
 def read_resume_parent(
-    requested: Optional[str], inputs: TrainingInputs, device: str,
+    requested: Optional[str], inputs: TrainingInputs, device: str, *,
+    expected_sha256: Optional[str] = None,
 ) -> Optional["CheckpointRead"]:
     """Read the resume parent once and refuse it unless it was trained on this
     run's inputs (contract M2.3). Returns `None` when nothing was requested.
+
+    **The parent chosen** (`expected_sha256`, `--expect-resume-sha256`: the
+    digest of the read the job runner decided on, the one the operator was
+    shown; root-cause round, P22-S1) is a parameter of the one read: other
+    bytes at the path, or none, are refused as `CheckpointChanged` before they
+    are loaded, so the run never continues from, places or records a parent
+    that was not chosen.
 
     **At the top of the run**, beside the workspace checks: `train()` calls this
     right after `read_training_inputs`, before the run directories,
@@ -658,20 +680,24 @@ def read_resume_parent(
     from src.utils.checkpoint_io import read_checkpoint
 
     if not requested:
+        if expected_sha256 is not None:
+            raise ValueError("--expect-resume-sha256 names a parent, but this run continues "
+                             "none (no --resume or resume_from). Nothing was written.")
         return None
 
     resume_path = Path(requested)
-    if not resume_path.exists():
+    # Named before the read, so a parent that does not load fails after a line
+    # that says which file it was.
+    logger.info(f"Reading the resume parent: {resume_path}")
+    try:
+        parent = read_checkpoint(resume_path, map_location=device, weights_only=True,
+                                 expected_sha256=expected_sha256)
+    except FileNotFoundError:  # nothing expected; with an expectation, CheckpointChanged
         raise FileNotFoundError(
             f"The resume parent {resume_path} does not exist. It was requested, so "
             "the run does not train from scratch instead; name an existing "
             "checkpoint, or start a new run without --resume."
-        )
-
-    # Named before the read, so a parent that does not load fails after a line
-    # that says which file it was.
-    logger.info(f"Reading the resume parent: {resume_path}")
-    parent = read_checkpoint(resume_path, map_location=device, weights_only=True)
+        ) from None
     check_resume_parent(
         parent.checkpoint, inputs, recorded_by=f"The resume parent {resume_path}"
     )
@@ -975,7 +1001,8 @@ def resolve_training_device(requested: str) -> str:
 # Main Training Function
 # =============================================================================
 def train(config: TrainConfig, explicit: Optional[Collection[str]] = None, *,
-          expected_dataset_sha256: Optional[str] = None) -> Dict[str, float]:
+          expected_dataset_sha256: Optional[str] = None,
+          expected_resume_sha256: Optional[str] = None) -> Dict[str, float]:
     """
     Main training function
 
@@ -988,6 +1015,10 @@ def train(config: TrainConfig, explicit: Optional[Collection[str]] = None, *,
             for (`--expect-dataset-sha256`), compared on the run's one manifest
             read (`read_training_inputs`); `DatasetChanged` otherwise. A
             precondition, not a setting: neither recorded nor configured.
+        expected_resume_sha256: the resume parent's SHA-256 the run was
+            started for (`--expect-resume-sha256`), compared on the parent's
+            one read before it is loaded (`read_resume_parent`);
+            `CheckpointChanged` otherwise. A precondition too.
 
     Returns:
         Final evaluation metrics
@@ -1042,7 +1073,8 @@ def train(config: TrainConfig, explicit: Optional[Collection[str]] = None, *,
         check_run_dir_free(config.run_dir)
 
     inputs = read_training_inputs(data_dir, expected_manifest_sha256=expected_dataset_sha256)
-    parent = read_resume_parent(config.resume_from, inputs, device)
+    parent = read_resume_parent(config.resume_from, inputs, device,
+                                expected_sha256=expected_resume_sha256)
 
     # **How the run continues from its parent, decided once, before any output**
     # (contract M3a-3, M3a-4): from the parent's own record, its learning
@@ -1339,9 +1371,11 @@ def _train_main(args: argparse.Namespace) -> int:
 
     # Run training
     try:
-        metrics = train(config, explicit, expected_dataset_sha256=args.expect_dataset_sha256)
+        metrics = train(config, explicit, expected_dataset_sha256=args.expect_dataset_sha256,
+                        expected_resume_sha256=args.expect_resume_sha256)
         return 0 if metrics else 1
-    except DatasetChanged as exc:  # a refusal, said once, not a failure with a traceback
+    except (DatasetChanged, CheckpointChanged) as exc:  # a refusal, said once, not a
+        # failure with a traceback
         logger.error(f"train_model: refused: {exc} Nothing was written.")
         return 1
     except KeyboardInterrupt:
