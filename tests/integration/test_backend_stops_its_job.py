@@ -148,12 +148,16 @@ class _Backend:
         env.update({LOCK_FILE_ENV: str(self.lock), "SHEPHERD_DEPLOYMENT_MODE": "M1",
                     "GRADIO_ANALYTICS_ENABLED": "False", "BROWSER": "/bin/true",
                     "PYTHONUNBUFFERED": "1"})
+        launcher = [sys.executable, str(REPO / "scripts" / "launch" / "shep_launch.py"),
+                    "--no-auto-install"]
         if self.started_by == "uvicorn":
             argv = [sys.executable, "-m", "uvicorn", "src.api.main:app", "--host", "127.0.0.1",
                     "--port", str(self.port), "--no-access-log"]
+        elif self.started_by == "service":     # the systemd unit's ExecStart flags
+            argv = [*launcher, "--no-browser", "--", "--host", "127.0.0.1",
+                    "--port", str(self.port)]
         else:
-            argv = [sys.executable, str(REPO / "scripts" / "launch" / "shep_launch.py"),
-                    "--no-auto-install", "--", "--port", str(self.port)]
+            argv = [*launcher, "--", "--port", str(self.port)]
         self._log = (self.tmp_path / "backend.log").open("w")
         # No core file: a backend that ends by SIGQUIT (Ctrl-\) would write one
         # into the repository, its working directory.
@@ -183,7 +187,15 @@ class _Backend:
                     conv_type="gat", batch_size=2, num_workers=0, use_amp=False)
 
     def send(self, number: int) -> None:
-        """The terminal's signal: its foreground group only, which the job is not in."""
+        """The terminal's signal: its foreground group only, which the job is
+        not in. For the service, systemd's KillMode=mixed stop: the main
+        process only, which must be the server itself (the launcher exec'd
+        into it), never the job's processes."""
+        if self.started_by == "service":
+            command = Path(f"/proc/{self.process.pid}/cmdline").read_bytes().split(b"\0")
+            assert b"uvicorn" in command, f"the main process is not the server: {command}"
+            os.kill(self.process.pid, number)
+            return
         os.killpg(self.process.pid, number)
 
     def said(self) -> str:
@@ -217,6 +229,10 @@ class _Backend:
     pytest.param("uvicorn", signal.SIGQUIT, False, id="uvicorn-ctrl-backslash"),
     # Ctrl-C with the launcher (its browser mode) waiting beside the server
     pytest.param("launcher", signal.SIGINT, False, id="launcher-ctrl-c"),
+    # The systemd unit's start and stop (KillMode=mixed: SIGTERM to the main
+    # process only; root-cause review, P23-3)
+    pytest.param("service", signal.SIGTERM, False, id="service-stop"),
+    pytest.param("service", signal.SIGTERM, True, id="service-stop-tab-open"),
     # A dashboard tab open: its heartbeat stream held open, as the browser holds it
     pytest.param("uvicorn", signal.SIGINT, True, id="uvicorn-ctrl-c-tab-open"),
     pytest.param("uvicorn", signal.SIGHUP, True, id="uvicorn-terminal-closed-tab-open"),

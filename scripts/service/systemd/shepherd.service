@@ -34,6 +34,17 @@ Environment=PYTHONUNBUFFERED=1
 # an allocator, set PYTORCH_ALLOC_CONF here; an explicit value is kept on every
 # start and restart.
 ExecStart=%h/SHEPHERD-Advanced/.venv/bin/python %h/SHEPHERD-Advanced/scripts/launch/shep_launch.py --no-auto-install --no-browser -- --host 127.0.0.1 --port 8264
+# Stopping the service stops its GPU job through the backend (deployment guide
+# §4.11): SIGTERM goes to the main process only, which is the server (the
+# launcher execs into it, above), and the server stops its job as every other
+# stop does (SIGINT first, so a test run finishes recording what it published);
+# once the server has exited, systemd SIGKILLs whatever is left of the service.
+# The default (control-group) would SIGTERM the job's processes directly, ahead
+# of the server's stop. The timeout covers the server's longest stop of its job
+# (training_manager.END_ACTIVE_JOB_SECONDS, 110 s) with room for its own
+# shutdown; when the server crashes, systemd SIGKILLs the job.
+KillMode=mixed
+TimeoutStopSec=150
 Restart=on-failure
 # The launcher exits 2 when it refuses its own configuration (a network bind
 # without SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND=1): restarting cannot fix

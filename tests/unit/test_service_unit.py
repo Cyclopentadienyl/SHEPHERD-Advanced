@@ -172,6 +172,38 @@ def test_a_network_bind_without_risk_acceptance_starts_nothing(monkeypatch, caps
     assert "SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND=1" in out
 
 
+def _seconds(value: str) -> float:
+    """A systemd time span as TimeoutStopSec= takes it (``150``, ``150s``,
+    ``2min 30s``), in seconds."""
+    units = {"": 1, "s": 1, "sec": 1, "m": 60, "min": 60, "h": 3600}
+    total = 0.0
+    for number, unit in re.findall(r"(\d+(?:\.\d+)?)\s*([a-z]*)", value):
+        assert unit in units, f"unexpected time unit {unit!r} in {value!r}"
+        total += float(number) * units[unit]
+    return total
+
+
+def test_stopping_the_unit_hands_the_job_s_stop_to_the_backend():
+    """Root-cause review, P23-3: the default KillMode=control-group SIGTERMs
+    every process of the service at once, the GPU job's main process and its
+    workers too, ahead of the backend's own stop (SIGINT first, which a test
+    run holds across publishing its report); and the stop timeout was the
+    manager's default, which can be shorter than that stop. KillMode=mixed
+    sends SIGTERM to the main process only, the server (the launcher execs
+    into it, test_the_launcher_runs_the_units_command_by_becoming_the_server),
+    and SIGKILLs the rest once it has exited; TimeoutStopSec is explicit and
+    covers the backend's longest stop of its job, computed from the job
+    runner's own constants, so a change there fails here."""
+    from src.api.services import training_manager as tm  # builds no application
+
+    assert _directive("KillMode") == "mixed"
+    bound = tm.END_ACTIVE_JOB_SECONDS
+    assert bound == (tm.STOP_GRACE_SECONDS + tm.TERMINATE_GRACE_SECONDS
+                     + tm.KILL_GRACE_SECONDS + tm.RESULT_WAIT_SECONDS)
+    # Room beyond the job's stop for the server's own shutdown and exit.
+    assert _seconds(_directive("TimeoutStopSec")) >= bound + 20
+
+
 def test_the_unit_does_not_restart_a_refused_bind(monkeypatch, capsys):
     """The launcher refuses its own configuration with exit status 2, which a
     restart cannot fix, so the unit must not restart on it."""

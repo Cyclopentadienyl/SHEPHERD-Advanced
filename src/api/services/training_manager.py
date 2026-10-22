@@ -145,6 +145,14 @@ OUTPUT_GRACE_SECONDS = 5.0
 #: How long a stop waits, once the process has ended, for its monitor to record
 #: how (and to read what a test run left) before answering.
 RESULT_WAIT_SECONDS = 60.0
+#: The longest `end_active_job` takes, so the longest a stopping backend
+#: spends on its job: a stop's whole escalation, then the wait for its monitor
+#: (or, for a job an operator is already stopping, the same bound). The
+#: systemd unit's TimeoutStopSec covers it (scripts/service/systemd/
+#: shepherd.service; root-cause review, P23-3), so the service manager's
+#: SIGKILL never pre-empts this stop.
+END_ACTIVE_JOB_SECONDS = (STOP_GRACE_SECONDS + TERMINATE_GRACE_SECONDS + KILL_GRACE_SECONDS
+                          + RESULT_WAIT_SECONDS)
 
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 
@@ -1216,8 +1224,7 @@ class TrainingManager:
         said: Dict[str, Any] = {"job_type": job_type, "job_id": job.job_id}
         if status == "running":
             return {**said, **self.stop(job_type)}
-        ended = job.done.wait(timeout=STOP_GRACE_SECONDS + TERMINATE_GRACE_SECONDS
-                              + KILL_GRACE_SECONDS + RESULT_WAIT_SECONDS)
+        ended = job.done.wait(timeout=END_ACTIVE_JOB_SECONDS)
         with self._lock:
             status = job.status
         return {**said, "success": ended, "status": status}

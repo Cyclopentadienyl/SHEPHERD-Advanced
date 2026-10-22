@@ -169,8 +169,9 @@ async def lifespan(app: FastAPI):
     shutdown event) leaves no job either: the stop began at the first, and
     the backend waits for it before it exits. Not covered: a SIGKILL or the out-of-memory killer; the
     job then keeps running and keeps the GPU lock until it is stopped by its
-    pid. Under systemd the unit's stop signals every process of the service
-    anyway.
+    pid. Under systemd the unit's ``KillMode=mixed`` sends its stop's SIGTERM
+    to the server alone, which stops the job this same way, and systemd's
+    SIGKILL then finds nothing of it (root-cause review, P23-3).
     """
     _check_startup_bind()
 
