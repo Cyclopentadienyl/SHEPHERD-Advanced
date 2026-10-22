@@ -261,7 +261,10 @@ class _ShutdownSignals:
     list of signal names** (verification of P23-2, T2-V4), so whatever set
     of signals the server handles itself, each is wrapped. SIGQUIT keeps its meaning: uvicorn
     raises the signal it captured again once it has shut down, so the backend
-    still ends by SIGQUIT, after the job's stop. Each runs the server's
+    still ends by SIGQUIT, after the job's stop. Each first records the stop
+    with the job runner (`record_stop_signal`, a plain store), so Restart
+    Backend's exec is refused from the signal on (round 3 of the review
+    fixes, P3-3), then runs the server's
     handler as before (a second Ctrl-C is still uvicorn's forced quit), then
     hands the event loop `begin`: the first time, the job's stop starts in a
     thread of its own (it closes the GPU slot, then stops the job that held
@@ -293,13 +296,16 @@ class _ShutdownSignals:
         #: signal -> (the handler it had, the one installed here)
         self._installed: Dict[int, Tuple[Any, Callable[[int, Any], None]]] = {}
         self._stopping: Optional[threading.Thread] = None
+        #: The job runner's record of a shutdown signal, called first in each
+        #: wrapped handler (`TrainingManager.record_stop_signal`).
+        self._record_stop_signal: Callable[[], None] = lambda: None
 
     def install(self) -> None:
         """Wrap the server's handlers (each listed signal whose handler is
         SIGTERM's), and route the other signals that no longer reach a job
         (`JOB_DETACHED_SIGNALS`) to its SIGTERM handler; in the event loop,
         at startup."""
-        from src.api.services.training_manager import JOB_DETACHED_SIGNALS
+        from src.api.services.training_manager import JOB_DETACHED_SIGNALS, training_manager
 
         if threading.current_thread() is not threading.main_thread():
             logger.debug("The application runs off the main thread (an in-process client), "
@@ -315,6 +321,7 @@ class _ShutdownSignals:
                 "connection has closed (an open dashboard tab holds it).", termination)
             return
         self._loop = asyncio.get_running_loop()
+        self._record_stop_signal = training_manager.record_stop_signal
         for name in JOB_DETACHED_SIGNALS:
             number = getattr(signal, name, None)
             if number is None:
@@ -328,6 +335,10 @@ class _ShutdownSignals:
     def _wrap(self, number: int, server_handler: Callable[[int, Any], Any],
               replaced: Any) -> None:
         def handler(signum: int, frame: Any) -> None:
+            # Recorded before anything else, a plain store (round 3 of the
+            # review fixes, P3-3): from here on Restart Backend's exec is
+            # refused, before this stop has closed the GPU slot.
+            self._record_stop_signal()
             try:
                 server_handler(signum, frame)
             finally:

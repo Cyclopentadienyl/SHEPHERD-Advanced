@@ -22,8 +22,13 @@ Safety:
     progress — the UI also greys the button out, but this server-side guard is
     the real safety net. After its delay the restart closes the job runner's
     GPU slot only if it is still idle and open, in one step (`close_if_idle`),
-    and keeps it closed through the exec, so no job can start in between; a
-    backend that began to stop meanwhile is not restarted.
+    and keeps it closed through the exec, so no job can start in between. The
+    final check that the backend has not begun to stop and the exec are one
+    step under the runner's lock (`exec_if_closed_for_restart`), and a stop
+    signal is recorded by its handler before anything else, so a backend
+    that began to stop is not restarted; only a stop signal that arrives as
+    the exec is made, before its handler has recorded it, is lost with the
+    old process image.
 
 Allocator re-resolution:
     The launcher records HOW ``PYTORCH_ALLOC_CONF`` was set via the
@@ -148,20 +153,28 @@ def restart_backend(
         # the REST API or another tab) is seen here and the restart aborted,
         # and one asked for after it is refused at the slot; none is orphaned
         # by the exec. A slot the backend's stop closed during the delay
-        # aborts the restart too, so the exec never overrides a shutdown
-        # (T2-V2). The slot stays closed through execve, which does not
-        # return; only a failed execve opens it again, and only the close
-        # this restart made, never a stop's that came meanwhile.
+        # aborts the restart too (T2-V2). **The final check and the exec are
+        # one step** (round 3 of the review fixes, P3-3): after the environment
+        # is resolved, the exec runs under the runner's lock only while the
+        # restart still owns the slot and no stop signal has been recorded (its
+        # handler records it first), so a stop that began meanwhile aborts the
+        # restart, and one that begins during the exec waits for the lock until
+        # the image is gone. Lost, as no check can prevent: a stop signal whose
+        # handler had not recorded it when the final check ran. The slot stays
+        # closed through execve, which does not return; only a failed execve
+        # opens it again, and only the close this restart made, never a stop's
+        # that came meanwhile.
+        aborted = ("Backend restart aborted: a GPU job became active, or the backend "
+                   "began to stop, before the process was replaced.")
         if not training_manager.close_if_idle():
-            logger.warning(
-                "Backend restart aborted: a GPU job became active, or the backend "
-                "began to stop, during the restart delay."
-            )
+            logger.warning(aborted)
             return
         try:
             env = resolve_restart_env(dict(os.environ))
             logger.info("Restarting backend: %s", " ".join(argv))
-            _execv(executable, argv, env)
+            if not training_manager.exec_if_closed_for_restart(
+                    lambda: _execv(executable, argv, env)):
+                logger.warning(aborted)
         except Exception:  # noqa: BLE001 — log and leave the process running
             logger.exception("Backend restart failed (execve)")
             training_manager.open(closed_by=training_manager.CLOSED_BY_RESTART)

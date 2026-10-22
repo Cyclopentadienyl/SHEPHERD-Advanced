@@ -583,6 +583,10 @@ class TrainingManager:
         #: Restart Backend replaces the process (`close_if_idle`). No job starts
         #: while it is closed, whatever the request (P23-1).
         self._closed_by: Optional[str] = None
+        #: A shutdown signal has arrived (`record_stop_signal`), recorded by
+        #: the signal handler before the stop it starts has closed the slot;
+        #: cleared at startup (`open`).
+        self._stop_signalled = False
         #: The latest job of each type, kept after it ends.
         self._last: Dict[str, _Job] = {}
         self._report_state: ReportStateReader = report_state or _registration_report_state
@@ -646,24 +650,54 @@ class TrainingManager:
         restart runs: verification of P23-1, T2-V2). Restart Backend closes
         it this way before it replaces the process image, so a job started
         during its delay is either seen here or refused, never orphaned by the
-        exec, and a stop begun during the delay is never overridden by the
-        exec."""
+        exec; a stop begun since is seen by the exec's own final check
+        (`exec_if_closed_for_restart`)."""
         with self._lock:
             if self._active is not None or self._closed_by is not None:
                 return False
             self._closed_by = self.CLOSED_BY_RESTART
             return True
 
+    def record_stop_signal(self) -> None:
+        """**A shutdown signal has arrived**, recorded by the signal handler
+        before anything else it does (round 3 of the review fixes, P3-3), so
+        Restart Backend's exec is refused from that moment, also before the
+        stop the signal starts has closed the slot. A plain store, never the
+        lock: a signal handler runs in the main thread between two of its
+        bytecodes, which may be holding it."""
+        self._stop_signalled = True
+
+    def exec_if_closed_for_restart(self, exec_image: Callable[[], None]) -> bool:
+        """**Restart Backend's final check and its exec, one step under the
+        lock** (round 3 of the review fixes, P3-3): `exec_image` runs, with
+        the lock held, only while the restart still owns the closed slot
+        (`close_if_idle`) and no shutdown signal has been recorded
+        (`record_stop_signal`); False, and nothing run, otherwise. A `close`
+        asked for meanwhile either came first, and the exec is refused, or
+        waits on the lock until the process image is replaced. What no check
+        can close: a signal whose handler had not recorded it when this check
+        ran is lost with the old image. A failed exec raises out of here with
+        the lock released (it is not reentrant), for the caller to open its
+        own close again (`open(closed_by=CLOSED_BY_RESTART)`)."""
+        with self._lock:
+            if self._closed_by != self.CLOSED_BY_RESTART or self._stop_signalled:
+                return False
+            exec_image()
+        return True
+
     def open(self, closed_by: Optional[str] = None) -> None:
         """Open the slot again. At the application's startup, whoever closed
         it (the runner is a process-wide singleton, which an in-process
-        client's next lifespan reuses). With `closed_by`, only while that
-        closer still owns it: Restart Backend's failed exec passes
-        `CLOSED_BY_RESTART`, so it reopens its own close and never a stop's
-        that came meanwhile, and the process serves on."""
+        client's next lifespan reuses), and a shutdown signal recorded is
+        forgotten. With `closed_by`, only while that closer still owns it:
+        Restart Backend's failed exec passes `CLOSED_BY_RESTART`, so it
+        reopens its own close and never a stop's that came meanwhile, and the
+        process serves on."""
         with self._lock:
             if closed_by is None or self._closed_by == closed_by:
                 self._closed_by = None
+            if closed_by is None:
+                self._stop_signalled = False
 
     def _slot_refusal_locked(self, wanted: JobType) -> Optional[str]:
         """Why `wanted` cannot start now, or None. Called under the lock.

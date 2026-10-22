@@ -251,6 +251,8 @@ def server_signals(monkeypatch):
 
     monkeypatch.setattr(api, "_stop_the_active_job", stop_the_active_job)
     monkeypatch.setattr(api, "_end_dashboard_streams", end_dashboard_streams)
+    # A runner of the test's own: each signal handled records the stop on it.
+    monkeypatch.setattr(tm, "training_manager", tm.TrainingManager())
     try:
         yield api, server, calls
     finally:
