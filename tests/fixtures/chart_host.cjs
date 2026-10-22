@@ -266,6 +266,35 @@ S.pending_cleared_then_same_run_again = async () => {  // A pending -> cleared -
   return { ok: asked === 2 && mid.pending && s.run === "ws/A" && s.epochs === 1 && s.message === "" && !s.pending,
            asked, mid, s };
 };
+// Two calls outstanding for the identical token: the token held now cannot
+// tell them apart (`stillAsked` passes both), and the server's answer can
+// change between them (training_chart_series answers "no longer listed" once
+// the run is not listed, and its rev is the rows read when it answers). Only
+// the sequence number keeps the older answer from being drawn last.
+S.same_token_newer_answer_not_listed = async () => {   // A pending, cleared, A again; newer: not listed, older: A late
+  const h = makeHost(MODULE, tok("ws/A", 1)); await settle();
+  h.setToken(tok(null, 0)); await settle();
+  h.setToken(tok("ws/A", 1)); await settle();
+  const asked = h.series().length;
+  await h.answer(h.series()[1], NOT_LISTED);
+  const mid = h.state();
+  await h.answer(h.series()[0], payload("ws/A", 1, 1));
+  const s = h.state();
+  return { ok: asked === 2 && mid.message === "This run is no longer listed." && s.run === null && s.charts === 0 &&
+               s.message === "This run is no longer listed." && !s.pending, asked, mid, s };
+};
+S.same_token_older_read_answers_last = async () => {   // {A, rev 3} asked twice; newer read 4 rows, older 3 rows late
+  const h = makeHost(MODULE, tok("ws/A", 3)); await settle();
+  h.setToken(tok(null, 0)); await settle();
+  h.setToken(tok("ws/A", 3)); await settle();
+  const asked = h.series().length;
+  await h.answer(h.series()[1], payload("ws/A", 4, 4));  // the log grew between the two reads
+  const mid = h.state();
+  await h.answer(h.series()[0], payload("ws/A", 3, 3));
+  const s = h.state();
+  return { ok: asked === 2 && mid.epochs === 4 && s.run === "ws/A" && s.epochs === 4 && s.rev === 4 && !s.pending,
+           asked, mid, s };
+};
 S.reply_queued_before_the_watch_callback = async () => {   // B's reply and the switch back to A in one task
   const h = await shown("ws/A", 2, 2);
   h.setToken(tok("ws/B", 7)); await settle();

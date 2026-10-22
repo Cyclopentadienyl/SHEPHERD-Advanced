@@ -30,11 +30,17 @@
  *
  * Replies (Gradio 6.30's server functions cannot be cancelled, and a failed
  * request resolves undefined instead of rejecting): a reply is drawn only if
- * it answers the newest request (a sequence number) and the token the
- * component holds now (`stillAsked`), so a late reply never brings back a run
- * after the selection was cleared or changed, even back to the run drawn. A
- * failed call is retried (each token has its own retries) and never read as
- * "no longer listed"; another run's curves never stay under it. While the
+ * both conditions hold, each with its own job. `stillAsked`: it answers the
+ * token the component holds now, so a reply for a token no longer asked is
+ * dropped and a late reply never brings back a run after the selection was
+ * cleared or changed, even back to the run drawn (a change may send no
+ * request, and Gradio replaces the token before the watch callback runs).
+ * The sequence number: it answers the newest request, so of two calls for the
+ * same token (asked again after a clear or another run), the newer answer
+ * wins; the token cannot tell them apart, and the server's answer can change
+ * between them (the run no longer listed, more rows read). A failed call is
+ * retried (each token has its own retries) and never read as "no longer
+ * listed"; another run's curves never stay under it. While the
  * reply for a run other than the one drawn is outstanding, the root is
  * aria-busy="true" and CHART_CSS hides the figure with `visibility` (the
  * charts are kept, and the ResizeObserver still measures them) and says

@@ -23,7 +23,8 @@ the package's scratch browser checks):
   Gradio 6.30's props, watch and server-function semantics emulated,
   `tests/fixtures/chart_host.cjs`, and the installed Gradio is that 6.30.0):
   a reply is drawn only for what the token asks now (the reviewer's P2-5: a
-  selection cleared or changed, back to the run drawn included), a failed
+  selection cleared or changed, back to the run drawn included) and, of two
+  calls for the same token, only the newer answer is drawn, a failed
   call is retried and said, never "no longer listed", and the figure is busy
   only while another run loads.
 
@@ -384,6 +385,8 @@ REPLY_SCENARIOS = [
     # a reply for what the token no longer asks for is never drawn (P2-5)
     "reviewer_pending_then_cleared", "shown_A_pending_B_back_to_A", "shown_A_pending_B_then_cleared",
     "cleared_A_pending_B_pending_A_reply_late", "pending_cleared_then_same_run_again",
+    # two calls for the identical token: the newer answer wins (the sequence number's own job)
+    "same_token_newer_answer_not_listed", "same_token_older_read_answers_last",
     "reply_queued_before_the_watch_callback", "superseded_failure_after_clear_is_ignored",
     "superseded_failure_after_switch_back_is_ignored", "export_names_the_run_shown",
     # busy only while another run loads; never on a retry or new epochs of the run drawn
