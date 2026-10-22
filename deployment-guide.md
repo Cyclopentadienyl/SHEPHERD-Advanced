@@ -2489,7 +2489,10 @@ Cancel。Load 只詢問一次（"Reload the pipeline with <12 hex> for every ses
 "🔒 Reload with <新>" 之後，確認畫面只顯示重新載入的狀態（"Loading <12 hex> for every
 session… 00:00:42"）與 Close（關閉不會中止重新載入；180 秒後為 Read again 與 Close），因此無法
 再要求第二次重新載入；卡片顯示同一行 "Loading …"，Run Diagnosis 顯示 "Disabled: a model load is
-in progress; diagnoses wait until it finishes."。Cancel 或 × 關閉抽屜而不重新載入；重新載入期間抽屜會保持打開，直到顯示其結果（重新載入無法中止）。
+in progress; diagnoses wait until it finishes."。Cancel 或 × 關閉抽屜而不重新載入。重新載入期間，
+Close 或 × 會立即關閉抽屜，重新載入照常進行（無法中止）：卡片保留那一行 "Loading …"，重新載入
+回應後，卡片顯示當時使用中的模型，結果不會再顯示；期間按 "Change model…" 會重新打開抽屜，顯示
+重新載入的狀態。在 Research › Models 中，Close 也以同樣方式關閉確認畫面。
 從 Research › Models 做的 Load 也會更新這張卡片。同一時間只會打開一個抽屜。
 
 ### Research › Prepare › Datasets
@@ -2564,7 +2567,7 @@ Training Console 現在是分成三部分的一個頁面：上方橫跨整頁的
 - 失敗的 run 的**錯誤橫幅**橫跨整頁。標題（"Training failed: Process exited with code 1"）
   之下是 run 印出的最後一行錯誤（"Last error printed: TrainingDeviceUnavailable: --device auto
   requires CUDA, …"），對唯讀瀏覽器與輸出一樣經過遮蔽。run 旁邊只在有日誌時說明日誌在哪裡（它的
-  `logs/train_….json`），否則說明沒有日誌（在第一個輸出之前就被拒絕的 run 顯示 "no run
+  `logs/train_….json`），否則說明沒有日誌（在建立 run 目錄之前就被拒絕的 run 顯示 "no run
   directory, so no log"）。接著是輸出的最後幾行，放在「Last output (N lines)」之下：視窗高度至少 1000 px 時展開，較矮的視窗則收合成這一行，讓圖表保有空間（你展開或收合
   後，在這個頁面中會保持）；一次顯示四行，其餘在框內捲動（窄視窗中全部顯示）。Dismiss 會在這個
   瀏覽器分頁中隱藏橫幅。run bar 中的每則通知都把名稱與路徑當作文字顯示，不論 workspace 或 run
@@ -2597,9 +2600,10 @@ bar 的資料集改變（手動選擇，或從 Datasets 的「Use for training �
 **run 檢視**顯示 job runner 最後啟動的 run；伺服器啟動後還沒有啟動過時，顯示 run bar 所選
 workspace 最新的 run（頁面開著時每 10 秒重新列出一次，所以從 CLI 啟動的 run 在寫下第一個
 checkpoint 後就會出現）。標題列出 run 名稱與這個 run 使用的資料集指紋，從它的 checkpoint 讀取：
-「✓ same as the run bar」、琥珀色的「≠ not the selected dataset」，或還沒有 checkpoint 時的
-「recorded at the first checkpoint」。快照句說明 run 如何結束，以及可從哪個 checkpoint 繼續，
-路徑相對於 workspace 根目錄；沒有 run 目錄的 run（在第一個輸出之前就被拒絕）會如實說明：沒有
+「✓ same as the run bar」、琥珀色的「≠ not the selected dataset」、執行中還沒有 checkpoint 時的
+「recorded at the first checkpoint」，或已結束而沒有 checkpoint 時的「not recorded (the run saved
+no checkpoint)」。快照句說明 run 如何結束，以及可從哪個 checkpoint 繼續，
+路徑相對於 workspace 根目錄；沒有 run 目錄的 run（在建立 run 目錄之前就被拒絕）會如實說明：沒有
 checkpoint、沒有日誌，也沒有可畫的圖。下方是一張共用 epoch 軸的四格圖：Loss（train，以及以虛線表示的
 validation）、MRR（validation，Trainer top-20）、Hits@K（validation，Trainer），以及對數軸的
 learning rate（0 或缺少的值為空隙）。圖下是資源列（GPU 與記憶體）。

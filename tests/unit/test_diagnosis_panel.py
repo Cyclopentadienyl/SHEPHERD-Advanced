@@ -1298,8 +1298,9 @@ def test_closing_the_change_drawer_drops_an_open_confirmation():
 
 
 def test_a_running_reload_keeps_the_change_drawer_open():
-    """The reload cannot be stopped and its outcome must be seen: × and Cancel
-    keep the drawer, the plan and the phase while it runs."""
+    """The reload cannot be stopped and its outcome must be seen: a close that
+    still finds the phase "loading" (one the page did not hold until the
+    answer, `CLOSE_WHILE_LOADING`) keeps the drawer, the plan and the phase."""
     kept = dp.close_change("loading")
     assert kept == {"change_drawer": kept["change_drawer"], "change_closed": False}
     assert kept["change_drawer"]["visible"] is True
@@ -1389,6 +1390,37 @@ def test_closing_the_change_drawer_resets_it_in_a_second_step(monkeypatch):
         assert drawer in closing.outputs and not inside & set(closing.outputs), name
         reset = next(fn for fn in demo.fns.values() if fn.trigger_after == closing._id)
         assert reset.name == "_reset_change" and inside <= set(reset.outputs)
+
+
+def test_while_a_reload_runs_the_drawer_closes_at_once_and_its_close_follows_the_answer(
+        monkeypatch):
+    """M5-3 review: Close and × did nothing while the reload held the server,
+    then closed the drawer after it in no fixed order with its answer. Close,
+    × and Cancel now hide the whole drawer at once in the page (the card keeps
+    its "Loading …" line); × is clicked for the server after the answer;
+    "Change model…" shows the drawer again meanwhile; and each close ends
+    with the list's page step that drops the page's own hiding."""
+    from src.webui.components import model_list as ml
+    from src.webui.components.help import as_json_for_script
+
+    demo, _ctx = _build_tab(monkeypatch)
+    guard = ml.load_guard("shep-models-clinical", dp.CLOSE_WHILE_LOADING)
+    assert guard["hide"] == "#shep-dx-change" and guard["then"] == "#shep-dx-change-close button"
+    assert guard["closers"] == ["#shep-models-clinical-keep", "#shep-dx-change-close button",
+                                "#shep-dx-change-cancel"]
+    assert guard["openers"] == ["#shep-dx-change-btn"]
+    (loading,) = _named(demo, "_loading")
+    assert as_json_for_script(guard) in loading.js
+    blocks = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
+    assert {"shep-dx-change", "shep-dx-change-cancel", "shep-dx-change-btn",
+            "shep-models-clinical-keep"} <= set(blocks)
+    assert '<button type="button" class="shep-dx-close" data-key="close"' in \
+        blocks["shep-dx-change-close"].value
+    for name in ("_close_change_drawer", "_cancel_change"):
+        (closing,) = _named(demo, name)
+        reset = next(fn for fn in demo.fns.values() if fn.trigger_after == closing._id)
+        done = next(fn for fn in demo.fns.values() if fn.trigger_after == reset._id)
+        assert done.fn is None and done.js == ml.load_closed_js("shep-models-clinical"), name
 
 
 # -------------------------------------------------- the candidates and the details

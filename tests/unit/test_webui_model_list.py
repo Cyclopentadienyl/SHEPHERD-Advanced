@@ -684,7 +684,9 @@ def test_load_and_reload_refresh_the_chips_and_reload_sets_the_trigger(root, ser
     confirm = _after(demo, loading)
     assert confirm.name == "_confirm" and handle.reload_done is not None
     assert ctx.served_model_changed in confirm.outputs and handle.phase in confirm.outputs
-    chips = _after(demo, confirm)
+    answered = _after(demo, confirm)                    # the page's step (`load_answered_js`)
+    assert answered.fn is None and answered.js == ml.load_answered_js(handle.elem_id)
+    chips = _after(demo, answered)
     assert chips.fn is read_chips
     assert _after(demo, chips).fn is handle.refresh["fn"]
 
@@ -748,6 +750,53 @@ def test_while_a_reload_runs_the_confirmation_shows_only_its_status_and_close():
     assert out[0] == "loading" and out[2]["value"] == "Close" and out[3] == "line"
     assert seen == [(plan, "s")]
     assert loading.fn(None, "s")[0] == "idle" and seen[-1] == (None, "s")
+
+
+def test_a_close_while_the_reload_runs_is_done_in_the_page_and_sent_after_its_answer():
+    """M5-3 review: the reload holds the server's event loop, so Close (and
+    the drawer's ×) did nothing until the reload answered; then its close and
+    the answer came back in no fixed order, and the box could be left open,
+    empty, with "Reload with <the model now served>". While a reload runs the
+    page closes it at once (`load_guard`) and clicks Close again only after
+    the answer (`load_answered_js`), so the server handles it in order; the
+    page's own hiding goes when that close is done (`load_closed_js`)."""
+    assert ml.load_guard("x") == {"list": "x", "closers": ["#x-keep"], "hide": "#x-confirm-box",
+                                  "then": "#x-keep", "openers": ["#x-load"]}
+    drawer = {"hide": "#d", "then": "#d-x button", "also": ["#d-x button", "#d-cancel"],
+              "openers": ["#open"]}
+    assert ml.load_guard("x", drawer) == {"list": "x", "closers": ["#x-keep", "#d-x button",
+                                                                   "#d-cancel"],
+                                          "hide": "#d", "then": "#d-x button",
+                                          "openers": ["#open"]}
+    demo, _ctx, handle, _ = _component()
+    assert handle.confirm.elem_id == "shep-models-clinical-confirm-box"
+    loading = _named(demo, "_loading")
+    from src.webui.components.help import as_json_for_script
+
+    assert as_json_for_script(ml.load_guard("shep-models-clinical")) in loading.js
+    for part in ("document.addEventListener('click'", "e.stopImmediatePropagation()",
+                 "'shep-load-closed-' + id", "{ display: none !important; }",
+                 ":not(#shep-load-x1):not(#shep-load-x2):not(#shep-load-x3)",
+                 "g.openers.some(hit)"):
+        assert part in loading.js, part
+    # A close and an opener are both held from the page's own handlers.
+    assert loading.js.count("e.preventDefault(); e.stopImmediatePropagation();") == 2
+    answered = _after(demo, _after(demo, loading))
+    assert answered.fn is None and "st.busy = false" in answered.js
+    assert "document.querySelector(st.guard.then)" in answered.js and "el.click()" in answered.js
+    assert '"shep-models-clinical"' in answered.js
+    # Close's own chain ends with the page's step that drops its hiding.
+    done = _after(demo, _after(demo, _named(demo, "_keep")))
+    assert done.fn is None and done.js == ml.load_closed_js(handle.elem_id) == handle.after_close_js
+    assert "!st.busy" in done.js and "css.remove()" in done.js
+    # A page that puts the list in a drawer names it, and its own closes.
+    from src.webui.shell import standalone_context
+
+    with gr.Blocks() as page:
+        ctx = standalone_context(page)
+        listed = ctx.create_model_list("clinical", close_while_loading=drawer)
+    script = _named(page, "_loading").js
+    assert as_json_for_script(ml.load_guard(listed.elem_id, drawer)) in script
 
 
 def test_keep_closes_the_confirmation(root, serving, monkeypatch):

@@ -68,7 +68,14 @@ components (a filter, links) in the list's header and footer rows.
 **While the reload runs the confirmation shows only its status and Close**
 (`loading_buttons`, before the reload; the mockup's footer): Reload goes, at
 once in the browser too, so a second click cannot ask for a second reload, and
-Keep becomes Close, since closing does not stop it.
+Keep becomes Close, since closing does not stop it. **Close works at once**,
+although nothing on the server answers meanwhile: the page itself hides the
+confirmation (or the page's drawer, with its ×) and, once the reload has
+answered, sends the close to the server in order after that answer
+(`load_guard`, `start_wait_js`, `load_answered_js`); a close sent while the
+reload held the server would be handled after it in no fixed order with its
+answer, and could leave the box open and empty. A closed load's outcome is not
+shown again: what is served then is on the page (the card, the list's "In use").
 
 **The page waits 180 s.** The reload holds the event loop (it never runs beside
 a diagnosis, BACKLOG 28), so nothing answers meanwhile: the page itself counts
@@ -1149,6 +1156,43 @@ _START_WAIT_JS = r"""
   // cannot ask for a second reload (the answer then hides it).
   var again = document.getElementById(__RELOAD_ID__);
   if (again) { again.disabled = true; }
+  // Until the reload answers nothing on the server answers (it holds the event
+  // loop): a close (`guard.closers`) is done here at once, by hiding
+  // `guard.hide`, and sent to the server only after the answer
+  // (`load_answered_js`); while it is closed, an opener shows it again.
+  var guard = __GUARD__;
+  if (guard) {
+    var loads = window.shepLoads = window.shepLoads || {};
+    var held = document.getElementById('shep-load-closed-' + guard.list);
+    if (held) { held.remove(); }
+    loads[guard.list] = {busy: true, closed: false, guard: guard};
+    if (!window.shepLoadGuard) {
+      window.shepLoadGuard = true;
+      document.addEventListener('click', function (e) {
+        var target = e.target;
+        if (!target || !target.closest) { return; }
+        var all = window.shepLoads || {};
+        Object.keys(all).forEach(function (id) {
+          var st = all[id], g = st.guard;
+          if (!st.busy) { return; }
+          var css = document.getElementById('shep-load-closed-' + id);
+          var hit = function (sel) { return !!target.closest(sel); };
+          if (g.closers.some(hit)) {
+            e.preventDefault(); e.stopImmediatePropagation();
+            if (!css) { css = document.createElement('style'); css.id = 'shep-load-closed-' + id; document.head.appendChild(css); }
+            // Three ids more than the selector: above a page's own rules for it
+            // (Models: "#page #list > .shep-model-confirm-box" sets its display).
+            css.textContent = g.hide + ':not(#shep-load-x1):not(#shep-load-x2):not(#shep-load-x3) { display: none !important; }';
+            st.closed = true;
+          } else if (st.closed && g.openers.some(hit)) {
+            e.preventDefault(); e.stopImmediatePropagation();
+            if (css) { css.remove(); }
+            st.closed = false;
+          }
+        });
+      }, true);
+    }
+  }
   var root = document.getElementById(__CONFIRM_ID__);
   if (root) {
     root.classList.remove('shep-waited');
@@ -1178,7 +1222,8 @@ _START_WAIT_JS = r"""
 """
 
 
-def start_wait_js(confirm_elem_id: str, reload_elem_id: Optional[str] = None) -> str:
+def start_wait_js(confirm_elem_id: str, reload_elem_id: Optional[str] = None,
+                  guard: Optional[Mapping[str, Any]] = None) -> str:
     """The script "Reload with …" runs in the browser before its handler: the
     Reload button (`reload_elem_id`) disabled at once, so a second click cannot
     ask for a second reload before the answer hides it; the 180 s count in
@@ -1186,11 +1231,78 @@ def start_wait_js(confirm_elem_id: str, reload_elem_id: Optional[str] = None) ->
     page (Diagnosis' drawer and Models) counts in the one whose Reload was
     clicked, and in any element of the page marked ``data-shep-load-elapsed``
     (the count) or ``data-shep-load-card`` (its words when the page stops
-    waiting: Diagnosis' card)."""
+    waiting: Diagnosis' card); with `guard` (`load_guard`), until the reload
+    answers, a close done in the page at once and held for the server."""
     from src.webui.components.help import as_json_for_script
 
     return (_START_WAIT_JS.replace("__CONFIRM_ID__", as_json_for_script(confirm_elem_id))
-            .replace("__RELOAD_ID__", as_json_for_script(reload_elem_id or "")))
+            .replace("__RELOAD_ID__", as_json_for_script(reload_elem_id or ""))
+            .replace("__GUARD__", as_json_for_script(dict(guard) if guard else None)))
+
+
+def load_guard(elem_id: str, close: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+    """What a close does while this list's reload runs (`start_wait_js`), as
+    CSS selectors: the ``closers`` (this list's Close, and `close`'s
+    ``also``: a drawer's × and Cancel) hide ``hide`` at once in the page (this
+    list's confirmation box, or `close`'s ``hide``: the drawer), and when the
+    reload answers ``then`` is clicked (Close itself, or `close`'s ``then``:
+    the drawer's ×), its close now handled after that answer; while it is
+    closed, an ``opener`` (this list's Load, or `close`'s ``openers``: the
+    button that opens the drawer) shows it again instead, on the reload's
+    status, since nothing it would ask can be answered before the reload."""
+    close = close or {}
+    keep = f"#{elem_id}-keep"
+    return {"list": elem_id,
+            "closers": [keep, *(close.get("also") or ())],
+            "hide": close.get("hide") or f"#{elem_id}-confirm-box",
+            "then": close.get("then") or keep,
+            "openers": list(close.get("openers") or [f"#{elem_id}-load"])}
+
+
+_LOAD_ANSWERED_JS = r"""
+() => {
+  // The reload answered: a close done in the page meanwhile goes to the
+  // server now, in order after the answer (its own click, no longer held).
+  var st = (window.shepLoads || {})[__LIST__];
+  if (st && st.busy) {
+    st.busy = false;
+    if (st.closed) {
+      st.closed = false;
+      var el = document.querySelector(st.guard.then);
+      if (el) { el.click(); }
+      else { var css = document.getElementById('shep-load-closed-' + __LIST__); if (css) { css.remove(); } }
+    }
+  }
+  return [];
+}
+"""
+
+_LOAD_CLOSED_JS = r"""
+() => {
+  // After a close's server steps: what the page hid while the reload ran is
+  // hidden by the server now; the page's own hiding goes.
+  var st = (window.shepLoads || {})[__LIST__];
+  if (!st || !st.busy) { var css = document.getElementById('shep-load-closed-' + __LIST__); if (css) { css.remove(); } }
+  return [];
+}
+"""
+
+
+def load_answered_js(elem_id: str) -> str:
+    """The page's step after the reload's answer (`load_guard`): a close done
+    in the page while the reload ran is clicked again, now for the server."""
+    from src.webui.components.help import as_json_for_script
+
+    return _LOAD_ANSWERED_JS.replace("__LIST__", as_json_for_script(elem_id))
+
+
+def load_closed_js(elem_id: str) -> str:
+    """The page's step at the end of a close (this list's Close; a page's
+    drawer close: ``ModelList.after_close_js``): the page's own hiding of what
+    the server has now hidden goes."""
+    from src.webui.components.help import as_json_for_script
+
+    return _LOAD_CLOSED_JS.replace("__LIST__", as_json_for_script(elem_id))
 
 
 @dataclass
@@ -1217,7 +1329,9 @@ class ModelList:
       ``head`` and ``foot`` builders returned;
     - ``reload_done``: the event that ends a Reload (its answer: reloaded or
       not, the phase back to idle or confirming), for a page to chain
-      ``.then(…)`` on, as Diagnosis clears its card's "Loading …" line.
+      ``.then(…)`` on, as Diagnosis clears its card's "Loading …" line;
+    - ``after_close_js``: the page step a page chains at the end of its own
+      close named in ``close_while_loading`` (`load_closed_js`).
     """
 
     preset: Preset
@@ -1244,6 +1358,7 @@ class ModelList:
     head_extra: Any = None
     foot_extra: Any = None
     reload_done: Any = None
+    after_close_js: str = ""
 
 
 def loading_buttons(plan: Any) -> Tuple[Any, Any, Any]:
@@ -1261,7 +1376,8 @@ def loading_buttons(plan: Any) -> Tuple[Any, Any, Any]:
 def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[str] = None,
                       head: Optional[Callable[[], Any]] = None,
                       foot: Optional[Callable[[], Any]] = None,
-                      on_loading: Optional[Mapping[str, Any]] = None) -> ModelList:
+                      on_loading: Optional[Mapping[str, Any]] = None,
+                      close_while_loading: Optional[Mapping[str, Any]] = None) -> ModelList:
     """Build the shared list in the current layout context and wire its events.
 
     `ctx` is the page context (`src.webui.shell.PageContext`): its chips are
@@ -1274,7 +1390,11 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
     they show before the reload holds the server): ``fn(plan, *inputs)``
     returns one value per output, `plan` None when there was nothing to load
     (Diagnosis: its card's "Loading … for every session" line and Run
-    Diagnosis' reason)."""
+    Diagnosis' reason). `close_while_loading` (``{"hide", "then", "also",
+    "openers"}``, `load_guard`) is what Close does while a reload runs when
+    the list sits in a page's drawer: the drawer hides at once, and its own
+    close is sent when the reload answers; the page chains
+    ``after_close_js`` at the end of that close."""
     chosen = PRESETS[preset]
     elem_id = elem_id or f"shep-models-{preset}"
     listing = gr.State(empty_listing())
@@ -1311,7 +1431,8 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
             reason = plain_html("", elem_id=f"{elem_id}-reason")
             note = plain_html("", elem_id=f"{elem_id}-note")
             foot_extra = foot() if foot is not None else None
-        with gr.Column(visible=False, elem_classes=["shep-model-confirm-box"]) as confirm:
+        with gr.Column(visible=False, elem_id=f"{elem_id}-confirm-box",
+                       elem_classes=["shep-model-confirm-box"]) as confirm:
             confirm_html = plain_html("", elem_id=f"{elem_id}-confirm", js_on_load=MODEL_LIST_JS,
                                       elem_classes=["shep-model-confirm"])
             with gr.Row():
@@ -1420,13 +1541,15 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
     reload_done = reload_button.click(
         _loading, inputs=[plan, *page_inputs],
         outputs=[phase, reload_button, keep_button, *page_outputs], queue=False,
-        js=start_wait_js(f"{elem_id}-confirm", f"{elem_id}-reload"),
+        js=start_wait_js(f"{elem_id}-confirm", f"{elem_id}-reload",
+                         load_guard(elem_id, close_while_loading)),
         show_progress="hidden").then(
         _confirm, inputs=[plan],
         outputs=[plan, confirm, confirm_html, reason, ctx.served_model_changed, phase,
                  reload_button, keep_button],
         show_progress="hidden")
-    reload_done.then(**ctx.chip_refresh).then(**refresh)
+    # A close done in the page while the reload ran goes to the server now.
+    reload_done.then(None, js=load_answered_js(elem_id)).then(**ctx.chip_refresh).then(**refresh)
 
     # Keep (or Cancel, or Close after an outcome) in two steps: the first hides
     # the confirmation box and drops the plan, and changes no component inside
@@ -1445,10 +1568,11 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
             return gr.update(), gr.update()
         return "", gr.update(visible=True)
 
+    after_close_js = load_closed_js(elem_id)
     keep_button.click(_keep, inputs=None, outputs=[plan, confirm, reason, phase],
                       show_progress="hidden").then(
         _after_keep, inputs=[plan], outputs=[confirm_html, reload_button],
-        show_progress="hidden")
+        show_progress="hidden").then(None, js=after_close_js)
 
     def _read_again(evt: gr.EventData):
         raw = getattr(evt, "_data", None)
@@ -1461,7 +1585,7 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
     return ModelList(chosen, elem_id, workspace, listing, selected, plan, view, ordering, phase,
                      show_older, count, rows, facts, reason, note, load_button, confirm,
                      confirm_html, reload_button, keep_button, refresh, head_extra, foot_extra,
-                     reload_done)
+                     reload_done, after_close_js)
 
 
 __all__ = [
@@ -1491,6 +1615,9 @@ __all__ = [
     "key_text",
     "list_html",
     "list_models",
+    "load_answered_js",
+    "load_closed_js",
+    "load_guard",
     "loadable",
     "loading_buttons",
     "note_html",

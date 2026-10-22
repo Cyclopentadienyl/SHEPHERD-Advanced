@@ -495,7 +495,7 @@ def test_the_used_dataset_fingerprint_is_an_operators_and_compared_in_full():
                              snapshot={"readable": True, "dataset_fingerprint": "a" * 12 + "b" * 52})
     assert "≠ not the selected dataset" in other            # 12 equal digits are not equal
     assert "recorded at the first checkpoint" in tc.run_head_html(run, ws, operator=True,
-                                                                  snapshot=None)
+                                                                  snapshot=None, live=True)
     read_only = tc.run_head_html(run, ws, operator=False,
                                  snapshot={"readable": True, "dataset_fingerprint": "a" * 64})
     assert "not shown · reading the checkpoint is an operator control" in read_only
@@ -760,7 +760,7 @@ def test_the_cause_is_redacted_for_a_read_only_request_as_the_tail_is(root, monk
 
 def test_a_run_with_no_run_directory_is_not_called_no_longer_listed(root):
     """M5-3: the run view said "This run is no longer listed" of a run that
-    never made its directory (refused before its first output)."""
+    never made its directory (refused before it made its run directory)."""
     run = tc.RunRef(id="demo/gat/never", label="gat/never",
                     path=root / "demo" / "runs" / "gat" / "never", workspace="demo", latest=False)
     ended = tc._chart_token(run, {}, live=False)
@@ -776,6 +776,68 @@ def test_a_run_with_no_run_directory_is_not_called_no_longer_listed(root):
     # Running before the run made its directory: no logs pointed to yet.
     live = tc.run_snapshot_html(run, {"status": "running"}, operator=True, snapshot=None)
     assert "No checkpoint has been written yet." in live and "logs/" not in live
+
+
+def test_an_ended_run_with_no_checkpoint_is_headed_as_its_snapshot_says(root, monkeypatch,
+                                                                       operator):
+    """M5-3 review: a run that ended with no checkpoint (Device auto refused on
+    a host without CUDA) was headed "used dataset fingerprint: recorded at the
+    first checkpoint" over "… so it has no checkpoint and no log." (no run
+    directory) or "No checkpoint was saved…" (a directory, no last.pt)."""
+    ws = {"row": {"dataset_fingerprint": "a" * 64}, "digits": 12}
+    run = tc.RunRef(id="demo/gat/r", label="gat/r", path=root / "demo" / "runs" / "gat" / "r",
+                    workspace="demo", latest=False)
+    ended = tc.run_head_html(run, ws, operator=True, snapshot=None)
+    assert "not recorded (the run saved no checkpoint)" in ended
+    assert "first checkpoint" not in ended
+    assert "recorded at the first checkpoint" in tc.run_head_html(run, ws, operator=True,
+                                                                  snapshot=None, live=True)
+    monkeypatch.setattr(tc, "_get_pyg_warning", lambda: None)
+    for made in (False, True):
+        job_run = root / "demo" / "runs" / "gat" / f"20261022-011234_auto_{int(made)}"
+        if made:
+            (job_run / "logs").mkdir(parents=True)
+        monkeypatch.setattr(tc.training_manager, "run_dir", job_run)
+        for status, live in (("failed", False), ("running", True)):
+            monkeypatch.setattr(tc.training_manager, "get_status", lambda status=status: {
+                "status": status, "job_id": "j", "error_message": _REFUSED_TAIL,
+                "gpu": {"job": None}})
+            pieces = tc.render(tc._workspace_state("demo"), {}, {}, [], operator)["pieces"]
+            if live:
+                assert "recorded at the first checkpoint" in pieces["head"]
+                assert "No checkpoint has been written yet." in pieces["snap"]
+            else:
+                assert "not recorded (the run saved no checkpoint)" in pieces["head"]
+                assert ("it has no checkpoint" in pieces["snap"] if not made
+                        else "No checkpoint was saved" in pieces["snap"])
+
+
+def test_a_read_only_banner_keeps_the_tails_indentation(root, monkeypatch):
+    """M5-3 review: the read-only redaction joined each line's whitespace, so
+    the traceback's lines lost their indent and its ``^^^`` markers no longer
+    sat under the code; and the tail was drawn in the page's proportional
+    font (the app's "* { font-family … !important }" won over its own)."""
+    monkeypatch.delenv("SHEPHERD_DEPLOYMENT_MODE", raising=False)
+    monkeypatch.setattr(tc, "_get_pyg_warning", lambda: None)
+    message = ("Process exited with code 1\n\n--- Last output ---\n"
+               "Traceback (most recent call last):\n"
+               '  File "/srv/secret/train.py", line 949, in train\n'
+               "    device = resolve(config.device)\n"
+               "             ^^^^^^^^^^^^^^^^^^^^^^\n"
+               "TrainingDeviceUnavailable: --device auto requires CUDA")
+    monkeypatch.setattr(tc.training_manager, "get_status",
+                        lambda: {"status": "failed", "error_message": message,
+                                 "gpu": {"job": None}})
+    banner = tc.render(tc._workspace_state("demo"), {}, {}, [], READ_ONLY)["pieces"]["banner"]
+    tail = banner[banner.index('<pre class="shep-banner-tail">'):banner.index("</pre>")]
+    assert "/srv/secret" not in banner
+    assert '\n  File &quot;a path outside the workspaces root&quot;, line 949' in tail
+    assert "\n    device = resolve(config.device)\n             ^^^^" in tail
+    scrub = tc.read_only_scrub(None)
+    assert scrub("\t  x = /srv/a/b.py  y") == "\t  x = a path outside the workspaces root y"
+    assert scrub("   ") == "   " and scrub("") == ""
+    tail_css = tc.PAGE_CSS[tc.PAGE_CSS.index(".shep-banner-tail {"):]
+    assert tail_css[:tail_css.index("}")].count("font-family: var(--shep-mono) !important") == 1
 
 
 def test_the_banner_escapes_the_output():
@@ -1161,6 +1223,15 @@ def test_the_details_popover_holds_the_manifest_digests():
     inner edge (1920 and 1536, both modes)."""
     assert tc.DETAILS_POPOVER_WIDTH >= 480
     assert f"width: min({tc.DETAILS_POPOVER_WIDTH}px, calc(100vw - 48px));" in tc.PAGE_CSS
+
+
+def test_the_details_popover_is_drawn_over_the_parameter_labels():
+    """M5-3 review: at 1280 x 720 and 1080 x 1920 the labels "Learning Rate",
+    "Batch Size", "Device" and "Seed" (Gradio's z-index 40) were drawn on the
+    popover, which sits in the chip (z-index 20)."""
+    assert tc.CHIP_Z_INDEX > 40
+    assert (f"#shep-train-chip {{ flex: 1 1 360px !important; position: relative; "
+            f"z-index: {tc.CHIP_Z_INDEX}; }}") in tc.PAGE_CSS
 
 
 def test_a_two_sentence_reason_breaks_between_its_sentences():

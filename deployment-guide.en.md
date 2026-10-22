@@ -2230,9 +2230,12 @@ open, Run Diagnosis is disabled: "Disabled: finish or cancel the model change fi
 <12 hex> for every session… 00:00:42") and Close (closing does not stop it; after 180 s, Read
 again and Close), so a second reload cannot be asked for; the card says the same "Loading …"
 line and Run Diagnosis says "Disabled: a model load is in progress; diagnoses wait until it
-finishes." Cancel or × closes the drawer without reloading; while the reload runs the drawer
-stays open until its outcome is shown (a reload cannot be stopped). A Load from Research › Models
-refreshes this card too. Only one drawer is open at a time.
+finishes." Cancel or × closes the drawer without reloading. While the reload runs, Close or ×
+closes the drawer at once and the reload goes on (it cannot be stopped): the card keeps its
+"Loading …" line, and when the reload answers, the card shows the model then in use and its
+outcome is not shown again; "Change model…" meanwhile opens the drawer again on the reload's
+status. In Research › Models, Close closes the confirmation the same way. A Load from Research ›
+Models refreshes this card too. Only one drawer is open at a time.
 
 ### Research › Prepare › Datasets
 
@@ -2316,7 +2319,7 @@ a run.
   TrainingDeviceUnavailable: --device auto requires CUDA, …"), redacted for a read-only browser
   as the output is. Beside the run it says where the run's log is only when there is one (its
   `logs/train_….json`), else that there is none ("no run directory, so no log" for a run refused
-  before its first output). The last lines of its output follow
+  before it made its run directory). The last lines of its output follow
   under "Last output (N lines)": open in a window at least 1000 px tall, closed to that one line
   in a shorter one so the charts keep their room (opening or closing it holds for this page);
   four lines show at a time, the rest scroll in the box (in a narrow window all of them show).
@@ -2356,10 +2359,11 @@ When the run bar's dataset changes while the drawer is open (by hand, or with Da
 started, the latest run of the run bar's workspace (listed again every 10 seconds while the page
 is open, so a run started from the CLI appears once it writes its first checkpoint). Its header
 names the run and the dataset fingerprint the run used, read from its checkpoint: "✓ same as the
-run bar", amber "≠ not the selected dataset", or "recorded at the first checkpoint" before there
-is one. The snapshot sentence says how the run ended and the checkpoint to continue from, as a
-path relative to the workspaces root; a run that has no run directory (refused before its first
-output) says so, with no checkpoint, no log and nothing to chart. Below them, one figure of four charts sharing the epoch
+run bar", amber "≠ not the selected dataset", "recorded at the first checkpoint" while it runs
+without one yet, or "not recorded (the run saved no checkpoint)" once it has ended without one.
+The snapshot sentence says how the run ended and the checkpoint to continue from, as a path
+relative to the workspaces root; a run that has no run directory (refused before it made its run
+directory) says so, with no checkpoint, no log and nothing to chart. Below them, one figure of four charts sharing the epoch
 axis: Loss (train, and validation dashed), MRR (validation, Trainer top-20), Hits@K (validation,
 Trainer) and the learning rate on a log axis (a 0 or a missing value is a gap). Under it, the
 resources line (GPU and memory).

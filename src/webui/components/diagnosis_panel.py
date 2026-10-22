@@ -1905,11 +1905,27 @@ def _on_change_model(request: gr.Request) -> Tuple[Any, ...]:
     return tuple(opened.get(name, gr.update()) for name in CHANGE_OUTPUTS)
 
 
+#: While this page's reload runs, its Close, × and Cancel close the whole
+#: drawer at once in the page (the card keeps the reload's "Loading …" line),
+#: and the × is clicked for the server once the reload has answered; "Change
+#: model…" meanwhile shows the drawer again, on the reload's status
+#: (`model_list.load_guard`).
+CLOSE_WHILE_LOADING = {
+    "hide": "#shep-dx-change",
+    "then": "#shep-dx-change-close button",
+    "also": ["#shep-dx-change-close button", "#shep-dx-change-cancel"],
+    "openers": ["#shep-dx-change-btn"],
+}
+
+
 def close_change(phase: Any) -> Dict[str, Any]:
     """Cancel or ×: the drawer closes and an open confirmation is dropped
-    (nothing was reloaded: the reload runs only on its own button). While a
-    reload runs (`phase` "loading") the drawer stays: the reload cannot be
-    stopped, and its outcome must be seen. The confirmation box inside the
+    (nothing was reloaded: the reload runs only on its own button). A close
+    while a reload runs is done in the page at once and reaches this only
+    after the reload's answer (`CLOSE_WHILE_LOADING`); one that still finds
+    `phase` "loading" (sent before the reload began, not from the page) leaves
+    the drawer open: the reload cannot be stopped, and its outcome must be
+    seen. The confirmation box inside the
     drawer is reset in a second step (`reset_change`): a response that hides a
     column and updates a component inside it leaves detached page elements in
     the browser (Gradio 6.30, measured), so this one changes no component in
@@ -2077,7 +2093,8 @@ def create_diagnosis_tab(ctx: Any) -> None:
                 handle = ctx.create_model_list(
                     "clinical", head=_head, foot=_foot,
                     on_loading={"fn": card_loading_outputs, "inputs": [card_state],
-                                "outputs": [card_loading, run_btn, run_cover, run_reason]})
+                                "outputs": [card_loading, run_btn, run_cover, run_reason]},
+                    close_while_loading=CLOSE_WHILE_LOADING)
 
         # --- the candidates ---------------------------------------------------
         with gr.Column(elem_id="shep-dx-results", elem_classes=["shep-panel"], min_width=0):
@@ -2252,14 +2269,17 @@ def create_diagnosis_tab(ctx: Any) -> None:
     def _close_change_drawer(phase, evt: gr.EventData):
         return mapped(close_change(phase)) if _event_key(evt) == "close" else gr.skip()
 
+    # Each close ends with the shared list's page step: a close done in the
+    # page while a reload ran (`CLOSE_WHILE_LOADING`) is now done here too.
     change_close.click(_close_change_drawer, inputs=[handle.phase],
-                       outputs=outputs(*change_names), show_progress="hidden").then(**reset)
+                       outputs=outputs(*change_names), show_progress="hidden").then(
+        **reset).then(None, js=handle.after_close_js)
 
     def _cancel_change(phase):
         return mapped(close_change(phase))
 
     links["cancel"].click(_cancel_change, inputs=[handle.phase], outputs=outputs(*change_names),
-                          show_progress="hidden").then(**reset)
+                          show_progress="hidden").then(**reset).then(None, js=handle.after_close_js)
 
     # --- Run Diagnosis, the phenotypes, the table, the segments
     result_names = ("results_hd", "badge", "results_body", "results_state", "selected",
@@ -2530,6 +2550,7 @@ PAGE_CSS = f"""
 
 
 __all__ = [
+    "CLOSE_WHILE_LOADING",
     "FIELD_HELP",
     "PAGE_CSS",
     "SEGMENTS",

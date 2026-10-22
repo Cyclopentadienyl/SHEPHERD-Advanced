@@ -156,6 +156,10 @@ BANNER_TAIL_LINES = 12
 #: their labels in it (M5-3: at 460 the second column's digests ended 2 px
 #: past the card's inner edge).
 DETAILS_POPOVER_WIDTH = 480
+#: The dataset chip's stacking level: above the parameter fields' labels
+#: (Gradio's 40), which its Details popover opens over in a narrow window
+#: (M5-3: at 1280 x 720 "Learning Rate" and "Batch Size" were drawn on it).
+CHIP_Z_INDEX = 60
 
 
 def _random_seed() -> int:
@@ -778,8 +782,8 @@ def last_error_line(lines: Sequence[str]) -> Optional[str]:
 def _log_where(run: Optional[str], run_dir: Optional[Path]) -> str:
     """Where a failed run's log is, said only when it exists: its training log
     (``logs/train_*.json``) named; else that none is there (no log in its
-    ``logs/``; or no run directory, as a run refused before its first output
-    leaves it). Without `run_dir` (not known here) nothing is said of the log."""
+    ``logs/``; or no run directory, as a run refused before it made its run
+    directory leaves it). Without `run_dir` (not known here) nothing is said of the log."""
     if not run:
         return ""
     head = f'run <code>{r.e(run)}</code>'
@@ -800,6 +804,16 @@ def _log_where(run: Optional[str], run_dir: Optional[Path]) -> str:
 
 def _as_is(text: str) -> str:
     return text
+
+
+def read_only_scrub(root: Optional[Path]) -> Callable[[str], str]:
+    """A read-only request's redaction of a printed line (`redact`: no
+    absolute path), its leading indentation kept: `redact` joins whitespace,
+    and a traceback's lines and its ``^^^`` markers line up by their indent."""
+    def scrub(text: str) -> str:
+        text = str(text)
+        return text[:len(text) - len(text.lstrip())] + redact(text, root)
+    return scrub
 
 
 def _render_error_block(message: str, *, headline: str = "Training failed",
@@ -1072,10 +1086,12 @@ def _newest_checkpoint(run_dir: Path) -> Optional[Path]:
 
 
 def run_head_html(run: Optional[RunRef], ws: Mapping[str, Any], *, operator: bool,
-                  snapshot: Optional[Mapping[str, Any]]) -> str:
+                  snapshot: Optional[Mapping[str, Any]], live: bool = False) -> str:
     """"Run gat/<run>" and the dataset fingerprint the run used: from its
     checkpoint for an operator ("✓ same as the run bar" / amber "≠ not the
-    selected dataset" / "recorded at the first checkpoint"); for a read-only
+    selected dataset"; with no checkpoint, "recorded at the first checkpoint"
+    while the run is `live`, else "not recorded (the run saved no
+    checkpoint)", as the snapshot sentence under it says); for a read-only
     request "not shown · reading the checkpoint is an operator control"."""
     if run is None:
         return ('<div class="shep-panel-hd shep-rv-hd"><h2>Run</h2><span class="shep-muted">'
@@ -1087,7 +1103,8 @@ def run_head_html(run: Optional[RunRef], ws: Mapping[str, Any], *, operator: boo
         used = (f'<span class="shep-fpk">{label}:</span><span class="shep-tag shep-tag-grey">'
                 f'{_LOCK} not shown · reading the checkpoint is an operator control</span>')
     elif snapshot is None:
-        used = f'<span class="shep-fpk">{label}:</span><span class="shep-muted">recorded at the first checkpoint</span>'
+        none = "recorded at the first checkpoint" if live else "not recorded (the run saved no checkpoint)"
+        used = f'<span class="shep-fpk">{label}:</span><span class="shep-muted">{none}</span>'
     elif not snapshot.get("readable", True):
         used = f'<span class="shep-fpk">{label}:</span><span class="shep-muted">not read (the checkpoint cannot be read)</span>'
     else:
@@ -1118,8 +1135,8 @@ def run_snapshot_html(run: Optional[RunRef], status: Mapping[str, Any], *, opera
     except OSError:
         exists = False
     if not exists and not live:
-        # A run refused before its first output (e.g. "--device auto requires
-        # CUDA" on a host without it) never made its directory: there is no
+        # A run refused before it made its run directory (e.g. "--device
+        # auto requires CUDA" on a host without it): there is no
         # checkpoint and no log to point to (for any request: a directory's
         # existence is not checkpoint inspection).
         ended = pill_state(status)[1].split(" · ")[0].capitalize()
@@ -1263,7 +1280,7 @@ def training_chart_csv(data: Any) -> Dict[str, Any]:
 
 
 #: The chart's line for a run with no run directory: a live one has not made
-#: it yet; an ended one has none (a run refused before its first output).
+#: it yet; an ended one has none (a run refused before it made its run directory).
 NO_RUN_DIR_LIVE = "No epochs logged yet."
 NO_RUN_DIR_ENDED = "This run has no run directory, so it logged no epochs to chart."
 
@@ -1420,11 +1437,10 @@ def render(ws: Optional[Mapping[str, Any]], mode: Optional[Mapping[str, Any]],
     # A read-only request sees no absolute path: each printed text is redacted
     # before it is escaped (redacting the built markup took its closing tags
     # for paths: "</span>" became "<a path outside the workspaces root").
-    root = workspaces_root()[0] if not access.allowed else None
     banner_html, banner_key = _build_error_banner_payload(
         status if s == "failed" else {}, _get_pyg_warning(), run=run["label"] if run else None,
         run_dir=run["path"] if run else None,
-        scrub=(lambda text: redact(text, root)) if not access.allowed else _as_is)
+        scrub=_as_is if access.allowed else read_only_scrub(workspaces_root()[0]))
     if banner_key is None or banner_key in (dismissed or ()):
         banner_html = ""
     cache["banner_key"] = banner_key
@@ -1451,7 +1467,8 @@ def render(ws: Optional[Mapping[str, Any]], mode: Optional[Mapping[str, Any]],
         "page": tuple(page),
         "run_name": bool(access.allowed),
         "banner": banner_html or "",
-        "head": run_head_html(run, ws, operator=access.allowed, snapshot=snapshot),
+        "head": run_head_html(run, ws, operator=access.allowed, snapshot=snapshot,
+                              live=in_use and run is not None and not run.get("latest")),
         "snap": run_snapshot_html(run, status, operator=access.allowed, snapshot=snapshot),
         "charts": _chart_token(run, cache, live=in_use),
         "drawer_reason": (f'<div class="shep-drawer-why">{view["drawer_reason"]}</div>'
@@ -2394,7 +2411,8 @@ TOPIC_HELP = {
         "The dataset fingerprint the run's checkpoint records (the split manifest it trained "
         "on), compared in full with the run bar's dataset. Reading it opens the checkpoint, "
         "which is an operator control (checkpoint inspection); a read-only request is not "
-        "shown it. Before the first checkpoint nothing records it yet.",
+        "shown it. Before the first checkpoint nothing records it yet, and a run that ended "
+        "without one never recorded it.",
     ),
 }
 
@@ -2795,7 +2813,7 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} #run_name input {{ border: 1px solid var(--shep-border-2) !important; border-radius: 8px; padding: 6px 10px !important; background: #fff; }}
 {_PAGE} #run_name input:disabled {{ background: var(--shep-grey-50); color: var(--shep-muted); }}
 {_PAGE} .shep-rb-row > button {{ flex: none !important; width: auto !important; min-width: max-content !important; padding: 0 14px !important; height: 40px; white-space: nowrap; }}
-{_PAGE} #shep-train-chip {{ flex: 1 1 360px !important; position: relative; z-index: 20; }}
+{_PAGE} #shep-train-chip {{ flex: 1 1 360px !important; position: relative; z-index: {CHIP_Z_INDEX}; }}
 {_PAGE} .shep-rb-chip {{ display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 15px; position: relative; }}
 /* The identity's parts wrap one by one (never hidden): "built …", the fingerprint, then the marks with "Details ›". */
 {_PAGE} .shep-rb-chip > .shep-ds {{ display: contents; }}
@@ -2864,7 +2882,7 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-banner-more {{ margin-top: 6px; }}
 {_PAGE} .shep-banner-more > summary {{ cursor: pointer; font-size: 14px; font-weight: 600; color: var(--shep-red-700); width: max-content; max-width: 100%; }}
 {_PAGE} .shep-banner-n {{ font-weight: 400; color: var(--shep-text-2); }}
-{_PAGE} .shep-banner-tail {{ margin: 6px 0 0; padding: 6px 10px; background: #fff; border: 1px solid var(--shep-red-200); border-radius: 6px; color: var(--shep-text); font-family: var(--shep-mono); font-size: 14px; line-height: 1.35; white-space: pre-wrap; overflow-wrap: anywhere; max-height: calc(4 * 1.35em + 14px); overflow: auto; }}
+{_PAGE} .shep-banner-tail {{ margin: 6px 0 0; padding: 6px 10px; background: #fff; border: 1px solid var(--shep-red-200); border-radius: 6px; color: var(--shep-text); font-family: var(--shep-mono) !important; font-size: 14px; line-height: 1.35; white-space: pre-wrap; overflow-wrap: anywhere; max-height: calc(4 * 1.35em + 14px); overflow: auto; }}
 {_PAGE} #shep-train-params-bd, {_PAGE} #shep-train-drawer-bd {{ padding: 4px 16px 12px !important; gap: 10px !important; }}
 {_PAGE} #shep-train-drawer {{ display: none !important; }}
 {_PAGE} .shep-train-drawer-open #shep-train-drawer {{ display: flex !important; }}
