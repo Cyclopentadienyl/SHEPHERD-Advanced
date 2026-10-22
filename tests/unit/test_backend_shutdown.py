@@ -383,6 +383,58 @@ def test_every_signal_a_job_no_longer_gets_is_routed_to_the_shutdown(server_sign
 
 
 @POSIX
+def test_a_signal_the_server_handles_itself_is_wrapped_whatever_its_name(server_signals):
+    """Verification of P23-2, T2-V4: the server's handlers are told by the
+    handler, never by a copy of the server's list of signal names. A server
+    that handles SIGHUP itself (a uvicorn whose set grew) has its handler
+    wrapped like SIGTERM's, so the hangup starts the job's stop; with the
+    copied list it was left unwrapped and the job trained on."""
+    api, server, calls = server_signals
+    signal.signal(signal.SIGHUP, server.handle_exit)
+
+    async def scenario():
+        signals = api._ShutdownSignals(api.app)
+        signals.install()
+        try:
+            await _delivered(signal.SIGHUP)
+            assert server.seen == ["SIGHUP"]
+            assert calls["stops"] == ["backend-stops-its-job"], "the server's own SIGHUP " \
+                "handler was not wrapped"
+        finally:
+            calls["release"].set()
+            signals.end_jobs()
+            signals.restore()
+
+    _in_the_event_loop(scenario)
+    assert signal.getsignal(signal.SIGHUP) == server.handle_exit
+
+
+@POSIX
+def test_uvicorn_s_own_handlers_are_the_ones_wrapped():
+    """uvicorn's real ``capture_signals``: every signal it handles itself
+    (``uvicorn.server.HANDLED_SIGNALS``) is wrapped, its handler kept as the
+    one called first, with nothing in the backend that lists those signals."""
+    import uvicorn
+    import uvicorn.server
+
+    import src.api.main as api
+
+    server = uvicorn.Server(uvicorn.Config(api.app))
+
+    async def scenario():
+        with server.capture_signals():
+            signals = api._ShutdownSignals(api.app)
+            signals.install()
+            try:
+                for number in uvicorn.server.HANDLED_SIGNALS:
+                    assert signals._installed[number][0] == server.handle_exit, number
+            finally:
+                signals.restore()
+
+    _in_the_event_loop(scenario)
+
+
+@POSIX
 def test_without_a_signal_the_lifespan_s_end_stops_the_job_itself(server_signals):
     """No signal began the shutdown (an in-process client, a server told to
     exit): `end_jobs` stops the job, and no thread was started."""
@@ -422,8 +474,20 @@ def test_a_handler_replaced_since_is_not_put_back(server_signals):
 @POSIX
 def test_signals_no_server_set_are_left_as_they_are(server_signals):
     """SIGHUP ignored (nohup) or handled by someone else, SIGINT at Python's
-    default handler, or no handler of a server's for SIGTERM: left as they are."""
+    default handler or someone else's, or no handler of a server's for
+    SIGTERM: left as they are."""
     api, server, calls = server_signals
+
+    def someone_else_s(number, frame):
+        pass
+
+    async def ctrl_c_handled_by_someone_else():
+        signal.signal(signal.SIGINT, someone_else_s)
+        signals = api._ShutdownSignals(api.app)
+        signals.install()
+        assert signal.getsignal(signal.SIGINT) is someone_else_s
+        assert signal.SIGINT not in signals._installed
+        signals.restore()
 
     async def ignored_hangup_and_default_ctrl_c():
         signal.signal(signal.SIGHUP, signal.SIG_IGN)
@@ -444,6 +508,7 @@ def test_signals_no_server_set_are_left_as_they_are(server_signals):
         assert signals._installed == {} and signal.getsignal(signal.SIGHUP) is signal.SIG_DFL
 
     _in_the_event_loop(ignored_hangup_and_default_ctrl_c)
+    _in_the_event_loop(ctrl_c_handled_by_someone_else)
     _in_the_event_loop(no_server)
 
 

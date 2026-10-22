@@ -238,11 +238,6 @@ async def lifespan(app: FastAPI):
             shutdown_signals.restore()
 
 
-#: The signals uvicorn's server handles itself (its own ``HANDLED_SIGNALS``):
-#: their handlers are the server's, wrapped by `_ShutdownSignals`.
-_SERVER_SIGNALS = ("SIGINT", "SIGTERM", "SIGBREAK")
-
-
 class _ShutdownSignals:
     """**The job's stop starts at the signal that stops the backend**
     (verification of the owner's decision, 2026-10-22). uvicorn's shutdown
@@ -257,11 +252,14 @@ class _ShutdownSignals:
     So, while the application runs, **every signal that no longer reaches a
     job because it leads its own group** (`JOB_DETACHED_SIGNALS`, defined
     once beside the spawn; root-cause review P23-2) ends in the server's
-    orderly shutdown: the server's handlers for SIGINT and SIGTERM (and
-    SIGBREAK on Windows) are wrapped, and each other one that still has its
-    default action (SIGHUP, a closed terminal; SIGQUIT, the terminal's
-    Ctrl-\\, which used to leave the job training with the lock) gets the
-    SIGTERM handler, wrapped the same way. SIGQUIT keeps its meaning: uvicorn
+    orderly shutdown: each one whose handler is the server's own, the one
+    SIGTERM has, is wrapped (uvicorn's SIGINT and SIGTERM, and SIGBREAK on
+    Windows), and each other one that still has its default action (SIGHUP,
+    a closed terminal; SIGQUIT, the terminal's Ctrl-\\, which used to leave
+    the job training with the lock) gets the SIGTERM handler, wrapped the
+    same way. **The server's handlers are told by the handler, never by a
+    list of signal names** (verification of P23-2, T2-V4), so whatever set
+    of signals the server handles itself, each is wrapped. SIGQUIT keeps its meaning: uvicorn
     raises the signal it captured again once it has shut down, so the backend
     still ends by SIGQUIT, after the job's stop. Each runs the server's
     handler as before (a second Ctrl-C is still uvicorn's forced quit), then
@@ -276,10 +274,11 @@ class _ShutdownSignals:
 
     Installed only in the main thread, where a server sets its handlers (an
     in-process test client runs the lifespan elsewhere), and only when
-    SIGTERM has a handler to route to (a server's); SIGINT's default handler
-    (no server set it) is not wrapped, and a routed signal is taken only
-    where it still has its default action (SIGHUP ignored under ``nohup``, or
-    one handled by someone else, is left as it is). `restore` puts back each
+    SIGTERM has a handler to route to (a server's); a handler that is not the
+    server's is not wrapped (SIGINT's default handler, which no server set,
+    or one of someone else's), and a routed signal is taken only where it
+    still has its default action (SIGHUP ignored under ``nohup`` is left as
+    it is). `restore` puts back each
     handler replaced here that is still the one installed here (after a
     forced quit uvicorn has already put back its own).
     """
@@ -292,9 +291,10 @@ class _ShutdownSignals:
         self._stopping: Optional[threading.Thread] = None
 
     def install(self) -> None:
-        """Wrap the server's handlers, and route the other signals that no
-        longer reach a job (`JOB_DETACHED_SIGNALS`) to its SIGTERM handler;
-        in the event loop, at startup."""
+        """Wrap the server's handlers (each listed signal whose handler is
+        SIGTERM's), and route the other signals that no longer reach a job
+        (`JOB_DETACHED_SIGNALS`) to its SIGTERM handler; in the event loop,
+        at startup."""
         from src.api.services.training_manager import JOB_DETACHED_SIGNALS
 
         if threading.current_thread() is not threading.main_thread():
@@ -310,8 +310,7 @@ class _ShutdownSignals:
             handler = signal.getsignal(number)
             if handler is signal.SIG_DFL:
                 self._wrap(number, termination, replaced=signal.SIG_DFL)
-            elif (name in _SERVER_SIGNALS and callable(handler)
-                  and handler is not signal.default_int_handler):
+            elif handler == termination:  # the server's own: a bound method, compared equal
                 self._wrap(number, handler, replaced=handler)
 
     def _wrap(self, number: int, server_handler: Callable[[int, Any], Any],
