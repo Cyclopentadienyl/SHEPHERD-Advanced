@@ -433,6 +433,8 @@ def build_knowledge_graph(
     print(f"      --kg-path {kg_path} --output-dir {workspace}")
     if generate_samples:
         print("\n  # Train model")
+        for line in _gpu_lock_step(workspace):
+            print(line)
         print(f"  python scripts/train_model.py --data-dir {workspace} --epochs 50")
     else:
         print("\n  # Complete the workspace before training. Cohorts cannot be")
@@ -446,6 +448,34 @@ def build_knowledge_graph(
         print(f"      --mondo-path {mondo.source_path} --hpo-path {hpo.source_path} \\")
         print("      --num-train <n> --num-val <n>")
     print("=" * 60)
+
+
+def _gpu_lock_step(workspace: Path) -> list:
+    """The printed training step's GPU lock, as the lock's one rule answers for
+    this shell (`gpu_lock.lock_state`; root-cause review, INT-3): the lock
+    `train_model.py` takes here, or why it is refused in its own words, with
+    the setup_demo-style export when nothing is set. `train_model.py` refuses
+    to run without the lock (review of 8242b47, P2-4), so a bare command was
+    false in a fresh shell; a copied hint would drift from the rule."""
+    import textwrap
+
+    from src.utils.gpu_lock import WORKSPACES_ROOT_ENV, lock_state
+
+    state = lock_state()
+    if state["configured"]:
+        said = (f"In this shell it takes the GPU lock {state['path']} ({state['source']}), "
+                "the one the service's jobs take when it names the same setting "
+                "(deployment guide §4.11).")
+    else:
+        said = f"Refused in this shell until the GPU lock is configured: {state['problem']}"
+    lines = [f"  # {line}" for line in textwrap.wrap(said, 86, break_long_words=False,
+                                                     break_on_hyphens=False)]
+    if state["unset"]:
+        root = workspace.resolve().parent
+        lines.append("  # For example, with this workspace's parent as the service's root:")
+        lines.append(f'  set "{WORKSPACES_ROOT_ENV}={root}"' if sys.platform == "win32"
+                     else f"  export {WORKSPACES_ROOT_ENV}={root}")
+    return lines
 
 
 def main():

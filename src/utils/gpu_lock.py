@@ -51,8 +51,15 @@ itself; a description whose process has exited is never named as the holder.
   leaves the lock with that child until it exits; the message then says the
   recorded holder has exited. A job the runner starts leads its own process
   group, which a stop's SIGTERM and SIGKILL reach whole and which the runner
-  ends before it frees the slot (`training_manager`); a CLI killed by hand
-  with `kill -9 <pid>` leaves its forked workers to end by themselves.
+  ends before it frees the slot (`training_manager`). A training CLI
+  (`train_model.py`, `setup_demo.py --train-model`) whose main process alone
+  is ended, by `kill <pid>` or `kill -9 <pid>`, leaves its forked DataLoader
+  workers holding the lock until they notice (torch's 5 s watchdog plus the
+  sample in progress, longer if one hangs); `kill -INT <pid>` (Ctrl-C's
+  signal, the runner's own graceful step) releases it at once, even sent to
+  the main process alone, and `kill -TERM -- -<pid>` ends the whole group
+  when the CLI leads one (a job of an interactive shell). `measure_scorer.py`
+  forks no workers.
 - **Local machine.** The lock file belongs on a local filesystem; the liveness
   hint in the message is only given for a holder on this host.
 
