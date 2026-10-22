@@ -1374,6 +1374,25 @@ def test_the_test_page_and_datasets_share_one_redaction():
 
 
 
+def test_the_notes_who_field_holds_a_normal_name():
+    """M5-3: "Who" was 166 px wide at 1920 x 1080, so "research screenshots v2"
+    showed without "v2". It takes two fifths of the note row, never under
+    NOTE_FIELD_MIN_WIDTH px (the row wraps first), beside "What was found"."""
+    demo, _ctx, _registry = _page_component()
+    by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
+    who, what = by_id["shep-test-note-who"], by_id["shep-test-note-what"]
+
+    def row_of(block):
+        while block is not None and "shep-test-noterow" not in (block.elem_classes or []):
+            block = block.parent
+        return block
+
+    assert row_of(who) is not None and row_of(who) is row_of(what)
+    assert (who.scale, what.scale) == (2, 3)
+    assert who.min_width == what.min_width == tp.NOTE_FIELD_MIN_WIDTH
+    assert tp.NOTE_FIELD_MIN_WIDTH >= 240
+
+
 def test_a_refusal_worded_outside_the_known_forms_still_names_no_case_id():
     """M5-3 review ARCH-10 (b): `case_free` knows the importer's present
     wordings; a future one ("cases[2]: duplicate of case_id 'PAT-9'", which it

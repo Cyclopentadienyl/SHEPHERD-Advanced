@@ -2225,8 +2225,12 @@ pipeline with the workspace and checkpoint the server lists. It replaces what ev
 served; results already produced keep their own identity, and diagnoses wait while the pipeline
 reloads. While the confirmation is open the list's own footer is hidden, so the from → to rows
 and that sentence stay in view; "Keep <old>" drops the confirmation. While the confirmation is
-open, and while the reload runs, Run Diagnosis is disabled: "Disabled: finish or cancel the model
-change first." Cancel or × closes the drawer without reloading; while the reload runs the drawer
+open, Run Diagnosis is disabled: "Disabled: finish or cancel the model change first." Once
+"🔒 Reload with <new>" is clicked, the confirmation shows only the reload's status ("Loading
+<12 hex> for every session… 00:00:42") and Close (closing does not stop it; after 180 s, Read
+again and Close), so a second reload cannot be asked for; the card says the same "Loading …"
+line and Run Diagnosis says "Disabled: a model load is in progress; diagnoses wait until it
+finishes." Cancel or × closes the drawer without reloading; while the reload runs the drawer
 stays open until its outcome is shown (a reload cannot be stopped). A Load from Research › Models
 refreshes this card too. Only one drawer is open at a time.
 
@@ -2307,7 +2311,12 @@ a run.
   `POST /api/v1/training/start?expected_dataset_fingerprint=<64 hex digits>`: another manifest is
   refused with 409, a value that is not 64 lowercase hex digits with 422 before the service is
   reached; without it nothing is checked, as before.
-- A failed run's **error banner** spans the page, with the run and the last lines of its output
+- A failed run's **error banner** spans the page. Under its headline ("Training failed: Process
+  exited with code 1") is the last error line the run printed ("Last error printed:
+  TrainingDeviceUnavailable: --device auto requires CUDA, …"), redacted for a read-only browser
+  as the output is. Beside the run it says where the run's log is only when there is one (its
+  `logs/train_….json`), else that there is none ("no run directory, so no log" for a run refused
+  before its first output). The last lines of its output follow
   under "Last output (N lines)": open in a window at least 1000 px tall, closed to that one line
   in a shorter one so the charts keep their room (opening or closing it holds for this page);
   four lines show at a time, the rest scroll in the box (in a narrow window all of them show).
@@ -2349,7 +2358,8 @@ is open, so a run started from the CLI appears once it writes its first checkpoi
 names the run and the dataset fingerprint the run used, read from its checkpoint: "✓ same as the
 run bar", amber "≠ not the selected dataset", or "recorded at the first checkpoint" before there
 is one. The snapshot sentence says how the run ended and the checkpoint to continue from, as a
-path relative to the workspaces root. Below them, one figure of four charts sharing the epoch
+path relative to the workspaces root; a run that has no run directory (refused before its first
+output) says so, with no checkpoint, no log and nothing to chart. Below them, one figure of four charts sharing the epoch
 axis: Loss (train, and validation dashed), MRR (validation, Trainer top-20), Hits@K (validation,
 Trainer) and the learning rate on a log axis (a 0 or a missing value is a gap). Under it, the
 resources line (GPU and memory).

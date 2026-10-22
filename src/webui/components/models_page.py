@@ -1698,6 +1698,10 @@ PAGE_CSS = f"""
      longest word, so "contested" stays one word); the table scrolls in its
      region rather than squeezing a word. */
   {_PAGE} .shep-mtbl td {{ overflow-wrap: break-word; }}
+  /* The table fits its frame at 1440 x 900 with a classic 15 px scrollbar beside it (M5-3:
+     at 10 px a side its columns' longest words, "run 2026-10-21 18:03", a 12-hex digest,
+     "Validation", "non-deterministic", "contested", made it 602 px in a 589 px frame). */
+  {_PAGE} .shep-mtbl th, {_PAGE} .shep-mtbl td {{ padding-left: 7px; padding-right: 7px; }}
   /* Below 1000 px the header and the table do not both fit: the list panel
      scrolls as one region (the header first, then the rows under the table's
      sticky header), never a header region above a table region. */

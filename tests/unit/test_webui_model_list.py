@@ -677,10 +677,12 @@ def test_load_and_reload_refresh_the_chips_and_reload_sets_the_trigger(root, ser
     chips = _after(demo, request)
     assert chips.fn is read_chips and chips.outputs == [ctx.chips]
     loading = _named(demo, "_loading")
-    assert loading.outputs == [handle.phase] and loading.queue is False
+    assert loading.outputs == [handle.phase, handle.reload_button, handle.keep_button]
+    assert loading.queue is False
     assert '"shep-models-clinical-confirm"' in loading.js
+    assert '"shep-models-clinical-reload"' in loading.js        # Reload off at once, in the page
     confirm = _after(demo, loading)
-    assert confirm.name == "_confirm"
+    assert confirm.name == "_confirm" and handle.reload_done is not None
     assert ctx.served_model_changed in confirm.outputs and handle.phase in confirm.outputs
     chips = _after(demo, confirm)
     assert chips.fn is read_chips
@@ -714,6 +716,38 @@ def test_confirm_returns_the_phase_and_the_served_model_changed_token(root, serv
     monkeypatch.setattr(ml, "finish_load", lambda *a, **k: (_ for _ in ()).throw(KeyError("x")))
     out = asyncio.run(confirm.fn(plan, operator_request(monkeypatch)))
     assert out[phase_at] == "idle" and "The Load stopped with an error." in out[2]
+
+
+def test_while_a_reload_runs_the_confirmation_shows_only_its_status_and_close():
+    """M5-3 (the mockup's footer after "Reload with …"): Reload and Keep were
+    still drawn while the reload ran, and a second click could ask for a second
+    reload. The step before the reload hides Reload and makes Keep "Close"
+    (closing does not stop it); the page's script disables Reload at once, and
+    counts in any element marked for this load (Diagnosis' card)."""
+    phase, reload_, keep = ml.loading_buttons({"to": {"sha256": "a" * 64}})
+    assert phase == "loading" and reload_["visible"] is False and keep["value"] == "Close"
+    assert ml.loading_buttons(None) == ("idle", gr.update(), gr.update())
+    script = ml.start_wait_js("x-confirm", "x-reload")
+    assert 'getElementById("x-reload")' in script and "again.disabled = true" in script
+    assert "data-shep-load-elapsed" in script and "data-shep-load-card" in script
+    # A page's own outputs ride on the same step, before the reload holds the server.
+    from src.webui.shell import standalone_context
+
+    with gr.Blocks() as demo:
+        ctx = standalone_context(demo)
+        extra_in, extra_out = gr.State("s"), gr.HTML("")
+        seen = []
+        handle = ctx.create_model_list(
+            "clinical", on_loading={"fn": lambda plan, s: seen.append((plan, s)) or ("line",),
+                                    "inputs": [extra_in], "outputs": [extra_out]})
+    loading = _named(demo, "_loading")
+    assert loading.inputs == [handle.plan, extra_in]
+    assert loading.outputs == [handle.phase, handle.reload_button, handle.keep_button, extra_out]
+    plan = {"to": {"sha256": "b" * 64}}
+    out = loading.fn(plan, "s")
+    assert out[0] == "loading" and out[2]["value"] == "Close" and out[3] == "line"
+    assert seen == [(plan, "s")]
+    assert loading.fn(None, "s")[0] == "idle" and seen[-1] == (None, "s")
 
 
 def test_keep_closes_the_confirmation(root, serving, monkeypatch):
@@ -751,7 +785,13 @@ def test_both_presets_sit_in_one_page_each_counting_in_its_own_confirmation():
     scripts = sorted(fn.js for fn in demo.fns.values() if fn.name == "_loading")
     assert len(scripts) == 2
     assert '"shep-models-clinical-confirm"' in scripts[0] + scripts[1]
-    assert all(script.count("shep-models-") == 1 for script in scripts)
+    # Each names only its own list's confirmation and Reload button.
+    import re
+
+    for script in scripts:
+        named = re.findall(r'"(shep-models-[a-z]+)-(confirm|reload)"', script)
+        assert sorted(kind for _p, kind in named) == ["confirm", "reload"]
+        assert len({prefix for prefix, _k in named}) == 1
     assert "document.querySelector('.shep-model-confirm')" not in "".join(scripts)
 
 

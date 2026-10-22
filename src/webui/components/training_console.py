@@ -22,7 +22,9 @@ reason line saying why an action is disabled (D8's short words for a read-only
 request; the GPU job holding the slot, from the job runner and the GPU lock's
 holder record, with "Open Test ›" for a test run), and 🔒 Start, 🔒 Continue…
 and 🔒 Stop. Stop asks first, in the code's words ("Stop training" / "Keep
-training"). A failed run's error banner spans the page with its output tail.
+training"). A failed run's error banner spans the page: under its headline the
+last error line the run printed, beside it where the run's log is (only when it
+has one), then its output tail.
 
 **Start sends the full dataset fingerprint it showed** (the session's
 ``gr.State``, never the client's); the job runner reads the manifest again and
@@ -87,7 +89,7 @@ import random
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import gradio as gr
 
@@ -149,6 +151,11 @@ LOCK_READ_SECONDS = 5.0
 LATEST_READ_SECONDS = 10.0
 #: Lines of a failed run's output the banner shows.
 BANNER_TAIL_LINES = 12
+#: The dataset chip's "Details ›" popover is this wide (px, at most the window
+#: less 48): "What the manifest binds" lays four columns of 12-hex digests and
+#: their labels in it (M5-3: at 460 the second column's digests ended 2 px
+#: past the card's inner edge).
+DETAILS_POPOVER_WIDTH = 480
 
 
 def _random_seed() -> int:
@@ -687,9 +694,14 @@ def run_bar_view(status: Mapping[str, Any], ws: Mapping[str, Any], mode: Mapping
     view["resume"] = why is None
     text = "Start disabled: close Continue… to start a new run."
     if why:
-        text += f" Continue Training disabled: {why}"
+        # One word group per sentence (`renderers.word_groups`): a line breaks
+        # between the two sentences, never leaving the last word of the second
+        # alone on a line under the first ("…cannot be" / "continued.").
+        view["reason"] = (f'<span class="shep-rb-why">{_NO}<span>'
+                          f'{r.word_groups(text, f"Continue Training disabled: {why}")}</span></span>')
         view["drawer_reason"] = line(_NO, f"Continue Training, in the run bar above, is disabled: {why}")
-    view["reason"] = line(_NO, text)
+    else:
+        view["reason"] = line(_NO, text)
     return view
 
 
@@ -733,16 +745,82 @@ def _get_pyg_warning() -> Optional[str]:
         return None
 
 
+#: A logging line at ERROR or CRITICAL ("<date> <time> - <logger> - ERROR -
+#: <message>", train_model.py's format, or logging's default "ERROR:<logger>:
+#: <message>"): its message.
+_LOG_ERROR = re.compile(
+    r"^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:[,.]\d+)? - \S+ - (?:ERROR|CRITICAL) - (?P<m>\S.*)$"
+    r"|^(?:ERROR|CRITICAL):[\w.]*:(?P<d>\S.*)$")
+#: The last line of a Python traceback: an exception's (dotted) class name,
+#: then ": message" or nothing, not indented, under the traceback's indented
+#: lines.
+_EXCEPTION_LINE = re.compile(r"^(?:[A-Za-z_]\w*\.)*[A-Z]\w*(?::\s+\S.*)?$")
+
+
+def last_error_line(lines: Sequence[str]) -> Optional[str]:
+    """The last error line a run printed in `lines` (its output tail), or None:
+    a logging line at ERROR or CRITICAL (its message), or the exception line
+    that ends a Python traceback (as printed: the class and the message),
+    whichever came last. Nothing is guessed from other lines."""
+    found = None
+    previous = ""
+    for line in lines:
+        text = line.rstrip()
+        logged = _LOG_ERROR.match(text)
+        if logged:
+            found = (logged.group("m") or logged.group("d")).strip()
+        elif (text and previous[:1].isspace() and _EXCEPTION_LINE.match(text)):
+            found = text
+        previous = line
+    return found
+
+
+def _log_where(run: Optional[str], run_dir: Optional[Path]) -> str:
+    """Where a failed run's log is, said only when it exists: its training log
+    (``logs/train_*.json``) named; else that none is there (no log in its
+    ``logs/``; or no run directory, as a run refused before its first output
+    leaves it). Without `run_dir` (not known here) nothing is said of the log."""
+    if not run:
+        return ""
+    head = f'run <code>{r.e(run)}</code>'
+    if run_dir is None:
+        return f'<span class="shep-banner-where">{head}</span>'
+    try:
+        exists = Path(run_dir).is_dir()
+    except OSError:
+        exists = False
+    if not exists:
+        said = "no run directory, so no log"
+    else:
+        log = training_manager.metrics_log_file(Path(run_dir))
+        said = (f'its log: <code>logs/{r.e(log.name)}</code>' if log is not None
+                else 'no log in its <code>logs/</code>')
+    return f'<span class="shep-banner-where">{head} · {said}</span>'
+
+
+def _as_is(text: str) -> str:
+    return text
+
+
 def _render_error_block(message: str, *, headline: str = "Training failed",
-                        run: Optional[str] = None) -> str:
-    """The red block: the headline, the run and where its log is, Dismiss,
-    and the output tail (monospace, escaped) in a disclosure, open as sent;
-    the banner's script closes it on a wide window under `BANNER_OPEN_HEIGHT`
-    px tall, where it would squeeze the charts (`_BANNER_JS`)."""
+                        run: Optional[str] = None, run_dir: Optional[Path] = None,
+                        scrub: Callable[[str], str] = _as_is) -> str:
+    """The red block: the headline, the run and where its log is (only when
+    there is one), Dismiss; under the headline the last error line the run
+    printed (`last_error_line`), so the cause is read without scrolling; and
+    the output tail (monospace, escaped) in a disclosure, open as sent; the
+    banner's script closes it on a wide window under `BANNER_OPEN_HEIGHT` px
+    tall, where it would squeeze the charts (`_BANNER_JS`). Every text the run
+    printed goes through `scrub` (a read-only request's redaction), the cause
+    as the tail's lines, and then is escaped: the redaction reads text, never
+    the markup around it."""
     first, _sep, tail = str(message).partition("\n\n--- Last output ---\n")
-    lines = tail.splitlines()[-BANNER_TAIL_LINES:] if tail else []
-    where = (f'<span class="shep-banner-where">run <code>{r.e(run)}</code> · full log in its '
-             '<code>logs/</code></span>' if run else "")
+    every = tail.splitlines() if tail else []
+    lines = [scrub(line) for line in every[-BANNER_TAIL_LINES:]]
+    cause = last_error_line(every)
+    cause_html = (f'<div class="shep-banner-cause"><span class="shep-banner-k">Last error '
+                  f'printed:</span> <span class="shep-banner-v">{r.e(scrub(cause))}</span></div>'
+                  if cause else "")
     count = f'{len(lines)} line{"" if len(lines) == 1 else "s"}'
     body = ('<details class="shep-banner-more" open><summary>Last output '
             f'<span class="shep-banner-n">({count})</span></summary>'
@@ -750,35 +828,39 @@ def _render_error_block(message: str, *, headline: str = "Training failed",
             if lines else "")
     return ('<div class="shep-banner shep-banner-red" role="alert">'
             f'<div class="shep-banner-hd"><span class="shep-banner-h">⚠ {r.e(headline)}: '
-            f'{r.e(first.strip())}</span>{where}'
+            f'{r.e(scrub(first.strip()))}</span>{_log_where(run, run_dir)}'
             '<button type="button" class="shep-btn shep-banner-x" data-act="dismiss">× Dismiss</button>'
-            f'</div>{body}</div>')
+            f'</div>{cause_html}{body}</div>')
 
 
-def _render_warning_block(message: str) -> str:
+def _render_warning_block(message: str, scrub: Callable[[str], str] = _as_is) -> str:
     """The amber block for a non-fatal advisory."""
     return ('<div class="shep-banner shep-banner-amber" role="status">'
-            f'<div class="shep-banner-hd"><span class="shep-banner-h">⚠ Warning: {r.e(message)}</span>'
+            f'<div class="shep-banner-hd"><span class="shep-banner-h">⚠ Warning: '
+            f'{r.e(scrub(str(message)))}</span>'
             '<button type="button" class="shep-btn shep-banner-x" data-act="dismiss">× Dismiss</button>'
             '</div></div>')
 
 
 def _build_error_banner_payload(
     status_info: Mapping[str, Any], pyg_warning: Optional[str], *, run: Optional[str] = None,
+    run_dir: Optional[Path] = None, scrub: Callable[[str], str] = _as_is,
 ) -> Tuple[Optional[str], Optional[str]]:
     """``(html, key)`` for the banner, or ``(None, None)`` when nothing must
     show. ``key`` names the content, so a session's dismissal holds until it
-    changes (a new or different error shows again)."""
+    changes (a new or different error shows again). `scrub` redacts each text
+    before it is escaped (a read-only request: no absolute path)."""
     blocks: List[str] = []
     key_parts: List[str] = []
     error_msg = status_info.get("error_message")
     if error_msg:
         epoch = _epochs(status_info)
         headline = f"Training failed at {epoch}" if epoch else "Training failed"
-        blocks.append(_render_error_block(error_msg, headline=headline, run=run))
+        blocks.append(_render_error_block(error_msg, headline=headline, run=run, run_dir=run_dir,
+                                          scrub=scrub))
         key_parts.append("ERR:" + str(error_msg))
     if pyg_warning:
-        blocks.append(_render_warning_block(pyg_warning))
+        blocks.append(_render_warning_block(pyg_warning, scrub))
         key_parts.append("PYG:" + str(pyg_warning))
     if not blocks:
         return None, None
@@ -1029,24 +1111,41 @@ def run_snapshot_html(run: Optional[RunRef], status: Mapping[str, Any], *, opera
     if run is None:
         return ('<p class="shep-rv-snap">No training job since the server started, and the run '
                 'bar’s dataset has no runs yet: start one with the parameters on the left.</p>')
-    logs = "Logs: the run directory’s <code>logs/</code>."
     s = (status.get("status") or "idle") if not run.get("latest") else "latest"
     live = s in ("running", "stopping")
+    try:
+        exists = Path(run["path"]).is_dir()
+    except OSError:
+        exists = False
+    if not exists and not live:
+        # A run refused before its first output (e.g. "--device auto requires
+        # CUDA" on a host without it) never made its directory: there is no
+        # checkpoint and no log to point to (for any request: a directory's
+        # existence is not checkpoint inspection).
+        ended = pill_state(status)[1].split(" · ")[0].capitalize()
+        state = (f"{ended} ({_epochs(status)}). " if _epochs(status) else f"{ended}. ") \
+            if s in ("completed", "stopped", "failed") else ""
+        return (f'<p class="shep-rv-snap">{r.e(state)}No run directory exists for this run, so '
+                'it has no checkpoint and no log.</p>')
+    # A live run's directory may not exist yet (it is made after the run's
+    # checks): the logs are pointed to once it does.
+    logs = "Logs: the run directory’s <code>logs/</code>." if exists else ""
     if not operator:
         state = (f"Running: {_epochs(status)}." if live and _epochs(status) else
                  "Running." if live else
                  f"{pill_state(status)[1].split(' · ')[0].capitalize()} ({_epochs(status)})."
                  if s in ("completed", "stopped", "failed") and _epochs(status) else "")
+        where = (" Logs: the run directory’s <code>logs/</code> on the server." if exists else "")
         return (f'<p class="shep-rv-snap">{r.e(state)} The checkpoint path and snapshot are shown '
                 'where the operator controls are: reading the run’s checkpoint is checkpoint '
-                'inspection. Logs: the run directory’s <code>logs/</code> on the server.</p>')
+                f'inspection.{where}</p>')
     if live:
         newest = _newest_checkpoint(run["path"])
         where = (f" The newest checkpoint file is {r.e(_shown_path(newest))}." if newest
                  else " No checkpoint has been written yet.")
         epochs = _epochs(status)
-        return (f'<p class="shep-rv-snap">Running{": " + r.e(epochs) if epochs else ""}.{where} '
-                f'{logs}</p>')
+        return (f'<p class="shep-rv-snap">Running{": " + r.e(epochs) if epochs else ""}.{where}'
+                f'{" " + logs if logs else ""}</p>')
     sentence = _snapshot_sentence(dict(snapshot) if snapshot else None)
     return f'<p class="shep-rv-snap">{r.e(sentence)} · {logs}</p>'
 
@@ -1163,11 +1262,27 @@ def training_chart_csv(data: Any) -> Dict[str, Any]:
             "csv": _metrics_csv_text(training_manager.get_metrics_history(path))}
 
 
-def _chart_token(run: Optional[RunRef], cache: Dict[str, Any]) -> Dict[str, Any]:
+#: The chart's line for a run with no run directory: a live one has not made
+#: it yet; an ended one has none (a run refused before its first output).
+NO_RUN_DIR_LIVE = "No epochs logged yet."
+NO_RUN_DIR_ENDED = "This run has no run directory, so it logged no epochs to chart."
+
+
+def _chart_token(run: Optional[RunRef], cache: Dict[str, Any], *,
+                 live: bool = False) -> Dict[str, Any]:
     """The component's token for the run shown: its id and how many rows its
-    metrics log holds, counted again only when the log file changed (a stat)."""
+    metrics log holds, counted again only when the log file changed (a stat).
+    A run whose directory does not exist is not asked for (the component
+    would say "no longer listed" of a run that was never listed): its line
+    says why there is nothing, `live` or ended."""
     if run is None:
         return charts.token(None, 0, empty="No run to show yet.")
+    try:
+        exists = Path(run["path"]).is_dir()
+    except OSError:
+        exists = False
+    if not exists:
+        return charts.token(None, 0, empty=NO_RUN_DIR_LIVE if live else NO_RUN_DIR_ENDED)
     log = training_manager.metrics_log_file(run["path"])
     try:
         stat = log.stat() if log is not None else None
@@ -1302,10 +1417,14 @@ def render(ws: Optional[Mapping[str, Any]], mode: Optional[Mapping[str, Any]],
         snapshot = _used_while_live(run, cache)
     else:
         snapshot = _snapshot_for(run, cache)
+    # A read-only request sees no absolute path: each printed text is redacted
+    # before it is escaped (redacting the built markup took its closing tags
+    # for paths: "</span>" became "<a path outside the workspaces root").
+    root = workspaces_root()[0] if not access.allowed else None
     banner_html, banner_key = _build_error_banner_payload(
-        status if s == "failed" else {}, _get_pyg_warning(), run=run["label"] if run else None)
-    if banner_html and not access.allowed:
-        banner_html = redact(banner_html, workspaces_root()[0])
+        status if s == "failed" else {}, _get_pyg_warning(), run=run["label"] if run else None,
+        run_dir=run["path"] if run else None,
+        scrub=(lambda text: redact(text, root)) if not access.allowed else _as_is)
     if banner_key is None or banner_key in (dismissed or ()):
         banner_html = ""
     cache["banner_key"] = banner_key
@@ -1334,7 +1453,7 @@ def render(ws: Optional[Mapping[str, Any]], mode: Optional[Mapping[str, Any]],
         "banner": banner_html or "",
         "head": run_head_html(run, ws, operator=access.allowed, snapshot=snapshot),
         "snap": run_snapshot_html(run, status, operator=access.allowed, snapshot=snapshot),
-        "charts": _chart_token(run, cache),
+        "charts": _chart_token(run, cache, live=in_use),
         "drawer_reason": (f'<div class="shep-drawer-why">{view["drawer_reason"]}</div>'
                           if view["drawer_reason"] else ""),
         "training_workspace": ws.get("name"),
@@ -1800,7 +1919,7 @@ def compare_html(parent: Mapping[str, Any], ws: Mapping[str, Any]) -> str:
     listed = ws.get("listed") or []
     trained = r.trained_on_html(recorded, listed, digits=digits)
     built = r.built_text((ws.get("row") or {}).get("build"))
-    rebuilt = (f"<p>This workspace was {r.e(built)}. The start refuses a different dataset.</p>"
+    rebuilt = (f"<p>It was {r.e(built)}. The start refuses a different dataset.</p>"
                if built else "<p>The start refuses a different dataset.</p>")
     return ('<div class="shep-cmp shep-cmp-amber"><b>⚠ The parent’s dataset is not this '
             f'workspace’s current one</b><p>parent {trained}</p><p>{now}</p>{rebuilt}</div>')
@@ -1825,7 +1944,10 @@ def _check_html(preview: Mapping[str, Any], source: str, *, differs: bool = Fals
             'dataset.</div>' if differs else
             f'<div class="shep-check-h shep-ok-t">{r.CHECK} Checkpoint read; it can continue '
             'on this workspace.</div>')
-    lines.append(f"<p>Plan read from the checkpoint: {r.e(preview['action'])}.</p>")
+    # A rate such as 3e-05 is never split at its hyphen.
+    action = re.sub(r"(\d(?:\.\d+)?e-\d+)", r'<span class="shep-nowrap">\1</span>',
+                    r.e(preview["action"]))
+    lines.append(f"<p>Plan read from the checkpoint: {action}.</p>")
     inherited = preview.get("inherited") or {}
     if inherited:
         rows = "".join(f"<tr><td>{r.e(k)}</td><td><code>{r.e(repr(inherited[k]))}</code></td></tr>"
@@ -1837,8 +1959,11 @@ def _check_html(preview: Mapping[str, Any], source: str, *, differs: bool = Fals
             'settings, start a new run.</p>'
             f'<table class="shep-ftbl"><thead><tr><th>Setting</th><th>Value</th></tr></thead>'
             f'<tbody>{rows}</tbody></table></details>')
-    lines.append('<p class="shep-note">The start checks again against this workspace’s data '
-                 'and graph.</p>')
+    if not differs:
+        # When the datasets differ, the comparison above already says the
+        # start refuses (M5-3: one line less, so the drawer fits).
+        lines.append('<p class="shep-note">The start checks again against this workspace’s '
+                     'data and graph.</p>')
     kind = "amber" if differs else "ok"
     return f'<div class="shep-check shep-check-{kind}">{head}{"".join(lines)}</div>'
 
@@ -1998,7 +2123,7 @@ def _on_check_continue(source, listed, manual, device, extend_epochs, ws, parent
     differs = continue_refusal(record, ws or {}) is not None and preview.get("ok")
     text = _check_html(preview, source, differs=bool(differs))
     if preview.get("end") == "finished" and not preview.get("ok") and not extend_epochs:
-        text += '<p class="shep-note">Enter <b>Extra epochs</b> below, then click <b>Check checkpoint</b> again.</p>'
+        text += '<p class="shep-note">Enter <b>Extra epochs</b> above, then click <b>Check checkpoint</b> again.</p>'
     return text, _extra_epochs_update(preview), mode, compare_html(record, ws or {})
 
 
@@ -2040,7 +2165,7 @@ def _resume(ws, device, source, listed, manual, extend_epochs, parents, mode):
     text = _check_html(preview, source, differs=preview.get("ok") and refusal is not None)
     if not preview.get("ok"):
         if preview.get("end") == "finished" and not extend_epochs:
-            text += ('<p class="shep-note">Enter <b>Extra epochs</b> below, then click '
+            text += ('<p class="shep-note">Enter <b>Extra epochs</b> above, then click '
                      '<b>Continue Training</b> again.</p>')
         return ("Not started: this checkpoint cannot be continued; the reason is in the check.",
                 text, _extra_epochs_update(preview), mode)
@@ -2456,17 +2581,23 @@ def create_training_tab(ctx: Any) -> None:
                     # in the parameters the drawer covers.
                     continue_device = gr.Radio(label="Device", choices=["auto", "cuda", "cpu"],
                                                value="auto", elem_id="continue_device")
-                    check_continue_btn = gr.Button("Check checkpoint", size="sm", scale=0,
-                                                   elem_id="shep-train-check",
-                                                   elem_classes=["shep-gated"])
+                    # Extra epochs (shown for a finished checkpoint) beside Check
+                    # checkpoint, above what the check says (M5-3: under a long
+                    # result it fell below the fold at 1920 x 1080).
+                    with gr.Row(elem_classes=["shep-train-check-row"]):
+                        # No widget minimum: hidden and empty, a Number is sent as
+                        # 0, which a minimum would reject before any handler runs.
+                        # Empty or 0 means "not extending"; the run plan refuses
+                        # below 1.
+                        extend_epochs = gr.Number(label="Extra epochs", value=None, precision=0,
+                                                  visible=False, elem_id="extend_epochs",
+                                                  scale=0, min_width=0)
+                        check_continue_btn = gr.Button("Check checkpoint", size="sm", scale=0,
+                                                       elem_id="shep-train-check",
+                                                       elem_classes=["shep-gated"])
                     compare = plain_html("", elem_id="shep-train-compare")
                     continue_preview = plain_html(f'<p class="shep-note">{_CONTINUE_PROMPT}</p>',
                                                   elem_id="continue_preview")
-                    # No widget minimum: hidden and empty, a Number is sent as 0,
-                    # which a minimum would reject before any handler runs. Empty
-                    # or 0 means "not extending"; the run plan refuses below 1.
-                    extend_epochs = gr.Number(label="Extra epochs", value=None, precision=0,
-                                              visible=False, elem_id="extend_epochs")
                 drawer_reason = plain_html("", elem_id="shep-train-drawer-why",
                                            elem_classes=["shep-panel-ft"])
 
@@ -2674,7 +2805,7 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-rb-inuse {{ color: var(--shep-text-2); font-size: 14px; }}
 {_PAGE} .shep-link {{ border: 0; background: none; padding: 0; color: var(--shep-accent-text); font-size: 15px; cursor: pointer; font-weight: 500; }}
 {_PAGE} .shep-link:hover {{ text-decoration: underline; }}
-{_PAGE} .shep-pop {{ position: absolute; top: calc(100% + 8px); left: 0; z-index: 30; width: min(460px, calc(100vw - 48px)); background: #fff; border: 1px solid var(--shep-border-2); border-radius: 10px; box-shadow: 0 10px 28px rgba(20,24,40,.16); padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; font-size: 15px; }}
+{_PAGE} .shep-pop {{ position: absolute; top: calc(100% + 8px); left: 0; z-index: 30; width: min({DETAILS_POPOVER_WIDTH}px, calc(100vw - 48px)); background: #fff; border: 1px solid var(--shep-border-2); border-radius: 10px; box-shadow: 0 10px 28px rgba(20,24,40,.16); padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; font-size: 15px; }}
 {_PAGE} .shep-pop[hidden] {{ display: none; }}
 {_PAGE} .shep-pop-hd {{ display: flex; align-items: center; gap: 8px; overflow-wrap: anywhere; }}
 {_PAGE} .shep-pop-x {{ margin-left: auto; width: 28px; height: 28px; border: 0; background: none; font-size: 20px; cursor: pointer; color: var(--shep-muted); }}
@@ -2696,7 +2827,9 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-rb-why {{ display: inline-flex; align-items: flex-start; gap: 6px; flex-wrap: nowrap; font-size: 15px; color: var(--shep-text-2); text-align: right; }}
 {_PAGE} .shep-rb-why > svg, {_PAGE} .shep-rb-why > .shep-tag {{ flex: none; margin-top: 3px; }}
 {_PAGE} .shep-rb-why > .shep-tag {{ margin-top: 0; }}
-{_PAGE} .shep-rb-why > span:not(.shep-tag) {{ min-width: 0; }}
+{_PAGE} .shep-rb-why > span:not(.shep-tag) {{ min-width: 0; text-wrap: pretty; }}
+/* A reason of two sentences breaks between them (`renderers.word_groups`); a sentence wider than its line wraps inside its group without leaving one word alone (text-wrap: pretty). */
+{_PAGE} .shep-rb-why .shep-wg {{ text-wrap: pretty; }}
 {_PAGE} .shep-rb-why .shep-link {{ white-space: nowrap; }}
 {_PAGE} .shep-rb-progress {{ flex: 1 1 160px; max-width: 380px; height: 8px; border-radius: 4px; background: var(--shep-grey-200); overflow: hidden; }}
 {_PAGE} .shep-rb-progress > i {{ display: block; height: 100%; background: var(--shep-accent); }}
@@ -2724,6 +2857,10 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-banner-hd {{ display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }}
 {_PAGE} .shep-banner-h {{ font-weight: 600; overflow-wrap: anywhere; }}
 {_PAGE} .shep-banner-where {{ margin-left: auto; color: var(--shep-text-2); font-size: 14px; }}
+/* The last error line the run printed, right under the headline: read without opening or scrolling the tail. */
+{_PAGE} .shep-banner-cause {{ margin-top: 4px; color: var(--shep-text); line-height: 1.4; overflow-wrap: anywhere; }}
+{_PAGE} .shep-banner-k {{ font-weight: 600; color: var(--shep-red-700); }}
+{_PAGE} .shep-banner-v {{ font-family: var(--shep-mono); font-size: 14px; }}
 {_PAGE} .shep-banner-more {{ margin-top: 6px; }}
 {_PAGE} .shep-banner-more > summary {{ cursor: pointer; font-size: 14px; font-weight: 600; color: var(--shep-red-700); width: max-content; max-width: 100%; }}
 {_PAGE} .shep-banner-n {{ font-weight: 400; color: var(--shep-text-2); }}
@@ -2765,7 +2902,16 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-train-parent-row {{ align-items: flex-end !important; flex-wrap: nowrap !important; }}
 {_PAGE} #checkpoint_dropdown {{ flex: 1 1 auto !important; min-width: 0 !important; }}
 {_PAGE} #shep-train-refresh {{ flex: none !important; width: auto !important; min-width: max-content !important; }}
-{_PAGE} #shep-train-check {{ align-self: flex-start; width: auto !important; min-width: max-content !important; }}
+/* Extra epochs (when shown) beside Check checkpoint, above what the check says. */
+{_PAGE} .shep-train-check-row {{ align-items: flex-end !important; flex-wrap: wrap !important; gap: 8px 12px !important; }}
+{_PAGE} .shep-train-check-row > * {{ flex: 0 0 auto !important; width: auto !important; }}
+{_PAGE} .shep-train-check-row > .form {{ background: none !important; border: 0 !important; box-shadow: none !important; }}
+/* Its label beside its box, one line with the button: "Extra epochs ⓘ [ 10 ]  Check checkpoint". */
+{_PAGE} #extend_epochs {{ padding: 0 !important; background: none !important; border: 0 !important; box-shadow: none !important; flex: none !important; min-width: max-content !important; }}
+{_PAGE} #extend_epochs label.container {{ display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }}
+{_PAGE} #extend_epochs [data-testid="block-info"] {{ margin: 0 !important; }}
+{_PAGE} #extend_epochs input[type="number"] {{ width: 96px; }}
+{_PAGE} #shep-train-check {{ align-self: flex-end; width: auto !important; min-width: max-content !important; }}
 {_PAGE} #shep-train-parents-note {{ margin-top: -4px; }}
 @media (min-width: 1400px) and (min-height: 760px) {{
   {_PAGE} > .column {{ height: 100%; min-height: 0 !important; }}
@@ -2785,6 +2931,23 @@ PAGE_CSS = charts.CHART_CSS + f"""
   {_PAGE} #shep-train-drawer-bd .wrap label {{ padding-top: 4px !important; padding-bottom: 4px !important; }}
   {_PAGE} #shep-train-drawer-bd input[type="number"], {_PAGE} #shep-train-drawer-bd input[type="text"] {{ padding-top: 6px !important; padding-bottom: 6px !important; }}
   {_PAGE} #shep-train-drawer-bd .shep-cmp, {_PAGE} #shep-train-drawer-bd .shep-check {{ padding: 8px 12px; }}
+  /* In every check result at 1920 x 1080 (M5-3: the first check of a finished parent and a
+     parent whose dataset differs overflowed by 20 and 118 px): the source's label beside its
+     choices, and the results' lines closer. */
+  {_PAGE} #continue_source, {_PAGE} #continue_device {{ display: flex !important; flex-wrap: wrap; align-items: center; gap: 2px 10px; }}
+  {_PAGE} #continue_source > [data-testid="block-info"], {_PAGE} #continue_device > [data-testid="block-info"] {{ margin: 0 !important; }}
+  {_PAGE} #checkpoint_dropdown .container {{ display: flex; align-items: center; gap: 8px; }}
+  {_PAGE} #checkpoint_dropdown .container > [data-testid="block-info"] {{ flex: none; margin: 0 !important; }}
+  {_PAGE} #checkpoint_dropdown .container > .wrap {{ flex: 1 1 auto; min-width: 0; }}
+  {_PAGE} .shep-train-parent-row {{ align-items: center !important; }}
+  {_PAGE} #shep-train-drawer-bd {{ gap: 6px !important; }}
+  {_PAGE} #shep-train-drawer-why {{ padding: 8px 16px !important; }}
+  {_PAGE} #shep-train-drawer-why .html-container, {_PAGE} #shep-train-drawer-why .shep-html {{ padding: 0 !important; }}
+  {_PAGE} #shep-train-drawer-bd .shep-cmp, {_PAGE} #shep-train-drawer-bd .shep-check {{ font-size: 14px; line-height: 1.4; }}
+  {_PAGE} #shep-train-drawer-bd .shep-cmp p, {_PAGE} #shep-train-drawer-bd .shep-check p {{ margin-top: 2px; }}
+  {_PAGE} #shep-train-drawer-bd .shep-check-h {{ margin-bottom: 2px; }}
+  {_PAGE} #shep-train-drawer-bd .shep-inherit {{ margin-top: 4px; }}
+  {_PAGE} #shep-train-drawer-bd .shep-inherit > summary {{ padding: 4px 10px; }}
   /* Never clipped, and never cramped: each of the four plots keeps a plot area of at least
      PLOT_MIN_HEIGHT px whatever its title's keys take (the minimum is the plot box's, and each
      box around it grows to hold its content). When that does not fit, the run view's body

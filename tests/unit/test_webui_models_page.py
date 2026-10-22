@@ -1066,3 +1066,13 @@ def test_the_list_panels_title_stays_while_the_panel_scrolls():
         "{{", "{").replace("}}", "}") in wide
     assert "#shep-mp-hd { position: sticky; top: 0; z-index: 45;" in wide
     assert "#shep-models-research-rows .shep-tbl th { top: 48px; }" in wide
+
+
+def test_the_table_fits_its_frame_beside_a_classic_scrollbar():
+    """M5-3: at 1440 x 900 with a classic (non-overlay) 15 px scrollbar the
+    table (602 px: its columns' longest words and 10 px a side) ran 13 px past
+    its 589 px frame; with 7 px a side it is 572 px (measured in a browser with
+    the scrollbar forced classic)."""
+    wide = mp.PAGE_CSS[mp.PAGE_CSS.index("@media (min-width: 1400px) and (min-height: 760px) {"):]
+    wide = wide[:wide.index("@media", 10)].replace(f"{mp._PAGE} ", "")
+    assert ".shep-mtbl th, .shep-mtbl td { padding-left: 7px; padding-right: 7px; }" in wide

@@ -1237,10 +1237,14 @@ def test_run_stays_on_for_path_reasoning_and_an_unreadable_status_but_not_a_mode
     graph = _status_serving(_path_only_identity(), gnn_ready=False)
     assert dp.run_controls(_card(graph), "idle")["run_btn"]["interactive"] is True
     assert dp.run_controls(_card(None, "timed out (5 s)"), "idle")["run_cover"] == ""
-    for phase in ("confirming", "loading"):
-        change = dp.run_controls(_card(_status_serving(_served_identity())), phase)
-        assert change["run_btn"]["interactive"] is False
-        assert dp.RUN_DISABLED_CHANGE in change["run_reason"] and "dx-run-change" in change["run_cover"]
+    change = dp.run_controls(_card(_status_serving(_served_identity())), "confirming")
+    assert change["run_btn"]["interactive"] is False
+    assert dp.RUN_DISABLED_CHANGE in change["run_reason"] and "dx-run-change" in change["run_cover"]
+    # While this page's Load reloads, the reason is the load's (the mockup's state 3).
+    loading = dp.run_controls(_card(_status_serving(_served_identity())), "loading")
+    assert loading["run_btn"]["interactive"] is False
+    assert dp.RUN_DISABLED_LOADING in loading["run_reason"]
+    assert "dx-run-loading" in loading["run_cover"] and "dx-run-loading" in dp.TOPIC_HELP
 
 
 # -------------------------------------------------- the card's outputs and the timer
@@ -1326,6 +1330,51 @@ def test_the_page_passes_the_model_change_phase_to_the_identity_drawer(monkeypat
                     if isinstance(b, gr.State) and b.value == "idle"]
     for name, fn in phases.items():
         assert any(i in phase_states for i in fn.inputs), name
+
+
+def test_the_card_says_this_pages_load_is_in_progress_until_its_answer(monkeypatch):
+    """M5-3 (the mockup's state 3): while this page's Load reloads, the card says
+    "Loading <12 hex> for every session… <elapsed>" (the page's script keeps
+    the count and swaps in the second sentence when it stops waiting) and Run
+    Diagnosis is off with the load's reason; both are sent in the step before
+    the reload, and taken back after its answer, whatever it was."""
+    plan = {"to": {"sha256": "e" * 64}}
+    line = dp.loading_line_html(plan)
+    assert "Loading <code>eeeeeeeeeeee</code> for every session…\u00a0" in line
+    assert "data-shep-load-elapsed>00:00:00<" in line and "data-shep-load-card" in line
+    assert '<span class="shep-load-off" hidden>The page stopped waiting for' in line
+    assert "after 180 s; the server may still finish the reload." in line
+    assert dp.loading_line_html(None) == "" and dp.loading_line_html({"to": None}) == ""
+    state = _card(_status_serving(_served_identity()))
+    html, run_btn, cover, reason = dp.card_loading_outputs(plan, state)
+    assert html == line and run_btn["interactive"] is False
+    assert "dx-run-loading" in cover and dp.RUN_DISABLED_LOADING in reason
+    assert dp.card_loading_outputs(None, state) == (gr.update(),) * 4
+    html, run_btn, cover, reason = dp.card_loaded_outputs(state, "idle")
+    assert html == "" and run_btn["interactive"] is True and cover == "" and reason == ""
+    # The page as built: the card's line rides on the list's step before the
+    # reload, and is taken back by a step after the reload's answer.
+    demo, _ctx = _build_tab(monkeypatch)
+    card_line = next(b for b in demo.blocks.values()
+                     if getattr(b, "elem_id", None) == "shep-dx-card-loading")
+    run_button = next(b for b in demo.blocks.values()
+                      if getattr(b, "elem_id", None) == "shep-dx-run-btn")
+    (loading,) = _named(demo, "_loading")
+    assert card_line in loading.outputs and run_button in loading.outputs
+    (confirm,) = _named(demo, "_confirm")
+    after = [fn for fn in demo.fns.values() if fn.trigger_after == confirm._id]
+    answered = [fn for fn in after if fn.name == "_reload_answered"]
+    assert len(answered) == 1 and card_line in answered[0].outputs
+    assert run_button in answered[0].outputs
+
+
+def test_the_compare_link_keeps_each_arrow_with_its_word(monkeypatch):
+    """M5-3: at 1440 x 900 "Compare in Research › Models ›" left its last "›"
+    alone on a line; each is held to the word before it."""
+    assert dp.COMPARE_LINK == "Compare in Research\u00a0› Models\u00a0›"
+    demo, _ctx = _build_tab(monkeypatch)
+    link = next(b for b in demo.blocks.values() if getattr(b, "elem_id", None) == "shep-dx-compare")
+    assert dp.COMPARE_LINK in link.value and "Models ›" not in link.value
 
 
 def test_closing_the_change_drawer_resets_it_in_a_second_step(monkeypatch):

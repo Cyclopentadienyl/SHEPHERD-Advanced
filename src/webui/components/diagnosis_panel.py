@@ -23,8 +23,11 @@ scrolls.
   for API clients, gated by WP2.
 - **Run Diagnosis** is greyed out and not clickable when no model is loaded
   (a bubble on hover and on keyboard focus says why, and the reason is visible
-  text under it) and while a model change is open; the API's demo answer for
-  API clients is unchanged.
+  text under it) and while a model change is open; while this page's Load
+  reloads, the card says "Loading <12 hex> for every session… <elapsed>" and
+  Run Diagnosis says the load is in progress (the mockup's state 3; set in the
+  list's step before the reload, taken back after its answer). The API's demo
+  answer for API clients is unchanged.
 - **The candidates**: the results badge ("Produced by the model in use" /
   "Produced by an earlier model or pipeline — N parts differ ›" / "Cannot
   check against the model in use yet" with its one reason), the identity
@@ -75,6 +78,7 @@ from src.webui.components.help import copy_button, help_button, text_id
 from src.webui.components.renderers import IDENTITY_BANNERS
 from src.webui.components.renderers import NOT_A_MEDICAL_DEVICE as _NOT_A_MEDICAL_DEVICE
 from src.webui.components.renderers import e as _e
+from src.webui.components.renderers import short_hex as _short_hex
 from src.webui.operator_access import operator_access
 
 logger = logging.getLogger(__name__)
@@ -1102,6 +1106,12 @@ TOPIC_HELP = {
         "A model change is open: finish it (Reload with …) or cancel it (Keep … or Cancel) "
         "first. Diagnoses wait while the pipeline reloads.",
     ),
+    "dx-run-loading": (
+        "Run Diagnosis is disabled",
+        "This page started a model load: the pipeline reloads for every session, and the server "
+        "answers no diagnosis until it finishes. Closing the change-model drawer does not stop "
+        "it.",
+    ),
     **{f"dx-banner-{key}": (headline, detail) for key, (headline, detail) in IDENTITY_BANNERS.items()},
 }
 
@@ -1110,6 +1120,11 @@ RUN_DISABLED_NO_MODEL = "Disabled: no model loaded. Load one with “Load a mode
 RUN_DISABLED_NO_MODEL_READ_ONLY = (
     "Disabled: no model loaded. An operator on the server's machine can load one.")
 RUN_DISABLED_CHANGE = "Disabled: finish or cancel the model change first."
+RUN_DISABLED_LOADING = "Disabled: a model load is in progress; diagnoses wait until it finishes."
+
+#: The change drawer's link to Research › Models: each "›" held to the word
+#: before it by a no-break space, so it is never alone on a line.
+COMPARE_LINK = "Compare in Research\u00a0› Models\u00a0›"
 
 #: The details segments: (label, value); the counts are added per candidate.
 SEGMENTS = (("Evidence", "evidence"), ("Explanation", "explanation"),
@@ -1605,7 +1620,9 @@ def run_controls(state: Mapping[str, Any], phase: Any) -> Dict[str, Any]:
     loaded; greyed and not clickable, with the reason as visible text under it
     and a bubble on hover and on keyboard focus (a transparent ⓘ over the
     button: the shared help control)."""
-    if phase not in (None, "idle"):
+    if phase == "loading":
+        key, why = "dx-run-loading", RUN_DISABLED_LOADING
+    elif phase not in (None, "idle"):
         key, why = "dx-run-change", RUN_DISABLED_CHANGE
     elif card.run_blocked(state):
         key = "dx-run-no-model"
@@ -1618,6 +1635,47 @@ def run_controls(state: Mapping[str, Any], phase: Any) -> Dict[str, Any]:
              f'aria-expanded="false" aria-describedby="{text_id(key)}"></button>')
     return {"run_btn": gr.update(interactive=False), "run_cover": cover,
             "run_reason": f'<p class="shep-dx-why"><span aria-hidden="true">⊖</span> {_e(why)}</p>'}
+
+
+def loading_line_html(plan: Any) -> str:
+    """The card's line while this page's Load reloads the pipeline (the
+    mockup's state 3): "Loading <12 hex> for every session… 00:00:00", the
+    count kept by the page's own script (`model_list.start_wait_js`, which
+    also swaps in the second sentence when the page stops waiting after
+    `PAGE_WAIT_SECONDS`, as the drawer says). "" without a plan."""
+    from src.webui.components.model_list import PAGE_WAIT_SECONDS
+
+    if not isinstance(plan, Mapping) or not isinstance(plan.get("to"), Mapping):
+        return ""
+    new = _e(_short_hex(plan["to"].get("sha256")))
+    return ('<p class="shep-dx-loading" role="status" data-shep-load-card>'
+            '<span class="shep-load-on"><span class="shep-spinner" aria-hidden="true"></span> '
+            f'Loading <code>{new}</code> for every session…\u00a0'
+            '<span class="shep-elapsed" data-shep-load-elapsed>00:00:00</span></span>'
+            f'<span class="shep-load-off" hidden>The page stopped waiting for <code>{new}</code> '
+            f'after {PAGE_WAIT_SECONDS} s; the server may still finish the reload.</span></p>')
+
+
+def _run_tuple(state: Mapping[str, Any], phase: Any) -> Tuple[Any, Any, Any]:
+    run = run_controls(state, phase)
+    return run["run_btn"], run["run_cover"], run["run_reason"]
+
+
+def card_loading_outputs(plan: Any, state: Any) -> Tuple[Any, ...]:
+    """The card's part of the step "Reload with …" runs before the reload (the
+    shared list's ``on_loading``): the "Loading …" line and Run Diagnosis off
+    with its reason, shown before the reload holds the server. Nothing when
+    there was no plan (nothing is loading)."""
+    if not plan:
+        return gr.update(), gr.update(), gr.update(), gr.update()
+    state = state if isinstance(state, Mapping) else card.new_state()
+    return (loading_line_html(plan), *_run_tuple(state, "loading"))
+
+
+def card_loaded_outputs(state: Mapping[str, Any], phase: Any) -> Tuple[Any, ...]:
+    """After the reload's answer: no "Loading …" line, and Run Diagnosis as
+    the phase now says (idle, or a confirmation shown again)."""
+    return ("", *_run_tuple(state, phase))
 
 
 def card_outputs(state: Mapping[str, Any], result: Optional[Mapping[str, Any]], phase: Any,
@@ -1944,6 +2002,9 @@ def create_diagnosis_tab(ctx: Any) -> None:
                                     'data-key="refresh" aria-label="Read the model in use again" '
                                     'title="Read again">↻</button>', elem_id="shep-dx-reread",
                                     js_on_load=MODEL_LIST_JS)
+                        # "Loading <12 hex> for every session… 00:00:42" while this
+                        # page's Load reloads the pipeline (`loading_line_html`).
+                        card_loading = plain_html("", elem_id="shep-dx-card-loading")
                         card_body = plain_html(card.body_html(card.new_state()),
                                                elem_id="shep-dx-card-body",
                                                js_on_load=MODEL_LIST_JS)
@@ -1996,9 +2057,11 @@ def create_diagnosis_tab(ctx: Any) -> None:
                 links: Dict[str, Any] = {}
 
                 def _head() -> Any:
+                    # Each "›" keeps to the word before it (a no-break space):
+                    # at 1440 x 900 the last one was left alone on a line.
                     links["compare"] = plain_html(
-                        '<button type="button" class="shep-dx-link" data-key="models">Compare in '
-                        'Research › Models ›</button>', elem_id="shep-dx-compare",
+                        f'<button type="button" class="shep-dx-link" data-key="models">'
+                        f'{COMPARE_LINK}</button>', elem_id="shep-dx-compare",
                         js_on_load=MODEL_LIST_JS)
                     return links["compare"]
 
@@ -2011,7 +2074,10 @@ def create_diagnosis_tab(ctx: Any) -> None:
                                elem_id="shep-dx-change-note")
                     return links["cancel"]
 
-                handle = ctx.create_model_list("clinical", head=_head, foot=_foot)
+                handle = ctx.create_model_list(
+                    "clinical", head=_head, foot=_foot,
+                    on_loading={"fn": card_loading_outputs, "inputs": [card_state],
+                                "outputs": [card_loading, run_btn, run_cover, run_reason]})
 
         # --- the candidates ---------------------------------------------------
         with gr.Column(elem_id="shep-dx-results", elem_classes=["shep-panel"], min_width=0):
@@ -2104,6 +2170,17 @@ def create_diagnosis_tab(ctx: Any) -> None:
     handle.phase.change(_phase_changed, inputs=[card_state, handle.phase],
                         outputs=outputs("run_btn", "run_cover", "run_reason"),
                         show_progress="hidden")
+
+    # The reload's answer (reloaded or not): the card's "Loading …" line goes
+    # and Run Diagnosis follows the phase again, whatever the answer was (a
+    # refused reload changes nothing served, so no card refresh would run).
+    def _reload_answered(state, phase):
+        return card_loaded_outputs(state if isinstance(state, Mapping) else card.new_state(),
+                                   phase)
+
+    handle.reload_done.then(_reload_answered, inputs=[card_state, handle.phase],
+                            outputs=[card_loading, run_btn, run_cover, run_reason],
+                            show_progress="hidden")
 
     # --- the card's own links: dismiss, Retry / read it, Recorded tests ›
     identity_names = ("identity_view", "identity_drawer", "change_drawer", "identity_seg",
@@ -2301,6 +2378,10 @@ PAGE_CSS = f"""
 {_TAB} .shep-tag-dashed {{ border-style: dashed !important; }}
 {_TAB} .shep-dx-state {{ display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 14px; color: var(--shep-grey-800); margin-bottom: 2px; }}
 {_TAB} .shep-dx-state .shep-dx-retry {{ height: 24px; padding: 0 6px; }}
+/* This page's Load in progress (the mockup's state 3): one accent line over the card's model. */
+{_TAB} #shep-dx-card-loading:not(:has(.shep-dx-loading)) {{ display: none !important; }}
+{_TAB} .shep-dx-loading {{ margin: 0; font-size: 15px; line-height: 1.35; color: var(--shep-accent-text); overflow-wrap: anywhere; }}
+{_TAB} .shep-dx-loading .shep-load-off {{ color: var(--shep-grey-800); }}
 {_TAB} .shep-dx-change {{ display: flex; align-items: flex-start; gap: 8px; margin-bottom: 2px; padding: 4px 8px; }}
 {_TAB} button.shep-dx-x {{ margin-left: auto; border: 0; background: none; color: var(--shep-amber-800); font-size: 18px; line-height: 1; cursor: pointer; padding: 0 2px; }}
 {_TAB} button.shep-dx-link {{ border: 0; background: none; padding: 0; color: var(--shep-accent-text); font: inherit; cursor: pointer; }}

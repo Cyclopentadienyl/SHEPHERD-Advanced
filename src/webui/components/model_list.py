@@ -65,6 +65,11 @@ components (a filter, links) in the list's header and footer rows.
    served changed;
 3. "Keep <old>" closes the confirmation; nothing is done.
 
+**While the reload runs the confirmation shows only its status and Close**
+(`loading_buttons`, before the reload; the mockup's footer): Reload goes, at
+once in the browser too, so a second click cannot ask for a second reload, and
+Keep becomes Close, since closing does not stop it.
+
 **The page waits 180 s.** The reload holds the event loop (it never runs beside
 a diagnosis, BACKLOG 28), so nothing answers meanwhile: the page itself counts
 (a script built for this list's own confirmation, `start_wait_js`) and after
@@ -1140,6 +1145,10 @@ element.addEventListener('keydown', function (e) {
 
 _START_WAIT_JS = r"""
 (...args) => {
+  // The Reload button goes at once, before the server answers: a second click
+  // cannot ask for a second reload (the answer then hides it).
+  var again = document.getElementById(__RELOAD_ID__);
+  if (again) { again.disabled = true; }
   var root = document.getElementById(__CONFIRM_ID__);
   if (root) {
     root.classList.remove('shep-waited');
@@ -1152,7 +1161,15 @@ _START_WAIT_JS = r"""
         var s = Math.floor((Date.now() - started) / 1000);
         var hh = String(Math.floor(s / 3600)).padStart(2, '0'), mm = String(Math.floor(s / 60) % 60).padStart(2, '0'), ss = String(s % 60).padStart(2, '0');
         var el = wait.querySelector('.shep-elapsed'); if (el) { el.textContent = hh + ':' + mm + ':' + ss; }
-        if (Date.now() - started >= limit) { wait.hidden = true; if (out) { out.hidden = false; } root.classList.add('shep-waited'); clearInterval(timer); }
+        // The same count wherever the page shows this load (Diagnosis' card).
+        document.querySelectorAll('[data-shep-load-elapsed]').forEach(function (e) { e.textContent = hh + ':' + mm + ':' + ss; });
+        if (Date.now() - started >= limit) {
+          wait.hidden = true; if (out) { out.hidden = false; } root.classList.add('shep-waited'); clearInterval(timer);
+          document.querySelectorAll('[data-shep-load-card]').forEach(function (c) {
+            var on = c.querySelector('.shep-load-on'), off = c.querySelector('.shep-load-off');
+            if (on) { on.hidden = true; } if (off) { off.hidden = false; }
+          });
+        }
       }, 1000);
     }
   }
@@ -1161,14 +1178,19 @@ _START_WAIT_JS = r"""
 """
 
 
-def start_wait_js(confirm_elem_id: str) -> str:
+def start_wait_js(confirm_elem_id: str, reload_elem_id: Optional[str] = None) -> str:
     """The script "Reload with …" runs in the browser before its handler: the
-    180 s count in **this** list's confirmation (its element id), so a list
-    placed twice on a page (Diagnosis' drawer and Models) counts in the one
-    whose Reload was clicked."""
+    Reload button (`reload_elem_id`) disabled at once, so a second click cannot
+    ask for a second reload before the answer hides it; the 180 s count in
+    **this** list's confirmation (its element id), so a list placed twice on a
+    page (Diagnosis' drawer and Models) counts in the one whose Reload was
+    clicked, and in any element of the page marked ``data-shep-load-elapsed``
+    (the count) or ``data-shep-load-card`` (its words when the page stops
+    waiting: Diagnosis' card)."""
     from src.webui.components.help import as_json_for_script
 
-    return _START_WAIT_JS.replace("__CONFIRM_ID__", as_json_for_script(confirm_elem_id))
+    return (_START_WAIT_JS.replace("__CONFIRM_ID__", as_json_for_script(confirm_elem_id))
+            .replace("__RELOAD_ID__", as_json_for_script(reload_elem_id or "")))
 
 
 @dataclass
@@ -1192,7 +1214,10 @@ class ModelList:
     - the rendered parts: ``count``, ``rows``, ``facts``, ``reason``, ``note``,
       ``load_button``, ``confirm``, ``confirm_html``, ``reload_button``,
       ``keep_button``; ``head_extra`` and ``foot_extra``, what the page's
-      ``head`` and ``foot`` builders returned.
+      ``head`` and ``foot`` builders returned;
+    - ``reload_done``: the event that ends a Reload (its answer: reloaded or
+      not, the phase back to idle or confirming), for a page to chain
+      ``.then(…)`` on, as Diagnosis clears its card's "Loading …" line.
     """
 
     preset: Preset
@@ -1218,18 +1243,38 @@ class ModelList:
     refresh: Dict[str, Any]
     head_extra: Any = None
     foot_extra: Any = None
+    reload_done: Any = None
+
+
+def loading_buttons(plan: Any) -> Tuple[Any, Any, Any]:
+    """The step "Reload with …" runs first, before the reload: ``(phase, Reload,
+    Keep)``. With a plan, the phase is "loading", Reload goes (a second click
+    could ask for a second reload) and Keep becomes Close (closing does not
+    stop the reload): while it runs the confirmation shows only its status
+    and Close, then, after 180 s, "Read again" and Close. Without one,
+    nothing changes."""
+    if not plan:
+        return "idle", gr.update(), gr.update()
+    return "loading", gr.update(visible=False), gr.update(value="Close")
 
 
 def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[str] = None,
                       head: Optional[Callable[[], Any]] = None,
-                      foot: Optional[Callable[[], Any]] = None) -> ModelList:
+                      foot: Optional[Callable[[], Any]] = None,
+                      on_loading: Optional[Mapping[str, Any]] = None) -> ModelList:
     """Build the shared list in the current layout context and wire its events.
 
     `ctx` is the page context (`src.webui.shell.PageContext`): its chips are
     refreshed and its ``served_model_changed`` trigger set after a Load.
     `elem_id` defaults to ``shep-models-<preset>``, so both presets can sit in
     one page. `head` and `foot`, when given, are called inside the list's
-    header and footer rows to place the page's own components there."""
+    header and footer rows to place the page's own components there.
+    `on_loading` (``{"fn", "inputs", "outputs"}``) adds the page's own outputs
+    to the step "Reload with …" runs before the reload, in the same answer (so
+    they show before the reload holds the server): ``fn(plan, *inputs)``
+    returns one value per output, `plan` None when there was nothing to load
+    (Diagnosis: its card's "Loading … for every session" line and Run
+    Diagnosis' reason)."""
     chosen = PRESETS[preset]
     elem_id = elem_id or f"shep-models-{preset}"
     listing = gr.State(empty_listing())
@@ -1338,8 +1383,15 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
                       outputs=[plan, confirm, confirm_html, reason, reload_button, keep_button,
                                phase]).then(**ctx.chip_refresh)
 
-    def _loading(current):
-        return "loading" if current else "idle"
+    page_inputs = list((on_loading or {}).get("inputs") or [])
+    page_outputs = list((on_loading or {}).get("outputs") or [])
+
+    def _loading(current, *page_values):
+        own = loading_buttons(current)
+        if not page_outputs:
+            return own
+        extra = on_loading["fn"](current or None, *page_values)
+        return (*own, *extra)
 
     async def _confirm(current, request: gr.Request):
         # **D8, the status and the reload run here, on the event loop, with
@@ -1365,12 +1417,16 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
                 gr.update(value=(f"Keep {old}" if still_open and old != "—" else
                                  "Cancel" if still_open else "Close")))
 
-    reload_button.click(_loading, inputs=[plan], outputs=[phase], queue=False,
-                        js=start_wait_js(f"{elem_id}-confirm"), show_progress="hidden").then(
+    reload_done = reload_button.click(
+        _loading, inputs=[plan, *page_inputs],
+        outputs=[phase, reload_button, keep_button, *page_outputs], queue=False,
+        js=start_wait_js(f"{elem_id}-confirm", f"{elem_id}-reload"),
+        show_progress="hidden").then(
         _confirm, inputs=[plan],
         outputs=[plan, confirm, confirm_html, reason, ctx.served_model_changed, phase,
                  reload_button, keep_button],
-        show_progress="hidden").then(**ctx.chip_refresh).then(**refresh)
+        show_progress="hidden")
+    reload_done.then(**ctx.chip_refresh).then(**refresh)
 
     # Keep (or Cancel, or Close after an outcome) in two steps: the first hides
     # the confirmation box and drops the plan, and changes no component inside
@@ -1404,7 +1460,8 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
 
     return ModelList(chosen, elem_id, workspace, listing, selected, plan, view, ordering, phase,
                      show_older, count, rows, facts, reason, note, load_button, confirm,
-                     confirm_html, reload_button, keep_button, refresh, head_extra, foot_extra)
+                     confirm_html, reload_button, keep_button, refresh, head_extra, foot_extra,
+                     reload_done)
 
 
 __all__ = [
@@ -1435,6 +1492,7 @@ __all__ = [
     "list_html",
     "list_models",
     "loadable",
+    "loading_buttons",
     "note_html",
     "read_again",
     "read_recorded",

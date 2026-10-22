@@ -22,7 +22,9 @@ Research › Prepare › Training (M5-2, UI-C): the run bar, the run view, the d
 - **what a tick sends**: only what changed, everything every few ticks, and
   never the session's selection back over a newer one;
 - **the banner**: escaped, red for a failure, amber for PyG, dismissed per
-  session; no absolute path for a read-only request.
+  session; no absolute path for a read-only request (each text redacted
+  before it is escaped); the last error line the run printed under the
+  headline, and where its log is only when it has one.
 
 Module: tests/unit/test_training_page.py
 """
@@ -503,6 +505,7 @@ def test_the_used_dataset_fingerprint_is_an_operators_and_compared_in_full():
 def test_the_snapshot_sentence_names_no_path_to_a_read_only_request(root):
     run = tc.RunRef(id="demo/gat/r", label="gat/r", path=root / "demo" / "runs" / "gat" / "r",
                     workspace="demo", latest=False)
+    (run["path"] / "checkpoints").mkdir(parents=True)       # a run that saved its last.pt
     snapshot = {"checkpoint": str(run["path"] / "checkpoints" / "last.pt"), "readable": True,
                 "completed_epochs": 60, "target_epochs": 60, "end": "finished"}
     status = {"status": "completed", "current_epoch": 60, "total_epochs": 60}
@@ -681,6 +684,98 @@ def test_the_banner_names_no_absolute_path_to_a_read_only_request(root, monkeypa
                                  "gpu": {"job": None}})
     banner = tc.render(tc._workspace_state("demo"), {}, {}, [], READ_ONLY)["pieces"]["banner"]
     assert "/srv/secret" not in banner and "a path outside the workspaces root" in banner
+
+
+#: A run refused at its top, as train_model.py prints it (logging, then the traceback).
+_REFUSED_TAIL = (
+    "Process exited with code 1\n\n--- Last output ---\n"
+    "2026-10-21 22:01:22,684 - __main__ - INFO - Configuration: {'run_dir': '/srv/secret/r'}\n"
+    "2026-10-21 22:01:22,690 - __main__ - ERROR - Training failed: --device auto requires CUDA\n"
+    "Traceback (most recent call last):\n"
+    '  File "/srv/secret/scripts/train_model.py", line 917, in resolve_training_device\n'
+    "    raise TrainingDeviceUnavailable(\n"
+    "TrainingDeviceUnavailable: --device auto requires CUDA, which is not available here. "
+    "Pass --device cpu explicitly.")
+
+
+def test_the_last_error_line_is_the_last_error_the_run_printed():
+    lines = _REFUSED_TAIL.partition("--- Last output ---\n")[2].splitlines()
+    assert tc.last_error_line(lines) == (
+        "TrainingDeviceUnavailable: --device auto requires CUDA, which is not available here. "
+        "Pass --device cpu explicitly.")
+    # A logging line at ERROR or CRITICAL gives its message; a later INFO line
+    # does not replace it; nothing is guessed from other lines.
+    logged = ["2026-10-21 10:00:00,001 - __main__ - ERROR - Training data not found in w",
+              "2026-10-21 10:00:00,002 - __main__ - INFO - done"]
+    assert tc.last_error_line(logged) == "Training data not found in w"
+    assert tc.last_error_line(["CRITICAL:root:out of disk"]) == "out of disk"
+    assert tc.last_error_line(["epoch 1: loss 0.5", "Note: nothing here", ""]) is None
+    # A traceback whose header fell out of the tail still ends in its exception.
+    assert tc.last_error_line(["    loss.backward()",
+                               "torch.OutOfMemoryError: CUDA out of memory."]) == \
+        "torch.OutOfMemoryError: CUDA out of memory."
+
+
+def test_a_failed_runs_banner_says_its_cause_and_where_its_log_is_only_when_it_exists(tmp_path):
+    """M5-3: the headline said only "Process exited with code 1", the cause
+    was in the tail under a scroll, and "full log in its logs/" was said of a
+    run directory that was never created."""
+    missing = tmp_path / "runs" / "gat" / "never_made"
+    html = tc._render_error_block(_REFUSED_TAIL, run="gat/never_made", run_dir=missing)
+    cause = html.index('<div class="shep-banner-cause">')
+    assert cause < html.index("<details")                    # right under the headline
+    assert ('Last error printed:</span> <span class="shep-banner-v">TrainingDeviceUnavailable: '
+            '--device auto requires CUDA') in html
+    assert "no run directory, so no log" in html and "full log" not in html
+    run = tmp_path / "runs" / "gat" / "made"
+    (run / "logs").mkdir(parents=True)
+    assert "no log in its <code>logs/</code>" in tc._render_error_block(
+        _REFUSED_TAIL, run="gat/made", run_dir=run)
+    (run / "logs" / "train_20261021_220122.json").write_text("{}")
+    assert "its log: <code>logs/train_20261021_220122.json</code>" in tc._render_error_block(
+        _REFUSED_TAIL, run="gat/made", run_dir=run)
+    # Without a cause line there is no cause block.
+    assert "shep-banner-cause" not in tc._render_error_block("Process exited with code 1")
+
+
+def test_the_cause_is_redacted_for_a_read_only_request_as_the_tail_is(root, monkeypatch):
+    monkeypatch.delenv("SHEPHERD_DEPLOYMENT_MODE", raising=False)
+    monkeypatch.setattr(tc, "_get_pyg_warning", lambda: None)
+    message = ("Process exited with code 1\n\n--- Last output ---\n"
+               "Traceback (most recent call last):\n"
+               '  File "/srv/secret/x.py", line 1, in <module>\n'
+               "FileNotFoundError: /srv/secret/place/kg.json")
+    monkeypatch.setattr(tc.training_manager, "get_status",
+                        lambda: {"status": "failed", "error_message": message,
+                                 "gpu": {"job": None}})
+    banner = tc.render(tc._workspace_state("demo"), {}, {}, [], READ_ONLY)["pieces"]["banner"]
+    cause = banner[banner.index("shep-banner-cause"):banner.index("<details")]
+    assert "FileNotFoundError:" in cause and "/srv/secret" not in banner
+    assert "a path outside the workspaces root" in cause
+    # The markup stays whole: each text is redacted before it is escaped (the
+    # built markup redacted whole lost its closing tags as "paths").
+    assert banner.count("</span>") == banner.count("<span") and "</details></div>" in banner
+    assert "<a path" not in banner and "× Dismiss</button>" in banner
+
+
+def test_a_run_with_no_run_directory_is_not_called_no_longer_listed(root):
+    """M5-3: the run view said "This run is no longer listed" of a run that
+    never made its directory (refused before its first output)."""
+    run = tc.RunRef(id="demo/gat/never", label="gat/never",
+                    path=root / "demo" / "runs" / "gat" / "never", workspace="demo", latest=False)
+    ended = tc._chart_token(run, {}, live=False)
+    assert ended == {"run": None, "rev": 0, "empty": tc.NO_RUN_DIR_ENDED}
+    assert "no longer listed" not in tc.NO_RUN_DIR_ENDED and "no run directory" in tc.NO_RUN_DIR_ENDED
+    assert tc._chart_token(run, {}, live=True) == {"run": None, "rev": 0,
+                                                   "empty": tc.NO_RUN_DIR_LIVE}
+    failed = {"status": "failed"}
+    for operator in (True, False):
+        snap = tc.run_snapshot_html(run, failed, operator=operator, snapshot=None)
+        assert "Failed. No run directory exists for this run, so it has no checkpoint and no log." in snap
+        assert "logs/" not in snap
+    # Running before the run made its directory: no logs pointed to yet.
+    live = tc.run_snapshot_html(run, {"status": "running"}, operator=True, snapshot=None)
+    assert "No checkpoint has been written yet." in live and "logs/" not in live
 
 
 def test_the_banner_escapes_the_output():
@@ -1025,6 +1120,61 @@ def test_the_continue_drawer_fits_and_says_the_plan_once():
     check = tc._check_html(preview, tc.CONTINUE_FROM_LIST)
     assert check.count("Extend training by 30 epochs") == 1
     assert "Checkpoint read; it can continue on this workspace." in check
+
+
+def test_extra_epochs_sits_above_every_check_result():
+    """M5-3: on the first Check of a finished parent and when the parent's
+    dataset differs, Extra epochs fell below the fold at 1920 x 1080 (under the
+    result). It is beside Check checkpoint now, before the comparison and the
+    result, and the drawer is denser (fits at 1920 x 1080 and 1920 x 940 in
+    every result, measured in a browser)."""
+    _demo, _ctx, by_id = _page()
+
+    def row_of(block):
+        while block is not None and "shep-train-check-row" not in (block.elem_classes or []):
+            block = block.parent
+        return block
+
+    row = row_of(by_id["extend_epochs"])
+    assert row is not None and row_of(by_id["shep-train-check"]) is row
+    body = by_id["shep-train-drawer-bd"].children
+    assert body.index(row) < body.index(by_id["shep-train-compare"]) < body.index(
+        by_id["continue_preview"])
+    wide = tc.PAGE_CSS[tc.PAGE_CSS.index("@media (min-width: 1400px) and (min-height: 760px) {"):]
+    wide = wide.replace(f"{tc._PAGE} ", "")
+    assert "#continue_source, #continue_device { display: flex !important;" in wide
+    assert "#checkpoint_dropdown .container { display: flex;" in wide
+    assert "#shep-train-drawer-why { padding: 8px 16px !important; }" in wide
+    # When the datasets differ, the comparison says the start refuses; the
+    # check does not add its general line, and a rate is never split.
+    preview = {"parent": "/w/demo/runs/gat/r/checkpoints/last.pt", "ok": True,
+               "action": "Extend training by 10 epochs at a fixed rate of 3e-05 (epochs 9-18, "
+                         "new target 18)", "sha256": "c" * 64, "inherited": {}}
+    differs = tc._check_html(preview, tc.CONTINUE_FROM_LIST, differs=True)
+    assert "The start checks again" not in differs
+    assert '<span class="shep-nowrap">3e-05</span>' in differs
+    assert "The start checks again" in tc._check_html(preview, tc.CONTINUE_FROM_LIST)
+
+
+def test_the_details_popover_holds_the_manifest_digests():
+    """M5-3: at 460 px the second column's digests ended 2 px past the card's
+    inner edge (1920 and 1536, both modes)."""
+    assert tc.DETAILS_POPOVER_WIDTH >= 480
+    assert f"width: min({tc.DETAILS_POPOVER_WIDTH}px, calc(100vw - 48px));" in tc.PAGE_CSS
+
+
+def test_a_two_sentence_reason_breaks_between_its_sentences():
+    """M5-3: in the Continue states the run bar's reason left one word alone
+    on its second line ("…cannot be" / "continued."): each sentence is a word
+    group, so the line breaks between them."""
+    ws = {"row": {"name": "demo", "trainable": True, "dataset_fingerprint": "a" * 64}}
+    refused = _view(ws=ws, mode={"drawer": True, "parent": {"chosen": True, "refused": True}})
+    reason = refused["reason"]
+    assert reason.count('class="shep-wg"') == 2
+    assert ('<span class="shep-wg">Start disabled: close Continue… to start a new run.</span> '
+            '<span class="shep-wg">Continue Training disabled: the check says this checkpoint '
+            'cannot be continued.</span>') in reason
+    assert ".shep-rb-why .shep-wg { text-wrap: pretty; }" in tc.PAGE_CSS.replace(f"{tc._PAGE} ", "")
 
 
 def test_the_plots_keep_a_usable_minimum_with_the_toolbar_in_view():

@@ -389,7 +389,7 @@ def test_extra_epochs_left_from_a_finished_checkpoint_never_block_a_resume(
     listed, manual = chosen("finished")
     text, update, _m, _c = _check(checkpoints, source, listed, manual, extend=extra["value"])
     _apply(extra, update)
-    assert extra["visible"] is True and "Enter <b>Extra epochs</b>" in text
+    assert extra["visible"] is True and "Enter <b>Extra epochs</b> above" in text
     extra["value"] = 3
     text, update, _m, _c = _check(checkpoints, source, listed, manual, extend=extra["value"])
     _apply(extra, update)
@@ -493,5 +493,5 @@ def test_continue_without_check_on_a_finished_checkpoint_shows_extra_epochs(
     monkeypatch.setattr(training_manager, "start_training", _starts(started))
     result = _resume(checkpoints, tc.CONTINUE_FROM_PATH, None, str(checkpoints["finished"]))
     assert started == [] and "Not started" in result[0]
-    assert "Enter <b>Extra epochs</b> below" in result[1]
+    assert "Enter <b>Extra epochs</b> above" in result[1]           # the field is above the check
     assert result[2]["visible"] is True

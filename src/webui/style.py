@@ -356,6 +356,10 @@ button.shep-row {
 .shep-ftbl tr.shep-changed th { box-shadow: inset 4px 0 0 var(--shep-accent); }
 .shep-ftbl tr.shep-changed td:last-child { font-weight: 600; }
 .shep-confirm-note { font-size: 14px; color: var(--shep-text-2); margin: 10px 0 4px; }
+/* A reload in progress (the confirmation's status, Diagnosis' card): a small turning ring. */
+.shep-spinner { display: inline-block; width: 12px; height: 12px; vertical-align: -1px; border-radius: 50%; border: 2px solid var(--shep-accent-100); border-top-color: var(--shep-accent); animation: shep-spin 0.9s linear infinite; }
+@keyframes shep-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .shep-spinner { animation: none; } }
 .shep-outcome { border-radius: 8px; padding: 10px 12px; font-size: 15px; }
 .shep-outcome-ok { background: var(--shep-green-50); border: 1px solid var(--shep-green-200); color: var(--shep-green-800); }
 .shep-outcome-amber { background: var(--shep-amber-50); border: 1px solid var(--shep-amber-300); color: var(--shep-amber-800); }

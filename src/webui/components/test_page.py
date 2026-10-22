@@ -127,6 +127,9 @@ ROWS_SHOWN = 8
 
 #: What replaces an absolute path that is under no named server directory.
 SERVER_PATH = "a server path"
+#: The investigation note's fields are never narrower (px): "Who" holds a
+#: normal name whole.
+NOTE_FIELD_MIN_WIDTH = 240
 
 #: The roles a version may be given that never offer ordering (§4.9 question 1).
 _NEVER_ORDERED = ("institutional_acceptance",)
@@ -2185,11 +2188,15 @@ def create_test_page(ctx: Any) -> None:
             # either (unbounded, eight lines did at every wide size).
             with gr.Column(visible=False, elem_classes=["shep-test-noteform"],
                            elem_id="shep-test-noteform") as note_form:
+                # "Who" holds a normal name whole (M5-3: at 166 px "research
+                # screenshots v2" lost its "v2"): two fifths of the row, never
+                # under 240 px; the row wraps before either gets narrower.
                 with gr.Row(elem_classes=["shep-test-noterow"]):
                     note_who = gr.Textbox(label="Who", elem_id="shep-test-note-who", max_lines=1,
-                                          scale=1, min_width=160)
+                                          scale=2, min_width=NOTE_FIELD_MIN_WIDTH)
                     note_what = gr.Textbox(label="What was found", elem_id="shep-test-note-what",
-                                           lines=2, max_lines=4, scale=3, min_width=220)
+                                           lines=2, max_lines=4, scale=3,
+                                           min_width=NOTE_FIELD_MIN_WIDTH)
                 with gr.Row(elem_classes=["shep-test-actions"]):
                     note_btn = gr.Button("🔒 Add note", variant="secondary",
                                          elem_id="shep-test-note-add", scale=0)
