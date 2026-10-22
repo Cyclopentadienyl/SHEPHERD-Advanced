@@ -411,6 +411,44 @@ def test_a_record_whose_version_the_registry_does_not_list_cannot_be_checked(wor
     assert contest_states([world["det"]], resolver, operator=False)[key]["problems"] == []
 
 
+@pytest.mark.parametrize("bytes_now", ["torn", "another schema", "another version", "gone"])
+def test_a_version_whose_bytes_changed_since_it_was_listed_is_said_changed(
+        world, monkeypatch, bytes_now):
+    """Root-cause round 3 (INT-R2): a version the page listed is read again for
+    its usage history bound to the digest it was listed with
+    (`CohortVersions.by_digest` -> `resolve_version(expected_sha256=)`,
+    compared before the bytes are decoded). Other bytes put there after the
+    listing -- torn, another schema, another valid version, or none -- are
+    "changed since it was listed", never a version that "cannot be read", and
+    none of its entries is shown."""
+    import src.evaluation.cohort_registry as cohort_registry
+
+    path = world["registry"] / "versions" / MYGENE / "cohort.json"
+    listing = ml.list_models("demo", operator_request(monkeypatch))
+    listed = mp.read_versions
+
+    def listed_then_changed(environ=None):
+        versions = listed(environ)
+        if bytes_now == "gone":
+            path.unlink()
+        elif bytes_now == "torn":
+            path.write_bytes(path.read_bytes()[:40])
+        else:
+            manifest = json.loads(path.read_bytes())
+            if bytes_now == "another schema":
+                manifest["schema_version"] = 99
+            else:
+                manifest["imported"]["at"] = "2026-10-22T00:00:00Z"
+            path.write_bytes(cohort_registry.encode_json(manifest))
+        return versions
+
+    monkeypatch.setattr(mp, "read_versions", listed_then_changed)
+    data = mp.read_page(listing)
+
+    assert f"{MYGENE}: {MYGENE} changed since it was listed" in data["usage"]["problems"]
+    assert MYGENE not in data["usage"]["read_from"]
+
+
 @pytest.mark.parametrize("value, shown", [
     (float("nan"), "not a finite number"), (None, "not reported"),
     ("0.3402", "not a finite number"), ({"k": 1}, "not a finite number"),

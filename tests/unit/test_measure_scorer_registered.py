@@ -653,6 +653,61 @@ def test_other_bytes_at_the_chosen_checkpoint_are_refused_before_torch_parses_th
     assert _nothing_written(cohort) and _usage(cohort) == []
 
 
+@pytest.mark.parametrize("bytes_now", ["torn", "another schema", "another version", "gone"])
+def test_other_bytes_at_the_chosen_version_are_refused_before_they_are_decoded(
+    cli, cohort, monkeypatch, bytes_now
+):
+    """Root-cause round 3 (INT-R2): `--expect-version-sha256` is compared on
+    the version's one `cohort.json` read before it is decoded
+    (`resolve_version(expected_sha256=)`), as the checkpoint's expectation is
+    before torch parses it: bytes put at the chosen version after the choice
+    are refused as changed, whatever they are. Torn bytes are not called
+    malformed, another schema is not refused as one, another valid version is
+    never decoded, and a removed `cohort.json` is not "an interrupted import"
+    with the advice to remove the directory. Nothing is written and the usage
+    history stays empty."""
+    import src.evaluation.cohort_registry as cohort_registry
+
+    path, label = cohort.version.identity.path, cohort.version.manifest["label"]
+    chosen = cohort.version.identity.sha256
+    if bytes_now == "gone":
+        path.unlink()
+    elif bytes_now == "torn":
+        data = path.read_bytes()
+        path.write_bytes(data[:len(data) // 2])
+    else:
+        manifest = json.loads(path.read_bytes())
+        if bytes_now == "another schema":
+            manifest["schema_version"] = 99
+        else:
+            manifest["imported"]["at"] = "2026-10-22T00:00:00Z"
+        path.write_bytes(cohort_registry.encode_json(manifest))
+    found = None if bytes_now == "gone" else _sha(path)
+
+    class Undecoded:
+        """The registry module's `json`, whose `loads` fails the test."""
+
+        def __getattr__(self, name):
+            return getattr(json, name)
+
+        @staticmethod
+        def loads(*args, **kwargs):
+            pytest.fail("the chosen version's cohort.json was decoded")
+
+    monkeypatch.setattr(cohort_registry, "json", Undecoded())
+
+    with pytest.raises(cli.ExpectedDigestMismatch) as refused:
+        cli.main(_argv(cohort, "--expect-version-sha256", chosen, "--record"))
+
+    message = str(refused.value)
+    held = "is gone" if found is None else f"holds bytes {found[:12]}..."
+    assert message.startswith(f"the cohort version {label!r} ({path}) {held}, not the "
+                              f"{chosen[:12]}... this run was started for: it changed after it "
+                              "was chosen"), message
+    assert "Nothing was written" in message
+    assert _nothing_written(cohort) and _usage(cohort) == []
+
+
 def _outcome(path):
     return json.loads(Path(path).read_text())
 

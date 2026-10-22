@@ -194,6 +194,29 @@ class CohortVersionRefused(ValueError):
     """A cohort version cannot be created, or one that exists cannot be read."""
 
 
+class CohortVersionChanged(ValueError):
+    """The version is not the one a caller chose: `resolve_version` was given
+    the SHA-256 of its ``cohort.json`` (``expected_sha256``) and its one read
+    has other bytes (``found``), or finds no version there (``found`` is
+    None); raised before the bytes are decoded. A ``ValueError``, like the
+    reader's other refusals, and not a `CohortVersionRefused`: it says only
+    that the bytes are not the ones chosen, never what is wrong with them.
+
+    It carries the facts (``path``, the ``cohort.json`` read or looked for;
+    ``expected``; ``found``) and its message states only them. What the
+    difference means depends on where the expectation came from (a run started
+    for a version, a list ordered by one, a version listed earlier), so each
+    caller words its own refusal from these fields."""
+
+    def __init__(self, path: str | Path, expected: str, found: Optional[str]) -> None:
+        self.path = Path(path)
+        self.expected = expected
+        self.found = found
+        held = (f"holds {found[:12]}..., not the {expected[:12]}... expected"
+                if found is not None else f"is gone; {expected[:12]}... was expected")
+        super().__init__(f"{self.path} {held}.")
+
+
 class CohortBindingMismatch(ValueError):
     """A cohort version was mapped against another graph or dataset record than
     the run's. `roles` names every role that differs."""
@@ -1077,7 +1100,8 @@ def _version_shape_problems(manifest: Dict[str, Any]) -> List[str]:
     return problems
 
 
-def resolve_version(registry: Any, label: str) -> CohortVersionRead:
+def resolve_version(registry: Any, label: str, *,
+                    expected_sha256: Optional[str] = None) -> CohortVersionRead:
     """Resolve a committed version: one read of its ``cohort.json``, parsed from
     those bytes, and the identity of those bytes.
 
@@ -1088,9 +1112,20 @@ def resolve_version(registry: Any, label: str) -> CohortVersionRead:
     resolved path is the one returned, so a caller writing reports under it
     writes where this check looked (`_registry_directory`).
 
+    **`expected_sha256` compares before it decodes** (the version a caller
+    chose by the digest of its ``cohort.json``): other bytes there -- torn,
+    another schema, another valid version -- raise `CohortVersionChanged` and
+    are never decoded; a version directory or ``cohort.json`` that is gone
+    raises the same, since the bytes chosen are no longer there, never the
+    advice to remove an interrupted import. As `read_checkpoint` and
+    `read_report` do. The registry and the label are still checked first:
+    they are arguments, not bytes.
+
     Raises:
         RegistryRefused: the registry path is refused (`validate_registry`), or
             the version directory resolves outside it or inside the repository.
+        CohortVersionChanged: ``expected_sha256`` is given and the read is not
+            it, or there is nothing to read.
         CohortVersionRefused: the label is invalid; there is no such version;
             the directory has no ``cohort.json`` (an interrupted import); the
             manifest cannot be read or parsed, is not an object, is not schema
@@ -1106,12 +1141,16 @@ def resolve_version(registry: Any, label: str) -> CohortVersionRead:
                                     done="No version is read from there.")
     path = directory / VERSION_MANIFEST
     if not directory.is_dir():
+        if expected_sha256 is not None:
+            raise CohortVersionChanged(path, expected_sha256, None)
         raise CohortVersionRefused(
             f"the registry {root} holds no cohort version {label!r} (no {directory})."
         )
     try:
         read = read_once(path)
     except FileNotFoundError:
+        if expected_sha256 is not None:
+            raise CohortVersionChanged(path, expected_sha256, None) from None
         raise CohortVersionRefused(
             f"{directory} has no {VERSION_MANIFEST}: an interrupted import, not a version. "
             "Remove the directory and import again."
@@ -1121,6 +1160,9 @@ def resolve_version(registry: Any, label: str) -> CohortVersionRead:
             f"{path} could not be read ({type(exc).__name__}: {exc})"
         ) from exc
     identity = read.identity
+    if expected_sha256 is not None and identity.sha256 != expected_sha256:
+        del read
+        raise CohortVersionChanged(path, expected_sha256, identity.sha256)
     try:
         text = read.data.decode("utf-8")
         del read
@@ -1442,6 +1484,7 @@ def create_report_dir(
 
 __all__ = [
     "CohortBindingMismatch",
+    "CohortVersionChanged",
     "CohortVersionRead",
     "CohortVersionRefused",
     "DEFAULT_PARTIAL_PHENOTYPES",

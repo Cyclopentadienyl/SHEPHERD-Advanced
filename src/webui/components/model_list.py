@@ -854,21 +854,25 @@ def request_load(listing: Mapping[str, Any], key: Any, ordering: Any, request: A
 def _record_usage(plan: Mapping[str, Any], loaded: bool, why: Optional[str],
                   environ: Optional[Mapping[str, str]] = None) -> Optional[str]:
     """The usage history entry for a Load from an ordered list (D4), or why it
-    could not be written; None when the list was not ordered or it was written."""
+    could not be written; None when the list was not ordered or it was written.
+    The version is read bound to the digest the list was ordered by
+    (`resolve_version(expected_sha256=)`, compared before decoding), so an entry
+    is never written against other bytes."""
     ordering = plan.get("ordering")
     if not ordering:
         return None
     try:
         from src.config import server_settings
-        from src.evaluation.cohort_registry import resolve_version
+        from src.evaluation.cohort_registry import CohortVersionChanged, resolve_version
         from src.evaluation.report_store import record_model_load
 
         setting = server_settings.cohort_registry(environ)
         if not setting.available:
             return f"the usage history was not written: {setting.problem}"
-        version = resolve_version(setting.value, ordering["version"])
-        expected = ordering.get("version_sha256")
-        if expected and version.identity.sha256 != expected:
+        try:
+            version = resolve_version(setting.value, ordering["version"],
+                                      expected_sha256=ordering.get("version_sha256") or None)
+        except CohortVersionChanged:
             return ("the usage history was not written: the cohort version changed since the "
                     "list was ordered")
         record_model_load(version, checkpoint_sha256=plan["to"]["sha256"],

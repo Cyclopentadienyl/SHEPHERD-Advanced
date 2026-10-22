@@ -326,11 +326,13 @@ def read_measurement_inputs(
 
     **What the run was started for** (M5's job runner): with
     `expect_version_sha256`, the version's `cohort.json` read must have that
-    digest, compared right after `resolve_version` reads it; with
-    `expect_checkpoint_sha256`, the checkpoint read must, compared on that read
-    before torch parses it (so before R3). Either refuses (`ExpectedDigestMismatch`) before
-    anything is measured or written, so a file replaced after it was chosen is
-    never measured under the choice. No file is read again for it: each
+    digest, compared on that read before it is decoded
+    (`resolve_version(expected_sha256=)`); with `expect_checkpoint_sha256`, the
+    checkpoint read must, compared on that read before torch parses it (so
+    before R3). Either refuses (`ExpectedDigestMismatch`) before anything is
+    measured or written, so a file replaced after it was chosen -- torn, of
+    another schema or format, valid but other, or gone -- is refused as changed
+    since it was chosen, never parsed. No file is read again for it: each
     comparison is with the digest of the read the run makes anyway.
 
     **Before any model is built or any output written.** `main` calls this
@@ -410,10 +412,9 @@ def read_measurement_inputs(
     else:
         resolved, siblings = None, ()
         version, cohort_version, candidates = _resolve_registered(
-            data_dir, cohort, registry, training_evidence
+            data_dir, cohort, registry, training_evidence,
+            expected_sha256=expect_version_sha256,
         )
-        _expect(expect_version_sha256, version.identity.sha256,
-                f"the cohort version {cohort!r} ({version.identity.path})")
 
     manifest = read_split_manifest(data_dir)
     graph = read_graph_artifacts(data_dir, map_location="cpu")
@@ -468,17 +469,16 @@ def read_measurement_inputs(
                              bound, dataset_record, r10)
 
 
-def _expect(expected: Optional[str], read: str, what: str) -> None:
-    """Refuse a read whose digest is not the one the run was started for."""
-    if expected is not None and read != expected:
-        raise _changed_since_chosen(what, f"holds bytes {read[:12]}...", expected)
-
-
-def _changed_since_chosen(what: str, found: str, expected: str) -> ExpectedDigestMismatch:
-    """The one wording of `ExpectedDigestMismatch`, for the cohort version
-    (`_expect`) and the checkpoint (`_read_checkpoint`)."""
+def _changed_since_chosen(what: str, found: Optional[str],
+                          expected: str) -> ExpectedDigestMismatch:
+    """The one wording of `ExpectedDigestMismatch`, for both expectations, each
+    compared by its reader before parsing: the cohort version's
+    (`CohortVersionChanged`, `_resolve_registered`) and the checkpoint's
+    (`CheckpointChanged`, `_read_checkpoint`). `found` is the digest the read
+    has, None when there was nothing to read."""
+    held = f"holds bytes {found[:12]}..." if found is not None else "is gone"
     return ExpectedDigestMismatch(
-        f"{what} {found}, not the {expected[:12]}... this run was started for: it changed "
+        f"{what} {held}, not the {expected[:12]}... this run was started for: it changed "
         "after it was chosen, so it is not measured under that choice. Nothing was written."
     )
 
@@ -493,21 +493,30 @@ def _resolve_generated(data_dir: Path, split: str) -> Tuple[CohortProvenance, Tu
 
 
 def _resolve_registered(
-    data_dir: Path, label: str, registry: Optional[Path], training_evidence: Sequence[Path]
+    data_dir: Path, label: str, registry: Optional[Path], training_evidence: Sequence[Path],
+    *, expected_sha256: Optional[str] = None,
 ) -> Tuple[CohortVersionRead, Dict[str, Any], List[Path]]:
     """The evidence candidates (listed, nothing read) and the version (one read
     of its `cohort.json`), with the block its report records.
 
     The evidence directories come first: they are the operator's arguments, and
     one that is not a directory is refused before anything is read.
+
+    With `expected_sha256` (`--expect-version-sha256`) the read is compared
+    before it is decoded: other bytes, or no version, are
+    `ExpectedDigestMismatch`, never a malformed version or an interrupted import.
     """
-    from src.evaluation.cohort_registry import resolve_version
+    from src.evaluation.cohort_registry import CohortVersionChanged, resolve_version
     from src.evaluation.r10 import evidence_candidates
 
     if registry is None:
         raise ValueError("a registered cohort is resolved in a registry; none was given")
     candidates = evidence_candidates(data_dir, training_evidence)
-    version = resolve_version(registry, label)
+    try:
+        version = resolve_version(registry, label, expected_sha256=expected_sha256)
+    except CohortVersionChanged as exc:
+        raise _changed_since_chosen(f"the cohort version {label!r} ({exc.path})",
+                                    exc.found, exc.expected) from None
     return version, cohort_version_block(version), candidates
 
 
@@ -612,10 +621,8 @@ def _read_checkpoint(checkpoint: Path, device: torch.device, *,
         return read_checkpoint(resolved, map_location=device, weights_only=True,
                                expected_sha256=expected_sha256)
     except CheckpointChanged as exc:
-        found = (f"holds bytes {exc.found[:12]}..." if exc.found is not None
-                 else "is gone")
         raise _changed_since_chosen(f"the checkpoint {checkpoint} (read at {resolved})",
-                                    found, exc.expected) from None
+                                    exc.found, exc.expected) from None
     except (OSError, MemoryError):
         # A MemoryError is not a property of the file. Converting it would send
         # a capacity shortfall to whoever reads the message as a corrupt file.

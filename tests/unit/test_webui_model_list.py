@@ -564,7 +564,8 @@ def test_bytes_replaced_before_the_reloads_own_read_are_refused_never_served(
     monkeypatch.setattr(report_store, "record_model_load",
                         lambda version, **fields: written.append(fields))
     version = type("V", (), {"identity": type("I", (), {"sha256": "c" * 64})()})()
-    monkeypatch.setattr(cohort_registry, "resolve_version", lambda registry, label: version)
+    monkeypatch.setattr(cohort_registry, "resolve_version",
+                        lambda registry, label, **kwargs: version)
     registry = tmp_path / "registry"
     registry.mkdir()
     monkeypatch.setattr(server_settings, "cohort_registry",
@@ -633,22 +634,32 @@ def test_a_refused_reload_leaves_the_model_in_use_and_says_so(root, serving, mon
     assert "Not reloaded" in raising.confirm_html and "RuntimeError" in raising.confirm_html
 
 
-def test_the_usage_history_is_written_only_for_a_list_ordered_by_a_versions_score(
-        root, serving, monkeypatch, tmp_path):
-    import src.evaluation.cohort_registry as cohort_registry
+def _ordered_by_a_version(monkeypatch, tmp_path):
+    """A registry holding one committed version, the deployment's, and the
+    ordering of a list by that version's score; the usage history entries a
+    Load writes are collected instead of appended."""
     import src.evaluation.report_store as report_store
-    from src.api.routes.pipeline import PipelineReloadResponse, PipelineStatusResponse
     from src.config import server_settings
+    from tests.fixtures.report_store import store_version
+    from tests.unit.test_evaluation_sidecar import cohort_version
 
     written = []
     monkeypatch.setattr(report_store, "record_model_load",
                         lambda version, **fields: written.append(fields))
-    version = type("V", (), {"identity": type("I", (), {"sha256": "c" * 64})()})()
-    monkeypatch.setattr(cohort_registry, "resolve_version", lambda registry, label: version)
     registry = tmp_path / "registry"
-    registry.mkdir()
+    version = store_version(registry, cohort_version())
     monkeypatch.setattr(server_settings, "cohort_registry",
                         lambda environ=None: server_settings.Setting("SHEPHERD_REGISTRY", registry))
+    ordering = {"version": version.manifest["label"], "version_sha256": version.identity.sha256,
+                "metric": "untruncated_mrr", "scoring_semantics_digest": "s" * 64}
+    return version, ordering, written
+
+
+def test_the_usage_history_is_written_only_for_a_list_ordered_by_a_versions_score(
+        root, serving, monkeypatch, tmp_path):
+    from src.api.routes.pipeline import PipelineReloadResponse, PipelineStatusResponse
+
+    _version, ordering, written = _ordered_by_a_version(monkeypatch, tmp_path)
 
     def reload(request):
         return PipelineReloadResponse(success=True, message="ok", status=PipelineStatusResponse(
@@ -659,8 +670,6 @@ def test_the_usage_history_is_written_only_for_a_list_ordered_by_a_versions_scor
     # an unordered list: no entry is tried, so none is said to be missing
     assert written == [] and "usage history" not in unordered.confirm_html
     serving["value"] = _status(root)
-    ordering = {"version": "mygene2-2026-09", "version_sha256": "c" * 64,
-                "metric": "untruncated_mrr", "scoring_semantics_digest": "s" * 64}
     step = ml.finish_load(_plan(root, monkeypatch, ordering), operator_request(monkeypatch),
                           reload=reload)
     assert written == [{"checkpoint_sha256": root["shas"]["model-12.pt"],
@@ -681,6 +690,39 @@ def test_the_usage_history_is_written_only_for_a_list_ordered_by_a_versions_scor
                           reload=reload)
     assert len(written) == count
     assert "the cohort version changed since the list was ordered" in step.confirm_html
+
+
+@pytest.mark.parametrize("bytes_now", ["torn", "another schema", "gone"])
+def test_a_version_whose_bytes_changed_since_the_ordering_gets_no_entry_and_is_said_changed(
+        root, serving, monkeypatch, tmp_path, bytes_now):
+    """Root-cause round 3 (INT-R2): the usage history's version is read bound
+    to the digest the list was ordered by, compared before it is decoded
+    (`resolve_version(expected_sha256=)`), so other bytes at the version --
+    torn, another schema, or none -- are said as "changed since the list was
+    ordered", never as a version that cannot be read, and no entry is
+    written."""
+    import src.evaluation.cohort_registry as cohort_registry
+    from src.api.routes.pipeline import PipelineReloadResponse, PipelineStatusResponse
+
+    version, ordering, written = _ordered_by_a_version(monkeypatch, tmp_path)
+    path = version.identity.path
+    if bytes_now == "gone":
+        path.unlink()
+    elif bytes_now == "torn":
+        path.write_bytes(path.read_bytes()[:40])
+    else:
+        manifest = json.loads(path.read_bytes())
+        manifest["schema_version"] = 99
+        path.write_bytes(cohort_registry.encode_json(manifest))
+
+    step = ml.finish_load(_plan(root, monkeypatch, ordering), operator_request(monkeypatch),
+                          reload=lambda request: PipelineReloadResponse(
+                              success=True, message="ok", status=PipelineStatusResponse(
+                                  **_status(root, served="model-12.pt"))))
+
+    assert written == []
+    assert ("But the usage history was not written: the cohort version changed since the "
+            "list was ordered.") in step.confirm_html, step.confirm_html
 
 
 def test_a_markup_workspace_name_is_escaped_in_the_confirmation(root, serving, monkeypatch):

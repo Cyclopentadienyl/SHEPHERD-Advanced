@@ -117,8 +117,9 @@ class CohortVersions:
     (`cohort_registry.list_versions`), and keeps each read: the digest a record
     is matched by and the version returned for it come from that one read.
     The constructor takes versions a server's list gave earlier (label and
-    digest each, Models' page data); each is read again on first use and
-    checked against the digest it was given."""
+    digest each, Models' page data); each is read again on first use, bound to
+    the digest it was given (`resolve_version(expected_sha256=)`, compared
+    before the bytes are decoded)."""
 
     def __init__(self, versions: Sequence[Mapping[str, Any]],
                  environ: Optional[Mapping[str, str]]) -> None:
@@ -164,7 +165,7 @@ class CohortVersions:
 
     def by_digest(self, digest: Any) -> Tuple[Any, Optional[str]]:
         """``(version, None)`` or ``(None, why)`` for a cohort version digest."""
-        from src.evaluation.cohort_registry import resolve_version
+        from src.evaluation.cohort_registry import CohortVersionChanged, resolve_version
 
         if self.registry is None:
             return None, self.problem
@@ -174,17 +175,18 @@ class CohortVersions:
             return None, (f"its cohort version ({shown}) is not one the server's registry "
                           "lists")
         label = listed["label"]
-        # Read by `listed` already, or once here for a version a list gave earlier.
+        # Read by `listed` already, or once here for a version a list gave
+        # earlier, bound to the digest it gave: other bytes, or none, are
+        # "changed", whatever they are, and never decoded.
         if label not in self._resolved:
             try:
-                version = resolve_version(self.registry, label)
+                version = resolve_version(self.registry, label, expected_sha256=digest)
+            except CohortVersionChanged:
+                self._resolved[label] = (None, f"{label} changed since it was listed")
             except Exception as exc:  # noqa: BLE001 - a state, never a crash of the page
                 self._resolved[label] = (None, f"{label} cannot be read ({type(exc).__name__})")
             else:
-                if version.identity.sha256 != digest:
-                    self._resolved[label] = (None, f"{label} changed since it was listed")
-                else:
-                    self._resolved[label] = (version, None)
+                self._resolved[label] = (version, None)
         return self._resolved[label]
 
 
