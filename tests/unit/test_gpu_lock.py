@@ -355,6 +355,7 @@ def test_not_configured_is_refused_never_run_unlocked(monkeypatch, tmp_path, cap
     monkeypatch.delenv(LOCK_FILE_ENV, raising=False)
     monkeypatch.delenv(WORKSPACES_ROOT_ENV, raising=False)
     monkeypatch.chdir(tmp_path)
+    _deployment_registry(tmp_path, monkeypatch)
     with pytest.raises(GpuLockNotConfigured, match="the GPU lock is not configured"):
         take_gpu_lock("training", "train_model.py")
     monkeypatch.setattr(sys, "argv", ["train_model.py", "--data-dir", str(tmp_path / "ws")])
@@ -367,7 +368,8 @@ def test_not_configured_is_refused_never_run_unlocked(monkeypatch, tmp_path, cap
     err = capsys.readouterr().err
     assert err.startswith("measure_scorer: refused: neither SHEPHERD_GPU_LOCK_FILE nor")
     assert err.rstrip().endswith("Nothing was written.")
-    assert list(tmp_path.iterdir()) == [], "a refused CLI wrote something"
+    assert [p.name for p in tmp_path.iterdir()] == ["registry"], "a refused CLI wrote something"
+    assert list((tmp_path / "registry").iterdir()) == [], "a refused CLI wrote something"
 
 
 @POSIX
