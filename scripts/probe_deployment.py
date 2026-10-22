@@ -108,13 +108,19 @@ entry point, and the registry, the kept reports and the ledgers are all under
     the measurement before the checkpoint is read (T4); served through the
     reload route, bound to the digest expected (as the dashboard's Load binds
     it), the measured checkpoint's record shown by the read-only view for the
-    digest the status reports, and none for M2's checkpoint served beside the
-    same ledger (T5); the overlap audit in registered mode (T6).
+    digest the status reports, uncontested in its version's report store (D5),
+    and none for M2's checkpoint served beside the same ledger (T5); the overlap
+    audit in registered mode (T6).
     Phase R, after R7: N of the real workspace's val cases written back as a
     source through the real graph's ids, imported with no exclusions (RT1);
     the checkpoint R4 trained measured on it with --record, training disease
     overlap none and validation phenotype-set overlap N of N, both as
-    constructed (RT2); that record shown for that checkpoint served (RT3).
+    constructed (RT2); that record shown for that checkpoint served,
+    uncontested (RT3).
+    The probe's registry is the deployment's (`SHEPHERD_REGISTRY`) for each
+    flow as a whole, set once around T1-T6 and RT1-RT3 whatever the operator's
+    shell names, and put back after (`_registry_setting`; root-cause round,
+    INT-1).
 
 Contract M3c (what is served is identified) adds checks, not probes:
     E1 requires the served identity to name the checkpoint D1 trained, the
@@ -2608,15 +2614,15 @@ def _import_version(registry: Path, data_dir: Path, source: Path, label: str) ->
 def _measure_cohort(checkpoint: Path, data_dir: Path, registry: Path, label: str,
                     device: str, *extra: str) -> int:
     """The production measurement entry point on a registered cohort version
-    (contract M4): `--cohort` with `--registry`, and `extra` (`--record`), with
-    that registry as the deployment's (`_registry_setting`)."""
+    (contract M4): `--cohort` with `--registry`, and `extra` (`--record`). Run
+    inside an M4 flow, where that registry is the deployment's
+    (`_registry_setting`, set once for the flow)."""
     import scripts.measure_scorer as measure_scorer
 
-    with _registry_setting(registry):
-        return measure_scorer.main([
-            "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
-            "--cohort", label, "--registry", str(registry), "--device", device, *extra,
-        ])
+    return measure_scorer.main([
+        "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
+        "--cohort", label, "--registry", str(registry), "--device", device, *extra,
+    ])
 
 
 def _kept_report(registry: Path, label: str) -> Tuple[Path, Dict[str, Any], Any, int]:
@@ -2747,6 +2753,9 @@ def _serve_and_view(data_dir: Path, checkpoint: Path, expected_sha256: str,
     checkpoint read before anything is published, as the dashboard's Load binds
     it), then the status and the loaded model's recorded results read as the
     Diagnosis panel reads them: two GETs on the application, status first.
+    Called inside an M4 flow, so the route reads the probe's registry as the
+    deployment's (`_registry_setting`), and each record's D5 state is from the
+    probe's report store.
 
     Returns the digest the status reports for the served checkpoint, which
     must be the one expected, and the records answer, whose echoed digest must
@@ -2784,11 +2793,18 @@ def _serve_and_view(data_dir: Path, checkpoint: Path, expected_sha256: str,
     return served["sha256"], answer
 
 
+#: A record's D5 state when the one report its key has in the store is the one
+#: it was built from (`GET /api/v1/evaluations/loaded-model`, `contest`).
+UNCONTESTED = {"state": "uncontested", "differing": [], "runs": []}
+
+
 def _the_view_shows(answer: Dict[str, Any], record: Dict[str, Any], ledger_sha256: str,
                     scopes: Tuple[str, ...]) -> Dict[str, Any]:
     """The read-only view's answer shows exactly `record`, from the ledger read
-    as `ledger_sha256`, with R10's evidence found for `scopes`. Returns its
-    facts: the state and the record's digests and counts, no path."""
+    as `ledger_sha256`, with R10's evidence found for `scopes`, and uncontested
+    in its version's report store (D5: the one report the flow kept for it).
+    Returns its facts: the state, the record's digests and counts and its D5
+    state, no path."""
     assert answer.get("state") == "records", f"the view's state is {answer.get('state')}"
     assert answer.get("records_not_shown") == 0, "a record for these weights is not shown"
     assert (answer.get("ledger") or {}).get("sha256") == ledger_sha256, (
@@ -2804,10 +2820,16 @@ def _the_view_shows(answer: Dict[str, Any], record: Dict[str, Any], ledger_sha25
     for scope in scopes:
         assert view["r10"][scope]["evidence"]["state"] == "found", (
             f"the view shows R10's {scope} evidence as not found")
+    # The review's P2-6, seen end to end (root-cause round, INT-1): the route
+    # reads the probe's registry, so the record's state is from its store.
+    contest = view.get("contest") or {}
+    assert contest == UNCONTESTED, (
+        f"the view shows the record's D5 state as {contest.get('state')}, not uncontested")
     return {"state": answer["state"], "checkpoint_sha256": answer["checkpoint_sha256"],
             "records": len(shown), "source_artifact_digest": view["source_artifact_digest"],
             "registration_sequence": view["registration"]["sequence"],
-            "n_ranked": view["n_ranked"], "environment_class": view["environment_class"]}
+            "n_ranked": view["n_ranked"], "environment_class": view["environment_class"],
+            "contest_state": contest["state"]}
 
 
 # =============================================================================
@@ -2936,7 +2958,10 @@ def _registry_setting(registry: Path):
     then put back, through `_deployment_settings`; the other M5 settings stay
     as they are. A ``--cohort`` run measures, and a report is registered, only
     in the deployment's registry (BACKLOG 37), and for M4's probes that is the
-    probe's."""
+    probe's. **Opened once around each M4 flow** (T1-T6, RT1-RT3; root-cause
+    round, INT-1), never per call, so every step of the flow that reads the
+    setting inherits it, the loaded-model route's D5 state included, whatever
+    the operator's shell names."""
     current = {name: os.environ.get(name) for name in _M5_SETTINGS}
     with _deployment_settings({**current, "SHEPHERD_REGISTRY": str(registry)}):
         yield
@@ -5059,10 +5084,6 @@ def phase_m2_demo(
             "partial_phenotypes": version.manifest["mapping"]["partial_phenotypes"],
         }
 
-    report.run("T1", "m2",
-               "M4: an import preview writes nothing and its id commits a version bound to "
-               "the graph", _imported)
-
     def _measured_and_recorded() -> Tuple[str, Dict[str, Any]]:
         from src.evaluation.sidecar import REGISTERED_RELATIONS
 
@@ -5103,10 +5124,6 @@ def phase_m2_demo(
             "cuda_executed": manifest.get("cuda_executed"),
         }
 
-    report.run("T2", "m2",
-               "M4: a registered version is measured with --record: report kept, R10 "
-               "recorded, one record", _measured_and_recorded)
-
     def _registered_again() -> Tuple[str, Dict[str, Any]]:
         import scripts.record_evaluation as record_evaluation
 
@@ -5114,8 +5131,8 @@ def phase_m2_demo(
         before = snapshot(measured.parent, include_dirs=True)
         # The later registration in the form measure_scorer prints for it:
         # `--report` and `--checkpoint FILE`, the file the run measured, with
-        # the probe's registry as the deployment's.
-        with _logged(record_evaluation.logger) as said, _registry_setting(registry):
+        # the probe's registry as the deployment's (the flow's).
+        with _logged(record_evaluation.logger) as said:
             code = record_evaluation.main(["--report", str(m4["report"]),
                                            "--checkpoint", str(measured)])
         assert code == 0, f"registering the same report again exited {code}"
@@ -5130,11 +5147,10 @@ def phase_m2_demo(
         # Since M5-1 a report is registered only from the registry's report
         # store (D5, 2026-10-19): a copy outside it is refused for where it is,
         # before it is read, saying to register the store's original.
-        with _registry_setting(registry):
-            refuses(lambda: record_evaluation.main(["--report", str(damaged),
-                                                    "--checkpoint", str(measured)]),
-                    SystemExit, ("is not a report the registry's report store holds",
-                                 "Nothing was written"))
+        refuses(lambda: record_evaluation.main(["--report", str(damaged),
+                                                "--checkpoint", str(measured)]),
+                SystemExit, ("is not a report the registry's report store holds",
+                             "Nothing was written"))
         assert_untouched(before, measured.parent, "a refused registration", include_dirs=True)
         # **A copy of the whole registry is not the deployment's** (BACKLOG 37):
         # its report, the same bytes in the same structure, is refused before
@@ -5142,12 +5158,11 @@ def phase_m2_demo(
         whole = m4_dir / "registry-copy"
         shutil.copytree(registry, whole, symlinks=True)
         copy_before = snapshot(whole, include_dirs=True)
-        with _registry_setting(registry):
-            refuses(lambda: record_evaluation.main([
-                "--report", str(whole / m4["report"].relative_to(registry)),
-                "--checkpoint", str(measured)]),
-                SystemExit, ("is not registered: the registry", "is not the deployment's",
-                             "Nothing was written"))
+        refuses(lambda: record_evaluation.main([
+            "--report", str(whole / m4["report"].relative_to(registry)),
+            "--checkpoint", str(measured)]),
+            SystemExit, ("is not registered: the registry", "is not the deployment's",
+                         "Nothing was written"))
         assert_untouched(before, measured.parent, "a registration from a copied registry",
                          include_dirs=True)
         assert_untouched(copy_before, whole, "a registration from a copied registry",
@@ -5160,11 +5175,6 @@ def phase_m2_demo(
                    "registry_copy": "refused: not the deployment's registry",
                    "ledger_unchanged": True,
                }
-
-    report.run("T3", "m2",
-               "M4: the same report again is already registered, a damaged copy outside the "
-               "report store and a copy of the whole registry refused, the ledger unchanged",
-               _registered_again)
 
     def _other_graph_refused() -> Tuple[str, Dict[str, Any]]:
         from src.evaluation.cohort_registry import CohortBindingMismatch
@@ -5189,10 +5199,6 @@ def phase_m2_demo(
             "differing_roles": sorted(refusal.roles), "checkpoint_reads": 0,
             "report_directory_created": False, "ledger_unchanged": True,
         }
-
-    report.run("T4", "m2",
-               "M4: a version mapped against another graph is refused before the checkpoint "
-               "is read", _other_graph_refused)
 
     def _read_only_view() -> Tuple[str, Dict[str, Any]]:
         assert "record" in m4, "the measurement (T2) is not available"
@@ -5222,10 +5228,6 @@ def phase_m2_demo(
                       "records": 0, "same_ledger": True},
         }
 
-    report.run("T5", "m2",
-               "M4: the read-only view shows the served checkpoint's record, and none for "
-               "another", _read_only_view)
-
     def _overlap_audit() -> Tuple[str, Dict[str, Any]]:
         import scripts.audit_split_overlap as audit
         from src.kg.storage.file_storage import _read_json
@@ -5247,8 +5249,30 @@ def phase_m2_demo(
             "counts": audited["counts"], "overlap": audited["overlap"]["as_written"],
         }
 
-    report.run("T6", "m2", "M4: the overlap audit runs on the registered version and records it",
-               _overlap_audit)
+    # **The probe's registry is the deployment's for the whole flow** (root-cause
+    # round, INT-1), set once here as phases M and R set their GPU lock, so every
+    # step that reads SHEPHERD_REGISTRY inherits it: measure_scorer --cohort,
+    # record_evaluation and the loaded-model route's D5 state alike.
+    with _registry_setting(registry):
+        report.run("T1", "m2",
+                   "M4: an import preview writes nothing and its id commits a version bound "
+                   "to the graph", _imported)
+        report.run("T2", "m2",
+                   "M4: a registered version is measured with --record: report kept, R10 "
+                   "recorded, one record", _measured_and_recorded)
+        report.run("T3", "m2",
+                   "M4: the same report again is already registered, a damaged copy outside "
+                   "the report store and a copy of the whole registry refused, the ledger "
+                   "unchanged", _registered_again)
+        report.run("T4", "m2",
+                   "M4: a version mapped against another graph is refused before the "
+                   "checkpoint is read", _other_graph_refused)
+        report.run("T5", "m2",
+                   "M4: the read-only view shows the served checkpoint's record, and none for "
+                   "another", _read_only_view)
+        report.run("T6", "m2",
+                   "M4: the overlap audit runs on the registered version and records it",
+                   _overlap_audit)
 
     # ---- M5's acceptance on the same workspace: M2's resumed checkpoint, T1's
     # version and registry, the probe's own deployment under <work>/m5.
@@ -5533,10 +5557,6 @@ def phase_m2_real(
             "counts": counts,
         }
 
-    report.run("RT1", "real",
-               "M4: a synthetic cohort of real val cases imports with no exclusions on the real "
-               "graph", _real_cohort)
-
     def _real_measured() -> Tuple[str, Dict[str, Any]]:
         assert "m4" in state, "the cohort version (RT1) is not available"
         assert "child" in state, "R4 did not pass"
@@ -5574,10 +5594,6 @@ def phase_m2_real(
             "cuda_executed": kept["manifest"].get("cuda_executed"),
         }
 
-    report.run("RT2", "real",
-               "M4: the new checkpoint measured on it with --record, R10 as constructed",
-               _real_measured)
-
     def _real_view() -> Tuple[str, Dict[str, Any]]:
         assert "record" in state.get("m4", {}), "the measurement (RT2) is not available"
         m4 = state["m4"]
@@ -5593,8 +5609,16 @@ def phase_m2_real(
             **shown,
         }
 
-    report.run("RT3", "real", "M4: the read-only view shows that record for the served real "
-               "checkpoint", _real_view)
+    # The probe's registry is the deployment's for the whole flow (INT-1).
+    with _registry_setting(registry):
+        report.run("RT1", "real",
+                   "M4: a synthetic cohort of real val cases imports with no exclusions on the "
+                   "real graph", _real_cohort)
+        report.run("RT2", "real",
+                   "M4: the new checkpoint measured on it with --record, R10 as constructed",
+                   _real_measured)
+        report.run("RT3", "real", "M4: the read-only view shows that record for the served "
+                   "real checkpoint", _real_view)
 
     # ---- M5's acceptance on real data, before R8 so R8 covers it.
     _m5_real(report, runs, real, workspaces_root, device, state)
