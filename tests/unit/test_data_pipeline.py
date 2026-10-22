@@ -1510,7 +1510,7 @@ class TestBuildPathOrdering:
         the lock's one rule for this shell: the lock it takes, or the rule's
         own refusal and the export that configures it, before the command."""
         from src.config.server_settings import GPU_LOCK_NOT_CONFIGURED
-        from src.utils.gpu_lock import LOCK_FILE_ENV, WORKSPACES_ROOT_ENV
+        from src.utils.gpu_lock import WORKSPACES_ROOT_ENV
 
         build = self._stub_build_stages(monkeypatch, wide_kg)
         self._satisfy_input_validation(tmp_dir)
@@ -1530,7 +1530,6 @@ class TestBuildPathOrdering:
             return " ".join(line.strip().lstrip("#").strip() for line in
                             step[:step.index("scripts/train_model.py")].splitlines())
 
-        monkeypatch.delenv(LOCK_FILE_ENV, raising=False)
         monkeypatch.delenv(WORKSPACES_ROOT_ENV, raising=False)
         unset = printed_step()
         assert " ".join(GPU_LOCK_NOT_CONFIGURED.split()) in unset
@@ -1538,8 +1537,8 @@ class TestBuildPathOrdering:
 
         monkeypatch.setenv(WORKSPACES_ROOT_ENV, str(tmp_dir))
         configured = printed_step()
-        assert (f"takes the GPU lock {tmp_dir.resolve() / '.shepherd-gpu.lock'} "
-                f"(under {WORKSPACES_ROOT_ENV})") in configured
+        assert (f"takes the GPU lock {tmp_dir.resolve() / '.shepherd-gpu.lock'}, "
+                f"under {WORKSPACES_ROOT_ENV}") in configured
         assert "Refused" not in configured and "export" not in configured
 
     def test_a_sufficient_build_writes_a_manifest_bound_to_the_graph_it_wrote(

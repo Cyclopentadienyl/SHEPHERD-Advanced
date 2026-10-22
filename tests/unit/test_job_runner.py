@@ -29,7 +29,6 @@ pytest.importorskip("fastapi")
 import src.api.services.training_manager as tm
 from src.api.services.training_manager import TestRunInputs, TrainingManager, build_test_argv
 from src.utils.gpu_lock import (
-    LOCK_FILE_ENV,
     LOCK_FILE_NAME,
     WORKSPACES_ROOT_ENV,
     GpuLock,
@@ -42,18 +41,16 @@ SHA_VERSION = "e" * 64
 
 
 @pytest.fixture(autouse=True)
-def _no_lock_settings(monkeypatch):
-    """Each test uses the lock tests/conftest.py gives it, or names its own;
-    the developer's environment never decides."""
-    monkeypatch.delenv(WORKSPACES_ROOT_ENV, raising=False)
+def _no_device_setting(monkeypatch):
+    """Each test uses the lock tests/conftest.py gives it (the one under its
+    own workspaces root), or names its own; the developer's environment never
+    decides, nor its serving device."""
     monkeypatch.delenv("SHEPHERD_DEVICE", raising=False)
 
 
 def _lock_under(monkeypatch, root: Path) -> None:
-    """The lock under the workspaces root `root`, the deployment's default:
-    the conftest's own file is unset, since beside the root it names another
-    file and is refused (root-cause review, P24-S1)."""
-    monkeypatch.delenv(LOCK_FILE_ENV, raising=False)
+    """The lock under the workspaces root `root`, its one name (root-cause
+    review, P24-S1)."""
     monkeypatch.setenv(WORKSPACES_ROOT_ENV, str(root))
 
 
@@ -271,7 +268,7 @@ def test_a_start_is_refused_while_another_process_holds_the_gpu_lock(tmp_path, p
 
 
 def test_an_unusable_lock_setting_refuses_every_start(tmp_path, popen, monkeypatch):
-    monkeypatch.setenv(LOCK_FILE_ENV, "relative.lock")
+    monkeypatch.setenv(WORKSPACES_ROOT_ENV, "relative")
     calls = popen()
     result = TrainingManager().start_training({"data_dir": str(tmp_path / "ws")})
     assert result["success"] is False and "The GPU lock cannot be used" in result["error"]
@@ -280,11 +277,10 @@ def test_an_unusable_lock_setting_refuses_every_start(tmp_path, popen, monkeypat
 
 def test_a_lock_not_configured_refuses_every_start_before_anything(tmp_path, popen,
                                                                    monkeypatch, inputs):
-    """Review of 8242b47, P2-4: with neither lock setting set, the runner
+    """Review of 8242b47, P2-4: with no workspaces root set, the runner
     refuses a start of either type, saying how to configure the lock; nothing
     is started, named or written (it used to keep only its own one-job rule
     while a CLI elsewhere ran unlocked)."""
-    monkeypatch.delenv(LOCK_FILE_ENV, raising=False)
     monkeypatch.delenv(WORKSPACES_ROOT_ENV, raising=False)
     calls = popen()
     manager = TrainingManager()
@@ -292,9 +288,9 @@ def test_a_lock_not_configured_refuses_every_start_before_anything(tmp_path, pop
                                            "run_dir": str(tmp_path / "run")}),
                    manager.start_test(inputs)):
         assert result["success"] is False
-        assert result["error"].startswith("The GPU lock cannot be used: neither "
-                                          "SHEPHERD_GPU_LOCK_FILE nor SHEPHERD_WORKSPACES_ROOT "
-                                          "is set")
+        assert result["error"].startswith("The GPU lock cannot be used: "
+                                          "SHEPHERD_WORKSPACES_ROOT is not set, so the GPU lock "
+                                          "is not configured")
         assert "§4.11" in result["error"] and result["error"].endswith("Nothing was started.")
     assert calls.calls == [] and manager.run_dir is None and not (tmp_path / "run").exists()
     lock = manager.get_status()["gpu"]["lock"]

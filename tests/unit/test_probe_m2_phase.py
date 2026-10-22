@@ -384,8 +384,9 @@ def test_the_real_phase_passes_and_leaves_the_workspace_as_it_was(tmp_path, serv
 
     # ---- M5's acceptance on the (stand-in) real workspace, before R8: listed
     # by its manifest's digest; RW2's record beside R3's checkpoint, under the
-    # work directory; RW3 stopped. The lock is the probe's own file, never one
-    # under the deployment's root.
+    # work directory; RW3 stopped. The lock is the probe's own, under a
+    # workspaces root of its own in the work directory, never the one under
+    # the deployment's root.
     import hashlib
 
     assert str(tmp_path) not in json.dumps({k: facts[k] for k in probe.M5_REAL_PROBES})
@@ -397,7 +398,7 @@ def test_the_real_phase_passes_and_leaves_the_workspace_as_it_was(tmp_path, serv
     assert facts["RW2"]["training_stop_while_it_ran"].startswith("refused")
     assert facts["RW1"]["deployment_gpu_lock"]["held"] is False
     assert facts["RW3"]["stop"]["status"] == "stopped"
-    assert (work / "real" / "m5" / "gpu.lock").is_file()
+    assert (work / "real" / "m5" / "gpu-lock-root" / ".shepherd-gpu.lock").is_file()
     assert not list(root.glob(".shepherd-gpu.lock*"))
 
 

@@ -81,9 +81,8 @@ def test_without_a_request_it_fails_closed(monkeypatch):
 
 
 # --------------------------------------------------------------------------- GPU jobs
-LOCK_FREE = {"configured": True, "path": "/srv/ws/.shepherd-gpu.lock",
-             "source": "under SHEPHERD_WORKSPACES_ROOT", "held_by": None, "holder": None,
-             "holder_alive": None, "problem": None, "unset": False}
+LOCK_FREE = {"configured": True, "path": "/srv/ws/.shepherd-gpu.lock", "held_by": None,
+             "holder": None, "holder_alive": None, "problem": None, "unset": False}
 
 
 @pytest.mark.parametrize("job_type, status, text", [
@@ -133,20 +132,19 @@ def test_a_holder_that_exited_is_not_named_as_the_holder():
 
 
 def test_a_lock_not_configured_says_so_and_that_jobs_are_refused(monkeypatch):
-    """Review of 8242b47, P2-4: with neither lock setting set every job is
+    """Review of 8242b47, P2-4: with no workspaces root set every job is
     refused, and the chip says so to every request (no path in it); it used to
     read "none in the job runner", as if jobs ran unlocked."""
     from src.utils.gpu_lock import lock_state
 
-    monkeypatch.delenv("SHEPHERD_GPU_LOCK_FILE", raising=False)
     monkeypatch.delenv("SHEPHERD_WORKSPACES_ROOT", raising=False)
     lock = lock_state()
     assert lock["unset"] is True and lock["configured"] is False and lock["problem"]
     for operator in (True, False):
         chip = c.gpu_chip_from(None, lock, operator=operator)
         assert (chip.kind, chip.text) == ("unread", "GPU jobs: refused, lock not configured")
-        assert chip.detail.startswith("The GPU lock is not configured: neither "
-                                      "SHEPHERD_GPU_LOCK_FILE nor SHEPHERD_WORKSPACES_ROOT is set")
+        assert chip.detail.startswith("The GPU lock is not configured: "
+                                      "SHEPHERD_WORKSPACES_ROOT, which names it, is not set")
         assert "refuses every training and test run" in chip.detail
         assert read_gpu_chip_now(operator) == chip
 
@@ -163,25 +161,22 @@ def read_gpu_chip_now(operator: bool) -> c.Chip:
 def test_the_chip_reads_the_lock_s_one_status_reader(monkeypatch, tmp_path):
     """Root-cause review, P24-S3: the chip turns no location or probe outcome
     into a state of its own; it reads `lock_state`, so a state the lock rule
-    adds (here a lock file beside the root that names another file) reaches
-    the chip as the runner sees it."""
+    gives (here a workspaces root that is set but refused) reaches the chip
+    as the runner sees it."""
     from src.utils import gpu_lock
 
     assert c.read_gpu_chip.__kwdefaults__["lock_reader"] is gpu_lock.lock_state
     assert not hasattr(c, "read_lock"), "a second reader of the lock's state"
-    other = tmp_path / "locks"
-    other.mkdir()
-    monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(tmp_path))
-    monkeypatch.setenv("SHEPHERD_GPU_LOCK_FILE", str(other / "gpu.lock"))
+    monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(tmp_path / "missing"))
     for operator in (True, False):
         chip = read_gpu_chip_now(operator)
         assert (chip.kind, chip.text) == ("unread", "GPU jobs: not read")
-        assert ("two different GPU lock files" in chip.detail) is operator
+        assert ("The GPU lock under it cannot be used either" in chip.detail) is operator
 
 
 def test_a_lock_that_cannot_be_used_names_its_path_only_to_an_operator():
     lock = {**LOCK_FREE, "configured": False,
-            "problem": "SHEPHERD_GPU_LOCK_FILE='/srv/secret/x' is not usable"}
+            "problem": "SHEPHERD_WORKSPACES_ROOT='/srv/secret/x' is not usable"}
     for operator in (True, False):
         chip = c.gpu_chip_from(None, lock, operator=operator)
         assert (chip.kind, chip.text) == ("unread", "GPU jobs: not read")
@@ -225,7 +220,6 @@ def test_the_chip_reads_a_real_lock_held_elsewhere(monkeypatch, tmp_path):
     (as a CLI's would be): the chip names the holder from its record."""
     from src.utils.gpu_lock import GpuLock
 
-    monkeypatch.delenv("SHEPHERD_GPU_LOCK_FILE", raising=False)
     monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(tmp_path))
 
     class Idle:

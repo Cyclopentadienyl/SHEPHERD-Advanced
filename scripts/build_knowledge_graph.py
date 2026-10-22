@@ -463,9 +463,9 @@ def _gpu_lock_step(workspace: Path) -> list:
 
     state = lock_state()
     if state["configured"]:
-        said = (f"In this shell it takes the GPU lock {state['path']} ({state['source']}), "
-                "the one the service's jobs take when it names the same setting "
-                "(deployment guide §4.11).")
+        said = (f"In this shell it takes the GPU lock {state['path']}, under "
+                f"{WORKSPACES_ROOT_ENV}: the one the service's jobs take when it names the "
+                "same root (deployment guide §4.11).")
     else:
         said = f"Refused in this shell until the GPU lock is configured: {state['problem']}"
     lines = [f"  # {line}" for line in textwrap.wrap(said, 86, break_long_words=False,

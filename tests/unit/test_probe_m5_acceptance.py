@@ -381,10 +381,10 @@ def test_a_socket_check_that_cannot_run_says_so(probe, tmp_path):
 # --------------------------------------------------------------------------- settings
 def test_the_m5_settings_cover_every_deployment_setting(probe):
     from src.config import server_settings
-    from src.utils.gpu_lock import LOCK_FILE_ENV, WORKSPACES_ROOT_ENV
+    from src.utils.gpu_lock import WORKSPACES_ROOT_ENV
 
     names = {setting.variable for setting in server_settings.all_settings()}
-    names |= {LOCK_FILE_ENV, WORKSPACES_ROOT_ENV, server_settings.ENV_BIND_HOST,
+    names |= {WORKSPACES_ROOT_ENV, server_settings.ENV_BIND_HOST,
               server_settings.ENV_ACCEPT_UNAUTHENTICATED_NETWORK_BIND, "SHEPHERD_DEVICE",
               "SHEPHERD_KG_PATH", "SHEPHERD_CHECKPOINT_PATH", "SHEPHERD_DATA_DIR"}
     assert names <= set(probe._M5_SETTINGS)
@@ -395,7 +395,7 @@ def test_the_m5_settings_are_the_probe_s_own_while_it_runs_and_put_back(probe, m
     import os
 
     monkeypatch.setenv("SHEPHERD_REGISTRY", "/deployment/registry")
-    monkeypatch.setenv("SHEPHERD_GPU_LOCK_FILE", "/deployment/gpu.lock")
+    monkeypatch.setenv("SHEPHERD_INTAKE_DIR", "/deployment/intake")
     monkeypatch.setenv("SHEPHERD_ALLOC_SOURCE", "preset")
     monkeypatch.delenv("SHEPHERD_WORKSPACES_ROOT", raising=False)
 
@@ -403,12 +403,12 @@ def test_the_m5_settings_are_the_probe_s_own_while_it_runs_and_put_back(probe, m
         with probe._deployment_settings({"SHEPHERD_WORKSPACES_ROOT": "/probe/root"}):
             assert os.environ["SHEPHERD_WORKSPACES_ROOT"] == "/probe/root"
             assert "SHEPHERD_REGISTRY" not in os.environ
-            assert "SHEPHERD_GPU_LOCK_FILE" not in os.environ
+            assert "SHEPHERD_INTAKE_DIR" not in os.environ
             assert os.environ["SHEPHERD_ALLOC_SOURCE"] == "preset"
             raise RuntimeError("a probe that raised")
 
     assert os.environ["SHEPHERD_REGISTRY"] == "/deployment/registry"
-    assert os.environ["SHEPHERD_GPU_LOCK_FILE"] == "/deployment/gpu.lock"
+    assert os.environ["SHEPHERD_INTAKE_DIR"] == "/deployment/intake"
     assert "SHEPHERD_WORKSPACES_ROOT" not in os.environ
     with pytest.raises(AssertionError, match="not an M5 setting"):
         with probe._deployment_settings({"SHEPHERD_ALLOC_SOURCE": "x"}):
@@ -644,14 +644,12 @@ def test_the_deployment_s_own_lock_is_read_and_stated(probe, tmp_path, monkeypat
     console only."""
     import subprocess
 
-    from src.utils.gpu_lock import LOCK_FILE_ENV, WORKSPACES_ROOT_ENV
+    from src.utils.gpu_lock import WORKSPACES_ROOT_ENV
 
     monkeypatch.delenv(WORKSPACES_ROOT_ENV, raising=False)
-    monkeypatch.delenv(LOCK_FILE_ENV, raising=False)
     assert probe._deployment_gpu_lock() == {"configured": False, "held": False,
                                             "unreadable": False}
-    lock = tmp_path / "gpu.lock"
-    monkeypatch.setenv(LOCK_FILE_ENV, str(lock))
+    monkeypatch.setenv(WORKSPACES_ROOT_ENV, str(tmp_path))
     holder = subprocess.Popen([sys.executable, "-c", probe._LOCK_HOLDER], cwd=REPO,
                               stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
     try:
@@ -1145,34 +1143,29 @@ def test_the_probe_s_own_lock_is_named_and_the_operator_s_is_still_stated(probe,
     operator's lock, and the operator's settings come back afterwards.
 
     The operator's shell names the deployment's root, as the guide prepares
-    it: the probe's own lock file is the one in effect only because the root
-    is unset meanwhile, since a lock file beside a root that names another is
-    refused (root-cause review, P24-S1)."""
-    from src.utils.gpu_lock import (
-        LOCK_FILE_ENV,
-        LOCK_FILE_NAME,
-        WORKSPACES_ROOT_ENV,
-        GpuLock,
-        lock_location,
-    )
+    it, and the root is the lock's one name (root-cause review, P24-S1 and
+    its verification): the probe's own lock is the one under a workspaces
+    root of its own, an empty directory, named in the operator's place
+    meanwhile."""
+    from src.utils.gpu_lock import LOCK_FILE_NAME, WORKSPACES_ROOT_ENV, GpuLock, lock_location
 
     operator_lock = tmp_path / LOCK_FILE_NAME
-    monkeypatch.delenv(LOCK_FILE_ENV)
     monkeypatch.setenv(WORKSPACES_ROOT_ENV, str(tmp_path))
     work = tmp_path / "work"
     work.mkdir()
+    own = work / probe.PROBE_GPU_LOCK_ROOT
     with GpuLock(operator_lock, job_type="training", command="deployment-job").acquire():
         with probe._probes_own_gpu_lock(work):
-            assert WORKSPACES_ROOT_ENV not in os.environ
-            assert lock_location().path == work / probe.PROBE_GPU_LOCK
+            assert os.environ[WORKSPACES_ROOT_ENV] == str(own)
+            assert lock_location() == own.resolve() / LOCK_FILE_NAME
+            assert list(own.iterdir()) == [], "the probe's own root lists a workspace"
             assert probe._deployment_gpu_lock() == {"configured": True, "held": True,
                                                     "unreadable": False}
     assert "deployment-job" in capsys.readouterr().err
-    assert LOCK_FILE_ENV not in os.environ
     assert os.environ[WORKSPACES_ROOT_ENV] == str(tmp_path)
     assert probe._OPERATOR_LOCK_SETTINGS is None
     monkeypatch.delenv(WORKSPACES_ROOT_ENV)
     with probe._probes_own_gpu_lock(work):
         assert probe._deployment_gpu_lock() == {"configured": False, "held": False,
                                                 "unreadable": False}
-    assert LOCK_FILE_ENV not in os.environ
+    assert WORKSPACES_ROOT_ENV not in os.environ

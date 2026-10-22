@@ -178,8 +178,9 @@ on the console, never hidden, and said again beside the acceptance's verdict.
     was held meanwhile. **The earlier measurement probes** (M3, M7,
     M11.measurement, T2, T4, R5, RT2) run measure_scorer in this process, which
     refuses without a configured GPU lock (P2-4), so phases M and R name a lock
-    of the probe's own, `<work>/probe-gpu.lock` (`_probes_own_gpu_lock`); they
-    therefore do not exclude a deployment job that runs meanwhile. Run the
+    of the probe's own, under a workspaces root of its own,
+    `<work>/probe-gpu-lock/` (`_probes_own_gpu_lock`); they therefore do not
+    exclude a deployment job that runs meanwhile. Run the
     acceptance while no managed GPU job runs. The job runner's own temporary
     files (a training job's settings file, a test run's job directory) are made
     in the system's temporary directory and removed when the job ends.
@@ -2853,8 +2854,9 @@ GATED_EVENTS: Tuple[Tuple[str, str, Tuple[Any, ...], str], ...] = (
     ("test_page", "_on_register", ({}, {}, {}, None, None), "Nothing was registered."),
 )
 #: The deployment settings M5's probes depend on: the server's settings
-#: (`src/config/server_settings.py`), the GPU lock's file, the serving device a
-#: test run is given, and the pipeline the service would build at startup.
+#: (`src/config/server_settings.py`; the workspaces root also names the GPU
+#: lock), the serving device a test run is given, and the pipeline the service
+#: would build at startup.
 #: For M5's probes each is the probe's own value or unset, in this process and
 #: in every process it starts, and all are put back afterwards; an operator's
 #: shell that holds the deployment's settings changes nothing here, and the
@@ -2862,8 +2864,7 @@ GATED_EVENTS: Tuple[Tuple[str, str, Tuple[Any, ...], str], ...] = (
 _M5_SETTINGS: Tuple[str, ...] = (
     "SHEPHERD_DEPLOYMENT_MODE", "SHEPHERD_WORKSPACES_ROOT", "SHEPHERD_REGISTRY",
     "SHEPHERD_INTAKE_DIR", "SHEPHERD_TRAINING_EVIDENCE_DIRS", "SHEPHERD_ORDERING_ROLES",
-    "SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND", "SHEPHERD_BIND_HOST",
-    "SHEPHERD_GPU_LOCK_FILE", "SHEPHERD_DEVICE",
+    "SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND", "SHEPHERD_BIND_HOST", "SHEPHERD_DEVICE",
     "SHEPHERD_KG_PATH", "SHEPHERD_CHECKPOINT_PATH", "SHEPHERD_DATA_DIR",
 )
 #: How long M5's waits allow: a service to answer, a job to take the GPU lock,
@@ -2880,12 +2881,14 @@ _TEST_RUN_SECONDS = 3600.0
 #: the lock before the measurement CLI was tried (review of 8242b47, W11/RW3).
 #: Nothing in the trainer grows with the epoch count but its schedule's length.
 _HOLD_EPOCHS = 1_000_000
-#: The probe's own GPU lock file, under the work directory, for the phases that
-#: run the formal entry points in this process (`_probes_own_gpu_lock`).
-PROBE_GPU_LOCK = "probe-gpu.lock"
-#: The GPU lock settings of the operator's environment while the probe's own
-#: lock is named in it (`_probes_own_gpu_lock`), for what W1 and RW1 say of the
-#: deployment's lock (`_deployment_gpu_lock`); None otherwise.
+#: The probe's own workspaces root, an empty directory under the work
+#: directory whose `.shepherd-gpu.lock` is the GPU lock of the phases that run
+#: the formal entry points in this process (`_probes_own_gpu_lock`).
+PROBE_GPU_LOCK_ROOT = "probe-gpu-lock"
+#: The GPU lock's setting (the workspaces root) of the operator's environment
+#: while the probe's own lock is named in it (`_probes_own_gpu_lock`), for what
+#: W1 and RW1 say of the deployment's lock (`_deployment_gpu_lock`); None
+#: otherwise.
 _OPERATOR_LOCK_SETTINGS: Optional[Dict[str, str]] = None
 #: A process that takes the GPU lock and keeps it until it is killed: W7's
 #: holder, through the lock's own entry point (`take_gpu_lock`). It also ends
@@ -2936,47 +2939,48 @@ def _registry_setting(registry: Path):
 
 @contextlib.contextmanager
 def _probes_own_gpu_lock(work: Path):
-    """`<work>/probe-gpu.lock` as the GPU lock in effect while this is open,
-    then the operator's settings put back (review of 8242b47, P2-4).
+    """`<work>/probe-gpu-lock/.shepherd-gpu.lock` as the GPU lock in effect
+    while this is open, then the operator's setting put back (review of
+    8242b47, P2-4).
 
     The formal entry points this probe runs in its own process (measure_scorer
     for M3, M7, M11.measurement, T2, T4, R5 and RT2) refuse without a
     configured lock, so the probe names one of its own and depends on nothing
     in the operator's shell; the deployment's lock is never taken, so those
     probes do not exclude a deployment job running meanwhile. M5's probes name
-    theirs (`_M5_SETTINGS`). The operator's lock settings are kept for
+    theirs (`_M5_SETTINGS`). The operator's setting is kept for
     `_deployment_gpu_lock`.
 
-    **The operator's workspaces root is unset meanwhile**: with a root set,
-    the root names the lock and a lock file naming another is refused
-    (`server_settings.gpu_lock_location`, root-cause review P24-S1), so the
-    probe's own lock is a lock file with no root, as the tests' is. Nothing
-    these phases run reads the root from the environment: the probe takes the
-    real one from ``--workspaces-root`` and lists it through ``environ=``."""
+    **The workspaces root is the lock's one name**
+    (`server_settings.gpu_lock_location`, root-cause review P24-S1 and its
+    verification), so the probe's own lock is the lock under a root of its
+    own, an empty directory, as each test's is; the operator's root is
+    replaced meanwhile. Nothing these phases run reads the root from the
+    environment: the probe takes the real one from ``--workspaces-root`` and
+    lists it through ``environ=``."""
     global _OPERATOR_LOCK_SETTINGS
-    from src.utils.gpu_lock import LOCK_FILE_ENV, WORKSPACES_ROOT_ENV
+    from src.utils.gpu_lock import WORKSPACES_ROOT_ENV
 
-    saved = {name: os.environ.get(name) for name in (LOCK_FILE_ENV, WORKSPACES_ROOT_ENV)}
-    _OPERATOR_LOCK_SETTINGS = {name: value for name, value in saved.items()
-                               if value is not None}
-    os.environ[LOCK_FILE_ENV] = str(work / PROBE_GPU_LOCK)
-    os.environ.pop(WORKSPACES_ROOT_ENV, None)
+    saved = os.environ.get(WORKSPACES_ROOT_ENV)
+    _OPERATOR_LOCK_SETTINGS = {} if saved is None else {WORKSPACES_ROOT_ENV: saved}
+    own = work / PROBE_GPU_LOCK_ROOT
+    own.mkdir(parents=True, exist_ok=True)
+    os.environ[WORKSPACES_ROOT_ENV] = str(own)
     try:
         yield
     finally:
         _OPERATOR_LOCK_SETTINGS = None
-        for name, value in saved.items():
-            if value is None:
-                os.environ.pop(name, None)
-            else:
-                os.environ[name] = value
+        if saved is None:
+            os.environ.pop(WORKSPACES_ROOT_ENV, None)
+        else:
+            os.environ[WORKSPACES_ROOT_ENV] = saved
 
 
 def _deployment_gpu_lock() -> Dict[str, bool]:
     """The GPU lock the operator's own settings name (kept by
     `_probes_own_gpu_lock`, or this process's environment when no probe lock
     is named): whether one is configured, whether a job holds it now, and
-    whether its settings are set but cannot be used (`unreadable`; neither
+    whether its setting is set but cannot be used (`unreadable`; a root not
     set is not configured, not unreadable). M5's probes run on their own lock,
     so a managed job holding the deployment's is not refused by them; this
     states it, in the report as booleans and on the console naming the holder
@@ -4155,10 +4159,9 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
     # ---- The GPU lock and the jobs, in this process's runner, under the
     # probe's settings: the lock under its workspace root, the device asked.
     def _lock_path() -> Path:
-        location = lock_location()
-        assert location.path is not None and location.path.parent == root, (
-            "the GPU lock is not the probe's, under its workspace root")
-        return location.path
+        path = lock_location()
+        assert path.parent == root, "the GPU lock is not the probe's, under its workspace root"
+        return path
 
     def _cli_argv(inputs: Any, outcome: Path) -> List[str]:
         """The command line the runner would run for `inputs`, less the
@@ -4229,7 +4232,7 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
         assert released, "the GPU lock stayed held after its holder was killed"
         return "a busy lock refused the runner and both CLIs, naming its holder; released " \
                "when the holder was killed", {
-                   "lock": "under SHEPHERD_WORKSPACES_ROOT (the deployment default)",
+                   "lock": "under SHEPHERD_WORKSPACES_ROOT, the lock's one name",
                    "holder": "a process that took the lock through take_gpu_lock",
                    "refused": {"runner_test_start": "named the holder",
                                "runner_training_start": "named the holder",
@@ -4451,7 +4454,8 @@ def _m5_real(report: Report, runs: Path, real: Path, workspaces_root: Path, devi
     before R8, which therefore covers them: the workspace as the server lists
     it, a test run through the job runner on the device, and a short training
     job started and stopped through it (no long training). Everything the runs
-    write is under --work-dir: the GPU lock is a file there, the registry is
+    write is under --work-dir: the GPU lock is the one under a workspaces root
+    of the probe's own there (an empty directory, never listed), the registry is
     RT1's (named as `SHEPHERD_REGISTRY` while they run: a test run measures
     only in the deployment's registry, BACKLOG 37), the runs' directories and
     ledgers are beside R3's checkpoint or under <work>/real/m5. The
@@ -4469,13 +4473,15 @@ def _m5_real(report: Report, runs: Path, real: Path, workspaces_root: Path, devi
     from src.evaluation.sidecar import read_ledger
     from src.kg.artifacts import MANIFEST_FILENAME
     from src.kg.storage.file_storage import _read_json
+    from src.utils.gpu_lock import LOCK_FILE_NAME
     from src.utils.gpu_lock import probe as lock_probe
 
     m5 = runs / "m5"
-    lock_path = m5 / "gpu.lock"
+    lock_root = m5 / "gpu-lock-root"
+    lock_path = lock_root / LOCK_FILE_NAME
     registry = runs / "m4" / "registry"
     reports = registry / "versions" / M4_REAL_LABEL / "reports"
-    settings = {"SHEPHERD_GPU_LOCK_FILE": str(lock_path), "SHEPHERD_DEVICE": device,
+    settings = {"SHEPHERD_WORKSPACES_ROOT": str(lock_root), "SHEPHERD_DEVICE": device,
                 "SHEPHERD_REGISTRY": str(registry)}
 
     def _listed() -> Tuple[str, Dict[str, Any]]:
@@ -4597,7 +4603,7 @@ def _m5_real(report: Report, runs: Path, real: Path, workspaces_root: Path, devi
             **held, "num_workers": workers, "while_it_ran": refused, "stop": stopped,
         }
 
-    m5.mkdir(parents=True, exist_ok=True)
+    lock_root.mkdir(parents=True, exist_ok=True)
     with _deployment_settings(settings):
         report.run("RW2", "real", "M5: a test run through the job runner on the real workspace "
                    "is kept and registered", _test_job)
@@ -4606,8 +4612,9 @@ def _m5_real(report: Report, runs: Path, real: Path, workspaces_root: Path, devi
 
 
 def _under_the_probes_own_gpu_lock(phase: Callable[..., None]) -> Callable[..., None]:
-    """`phase(report, work, ...)` run with `<work>/probe-gpu.lock` as the GPU lock
-    in effect (`_probes_own_gpu_lock`), the operator's settings put back after."""
+    """`phase(report, work, ...)` run with the lock under `<work>/probe-gpu-lock/`
+    as the GPU lock in effect (`_probes_own_gpu_lock`), the operator's setting
+    put back after."""
     @functools.wraps(phase)
     def run(report: Report, work: Path, *args: Any, **kwargs: Any) -> None:
         with _probes_own_gpu_lock(work):

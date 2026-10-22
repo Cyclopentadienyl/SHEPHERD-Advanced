@@ -31,7 +31,6 @@ from src.api.services.training_manager import TestRunInputs, TrainingManager  # 
 from src.evaluation.cohort_registry import is_run_id, resolve_version  # noqa: E402
 from src.evaluation.report_store import read_usage_history  # noqa: E402
 from src.utils.gpu_lock import (  # noqa: E402
-    LOCK_FILE_ENV,
     LOCK_FILE_NAME,
     WORKSPACES_ROOT_ENV,
     probe,
@@ -70,7 +69,6 @@ def _run(cohort, monkeypatch, **change):
     # The service's registry setting, which the run inherits: it measures only
     # in the deployment's registry (BACKLOG 37).
     monkeypatch.setenv("SHEPHERD_REGISTRY", str(cohort.registry))
-    monkeypatch.delenv(LOCK_FILE_ENV, raising=False)
     monkeypatch.setenv(WORKSPACES_ROOT_ENV, str(cohort.data_dir.parent))
     fields = {"registry": cohort.registry, "version_label": LABEL,
               "version_sha256": cohort.version.identity.sha256, "workspace": cohort.data_dir,

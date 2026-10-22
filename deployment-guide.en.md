@@ -1706,18 +1706,23 @@ have the GPU is refused, naming who has it; nothing is queued.
 
 ### The GPU lock
 
-One lock file per deployment, whatever the workspace:
+One lock file per deployment, whatever the workspace, named by the workspaces root alone:
 
 | Settings | Lock file |
 |---|---|
-| `SHEPHERD_WORKSPACES_ROOT=/absolute/root` | `<root>/.shepherd-gpu.lock`, whatever else is set: **the root is the lock's one identity** (since the root-cause round of 2026-10-22) |
-| `SHEPHERD_GPU_LOCK_FILE=/absolute/path` beside the root | accepted only when it names that same file; another file refuses every job, naming both settings and saying to remove `SHEPHERD_GPU_LOCK_FILE` (it used to win over the root) |
-| `SHEPHERD_GPU_LOCK_FILE=/absolute/path`, no root | that file; its directory must exist (nothing creates it) |
-| neither | **not configured**: every managed job is refused (since the review of 8242b47): the CLIs exit 1 before anything is read, the service refuses every start, each saying how to configure the lock |
+| `SHEPHERD_WORKSPACES_ROOT=/absolute/root` | `<root>/.shepherd-gpu.lock`: **the root is the lock's one name** (since the root-cause round of 2026-10-22); no other setting names a lock |
+| not set | **not configured**: every managed job is refused (since the review of 8242b47): the CLIs exit 1 before anything is read, the service refuses every start, each saying how to configure the lock |
 
-A setting that is set but unusable (a relative path, a directory that does not exist, a path
-under a directory the service account may not search) refuses every job rather than running it
-unlocked, and the status shows why (`gpu.lock.problem`).
+**`SHEPHERD_GPU_LOCK_FILE` is no longer read** (since the root-cause round of 2026-10-22). It
+named a lock file of its own, beside the root or instead of it, so a service configured with it
+and a shell given only the root each counted as configured, locked two files and ran side by
+side (a service with no root lists no workspace, but `POST /api/v1/training/start` takes a
+workspace path). Remove it from the service's environment and from your shell; where it was the
+only setting, every job is now refused as not configured until the root is set.
+
+A root that is set but unusable (a relative path, a directory that does not exist, a path under a
+directory the service account may not search) refuses every job rather than running it unlocked,
+and the status shows why (`gpu.lock.problem`).
 
 `train_model.py` and `measure_scorer.py` take the lock right after reading their command line,
 before the device or any input is read, and hold it until they end. When it is busy they keep
@@ -1732,21 +1737,15 @@ measure_scorer: refused: the GPU lock /srv/shepherd/workspaces/.shepherd-gpu.loc
 check the lock before starting a job and refuse the start with the same holder
 ("Nothing was started."); the job's own process then takes the lock itself.
 
-**Set the variable for the service and in the shell where you run the CLIs** (for example, the
+**Set the root for the service and in the shell where you run the CLIs** (for example, the
 same `Environment=` lines as the systemd unit, which reads no environment file of its own, or
-one file that both the unit's `EnvironmentFile=` and your shell read). A CLI that sees neither
-variable is refused, exit 1, with nothing written (`train_model: refused: neither
-SHEPHERD_GPU_LOCK_FILE nor SHEPHERD_WORKSPACES_ROOT is set, so the GPU lock is not configured
-...`); so is `setup_demo.py --train-model`, which trains through the same trainer. **Give the
-shell the service's workspaces root**: every process that names the root takes
-`<root>/.shepherd-gpu.lock`, the service, your shell and its CLIs alike, and a lock file set
-beside the root that names another file is refused rather than used (it used to win, so a
-service with a lock file and a shell with only the root locked two files and ran side by side).
-What one environment variable cannot settle, since each process reads its own: a process that
-names another root, or a lock file and no root, takes another lock. A service configured with
-`SHEPHERD_GPU_LOCK_FILE` and no root lists no workspace, so its dashboard starts no job, but
-`POST /api/v1/training/start` takes a workspace path and runs one; for such a service give the
-shell the same lock file and no root.
+one file that both the unit's `EnvironmentFile=` and your shell read). A CLI that sees no root
+is refused, exit 1, with nothing written (`train_model: refused: SHEPHERD_WORKSPACES_ROOT is not
+set, so the GPU lock is not configured ...`); so is `setup_demo.py --train-model`, which trains
+through the same trainer. **Give the shell the service's workspaces root**: every process that
+names the root takes `<root>/.shepherd-gpu.lock`, the service, your shell and its CLIs alike,
+and nothing else names a lock. What one environment variable cannot settle, since each process
+reads its own: a process that names another root takes another lock.
 
 **`SHEPHERD_REGISTRY` is required in that shell as well** (since the M5 review, BACKLOG 37):
 `measure_scorer.py --cohort`, `--record` and `record_evaluation.py --report` work only in the
@@ -1864,9 +1863,10 @@ cohort version, the same CLI an operator runs). One job at a time:
   restart's shutdown would stop a running training. The commands `setup_demo.py` prints have no
   `--reload`, and `python -m src.api.main` no longer reloads.
 - `GET /api/v1/training/status` adds `job_id`, `end_time`, `exit_code` and `gpu`: the job holding
-  the GPU, of either type, and the lock (`configured`, `path`, `source`, `held_by` with the
-  holder's own record `holder` and `holder_alive`, `problem`, and `unset` when neither setting
-  is set), the same reading the GPU chip shows.
+  the GPU, of either type, and the lock (`configured`, `path`, `held_by` with the holder's own
+  record `holder` and `holder_alive`, `problem`, and `unset` when no workspaces root is set), the
+  same reading the GPU chip shows (the `source` field went with `SHEPHERD_GPU_LOCK_FILE`: the
+  root is the only one).
   A test run holding the GPU shows there, never as training.
 
 Since M5-2, Research › Test starts and cancels test runs from the dashboard through this runner
@@ -1887,7 +1887,7 @@ repository's `data/workspaces/` included.
 | Variable | Value | Unset or refused |
 |---|---|---|
 | `SHEPHERD_DEPLOYMENT_MODE` | `M1`, exactly (`m1`, ` M1` or `M2` are other values) | read-only: every operator control is refused (D8, §4.13) |
-| `SHEPHERD_WORKSPACES_ROOT` | absolute path of an existing directory; its subdirectories are the workspaces | no workspace is listed |
+| `SHEPHERD_WORKSPACES_ROOT` | absolute path of an existing directory; its subdirectories are the workspaces, and `.shepherd-gpu.lock` directly under it is the GPU lock (§4.11) | no workspace is listed, and no GPU lock: every training and test run is refused |
 | `SHEPHERD_REGISTRY` | the cohort registry (§4.9), the directory the commands take as `--registry`: absolute, existing, outside the repository; the only registry reports are registered from and `--cohort` runs measure in, for the service and the commands alike | no cohort version is listed; every registration and `--cohort` measurement is refused |
 | `SHEPHERD_INTAKE_DIR` | an existing directory outside the repository where you place `shepherd-cases/1` files to import; absolute | no import source is offered |
 | `SHEPHERD_TRAINING_EVIDENCE_DIRS` | optional: R10 evidence directories, as `--training-evidence` takes them, separated by `:` (`;` on Windows); each absolute and existing | none; one bad entry refuses the whole setting |
@@ -1909,11 +1909,9 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
   read-only for them. Diagnosis, the status pages and the read-only lists work either way.
 - **The workspaces root may be inside the repository**, as the usual `data/workspaces/` is, but
   only when you name it. A relative path, a missing directory and a file are refused.
-- **The GPU lock follows these settings** (§4.11): with the root set, the lock is
-  `<root>/.shepherd-gpu.lock`, the lock's one identity, and a `SHEPHERD_GPU_LOCK_FILE` beside it
-  must name that same file or every training and test run is refused. A shell where you run the
-  formal CLIs needs the same root (for a service with a lock file and no root, that same file and
-  no root), and with neither set every training and test run is refused.
+- **The GPU lock follows the workspaces root** (§4.11): the lock is `<root>/.shepherd-gpu.lock`,
+  the lock's one name; `SHEPHERD_GPU_LOCK_FILE` is no longer read. A shell where you run the
+  formal CLIs needs the same root, and with no root set every training and test run is refused.
 - **The registry and the intake directory hold patient-level data.** They follow the
   registry's rule (§4.9): a relative path, a missing directory, and a path that resolves inside
   the repository (through a symlink too) are refused. `--registry` on the command line and
@@ -2261,7 +2259,7 @@ read-only, the full reason D8 gives. It never repeats a header's value.
 | `GPU job: training (job runner)`, `GPU job: test run (job runner)` | A job this service started; `· stopping` while it stops |
 | `GPU job: train_model.py (pid 41822, since 09:58 UTC)` | A process this service did not start holds the GPU lock (a formal CLI, or another server's job runner on the same lock); the chip says what its holder record says: the command, the pid and the start |
 | `GPU job: lock held, holder not described` | The lock is held, but no running process is described as its holder |
-| `GPU jobs: refused, lock not configured` | No GPU lock is configured (neither `SHEPHERD_GPU_LOCK_FILE` nor `SHEPHERD_WORKSPACES_ROOT`), so every training and test run is refused until one is set (§4.11) |
+| `GPU jobs: refused, lock not configured` | No GPU lock is configured (`SHEPHERD_WORKSPACES_ROOT`, which names it, is not set), so every training and test run is refused until it is set (§4.11) |
 | `GPU jobs: not read` (grey) | The state could not be read. When the lock setting cannot be used, the ⓘ says so, naming the path only to a browser D8 allows |
 
 ### Help: the ⓘ buttons

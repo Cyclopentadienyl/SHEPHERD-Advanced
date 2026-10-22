@@ -2028,17 +2028,21 @@ server function 傳來，由瀏覽器存檔；伺服器不為它提供檔案。�
 
 ### GPU 鎖
 
-每個部署一個鎖檔，不論使用哪個 workspace：
+每個部署一個鎖檔，不論使用哪個 workspace，只由 workspace 根目錄指名：
 
 | 設定 | 鎖檔 |
 |---|---|
-| `SHEPHERD_WORKSPACES_ROOT=/絕對路徑的根目錄` | `<根目錄>/.shepherd-gpu.lock`，不論還設定了什麼：**根目錄是這把鎖唯一的身分**（自 2026-10-22 的根因修正輪起） |
-| 根目錄旁另設 `SHEPHERD_GPU_LOCK_FILE=/絕對路徑` | 只有指向同一個檔案時才接受；指向別的檔案時拒絕所有工作，訊息會列出兩個設定並說明要移除 `SHEPHERD_GPU_LOCK_FILE`（以前它會蓋過根目錄） |
-| `SHEPHERD_GPU_LOCK_FILE=/絕對路徑`，沒有根目錄 | 該檔案；所在目錄必須已存在（不會自動建立） |
-| 兩者皆未設定 | **未設定鎖**：所有受管理的工作都會被拒絕（自 8242b47 的審查起）：CLI 在讀取任何東西之前以結束碼 1 結束，服務拒絕每一次啟動，並各自說明如何設定這把鎖 |
+| `SHEPHERD_WORKSPACES_ROOT=/絕對路徑的根目錄` | `<根目錄>/.shepherd-gpu.lock`：**根目錄是這把鎖唯一的名稱**（自 2026-10-22 的根因修正輪起）；沒有其他設定能指名一把鎖 |
+| 未設定 | **未設定鎖**：所有受管理的工作都會被拒絕（自 8242b47 的審查起）：CLI 在讀取任何東西之前以結束碼 1 結束，服務拒絕每一次啟動，並各自說明如何設定這把鎖 |
 
-設定了卻無法使用的值（相對路徑、不存在的目錄、服務帳號無權進入的目錄底下的路徑）會拒絕所有
-工作，而不是在沒有鎖的情況下執行，狀態也會說明原因（`gpu.lock.problem`）。
+**`SHEPHERD_GPU_LOCK_FILE` 不再被讀取**（自 2026-10-22 的根因修正輪起）。它會在根目錄旁或取代
+根目錄指名一個自己的鎖檔，所以設定了它的服務與只設定根目錄的 shell 都算已設定，卻鎖住兩個檔案、
+並排執行（沒有根目錄的服務不會列出任何 workspace，但 `POST /api/v1/training/start` 接受
+workspace 路徑）。請從服務的環境與你的 shell 中移除它；原本只設定它的地方，在設定根目錄之前，
+每個工作都會以「未設定鎖」被拒絕。
+
+設定了卻無法使用的根目錄（相對路徑、不存在的目錄、服務帳號無權進入的目錄底下的路徑）會拒絕
+所有工作，而不是在沒有鎖的情況下執行，狀態也會說明原因（`gpu.lock.problem`）。
 
 `train_model.py` 與 `measure_scorer.py` 在讀完命令列後立刻取鎖——在解析裝置或讀取任何輸入
 之前——並持有到結束。鎖被占用時，它們會再嘗試約一秒（讓剛要結束的工作不會擋下下一個），
@@ -2052,18 +2056,14 @@ measure_scorer: refused: the GPU lock /srv/shepherd/workspaces/.shepherd-gpu.loc
 先檢查鎖，並以同樣的占用者拒絕這次啟動（"Nothing was started."）；工作自己的行程隨後再自行
 取鎖。
 
-**請在服務與執行 CLI 的 shell 中設定同一個變數**（例如與 systemd unit 相同的
+**請在服務與執行 CLI 的 shell 中設定同一個根目錄**（例如與 systemd unit 相同的
 `Environment=` 行——unit 本身不讀取任何環境檔——或一個同時由 unit 的 `EnvironmentFile=` 與你的
-shell 讀取的檔案）。兩個變數都看不到的 CLI 會被拒絕，結束碼 1，不寫出任何東西（`train_model:
-refused: neither SHEPHERD_GPU_LOCK_FILE nor SHEPHERD_WORKSPACES_ROOT is set, so the GPU lock is not
-configured ...`）；`setup_demo.py --train-model` 透過同一個訓練器訓練，同樣如此。**請給 shell
-與服務相同的 workspace 根目錄**：每個指定了這個根目錄的行程——服務、你的 shell 與其中的 CLI——
-都取 `<根目錄>/.shepherd-gpu.lock`；在根目錄旁另設、卻指向別的檔案的鎖檔會被拒絕而不是被採用
-（以前它會勝出，所以設定了鎖檔的服務與只設定根目錄的 shell 會鎖住兩個檔案、並排執行）。單靠環境
-變數無法解決的情況（每個行程讀的是自己的環境）：指定了另一個根目錄、或只指定鎖檔而沒有根目錄的
-行程，取的是另一把鎖。只設定 `SHEPHERD_GPU_LOCK_FILE`、沒有根目錄的服務不會列出任何
-workspace，所以它的儀表板不會啟動工作，但 `POST /api/v1/training/start` 接受 workspace 路徑並會
-執行工作；對這樣的服務，請給 shell 同一個鎖檔，且不要設定根目錄。
+shell 讀取的檔案）。看不到根目錄的 CLI 會被拒絕，結束碼 1，不寫出任何東西（`train_model:
+refused: SHEPHERD_WORKSPACES_ROOT is not set, so the GPU lock is not configured ...`）；
+`setup_demo.py --train-model` 透過同一個訓練器訓練，同樣如此。**請給 shell 與服務相同的
+workspace 根目錄**：每個指定了這個根目錄的行程——服務、你的 shell 與其中的 CLI——都取
+`<根目錄>/.shepherd-gpu.lock`，沒有其他東西能指名一把鎖。單靠環境變數無法解決的情況（每個行程
+讀的是自己的環境）：指定了另一個根目錄的行程，取的是另一把鎖。
 
 **那個 shell 中也必須設定 `SHEPHERD_REGISTRY`**（自 M5 審查起，BACKLOG 37）：
 `measure_scorer.py --cohort`、`--record` 與 `record_evaluation.py --report` 只在它所指名的
@@ -2156,9 +2156,9 @@ Training Console 與訓練 API 背後的服務現在執行兩種工作，各自�
   reloader 每次儲存原始碼都會重啟伺服器，每次重啟的關閉程序都會停止正在進行的訓練。
   `setup_demo.py` 印出的命令不再含 `--reload`，`python -m src.api.main` 也不再自動重新載入。
 - `GET /api/v1/training/status` 新增 `job_id`、`end_time`、`exit_code` 與 `gpu`：占用 GPU 的
-  工作（任一類型），以及鎖的狀態（`configured`、`path`、`source`、`held_by` 及持有者自己的紀錄
-  `holder` 與 `holder_alive`、`problem`，以及兩個設定都沒有時的 `unset`），與 GPU chip 顯示的是同一份
-  讀取結果。占用
+  工作（任一類型），以及鎖的狀態（`configured`、`path`、`held_by` 及持有者自己的紀錄 `holder`
+  與 `holder_alive`、`problem`，以及沒有設定 workspace 根目錄時的 `unset`），與 GPU chip 顯示的是
+  同一份讀取結果（`source` 欄位隨 `SHEPHERD_GPU_LOCK_FILE` 一起移除：根目錄是唯一的來源）。占用
   GPU 的測試執行會顯示在這裡，絕不會顯示成訓練。
 
 自 M5-2 起，Research › Test 透過這個 job runner 從儀表板啟動與取消測試執行（§4.14）；沒有任何 API
@@ -2179,7 +2179,7 @@ M5 的控制項只作用於伺服器列出的項目，從不作用於請求指�
 | 變數 | 值 | 未設定或被拒絕時 |
 |---|---|---|
 | `SHEPHERD_DEPLOYMENT_MODE` | 恰好是 `M1`（`m1`、` M1` 或 `M2` 都算其他值） | 唯讀：每個操作者控制項都被拒絕（D8，§4.13） |
-| `SHEPHERD_WORKSPACES_ROOT` | 一個已存在目錄的絕對路徑；其子目錄就是各個 workspace | 不列出任何 workspace |
+| `SHEPHERD_WORKSPACES_ROOT` | 一個已存在目錄的絕對路徑；其子目錄就是各個 workspace，其正下方的 `.shepherd-gpu.lock` 就是 GPU 鎖（§4.11） | 不列出任何 workspace，也沒有 GPU 鎖：每個訓練與測試執行都會被拒絕 |
 | `SHEPHERD_REGISTRY` | cohort registry（§4.9），即各指令以 `--registry` 接收的目錄：絕對路徑、已存在、位於 repository 之外；服務與各指令唯一從中登錄報告、在其中進行 `--cohort` 量測的 registry | 不列出任何 cohort 版本；每次登錄與 `--cohort` 量測都被拒絕 |
 | `SHEPHERD_INTAKE_DIR` | 位於 repository 之外的已存在目錄，你把要匯入的 `shepherd-cases/1` 檔案放在這裡；絕對路徑 | 不提供任何匯入來源 |
 | `SHEPHERD_TRAINING_EVIDENCE_DIRS` | 選填：R10 證據目錄，與 `--training-evidence` 接收的相同，以 `:` 分隔（Windows 為 `;`）；每一個都必須是已存在的絕對路徑 | 無；只要有一個項目不合格，整個設定就被拒絕 |
@@ -2199,10 +2199,9 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
   其他值時，每個控制項都被拒絕，部署對它們而言是唯讀的。診斷、狀態頁面與唯讀清單不受影響。
 - **workspace 根目錄可以位於 repository 內**，一般使用的 `data/workspaces/` 就是如此，但必須
   由你明確指定。相對路徑、不存在的目錄與檔案都會被拒絕。
-- **GPU 鎖跟著這些設定走**（§4.11）：設定了根目錄時，鎖是 `<根目錄>/.shepherd-gpu.lock`，這是
-  這把鎖唯一的身分；在它旁邊另設的 `SHEPHERD_GPU_LOCK_FILE` 必須指向同一個檔案，否則每個訓練與測試
-  執行都會被拒絕。執行正式 CLI 的 shell 需要相同的根目錄（若服務只指定鎖檔而沒有根目錄，就是同一個
-  鎖檔、且不設定根目錄）；兩者都沒有設定時，每個訓練與測試執行都會被拒絕。
+- **GPU 鎖跟著 workspace 根目錄走**（§4.11）：鎖是 `<根目錄>/.shepherd-gpu.lock`，這是這把鎖
+  唯一的名稱；`SHEPHERD_GPU_LOCK_FILE` 不再被讀取。執行正式 CLI 的 shell 需要相同的根目錄；沒有
+  設定根目錄時，每個訓練與測試執行都會被拒絕。
 - **registry 與 intake 目錄存放病人層級的資料。** 兩者都遵循 registry 的規則（§4.9）：相對
   路徑、不存在的目錄，以及解析後落在 repository 內的路徑（包括經由 symlink）一律拒絕。命令列的
   `--registry` 與 `SHEPHERD_REGISTRY` 由同一個函式檢查。請把兩者建在只有執行服務與指令的帳號
@@ -2507,7 +2506,7 @@ CORS 只決定頁面能讀取什麼。不需要預檢的跨來源請求仍會抵
 | `GPU job: training (job runner)`、`GPU job: test run (job runner)` | 本服務啟動的工作；停止中時加上 `· stopping` |
 | `GPU job: train_model.py (pid 41822, since 09:58 UTC)` | 某個不是本服務啟動的行程持有 GPU 鎖（正式的 CLI，或同一把鎖上另一台伺服器的 job runner）；chip 只顯示其持有者紀錄所寫的內容：指令、pid 與開始時間 |
 | `GPU job: lock held, holder not described` | 鎖被持有，但沒有任何仍在執行的行程被描述為持有者 |
-| `GPU jobs: refused, lock not configured` | 沒有設定 GPU 鎖（`SHEPHERD_GPU_LOCK_FILE` 與 `SHEPHERD_WORKSPACES_ROOT` 都沒有設定），因此在設定之前每個訓練與測試執行都會被拒絕（§4.11） |
+| `GPU jobs: refused, lock not configured` | 沒有設定 GPU 鎖（指名它的 `SHEPHERD_WORKSPACES_ROOT` 沒有設定），因此在設定之前每個訓練與測試執行都會被拒絕（§4.11） |
 | `GPU jobs: not read`（灰色） | 無法讀取狀態。鎖的設定無法使用時，ⓘ 會說明，但只對 D8 允許的瀏覽器顯示路徑 |
 
 ### 說明：ⓘ 按鈕

@@ -47,7 +47,6 @@ def site(tmp_path, monkeypatch):
     monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(workspaces))
     monkeypatch.setenv("SHEPHERD_REGISTRY", str(cohort.registry))
     monkeypatch.setenv("SHEPHERD_DEVICE", "cpu")
-    monkeypatch.delenv("SHEPHERD_GPU_LOCK_FILE", raising=False)
     monkeypatch.setattr(served_status, "read_status", lambda: (None, "not read"))
     return cohort, checkpoints / "best.pt"
 

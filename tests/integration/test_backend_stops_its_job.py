@@ -46,7 +46,7 @@ import pytest
 pytest.importorskip("torch")
 pytest.importorskip("uvicorn")
 
-from src.utils.gpu_lock import LOCK_FILE_ENV, WORKSPACES_ROOT_ENV, probe  # noqa: E402
+from src.utils.gpu_lock import LOCK_FILE_NAME, WORKSPACES_ROOT_ENV, probe  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"),
@@ -134,7 +134,9 @@ class _Backend:
         self.tmp_path, self.started_by = tmp_path, started_by
         self.process = None
         self.job_pid = None
-        self.lock = tmp_path / "gpu.lock"
+        #: The service's workspaces root, which names its GPU lock.
+        self.root = tmp_path / "workspaces"
+        self.lock = self.root / LOCK_FILE_NAME
         self.port = _free_port()
         self._log = None
 
@@ -142,10 +144,10 @@ class _Backend:
         from tests.fixtures.trainable_workspace import write_trainable_workspace
 
         self.data = write_trainable_workspace(self.tmp_path / "case")
+        self.root.mkdir(exist_ok=True)
         env = {k: v for k, v in os.environ.items()
-               if k not in (WORKSPACES_ROOT_ENV, "SHEPHERD_KG_PATH", "SHEPHERD_CHECKPOINT_PATH",
-                            "SHEPHERD_BIND_HOST")}
-        env.update({LOCK_FILE_ENV: str(self.lock), "SHEPHERD_DEPLOYMENT_MODE": "M1",
+               if k not in ("SHEPHERD_KG_PATH", "SHEPHERD_CHECKPOINT_PATH", "SHEPHERD_BIND_HOST")}
+        env.update({WORKSPACES_ROOT_ENV: str(self.root), "SHEPHERD_DEPLOYMENT_MODE": "M1",
                     "GRADIO_ANALYTICS_ENABLED": "False", "BROWSER": "/bin/true",
                     "PYTHONUNBUFFERED": "1"})
         launcher = [sys.executable, str(REPO / "scripts" / "launch" / "shep_launch.py"),

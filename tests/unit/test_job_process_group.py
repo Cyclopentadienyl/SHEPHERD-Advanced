@@ -37,7 +37,7 @@ import pytest
 pytest.importorskip("torch")
 
 import src.api.services.training_manager as tm  # noqa: E402
-from src.utils.gpu_lock import LOCK_FILE_ENV, probe  # noqa: E402
+from src.utils.gpu_lock import LOCK_FILE_NAME, WORKSPACES_ROOT_ENV, probe  # noqa: E402
 from tests.fixtures.job_processes import REPO, FakeProcess  # noqa: E402
 
 LINUX = pytest.mark.skipif(not sys.platform.startswith("linux"),
@@ -120,9 +120,10 @@ def _members(group: int) -> list:
 
 @pytest.fixture
 def blocked(tmp_path, monkeypatch):
-    """The lock, the child script and short escalation steps."""
-    lock = tmp_path / "gpu.lock"
-    monkeypatch.setenv(LOCK_FILE_ENV, str(lock))
+    """The lock (under the test's directory as its workspaces root), the
+    child script and short escalation steps."""
+    lock = tmp_path / LOCK_FILE_NAME
+    monkeypatch.setenv(WORKSPACES_ROOT_ENV, str(tmp_path))
     for name, value in (("STOP_GRACE_SECONDS", 15.0), ("TERMINATE_GRACE_SECONDS", 2.0),
                         ("KILL_GRACE_SECONDS", 2.0), ("OUTPUT_GRACE_SECONDS", 0.5)):
         monkeypatch.setattr(tm, name, value)
@@ -276,7 +277,7 @@ INNER = r'''import json, os, sys, threading, time
 from pathlib import Path
 repo, tmp = sys.argv[1], Path(sys.argv[2])
 sys.path.insert(0, repo)
-os.environ["SHEPHERD_GPU_LOCK_FILE"] = str(tmp / "gpu.lock")
+os.environ["SHEPHERD_WORKSPACES_ROOT"] = str(tmp)
 from src.api.services import training_manager as tm
 from src.utils.gpu_lock import probe
 tm.STOP_GRACE_SECONDS, tm.TERMINATE_GRACE_SECONDS, tm.KILL_GRACE_SECONDS = 0.5, 2.0, 2.0
@@ -304,7 +305,7 @@ with manager._lock:
     refusal = manager._slot_refusal_locked(tm.JOB_TYPES["training"])
 print(json.dumps({"worker": worker, "returned": not stopper.is_alive(),
                   "seconds": time.monotonic() - started, "answer": answer,
-                  "worker_state": state(worker), "lock": probe(tmp / "gpu.lock"),
+                  "worker_state": state(worker), "lock": probe(tmp / ".shepherd-gpu.lock"),
                   "active": manager.active_job(), "slot_refusal": refusal},
                  default=str), flush=True)
 os._exit(0)
@@ -407,8 +408,8 @@ def test_the_real_training_cli_with_forked_workers_leaves_nothing_after_a_stop(
     from tests.fixtures.trainable_workspace import write_trainable_workspace
 
     data = write_trainable_workspace(tmp_path / "case")
-    lock = tmp_path / "gpu.lock"
-    monkeypatch.setenv(LOCK_FILE_ENV, str(lock))
+    lock = tmp_path / LOCK_FILE_NAME
+    monkeypatch.setenv(WORKSPACES_ROOT_ENV, str(tmp_path))
     monkeypatch.setattr(tm, "STOP_GRACE_SECONDS", stop_grace)
     manager = tm.TrainingManager()
     started = manager.start_training(dict(

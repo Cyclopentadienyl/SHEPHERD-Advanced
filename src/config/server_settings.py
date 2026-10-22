@@ -12,18 +12,17 @@ feature that needs it is off.
 | Variable | What it is | Unset |
 |---|---|---|
 | `SHEPHERD_DEPLOYMENT_MODE` | SPEC_4's deployment mode; only the exact value `M1` enables operator controls, which D8's check then allows request by request (below) | read-only |
-| `SHEPHERD_WORKSPACES_ROOT` | the one workspace root: its subdirectories are the workspaces the server lists (SPEC_4 M1's "one explicit workspace namespace") | no workspace listed |
+| `SHEPHERD_WORKSPACES_ROOT` | the one workspace root: its subdirectories are the workspaces the server lists (SPEC_4 M1's "one explicit workspace namespace"), and the GPU lock is `.shepherd-gpu.lock` directly under it | no workspace listed; no GPU lock, so every managed GPU job is refused |
 | `SHEPHERD_REGISTRY` | the cohort registry (the `--registry` of the CLI), the only one reports are registered from and cohort versions measured in (`deployment_registry_refusal`) | no cohort feature; every registration and `--cohort` measurement refused |
 | `SHEPHERD_INTAKE_DIR` | where an operator places import sources | no import source |
 | `SHEPHERD_TRAINING_EVIDENCE_DIRS` | R10 evidence directories, `os.pathsep`-separated (optional) | none |
 | `SHEPHERD_ORDERING_ROLES` | cohort roles that offer ordering by test score, comma-separated | none |
 
 **The GPU lock's location is read here too** (`gpu_lock_location`, the one
-rule `src.utils.gpu_lock` applies). **The workspaces root is its identity**:
-with `SHEPHERD_WORKSPACES_ROOT` set the lock is `.shepherd-gpu.lock` under it,
-and `SHEPHERD_GPU_LOCK_FILE` is accepted only when it names that same file;
-with no root set, `SHEPHERD_GPU_LOCK_FILE` names it. With neither set, every
-managed GPU job is refused (review of 8242b47, P2-4).
+rule `src.utils.gpu_lock` applies). **The workspaces root is its one name**:
+the lock is `.shepherd-gpu.lock` under `SHEPHERD_WORKSPACES_ROOT`, and no other
+setting names one (root-cause round, P24-S1 and its verification). With no
+root set, every managed GPU job is refused (review of 8242b47, P2-4).
 
 **A missing setting turns its feature off with a stated reason; nothing falls
 back to a default path**, inside the repository or anywhere else. The
@@ -86,10 +85,8 @@ ENV_REGISTRY = "SHEPHERD_REGISTRY"
 ENV_INTAKE_DIR = "SHEPHERD_INTAKE_DIR"
 ENV_TRAINING_EVIDENCE_DIRS = "SHEPHERD_TRAINING_EVIDENCE_DIRS"
 ENV_ORDERING_ROLES = "SHEPHERD_ORDERING_ROLES"
-#: The deployment's GPU lock file, when it is not the one under the workspaces
-#: root (`gpu_lock_location`).
-ENV_GPU_LOCK_FILE = "SHEPHERD_GPU_LOCK_FILE"
-#: The GPU lock's file name directly under the workspaces root.
+#: The GPU lock's file name directly under the workspaces root, its one place
+#: (`gpu_lock_location`).
 GPU_LOCK_FILE_NAME = ".shepherd-gpu.lock"
 ENV_ACCEPT_UNAUTHENTICATED_NETWORK_BIND = "SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND"
 #: The bind address the launcher and `src.api.main:main()` pass to application
@@ -123,7 +120,6 @@ __all__ = [
     "ENV_ACCEPT_UNAUTHENTICATED_NETWORK_BIND",
     "ENV_BIND_HOST",
     "ENV_DEPLOYMENT_MODE",
-    "ENV_GPU_LOCK_FILE",
     "ENV_INTAKE_DIR",
     "ENV_ORDERING_ROLES",
     "ENV_REGISTRY",
@@ -311,48 +307,15 @@ def workspaces_root(environ: Optional[Mapping[str, str]] = None) -> Setting:
     )
 
 
-#: Why every managed GPU job is refused when neither lock setting is set
+#: Why every managed GPU job is refused when no workspaces root is set
 #: (`gpu_lock_location`; review of 8242b47, P2-4).
 GPU_LOCK_NOT_CONFIGURED = (
-    f"neither {ENV_GPU_LOCK_FILE} nor {ENV_WORKSPACES_ROOT} is set, so the GPU lock is not "
-    "configured and every managed GPU job is refused rather than run without excluding the "
-    f"others. Set {ENV_WORKSPACES_ROOT} in this environment to the value the service uses: the "
-    f"lock is then {GPU_LOCK_FILE_NAME} under that root, the one file every process that names "
-    f"the root takes (deployment guide §4.11). {ENV_GPU_LOCK_FILE} names the lock only where no "
-    "workspaces root is set; for a service set up that way, name its lock file, and no root, "
-    "here."
+    f"{ENV_WORKSPACES_ROOT} is not set, so the GPU lock is not configured and every managed "
+    "GPU job is refused rather than run without excluding the others. Set "
+    f"{ENV_WORKSPACES_ROOT} in this environment to the value the service uses: the lock is "
+    f"{GPU_LOCK_FILE_NAME} under that root, the one file every process that names the root "
+    "takes (deployment guide §4.11)."
 )
-
-
-def _lock_file(raw: str) -> Setting:
-    """The file `SHEPHERD_GPU_LOCK_FILE`'s value `raw` names, its directory
-    resolved (`check_operator_directory`), or why it names none: not absolute,
-    a directory that does not exist or cannot be checked, or a directory
-    itself."""
-    given = Path(raw)
-    if not given.is_absolute():
-        return Setting(ENV_GPU_LOCK_FILE, None, (
-            f"{ENV_GPU_LOCK_FILE} is refused: {raw!r} is not an absolute path. Every "
-            "process that takes the GPU lock must name the same file, whatever its "
-            "working directory."))
-    try:
-        directory = check_operator_directory(
-            given.parent, what="the GPU lock file's directory", holds="the GPU lock",
-            outside_repository=False)
-    except DirectoryRefused as exc:
-        return Setting(ENV_GPU_LOCK_FILE, None, f"{ENV_GPU_LOCK_FILE} is refused: {exc}")
-    path = directory / given.name
-    try:
-        is_directory = path.is_dir()
-    except OSError as exc:  # `is_dir` raises EACCES on 3.12 rather than answering
-        return Setting(ENV_GPU_LOCK_FILE, None, (
-            f"{ENV_GPU_LOCK_FILE} is refused: {path} cannot be checked "
-            f"({type(exc).__name__}: {exc.strerror or exc})."))
-    if is_directory:
-        return Setting(ENV_GPU_LOCK_FILE, None, (
-            f"{ENV_GPU_LOCK_FILE} is refused: {path} is a directory; name a file "
-            "inside it."))
-    return Setting(ENV_GPU_LOCK_FILE, path)
 
 
 def gpu_lock_location(environ: Optional[Mapping[str, str]] = None) -> Setting:
@@ -360,54 +323,36 @@ def gpu_lock_location(environ: Optional[Mapping[str, str]] = None) -> Setting:
     the job runner, the formal CLIs and the dashboard's chip apply, through
     `src.utils.gpu_lock.lock_location`.
 
-    **The workspaces root is the lock's identity** (root-cause review,
-    P24-S1). With `SHEPHERD_WORKSPACES_ROOT` set, as `workspaces_root` reads
-    it, the lock is `.shepherd-gpu.lock` directly under it: every process that
-    names the deployment's root (the service, and a shell given the same root)
-    takes the one file, whatever else it sets, and the server's list and the
-    lock never read that variable differently. `SHEPHERD_GPU_LOCK_FILE` beside
-    it is accepted only when it names that same file; another file is a
-    problem that names both, never settled by picking one (a precedence
-    between the two let a service with a lock file and a shell with only the
-    root lock different files and run side by side). With no root set,
-    `SHEPHERD_GPU_LOCK_FILE` names the lock (`_lock_file`): the tests' and the
-    probe's own lock, or a deployment that names no workspaces root.
-    `variable` names the setting that decided.
+    **The workspaces root is the lock's one name** (root-cause review,
+    P24-S1, and its verification): the lock is `.shepherd-gpu.lock` directly
+    under `SHEPHERD_WORKSPACES_ROOT`, as `workspaces_root` reads it, so every
+    process that names the deployment's root (the service, and a shell given
+    the same root) takes the one file, and the server's list and the lock
+    never read that variable differently. No other setting names a lock:
+    `SHEPHERD_GPU_LOCK_FILE`, which did, is no longer read, since a process
+    configured with it (a service with no root, say) and one given only the
+    root counted as configured, locked two files and ran side by side. The
+    tests and the deployment probe take a lock of their own by naming a
+    workspaces root of their own.
 
-    **Neither set is a problem, not a default** (review of 8242b47, P2-4):
+    **No root is a problem, not a default** (review of 8242b47, P2-4):
     `value` is None, `unset` True and `problem` says how to configure it, so
     every managed GPU job is refused rather than run without excluding the
-    others. A setting that is set but unusable is refused too, never replaced
-    by the other one or by a default.
+    others. A root that is set but refused is a problem too, never replaced
+    by a default.
 
     **The limit one rule keeps**: each process names the lock from its own
-    environment, so a process that names another root, or a lock file and no
-    root, takes another file and is not excluded.
+    environment, so a process that names another root takes another file and
+    is not excluded.
     """
-    raw_file = _raw(environ, ENV_GPU_LOCK_FILE)
-    if _raw(environ, ENV_WORKSPACES_ROOT) is None:
-        if raw_file is None:
-            return Setting(ENV_GPU_LOCK_FILE, None, GPU_LOCK_NOT_CONFIGURED, unset=True)
-        return _lock_file(raw_file)
     root = workspaces_root(environ)
-    if root.value is None:  # set, and refused: whatever the file setting says
+    if root.value is None:
+        if root.unset:
+            return Setting(ENV_WORKSPACES_ROOT, None, GPU_LOCK_NOT_CONFIGURED, unset=True)
         return Setting(ENV_WORKSPACES_ROOT, None, (
             f"{root.problem} The GPU lock under it cannot be used either, so every managed "
             "GPU job is refused until it is corrected."))
-    lock = root.value / GPU_LOCK_FILE_NAME
-    if raw_file is not None:
-        named = _lock_file(raw_file)
-        if named.value is None:
-            return named
-        if named.value != lock:
-            return Setting(ENV_GPU_LOCK_FILE, None, (
-                f"{ENV_GPU_LOCK_FILE} names {named.value}, and {ENV_WORKSPACES_ROOT} names "
-                f"the lock {lock}: two different GPU lock files. With the workspaces root "
-                f"set, the lock is {lock}, the file every process that names this root takes, "
-                "so a job on the other file would not exclude theirs. Remove "
-                f"{ENV_GPU_LOCK_FILE} from this environment (or set it to {lock}); every "
-                "managed GPU job is refused until then."))
-    return Setting(ENV_WORKSPACES_ROOT, lock)
+    return Setting(ENV_WORKSPACES_ROOT, root.value / GPU_LOCK_FILE_NAME)
 
 
 def cohort_registry(environ: Optional[Mapping[str, str]] = None) -> Setting:

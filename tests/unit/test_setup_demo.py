@@ -132,10 +132,10 @@ def test_train_model_takes_the_gpu_lock_for_the_whole_training(monkeypatch, caps
     """Review of 8242b47, P2-4: the demo trains through the real trainer on the
     GPU, so it is a managed GPU job: the lock is held while it trains, and
     released after."""
-    from src.utils.gpu_lock import LOCK_FILE_ENV, probe
+    from src.utils.gpu_lock import LOCK_FILE_NAME, WORKSPACES_ROOT_ENV, probe
 
-    lock = tmp_path / "gpu.lock"
-    monkeypatch.setenv(LOCK_FILE_ENV, str(lock))
+    lock = tmp_path / LOCK_FILE_NAME
+    monkeypatch.setenv(WORKSPACES_ROOT_ENV, str(tmp_path))
     seen = {}
 
     def _trained(workspace, num_epochs, device):
@@ -155,7 +155,7 @@ def test_train_model_is_refused_before_anything_is_written(monkeypatch, tmp_path
     is trained."""
     import logging
 
-    from src.utils.gpu_lock import LOCK_FILE_ENV, WORKSPACES_ROOT_ENV, GpuLock
+    from src.utils.gpu_lock import LOCK_FILE_NAME, WORKSPACES_ROOT_ENV, GpuLock
 
     output = tmp_path / "demo"
     monkeypatch.setattr(sys, "argv", ["setup_demo.py", "--output-dir", str(output),
@@ -166,13 +166,13 @@ def test_train_model_is_refused_before_anything_is_written(monkeypatch, tmp_path
                         lambda *a, **k: pytest.fail("wrote without the lock"))
     with caplog.at_level(logging.ERROR):
         if case == "not configured":
-            monkeypatch.delenv(LOCK_FILE_ENV, raising=False)
             monkeypatch.delenv(WORKSPACES_ROOT_ENV, raising=False)
             assert setup_demo.main() == 1
-            assert "setup_demo: refused: neither SHEPHERD_GPU_LOCK_FILE nor" in caplog.text
+            assert "setup_demo: refused: SHEPHERD_WORKSPACES_ROOT is not set, so the GPU " \
+                "lock is not configured" in caplog.text
         else:
-            lock = tmp_path / "gpu.lock"
-            monkeypatch.setenv(LOCK_FILE_ENV, str(lock))
+            lock = tmp_path / LOCK_FILE_NAME
+            monkeypatch.setenv(WORKSPACES_ROOT_ENV, str(tmp_path))
             with GpuLock(lock, job_type="test", command="measure_scorer.py").acquire():
                 assert setup_demo.main() == 1
             assert "is held by a test job (measure_scorer.py" in caplog.text

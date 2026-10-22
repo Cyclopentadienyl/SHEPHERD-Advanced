@@ -1564,7 +1564,7 @@ contract and BACKLOG stay the record, and no new planning document is added.
 - **One GPU lock for managed training and evaluation jobs** (the reviewer's decisions, relayed by the owner, 2026-10-19). Jobs the
   WebUI or the API start and the formal training and evaluation CLIs (`train_model.py`,
   `measure_scorer.py`) take the same lock, one per deployment whatever the workspace (since the
-  root-cause round, the deployment's workspaces root is its one identity, below); a busy
+  root-cause round, the deployment's workspaces root is its one name, below); a busy
   lock is refused with who holds it, never queued. The lock covers the working process's whole
   life, with tests for a stop, an abnormal exit and a parent and child process. What is claimed
   is exactly that: managed training and evaluation jobs exclude each other. `flock` is
@@ -1622,30 +1622,31 @@ contract and BACKLOG stay the record, and no new planning document is added.
   `tests/unit/test_job_process_group.py`, `tests/unit/test_backend_shutdown.py`,
   `tests/integration/test_backend_stops_its_job.py`, `tests/unit/test_gpu_lock.py`.
   *Root-cause round (2026-10-22; implemented, not reviewed):* **the workspaces root is the
-  lock's one identity** (P24-S1). The location's one rule had two sources with a precedence
+  lock's one name** (P24-S1). The location's one rule had two sources with a precedence
   (`SHEPHERD_GPU_LOCK_FILE` won over the root), so a service with a lock file and the root and a
   shell given only the root both counted as configured, locked two files and ran side by side.
-  Now, with `SHEPHERD_WORKSPACES_ROOT` set, the lock is `<root>/.shepherd-gpu.lock` whatever else
-  is set; `SHEPHERD_GPU_LOCK_FILE` beside it is accepted only when it names that same file, and
-  another file is a setting problem naming both and saying to remove the file setting (the
-  runner, the CLIs and the chip refuse; nothing is picked); with no root, the lock file names
-  the lock. The probe's own lock unsets the operator's root meanwhile, as the tests do. The limit
-  that remains is inherent to a cooperative lock named by each process's environment: a process
-  that names another root, or a lock file and no root, takes another file. That includes a
-  service configured with a lock file and no root: it lists no workspace, so the dashboard
-  starts no job there, but `POST /api/v1/training/start` takes a workspace path and runs one, so
-  a shell given only a root does not exclude it (BACKLOG records the complete form). **One
-  reader of the lock's state** (P24-S3): `gpu_lock.lock_state` alone turns the location and the
+  A first form kept the lock file where no root was set, which left the split reachable (the
+  round's verification, T2-V1: a service with a lock file and no root lists no workspace, but
+  `POST /api/v1/training/start` takes a workspace path and runs a job beside a shell given only
+  the root). So **`SHEPHERD_GPU_LOCK_FILE` is no longer read**: the lock is
+  `<root>/.shepherd-gpu.lock` and nothing else names one; with no root, the runner, the CLIs and
+  the chip refuse as not configured; the tests and the probe take a lock of their own by naming
+  a workspaces root of their own (an empty directory), and the status's `source` field went with
+  the second name (BACKLOG 44, closed by it). The limit that remains is inherent to a
+  cooperative lock named by each process's environment: a process that names another root takes
+  another file. **One reader of the lock's state** (P24-S3): `gpu_lock.lock_state` alone turns the location and the
   probe into a status (with the holder's record), the chip reads it, and "not configured" is
   the setting's structural `unset`, never its words. **The GPU slot has a closed state**
   (P23-1): the backend's stop closes it at the signal (`TrainingManager.close`, which returns the
   job holding it read in the same step), so a start still under way is refused ("The backend is
   stopping; nothing was started.") by every route; Restart Backend closes it only when idle and
   open (a stop begun during its delay owns the slot and aborts the restart; a failed exec opens
-  only the restart's own close) and keeps it closed through the exec. **The signals a job no longer gets are defined once**
-  (P23-2): `training_manager.JOB_DETACHED_SIGNALS`, beside the spawn; the backend and the probe
-  route each of them, Ctrl-\ (SIGQUIT) included, which used to leave the job training with the
-  lock (the backend still ends by SIGQUIT, after the job's stop). **The systemd unit hands its
+  only the restart's own close; T2-V2) and keeps it closed through the exec. **The signals a job
+  no longer gets are defined once** (P23-2): `training_manager.JOB_DETACHED_SIGNALS`, beside the
+  spawn; the backend and the probe route each of them, Ctrl-\ (SIGQUIT) included, which used to
+  leave the job training with the lock (the backend still ends by SIGQUIT, after the job's
+  stop); the backend tells the server's own handlers by the handler, the one SIGTERM has, never
+  by a copy of uvicorn's list of signal names (T2-V4). **The systemd unit hands its
   stop to the backend** (P23-3): `KillMode=mixed` (SIGTERM to the server, the main process since
   the launcher execs into it; SIGKILL to what is left once it exits) and `TimeoutStopSec=150`,
   which covers `END_ACTIVE_JOB_SECONDS` (110 s), checked against the runner's constants by a

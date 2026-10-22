@@ -13,18 +13,18 @@ from src.config.server_settings import (
     ENV_DEPLOYMENT_MODE,
     ENV_REGISTRY,
 )
-from src.utils.gpu_lock import LOCK_FILE_ENV, WORKSPACES_ROOT_ENV
+from src.utils.gpu_lock import WORKSPACES_ROOT_ENV
 
 
 @pytest.fixture(autouse=True, scope="session")
 def _suite_gpu_lock(tmp_path_factory):
     """A GPU lock of the suite's own for fixtures wider than one test (a
     module's fixture that runs a CLI once), set before any of them runs and
-    never the deployment's; each test then gets its own
+    never the deployment's: the lock under a workspaces root of the suite's
+    own, an empty directory. Each test then gets its own
     (`_no_deployment_gpu_lock`)."""
     with pytest.MonkeyPatch.context() as patch:
-        patch.setenv(LOCK_FILE_ENV, str(tmp_path_factory.mktemp("suite-gpu-lock") / "gpu.lock"))
-        patch.delenv(WORKSPACES_ROOT_ENV, raising=False)
+        patch.setenv(WORKSPACES_ROOT_ENV, str(tmp_path_factory.mktemp("suite-workspaces")))
         yield
 
 
@@ -38,13 +38,14 @@ def _no_deployment_gpu_lock(monkeypatch, tmp_path_factory):
     runs a CLI in process (failing while a real job holds it) and create the
     lock file in the real workspace root. Since the review of 8242b47 (P2-4)
     a formal CLI and the job runner refuse to run without a configured lock,
-    so each test is given its own lock file (`SHEPHERD_GPU_LOCK_FILE`, in a
-    directory of its own) with `SHEPHERD_WORKSPACES_ROOT` unset. A test about
-    another lock, or none, sets or removes these with `monkeypatch`, and its
-    child processes inherit only what it set.
+    and the workspaces root is the lock's one name (root-cause round,
+    P24-S1), so each test is given a workspaces root of its own
+    (`SHEPHERD_WORKSPACES_ROOT`, an empty directory), whose
+    `.shepherd-gpu.lock` is its lock and under which the server lists no
+    workspace. A test about another root, or none, sets or removes it with
+    `monkeypatch`, and its child processes inherit only what it set.
     """
-    monkeypatch.setenv(LOCK_FILE_ENV, str(tmp_path_factory.mktemp("gpu-lock") / "gpu.lock"))
-    monkeypatch.delenv(WORKSPACES_ROOT_ENV, raising=False)
+    monkeypatch.setenv(WORKSPACES_ROOT_ENV, str(tmp_path_factory.mktemp("workspaces")))
 
 
 @pytest.fixture(autouse=True)

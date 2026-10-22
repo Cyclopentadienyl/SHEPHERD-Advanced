@@ -82,12 +82,12 @@ GPU_SCOPE = (
 GPU_NONE = "GPU jobs: none"
 GPU_NOT_READ = "GPU jobs: not read"
 GPU_NOT_CONFIGURED = "GPU jobs: refused, lock not configured"
-#: What the chip's ⓘ says with neither lock setting set (review of 8242b47,
+#: What the chip's ⓘ says with no workspaces root set (review of 8242b47,
 #: P2-4); it names no server path, so every request may see it.
 GPU_NOT_CONFIGURED_DETAIL = (
-    "The GPU lock is not configured: neither SHEPHERD_GPU_LOCK_FILE nor "
-    "SHEPHERD_WORKSPACES_ROOT is set in the service's environment, so the job runner refuses "
-    "every training and test run until one is set (deployment guide §4.11)."
+    "The GPU lock is not configured: SHEPHERD_WORKSPACES_ROOT, which names it, is not set in "
+    "the service's environment, so the job runner refuses every training and test run until "
+    "it is set (deployment guide §4.11)."
 )
 _RUNNER_NOUN = {"training": "training", "test": "test run"}
 
@@ -152,7 +152,7 @@ def gpu_chip_from(active: Optional[Mapping[str, Any]], lock: Mapping[str, Any],
     """The GPU chip from the runner's active job and the lock as
     `src.utils.gpu_lock.lock_state` reads it now, the one place that turns the
     lock's location and probe into a status (root-cause review, P24-S3): its
-    ``problem``, ``unset`` (the problem is that neither lock setting is set),
+    ``problem``, ``unset`` (the problem is that no workspaces root is set),
     ``held_by`` (who holds it at this instant, in words; None when free),
     ``holder`` (the holder's description record, or None) and
     ``holder_alive`` (True, False, or None when that cannot be told).

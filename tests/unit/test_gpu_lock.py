@@ -29,7 +29,6 @@ import pytest
 
 from src.utils import gpu_lock
 from src.utils.gpu_lock import (
-    LOCK_FILE_ENV,
     LOCK_FILE_NAME,
     WORKSPACES_ROOT_ENV,
     GpuLock,
@@ -46,13 +45,17 @@ from tests.fixtures.job_processes import REPO, start_lock_holder
 
 POSIX = pytest.mark.skipif(sys.platform == "win32", reason="signals and fork are POSIX")
 
+#: The variable that named a lock of its own, beside the workspaces root or
+#: instead of it, until the verification of the root-cause round's P24-S1
+#: (T2-V1). It is no longer read; the tests that set it show it names nothing.
+RETIRED_LOCK_FILE_ENV = "SHEPHERD_GPU_LOCK_FILE"
+
 
 @pytest.fixture
 def root(tmp_path, monkeypatch):
-    """A workspace root named by the setting; no explicit lock file."""
+    """A workspace root named by the setting, which names the lock."""
     root = tmp_path / "workspaces"
     root.mkdir()
-    monkeypatch.delenv(LOCK_FILE_ENV, raising=False)
     monkeypatch.setenv(WORKSPACES_ROOT_ENV, str(root))
     return root
 
@@ -68,135 +71,106 @@ def _wait_free(path: Path, seconds: float = 10.0) -> bool:
 
 # --------------------------------------------------------------------------- location
 def test_the_lock_is_under_the_workspace_root_whatever_the_workspace(root):
-    assert lock_location() == (root / LOCK_FILE_NAME, f"under {WORKSPACES_ROOT_ENV}")
+    assert lock_location() == root / LOCK_FILE_NAME
 
 
-def test_a_lock_file_beside_the_root_naming_another_file_is_refused(root, tmp_path,
-                                                                    monkeypatch):
-    """Root-cause review, P24-S1: the workspaces root is the lock's identity.
-    A lock file that named another file used to win over the root, so a
-    service with both and a shell given only the root (the guide's export)
-    locked two files and ran side by side. Now it is refused, naming both and
-    what to remove, by the location, the status and the CLIs' taker alike;
-    nothing is picked and nothing is created."""
+def test_no_setting_but_the_root_names_a_lock(root, tmp_path, monkeypatch):
+    """Verification of P24-S1, T2-V1: the workspaces root is the lock's one
+    name. `SHEPHERD_GPU_LOCK_FILE` named a lock of its own where no root was
+    set, so a service configured that way and a shell given only the root
+    (the guide's export) each counted as configured and locked two files. It
+    is no longer read: beside the root the lock is the root's, and with no
+    root it configures nothing, so the location, the status and the CLIs'
+    taker refuse as not configured. Nothing is created at the file it names."""
+    from src.config import server_settings
+
+    assert not hasattr(server_settings, "ENV_GPU_LOCK_FILE"), "a second name for the lock"
     other = tmp_path / "locks"
     other.mkdir()
-    monkeypatch.setenv(LOCK_FILE_ENV, str(other / "gpu.lock"))
-    with pytest.raises(GpuLockMisconfigured) as refused:
+    monkeypatch.setenv(RETIRED_LOCK_FILE_ENV, str(other / "gpu.lock"))
+    assert lock_location() == root / LOCK_FILE_NAME
+    with take_gpu_lock("training", "train_model.py"):
+        assert probe(root / LOCK_FILE_NAME) is not None
+    monkeypatch.delenv(WORKSPACES_ROOT_ENV)
+    with pytest.raises(GpuLockNotConfigured, match=f"^{WORKSPACES_ROOT_ENV} is not set"):
         lock_location()
-    said = str(refused.value)
-    assert not isinstance(refused.value, GpuLockNotConfigured)
-    assert f"{LOCK_FILE_ENV} names {other / 'gpu.lock'}" in said
-    assert f"{WORKSPACES_ROOT_ENV} names the lock {root / LOCK_FILE_NAME}" in said
-    assert "two different GPU lock files" in said and f"Remove {LOCK_FILE_ENV}" in said
-    assert lock_state()["problem"] == said and lock_state()["unset"] is False
-    assert lock_state()["configured"] is False
-    with pytest.raises(GpuLockMisconfigured, match="two different GPU lock files"):
-        take_gpu_lock("training", "train_model.py")
-    assert list(other.iterdir()) == [] and list(root.iterdir()) == []
+    assert lock_state()["unset"] is True and lock_state()["configured"] is False
+    with pytest.raises(GpuLockNotConfigured):
+        take_gpu_lock("test", "measure_scorer.py")
+    assert list(other.iterdir()) == []
 
 
-def test_a_lock_file_beside_the_root_naming_its_lock_is_that_lock(root, tmp_path, monkeypatch):
-    """The same file named twice, through a symlinked directory too, is one
-    lock: the one under the root."""
-    link = tmp_path / "link"
-    link.symlink_to(root)
-    for named in (root / LOCK_FILE_NAME, link / LOCK_FILE_NAME):
-        monkeypatch.setenv(LOCK_FILE_ENV, str(named))
-        assert lock_location() == (root / LOCK_FILE_NAME, f"under {WORKSPACES_ROOT_ENV}")
-
-
-def test_a_refused_root_is_never_replaced_by_a_lock_file(monkeypatch, tmp_path):
+def test_a_refused_root_is_refused_never_replaced(monkeypatch, tmp_path):
     monkeypatch.setenv(WORKSPACES_ROOT_ENV, str(tmp_path / "missing"))
-    monkeypatch.setenv(LOCK_FILE_ENV, str(tmp_path / "gpu.lock"))
-    with pytest.raises(GpuLockMisconfigured, match=f"{WORKSPACES_ROOT_ENV} is refused"):
+    with pytest.raises(GpuLockMisconfigured, match=f"{WORKSPACES_ROOT_ENV} is refused") as refused:
         lock_location()
+    assert not isinstance(refused.value, GpuLockNotConfigured)
+    assert lock_state()["unset"] is False
 
 
 def test_not_configured_is_the_setting_s_own_unset_never_its_words(monkeypatch):
-    """Root-cause review, P24-S3: "neither set" is told from "set and
+    """Root-cause review, P24-S3: "not set" is told from "set and
     refused" by the setting's structural `unset`, not by comparing its text,
     so rewording the guidance cannot turn a refusal into "not configured" or
     the reverse."""
     from src.config import server_settings
 
     monkeypatch.setattr(server_settings, "gpu_lock_location", lambda environ=None: (
-        server_settings.Setting(LOCK_FILE_ENV, None, "reworded guidance", unset=True)))
+        server_settings.Setting(WORKSPACES_ROOT_ENV, None, "reworded guidance", unset=True)))
     with pytest.raises(GpuLockNotConfigured, match="reworded guidance"):
         lock_location()
     assert lock_state()["unset"] is True
     monkeypatch.setattr(server_settings, "gpu_lock_location", lambda environ=None: (
-        server_settings.Setting(LOCK_FILE_ENV, None, server_settings.GPU_LOCK_NOT_CONFIGURED)))
+        server_settings.Setting(WORKSPACES_ROOT_ENV, None,
+                                server_settings.GPU_LOCK_NOT_CONFIGURED)))
     with pytest.raises(GpuLockMisconfigured) as refused:
         lock_location()
     assert not isinstance(refused.value, GpuLockNotConfigured)
     assert lock_state()["unset"] is False
 
 
-def test_neither_setting_is_not_configured_and_refused_with_guidance(monkeypatch):
+def test_no_root_is_not_configured_and_refused_with_guidance(monkeypatch):
     """Review of 8242b47, P2-4: no location is a refusal, never a run without
     the lock, and it says how to configure one, the same file as the service's."""
-    monkeypatch.delenv(LOCK_FILE_ENV, raising=False)
     monkeypatch.delenv(WORKSPACES_ROOT_ENV, raising=False)
     with pytest.raises(GpuLockNotConfigured) as refused:
         lock_location()
     said = str(refused.value)
-    assert said.startswith(f"neither {LOCK_FILE_ENV} nor {WORKSPACES_ROOT_ENV} is set, so the "
-                           "GPU lock is not configured")
+    assert said.startswith(f"{WORKSPACES_ROOT_ENV} is not set, so the GPU lock is not "
+                           "configured")
     assert f"Set {WORKSPACES_ROOT_ENV} in this environment to the value the service uses" in said
-    assert "§4.11" in said and "only where no workspaces root is set" in said
+    assert "§4.11" in said and RETIRED_LOCK_FILE_ENV not in said
     assert isinstance(refused.value, GpuLockMisconfigured)
-    assert lock_state() == {"configured": False, "path": None, "source": None, "held_by": None,
+    assert lock_state() == {"configured": False, "path": None, "held_by": None,
                             "holder": None, "holder_alive": None, "problem": said,
                             "unset": True}
 
 
 def test_the_location_is_the_server_settings_one_rule(monkeypatch, tmp_path):
-    """One reader of both variables: the root the server lists and the root
-    the lock is under are one reading, a value the list refuses is refused for
-    the lock too (no strip in one and not the other), and an explicit file is
-    resolved as the settings resolve a directory."""
+    """One reader of the variable: the root the server lists and the root the
+    lock is under are one reading, and a value the list refuses is refused
+    for the lock too (no strip in one and not the other)."""
     from src.config import server_settings
 
     real = tmp_path / "real"
     real.mkdir()
     link = tmp_path / "link"
     link.symlink_to(real)
-    monkeypatch.delenv(LOCK_FILE_ENV, raising=False)
     monkeypatch.setenv(WORKSPACES_ROOT_ENV, str(link))
-    assert lock_location().path == server_settings.workspaces_root().value / LOCK_FILE_NAME
-    assert lock_location().path == real.resolve() / LOCK_FILE_NAME
+    assert lock_location() == server_settings.workspaces_root().value / LOCK_FILE_NAME
+    assert lock_location() == real.resolve() / LOCK_FILE_NAME
     monkeypatch.setenv(WORKSPACES_ROOT_ENV, " " + str(real))
     assert server_settings.workspaces_root().value is None
     with pytest.raises(GpuLockMisconfigured, match=f"{WORKSPACES_ROOT_ENV} is refused"):
         lock_location()
-    monkeypatch.delenv(WORKSPACES_ROOT_ENV)
-    monkeypatch.setenv(LOCK_FILE_ENV, " " + str(real / "gpu.lock"))
-    with pytest.raises(GpuLockMisconfigured, match="is not an absolute path"):
-        lock_location()
-    monkeypatch.setenv(LOCK_FILE_ENV, str(link / "gpu.lock"))
-    assert lock_location() == (real.resolve() / "gpu.lock", LOCK_FILE_ENV)
 
 
-def test_a_refused_explicit_file_is_never_replaced_by_the_root(monkeypatch, tmp_path):
-    monkeypatch.setenv(WORKSPACES_ROOT_ENV, str(tmp_path))
-    monkeypatch.setenv(LOCK_FILE_ENV, "relative.lock")
-    with pytest.raises(GpuLockMisconfigured, match=f"{LOCK_FILE_ENV} is refused"):
-        lock_location()
-    assert lock_state()["unset"] is False
-
-
-@pytest.mark.parametrize("setting, value, says", [
-    (LOCK_FILE_ENV, "relative/gpu.lock", "not an absolute path"),
-    (LOCK_FILE_ENV, "/no/such/dir/gpu.lock", "does not exist"),
-    (WORKSPACES_ROOT_ENV, "relative", "not an absolute path"),
-    (WORKSPACES_ROOT_ENV, "/no/such/root", "does not exist"),
+@pytest.mark.parametrize("value, says", [
+    ("relative", "not an absolute path"),
+    ("/no/such/root", "does not exist"),
 ])
-def test_a_setting_that_cannot_name_a_lock_is_refused_never_defaulted(
-        monkeypatch, setting, value, says):
-    monkeypatch.delenv(LOCK_FILE_ENV, raising=False)
-    monkeypatch.delenv(WORKSPACES_ROOT_ENV, raising=False)
-    monkeypatch.setenv(setting, value)
+def test_a_root_that_cannot_name_a_lock_is_refused_never_defaulted(monkeypatch, value, says):
+    monkeypatch.setenv(WORKSPACES_ROOT_ENV, value)
     with pytest.raises(GpuLockMisconfigured, match=says):
         lock_location()
     assert lock_state()["problem"] and not lock_state()["configured"]
@@ -218,16 +192,11 @@ def _unsearchable(monkeypatch, below: Path) -> None:
     monkeypatch.setattr(Path, "is_dir", is_dir)
 
 
-@pytest.mark.parametrize("setting", [LOCK_FILE_ENV, WORKSPACES_ROOT_ENV])
-def test_a_location_that_cannot_be_checked_is_refused_with_its_reason(
-        monkeypatch, tmp_path, setting):
+def test_a_location_that_cannot_be_checked_is_refused_with_its_reason(monkeypatch, tmp_path):
     """Status, start and the CLIs refuse with the reason; nothing raises
     `PermissionError` out of a status poll."""
-    monkeypatch.delenv(LOCK_FILE_ENV, raising=False)
-    monkeypatch.delenv(WORKSPACES_ROOT_ENV, raising=False)
     locked = tmp_path / "locked"
-    monkeypatch.setenv(setting, str(locked / "sub" / ("gpu.lock" if setting == LOCK_FILE_ENV
-                                                       else "")))
+    monkeypatch.setenv(WORKSPACES_ROOT_ENV, str(locked / "sub"))
     _unsearchable(monkeypatch, locked)
     with pytest.raises(GpuLockMisconfigured, match=r"cannot be checked \(.*Permission denied"):
         lock_location()
@@ -243,12 +212,6 @@ def test_a_lock_state_never_raises_an_os_error_from_the_location(monkeypatch):
 
     monkeypatch.setattr(gpu_lock, "lock_location", unreadable)
     assert "cannot be checked" in lock_state()["problem"]
-
-
-def test_a_directory_is_not_a_lock_file(monkeypatch, tmp_path):
-    monkeypatch.setenv(LOCK_FILE_ENV, str(tmp_path))
-    with pytest.raises(GpuLockMisconfigured, match="is a directory"):
-        lock_location()
 
 
 # --------------------------------------------------------------------------- in one process
@@ -400,9 +363,12 @@ def test_probe_creates_nothing(root):
     assert probe(root / LOCK_FILE_NAME) is None
     assert list(root.iterdir()) == []
     assert lock_state() == {"configured": True, "path": str(root / LOCK_FILE_NAME),
-                            "source": f"under {WORKSPACES_ROOT_ENV}", "held_by": None,
-                            "holder": None, "holder_alive": None, "problem": None,
-                            "unset": False}
+                            "held_by": None, "holder": None, "holder_alive": None,
+                            "problem": None, "unset": False}
+
+
+#: How the not-configured refusal begins.
+NOT_CONFIGURED = f"{WORKSPACES_ROOT_ENV} is not set, so the GPU lock is not configured"
 
 
 def test_not_configured_is_refused_never_run_unlocked(monkeypatch, tmp_path, caplog, capsys):
@@ -412,7 +378,6 @@ def test_not_configured_is_refused_never_run_unlocked(monkeypatch, tmp_path, cap
     import scripts.measure_scorer as ms
     import scripts.train_model as tm
 
-    monkeypatch.delenv(LOCK_FILE_ENV, raising=False)
     monkeypatch.delenv(WORKSPACES_ROOT_ENV, raising=False)
     monkeypatch.chdir(tmp_path)
     _deployment_registry(tmp_path, monkeypatch)
@@ -422,11 +387,11 @@ def test_not_configured_is_refused_never_run_unlocked(monkeypatch, tmp_path, cap
     monkeypatch.setattr(tm, "_train_main", lambda args: pytest.fail("ran without the lock"))
     with caplog.at_level(logging.ERROR):
         assert tm.main() == 1
-    assert "train_model: refused: neither SHEPHERD_GPU_LOCK_FILE nor" in caplog.text
+    assert f"train_model: refused: {NOT_CONFIGURED}" in caplog.text
     assert "Nothing was written." in caplog.text
     assert ms._run_as_program(_measure_argv(tmp_path)) == 1
     err = capsys.readouterr().err
-    assert err.startswith("measure_scorer: refused: neither SHEPHERD_GPU_LOCK_FILE nor")
+    assert err.startswith(f"measure_scorer: refused: {NOT_CONFIGURED}")
     assert err.rstrip().endswith("Nothing was written.")
     assert [p.name for p in tmp_path.iterdir()] == ["registry"], "a refused CLI wrote something"
     assert list((tmp_path / "registry").iterdir()) == [], "a refused CLI wrote something"
@@ -442,7 +407,7 @@ def test_a_shell_without_the_settings_is_refused_while_the_deployment_is_busy(ro
     from tests.fixtures.trainable_workspace import write_trainable_workspace
 
     workspace = write_trainable_workspace(root / "ws")
-    env = {k: v for k, v in os.environ.items() if k not in (LOCK_FILE_ENV, WORKSPACES_ROOT_ENV)}
+    env = {k: v for k, v in os.environ.items() if k != WORKSPACES_ROOT_ENV}
     argv = [sys.executable, str(REPO / "scripts" / "train_model.py"), "--data-dir",
             str(workspace), "--device", "cpu", "--epochs", "1", "--hidden-dim", "16",
             "--num-layers", "1", "--batch-size", "4"]
@@ -453,7 +418,7 @@ def test_a_shell_without_the_settings_is_refused_while_the_deployment_is_busy(ro
                               env={**env, WORKSPACES_ROOT_ENV: str(root)},
                               capture_output=True, text=True, timeout=300)
     assert bare.returncode == 1, bare.stderr[-2000:]
-    assert "train_model: refused: neither SHEPHERD_GPU_LOCK_FILE nor" in bare.stderr
+    assert f"train_model: refused: {NOT_CONFIGURED}" in bare.stderr
     assert "Nothing was written." in bare.stderr and not (tmp_path / "bare").exists()
     assert same.returncode == 1, same.stderr[-2000:]
     assert "is held by a training job (existing-job" in same.stderr
@@ -461,18 +426,23 @@ def test_a_shell_without_the_settings_is_refused_while_the_deployment_is_busy(ro
 
 
 @POSIX
-def test_the_service_and_a_shell_given_its_root_never_lock_two_files(tmp_path, monkeypatch):
-    """Root-cause review, P24-S1, across processes, through the job runner's
-    own start check (this process as the service) and the real
-    train_model.py (a shell). The finding's split: a service with a lock file
-    and the workspaces root, and a shell given only the root, as the guide's
+def test_the_service_and_a_shell_never_lock_two_files(tmp_path, monkeypatch):
+    """Root-cause review, P24-S1, and its verification (T2-V1), across
+    processes, through the job runner's own start check (this process as the
+    service) and the real train_model.py (a shell). The split: a service
+    configured with a lock file of its own, with no workspaces root (D8 does
+    not require one, and ``POST /api/v1/training/start`` takes a workspace
+    path) or beside one, and a shell given only the root, as the guide's
     export gives it; each counted as configured and they locked two files.
 
-    Now the service with both settings is refused by its runner, so it starts
-    nothing beside the shell's job; the service with the root, and the shell
-    with the root (or with a lock file naming the same file), take one lock and
-    each refuses while the other holds it; a shell whose lock file names
-    another file is refused naming both, nothing written."""
+    Now no setting but the root names a lock. The root-less service's runner
+    refuses every start as not configured (it used to see its own file free
+    and start beside the shell's job), and a service with the root names the
+    shell's job, whatever lock file it also sets. With the service's job
+    holding the root's lock, a shell with the root, whatever lock file it
+    also sets, is refused naming that job, and a shell with only a lock file
+    is refused as not configured; nothing is written, and nothing is created
+    at the lock file named."""
     from src.api.services.training_manager import JOB_TYPES, TrainingManager
     from tests.fixtures.trainable_workspace import write_trainable_workspace
 
@@ -481,11 +451,12 @@ def test_the_service_and_a_shell_given_its_root_never_lock_two_files(tmp_path, m
     locks = tmp_path / "locks"
     locks.mkdir()
     workspace = write_trainable_workspace(workspaces / "case")
-    split_service = {LOCK_FILE_ENV: str(locks / "gpu.lock"), WORKSPACES_ROOT_ENV: str(workspaces)}
+    file_only = {RETIRED_LOCK_FILE_ENV: str(locks / "gpu.lock")}
     root_only = {WORKSPACES_ROOT_ENV: str(workspaces)}
+    file_and_root = {**file_only, **root_only}
 
     def runner_refusal(settings):
-        for name in (LOCK_FILE_ENV, WORKSPACES_ROOT_ENV):
+        for name in (RETIRED_LOCK_FILE_ENV, WORKSPACES_ROOT_ENV):
             if name in settings:
                 monkeypatch.setenv(name, settings[name])
             else:
@@ -496,45 +467,44 @@ def test_the_service_and_a_shell_given_its_root_never_lock_two_files(tmp_path, m
 
     def shell_trains(settings, name):
         env = {k: v for k, v in os.environ.items()
-               if k not in (LOCK_FILE_ENV, WORKSPACES_ROOT_ENV)}
+               if k not in (RETIRED_LOCK_FILE_ENV, WORKSPACES_ROOT_ENV)}
         argv = [sys.executable, str(REPO / "scripts" / "train_model.py"), "--data-dir",
                 str(workspace), "--device", "cpu", "--epochs", "1", "--hidden-dim", "16",
                 "--num-layers", "1", "--batch-size", "4", "--run-dir", str(tmp_path / name)]
         return subprocess.run(argv, env={**env, **settings}, cwd=REPO, capture_output=True,
                               text=True, timeout=300)
 
-    # The shell's job holds the lock its root names: the split service's
-    # runner refuses (it used to see its own file free and start), the
-    # root-only service's runner names the shell's job.
-    shell_job = start_lock_holder("sleep", {LOCK_FILE_ENV: "", **root_only}, tmp_path)
+    # The shell's job holds the lock its root names: the root-less service's
+    # runner refuses as not configured; a service with the root names the
+    # shell's job, a lock file beside the root changing nothing.
+    shell_job = start_lock_holder("sleep", root_only, tmp_path)
     try:
-        refused = runner_refusal(split_service)
-        assert refused and "two different GPU lock files" in refused, refused
-        assert f"Remove {LOCK_FILE_ENV}" in refused and "Nothing was started." in refused
-        busy = runner_refusal(root_only)
-        assert busy and "held by a training job (lock_holder.py" in busy, busy
+        refused = runner_refusal(file_only)
+        assert refused and f"The GPU lock cannot be used: {NOT_CONFIGURED}" in refused, refused
+        assert "Nothing was started." in refused
+        for service in (root_only, file_and_root):
+            busy = runner_refusal(service)
+            assert busy and "held by a training job (lock_holder.py" in busy, (service, busy)
     finally:
         shell_job.kill()
         shell_job.wait(10)
     assert _wait_free(workspaces / LOCK_FILE_NAME)
 
-    # The service's job holds the root's lock: a shell with the root, or with
-    # a lock file naming that file, is refused naming it; a shell whose lock
-    # file names another file is refused naming both (it used to train).
+    # The service's job holds the root's lock: a shell with the root, with or
+    # without a lock file, is refused naming it; a shell with only a lock file
+    # is refused as not configured (it used to train beside the job).
     with GpuLock(workspaces / LOCK_FILE_NAME, job_type="training",
                  command="service-job").acquire():
         root_shell = shell_trains(root_only, "root")
-        same_file = shell_trains({**root_only, LOCK_FILE_ENV: str(workspaces / LOCK_FILE_NAME)},
-                                 "same-file")
-        split_shell = shell_trains(split_service, "split")
-    for done in (root_shell, same_file):
+        both_shell = shell_trains(file_and_root, "both")
+        file_shell = shell_trains(file_only, "file")
+    for done in (root_shell, both_shell):
         assert done.returncode == 1, done.stderr[-2000:]
         assert "is held by a training job (service-job" in done.stderr
-    assert split_shell.returncode == 1, split_shell.stderr[-2000:]
-    assert "train_model: refused:" in split_shell.stderr
-    assert "two different GPU lock files" in split_shell.stderr
-    assert "Nothing was written." in split_shell.stderr
-    assert not any((tmp_path / name).exists() for name in ("root", "same-file", "split"))
+    assert file_shell.returncode == 1, file_shell.stderr[-2000:]
+    assert f"train_model: refused: {NOT_CONFIGURED}" in file_shell.stderr
+    assert "Nothing was written." in file_shell.stderr
+    assert not any((tmp_path / name).exists() for name in ("root", "both", "file"))
     assert list(locks.iterdir()) == [], "a lock file nobody else takes was created"
 
 
@@ -641,18 +611,17 @@ def test_two_workspaces_share_one_lock(root, tmp_path):
 
 # --------------------------------------------------------------------------- the suite
 def test_a_test_never_sees_the_deployments_lock_settings(tmp_path_factory):
-    """What tests/conftest.py guarantees: a lock file of the test's own, under
-    the suite's temporary directory, and no workspaces root; the next test sets
-    the deployment's in the environment as an operator's shell that loaded the
-    service's would."""
-    own = Path(os.environ[LOCK_FILE_ENV])
-    assert own.parent.parent == tmp_path_factory.getbasetemp()
-    assert WORKSPACES_ROOT_ENV not in os.environ
+    """What tests/conftest.py guarantees: a workspaces root of the test's own,
+    an empty directory under the suite's temporary directory, whose lock is
+    the test's; the next test sets the deployment's in the environment as an
+    operator's shell that loaded the service's would."""
+    own = Path(os.environ[WORKSPACES_ROOT_ENV])
+    assert own.parent == tmp_path_factory.getbasetemp()
+    assert lock_location() == own.resolve() / LOCK_FILE_NAME
 
 
 def test_the_lock_settings_of_the_shell_never_reach_the_suite(tmp_path):
-    env = {**os.environ, LOCK_FILE_ENV: str(tmp_path / "gpu.lock"),
-           WORKSPACES_ROOT_ENV: str(tmp_path)}
+    env = {**os.environ, WORKSPACES_ROOT_ENV: str(tmp_path)}
     done = subprocess.run(
         [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-o", "addopts=",
          f"{__file__}::test_a_test_never_sees_the_deployments_lock_settings"],
@@ -714,7 +683,7 @@ def test_measure_scorer_holds_the_lock_for_its_run_and_releases_it(root, monkeyp
 def test_measure_scorer_refuses_an_unusable_setting(root, monkeypatch, capsys):
     import scripts.measure_scorer as ms
 
-    monkeypatch.setenv(LOCK_FILE_ENV, "gpu.lock")
+    monkeypatch.setenv(WORKSPACES_ROOT_ENV, "workspaces")
     _deployment_registry(root, monkeypatch)
     assert ms._run_as_program(_measure_argv(root)) == 1
     assert "is not an absolute path" in capsys.readouterr().err
@@ -738,9 +707,10 @@ def test_a_lock_file_that_cannot_be_opened_refuses_both_clis(tmp_path, monkeypat
     import scripts.measure_scorer as ms
     import scripts.train_model as tm
 
-    dangling = tmp_path / "gpu.lock"
+    (tmp_path / "root").mkdir()
+    dangling = tmp_path / "root" / LOCK_FILE_NAME
     dangling.symlink_to(tmp_path / "missing" / "gpu.lock")
-    monkeypatch.setenv(LOCK_FILE_ENV, str(dangling))
+    monkeypatch.setenv(WORKSPACES_ROOT_ENV, str(tmp_path / "root"))
     monkeypatch.setattr(sys, "argv", ["train_model.py", "--data-dir", str(tmp_path / "ws")])
     monkeypatch.setattr(tm, "_train_main", lambda args: pytest.fail("ran without the lock"))
     with caplog.at_level(logging.ERROR):

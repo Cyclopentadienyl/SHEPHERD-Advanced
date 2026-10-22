@@ -43,8 +43,8 @@ and the server's shutdown stops the GPU job it runs.
 P2-4), as `scripts/train_model.py` does: the demo trains through the real
 trainer on the GPU, so it is a managed GPU job. The lock is taken before
 anything is written and held until training ends; a busy lock, or one that is
-not configured (neither SHEPHERD_GPU_LOCK_FILE nor SHEPHERD_WORKSPACES_ROOT
-set), is refused with exit 1 and nothing written.
+not configured (SHEPHERD_WORKSPACES_ROOT, the lock's one name, not set), is
+refused with exit 1 and nothing written.
 """
 from __future__ import annotations
 
@@ -295,8 +295,7 @@ def train_demo_model(workspace: Path, num_epochs: int, device: str = "auto") -> 
             "Demo training produced no metrics; see the log above. The workspace "
             "itself was written and is valid — re-run training with "
             f"scripts/train_model.py --data-dir {workspace}, in a shell where the GPU lock "
-            "is configured (SHEPHERD_WORKSPACES_ROOT or SHEPHERD_GPU_LOCK_FILE, deployment "
-            "guide §4.11)"
+            "is configured (SHEPHERD_WORKSPACES_ROOT, deployment guide §4.11)"
         )
 
     ckpt_dir = run_checkpoint_dir(run_dir)
