@@ -127,15 +127,17 @@ class CohortVersions:
         self.listed = {v["sha256"]: v for v in versions if _is_digest(v.get("sha256"))}
         setting = server_settings.cohort_registry(environ)
         self.registry = setting.value if setting.available else None
-        self.problem = None if setting.available else (setting.problem or "no cohort registry")
+        #: Why no version can be found (`registry` None), as `by_digest` says it.
+        self.problem = None if setting.available else (
+            f"no cohort registry: {setting.problem or 'none is configured'}")
         self._resolved: Dict[str, Any] = {}
 
     @classmethod
     def listed(cls, environ: Optional[Mapping[str, str]] = None) -> "CohortVersions":
         """The versions the server's registry holds now, each ``cohort.json``
         read once and nothing else (`list_versions`: no report store is listed
-        here), kept as read; none when they cannot be listed (every record then
-        "cannot be checked")."""
+        here), kept as read; none when they cannot be listed, and why (every
+        record then "cannot be checked", for that reason)."""
         from src.evaluation.cohort_registry import RegistryRefused, list_versions
 
         found = cls((), environ)
@@ -143,10 +145,14 @@ class CohortVersions:
             return found
         try:
             entries = list_versions(found.registry)
-        except RegistryRefused:  # the listing's own refusal: nothing is listed
+        except RegistryRefused as exc:  # the listing's own refusal: nothing is listed
+            found.registry, found.problem = None, (
+                f"the registry's cohort versions cannot be listed: {exc}")
             return found
-        except Exception:  # noqa: BLE001 - contested then reads "cannot be checked"
+        except Exception as exc:  # noqa: BLE001 - contested then reads "cannot be checked"
             logger.exception("The cohort versions could not be listed")
+            found.registry, found.problem = None, (
+                f"the registry's cohort versions cannot be listed ({type(exc).__name__})")
             return found
         for entry in entries:
             if entry.version is None:
@@ -161,7 +167,7 @@ class CohortVersions:
         from src.evaluation.cohort_registry import resolve_version
 
         if self.registry is None:
-            return None, f"no cohort registry: {self.problem}"
+            return None, self.problem
         listed = self.listed.get(digest)
         if listed is None:
             shown = digest[:12] if _is_digest(digest) else "—"

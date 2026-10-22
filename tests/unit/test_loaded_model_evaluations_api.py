@@ -1031,6 +1031,37 @@ def _operator_state(record):
     return contest_states([record], CohortVersions.listed())[key_text(record_key(record))]
 
 
+def test_a_registry_whose_versions_cannot_be_listed_is_the_records_named_cause(
+    app, served, tmp_path, monkeypatch
+):
+    """The verification of EB-4 (R-5): when the registry's ``versions/``
+    cannot be listed at all, every record is "cannot be checked" and the
+    operator is told that cause, from the listing's own refusal -- never that
+    the record's version "is not one the server's registry lists", which names
+    the wrong one. The route still shows the state without the words. The same
+    registry listable is the control."""
+    registry, kept, record = _registered_with_registry(served, tmp_path, monkeypatch)
+    assert _operator_state(record)["state"] == "uncontested"
+    original = Path.iterdir
+
+    def iterdir(self):
+        if self.name == "versions":
+            raise PermissionError(13, "Permission denied", str(self))
+        return original(self)
+
+    monkeypatch.setattr(Path, "iterdir", iterdir)
+    state = _operator_state(record)
+
+    assert state["state"] == "cannot_be_checked"
+    (problem,) = state["problems"]
+    assert problem.startswith("the registry's cohort versions cannot be listed: ")
+    assert "cannot be listed (PermissionError" in problem
+    assert "not one the server's registry lists" not in problem
+    (view,) = _get(app)["records"]
+    assert view["contest"]["state"] == "cannot_be_checked"
+    assert str(tmp_path) not in json.dumps(view)
+
+
 def test_a_contested_record_is_marked_with_what_differs_and_names_no_path(
     app, served, tmp_path, monkeypatch
 ):
