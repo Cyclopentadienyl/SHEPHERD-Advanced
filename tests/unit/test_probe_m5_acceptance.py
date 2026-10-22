@@ -23,11 +23,14 @@ job, that what they rest on holds and that their checks fire:
   the URL-fetch count fails when the guard is gone;
 - a training stop is required not to reach a test run;
 - W11's and RW3's training job must run and be the lock's recorded holder
-  before a test start is tried and after the measurement CLI is: a job that
-  ended fails as one that could not hold the lock, never as a start or the
-  lock failing to refuse, a test run a start not refused began is stopped,
-  and without os.waitid the check fails saying so; RW3 holds its job by
-  configuration (review of 8242b47, W11/RW3, and its verification);
+  before a test start is tried and after the measurement CLI is, one bracket
+  around the whole check, shown on the real job runner: a job that ended at
+  any step fails as one that could not hold the lock, never as a start, a
+  cancel or the lock failing to refuse; a test cancel that stops training
+  fails as reaching it; a test run a start not refused began is stopped; the
+  job is held by configuration in the one function that starts it, whatever
+  its settings say, and without os.waitid no job is started (review of
+  8242b47, W11/RW3; root-cause round, W11-1, W11-2, W11-4);
 - phases M and R name the probe's own GPU lock, and the operator's lock is
   still stated and its settings put back (P2-4).
 
@@ -940,66 +943,120 @@ def test_a_list_item_s_identity_fields_leave_its_reasons_out(probe):
 
 
 # --------------------------------------------------------------------------- W11 / RW3's hold
-class _HoldRunner(_Runner):
-    """A runner whose training job runs: a test start refused for the slot, a
-    test cancel that does not reach training. `starts` counts the starts
-    tried; `before_start`, when set, runs first (the job ending, say), and
-    `start_answer`, when set, is a start not refused: a test run started."""
+#: The training job's stand-in: it takes the test's own GPU lock through the
+#: lock's entry point, as `train_model.py` does, and holds it until it ends.
+_HOLDER_JOB = (
+    "import time\n"
+    "from src.utils.gpu_lock import take_gpu_lock\n"
+    "lock = take_gpu_lock('training', 'train_model.py')\n"
+    "time.sleep(120)\n"
+)
+#: A test run's stand-in, for a start that is not refused: a stop's SIGINT
+#: ends it as a stop ends a test run, so the runner says "cancelled".
+_TEST_RUN = [sys.executable, "-c",
+             "import signal, time; signal.signal(signal.SIGINT, signal.SIG_DFL); time.sleep(120)"]
 
-    def __init__(self, start_answer=None, before_start=None):
-        super().__init__({"training": "running"})
-        self.starts, self.start_answer, self.before_start = 0, start_answer, before_start
 
-    def start_test(self, inputs):
-        self.starts += 1
-        if self.before_start is not None:
-            self.before_start()
-        if self.start_answer is not None:
-            self.words["test"] = "running"
-            return self.start_answer
-        return {"success": False, "error": "Training is already running (job t); one GPU job "
-                                           "runs at a time. Nothing was started."}
+class _RunInputs:
+    """A test run's inputs, as far as `start_test` reads them."""
 
-    def cancel_test(self):
-        return {"success": False, "error": "No test run is running: the GPU job running is "
-                                           "training, which this stop does not reach"}
+    def __init__(self, reports: Path):
+        self.reports = reports
+
+    def reports_dir(self):
+        return self.reports
+
+    def summary(self):
+        return {}
 
 
 @pytest.fixture
 def held(probe, monkeypatch, tmp_path):
-    """A real child of this process standing in for the training job, named
-    by the lock's holder record, and a measurement CLI refused by the lock
-    naming it."""
-    import subprocess
+    """The real job runner, its training job a real child holding the test's
+    GPU lock (started as the runner starts every job, `_spawn_locked`), and a
+    measurement CLI refused by the lock naming its holder while it is held,
+    measuring (exit 0) once it is free. `ends_job` ends the training job as
+    a crash does (SIGKILL), waiting until the runner's monitor has recorded
+    it; `during_cli`, when set, runs as the CLI starts."""
+    import signal
+    import time
 
-    import src.utils.gpu_lock as gpu_lock
+    import src.api.services.training_manager as training_manager
+    from src.api.services.training_manager import JOB_TYPES, TrainingManager
+    from src.utils.gpu_lock import lock_state
 
-    job = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
-    state = {"job": job, "named": True, "cli_calls": 0}
+    monkeypatch.delenv("SHEPHERD_DEVICE", raising=False)
+    monkeypatch.setattr(training_manager, "build_test_argv", lambda *args: list(_TEST_RUN))
+    manager = TrainingManager()
+    with manager._lock:
+        job, error = manager._spawn_locked(JOB_TYPES["training"],
+                                           [sys.executable, "-c", _HOLDER_JOB], inputs={})
+    assert job is not None, error
+    pid = job.process.pid
+    deadline = time.monotonic() + 60
+    while not probe._names_pid(lock_state().get("held_by") or "", pid):
+        assert job.process.poll() is None and time.monotonic() < deadline, (
+            "the training job's stand-in did not take the GPU lock")
+        time.sleep(0.05)
 
-    def lock_state(environ=None):
-        named = f"a training job (train_model.py, pid {job.pid} on host, as it described itself)"
-        return {"held_by": named if state["named"] else "a test job (other, pid 1)"}
+    def ends_job():
+        os.kill(pid, signal.SIGKILL)
+        assert job.done.wait(timeout=30), "the runner did not record the job's end"
+
+    state = {"manager": manager, "pid": pid, "ends_job": ends_job, "during_cli": None,
+             "cli_calls": 0, "outcome": tmp_path / "outcome.json",
+             "inputs": _RunInputs(tmp_path)}
 
     def cli(argv):
         state["cli_calls"] += 1
-        return 1, (f"measure_scorer: refused: the GPU lock x is held by a training job "
-                   f"(train_model.py, pid {job.pid} on host). Nothing was written.")
+        if state["during_cli"] is not None:
+            state["during_cli"]()
+        held_by = lock_state().get("held_by")
+        if held_by:
+            return 1, (f"measure_scorer: refused: the GPU lock x is held by {held_by}. One "
+                       "managed GPU job runs at a time. Nothing was written.")
+        return 0, "measured"
 
-    monkeypatch.setattr(gpu_lock, "lock_state", lock_state)
     monkeypatch.setattr(probe, "_cli_measure", cli)
-    state["outcome"] = tmp_path / "outcome.json"
     try:
         yield state
     finally:
-        if job.poll() is None:
-            job.kill()
-        job.wait(timeout=10)
+        for job_type in ("test", "training"):
+            if manager.get_job_status_word(job_type) == "running":
+                manager.stop(job_type)
+        if job.process.poll() is None:
+            job.process.kill()
+        job.done.wait(timeout=30)
 
 
-def _exclusion(probe, held, runner=None):
-    return probe._exclusion_while_training(runner or _HoldRunner(), object(), held["job"].pid,
-                                           [], held["outcome"])
+def _exclusion(probe, held):
+    return probe._exclusion_while_training(held["manager"], held["inputs"], held["pid"], [],
+                                           held["outcome"])
+
+
+def _after(held, method, then):
+    """`held`'s runner with `method` answering as it does, then `then()`."""
+    manager = held["manager"]
+    real = getattr(manager, method)
+
+    def answered(*args):
+        answer = real(*args)
+        then()
+        return answer
+
+    setattr(manager, method, answered)
+
+
+def _before(held, method, first):
+    """`held`'s runner with `first()` run before `method` answers."""
+    manager = held["manager"]
+    real = getattr(manager, method)
+
+    def answered(*args):
+        first()
+        return real(*args)
+
+    setattr(manager, method, answered)
 
 
 WAITID = pytest.mark.skipif(not hasattr(os, "waitid"), reason="os.waitid")
@@ -1009,83 +1066,105 @@ WAITID = pytest.mark.skipif(not hasattr(os, "waitid"), reason="os.waitid")
 def test_the_hold_passes_when_the_job_runs_and_is_named_throughout(probe, held):
     facts = _exclusion(probe, held)
     assert facts["cli_exit"] == 1 and held["cli_calls"] == 1
+    assert held["manager"].get_job_status_word("training") == "running"
+    assert held["manager"].get_job_status_word("test") == "idle"
 
 
 @WAITID
 def test_a_job_that_ended_before_the_check_fails_as_could_not_hold(probe, held):
     """Review of 8242b47, W11/RW3: the demo job ended by early stopping and
     released the lock before the CLI was tried, which then measured (exit 0)
-    and read as the lock failing. A job that ended is said as one that could
-    not hold the lock, never a pass, and the CLI is not tried. Checked before
-    anything is tried (verification of the fix): a test start, which the slot
-    no longer refuses, would start a real test run and fail as "not refused"."""
-    held["job"].kill()
-    held["job"].wait(timeout=10)        # reaped: waited for already
-    runner = _HoldRunner(start_answer={"success": True, "job_id": "test-1"})
+    and read as the lock failing. A job that ended before the check is said as
+    one that could not hold the lock, and nothing is tried: a test start, which
+    the free slot would not refuse, would start a real test run."""
+    held["ends_job"]()
+    starts = []
+    _before(held, "start_test", lambda: starts.append(1))
     with pytest.raises(AssertionError, match="could not hold the GPU lock for the check: before "
                                              "a test start was tried, its process had ended"):
-        _exclusion(probe, held, runner)
-    assert runner.starts == 0 and held["cli_calls"] == 0 and runner.stopped == []
-
-
-@WAITID
-def test_a_job_that_ends_as_the_test_start_is_tried_fails_as_could_not_hold(probe, held):
-    """The job ends between the check and the start, so the slot is free and
-    the start begins a test run: said as the job not holding, never as the
-    start failing to refuse, and the test run it began is stopped."""
-    def the_job_ends():
-        held["job"].kill()
-        held["job"].wait(timeout=10)
-
-    runner = _HoldRunner(start_answer={"success": True, "job_id": "test-1"},
-                         before_start=the_job_ends)
-    with pytest.raises(AssertionError, match="could not hold the GPU lock for the check: while "
-                                             "a test start was tried, its process had ended"):
-        _exclusion(probe, held, runner)
-    assert runner.stopped == ["test"], "the test run the start began was left running"
-    assert held["cli_calls"] == 0
-
-
-@WAITID
-def test_a_start_not_refused_while_the_job_holds_fails_and_its_run_is_stopped(probe, held):
-    """The counter-example the check exists for: the job runs and holds the
-    lock, and a test start is not refused. It fails as not refused, and the
-    test run it began is stopped, whatever ends the probe."""
-    runner = _HoldRunner(start_answer={"success": True, "job_id": "test-1"})
-    with pytest.raises(AssertionError, match="a test start was not refused"):
-        _exclusion(probe, held, runner)
-    assert runner.starts == 1 and runner.stopped == ["test"]
-    assert held["cli_calls"] == 0
-
-
-@WAITID
-def test_a_job_that_ends_while_the_cli_is_tried_fails_as_could_not_hold(probe, held,
-                                                                        monkeypatch):
-    """The reviewer's timing: the job ends (a zombie the runner has not waited
-    for yet) while the CLI runs, and the CLI measures (exit 0). The after-check
-    says the job could not hold, before the CLI's exit is read as the lock's."""
-    import signal
-    import time
-
-    def measured_after_the_job_ended(argv):
-        os.kill(held["job"].pid, signal.SIGKILL)
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline and os.waitid(
-                os.P_PID, held["job"].pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is None:
-            time.sleep(0.05)
-        return 0, "measured"
-
-    monkeypatch.setattr(probe, "_cli_measure", measured_after_the_job_ended)
-    with pytest.raises(AssertionError, match=r"while the measurement CLI was tried \(exit 0\), "
-                                             r"its process had ended .* not exercised"):
         _exclusion(probe, held)
+    assert starts == [] and held["cli_calls"] == 0
 
 
 @WAITID
-def test_a_lock_held_by_another_than_the_job_fails_the_hold(probe, held):
-    held["named"] = False
+@pytest.mark.parametrize("moment", ["as the test start is tried", "after a refused start",
+                                    "after the cancel", "while the CLI is tried"])
+def test_a_job_that_ends_during_the_check_fails_as_could_not_hold(probe, held, moment):
+    """Root-cause round, W11-1: one bracket around the whole check. However the
+    job ends between the two holder checks (here as a crash does, so nothing
+    asked it to stop), every answer meanwhile is judged only after the second
+    check, and the failure says the job could not hold the lock: never "a test
+    start was not refused", "a test cancel was not refused", "the cancel
+    reached training" or the lock failing to refuse. A test run the free slot
+    let a start begin is stopped before the cancel is tried."""
+    if moment == "as the test start is tried":
+        _before(held, "start_test", held["ends_job"])
+    elif moment == "after a refused start":
+        _after(held, "start_test", held["ends_job"])
+    elif moment == "after the cancel":
+        _after(held, "cancel_test", held["ends_job"])
+    else:
+        held["during_cli"] = held["ends_job"]
+    with pytest.raises(AssertionError) as failed:
+        _exclusion(probe, held)
+    said = str(failed.value)
+    assert said.startswith("the training job could not hold the GPU lock for the check: after "
+                           "a test start, a test cancel and the measurement CLI"), said
+    assert "its process had ended (the runner says failed)" in said and "not exercised" in said
+    word = held["manager"].get_job_status_word("test")
+    assert word == ("cancelled" if moment == "as the test start is tried" else "idle"), word
+
+
+@WAITID
+@pytest.mark.parametrize("answer", ["stopped, saying so", "stopped, claiming a refusal"])
+def test_a_test_cancel_that_stops_training_fails_as_reaching_it(probe, held, answer):
+    """The counter-example the attribution exists for: the test cancel, the one
+    stop the check tries, ends the training job (a product defect). The
+    runner's own record says a stop ended it ("stopped", which only a stop
+    gives), so it fails as the cancel reaching training, never as a job that
+    could not hold the lock, whatever the cancel answered."""
+    manager = held["manager"]
+
+    def cancel():
+        stopped = manager.stop("training")
+        if answer == "stopped, saying so":
+            return stopped
+        return {"success": False, "error": "No test run is running: the GPU job running is "
+                                           "training, which this stop does not reach"}
+
+    manager.cancel_test = cancel
+    with pytest.raises(AssertionError, match="the cancel reached training: the runner says "
+                                             "stopped"):
+        _exclusion(probe, held)
+    assert held["cli_calls"] == 1
+
+
+@WAITID
+def test_a_start_not_refused_while_the_job_holds_fails_and_its_run_is_stopped(
+        probe, held, monkeypatch):
+    """The counter-example the start's check exists for: the job runs and holds
+    the lock, and a test start is not refused (the runner's slot check gone).
+    It fails as not refused, and the test run it began is stopped before the
+    cancel is tried."""
+    manager = held["manager"]
+    real = manager._slot_refusal_locked
+    monkeypatch.setattr(manager, "_slot_refusal_locked",
+                        lambda kind: None if kind.name == "test" else real(kind))
+    with pytest.raises(AssertionError, match="a test start was not refused"):
+        _exclusion(probe, held)
+    assert manager.get_job_status_word("test") == "cancelled"
+    assert manager.get_job_status_word("training") == "running"
+
+
+@WAITID
+def test_a_lock_held_by_another_than_the_job_fails_the_hold(probe, held, monkeypatch):
+    import src.utils.gpu_lock as gpu_lock
+
+    monkeypatch.setattr(gpu_lock, "lock_state", lambda environ=None: {
+        "held_by": "a training job (train_model.py, pid 1 on host, as it described itself)"})
     with pytest.raises(AssertionError, match="holder record did not name its process"):
         _exclusion(probe, held)
+    assert held["cli_calls"] == 0
 
 
 def test_without_os_waitid_the_hold_fails_saying_why(probe, held, monkeypatch):
@@ -1098,27 +1177,30 @@ def test_without_os_waitid_the_hold_fails_saying_why(probe, held, monkeypatch):
     assert held["cli_calls"] == 0
 
 
-def test_rw3_holds_its_job_by_configuration(probe, tmp_path, monkeypatch):
-    """RW3's job is started with `_HOLD_EPOCHS` epochs and patience, whatever
-    the real settings say (theirs would let it end by itself during the
-    check, as the reviewer's run showed)."""
+class _StartsRecorded:
+    """A job runner that records each training start asked of it, the settings
+    it was given, and refuses it; `made` collects every runner made."""
+
+    made: list = []
+
+    def __init__(self, *args, **kwargs):
+        self.starts = []
+        _StartsRecorded.made.append(self)
+
+    def get_job_status_word(self, job_type):
+        return "idle"
+
+    def start_training(self, config, expected_dataset_fingerprint=None):
+        self.starts.append(dict(config))
+        return {"success": False, "error": "refused by the stand-in"}
+
+
+def _rw3(probe, tmp_path, monkeypatch, settings):
+    """Phase R's M5 part with a recording runner (`_StartsRecorded`); its RW3."""
     import src.api.services.training_manager as training_manager
 
-    started = {}
-
-    class _NoRunner:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def get_job_status_word(self, job_type):
-            return "idle"
-
-    def start(manager, config, fingerprint, lock_path):
-        started.update(config)
-        raise AssertionError("captured")
-
-    monkeypatch.setattr(training_manager, "TrainingManager", _NoRunner)
-    monkeypatch.setattr(probe, "_start_training_job", start)
+    _StartsRecorded.made = []
+    monkeypatch.setattr(training_manager, "TrainingManager", _StartsRecorded)
     monkeypatch.setattr(probe, "_read_run_checkpoint", lambda path: {"sha256": "c" * 64})
     monkeypatch.setattr(probe, "_deployment_gpu_lock", lambda: {
         "configured": False, "held": False, "unreadable": False})
@@ -1128,11 +1210,58 @@ def test_rw3_holds_its_job_by_configuration(probe, tmp_path, monkeypatch):
     report = probe.Report()
     probe._m5_real(report, tmp_path / "work", real, tmp_path / "workspaces", "cpu",
                    {"read": {"split_manifest.json": "f" * 64}, "parent": tmp_path / "p.pt",
-                    "settings": {"num_workers": 0, "num_epochs": 3,
-                                 "early_stopping_patience": 2},
-                    "m4": {"version": version}})
-    assert started["num_epochs"] == started["early_stopping_patience"] == probe._HOLD_EPOCHS
+                    "settings": settings, "m4": {"version": version}})
+    return {p.probe_id: p for p in report.probes}["RW3"]
+
+
+#: Settings that would end the job by itself or make it a continuation.
+_SELF_ENDING = {"num_epochs": 3, "early_stopping_patience": 2, "pause_after_epoch": 1,
+                "resume_from": "parent.pt", "extend_epochs": 1, "extend_lr": 0.01}
+
+
+def test_the_held_job_is_held_by_configuration_whatever_its_settings_say(probe, tmp_path,
+                                                                         monkeypatch):
+    """Root-cause round, W11-2: the hold is `_start_training_job`'s, the one
+    function W11 and RW3 start their job through, so neither caller can
+    start it otherwise. Whatever settings it is given, the runner gets
+    `_HOLD_EPOCHS` epochs and patience, no pause, no parent, no extension, and
+    every other setting as given."""
+    if not hasattr(os, "waitid"):                     # pinned on every platform
+        monkeypatch.setattr(os, "waitid", lambda *args: None, raising=False)
+    runner = _StartsRecorded()
+    others = {**probe._DEMO_TRAINING, "data_dir": "/w", "run_dir": "/r", "device": "cpu"}
+    with pytest.raises(AssertionError, match="the runner refused the training start"):
+        probe._start_training_job(runner, {**others, **_SELF_ENDING}, "f" * 64,
+                                  tmp_path / "gpu.lock")
+    assert runner.starts == [{**others, "num_epochs": probe._HOLD_EPOCHS,
+                              "early_stopping_patience": probe._HOLD_EPOCHS}]
     assert probe._HOLD_EPOCHS >= 1_000_000
+
+
+@WAITID
+def test_rw3_starts_its_job_held_whatever_the_real_settings_say(probe, tmp_path, monkeypatch):
+    """RW3's job, from real settings that would let it end by itself during the
+    check (the reviewer's run) or continue a parent, reaches the runner held."""
+    rw3 = _rw3(probe, tmp_path, monkeypatch, {"num_workers": 0, **_SELF_ENDING})
+    assert rw3.status == "failed" and "the runner refused the training start" in rw3.detail
+    (config,) = [start for runner in _StartsRecorded.made for start in runner.starts]
+    assert config["num_epochs"] == config["early_stopping_patience"] == probe._HOLD_EPOCHS
+    assert not set(config) & {"pause_after_epoch", "resume_from", "extend_epochs", "extend_lr"}
+
+
+def test_without_os_waitid_no_held_job_is_started(probe, tmp_path, monkeypatch):
+    """Root-cause round, W11-4: whether the job still runs cannot be told
+    without os.waitid, and that is known before anything starts, so W11's and
+    RW3's one start (`_start_training_job`) fails saying so before it asks the
+    runner for a job: RW3 fails with the sentence, no training started."""
+    monkeypatch.delattr(os, "waitid", raising=False)
+    runner = _StartsRecorded()
+    with pytest.raises(AssertionError, match=r"no os\.waitid"):
+        probe._start_training_job(runner, {}, "f" * 64, tmp_path / "gpu.lock")
+    assert runner.starts == []
+    rw3 = _rw3(probe, tmp_path, monkeypatch, {"num_workers": 0})
+    assert rw3.status == "failed" and "no os.waitid" in rw3.detail
+    assert [start for made in _StartsRecorded.made for start in made.starts] == []
 
 
 def test_the_probe_s_own_lock_is_named_and_the_operator_s_is_still_stated(probe, tmp_path,

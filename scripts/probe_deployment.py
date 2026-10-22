@@ -163,15 +163,19 @@ on the console, never hidden, and said again beside the acceptance's verdict.
     workspace as the server lists it (RW1); a test run through the runner on
     it, on the device, kept and registered (RW2); a training job on it
     started and stopped, other jobs refused while it runs (RW3).
-    **W11's and RW3's training job holds the GPU by configuration**
-    (`_HOLD_EPOCHS` epochs, early stopping as long), so it ends only by the
-    probe's stop; that it runs and is the lock's recorded holder is checked
-    before a test start is tried and after the measurement CLI is, and a job
+    **W11's and RW3's training job holds the GPU by configuration**, applied
+    where it is started (`_held_config`: `_HOLD_EPOCHS` epochs, early stopping
+    as long, no pause, a new run), so it ends only by the probe's stop. **One
+    bracket covers the whole check**: that the job runs and is the lock's
+    recorded holder is checked before a test start is tried and after the
+    measurement CLI is, and the answers between are judged only then. A job
     that ended meanwhile fails the probe as one that could not hold the lock,
-    never as a pass or a skip (review of 8242b47, W11/RW3); a test run that a
-    start not refused began is stopped. Telling whether it still
-    runs needs `os.waitid` (not on Windows, nor on macOS before Python 3.13),
-    without which W11 and RW3 fail saying so.
+    or, when the runner says a stop ended it, as the test cancel reaching
+    training; never as a pass or a skip (review of 8242b47, W11/RW3;
+    root-cause round, W11-1, W11-2). A test run that a start not refused began
+    is stopped. Telling whether the job still runs needs `os.waitid` (not on
+    Windows, nor on macOS before Python 3.13), without which W11 and RW3 fail
+    saying so before they start a job (W11-4).
     Every M5 setting is the probe's own while M5's probes run
     (`_M5_SETTINGS`), so they never use the deployment's lock, root or
     registry; W1 and RW1 state whether the lock the operator's settings name
@@ -2874,11 +2878,12 @@ _LOCK_TAKEN_SECONDS = 300.0
 _FIRST_EPOCH_SECONDS = 1800.0
 _TEST_RUN_SECONDS = 3600.0
 #: The epochs, and the early-stopping patience, of the training job W11 and RW3
-#: hold the GPU with: far more than it can complete while the probe watches, so
-#: it ends only by the probe's stop (or a failure, which the checks name), never
-#: by itself during the check. With the trainer's default patience the demo job
-#: stopped early at about epoch 10, within a second on a fast CPU, and released
-#: the lock before the measurement CLI was tried (review of 8242b47, W11/RW3).
+#: hold the GPU with (`_held_config`): far more than it can complete while the
+#: probe watches, so it ends only by the probe's stop (or a failure, which the
+#: checks name), never by itself during the check. With the trainer's default
+#: patience the demo job stopped early at about epoch 10, within a second on a
+#: fast CPU, and released the lock before the measurement CLI was tried (review
+#: of 8242b47, W11/RW3).
 #: Nothing in the trainer grows with the epoch count but its schedule's length.
 _HOLD_EPOCHS = 1_000_000
 #: The probe's own workspaces root, an empty directory under the work
@@ -3019,15 +3024,24 @@ _NO_WAITID = (
     "check that it held the GPU lock throughout cannot be made")
 
 
+def _require_waitid() -> Callable[..., Any]:
+    """`os.waitid`, or the probe's failure saying why it is needed
+    (`_NO_WAITID`). The one check of it: `_start_training_job` makes it before
+    anything is started, so W11 and RW3 start no job where it is missing
+    (root-cause round, W11-4), and `_job_runs` takes waitid from it."""
+    waitid = getattr(os, "waitid", None)
+    if waitid is None:
+        raise AssertionError(_NO_WAITID)
+    return waitid
+
+
 def _job_runs(pid: int) -> bool:
     """Whether the runner's job process `pid`, a child of this process (the
     runner runs in it), has not ended. `waitid` with WNOWAIT looks without
     waiting for it, so the runner's monitor still does; an ended job the
     monitor has not waited for yet is a zombie, which `kill(pid, 0)` and the
     holder description's liveness hint would still count as running."""
-    waitid = getattr(os, "waitid", None)
-    if waitid is None:
-        raise AssertionError(_NO_WAITID)
+    waitid = _require_waitid()
     try:
         return waitid(os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is None
     except ChildProcessError:  # waited for already: it has ended
@@ -3655,16 +3669,41 @@ def _cli_measure(argv: List[str]) -> Tuple[int, str]:
     return code, said.getvalue()
 
 
+#: The settings a held job is never given: a parent, which would make it a
+#: continuation (contract M3a-3), an extension of one (M3a-4), and a pause,
+#: which would end it by itself (`_held_config`).
+_NOT_HELD = ("resume_from", "extend_epochs", "extend_lr", "pause_after_epoch")
+
+
+def _held_config(config: Mapping[str, Any]) -> Dict[str, Any]:
+    """`config` as the job W11 and RW3 hold the GPU lock with runs it: a new
+    run, whatever the settings name (no parent, no extension), that ends only
+    by the probe's stop. The trainer's three ways of ending by itself are
+    closed here, for both callers: the stage's end (`_HOLD_EPOCHS` epochs),
+    early stopping (a patience as long, which cannot run out within the
+    stage) and a pause (none). Root-cause round, W11-2: the hold is this
+    function's, not a copy at each caller."""
+    held = {name: value for name, value in config.items() if name not in _NOT_HELD}
+    held.update(num_epochs=_HOLD_EPOCHS, early_stopping_patience=_HOLD_EPOCHS)
+    return held
+
+
 def _start_training_job(manager: Any, config: Dict[str, Any], fingerprint: str,
                         lock_path: Path) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-    """A training job through the runner, waited for until its own process
-    holds the GPU lock (its holder record names it) and it has begun its
-    first epoch on the device (its progress file says so, as the runner's
-    status reads it). Returns the start's answer and what the waits saw. A job
-    that ends before either fails here, with its output on the console."""
+    """The training job W11 and RW3 hold the GPU lock with: `config` held
+    (`_held_config`) and started through the runner, then waited for until its
+    own process holds the GPU lock (its holder record names it) and it has
+    begun its first epoch on the device (its progress file says so, as the
+    runner's status reads it). Returns the start's answer and what the waits
+    saw. A job that ends before either fails here, with its output on the
+    console. Where `os.waitid` is missing nothing is started
+    (`_require_waitid`): without it the check that the job held the lock
+    throughout cannot be made."""
+    _require_waitid()
     from src.utils.gpu_lock import lock_state
 
-    started = manager.start_training(config, expected_dataset_fingerprint=fingerprint)
+    started = manager.start_training(_held_config(config),
+                                     expected_dataset_fingerprint=fingerprint)
     assert started.get("success"), "the runner refused the training start"
     pid = started["pid"]
 
@@ -3699,37 +3738,47 @@ def _exclusion_while_training(manager: Any, inputs: Any, pid: int, cli_argv: Lis
     """While `manager`'s training job runs and holds the GPU lock: a test
     start on the same runner is refused for the slot, a test cancel does not
     reach training, and the measurement CLI, another process, is refused by
-    the lock naming the job's own process. Nothing is started or written."""
-    # **The job holds the lock for the whole check**, checked before anything
-    # is tried and after the CLI (review of 8242b47, W11/RW3): it holds the
-    # lock from its start to its end, so running and named as the holder both
-    # times means it held it throughout. A job that ended (it cannot by
-    # itself, `_HOLD_EPOCHS`; a crash can) is said as a job that could not
-    # hold the lock, never read as a start or the lock failing to refuse, and
-    # never a pass or a skip.
+    the lock naming the job's own process. Nothing is started or written.
+
+    **One bracket around the whole check** (review of 8242b47, W11/RW3;
+    root-cause round, W11-1): that the job runs and is the lock's recorded
+    holder is checked before anything is tried and once more after the CLI,
+    and every answer between is observed, not judged, until then. A job holds
+    the lock from its start to its end, so running and named both times means
+    it held it throughout and every answer is the product's. A job that ended
+    meanwhile (it cannot by itself, `_held_config`; a crash or a stop can) is
+    attributed from the runner's own record: training reads "stopping" or
+    "stopped" only after a stop was asked of it (`TrainingManager._stop`,
+    `_final_status`), and the one stop tried here is the test cancel, which
+    then reached training; any other ending is a job that could not hold the
+    lock. Never a pass or a skip, and never read as a start or the lock
+    failing to refuse.
+    """
     before = _holding_job(manager, pid)
     assert not before, (f"the training job could not hold the GPU lock for the check: "
                         f"before a test start was tried, {before}")
-    # A test run that a start not refused began is stopped, whatever ends
-    # the check; a start not refused because the job had just ended is said
-    # as the job not holding.
+    # Observed, not judged yet. A test run that a start not refused began is
+    # stopped before the cancel is tried, whatever its answer turns out to mean.
     with _job_ended_on_exit(manager, "test"):
         started = manager.start_test(inputs)
-        if started.get("success"):
-            ended = _holding_job(manager, pid)
-            assert not ended, (f"the training job could not hold the GPU lock for the check: "
-                               f"while a test start was tried, {ended}")
-        assert not started.get("success") and "Training is already running" in started["error"] \
-            and "Nothing was started." in started["error"], "a test start was not refused"
     cancelled = manager.cancel_test()
-    assert not cancelled.get("success") and "No test run is running" in cancelled["error"] \
-        and "does not reach" in cancelled["error"], "a test cancel was not refused"
-    assert manager.get_job_status_word("training") == "running", "the cancel reached training"
+    after_cancel = manager.get_job_status_word("training")
     code, said = _cli_measure(cli_argv)
     after = _holding_job(manager, pid)
-    assert not after, (f"the training job could not hold the GPU lock for the check: while "
-                       f"the measurement CLI was tried (exit {code}), {after}, so the "
-                       "exclusion was not exercised")
+    if after:
+        now = manager.get_job_status_word("training")
+        assert not {after_cancel, now} & {"stopping", "stopped"}, (
+            f"the cancel reached training: the runner says {now}, which only a stop gives, and "
+            "the test cancel was the one stop tried")
+        raise AssertionError(f"the training job could not hold the GPU lock for the check: "
+                             f"after a test start, a test cancel and the measurement CLI (exit "
+                             f"{code}) were tried, {after}, so the exclusion was not exercised")
+    start_error, cancel_error = started.get("error") or "", cancelled.get("error") or ""
+    assert not started.get("success") and "Training is already running" in start_error \
+        and "Nothing was started." in start_error, "a test start was not refused"
+    assert not cancelled.get("success") and "No test run is running" in cancel_error \
+        and "does not reach" in cancel_error, "a test cancel was not refused"
+    assert after_cancel == "running", "the cancel reached training"
     assert code == 1 and "a training job" in said and _names_pid(said, pid) \
         and "Nothing was written." in said, (
             f"the measurement CLI was not refused by the lock naming the training job "
@@ -4400,9 +4449,7 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
         inputs = _listed_test_inputs(M4_DEMO_LABEL, M5_WORKSPACE, M5_LISTED_RUN, M5_CHECKPOINT)
         manager = TrainingManager()
         config = {**_DEMO_TRAINING, "data_dir": str(state["workspace"]),
-                  "run_dir": str(m5 / "jobs" / "stopped-training"),
-                  "num_epochs": _HOLD_EPOCHS, "early_stopping_patience": _HOLD_EPOCHS,
-                  "device": device}
+                  "run_dir": str(m5 / "jobs" / "stopped-training"), "device": device}
         with _job_ended_on_exit(manager, "training"):
             started, held = _start_training_job(manager, config, state["fingerprint"],
                                                 lock_path)
@@ -4582,14 +4629,11 @@ def _m5_real(report: Report, runs: Path, real: Path, workspaces_root: Path, devi
             version_sha256=version.identity.sha256, workspace=real, checkpoint=parent,
             checkpoint_sha256=_read_run_checkpoint(parent)["sha256"])
         manager = TrainingManager()
-        # **A new run**, whatever the settings file holds: a parent named there
-        # would make this a continuation (contract M3a-3).
-        for continuation in ("resume_from", "extend_epochs", "pause_after_epoch"):
-            settings_now.pop(continuation, None)
-        # **Held by configuration** (`_HOLD_EPOCHS`): the real settings' epochs
-        # and patience would let it end by itself during the check.
+        # A new run held by configuration whatever the settings file holds
+        # (`_start_training_job` applies `_held_config`): the real settings'
+        # epochs and patience would let it end by itself during the check, and
+        # a parent named there would make it a continuation (contract M3a-3).
         config = {**settings_now, "data_dir": str(real), "run_dir": str(m5 / "stopped-training"),
-                  "num_epochs": _HOLD_EPOCHS, "early_stopping_patience": _HOLD_EPOCHS,
                   "device": device}
         with _job_ended_on_exit(manager, "training"):
             started, held = _start_training_job(manager, config,
