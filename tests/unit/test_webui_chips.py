@@ -131,10 +131,20 @@ def test_a_holder_that_exited_is_not_named_as_the_holder():
         "GPU job: lock held, holder not described")
 
 
-def test_a_lock_not_configured_says_what_is_not_seen():
-    chip = c.gpu_chip_from(None, {**LOCK_FREE, "configured": False}, operator=True)
-    assert chip.text == "GPU jobs: none in the job runner"
-    assert "not configured" in chip.detail and "not seen" in chip.detail
+def test_a_lock_not_configured_says_so_and_that_jobs_are_refused(monkeypatch):
+    """Review of 8242b47, P2-4: with neither lock setting set every job is
+    refused, and the chip says so to every request (no path in it); it used to
+    read "none in the job runner", as if jobs ran unlocked."""
+    monkeypatch.delenv("SHEPHERD_GPU_LOCK_FILE", raising=False)
+    monkeypatch.delenv("SHEPHERD_WORKSPACES_ROOT", raising=False)
+    lock = c.read_lock()
+    assert lock["unset"] is True and lock["configured"] is False and lock["problem"]
+    for operator in (True, False):
+        chip = c.gpu_chip_from(None, lock, operator=operator)
+        assert (chip.kind, chip.text) == ("unread", "GPU jobs: refused, lock not configured")
+        assert chip.detail.startswith("The GPU lock is not configured: neither "
+                                      "SHEPHERD_GPU_LOCK_FILE nor SHEPHERD_WORKSPACES_ROOT is set")
+        assert "refuses every training and test run" in chip.detail
 
 
 def test_a_lock_that_cannot_be_used_names_its_path_only_to_an_operator():

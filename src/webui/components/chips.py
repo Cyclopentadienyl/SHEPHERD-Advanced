@@ -80,7 +80,14 @@ GPU_SCOPE = (
 
 GPU_NONE = "GPU jobs: none"
 GPU_NOT_READ = "GPU jobs: not read"
-GPU_NO_LOCK = "GPU jobs: none in the job runner"
+GPU_NOT_CONFIGURED = "GPU jobs: refused, lock not configured"
+#: What the chip's ⓘ says with neither lock setting set (review of 8242b47,
+#: P2-4); it names no server path, so every request may see it.
+GPU_NOT_CONFIGURED_DETAIL = (
+    "The GPU lock is not configured: neither SHEPHERD_GPU_LOCK_FILE nor "
+    "SHEPHERD_WORKSPACES_ROOT is set in the service's environment, so the job runner refuses "
+    "every training and test run until one is set (deployment guide §4.11)."
+)
 _RUNNER_NOUN = {"training": "training", "test": "test run"}
 
 _LOCK_SVG = ('<svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true" focusable="false">'
@@ -143,7 +150,8 @@ def gpu_chip_from(active: Optional[Mapping[str, Any]], lock: Mapping[str, Any],
                   *, operator: bool) -> Chip:
     """The GPU chip from the runner's active job and the lock as read now.
 
-    `lock` holds ``configured``, ``problem``, ``held`` (whether someone holds
+    `lock` holds ``configured``, ``problem``, ``unset`` (the problem is that
+    neither lock setting is set), ``held`` (whether someone holds
     it at this instant), ``holder`` (its description record, or None),
     ``holder_alive`` (True, False, or None when that cannot be told) and
     ``description`` (`describe_holder`'s words). `operator` says whether the
@@ -156,17 +164,14 @@ def gpu_chip_from(active: Optional[Mapping[str, Any]], lock: Mapping[str, Any],
         if active.get("status") == "stopping":
             text += " · stopping"
         return Chip("busy", text, GPU_SCOPE)
+    if lock.get("unset"):
+        return Chip("unread", GPU_NOT_CONFIGURED, f"{GPU_NOT_CONFIGURED_DETAIL}\n\n{GPU_SCOPE}")
     if lock.get("problem"):
         detail = ("The GPU lock cannot be used, so every managed job is refused until it is "
                   "corrected.")
         if operator:
             detail += f" {lock['problem']}"
         return Chip("unread", GPU_NOT_READ, f"{detail}\n\n{GPU_SCOPE}")
-    if not lock.get("configured"):
-        return Chip("none", GPU_NO_LOCK, (
-            "The GPU lock is not configured (neither SHEPHERD_GPU_LOCK_FILE nor "
-            "SHEPHERD_WORKSPACES_ROOT is set), so a job a CLI runs elsewhere is not seen "
-            f"here and is not excluded.\n\n{GPU_SCOPE}"))
     if not lock.get("held"):
         return Chip("none", GPU_NONE, GPU_SCOPE)
     holder = lock.get("holder")
@@ -196,6 +201,7 @@ def read_lock(environ: Optional[Mapping[str, str]] = None) -> dict:
     """The GPU lock as the chip needs it, read now (`gpu_chip_from`)."""
     from src.utils.gpu_lock import (
         GpuLockMisconfigured,
+        GpuLockNotConfigured,
         describe_holder,
         holder_alive,
         lock_location,
@@ -203,14 +209,14 @@ def read_lock(environ: Optional[Mapping[str, str]] = None) -> dict:
         read_holder,
     )
 
-    state = {"configured": False, "problem": None, "held": False, "holder": None,
-             "holder_alive": None, "description": None}
+    state = {"configured": False, "problem": None, "unset": False, "held": False,
+             "holder": None, "holder_alive": None, "description": None}
     try:
         location = lock_location(environ)
+    except GpuLockNotConfigured as exc:
+        return {**state, "problem": str(exc), "unset": True}
     except (GpuLockMisconfigured, OSError) as exc:
         return {**state, "problem": str(exc)}
-    if location.path is None:
-        return state
     state["configured"] = True
     try:
         held_by = probe(location.path)
@@ -305,7 +311,7 @@ __all__ = [
     "D8_SHORT",
     "GPU_NONE",
     "GPU_NOT_READ",
-    "GPU_NO_LOCK",
+    "GPU_NOT_CONFIGURED",
     "GPU_SCOPE",
     "chip_html",
     "chips_html",

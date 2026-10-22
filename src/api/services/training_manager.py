@@ -18,8 +18,15 @@ Purpose:
       started elsewhere is refused early, naming its holder
     - Tracks each job's own process, status, exit code and output tail; the
       latest job of each type keeps its state after it ends
-    - Stops a job by type: SIGINT (CTRL_BREAK_EVENT on Windows), then SIGTERM,
-      then SIGKILL; a training stop never reaches a test run, nor the reverse
+    - Stops a job by type: SIGINT (CTRL_BREAK_EVENT on Windows) to its main
+      process, then SIGTERM, then SIGKILL to its whole process group; a
+      training stop never reaches a test run, nor the reverse
+    - **Each job leads its own process group** (review of 8242b47, P2-3), so
+      the DataLoader workers it forks, which share the GPU lock's open file,
+      end with it: after its main process ends the monitor ends what is left
+      of the group, and only then records how the job ended and frees the
+      slot. The backend's shutdown stops the job it runs (`end_active_job`,
+      called by `src.api.main`'s lifespan)
     - Reads training metrics from MetricsLogger's JSON log files, and, once a
       test run has ended, what it published (its `--outcome` file) and whether
       that report is kept and registered (the registration's one helper)
@@ -40,6 +47,31 @@ Architecture Note:
     of their `main`), so the lock follows the real worker and is released by
     the kernel however that process ends; the runner only checks it before
     starting, to refuse early.
+
+    **A job's processes, on POSIX** (P2-3): the child calls `setpgid(0, 0)`
+    before it runs the script (`process_group=0`), so it and every process
+    it forks form a group of their own, never the backend's. A stop sends
+    SIGINT to the main process only, the graceful path (training stops where
+    it stands, measure_scorer says cancelled, a DataLoader ends its own
+    workers as the process exits), and SIGTERM and SIGKILL to the whole
+    group, as systemd's ``KillMode=mixed`` does. Once the main process has
+    been waited for, the monitor ends whatever of the group is left
+    (SIGTERM, then SIGKILL), reaping any of its zombies this process adopted;
+    on Linux a member counts as left only while it is not a zombie
+    (`/proc/<pid>/stat`), since a zombie holds no descriptor, so not the lock.
+    A group is recorded only for a process this module started, with a pid
+    above 1, that leads it; anything else is signalled through its own
+    methods, so a group signal can never reach every process (pid 1) or the
+    backend's own group.
+
+    **On Windows** (the backend is untested there): the job gets its own
+    console process group (CREATE_NEW_PROCESS_GROUP), which CTRL_BREAK_EVENT
+    is sent to; a backend with no console cannot send it (`OSError`), and the
+    stop goes on to TerminateProcess, which ends the main process only.
+    DataLoader workers are spawned there, not forked, and do not inherit the
+    lock's handle; the release of a dead process's file lock by the system
+    can be delayed. A Job Object, the true equivalent of a process group, is
+    not added while the Windows backend is untested.
 
     **Nothing here gates access.** Every caller that starts, stops or lists
     applies D8 first, on its own request (`src/utils/operator_access.py`):
@@ -75,6 +107,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -113,6 +146,17 @@ OUTPUT_GRACE_SECONDS = 5.0
 RESULT_WAIT_SECONDS = 60.0
 
 _SHA256 = re.compile(r"[0-9a-f]{64}")
+
+#: The class every job's process is started with, as this module imported it.
+#: Only a process started through it leads a group of its own (P2-3); a
+#: stand-in that is not one (a test's) has no group and is signalled through
+#: its own methods.
+_POPEN = subprocess.Popen
+#: How long the monitor lets a job's group settle after its main process was
+#: waited for (workers a SIGTERM to the group has just reached, or that a
+#: DataLoader is ending) before it says that processes remain and ends them.
+_GROUP_SETTLE_SECONDS = 1.0
+_GROUP_POLL_SECONDS = 0.05
 
 
 @dataclass
@@ -360,6 +404,10 @@ class _Job:
     reports_before: Set[str] = field(default_factory=set)
     #: Where a test run writes its outcome (`--outcome`), in its job directory.
     outcome_path: Optional[Path] = None
+    #: The process group the job leads (its main process's pid), which a stop's
+    #: SIGTERM and SIGKILL and the monitor's cleanup reach; None on Windows and
+    #: for a process that does not lead one (`_job_group`).
+    group: Optional[int] = None
     done: threading.Event = field(default_factory=threading.Event)
 
     def tail(self, n: Optional[int] = None) -> List[str]:
@@ -402,6 +450,100 @@ def _signal_name(returncode: int) -> str:
         return signal.Signals(-returncode).name
     except ValueError:
         return f"signal {-returncode}"
+
+
+# ---------------------------------------------------------------------------
+# A job's process group (P2-3)
+# ---------------------------------------------------------------------------
+def _job_group(process: Any) -> Optional[int]:
+    """The process group `process` leads, or None.
+
+    Its pid, for a process this module started on POSIX (`process_group=0`:
+    the child set its group before it ran anything, so every process it forks
+    is in it), once `getpgid` confirms that it leads the group. None on
+    Windows, for a stand-in that is not a `Popen`, and for a pid of 0 or 1:
+    `killpg(1, sig)` is `kill(-1, sig)`, every process this account may
+    signal, and `killpg(0, sig)` the backend's own group, so neither is ever
+    a job's."""
+    if sys.platform == "win32" or not isinstance(process, _POPEN):
+        return None
+    pid = process.pid
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 1:
+        return None
+    try:
+        leads = os.getpgid(pid) == pid
+    except OSError:
+        leads = False
+    if not leads:
+        logger.warning("Job process %s does not lead a process group of its own; a stop "
+                       "reaches it alone.", pid)
+        return None
+    return pid
+
+
+def _signal_group(group: int, sig: int) -> bool:
+    """`sig` to every process of the job's group; False when none is left.
+
+    The group's id is the job's own pid, which the system does not give to
+    another process while any process of the group remains (the main process
+    included, until it is waited for), so this reaches no other job and never
+    the backend."""
+    try:
+        os.killpg(group, sig)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def _live_member(group: int) -> bool:
+    """Linux: whether a process of `group` is neither a zombie nor dead, read
+    from `/proc/<pid>/stat` (its state, and its process group, the fifth
+    field). A zombie holds no descriptor, so not the GPU lock, and one adopted
+    by a reaper that never reaps (a container whose PID 1 does not wait, say)
+    would otherwise keep the slot forever. True when /proc cannot be listed:
+    the group signal said a process is there."""
+    try:
+        names = os.listdir("/proc")
+    except OSError:
+        return True
+    for name in names:
+        if not name.isdigit():
+            continue
+        try:
+            with open(f"/proc/{name}/stat", "rb") as stat:
+                fields = stat.read().rsplit(b")", 1)[1].split()
+            if int(fields[2]) == group and fields[0] not in (b"Z", b"X"):
+                return True
+        except (OSError, IndexError, ValueError):
+            continue
+    return False
+
+
+def _group_left(group: int) -> bool:
+    """Whether a process of the job's group remains. **Only once its main
+    process has been waited for** (by `Popen.wait`): this reaps the group's
+    zombies that are this process's children, and the main process is one
+    until then, whose exit status `Popen` must read itself.
+
+    The zombies reaped are the group's processes this process adopted: one
+    orphaned by the job's end is adopted by PID 1 or the nearest subreaper,
+    and when that is this backend (PID 1 of a container without an init, say)
+    nothing else would ever reap it. Only this group's are waited for, never
+    another job's or the backend's own children. Then the group is asked
+    (`killpg(group, 0)`), and on Linux only a member that is not a zombie
+    counts (`_live_member`); elsewhere every member answering does."""
+    while True:
+        try:
+            pid, _ = os.waitpid(-group, os.WNOHANG)
+        except ChildProcessError:  # no child of this process is in the group
+            break
+        if pid == 0:
+            break
+    if not _signal_group(group, 0):
+        return False
+    if not sys.platform.startswith("linux"):
+        return True
+    return _live_member(group)
 
 
 class TrainingManager:
@@ -502,12 +644,14 @@ class TrainingManager:
                 # the reader: a reader that stops lets the pipe fill and blocks
                 # the job.
                 errors="replace",
-                # On Windows use CREATE_NEW_PROCESS_GROUP for graceful stop
-                creationflags=(
-                    subprocess.CREATE_NEW_PROCESS_GROUP
-                    if sys.platform == "win32"
-                    else 0
-                ),
+                # **Each job leads its own process group** (P2-3): on POSIX the
+                # child calls setpgid(0, 0) before it runs the script, so every
+                # process it forks (DataLoader workers, which share the GPU
+                # lock's open file) is in the group a stop and the monitor end,
+                # never the backend's. On Windows CREATE_NEW_PROCESS_GROUP,
+                # which CTRL_BREAK_EVENT is sent to.
+                **({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+                   if sys.platform == "win32" else {"process_group": 0}),
             )
         except (OSError, ValueError) as e:
             error = f"The {kind.name} process could not be started: {e}"
@@ -521,7 +665,8 @@ class TrainingManager:
 
         job = _Job(kind, job_id, datetime.now(), process=process, inputs=inputs,
                    cleanup=list(cleanup), run_dir=run_dir, reports_dir=reports_dir,
-                   reports_before=set(reports_before or ()), outcome_path=outcome_path)
+                   reports_before=set(reports_before or ()), outcome_path=outcome_path,
+                   group=_job_group(process))
         self._last[kind.name] = job
         self._active = job
         threading.Thread(target=self._monitor, args=(job,), daemon=True,
@@ -569,7 +714,11 @@ class TrainingManager:
                 sends the one it displayed; the API takes it as an optional
                 field). The manifest is read again first, and a different one is
                 refused (`dataset_refusal`) before anything is written or
-                started.
+                started. **The training process checks it again on its own one
+                manifest read** (`--expect-dataset-sha256`, review of 8242b47,
+                P2-2), so a manifest replaced after this check is refused
+                there, before the graph and samples are read and before
+                anything is written, never trained on.
 
         Returns:
             Status dict with success/error info. Refused while any GPU job is
@@ -648,6 +797,11 @@ class TrainingManager:
                 raise
 
             cmd = [sys.executable, str(PROJECT_ROOT / kind.script), "--config", str(config_path)]
+            # The process's own check on its one manifest read (P2-2): an
+            # argument, not a configuration key, since it is a precondition of
+            # this job and not a setting the run records.
+            if expected_dataset_fingerprint is not None:
+                cmd += ["--expect-dataset-sha256", expected_dataset_fingerprint]
             job, error = self._spawn_locked(kind, cmd, inputs={"config_path": str(config_path)},
                                             cleanup=[config_path], run_dir=run_dir)
             if job is None:
@@ -780,9 +934,11 @@ class TrainingManager:
 
     def stop(self, job_type: str) -> Dict[str, Any]:
         """Stop the running job of `job_type`: SIGINT (CTRL_BREAK_EVENT on
-        Windows), up to `STOP_GRACE_SECONDS`; then SIGTERM, up to
-        `TERMINATE_GRACE_SECONDS`; then SIGKILL. Blocks until the process has
-        ended and its monitor has recorded how (routes call it from a thread).
+        Windows) to its main process, up to `STOP_GRACE_SECONDS`; then SIGTERM
+        to its process group, up to `TERMINATE_GRACE_SECONDS`; then SIGKILL to
+        the group. Blocks until the main process has ended and its monitor has
+        ended the rest of the group and recorded how the job ended (routes call
+        it from a thread); "stopped" means no process of the job is left.
 
         **Refused across types**: a training stop never stops a test run, nor
         the reverse. **Refused when the process has already ended on its own**
@@ -830,8 +986,14 @@ class TrainingManager:
             return {"success": False, "status": "stopping",
                     "error": f"{kind.noun} did not end after SIGKILL; it keeps the GPU slot "
                              "until it does."}, job
-        # Ended: its monitor records how, and reads what a test run left.
-        job.done.wait(timeout=RESULT_WAIT_SECONDS)
+        # Its main process ended: the monitor ends what is left of its process
+        # group, records how the job ended and reads what a test run left.
+        # Stopped only once that is done; until then the job keeps the slot.
+        if not job.done.wait(timeout=RESULT_WAIT_SECONDS):
+            return {"success": False, "status": "stopping",
+                    "error": f"{kind.noun}'s main process has ended, but the rest of its "
+                             "process group is still being ended, or what it left read; it "
+                             "keeps the GPU slot until that is done."}, job
         with self._lock:
             status = job.status
         logger.info("%s job %s ended: %s", job_type, job.job_id, status)
@@ -848,38 +1010,131 @@ class TrainingManager:
                 f"({status + ', ' if recorded else ''}exit code {process.returncode}) before "
                 "this stop arrived; nothing was stopped.")
         if not recorded:
-            said += " What it left is still being read."
+            said += (" Its monitor is still ending what is left of its process group, or "
+                     "reading what it left; the job keeps the GPU slot until then.")
         logger.info("Stop of %s job %s refused: %s", job.kind.name, job.job_id, said)
         return {"success": False, "error": said, "status": status}
 
     @staticmethod
     def _end_process(job: _Job, process: subprocess.Popen) -> None:
-        if sys.platform == "win32":
-            # On Windows, send CTRL_BREAK_EVENT to the process group
-            process.send_signal(signal.CTRL_BREAK_EVENT)
-            job.stop_signal = "CTRL_BREAK_EVENT"
-        else:
-            process.send_signal(signal.SIGINT)
-            job.stop_signal = "SIGINT"
-        try:
-            process.wait(timeout=STOP_GRACE_SECONDS)
-            return
-        except subprocess.TimeoutExpired:
-            logger.warning("%s job %s did not stop gracefully, terminating...",
-                           job.kind.name, job.job_id)
-        process.terminate()
+        """The stop's escalation. SIGINT (CTRL_BREAK_EVENT on Windows) to the
+        job's main process only: its graceful stop. Then SIGTERM and SIGKILL to
+        its whole process group (`_terminate`), so a forked worker that shares
+        the GPU lock's open file ends with it. Returns once the main process
+        has ended or SIGKILL was sent; the monitor ends what is left of the
+        group (`_end_group`)."""
+        if TrainingManager._interrupt(job, process):
+            try:
+                process.wait(timeout=STOP_GRACE_SECONDS)
+                return
+            except subprocess.TimeoutExpired:
+                logger.warning("%s job %s did not stop gracefully, terminating...",
+                               job.kind.name, job.job_id)
+        TrainingManager._terminate(job, process, kill=False)
         job.stop_signal = "SIGTERM"
         try:
             process.wait(timeout=TERMINATE_GRACE_SECONDS)
             return
         except subprocess.TimeoutExpired:
             pass
-        process.kill()
+        TrainingManager._terminate(job, process, kill=True)
         job.stop_signal = "SIGKILL"
         try:
             process.wait(timeout=KILL_GRACE_SECONDS)
         except subprocess.TimeoutExpired:
             logger.error("%s job %s did not end after SIGKILL", job.kind.name, job.job_id)
+
+    @staticmethod
+    def _interrupt(job: _Job, process: subprocess.Popen) -> bool:
+        """The graceful signal to the job's main process: SIGINT, or on Windows
+        CTRL_BREAK_EVENT to its console process group. False when it could not
+        be sent: a backend with no console cannot send CTRL_BREAK_EVENT
+        (`os.kill` raises OSError there), and the stop goes on to terminate."""
+        if sys.platform != "win32":
+            process.send_signal(signal.SIGINT)
+            job.stop_signal = "SIGINT"
+            return True
+        try:  # pragma: no cover - the backend is untested on Windows
+            process.send_signal(signal.CTRL_BREAK_EVENT)
+        except OSError as exc:  # pragma: no cover - Windows
+            logger.warning("%s job %s: CTRL_BREAK_EVENT could not be sent (%s); "
+                           "terminating it", job.kind.name, job.job_id, exc)
+            return False
+        job.stop_signal = "CTRL_BREAK_EVENT"  # pragma: no cover - Windows
+        return True  # pragma: no cover - Windows
+
+    @staticmethod
+    def _terminate(job: _Job, process: subprocess.Popen, *, kill: bool) -> None:
+        """SIGTERM (SIGKILL with `kill`) to the job's process group; without a
+        group (Windows, a stand-in) `terminate()` / `kill()` of its main
+        process, which on Windows is TerminateProcess and ends that process
+        only."""
+        if job.group is None:
+            if kill:
+                process.kill()
+            else:
+                process.terminate()
+            return
+        _signal_group(job.group, signal.SIGKILL if kill else signal.SIGTERM)
+
+    @staticmethod
+    def _end_group(job: _Job) -> None:
+        """Once the job's main process has been waited for: end what is left of
+        its process group, SIGTERM then SIGKILL, and return only when nothing
+        of it is left, so the slot and the job's final status mean that the
+        whole job has ended, forked workers too (P2-3). A job that ended by
+        itself normally leaves none (a DataLoader ends its workers as its
+        process exits); one that was killed, or crashed, may. A group that
+        SIGKILL cannot end keeps the slot, as a main process would (the
+        monitor's `wait` has no limit either)."""
+        group = job.group
+        if group is None:
+            return
+        deadline = time.monotonic() + _GROUP_SETTLE_SECONDS
+        while _group_left(group):
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(_GROUP_POLL_SECONDS)
+        else:
+            return
+        logger.warning("%s job %s: its main process has ended and processes of its group "
+                       "remain (forked workers, say); ending them", job.kind.name, job.job_id)
+        for sig, grace in ((signal.SIGTERM, TERMINATE_GRACE_SECONDS),
+                           (signal.SIGKILL, KILL_GRACE_SECONDS)):
+            if not _signal_group(group, sig):
+                return
+            deadline = time.monotonic() + grace
+            while time.monotonic() < deadline:
+                if not _group_left(group):
+                    return
+                time.sleep(_GROUP_POLL_SECONDS)
+        logger.error("%s job %s: processes of its group did not end after SIGKILL; it keeps "
+                     "the GPU slot until they do", job.kind.name, job.job_id)
+        while _group_left(group):
+            time.sleep(0.5)
+
+    def end_active_job(self) -> Optional[Dict[str, Any]]:
+        """**Stopping the backend stops its jobs** (the owner's decision of
+        2026-10-22): the job holding the GPU slot, whatever its type, stopped
+        through `stop` (SIGINT, then SIGTERM, then SIGKILL to its group), or,
+        when an operator's stop is already ending it, waited for, bounded by
+        the same escalation. `src.api.main`'s lifespan calls it at shutdown, so
+        a backend stopped by Ctrl-C, a closed terminal or SIGTERM ends its job
+        as systemd ending the service does. Returns what happened, or None
+        when no job held the slot. Blocks; call it from a thread."""
+        with self._lock:
+            job = self._active
+            if job is None:
+                return None
+            job_type, status = job.kind.name, job.status
+        said: Dict[str, Any] = {"job_type": job_type, "job_id": job.job_id}
+        if status == "running":
+            return {**said, **self.stop(job_type)}
+        ended = job.done.wait(timeout=STOP_GRACE_SECONDS + TERMINATE_GRACE_SECONDS
+                              + KILL_GRACE_SECONDS + RESULT_WAIT_SECONDS)
+        with self._lock:
+            status = job.status
+        return {**said, "success": ended, "status": status}
 
     # =========================================================================
     # The monitor
@@ -900,8 +1155,9 @@ class TrainingManager:
             pass
 
     def _monitor(self, job: _Job) -> None:
-        """Wait for the job's own process (never another job's), read what it
-        left, and record how it ended; the GPU slot is free only then."""
+        """Wait for the job's own process (never another job's), end what is
+        left of its process group, read what it left, and record how it ended;
+        the GPU slot is free only then."""
         returncode: Optional[int] = None
         outcome: Optional[Dict[str, Any]] = None
         try:
@@ -909,6 +1165,9 @@ class TrainingManager:
                                       name=f"{job.kind.name}-output")
             reader.start()
             returncode = job.process.wait()
+            # The rest of its process group, before its output is read to the
+            # end: a forked worker holds the pipe open as long as it lives.
+            self._end_group(job)
             reader.join(timeout=OUTPUT_GRACE_SECONDS)
             if job.kind.name == "test":
                 outcome = self._test_outcome(job, returncode)

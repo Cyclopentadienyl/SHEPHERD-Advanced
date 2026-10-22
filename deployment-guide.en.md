@@ -327,7 +327,8 @@ by hand.
 **After setup**:
 1. Build the knowledge graph: `python scripts/build_knowledge_graph.py`
 2. Precompute shortest paths: `python scripts/compute_shortest_paths.py`
-3. Train: `python scripts/train_model.py` (optionally `--config <hyperparameters.yaml>`)
+3. Train: `python scripts/train_model.py` (optionally `--config <hyperparameters.yaml>`), in a
+   shell where the GPU lock is configured: it refuses without one (§4.11)
 4. Launch: `./launch_shepherd.sh`
 
 **Things to know**:
@@ -1269,6 +1270,9 @@ python scripts/measure_scorer.py \
     [--training-evidence DIR ...] [--record] [--device auto|cuda|cpu] [--batch-size 32]
 ```
 
+Run it in a shell where the GPU lock is configured, the same lock as the service's (§4.11);
+without one it refuses, exit 1, with nothing written.
+
 Before anything is written the run checks, on the bytes it read: the version's `cohort.json` and
 its `samples.json` against the digest it binds; **the version's counts**, which become the
 report's and the ledger's denominators — they must be present and agree with each other and with
@@ -1568,7 +1572,7 @@ is taken back, so it leaves no part of its entry; if even that fails, the error 
 the file may hold part of it.
 
 **New `measure_scorer.py` options.** They are there for M5's job runner, and you can use them
-by hand too. `--expect-version-sha256` and `--outcome` apply to `--cohort` runs only (exit 2
+by hand too, in a shell where the GPU lock is configured (§4.11). `--expect-version-sha256` and `--outcome` apply to `--cohort` runs only (exit 2
 with `--split`); the other two apply to both:
 
 ```bash
@@ -1705,7 +1709,7 @@ One lock file per deployment, whatever the workspace:
 |---|---|
 | `SHEPHERD_GPU_LOCK_FILE=/absolute/path` | that file; its directory must exist (nothing creates it) |
 | otherwise `SHEPHERD_WORKSPACES_ROOT=/absolute/root` | `<root>/.shepherd-gpu.lock` |
-| neither | **not configured**: the CLIs run without the lock and say so in their log; the service keeps only its own one-job rule |
+| neither | **not configured**: every managed job is refused (since the review of 8242b47): the CLIs exit 1 before anything is read, the service refuses every start, each saying how to configure the lock |
 
 A setting that is set but unusable (a relative path, a directory that does not exist, a path
 under a directory the service account may not search) refuses every job rather than running it
@@ -1726,9 +1730,14 @@ check the lock before starting a job and refuse the start with the same holder
 
 **Set the variable for the service and in the shell where you run the CLIs** (for example, the
 same `Environment=` lines as the systemd unit, which reads no environment file of its own, or
-one file that both the unit's `EnvironmentFile=` and your shell read). A CLI that does not see it runs without the
-lock and logs `GPU lock not configured (...), so this run does not exclude other managed GPU
-jobs.`
+one file that both the unit's `EnvironmentFile=` and your shell read). A CLI that sees neither
+variable is refused, exit 1, with nothing written (`train_model: refused: neither
+SHEPHERD_GPU_LOCK_FILE nor SHEPHERD_WORKSPACES_ROOT is set, so the GPU lock is not configured
+...`); so is `setup_demo.py --train-model`, which trains through the same trainer. **If the
+service names a lock file (`SHEPHERD_GPU_LOCK_FILE`), the shell must name the same file**:
+`SHEPHERD_WORKSPACES_ROOT` alone names `<root>/.shepherd-gpu.lock`, another file, and the two
+jobs would not exclude each other. `SHEPHERD_GPU_LOCK_FILE` may name any absolute path whose
+directory exists only on a machine where no service runs.
 
 **`SHEPHERD_REGISTRY` is required in that shell as well** (since the M5 review, BACKLOG 37):
 `measure_scorer.py --cohort`, `--record` and `record_evaluation.py --report` work only in the
@@ -1758,9 +1767,18 @@ What the lock does and does not guarantee:
   close-on-exec). A process the job forks without starting a new program — DataLoader workers
   under the `fork` start method, for example — shares it: a job that ends normally releases it
   for that process too, but when the job is killed (or exits without releasing), that process
-  keeps the lock until it exits; the refusal then says the recorded holder has exited.
+  keeps the lock until it exits; the refusal then says the recorded holder has exited. **A job
+  the service starts leads its own process group** (since the review of 8242b47), and a stop and
+  the runner end the whole group, those processes included (below). A CLI you start in an
+  interactive shell leads its own group there (job control): `kill -TERM -- -<pid>` ends it with
+  its workers, while `kill -9 <pid>` alone leaves them to end by themselves.
 - **Keep the lock file on a local filesystem.**
 - **Windows** uses `msvcrt.locking` on the file's first byte; a Windows backend is untested.
+  There DataLoader workers are spawned, not forked, and do not inherit the lock's handle; the
+  system's release of a dead process's file lock can be delayed; a stop sends CTRL_BREAK_EVENT
+  to the job's console process group, and a backend with no console, which cannot send it, goes
+  on to TerminateProcess, which ends the main process only. A Job Object, the true equivalent of
+  a process group, is not added while the Windows backend is untested.
 
 ### The job runner
 
@@ -1772,8 +1790,14 @@ cohort version, the same CLI an operator runs). One job at a time:
   while a stop is still waiting for its process is now refused (it used to be accepted, and could
   start a second process beside the one being stopped).
 - **A stop reaches only its own job type**: a training stop never stops a test run, nor the
-  reverse. It sends SIGINT, then SIGTERM after 30 s, then SIGKILL after 10 s more, and answers
-  once the process has ended; `POST /api/v1/training/stop` no longer holds up the rest of the API
+  reverse. It sends SIGINT to the job's main process (its graceful stop), then SIGTERM to the
+  job's whole process group after 30 s, then SIGKILL to the group after 10 s more, and answers
+  once no process of the job is left: each job leads its own process group, so the DataLoader
+  workers it forked, which share the GPU lock, end with it, and once the main process has ended
+  the runner ends what is left of the group before it says how the job ended and frees the slot
+  (since the review of 8242b47: a worker used to outlive a stop that said "stopped" and keep the
+  lock). A worker left as a zombie (a container whose PID 1 never reaps) holds nothing and does
+  not keep the slot. `POST /api/v1/training/stop` no longer holds up the rest of the API
   and the dashboard while it waits. **A stop that arrives after the process has ended on its own**
   (while its result is still being read) is refused (`409`, "had already ended on its own ...;
   nothing was stopped") and changes nothing: a failure stays `failed`, with its message.
@@ -1795,6 +1819,18 @@ cohort version, the same CLI an operator runs). One job at a time:
   report, the checkpoint's directory, where its ledger is.
 - **Runtime Settings' Restart Backend** is refused while any job runs, training or a test run
   (its note now says "A GPU job (training or a test run) is in progress").
+- **Stopping the backend stops its job** (the owner's decision of 2026-10-22). Because a job
+  leads its own process group, a Ctrl-C or a hangup of the terminal the backend runs in, or a
+  SIGTERM sent to the backend alone, no longer reaches the job itself; the backend's shutdown
+  stops it instead, as a stop above does, for a backend started from a terminal (the launcher,
+  which waits for the server through a Ctrl-C, or uvicorn by hand) or sent SIGTERM outside
+  systemd; under systemd, stopping the unit signals every process of the service anyway. A
+  shutdown that does not run (a second Ctrl-C, which makes uvicorn quit at once, SIGKILL, the
+  out-of-memory killer) leaves the job running and holding the lock; the GPU chip names it; stop
+  it with `kill -INT <pid>` or `kill -TERM -- -<pid>`. **Do not run the backend with
+  `--reload`**: uvicorn's reloader restarts the server on every saved source file, and each
+  restart's shutdown would stop a running training. The commands `setup_demo.py` prints have no
+  `--reload`, and `python -m src.api.main` no longer reloads.
 - `GET /api/v1/training/status` adds `job_id`, `end_time`, `exit_code` and `gpu`: the job holding
   the GPU, of either type, and the lock (`configured`, `path`, `source`, `held_by`, `problem`).
   A test run holding the GPU shows there, never as training.
@@ -1839,6 +1875,10 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
   read-only for them. Diagnosis, the status pages and the read-only lists work either way.
 - **The workspaces root may be inside the repository**, as the usual `data/workspaces/` is, but
   only when you name it. A relative path, a missing directory and a file are refused.
+- **The GPU lock follows these settings** (§4.11): with the root set and no
+  `SHEPHERD_GPU_LOCK_FILE`, the lock is `<root>/.shepherd-gpu.lock`. A shell where you run the
+  formal CLIs needs the same setting (if the service names a lock file, that same file), and
+  with neither set every training and test run is refused.
 - **The registry and the intake directory hold patient-level data.** They follow the
   registry's rule (§4.9): a relative path, a missing directory, and a path that resolves inside
   the repository (through a symlink too) are refused. `--registry` on the command line and
@@ -2175,7 +2215,7 @@ read-only, the full reason D8 gives. It never repeats a header's value.
 | `GPU job: training (job runner)`, `GPU job: test run (job runner)` | A job this service started; `· stopping` while it stops |
 | `GPU job: train_model.py (pid 41822, since 09:58 UTC)` | A process this service did not start holds the GPU lock (a formal CLI, or another server's job runner on the same lock); the chip says what its holder record says: the command, the pid and the start |
 | `GPU job: lock held, holder not described` | The lock is held, but no running process is described as its holder |
-| `GPU jobs: none in the job runner` | No GPU lock is configured (neither `SHEPHERD_GPU_LOCK_FILE` nor `SHEPHERD_WORKSPACES_ROOT`), so a CLI's job would not be seen |
+| `GPU jobs: refused, lock not configured` | No GPU lock is configured (neither `SHEPHERD_GPU_LOCK_FILE` nor `SHEPHERD_WORKSPACES_ROOT`), so every training and test run is refused until one is set (§4.11) |
 | `GPU jobs: not read` (grey) | The state could not be read. When the lock setting cannot be used, the ⓘ says so, naming the path only to a browser D8 allows |
 
 ### Help: the ⓘ buttons
@@ -2345,7 +2385,11 @@ a run.
   again. Nothing was started." The API takes the same check as an optional query parameter,
   `POST /api/v1/training/start?expected_dataset_fingerprint=<64 hex digits>`: another manifest is
   refused with 409, a value that is not 64 lowercase hex digits with 422 before the service is
-  reached; without it nothing is checked, as before.
+  reached; without it nothing is checked, as before. **The training process checks it again on
+  its own manifest read** (`train_model.py --expect-dataset-sha256`, since the review of
+  8242b47), so a workspace republished after the runner's check is refused there too, before the
+  graph and the samples are read: the run fails with `train_model: refused: The dataset changed
+  since it was shown; select it again. …` in its output, exit 1, and no run directory.
 - A failed run's **error banner** spans the page. Under its headline ("Training failed: Process
   exited with code 1") is the last error line the run printed ("Last error printed:
   TrainingDeviceUnavailable: --device auto requires CUDA, …"), redacted for a read-only browser

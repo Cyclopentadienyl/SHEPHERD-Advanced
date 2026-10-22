@@ -308,7 +308,9 @@ def stop_training() -> Dict[str, Any]:
     """
     Stop the currently running training; a test run is never stopped by it.
 
-    Sends SIGINT for graceful shutdown, falls back to SIGTERM, then SIGKILL.
+    Sends SIGINT to the job's main process for graceful shutdown, falls back to
+    SIGTERM, then SIGKILL, to its whole process group; answers once no process
+    of the job is left.
     **A plain `def`**: the stop waits for the process to end (tens of seconds
     at worst), so FastAPI runs it in its threadpool instead of on the event
     loop, which the rest of the API and the mounted dashboard share.

@@ -110,6 +110,7 @@ def _run_launcher(monkeypatch, launcher_args, env=None, hand_over=True):
 
     monkeypatch.setattr(launcher, "run", lambda cmd, check=False: (
         record["run"].append(list(cmd)) or subprocess.CompletedProcess(cmd, 0)))
+    monkeypatch.setattr(launcher, "serve", lambda cmd: record["run"].append(list(cmd)) or 0)
     monkeypatch.setattr(launcher, "pip_install", lambda spec, name, **kwargs: (
         record["installs"].append(name) or False))
     # Every accelerator absent, so a requested one reaches the install decision.

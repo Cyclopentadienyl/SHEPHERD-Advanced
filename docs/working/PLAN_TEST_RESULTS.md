@@ -1551,8 +1551,8 @@ contract and BACKLOG stay the record, and no new planning document is added.
   allocation or automatic model unloading is added.
   *As implemented (M5-1, 2026-10-20):* `src/utils/gpu_lock.py`. The lock file is
   `SHEPHERD_GPU_LOCK_FILE`, or `.shepherd-gpu.lock` under `SHEPHERD_WORKSPACES_ROOT`; with
-  neither set the lock is not configured and a CLI says so in its log and runs; a setting that
-  is set but unusable refuses. `train_model.py` and `measure_scorer.py` take it right after
+  neither set the lock was not configured and a CLI said so in its log and ran (changed after
+  the review of `8242b47`, below); a setting that is set but unusable refuses. `train_model.py` and `measure_scorer.py` take it right after
   argument parsing, before the device or any input is read, and refuse naming the holder from
   its descriptive `<lock file>.json` (exit 1, "Nothing was written."); the runner checks it
   before a start and its child takes it itself. The descriptor is close-on-exec; tests cover a
@@ -1561,6 +1561,33 @@ contract and BACKLOG stay the record, and no new planning document is added.
   killed or exits without releasing leaves it with the child until it exits, and the message
   says the recorded holder exited) and two workspaces sharing one lock. Windows uses
   `msvcrt.locking`, untested.
+  *After the reviewer's review of `150105f..8242b47` (2026-10-22; implemented, its incremental
+  review next, the GB10 acceptance after):* **no managed job runs without the lock** (P2-4):
+  with neither setting set, the runner refuses every start and `train_model.py`,
+  `measure_scorer.py` and `setup_demo.py --train-model` (which trains through the same trainer
+  and now takes the lock) refuse before anything is read, each saying how to configure it; the
+  location's one rule is the server settings' (`server_settings.gpu_lock_location`), which
+  `gpu_lock.lock_location` applies, and the dashboard's chip says the lock is not configured and
+  jobs are refused. **A job's processes end with it** (P2-3): each job the runner starts leads
+  its own process group (POSIX `process_group=0`; Windows its own console group); a stop sends
+  SIGINT to the main process only, then SIGTERM and SIGKILL to the group (systemd's
+  `KillMode=mixed`), and once the main process has been waited for the runner ends what is
+  left of the group, reaping zombies it adopted and, on Linux, counting only members that are
+  not zombies (`/proc/<pid>/stat`), before it records how the job ended and frees the slot; a
+  group is recorded only for a process it started, with a pid above 1, that leads it. On Windows
+  a stop that cannot send CTRL_BREAK_EVENT (no console) goes on to TerminateProcess; DataLoader
+  workers are spawned there and do not inherit the lock's handle; a Job Object is not added
+  while the Windows backend is untested. A CLI killed by hand with `kill -9 <pid>` still leaves
+  its forked workers to end by themselves (a worker's PR_SET_PDEATHSIG, the critic's optional
+  measure, is not added). **Stopping the backend stops its jobs** (the owner's decision,
+  2026-10-22): the lifespan's shutdown in `src/api/main.py` stops the runner's active job
+  (`TrainingManager.end_active_job`, bounded by the stop's escalation), a hangup is routed to
+  uvicorn's orderly shutdown, and the launcher in its browser mode waits for the server through
+  a Ctrl-C; a forced quit (a second Ctrl-C), SIGKILL or the out-of-memory killer still leave
+  the job running, and `--reload` is gone from the printed commands and from
+  `python -m src.api.main`, since each reload's shutdown would stop a training. Tests:
+  `tests/unit/test_job_process_group.py`, `tests/unit/test_backend_shutdown.py`,
+  `tests/integration/test_backend_stops_its_job.py`, `tests/unit/test_gpu_lock.py`.
 - **Gradio 6.30.0 is M5's first commit** (the owner, 2026-10-20, with the reviewer's
   boundaries). The smallest dependency change: `gradio==6.30.0`, and in `uv.lock` only what it
   forces (gradio-client, starlette, huggingface-hub; brotli and hf-gradio new). The mount
@@ -1666,7 +1693,12 @@ contract and BACKLOG stay the record, and no new planning document is added.
     it was shown; select it again.") before a parent is read, a run named or anything written
     or started; the API route takes the same check as an optional query parameter (409 on a
     mismatch, 422 for a value that is not a full lowercase SHA-256), through the same service
-    call. The Data Paths section, its gated Save Path and the startup read of
+    call. *Since the review of `8242b47` (P2-2; implemented, its incremental review next):* the
+    training process checks it again on its own one manifest read (`train_model.py
+    --expect-dataset-sha256`, an argument, neither a configuration key nor a recorded setting,
+    compared inside `read_training_inputs` before the graph and the samples are read), so a
+    workspace republished after the runner's check is refused (`DatasetChanged`, exit 1, no
+    run directory) rather than trained on (`tests/unit/test_training_dataset_expected.py`). The Data Paths section, its gated Save Path and the startup read of
     `.shepherd_training_config.json` are gone; the gated save function stays unused (nothing
     else calls it) for the owner's question "Save as the default dataset". "Continue…" is a
     drawer over the parameters: the run bar's workspace's checkpoints from the server's list (D8,
@@ -1935,11 +1967,19 @@ contract and BACKLOG stay the record, and no new planning document is added.
   nothing kept (W10); a training job holding the lock while a test start, a test cancel and
   the CLI are refused, its stop ending it as stopped (W11). On the real workspace, before R8:
   the workspace as the server lists it, a test run through the runner kept and registered,
-  and a short training job started and stopped (RW1–RW3). Every M5 setting is the probe's own
+  and a training job started and stopped (RW1–RW3). Every M5 setting is the probe's own
   while M5's probes run, so they never use the deployment's lock, root or registry (W1 and RW1
-  state whether the deployment's lock was held meanwhile); the earlier measurement probes take
-  whatever lock the shell's settings name, as the CLI does. Not the layout or a browser
-  session, which the screenshots and the owner's use cover.
+  state whether the deployment's lock was held meanwhile). Not the layout or a browser
+  session, which the screenshots and the owner's use cover. *After the review of `8242b47`
+  (implemented, its incremental review next):* W11's and RW3's training job holds the GPU by
+  configuration (a million epochs, early stopping as long), and that it runs and is the lock's
+  recorded holder is checked before and after the measurement CLI is tried, so a job that
+  ended meanwhile fails the probe as one that could not hold the lock, never as a pass, a skip
+  or the lock failing (W11/RW3: on the reviewer's CPU the demo job stopped early within a
+  second and released the lock before the CLI ran); without `os.waitid` (Windows, macOS before
+  Python 3.13) they fail saying so. The earlier measurement probes take a lock of the probe's
+  own under its work directory, since a CLI now refuses without one, and so do not exclude a
+  deployment job running meanwhile.
 - **Two checkpoints:** the layout direction, confirmed once on a thin, operable prototype in the
   existing Gradio, showing representative wide and narrow layouts and the identity switch (a
   static image may help, but cannot stand in for zoom, scrolling and keyboard checks); then M5's

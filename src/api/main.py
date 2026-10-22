@@ -50,7 +50,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import signal
 import sys
+import threading
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -141,6 +143,20 @@ async def lifespan(app: FastAPI):
     through the same rule they applied (`server_settings.startup_bind`), and
     a refused one ends startup by raising, so uvicorn exits without serving.
     None passed in (a uvicorn started by hand) is not checked, as §3.1 says.
+
+    **Stopping the backend stops its jobs** (the owner's decision of
+    2026-10-22): each GPU job leads its own process group (review of 8242b47,
+    P2-3), so a Ctrl-C or a hangup of the terminal the backend runs in no
+    longer reaches it, and neither does a SIGTERM sent to the backend alone.
+    So shutdown stops the job the runner holds (`end_active_job`: SIGINT,
+    then SIGTERM, then SIGKILL to its group), and a hangup (SIGHUP, a closed
+    terminal), which uvicorn does not handle, is routed to the server's own
+    SIGTERM handler for as long as the application runs, so it shuts down
+    the same way (`_hangup_as_termination`). Not covered: a shutdown that
+    never reaches the lifespan's end (uvicorn's forced quit on a second
+    Ctrl-C, a SIGKILL or the out-of-memory killer); the job then keeps
+    running and keeps the GPU lock until it is stopped by its pid. Under
+    systemd the unit's stop signals every process of the service anyway.
     """
     _check_startup_bind()
 
@@ -192,11 +208,63 @@ async def lifespan(app: FastAPI):
         logger.error(f"Startup failed: {e}")
         app_state.is_ready = False
 
-    yield
+    hangup = _hangup_as_termination()
+    try:
+        yield
+    finally:
+        # Shutdown
+        logger.info("Shutting down SHEPHERD-Advanced API...")
+        app_state.is_ready = False
+        try:
+            await asyncio.to_thread(_stop_the_active_job)
+        finally:
+            if hangup is not None:
+                signal.signal(signal.SIGHUP, hangup)
 
-    # Shutdown
-    logger.info("Shutting down SHEPHERD-Advanced API...")
-    app_state.is_ready = False
+
+def _hangup_as_termination() -> Optional[Any]:
+    """Route SIGHUP to the handler the server set for SIGTERM (uvicorn's
+    orderly shutdown), so a backend whose terminal is closed shuts down as it
+    does on SIGTERM and stops its job; returns the handler replaced, which
+    shutdown puts back, or None when nothing was changed.
+
+    Only in the main thread (where a server sets its handlers; an in-process
+    test client runs the lifespan elsewhere), only where SIGHUP still has its
+    default action (one ignored under ``nohup``, or handled by someone else,
+    is left as it is), and only when SIGTERM has a handler to route it to."""
+    hangup = getattr(signal, "SIGHUP", None)
+    if hangup is None or threading.current_thread() is not threading.main_thread():
+        return None
+    if signal.getsignal(hangup) is not signal.SIG_DFL:
+        return None
+    termination = signal.getsignal(signal.SIGTERM)
+    if not callable(termination):
+        return None
+    signal.signal(hangup, termination)
+    return signal.SIG_DFL
+
+
+def _stop_the_active_job() -> None:
+    """At shutdown: the job runner's active job stopped, or one an operator is
+    already stopping waited for (`TrainingManager.end_active_job`), bounded by
+    the stop's escalation; said in the log either way."""
+    from src.api.services.training_manager import training_manager
+
+    active = training_manager.active_job()
+    if active is None:
+        return
+    logger.warning("The backend is stopping, so it stops the %s job %s it runs (pid %s): "
+                   "SIGINT, then SIGTERM, then SIGKILL to its process group.",
+                   active["job_type"], active["job_id"], active["pid"])
+    ended = training_manager.end_active_job()
+    if ended is None:
+        return
+    if ended.get("success"):
+        logger.info("The %s job %s ended as %s.", ended["job_type"], ended["job_id"],
+                    ended.get("status"))
+    else:
+        logger.warning("The %s job %s: %s", ended["job_type"], ended["job_id"],
+                       ended.get("error") or f"still {ended.get('status')}")
 
 
 def _check_startup_bind() -> None:
@@ -745,6 +813,10 @@ def main(host: Optional[str] = None, port: int = 8000):
     startup as ``SHEPHERD_BIND_HOST``, which checks it again (`lifespan`).
     Proxy headers are not trusted: the client address uvicorn reports is the
     socket's, though D8 never reads it anyway.
+
+    **No auto-reload**: uvicorn's reloader restarts the server by SIGTERM on
+    every saved source file, and shutdown stops the GPU job the server runs
+    (`lifespan`), so a code save would stop a training.
     """
     import uvicorn
 
@@ -760,7 +832,6 @@ def main(host: Optional[str] = None, port: int = 8000):
         "src.api.main:app",
         host=decision.host,
         port=port,
-        reload=True,
         log_level="info",
         access_log=False,
         proxy_headers=False,

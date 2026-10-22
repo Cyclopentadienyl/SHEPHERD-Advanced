@@ -109,3 +109,71 @@ def test_a_demo_trained_on_the_cpu_is_served_by_the_printed_environment(
     monkeypatch.delenv("SHEPHERD_DEVICE")
     with pytest.raises(ServingDeviceUnavailable):
         api.build_pipeline()
+
+
+# --------------------------------------------------------------------------- the GPU lock
+def test_the_printed_commands_do_not_reload(monkeypatch, capsys, tmp_path):
+    """uvicorn's reloader restarts the server on every saved file, and the
+    server's shutdown stops the GPU job it runs (the owner's decision of
+    2026-10-22), so neither printed command has --reload. The training hint
+    says the lock must be configured, since training refuses without it."""
+    checkpoint = tmp_path / "demo" / "runs" / "gat" / "demo" / "checkpoints" / "best.pt"
+    monkeypatch.setattr(setup_demo, "train_demo_model", lambda *a: checkpoint)
+    trained, _ = _printed(monkeypatch, capsys, tmp_path, "--train-model")
+    plain, output = _printed(monkeypatch, capsys, tmp_path / "plain")
+    for printed in (trained, plain):
+        assert "python -m uvicorn src.api.main:app --host 127.0.0.1 --port 8000\n" in printed
+        assert "--reload" not in printed
+    assert f"export SHEPHERD_WORKSPACES_ROOT={output.resolve().parent}" in plain
+    assert "§4.11" in plain
+
+
+def test_train_model_takes_the_gpu_lock_for_the_whole_training(monkeypatch, capsys, tmp_path):
+    """Review of 8242b47, P2-4: the demo trains through the real trainer on the
+    GPU, so it is a managed GPU job: the lock is held while it trains, and
+    released after."""
+    from src.utils.gpu_lock import LOCK_FILE_ENV, probe
+
+    lock = tmp_path / "gpu.lock"
+    monkeypatch.setenv(LOCK_FILE_ENV, str(lock))
+    seen = {}
+
+    def _trained(workspace, num_epochs, device):
+        seen["held_by"] = probe(lock)
+        return tmp_path / "demo" / "best.pt"
+
+    monkeypatch.setattr(setup_demo, "train_demo_model", _trained)
+    _printed(monkeypatch, capsys, tmp_path, "--train-model")
+    assert "a training job (setup_demo.py --train-model" in seen["held_by"]
+    assert probe(lock) is None
+
+
+@pytest.mark.parametrize("case", ["not configured", "busy"])
+def test_train_model_is_refused_before_anything_is_written(monkeypatch, tmp_path, caplog, case):
+    """Without a configured lock, or with the lock held by another job, the
+    demo is refused with exit 1 before the workspace is written or anything
+    is trained."""
+    import logging
+
+    from src.utils.gpu_lock import LOCK_FILE_ENV, WORKSPACES_ROOT_ENV, GpuLock
+
+    output = tmp_path / "demo"
+    monkeypatch.setattr(sys, "argv", ["setup_demo.py", "--output-dir", str(output),
+                                      "--train-model"])
+    monkeypatch.setattr(setup_demo, "train_demo_model",
+                        lambda *a: pytest.fail("trained without the lock"))
+    monkeypatch.setattr(setup_demo, "write_workspace",
+                        lambda *a, **k: pytest.fail("wrote without the lock"))
+    with caplog.at_level(logging.ERROR):
+        if case == "not configured":
+            monkeypatch.delenv(LOCK_FILE_ENV, raising=False)
+            monkeypatch.delenv(WORKSPACES_ROOT_ENV, raising=False)
+            assert setup_demo.main() == 1
+            assert "setup_demo: refused: neither SHEPHERD_GPU_LOCK_FILE nor" in caplog.text
+        else:
+            lock = tmp_path / "gpu.lock"
+            monkeypatch.setenv(LOCK_FILE_ENV, str(lock))
+            with GpuLock(lock, job_type="test", command="measure_scorer.py").acquire():
+                assert setup_demo.main() == 1
+            assert "is held by a test job (measure_scorer.py" in caplog.text
+    assert "Nothing was written." in caplog.text and not output.exists()

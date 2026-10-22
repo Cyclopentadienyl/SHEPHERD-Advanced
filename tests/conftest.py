@@ -14,18 +14,34 @@ from src.config.server_settings import (
 from src.utils.gpu_lock import LOCK_FILE_ENV, WORKSPACES_ROOT_ENV
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _suite_gpu_lock(tmp_path_factory):
+    """A GPU lock of the suite's own for fixtures wider than one test (a
+    module's fixture that runs a CLI once), set before any of them runs and
+    never the deployment's; each test then gets its own
+    (`_no_deployment_gpu_lock`)."""
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv(LOCK_FILE_ENV, str(tmp_path_factory.mktemp("suite-gpu-lock") / "gpu.lock"))
+        patch.delenv(WORKSPACES_ROOT_ENV, raising=False)
+        yield
+
+
 @pytest.fixture(autouse=True)
-def _no_deployment_gpu_lock(monkeypatch):
-    """Every test starts without the deployment's GPU lock settings.
+def _no_deployment_gpu_lock(monkeypatch, tmp_path_factory):
+    """Every test starts with a GPU lock of its own, never the deployment's.
 
     The deployment guide (§4.11) tells operators to load the service's
     environment in the shell where they run the CLIs; a test suite run from
     that shell would otherwise take the deployment's lock in every test that
     runs a CLI in process (failing while a real job holds it) and create the
-    lock file in the real workspace root. A test that needs a lock sets these
-    with `monkeypatch`, and its child processes inherit only what it set.
+    lock file in the real workspace root. Since the review of 8242b47 (P2-4)
+    a formal CLI and the job runner refuse to run without a configured lock,
+    so each test is given its own lock file (`SHEPHERD_GPU_LOCK_FILE`, in a
+    directory of its own) with `SHEPHERD_WORKSPACES_ROOT` unset. A test about
+    another lock, or none, sets or removes these with `monkeypatch`, and its
+    child processes inherit only what it set.
     """
-    monkeypatch.delenv(LOCK_FILE_ENV, raising=False)
+    monkeypatch.setenv(LOCK_FILE_ENV, str(tmp_path_factory.mktemp("gpu-lock") / "gpu.lock"))
     monkeypatch.delenv(WORKSPACES_ROOT_ENV, raising=False)
 
 

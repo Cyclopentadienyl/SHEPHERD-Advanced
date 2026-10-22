@@ -47,6 +47,26 @@ def run(cmd: List[str], check: bool = False) -> subprocess.CompletedProcess:
     log("$ " + " ".join(cmd))
     return subprocess.run(cmd, check=check)
 
+def serve(cmd: List[str]) -> int:
+    """Run the server beside this process (the browser opener's) until it exits;
+    its exit status.
+
+    **A Ctrl-C waits for the server, never kills it.** The server is in this
+    terminal's process group and gets the same SIGINT; its shutdown stops the
+    GPU job it runs, which leads a process group of its own and so no longer
+    gets the terminal's signal (`src/api/main.py`, review of 8242b47).
+    `subprocess.run` would kill the server 0.25 s after the first Ctrl-C,
+    before that shutdown ends, and leave the job running. A second Ctrl-C
+    makes uvicorn quit at once, without its shutdown.
+    """
+    log("$ " + " ".join(cmd))
+    process = subprocess.Popen(cmd)
+    while True:
+        try:
+            return process.wait()
+        except KeyboardInterrupt:
+            continue
+
 # No proxy, the environment's or the Windows system one: an operator's
 # http_proxy (the deployment guide sets one for downloads) would take the
 # loopback /health poll, and no_proxy=localhost does not cover 127.0.0.1.
@@ -591,8 +611,7 @@ def main() -> int:
         )
         opener.start()
 
-    res = run(cmd)
-    return res.returncode
+    return serve(cmd)
 
 if __name__ == "__main__":
     sys.exit(main())

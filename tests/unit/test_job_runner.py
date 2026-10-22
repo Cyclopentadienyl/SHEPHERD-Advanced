@@ -43,10 +43,29 @@ SHA_VERSION = "e" * 64
 
 @pytest.fixture(autouse=True)
 def _no_lock_settings(monkeypatch):
-    """Each test names the lock it uses; the developer's environment does not."""
-    monkeypatch.delenv(LOCK_FILE_ENV, raising=False)
+    """Each test uses the lock tests/conftest.py gives it, or names its own;
+    the developer's environment never decides."""
     monkeypatch.delenv(WORKSPACES_ROOT_ENV, raising=False)
     monkeypatch.delenv("SHEPHERD_DEVICE", raising=False)
+
+
+def _lock_under(monkeypatch, root: Path) -> None:
+    """The lock under the workspaces root `root`, the deployment's default:
+    the conftest's own file is unset, since an explicit file wins."""
+    monkeypatch.delenv(LOCK_FILE_ENV, raising=False)
+    monkeypatch.setenv(WORKSPACES_ROOT_ENV, str(root))
+
+
+def _end_real_job(manager: TrainingManager, job_type: str = "training") -> None:
+    """A test's own real child, stopped by its pid if it still runs (a test
+    that failed), so no process outlives the test."""
+    job = manager._last.get(job_type)
+    if job is None or job.process is None:
+        return
+    if job.process.poll() is None:
+        job.process.kill()
+        job.process.wait(timeout=10)
+    job.done.wait(30)
 
 
 class Popens:
@@ -237,7 +256,7 @@ def test_a_start_is_refused_while_another_process_holds_the_gpu_lock(tmp_path, p
                                                                      monkeypatch, inputs):
     root = tmp_path / "workspaces"
     root.mkdir(exist_ok=True)
-    monkeypatch.setenv(WORKSPACES_ROOT_ENV, str(root))
+    _lock_under(monkeypatch, root)
     calls = popen()
     manager = TrainingManager()
     with GpuLock(root / LOCK_FILE_NAME, job_type="training", command="train_model.py").acquire():
@@ -256,6 +275,29 @@ def test_an_unusable_lock_setting_refuses_every_start(tmp_path, popen, monkeypat
     result = TrainingManager().start_training({"data_dir": str(tmp_path / "ws")})
     assert result["success"] is False and "The GPU lock cannot be used" in result["error"]
     assert calls.calls == []
+
+
+def test_a_lock_not_configured_refuses_every_start_before_anything(tmp_path, popen,
+                                                                   monkeypatch, inputs):
+    """Review of 8242b47, P2-4: with neither lock setting set, the runner
+    refuses a start of either type, saying how to configure the lock; nothing
+    is started, named or written (it used to keep only its own one-job rule
+    while a CLI elsewhere ran unlocked)."""
+    monkeypatch.delenv(LOCK_FILE_ENV, raising=False)
+    monkeypatch.delenv(WORKSPACES_ROOT_ENV, raising=False)
+    calls = popen()
+    manager = TrainingManager()
+    for result in (manager.start_training({"data_dir": str(tmp_path / "ws"),
+                                           "run_dir": str(tmp_path / "run")}),
+                   manager.start_test(inputs)):
+        assert result["success"] is False
+        assert result["error"].startswith("The GPU lock cannot be used: neither "
+                                          "SHEPHERD_GPU_LOCK_FILE nor SHEPHERD_WORKSPACES_ROOT "
+                                          "is set")
+        assert "§4.11" in result["error"] and result["error"].endswith("Nothing was started.")
+    assert calls.calls == [] and manager.run_dir is None and not (tmp_path / "run").exists()
+    lock = manager.get_status()["gpu"]["lock"]
+    assert lock["unset"] is True and lock["configured"] is False and lock["problem"]
 
 
 # --------------------------------------------------------------------------- stop
@@ -778,7 +820,7 @@ def test_a_real_child_holds_the_lock_and_releases_it_when_stopped(
     the lock with it."""
     root = tmp_path / "workspaces"
     root.mkdir()
-    monkeypatch.setenv(WORKSPACES_ROOT_ENV, str(root))
+    _lock_under(monkeypatch, root)
     for name in ("STOP_GRACE_SECONDS", "TERMINATE_GRACE_SECONDS"):
         monkeypatch.setattr(tm, name, 1.0)
     script = tmp_path / "child.py"
@@ -790,24 +832,27 @@ def test_a_real_child_holds_the_lock_and_releases_it_when_stopped(
                           **kwargs)
 
     manager = TrainingManager()
-    with patch("subprocess.Popen", launch):
-        assert manager.start_training({"data_dir": str(root / "ws")})["success"]
-    wait_for(lambda: "HELD" in manager.get_log("training")["lines"], 30)
-    pid = manager.get_status()["pid"]
-    assert f"pid {pid}" in probe(root / LOCK_FILE_NAME)
+    try:
+        with patch("subprocess.Popen", launch):
+            assert manager.start_training({"data_dir": str(root / "ws")})["success"]
+        wait_for(lambda: "HELD" in manager.get_log("training")["lines"], 30)
+        pid = manager.get_status()["pid"]
+        assert f"pid {pid}" in probe(root / LOCK_FILE_NAME)
 
-    result = manager.stop_training()
-    assert result["status"] == "stopped" and manager.get_status()["exit_code"] == expected_exit
-    assert probe(root / LOCK_FILE_NAME) is None
-    with pytest.raises(ProcessLookupError):
-        os.kill(pid, 0)
+        result = manager.stop_training()
+        assert result["status"] == "stopped" and manager.get_status()["exit_code"] == expected_exit
+        assert probe(root / LOCK_FILE_NAME) is None
+        with pytest.raises(ProcessLookupError):
+            os.kill(pid, 0)
+    finally:
+        _end_real_job(manager)
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
 def test_a_child_killed_outside_the_runner_frees_the_slot_and_the_lock(tmp_path, monkeypatch):
     root = tmp_path / "workspaces"
     root.mkdir()
-    monkeypatch.setenv(WORKSPACES_ROOT_ENV, str(root))
+    _lock_under(monkeypatch, root)
     script = tmp_path / "child.py"
     script.write_text(CHILD)
     real_popen = tm.subprocess.Popen
@@ -817,12 +862,15 @@ def test_a_child_killed_outside_the_runner_frees_the_slot_and_the_lock(tmp_path,
                           **kwargs)
 
     manager = TrainingManager()
-    with patch("subprocess.Popen", launch):
-        manager.start_training({"data_dir": str(root / "ws")})
-    wait_for(lambda: "HELD" in manager.get_log("training")["lines"], 30)
-    os.kill(manager.get_status()["pid"], signal.SIGKILL)  # the OOM killer, say
-    ended(manager, "training")
-    status = manager.get_status()
-    assert status["status"] == "failed" and status["error_message"].startswith(
-        "Process ended by SIGKILL")
-    assert manager.active_job() is None and probe(root / LOCK_FILE_NAME) is None
+    try:
+        with patch("subprocess.Popen", launch):
+            manager.start_training({"data_dir": str(root / "ws")})
+        wait_for(lambda: "HELD" in manager.get_log("training")["lines"], 30)
+        os.kill(manager.get_status()["pid"], signal.SIGKILL)  # the OOM killer, say
+        ended(manager, "training")
+        status = manager.get_status()
+        assert status["status"] == "failed" and status["error_message"].startswith(
+            "Process ended by SIGKILL")
+        assert manager.active_job() is None and probe(root / LOCK_FILE_NAME) is None
+    finally:
+        _end_real_job(manager)

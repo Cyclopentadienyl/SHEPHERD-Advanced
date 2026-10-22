@@ -8,7 +8,9 @@ without exec shares it: a holder that ends normally releases it for that child
 too, and one that exits without releasing leaves it with the child until the
 child exits, the message then never naming the dead holder as the holder.
 The CLIs take it at the start of `main`, before anything is read, and refuse
-with "Nothing was written."
+with "Nothing was written."; with the lock not configured too (review of
+8242b47, P2-4), never running without it. Where it is, is the server settings'
+one rule (`server_settings.gpu_lock_location`).
 
 Module: tests/unit/test_gpu_lock.py
 """
@@ -33,6 +35,7 @@ from src.utils.gpu_lock import (
     GpuLock,
     GpuLockBusy,
     GpuLockMisconfigured,
+    GpuLockNotConfigured,
     holder_path,
     lock_location,
     lock_state,
@@ -73,12 +76,55 @@ def test_an_explicit_lock_file_wins_over_the_root(root, tmp_path, monkeypatch):
     assert lock_location().path == tmp_path / "gpu.lock"
 
 
-def test_neither_setting_means_not_configured_with_the_reason(monkeypatch):
+def test_neither_setting_is_not_configured_and_refused_with_guidance(monkeypatch):
+    """Review of 8242b47, P2-4: no location is a refusal, never a run without
+    the lock, and it says how to configure one, the same file as the service's."""
     monkeypatch.delenv(LOCK_FILE_ENV, raising=False)
     monkeypatch.delenv(WORKSPACES_ROOT_ENV, raising=False)
-    location = lock_location()
-    assert location.path is None
-    assert LOCK_FILE_ENV in location.source and WORKSPACES_ROOT_ENV in location.source
+    with pytest.raises(GpuLockNotConfigured) as refused:
+        lock_location()
+    said = str(refused.value)
+    assert said.startswith(f"neither {LOCK_FILE_ENV} nor {WORKSPACES_ROOT_ENV} is set, so the "
+                           "GPU lock is not configured")
+    assert "if the service names a lock file" in said and "§4.11" in said
+    assert "Only on a machine where no service runs" in said
+    assert isinstance(refused.value, GpuLockMisconfigured)
+    assert lock_state() == {"configured": False, "path": None, "source": None, "held_by": None,
+                            "problem": said, "unset": True}
+
+
+def test_the_location_is_the_server_settings_one_rule(monkeypatch, tmp_path):
+    """One reader of both variables: the root the server lists and the root
+    the lock is under are one reading, a value the list refuses is refused for
+    the lock too (no strip in one and not the other), and an explicit file is
+    resolved as the settings resolve a directory."""
+    from src.config import server_settings
+
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real)
+    monkeypatch.delenv(LOCK_FILE_ENV, raising=False)
+    monkeypatch.setenv(WORKSPACES_ROOT_ENV, str(link))
+    assert lock_location().path == server_settings.workspaces_root().value / LOCK_FILE_NAME
+    assert lock_location().path == real.resolve() / LOCK_FILE_NAME
+    monkeypatch.setenv(WORKSPACES_ROOT_ENV, " " + str(real))
+    assert server_settings.workspaces_root().value is None
+    with pytest.raises(GpuLockMisconfigured, match=f"{WORKSPACES_ROOT_ENV} is refused"):
+        lock_location()
+    monkeypatch.setenv(LOCK_FILE_ENV, " " + str(real / "gpu.lock"))
+    with pytest.raises(GpuLockMisconfigured, match="is not an absolute path"):
+        lock_location()
+    monkeypatch.setenv(LOCK_FILE_ENV, str(link / "gpu.lock"))
+    assert lock_location() == (real.resolve() / "gpu.lock", LOCK_FILE_ENV)
+
+
+def test_a_refused_explicit_file_is_never_replaced_by_the_root(monkeypatch, tmp_path):
+    monkeypatch.setenv(WORKSPACES_ROOT_ENV, str(tmp_path))
+    monkeypatch.setenv(LOCK_FILE_ENV, "relative.lock")
+    with pytest.raises(GpuLockMisconfigured, match=f"{LOCK_FILE_ENV} is refused"):
+        lock_location()
+    assert lock_state()["unset"] is False
 
 
 @pytest.mark.parametrize("setting, value, says", [
@@ -296,17 +342,60 @@ def test_probe_creates_nothing(root):
     assert list(root.iterdir()) == []
     assert lock_state() == {"configured": True, "path": str(root / LOCK_FILE_NAME),
                             "source": f"under {WORKSPACES_ROOT_ENV}", "held_by": None,
-                            "problem": None}
+                            "problem": None, "unset": False}
 
 
-def test_not_configured_runs_unlocked_and_says_so(monkeypatch, caplog):
+def test_not_configured_is_refused_never_run_unlocked(monkeypatch, tmp_path, caplog, capsys):
+    """Review of 8242b47, P2-4: `take_gpu_lock` never hands back a context
+    without the lock, and both CLIs refuse before anything is read or written,
+    with the guidance (they used to log a warning and run unlocked)."""
+    import scripts.measure_scorer as ms
+    import scripts.train_model as tm
+
     monkeypatch.delenv(LOCK_FILE_ENV, raising=False)
     monkeypatch.delenv(WORKSPACES_ROOT_ENV, raising=False)
-    with caplog.at_level(logging.WARNING):
-        with take_gpu_lock("training", "train_model.py"):
-            pass
-    assert "not configured" in caplog.text
-    assert "does not exclude other managed GPU jobs" in caplog.text
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(GpuLockNotConfigured, match="the GPU lock is not configured"):
+        take_gpu_lock("training", "train_model.py")
+    monkeypatch.setattr(sys, "argv", ["train_model.py", "--data-dir", str(tmp_path / "ws")])
+    monkeypatch.setattr(tm, "_train_main", lambda args: pytest.fail("ran without the lock"))
+    with caplog.at_level(logging.ERROR):
+        assert tm.main() == 1
+    assert "train_model: refused: neither SHEPHERD_GPU_LOCK_FILE nor" in caplog.text
+    assert "Nothing was written." in caplog.text
+    assert ms._run_as_program(_measure_argv(tmp_path)) == 1
+    err = capsys.readouterr().err
+    assert err.startswith("measure_scorer: refused: neither SHEPHERD_GPU_LOCK_FILE nor")
+    assert err.rstrip().endswith("Nothing was written.")
+    assert list(tmp_path.iterdir()) == [], "a refused CLI wrote something"
+
+
+@POSIX
+def test_a_shell_without_the_settings_is_refused_while_the_deployment_is_busy(root, tmp_path):
+    """The reviewer's counter-example (review of 8242b47, P2-4): the deployment's
+    lock is held, and train_model.py is run from a shell that names no lock. It
+    used to train a CPU epoch and write a checkpoint beside the busy job; it is
+    refused, exit 1, with nothing written. The same shell with the service's
+    root takes the same lock and is refused naming the holder."""
+    from tests.fixtures.trainable_workspace import write_trainable_workspace
+
+    workspace = write_trainable_workspace(root / "ws")
+    env = {k: v for k, v in os.environ.items() if k not in (LOCK_FILE_ENV, WORKSPACES_ROOT_ENV)}
+    argv = [sys.executable, str(REPO / "scripts" / "train_model.py"), "--data-dir",
+            str(workspace), "--device", "cpu", "--epochs", "1", "--hidden-dim", "16",
+            "--num-layers", "1", "--batch-size", "4"]
+    with GpuLock(root / LOCK_FILE_NAME, job_type="training", command="existing-job").acquire():
+        bare = subprocess.run([*argv, "--run-dir", str(tmp_path / "bare")], env=env, cwd=REPO,
+                              capture_output=True, text=True, timeout=300)
+        same = subprocess.run([*argv, "--run-dir", str(tmp_path / "same")], cwd=REPO,
+                              env={**env, WORKSPACES_ROOT_ENV: str(root)},
+                              capture_output=True, text=True, timeout=300)
+    assert bare.returncode == 1, bare.stderr[-2000:]
+    assert "train_model: refused: neither SHEPHERD_GPU_LOCK_FILE nor" in bare.stderr
+    assert "Nothing was written." in bare.stderr and not (tmp_path / "bare").exists()
+    assert same.returncode == 1, same.stderr[-2000:]
+    assert "is held by a training job (existing-job" in same.stderr
+    assert not (tmp_path / "same").exists()
 
 
 def test_windows_never_probes_a_pid(monkeypatch):
@@ -411,10 +500,14 @@ def test_two_workspaces_share_one_lock(root, tmp_path):
 
 
 # --------------------------------------------------------------------------- the suite
-def test_a_test_never_sees_the_deployments_lock_settings():
-    """What tests/conftest.py guarantees; the next test sets them in the
-    environment as an operator's shell that loaded the service's would."""
-    assert LOCK_FILE_ENV not in os.environ and WORKSPACES_ROOT_ENV not in os.environ
+def test_a_test_never_sees_the_deployments_lock_settings(tmp_path_factory):
+    """What tests/conftest.py guarantees: a lock file of the test's own, under
+    the suite's temporary directory, and no workspaces root; the next test sets
+    the deployment's in the environment as an operator's shell that loaded the
+    service's would."""
+    own = Path(os.environ[LOCK_FILE_ENV])
+    assert own.parent.parent == tmp_path_factory.getbasetemp()
+    assert WORKSPACES_ROOT_ENV not in os.environ
 
 
 def test_the_lock_settings_of_the_shell_never_reach_the_suite(tmp_path):

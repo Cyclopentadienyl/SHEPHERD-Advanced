@@ -28,15 +28,8 @@ pytest.importorskip("fastapi")
 
 import src.api.services.training_manager as tm  # noqa: E402
 from src.api.services.training_manager import TrainingManager  # noqa: E402
-from src.utils.gpu_lock import LOCK_FILE_ENV, WORKSPACES_ROOT_ENV  # noqa: E402
 from tests.fixtures.job_processes import FakeProcess  # noqa: E402
 from tests.fixtures.operator_access import OPERATOR_BASE_URL, operator_mode  # noqa: E402
-
-
-@pytest.fixture(autouse=True)
-def _no_lock_settings(monkeypatch):
-    monkeypatch.delenv(LOCK_FILE_ENV, raising=False)
-    monkeypatch.delenv(WORKSPACES_ROOT_ENV, raising=False)
 
 
 @pytest.fixture(scope="module")
@@ -169,7 +162,10 @@ def test_the_route_takes_the_same_check_through_the_one_start_path(workspace, mo
                          json={"data_dir": str(workspace)})
         assert ok.status_code == 200, ok.text
         written = Path(ok.json()["config_path"]).read_text()
-        assert "expected_dataset_fingerprint" not in written   # never reaches the process
+        # The process gets it as an argument it checks on its own manifest read
+        # (review of 8242b47, P2-2), never as a configuration key it records.
+        assert "expected_dataset_fingerprint" not in written
+        assert popen.call_args[0][0][-2:] == ["--expect-dataset-sha256", shown]
         fresh._last["training"].process.finish(0)
         fresh._last["training"].done.wait(5)
         _rewrite_manifest(workspace)

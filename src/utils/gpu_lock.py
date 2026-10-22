@@ -11,10 +11,13 @@ busy lock is refused, naming its holder; nothing is queued.
 **Where it is.** `SHEPHERD_GPU_LOCK_FILE`, an absolute path whose directory
 exists, when it is set; otherwise `.shepherd-gpu.lock` directly under
 `SHEPHERD_WORKSPACES_ROOT`, the one workspace root, so two workspaces share one
-lock. With neither set the lock is **not configured**: a CLI says so in its log
-and runs without it, and the runner keeps only its own one-job rule. A setting
-that is set but unusable (relative, or its directory missing) is refused, never
-replaced by a default.
+lock. The rule is the server settings' (`server_settings.gpu_lock_location`),
+the one reader of both variables. **With neither set the lock is not
+configured and every managed job is refused** (review of 8242b47, P2-4): a
+formal CLI exits before it reads anything and the runner refuses a start, each
+saying how to configure it; nothing runs without excluding the others. A
+setting that is set but unusable (relative, or its directory missing) is
+refused too, never replaced by the other one or by a default.
 
 **What the lock is.** An exclusive, non-blocking `fcntl.flock` on the lock file
 on POSIX; `msvcrt.locking` on the file's first byte on Windows (untested there,
@@ -41,7 +44,10 @@ itself; a description whose process has exited is never named as the holder.
   shares the open file: a holder that ends normally releases the lock for it
   too, but a holder that is killed or exits without releasing (`os._exit`)
   leaves the lock with that child until it exits; the message then says the
-  recorded holder has exited.
+  recorded holder has exited. A job the runner starts leads its own process
+  group, which a stop's SIGTERM and SIGKILL reach whole and which the runner
+  ends before it frees the slot (`training_manager`); a CLI killed by hand
+  with `kill -9 <pid>` leaves its forked workers to end by themselves.
 - **Local machine.** The lock file belongs on a local filesystem; the liveness
   hint in the message is only given for a holder on this host.
 
@@ -57,11 +63,12 @@ import socket
 import sys
 import time
 from collections.abc import Mapping
-from contextlib import AbstractContextManager, nullcontext
+from contextlib import AbstractContextManager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, NamedTuple
 
+from src.config import server_settings
 from src.utils.file_modes import publish_bytes
 
 if sys.platform == "win32":  # pragma: no cover - the backend is untested on Windows
@@ -76,11 +83,11 @@ else:
 logger = logging.getLogger(__name__)
 
 #: An explicit lock file (absolute; its directory must exist).
-LOCK_FILE_ENV = "SHEPHERD_GPU_LOCK_FILE"
+LOCK_FILE_ENV = server_settings.ENV_GPU_LOCK_FILE
 #: The one workspace root; the lock lives directly under it when no explicit
 #: file is named.
-WORKSPACES_ROOT_ENV = "SHEPHERD_WORKSPACES_ROOT"
-LOCK_FILE_NAME = ".shepherd-gpu.lock"
+WORKSPACES_ROOT_ENV = server_settings.ENV_WORKSPACES_ROOT
+LOCK_FILE_NAME = server_settings.GPU_LOCK_FILE_NAME
 HOLDER_SUFFIX = ".json"
 
 #: How long a taker keeps trying before it refuses: long enough to step over
@@ -107,74 +114,44 @@ class GpuLockBusy(OSError):
 
 
 class GpuLockMisconfigured(ValueError):
-    """A lock setting is set but cannot name a usable lock file. Refused rather
-    than replaced by a default, so two processes never lock different files."""
+    """No usable lock file: a setting is set but cannot name one, or neither is
+    set (`GpuLockNotConfigured`). Refused rather than replaced by a default or
+    run unlocked, so two processes never lock different files that way and no
+    managed job runs without excluding the others."""
+
+
+class GpuLockNotConfigured(GpuLockMisconfigured):
+    """Neither lock setting is set (review of 8242b47, P2-4): every managed job
+    is refused until one is."""
 
 
 class LockLocation(NamedTuple):
-    """Where the deployment's lock file is, and which setting named it; `path`
-    is None when the lock is not configured, `source` then saying why."""
+    """Where the deployment's lock file is, and which setting named it."""
 
-    path: Path | None
+    path: Path
     source: str
 
 
 # ---------------------------------------------------------------------------
 # Where the lock is
 # ---------------------------------------------------------------------------
-def _is_dir(path: Path, setting: str, value: str) -> bool:
-    """`path.is_dir()`, or a refusal when that cannot be told: on Python 3.12 it
-    raises for a path under a directory this account may not search (EACCES)
-    instead of answering."""
-    try:
-        return path.is_dir()
-    except OSError as exc:
-        raise GpuLockMisconfigured(
-            f"{setting}={value!r}: {path} cannot be checked ({exc}), so the GPU lock "
-            "cannot be kept there. Every process that takes it must be able to reach "
-            "its directory.") from exc
-
-
 def lock_location(environ: Mapping[str, str] | None = None) -> LockLocation:
-    """The lock file the settings name, read from the environment at each call.
+    """The lock file the settings name, read from the environment at each call
+    through the server settings' one rule (`server_settings.gpu_lock_location`).
 
     Raises:
+        GpuLockNotConfigured: neither setting is set.
         GpuLockMisconfigured: a setting is set but is not an absolute path,
             names a directory that does not exist, or names a path this account
             cannot check.
     """
-    # Integration note (M5-1): `SHEPHERD_WORKSPACES_ROOT` is WP1's setting; once
-    # its settings module exists, these two reads go through it (one reader).
-    env = os.environ if environ is None else environ
-    explicit = (env.get(LOCK_FILE_ENV) or "").strip()
-    if explicit:
-        path = Path(explicit)
-        if not path.is_absolute():
-            raise GpuLockMisconfigured(
-                f"{LOCK_FILE_ENV}={explicit!r} is not an absolute path. Every process that "
-                "takes the GPU lock must name the same file, whatever its working directory.")
-        if not _is_dir(path.parent, LOCK_FILE_ENV, explicit):
-            raise GpuLockMisconfigured(
-                f"{LOCK_FILE_ENV}={explicit!r}: the directory {path.parent} does not exist. "
-                "Nothing creates it; create it, or point the setting elsewhere.")
-        if _is_dir(path, LOCK_FILE_ENV, explicit):
-            raise GpuLockMisconfigured(
-                f"{LOCK_FILE_ENV}={explicit!r} is a directory; name a file inside it.")
-        return LockLocation(path, LOCK_FILE_ENV)
-    root = (env.get(WORKSPACES_ROOT_ENV) or "").strip()
-    if root:
-        root_path = Path(root)
-        if not root_path.is_absolute():
-            raise GpuLockMisconfigured(
-                f"{WORKSPACES_ROOT_ENV}={root!r} is not an absolute path, so the GPU lock "
-                "under it would depend on each process's working directory.")
-        if not _is_dir(root_path, WORKSPACES_ROOT_ENV, root):
-            raise GpuLockMisconfigured(
-                f"{WORKSPACES_ROOT_ENV}={root!r} does not exist or is not a directory, so "
-                "the GPU lock cannot be kept under it.")
-        return LockLocation(root_path / LOCK_FILE_NAME, f"under {WORKSPACES_ROOT_ENV}")
-    return LockLocation(
-        None, f"not configured (neither {LOCK_FILE_ENV} nor {WORKSPACES_ROOT_ENV} is set)")
+    setting = server_settings.gpu_lock_location(environ)
+    if setting.value is None:
+        if setting.problem == server_settings.GPU_LOCK_NOT_CONFIGURED:
+            raise GpuLockNotConfigured(setting.problem)
+        raise GpuLockMisconfigured(setting.problem)
+    source = LOCK_FILE_ENV if setting.variable == LOCK_FILE_ENV else f"under {WORKSPACES_ROOT_ENV}"
+    return LockLocation(setting.value, source)
 
 
 def holder_path(lock_path: Path) -> Path:
@@ -430,20 +407,17 @@ def take_gpu_lock(job_type: str, command: str, *, log: logging.Logger | None = N
                   environ: Mapping[str, str] | None = None) -> AbstractContextManager:
     """The lock for a CLI's run, taken now: a context manager that releases it.
 
-    With the lock not configured, a no-op context manager, and the log says that
-    this run does not exclude other managed GPU jobs.
+    **Never a run without it** (review of 8242b47, P2-4): with the lock not
+    configured, or a setting unusable, this raises before anything is read.
 
     Raises:
         GpuLockBusy: another process holds it.
+        GpuLockNotConfigured: neither lock setting is set.
         GpuLockMisconfigured: a lock setting is set but unusable.
         OSError: the lock file cannot be opened or locked.
     """
     log = log or logger
     location = lock_location(environ)
-    if location.path is None:
-        log.warning("GPU lock %s, so this run does not exclude other managed GPU jobs.",
-                    location.source)
-        return nullcontext()
     lock = GpuLock(location.path, job_type=job_type, command=command).acquire()
     log.info("GPU lock %s held (%s) until this run ends.", location.path, location.source)
     return lock
@@ -451,21 +425,21 @@ def take_gpu_lock(job_type: str, command: str, *, log: logging.Logger | None = N
 
 def lock_state(environ: Mapping[str, str] | None = None) -> dict[str, Any]:
     """The lock as a status shows it: `configured`, `path`, `source` (the
-    setting that names it, or why there is none), who holds it at this instant
-    (`held_by`, None when free), and `problem` when it cannot be used or
-    checked, in which case a job is refused rather than started unlocked."""
+    setting that names it), who holds it at this instant (`held_by`, None when
+    free), and `problem` when it is not configured or cannot be used or
+    checked, in which case every job is refused rather than started unlocked;
+    `unset` says the problem is that neither setting is set."""
     state: dict[str, Any] = {"configured": False, "path": None, "source": None,
-                             "held_by": None, "problem": None}
+                             "held_by": None, "problem": None, "unset": False}
     try:
         location = lock_location(environ)
+    except GpuLockNotConfigured as exc:
+        return {**state, "problem": str(exc), "unset": True}
     except GpuLockMisconfigured as exc:
         return {**state, "problem": str(exc)}
     except OSError as exc:  # a check `lock_location` does not wrap: still a refusal
         return {**state, "problem": f"the GPU lock's location cannot be checked ({exc})"}
-    state.update(source=location.source)
-    if location.path is None:
-        return state
-    state.update(configured=True, path=str(location.path))
+    state.update(source=location.source, configured=True, path=str(location.path))
     try:
         state["held_by"] = probe(location.path)
     except OSError as exc:
@@ -477,6 +451,7 @@ __all__ = [
     "GpuLock",
     "GpuLockBusy",
     "GpuLockMisconfigured",
+    "GpuLockNotConfigured",
     "HOLDER_SUFFIX",
     "LOCK_FILE_ENV",
     "LOCK_FILE_NAME",

@@ -35,7 +35,16 @@ Output files:
 
 The command to start the API is printed on completion, with the checkpoint the
 run actually selected and the device it was trained on: serving refuses `auto`
-without CUDA (contract M3c), so the command names the device.
+without CUDA (contract M3c), so the command names the device. It has no
+`--reload`: uvicorn's reloader restarts the server on every saved source file,
+and the server's shutdown stops the GPU job it runs.
+
+**`--train-model` takes the deployment's GPU lock** (M5; review of 8242b47,
+P2-4), as `scripts/train_model.py` does: the demo trains through the real
+trainer on the GPU, so it is a managed GPU job. The lock is taken before
+anything is written and held until training ends; a busy lock, or one that is
+not configured (neither SHEPHERD_GPU_LOCK_FILE nor SHEPHERD_WORKSPACES_ROOT
+set), is refused with exit 1 and nothing written.
 """
 from __future__ import annotations
 
@@ -285,7 +294,9 @@ def train_demo_model(workspace: Path, num_epochs: int, device: str = "auto") -> 
         raise SystemExit(
             "Demo training produced no metrics; see the log above. The workspace "
             "itself was written and is valid — re-run training with "
-            f"scripts/train_model.py --data-dir {workspace}"
+            f"scripts/train_model.py --data-dir {workspace}, in a shell where the GPU lock "
+            "is configured (SHEPHERD_WORKSPACES_ROOT or SHEPHERD_GPU_LOCK_FILE, deployment "
+            "guide §4.11)"
         )
 
     ckpt_dir = run_checkpoint_dir(run_dir)
@@ -344,6 +355,26 @@ def main():
 
     output_dir = Path(args.output_dir)
 
+    # **A managed GPU job takes the deployment's GPU lock** before anything is
+    # written, and keeps it until training ends (src/utils/gpu_lock.py).
+    gpu_lock = None
+    if args.train_model:
+        from src.utils.gpu_lock import GpuLockMisconfigured, take_gpu_lock
+
+        try:
+            gpu_lock = take_gpu_lock("training", "setup_demo.py --train-model", log=logger)
+        except (OSError, GpuLockMisconfigured) as exc:  # GpuLockBusy is an OSError
+            logger.error(f"setup_demo: refused: {exc} Nothing was written.")
+            return 1
+    try:
+        return _setup(args, output_dir)
+    finally:
+        if gpu_lock is not None:
+            gpu_lock.release()
+
+
+def _setup(args: argparse.Namespace, output_dir: Path) -> int:
+    """`main`'s work, under the GPU lock when it trains."""
     logger.info("Building demo knowledge graph...")
     kg = build_demo_kg()
 
@@ -388,22 +419,26 @@ Start the API with GNN scoring (full mode):
   SHEPHERD_CHECKPOINT_PATH={checkpoint_path} \\
   SHEPHERD_DATA_DIR={output_dir} \\
   SHEPHERD_DEVICE={serving_device(args.device)} \\
-  python -m uvicorn src.api.main:app --host 127.0.0.1 --port 8000 --reload
+  python -m uvicorn src.api.main:app --host 127.0.0.1 --port 8000
 """)
     else:
         print(f"""
 Start the API with path-reasoning only (fallback mode):
 
   SHEPHERD_KG_PATH={kg_path} \\
-  python -m uvicorn src.api.main:app --host 127.0.0.1 --port 8000 --reload
+  python -m uvicorn src.api.main:app --host 127.0.0.1 --port 8000
 
-To enable GNN scoring, train on this workspace:
+To enable GNN scoring, train on this workspace, in a shell where the GPU lock
+is configured (training refuses without it; deployment guide §4.11), for
+example with the workspaces root the service is given:
+  export SHEPHERD_WORKSPACES_ROOT={output_dir.resolve().parent}
   python scripts/setup_demo.py --train-model
   # or, equivalently, the production entry point:
   python scripts/train_model.py --data-dir {output_dir} --epochs 20
   # on a host without CUDA, add --device cpu to either: auto refuses there
 """)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

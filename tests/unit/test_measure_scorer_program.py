@@ -700,6 +700,7 @@ def test_run_as_a_program_a_cancel_prints_no_traceback_and_ends_by_sigint(tmp_pa
     script.write_text(_CANCELLED_CHILD)
     env = {k: v for k, v in os.environ.items()
            if k not in (LOCK_FILE_ENV, WORKSPACES_ROOT_ENV, "PYTHONUNBUFFERED")}
+    env[LOCK_FILE_ENV] = str(tmp_path / "gpu.lock")   # its own: none refuses (P2-4)
     child = subprocess.Popen(
         [sys.executable, str(script), str(REPO_ROOT),
          *_generated(tmp_path / "ws", tmp_path / "c.pt", tmp_path / "out" / "m.json")],

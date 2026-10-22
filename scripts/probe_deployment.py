@@ -160,26 +160,40 @@ on the console, never hidden, and said again beside the acceptance's verdict.
     stopped (W11).
     Phase R, after RT3 and before R8, which therefore covers them: the real
     workspace as the server lists it (RW1); a test run through the runner on
-    it, on the device, kept and registered (RW2); a short training job on it
+    it, on the device, kept and registered (RW2); a training job on it
     started and stopped, other jobs refused while it runs (RW3).
+    **W11's and RW3's training job holds the GPU by configuration**
+    (`_HOLD_EPOCHS` epochs, early stopping as long), so it ends only by the
+    probe's stop; that it runs and is the lock's recorded holder is checked
+    before and after the measurement CLI is tried, and a job that ended
+    meanwhile fails the probe as one that could not hold the lock, never as a
+    pass or a skip (review of 8242b47, W11/RW3). Telling whether it still
+    runs needs `os.waitid` (not on Windows, nor on macOS before Python 3.13),
+    without which W11 and RW3 fail saying so.
     Every M5 setting is the probe's own while M5's probes run
     (`_M5_SETTINGS`), so they never use the deployment's lock, root or
     registry; W1 and RW1 state whether the lock the operator's settings name
-    was held meanwhile. The earlier measurement probes (M3, M7,
-    M11.measurement, T2, T4, R5, RT2) run measure_scorer in this process and
-    take whatever GPU lock the shell's settings name, as the CLI does. Run the
+    was held meanwhile. **The earlier measurement probes** (M3, M7,
+    M11.measurement, T2, T4, R5, RT2) run measure_scorer in this process, which
+    refuses without a configured GPU lock (P2-4), so phases M and R name a lock
+    of the probe's own, `<work>/probe-gpu.lock` (`_probes_own_gpu_lock`); they
+    therefore do not exclude a deployment job that runs meanwhile. Run the
     acceptance while no managed GPU job runs. The job runner's own temporary
     files (a training job's settings file, a test run's job directory) are made
     in the system's temporary directory and removed when the job ends.
     Stop a run with Ctrl-C or SIGTERM (``kill <pid>``): the services and the
     jobs it started are stopped on the way out. On Linux its services also end
-    with it after a SIGKILL; a runner job it started then keeps running until
-    stopped by its pid, which the GPU lock's holder record names.
+    with it after a SIGKILL; **a runner job it started then keeps running**,
+    and W11's or RW3's training job would never end by itself: stop it by its
+    pid, which the GPU lock's holder record (``<lock file>.json``) names, with
+    ``kill -INT <pid>``, or end its whole process group with
+    ``kill -TERM -- -<pid>`` (the job leads its own group).
 """
 from __future__ import annotations
 
 import argparse
 import contextlib
+import functools
 import json
 import logging
 import os
@@ -2850,6 +2864,21 @@ _SERVICE_START_SECONDS = 300.0
 _LOCK_TAKEN_SECONDS = 300.0
 _FIRST_EPOCH_SECONDS = 1800.0
 _TEST_RUN_SECONDS = 3600.0
+#: The epochs, and the early-stopping patience, of the training job W11 and RW3
+#: hold the GPU with: far more than it can complete while the probe watches, so
+#: it ends only by the probe's stop (or a failure, which the checks name), never
+#: by itself during the check. With the trainer's default patience the demo job
+#: stopped early at about epoch 10, within a second on a fast CPU, and released
+#: the lock before the measurement CLI was tried (review of 8242b47, W11/RW3).
+#: Nothing in the trainer grows with the epoch count but its schedule's length.
+_HOLD_EPOCHS = 1_000_000
+#: The probe's own GPU lock file, under the work directory, for the phases that
+#: run the formal entry points in this process (`_probes_own_gpu_lock`).
+PROBE_GPU_LOCK = "probe-gpu.lock"
+#: The GPU lock settings of the operator's environment while the probe's own
+#: lock is named in it (`_probes_own_gpu_lock`), for what W1 and RW1 say of the
+#: deployment's lock (`_deployment_gpu_lock`); None otherwise.
+_OPERATOR_LOCK_SETTINGS: Optional[Dict[str, str]] = None
 #: A process that takes the GPU lock and keeps it until it is killed: W7's
 #: holder, through the lock's own entry point (`take_gpu_lock`). It also ends
 #: when its standard input closes, so a probe that dies cannot leave it behind.
@@ -2897,23 +2926,55 @@ def _registry_setting(registry: Path):
         yield
 
 
+@contextlib.contextmanager
+def _probes_own_gpu_lock(work: Path):
+    """`<work>/probe-gpu.lock` as the GPU lock in effect while this is open,
+    then the operator's settings put back (review of 8242b47, P2-4).
+
+    The formal entry points this probe runs in its own process (measure_scorer
+    for M3, M7, M11.measurement, T2, T4, R5 and RT2) refuse without a
+    configured lock, so the probe names one of its own and depends on nothing
+    in the operator's shell; the deployment's lock is never taken, so those
+    probes do not exclude a deployment job running meanwhile. M5's probes name
+    theirs (`_M5_SETTINGS`). The operator's lock settings are kept for
+    `_deployment_gpu_lock`."""
+    global _OPERATOR_LOCK_SETTINGS
+    from src.utils.gpu_lock import LOCK_FILE_ENV, WORKSPACES_ROOT_ENV
+
+    saved = {name: os.environ.get(name) for name in (LOCK_FILE_ENV, WORKSPACES_ROOT_ENV)}
+    _OPERATOR_LOCK_SETTINGS = {name: value for name, value in saved.items()
+                               if value is not None}
+    os.environ[LOCK_FILE_ENV] = str(work / PROBE_GPU_LOCK)
+    try:
+        yield
+    finally:
+        _OPERATOR_LOCK_SETTINGS = None
+        for name, value in saved.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
 def _deployment_gpu_lock() -> Dict[str, bool]:
-    """The GPU lock the operator's own settings name (this process's
-    environment, read before M5's settings are applied): whether one is
-    configured, and whether a job holds it now. M5's probes run on their own
-    lock, so a managed job holding the deployment's is not refused by them;
-    this states it, in the report as booleans and on the console naming the
-    holder (its description names a host, which the report never carries)."""
+    """The GPU lock the operator's own settings name (kept by
+    `_probes_own_gpu_lock`, or this process's environment when no probe lock
+    is named): whether one is configured, whether a job holds it now, and
+    whether its settings are set but cannot be used (`unreadable`; neither
+    set is not configured, not unreadable). M5's probes run on their own lock,
+    so a managed job holding the deployment's is not refused by them; this
+    states it, in the report as booleans and on the console naming the holder
+    (its description names a host, which the report never carries)."""
     from src.utils.gpu_lock import lock_state
 
-    state = lock_state()
+    state = lock_state(_OPERATOR_LOCK_SETTINGS)
     held_by = state.get("held_by")
     if held_by:
         print(f"   the deployment's GPU lock is held by {held_by} while M5's probes run on "
               "their own lock: run the acceptance while no managed GPU job runs",
               file=sys.stderr)
     return {"configured": bool(state.get("configured")), "held": bool(held_by),
-            "unreadable": bool(state.get("problem"))}
+            "unreadable": bool(state.get("problem")) and not state.get("unset")}
 
 
 def _wait_for(condition: Callable[[], Any], timeout: float, interval: float = 0.2) -> Any:
@@ -2929,6 +2990,43 @@ def _wait_for(condition: Callable[[], Any], timeout: float, interval: float = 0.
 def _names_pid(text: str, pid: int) -> bool:
     """Whether a holder's description (`describe_holder`) names process `pid`."""
     return re.search(rf"\bpid {pid}\b", text) is not None
+
+
+#: Why W11 and RW3 cannot run where `os.waitid` is missing.
+_NO_WAITID = (
+    "this Python has no os.waitid (Windows, or macOS before Python 3.13), so whether the "
+    "training job's process still runs cannot be told without waiting for it, and the "
+    "check that it held the GPU lock throughout cannot be made")
+
+
+def _job_runs(pid: int) -> bool:
+    """Whether the runner's job process `pid`, a child of this process (the
+    runner runs in it), has not ended. `waitid` with WNOWAIT looks without
+    waiting for it, so the runner's monitor still does; an ended job the
+    monitor has not waited for yet is a zombie, which `kill(pid, 0)` and the
+    holder description's liveness hint would still count as running."""
+    waitid = getattr(os, "waitid", None)
+    if waitid is None:
+        raise AssertionError(_NO_WAITID)
+    try:
+        return waitid(os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is None
+    except ChildProcessError:  # waited for already: it has ended
+        return False
+
+
+def _holding_job(manager: Any, pid: int) -> str:
+    """'' while the training job's process `pid` runs and the GPU lock's
+    holder record names it; otherwise what is not so, in words that carry no
+    path or host (the report's)."""
+    from src.utils.gpu_lock import lock_state
+
+    if not _job_runs(pid):
+        return ("its process had ended (the runner says "
+                f"{manager.get_job_status_word('training')})")
+    held_by = lock_state().get("held_by") or ""
+    if not ("a training job" in held_by and _names_pid(held_by, pid)):
+        return "the GPU lock's holder record did not name its process"
+    return ""
 
 
 #: The free-text fields of a list item, which may name a server path for the
@@ -3583,7 +3681,20 @@ def _exclusion_while_training(manager: Any, inputs: Any, pid: int, cli_argv: Lis
     assert not cancelled.get("success") and "No test run is running" in cancelled["error"] \
         and "does not reach" in cancelled["error"], "a test cancel was not refused"
     assert manager.get_job_status_word("training") == "running", "the cancel reached training"
+    # **The job holds the lock for the whole of the CLI's attempt**, checked
+    # before and after it (review of 8242b47, W11/RW3): it holds the lock from
+    # its start to its end, so running and named as the holder both times
+    # means it held it throughout. A job that ended meanwhile cannot by itself
+    # (`_HOLD_EPOCHS`), and is said as a job that could not hold the lock,
+    # never read as the lock failing, and never a pass or a skip.
+    before = _holding_job(manager, pid)
+    assert not before, (f"the training job could not hold the GPU lock for the check: "
+                        f"before the measurement CLI was tried, {before}")
     code, said = _cli_measure(cli_argv)
+    after = _holding_job(manager, pid)
+    assert not after, (f"the training job could not hold the GPU lock for the check: while "
+                       f"the measurement CLI was tried (exit {code}), {after}, so the "
+                       "exclusion was not exercised")
     assert code == 1 and "a training job" in said and _names_pid(said, pid) \
         and "Nothing was written." in said, (
             f"the measurement CLI was not refused by the lock naming the training job "
@@ -4255,7 +4366,8 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
         inputs = _listed_test_inputs(M4_DEMO_LABEL, M5_WORKSPACE, M5_LISTED_RUN, M5_CHECKPOINT)
         manager = TrainingManager()
         config = {**_DEMO_TRAINING, "data_dir": str(state["workspace"]),
-                  "run_dir": str(m5 / "jobs" / "stopped-training"), "num_epochs": 1000,
+                  "run_dir": str(m5 / "jobs" / "stopped-training"),
+                  "num_epochs": _HOLD_EPOCHS, "early_stopping_patience": _HOLD_EPOCHS,
                   "device": device}
         with _job_ended_on_exit(manager, "training"):
             started, held = _start_training_job(manager, config, state["fingerprint"],
@@ -4437,7 +4549,10 @@ def _m5_real(report: Report, runs: Path, real: Path, workspaces_root: Path, devi
         # would make this a continuation (contract M3a-3).
         for continuation in ("resume_from", "extend_epochs", "pause_after_epoch"):
             settings_now.pop(continuation, None)
+        # **Held by configuration** (`_HOLD_EPOCHS`): the real settings' epochs
+        # and patience would let it end by itself during the check.
         config = {**settings_now, "data_dir": str(real), "run_dir": str(m5 / "stopped-training"),
+                  "num_epochs": _HOLD_EPOCHS, "early_stopping_patience": _HOLD_EPOCHS,
                   "device": device}
         with _job_ended_on_exit(manager, "training"):
             started, held = _start_training_job(manager, config,
@@ -4447,7 +4562,7 @@ def _m5_real(report: Report, runs: Path, real: Path, workspaces_root: Path, devi
                 manager, inputs, started["pid"],
                 build_test_argv(inputs, deployment_device(), outcome)[2:], outcome)
             stopped = _stop_training_job(manager, lock_path)
-        return "a short training job on the real workspace held the GPU and was stopped", {
+        return "a training job on the real workspace held the GPU and was stopped", {
             **held, "num_workers": workers, "while_it_ran": refused, "stop": stopped,
         }
 
@@ -4455,16 +4570,29 @@ def _m5_real(report: Report, runs: Path, real: Path, workspaces_root: Path, devi
     with _deployment_settings(settings):
         report.run("RW2", "real", "M5: a test run through the job runner on the real workspace "
                    "is kept and registered", _test_job)
-        report.run("RW3", "real", "M5: a short training job on the real workspace holds the GPU "
+        report.run("RW3", "real", "M5: a training job on the real workspace holds the GPU "
                    "lock and is stopped as stopped, other jobs refused", _training_job)
 
 
+def _under_the_probes_own_gpu_lock(phase: Callable[..., None]) -> Callable[..., None]:
+    """`phase(report, work, ...)` run with `<work>/probe-gpu.lock` as the GPU lock
+    in effect (`_probes_own_gpu_lock`), the operator's settings put back after."""
+    @functools.wraps(phase)
+    def run(report: Report, work: Path, *args: Any, **kwargs: Any) -> None:
+        with _probes_own_gpu_lock(work):
+            phase(report, work, *args, **kwargs)
+
+    return run
+
+
+@_under_the_probes_own_gpu_lock
 def phase_m2_demo(
     report: Report, work: Path, sound: Path, checkpoint: Path, device: str
 ) -> None:
     """Contract M2's acceptance on the demo workspace: the successes first, then
     every refusal, each from the production entry point that makes it; then
-    contract M4's flow on the same workspace (T1-T6)."""
+    contract M4's flow on the same workspace (T1-T6), then M5's (W1-W11). The
+    formal entry points take the probe's own GPU lock (`_probes_own_gpu_lock`)."""
     print("\nM. Contract M2 on the demo workspace, then M4's flow")
     import src.api.main as api
     from src.inference.pipeline import PipelineBuildError
@@ -5087,13 +5215,16 @@ def _training_settings(config_path: Path) -> Tuple[Dict[str, Any], str]:
     return loaded, read.identity.sha256
 
 
+@_under_the_probes_own_gpu_lock
 def phase_m2_real(
     report: Report, work: Path, real: Path, config_path: Path, reference: Path,
     workspaces_root: Path, device: str,
 ) -> None:
     """Contract M2's acceptance on real data: the full success path, from the
     production entry points, on a workspace that is read and never written;
-    contract M4's flow on it (RT1-RT3) before R8 checks it unchanged."""
+    contract M4's flow on it (RT1-RT3) and M5's (RW1-RW3) before R8 checks it
+    unchanged. The formal entry points take the probe's own GPU lock
+    (`_probes_own_gpu_lock`), under the work directory."""
     print("\nR. Contract M2 on real data, with M4's flow")
     from src.utils.fingerprint import file_sha256
 

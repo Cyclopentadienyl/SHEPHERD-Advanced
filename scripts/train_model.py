@@ -23,7 +23,14 @@ Usage:
 
     One managed GPU job at a time (M5): `main` takes the deployment's GPU lock
     (src/utils/gpu_lock.py) before anything is read; a busy lock is refused,
-    naming its holder, with exit 1 and nothing written.
+    naming its holder, and so is a lock that is not configured (neither
+    SHEPHERD_GPU_LOCK_FILE nor SHEPHERD_WORKSPACES_ROOT set), each with exit 1
+    and nothing written.
+
+    A caller that chose the dataset beforehand passes the fingerprint it showed
+    (`--expect-dataset-sha256`, M5's job runner does): a workspace whose
+    split_manifest.json, as this run reads it, has other bytes is refused with
+    exit 1 and nothing written, before the graph and the samples are read.
 
 Dependencies:
     - argparse: CLI argument parsing
@@ -237,6 +244,26 @@ class TrainConfig:
 _DEVICE_RE = re.compile(r"^(auto|cpu|mps|cuda(:\d+)?)$")
 
 
+_SHA256_RE = re.compile(r"[0-9a-f]{64}")
+
+
+def _sha256_arg(value: str) -> str:
+    """argparse type for --expect-dataset-sha256: 64 lowercase hexadecimal
+    digits, the form the server's lists show a dataset fingerprint in."""
+    if not _SHA256_RE.fullmatch(value):
+        raise argparse.ArgumentTypeError(
+            f"{value!r} is not a SHA-256 (64 lowercase hexadecimal digits)")
+    return value
+
+
+class DatasetChanged(ValueError):
+    """The workspace's split_manifest.json, as this run read it, is not the one
+    the run was started for (`--expect-dataset-sha256`): refused before the
+    graph and the samples are read and before anything is written, as
+    measure_scorer refuses a checkpoint or cohort version that is not the one
+    chosen (review of 8242b47, P2-2)."""
+
+
 def _device_arg(value: str) -> str:
     """argparse type for --device: validate against the PyTorch device grammar."""
     # fullmatch, not match: Python's ``$`` also matches just before a trailing newline, so
@@ -376,6 +403,19 @@ def parse_args() -> argparse.Namespace:
              "with a resumable checkpoint, recorded as paused",
     )
 
+    # A precondition of a run whose dataset was chosen beforehand (M5's job
+    # runner): neither a setting nor recorded, so not a TrainConfig field.
+    parser.add_argument(
+        "--expect-dataset-sha256",
+        type=_sha256_arg,
+        default=None,
+        metavar="HEX",
+        help="Refuse before anything is written unless the workspace's split_manifest.json, "
+             "as this run reads it, has this SHA-256 (the dataset fingerprint shown when the "
+             "run was chosen). Without it the run trains on the manifest it reads and records "
+             "that one",
+    )
+
     # Misc
     parser.add_argument(
         "--seed",
@@ -462,7 +502,8 @@ def load_config_with_explicit(args: argparse.Namespace) -> Tuple[TrainConfig, Se
         config.seed = args.seed
 
     for name, value in vars(args).items():
-        if name in ("config", "debug") or value is None or value is False:
+        if name in ("config", "debug", "expect_dataset_sha256") or value is None \
+                or value is False:
             continue
         explicit.add(_FLAG_FIELDS.get(name, name))
     return config, explicit
@@ -504,9 +545,18 @@ class TrainingInputs(NamedTuple):
     dataset_record: DatasetRecord
 
 
-def read_training_inputs(data_dir: Path) -> TrainingInputs:
+def read_training_inputs(
+    data_dir: Path, *, expected_manifest_sha256: Optional[str] = None,
+) -> TrainingInputs:
     """Read the manifest, the graph tensors and both sample files once each, and
     verify from those reads (contract M2.1, S8).
+
+    **The dataset the run was started for** (`expected_manifest_sha256`, the
+    fingerprint a caller showed; review of 8242b47, P2-2) is compared on this
+    one manifest read, right after it and before the graph and the samples are
+    read: a workspace republished since it was shown is refused as changed
+    (`DatasetChanged`), never trained on, and never reported as a manifest
+    that contradicts its files.
 
     **Before anything is written.** `train` calls this ahead of the run
     directories, `config.yaml` and `runtime.json`: whether this workspace's graph
@@ -543,6 +593,13 @@ def read_training_inputs(data_dir: Path) -> TrainingInputs:
         resolve_cohort(data_dir, split)
 
     manifest = read_split_manifest(data_dir)
+    read_sha256 = manifest.identity.sha256
+    if expected_manifest_sha256 is not None and read_sha256 != expected_manifest_sha256:
+        raise DatasetChanged(
+            f"The dataset changed since it was shown; select it again. "
+            f"{manifest.identity.path} holds bytes {read_sha256[:12]}..., not the "
+            f"{expected_manifest_sha256[:12]}... this run was started for. Nothing was written.")
+    logger.info(f"Dataset fingerprint (split_manifest.json sha256): {read_sha256}")
     graph = read_graph_artifacts(data_dir, map_location="cpu")
     samples = {
         split: read_samples(data_dir, split, training_fields=True)
@@ -927,7 +984,8 @@ def resolve_training_device(requested: str) -> str:
 # =============================================================================
 # Main Training Function
 # =============================================================================
-def train(config: TrainConfig, explicit: Optional[Collection[str]] = None) -> Dict[str, float]:
+def train(config: TrainConfig, explicit: Optional[Collection[str]] = None, *,
+          expected_dataset_sha256: Optional[str] = None) -> Dict[str, float]:
     """
     Main training function
 
@@ -936,6 +994,10 @@ def train(config: TrainConfig, explicit: Optional[Collection[str]] = None) -> Di
         explicit: the fields the operator set (`load_config_with_explicit`).
             `None`, for a caller that built `config` itself, counts every
             field that differs from its default as set.
+        expected_dataset_sha256: the dataset fingerprint the run was started
+            for (`--expect-dataset-sha256`), compared on the run's one manifest
+            read (`read_training_inputs`); `DatasetChanged` otherwise. A
+            precondition, not a setting: neither recorded nor configured.
 
     Returns:
         Final evaluation metrics
@@ -989,7 +1051,7 @@ def train(config: TrainConfig, explicit: Optional[Collection[str]] = None) -> Di
     if config.run_dir:
         check_run_dir_free(config.run_dir)
 
-    inputs = read_training_inputs(data_dir)
+    inputs = read_training_inputs(data_dir, expected_manifest_sha256=expected_dataset_sha256)
     parent = read_resume_parent(config.resume_from, inputs, device)
 
     # **How the run continues from its parent, decided once, before any output**
@@ -1243,7 +1305,8 @@ def main():
     # it however the process ends (src/utils/gpu_lock.py).
     try:
         gpu_lock = take_gpu_lock("training", "train_model.py", log=logger)
-    except (OSError, GpuLockMisconfigured) as exc:  # GpuLockBusy is an OSError
+    except (OSError, GpuLockMisconfigured) as exc:  # GpuLockBusy is an OSError; not
+        # configured is a GpuLockMisconfigured (review of 8242b47, P2-4)
         logger.error(f"train_model: refused: {exc} Nothing was written.")
         return 1
     with gpu_lock:
@@ -1286,8 +1349,11 @@ def _train_main(args: argparse.Namespace) -> int:
 
     # Run training
     try:
-        metrics = train(config, explicit)
+        metrics = train(config, explicit, expected_dataset_sha256=args.expect_dataset_sha256)
         return 0 if metrics else 1
+    except DatasetChanged as exc:  # a refusal, said once, not a failure with a traceback
+        logger.error(f"train_model: refused: {exc}")
+        return 1
     except KeyboardInterrupt:
         logger.info("Training interrupted by user")
         return 1
