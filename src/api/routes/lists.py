@@ -17,13 +17,16 @@ request.
   checkpoint the report records: ``registered`` when that ledger names it,
   ``cannot_be_checked`` otherwise, never ``not_registered``, since a
   registration filed beside another copy of the same weights is not looked
-  for (the reason names the ledger that was). Each run also carries D5's state
-  of its report's key (``contest``: uncontested, contested with the fields and
-  runs that differ, or cannot_be_checked; never a problem's words), from the
-  same run listing the Test page shows, so the two cannot disagree about a
-  run. The cost: one scan of each listed version's report store per request,
-  each kept report read once more, on an open route (as the loaded-model view's
-  records cost, BACKLOG 36).
+  for (the reason names the ledger that was). Each run with a ``report.json``
+  also carries D5's state of its report's key (``contest``: uncontested,
+  contested with the fields and runs that differ, or cannot_be_checked; never a
+  problem's words), from the same run listing the Test page shows, so the two
+  cannot disagree about a run; it is for the bytes the run's state read, so a
+  report replaced between the two reads is cannot_be_checked. ``contest`` is
+  null for a run directory with no ``report.json`` and for a run whose state
+  was not read (its ``problem`` says why). The cost: one scan of each listed
+  version's report store per request, each kept report read once more, on an
+  open route (as the loaded-model view's records cost, BACKLOG 36).
 - `GET /workspaces/{name}/checkpoints`: a listed workspace's checkpoints. It
   opens every checkpoint of the workspace (SPEC_4 C3), which D8 offers only
   where the operator controls are, so it takes D8's one dependency
@@ -57,7 +60,8 @@ def get_workspaces() -> Dict[str, Any]:
 def get_cohort_versions() -> Dict[str, Any]:
     """The cohort versions in the server's registry, by label and digest, with
     each kept run's kept and registered state read from the disk, and D5's
-    state of its report's key (``contest``, without the problems' words).
+    state of its report's key for those bytes (``contest``, without the
+    problems' words; null for a run with no ``report.json``).
     Without a checkpoint file, ``registered`` is either ``registered`` (the
     ledger beside the checkpoint the report records names it) or
     ``cannot_be_checked``; a list never says ``not_registered``, because a

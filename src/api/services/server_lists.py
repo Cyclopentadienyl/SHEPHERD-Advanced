@@ -49,14 +49,16 @@ registered is read by the registration's one helper, passed in as
 nothing here infers either from which files exist.
 
 **D5's state of each run's key** (`ReportItem.contest`) comes with the run's
-state, from one scan of the version's store (`read_report_store`,
-`scan_report_store`'s `StoreScan.run_status`): the one run listing that
-`GET /api/v1/cohorts` and the Test page share, so the two cannot disagree about
-a run, and neither judges D5 itself. The open route's listing leaves out the
-problems' words, which may name a server path; the Test page's keeps them for
-the operator. A version whose runs' states are read is scanned once per call:
-each kept report read once more, on an open route (the trade BACKLOG 36
-accepted for the loaded-model view).
+state, from one scan of the version's store (`record_states.run_contest`, the
+one layer that turns a scan into a shown D5 state, for records too): the one
+run listing that `GET /api/v1/cohorts` and the Test page share, so the two
+cannot disagree about a run, and neither judges D5 itself. It is bound to the
+bytes the run's state read, so one item never describes two versions of a
+report. The open route's listing leaves out the problems' words, which may name
+a server path; the Test page's keeps them for the operator. A version whose
+runs' states are read is scanned once per call: each kept report read once
+more, on an open route (the trade BACKLOG 36 accepted for the loaded-model
+view).
 
 **Import sources** (M5-2, the Test page; D7): the ``*.json`` files the operator
 placed directly in ``SHEPHERD_INTAKE_DIR`` (`list_intake_files`), by file name;
@@ -73,14 +75,11 @@ Module: src/api/services/server_lists.py
 """
 from __future__ import annotations
 
-import logging
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, NamedTuple, Optional, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from src.config import server_settings
-
-logger = logging.getLogger(__name__)
 
 __all__ = [
     "CheckpointItem",
@@ -89,7 +88,6 @@ __all__ = [
     "Listing",
     "ReportItem",
     "ServerListRefused",
-    "StoreRead",
     "WorkspaceItem",
     "cohort_version_item",
     "list_checkpoints",
@@ -97,7 +95,6 @@ __all__ = [
     "list_intake_files",
     "list_workspaces",
     "locate_checkpoint",
-    "read_report_store",
     "resolve_checkpoint",
     "resolve_cohort_version",
     "resolve_intake_file",
@@ -203,10 +200,10 @@ class ReportItem:
     """One run directory of a version's report store. `state` is what the
     report-state reader says of it (kept, registered); `None`, with `problem`,
     when it was not read. `contest` is D5's state of the key its report is
-    under, read with `state` (`_run_contest`): ``state`` (uncontested,
-    contested, cannot_be_checked), ``differing``, ``disagreeing_runs`` and
-    ``problems`` (empty but on an operator's listing); `None` when the run's
-    state was not read or it kept no report."""
+    under, for the bytes `state` read (`record_states.run_contest`): ``state``
+    (uncontested, contested, cannot_be_checked), ``differing``,
+    ``disagreeing_runs`` and ``problems`` (empty but on an operator's listing);
+    `None` when the run's state was not read or it kept no report."""
 
     run_id: str
     state: Optional[Dict[str, Any]]
@@ -620,59 +617,15 @@ def locate_checkpoint(
 # ---------------------------------------------------------------------------
 # Cohort versions and their reports
 # ---------------------------------------------------------------------------
-class StoreRead(NamedTuple):
-    """A version's report store as one scan read it (`scan_report_store`'s
-    `StoreScan`), or why it could not be scanned (`problem`)."""
-
-    scan: Optional[Any]
-    problem: Optional[str]
-
-
-def read_report_store(version: Any) -> StoreRead:
-    """One scan of `version`'s report store (`scan_report_store`): each kept
-    report read once and built into the record the ledger would hold. A scan
-    that fails is its reason, never an exception, so every run is still listed,
-    its key's state "cannot be checked"."""
-    from src.evaluation.report_store import scan_report_store
-
-    try:
-        return StoreRead(scan_report_store(version), None)
-    except Exception as exc:  # noqa: BLE001 - the runs' states then read "cannot be checked"
-        logger.exception("A report store could not be scanned")
-        return StoreRead(None, f"the report store could not be compared ({type(exc).__name__})")
-
-
-#: Why a kept report has no key state of its own: the scan did not read it (it
-#: was written after the scan, before its state was read).
-_NOT_COMPARED = "the report store's comparison did not read it"
-
-
-def _run_contest(store: StoreRead, run_id: str, state: Mapping[str, Any],
-                 operator: bool) -> Optional[Dict[str, Any]]:
-    """D5's state of the key run `run_id`'s report is under, from the store's
-    one scan (`StoreScan.run_status`, which finds the run by its id). A report
-    the scan read but could not place is ``cannot_be_checked``, and so is one it
-    did not read, or every run of a store that could not be scanned: never no
-    state while a report may be kept. None for a run that kept none. `operator`
-    False leaves out the problems' words, which may name a server path."""
-    status = store.scan.run_status(run_id) if store.scan is not None else None
-    if status is None:
-        if state.get("kept") == "not_kept":
-            return None
-        return {"state": "cannot_be_checked", "differing": [], "disagreeing_runs": [],
-                "problems": [store.problem or _NOT_COMPARED] if operator else []}
-    return {"state": status.state, "differing": list(status.differing),
-            "disagreeing_runs": list(status.disagreeing_runs),
-            "problems": list(status.problems) if operator else []}
-
-
 def _report_items(
     version: Any, report_state: Optional[ReportStateReader], *,
-    store: Optional[StoreRead] = None, operator: bool = False,
+    store: Optional[Any] = None, operator: bool = False,
 ) -> Tuple[Tuple[ReportItem, ...], Optional[str]]:
     """The version's runs, newest first. Given `report_state`, each with what
-    it kept, whether its report is registered, and D5's state of its key from
-    one scan of the store (`store`, made here when not given)."""
+    it kept, whether its report is registered, and D5's state of its key for
+    those bytes (`run_contest`) from one scan of the store (`store`, a
+    `record_states.read_report_store`, made here when not given)."""
+    from src.api.services.record_states import read_report_store, run_contest
     from src.evaluation.cohort_registry import RegistryRefused, list_report_runs
 
     try:
@@ -696,13 +649,13 @@ def _report_items(
                     f"its state could not be read ({type(exc).__name__}: {exc})")))
                 continue
             items.append(ReportItem(run.run_id, state, None,
-                                    _run_contest(store, run.run_id, state, operator)))
+                                    run_contest(store, run.run_id, state, operator=operator)))
     return tuple(items), None
 
 
 def _version_item(listed: Any, report_state: Optional[ReportStateReader],
                   environ: Optional[Mapping[str, str]], *,
-                  store: Optional[StoreRead] = None,
+                  store: Optional[Any] = None,
                   operator: bool = False) -> CohortVersionItem:
     if listed.version is None:
         return CohortVersionItem(listed.label, None, None, False, None, None, None, None,
@@ -833,12 +786,12 @@ def cohort_version_item(
 
 
 def version_item(version: Any, *, report_state: Optional[ReportStateReader] = None,
-                 store: Optional[StoreRead] = None, operator: bool = False,
+                 store: Optional[Any] = None, operator: bool = False,
                  environ: Optional[Mapping[str, str]] = None) -> CohortVersionItem:
     """A cohort version already read (`resolve_cohort_version`), listed as
     `list_cohort_versions` lists it. `store` is that version's one scan
-    (`read_report_store`), for a caller that shows the scan's records too, so
-    the store is scanned once; made here when not given. `operator` keeps the
+    (`record_states.read_report_store`), for a caller that shows the scan's
+    records too, so the store is scanned once; made here when not given. `operator` keeps the
     problems' words in each run's D5 state, for an operator's page (the Test
     page); the open route's listing leaves them out."""
     from src.evaluation.cohort_registry import ListedVersion

@@ -559,11 +559,11 @@ def read_reports(label: Any, *, environ: Optional[Mapping[str, str]] = None) -> 
     (`server_lists.version_item`, the listing ``GET /api/v1/cohorts`` shares,
     here with the problems' words for the operator); each run's key and record
     (the record the ledger would hold) from the same one scan of the store,
-    found by the run's id; and the investigation notes kept with the key. The
-    version is read once. Opens no checkpoint."""
+    found by the run's id for the bytes its state read; and the investigation
+    notes kept with the key. The version is read once. Opens no checkpoint."""
+    from src.api.services.record_states import read_report_store
     from src.api.services.server_lists import (
         ServerListRefused,
-        read_report_store,
         resolve_cohort_version,
         stored_report_state,
         version_item,
@@ -588,11 +588,13 @@ def read_reports(label: Any, *, environ: Optional[Mapping[str, str]] = None) -> 
         notes_problems = [f"the investigation notes could not be read ({type(exc).__name__})"]
     runs = []
     for report in item.reports:
-        placed = store.scan.run_key(report.run_id) if store.scan is not None else None
-        key, unbuilt = placed if placed is not None else (None, None)
-        # By the report's digest: byte-identical copies under other runs are one
-        # report in the scan, and a run's own digest names its record.
+        # By the digest of the bytes the run's state read: no key (and so no
+        # note) for a report replaced since the scan read it; and byte-identical
+        # copies under other runs are one report in the scan, so a run's own
+        # digest names its record.
         digest = (report.state or {}).get("report_sha256")
+        placed = store.scan.run_key(report.run_id, digest) if store.scan is not None else None
+        key, unbuilt = placed if placed is not None else (None, None)
         built = store.scan.reports.get(key, {}).get(digest) if key is not None else None
         runs.append({
             "run_id": report.run_id, "when": run_time(report.run_id),

@@ -290,14 +290,17 @@ class StoreScan(NamedTuple):
     store itself could not be listed), which leave every key of the version
     unable to be checked. **Every report the scan read is named by its run id**,
     so a run's state is found by its id (`run_status`), never by reading ids out
-    of a problem's words.
+    of a problem's words. ``digests`` maps each run id whose ``report.json``
+    the scan read to the digest of those bytes, so a lookup by run id is bound
+    to the bytes the caller read there (`run_key`, `run_status`).
     """
 
     version: "CohortVersionRead"
     reports: Dict[Tuple[Any, ...], Dict[str, Tuple[str, Dict[str, Any]]]]
-    unbuilt: Dict[Tuple[Any, ...], Tuple[str, ...]]
-    unplaced: Tuple[str, ...]
+    unbuilt: Dict[Tuple[Any, ...], Tuple[Tuple[str, str], ...]]
+    unplaced: Tuple[Tuple[Optional[str], str], ...]
     runs: Dict[Tuple[Any, ...], Tuple[str, ...]]
+    digests: Dict[str, str]
 
     def status(self, key: Tuple[Any, ...]) -> KeyStatus:
         """The key's state: ``contested`` when any two of its reports differ on
@@ -334,12 +337,7 @@ class StoreScan(NamedTuple):
     def _unplaced_problems(self) -> Tuple[str, ...]:
         return tuple(problem for _run, problem in self.unplaced)
 
-    def run_key(self, run_id: str) -> Optional[Tuple[Optional[Tuple[Any, ...]], Optional[str]]]:
-        """Where the scan placed the report in run directory `run_id`:
-        ``(key, None)`` for a report it built, ``(key, problem)`` for one under
-        a key it could not compare, ``(None, problem)`` for one whose key cannot
-        be told; None when it read no report there (no ``report.json``: an
-        interrupted or refused run)."""
+    def _placed(self, run_id: str) -> Optional[Tuple[Optional[Tuple[Any, ...]], Optional[str]]]:
         for key, run_ids in self.runs.items():
             if run_id in run_ids:
                 return tuple(key), None
@@ -352,14 +350,41 @@ class StoreScan(NamedTuple):
                 return None, problem
         return None
 
-    def run_status(self, run_id: str) -> Optional[KeyStatus]:
+    def _other_bytes(self, run_id: str, sha256: Optional[str]) -> bool:
+        """Whether the scan read other bytes in run directory `run_id` than the
+        caller's read found there (`sha256`, None when it read none)."""
+        read = self.digests.get(run_id)
+        return read is not None and read != sha256
+
+    def run_key(self, run_id: str,
+                sha256: Optional[str]) -> Optional[Tuple[Optional[Tuple[Any, ...]], Optional[str]]]:
+        """Where the scan placed the report in run directory `run_id`:
+        ``(key, None)`` for a report it built, ``(key, problem)`` for one under
+        a key it could not compare, ``(None, problem)`` for one whose key cannot
+        be told; None when it read no report there (no ``report.json``: an
+        interrupted or refused run), **or other bytes than the caller's read**:
+        `sha256` is the digest of the ``report.json`` the caller read in that
+        directory (None when it read none), so no key is given for bytes the
+        caller did not read (a report replaced between the two reads)."""
+        if self._other_bytes(run_id, sha256):
+            return None
+        return self._placed(run_id)
+
+    def run_status(self, run_id: str, sha256: Optional[str]) -> Optional[KeyStatus]:
         """D5's state of the key the report in run directory `run_id` is under
-        (`status`); ``cannot_be_checked`` for a report whose key cannot be told,
-        with the store's unplaced problems; None when the scan read no report
-        there."""
-        placed = self.run_key(run_id)
+        (`status`), for the bytes the caller read there (`sha256`, as
+        `run_key`); ``cannot_be_checked`` for a report whose key cannot be told,
+        with the store's unplaced problems, and for one the scan read as other
+        bytes, saying so; None when the scan read no report there."""
+        placed = self._placed(run_id)
         if placed is None:
             return None
+        if self._other_bytes(run_id, sha256):
+            return KeyStatus("cannot_be_checked", (run_id,), problems=(
+                f"the report in {run_id} is not the one the store's comparison read (it read "
+                f"{self.digests[run_id][:12]}..., this read "
+                f"{sha256[:12] + '...' if sha256 else 'no report'}): it was replaced between "
+                "the two reads",))
         key, _problem = placed
         if key is None:
             return KeyStatus("cannot_be_checked", (run_id,), problems=self._unplaced_problems())
@@ -400,12 +425,14 @@ def scan_report_store(
     unplaced: List[Tuple[Optional[str], str]] = []
 
     runs: Dict[Tuple[Any, ...], List[str]] = {}
+    digests: Dict[str, str] = {}
 
     def add(run_id: str, record: Dict[str, Any]) -> None:
         key = record_key(record)
         grouped.setdefault(key, {}).setdefault(record["source_artifact_digest"],
                                                (run_id, record))
         runs.setdefault(key, []).append(run_id)
+        digests[run_id] = record["source_artifact_digest"]
 
     if known is not None:
         add(*known)
@@ -440,6 +467,7 @@ def scan_report_store(
         except (OSError, ValueError) as exc:
             unplaced.append((name, f"{path} could not be read: {type(exc).__name__}: {exc}"))
             continue
+        digests[name] = digest
         try:
             record = build_record(report, digest)
         except (ValueError, RecursionError) as exc:
@@ -457,7 +485,8 @@ def scan_report_store(
         del report
         add(name, record)
     return StoreScan(version, grouped, {key: tuple(p) for key, p in unbuilt.items()},
-                     tuple(unplaced), {key: tuple(sorted(r)) for key, r in runs.items()})
+                     tuple(unplaced), {key: tuple(sorted(r)) for key, r in runs.items()},
+                     digests)
 
 
 # ---------------------------------------------------------------------------

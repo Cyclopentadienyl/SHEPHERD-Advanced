@@ -1956,14 +1956,18 @@ and a file, or a label, and the server finds that name in its own list again.
   measured bytes) is not looked for, and the reason names the ledger that was. A report that
   names its checkpoint by a relative path, or that cannot be read, has no ledger to look in:
   `registered` is then `cannot_be_checked` too, saying why. A checkpoint moved since the run is
-  looked for where the run read it. Each run also carries D5's state of its report's key
-  (`contest`: `uncontested`; `contested`, with the fields and the runs that differ;
-  `cannot_be_checked`, never to be read as uncontested), the same state Research › Test shows
-  for that run, without the reasons' own words, which may name a server path (since the
-  root-cause round of the review fixes). A run whose report cannot be read or compared is
-  `cannot_be_checked` (unless the reports under its key already disagree), and so is every run
-  of a store that cannot be scanned. Each request scans every listed version's report store
-  once.
+  looked for where the run read it. Each run with a `report.json` also carries D5's state of
+  its report's key (`contest`: `uncontested`; `contested`, with the fields and the runs that
+  differ; `cannot_be_checked`, never to be read as uncontested), the same state Research › Test
+  shows for that run, without the reasons' own words, which may name a server path (since the
+  root-cause round of the review fixes). `contest` is `null` for a run directory with no
+  `report.json` (an interrupted, cancelled or refused run) and for a run whose state was not
+  read (its `problem` says why). A run whose report cannot be read, or whose key cannot be told,
+  is `cannot_be_checked`; one that can be read but not compared is `cannot_be_checked` unless
+  the reports under its key already disagree (then `contested`). So is every run of a store
+  that cannot be scanned, and a run whose report was replaced between the store's scan and the
+  read of its state: a run's state and its `contest` always describe the same bytes. Each
+  request scans every listed version's report store once.
 
 ### The build time: `workspace_build.json`
 
@@ -2315,20 +2319,21 @@ anything is published, so a file rewritten in the meantime (a running training j
 "Not reloaded; the model in use is unchanged." with the reason. The API takes the same check as
 an optional field of the reload request, `expected_checkpoint_sha256` (64 lowercase hex digits,
 else 422): other bytes are refused and the running pipeline goes on serving; without it nothing
-is checked, as before. It replaces what every browser is served; results already produced keep their own identity, and diagnoses wait while the pipeline
-reloads. While the confirmation is open the list's own footer is hidden, so the from → to rows
-and that sentence stay in view; "Keep <old>" drops the confirmation. While the confirmation is
-open, Run Diagnosis is disabled: "Disabled: finish or cancel the model change first." Once
-"🔒 Reload with <new>" is clicked, the confirmation shows only the reload's status ("Loading
-<12 hex> for every session… 00:00:42") and Close (closing does not stop it; after 180 s, Read
-again and Close), so a second reload cannot be asked for; the card says the same "Loading …"
-line and Run Diagnosis says "Disabled: a model load is in progress; diagnoses wait until it
-finishes." Cancel or × closes the drawer without reloading. While the reload runs, Close or ×
-closes the drawer at once and the reload goes on (it cannot be stopped): the card keeps its
-"Loading …" line, and when the reload answers, the card shows the model then in use and its
-outcome is not shown again; "Change model…" meanwhile opens the drawer again on the reload's
-status. In Research › Models, Close closes the confirmation the same way. A Load from Research ›
-Models refreshes this card too. Only one drawer is open at a time.
+is checked, as before. It replaces what every browser is served; results already produced keep
+their own identity, and diagnoses wait while the pipeline reloads. While the confirmation is
+open the list's own footer is hidden, so the from → to rows and that sentence stay in view;
+"Keep <old>" drops the confirmation. While the confirmation is open, Run Diagnosis is disabled:
+"Disabled: finish or cancel the model change first." Once "🔒 Reload with <new>" is clicked, the
+confirmation shows only the reload's status ("Loading <12 hex> for every session… 00:00:42") and
+Close (closing does not stop it; after 180 s, Read again and Close), so a second reload cannot
+be asked for; the card says the same "Loading …" line and Run Diagnosis says "Disabled: a model
+load is in progress; diagnoses wait until it finishes." Cancel or × closes the drawer without
+reloading. While the reload runs, Close or × closes the drawer at once and the reload goes on
+(it cannot be stopped): the card keeps its "Loading …" line, and when the reload answers, the
+card shows the model then in use and its outcome is not shown again; "Change model…" meanwhile
+opens the drawer again on the reload's status. In Research › Models, Close closes the
+confirmation the same way. A Load from Research › Models refreshes this card too. Only one
+drawer is open at a time.
 
 ### Research › Prepare › Datasets
 

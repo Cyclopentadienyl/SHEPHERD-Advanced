@@ -37,6 +37,7 @@ Module: tests/unit/test_webui_test_page.py
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shutil
@@ -449,6 +450,89 @@ def test_the_cohort_route_and_the_test_page_give_each_run_the_same_d5_state(
         assert page[added]["key"] == page[site.run_id]["key"]
         assert "cannot be compared" in page[added]["unbuilt"]
         assert page[added]["record"] is None and page[site.run_id]["record"] is not None
+
+
+@pytest.mark.parametrize("replacement", ["damaged", "another report"])
+def test_a_report_replaced_between_the_scan_and_its_state_is_never_shown_uncontested(
+        site, monkeypatch, replacement):
+    """The verification of EB-3 (R-1): a run's kept/registered state and its
+    key's D5 state come from two reads of its ``report.json`` (the store's scan,
+    then the registration's helper). A report replaced between them -- damaged,
+    or another report under the same key -- is ``cannot_be_checked`` on
+    ``GET /api/v1/cohorts`` and on the Test page, saying so for the operator,
+    never the scan's "uncontested" for bytes the state did not read; the page
+    then gives the run no key (so no note is filed under the scan's), no record
+    and no Register. The same store unreplaced is the control. Catches a
+    listing that takes the scan's state without checking which bytes it read."""
+    import src.evaluation.report_store as report_store
+
+    report = site.reports / site.run_id / "report.json"
+    original = report.read_bytes()
+    assert _cohorts_route_runs(LABEL)[site.run_id]["contest"]["state"] == "uncontested"
+    control = {run["run_id"]: run for run in tp.read_reports(LABEL)["runs"]}[site.run_id]
+    assert control["contest"]["state"] == "uncontested" and control["key"] is not None
+
+    if replacement == "damaged":
+        replaced = b"not a report"
+    else:
+        changed = json.loads(original)
+        changed["authoritative_metrics"]["untruncated_mrr"] += 0.0004
+        replaced = json.dumps(changed, indent=2, sort_keys=True).encode()
+    real = report_store.scan_report_store
+
+    def scan_then_replace(version, **kwargs):
+        report.write_bytes(original)  # each surface's scan reads the original
+        try:
+            return real(version, **kwargs)
+        finally:
+            report.write_bytes(replaced)
+
+    monkeypatch.setattr(report_store, "scan_report_store", scan_then_replace)
+    listed = _cohorts_route_runs(LABEL)[site.run_id]
+    reports = tp.read_reports(LABEL)
+    shown = {run["run_id"]: run for run in reports["runs"]}[site.run_id]
+
+    for run in (listed, shown):
+        if replacement == "damaged":
+            assert run["state"]["kept"] == "not_kept" and run["state"]["report_sha256"] is None
+        else:
+            assert run["state"]["kept"] == "kept"
+            assert run["state"]["report_sha256"] == hashlib.sha256(replaced).hexdigest()
+        assert run["contest"]["state"] == "cannot_be_checked", run["contest"]
+    assert listed["contest"]["problems"] == []
+    assert any("replaced between the two reads" in p for p in shown["contest"]["problems"])
+    assert shown["key"] is None and shown["record"] is None
+    assert tp.register_state({"access": {"allowed": True}}, reports, site.run_id)[0] is False
+    assert not tp.notes_visible(reports, site.run_id)
+
+
+def test_a_store_that_cannot_be_scanned_reads_the_same_for_its_records_and_its_runs(
+        site, monkeypatch):
+    """The verification of EB-3 (R-2): the record-level D5 state (Models, the
+    Diagnosis card, ``GET /api/v1/evaluations/loaded-model``) and the run-level
+    one (the Test page, ``GET /api/v1/cohorts``) turn a scan into a shown state
+    through one layer, so a store whose scan fails is caught and worded once:
+    the same words for the record and the run it came from, and none on an open
+    surface. Catches a second copy of the failure handling with its own words."""
+    import src.evaluation.report_store as report_store
+    from src.api.services.record_states import CohortVersions, contest_states
+
+    record = {run["run_id"]: run for run in tp.read_reports(LABEL)["runs"]}[site.run_id]["record"]
+    assert record is not None
+
+    def fails(*args, **kwargs):
+        raise RuntimeError("unreadable")
+
+    monkeypatch.setattr(report_store, "scan_report_store", fails)
+    run = {run["run_id"]: run for run in tp.read_reports(LABEL)["runs"]}[site.run_id]
+    (state,) = contest_states([record], CohortVersions.listed()).values()
+    (open_state,) = contest_states([record], CohortVersions.listed(), operator=False).values()
+
+    assert run["contest"]["state"] == state["state"] == "cannot_be_checked"
+    assert run["contest"]["problems"] == state["problems"] == [
+        "its report store could not be read (RuntimeError)"]
+    assert open_state["problems"] == _cohorts_route_runs(LABEL)[site.run_id]["contest"][
+        "problems"] == []
 
 
 def test_the_result_shows_aggregates_and_states_never_a_case_or_a_path(site):

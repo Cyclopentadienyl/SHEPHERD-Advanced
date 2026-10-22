@@ -764,8 +764,14 @@ disagreement block, contested states and investigation notes are phase 2.
   problems' words) and Research › Test shows the same state from the same listing instead of
   its own join; the scan names every report it read by its run id (`StoreScan.run_key`,
   `run_status`), so a report whose key cannot be told is "cannot be checked" on both, never no
-  state, and no run id is read out of a problem's words. The cost is one scan of each listed
-  version's store per request of the open route. The loaded-model route finds a record's
+  state, and no run id is read out of a problem's words. A run's lookup is bound to the digest
+  of the bytes its kept/registered state read, so the two describe one byte string: a report
+  replaced between the scan's read and the state's is "cannot be checked" and is given no key.
+  Records and runs turn a scan into a shown state through one layer
+  (`record_states.read_report_store`, `run_contest`): one wording for a store that cannot be
+  scanned, one place that leaves the problems' words out of an open route. The cost is one
+  scan of each listed version's store per request of the open route, each kept report read by
+  the scan and again by the state (BACKLOG 36). The loaded-model route finds a record's
   version by reading each version manifest once (`CohortVersions.listed` on `list_versions`),
   and its docstring says what it reads: the ledger, the manifests and the shown records'
   stores.

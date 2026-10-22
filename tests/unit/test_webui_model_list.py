@@ -27,8 +27,9 @@ The shared model list and the one Load (M5-2, UI-A).
   the server resolves (never a client path), bound to the model fingerprint
   shown: through the real `run_reload`, bytes that replace the file after the
   Load hashed it are refused on the reload's own read and never served;
-  "served model changed" set when any part of what is served changed; a usage history entry only when the list was ordered by a
-  cohort version's score, and not when that version changed since;
+  "served model changed" set when any part of what is served changed; a usage
+  history entry only when the list was ordered by a cohort version's score,
+  and not when that version changed since;
 - **the wiring**: Load and Reload refresh the chips, Reload sets the "served
   model changed" trigger and the phase and re-reads the list, Keep closes the
   confirmation; the 180 s count runs in the list's own confirmation, so both

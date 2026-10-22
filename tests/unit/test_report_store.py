@@ -202,15 +202,44 @@ def test_every_report_the_scan_read_is_named_by_its_run_id(tmp_path):
     assert unbuilt[0] == stale.parent.name and "python_seed" in unbuilt[1]
     (unplaced,) = scan.unplaced
     assert unplaced[0] == broken.parent.name and str(broken) in unplaced[1]
-    assert scan.run_key(first.parent.name) == (key, None)
-    assert scan.run_key(stale.parent.name) == (key, unbuilt[1])
-    assert scan.run_key(broken.parent.name) == (None, unplaced[1])
-    assert scan.run_key(interrupted.name) is None and scan.run_status(interrupted.name) is None
-    assert scan.run_status(first.parent.name) == scan.status(key)
-    assert scan.run_status(stale.parent.name).state == "cannot_be_checked"
-    lost = scan.run_status(broken.parent.name)
+    first_sha, stale_sha = _sha(first), _sha(stale)
+    assert scan.run_key(first.parent.name, first_sha) == (key, None)
+    assert scan.run_key(stale.parent.name, stale_sha) == (key, unbuilt[1])
+    assert scan.run_key(broken.parent.name, None) == (None, unplaced[1])
+    assert scan.run_key(interrupted.name, None) is None
+    assert scan.run_status(interrupted.name, None) is None
+    assert scan.run_status(first.parent.name, first_sha) == scan.status(key)
+    assert scan.run_status(stale.parent.name, stale_sha).state == "cannot_be_checked"
+    lost = scan.run_status(broken.parent.name, None)
     assert (lost.state, lost.run_ids, lost.problems) == (
         "cannot_be_checked", (broken.parent.name,), (unplaced[1],))
+
+
+def _sha(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize("now", ["other bytes", "no report"])
+def test_a_lookup_by_run_id_is_bound_to_the_bytes_the_caller_read(tmp_path, now):
+    """The verification of EB-3 (R-1): a run's state and its key's state come
+    from two reads of its ``report.json`` (the registration's helper's, the
+    scan's). A report replaced between them -- by other bytes, or by none the
+    caller could read -- is given no key and is ``cannot_be_checked``, naming
+    both reads: never the scan's key or state for bytes the caller did not
+    read. The bytes the scan read are its own control."""
+    first = _stored(tmp_path)
+    scan = scan_report_store(version_of(first))
+    read = None if now == "no report" else hashlib.sha256(b"other bytes").hexdigest()
+
+    assert scan.digests == {first.parent.name: _sha(first)}
+    assert scan.run_key(first.parent.name, _sha(first)) == (_key(first), None)
+    assert scan.run_status(first.parent.name, _sha(first)).state == "uncontested"
+    assert scan.run_key(first.parent.name, read) is None
+    replaced = scan.run_status(first.parent.name, read)
+    assert (replaced.state, replaced.run_ids) == ("cannot_be_checked", (first.parent.name,))
+    (problem,) = replaced.problems
+    assert _sha(first)[:12] in problem and "replaced between the two reads" in problem
+    assert (read[:12] if read else "no report") in problem
 
 
 def test_a_report_nested_too_deeply_to_copy_cannot_be_checked_and_does_not_crash(tmp_path):
