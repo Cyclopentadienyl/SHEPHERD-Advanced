@@ -327,8 +327,8 @@ def read_measurement_inputs(
     **What the run was started for** (M5's job runner): with
     `expect_version_sha256`, the version's `cohort.json` read must have that
     digest, compared right after `resolve_version` reads it; with
-    `expect_checkpoint_sha256`, the checkpoint read must, compared right after
-    it is read and before R3. Either refuses (`ExpectedDigestMismatch`) before
+    `expect_checkpoint_sha256`, the checkpoint read must, compared on that read
+    before torch parses it (so before R3). Either refuses (`ExpectedDigestMismatch`) before
     anything is measured or written, so a file replaced after it was chosen is
     never measured under the choice. No file is read again for it: each
     comparison is with the digest of the read the run makes anyway.
@@ -436,9 +436,10 @@ def read_measurement_inputs(
     # **Read at its resolved path**, so the read's identity names the file whose
     # bytes were measured, and `--record`'s ledger directory is fixed now: a link
     # retargeted during the run cannot move this run's record beside other weights.
-    read = _read_checkpoint(checkpoint, device)
-    _expect(expect_checkpoint_sha256, read.identity.sha256,
-            f"the checkpoint {checkpoint} (read at {read.identity.path})")
+    # `--expect-checkpoint-sha256` is compared on that one read, before torch
+    # parses the bytes (`read_checkpoint(expected_sha256=)`), so other bytes at
+    # the chosen path, a checkpoint or not, are refused as changed, never parsed.
+    read = _read_checkpoint(checkpoint, device, expected_sha256=expect_checkpoint_sha256)
     # **The model scored must have been trained on this graph** (contract M2.4):
     # the checkpoint's recorded graph roles against `bound`, whose `kg` is the
     # manifest-bound source graph and whose tensor digests equal this run's
@@ -470,11 +471,16 @@ def read_measurement_inputs(
 def _expect(expected: Optional[str], read: str, what: str) -> None:
     """Refuse a read whose digest is not the one the run was started for."""
     if expected is not None and read != expected:
-        raise ExpectedDigestMismatch(
-            f"{what} holds bytes {read[:12]}..., not the {expected[:12]}... this run was "
-            "started for: it changed after it was chosen, so it is not measured under that "
-            "choice. Nothing was written."
-        )
+        raise _changed_since_chosen(what, f"holds bytes {read[:12]}...", expected)
+
+
+def _changed_since_chosen(what: str, found: str, expected: str) -> ExpectedDigestMismatch:
+    """The one wording of `ExpectedDigestMismatch`, for the cohort version
+    (`_expect`) and the checkpoint (`_read_checkpoint`)."""
+    return ExpectedDigestMismatch(
+        f"{what} {found}, not the {expected[:12]}... this run was started for: it changed "
+        "after it was chosen, so it is not measured under that choice. Nothing was written."
+    )
 
 
 def _resolve_generated(data_dir: Path, split: str) -> Tuple[CohortProvenance, Tuple[str, ...]]:
@@ -581,8 +587,14 @@ def _verify_version_binding(
     verify_cohort_binding(version.manifest, bound, dataset_record.identity.sha256)
 
 
-def _read_checkpoint(checkpoint: Path, device: torch.device) -> CheckpointRead:
+def _read_checkpoint(checkpoint: Path, device: torch.device, *,
+                     expected_sha256: Optional[str] = None) -> CheckpointRead:
     """The checkpoint, one read at its resolved path, or a refusal naming it.
+
+    With `expected_sha256` (`--expect-checkpoint-sha256`) the read is compared
+    before torch parses it: other bytes, or no file, are `ExpectedDigestMismatch`
+    (root-cause round, BACKLOG 43), never `UnparseableCheckpoint` or a
+    `FileNotFoundError`.
 
     `read_checkpoint` passes on whatever torch raises for the bytes, as its
     contract says, and for bytes that are not a weights-only checkpoint that is
@@ -593,10 +605,17 @@ def _read_checkpoint(checkpoint: Path, device: torch.device) -> CheckpointRead:
     torch's error chained (`UnparseableCheckpoint`). A file that cannot be read
     keeps the read's own `OSError`, which names it.
     """
-    from src.utils.checkpoint_io import read_checkpoint
+    from src.utils.checkpoint_io import CheckpointChanged, read_checkpoint
 
+    resolved = Path(checkpoint).resolve()
     try:
-        return read_checkpoint(Path(checkpoint).resolve(), map_location=device, weights_only=True)
+        return read_checkpoint(resolved, map_location=device, weights_only=True,
+                               expected_sha256=expected_sha256)
+    except CheckpointChanged as exc:
+        found = (f"holds bytes {exc.found[:12]}..." if exc.found is not None
+                 else "is gone")
+        raise _changed_since_chosen(f"the checkpoint {checkpoint} (read at {resolved})",
+                                    found, exc.expected) from None
     except (OSError, MemoryError):
         # A MemoryError is not a property of the file. Converting it would send
         # a capacity shortfall to whoever reads the message as a corrupt file.

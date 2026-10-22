@@ -614,6 +614,45 @@ def test_a_read_that_is_not_the_chosen_one_is_refused_before_anything_is_measure
     assert _nothing_written(cohort) and _usage(cohort) == []
 
 
+@pytest.mark.parametrize("bytes_now", ["not a checkpoint", "another checkpoint", "gone"])
+def test_other_bytes_at_the_chosen_checkpoint_are_refused_before_torch_parses_them(
+    cli, cohort, monkeypatch, bytes_now
+):
+    """Root-cause round, BACKLOG 43: `--expect-checkpoint-sha256` is compared on
+    the checkpoint's one read before torch parses it, so bytes put at the chosen
+    path after the choice are refused as changed, whatever they are: junk is not
+    called unparseable, a valid other checkpoint is never loaded, and a removed
+    file is not a bare FileNotFoundError. Nothing is written."""
+    import hashlib
+
+    import torch
+
+    import src.utils.checkpoint_io as checkpoint_io
+
+    chosen = cohort.checkpoint_sha256
+    if bytes_now == "not a checkpoint":
+        cohort.checkpoint.write_bytes(b"torn mid-overwrite")
+    elif bytes_now == "another checkpoint":
+        torch.save({"state_dict": {}}, cohort.checkpoint)
+    else:
+        cohort.checkpoint.unlink()
+    found = (None if bytes_now == "gone"
+             else hashlib.sha256(cohort.checkpoint.read_bytes()).hexdigest())
+    # The checkpoint reader hands torch the bytes through its module's BytesIO
+    # (the graph's tensor files are parsed elsewhere, before the checkpoint).
+    monkeypatch.setattr(checkpoint_io, "BytesIO",
+                        lambda *a, **k: pytest.fail("torch parsed the checkpoint's bytes"))
+
+    with pytest.raises(cli.ExpectedDigestMismatch) as refused:
+        cli.main(_argv(cohort, "--expect-checkpoint-sha256", chosen, "--record"))
+
+    message = str(refused.value)
+    held = "is gone" if found is None else f"holds bytes {found[:12]}..."
+    assert f"{held}, not the {chosen[:12]}... this run was started for" in message
+    assert "Nothing was written" in message
+    assert _nothing_written(cohort) and _usage(cohort) == []
+
+
 def _outcome(path):
     return json.loads(Path(path).read_text())
 
