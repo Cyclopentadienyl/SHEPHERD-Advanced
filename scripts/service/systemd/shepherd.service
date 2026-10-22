@@ -29,10 +29,10 @@ Environment=PYTHONUNBUFFERED=1
 # service gets what a manual start gets: the allocator preset saved in Runtime
 # Settings (the rule Restart Backend applies) and the attention settings.
 # --no-auto-install: a service never pip-installs. --no-browser: nobody to show
-# it to, and the launcher then execs into uvicorn, so the main PID is the
-# server and nothing waits beside it. Arguments after -- go to uvicorn. To pin
-# an allocator, set PYTORCH_ALLOC_CONF here; an explicit value is kept on every
-# start and restart.
+# it to. The launcher execs into uvicorn (on every POSIX start), so the main
+# PID is the server and nothing waits beside it. Arguments after -- go to
+# uvicorn. To pin an allocator, set PYTORCH_ALLOC_CONF here; an explicit value
+# is kept on every start and restart.
 ExecStart=%h/SHEPHERD-Advanced/.venv/bin/python %h/SHEPHERD-Advanced/scripts/launch/shep_launch.py --no-auto-install --no-browser -- --host 127.0.0.1 --port 8264
 # Stopping the service stops its GPU job through the backend (deployment guide
 # §4.11): SIGTERM goes to the main process only, which is the server (the

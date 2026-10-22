@@ -48,8 +48,12 @@ def run(cmd: List[str], check: bool = False) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, check=check)
 
 def serve(cmd: List[str]) -> int:
-    """Run the server beside this process (the browser opener's) until it exits;
-    its exit status.
+    """Run the server beside this process until it exits; its exit status.
+    Only where this process cannot become the server (`can_hand_over`:
+    Windows, where ``os.exec*`` changes the PID). There Ctrl-C and Ctrl-Break
+    are console events that reach the server too, since it shares this
+    console, and a SIGTERM from another process is TerminateProcess, which no
+    process can catch or pass on, so nothing is forwarded.
 
     **A Ctrl-C waits for the server, never kills it.** The server is in this
     terminal's process group and gets the same SIGINT; it then stops the GPU
@@ -77,25 +81,28 @@ def urlopen(url: str, timeout: float):
     """Open ``url`` on this host's own server, never through a proxy."""
     return _LOCAL_OPENER.open(url, timeout=timeout)
 
-def _open_browser_when_ready(url: str, health_url: str, progress_every: float = 30.0) -> None:
+def _open_browser_when_ready(url: str, health_url: str, progress_every: float = 30.0,
+                             server: Optional[int] = None) -> None:
     """Poll ``health_url`` until it answers, then open ``url`` once.
 
-    Runs in a daemon thread beside the server. **There is no deadline.**
+    Runs beside the server: in the helper `start_browser_opener` starts,
+    given the server's PID as ``server``, or on Windows in a daemon thread of
+    the launcher that waits for the server. **There is no deadline.**
     uvicorn runs the app's lifespan, where an eager pipeline build loads,
     before it binds the socket, so the first answer is the end of startup
     however long the load takes. A fixed 60 s bound only guessed that time,
     and gave up on a start that loads a large SP table eagerly (about 84 s
-    on a GB10; BACKLOG item 17). The wait cannot outlive the server: when it
-    exits, ``run`` returns, ``main`` exits and this daemon thread ends with
-    the process. A line about every ``progress_every`` seconds says the
-    server is still starting.
+    on a GB10; BACKLOG item 17). The wait cannot outlive the server: the
+    helper returns once no process ``server`` is left, and the daemon thread
+    ends with the launcher, which exits when the server does. A line about
+    every ``progress_every`` seconds says the server is still starting.
 
     ``/health``, not ``/ready``: ``/ready`` stays 503 after a failed startup,
     and the dashboard is where an operator then reloads a pipeline.
     """
     started = time.monotonic()
     next_progress = progress_every
-    while True:
+    while server is None or _is_running(server):
         try:
             resp = urlopen(health_url, timeout=3)
             if resp.status == 200:
@@ -109,6 +116,43 @@ def _open_browser_when_ready(url: str, health_url: str, progress_every: float = 
             log(f"Server still starting ({elapsed:.0f} s); the browser opens when {health_url} answers")
             next_progress = elapsed + progress_every
         time.sleep(1.0)
+
+def _is_running(pid: int) -> bool:
+    """Whether a process ``pid`` exists (one of another user's counts)."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+#: The browser opener as a program of its own (`start_browser_opener`). Its
+#: first process forks and exits at once, so the launcher, which waits for
+#: that one, has no child left when it becomes the server; the second, whose
+#: parent is then the system's, polls (`_open_browser_when_ready`). It stays
+#: in the terminal's process group, so a Ctrl-C ends it too.
+_BROWSER_OPENER = (
+    "import importlib.util, os, sys\n"
+    "if os.fork():\n"
+    "    os._exit(0)\n"
+    "try:\n"
+    "    spec = importlib.util.spec_from_file_location('shep_launch', sys.argv[1])\n"
+    "    launcher = importlib.util.module_from_spec(spec)\n"
+    "    spec.loader.exec_module(launcher)\n"
+    "    launcher._open_browser_when_ready(sys.argv[2], sys.argv[3], server=int(sys.argv[4]))\n"
+    "except KeyboardInterrupt:\n"
+    "    pass\n"
+)
+
+def start_browser_opener(url: str, health_url: str) -> None:
+    """Start the browser opener detached from this process, which then becomes
+    the server (`exec_server`) and keeps its PID, the one the opener is given
+    to watch. A new interpreter rather than a fork of this one: the launcher
+    has imported torch, whose threads a forked copy would not have."""
+    sys.stdout.flush()
+    subprocess.run([sys.executable, "-c", _BROWSER_OPENER, str(Path(__file__).resolve()),
+                    url, health_url, str(os.getpid())], check=False)
 
 def apply_allocator(env, settings: Dict[str, Any]) -> List[str]:
     """Put the CUDA allocator into ``env`` and return what to log.
@@ -270,7 +314,7 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--skip-launch", action="store_true", help="Do not start main app after setup")
     m = p.add_argument_group("Main app")
     m.add_argument("--entry", type=str, default=DEFAULT_ENTRY, help="Python module to run with -m (default: uvicorn)")
-    m.add_argument("--no-browser", action="store_true", help="Do not open a browser once the server is ready. On Linux/macOS the launcher then\nreplaces itself with the server (exec) instead of waiting beside it.")
+    m.add_argument("--no-browser", action="store_true", help="Do not open a browser once the server is ready.")
     return p
 
 def split_passthrough(argv: List[str]) -> Tuple[List[str], List[str]]:
@@ -379,12 +423,15 @@ def display_base_url(uvicorn_args: List[str]) -> str:
 
 
 def can_hand_over() -> bool:
-    """Whether this process may become the server by ``exec``.
+    """Whether this process may become the server by ``exec``, as it then does
+    on every start, a browser to open or not.
 
     POSIX only. There ``execve`` replaces the process image and keeps the PID,
-    so a service manager's main PID becomes the server and its signals reach
-    it. On Windows ``os.exec*`` starts a new process and ends this one: the PID
-    changes and a supervisor loses track, so the launcher waits instead.
+    so whoever started the launcher -- a terminal, launch_shepherd.sh, a
+    service manager -- holds the server's PID and its signals reach the
+    server. On Windows ``os.exec*`` starts a new process and ends this one:
+    the PID changes and a supervisor loses track, so the launcher waits
+    instead (`serve`).
     """
     return os.name == "posix"
 
@@ -593,18 +640,24 @@ def main() -> int:
                + ["--no-access-log"] + passthrough + UVICORN_FORCED_ARGS)
     else:
         cmd = [sys.executable, "-m", args.entry] + passthrough
-    # **Headless: become the server.** The only reason to keep this process
-    # alive is the browser thread below, and --no-browser has none. Everything
-    # above -- allocator, attention, plugin, retrieval -- is already in
-    # os.environ, so exec hands it over whole. No launcher is left resident,
-    # the service's main PID is the server, and Restart Backend re-execs it in
-    # place as it would a bare uvicorn start.
-    if args.no_browser and can_hand_over():
-        return exec_server(cmd)
     # Auto-open browser once server is ready (polls /health until it answers)
+    opens_browser = not args.no_browser and has_urls
     if not args.no_browser and not has_urls:
         log("No browser is opened: the server has no URL this launcher knows")
-    elif not args.no_browser:
+    # **Become the server, on every POSIX start** (round 3 of the review
+    # fixes, P3-2). Everything above -- allocator, attention, plugin,
+    # retrieval -- is already in os.environ, so exec hands it over whole. No
+    # launcher is left resident: the PID that was started is the server's, so
+    # a SIGTERM sent to it alone (a service manager, `kill`) is the server's
+    # orderly stop, which stops its job; a launcher waiting beside the server
+    # was ended by it alone, and the server served on with its job. Restart
+    # Backend re-execs it in place as it would a bare uvicorn start. The
+    # browser, when one is to be opened, is a helper started first.
+    if can_hand_over():
+        if opens_browser:
+            start_browser_opener(f"{base_url}/ui", f"{base_url}/health")
+        return exec_server(cmd)
+    if opens_browser:
         opener = threading.Thread(
             target=_open_browser_when_ready,
             args=(f"{base_url}/ui", f"{base_url}/health"),

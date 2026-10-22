@@ -5,7 +5,10 @@
 # 
 # This is a convenience wrapper that:
 # 1. Activates the virtual environment
-# 2. Passes all arguments to scripts/launch/shep_launch.py
+# 2. Passes all arguments to scripts/launch/shep_launch.py, replacing itself
+#    with it (exec), so the PID this script was started as is the launcher's,
+#    which then becomes the server's (it execs into uvicorn): a SIGTERM sent to
+#    it alone stops the server, which stops its GPU job
 # 3. Allows users to set COMMANDLINE_ARGS environment variable
 # 
 # Usage Examples:
@@ -67,15 +70,9 @@ if [[ ! -f "scripts/launch/shep_launch.py" ]]; then
     warning "Expected file location: scripts/launch/shep_launch.py"
 fi
 
-# Launch the Python launcher with all arguments
+# Launch the Python launcher with all arguments, in this process's place
+# (round 3 of the review fixes, P3-2): a launcher started as this script's
+# child was not reached by a SIGTERM sent to the PID that was started.
 log "Launching SHEPHERD via shep_launch.py..."
 echo ""
-python scripts/launch/shep_launch.py "$@"
-
-# Capture exit code
-EXIT_CODE=$?
-
-# Deactivate virtual environment
-deactivate
-
-exit $EXIT_CODE
+exec python scripts/launch/shep_launch.py "$@"

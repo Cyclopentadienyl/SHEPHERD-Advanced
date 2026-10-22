@@ -19,8 +19,9 @@ stopped from its terminal, is tests/integration/test_backend_stops_its_job.py.
   put back at shutdown unless someone else replaced it since.
 - No auto-reload (`src.api.main:main()`, setup_demo's printed commands): a
   reload restarts the server, and so would stop a training on every save.
-- The launcher in its browser mode waits for the server through a Ctrl-C
-  instead of killing it after 0.25 s, so the server's shutdown can end.
+- Where the launcher waits beside the server (`serve`: Windows, where it
+  cannot become the server by exec), it waits through a Ctrl-C instead of
+  killing the server after 0.25 s, so the server's shutdown can end.
 
 Module: tests/unit/test_backend_shutdown.py
 """
@@ -728,7 +729,7 @@ signal.signal(signal.SIGINT, shut_down)
 print("READY", flush=True)
 time.sleep(600)
 '''
-#: The launcher's `serve`, as its browser mode runs it, in a session of its own.
+#: The launcher's `serve`, as it runs where it cannot exec, in a session of its own.
 LAUNCHER = r'''import importlib.util, sys
 spec = importlib.util.spec_from_file_location("shep_launch", sys.argv[1])
 launcher = importlib.util.module_from_spec(spec)

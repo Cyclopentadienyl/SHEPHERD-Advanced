@@ -91,10 +91,12 @@ def _run_launcher(monkeypatch, launcher_args, env=None, hand_over=True):
     """Run the launcher's own main with the server, installs and browser stubbed.
 
     Returns what it did: the server command, whether it exec'd or waited,
-    browser threads started, pip installs attempted, and main's status.
+    browser threads started, browser openers started beside an exec (their
+    URLs), pip installs attempted, and main's status.
     """
     launcher = _launcher()
-    record = {"exec": [], "run": [], "browsers": 0, "threads": [], "installs": []}
+    record = {"exec": [], "run": [], "browsers": 0, "threads": [], "installs": [],
+              "openers": []}
 
     class _Thread:
         def __init__(self, *args, **kwargs):
@@ -111,6 +113,8 @@ def _run_launcher(monkeypatch, launcher_args, env=None, hand_over=True):
     monkeypatch.setattr(launcher, "run", lambda cmd, check=False: (
         record["run"].append(list(cmd)) or subprocess.CompletedProcess(cmd, 0)))
     monkeypatch.setattr(launcher, "serve", lambda cmd: record["run"].append(list(cmd)) or 0)
+    monkeypatch.setattr(launcher, "start_browser_opener",
+                        lambda url, health: record["openers"].append((url, health)))
     monkeypatch.setattr(launcher, "pip_install", lambda spec, name, **kwargs: (
         record["installs"].append(name) or False))
     # Every accelerator absent, so a requested one reaches the install decision.
@@ -291,8 +295,8 @@ def test_a_unix_socket_is_shown_as_its_path_not_as_a_url(monkeypatch, capsys, ap
     has no URL to show or open, and passes no host to startup."""
     done = _run_launcher(monkeypatch, ["--no-auto-install", "--", *app_args],
                          env={**env, "SHEPHERD_BIND_HOST": "0.0.0.0"})
-    assert done["status"] == 0 and done["run"]
-    assert done["browsers"] == 0
+    assert done["exec"] and not done["run"]
+    assert done["browsers"] == 0 and done["openers"] == []
     out = capsys.readouterr().out
     assert "Listening on          : unix socket /run/shepherd.sock (this machine only" in out
     assert "http://" not in out and "No browser is opened" in out
@@ -358,10 +362,22 @@ def test_the_displayed_address_follows_uvicorns_own_rules(uvicorn_args, expected
     assert _launcher().display_base_url(uvicorn_args) == expected
 
 
-def test_without_no_browser_the_launcher_waits_and_opens_one(monkeypatch):
-    # The control for the test above: the stubs do see the other path.
+def test_with_a_browser_to_open_the_launcher_still_becomes_the_server(monkeypatch):
+    """Round 3 of the review fixes, P3-2: the browser mode used to wait beside
+    the server, so a SIGTERM sent to the PID that was started ended the
+    launcher alone and the server served on with its job. On POSIX it execs
+    as the headless mode does, and the browser opener is a helper started
+    first, given the URLs."""
     done = _run_launcher(monkeypatch, ["--no-auto-install"])
-    assert done["run"] and not done["exec"]
+    assert done["exec"] and not done["run"]
+    assert done["threads"] == [] and done["browsers"] == 0
+    assert done["openers"] == [("http://127.0.0.1:8000/ui", "http://127.0.0.1:8000/health")]
+
+
+def test_where_exec_would_change_the_pid_the_browser_opens_from_a_thread(monkeypatch):
+    # The control for the tests around it: the stubs do see the other path.
+    done = _run_launcher(monkeypatch, ["--no-auto-install"], hand_over=False)
+    assert done["run"] and not done["exec"] and done["openers"] == []
     assert done["browsers"] == 1
     assert done["status"] == 0
     # A daemon: the opener waits for /health with no deadline, so only the

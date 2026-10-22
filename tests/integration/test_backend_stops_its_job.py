@@ -11,11 +11,16 @@ From the signal on the GPU slot is closed, so a start still under way is
 refused (P23-1).
 
 End to end: the real backend (`python -m uvicorn src.api.main:app`, as
-setup_demo prints it, and the launcher in its browser mode, which waits beside
-the server) in a session of its own, a real training job started through the
-API (`scripts/train_model.py`, held by its epochs), then the terminal's signal
-sent to the backend's process group, which the job is not in. The backend must
-end, and with it every process of the job and the GPU lock.
+setup_demo prints it; the launcher, in its browser mode and as the systemd unit
+starts it; and `launch_shepherd.sh`) in a session of its own, a real training
+job started through the API (`scripts/train_model.py`, held by its epochs),
+then the terminal's signal sent to the backend's process group, which the job
+is not in, or a SIGTERM sent to the PID that was started alone, as a service
+manager or `kill` sends it. The backend must end, and with it every process of
+the job and the GPU lock. **Every POSIX start path leaves the server as the
+process that was started** (round 3 of the review fixes, P3-2): the script
+execs the launcher, which execs into uvicorn, its browser opener a helper that
+is not the server's child.
 
 **With a dashboard tab open** (verification of the owner's decision): the tab
 keeps Gradio's session heartbeat stream open, and uvicorn waits for every open
@@ -120,6 +125,22 @@ def _wait(condition, seconds: float, what: str):
     raise AssertionError(f"timed out waiting for {what}")
 
 
+def _children(pid: int) -> list:
+    """`(pid, state, cmdline)` of each process whose parent is `pid`."""
+    found = []
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
+            command = (entry / "cmdline").read_bytes().replace(b"\0", b" ")
+        except (OSError, IndexError):
+            continue
+        if int(fields[1]) == pid:
+            found.append((int(entry.name), fields[0], command.decode(errors="replace")))
+    return found
+
+
 def _no_core_file() -> None:
     import resource
 
@@ -158,6 +179,9 @@ class _Backend:
         elif self.started_by == "service":     # the systemd unit's ExecStart flags
             argv = [*launcher, "--no-browser", "--", "--host", "127.0.0.1",
                     "--port", str(self.port)]
+        elif self.started_by == "script":      # launch_shepherd.sh, in its browser mode
+            argv = ["bash", str(REPO / "launch_shepherd.sh"), "--no-auto-install", "--",
+                    "--port", str(self.port)]
         else:
             argv = [*launcher, "--", "--port", str(self.port)]
         self._log = (self.tmp_path / "backend.log").open("w")
@@ -190,13 +214,20 @@ class _Backend:
 
     def send(self, number: int) -> None:
         """The terminal's signal: its foreground group only, which the job is
-        not in. For the service, systemd's KillMode=mixed stop: the main
-        process only, which must be the server itself (the launcher exec'd
-        into it), never the job's processes."""
-        if self.started_by == "service":
-            command = Path(f"/proc/{self.process.pid}/cmdline").read_bytes().split(b"\0")
+        not in. A SIGTERM to a backend started through the launcher or the
+        script, as systemd's KillMode=mixed stop or `kill <pid>` sends it: the
+        PID that was started only, which must be the server itself (the
+        script and the launcher exec'd into it), never the job's processes,
+        with no child of its own left from the start (the browser opener is
+        not its child, nor a zombie of it)."""
+        if self.started_by != "uvicorn" and number == signal.SIGTERM:
+            pid = self.process.pid
+            command = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
             assert b"uvicorn" in command, f"the main process is not the server: {command}"
-            os.kill(self.process.pid, number)
+            left = [child for child in _children(pid)
+                    if child[0] != self.job_pid or child[1] in ("Z", "X")]
+            assert left == [], f"the server has children of the start: {left}"
+            os.kill(pid, number)
             return
         os.killpg(self.process.pid, number)
 
@@ -229,8 +260,13 @@ class _Backend:
     pytest.param("uvicorn", signal.SIGTERM, False, id="uvicorn-sigterm"),
     # Ctrl-\ (root-cause review, P23-2): it used to orphan the job
     pytest.param("uvicorn", signal.SIGQUIT, False, id="uvicorn-ctrl-backslash"),
-    # Ctrl-C with the launcher (its browser mode) waiting beside the server
+    # Ctrl-C with the launcher (its browser mode) started from the terminal
     pytest.param("launcher", signal.SIGINT, False, id="launcher-ctrl-c"),
+    # SIGTERM to the PID that was started alone (round 3 of the review fixes,
+    # P3-2): the launcher in its browser mode, and launch_shepherd.sh, which
+    # used to end alone while the server served on with its job
+    pytest.param("launcher", signal.SIGTERM, False, id="launcher-sigterm"),
+    pytest.param("script", signal.SIGTERM, False, id="script-sigterm"),
     # The systemd unit's start and stop (KillMode=mixed: SIGTERM to the main
     # process only; root-cause review, P23-3)
     pytest.param("service", signal.SIGTERM, False, id="service-stop"),
@@ -244,6 +280,8 @@ class _Backend:
 ])
 def test_the_backend_stopped_from_its_terminal_stops_the_job_it_runs(tmp_path, started_by, sig,
                                                                      tab_open):
+    if started_by == "script" and not (REPO / ".venv" / "bin" / "activate").is_file():
+        pytest.skip("launch_shepherd.sh sources .venv/bin/activate in the repository")
     backend = _Backend(tmp_path, started_by)
     tab = None
     try:
