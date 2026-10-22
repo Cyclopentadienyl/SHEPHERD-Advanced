@@ -818,28 +818,27 @@ class TrainingManager:
                 "run_dir": str(run_dir),
             }
 
-    #: Said when the dataset changed between showing it and starting (M5-2).
-    DATASET_CHANGED = "The dataset changed since it was shown; select it again."
-
     def dataset_refusal(self, data_dir: str, expected: Any) -> Optional[str]:
         """Why a run on `data_dir` must not start for a caller that showed the
         dataset fingerprint `expected`, or None: the workspace's
-        ``split_manifest.json`` is read again through its one reader
-        (`read_split_manifest`) and compared in full. A value that is not a
-        full SHA-256 hexdigest, or a manifest that cannot be read now, is
-        refused too: nothing then says the run would use what was shown."""
+        ``split_manifest.json`` is read again through its one reader, which
+        compares `expected` before decoding (`read_split_manifest(
+        expected_sha256=)`, P22-S2) and raises `DatasetChanged`, the refusal
+        the training process says too. A value that is not a full SHA-256
+        hexdigest is refused, and so is a manifest that cannot be read now:
+        nothing then says the run would use what was shown."""
         if not (isinstance(expected, str) and _SHA256.fullmatch(expected)):
             return ("The dataset fingerprint sent with the start is not a full SHA-256 "
                     "hexdigest, so the dataset cannot be checked. Nothing was started.")
-        from src.kg.artifacts import read_split_manifest
+        from src.kg.artifacts import MANIFEST_FILENAME, DatasetChanged, read_split_manifest
 
         try:
-            current = read_split_manifest(self.workspace_path(data_dir)).identity.sha256
-        except (ValueError, OSError) as exc:
-            return (f"{self.DATASET_CHANGED} Its split_manifest.json cannot be read now "
+            read_split_manifest(self.workspace_path(data_dir), expected_sha256=expected)
+        except DatasetChanged as exc:
+            return f"{exc} Nothing was started."
+        except (ValueError, OSError) as exc:  # the reader's refusals name the path
+            return (f"The dataset's {MANIFEST_FILENAME} cannot be read now "
                     f"({type(exc).__name__}). Nothing was started.")
-        if current != expected:
-            return f"{self.DATASET_CHANGED} Nothing was started."
         return None
 
     def stop_training(self) -> Dict[str, Any]:

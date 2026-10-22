@@ -16,6 +16,15 @@ its one manifest read, before the graph and the samples are read: a mismatch
 is `DatasetChanged`, exit 1, no traceback, no run directory. The runner's
 early check stays (the API's 409). Through the real runner and the real CLI.
 
+**The comparison is the manifest reader's** (root-cause round, P22-S2):
+`read_split_manifest(expected_sha256=)` compares the digest of its one read
+before the bytes are decoded and raises the one `DatasetChanged`, also for a
+manifest that is gone. It used to be compared by the caller after the parse,
+so torn bytes, another schema or a missing manifest reached the child as a
+"Training failed" traceback advising a rebuild, while the runner's check on
+the same bytes said "the dataset changed". Both now call the reader and say
+the same sentence.
+
 Module: tests/unit/test_training_dataset_expected.py
 """
 from __future__ import annotations
@@ -118,8 +127,8 @@ def test_the_reviewers_counterexample_a_manifest_replaced_after_the_check_is_ref
     log = "\n".join(job.tail())
     assert job.status == "failed" and job.exit_code == 1, log[-3000:]
     assert f"train_model: refused: {CHANGED}" in log
-    assert f"not the {shown[:12]}... this run was started for" in log
-    assert "Nothing was written." in log and "Traceback" not in log
+    assert f"(shown: {shown[:12]}...). Nothing was written." in log
+    assert "Traceback" not in log
     assert not (tmp_path / "run").exists(), "a refused run left its directory"
 
 
@@ -144,6 +153,67 @@ def test_a_republish_in_progress_is_said_as_a_changed_dataset(workspace, tmp_pat
     assert job.status == "failed" and CHANGED in log, log[-3000:]
     assert "contradicts itself" not in log and "Traceback" not in log
     assert not (tmp_path / "run").exists()
+
+
+def _torn(path: Path) -> None:
+    data = path.read_bytes()
+    path.write_bytes(data[: len(data) // 2])
+
+
+def _other_schema(path: Path) -> None:
+    manifest = json.loads(path.read_text())
+    manifest["schema_version"] = 99
+    path.write_text(json.dumps(manifest))
+
+
+#: Changes the manifest's own parse would refuse (torn mid-overwrite, written
+#: by another revision) or not find, each said as a changed dataset.
+UNREADABLE = {"torn": _torn, "other-schema": _other_schema, "gone": Path.unlink}
+
+
+@pytest.mark.parametrize("how", sorted(UNREADABLE))
+def test_a_manifest_that_no_longer_parses_is_said_as_changed_by_both_checks(
+        workspace, tmp_path, monkeypatch, how):
+    """P22-S2: the job runner's check passed, then the manifest became bytes
+    the reader cannot parse, or went away, before the process read it. The
+    process refuses it as changed (exit 1, no traceback, no run directory),
+    in the words the runner's own check uses on the same workspace."""
+    path = workspace / "split_manifest.json"
+    shown = _digest(path)
+
+    job, _ = _run(workspace, tmp_path / "run", shown, monkeypatch,
+                  lambda: UNREADABLE[how](path))
+    log = "\n".join(job.tail())
+    assert job.status == "failed" and job.exit_code == 1, log[-3000:]
+    assert f"train_model: refused: {CHANGED}" in log, log[-3000:]
+    assert "Traceback" not in log and "Training failed" not in log and "Rebuild" not in log
+    assert not (tmp_path / "run").exists(), "a refused run left its directory"
+    runner = tm.TrainingManager().dataset_refusal(str(workspace), shown)
+    assert runner.endswith(" Nothing was started.")
+    assert f"train_model: refused: {runner[:-len(' Nothing was started.')]}" in log
+
+
+@pytest.mark.parametrize("how", sorted(UNREADABLE))
+def test_the_reader_compares_before_it_decodes(workspace, monkeypatch, how):
+    import src.kg.artifacts as artifacts
+
+    path = workspace / "split_manifest.json"
+    shown = _digest(path)
+    UNREADABLE[how](path)
+    monkeypatch.setattr(artifacts.json, "loads", lambda *a, **k: pytest.fail("decoded"))
+    with pytest.raises(artifacts.DatasetChanged, match=re.escape(CHANGED)) as refused:
+        artifacts.read_split_manifest(workspace, expected_sha256=shown)
+    assert isinstance(refused.value, ValueError)
+    assert f"(shown: {shown[:12]}...)" in str(refused.value)
+    assert ("is gone" in str(refused.value)) == (how == "gone")
+
+
+def test_the_reader_reads_the_manifest_shown_as_before(workspace):
+    from src.kg.artifacts import read_split_manifest
+
+    shown = _digest(workspace / "split_manifest.json")
+    read = read_split_manifest(workspace, expected_sha256=shown)
+    assert read.identity.sha256 == shown and read.manifest["schema_version"] == 3
 
 
 def test_the_comparison_comes_before_the_graph_and_the_samples_are_read(workspace,
@@ -182,6 +252,20 @@ def test_the_cli_refuses_a_wrong_expectation_before_anything_is_written(workspac
                 "--run-dir", str(tmp_path / "run"), "--expect-dataset-sha256", "0" * 64)
     assert done.returncode == 1, done.stderr[-2000:]
     assert f"train_model: refused: {CHANGED}" in done.stderr and "Traceback" not in done.stderr
+    assert not (tmp_path / "run").exists()
+
+
+def test_the_cli_refuses_a_torn_manifest_as_changed(workspace, tmp_path):
+    """The formal entry run by hand with the fingerprint it was given, after
+    the manifest was torn (P22-S2): refused as changed, not a traceback."""
+    path = workspace / "split_manifest.json"
+    shown = _digest(path)
+    _torn(path)
+    done = _cli("--data-dir", str(workspace), "--device", "cpu", "--epochs", "1",
+                "--run-dir", str(tmp_path / "run"), "--expect-dataset-sha256", shown)
+    assert done.returncode == 1, done.stderr[-2000:]
+    assert f"train_model: refused: {CHANGED}" in done.stderr
+    assert "Traceback" not in done.stderr and "not UTF-8 JSON" not in done.stderr
     assert not (tmp_path / "run").exists()
 
 

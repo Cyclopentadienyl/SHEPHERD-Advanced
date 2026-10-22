@@ -87,8 +87,10 @@ def test_a_dataset_that_changed_since_it_was_shown_is_refused_before_anything_ha
         result = manager.start_training({"data_dir": str(workspace)},
                                         expected_dataset_fingerprint=shown)
     assert result["success"] is False and result["dataset_changed"] is True
+    now = _fingerprint(workspace)
     assert result["error"] == ("The dataset changed since it was shown; select it again. "
-                               "Nothing was started.")
+                               f"Its split_manifest.json holds {now[:12]}... now "
+                               f"(shown: {shown[:12]}...). Nothing was started.")
     _nothing_happened(manager, popen, workspace, before)
 
 
@@ -117,7 +119,9 @@ def test_a_value_that_is_not_a_full_digest_is_refused(workspace, expected):
     popen.assert_not_called()
 
 
-def test_a_manifest_that_cannot_be_read_now_is_refused(workspace):
+def test_a_manifest_that_is_gone_is_a_changed_dataset(workspace):
+    """The bytes shown are no longer there: the reader's own refusal
+    (`DatasetChanged`, P22-S2), the words the training process uses."""
     shown = _fingerprint(workspace)
     (workspace / "split_manifest.json").unlink()
     manager = TrainingManager()
@@ -125,8 +129,30 @@ def test_a_manifest_that_cannot_be_read_now_is_refused(workspace):
         result = manager.start_training({"data_dir": str(workspace)},
                                         expected_dataset_fingerprint=shown)
     assert result["success"] is False
-    assert result["error"].startswith("The dataset changed since it was shown; select it again.")
-    assert "cannot be read now" in result["error"] and str(workspace) not in result["error"]
+    assert result["error"] == ("The dataset changed since it was shown; select it again. "
+                               f"Its split_manifest.json is gone (shown: {shown[:12]}...). "
+                               "Nothing was started.")
+    popen.assert_not_called()
+
+
+def test_the_manifest_shown_that_cannot_be_read_is_refused_as_unreadable(workspace):
+    """Bytes that are the ones shown but that this revision cannot read (here
+    another schema, its digest sent as the fingerprint): not "changed", which
+    would be false, but unreadable, naming no path."""
+    path = workspace / "split_manifest.json"
+    manifest = json.loads(path.read_text())
+    manifest["schema_version"] = 99
+    path.write_text(json.dumps(manifest))
+    import hashlib
+
+    shown = hashlib.sha256(path.read_bytes()).hexdigest()
+    with patch("subprocess.Popen") as popen:
+        result = TrainingManager().start_training({"data_dir": str(workspace)},
+                                                  expected_dataset_fingerprint=shown)
+    assert result["success"] is False
+    assert result["error"] == ("The dataset's split_manifest.json cannot be read now "
+                               "(ValueError). Nothing was started.")
+    assert str(workspace) not in result["error"]
     popen.assert_not_called()
 
 
@@ -213,7 +239,8 @@ def test_the_run_bars_start_sends_what_it_showed_and_the_runner_refuses_a_rebuil
     fresh = TrainingManager()
     monkeypatch.setattr(tc, "training_manager", fresh)
     state = tc._workspace_state("demo")
-    assert state["row"]["dataset_fingerprint"] == _fingerprint(workspace)
+    shown = _fingerprint(workspace)
+    assert state["row"]["dataset_fingerprint"] == shown
     assert state["row"]["dataset_fingerprint"][:12] in tc.chip_html(state)
     _rewrite_manifest(workspace)
 
@@ -222,8 +249,10 @@ def test_the_run_bars_start_sends_what_it_showed_and_the_runner_refuses_a_rebuil
                    "15, 10, 5", 5000]
     with patch("subprocess.Popen") as popen:
         notice, _seed = tc._on_start(gradio_request(), state, *form, False)
-    assert notice == tc.notice_html("Not started: The dataset changed since it was shown; "
-                                    "select it again. Nothing was started.")
+    assert notice == tc.notice_html(
+        "Not started: The dataset changed since it was shown; select it again. Its "
+        f"split_manifest.json holds {_fingerprint(workspace)[:12]}... now "
+        f"(shown: {shown[:12]}...). Nothing was started.")
     popen.assert_not_called()
     assert fresh.run_dir is None
 

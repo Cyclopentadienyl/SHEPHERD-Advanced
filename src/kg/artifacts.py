@@ -83,7 +83,28 @@ class ManifestRead(NamedTuple):
     identity: ReadIdentity
 
 
-def read_split_manifest(data_dir: Path) -> ManifestRead:
+class DatasetChanged(ValueError):
+    """The workspace's `split_manifest.json` is not the one a caller was shown.
+
+    Raised by `read_split_manifest` when it is given the fingerprint shown
+    (``expected_sha256``) and its one read has other bytes, or finds no
+    manifest. The message is the single wording of this refusal: the job
+    runner's early check (`TrainingManager.dataset_refusal`) and the training
+    process (`read_training_inputs`, `--expect-dataset-sha256`) both say it
+    (review of 8242b47, P2-2, and the root-cause round's P22-S2). A
+    ``ValueError``, so a handler of the reader's other refusals still catches it.
+    """
+
+    def __init__(self, expected: str, found: Optional[str]) -> None:
+        now = (f"Its {MANIFEST_FILENAME} holds {found[:12]}... now" if found is not None
+               else f"Its {MANIFEST_FILENAME} is gone")
+        super().__init__(f"The dataset changed since it was shown; select it again. "
+                         f"{now} (shown: {expected[:12]}...).")
+
+
+def read_split_manifest(
+    data_dir: Path, *, expected_sha256: Optional[str] = None
+) -> ManifestRead:
     """Read `split_manifest.json` once, and refuse one this revision cannot read.
 
     The refusals are the ones each verifier made when it parsed the manifest
@@ -92,19 +113,34 @@ def read_split_manifest(data_dir: Path) -> ManifestRead:
     JSON object, is refused naming the file; it used to surface as a bare
     decoding or attribute error.
 
+    **`expected_sha256` compares before it decodes** (the dataset fingerprint a
+    caller showed): the digest of this one read against it, before the bytes
+    are decoded, parsed or schema-checked, so other bytes, valid or not, raise
+    `DatasetChanged` and are never interpreted; an absent manifest raises the
+    same, since the bytes shown are no longer there. As `read_report` and
+    `read_samples_file` do.
+
     Decoded as UTF-8, as the generator writes it; the bytes are released before
     the text is parsed.
     """
     from src.utils.fingerprint import read_once
 
     manifest_path = data_dir / MANIFEST_FILENAME
-    if not manifest_path.is_file():
+    try:
+        if not manifest_path.is_file():
+            raise FileNotFoundError(manifest_path)
+        read = read_once(manifest_path)
+    except FileNotFoundError:
+        if expected_sha256 is not None:
+            raise DatasetChanged(expected_sha256, None) from None
         raise ValueError(
             f"{data_dir} has no {MANIFEST_FILENAME}, so nothing records which "
             f"graph export its artifacts are. {_REBUILD}"
-        )
-    read = read_once(manifest_path)
+        ) from None
     identity = read.identity
+    if expected_sha256 is not None and identity.sha256 != expected_sha256:
+        del read
+        raise DatasetChanged(expected_sha256, identity.sha256)
     # `RecursionError` is how `json` meets nesting deeper than the interpreter's
     # limit: a file this revision cannot read, refused like any other (M5-1).
     try:

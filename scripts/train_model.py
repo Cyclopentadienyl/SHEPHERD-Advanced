@@ -125,6 +125,9 @@ from src.kg.data_loader import (
 from src.models.gnn.shepherd_gnn import ShepherdGNN, ShepherdGNNConfig, create_model
 from src.evaluation.cohort import resolve_cohort, verify_cohort_reads
 from src.utils.gpu_lock import GpuLockMisconfigured, take_gpu_lock
+# The refusal of a dataset that is not the one shown, raised by the manifest
+# reader itself (`read_split_manifest(expected_sha256=)`); `main` says it once.
+from src.kg.artifacts import DatasetChanged
 
 if TYPE_CHECKING:
     from src.kg.artifacts import DatasetRecord, ManifestRead
@@ -254,14 +257,6 @@ def _sha256_arg(value: str) -> str:
         raise argparse.ArgumentTypeError(
             f"{value!r} is not a SHA-256 (64 lowercase hexadecimal digits)")
     return value
-
-
-class DatasetChanged(ValueError):
-    """The workspace's split_manifest.json, as this run read it, is not the one
-    the run was started for (`--expect-dataset-sha256`): refused before the
-    graph and the samples are read and before anything is written, as
-    measure_scorer refuses a checkpoint or cohort version that is not the one
-    chosen (review of 8242b47, P2-2)."""
 
 
 def _device_arg(value: str) -> str:
@@ -552,11 +547,12 @@ def read_training_inputs(
     verify from those reads (contract M2.1, S8).
 
     **The dataset the run was started for** (`expected_manifest_sha256`, the
-    fingerprint a caller showed; review of 8242b47, P2-2) is compared on this
-    one manifest read, right after it and before the graph and the samples are
-    read: a workspace republished since it was shown is refused as changed
-    (`DatasetChanged`), never trained on, and never reported as a manifest
-    that contradicts its files.
+    fingerprint a caller showed; review of 8242b47, P2-2) is a parameter of
+    the one manifest read, the first read here: the reader compares it before
+    the bytes are decoded (`read_split_manifest(expected_sha256=)`), so a
+    workspace republished since it was shown, torn, of another schema or
+    without a manifest, is refused as changed (`DatasetChanged`), never
+    trained on, and never reported as a manifest that contradicts its files.
 
     **Before anything is written.** `train` calls this ahead of the run
     directories, `config.yaml` and `runtime.json`: whether this workspace's graph
@@ -587,19 +583,13 @@ def read_training_inputs(
     )
     from src.kg.storage.file_storage import read_graph_artifacts, read_samples
 
-    # Stat only: a missing split or a workspace generated before the allocation
-    # step is named before anything is read.
+    # The manifest first, so a dataset that is not the one shown is said as
+    # changed before any other refusal about its files (P22-S2).
+    manifest = read_split_manifest(data_dir, expected_sha256=expected_manifest_sha256)
+    logger.info(f"Dataset fingerprint (split_manifest.json sha256): {manifest.identity.sha256}")
+    # Stat only: a missing split is named before the graph and samples are read.
     for split in TRAINING_SPLITS:
         resolve_cohort(data_dir, split)
-
-    manifest = read_split_manifest(data_dir)
-    read_sha256 = manifest.identity.sha256
-    if expected_manifest_sha256 is not None and read_sha256 != expected_manifest_sha256:
-        raise DatasetChanged(
-            f"The dataset changed since it was shown; select it again. "
-            f"{manifest.identity.path} holds bytes {read_sha256[:12]}..., not the "
-            f"{expected_manifest_sha256[:12]}... this run was started for. Nothing was written.")
-    logger.info(f"Dataset fingerprint (split_manifest.json sha256): {read_sha256}")
     graph = read_graph_artifacts(data_dir, map_location="cpu")
     samples = {
         split: read_samples(data_dir, split, training_fields=True)
@@ -1352,7 +1342,7 @@ def _train_main(args: argparse.Namespace) -> int:
         metrics = train(config, explicit, expected_dataset_sha256=args.expect_dataset_sha256)
         return 0 if metrics else 1
     except DatasetChanged as exc:  # a refusal, said once, not a failure with a traceback
-        logger.error(f"train_model: refused: {exc}")
+        logger.error(f"train_model: refused: {exc} Nothing was written.")
         return 1
     except KeyboardInterrupt:
         logger.info("Training interrupted by user")
