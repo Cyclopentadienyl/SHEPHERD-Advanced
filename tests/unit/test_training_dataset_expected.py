@@ -23,7 +23,11 @@ manifest that is gone. It used to be compared by the caller after the parse,
 so torn bytes, another schema or a missing manifest reached the child as a
 "Training failed" traceback advising a rebuild, while the runner's check on
 the same bytes said "the dataset changed". Both now call the reader and say
-the same sentence.
+the same sentence. **Nothing about the workspace is checked before that
+read** (verification of the root-cause round, P3-1): `main` stat-ed the
+graph and sample files and `train` the directory first, so a workspace gone,
+or replaced by an empty one, after the runner's check got "Training data not
+found ... Build training data first" from the process.
 
 Module: tests/unit/test_training_dataset_expected.py
 """
@@ -166,9 +170,22 @@ def _other_schema(path: Path) -> None:
     path.write_text(json.dumps(manifest))
 
 
+def _workspace_gone(path: Path) -> None:
+    path.parent.rename(path.parent.with_name(f"{path.parent.name}-moved"))
+
+
+def _workspace_emptied(path: Path) -> None:
+    _workspace_gone(path)
+    path.parent.mkdir()
+
+
 #: Changes the manifest's own parse would refuse (torn mid-overwrite, written
-#: by another revision) or not find, each said as a changed dataset.
-UNREADABLE = {"torn": _torn, "other-schema": _other_schema, "gone": Path.unlink}
+#: by another revision) or not find, the whole workspace gone or replaced by
+#: an empty directory included, each said as a changed dataset.
+UNREADABLE = {"torn": _torn, "other-schema": _other_schema, "gone": Path.unlink,
+              "workspace-gone": _workspace_gone, "workspace-emptied": _workspace_emptied}
+#: The cases that leave no manifest at all.
+GONE = {"gone", "workspace-gone", "workspace-emptied"}
 
 
 @pytest.mark.parametrize("how", sorted(UNREADABLE))
@@ -187,6 +204,7 @@ def test_a_manifest_that_no_longer_parses_is_said_as_changed_by_both_checks(
     assert job.status == "failed" and job.exit_code == 1, log[-3000:]
     assert f"train_model: refused: {CHANGED}" in log, log[-3000:]
     assert "Traceback" not in log and "Training failed" not in log and "Rebuild" not in log
+    assert "not found" not in log and "Build training data" not in log
     assert not (tmp_path / "run").exists(), "a refused run left its directory"
     runner = tm.TrainingManager().dataset_refusal(str(workspace), shown)
     assert runner.endswith(" Nothing was started.")
@@ -205,7 +223,7 @@ def test_the_reader_compares_before_it_decodes(workspace, monkeypatch, how):
         artifacts.read_split_manifest(workspace, expected_sha256=shown)
     assert isinstance(refused.value, ValueError)
     assert f"(shown: {shown[:12]}...)" in str(refused.value)
-    assert ("is gone" in str(refused.value)) == (how == "gone")
+    assert ("is gone" in str(refused.value)) == (how in GONE)
 
 
 def test_the_reader_reads_the_manifest_shown_as_before(workspace):
@@ -266,6 +284,18 @@ def test_the_cli_refuses_a_torn_manifest_as_changed(workspace, tmp_path):
     assert done.returncode == 1, done.stderr[-2000:]
     assert f"train_model: refused: {CHANGED}" in done.stderr
     assert "Traceback" not in done.stderr and "not UTF-8 JSON" not in done.stderr
+    assert not (tmp_path / "run").exists()
+
+
+def test_without_an_expectation_a_missing_workspace_is_the_manifest_readers_refusal(tmp_path):
+    """The CLI by hand naming no workspace that exists: nothing stats the
+    directory first (P3-1), so the manifest reader refuses it, with the
+    command that builds one, and nothing is written."""
+    done = _cli("--data-dir", str(tmp_path / "nowhere"), "--device", "cpu",
+                "--run-dir", str(tmp_path / "run"))
+    assert done.returncode == 1, done.stderr[-2000:]
+    assert f"{tmp_path / 'nowhere'} has no split_manifest.json" in done.stderr
+    assert "scripts/build_knowledge_graph.py --generate-samples" in done.stderr
     assert not (tmp_path / "run").exists()
 
 

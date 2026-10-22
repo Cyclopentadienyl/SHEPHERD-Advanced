@@ -597,23 +597,20 @@ def read_training_inputs(
     )
     from src.kg.storage.file_storage import read_graph_artifacts, read_samples
 
-    # The manifest first, so a dataset that is not the one shown is said as
-    # changed before any other refusal about its files (P22-S2); its absence is
-    # the reader's own refusal.
+    # The manifest first, and nothing about the workspace before it (`train`
+    # and `main` stat nothing), so a dataset that is not the one shown, its
+    # directory gone included, is said as changed before any other refusal
+    # about its files (P22-S2); its absence is the reader's own refusal.
     manifest = read_split_manifest(data_dir, expected_sha256=expected_manifest_sha256)
     logger.info(f"Dataset fingerprint (split_manifest.json sha256): {manifest.identity.sha256}")
-    # Stat only: a missing split is named before the graph and the samples are
-    # read. The samples alone: the manifest is not looked at by path again
-    # after its read (contract M2.1), which `resolve_cohort` would do.
-    for split in TRAINING_SPLITS:
-        samples_path = data_dir / f"{split}_samples.json"
-        if not samples_path.is_file():
-            raise ValueError(f"{samples_path} does not exist")
-    graph = read_graph_artifacts(data_dir, map_location="cpu")
+    # The samples before the graph, so a missing split is refused, by the one
+    # reader that locates a workspace split and names the splits there are,
+    # before the graph tensors are loaded.
     samples = {
         split: read_samples(data_dir, split, training_fields=True)
         for split in TRAINING_SPLITS
     }
+    graph = read_graph_artifacts(data_dir, map_location="cpu")
 
     bound = verify_graph_reads(manifest, graph.reads)
     check_unparsed_kg_json(data_dir, manifest)
@@ -1060,12 +1057,13 @@ def train(config: TrainConfig, explicit: Optional[Collection[str]] = None, *,
     #
     # No rollback and no transactional writing: the refusal simply moves ahead of
     # the side effects.
+    #
+    # **The workspace's first check is its manifest read** (P22-S2): no stat of
+    # the directory or its files comes before it, so a workspace that is gone,
+    # or replaced by another, after a caller showed its fingerprint is refused
+    # as changed (`DatasetChanged`), and without a fingerprint as a workspace
+    # with no manifest, with the command that builds one.
     data_dir = Path(config.data_dir)
-    if not data_dir.exists():
-        logger.error(f"Data directory not found: {data_dir}")
-        logger.info("Build a workspace first:")
-        logger.info("  python scripts/build_knowledge_graph.py --generate-samples")
-        return {}
 
     # An explicit run directory that holds files is refused here, before the
     # first artifact exists (contract M3a-2). It is claimed below, after every
@@ -1356,25 +1354,8 @@ def _train_main(args: argparse.Namespace) -> int:
     # Load configuration
     config, explicit = load_config_with_explicit(args)
 
-    # Validate training data exists
-    data_dir = Path(config.data_dir)
-    has_graph_data = (data_dir / "node_features.pt").exists()
-    has_train_samples = (data_dir / "train_samples.json").exists()
-
-    if has_graph_data and not has_train_samples:
-        logger.error(
-            f"Workspace {data_dir} has graph data but no train_samples.json. "
-            f"Re-run build_knowledge_graph.py with --generate-samples."
-        )
-        return 1
-    elif not data_dir.exists() or not has_graph_data:
-        logger.error(f"Training data not found in {data_dir}")
-        logger.error("Required files: train_samples.json, node_features.pt, edge_indices.pt")
-        logger.error("Build training data first:")
-        logger.error("  python scripts/build_knowledge_graph.py --workspace <dir> --external-dir data/external --generate-samples")
-        return 1
-
-    # Run training
+    # Run training. The workspace is checked by its readers, the manifest's
+    # first (`read_training_inputs`), each refusal naming the missing file.
     try:
         metrics = train(config, explicit, expected_dataset_sha256=args.expect_dataset_sha256,
                         expected_resume_sha256=args.expect_resume_sha256)

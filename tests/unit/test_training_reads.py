@@ -23,8 +23,9 @@ is built only from the reads. The acceptance shown here, at the real entry point
   check takes (it records nothing), the run completes and no poison reaches the
   record;
 - a workspace with no validation samples records none; an unrelated split is
-  never opened; an empty training split is refused before anything is written,
-  and so is a split with a case not in phenotype normal form (N2);
+  never opened; a missing split is the samples reader's own refusal, before
+  the graph is read; an empty training split is refused before anything is
+  written, and so is a split with a case not in phenotype normal form (N2);
 - training trains on both optional sample fields (`training_fields=True`);
 - a parent that does not parse leaves no run artifact (it is read at the top
   since M2.3), after a line that names it;
@@ -436,6 +437,29 @@ def test_an_unrelated_split_is_never_opened(train_model, captured, workspace, tm
 
     assert opens.opens(workspace / "test_samples.json") == 0
     assert "test_samples" not in captured["trainer"].training_input_digests
+
+
+def test_a_missing_split_is_the_samples_readers_refusal_before_the_graph_is_read(
+    train_model, workspace, monkeypatch, tmp_path
+):
+    """One locator of a workspace split (verification of the root-cause round,
+    P3-2): training stats no sample file itself; `read_samples` locates each
+    and refuses a missing one, naming the splits there are, and the samples
+    are read before the graph tensors, so that refusal comes before the graph
+    is loaded."""
+    import src.kg.storage.file_storage as storage
+
+    _forbid_stages(monkeypatch, train_model)
+    (workspace / "val_samples.json").unlink()
+    monkeypatch.setattr(storage, "read_graph_artifacts",
+                        lambda *a, **k: pytest.fail("the graph was read"))
+    run = tmp_path / "run"
+
+    with pytest.raises(FileNotFoundError, match=r"Samples file not found: .*val_samples\.json"
+                                                r" — this workspace has: train$"):
+        train_model.train(_config(train_model, workspace, run))
+
+    assert _run_artifacts(run) == []
 
 
 def test_a_parent_that_does_not_parse_leaves_no_checkpoint_and_no_metrics(
