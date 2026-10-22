@@ -2065,7 +2065,8 @@ measure_scorer: refused: the GPU lock /srv/shepherd/workspaces/.shepherd-gpu.loc
 
 **請在服務與執行 CLI 的 shell 中設定同一個根目錄**（例如你在 systemd unit 中設定的
 `Environment=` 行（§4.12；unit 的範本為根目錄與 registry 各留有一行註解掉的設定）——unit 本身不讀取
-任何環境檔——或一個同時由 unit 的 `EnvironmentFile=` 與你的 shell 讀取的檔案）。看不到根目錄的 CLI 會被拒絕，結束碼 1，不寫出任何東西（`train_model:
+任何環境檔——或一個同時由 unit 的 `EnvironmentFile=` 與你的 shell 讀取的檔案）。看不到根目錄的
+CLI 會被拒絕，結束碼 1，不寫出任何東西（`train_model:
 refused: SHEPHERD_WORKSPACES_ROOT is not set, so the GPU lock is not configured ...`）；
 `setup_demo.py --train-model` 透過同一個訓練器訓練，同樣如此。**請給 shell 與服務相同的
 workspace 根目錄**：每個指定了這個根目錄的行程——服務、你的 shell 與其中的 CLI——都取

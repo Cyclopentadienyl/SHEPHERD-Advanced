@@ -663,8 +663,8 @@ class TrainingManager:
         before anything else it does (round 3 of the review fixes, P3-3), so
         Restart Backend's exec is refused from that moment, also before the
         stop the signal starts has closed the slot. A plain store, never the
-        lock: a signal handler runs in the main thread between two of its
-        bytecodes, which may be holding it."""
+        lock: a signal handler runs in the main thread between two of that
+        thread's bytecodes, and the thread may be holding the lock."""
         self._stop_signalled = True
 
     def exec_if_closed_for_restart(self, exec_image: Callable[[], None]) -> bool:
@@ -1262,9 +1262,8 @@ class TrainingManager:
         closing the slot (`close`): when a shutdown signal arrives, or at the
         lifespan's end when no signal began it, so a backend stopped by
         Ctrl-C, a closed terminal, SIGTERM or the service manager ends its
-        job, open connections or not. Returns what
-        happened, or None when no job held the slot. Blocks; call it from a
-        thread."""
+        job, open connections or not. Returns what happened, or None when no
+        job held the slot. Blocks; call it from a thread."""
         with self._lock:
             job = self._active
             if job is None:

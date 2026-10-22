@@ -264,8 +264,8 @@ class _ShutdownSignals:
     still ends by SIGQUIT, after the job's stop. Each first records the stop
     with the job runner (`record_stop_signal`, a plain store), so Restart
     Backend's exec is refused from the signal on (round 3 of the review
-    fixes, P3-3), then runs the server's
-    handler as before (a second Ctrl-C is still uvicorn's forced quit), then
+    fixes, P3-3), then runs the server's handler as before (a second Ctrl-C
+    is still uvicorn's forced quit), then
     hands the event loop `begin`: the first time, the job's stop starts in a
     thread of its own (it closes the GPU slot, then stops the job that held
     it: `_stop_the_active_job`), and every time, the dashboard's
