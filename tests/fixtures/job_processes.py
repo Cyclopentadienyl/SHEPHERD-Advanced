@@ -13,6 +13,10 @@ the descriptor and exit with or without releasing, or start a program that
 must not keep it), so a test can kill it, let it exit, or watch what its
 children keep.
 
+`process_stat` is the tests' one reader of a process's state (Linux,
+`/proc/<pid>/stat`), with what is read from it: `process_state`, `live`,
+`processes` and `group_members`.
+
 Module: tests/fixtures/job_processes.py
 """
 from __future__ import annotations
@@ -105,6 +109,57 @@ with take_gpu_lock("training", "lock_holder.py"):
         print(f"CHILD {child.pid}", flush=True)
         os._exit(0)
 '''
+
+
+#: The states of a process that has ended and not yet been reaped (a zombie,
+#: or one being torn down): it holds no descriptor, so not the GPU lock.
+ENDED_STATES = ("Z", "X")
+
+
+def process_stat(pid: int) -> list | None:
+    """The fields of `/proc/<pid>/stat` after the command name (the state,
+    the parent, the process group, ...), or None once the process is gone,
+    either way the system says so: its entry absent (FileNotFoundError), or
+    the process reaped while its entry is read (`read` fails with ESRCH,
+    ProcessLookupError; the review of 2887506 caught a copy of this reader
+    that knew only the first). Any other failure is raised."""
+    try:
+        with open(f"/proc/{pid}/stat", "rb") as handle:
+            data = handle.read()
+    except (FileNotFoundError, ProcessLookupError):
+        return None
+    return data.rsplit(b")", 1)[1].decode("ascii").split()
+
+
+def process_state(pid: int) -> str:
+    """The state letter of process `pid` (`R`, `S`, `T`, `Z`, ...), or "gone"."""
+    fields = process_stat(pid)
+    return "gone" if fields is None else fields[0]
+
+
+def live(pid: int) -> bool:
+    """Whether process `pid` is there and has not ended (a zombie has)."""
+    return process_state(pid) not in ("gone", *ENDED_STATES)
+
+
+def processes():
+    """`(pid, fields)` of each process there is, its fields `process_stat`'s."""
+    for name in os.listdir("/proc"):
+        if not name.isdigit():
+            continue
+        try:
+            fields = process_stat(int(name))
+        except PermissionError:  # not this account's process, so not one of its jobs'
+            continue
+        if fields is not None:
+            yield int(name), fields
+
+
+def group_members(group: int) -> list:
+    """The processes of process group `group` (the fifth field of the stat)
+    that have not ended."""
+    return [pid for pid, fields in processes()
+            if int(fields[2]) == group and fields[0] not in ENDED_STATES]
 
 
 def start_lock_holder(action: str, env: dict, tmp: Path) -> subprocess.Popen:

@@ -56,6 +56,8 @@ REPO = Path(__file__).resolve().parents[2]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
+from tests.fixtures.job_processes import live  # noqa: E402
+
 
 def _probe():
     spec = importlib.util.spec_from_file_location(
@@ -464,15 +466,6 @@ def test_the_service_is_started_as_the_launcher_starts_it(probe, tmp_path, monke
 _CHILD = "import time; time.sleep(120)"
 
 
-def _gone(pid: int) -> bool:
-    """Whether process `pid` has ended (a zombie nobody reaped has ended)."""
-    try:
-        with open(f"/proc/{pid}/stat", encoding="ascii") as handle:
-            return handle.read().rsplit(")", 1)[1].split()[0] == "Z"
-    except FileNotFoundError:
-        return True
-
-
 def _run_parent(script: str):
     """A Python process running `script` with the probe module as `probe`;
     returns it and the child pid it prints first."""
@@ -526,7 +519,7 @@ def test_a_termination_signal_ends_the_probe_through_its_cleanups(probe, name):
         parent.send_signal(number)
         said, _ = parent.communicate(timeout=60)
         assert parent.returncode == 128 + number and "cleaned up" in said
-        assert _gone(child)
+        assert not live(child)
     finally:
         _stop(child)
         _stop(parent.pid)
@@ -590,9 +583,9 @@ def test_a_service_started_by_the_probe_ends_when_the_probe_is_killed(probe):
         _stop(parent.pid)
         parent.wait(timeout=30)
         deadline = time.monotonic() + 20
-        while not _gone(child) and time.monotonic() < deadline:
+        while live(child) and time.monotonic() < deadline:
             time.sleep(0.1)
-        assert _gone(child), "the child outlived the killed probe"
+        assert not live(child), "the child outlived the killed probe"
     finally:
         _stop(child)
 

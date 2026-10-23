@@ -52,6 +52,7 @@ pytest.importorskip("torch")
 pytest.importorskip("uvicorn")
 
 from src.utils.gpu_lock import LOCK_FILE_NAME, WORKSPACES_ROOT_ENV, probe  # noqa: E402
+from tests.fixtures.job_processes import group_members, processes  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 pytestmark = pytest.mark.skipif(not sys.platform.startswith("linux"),
@@ -62,21 +63,6 @@ def _free_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         return sock.getsockname()[1]
-
-
-def _members(group: int) -> list:
-    """The processes of `group` that are not zombies (a zombie holds nothing)."""
-    found = []
-    for entry in Path("/proc").iterdir():
-        if not entry.name.isdigit():
-            continue
-        try:
-            fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
-        except (OSError, IndexError):
-            continue
-        if int(fields[2]) == group and fields[0] not in ("Z", "X"):
-            found.append(int(entry.name))
-    return found
 
 
 def _request(port: int, method: str, path: str, body=None, timeout: float = 30.0):
@@ -128,16 +114,14 @@ def _wait(condition, seconds: float, what: str):
 def _children(pid: int) -> list:
     """`(pid, state, cmdline)` of each process whose parent is `pid`."""
     found = []
-    for entry in Path("/proc").iterdir():
-        if not entry.name.isdigit():
+    for child, fields in processes():
+        if int(fields[1]) != pid:
             continue
         try:
-            fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
-            command = (entry / "cmdline").read_bytes().replace(b"\0", b" ")
-        except (OSError, IndexError):
+            command = Path(f"/proc/{child}/cmdline").read_bytes().replace(b"\0", b" ")
+        except (FileNotFoundError, ProcessLookupError):  # gone since: no longer a child
             continue
-        if int(fields[1]) == pid:
-            found.append((int(entry.name), fields[0], command.decode(errors="replace")))
+        found.append((child, fields[0], command.decode(errors="replace")))
     return found
 
 
@@ -235,12 +219,12 @@ class _Backend:
         return (self.tmp_path / "backend.log").read_text()
 
     def job_ended(self) -> bool:
-        return _members(self.job_pid) == [] and probe(self.lock) is None
+        return group_members(self.job_pid) == [] and probe(self.lock) is None
 
     def assert_the_job_ended_with_it(self) -> None:
         said = self.said()
         assert "The backend is stopping, so it stops the training job" in said, said[-3000:]
-        assert _members(self.job_pid) == [], "a process of the job outlived the backend"
+        assert group_members(self.job_pid) == [], "a process of the job outlived the backend"
         assert probe(self.lock) is None, "the GPU lock outlived the backend"
 
     def stop(self) -> None:
@@ -248,7 +232,7 @@ class _Backend:
         if self.process is not None and self.process.poll() is None:
             os.killpg(self.process.pid, signal.SIGKILL)
             self.process.wait(timeout=30)
-        for pid in _members(self.job_pid) if self.job_pid else []:
+        for pid in group_members(self.job_pid) if self.job_pid else []:
             os.kill(pid, signal.SIGKILL)
         if self._log is not None:
             self._log.close()

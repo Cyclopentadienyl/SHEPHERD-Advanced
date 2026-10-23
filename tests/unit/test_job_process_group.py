@@ -13,9 +13,11 @@ test_cancel_tree.py).
 Everything here goes through the runner's real entry points (`_spawn_locked`,
 `stop_training`, `start_training`, the monitor) with real children: a script
 whose real torch DataLoader worker (fork) is blocked in `__getitem__`, and the
-real `scripts/train_model.py`. A member of a group counts as left only while it
-is not a zombie (`/proc/<pid>/stat`): a zombie holds no descriptor. Every child
-a test starts is stopped by its pid in `finally`.
+real `scripts/train_model.py`, whose forked workers a start-up hook holds in
+their first sample (`HOLD`). A member of a group counts as left only while it
+is not a zombie (`/proc/<pid>/stat`, read by the tests' one reader in
+tests/fixtures/job_processes.py): a zombie holds no descriptor. Every child a
+test starts is stopped by its pid in `finally`.
 
 Module: tests/unit/test_job_process_group.py
 """
@@ -38,7 +40,13 @@ pytest.importorskip("torch")
 
 import src.api.services.training_manager as tm  # noqa: E402
 from src.utils.gpu_lock import LOCK_FILE_NAME, WORKSPACES_ROOT_ENV, probe  # noqa: E402
-from tests.fixtures.job_processes import REPO, FakeProcess  # noqa: E402
+from tests.fixtures.job_processes import (  # noqa: E402
+    REPO,
+    FakeProcess,
+    group_members,
+    live,
+    process_state,
+)
 
 LINUX = pytest.mark.skipif(not sys.platform.startswith("linux"),
                            reason="/proc and fork DataLoader workers: Linux")
@@ -90,34 +98,6 @@ with take_gpu_lock("training", "blocked-loader"):
 '''
 
 
-def _state(pid: int) -> str:
-    """The process's state letter, or "gone"."""
-    try:
-        return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
-    except (FileNotFoundError, ProcessLookupError, IndexError):
-        return "gone"
-
-
-def _live(pid: int) -> bool:
-    """Running, not a zombie: a zombie holds no descriptor, so not the lock."""
-    return _state(pid) not in ("gone", "Z", "X")
-
-
-def _members(group: int) -> list:
-    """The group's processes that are not zombies."""
-    found = []
-    for entry in Path("/proc").iterdir():
-        if not entry.name.isdigit():
-            continue
-        try:
-            fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
-        except (OSError, IndexError):
-            continue
-        if int(fields[2]) == group and fields[0] not in ("Z", "X"):
-            found.append(int(entry.name))
-    return found
-
-
 @pytest.fixture
 def blocked(tmp_path, monkeypatch):
     """The lock (under the test's directory as its workspaces root), the
@@ -150,12 +130,41 @@ def _start(manager: tm.TrainingManager, child: Path, pidfile: Path, mode: str):
 def _cleanup(job, worker) -> None:
     """Stop, by pid, whatever a failed test left of its own children."""
     for pid in ([worker] if worker else []) + ([job.process.pid] if job and job.process else []):
-        if _live(pid):
+        if live(pid):
             os.kill(pid, signal.SIGKILL)
     if job and job.process and job.process.poll() is None:
         job.process.wait(timeout=10)
     if job:
         job.done.wait(30)
+
+
+# --------------------------------------------------------------------------- the tests' reader
+@LINUX
+def test_a_process_reaped_while_its_state_is_read_is_gone(monkeypatch):
+    """The tests' one reader of a process's state (`process_stat`) counts a
+    process reaped between the opening of its /proc entry and the read, which
+    then fails with ESRCH, as gone, as it counts one whose entry is absent. A
+    copy of the reader that knew only the absent entry failed the probe's
+    parent-death test with ProcessLookupError (review of 2887506)."""
+    import tests.fixtures.job_processes as job_processes
+
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+
+    def opened_then_reaped(path, *args, **kwargs):
+        handle = open(path, *args, **kwargs)
+        child.kill()
+        child.wait()
+        return handle
+
+    monkeypatch.setattr(job_processes, "open", opened_then_reaped, raising=False)
+    try:
+        assert process_state(child.pid) == "gone"
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait()
+    monkeypatch.undo()
+    assert process_state(child.pid) == "gone" and not live(child.pid)
 
 
 # --------------------------------------------------------------------------- a stop
@@ -183,8 +192,8 @@ def test_a_stop_ends_the_whole_job_before_it_says_stopped(blocked, monkeypatch, 
         answer = manager.stop_training()
         assert answer["success"] is True and answer["status"] == "stopped", answer
         assert job.stop_signal == last
-        assert not _live(worker), "a forked worker outlived a stop that said stopped"
-        assert _members(job.group) == []
+        assert not live(worker), "a forked worker outlived a stop that said stopped"
+        assert group_members(job.group) == []
         assert probe(lock) is None, "the GPU lock is still held after the stop"
         assert manager.active_job() is None
     finally:
@@ -216,7 +225,7 @@ def test_a_job_that_ends_by_itself_leaves_no_worker_and_keeps_the_slot_until_the
         assert seen["active"] and seen["active"]["status"] == "running"
         assert seen["start"]["success"] is False
         assert "Training is already running" in seen["start"]["error"]
-        assert not _live(worker) and probe(lock) is None and manager.active_job() is None
+        assert not live(worker) and probe(lock) is None and manager.active_job() is None
     finally:
         _cleanup(job, worker)
 
@@ -245,7 +254,7 @@ def test_a_worker_the_backend_adopts_is_reaped_not_waited_for_forever(blocked, m
         stopper.join(60)
         assert not stopper.is_alive(), "the stop never returned: a zombie kept the group"
         assert answer["success"] is True and answer["status"] == "stopped", answer
-        assert _state(worker) == "gone", "the adopted worker was not reaped"
+        assert process_state(worker) == "gone", "the adopted worker was not reaped"
         assert probe(lock) is None
     finally:
         libc.prctl(PR_SET_CHILD_SUBREAPER, 0, 0, 0, 0)
@@ -280,13 +289,9 @@ sys.path.insert(0, repo)
 os.environ["SHEPHERD_WORKSPACES_ROOT"] = str(tmp)
 from src.api.services import training_manager as tm
 from src.utils.gpu_lock import probe
+from tests.fixtures.job_processes import process_state
 tm.STOP_GRACE_SECONDS, tm.TERMINATE_GRACE_SECONDS, tm.KILL_GRACE_SECONDS = 0.5, 2.0, 2.0
 tm.OUTPUT_GRACE_SECONDS, tm.RESULT_WAIT_SECONDS = 0.5, 30.0
-def state(pid):
-    try:
-        return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
-    except FileNotFoundError:
-        return "gone"
 manager = tm.TrainingManager()
 with manager._lock:
     job, error = manager._spawn_locked(tm.JOB_TYPES["training"], [sys.executable,
@@ -305,7 +310,8 @@ with manager._lock:
     refusal = manager._slot_refusal_locked(tm.JOB_TYPES["training"])
 print(json.dumps({"worker": worker, "returned": not stopper.is_alive(),
                   "seconds": time.monotonic() - started, "answer": answer,
-                  "worker_state": state(worker), "lock": probe(tmp / ".shepherd-gpu.lock"),
+                  "worker_state": process_state(worker),
+                  "lock": probe(tmp / ".shepherd-gpu.lock"),
                   "active": manager.active_job(), "slot_refusal": refusal},
                  default=str), flush=True)
 os._exit(0)
@@ -339,7 +345,8 @@ def test_a_zombie_left_with_a_reaper_that_never_reaps_does_not_keep_the_slot(tmp
 
 
 # --------------------------------------------------------------------------- never a group signal by mistake
-@pytest.mark.parametrize("pid", [0, 1, 2, os.getpid()])
+@pytest.mark.parametrize("pid", [0, 1, 2, os.getpid()],
+                         ids=["0", "1", "2", "own"])  # one id in every xdist worker
 def test_a_stand_in_process_is_never_signalled_as_a_group(monkeypatch, tmp_path, pid):
     """`killpg(1)` is `kill(-1)`, every process this account may signal, and
     `killpg(0)` the backend's own group. A stand-in (a test's FakeProcess) has
@@ -398,17 +405,66 @@ def test_a_real_job_leads_its_own_group_and_a_test_run_is_never_reached(blocked)
 
 
 # --------------------------------------------------------------------------- the real trainer
+#: Loaded at start-up by the real trainer's job (`sitecustomize`, from the
+#: PYTHONPATH the job inherits from the runner): each DataLoader worker the
+#: trainer forks writes its pid into $SHEPHERD_TEST_HOLD_DIR and holds in its
+#: first sample, so it cannot end by itself before the stop. Left alone, a tiny
+#: cohort's epoch ends its workers within moments, between two scans of /proc
+#: (review of 2887506). With $SHEPHERD_TEST_IGNORE_SIGINT the trainer ignores
+#: SIGINT, so the stop must escalate however soon the trainer would have
+#: ended. Nothing else changes: the trainer, its DataLoader and the workers it
+#: forks are the real ones.
+HOLD = r'''import os, signal, sys, time
+from pathlib import Path
+
+held = os.environ["SHEPHERD_TEST_HOLD_DIR"]
+
+
+def hold_in_first_sample():
+    loader = sys.modules.get("src.kg.data_loader")
+    if loader is None:          # a fork before the trainer's DataLoader exists
+        return
+
+    def held_sample(self, index):
+        Path(held, str(os.getpid())).touch()
+        time.sleep(600)
+
+    loader.DiagnosisDataset.__getitem__ = held_sample
+
+
+os.register_at_fork(after_in_child=hold_in_first_sample)
+if os.environ.get("SHEPHERD_TEST_IGNORE_SIGINT"):
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+'''
+
+
 @LINUX
-@pytest.mark.parametrize("stop_grace", [60.0, 0.01])
+@pytest.mark.parametrize("sigint, stop_grace, last", [
+    ("handled", 60.0, "SIGINT"),
+    ("ignored", 0.5, "SIGTERM"),
+], ids=["graceful", "escalated"])
 def test_the_real_training_cli_with_forked_workers_leaves_nothing_after_a_stop(
-        tmp_path, monkeypatch, stop_grace):
-    """scripts/train_model.py through `start_training`, num_workers=2 (fork):
-    a graceful stop (SIGINT) and one escalated at once to SIGTERM both end
-    every process of the job and free the lock before the stop answers."""
+        tmp_path, monkeypatch, sigint, stop_grace, last):
+    """scripts/train_model.py through `start_training`, num_workers=2 (fork),
+    both workers held alive in a sample (`HOLD`) when the stop comes: a
+    graceful stop (SIGINT) and, the trainer ignoring SIGINT, one escalated to
+    SIGTERM to the whole group both end every process of the job and free the
+    lock before the stop answers. The workers' pids are their own record, not
+    a scan of /proc, and held they cannot end by themselves, so how fast the
+    machine is decides neither whether the workers are there nor which signal
+    ends the job."""
     from tests.fixtures.trainable_workspace import write_trainable_workspace
 
     data = write_trainable_workspace(tmp_path / "case")
     lock = tmp_path / LOCK_FILE_NAME
+    hook, held = tmp_path / "hook", tmp_path / "held"
+    hook.mkdir()
+    held.mkdir()
+    (hook / "sitecustomize.py").write_text(HOLD)
+    monkeypatch.setenv("PYTHONPATH", str(hook), prepend=os.pathsep)
+    monkeypatch.setenv("SHEPHERD_TEST_HOLD_DIR", str(held))
+    if sigint == "ignored":
+        monkeypatch.setenv("SHEPHERD_TEST_IGNORE_SIGINT", "1")
     monkeypatch.setenv(WORKSPACES_ROOT_ENV, str(tmp_path))
     monkeypatch.setattr(tm, "STOP_GRACE_SECONDS", stop_grace)
     manager = tm.TrainingManager()
@@ -420,15 +476,20 @@ def test_the_real_training_cli_with_forked_workers_leaves_nothing_after_a_stop(
     job = manager._last["training"]
     try:
         deadline = time.monotonic() + 180
-        while len(_members(job.group)) < 3 and time.monotonic() < deadline:
+        while len(list(held.iterdir())) < 2 and time.monotonic() < deadline:
             assert job.process.poll() is None, job.tail(30)
             time.sleep(0.2)
-        assert len(_members(job.group)) >= 3, job.tail(30)   # the main process + 2 workers
+        workers = sorted(int(entry.name) for entry in held.iterdir())
+        assert len(workers) == 2, job.tail(30)
+        assert set(workers) <= set(group_members(job.group)), "a held worker is not in the group"
+        assert f"pid {job.process.pid}" in (probe(lock) or "")
         answer = manager.stop_training()
         assert answer["success"] is True and answer["status"] == "stopped", answer
-        assert _members(job.group) == [] and probe(lock) is None
-        assert job.stop_signal == ("SIGINT" if stop_grace > 1 else "SIGTERM")
+        assert job.stop_signal == last
+        assert not any(live(pid) for pid in workers), "a forked worker outlived the stop"
+        assert group_members(job.group) == [] and probe(lock) is None
+        assert manager.active_job() is None
     finally:
-        for pid in _members(job.group or -1):
+        for pid in group_members(job.group or -1):
             os.kill(pid, signal.SIGKILL)
         job.done.wait(30)
