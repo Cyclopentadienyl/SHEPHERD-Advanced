@@ -281,6 +281,8 @@ class _Backend:
 def test_the_backend_stopped_from_its_terminal_stops_the_job_it_runs(tmp_path, started_by, sig,
                                                                      tab_open):
     if started_by == "script" and not (REPO / ".venv" / "bin" / "activate").is_file():
+        # The script's exec itself is checked without it, by
+        # tests/unit/test_service_unit.py (a stub environment and launcher).
         pytest.skip("launch_shepherd.sh sources .venv/bin/activate in the repository")
     backend = _Backend(tmp_path, started_by)
     tab = None

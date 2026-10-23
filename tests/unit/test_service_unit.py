@@ -12,8 +12,11 @@ Traditional Chinese Windows, where an unnamed read fails before any assertion.
 """
 import ast
 import importlib.util
+import json
+import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -372,6 +375,41 @@ def test_with_a_browser_to_open_the_launcher_still_becomes_the_server(monkeypatc
     assert done["exec"] and not done["run"]
     assert done["threads"] == [] and done["browsers"] == 0
     assert done["openers"] == [("http://127.0.0.1:8000/ui", "http://127.0.0.1:8000/health")]
+
+
+@pytest.mark.skipif(os.name != "posix", reason="launch_shepherd.sh is the POSIX start; "
+                                               "Windows starts through launch_shepherd.cmd")
+def test_launch_shepherd_sh_puts_the_launcher_in_the_pid_that_was_started(tmp_path):
+    """Round 3 of the review fixes, P3-2: the script ran the launcher as its
+    child, so a SIGTERM sent to the PID a supervisor started reached bash
+    alone, and the server served on with its job. It execs the launcher now,
+    which execs into uvicorn (the tests above). Run here beside a stub
+    virtual environment and a stub launcher that says its PID, so this holds
+    without the checkout's .venv, which the end-to-end case in
+    tests/integration/test_backend_stops_its_job.py needs."""
+    script = REPO_ROOT / "launch_shepherd.sh"
+    shutil.copy(script, tmp_path / script.name)
+    venv_bin = tmp_path / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    (venv_bin / "python").symlink_to(sys.executable)
+    (venv_bin / "activate").write_text(f'PATH={shlex.quote(str(venv_bin))}:"$PATH"\n',
+                                       encoding="utf-8")
+    launcher = tmp_path / "scripts" / "launch" / "shep_launch.py"
+    launcher.parent.mkdir(parents=True)
+    launcher.write_text("import json, os, sys\n"
+                        "print(json.dumps({'pid': os.getpid(), 'argv': sys.argv[1:]}))\n",
+                        encoding="utf-8")
+
+    args = ["--no-auto-install", "--", "--port", "8264"]
+    process = subprocess.Popen(["bash", script.name, *args], cwd=tmp_path,
+                               stdout=subprocess.PIPE, text=True)
+    out, _ = process.communicate(timeout=60)
+    said = json.loads(out.strip().splitlines()[-1])
+    assert said["pid"] == process.pid, (
+        f"the launcher ran as pid {said['pid']}, not as the pid that was started "
+        f"({process.pid}): a SIGTERM sent to that pid would not reach it")
+    assert said["argv"] == args
+    assert process.returncode == 0
 
 
 def test_where_exec_would_change_the_pid_the_browser_opens_from_a_thread(monkeypatch):
