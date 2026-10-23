@@ -466,9 +466,10 @@ def test_the_service_is_started_as_the_launcher_starts_it(probe, tmp_path, monke
 _CHILD = "import time; time.sleep(120)"
 
 
-def _run_parent(script: str):
+def _run_parent(script: str, stderr=None):
     """A Python process running `script` with the probe module as `probe`;
-    returns it and the child pid it prints first."""
+    returns it and the child pid it prints first. `stderr` is passed to
+    `Popen` (inherited unless given)."""
     import subprocess
 
     source = str(REPO / "scripts" / "probe_deployment.py")
@@ -478,7 +479,8 @@ def _run_parent(script: str):
         "probe = sys.modules['probe'] = importlib.util.module_from_spec(spec)\n"
         "spec.loader.exec_module(probe)\n"
         + script)
-    parent = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, text=True)
+    parent = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE,
+                              stderr=stderr, text=True)
     child = int(parent.stdout.readline())
     return parent, child
 
@@ -501,12 +503,28 @@ def test_a_termination_signal_ends_the_probe_through_its_cleanups(probe, name):
     jobs it started (`_job_ended_on_exit`), as Ctrl-C does; without the
     handler the process ends at once and a child it started keeps running.
     SIGQUIT did, until the signals were taken from the runner's one list of
-    those a job no longer gets (root-cause review, P23-2)."""
+    those a job no longer gets (root-cause review, P23-2).
+
+    **The probe is started with the signal at its default action and not
+    blocked**, the case this test is about: a disposition and a signal mask
+    are inherited across exec, and the probe deliberately leaves a signal
+    already set to be ignored as it is (`test_a_signal_set_to_be_ignored_is_
+    left_ignored`), so a test process that ignores or blocks the signal would
+    otherwise leave the probe asleep and time out without saying why (one
+    unexplained 60 s timeout was seen for SIGHUP while closing out the review
+    of 2887506; not reproduced since). The parent says on stderr whether the
+    probe's handler was installed, and a failure shows what it said."""
     import signal
+    import subprocess
 
     number = getattr(signal, name)
     parent, child = _run_parent(
+        "import signal\n"
+        f"signal.pthread_sigmask(signal.SIG_UNBLOCK, [{int(number)}])\n"
+        f"signal.signal({int(number)}, signal.SIG_DFL)\n"
         "probe._stop_on_termination_signals()\n"
+        f"installed = signal.getsignal({int(number)}) is probe._exit_on_signal\n"
+        "print(f'handler installed: {installed}', file=sys.stderr, flush=True)\n"
         f"started = subprocess.Popen([sys.executable, '-c', {_CHILD!r}],\n"
         "                           stdout=subprocess.DEVNULL)\n"
         "try:\n"
@@ -514,11 +532,17 @@ def test_a_termination_signal_ends_the_probe_through_its_cleanups(probe, name):
         "    time.sleep(120)\n"
         "finally:\n"
         "    started.kill(); started.wait()\n"
-        "    print('cleaned up', flush=True)\n")
+        "    print('cleaned up', flush=True)\n", stderr=subprocess.PIPE)
     try:
         parent.send_signal(number)
-        said, _ = parent.communicate(timeout=60)
-        assert parent.returncode == 128 + number and "cleaned up" in said
+        try:
+            said, told = parent.communicate(timeout=60)
+        except subprocess.TimeoutExpired:
+            _stop(parent.pid)
+            said, told = parent.communicate()
+            pytest.fail(f"the probe did not end within 60 s of {name}; it said: {told!r}")
+        assert "handler installed: True" in told, told
+        assert parent.returncode == 128 + number and "cleaned up" in said, (said, told)
         assert not live(child)
     finally:
         _stop(child)
