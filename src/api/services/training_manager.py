@@ -27,7 +27,8 @@ Purpose:
       of the group, and only then records how the job ended and frees the
       slot. A backend being stopped closes the slot, so nothing starts from
       then on, and stops the job it runs (`close`, `end_active_job`, called by
-      `src.api.main` at the shutdown signal and at the lifespan's end)
+      `src.api.main` once per shutdown: at the shutdown signal, or at the
+      lifespan's end when no signal began the shutdown)
     - Reads training metrics from MetricsLogger's JSON log files, and, once a
       test run has ended, what it published (its `--outcome` file) and whether
       that report is kept and registered (the registration's one helper)
@@ -636,9 +637,10 @@ class TrainingManager:
         the job returned, which the caller stops, or comes after it and is
         refused. So no job can start while the backend waits for its
         connections to close, and none outlives it. `src.api.main` closes it
-        at the shutdown signal and at the lifespan's end. **The stop owns the
-        slot from then on**, also when a restart closed it first, so a failed
-        exec does not open it again (`open`)."""
+        once per shutdown (round 3 of the review fixes, P3-4): at the
+        shutdown signal, or at the lifespan's end when no signal began the
+        shutdown. **The stop owns the slot from then on**, also when a restart
+        closed it first, so a failed exec does not open it again (`open`)."""
         with self._lock:
             self._closed_by = self.CLOSED_BY_STOP
             return self._describe_active_locked()
