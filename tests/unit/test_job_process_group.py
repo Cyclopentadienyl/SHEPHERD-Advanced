@@ -261,6 +261,53 @@ def test_a_worker_the_backend_adopts_is_reaped_not_waited_for_forever(blocked, m
         _cleanup(job, worker)
 
 
+@LINUX
+def test_an_adopted_worker_that_ends_while_its_group_is_checked_is_reaped(blocked,
+                                                                          monkeypatch):
+    """The backend as the reaper of the job's orphans, and the adopted worker
+    ending after the monitor has reaped the group's zombies and before it
+    reads which members are left: the read finds only that zombie, so nothing
+    of the group is left, and the zombie is reaped before the job ends. It
+    used to be left unreaped for good (the verification of the review of
+    2887506: the test above failed now and then with state 'Z'). The main
+    process ends by itself (`crash`) and leaves its worker alive; the test
+    kills the worker at that point of the monitor's check (`_live_member`,
+    after the reap and the group signal)."""
+    tmp, lock, child = blocked
+    libc = ctypes.CDLL(None, use_errno=True)
+    assert libc.prctl(PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) == 0
+    manager = tm.TrainingManager()
+    real_live_member = tm._live_member
+    ended_in_check = []
+    job = worker = None
+
+    def worker_ends_as_checked(group):
+        if job is not None and group == job.group and not ended_in_check and live(worker):
+            os.kill(worker, signal.SIGKILL)
+            deadline = time.monotonic() + 30
+            while process_state(worker) != "Z" and time.monotonic() < deadline:
+                time.sleep(0.01)
+            ended_in_check.append(process_state(worker))
+        return real_live_member(group)
+
+    monkeypatch.setattr(tm, "_live_member", worker_ends_as_checked)
+    try:
+        job, worker = _start(manager, child, tmp / "worker.pid", "crash")
+        assert job.done.wait(60), "the job never ended"
+        assert job.status == "failed" and job.exit_code == 7
+        assert ended_in_check == ["Z"], "the worker did not end during the group check"
+        assert process_state(worker) == "gone", "the adopted worker was not reaped"
+        assert probe(lock) is None and manager.active_job() is None
+    finally:
+        libc.prctl(PR_SET_CHILD_SUBREAPER, 0, 0, 0, 0)
+        if worker is not None:
+            try:
+                os.waitpid(worker, os.WNOHANG)  # this process's zombie, if it was left
+            except ChildProcessError:
+                pass
+        _cleanup(job, worker)
+
+
 #: The critic's experiment (S/cxr-jobs/critic/e1): a reaper that adopts the
 #: job's orphans and never reaps them (docker's `sleep infinity` as PID 1, say)
 #: runs the backend; the backend stops a job whose worker is blocked in a

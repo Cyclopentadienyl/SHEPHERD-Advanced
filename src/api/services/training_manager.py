@@ -540,6 +540,18 @@ def _live_member(group: int) -> bool:
     return False
 
 
+def _reap_group(group: int) -> None:
+    """Reap the zombies of `group` that are this process's children, without
+    waiting for a member that has not ended."""
+    while True:
+        try:
+            pid, _ = os.waitpid(-group, os.WNOHANG)
+        except ChildProcessError:  # no child of this process is in the group
+            return
+        if pid == 0:
+            return
+
+
 def _group_left(group: int) -> bool:
     """Whether a process of the job's group remains. **Only once its main
     process has been waited for** (by `Popen.wait`): this reaps the group's
@@ -552,19 +564,20 @@ def _group_left(group: int) -> bool:
     nothing else would ever reap it. Only this group's are waited for, never
     another job's or the backend's own children. Then the group is asked
     (`killpg(group, 0)`), and on Linux only a member that is not a zombie
-    counts (`_live_member`); elsewhere every member answering does."""
-    while True:
-        try:
-            pid, _ = os.waitpid(-group, os.WNOHANG)
-        except ChildProcessError:  # no child of this process is in the group
-            break
-        if pid == 0:
-            break
+    counts (`_live_member`); elsewhere every member answering does. When none
+    is left on Linux, the group's zombies are reaped once more before the
+    answer: a member that ended after the first reap and before it was read
+    (an adopted worker still exiting at the reap) is a zombie of this process
+    the answer counts as gone, and no later call would come to reap it."""
+    _reap_group(group)
     if not _signal_group(group, 0):
         return False
     if not sys.platform.startswith("linux"):
         return True
-    return _live_member(group)
+    if _live_member(group):
+        return True
+    _reap_group(group)
+    return False
 
 
 class TrainingManager:
