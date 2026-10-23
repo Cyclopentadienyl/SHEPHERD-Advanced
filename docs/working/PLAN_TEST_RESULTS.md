@@ -823,9 +823,10 @@ one waits (`trigger_mode="multiple"`: Gradio's default drops it). The 5-second p
 selection: on the tick that sees the job change it hands the store's re-read to that group.
 *Round 3 (2026-10-22, F6; implemented, not reviewed):* the poll is the one writer of what the
 session saw of the job, so it hands each change over once, and only that hand-off chooses an
-ended run's report (the read after an act decides no end; the consumer-side guard of the first
-version is deleted); the poll writes the job card and Cancel only, and Start and its reason are
-written in the group (BACKLOG 46).
+ended run's report (a run the poll saw busy, or one that started and ended between two ticks;
+the read after an act decides no end; the consumer-side guard of the first version is deleted);
+the poll writes the job card and Cancel only, and Start and its reason are written in the group
+(BACKLOG 46).
 
 ### D6 — How a test cohort is imported, identified and versioned
 
@@ -1833,10 +1834,12 @@ contract and BACKLOG stay the record, and no new planning document is added.
     another page is shown), sending only what changed. *Round 3 (2026-10-22, F7; implemented,
     not reviewed):* the fast poll writes no session selection; a training job seen running in
     another workspace than the session's is handed to a queued render, which follows it only if
-    it still runs there, and every writer of the run bar's workspace (page open and its render,
-    the select, Datasets' "Use for training ›", every render) runs in one queued group of one
-    (`shell.TRAINING_SELECTION_CONCURRENCY`), so a workspace chosen after a job ended is never
-    set back (BACKLOG 46). The Datasets page's temporary bridge into the old Data Directory is
+    it still runs there (the workspace change it makes runs the same chain as a dataset chosen by
+    hand: with Continue… open, the parents are listed again), and every writer of the run bar's
+    workspace (page open and its render, the select, Datasets' "Use for training ›", every
+    render) runs in one queued group of one (`shell.TRAINING_SELECTION_CONCURRENCY`), so a
+    workspace chosen after a job ended is never set back (BACKLOG 46). The Datasets page's
+    temporary bridge into the old Data Directory is
     deleted;
   - **added at the owner's request (2026-10-19):**
     - **navigation in two levels**: "Diagnosis (clinical)" and "Research (pre-clinical)";

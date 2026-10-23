@@ -2500,8 +2500,9 @@ else at start. Each entry names the run, the epoch, the file
 and what it holds (`last.pt (training state)`, a model file `(weights only)`, which cannot be
 continued). The drawer has its own **Device** (auto, cuda or cpu), which starts from the
 parameters' Device each time it opens and is what Check checkpoint and Continue Training use.
-When the run bar's dataset changes while the drawer is open (by hand, or with Datasets'
-"Use for training ›"), the list becomes that workspace's runs, read again the same way.
+When the run bar's dataset changes while the drawer is open (by hand, with Datasets'
+"Use for training ›", or to follow a training job started on another dataset), the list
+becomes that workspace's runs, read again the same way.
 
 **The run view** shows the run the job runner started last or, before one since the server
 started, the latest run of the run bar's workspace (listed again every 10 seconds while the page

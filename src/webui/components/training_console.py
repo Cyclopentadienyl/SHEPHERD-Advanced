@@ -1910,13 +1910,14 @@ def _parents_listed(access: Any, ws: Optional[Mapping[str, Any]], current: Any):
 
 
 def _relist_parents(request: gr.Request, ws, mode):
-    """The run bar's workspace changed (chosen by hand, or by Datasets' "Use
-    for training ›") while Continue… is open: the parent list becomes the new
-    workspace's runs, through the Refresh's path (it opens every checkpoint,
-    so D8 first, on this event's own request; refused, the list is emptied
-    and the note says why), and the last check, the comparison and the Extra
-    epochs, which were about the old list, are cleared. With the drawer
-    closed nothing is listed (it lists when opened).
+    """The run bar's workspace changed (chosen by hand, by Datasets' "Use for
+    training ›", or followed to a job running in another workspace) while
+    Continue… is open: the parent list becomes the new workspace's runs,
+    through the Refresh's path (it opens every checkpoint, so D8 first, on
+    this event's own request; refused, the list is emptied and the note says
+    why), and the last check, the comparison and the Extra epochs, which were
+    about the old list, are cleared. With the drawer closed nothing is listed
+    (it lists when opened).
 
     Returns the parents (state), the parent select, its note, the
     comparison, the check's text and the Extra epochs field."""
@@ -2764,9 +2765,10 @@ def create_training_tab(ctx: Any) -> None:
                   outputs=[ws, chip, ctx.training_workspace, mode, notice],
                   show_progress="hidden", **in_order, **every_one).then(**view_step)
     # The session's workspace changed (a hand choice above writes it, and so
-    # does Datasets' "Use for training ›"): with Continue… open, the parent
-    # list follows it (a gated listing, then the chosen parent, the run bar
-    # and the chips again).
+    # do Datasets' "Use for training ›" and a render that follows a job
+    # running in another workspace): with Continue… open, the parent list
+    # follows it (a gated listing, then the chosen parent, the run bar and the
+    # chips again). A follow therefore costs its render and this chain.
     chosen_step = {"fn": _on_parent_chosen,
                    "inputs": [continue_source, checkpoint_dropdown, manual_checkpoint, parents, ws,
                               mode], "outputs": [mode, compare], "show_progress": "hidden"}

@@ -2711,8 +2711,8 @@ checkpoint）。API 也以選用的查詢參數接受 parent 的 digest，
 行程在啟動時仍會檢查其他一切。每個項目列出 run、epoch、檔案以及它保存的內容
 （`last.pt (training state)`，或模型檔 `(weights only)`，後者無法繼續訓練）。抽屜有自己的 **Device**（auto、cuda 或 cpu），每次打開時
 從參數的 Device 開始，Check checkpoint 與 Continue Training 使用的就是它。抽屜打開期間若 run
-bar 的資料集改變（手動選擇，或從 Datasets 的「Use for training ›」），清單會以同樣的方式重新
-讀取，改為該 workspace 的 run。
+bar 的資料集改變（手動選擇、從 Datasets 的「Use for training ›」，或跟隨在另一個資料集上啟動的
+訓練工作），清單會以同樣的方式重新讀取，改為該 workspace 的 run。
 
 **run 檢視**顯示 job runner 最後啟動的 run；伺服器啟動後還沒有啟動過時，顯示 run bar 所選
 workspace 最新的 run（頁面開著時每 10 秒重新列出一次，所以從 CLI 啟動的 run 在寫下第一個
