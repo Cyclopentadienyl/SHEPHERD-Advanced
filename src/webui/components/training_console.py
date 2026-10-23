@@ -1420,8 +1420,9 @@ HANDED_KEYS = tuple(key for key in VIEW_KEYS if key not in SELECTION_KEYS + POLL
 #: The reads a render keeps per session that are throttled by time, not by a
 #: file's change (the GPU lock's probe, `LOCK_READ_SECONDS`; the workspace's
 #: runs, `LATEST_READ_SECONDS`): the fast poll keeps its own (``polled``, which
-#: only it writes), so it reads them no more often than a render does, and the
-#: render it hands a change over to reads them from there (`_with_polled`).
+#: only it writes), so it reads them no more often than a render does; the
+#: poll and the render it hands a change over to take each from there when it
+#: is newer than the last render's (`_with_polled`).
 POLL_READS = ("lock", "latest")
 #: The hidden component the fast poll hands a change over through (`_poll`),
 #: whose ``.change`` runs the queued render (`_render_changed`): not a
@@ -1586,10 +1587,26 @@ def _render_view(ws, mode, cache, dismissed, request: gr.Request):
 
 def _with_polled(cache: Optional[Mapping[str, Any]], polled: Optional[Mapping[str, Any]]
                  ) -> Dict[str, Any]:
-    """The session's cache with the fast poll's own reads kept by time
-    (`POLL_READS`) in place of the last render's."""
-    own = {key: value for key, value in (polled or {}).items() if key in POLL_READS}
-    return {**(cache or {}), **own}
+    """The session's cache with each of the fast poll's own reads kept by
+    time (`POLL_READS`) in place of the last render's only when it is newer:
+    the lock's (``[when, lock]``); the latest run's (``[workspace, when,
+    run]``) when it is of the same workspace too (another workspace's is not
+    comparable, and the render's stays: `_latest_of` reads a workspace the
+    renders have not drawn yet from its selection); and either when the
+    render kept none. So neither a tick nor the render it hands over to
+    draws an older read than the last render drew. The render after an
+    action reads the lock or the runs again when its own read is too old,
+    while the tick's own may still be young enough to keep and be from
+    before a CLI took the GPU or a run was written."""
+    merged = dict(cache or {})
+    own = polled or {}
+    lock, held = own.get("lock"), merged.get("lock")
+    if lock and (not held or lock[0] > held[0]):
+        merged["lock"] = lock
+    latest, held = own.get("latest"), merged.get("latest")
+    if latest and (not held or (latest[0] == held[0] and latest[1] > held[1])):
+        merged["latest"] = latest
+    return merged
 
 
 def _render_changed(ws, mode, cache, dismissed, polled, request: gr.Request):
@@ -1597,8 +1614,9 @@ def _render_changed(ws, mode, cache, dismissed, polled, request: gr.Request):
     turn in the run bar's workspace group: the run bar and the run view from
     the session's selection and the job as they are now, what changed since
     the session was last sent them, and everything every `FULL_SEND_TICKS`
-    hand-offs. It reads the reads the poll keeps by time (`POLL_READS`) from
-    the poll's own record, so it draws what the poll found."""
+    hand-offs. The reads kept by time (`POLL_READS`) are the newer of the
+    poll's own and the last render's (`_with_polled`), so it draws what the
+    poll found, never an older read than the last render drew."""
     rendered = render(ws, mode, _with_polled(cache, polled), dismissed, request)
     handed = int((cache or {}).get("handed") or 0) + 1
     rendered["cache"]["handed"] = handed
@@ -1626,8 +1644,9 @@ def _poll(location, ws, mode, cache, dismissed, polled, request: gr.Request):
     The reads a render keeps by a file's change (a run's log rows and
     record, the runner's workspace) are the last render's; those it keeps by
     time (`POLL_READS`) are the poll's own, which only it writes, so it
-    reads them no more often than a render does, and the render it hands
-    over to draws from them what it found."""
+    reads them no more often than a render does; it and the render it hands
+    over to take each where it is newer than the last render's
+    (`_with_polled`)."""
     idle = (gr.update(),) * 4
     if location != TRAINING:
         return idle

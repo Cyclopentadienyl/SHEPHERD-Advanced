@@ -21,7 +21,9 @@ Research › Prepare › Training (M5-2, UI-C): the run bar, the run view, the d
   server functions (a run the server lists, never a path);
 - **one writer of the run bar and the run view**: a fast tick writes only the
   status pill (and the chips) and hands every other change to a queued
-  render, which sends what changed (everything every few hand-offs); every
+  render, which sends what changed (everything every few hand-offs), and
+  neither draws an older read of the GPU lock or the run list than the last
+  render drew (P2-NEW-1's verification, F1); every
   writer of the run bar's workspace and of what is drawn from it (Datasets'
   "Use for training" included) is in one queued group, so a late tick or
   render never writes back the workspace it started from, nor shows or starts
@@ -1106,6 +1108,105 @@ def test_new_epochs_reach_the_charts_and_the_run_head_while_nobody_acts(
     assert "head" in page.tick()
     head = page.shown("shep-train-run-head")
     assert fingerprint[:12] in head and "same as the run bar" in head
+    assert page.tick() == []
+
+
+def _clock(monkeypatch):
+    """The page's clock, moved on by hand (``ahead``, seconds): the reads a
+    render and a tick keep by time (`tc.POLL_READS`) measure their age by
+    ``datetime.now()``."""
+    from datetime import datetime, timedelta
+
+    class Clock(datetime):
+        ahead = 0.0
+
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.now(tz) + timedelta(seconds=cls.ahead)
+
+    monkeypatch.setattr(tc, "datetime", Clock)
+    return Clock
+
+
+HELD_LOCK = {"configured": True,
+             "held_by": "a training job (train_model.py, pid 4242 on host, since 2026-10-23T06:00:00)"}
+
+
+def test_a_tick_never_draws_an_older_lock_read_than_the_render_after_a_choice(
+        training_page, monkeypatch):
+    """Served (P2-NEW-1's verification, F1): a tick keeps its own read of the
+    GPU lock for `LOCK_READ_SECONDS`, the renders theirs. A CLI takes the GPU
+    after the tick read the lock free; a dataset chosen then is drawn by a
+    render whose own read is too old, so it reads the lock held: Start
+    disabled, the GPU job in the reason line. The next tick's own read is
+    still young, and older: the tick draws the render's, finds the page as it
+    was sent and hands nothing over. When it drew its own, it handed a free
+    lock over and its render enabled Start again without the GPU line while
+    the lock was held. The tick's own read, when it is the newer, is still
+    handed over (the CLI ends while nobody acts)."""
+    _job, page = training_page
+    lock = {"now": {"configured": True, "held_by": None}}
+    monkeypatch.setattr(tc, "lock_state", lambda: lock["now"])
+    clock = _clock(monkeypatch)
+    page.pick("demo")                                    # the render reads the lock: free
+    assert page.shown("shep-train-start", "interactive") is True
+    clock.ahead += tc.LOCK_READ_SECONDS + 0.5
+    assert page.tick() == []                             # the tick reads it again: free
+    clock.ahead += 1
+    lock["now"] = HELD_LOCK                              # a CLI takes the GPU
+    page.pick("resampled")                               # its render reads it again: held
+    assert page.shown("shep-train-start", "interactive") is False
+    assert "GPU job" in page.shown("shep-train-reason")
+    handed = page.tick()
+    assert page.shown("shep-train-start", "interactive") is False, \
+        "the tick's hand-off drew Start enabled from an older read of the lock"
+    assert "GPU job" in page.shown("shep-train-reason")
+    assert handed == []
+    # Positive control: the CLI ends while nobody acts; the tick's own read,
+    # newer than the render's once it is read again, is handed over.
+    lock["now"] = {"configured": True, "held_by": None}
+    clock.ahead += tc.LOCK_READ_SECONDS + 0.5
+    assert "start" in page.tick()
+    assert page.shown("shep-train-start", "interactive") is True
+    assert "GPU job" not in page.shown("shep-train-reason")
+    assert page.tick() == []
+
+
+def test_a_tick_never_draws_an_older_run_list_than_the_render_after_a_choice(
+        training_page, root, monkeypatch):
+    """Served (F1, the run list): a tick keeps its own listing of the
+    workspace's runs for `LATEST_READ_SECONDS`, the renders theirs. A run
+    written elsewhere (the CLI) after the tick listed them is drawn by the
+    render after a choice, whose own listing is too old; the next tick draws
+    the render's listing and hands nothing over. When it drew its own, its
+    hand-off drew the previous run back. The tick's own listing, when it is
+    the newer, is still handed over (a run written while nobody acts)."""
+    _job, page = training_page
+    clock = _clock(monkeypatch)
+    page.pick("demo")                                    # the selection's latest run
+    assert page.shown("shep-train-charts")["run"] == "demo/gat/20261018-142000_run_d41f8b"
+    clock.ahead += tc.LATEST_READ_SECONDS + 0.5
+    assert page.tick() == []                             # the tick lists the runs again
+    clock.ahead += 1
+    new = root / "demo" / "runs" / "gat" / "20261023-120000_run_cccccc"
+    (new / "checkpoints").mkdir(parents=True)
+    (new / "checkpoints" / "model-1-0.0100.pt").write_bytes(b"x")
+    (new / "logs").mkdir()
+    (new / "logs" / "train_20261023_120000.json").write_text(json.dumps(_metrics(1)))
+    page.pick("demo")                                    # its render lists them again
+    assert page.shown("shep-train-charts")["run"] == "demo/gat/20261023-120000_run_cccccc"
+    handed = page.tick()
+    assert page.shown("shep-train-charts")["run"] == "demo/gat/20261023-120000_run_cccccc", \
+        "the tick's hand-off drew the previous run from an older listing"
+    assert handed == []
+    # Positive control: another run written while nobody acts; the tick's own
+    # listing, newer than the render's once it lists again, is handed over.
+    newest = root / "demo" / "runs" / "gat" / "20261023-130000_run_eeeeee"
+    (newest / "checkpoints").mkdir(parents=True)
+    (newest / "checkpoints" / "model-1-0.0100.pt").write_bytes(b"x")
+    clock.ahead += tc.LATEST_READ_SECONDS + 0.5
+    assert "charts" in page.tick()
+    assert page.shown("shep-train-charts")["run"] == "demo/gat/20261023-130000_run_eeeeee"
     assert page.tick() == []
 
 
