@@ -739,25 +739,32 @@ def _refined_state(page: Mapping[str, Any], label: Any, run: Mapping[str, Any],
     "cannot be checked", or no listed file holds the weights, or finding it
     would list another workspace and `read_others` is False). `path`: the
     report as the store's listing names it (`resolve_report` finds it when it
-    is not given). The place is found from the bytes the list showed: the
-    report is read bound to their digest, and other bytes raise before they
-    are parsed, so the list's answer stands for a report changed since."""
+    is not given). **One read, the helper's** (round 3 of the review fixes,
+    its verification's A-3): the place is found from the report the helper
+    reads bound to the digest the list showed (its ``place``), so the page
+    reads no report itself, and a report changed since the list was read is
+    never decoded to place a ledger: no place is asked for, and the list's
+    answer stands."""
     from src.api.services.server_lists import resolve_report
     from src.evaluation.registration import report_state
-    from src.evaluation.report_store import read_report
 
     if not _needs_refining(run):
         return None
     state = run.get("state") or {}
     if path is None:
         path = resolve_report(label, run.get("run_id"), environ=environ)
-    report, _digest = read_report(path, state.get("report_sha256"))
-    manifest = report.get("manifest") if isinstance(report, Mapping) else None
-    place = ledger_checkpoint(manifest or {}, page, models, models.get("workspace"),
-                              read_others=read_others, cache=cache, environ=environ)
-    if place.path is None or place.item is None:
+    placed: List[LedgerPlace] = []
+
+    def beside_listed(manifest: Mapping[str, Any]) -> Optional[Path]:
+        place = ledger_checkpoint(manifest, page, models, models.get("workspace"),
+                                  read_others=read_others, cache=cache, environ=environ)
+        placed.append(place)
+        return place.path if place.item is not None else None
+
+    fresh = report_state(path, place=beside_listed, expected_sha256=state.get("report_sha256"))
+    place = placed[0] if placed else None
+    if place is None or place.path is None or place.item is None:
         return None
-    fresh = report_state(path, checkpoint=place.path, expected_sha256=state.get("report_sha256"))
     beside = item_key(place.item)
     if place.item.get("workspace") != models.get("workspace"):
         beside += f" in workspace {place.item.get('workspace')}"
@@ -1849,13 +1856,14 @@ def register_selected(page: Mapping[str, Any], reports: Mapping[str, Any],
     the version's listed report store; then the one registration function,
     given the digest shown, which compares it on the one read it registers,
     before parsing it (a report changed since it was shown is refused there,
-    in its words, and never parsed), and which finds the ledger's place from
-    that same read through this page's placement (`ledger_checkpoint`: the
-    listed file holding the weights the report measured, by full digest, the
-    file the run read first; never the report's recorded path), then checks
-    the deployment's registry, the store, the version, D5's block and the
-    checkpoint's bytes again. The page reads and judges no report itself
-    (round 3 of the review fixes, F2)."""
+    in its words, and never parsed; one changed after that read is registered
+    as the bytes the read holds, the ones shown), and which finds the
+    ledger's place from that same read through this page's placement
+    (`ledger_checkpoint`: the listed file holding the weights the report
+    measured, by full digest, the file the run read first; never the report's
+    recorded path), then checks the deployment's registry, the store, the
+    version, D5's block and the checkpoint's bytes again. The page reads and
+    judges no report itself (round 3 of the review fixes, F2)."""
     from src.api.services.server_lists import ServerListRefused, resolve_report
     from src.evaluation.registration import RegistrationRefused, corroboration_note, register_report
 

@@ -789,6 +789,61 @@ def test_the_bytes_registered_are_the_bytes_shown_whatever_replaces_them_after_t
     assert hashlib.sha256(path.read_bytes()).hexdigest() != shown
 
 
+@pytest.mark.parametrize("how", ["overwrite", "rename"])
+@pytest.mark.parametrize("hook", ["resolve_report", "ledger_checkpoint"])
+def test_the_reviewers_swap_is_refused_before_the_one_read_and_registers_the_bytes_shown_after_it(
+    site, monkeypatch, hook, how
+):
+    """The reviewer's reproduction of P2-1, hooked as it was written: another
+    valid report swapped in, in place or by a rename, when `ledger_checkpoint`
+    returns. Since round 3 of the review fixes (F2) the page's placement runs
+    inside the registration, after its one read compared the digest shown, so
+    that swap lands after the read: the bytes shown are registered, the record
+    names the digest shown, and the replacement is never recorded (refusing it
+    would need a second read, a second judge; the round's verification, A-1).
+    The same swap one step earlier, when the page has found the report
+    (`resolve_report` returns), lands before that read and is refused in the
+    registration's words: no ledger, the usage history unchanged."""
+    import src.api.services.server_lists as server_lists
+
+    page, request = _page(monkeypatch)
+    models = tp.read_models("demo", request)
+    reports = tp.read_reports(LABEL)
+    path = site.reports / site.run_id / "report.json"
+    shown = tp.find(reports["runs"], "run_id", site.run_id)["state"]["report_sha256"]
+    replacement = _another_valid_report(path)
+    usage_before = _usage_lines(site)
+    owner = server_lists if hook == "resolve_report" else tp
+    real = getattr(owner, hook)
+    fired = []
+
+    def swap_on_return(*args, **kwargs):
+        result = real(*args, **kwargs)
+        if not fired:
+            fired.append(hook)
+            _swap(path, replacement, how)
+        return result
+
+    monkeypatch.setattr(owner, hook, swap_on_return)
+
+    done, said = tp.register_selected(page, reports, models, "demo", site.run_id, request)
+
+    assert fired == [hook]
+    ledger = site.checkpoint.parent / "evaluations.json"
+    now = hashlib.sha256(replacement).hexdigest()
+    if hook == "resolve_report":
+        assert done is False and said.startswith(
+            f"{path} is not the report that was shown: it now holds bytes {now[:12]}..., and "
+            f"{shown[:12]}... was shown."), said
+        assert not ledger.exists()
+        assert _usage_lines(site) == usage_before
+    else:
+        assert done is True and said.startswith("Registered as record 1."), said
+        assert [r["source_artifact_digest"]
+                for r in json.loads(ledger.read_text())["records"]] == [shown]
+        assert now not in ledger.read_text()
+
+
 def test_register_takes_the_deployments_registry_from_the_settings_it_was_given(
     site, monkeypatch
 ):
@@ -1706,6 +1761,31 @@ def test_a_report_changed_since_the_list_is_never_placed_from_its_new_bytes(site
 
     assert tp.refine_registration(page, reports, site.run_id, models,
                                   request=request) is reports
+
+
+def test_the_registered_answer_reads_the_report_once_the_registrations_read(site, monkeypatch):
+    """Round 3's verification (A-3): the selected report's registered answer
+    places the ledger from the one read the registration's helper makes
+    (`report_state`'s ``place``), so the page reads no report itself: the
+    report is read once for the answer, and the answer is the ledger beside
+    the listed file Register would use."""
+    from tests.fixtures.replacement import hook_read_once
+
+    _point_report_at_site(site)
+    page, request = _page(monkeypatch)
+    models = tp.read_models("demo", request)
+    reports = tp.read_reports(LABEL)
+    path = (site.reports / site.run_id / "report.json").resolve()
+    reads = []
+    hook_read_once(monkeypatch,
+                   on_entry=lambda read: reads.append(read) if read.resolve() == path else None)
+
+    refined = tp.refine_registration(page, reports, site.run_id, models, request=request)
+
+    state = tp.find(refined["runs"], "run_id", site.run_id)["state"]
+    assert state["registered"] == "not_registered"
+    assert state["checked_beside"] == f"gat/{RUN}/best.pt"
+    assert len(reads) == 1, reads
 
 
 def test_every_row_says_not_registered_for_an_operator_and_keeps_it(site, monkeypatch):

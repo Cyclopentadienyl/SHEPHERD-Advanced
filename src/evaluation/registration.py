@@ -64,11 +64,16 @@ read is never registered in the run's name (the reviewer's P2 of 2026-10-17).
 **A registration from the Test page is bound to the report it showed**
 (``expected_report_sha256``, the M5 review's P2-1): the digest shown is
 compared on the one read registered here, before its bytes are decoded, so a
-file replaced after it was shown -- by another valid report or damaged bytes
--- is refused and never parsed. **That read is the page's only one** (round 3
+file replaced after it was shown and before that read -- by another valid
+report or damaged bytes -- is refused and never parsed; a file replaced after
+that read is registered as the bytes the read holds, the ones shown, and the
+replacement is never recorded. **That read is the page's only one** (round 3
 of the review fixes, F2): where the ledger goes is found from it too, by the
-page's own placement passed in (``place``), so the page neither reads nor
-judges the report itself.
+page's own placement passed in (``place``). The page's answer for whether a
+report is registered in the ledger its Register would write comes from one
+read in the same way (`report_state`'s ``place``), so the page neither reads
+nor judges a report itself, to register it or to say whether it is
+registered.
 
 **A registration is in the version's usage history** (D4): a ledger written is
 appended there by this function, so a registration from the command line counts
@@ -689,6 +694,7 @@ def report_state(
     report_path: Path,
     *,
     checkpoint: Optional[Path] = None,
+    place: Optional[Callable[[Mapping[str, Any]], Optional[Path]]] = None,
     expected_sha256: Optional[str] = None,
 ) -> ReportState:
     """Whether one report was kept, and whether it is registered, read from
@@ -725,11 +731,24 @@ def report_state(
       absolute path, has no ledger to read: ``cannot_be_checked``, saying why.
       A checkpoint moved since the run is looked for where the run read it,
       and the reason names that ledger.
+    - **With** ``place`` (the Test page's answer for the ledger its Register
+      would write; round 3 of the review fixes, its verification's A-3): a
+      callable given the report's manifest as parsed here, from the one read
+      (compared with ``expected_sha256`` before it was decoded), which returns
+      the checkpoint file whose ledger is read, as ``checkpoint`` would name
+      it, found the caller's way, or None when it names none. It is called only
+      for a kept report, so bytes other than the ones expected are never
+      decoded to place a ledger; when it is not called, or names none, the
+      ledger is looked for as without ``checkpoint``. As `register_report`'s
+      ``place``: the caller never reads the report itself. Not with
+      ``checkpoint`` (a caller's error, ``TypeError``).
 
     Reads the report once (`read_report`) and the ledger once (`read_ledger`);
     writes nothing. A link retargeted between the run and this call moves the
     ledger looked in, as it would move a later registration.
     """
+    if checkpoint is not None and place is not None:
+        raise TypeError("report_state takes at most one of checkpoint and place")
     ledger_path = _ledger_beside(checkpoint) if checkpoint is not None else None
     report_path = Path(report_path)
     digest: Optional[str] = None
@@ -761,6 +780,14 @@ def report_state(
             digest = expected_sha256
         else:
             kept, why_kept = "kept", f"{report_path} is in the report store"
+            if place is not None:
+                # **The ledger placed from this read**: the caller is given the
+                # manifest parsed from the bytes just compared, never a read of
+                # its own.
+                manifest = report.get("manifest") if isinstance(report, dict) else None
+                checkpoint = place(manifest if isinstance(manifest, dict) else {})
+                if checkpoint is not None:
+                    ledger_path = _ledger_beside(checkpoint)
 
     if digest is None:
         return ReportState(kept, why_kept, "cannot_be_checked",

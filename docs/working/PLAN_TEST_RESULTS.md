@@ -724,6 +724,15 @@ disagreement block, contested states and investigation notes are phase 2.
   the digest it showed and the settings it found the report by. Since round 3 of the review
   fixes (F2, implemented) that read is the page's only one and its comparison the only judge:
   the page no longer reads the report first, and the ledger's place comes from the same read.
+  So a swap is refused when it lands before that read (before the click, or when the page has
+  found the report, `resolve_report` returning) and registers the bytes shown when it lands
+  after it: the reviewer's reproduction swaps the file when `ledger_checkpoint` returns, which
+  since F2 runs inside the registration after its one read (the placement passed in), and the
+  record names the digest shown, the replacement never recorded. Refusing there would need a
+  second read, a second judge. That reproduction as written therefore expects a refusal it no
+  longer gets; the same swap at `resolve_report`'s return is refused in the registration's
+  words, nothing written (both in
+  `test_the_reviewers_swap_is_refused_before_the_one_read_and_registers_the_bytes_shown_after_it`).
 - **The block.** `scan_report_store` builds every stored report with `build_record`, groups the
   records by `record_key` and compares them with `differing_fields`, the comparison
   `append_record` now uses too. A contested key refuses every registration under it
@@ -790,10 +799,13 @@ compares the digest shown on the one read it registers (above), and files the re
 checkpoint the server lists holding the weights the report measured, found by full digest in the
 workspace's checkpoint list (never the report's recorded path); the one function checks the
 store, the version, the block and the checkpoint's bytes again. *Since round 3 of the review
-fixes (F2), implemented:* the page reads and compares no report itself; the listed file is found
+fixes (F2), implemented:* Register reads and compares no report itself; the listed file is found
 from the registration's own read (`place`, the page's placement passed in). For
 the selected report, an operator's page asks `report_state` again with that listed file, so "not
-registered" is said for the ledger a registration from the page would write. *Review fixes
+registered" is said for the ledger a registration from the page would write; *since that round's
+verification (A-3), implemented,* that answer too comes from one read, `report_state`'s, which
+places the ledger through the same `place` (a report changed since the list is never decoded to
+place one, and the list's answer stands), so the page reads no report itself. *Review fixes
 (2026-10-21):* Register and that answer find the listed file in one order: the file the run read
 when it is listed with those weights (the ledger `stored_report_state` reads), then a listed copy
 in the workspace the run measured, then one in the workspace shown, so a report measured on one
