@@ -19,13 +19,13 @@ the report store of each shown record's version; no checkpoint, and no write
 **Found by the served read, filtered by its digest.** Application state is read
 once, and both the ledger's directory and the digest the ledger is filtered by
 come from that pipeline's own checkpoint read
-(`DiagnosisPipeline.served_checkpoint_read`). The handler is ``async def`` and
-takes that identity with no ``await`` before it, on the event-loop thread, where
-`publish_pipeline` runs too: a reload cannot land between reading the pipeline
-and reading its identity. Only then does it ``await`` the file reads below,
-which run in the threadpool (`run_in_threadpool`) so that the scans of the
-report stores do not hold the event loop; they work from the identity already
-taken.
+(`DiagnosisPipeline.served_checkpoint_read`). A reload published meanwhile
+therefore cannot pair one model's ledger with another model's digest, whichever
+thread runs the handler: the route runs on the event loop, and the dashboard's
+read-only view runs it on an event loop of its own in a worker thread
+(`models_page._route_records`). It then ``await``s the file reads below, which
+run in the threadpool (`run_in_threadpool`) so that the scans of the report
+stores do not hold the event loop; they work from the identity already taken.
 The digest used is echoed, and the panel shows the records only when it equals
 the digest of the status it read. Because records are found by digest and not by
 file name, a model replaced by other bytes never shows its predecessor's records,
@@ -604,9 +604,9 @@ async def get_loaded_model_evaluations() -> LoadedModelEvaluations:
     parameters."""
     from src.api.main import app_state
 
-    # **No `await` before the identity is taken, and none may be added.** The
-    # pipeline is read from application state once, on the event-loop thread
-    # where a reload publishes, and everything below comes from that one object.
+    # **Application state is read once, and everything below comes from that one
+    # object**, so a reload published meanwhile cannot mix two models here,
+    # whichever thread this runs on (see the module docstring).
     pipeline = app_state.pipeline
     if pipeline is None:
         return _nothing_to_look_up("no_model")
