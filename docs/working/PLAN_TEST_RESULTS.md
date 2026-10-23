@@ -1700,10 +1700,10 @@ contract and BACKLOG stay the record, and no new planning document is added.
   (`record_stop_signal`, a plain store), so a stop whose thread has not yet closed the slot refuses
   the exec too. The one residual no check can close: a stop signal whose handler had not recorded
   it when that check ran is lost with the old image (systemd then SIGKILLs the service after
-  `TimeoutStopSec`; in a terminal a second Ctrl-C stops the new backend). **The PID that was
-  started is the server on every POSIX start path** (P3-2): `launch_shepherd.sh` execs the
-  launcher, and the launcher execs into uvicorn in its browser mode too, the browser opened by a
-  helper (a new interpreter that forks once and exits, so the server has no child of the start);
+  `TimeoutStopSec`; in a terminal a second Ctrl-C stops the new backend; BACKLOG 47). **The PID
+  that was started is the server on every POSIX start path** (P3-2): `launch_shepherd.sh` execs
+  the launcher, and the launcher execs into uvicorn in its browser mode too, the browser opened by
+  a helper (a new interpreter that forks once and exits, so the server has no child of the start);
   chosen over a forwarding path in the waiting launcher, which would have been a second mechanism
   for the same rule and could not reach the script's case. `serve` waits beside the server only on
   Windows, where exec changes the PID; there Ctrl-C and Ctrl-Break reach the server through the
