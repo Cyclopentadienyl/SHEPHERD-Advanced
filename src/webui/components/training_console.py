@@ -60,22 +60,33 @@ metrics log through the component's server function) and the resources line.
 **Per browser session, no module state:** the selection, the drawer, the last
 values sent and the banners a session dismissed are ``gr.State``. The page is
 refreshed when it is shown (``ctx.on_page_open``) and by the shell's timers
-(outside ``gr.Tabs``: ``ctx.timer_fast`` for the run bar and the chart token,
+(outside ``gr.Tabs``: ``ctx.timer_fast`` for the run bar and the run view,
 ``ctx.timer_slow`` for the resources line), both ``queue=False``, doing no work
-while another page is shown (``ctx.location``). Each tick sends only what
-changed, and everything again every `FULL_SEND_TICKS` ticks.
-**The fast poll writes no session selection** (the run bar's workspace,
-``ws`` and ``ctx.training_workspace``): when it sees a training job running
-in another workspace than the session's, it hands that over to a queued
-render through a hidden component's ``.change`` (`FOLLOW_ID`), which reads
-the session's workspace and the job again at its own turn and follows the job
-only if it still runs there. Every listener that writes the run bar's
-workspace (page open, then its render; the select; Datasets' "Use for
-training ›" and the change of ``ctx.training_workspace`` it makes; every
-render of the run bar, the hand-off's included) is in one queued group of one
-(``ctx.training_workspace_writes``), first asked first run, so a workspace
-chosen after a job ended is never set back by a render that read the job
-running.
+while another page is shown (``ctx.location``).
+**The run bar and the run view are one projection of the session's
+selection, written only by a queued render** (`render`, the pieces of
+`VIEW_KEYS`: the run bar's workspace, ``ws`` and ``ctx.training_workspace``;
+the select's value, the chip, the run shown and its chart token, Start,
+Continue…, Stop and their reason, the drawer's line): every listener that
+writes them is in one queued group of one (``ctx.training_workspace_writes``),
+first asked first run, each from what the one before it wrote: the page open,
+then its render; the select; Datasets' "Use for training ›" and the change of
+``ctx.training_workspace`` it makes; the render after every action, and the
+render the fast poll hands a change over to. So a workspace chosen while a
+render waits is applied after it, and no piece drawn from an older selection
+is applied after one drawn from a newer. **The fast poll writes only the
+status pill** (`POLL_KEYS`, the job runner's state alone, on every tick, as
+the renders do), the header's chips and a hand-off: it renders the page as it
+is now and compares it with
+what the session was last sent; when a piece differs (new epochs, a job that
+started or ended, the GPU slot, a running job's workspace to follow), it gives
+a hidden component a new value (`CHANGED_ID`), whose ``.change`` runs the
+queued render, which reads the session's selection and the job again at its
+own turn and sends what changed (everything again every `FULL_SEND_TICKS`
+hand-offs). It writes no cache: what the session was sent, and the reads a
+render keeps, have the renders as their one writer (the poll keeps its own
+record, its reads throttled by time, `POLL_READS`, and the GPU slot it saw,
+in a State only it writes).
 
 **D8:** Start, Continue…, Continue Training, Check checkpoint, the parent list
 and Stop (its confirmation reads the run's checkpoint) call the Gradio helper
@@ -155,8 +166,9 @@ _MAX_SEED = 2**32 - 1
 # order, and swaps in a random seed at this index when "Randomize seed" is on.
 SEED_PARAM_INDEX = 7
 
-#: Every this many ticks the run bar is sent whole, whatever the session's
-#: record of what it last sent says (a tick and a queued event may cross).
+#: Every this many renders the fast poll hands over, the run bar and the run
+#: view are sent whole, whatever the session's record of what it was last sent
+#: says (each other one sends what changed; the render after an action, whole).
 FULL_SEND_TICKS = 8
 #: The GPU lock is read at most this often per session (seconds).
 LOCK_READ_SECONDS = 5.0
@@ -1390,20 +1402,32 @@ def _poll_resources(location: Any = TRAINING) -> Any:
 VIEW_KEYS = ("ws", "dataset", "chip", "pill", "reason", "start", "cont", "stop", "resume",
              "runbar", "page", "run_name", "banner", "head", "snap", "charts", "drawer_reason",
              "training_workspace")
-#: The pieces that are the session's selection (the run bar's workspace), not
-#: display: written only by a queued render (`_render_view`), and only when it
-#: changed them (a running job's dataset: `render`'s ``ws_changed``).
+#: The pieces that are the session's selection (the run bar's workspace):
+#: written by a render only when it changed them (a running job's dataset:
+#: `render`'s ``ws_changed``).
 SELECTION_KEYS = ("ws", "training_workspace")
-#: The pieces the fast poll writes (`_poll`): the rest. Display only: a tick
-#: that crosses a queued render can send an older piece, which a later tick
-#: replaces (when the piece changes again, or at the next whole send,
-#: `FULL_SEND_TICKS`).
-POLL_KEYS = tuple(key for key in VIEW_KEYS if key not in SELECTION_KEYS)
-#: The hidden component the fast poll hands a running job's workspace over
-#: through (`_poll`): not a ``gr.State``, because the answer to a
-#: ``queue=False`` request dispatches a component's ``.change``, never a
-#: State's.
-FOLLOW_ID = "shep-train-follow"
+#: The one piece the fast poll writes (`_poll`), on every tick, besides the
+#: renders: the status pill, drawn from the job runner alone, never from the
+#: session's selection. A tick that crosses a render can show an older pill
+#: until the next tick.
+POLL_KEYS = ("pill",)
+#: Every other piece but the selection's own, which a queued render alone
+#: writes (they are drawn from the session's selection, ``ws``, and ``mode``
+#: where it shapes them: the drawer, Stop's confirmation; the banner and the
+#: run name with them): when the poll finds one of them not what the session
+#: was last sent, it hands the change over (`CHANGED_ID`).
+HANDED_KEYS = tuple(key for key in VIEW_KEYS if key not in SELECTION_KEYS + POLL_KEYS)
+#: The reads a render keeps per session that are throttled by time, not by a
+#: file's change (the GPU lock's probe, `LOCK_READ_SECONDS`; the workspace's
+#: runs, `LATEST_READ_SECONDS`): the fast poll keeps its own (``polled``, which
+#: only it writes), so it reads them no more often than a render does, and the
+#: render it hands a change over to reads them from there (`_with_polled`).
+POLL_READS = ("lock", "latest")
+#: The hidden component the fast poll hands a change over through (`_poll`),
+#: whose ``.change`` runs the queued render (`_render_changed`): not a
+#: ``gr.State``, because the answer to a ``queue=False`` request dispatches a
+#: component's ``.change``, never a State's.
+CHANGED_ID = "shep-train-changed"
 
 
 def _gpu_view(active, cache: Dict[str, Any], operator: bool) -> Optional[Dict[str, Any]]:
@@ -1520,16 +1544,21 @@ def _update_for(key: str, value: Any) -> Any:
     return value
 
 
+def _comparable(value: Any) -> str:
+    """A piece as the session's record of what it was sent keeps it."""
+    return json.dumps(value, sort_keys=True, default=str)
+
+
 def view_updates(rendered: Mapping[str, Any], cache_before: Optional[Mapping[str, Any]], *,
-                 full: bool = False, keys: Sequence[str] = VIEW_KEYS) -> Tuple[Any, ...]:
-    """The outputs for `keys` (`VIEW_KEYS` for a queued render, `POLL_KEYS`
-    for the poll) and the cache: a piece that equals what this session was
-    last sent is ``gr.update()`` (nothing sent), unless `full`."""
+                 full: bool = False) -> Tuple[Any, ...]:
+    """A queued render's outputs (`VIEW_KEYS`) and the cache: a piece that
+    equals what this session was last sent is ``gr.update()`` (nothing sent),
+    unless `full`."""
     sent = dict((cache_before or {}).get("sent") or {})
     pieces = rendered["pieces"]
     cache = dict(rendered["cache"])
     out = []
-    for key in keys:
+    for key in VIEW_KEYS:
         value = pieces[key]
         if key in SELECTION_KEYS:
             # The session's selection is written only when this render changed
@@ -1537,7 +1566,7 @@ def view_updates(rendered: Mapping[str, Any], cache_before: Optional[Mapping[str
             # bar's workspace group keeps it from writing back an older one.
             out.append(value if rendered.get("ws_changed") else gr.update())
             continue
-        comparable = json.dumps(value, sort_keys=True, default=str)
+        comparable = _comparable(value)
         if not full and sent.get(key) == comparable:
             out.append(gr.update())
         else:
@@ -1551,36 +1580,78 @@ def _render_view(ws, mode, cache, dismissed, request: gr.Request):
     """Every action's last step: the run bar and the run view as they are now,
     whole (an action changed what they show)."""
     rendered = render(ws, mode, cache, dismissed, request)
-    rendered["cache"]["ticks"] = 0
+    rendered["cache"]["handed"] = 0
     return view_updates(rendered, cache, full=True)
 
 
-def _poll(location, ws, mode, cache, dismissed, request: gr.Request):
-    """The shell's fast timer (``queue=False``): while Training is shown, what
-    changed in the run bar, the run view and the chart token (`POLL_KEYS`),
-    and the header's chips when the GPU slot it read changed
-    (`chips_on_change`); nothing while another page is shown. It writes no
-    session selection: when its render found a training job running in
-    another workspace than the session's (``ws_changed``), it gives the follow
-    token (`FOLLOW_ID`) a new value, and the queued render that token's change
-    runs follows the job at its own turn, if the job still runs there."""
-    idle = tuple(gr.update() for _ in POLL_KEYS) + (gr.update(), gr.update(), gr.update())
+def _with_polled(cache: Optional[Mapping[str, Any]], polled: Optional[Mapping[str, Any]]
+                 ) -> Dict[str, Any]:
+    """The session's cache with the fast poll's own reads kept by time
+    (`POLL_READS`) in place of the last render's."""
+    own = {key: value for key, value in (polled or {}).items() if key in POLL_READS}
+    return {**(cache or {}), **own}
+
+
+def _render_changed(ws, mode, cache, dismissed, polled, request: gr.Request):
+    """The render the fast poll hands a change over to (`CHANGED_ID`), at its
+    turn in the run bar's workspace group: the run bar and the run view from
+    the session's selection and the job as they are now, what changed since
+    the session was last sent them, and everything every `FULL_SEND_TICKS`
+    hand-offs. It reads the reads the poll keeps by time (`POLL_READS`) from
+    the poll's own record, so it draws what the poll found."""
+    rendered = render(ws, mode, _with_polled(cache, polled), dismissed, request)
+    handed = int((cache or {}).get("handed") or 0) + 1
+    rendered["cache"]["handed"] = handed
+    return view_updates(rendered, cache, full=handed % FULL_SEND_TICKS == 0)
+
+
+def _poll(location, ws, mode, cache, dismissed, polled, request: gr.Request):
+    """The shell's fast timer (``queue=False``), while Training is shown: the
+    status pill (`POLL_KEYS`) on every tick, the header's chips on the tick
+    that sees the GPU slot change (`chips_on_change`), the hand-off, and its
+    own record (``polled``: its reads kept by time and the GPU slot it saw);
+    nothing while another page is shown.
+
+    It writes no piece drawn from the session's selection, and no cache (a
+    tick's answer is applied whenever it arrives, also after a render that
+    read a newer selection): it renders the page as it is now and compares
+    it with what the session was last sent, the cache's record, which only
+    the renders write. When a piece of `HANDED_KEYS` is not what was sent,
+    the GPU slot is not what the last render saw, or a training job runs in
+    another workspace than the session's (``ws_changed``), it gives the
+    hand-off token (`CHANGED_ID`) a new value, naming what it found, and the
+    queued render that token's change runs reads the session's selection
+    and the job again at its own turn.
+
+    The reads a render keeps by a file's change (a run's log rows and
+    record, the runner's workspace) are the last render's; those it keeps by
+    time (`POLL_READS`) are the poll's own, which only it writes, so it
+    reads them no more often than a render does, and the render it hands
+    over to draws from them what it found."""
+    idle = (gr.update(),) * 4
     if location != TRAINING:
         return idle
+    before = cache or {}
     try:
-        rendered = render(ws, mode, cache, dismissed, request)
+        rendered = render(ws, mode, _with_polled(before, polled), dismissed, request)
     except Exception:  # noqa: BLE001 - a tick that raises would stop the page's updates
         logger.exception("The Training page could not be read")
         return idle
-    ticks = int((cache or {}).get("ticks") or 0) + 1
-    rendered["cache"]["ticks"] = ticks
-    chips = chips_on_change((cache or {}).get("gpu_seen"), rendered["cache"].get("gpu_seen"),
-                            request)
+    sent = before.get("sent") or {}
+    pieces = rendered["pieces"]
+    changed = [key for key in HANDED_KEYS if sent.get(key) != _comparable(pieces[key])]
+    seen = rendered["cache"].get("gpu_seen")
+    if seen != before.get("gpu_seen"):
+        changed.append("gpu")
+    if rendered["ws_changed"]:
+        changed.append("ws")
+    # The chips: read again on the tick that sees the GPU slot change.
+    chips = chips_on_change((polled or {}).get("gpu_seen"), seen, request)
     # Each hand-off is a new value (its own time), so its .change always fires.
-    follow = ({"workspace": rendered["pieces"]["ws"].get("name"), "at": time.monotonic_ns()}
-              if rendered["ws_changed"] else gr.update())
-    return (*view_updates(rendered, cache, full=ticks % FULL_SEND_TICKS == 0, keys=POLL_KEYS),
-            follow, chips)
+    handoff = {"changed": changed, "at": time.monotonic_ns()} if changed else gr.update()
+    own = {key: rendered["cache"][key] for key in POLL_READS if key in rendered["cache"]}
+    own["gpu_seen"] = seen
+    return pieces["pill"], handoff, chips, own
 
 
 # =============================================================================
@@ -2519,6 +2590,9 @@ def create_training_tab(ctx: Any) -> None:
     ws = gr.State(_empty_workspace())
     mode = gr.State({})
     cache = gr.State({})
+    # The fast poll's own record (its reads kept by time, `POLL_READS`, and the
+    # GPU slot it saw last, for the chips): only it writes it.
+    polled = gr.State({})
     dismissed = gr.State([])
     parents = gr.State({})
 
@@ -2724,10 +2798,12 @@ def create_training_tab(ctx: Any) -> None:
                     runbar, page, run_name, banner, run_head, run_snap, figure, drawer_reason,
                     ctx.training_workspace, cache]
     view_inputs = [ws, mode, cache, dismissed]
-    # Every render of the run bar may write its workspace (a running job's
-    # dataset), so every one is in the group of the workspace's writers
+    # Every render writes the run bar and the run view drawn from the session's
+    # selection, and may write the workspace itself (a running job's dataset),
+    # so every one is in the group of the workspace's writers
     # (`shell.TRAINING_SELECTION_CONCURRENCY`): it runs after those asked
-    # before it, from what they wrote.
+    # before it, from what they wrote, and its answer is never applied after
+    # the answer of one asked after it.
     in_order = ctx.training_workspace_writes
     view_step = {"fn": _render_view, "inputs": view_inputs, "outputs": view_outputs,
                  "show_progress": "hidden", **in_order}
@@ -2737,8 +2813,8 @@ def create_training_tab(ctx: Any) -> None:
     # once, with the first trigger's data): with "multiple" each choice of the
     # workspace joins, and the last one asked is the one that stays.
     every_one = {"trigger_mode": "multiple"}
-    # The fast poll's hand-off of a running job's workspace (`_poll`).
-    follow = gr.JSON(value=None, visible=False, elem_id=FOLLOW_ID)
+    # The fast poll's hand-off of a change it found (`_poll`).
+    changed = gr.JSON(value=None, visible=False, elem_id=CHANGED_ID)
 
     # The page shown: the list read again, then the run bar whole, in that order.
     ctx.on_page_open(TRAINING, {
@@ -2747,16 +2823,16 @@ def create_training_tab(ctx: Any) -> None:
         "show_progress": "hidden", **in_order}).then(**view_step)
 
     # The shell's timers (outside gr.Tabs), read-only polls without the queue.
-    # The fast one writes every piece but the session's selection (`POLL_KEYS`)
-    # and hands a running job's workspace to a queued render. That render reads
-    # everything at its turn, so the follow token's default trigger
-    # ("always_last") is the one wanted: tokens given while one render waits
-    # need one more render, not one each.
-    ctx.timer_fast.tick(_poll, inputs=[ctx.location, *view_inputs],
+    # The fast one writes the status pill (`POLL_KEYS`) and the chips, and hands
+    # every other change to a queued render in the group. That render reads
+    # everything at its turn, so the token's default trigger ("always_last") is
+    # the one wanted: tokens given while one render waits need one more render,
+    # not one each.
+    ctx.timer_fast.tick(_poll, inputs=[ctx.location, *view_inputs, polled],
                         outputs=[*(view_outputs[VIEW_KEYS.index(key)] for key in POLL_KEYS),
-                                 cache, follow, ctx.chips],
+                                 changed, ctx.chips, polled],
                         queue=False, show_progress="hidden")
-    follow.change(**view_step)
+    changed.change(**{**view_step, "fn": _render_changed, "inputs": [*view_inputs, polled]})
     ctx.timer_slow.tick(_poll_resources, inputs=[ctx.location], outputs=[resources],
                         queue=False, show_progress="hidden")
 
