@@ -30,7 +30,8 @@ genes_to_           node_features.pt                           (fingerprint
 ```
 
 Steps 1 and 2 are **CLI prerequisites** run once per dataset version. Step 3
-(training) is driven from the **WebUI Training Console**. Step 4 serves inference.
+(training) is driven from the dashboard's **Research › Prepare › Training** page.
+Step 4 serves inference.
 
 ---
 
@@ -47,8 +48,16 @@ Steps 1 and 2 are **CLI prerequisites** run once per dataset version. Step 3
   `PyG native extensions: pyg_lib 0.6.0 OK | torch_scatter ... OK | ...`.
   If any read `MISSING`, you are on slow fallback kernels — re-run the deploy
   PyG-extension step before training (especially for HGT).
+- **The service's settings**, as the [deployment guide](../deployment-guide.en.md)
+  §4.12 states them: the dashboard lists the subdirectories of
+  `SHEPHERD_WORKSPACES_ROOT` as datasets, and its Start is an operator control,
+  refused unless `SHEPHERD_DEPLOYMENT_MODE=M1`. Every training run, from the
+  dashboard or from a shell, takes the GPU lock `SHEPHERD_WORKSPACES_ROOT` names
+  and is refused while it is unset, so give the shell where you run
+  `train_model.py` the service's root too (§4.11).
 
-Pick a workspace name up front (used in every step):
+Pick a workspace name up front (used in every step), directly under the
+service's workspaces root, so the Training page lists it:
 
 ```bash
 export WS=data/workspaces/hpo_2026_v1      # name it per dataset version
@@ -121,18 +130,20 @@ On Spark's 128 GB unified memory this is comfortable.
 
 ---
 
-## Step 3 — Train (WebUI Training Console)
+## Step 3 — Train (Research › Prepare › Training)
 
-1. Launch the app (see Step 4) and open `/ui` → **Training Console**.
-2. Set **Data Dir** to your workspace (`$WS`).
+1. Launch the app with the service's settings (see Step 4) and open `/ui` →
+   **Research (pre-clinical)** › Prepare › **Training**.
+2. Choose your workspace, `$WS`'s last part (`hpo_2026_v1`), in the run bar's
+   **Dataset** list.
 3. Recommended first run — validate the whole pipeline cheaply:
-   - **Conv Type = `gat`** (AMP works, fastest, lowest memory). Get a clean
+   - **GNN Conv Type = `gat`** (AMP works, fastest, lowest memory). Get a clean
      baseline end-to-end before touching HGT.
    - A handful of epochs first to confirm loss curves move and checkpoints save.
-4. Then switch **Conv Type = `hgt`** for the real run. HGT forces float32
+4. Then switch **GNN Conv Type = `hgt`** for the real run. HGT forces float32
    (pyg_lib limitation) and uses more memory — this is exactly the case that OOMs
    a 16 GB 5070 Ti but fits easily on Spark's unified memory. On Spark you can
-   raise `batch_size` and `max_subgraph_nodes` (defaults are tuned for 16 GB).
+   raise **Batch Size** and **Max Subgraph Nodes** (defaults are tuned for 16 GB).
 5. Watch for `hits@10` to climb. Milestone reference: 3 epochs → 0.581; the ≥ 80%
    target needs 30+ epochs.
 
@@ -140,11 +151,12 @@ On Spark's 128 GB unified memory this is comfortable.
 `$WS/runs/<arch>/<date-time>_<run name>_<id>/`, holding `config.yaml`,
 `runtime.json`, `final_metrics.json`, `checkpoints/` (`last.pt`, written every
 epoch, and the top-K `model-<epoch>-<metric>.pt`) and `logs/`. The optional
-**Run name** field names it; Status shows the folder once training starts. No
-run writes into or prunes another run's folder.
+**Run name** field names it; the run view's header names the run once training
+starts. No run writes into or prunes another run's folder.
 
-**Continue Training** (contract M3a-3, M3a-4): pick a checkpoint from the run
-list or type its path, click **Check checkpoint**, then **Continue Training**.
+**Continue Training** (contract M3a-3, M3a-4): open **Continue…**, pick a
+checkpoint of the run bar's dataset from the run list or type its path, click
+**Check checkpoint**, then **Continue Training**.
 What happens is decided by the checkpoint's own record:
 
 - an unfinished run (stopped between epochs, or paused) is resumed with its own
@@ -159,9 +171,11 @@ train from a checkpoint with other settings, start a new run: changing settings
 from a parent (a branch) is not available yet.
 
 **Stop** asks first and says how much progress is lost; a stopped run shows
-**STOPPED** and the latest checkpoint it can be continued from.
+**Stopped** and the latest checkpoint it can be continued from.
 
-> CLI (no UI): `scripts/train_model.py --data-dir "$WS" [--run-name NAME]`, or
+> CLI (no UI), in a shell given the service's `SHEPHERD_WORKSPACES_ROOT` (the
+> GPU lock's one name; [deployment guide](../deployment-guide.en.md) §4.11):
+> `scripts/train_model.py --data-dir "$WS" [--run-name NAME]`, or
 > `--config <yaml>`. `--resume <checkpoint>` continues a parent as above,
 > `--extend-epochs N` extends a finished one, `--extend-lr LR` replaces a rate
 > that ended at 0 (and only such a rate), and `--pause-after-epoch N` stops with
@@ -194,11 +208,16 @@ first: the similarity contract must be defined before the interface is reused.
 
 ## Step 4 — Launch & run inference
 
+The launcher reads no environment file: set the service's settings first, in
+this shell or in the systemd unit ([deployment guide](../deployment-guide.en.md)
+§4.12; for Step 3, at least `SHEPHERD_DEPLOYMENT_MODE` and
+`SHEPHERD_WORKSPACES_ROOT`).
+
 ```bash
 ./launch_shepherd.sh          # uvicorn src.api.main:app on :8000
 ```
 
-- Diagnosis UI: <http://localhost:8000/ui> (Diagnosis Panel tab)
+- Diagnosis UI: <http://localhost:8000/ui> (**Diagnosis (clinical)**, the first screen)
 - API docs: <http://localhost:8000/docs>
 
 ---
@@ -213,8 +232,8 @@ and edge-type count (`src/utils/fingerprint.py:compute_fingerprint`, attached in
 At inference load (`src/inference/pipeline.py` →
 `verify_fingerprint`), the checkpoint's fingerprint is compared against the
 currently loaded data. Mismatches produce **warnings, not hard errors**, and
-surface up through the pipeline API (`fingerprint_warnings`) into the Diagnosis
-Panel. This is what catches "a checkpoint was loaded against the wrong dataset"
+surface up through the pipeline API (`fingerprint_warnings`) onto the Diagnosis
+page. This is what catches "a checkpoint was loaded against the wrong dataset"
 before it silently produces garbage rankings.
 
 **What it means for you:**
@@ -231,8 +250,9 @@ before it silently produces garbage rankings.
 ## Spark (GB10) specific notes
 
 - **Unified memory**: nvidia-smi/NVML report GPU memory as `[N/A]` (it is one
-  shared 128 GB pool). The Training Console already handles this (shows a single
-  unified-memory gauge; GPU util + temperature still read normally). Not a bug.
+  shared 128 GB pool). The Training page's Resources line already handles this
+  (one shared unified-memory figure; GPU util + temperature still read normally).
+  Not a bug.
 - **`sm_121` capability warning** from torch on GB10 is harmless/expected.
 - **Memory headroom**: the 16 GB-oriented defaults (`max_subgraph_nodes=5000`,
   conservative `batch_size`, HGT batch ≤ 16) can be raised on Spark.
@@ -245,8 +265,8 @@ before it silently produces garbage rankings.
 
 | Symptom | Where to look |
 |---------|---------------|
-| Training crashed | Red error banner in the Training Console (filtered traceback tail); full run output in the console where uvicorn runs |
+| Training crashed | Red error banner on Research › Prepare › Training (the last error line and the output's tail); full run output in the console where uvicorn runs |
 | "Running slow" / HGT sluggish | PyG status line at training start; if any extension `MISSING`, re-run deploy PyG step |
-| Inference rankings look wrong after a rebuild | Fingerprint warnings in the Diagnosis Panel — likely a checkpoint/data version mismatch |
+| Inference rankings look wrong after a rebuild | Fingerprint warnings on the Diagnosis page — likely a checkpoint/data version mismatch |
 | `No paths found` / empty results at inference | Check, in order: the pipeline is pointed at the intended `$WS`; `kg.json` and `shortest_paths.pt` are present there; the submitted HPO ids exist in the KG (unknown ids are dropped before scoring); at least one phenotype has a KG path to a disease — candidate discovery is BFS-gated, so a phenotype with no qualifying path yields nothing |
 | Build/SP killed (OOM) | Expected only on small-RAM machines; Spark's 128 GB is fine. See `docs/MILESTONE_REPORT.md` SP memory section |
