@@ -1197,10 +1197,13 @@ def test_the_header_chips_follow_the_gpu_line_on_the_tick_that_sees_it_change(si
 def test_the_report_of_a_run_that_has_just_ended_is_selected(site, monkeypatch):
     """A run this session saw running ends with a report: the read the poll
     hands over selects it, even over the report the operator had chosen; once
-    seen ended, the poll hands nothing over. Only that hand-off decides an
+    seen ended, the poll hands nothing over. So does a hand-off whose run the
+    poll never saw busy because it started and ended between two ticks (the
+    poll saw the run before it, or no run). Only that hand-off decides an
     end: an act's read after it keeps the operator's choice, and so does a
-    hand-off that names no end (the GPU line changed) or whose ended run is
-    no longer the job read now."""
+    hand-off that names no end (the GPU line changed, or the session's first
+    tick, which saw nothing before) or whose ended run is no longer the job
+    read now (even when that job ended with another listed report)."""
     other = _disagreeing_copy(site)
     demo, ctx, _registry = _page_component()
     poll, after = _named(demo, "_poll"), _named(demo, "_after_job_change")
@@ -1225,7 +1228,17 @@ def test_the_report_of_a_run_that_has_just_ended_is_selected(site, monkeypatch):
     no_end = after.fn(page, {}, None, "demo", None, other, reports,
                       {"seen": completed, "now": completed, "at": 1}, _readonly())
     assert no_end[1] == other, "a hand-off that names no end keeps the operator's choice"
-    job.update(job_id="test-3", status="running", outcome=None)
+    for before in ({"job_id": "test-1", "status": "completed"}, {"job_id": None, "status": "idle"}):
+        between = after.fn(page, {}, None, "demo", None, other, reports,
+                           {"seen": before, "now": completed, "at": 2}, _readonly())
+        assert between[1] == site.run_id, f"a run that started and ended after {before}"
+    first = poll.fn("test", page, {}, _readonly())[-2]
+    assert first["seen"] == {"job_id": None, "status": None} and first["now"] == completed
+    first_tick = after.fn(page, {}, None, "demo", None, other, reports, first, _readonly())
+    assert first_tick[1] == other, "the session's first tick saw nothing before: no end"
+    job.update(job_id="test-3", status="completed",
+               outcome={"report_dir": str(site.reports / site.run_id), "kept": True,
+                        "registered": False, "summary": "kept"})
     moved_on = after.fn(page, {}, None, "demo", None, other, reports, handoff, _readonly())
     assert moved_on[1] == other, "the ended run is no longer the job read now"
 
@@ -1476,6 +1489,57 @@ def test_an_ended_run_is_handed_over_once_and_a_click_after_it_stays(site, monke
             "the late act wrote back the job it read, so the poll handed the end over again"
         browser.close()
         assert browser.state(selected_report) == newest, "the click was undone"
+
+
+def test_a_run_started_here_that_ends_before_the_next_tick_is_chosen(site, monkeypatch):
+    """Through the page served by Gradio: Start's read (the act's, which
+    writes nothing the poll reads) sees the run it started running, and the
+    run ends with its report before the poll's next tick, so the poll never
+    sees it busy. That tick hands over the job it saw last (the run before)
+    and the one it reads now (this run, ended), and the hand-off chooses this
+    run's report over the report the operator had chosen; the tick after
+    hands nothing over. When only a run the poll saw busy could end, the
+    operator's choice stayed and this run's report was never chosen."""
+    other = _disagreeing_copy(site)
+    job = {"status": "completed", "job_id": "test-1", "inputs": {}, "log": [], "outcome": None}
+    monkeypatch.setattr(tp, "read_job", lambda **k: dict(job))
+    monkeypatch.setattr(tp, "gpu_line", lambda **k: ("none", "GPU jobs: none"))
+    demo, ctx, _registry = _page_component()
+    refresh, on_report, poll, after = (
+        _named(demo, n) for n in ("_refresh", "_on_report", "_poll", "_after_job_change"))
+    after_act = next(fn for fn in demo.fns.values() if fn.name == "_after_act")
+    selected_report = on_report.outputs[0]
+
+    with served(demo) as base:
+        browser = ServedSession(base, demo)
+
+        def tick():
+            return browser.predict(poll, [None, None, None])[poll.outputs.index(after.inputs[-1])]
+
+        def hand_over(change):
+            return browser.join(after, [None, None, None, "demo", None, None, None, change])
+
+        assert browser.wait(browser.join(refresh, [None] * 5))
+        browser.set_state(ctx.location, tp.PAGE)
+        assert browser.wait(hand_over(tick()))
+        assert tick().get("__type__") == "update"
+        assert browser.wait(browser.join(on_report, [None] * 3, {"key": other}))
+        assert browser.state(selected_report) == other != site.run_id
+
+        job.update(job_id="test-2", status="running")
+        assert browser.wait(browser.join(after_act, [None, None, None, "demo", None, None, None]))
+        assert browser.state(selected_report) == other, "an act's read decides no end"
+        job.update(status="completed", outcome={"report_dir": str(site.reports / site.run_id),
+                                                "kept": True, "registered": False,
+                                                "summary": "kept"})
+        handoff = tick()
+        assert handoff["seen"] == {"job_id": "test-1", "status": "completed"}
+        assert handoff["now"] == {"job_id": "test-2", "status": "completed"}
+        assert browser.wait(hand_over(handoff))
+        assert tick().get("__type__") == "update", "the end is handed over once"
+        browser.close()
+        assert browser.state(selected_report) == site.run_id, \
+            "the run started here ended between two ticks and its report was not chosen"
 
 
 def test_a_late_reload_never_writes_back_another_workspaces_checkpoints(site, monkeypatch):

@@ -91,8 +91,9 @@ joins it, also one made while an earlier one waits. So each starts from the
 selection the one before it wrote, in the order they were asked, and a late
 answer never writes back a selection it started from over one chosen
 meanwhile. The report of a run that has just ended is chosen once for that
-run: only the poll's hand-off of that end chooses it, and the poll, the one
-writer of what the session saw of the job, hands each change over once.
+run: only the poll's hand-off of that end chooses it (a run the poll saw busy,
+or one that started and ended between two of its ticks), and the poll, the
+one writer of what the session saw of the job, hands each change over once.
 
 Module: src/webui/components/test_page.py
 """
@@ -2356,9 +2357,9 @@ def create_test_page(ctx: Any) -> None:
 
     def _select_report(reports: Mapping[str, Any], current: Any, job: Mapping[str, Any],
                        *, prefer_outcome: bool = False) -> Any:
-        """The report to show: the one chosen, unless a run this session saw
-        running has just ended with a report (then that one), or the chosen
-        one is gone (then the newest)."""
+        """The report to show: the one chosen, unless the poll's hand-off of
+        a run's end prefers that run's report (`_after_job_change`), or the
+        chosen one is gone (then the newest)."""
         runs = [x["run_id"] for x in reports.get("runs") or []]
         outcome = (job or {}).get("outcome") or {}
         if outcome.get("report_dir"):
@@ -2604,12 +2605,19 @@ def create_test_page(ctx: Any) -> None:
                           request: gr.Request):
         """The poll's hand-off, in the selection's group: Start and its reason
         from the selection as it is now, and the reports read again. The one
-        place an end is decided: when the poll saw a run busy (``seen``) and
-        now sees it no longer busy (``now``), that run's report is chosen."""
+        place an end is decided, from what the poll saw on its last tick
+        (``seen``) and sees now (``now``): the run read now is no longer busy,
+        and the poll saw it busy, or saw another job or none (``idle``) — a
+        run that started and ended between two ticks, such as a short one
+        started here (the act's read after Start writes nothing the poll
+        reads). That run's report is chosen. A session's first tick (nothing
+        seen yet) decides no end."""
         if not page or not isinstance(change, Mapping):
             return [gr.update()] * (2 + len(start_outputs) + len(result_outputs))
         seen, now = change.get("seen") or {}, change.get("now") or {}
-        ended = (now.get("job_id") if seen.get("status") in _BUSY
+        saw_any = seen.get("job_id") is not None or seen.get("status") is not None
+        started_since = saw_any and now.get("job_id") not in (None, seen.get("job_id"))
+        ended = (now.get("job_id") if (seen.get("status") in _BUSY or started_since)
                  and now.get("status") not in _BUSY else None)
         job, label, reports, run_id = _job_read_again(page, models, current_report, reports,
                                                       request, ended=ended)
