@@ -8,8 +8,8 @@
 > **Golden rule**: one **workspace** = one dataset version. Everything for a given
 > dataset (KG, shortest paths, checkpoints, index) lives under a single
 > `data/workspaces/<name>/` folder. Never mix a checkpoint from one workspace with
-> the data of another — the fingerprint check (see end) is the safety net, but the
-> discipline is the real fix.
+> the data of another — serving refuses such a checkpoint (see "The safety net"
+> near the end), but the discipline is the real fix.
 
 ---
 
@@ -222,28 +222,48 @@ this shell or in the systemd unit ([deployment guide](../deployment-guide.en.md)
 
 ---
 
-## The fingerprint safety net (read this)
+## The safety net: a checkpoint is served only over its own graph (read this)
 
-Every checkpoint embeds a **data fingerprint** — the structural identity of the
-graph it was trained on: node types, per-type node counts, feature dimensions,
-and edge-type count (`src/utils/fingerprint.py:compute_fingerprint`, attached in
-`scripts/train_model.py` and the `ModelCheckpoint` callback).
+Every checkpoint records **what it was trained on** (`training_input_digests`):
+the SHA-256 of each input the run read (the samples, the graph tensors, the
+workspace's `split_manifest.json`) and of `kg.json` as that manifest binds it.
+Beside it, a structural **data fingerprint**: node types, per-type node counts,
+feature dimensions and edge-type count
+(`src/utils/fingerprint.py:compute_fingerprint`). `scripts/train_model.py`
+attaches both and the `ModelCheckpoint` callback writes them into every
+checkpoint.
 
-At inference load (`src/inference/pipeline.py` →
-`verify_fingerprint`), the checkpoint's fingerprint is compared against the
-currently loaded data. Mismatches produce **warnings, not hard errors**, and
-surface up through the pipeline API (`fingerprint_warnings`) onto the Diagnosis
-page. This is what catches "a checkpoint was loaded against the wrong dataset"
-before it silently produces garbage rankings.
+At inference load (`src/inference/pipeline.py`), the record is compared first
+(`verify_training_record`, contract M2.4). Unless the checkpoint records this
+workspace's `kg.json`, `node_features.pt`, `edge_indices.pt` and
+`num_nodes.json`, each by its digest, the load is **refused before any model is
+built**; a checkpoint that records none (one from before the provenance
+contract) is refused the same way. This is what stops "a checkpoint loaded
+against the wrong dataset", a same-shaped graph the fingerprint cannot tell
+apart included. The refusal says "Checkpoint <path> does not match this
+workspace's graph" and names each graph file that differs (for example
+"node_features differs"). A service started with such a checkpoint serves no
+model (its log's "Startup failed" line says why), and **🔒 Change model…** ›
+**🔒 Load this model** on the Diagnosis page answers "Not reloaded; the model
+in use is unchanged." with that reason.
+
+The structural fingerprint (`verify_fingerprint`) is then a **diagnostic, not
+the graph's identity**, and never stops a load. Its warnings surface through the
+pipeline API (`fingerprint_warnings`) in the Warnings section of the Diagnosis
+page's **Details ›** drawer: "Graph structure differs from the checkpoint's
+structural fingerprint", or "Graph structure not compared" when the checkpoint
+records no fingerprint.
 
 **What it means for you:**
 - Keep each dataset version in its own workspace; load a checkpoint against the
   same workspace it was trained on.
-- If you rebuild the KG (e.g. expand the ontology, more samples, different
-  `--feature-dim`), the fingerprint changes — **old checkpoints will warn**. That
-  warning is correct: retrain (or rebuild the index) for the new data.
-- A "legacy checkpoint has no fingerprint" warning means an old checkpoint that
-  predates this mechanism — verify compatibility manually.
+- If a rebuild changes the graph's files (e.g. an expanded ontology or a
+  different `--feature-dim`), **the old checkpoints are refused** on the rebuilt
+  workspace. That refusal is correct: retrain for the new data.
+- A checkpoint refused because it "records no training_input_digests" predates
+  the provenance contract: retrain it. `scripts/migrate_checkpoints.py` writes
+  nothing into a checkpoint; it moves one with no record to the workspace's
+  `archive/`.
 
 ---
 
@@ -267,6 +287,7 @@ before it silently produces garbage rankings.
 |---------|---------------|
 | Training crashed | Red error banner on Research › Prepare › Training (the last error line and the output's tail); full run output in the console where uvicorn runs |
 | "Running slow" / HGT sluggish | PyG status line at training start; if any extension `MISSING`, re-run deploy PyG step |
-| Inference rankings look wrong after a rebuild | Fingerprint warnings on the Diagnosis page — likely a checkpoint/data version mismatch |
+| A model will not load after a rebuild ("does not match this workspace's graph") | Expected: the checkpoint was trained on the old build (see the safety net above); retrain on the rebuilt workspace |
+| Inference rankings look wrong | The Diagnosis page's **Details ›** drawer: which workspace is served and whether the model was trained on it ("the same dataset ✓" or "another dataset"), and the structural fingerprint's warnings |
 | `No paths found` / empty results at inference | Check, in order: the pipeline is pointed at the intended `$WS`; `kg.json` and `shortest_paths.pt` are present there; the submitted HPO ids exist in the KG (unknown ids are dropped before scoring); at least one phenotype has a KG path to a disease — candidate discovery is BFS-gated, so a phenotype with no qualifying path yields nothing |
 | Build/SP killed (OOM) | Expected only on small-RAM machines; Spark's 128 GB is fine. See `docs/MILESTONE_REPORT.md` SP memory section |

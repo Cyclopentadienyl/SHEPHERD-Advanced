@@ -17,7 +17,11 @@ it requires. What these pin, through the code itself:
   a script that takes the GPU lock (`take_gpu_lock` in its source; §4.11, the
   workspaces root), a registration or a `--cohort` measurement (§4.11, the
   registry). The rules themselves stay in the guide, in one place, and the
-  guide's sections cited hold them.
+  guide's sections cited hold them;
+- **the playbook's safety net is the load's refusal** (contract M2.4): the
+  refusals it quotes are what serving raises for a checkpoint of another graph
+  and for one with no record, and the structural fingerprint is the drawer's
+  diagnostic beside them, not the safety net it used to be called.
 
 Module: tests/unit/test_entry_documents.py
 """
@@ -272,3 +276,66 @@ def test_the_guide_s_sections_cited_state_those_settings(guide):
     assert ss.ENV_WORKSPACES_ROOT in sections["4.11"] and ss.ENV_REGISTRY in sections["4.11"]
     for variable in (ss.ENV_DEPLOYMENT_MODE, ss.ENV_WORKSPACES_ROOT, ss.ENV_REGISTRY):
         assert variable in sections["4.12"], variable
+
+
+# ---------------------------------------------------------------------------
+# The safety net: what a load does with a checkpoint of another graph
+# ---------------------------------------------------------------------------
+def _safety_net() -> str:
+    """The playbook's safety-net section, its lines joined."""
+    body = next((body for heading, body in _sections(_text("docs/TRAINING_PIPELINE_PLAYBOOK.md"))
+                 if heading.startswith("## The safety net")), None)
+    assert body is not None, "the playbook has no section '## The safety net…'"
+    return " ".join(body.split())
+
+
+def test_the_playbook_s_safety_net_is_the_load_s_refusal_in_the_code_s_words(tmp_path):
+    """Since contract M2.4 a load refuses, before any model is built, a
+    checkpoint whose record names another graph or none; the structural
+    fingerprint is a diagnostic beside that refusal. The playbook said the
+    fingerprint's warnings were the safety net and that old checkpoints "will
+    warn" after a rebuild. What it quotes now is what the real load raises for
+    both cases, and what the Diagnosis page's drawer shows for the fingerprint."""
+    pytest.importorskip("torch")
+    from src.api import main as service
+    from src.inference.pipeline import PipelineBuildError
+    from src.kg.artifacts import GRAPH_ARTIFACTS
+    from src.utils.fingerprint import verify_fingerprint
+    from src.webui.components import diagnosis_card, model_list
+    from tests.unit import test_training_record as record
+
+    text = _safety_net()
+    data_dir, checkpoint = record.build_workspace(tmp_path / "a")
+    refused = {}
+    for case, workspace, served in (
+            ("another graph", record._same_shaped_other(tmp_path / "b"), checkpoint),
+            ("no record", data_dir, record._pre_contract(checkpoint, tmp_path / "old.pt"))):
+        with pytest.raises(PipelineBuildError) as refusal:
+            record._serve(workspace, served)
+        refused[case] = str(refusal.value)
+    for case, quoted in (("another graph", "does not match this workspace's graph"),
+                         ("another graph", "node_features differs"),
+                         ("no record", "records no training_input_digests")):
+        assert quoted in refused[case], (case, refused[case])
+        assert quoted in text, quoted
+    assert "refused before any model is built" in text
+    assert all(f"`{name}`" in text for name in GRAPH_ARTIFACTS.values()), GRAPH_ARTIFACTS
+    assert "Startup failed" in inspect.getsource(service.lifespan)
+    assert "Not reloaded; the model in use is unchanged." in text
+    assert "Not reloaded; the model in use is unchanged." in inspect.getsource(model_list)
+
+    # The fingerprint: never a refusal; its two lines as the drawer writes them.
+    differs = verify_fingerprint({"data_fingerprint": {"node_types": ["gone"]}}, {})
+    legacy = verify_fingerprint({}, {})
+    for warnings, line in ((differs, "Graph structure differs from the checkpoint's structural "
+                                     "fingerprint"),
+                           (legacy, "Graph structure not compared")):
+        assert line in diagnosis_card._structure_line({"fingerprint_warnings": warnings}), line
+        assert f'"{line}"' in text, line
+    assert "never stops a load" in text
+
+    # Troubleshooting sends a rebuild's old checkpoint to that refusal, not to
+    # the fingerprint's warnings.
+    rows = [row for row in _text("docs/TRAINING_PIPELINE_PLAYBOOK.md").splitlines()
+            if row.startswith("|") and "rebuild" in row.split("|")[1]]
+    assert rows and all("does not match this workspace's graph" in row for row in rows), rows
