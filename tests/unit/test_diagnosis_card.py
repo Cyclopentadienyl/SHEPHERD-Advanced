@@ -13,8 +13,9 @@ Diagnosis: the "Model in use" card and its Details (M5-2, UI-B).
 - **trained on: the checkpoint's own record**, never the served workspace's
   manifest, read from the served file alone (never the other checkpoints of
   its runs) only for a request D8 allows and only on a queued refresh, and
-  only when the bytes read are the served ones; a read-only request is told
-  it is not shown, and nothing is opened;
+  only when the bytes read are the served ones, compared on that read before
+  torch is handed them (another model, or none, is said so); a read-only
+  request is told it is not shown, and nothing is opened;
 - **the session's state**: a failed read keeps the last known status (grey,
   never current); another served identity than this session's last read sets
   the change notice; what the served checkpoint records is kept while the
@@ -273,6 +274,66 @@ def test_a_file_rewritten_since_it_was_loaded_is_not_read_as_the_models(root):
     trained = _state(root, status=status)["facts"]["trained"]
     assert trained["state"] == "not_read" and trained["fingerprint"] is None
     assert "not the one loaded" in trained["problem"]
+
+
+@pytest.mark.parametrize("bytes_now", ["another checkpoint", "torn", "not a dict", "gone"])
+def test_other_bytes_at_the_served_file_are_said_not_the_model_loaded_before_torch_sees_them(
+    root, monkeypatch, bytes_now
+):
+    """Round 3 of the review fixes (INT-R1's class, its verification's A-2): the
+    card's one read of the served file is bound to the served digest
+    (`read_checkpoint(expected_sha256=)`), so whatever is there when it reads
+    -- another valid checkpoint, torn bytes, a pickle that is not a checkpoint,
+    or nothing -- is "not read" as another model than the one loaded, or as
+    gone, compared before torch is handed the bytes: never torch's error, never
+    "could not be read". The control: the same served file unchanged is read."""
+    import io
+
+    import torch
+
+    from src.utils import checkpoint_io
+    from tests.fixtures.replacement import hook_read_once, replace_file
+
+    status = _status(root)
+    control = _state(root, status=status)["facts"]["trained"]
+    assert control == {"state": "read", "fingerprint": root["recorded"], "problem": None}
+
+    path = root["workspace"] / "runs" / "gat" / RUN / "checkpoints" / "model-05.pt"
+    data = path.read_bytes()
+    if bytes_now == "another checkpoint":
+        buffer = io.BytesIO()
+        torch.save({"checkpoint_kind": "weights", "epoch": 6,
+                    "training_input_digests": {"split_manifest": root["fingerprint"]}}, buffer)
+        data = buffer.getvalue()
+    elif bytes_now == "torn":
+        data = data[:len(data) // 2]
+    elif bytes_now == "not a dict":
+        buffer = io.BytesIO()
+        torch.save([1, 2, 3], buffer)
+        data = buffer.getvalue()
+    fired = []
+
+    def on_entry(read_path):
+        # Right before the card's read of the served file, after the server's
+        # list found it: the window between the list and the read.
+        if fired or read_path.resolve() != path.resolve():
+            return
+        fired.append(read_path)
+        if bytes_now == "gone":
+            path.unlink()
+        else:
+            replace_file(path, data, "rename")
+
+    hook_read_once(monkeypatch, on_entry=on_entry)
+    monkeypatch.setattr(checkpoint_io, "BytesIO",
+                        lambda *a, **k: pytest.fail("torch was handed the file's bytes"))
+
+    trained = _state(root, status=status)["facts"]["trained"]
+
+    assert fired, "the card never read the served file"
+    problem = ("the file the model was loaded from is gone" if bytes_now == "gone" else
+               f"the file now holds model {file_sha256(path)[:12]}, not the one loaded")
+    assert trained == {"state": "not_read", "fingerprint": None, "problem": problem}
 
 
 # --------------------------------------------------------------------------- the session's state

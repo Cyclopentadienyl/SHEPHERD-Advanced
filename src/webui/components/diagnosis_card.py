@@ -38,13 +38,13 @@ it is shown, after each diagnosis, after a Load ("served model changed") and on
 - "trained on <name> · dataset fingerprint <12 hex>" from **the checkpoint's own
   record** (``training_input_digests.split_manifest``: the served file, found
   in the server's list by `resolve_checkpoint` and read once by the one
-  checkpoint reader, taken only when the bytes read are the served ones, by
-  the full digest), **never the served workspace's manifest**. Reading a
-  checkpoint is an operator control (SPEC_4 C3, D8), so a read-only request
-  sees "not shown · reading the checkpoint is an operator control". Only the
-  served file is opened, on a queued refresh, once per served model per
-  session (what it records is kept while the served identity is the same);
-  the timer's read never opens a checkpoint;
+  checkpoint reader bound to the served digest, so other bytes are compared
+  away on that read before they are parsed), **never the served workspace's
+  manifest**. Reading a checkpoint is an operator control (SPEC_4 C3, D8), so
+  a read-only request sees "not shown · reading the checkpoint is an operator
+  control". Only the served file is opened, on a queued refresh, once per
+  served model per session (what it records is kept while the served
+  identity is the same); the timer's read never opens a checkpoint;
 - the mode chips, only when true: amber "synthetic data", neutral "no SP
   table", red "no trained model" / "GNN not loaded", amber "unverified";
 - "Recorded tests: <state>" from the ledger beside the checkpoint and the
@@ -247,13 +247,16 @@ def trained_on_listed(item: Mapping[str, Any], *, environ: Optional[Mapping[str,
     (``training_input_digests.split_manifest``): the file the server lists for
     the item (`resolve_checkpoint`, which reads no file) is read once by the one
     checkpoint reader (`read_checkpoint`, ``weights_only``; opening a
-    checkpoint is an operator control), and its record is taken only when the
-    bytes read are the served ones (the full digest), as `resolve_checkpoint`
-    asks of its callers. Only the served file is opened, never the other
+    checkpoint is an operator control), bound to the served digest (the full
+    digest, ``expected_sha256``), as `resolve_checkpoint` asks of its callers:
+    other bytes, a checkpoint or not, and a file removed are "not read" for
+    what they are (another model than the one loaded, or gone), compared on
+    that read before torch is handed them (round 3 of the review fixes,
+    INT-R1's class). Only the served file is opened, never the other
     checkpoints of its runs, so a workspace with hundreds of checkpoints costs
     the card one read."""
     from src.api.services.server_lists import ServerListRefused, resolve_checkpoint
-    from src.utils.checkpoint_io import read_checkpoint
+    from src.utils.checkpoint_io import CheckpointChanged, read_checkpoint
 
     try:
         path = resolve_checkpoint(item["workspace"], item["architecture"], item["run"],
@@ -261,11 +264,14 @@ def trained_on_listed(item: Mapping[str, Any], *, environ: Optional[Mapping[str,
     except ServerListRefused:
         return {"state": "not_read", "fingerprint": None,
                 "problem": "the checkpoint in use is no longer listed"}
-    read = read_checkpoint(path, map_location="cpu", weights_only=True)
-    if read.identity.sha256 != item["sha256"]:
+    try:
+        read = read_checkpoint(path, map_location="cpu", weights_only=True,
+                               expected_sha256=item["sha256"])
+    except CheckpointChanged as exc:
         return {"state": "not_read", "fingerprint": None,
-                "problem": (f"the file now holds model {r.short_hex(read.identity.sha256)}, not "
-                            "the one loaded")}
+                "problem": ("the file the model was loaded from is gone" if exc.found is None
+                            else f"the file now holds model {r.short_hex(exc.found)}, not the "
+                                 "one loaded")}
     record = read.checkpoint if isinstance(read.checkpoint, dict) else {}
     digests = record.get("training_input_digests")
     recorded = digests.get("split_manifest") if isinstance(digests, dict) else None
