@@ -1603,7 +1603,8 @@ contract and BACKLOG stay the record, and no new planning document is added.
   released only when every descriptor of its file is closed, which a child can inherit, and it
   is cooperative, so a GPU process that does not take it is not stopped; the resident
   inference service may still hold memory. No cross-process inference scheduling, multi-GPU
-  allocation or automatic model unloading is added.
+  allocation or automatic model unloading is added; the owner's requirement that training and
+  inference exclude each other (2026-10-23) is BACKLOG 48, recorded and not started.
   *As implemented (M5-1, 2026-10-20):* `src/utils/gpu_lock.py`. The lock file was
   `SHEPHERD_GPU_LOCK_FILE`, or `.shepherd-gpu.lock` under `SHEPHERD_WORKSPACES_ROOT` (since the
   root-cause round only the latter, below); with
