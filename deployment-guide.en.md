@@ -1851,10 +1851,12 @@ cohort version, the same CLI an operator runs). One job at a time:
   (since the root-cause round of 2026-10-22). A stop of the backend begun before the process is
   replaced (Ctrl-C, `systemctl stop`) aborts the restart too: its signal is recorded before
   anything else, and the restart's last check and its exec are one step (since round 3 of the
-  review fixes). One case no check can close: a stop signal that arrives as the exec is made,
-  before its handler has recorded it, is lost with the old process, and the new one serves on;
-  under systemd the unit then SIGKILLs the whole service, a job started meanwhile included, after
-  `TimeoutStopSec`, and in a terminal a second Ctrl-C stops the new backend.
+  review fixes). One case this self-exec restart cannot close: a stop signal that arrives as the
+  exec is made, before its handler has recorded it, is lost with the old process, and the new one
+  serves on; under systemd the unit then SIGKILLs the whole service, a job started meanwhile
+  included, after `TimeoutStopSec`, and in a terminal a second Ctrl-C stops the new backend. It is
+  a limit of the restart replacing its own process image: a restart made by a supervisor could
+  close it, and none is built (BACKLOG 47).
 - **Stopping the backend stops its job** (the owner's decision of 2026-10-22). Because a job
   leads its own process group, a Ctrl-C, a Ctrl-\ or a hangup of the terminal the backend runs
   in, or a SIGTERM sent to the backend alone, no longer reaches the job itself; the backend stops

@@ -28,7 +28,9 @@ Safety:
     signal is recorded by its handler before anything else, so a backend
     that began to stop is not restarted; only a stop signal that arrives as
     the exec is made, before its handler has recorded it, is lost with the
-    old process image.
+    old process image. That is a limit of this self-exec design, not of
+    every restart: a restart made by a supervisor could close it, and none
+    is built (BACKLOG 47).
 
 Allocator re-resolution:
     The launcher records HOW ``PYTORCH_ALLOC_CONF`` was set via the
@@ -159,11 +161,11 @@ def restart_backend(
         # restart still owns the slot and no stop signal has been recorded (its
         # handler records it first), so a stop that began meanwhile aborts the
         # restart, and one that begins during the exec waits for the lock until
-        # the image is gone. Lost, as no check can prevent: a stop signal whose
-        # handler had not recorded it when the final check ran. The slot stays
-        # closed through execve, which does not return; only a failed execve
-        # opens it again, and only the close this restart made, never a stop's
-        # that came meanwhile.
+        # the image is gone. Lost, as no check in this self-exec design can
+        # prevent (BACKLOG 47): a stop signal whose handler had not recorded it
+        # when the final check ran. The slot stays closed through execve,
+        # which does not return; only a failed execve opens it again, and only
+        # the close this restart made, never a stop's that came meanwhile.
         aborted = ("Backend restart aborted: a GPU job became active, or the backend "
                    "began to stop, before the process was replaced.")
         if not training_manager.close_if_idle():

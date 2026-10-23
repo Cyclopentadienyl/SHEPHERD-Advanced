@@ -694,7 +694,8 @@ disagreement block, contested states and investigation notes are phase 2.
   saying to register the store's original. The
   digest, checkpoint and ledger checks are unchanged.
 - **Only the deployment's registry** (the M5 review's P2-7, BACKLOG 37; implemented
-  2026-10-22, not yet reviewed). A copy of the whole registry holds the same bytes in the same
+  2026-10-22, its core issue checked by the reviewer's incremental review of `2887506`,
+  2026-10-23). A copy of the whole registry holds the same bytes in the same
   structure, so it used to register too, with its own usage history and its own block. Now the
   registry a report's path names must be the one `SHEPHERD_REGISTRY` names, both resolved
   (`server_settings.deployment_registry_refusal`; never device and inode, which can be 0 for
@@ -758,7 +759,8 @@ disagreement block, contested states and investigation notes are phase 2.
   unset, or a record's version not listed, they say "contested state not checked", never
   uncontested; since the M5-3 review the contested and the uncheckable records are counted
   apart ("3 · 1 contested · contested state of 1 not checked"). **Since the M5 review's P2-6
-  (BACKLOG 36; implemented 2026-10-22, not yet reviewed)** `GET /api/v1/evaluations/loaded-model`
+  (BACKLOG 36; implemented 2026-10-22, its core issue checked by the reviewer's incremental
+  review of `2887506`, 2026-10-23)** `GET /api/v1/evaluations/loaded-model`
   gives each record it shows its state (`contest`: uncontested, contested with the differing
   fields and runs, or cannot_be_checked) from the same function the dashboard uses
   (`src/api/services/record_states.contest_states`, moved there from the dashboard's model list
@@ -1698,9 +1700,11 @@ contract and BACKLOG stay the record, and no new planning document is added.
   the runner's lock only while the restart still owns the closed slot and no shutdown signal has
   been recorded, and the backend's signal handler records the stop before anything else
   (`record_stop_signal`, a plain store), so a stop whose thread has not yet closed the slot refuses
-  the exec too. The one residual no check can close: a stop signal whose handler had not recorded
-  it when that check ran is lost with the old image (systemd then SIGKILLs the service after
-  `TimeoutStopSec`; in a terminal a second Ctrl-C stops the new backend; BACKLOG 47). **The PID
+  the exec too. The one residual, a limit of this self-exec restart that no check in the process
+  can close (a restart made by a supervisor could close it; none is built): a stop signal whose
+  handler had not recorded it when that check ran is lost with the old image (systemd then
+  SIGKILLs the service after `TimeoutStopSec`; in a terminal a second Ctrl-C stops the new
+  backend; BACKLOG 47). **The PID
   that was started is the server on every POSIX start path** (P3-2): `launch_shepherd.sh` execs
   the launcher, and the launcher execs into uvicorn in its browser mode too, the browser opened by
   a helper (a new interpreter that forks once and exits, so the server has no child of the start);
