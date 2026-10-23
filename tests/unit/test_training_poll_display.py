@@ -46,7 +46,7 @@ def _written(fn, answer, block):
     return answer[fn.outputs.index(block)] if block in fn.outputs else {}
 
 
-def test_delayed_full_poll_cannot_restore_the_old_dataset_label(root, operator, monkeypatch):
+def test_delayed_full_poll_cannot_restore_the_old_dataset_label(root, operator, monkeypatch):  # noqa: F811
     job = _job_in_resampled(root, monkeypatch)
     demo, ctx, named, by_id = _datasets_and_training()
     poll, opened, choose = (named[n] for n in ('_poll', '_open', '_on_dataset'))

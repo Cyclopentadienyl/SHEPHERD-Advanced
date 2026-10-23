@@ -1881,7 +1881,15 @@ contract and BACKLOG stay the record, and no new planning document is added.
     hand: with Continue… open, the parents are listed again), and every writer of the run bar's
     workspace (page open and its render, the select, Datasets' "Use for training ›", every
     render) runs in one queued group of one (`shell.TRAINING_SELECTION_CONCURRENCY`), so a
-    workspace chosen after a job ended is never set back (BACKLOG 46). The Datasets page's
+    workspace chosen after a job ended is never set back (BACKLOG 46). *Since the reviewer's
+    incremental review of `2887506` (P2-NEW-1, 2026-10-23; implemented, not reviewed):* every
+    piece of the run bar and the run view drawn from the session's selection (the select's
+    value, the chip, the reason, Start, Continue…, Stop and Continue Training, the drawer's line,
+    the run head, the snapshot sentence, the chart token) is written only by the queued
+    listeners of that group; the fast poll writes the status pill (the job runner's state) and
+    the chips, and hands every other change it finds to a queued render as it hands over a job
+    running in another workspace (one hand-off), so a tick that crosses a choice never shows
+    another dataset than the one Start would train (BACKLOG 46). The Datasets page's
     temporary bridge into the old Data Directory is
     deleted;
   - **added at the owner's request (2026-10-19):**
