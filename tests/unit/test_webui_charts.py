@@ -151,7 +151,10 @@ def test_the_toolbar_offers_reset_export_zoom_and_the_gestures():
     template = _figure().html_template
     for act in ("reset", "csv", "zoom-in", "zoom-out", "follow"):
         assert f'data-chart-act="{act}"' in template
-    assert charts.GESTURES in template and "The wheel scrolls the page here" in template
+    # The same gestures in every layout: the wheel zooms in a narrow window too
+    # (the GB10 acceptance), so no note says otherwise.
+    assert charts.GESTURES in template and "scrolls the page here" not in template
+    assert "shep-charts-narrow" not in template and not hasattr(charts, "NARROW_NOTE")
     assert 'aria-describedby="shep-help-text-training-charts"' in template
 
 
@@ -335,6 +338,36 @@ def test_a_run_shown_next_fits_every_chart_unless_it_has_its_own_view():
                         "loss": [False, None], "lr": [False, None]}
     assert res["a"] == {"x": [3, 9], "xManual": True,
                         "pending": {"loss": [0.6, 1.2], "lr": [0.6, 1.2]}}
+
+
+@pytest.mark.skipif(NODE is None, reason="Node is not installed")
+def test_no_epoch_view_starts_below_epoch_0():
+    """The GB10 acceptance saw the epoch axis go below 0. A zoom out or a pan
+    left at the start, the auto range of a run with one epoch, and a view kept
+    from before this rule (stored negative) all start at 0 with their width
+    kept; a value axis is never bounded by it. (Follow, the keys and a drag
+    set the view through the same `normX`; the browser check covers them.)"""
+    out = _node(
+        "const vm=require('vm');const fs=require('fs');"
+        "const ctx={window:{},console,JSON,Array,Object,Math};vm.createContext(ctx);"
+        f"vm.runInContext(fs.readFileSync({json.dumps(str(STATIC / charts.MODULE))},'utf8'),ctx);"
+        "const X=ctx.window.ShepCharts._x;"
+        "const xs=Array.from({length:100},(_,i)=>i+1);"
+        "const st={id:'loss',yLog:false,yManual:true,y:[0,1],data:[xs,xs.map(v=>1/v)]};"
+        "const inst={key:'training',run:'r',charts:{loss:st},order:['loss'],saveTimer:1,"
+        "            xManual:true,x:[0,20]};"
+        "const res={norm:[X.norm([-5,20]),X.norm([3,9])]};"
+        "X.zoom(inst,st,'x',10,2);res.zoomOut=inst.x.slice();"
+        "inst.x=[0,20];X.pan(inst,st,'x',-0.5);res.panLeft=inst.x.slice();"
+        "inst.x=[-40,10];res.stored=X.view(inst);"
+        "st.data=[[0],[1]];inst.xManual=false;res.auto=X.view(inst);"
+        "X.zoom(inst,st,'y',10,0.5);res.y=st.y.slice();"
+        "console.log(JSON.stringify(res));")
+    res = json.loads(out)
+    assert res["norm"] == [[0, 25], [3, 9]]
+    assert res["zoomOut"] == [0, 200] and res["panLeft"] == [0, 20]
+    assert res["stored"] == [0, 50] and res["auto"] == [0, 1]
+    assert res["y"][0] < 0                                     # the value axis is not bounded
 
 
 @pytest.mark.skipif(NODE is None, reason="Node is not installed")

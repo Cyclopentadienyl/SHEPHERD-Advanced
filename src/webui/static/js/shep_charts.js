@@ -57,13 +57,15 @@
  * Interaction: wheel zoom centred on the cursor (over the X axis X only, over
  * the Y axis Y only, inside both), drag pan, double-click and "Reset view",
  * keyboard (+ - x X y Y arrows 0 End), zoom limits (a minimum span; at most
- * 1000x the data extent, data decades + 6 on a log axis), log axes computed
+ * 1000x the data extent, data decades + 6 on a log axis; the epoch axis never
+ * starts below 0, `normX`, wherever a view is set), log axes computed
  * in log10 space with values <= 0 or missing as gaps, the view kept per run
  * in sessionStorage (the last 20 runs shown in the tab; a run not shown
  * before fits its data, its epochs and every chart's values), whole epochs
  * on the epoch axis and in the zoom note, and while zoomed during
- * a live run an overlay button "N new epochs ->". In the narrow layout the
- * wheel scrolls the page and a note says how to zoom.
+ * a live run an overlay button "N new epochs ->". The wheel zooms in every
+ * layout, narrow included; over anything but a chart's plot or axes it
+ * scrolls the page, and a touch still scrolls the page in the narrow layout.
  */
 (function () {
   "use strict";
@@ -75,7 +77,6 @@
   var KEY_ZOOM = 0.8;
   var KEY_PAN = 0.1;
   var STORE_PREFIX = "shep-charts-view-v2:", STORE_RUNS = 20;
-  var NARROW = "(max-width: 1399px), (max-height: 759px)";
   var FONT = "14px 'IBM Plex Sans', system-ui, sans-serif";
   var INK = "#434a58", GRID = "#e6e8ee";
   var RETRY_MS = 3000, RETRY_MAX = 20;
@@ -143,7 +144,14 @@
     });
     if (lo === Infinity) { return [0, 1]; }
     if (lo === hi) { lo -= 0.5; hi += 0.5; }
-    return [lo, hi];
+    return normX([lo, hi]);
+  }
+  // The one rule for an epoch view: it never starts below epoch 0. A view that
+  // would is moved right with its width kept, so a zoom, a pan, the keys,
+  // follow, the auto range and a view kept from before (a stored negative one
+  // included) all end at the same bound, and no view is reset for it.
+  function normX(r) {
+    return r[0] < 0 ? [0, r[1] - r[0]] : r;
   }
   // The values in view (inside `xr` when given; all of them when none is),
   // finite and, on a log axis, above zero; padded 5 % in transformed space.
@@ -182,7 +190,7 @@
   }
 
   // ------------------------------------------------------------ the view
-  function xView(inst) { return inst.xManual && inst.x ? inst.x : figureXExtent(inst); }
+  function xView(inst) { return inst.xManual && inst.x ? normX(inst.x) : figureXExtent(inst); }
 
   function applyView(inst) {
     var xr = xView(inst);
@@ -243,7 +251,7 @@
     if (!isFinite(a) || !isFinite(b) || !(b > a) || (axis === "y" && st.yLog && !(a > 0))) { return; }
     if (axis === "x") {
       if (!inst.xManual) { inst.frozenLast = lastEpoch(inst); }
-      inst.x = [a, b];
+      inst.x = normX([a, b]);
       inst.xManual = true;
     } else {
       st.y = [a, b];
@@ -272,7 +280,7 @@
   // Jump to the newest epoch, keeping the zoom width.
   function follow(inst) {
     var ext = figureXExtent(inst), x = xView(inst), w = x[1] - x[0];
-    inst.x = [ext[1] - w, ext[1]];
+    inst.x = normX([ext[1] - w, ext[1]]);
     inst.xManual = true;
     inst.frozenLast = ext[1];
     applyView(inst);
@@ -364,9 +372,6 @@
   function chartOf(inst, target) {
     var card = target && target.closest ? target.closest(".shep-chart") : null;
     return card && inst.root.contains(card) ? inst.charts[card.getAttribute("data-chart")] : null;
-  }
-  function narrow() {
-    try { return window.matchMedia(NARROW).matches; } catch (err) { return false; }
   }
 
   // ------------------------------------------------------------ rendering
@@ -613,9 +618,8 @@
     var drag = null;
 
     on("wheel", function (e) {
-      if (narrow()) { return; }               // the page scrolls here; a note says how to zoom
       var st = chartOf(inst, e.target), zone = zoneOf(st, e.clientX, e.clientY);
-      if (!zone) { return; }
+      if (!zone) { return; }                  // not over a plot or its axes: the page scrolls
       e.preventDefault();
       var f = Math.exp(wheelDelta(e) * WHEEL_STEP), o = st.u.over.getBoundingClientRect();
       if (zone.indexOf("x") >= 0) { zoomAxis(inst, st, "x", f, st.u.posToVal(e.clientX - o.left, "x")); }
@@ -878,5 +882,6 @@
   window.ShepCharts = { mount: mount, logSplits: logSplits, stats: stats, view: view,
                         _inst: INST, _u: function (key, id) { var i = INST[key]; return i && i.charts[id] && i.charts[id].u; },
                         _views: { write: writeView, load: loadView, enter: enterRun },
+                        _x: { norm: normX, view: xView, zoom: zoomAxis, pan: panAxis },
                         _epochs: { axis: epochAxis, label: wholeEpoch } };
 })();

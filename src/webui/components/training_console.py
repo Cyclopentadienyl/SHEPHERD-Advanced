@@ -1839,10 +1839,21 @@ def confirming(status: Mapping[str, Any], mode: Mapping[str, Any]) -> bool:
     return isinstance(asked, str) and asked == _running_job(status)
 
 
+#: Stop's question. It names no epoch: the job goes on training while the
+#: question is open, so an epoch read when it was asked would be out of date
+#: by the answer (the GB10 acceptance: asked at epoch 183, at 186 on screen,
+#: 195 saved). What can be continued is said once the job has stopped, from
+#: the run's own checkpoint (the snapshot sentence).
+STOP_QUESTION = ("<b>Stop training now?</b> The job stops. The checkpoints it has saved are "
+                 "kept and progress not yet saved is lost; if it has saved none yet, this run "
+                 "cannot be continued. Once it has stopped, the page says where it can be "
+                 "continued from.")
+
+
 def _on_stop_request(request: gr.Request, mode):
-    """Stop's first step: say what stopping loses before it happens. It reads
-    the run's checkpoint, so D8 is checked first (refused: nothing is read).
-    The confirmation is recorded for the job running now (its id).
+    """Stop's first step: ask before anything happens (`STOP_QUESTION`),
+    reading nothing. D8 is checked first, as for the Stop itself. The
+    confirmation is recorded for the job running now (its id).
 
     Returns the confirmation's text and the session's mode.
     """
@@ -1854,17 +1865,8 @@ def _on_stop_request(request: gr.Request, mode):
     job = _running_job(training_manager.get_status())
     if job is None:
         return notice_html("Nothing to stop: no training job is running."), mode
-    snapshot = training_manager.latest_snapshot()
-    if snapshot and snapshot.get("readable", True) and snapshot.get("completed_epochs"):
-        name = Path(str(snapshot["checkpoint"])).name
-        text = (f"<b>Stop training now?</b> The last saved checkpoint is from epoch "
-                f"{r.e(snapshot['completed_epochs'])} (<code>{r.e(name)}</code>). Progress since "
-                f"then is lost; you can continue from epoch {r.e(snapshot['completed_epochs'])}.")
-    else:
-        text = ("<b>Stop training now?</b> No checkpoint has been saved yet, so all progress "
-                "of this run is lost and nothing can be continued.")
     mode["confirm"] = job
-    return f'<div class="shep-rb-confirm-q">{text}</div>', mode
+    return f'<div class="shep-rb-confirm-q">{STOP_QUESTION}</div>', mode
 
 
 def _on_stop_cancel(mode):
@@ -2567,8 +2569,8 @@ TOPIC_HELP = {
         "x and y zoom one axis (Shift zooms out), the arrows pan, End jumps to the latest "
         "epochs, 0 resets. The four charts share one epoch range; each keeps its own value "
         "range. While zoomed during a live run, a button counts the new epochs beyond the "
-        "view. The view is kept per run in this browser tab. In the narrow layout the wheel "
-        "scrolls the page.",
+        "view. The view is kept per run in this browser tab. The epoch axis never starts "
+        "below epoch 0. Away from the charts the wheel scrolls the page.",
     ),
     "training-used-dataset": (
         "Used dataset fingerprint",
@@ -3109,6 +3111,11 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-html svg {{ display: inline-block; vertical-align: -2px; }}
 {_PAGE} .shep-train-parent-row {{ align-items: flex-end !important; flex-wrap: nowrap !important; }}
 {_PAGE} #checkpoint_dropdown {{ flex: 1 1 auto !important; min-width: 0 !important; }}
+/* Its open list wider than the select (Gradio sizes the list and each entry to the box, inline),
+   so an entry (run, epoch, file, what it holds, model fingerprint) reads in two lines instead of
+   four; still fixed and opaque, as Gradio draws it, and kept inside the window. */
+{_PAGE} #checkpoint_dropdown .options {{ min-width: min(36rem, calc(100vw - 48px)); }}
+{_PAGE} #checkpoint_dropdown .options li {{ min-width: 100%; }}
 {_PAGE} #shep-train-refresh {{ flex: none !important; width: auto !important; min-width: max-content !important; }}
 /* Extra epochs (when shown) beside Check checkpoint, above what the check says. */
 {_PAGE} .shep-train-check-row {{ align-items: flex-end !important; flex-wrap: wrap !important; gap: 8px 12px !important; }}
@@ -3160,13 +3167,15 @@ PAGE_CSS = charts.CHART_CSS + f"""
      PLOT_MIN_HEIGHT px whatever its title's keys take (the minimum is the plot box's, and each
      box around it grows to hold its content). When that does not fit, the run view's body
      scrolls inside: its header and the charts' toolbar stay at its top, and the resources line
-     yields below. */
+     stays at its foot, a compact line over the plots that scroll under it, never pushed out of
+     view. */
   {_PAGE} #shep-train-runview {{ overflow-y: auto !important; }}
   {_PAGE} #shep-train-runview > #shep-train-charts {{ flex: 1 1 auto !important; min-height: auto; display: flex; flex-direction: column; }}
   {_PAGE} #shep-train-charts .shep-chart-plot {{ min-height: {PLOT_MIN_HEIGHT + PLOT_AXIS_ROOM}px; }}
   {_PAGE} #shep-train-charts .shep-charts, {_PAGE} #shep-train-charts .shep-charts-body, {_PAGE} #shep-train-charts .shep-charts-grid, {_PAGE} #shep-train-charts .shep-chart {{ min-height: auto; }}
   {_PAGE} #shep-train-charts .shep-charts-grid {{ grid-auto-rows: minmax(min-content, 1fr); }}
   {_PAGE} #shep-train-runview > #shep-train-rv-top {{ position: sticky; top: 0; z-index: 6; background: var(--shep-panel); }}
+  {_PAGE} #shep-train-runview > #resource_display {{ position: sticky; bottom: 0; z-index: 6; background: var(--shep-panel); }}
   {_PAGE} #shep-train-charts .shep-charts-bar {{ position: sticky; top: var(--shep-rv-top-h, 92px); z-index: 5; background: var(--shep-panel); }}
   {_PAGE} #shep-train-charts > .html-container {{ flex: 1 1 auto; min-height: auto; display: flex; flex-direction: column; }}
   {_PAGE} #shep-train-charts > .html-container > div {{ flex: 1 1 auto; min-height: auto; display: flex; flex-direction: column; }}

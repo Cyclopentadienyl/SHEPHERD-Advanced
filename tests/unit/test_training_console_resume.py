@@ -302,24 +302,44 @@ def test_continue_training_is_refused_when_the_parents_dataset_is_not_the_worksp
     assert "The parent’s dataset is not this workspace’s current one" in compare
 
 
-def test_stop_says_what_it_loses_before_it_happens(checkpoints, monkeypatch):
+def test_stop_asks_without_naming_an_epoch_the_job_has_moved_past(checkpoints, monkeypatch):
+    """The job trains on while the question is open (the GB10 acceptance:
+    asked at epoch 183, 195 saved), so the question names no epoch and reads
+    no checkpoint: the same words whether one is saved or not, and whatever
+    is saved by the answer. Where it can be continued is said once it has
+    stopped (test_a_stopped_run_shows_stopped_and_where_it_can_be_continued)."""
     monkeypatch.setattr(training_manager, "get_status",
                         lambda: {"status": "running", "job_id": "j1"})
-    monkeypatch.setattr(training_manager, "run_dir", checkpoints["paused"].parent.parent)
-    text, mode = tc._on_stop_request(OP, {})
-    assert mode["confirm"] == "j1"                          # asked for the job running now
-    assert "epoch 1" in text and "Progress since then is lost" in text
-    assert str(checkpoints["root"]) not in text            # the file's name, not its path
+    monkeypatch.setattr(training_manager, "latest_snapshot",
+                        lambda *a, **k: pytest.fail("the question read a checkpoint"))
+    asked = []
+    for run_dir in (checkpoints["paused"].parent.parent, checkpoints["ws"] / "no-run"):
+        monkeypatch.setattr(training_manager, "run_dir", run_dir)
+        text, mode = tc._on_stop_request(OP, {})
+        assert mode["confirm"] == "j1"                      # asked for the job running now
+        asked.append(text)
+    assert asked[0] == asked[1] == f'<div class="shep-rb-confirm-q">{tc.STOP_QUESTION}</div>'
+    assert "epoch" not in tc.STOP_QUESTION.lower()
+    assert "saved are kept" in tc.STOP_QUESTION and "not yet saved is lost" in tc.STOP_QUESTION
 
-    monkeypatch.setattr(training_manager, "run_dir", checkpoints["ws"] / "no-run")
-    text, _mode = tc._on_stop_request(OP, {})
-    assert "No checkpoint has been saved yet" in text
+    # Asked before any checkpoint, answered after one was saved (and later
+    # epochs ran): the notice names the checkpoint the stop left, not one
+    # read when it was asked.
+    monkeypatch.setattr(training_manager, "stop_training", lambda: {
+        "success": True, "outcome": {"checkpoint": str(checkpoints["paused"]), "readable": True,
+                                     "completed_epochs": 195, "target_epochs": 5000,
+                                     "end": "paused"}})
+    notice, mode = tc._on_stop(OP, {"confirm": "j1"})
+    assert "Stopped. Paused at epoch 195 of 5000" in notice and mode["confirm"] is None
 
-    # Nothing running: nothing is asked, and no checkpoint is read.
+    # Keep training closes the question and stops nothing.
+    monkeypatch.setattr(training_manager, "stop_training",
+                        lambda: pytest.fail("Keep training stopped the job"))
+    assert tc._on_stop_cancel({"confirm": "j1"}) == {"confirm": None}
+
+    # Nothing running: nothing is asked.
     monkeypatch.setattr(training_manager, "get_status", lambda: {"status": "completed",
                                                                   "job_id": "j1"})
-    monkeypatch.setattr(training_manager, "latest_snapshot",
-                        lambda *a: pytest.fail("read a checkpoint with nothing to stop"))
     text, mode = tc._on_stop_request(OP, {"confirm": "j0"})
     assert mode["confirm"] is None and "no training job is running" in text
 

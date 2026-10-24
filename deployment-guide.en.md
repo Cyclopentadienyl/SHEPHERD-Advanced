@@ -2449,9 +2449,12 @@ a run.
   training is running.", D8's reason for a read-only browser ("Operator controls only: request
   not local"), or the GPU job holding the slot ("GPU job: test run (…) · Open Test ›",
   "GPU job: train_model.py (pid …, since …)").
-- **🔒 Start, 🔒 Continue…, 🔒 Stop.** Stop asks first: "Stop training now? The last saved
-  checkpoint is from epoch N (last.pt). Progress since then is lost; you can continue from epoch
-  N." with **■ Stop training** and **Keep training**. The question belongs to the job it was
+- **🔒 Start, 🔒 Continue…, 🔒 Stop.** Stop asks first: "Stop training now? The job stops. The
+  checkpoints it has saved are kept and progress not yet saved is lost; if it has saved none yet,
+  this run cannot be continued. Once it has stopped, the page says where it can be continued
+  from." with **■ Stop training** and **Keep training**. The question names no epoch: the job
+  trains on while it is open, so an epoch read when it was asked would be out of date by the
+  answer; once stopped, the snapshot sentence names the checkpoint the stop left. The question belongs to the job it was
   asked for: if that job ends before you answer, it closes, and a job started later never shows
   it; **■ Stop training** answered for a job that is no longer the one running stops nothing
   ("Not stopped: …; click Stop again").
@@ -2492,7 +2495,9 @@ groups do not fit the window (they fit at 1920 × 1080), the parameters scroll i
 column; the run bar never scrolls. Each of the four plots keeps a plot area of at least 140 px:
 when the window is too short for that (1536 × 760, for example), the run view scrolls inside its
 own panel, with its header, the run's sentence and the chart toolbar staying at its top and the
-resources line below the plots.
+resources line at its foot, a compact line the plots scroll under. A plot's box is sized by the
+layout alone, never by the canvas drawn in it, so the same window size gives the same plots
+whether the page was opened there, reloaded, or came back from a narrow window.
 
 **Continue…** opens a drawer in place of the parameters: the checkpoints of the run bar's
 workspace, newest first (the server's list: an operator control, since listing opens every
@@ -2548,8 +2553,11 @@ resources line (GPU and memory).
   X y Y, the arrows, 0 and End. The view stays while new epochs arrive, across page switches and a
   reload in the same browser tab (for the last 20 runs shown); a run not shown before fits its
   data, its epochs and every chart's values. The epoch axis counts whole epochs. While zoomed,
-  "N new epochs →" jumps to the latest at the same width. In a narrow window the wheel scrolls
-  the page, and the note above the charts says how to zoom.
+  "N new epochs →" jumps to the latest at the same width. The epoch axis never starts below
+  epoch 0: a view that would (a zoom out, a pan, a view kept from before) is moved right with its
+  width kept; a value axis has no such bound. The wheel zooms in a narrow window too; over
+  anything but a chart's plot or axes it scrolls the page, and in a narrow window a touch on a
+  chart scrolls the page.
 - **Export CSV** saves the run's metrics log (epoch, split and each logged value) from the browser
   as `training_metrics_<architecture>_<run>.csv`.
 - The charts read the run's metrics log through the page's own server function, for a run the

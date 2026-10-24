@@ -182,9 +182,6 @@ _DOWNLOAD = ('<svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true"
 
 #: The gestures, as visible text where the toolbar has room (its ⓘ always).
 GESTURES = "Wheel: zoom · drag: pan · double-click: reset"
-#: In the narrow layout the wheel scrolls the page, which this note says.
-NARROW_NOTE = ("The wheel scrolls the page here; zoom with + and −, drag to pan, Reset view "
-               "to reset.")
 
 
 def figure_template(*, series_fn: str, csv_fn: Optional[str], help_key: Optional[str],
@@ -202,7 +199,6 @@ def figure_template(*, series_fn: str, csv_fn: Optional[str], help_key: Optional
         '<div class="shep-charts-bar">'
         '<span class="shep-charts-zoom" hidden></span>'
         f'<span class="shep-charts-hint">{escape(GESTURES)}</span>'
-        f'<span class="shep-charts-narrow">{escape(NARROW_NOTE)}</span>'
         f'{help_html}'
         '<span class="shep-charts-tools">'
         f'<button type="button" class="shep-charts-btn" data-chart-act="reset">{_HOME}'
@@ -251,15 +247,18 @@ def chart_figure(*, key: str, elem_id: str, series_fn: Callable[[Any], Any],
 #: the module marks the figure busy (``aria-busy="true"``) its grid, overlay,
 #: zoom note and message are hidden with ``visibility`` and the body says
 #: `LOADING` (filled in for ``@LOADING@``); in the narrow layout the body keeps
-#: room for that line.
+#: room for that line. **A plot box is sized by the layout alone**
+#: (``contain: size``): the canvas drawn into it never counts toward its size,
+#: so a canvas drawn for an earlier layout (narrow, or before a banner came or
+#: went) cannot hold the box at that size; the module's one ResizeObserver then
+#: fits the canvas to the box, in both directions.
 CHART_CSS = """
 .shep-figure > .html-container { padding: 0 !important; }
 .shep-charts { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; }
 .shep-charts-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 0 0 8px; min-height: 40px; }
 .shep-charts-zoom { display: inline-flex; align-items: center; height: 28px; padding: 0 8px; border-radius: 6px; background: var(--shep-accent-50); border: 1px solid var(--shep-accent-100); color: var(--shep-accent-text); font-size: 14px; white-space: nowrap; }
 .shep-charts-zoom[hidden] { display: none; }
-.shep-charts-hint, .shep-charts-narrow { font-size: 14px; color: var(--shep-text-2); }
-.shep-charts-narrow { display: none; }
+.shep-charts-hint { font-size: 14px; color: var(--shep-text-2); }
 .shep-charts-tools { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .shep-charts .shep-charts-btn { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--shep-border-2); background: #fff; color: var(--shep-text); font-size: 14px; font-weight: 500; cursor: pointer; white-space: nowrap; }
 .shep-charts .shep-charts-btn:hover, .shep-charts .shep-charts-icon:hover { background: var(--shep-panel-2); }
@@ -278,7 +277,7 @@ CHART_CSS = """
 .shep-chart-key { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; color: var(--shep-text-2); white-space: nowrap; }
 .shep-sw { display: inline-block; width: 18px; height: 0; border-top: 2px solid currentColor; vertical-align: middle; }
 .shep-sw-dash { border-top-style: dashed; }
-.shep-chart-plot { flex: 1 1 auto; min-height: 0; min-width: 0; position: relative; border-radius: 4px; }
+.shep-chart-plot { flex: 1 1 auto; min-height: 0; min-width: 0; position: relative; border-radius: 4px; contain: size; }
 .shep-chart-plot .u-wrap { cursor: crosshair; touch-action: none; }
 .shep-chart-plot .u-wrap.shep-panning { cursor: grabbing; }
 .shep-chart-xl { text-align: center; font-size: 14px; color: var(--shep-text-2); line-height: 1.3; }
@@ -295,8 +294,6 @@ CHART_CSS = """
 .shep-charts[aria-busy="true"] .shep-charts-body::after { content: "@LOADING@"; position: absolute; inset: 40% 0 auto 0; text-align: center; font-size: 15px; color: var(--shep-muted); pointer-events: none; }
 @media (max-width: 1399px), (max-height: 759px) {
   .shep-charts { height: auto; }
-  .shep-charts-hint { display: none; }
-  .shep-charts-narrow { display: inline; }
   .shep-charts-grid { grid-template-columns: minmax(0, 1fr); grid-auto-rows: auto; }
   .shep-chart-plot { flex: none; height: 260px; touch-action: pan-y; }
   .shep-chart-plot .u-wrap { touch-action: pan-y; }
@@ -311,7 +308,6 @@ __all__ = [
     "CHART_HEAD",
     "GESTURES",
     "LOADING",
-    "NARROW_NOTE",
     "SIGNIFICANT",
     "STATIC_DIR",
     "UPLOT_VERSION",

@@ -635,7 +635,7 @@ def _dashboard_calls():
         (rs._on_apply, ["cuda_async", False], "save_runtime_settings"),
         (tc._on_start, None, None),
         (tc._on_stop, [{}], "stop_training"),
-        (tc._on_stop_request, [{}], "latest_snapshot"),
+        (tc._on_stop_request, [{}], None),                 # asks, reading nothing
         (tc._on_continue_open, [{}, {}], None),
         (tc._refresh_checkpoints, [{}, {}, None], None),
         (tc._on_check_continue, [path, None, "/srv/x.pt", "cpu", None, {"name": "ws"}, {},

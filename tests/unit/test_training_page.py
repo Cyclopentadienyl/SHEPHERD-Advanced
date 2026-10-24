@@ -1528,6 +1528,20 @@ def test_a_stop_confirmation_belongs_to_the_job_it_was_asked_for(root, monkeypat
     assert stops == [1, 1]
 
 
+def test_keep_training_only_closes_the_question():
+    """Keep training runs `_on_stop_cancel` and then redraws the view; no
+    step of its chain is the Stop."""
+    demo, _ctx, by_id = _page()
+    keep = next(fn for fn in demo.fns.values()
+                if (by_id["shep-train-stop-keep"]._id, "click") in fn.targets)
+    assert keep.fn is tc._on_stop_cancel
+    chain, step = [], keep
+    while (step := next((fn for fn in demo.fns.values() if fn.trigger_after == step._id),
+                        None)) is not None:
+        chain.append(step.fn)
+    assert chain and tc._on_stop not in chain and tc._on_stop_request not in chain
+
+
 def test_start_and_continue_close_a_confirmation_left_from_an_earlier_job():
     demo, _ctx, by_id = _page()
     start = next(fn for fn in demo.fns.values()

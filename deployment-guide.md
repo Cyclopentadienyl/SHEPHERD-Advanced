@@ -2670,9 +2670,12 @@ Training Console 現在是分成三部分的一個頁面：上方橫跨整頁的
   running.」、對唯讀瀏覽器顯示 D8 的原因（「Operator controls only: request not local」），或
   占用 GPU 的工作（「GPU job: test run (…) · Open Test ›」、「GPU job: train_model.py (pid …,
   since …)」）。
-- **🔒 Start、🔒 Continue…、🔒 Stop。** Stop 會先詢問：「Stop training now? The last saved
-  checkpoint is from epoch N (last.pt). Progress since then is lost; you can continue from
-  epoch N.」，按鈕為 **■ Stop training** 與 **Keep training**。這個詢問屬於提出它時正在執行的
+- **🔒 Start、🔒 Continue…、🔒 Stop。** Stop 會先詢問：「Stop training now? The job stops. The
+  checkpoints it has saved are kept and progress not yet saved is lost; if it has saved none
+  yet, this run cannot be continued. Once it has stopped, the page says where it can be
+  continued from.」，按鈕為 **■ Stop training** 與 **Keep training**。詢問不提任何 epoch：
+  詢問開著時工作仍在訓練，提問當下讀到的 epoch 到回答時已經過時；停止後，快照句會說明停止留下的
+  checkpoint。這個詢問屬於提出它時正在執行的
   工作：若該工作在你回答前結束，詢問就會關閉，之後啟動的工作不會顯示它；對已不是目前執行中的
   工作按下 **■ Stop training** 不會停止任何東西（「Not stopped: …; click Stop again」）。
 - **Start 會送出 chip 顯示的資料集指紋**，job runner 在做任何事之前會再讀一次 manifest：若
@@ -2704,7 +2707,9 @@ Expert 收合。**Data Paths 與它的 Save Path 已移除**：workspace 由 run
 提供「Save as the default dataset」是擁有者要決定的問題）。三個分組放不進視窗時（1920 × 1080
 放得下），參數在自己的欄內捲動；run bar 永遠不捲動。四張圖各自至少保留 140 px 的繪圖區：
 視窗太矮放不下時（例如 1536 × 760），run 檢視在自己的面板內捲動，其標題、run 的說明句與圖表
-工具列固定在頂端，資源列則在圖表下方。
+工具列固定在頂端，資源列則固定在底部，是一行精簡的狀態列，圖表從它下方捲過。繪圖區的大小
+只由版面決定，不受畫在裡面的 canvas 影響，所以同一個視窗大小下，不論是直接開啟、重新載入，
+還是從窄視窗恢復，圖表大小都相同。
 
 **Continue…** 會打開一個取代參數欄的抽屜：run bar 所選 workspace 的 checkpoint，最新的在前
 （伺服器的清單：列出時會開啟每個 checkpoint，所以是操作者控制項），或手動輸入其中某個
@@ -2750,8 +2755,9 @@ learning rate（0 或缺少的值為空隙）。圖下是資源列（GPU 與記�
   可縮放。圖表取得焦點時：+ − x X y Y、方向鍵、0 與 End。新的 epoch 到來時、切換頁面時，以及在
   同一個瀏覽器分頁中重新載入時，檢視範圍都會保留（最近顯示的 20 個 run）；之前沒顯示過的 run
   會容納它的資料，包括 epoch 與每張圖的數值。epoch 軸以整數 epoch 計。縮放中時，
-  「N new epochs →」會以相同寬度跳到最新的 epoch。在窄視窗中滾輪捲動的是頁面，圖表上方的說明
-  會告訴你如何縮放。
+  「N new epochs →」會以相同寬度跳到最新的 epoch。epoch 軸的起點永遠不會小於 epoch 0：會落到
+  0 以下的檢視（縮小、平移、之前保留的檢視）會保持寬度向右移；數值軸沒有這個下限。窄視窗中滾輪
+  同樣會縮放；不在圖表繪圖區或座標軸上時，滾輪捲動頁面；窄視窗中在圖表上觸控是捲動頁面。
 - **Export CSV** 由瀏覽器把 run 的 metrics log（epoch、split 與每個記錄的值）存成
   `training_metrics_<architecture>_<run>.csv`。
 - 圖表經由頁面自己的 server function 讀取 run 的 metrics log，只針對伺服器列出的 run（從不
