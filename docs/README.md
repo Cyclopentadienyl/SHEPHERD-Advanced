@@ -122,6 +122,8 @@ and other documents.
 | [`../medical-kg-todo.md`](../medical-kg-todo.md) | Project-level task list |
 | [`../deployment-guide.md`](../deployment-guide.md) | Deployment guide (Traditional Chinese original); referenced by `deploy.cmd` |
 | [`../deployment-guide.en.md`](../deployment-guide.en.md) | English edition of the deployment guide; the Chinese original is authoritative for `deploy.cmd`'s pointer |
+| [`../AGENTS.md`](../AGENTS.md) | Working rules for every agent on the repository, author and reviewer alike: the scale of a fix (adopted 2026-10-24) |
+| [`../CLAUDE.md`](../CLAUDE.md) | Claude Code's instructions file; it imports `AGENTS.md` into every session |
 | [`../data/external/README.md`](../data/external/README.md) | How to obtain and place external data sources — belongs with the data |
 | [`../configs/deployment/README.md`](../configs/deployment/README.md) | Deployment config conventions |
 | [`../models/pretrained/README.md`](../models/pretrained/README.md) | What belongs in the pretrained-model directory |
