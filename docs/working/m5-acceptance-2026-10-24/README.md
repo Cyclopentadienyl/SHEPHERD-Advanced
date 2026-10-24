@@ -79,8 +79,9 @@ The rest stays on the homelab in `/home/user/m5-acceptance-b14c4de-01/` and in t
   SHA-256 `18ea2dba6f286dc6fe8ce3400fb9ca5c09ab750c1b0b6216d3f53374cb894155`), on the homelab;
 - the reduced review package, `m5-acceptance-b14c4de-01-review.tar.gz` (SHA-256
   `3a26b49f1853f2c74a362444959bf97716748ec77b5da8c94c9690a18b49735c`): 280 of the 284 regular files
-  byte for byte, with the four real-training checkpoints (about 48 MB each) and the 12 symbolic links
-  listed by path, size and SHA-256 in its `ARCHIVE_CONTENTS.json`, not included.
+  byte for byte. Its `ARCHIVE_CONTENTS.json` lists what it leaves out: the four real-training
+  checkpoints (about 48 MB each) by path, size and SHA-256, and the 12 symbolic links by link name
+  and target (not followed, so no target is hashed).
 
 They hold the stage records (the script itself, the clone and install logs with their exit codes,
 the deploy log, the package lists, the environment check, the data copy's comparison), the console
