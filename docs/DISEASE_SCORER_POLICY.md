@@ -3,6 +3,12 @@
 **Status:** Accepted (2026-08) by the deploying institution. **Not yet implemented** — see the
 status table in §2. Implementation is work item B-1, which remains gated (§6).
 
+**Revision: rev 5 (2026-10-25). Factual update, no normative change.** The status table (§2) was
+re-checked against `main` at `416a242`; code citations that had drifted are now anchored by function
+name; §2.1 lists what B-1 and B-2 still lack; the gate 1 row says what exists of B-0 and what does
+not. The seven statements, the conditions, the schedule, the limits, the gates and the rollout are
+unchanged.
+
 **Revision: rev 4. Factual correction.** The implemented B-0 artifacts record aggregate metrics
 and per-sample ground-truth ranks, not per-candidate score components. The deferred cascade/tie-break
 analysis can be performed without a second institutional inference run only if B-0.5 persists an
@@ -74,8 +80,11 @@ filtering; C6 applies to filtering alone; C7–C10 govern the data the view is b
 | **C9** | **Unavailable SP is a distinct state, not a number.** A value that could not be computed (no table loaded, unmapped node, lookup failure) is represented as unavailable, never as numeric zero. It carries its own facet and is never ordered as though it were a low score | all |
 | **C10** | **Every view is bound to provenance.** A view is addressed by an immutable result ID and carries the scorer, KG and SP artifact fingerprints of the result it projects | all |
 
-**Why C9 is a condition and not a detail.** `_calculate_sp_score` currently returns `0.0` on four
-distinct failure paths (`src/inference/pipeline.py:1333, 1337, 1347, 1358`), and `0.0` is **below**
+**Why C9 is a condition and not a detail.** `_calculate_sp_score` (`src/inference/pipeline.py`)
+currently returns `0.0` on five paths that are failures, not results: no table loaded, no node
+mapping, an unmapped candidate, no mappable phenotype, and the unavailable state of
+`sp_mean_distances` (`src/inference/sp_index.py`), whose availability mask it collapses (checked at
+`416a242`). `0.0` is **below**
 the value a genuine "no path found" produces (`1/7`). Under a numeric sort, a mapping failure would
 therefore rank below a real negative and be indistinguishable from a very poor score.
 
@@ -96,8 +105,8 @@ and filters with no further computation.
 
 ### 1.3 Three limits, previously conflated as `top_k`
 
-`top_k` (`src/inference/pipeline.py:913`, `src/webui/components/diagnosis_panel.py:105`, default 10)
-currently means "how many to produce" and "how many to show" at once. The target design separates
+`top_k` (`DiagnosisPipeline.run`, default 10; the API's `/diagnose` accepts 1–100, the Diagnosis
+page 1–20) currently means "how many to produce" and "how many to show" at once. The target design separates
 them:
 
 | Parameter | Meaning | Authority | Where it is set |
@@ -119,11 +128,11 @@ column is implemented.
 
 | Concern | Current behaviour | Approved target | Implementation status |
 |---|---|---|---|
-| **Candidate universe** | BFS path discovery gates scoring. Two order-dependent caps truncate it: `max_paths_per_source = 100` (`src/reasoning/path_reasoning.py:105`) and `max_genes = 100` per phenotype (`:507`), both applied to unordered neighbour lists | Every disease in the configured KG universe is scored; no discovery gate | **Not implemented** — work item B-1, gated |
-| **Disease score** | `0.7 × ((cos+1)/2) + 0.3 × SP` when a checkpoint and `shortest_paths.pt` are both loaded (`src/inference/pipeline.py:1707`) | Raw cosine (interim, statement 2) | **Not implemented** — B-1 |
+| **Candidate universe** | BFS path discovery gates scoring. Two order-dependent caps truncate it: `PathReasoningConfig.max_paths_per_source = 100` and `max_genes = 100` per phenotype in `find_phenotype_gene_disease_paths` (`src/reasoning/path_reasoning.py`), both applied to unordered neighbour lists | Every disease in the configured KG universe is scored; no discovery gate | **Not implemented** — work item B-1, gated |
+| **Disease score** | `0.7 × ((cos+1)/2) + 0.3 × SP` when a checkpoint and `shortest_paths.pt` are both loaded (`_calculate_combined_score` in `src/inference/pipeline.py`, mixing through `mix_embedding_and_sp_scores` in `src/inference/scoring.py`) | Raw cosine (interim, statement 2) | **Not implemented** — B-1 |
 | **SP role** | A ranking term with nominal coefficient 0.3, and therefore able to reorder candidates. The coefficient is not the term's effective contribution — see §3.5 | Optional post-ranking contextual analysis only; separate field or panel; no effect on identity, order, rank or ranking score | **Not implemented** — B-1 |
 | **Evidence-path role** | Path reasoning performs candidate discovery, supplies evidence, **and** becomes the ranking score when no GNN is loaded | Evidence only, via a target-restricted traversal that cannot alter the candidate set | **Not implemented** — design not yet approved (gate 3, §6) |
-| **GNN-unavailable fallback** | `confidence_score = reasoning_score` (`src/inference/pipeline.py:1613`) — a different quantity written into the same field. The field itself carries no discriminator; since provenance contract M3c each result states its scoring mode (`path_reasoning_fallback`) in its served identity, with the checkpoint `absent` | Discriminated score semantics; fail-closed by default; fallback only by explicit request or approved deployment policy | **Fail-closed core implemented** (provenance contract M1, 2026-10-07): a requested model that cannot be built is refused, never replaced by this fallback. **Described per result** (provenance contract M3c, implemented 2026-10-16, merged as #124): the served identity names the scoring mode and what produced the result; it is a description, not discriminated score semantics. **Not implemented** — the rest of B-2: discriminated semantics, and whether serving with no model configured needs an opt-in |
+| **GNN-unavailable fallback** | `confidence_score = reasoning_score` (`_score_and_rank_candidates` in `src/inference/pipeline.py`) — a different quantity written into the same field. The field itself carries no discriminator; since provenance contract M3c each result states its scoring mode (`path_reasoning_fallback`) in its served identity, with the checkpoint `absent` | Discriminated score semantics; fail-closed by default; fallback only by explicit request or approved deployment policy | **Fail-closed core implemented** (provenance contract M1, 2026-10-07): a requested model that cannot be built is refused, never replaced by this fallback. **Described per result** (provenance contract M3c, implemented 2026-10-16, merged as #124): the served identity names the scoring mode and what produced the result; it is a description, not discriminated score semantics. **Not implemented** — the rest of B-2: discriminated semantics, and whether serving with no model configured needs an opt-in |
 
 Two further current behaviours, for completeness:
 
@@ -134,6 +143,66 @@ Two further current behaviours, for completeness:
   every result carries it too, in its served identity, beside the checkpoint, graph and
   shortest-path table that produced it. It is not attached to individual candidates, and it does
   not change what `confidence_score` holds.
+
+### 2.1 What B-1 and B-2 still lack (2026-10-25, at `main` `416a242`)
+
+A gap list, not a design: the design is B-1's own work once gate 1 is decided (§6). Each line names
+what exists to build on, so B-1 extends it rather than writing a second copy.
+
+**What exists and is to be reused.**
+- The cosine: `cosine_score_matrix` and `cosine_scores` (`src/inference/scoring.py`), already
+  shared by serving, Mode C and the trainer's validation values.
+- The canonical order: Mode C's `canonical_ranking` (`src/evaluation/measurement.py`), score
+  descending, ties to the lower global disease id, non-finite scores refused. Serving cannot import
+  it where it is (the layers contract in `.import-linter.ini` puts `src.evaluation` above
+  `src.inference`), so B-1 moves it down into `src/inference` and Mode C imports it from there.
+- The SP primitive with its availability mask: `sp_mean_distances` (`src/inference/sp_index.py`).
+- The per-result description: the served identity's `scoring_mode` (provenance contract M3c).
+- The evidence panel and the result's evidence fields, which B-1c fills from a different source.
+
+**One scorer, not two (`PLAN_TEST_RESULTS.md` D3).** Only the cosine is shared today. The patient
+pool and the candidate universe are not: serving clamps disease indices and drops an unmapped
+phenotype silently, where Mode C refuses. B-1 settles both by Mode C's rule, the stricter one.
+
+**B-1a — the canonical ranking.** Score every disease in the graph by raw cosine and order it by the
+shared canonical order; remove the BFS gate and its two caps from candidate selection (§2, first
+row); separate `selection_limit` from the two display limits (§1.3).
+
+**B-1b — SP as an optional view.** Eager SP over the selected set (§1.2); the SP surface under
+C1–C10, none of which exists; C9 in particular: the served path still writes `0.0` for an
+unavailable SP and the exports carry that `0.0`. The three limits' values are [OPEN] (§1.3).
+
+**B-1c — evidence after ranking.** A target-restricted evidence traversal for the visible page;
+its design is gate 3, not drafted. Today every candidate comes from discovery paths, so the evidence
+it shows is the discovery path itself, and the evidence states for a candidate without one (the
+evidence panel's Mode B and INSUFFICIENT) are never reached on the served path; B-1c makes them
+reachable and needs a traversal budget for them.
+
+**The result union (§7).** Not drafted. It also decides what replaces `confidence_score`'s
+description in the API (today a value documented as bounded to [0, 1], which raw cosine is not) and
+the configuration switch's default.
+
+**B-2.** Done: a requested model that cannot be built is refused (M1); every result names its
+scoring mode (M3c). Missing: discriminated score semantics for the path-reasoning fallback (the
+Diagnosis report writes the missing GNN score as `0.000` there); whether serving with no model needs an
+explicit opt-in (provenance contract §8, question 2).
+
+**Gate 1's evidence.** Mode C is built and has run on synthetic and demo cohorts (M4 acceptance,
+`2c94a4e`; M5 close-out, `773dc4a`). Mode D (the served ranking measured on the same cohort,
+B-0.5) is not built. Its design problem is recorded in `working/scorer-measurement/PLAN_B03.md` §4:
+the public entry point truncates to `top_k` and builds paths and explanations, so an untruncated
+served rank cannot be had without duplicating candidate construction; and a disease the BFS gate
+does not discover has no served rank at all, so the two measurements do not rank the same set. No
+institutional run and no report exist (BACKLOG 7b, 8a, 8b).
+
+**Who decides what.**
+- The engineering team: whether gate 1 stands as written or is revised with a stated reason (it is
+  not skipped silently); the union's shape; how C9's unavailable state is represented; the
+  traversal design for gate 3.
+- The institution: the values of the three limits; the B-0.5 institutional run and its protocol
+  (BACKLOG 8a, which consumes item 11).
+- The owner: the configuration switch's default (§7); whether B-2's no-model serving needs an
+  opt-in.
 
 ---
 
@@ -177,13 +246,15 @@ and the decision does not rest on them:
 
 ### 3.2 Repository evidence
 
+Sources are named by function (re-anchored at `416a242`, rev 5); the facts are unchanged.
+
 | Fact | Source |
 |---|---|
-| Training optimises cosine over mean-pooled phenotype embeddings; no learned task head participates | `src/training/trainer.py:744-766`; `src/training/loss_functions.py:513-517` |
-| `ShepherdGNN` constructs no task head, and checkpoint loading uses strict `load_state_dict` semantics | `src/models/gnn/shepherd_gnn.py:96-173`; `src/inference/pipeline.py:831` |
-| η defaults to 0.7 and is a project choice, not a paper value | `src/inference/pipeline.py:296-309` |
-| The SP transform is absolute, `1/(1 + mean(d))`, with range `[1/7, 1/2]` under `max_hops = 5` | `src/inference/pipeline.py:1361, 1380` |
-| Candidate discovery is BFS-gated and truncated in traversal order | `src/reasoning/path_reasoning.py:105, 275-276, 507` |
+| Training optimises cosine over mean-pooled phenotype embeddings; no learned task head participates | `Trainer._compute_model_outputs` (`src/training/trainer.py`); `MultiTaskLoss.forward` (`src/training/loss_functions.py`) |
+| `ShepherdGNN` constructs no task head, and checkpoint loading uses strict `load_state_dict` semantics | `ShepherdGNN.__init__` and `build_shepherd_model` (`src/models/gnn/shepherd_gnn.py`) |
+| η defaults to 0.7 and is a project choice, not a paper value | `PipelineConfig.eta` (`src/inference/pipeline.py`) |
+| The SP transform is absolute, `1/(1 + mean(d))`, with range `[1/7, 1/2]` under `max_hops = 5` | `sp_scores_from_distances` (`src/inference/scoring.py`); `sp_mean_distances` (`src/inference/sp_index.py`) |
+| Candidate discovery is BFS-gated and truncated in traversal order | `PathReasoningConfig.max_paths_per_source`, `PathReasoner._bfs_find_paths`, `find_phenotype_gene_disease_paths` (`src/reasoning/path_reasoning.py`) |
 
 ### 3.3 Reported deployment observation, and what it supports
 
@@ -288,7 +359,7 @@ B-1 implementation may not begin until all three clear:
 
 | Gate | Status |
 |---|---|
-| **1 — B-0 measurement report** | Not cleared. B-0 is approved for implementation; the measurement has not been run. |
+| **1 — B-0 measurement report** | Not cleared. Of B-0, Mode C (the approved ranking, measured) is built and has run on synthetic and demo cohorts; Mode D (the served ranking, measured) is not built, and no institutional run or report exists (§2.1). Whether this gate stands as written or is revised with a stated reason is the next batch's decision (BACKLOG §0). |
 | **2 — Institutional scorer-policy decision** | **Cleared by this record.** |
 | **3 — Approved target-restricted evidence-traversal design** | Not cleared. Requires legal reachability × completeness combinations, visited-state and cycle semantics, multi-source provenance, deterministic ordering, global-budget units and enforcement, target fairness, and cancellation behaviour. |
 

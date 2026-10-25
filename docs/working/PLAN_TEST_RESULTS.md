@@ -1,6 +1,18 @@
 # PLAN — backlog item 14: test results recorded by the pipeline, shown where a model is chosen
 
-**Status: revision 4, corrected 2026-10-16.** **Phase 1 (the contract's M4) is implemented on
+**Current status (2026-10-25, at `main` `416a242`).** Both phases are complete, accepted and
+merged. **Phase 1** (the contract's M4): test cohorts imported as immutable versions, Mode C
+measured on them, every report kept, one registration function, ledger schema 3; accepted on the
+GB10 at `2c94a4e` (84 of 84) and merged as #126. **Phase 2** (the contract's M5): the research WebUI
+(Datasets, Training, Test, Models), the job runner and GPU lock, D4, D5 and D8; accepted on the GB10
+at `b14c4de` (99 of 99) and in the WebUI's manual rounds to `773dc4a`, and merged as #129. **What is
+complete is the engineering tool; the institution's evaluation conditions are not** (§4.9: the
+acceptance rule and metric, the institutional cohort's data, terms and protocol, MyGene2's terms;
+EVALUATION_COHORTS §5). The WebUI's usability is not accepted (BACKLOG 52). Where each capability is
+entered: `docs/ARCHITECTURE.md` §11. The status record below is dated history: "on this branch",
+"not merged" and "not yet reviewed" there describe the date written.
+
+**Status history: revision 4, corrected 2026-10-16.** **Phase 1 (the contract's M4) is implemented on
 this branch (2026-10-16)** (§6, "Phase 1 as implemented"; the contract's §4, "M4 as implemented").
 Its internal review's 29 findings (none P1, two P2) are fixed in `f3108c4`; the reviewer's code
 review of `59f519d..f3108c4` (2026-10-17) found one P2, fixed in `29c3d1f`, and its incremental
@@ -19,7 +31,8 @@ changes a default without adding a second path.
   node, keeping the first occurrence. Three states are kept apart: the principle is decided; N1
   is delivered (serving, and since M4 the importer); N2 (the generator, the reader's check and
   the workspace manifest) is not delivered: it is its own change, not yet scheduled. M4 has no N2
-  dependency.
+  dependency. *(Dated: N2 was delivered since without its manifest field, merged as #128,
+  `150105f`, 2026-10-19.)*
 - **"Ledger v2" was a feature name.** The ledger file's `schema_version` was already 2 (R2), so
   the format this plan designs is **ledger schema 3** (§5); no two formats are labelled 2.
 - **What M2 and M3 already completed is stated as done**: single reads (M2.1), the checkpoint
@@ -40,7 +53,7 @@ boundaries ("M5's boundaries"), both from the reviewer's M5 boundaries as the ow
 them; N2's bullet in §4.9 records the reviewer's review of batch B (no P1 or P2).
 
 **Amended 2026-10-18, with N2:** §4.9, question 2, records N2 as implemented on the development
-branch without its manifest field (batch B; awaiting review, not merged): the shared reader
+branch without its manifest field (batch B; awaiting review, not merged; merged since as #128): the shared reader
 refuses a stored case that lists a phenotype twice, the generator applies the rule, and the
 split manifest's field is deferred (`PLAN_PHENOTYPE_NORMALISATION.md` §6). The 2026-10-16
 bullet above is the record as it stood.
@@ -103,7 +116,7 @@ parallel one:
   2026-10-05, `cf23970`). The job runner is made by reshaping `training_manager`, with the
   Training Console moved onto it. The existing checkpoint listing route is upgraded instead of
   adding a second one.
-- **F1–F3 are fixed** on this branch (`d95965e`, `88569e4`, `fe44b8f`, `20f43d1`, `a57ed2d`).
+- **F1–F3 are fixed** (`d95965e`, `88569e4`, `fe44b8f`, `20f43d1`, `a57ed2d`; merged as #119, `4298aac`).
 - **Corrected after an independent verification (2026-10-05).** Five reviewers checked every
   claim in revision 3. The corrections:
   - **the pool is not shared** (§2.2, D3, §4.0). Only the cosine is, so unifying the pool is
@@ -284,13 +297,20 @@ last one says what M4 changed.
 
 ### 2.4 WebUI and API
 
+*As it stood at `1cab39f`, before M4 and M5.* Since M5 (#129) the WebUI has the two-level navigation
+with Datasets, Training, Test and Models; the job runner has training and test jobs under one GPU
+lock (`src/api/services/training_manager.py`, `src/utils/gpu_lock.py`); workspaces, checkpoints and
+cohort versions come from the server's lists (`src/api/services/server_lists.py`); recorded results are
+shown on Models, while the Diagnosis card shows a recorded-tests state. `docs/ARCHITECTURE.md` §11 is
+the current map.
+
 - **Tabs.** The WebUI has four: Training Console, Diagnosis, Runtime Settings, and **Model
   Management, a placeholder** that reads "Coming soon — will provide checkpoint listing and
   metrics comparison" (`src/webui/app.py:191-206`).
 - **How the tabs reach the backend.** It is mixed:
   - the Training Console imports `training_manager` directly;
   - the Diagnosis tab calls the API over HTTP, at a hard-coded `http://127.0.0.1:8000` on
-    `main` (`diagnosis_panel.py:44`; F1, fixed on this branch).
+    `main` (`diagnosis_panel.py:44`; F1, fixed and merged as #119).
 - **One job runner.** `training_manager` tracks one subprocess, with `train_model.py` hard-coded.
   It is not a general job runner.
 - **Checkpoint listing.** The only listing route is `GET /api/v1/training/checkpoints`. No route
@@ -1117,7 +1137,7 @@ gates phase 2; question 4 is answered:
        (`mapping.phenotype_normalisation_version`) and its counts (`repeats_removed`,
        `cases_with_repeats`) in the version manifest;
      - **N2 is implemented on the development branch without its manifest field** (2026-10-18,
-       BACKLOG item 16, batch B; reviewed by the reviewer with no P1 or P2 at `2e099b6` (2026-10-19), not merged): the
+       BACKLOG item 16, batch B; reviewed by the reviewer with no P1 or P2 at `2e099b6` (2026-10-19); merged as #128, `150105f`, 2026-10-19): the
        generator applies the rule, and the shared reader refuses a stored samples file with a
        repeated phenotype, naming its producer. The workspace manifest's field is deferred to
        the next split-manifest schema change or the first change of the rule's version
@@ -1574,6 +1594,11 @@ D3's shared-scorer constraint goes to B-1's plan. Mode D and B-1 are separate it
 neither is a prerequisite here.
 
 ### M5's boundaries (2026-10-19)
+
+*Read with the current status at the top: every "implemented, not reviewed" or "its incremental
+review next" mark below was closed by the reviewer's incremental reviews of `8242b47..2887506` and
+`2887506..87d189c` (2026-10-23), the code was accepted on the GB10 at `b14c4de`, and M5 was merged as
+#129. The marks are kept as the record of each step.*
 
 The reviewer's boundaries for M5, relayed by the owner. They narrow phase 2 above; this plan, the
 contract and BACKLOG stay the record, and no new planning document is added.
@@ -2155,8 +2180,11 @@ contract and BACKLOG stay the record, and no new planning document is added.
     uses (D5);
   - A's source kept: exports carry the result's own `served_identity`, and the badge compares the
     whole identity (`test_a_result_older_than_a_load_says_how_many_parts_differ`). Holds;
-  - layout: **not yet recorded**. The screenshot matrix (1920×1080, 1707×870, 1536×760,
-    1440×900, 1280×720, 1080×1920, 200 % zoom; M1 and read-only) is M5-3's next step.
+  - layout: **not yet recorded** (as written). The screenshot matrix (1920×1080, 1707×870, 1536×760,
+    1440×900, 1280×720, 1080×1920, 200 % zoom; M1 and read-only) was M5-3's next step. *Since:* the
+    layout was accepted in the WebUI's manual rounds at the owner's window, narrow and read-only
+    included (`m5-webui-acceptance-2026-10-25/`); the full matrix was not run and is not an M5 gate
+    (the design skill picks its checks by risk; BACKLOG 52).
   The GPU acceptance uses the existing tools and a qualified model, centred on starting and
   stopping jobs, their exclusion, registration and UI operation; long training, S10 and the
   memory investigation are not rerun unless a related regression appears. *The probe's part,

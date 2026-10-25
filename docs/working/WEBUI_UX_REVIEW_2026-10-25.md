@@ -6,6 +6,10 @@ are light enough to finish within M5 or need a phase of their own, or a redesign
 the project skill `.claude/skills/webui-design/SKILL.md` (sources in its `references/sources.md`). This is a review
 record: it changes no code, and what is done next is the owner's decision, with the reviewer, for M5's close.
 
+**Since (2026-10-25):** M5 was closed on its agreed functional scope and merged as #129 (`416a242`). The later
+improvements in section 4 and the appendix are BACKLOG 52's, scheduled in BACKLOG §0's UI batches; they are not
+conditions for reopening M5. Of finding 31, the contrast half was fixed in `f9202b6`; the chevron half remains.
+
 ## 1. Method
 
 - **Research**, five independent passes: design guidance and design systems (Nielsen Norman Group, IBM Carbon,

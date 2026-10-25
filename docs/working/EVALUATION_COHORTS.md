@@ -4,11 +4,22 @@
 
 **Status:** §1–§2 established, including the published article (§1.6); §3 decided; §5's two gating
 questions **answered and confirmed** by the institution, its partition questions still open; §6.0
-fixed; §6.8's audit built and run, its evidence committed (revision 28).
+fixed; §6.8's audit built and run, its evidence committed (revision 28). **The engineering tools are
+complete through M5** (revision 32: cohort versions, Mode C measurement, kept reports, registration,
+D4 and D5, the Test and Models pages; merged as #126 and #129); **the institution's conditions are
+not** (§5's partition questions, MyGene2's terms, the institutional cohort's data, terms and
+protocol, the acceptance rule).
 
 <details>
 <summary><b>Revision history</b></summary>
 
+- **32** — the provenance contract's M5, item 14's phase 2 (accepted on the GB10 at `b14c4de`
+  and in the WebUI's manual rounds to `773dc4a`; merged as #129, `416a242`, 2026-10-25). §6.6's
+  status is amended: the Test page imports a version (its role set at import, then immutable),
+  measures it through the job runner and registers a kept report, behind D8; Models shows the
+  records, D4's ordering for the server's research roles and the usage history; the Diagnosis card
+  shows a recorded-tests state. §5 item 3 re-cites auto-selection as M3a left it. The engineering
+  tools are complete; the institutional conditions stay open.
 - **31** — the provenance contract's M4, item 14's phase 1 (implemented 2026-10-16, its
   functional acceptance passed at `2c94a4e`, merged as #126). §6.5's "As built" is amended in
   place: the key is stated as the code has it (`PLAN_TEST_RESULTS.md` F4), the ledger is schema
@@ -798,9 +809,10 @@ disease universe is cut, not whether.
    split, so whether to apply turns on a different question — whether ranking *on this hospital's
    own population* is held to be non-delegable. A value judgement for the institution.
 3. **Which criterion of record selects a model.** The built-in auto-selection reads the ranking
-   metric from a checkpoint's own logs (`select_auto_checkpoint`, called at
-   `src/api/routes/pipeline.py:355`; priority `("val_mrr", "val_hits@10", "val_hits@1")` at
-   `src/utils/checkpoint_paths.py:45`), which the M1–M3 audit found to be `val_mrr` in all fifteen
+   metric from a checkpoint's own logs (written as `select_auto_checkpoint`; since M3a
+   `select_auto_run_checkpoint`, `src/utils/checkpoint_paths.py`, which searches run directories only:
+   the latest run, then the in-run priority `RANKING_SCORE_KEYS = ("val_mrr", "val_hits@10",
+   "val_hits@1")`), which the M1–M3 audit found to be `val_mrr` in all fifteen
    checkpoints. That matches the institution's stated first stage — best validation model as the
    batch representative — so the two are a pipeline rather than competing rules. *Historical:*
    those fifteen were trained on a split with 100% disease overlap, where the metric, per §1.2,
@@ -809,9 +821,11 @@ disease universe is cut, not whether.
    consumes are disease-disjoint, so a model trained there from scratch is validated on diseases it
    was not supervised on. **That is a contract on training input, not on the checkpoints selection
    reads.** Auto-selection still takes the ranking metric from whatever `logs` a candidate carries
-   and checks nothing about where that score came from, so a legacy checkpoint in the same
-   directory, scored on an overlapping split, can still be chosen; the fingerprint check compares
-   structure only, never `training_input_digests` (`src/utils/fingerprint.py`). Whether one
+   and checks nothing about where that score came from. *(Written before M2 and M3a: a legacy
+   checkpoint in the same directory could be chosen, and the fingerprint check compared structure
+   only. Since then serving refuses a checkpoint whose recorded graph does not match, old-pipeline
+   checkpoints are unsupported and refused (contract decision 2), and selection reads run
+   directories only.)* Whether one
    checkpoint's score means unseen-disease performance depends on its own training and validation
    sources, including any training it resumed from, and cannot be read off the current workspace.
    What also stays open is whether a disjoint-split metric separates candidates well enough to
@@ -1243,7 +1257,10 @@ from artifacts that already exist.
 6 is outside this project's scope as BACKLOG 11i stands; BACKLOG item 14 would reopen it for one
 surface. *Since M4 (item 14's phase 1, merged as #126, 2026-10-17)* it has, read-only: the
 Diagnosis tab's model status shows the loaded checkpoint's recorded results, and no UI control
-changes a cohort's role or records a result (§6.7).
+changes a cohort's role or records a result (§6.7). *Since M5 (#129, 2026-10-25):* the Test page
+imports a version (its role set at import; versions stay immutable, so no control changes a role
+afterwards), measures it and registers a kept report, behind D8; the records are shown on Models,
+and the Diagnosis card shows only a recorded-tests state.
 
 **Not built:** `synthetic_test_unseen`, refit siblings, allocation generations for burned synthetic
 cohorts, and any surface that attributes one checkpoint's numbers to another. §5 closed the
