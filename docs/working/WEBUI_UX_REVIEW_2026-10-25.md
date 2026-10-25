@@ -25,12 +25,13 @@ record: it changes no code, and what is done next is the owner's decision, with 
 
 ## 2. Verdict: adjust, do not redesign
 
-All three audits found the structure sound and **no finding needs a redesign**: 83 findings, 71 light adjustments and
-12 structural, 8 of them high. The skeleton already follows what the research recommends: two navigation levels with
-four Research pages (a side navigation pays off only above about five), list-with-details pages (as ClearML and
-MLflow do), Diagnosis reading left to right from input to ranked list to details, a run view whose charts scroll in
-their own row, one help registry, fingerprints with Copy, refusals kept visible, everything served offline. What makes
-the pages feel overloaded sits in a few shared layers, so each fix spreads to every page:
+All three audits found the structure sound and **no finding needs a redesign**: 83 findings, 70 light adjustments and
+13 structural; 8 high, 50 medium and 25 low (the counts of `review.json`). The skeleton already follows what the
+research recommends: two navigation levels with four Research pages (a side navigation pays off only above about
+five), list-with-details pages (as ClearML and MLflow do), Diagnosis reading left to right from input to ranked list
+to details, a run view whose charts scroll in their own row, one help registry, fingerprints with Copy, refusals kept
+visible, everything served offline. What makes the pages feel overloaded sits in a few shared layers, so each fix
+spreads to every page:
 
 1. **Theme tokens.** Field labels are tinted chips that read as tags or buttons; input borders are almost invisible
    (about 1.05:1 to 1.5:1); placeholders and `info=` text, a refusal among them, use Gradio's subdued grey at 2.54:1;
@@ -45,75 +46,101 @@ the pages feel overloaded sits in a few shared layers, so each fix spreads to ev
 
 ## 3. The high findings
 
-| # | Page | Finding | Fix | Effort |
+"M5" marks what the close-out batch of 2026-10-25 changed (section 4); "Later" is a later improvement (section 4).
+
+| # | Page | Finding | Fix | Status |
 |---|---|---|---|---|
-| 1 | Training | The Device help said `auto` falls back to the CPU; the trainer refuses `auto` without CUDA, so the default could start a refused run with nothing on the page saying why | **Fixed in `e54a5f1`** (both help texts; regression test) | S |
-| 2 | Shell, all pages | Placeholders and `info=` text (a refusal among them) at 2.54:1 | Theme variables `--block-info-text-color`, `--input-placeholder-color` | S |
-| 3 | Training | The Hits@K legend tells dashed series apart by colour alone (every dashed key has one style), three of five series overlap, and two palette colours miss 3:1 | Legend swatches drawn with each series' dash pattern; two palette colours darkened | S |
-| 4 | Diagnosis | An uncalibrated score is labelled "Confidence", and the scores repeat in the details header | "Score", with a one-line ⓘ (relative to this list, not a probability); a "Phenotypes k/N" column; the scores said once | M |
-| 5 | Test | The Model select is a dot-joined provenance chain per option | The Training pair (Run → Checkpoint) and its details table, the helpers moved to `renderers.py` | M |
-| 6 | Test | Two report rows read identically (the time cut to the minute) while showing different registration states | Seconds in the label, or the run suffix only where two labels collide | M |
-| 7 | Test | R10 overlap (leakage) is two undifferentiated paragraphs; its help is a 155-word run-on | A 2 × 2 table (training / validation × disease / same phenotype set) with ⚠ where k > 0; a 55-word help | M |
-| 8 | Test | The Result does not say which workspace or run produced the report; only a clipped path does | A "Measured" summary list (workspace, model, cohort version, regime), a neutral line when it differs from the selection | M |
+| 1 | Training | The Device help said `auto` falls back to the CPU; the trainer refuses `auto` without CUDA, so the default could start a refused run with nothing on the page saying why | Both help texts; regression test | Fixed in `e54a5f1` |
+| 2 | Shell, all pages | Placeholders and `info=` text (a refusal among them) at 2.54:1 | Theme variables `--block-info-text-color`, `--input-placeholder-color` from the existing tokens | M5 |
+| 3 | Training | The Hits@K legend tells dashed series apart by colour alone (every dashed key has one style), three of five series overlap, and two palette colours miss 3:1 | Legend and tooltip swatches drawn with each series' own dash pattern | M5; the palette colours Later |
+| 4 | Diagnosis | An uncalibrated score is labelled "Confidence", and the scores repeat in the details header | "Score" on the page and in the report, with an ⓘ and a report line saying it is a ranking score, not a calibrated disease probability; API field, scoring and CSV columns unchanged | M5; no phenotype column; the repeat Later |
+| 5 | Test | The Model select is a dot-joined provenance chain per option | The Training pair (Run → Checkpoint), through shared renderer helpers | Later |
+| 6 | Test | Two report rows read identically (the time cut to the minute) while showing different registration states | Rows that would read the same get the seconds, then the run id's last part; selection and registration keep the full run id | M5 |
+| 7 | Test | R10 overlap (leakage) is two undifferentiated paragraphs; its help is a 155-word run-on | A table is allowed within the fixed semantics (section 5, decision 3) | Later |
+| 8 | Test | The Result shows the report's own identity (run id, cohort label and version, checkpoint digest, deterministic, device) but no readable workspace or training-run name | A short name, or a hint when the selection differs from what was measured; a historical report's identity is never replaced by the current selection; no new reader or data format | Later (UX) |
 
-Items 7 and 8 re-lay governed texts (the caveats, the D3 label, the §4.9 note), which change only with the owner's
-sign-off.
+Item 7, and any re-layout of the caveats, the D3 label or the §4.9 note, keeps the governed semantics (section 5,
+decision 3).
 
-## 4. Size and a proposed split
+## 4. Size, and M5's close-out scope
 
 The audits estimate about 2–3 days for the shell's light adjustments plus 3–5 for its structural items, a few days
-for Training and Datasets, and 4–6 for Test and Models: **about 2½ to 3½ working weeks for all 83**, none of it a new
-layout or navigation. That is more than "light", so a split is proposed for the owner and the reviewer to decide:
+for Training and Datasets, and 4–6 for Test and Models: about 2½ to 3½ working weeks for all 83, none of it a new
+layout or navigation. A two-part split (about a week within M5, then a design pass) was proposed; the owner and the
+reviewer chose a **narrow close-out** instead (2026-10-25).
 
-**A. Within M5, before its manual acceptance closes (about a week).** What misleads, what every page shares, and the
-one structural fix that removes the worst overload:
+**Must-fix within M5** (done in the close-out batch, each with a regression test that fails on the code before it):
 
-- the high findings 2–8 above (1 is done);
-- the shared adjustments: group labels that do not read as tabs; field labels as plain text; input borders at 3:1; a
-  lock only on refused buttons; workspace options by name only (shared by Diagnosis' drawer, Test, Models and
-  Training); the status vocabulary for the header chips and an environment line that leads with its consequence;
-- the safe structured bubble renderer (lead, bullets, `Term: text` rows as a two-column table, bold; built with
-  `createElement`/`textContent`), with placement that never covers its field and a 320 px width.
+- the score named for what it is: "Score" in the table, the details header and the human-readable report, with an ⓘ
+  and a report line saying it ranks the candidates and is not a calibrated disease probability (appendix 1, in part);
+- readable `info=` lines (refusals among them) and placeholders through the existing tokens, and the Settings
+  restart-locked note in the red token (appendix 2 and 31, in part);
+- the Hits@K legend and tooltip swatches drawn with each series' own dash pattern (appendix 33, in part);
+- report rows that would read the same told apart by seconds, then the run id's last part (appendix 62).
 
-**B. A WebUI design pass of its own, after M5 (about two weeks).** Page by page, each with its tests and one review:
+**Still to accept within M5:** the owner's local UI recheck of the Training round (F1, F5 and its help) on the runs
+already made (wide, narrow, back to wide, the Continue preview; no retraining), then the remaining manual acceptance
+(section 6). A finding there blocks the close only when it is a concrete defect: a wrong target, mixed state, a
+needed warning that cannot be seen, or a control that cannot be operated.
 
-- the 78 help texts rewritten to the budget, each page's bubbles in turn;
-- Diagnosis: the input echo (which HPO ids were used), evidence as key-value rows with the narrative collapsed, terms
-  and paths shown name first, the identity drawer as summary lists, later an HPO autocomplete;
-- Settings: one panel, fields before actions, running against saved allocator, a restart confirmation, fields locked
-  for read-only browsers;
-- Test: the reports list in the Result column, one shared record renderer for Test and Models, tiles without the
-  repeated "Mode C";
-- Models: the details as a summary list, an empty state with its next step, the independence notice tiered by order;
-- Datasets: the details' verification hashes behind a disclosure, compact rows;
-- Training: a one-row run bar, Continue Training and Cancel in the drawer's footer, the chart floor raised to about
-  200 px, checkpoint options as "latest · epoch 195" / "best val MRR 0.287 · epoch 21";
-- the research tabs inside the header row when there is room;
-- an automated UI audit in the repository (screenshots at the viewport matrix, geometry, repeats, axe offline), as the
-  skill's section 12 describes.
+**Later improvements, not in M5** (the rest of the appendix, including the unfinished parts of the items above):
 
-## 5. Decisions for the owner
+- site-wide: field labels as plain text, input borders at 3:1, a lock only on refused buttons, status marks with the
+  traffic-light vocabulary, group labels set apart from the tabs, the environment line that leads with its
+  consequence, the research tabs inside the header row when there is room;
+- the help bubbles: all 78 texts rewritten to the budget; the structured renderer and placement that never covers its
+  field, if and when the one shared bubble is extended;
+- Diagnosis: the scores said once, the input echo (which HPO ids were used), evidence as key-value rows, terms and
+  paths shown name first, the identity drawer as summary lists;
+- Settings: one panel, fields before actions, running against saved allocator, read-only locks;
+- Test: the Run → Checkpoint pair (shared renderer helpers), the reports list beside the Result, one record renderer
+  for Test and Models, R10 as a table, tiles without the repeated "Mode C", a readable workspace and run name in the
+  Result;
+- Models and Datasets: details as summary lists, an empty state with its next step;
+- Training: a one-row run bar, Continue's buttons in the drawer's footer, a higher chart floor (about 200 px), the
+  chart palette's two colours below 3:1, checkpoint words "best" (decision 4);
+- a UI audit in the repository (screenshots, geometry, repeats, axe offline).
 
-1. The split above: A within M5, B as its own phase; or another cut.
-2. The 14 px text floor against an 11–12 px overline for the group labels (or keep 14 px and set the labels apart by
-   position and weight only).
-3. Sign-off to re-lay governed texts (R10 as a table, the tiered independence notice, the D3 label as the tiles'
-   legend).
-4. Whether "latest" and "best" become the checkpoint options' words (best defined per run as the highest Trainer
-   validation MRR among saved files).
+## 5. Decisions (2026-10-25, owner and reviewer)
+
+1. **Scope:** the narrow close-out of section 4, not the A/B split.
+2. **Text floor:** 14 px stays; the PREPARE / EVALUATE group labels are set apart by position, spacing and weight.
+3. **Governed texts:** their presentation may change within fixed semantics without a line-by-line sign-off. An R10
+   table keeps each cell's state, k/n, units, cases and unverifiable reasons; an unverifiable cell never reads 0, —
+   or "no overlap"; Mode C never implies an online total; the key warnings (ordering by test score uses up the
+   cohort's independence) stay visible where the choice is made; denominators, thresholds and the ordering and
+   registration policy do not change.
+4. **Checkpoint words:** "Latest save" and "Top-k save" stay. If "best" is used later it means the highest Trainer
+   val MRR recorded among this run's saved files, read from the list's metadata, never from file names; ties may share
+   the word; a missing score, weights only, early stop and extend limits stay visible; the epoch is
+   `completed_epochs`, older files keep "recorded epoch"; a word never changes a value, digest or permission.
+5. **The skill:** revised to the reviewer's notes (checks chosen by risk, numbers as guidance, one shared bubble
+   extended only when needed, third-party components judged on their merits, distinct missing-state words, the
+   AGENTS rules first, no scope of its own), then referenced from `AGENTS.md`.
 
 ## 6. For the reviewer, on M5's close
 
-M5's functional acceptance passed (99 of 99 probes, `b14c4de`), and the WebUI's manual acceptance is under way; the
-Training page's second round (`1f4eb05`) awaits review. The question for the close is which of A belongs to M5's
-acceptance, and whether the manual acceptance resumes on A's result or on `1f4eb05` with A following. Nothing here
-changes the backend, the probes or any recorded evidence.
+M5's functional acceptance passed (99 of 99 probes); that evidence stays tied to `b14c4de`, and the UI increments
+since carry their own tests. The close needs: the review of the close-out batch; the owner's local UI recheck
+(section 4); and the remaining manual acceptance, compared against the notes already taken and adding only what is
+missing (models the probe made may be reused):
+
+- launcher and service settings;
+- Datasets selection;
+- Training, the items this round changed: Start, live zoom, Keep training, Stop, the Continue preview, Export CSV,
+  session isolation;
+- Diagnosis: load, inference, results, CSV and report identity;
+- Test: preview import → version → measure → register → read back;
+- Models: display and the ordering warning;
+- read-only refusals and a normal service stop.
+
+M1's scope is unchanged and BACKLOG 50 (pin PyG) stays open. The later improvements need not be cleared to close.
 
 ## Appendix: every finding
 
 The audits' own words, abridged; the full records (evidence with file and line, the principle each cites, the
 research's principles and implementation references) are in
-[`webui-ux-review-2026-10-25/review.json`](webui-ux-review-2026-10-25/review.json). Finding 1's fix there predates
+[`webui-ux-review-2026-10-25/review.json`](webui-ux-review-2026-10-25/review.json). Finding 32's fix there predates
 `e54a5f1`, which made it.
 
 | # | Page | Finding | Severity | Effort | Scope | Fix (abridged) |

@@ -16,3 +16,8 @@ For every agent working on this repository: the author (Claude) and the reviewer
    and what question the next check answers. A progress report, not a request for approval.
 
 A minimal change at the shared root cause is a root-cause fix: it does not require refactoring the code around it.
+
+## WebUI work
+
+The WebUI's design rules are the project skill `.claude/skills/webui-design/SKILL.md`. The rules above come first: the
+skill says how to do the UI work a task asks for, picks its checks by risk, and never widens the task's scope.

@@ -275,8 +275,7 @@ CHART_CSS = """
 .shep-chart-title { font-weight: 600; font-size: 15px; color: var(--shep-text); }
 .shep-chart-keys { display: inline-flex; gap: 4px 14px; flex-wrap: wrap; }
 .shep-chart-key { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; color: var(--shep-text-2); white-space: nowrap; }
-.shep-sw { display: inline-block; width: 18px; height: 0; border-top: 2px solid currentColor; vertical-align: middle; }
-.shep-sw-dash { border-top-style: dashed; }
+.shep-sw { display: inline-block; flex: none; vertical-align: middle; }
 .shep-chart-plot { flex: 1 1 auto; min-height: 0; min-width: 0; position: relative; border-radius: 4px; contain: size; }
 .shep-chart-plot .u-wrap { cursor: crosshair; touch-action: none; }
 .shep-chart-plot .u-wrap.shep-panning { cursor: grabbing; }
@@ -285,7 +284,7 @@ CHART_CSS = """
 .shep-chart-tip { position: absolute; z-index: 3; pointer-events: none; background: #fff; border: 1px solid var(--shep-border-2); border-radius: 6px; box-shadow: 0 4px 14px rgba(20,24,40,.14); padding: 6px 8px; font-size: 14px; line-height: 1.35; color: var(--shep-text); white-space: nowrap; }
 .shep-chart-tip[hidden] { display: none; }
 .shep-chart-tip .shep-tip-hd { font-weight: 600; }
-.shep-chart-tip .shep-sw { width: 10px; height: 10px; border: 0; background: currentColor; margin-right: 6px; border-radius: 2px; }
+.shep-chart-tip .shep-sw { margin-right: 6px; }
 .shep-charts .shep-charts-new { position: absolute; top: 2px; right: 2px; z-index: 4; height: 30px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--shep-accent-100); background: #fff; color: var(--shep-accent-text); font-size: 14px; font-weight: 600; cursor: pointer; box-shadow: 0 2px 8px rgba(20,24,40,.12); }
 .shep-charts-new[hidden] { display: none; }
 .shep-charts-msg { position: absolute; inset: 40% 0 auto 0; text-align: center; font-size: 15px; color: var(--shep-muted); pointer-events: none; }

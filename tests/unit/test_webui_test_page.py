@@ -1921,6 +1921,29 @@ def _runs(n):
             for i in range(n)]
 
 
+def test_report_rows_that_would_read_the_same_are_told_apart_by_their_run_id():
+    """The 2026-10-25 review's Test screenshot: two rows read "2026-10-24 11:10
+    UTC · model f6f7e5cab280" with different registration states. Such rows get
+    the seconds, then the run id's last part; other rows keep the minute; every
+    row still selects by its full run id."""
+    sha = "f6f7e5cab280"
+    ids = [f"20261024T111047Z-{sha}-1885e8bd", f"20261024T111012Z-{sha}-0c0ffee0",
+           f"20261024T111012Z-{sha}-7a7a7a7a", f"20261024T095501Z-{sha}-11111111"]
+    runs = [{"run_id": x, "when": tp.run_time(x), "sha12": sha,
+             "state": {"kept": "kept", "registered": "not_registered"}} for x in ids]
+    html = tp.reports_html({"label": LABEL, "runs": runs}, ids[0])
+    mains = re.findall(r'data-key="([^"]+)"[^>]*><span class="shep-test-rep-main">(.*?)</span>'
+                       r'<span class="shep-test-rep-chip">', html)
+    assert [key for key, _ in mains] == ids
+    text = {key: re.sub(r"<[^>]+>", "", main) for key, main in mains}
+    assert len(set(text.values())) == 4
+    assert text[ids[0]] == f"2026-10-24 11:10:47 UTC · model {sha}"
+    assert text[ids[1]] == f"2026-10-24 11:10:12 UTC · model {sha} · run …0c0ffee0"
+    assert text[ids[2]] == f"2026-10-24 11:10:12 UTC · model {sha} · run …7a7a7a7a"
+    assert text[ids[3]] == f"2026-10-24 09:55 UTC · model {sha}"
+    assert tp.run_time(ids[0], seconds=True) == "2026-10-24 11:10:47 UTC"
+
+
 def test_a_long_report_list_shows_the_newest_and_keeps_the_selected():
     runs = _runs(20)
     reports = {"label": LABEL, "runs": runs}

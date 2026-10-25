@@ -8,8 +8,13 @@ description: Design rules and the review workflow for the SHEPHERD-Advanced Grad
 The rules every WebUI change follows, the author's and the reviewer's alike. They come from the owner's
 requirements (BACKLOG 27), the GB10 WebUI acceptance and recheck (2026-10-24/25), and a research pass over design
 systems, Gradio, ML tools, clinical decision-support guidance and agent review workflows
-(`docs/working/WEBUI_UX_REVIEW_2026-10-25.md`; sources in `references/sources.md`). A rule here is checkable; when a
-screen cannot meet one, say why in the delivery.
+(`docs/working/WEBUI_UX_REVIEW_2026-10-25.md`; sources in `references/sources.md`). When a screen cannot meet a rule,
+say why in the delivery.
+
+**How this skill applies.** `AGENTS.md`'s rules on the scale of a fix and when verification stops come first. The
+skill says how to do the UI work a task asks for; it never widens a task's scope or adds a gate to it, and a finding
+outside the task is recorded for later, not fixed in passing. Its numbers are guidance, except the owner's 14 px text
+floor and the WCAG contrast ratios (4.5:1 text, 3:1 non-text).
 
 ## 1. The owner's principles
 
@@ -33,9 +38,10 @@ screen cannot meet one, say why in the delivery.
 - **One scroll region per area.** Header and status rows are in flow, the content row takes `minmax(0, 1fr)` and is
   the only thing that scrolls. Nothing sticky or fixed may cover a chart's plot or axes, a table row or a focused
   control; a status line is a row of its own (the run view: header, charts, resources).
-- **Charts are never squeezed.** Each plot keeps a floor (today 140 px plot area; the target is 200–220 px), 2 × 2 when
-  the chart area is about 1000 px wide or more, one column below; when the floor does not fit, the chart region
-  scrolls. Lines meet 3:1 against the plot; series differ by more than colour (dash pattern shown in the legend too).
+- **Charts are never squeezed.** Each plot keeps a floor (today 140 px plot area; about 200 px is a later target),
+  2 × 2 when the chart area is about 1000 px wide or more, one column below; when the floor does not fit, the chart
+  region scrolls. Lines meet 3:1 against the plot; series differ by more than colour, and the legend and tooltip
+  swatches draw each series' own dash pattern.
 
 ## 3. Navigation and what looks clickable
 
@@ -43,7 +49,7 @@ screen cannot meet one, say why in the delivery.
   tabs (underline, at least two cues for the selected one), level 3 in-page segmented controls. No two levels share a
   treatment, and in-page radios do not copy the level-1 switch.
 - **Group labels are not tabs.** PREPARE and EVALUATE carry no tab box, padding, hover, underline or pointer, sit
-  outside the tab row's hit area (an overline above the group, or a smaller label set apart), and are not focusable.
+  outside the tab row's hit area (set apart by position, spacing and weight at 14 px), and are not focusable.
 - **Labels are text, not chips.** Field labels are plain 14 px/600 text; a tinted pill reads as a tag or a button.
   Static headings get no background.
 - **A lock means "refused".** A gated button shows no lock while the operator may use it; when D8 refuses, the button
@@ -85,11 +91,14 @@ existing `shep-tag-ok/-grey/-amber/-red` classes carry these colours.
 | State | Colour token | Shape | Word |
 |---|---|---|---|
 | OK, on, current | `--shep-status-ok` (green) | ● filled | On / Loaded / Current |
-| Off, not loaded, not applicable, unknown | `--shep-status-neutral` (grey) | ○ hollow | Off / Not loaded / — |
+| Off, not loaded, not applicable, unknown, cannot be verified, absent | `--shep-status-neutral` (grey) | ○ hollow | the state's own word (below) |
 | Needs attention, does not block | `--shep-status-warn` (amber) | ▲ | the condition, short |
 | Error, refused, blocks the task | `--shep-status-error` (red) | ✕ | the condition, short |
 | Running | `--shep-status-info` (blue) | spinner (only here) | Running |
 
+- **Missing states keep their own words.** Off, Not loaded, Not applicable, Unknown, Cannot be verified (unverifiable)
+  and Absent (not recorded) say different things and are never merged into one "Off" or "—". A dash means only "no
+  value here" where nothing else is meant; an unverifiable result never reads 0, — or "none".
 - Colour never carries meaning alone (WCAG 1.4.1): the shape and the word do. Show the word beside the mark; a mark
   without its word is allowed only where space forces it, and then it gets a bubble on hover **and** keyboard focus
   plus an `aria-label`. Hover-only text is not enough (keyboard, touch, screen readers).
@@ -102,23 +111,27 @@ existing `shep-tag-ok/-grey/-amber/-red` classes carry these colours.
 
 - A bubble is a **toggletip**: click, Enter or Space opens and pins it; Esc and an outside click close it; hover and
   focus preview it (hover after a short delay). Pinned, it is a dialog; a hover preview is a tooltip.
-- **Budget:** a lead of 90 characters or fewer that answers the question; then at most 3 short bullets or rows; about
-  60–80 words in all; at most 2 bold terms; width up to 320 px.
+- **Budget (guidance):** a lead of about 90 characters that answers the question; then a few short bullets or rows;
+  about 60–80 words in all; a width of about 320 px.
 - **Never the only place for must-know facts.** Formats, units, refusals and states that change what happens are
   visible text (`info=` under the field, or the reason line). A bubble explains; it does not warn.
 - **Placement never covers the field it explains**: try beside, then above, then below (Floating UI's flip order).
-- **Structured, but safe.** The bubble body is built only with `createElement` and `textContent` from a fixed line
-  grammar, never parsed as HTML: line 1 is the lead (bold); `- ` lines are a list; `Term: text` lines are a two-column
-  key-value table; `**word**` is bold; a blank line starts a paragraph. A test feeds `<img src=x onerror=…>` and must
-  see literal text. (This renderer is the planned replacement for today's plain `textContent` bubble.)
+- **One bubble, extended only when needed.** Today's bubble (`src/webui/components/help.py`) shows plain text with
+  paragraphs. When a text needs more structure (a lead, a list, key-value rows), extend that one shared component; do
+  not add a second tooltip mechanism, and do not impose a grammar on every text in advance. Whatever it renders is
+  built with `createElement` and `textContent`, never parsed as HTML; a test feeds `<img src=x onerror=…>` and must see
+  literal text.
 
 ## 8. Selects, lists and tables
 
 - Options are 40 characters or fewer, unique, with the distinguishing token first and at most one separator. Over
   about 15 options: filterable; under 5: a radio or segmented control.
 - The chosen item's details show in a summary list beside or under the select, never in its option text.
-- Per run, at most one option is "latest" and one is "best <metric>", and the details state the rule ("best = highest
-  Trainer val MRR among saved files"). A validation figure is named as the Trainer's, never as a test result.
+- Checkpoint options say what the file is ("Latest save", "Top-k save") and how far it trained (`completed_epochs`;
+  an older file without it says "recorded epoch"). If "best" is used, it means the highest Trainer val MRR recorded
+  among this run's saved files, read from the list's metadata, never from file names; ties may share it; a missing
+  score, weights only, early stop and extend limits stay visible. A word on an option never changes its value, digest
+  or permission. A validation figure is named as the Trainer's, never as a test result.
 - Tables: a title with its count, a one-line description, the name column first (pinned when wide), selection opens
   details beside the list without leaving it. No ARIA `aria-selected` on rows of a plain `table`.
 
@@ -145,28 +158,34 @@ Copy buttons included); correct roles (tablist/tab, listbox/option, dialog for a
   `--block-info-text-color`, `--input-placeholder-color`.
 - `gr.Sidebar` is a fixed full-height overlay: not for page navigation. Keep page navigation in `gr.Tabs`
   (`overflow_behavior="wrap"`, Settings with `alignment="right"`).
-- No third-party `gradio_*` components (offline, version drift): build small widgets as `gr.HTML` with `js_on_load`,
-  event delegation on `element`, and escape every value in Python. No CDN, no Google Fonts.
+- A third-party `gradio_*` component is judged on its merits: it must work offline (no CDN, no Google Fonts), be
+  pinned, be maintained and render safely (escape what it shows). Otherwise build the small widget as `gr.HTML` with
+  `js_on_load`, event delegation on `element`, and every value escaped in Python.
 - Target only `elem_id`, `elem_classes`, the documented `<elem_id>-button` tab ids and ARIA attributes; keep a tested
   inventory of any Gradio-internal class used. If such overrides keep growing across milestones, record the decision
   between `gr.HTML` islands and a custom frontend on `gr.Server`.
 
 ## 12. Before delivering UI work
 
-1. **Screenshots** of every changed page and state at 1850 × 960 (the primary), 1920 × 1080, 1536 × 760, 960 × 1080
-   (narrow) and 1080 × 1920 (portrait): drawers open, a bubble open, a read-only browser.
-2. **Geometry**, measured in the browser, not judged by eye: no horizontal page scroll; one scroll region; no sticky or
-   fixed element over a chart axis or a focused control (`document.elementsFromPoint`); each chart at its floor;
-   the same size after a reload and after narrow → wide.
-3. **Repeats:** count each 12-hex fingerprint, run id and file name in the visible text of one screen; more than one
-   needs a reason.
-4. **Words:** a unit test over option builders (≤ 40 characters, ≤ 1 separator) and the help registry (lead ≤ 90
-   characters, word budget).
-5. **Accessibility:** axe-core run offline (e.g. `axe-playwright-python`, which bundles it) on each page and state;
-   contrast of the colour tokens.
-6. Attach the screenshots and the measured results to the delivery. A UI claim without that evidence is not done.
+Choose the checks by the change's risk, run them once, and say in the delivery what was checked and how. Do not rerun
+checks that already passed for the same code.
 
-## 13. Open decisions (the owner's)
+| Change | Checks |
+|---|---|
+| Wording, a label, an option or help text | the unit test that pins it (options: unique, short, one separator; help: the lead answers the question) |
+| A colour or theme token | the contrast test of the tokens it touches |
+| A widget or renderer (HTML, JS) | a unit or Node test of what it renders, escaping included; one look in the real app |
+| Layout or scrolling | geometry measured in the browser at the owner's window (about 1850 × 960) and the narrow layout: no horizontal page scroll, one scroll region, nothing sticky over a chart axis or a focused control (`document.elementsFromPoint`), the same after narrow → wide; a screenshot of each |
+| A broad layout change across pages | the above at more sizes (1920 × 1080, 1536 × 760, 960 × 1080, 1080 × 1920), a read-only browser, and axe-core offline (e.g. `axe-playwright-python`) |
+| A repeated fact (rule 1.2) | count the fingerprint, run id or name in one screen's visible text; more than one needs a reason |
 
-- The 14 px floor against an 11–12 px overline for the PREPARE / EVALUATE group labels.
-- Governed texts (the caveats, the D3 label, the §4.9 note) are reworded or re-laid out only with the owner's sign-off.
+## 13. Decided
+
+- **Decided (2026-10-25):** the 14 px floor stays; the PREPARE / EVALUATE group labels are set apart by position,
+  spacing and weight, not a smaller size.
+- **Decided (2026-10-25):** governed texts (the caveats, the D3 label, the §4.9 note, R10) may change their
+  presentation within fixed semantics without a line-by-line sign-off: R10 keeps each cell's state, k/n, units, cases
+  and unverifiable reasons, and an unverifiable cell never reads 0, — or "no overlap"; Mode C never implies an online
+  total; the key warnings (ordering by test score uses up the cohort's independence) stay visible where the choice is
+  made; denominators, thresholds and the ordering and registration policy do not change. A change to the semantics is
+  the owner's.

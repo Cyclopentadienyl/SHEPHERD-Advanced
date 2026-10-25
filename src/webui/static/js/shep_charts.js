@@ -387,13 +387,20 @@
     });
   }
 
+  // A series' swatch in the legend and the tooltip: a short line in its colour
+  // and its own dash pattern (the slot's DASHES entry, as its line is drawn),
+  // so series that overlap are told apart without colour.
+  function swatchHtml(slot) {
+    var dash = DASHES[slot % DASHES.length];
+    return '<svg class="shep-sw" width="24" height="8" viewBox="0 0 24 8" aria-hidden="true" focusable="false">' +
+      '<line x1="0" y1="4" x2="24" y2="4" stroke="' + PALETTE[slot % PALETTE.length] + '" stroke-width="2"' +
+      (dash ? ' stroke-dasharray="' + dash.join(" ") + '"' : "") + "/></svg>";
+  }
+
   function keysHtml(inst, spec) {
     return (spec.series || []).map(function (s) {
       var slot = colourSlot(inst, spec.id, String(s.label));
-      var colour = PALETTE[slot % PALETTE.length];
-      var dashed = DASHES[slot % DASHES.length] ? " shep-sw-dash" : "";
-      return '<span class="shep-chart-key"><i class="shep-sw' + dashed + '" style="color:' + colour +
-        '" aria-hidden="true"></i>' + esc(s.label) + "</span>";
+      return '<span class="shep-chart-key">' + swatchHtml(slot) + esc(s.label) + "</span>";
     }).join("");
   }
 
@@ -496,8 +503,7 @@
     for (var s = 1; s < st.data.length; s++) {
       var v = st.data[s][idx];
       var slot = colourSlot(inst, st.id, st.labels[s - 1]);
-      rows.push('<div><i class="shep-sw" style="color:' + PALETTE[slot % PALETTE.length] + '"></i>' +
-        esc(st.labels[s - 1]) + " " + (v == null ? "—" : esc(fmt(v))) + "</div>");
+      rows.push("<div>" + swatchHtml(slot) + esc(st.labels[s - 1]) + " " + (v == null ? "—" : esc(fmt(v))) + "</div>");
     }
     st.tip.innerHTML = rows.join("");
     st.tip.hidden = false;
@@ -883,5 +889,6 @@
                         _inst: INST, _u: function (key, id) { var i = INST[key]; return i && i.charts[id] && i.charts[id].u; },
                         _views: { write: writeView, load: loadView, enter: enterRun },
                         _x: { norm: normX, view: xView, zoom: zoomAxis, pan: panAxis },
-                        _epochs: { axis: epochAxis, label: wholeEpoch } };
+                        _epochs: { axis: epochAxis, label: wholeEpoch },
+                        _keys: { html: keysHtml, swatch: swatchHtml, dashes: DASHES } };
 })();

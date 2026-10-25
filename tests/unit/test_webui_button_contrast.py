@@ -137,6 +137,33 @@ def test_a_field_labels_text_has_at_least_four_and_a_half_to_one_on_its_chip(tex
     assert contrast(_effective(text), _effective(fill)) >= 4.5
 
 
+def test_the_themes_own_info_line_and_placeholder_are_below_the_threshold():
+    """Why the stylesheet sets them: the theme's subdued grey."""
+    assert contrast(_theme_value("block_info_text_color"), "#ffffff") < 4.5
+    assert contrast(_theme_value("input_placeholder_color"), "#ffffff") < 4.5
+
+
+@pytest.mark.parametrize("text", ["--block-info-text-color", "--input-placeholder-color"])
+def test_an_info_line_and_a_placeholder_have_four_and_a_half_to_one_where_fields_sit(text):
+    """A field's info= line carries refusals (the AMP radio's "Disabled: …")
+    and a placeholder is read as a hint: both are text, on a field or a panel."""
+    tokens = _tokens()
+    around = {"field": _effective("--input-background-fill"), "white": "#ffffff",
+              "panel": tokens["--shep-panel"], "panel-2": tokens["--shep-panel-2"],
+              "page": tokens["--shep-bg"]}
+    for name, colour in around.items():
+        assert contrast(_effective(text), colour) >= 4.5, name
+
+
+def test_the_restart_locked_note_is_drawn_in_a_readable_red_token():
+    from src.webui.app import DASHBOARD_CSS
+
+    rule = re.search(r"\.shep-restart-locked\s*\{([^}]*)\}", DASHBOARD_CSS).group(1)
+    colour = re.search(r"(?<![-\w])color:\s*([^;]+);", rule).group(1)
+    tokens = _tokens()
+    assert contrast(_resolve(colour, tokens), tokens["--shep-bg"]) >= 4.5
+
+
 @pytest.mark.parametrize("border", ["--checkbox-border-color", "--checkbox-border-color-hover"])
 def test_an_unchecked_checkboxs_border_shows_against_its_fill_and_every_background(border):
     tokens = _tokens()

@@ -139,7 +139,13 @@ def _parse_hpo_ids(text: str) -> List[str]:
     """
     return [f"HP:{match.group(1)}" for match in _HPO_ID_RE.finditer(text or "")]
 
-# Confidence label → (emoji, CSS color)
+#: What a candidate's score is, said under the report's table and in the
+#: Score column's help. The API field stays ``confidence_score`` (and the CSV
+#: column with it); the words shown say what the number is.
+SCORE_NOTE = ("Score ranks the candidates of this result. It is not a calibrated "
+              "disease probability.")
+
+# Evidence label (the API's confidence_label) → (emoji, CSS color)
 LABEL_STYLES = {
     "Strong path support": ("🟢", "#22c55e"),
     "Weak path support": ("🟡", "#eab308"),
@@ -283,10 +289,10 @@ def _format_results_table(candidates: List[Dict]) -> str:
         )
 
     header = (
-        "| Rank | Disease | Confidence | GNN | SP | Evidence |\n"
-        "|:----:|---------|:----------:|:---:|:--:|----------|\n"
+        "| Rank | Disease | Score | GNN | SP | Evidence |\n"
+        "|:----:|---------|:-----:|:---:|:--:|----------|\n"
     )
-    return header + "\n".join(rows)
+    return header + "\n".join(rows) + "\n\n" + SCORE_NOTE
 
 
 def _format_evidence_detail(candidate: Dict) -> str:
@@ -967,7 +973,7 @@ def _build_results_report_md(result: Dict[str, Any]) -> str:
         lines += [
             "",
             f"### #{c.get('rank')} — {c.get('disease_name')}",
-            f"`{_clean_disease_id(c.get('disease_id', ''))}` · confidence "
+            f"`{_clean_disease_id(c.get('disease_id', ''))}` · score "
             f"{_fmt_num(c.get('confidence_score')) or 'n/a'}",
             "",
             "**Evidence**",
@@ -1082,6 +1088,12 @@ TOPIC_HELP = {
         "The model in use is the card's last status read. A read that failed, or one older "
         "than the result, never shows \"Produced by the model in use\". The result, its CSV "
         "and its report keep their own identity whatever the badge says.",
+    ),
+    "dx-score": (
+        "Score",
+        SCORE_NOTE + " A score of 0.72 does not mean a 72% chance of the disease.\n\n"
+        "GNN and SP are its parts, mixed as the result's identity records (Scoring mode, "
+        "Mixing weight eta). The CSV keeps the API's name for it, confidence_score.",
     ),
     "dx-exports": (
         "Exports",
@@ -1311,7 +1323,8 @@ def candidates_table_html(candidates: List[Mapping[str, Any]], selected: Any,
             f'<td><span class="shep-dx-dot shep-dx-dot-{dot}" aria-hidden="true"></span>'
             f'{_e(label)}</td></tr>')
     head = ('<tr><th scope="col" class="shep-num">Rank</th><th scope="col">Disease</th>'
-            '<th scope="col" class="shep-num">Confidence</th><th scope="col" class="shep-num">GNN'
+            f'<th scope="col" class="shep-num">Score{help_button("dx-score", "Score")}</th>'
+            '<th scope="col" class="shep-num">GNN'
             '</th><th scope="col" class="shep-num">SP</th><th scope="col">Evidence</th></tr>')
     return ('<div class="shep-tbl-wrap shep-dx-tbl-wrap"><table class="shep-tbl shep-dx-tbl" '
             f'aria-label="Ranked candidates"><thead>{head}</thead><tbody>{"".join(rows)}</tbody>'
@@ -1359,7 +1372,7 @@ def details_header_html(candidate: Optional[Mapping[str, Any]], sp_absent: bool 
     return (f'<div class="shep-panel-hd shep-dx-det-hd"><h2><span class="shep-dx-rank">'
             f'#{_e(candidate.get("rank"))}</span> {_e(candidate.get("disease_name"))}</h2>'
             f'<p class="shep-dx-det-sub"><code>{_e(_clean_disease_id(candidate.get("disease_id")))}'
-            f'</code> Confidence <b>{_num(candidate.get("confidence_score"))}</b> · GNN '
+            f'</code> Score <b>{_num(candidate.get("confidence_score"))}</b> · GNN '
             f'{_num(candidate.get("gnn_score"))} · SP {_e(sp_text)}</p></div>')
 
 

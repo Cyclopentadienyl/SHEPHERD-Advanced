@@ -169,9 +169,10 @@ DASHBOARD_CSS = """
     .shep-badge-restart { background: rgba(220,38,38,0.12);  color: #b91c1c; border-color: rgba(220,38,38,0.30); }
     .shep-badge-nextrun { background: rgba(100,116,139,0.14);color: #475569; border-color: rgba(100,116,139,0.32); }
 
-    /* Restart-locked warning (training in progress) */
+    /* Restart-locked warning (training in progress): the red token, 6.7:1 on
+       the page (#dc2626 was 4.39:1). */
     .shep-restart-locked {
-        color: #dc2626;
+        color: var(--shep-red-700);
         font-weight: 600;
         font-size: 14px;
     }

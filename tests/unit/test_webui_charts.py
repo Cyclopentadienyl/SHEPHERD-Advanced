@@ -270,6 +270,34 @@ def test_log_ticks_return_for_minimums_that_hang_uplot_1632():
 
 
 @pytest.mark.skipif(NODE is None, reason="Node is not installed")
+def test_each_legend_key_shows_its_series_own_dash_pattern():
+    """Hits@1…@20 overlap (BACKLOG 27, the 2026-10-25 review): one "dashed"
+    look for every dashed series told them apart by colour alone. Each key and
+    each tooltip row draws its slot's own pattern, the one its line uses."""
+    out = _node(
+        "const vm=require('vm');const fs=require('fs');"
+        "const ctx={window:{},console,JSON,Array,Object,String};vm.createContext(ctx);"
+        f"vm.runInContext(fs.readFileSync({json.dumps(str(STATIC / charts.MODULE))},'utf8'),ctx);"
+        "const K=ctx.window.ShepCharts._keys;"
+        "const labels=['Hits@1','Hits@3','Hits@5','Hits@10','Hits@20'];"
+        "const inst={key:'k-'+Date.now()};"
+        "const html=K.html(inst,{id:'hits',series:labels.map(l=>({label:l}))});"
+        "console.log(JSON.stringify({html,dashes:K.dashes,"
+        "  evil:K.html(inst,{id:'x',series:[{label:'<img src=x onerror=1>'}]})}));")
+    res = json.loads(out)
+    keys = res["html"].split('<span class="shep-chart-key">')[1:]
+    assert len(keys) == 5
+    patterns = []
+    for slot, key in enumerate(keys):
+        found = re.search(r'stroke-dasharray="([^"]+)"', key)
+        dash = res["dashes"][slot]
+        assert (found and found.group(1)) == (" ".join(map(str, dash)) if dash else None), key
+        patterns.append(found and found.group(1))
+    assert len(set(patterns)) == 5 and 'aria-hidden="true"' in keys[0]
+    assert "<img" not in res["evil"] and "&lt;img" in res["evil"]
+
+
+@pytest.mark.skipif(NODE is None, reason="Node is not installed")
 def test_the_locale_guard_lets_a_posix_locale_load_uplot():
     out = _node(
         "const vm=require('vm');const fs=require('fs');"

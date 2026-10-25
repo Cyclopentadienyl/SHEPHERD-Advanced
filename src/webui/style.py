@@ -205,12 +205,17 @@ body { color: var(--shep-text); }
    4.5:1 on its chip (the Soft theme's indigo-500 on indigo-100 is 3.63:1). An
    unchecked checkbox's border is what shows it is there: at least 3:1 against
    its fill and what is around it (WCAG 1.4.11; the theme's grey-100 is 1.1:1,
-   and its hover grey-300 1.4:1). */
+   and its hover grey-300 1.4:1). A field's info= line (a refusal such as the
+   AMP radio's "Disabled: HGT requires …" travels there) and a placeholder are
+   text too: the theme's subdued grey (#9ca3af) is 2.54:1 on white; the
+   secondary text and the muted token are 8.9:1 and 6.1:1. */
 .gradio-container {
   --block-title-text-color: var(--shep-accent-text);
   --block-label-text-color: var(--shep-accent-text);
   --checkbox-border-color: var(--shep-grey-500);
   --checkbox-border-color-hover: var(--shep-accent);
+  --block-info-text-color: var(--shep-text-2);
+  --input-placeholder-color: var(--shep-muted);
 }
 /* A disabled checkbox or radio (read-only) does not answer hover: Gradio 6.30's
    own hover rule (.gradio-style input[type=checkbox]:hover, and radio's) ignores

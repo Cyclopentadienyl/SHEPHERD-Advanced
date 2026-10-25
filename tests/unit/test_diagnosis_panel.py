@@ -198,6 +198,22 @@ def test_report_includes_meta_and_all_candidates_with_cleaned_ids():
     assert "`MONDO:0011073`" in md and "mondo:MONDO" not in md  # cleaned id
 
 
+def test_the_score_is_named_for_what_it_is_and_the_csv_keeps_the_api_name():
+    """The combined score is a ranking score, not a calibrated probability: the
+    page and the report say "Score" and say so; the CSV keeps confidence_score."""
+    result = _sample_result()
+    md = dp._build_results_report_md(result)
+    table = md.split("## Ranked candidates")[1].split("## Per-candidate detail")[0]
+    assert "| Rank | Disease | Score | GNN | SP | Evidence |" in table
+    assert dp.SCORE_NOTE in table and "not a calibrated disease probability" in dp.SCORE_NOTE
+    assert "· score 0.720" in md and "· confidence" not in md
+    page = dp.results_body_html(result, 1) + dp.details_header_html(result["candidates"][0])
+    assert "Confidence" not in page and "> Score <b>0.720</b>" in page
+    assert 'data-help="dx-score"' in page and "dx-score" in dp.TOPIC_HELP
+    assert dp._build_results_csv(result).splitlines()[0].startswith(
+        "rank,disease_id,disease_name,confidence_score,confidence_label")
+
+
 # ------------------------------------------------------------------- disease id cleaning
 @pytest.mark.parametrize(
     "raw,expected",
