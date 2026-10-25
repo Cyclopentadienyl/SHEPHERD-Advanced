@@ -25,6 +25,7 @@ Module: tests/integration/test_measure_scorer_run.py
 import hashlib
 import json
 import math
+import os
 import re
 import subprocess
 import sys
@@ -73,14 +74,20 @@ def measured(tmp_path_factory):
             "--record",
         ],
         cwd=str(REPO_ROOT),
+        # The registry is the deployment's: a --cohort run measures only there
+        # (BACKLOG 37).
+        env={**os.environ, "SHEPHERD_REGISTRY": str(cohort.registry)},
         capture_output=True,
         text=True,
         timeout=RUN_TIMEOUT_SECONDS,
     )
     assert completed.returncode == 0, completed.stderr[-4000:]
 
-    runs = sorted((cohort.version.directory / "reports").iterdir())
+    store = sorted((cohort.version.directory / "reports").iterdir())
+    runs = [path for path in store if RUN_ID.fullmatch(path.name)]
     assert len(runs) == 1, runs
+    # Beside the run directory, only the version's usage history (since M5-1).
+    assert [path.name for path in store if path not in runs] == ["usage.jsonl"], store
     run_dir = runs[0]
 
     def read(path: Path):
@@ -112,6 +119,20 @@ def test_the_report_is_kept_in_a_new_run_directory_of_the_report_store(measured)
     assert RUN_ID.fullmatch(run_dir.name)
     assert run_dir.name.split("-")[1] == cohort.checkpoint_sha256[:12]
     assert measured["written"] == ["ranks.json", "report.json"]
+
+
+def test_the_run_and_its_registration_are_in_the_versions_usage_history(measured):
+    """M5-1 (D4): the command-line run appended itself, then its registration,
+    to the version's usage history, naming the report by its digest."""
+    from src.evaluation.report_store import read_usage_history
+
+    entries, problems = read_usage_history(measured["cohort"].version)
+    digest = _sha(measured["run_dir"] / "report.json")
+
+    assert problems == []
+    assert [(e["kind"], e["run_id"], e["report_sha256"]) for e in entries] == [
+        ("test_run", measured["run_dir"].name, digest),
+        ("registered", measured["run_dir"].name, digest)]
 
 
 def test_the_report_names_its_ranks_by_the_digest_written(measured):

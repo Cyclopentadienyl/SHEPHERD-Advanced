@@ -21,6 +21,20 @@ Usage:
     Every run writes into a new directory of its own,
     {data_dir}/runs/{conv_type}/{date}_{run_name}_{run_id}/ (contract M3a-2).
 
+    One managed GPU job at a time (M5): `main` takes the deployment's GPU lock
+    (src/utils/gpu_lock.py) before anything is read; a busy lock is refused,
+    naming its holder, and so is a lock that is not configured
+    (SHEPHERD_WORKSPACES_ROOT, the lock's one name, not set), each with exit 1
+    and nothing written.
+
+    A caller that chose the dataset beforehand passes the fingerprint it showed
+    (`--expect-dataset-sha256`, M5's job runner does): a workspace whose
+    split_manifest.json, as this run reads it, has other bytes is refused with
+    exit 1 and nothing written, before the graph and the samples are read.
+    Likewise a resume parent chosen beforehand (`--expect-resume-sha256`, which
+    the job runner always passes for a continued run): other bytes at --resume
+    are refused with exit 1 and nothing written, before they are loaded.
+
 Dependencies:
     - argparse: CLI argument parsing
     - yaml: Configuration file loading
@@ -112,7 +126,12 @@ from src.kg.data_loader import (
     create_diagnosis_dataloader,
 )
 from src.models.gnn.shepherd_gnn import ShepherdGNN, ShepherdGNNConfig, create_model
-from src.evaluation.cohort import resolve_cohort, verify_cohort_reads
+from src.evaluation.cohort import verify_cohort_reads
+from src.utils.gpu_lock import GpuLockMisconfigured, take_gpu_lock
+# The refusals of a dataset or a resume parent that is not the one chosen,
+# raised by their readers themselves (`expected_sha256=`); `main` says each once.
+from src.kg.artifacts import DatasetChanged
+from src.utils.checkpoint_io import CheckpointChanged
 
 if TYPE_CHECKING:
     from src.kg.artifacts import DatasetRecord, ManifestRead
@@ -230,6 +249,19 @@ class TrainConfig:
 # restrict --device to {auto,cuda,cpu}, which made it impossible to target a specific GPU on a
 # multi-GPU host even though torch.device() and the rest of the pipeline accept "cuda:N".
 _DEVICE_RE = re.compile(r"^(auto|cpu|mps|cuda(:\d+)?)$")
+
+
+_SHA256_RE = re.compile(r"[0-9a-f]{64}")
+
+
+def _sha256_arg(value: str) -> str:
+    """argparse type for --expect-dataset-sha256 and --expect-resume-sha256:
+    64 lowercase hexadecimal digits, the form the server's lists show a
+    dataset or model fingerprint in."""
+    if not _SHA256_RE.fullmatch(value):
+        raise argparse.ArgumentTypeError(
+            f"{value!r} is not a SHA-256 (64 lowercase hexadecimal digits)")
+    return value
 
 
 def _device_arg(value: str) -> str:
@@ -371,6 +403,28 @@ def parse_args() -> argparse.Namespace:
              "with a resumable checkpoint, recorded as paused",
     )
 
+    # A precondition of a run whose dataset was chosen beforehand (M5's job
+    # runner): neither a setting nor recorded, so not a TrainConfig field.
+    parser.add_argument(
+        "--expect-dataset-sha256",
+        type=_sha256_arg,
+        default=None,
+        metavar="HEX",
+        help="Refuse before anything is written unless the workspace's split_manifest.json, "
+             "as this run reads it, has this SHA-256 (the dataset fingerprint shown when the "
+             "run was chosen). Without it the run trains on the manifest it reads and records "
+             "that one",
+    )
+    parser.add_argument(
+        "--expect-resume-sha256",
+        type=_sha256_arg,
+        default=None,
+        metavar="HEX",
+        help="With --resume (or resume_from): refuse before anything is written unless the "
+             "parent checkpoint, as this run reads it, has this SHA-256 (the model fingerprint "
+             "of the parent chosen). Compared before the file is loaded",
+    )
+
     # Misc
     parser.add_argument(
         "--seed",
@@ -457,7 +511,8 @@ def load_config_with_explicit(args: argparse.Namespace) -> Tuple[TrainConfig, Se
         config.seed = args.seed
 
     for name, value in vars(args).items():
-        if name in ("config", "debug") or value is None or value is False:
+        if name in ("config", "debug", "expect_dataset_sha256", "expect_resume_sha256") \
+                or value is None or value is False:
             continue
         explicit.add(_FLAG_FIELDS.get(name, name))
     return config, explicit
@@ -499,9 +554,19 @@ class TrainingInputs(NamedTuple):
     dataset_record: DatasetRecord
 
 
-def read_training_inputs(data_dir: Path) -> TrainingInputs:
+def read_training_inputs(
+    data_dir: Path, *, expected_manifest_sha256: Optional[str] = None,
+) -> TrainingInputs:
     """Read the manifest, the graph tensors and both sample files once each, and
     verify from those reads (contract M2.1, S8).
+
+    **The dataset the run was started for** (`expected_manifest_sha256`, the
+    fingerprint a caller showed; review of 8242b47, P2-2) is a parameter of
+    the one manifest read, the first read here: the reader compares it before
+    the bytes are decoded (`read_split_manifest(expected_sha256=)`), so a
+    workspace republished since it was shown, torn, of another schema or
+    without a manifest, is refused as changed (`DatasetChanged`), never
+    trained on, and never reported as a manifest that contradicts its files.
 
     **Before anything is written.** `train` calls this ahead of the run
     directories, `config.yaml` and `runtime.json`: whether this workspace's graph
@@ -532,17 +597,20 @@ def read_training_inputs(data_dir: Path) -> TrainingInputs:
     )
     from src.kg.storage.file_storage import read_graph_artifacts, read_samples
 
-    # Stat only: a missing split or a workspace generated before the allocation
-    # step is named before anything is read.
-    for split in TRAINING_SPLITS:
-        resolve_cohort(data_dir, split)
-
-    manifest = read_split_manifest(data_dir)
-    graph = read_graph_artifacts(data_dir, map_location="cpu")
+    # The manifest first, and nothing about the workspace before it (`train`
+    # and `main` stat nothing), so a dataset that is not the one shown, its
+    # directory gone included, is said as changed before any other refusal
+    # about its files (P22-S2); its absence is the reader's own refusal.
+    manifest = read_split_manifest(data_dir, expected_sha256=expected_manifest_sha256)
+    logger.info(f"Dataset fingerprint (split_manifest.json sha256): {manifest.identity.sha256}")
+    # The samples before the graph, so a missing split is refused, by the one
+    # reader that locates a workspace split and names the splits there are,
+    # before the graph tensors are loaded.
     samples = {
         split: read_samples(data_dir, split, training_fields=True)
         for split in TRAINING_SPLITS
     }
+    graph = read_graph_artifacts(data_dir, map_location="cpu")
 
     bound = verify_graph_reads(manifest, graph.reads)
     check_unparsed_kg_json(data_dir, manifest)
@@ -570,10 +638,18 @@ def read_training_inputs(data_dir: Path) -> TrainingInputs:
 
 
 def read_resume_parent(
-    requested: Optional[str], inputs: TrainingInputs, device: str,
+    requested: Optional[str], inputs: TrainingInputs, device: str, *,
+    expected_sha256: Optional[str] = None,
 ) -> Optional["CheckpointRead"]:
     """Read the resume parent once and refuse it unless it was trained on this
     run's inputs (contract M2.3). Returns `None` when nothing was requested.
+
+    **The parent chosen** (`expected_sha256`, `--expect-resume-sha256`: the
+    digest of the read the job runner decided on, the one the operator was
+    shown; root-cause round, P22-S1) is a parameter of the one read: other
+    bytes at the path, or none, are refused as `CheckpointChanged` before they
+    are loaded, so the run never continues from, places or records a parent
+    that was not chosen.
 
     **At the top of the run**, beside the workspace checks: `train()` calls this
     right after `read_training_inputs`, before the run directories,
@@ -606,20 +682,24 @@ def read_resume_parent(
     from src.utils.checkpoint_io import read_checkpoint
 
     if not requested:
+        if expected_sha256 is not None:
+            raise ValueError("--expect-resume-sha256 names a parent, but this run continues "
+                             "none (no --resume or resume_from). Nothing was written.")
         return None
 
     resume_path = Path(requested)
-    if not resume_path.exists():
+    # Named before the read, so a parent that does not load fails after a line
+    # that says which file it was.
+    logger.info(f"Reading the resume parent: {resume_path}")
+    try:
+        parent = read_checkpoint(resume_path, map_location=device, weights_only=True,
+                                 expected_sha256=expected_sha256)
+    except FileNotFoundError:  # nothing expected; with an expectation, CheckpointChanged
         raise FileNotFoundError(
             f"The resume parent {resume_path} does not exist. It was requested, so "
             "the run does not train from scratch instead; name an existing "
             "checkpoint, or start a new run without --resume."
-        )
-
-    # Named before the read, so a parent that does not load fails after a line
-    # that says which file it was.
-    logger.info(f"Reading the resume parent: {resume_path}")
-    parent = read_checkpoint(resume_path, map_location=device, weights_only=True)
+        ) from None
     check_resume_parent(
         parent.checkpoint, inputs, recorded_by=f"The resume parent {resume_path}"
     )
@@ -637,8 +717,9 @@ def plan_from_parent(
     early stopping's best weights when the parent names a file for them.
 
     That file is read once, with the safe loader, and accepted only with the
-    SHA-256 the parent recorded for it: the weights a run restores at its end
-    are the ones its record names, or the run is refused.
+    SHA-256 the parent recorded for it, which the reader compares before it
+    loads the file (`read_checkpoint(expected_sha256=)`): the weights a run
+    restores at its end are the ones its record names, or the run is refused.
     """
     from src.utils.run_plan import RunPlanRefused, plan_continuation
     from src.utils.checkpoint_io import read_checkpoint
@@ -658,13 +739,16 @@ def plan_from_parent(
     best_weights = None
     if (plan.best_weights or {}).get("kind") == "file":
         source = plan.best_weights
-        read = read_checkpoint(source["path"], map_location="cpu", weights_only=True)
-        if read.identity.sha256 != source["sha256"]:
+        try:
+            read = read_checkpoint(source["path"], map_location="cpu", weights_only=True,
+                                   expected_sha256=source["sha256"])
+        except CheckpointChanged as exc:
+            now = (f"the file there now has {exc.found}" if exc.found is not None
+                   else "there is no file there now")
             raise RunPlanRefused(
                 f"The parent names {source['path'].name} as early stopping's best weights "
-                f"with SHA-256 {source['sha256']}; the file there now has "
-                f"{read.identity.sha256}. Put the recorded file back or choose another "
-                "checkpoint.")
+                f"with SHA-256 {source['sha256']}; {now}. Put the recorded file back or "
+                "choose another checkpoint.") from None
         best_weights = read.checkpoint["state_dict"]
     return plan, best_weights
 
@@ -922,7 +1006,9 @@ def resolve_training_device(requested: str) -> str:
 # =============================================================================
 # Main Training Function
 # =============================================================================
-def train(config: TrainConfig, explicit: Optional[Collection[str]] = None) -> Dict[str, float]:
+def train(config: TrainConfig, explicit: Optional[Collection[str]] = None, *,
+          expected_dataset_sha256: Optional[str] = None,
+          expected_resume_sha256: Optional[str] = None) -> Dict[str, float]:
     """
     Main training function
 
@@ -931,6 +1017,14 @@ def train(config: TrainConfig, explicit: Optional[Collection[str]] = None) -> Di
         explicit: the fields the operator set (`load_config_with_explicit`).
             `None`, for a caller that built `config` itself, counts every
             field that differs from its default as set.
+        expected_dataset_sha256: the dataset fingerprint the run was started
+            for (`--expect-dataset-sha256`), compared on the run's one manifest
+            read (`read_training_inputs`); `DatasetChanged` otherwise. A
+            precondition, not a setting: neither recorded nor configured.
+        expected_resume_sha256: the resume parent's SHA-256 the run was
+            started for (`--expect-resume-sha256`), compared on the parent's
+            one read before it is loaded (`read_resume_parent`);
+            `CheckpointChanged` otherwise. A precondition too.
 
     Returns:
         Final evaluation metrics
@@ -967,12 +1061,13 @@ def train(config: TrainConfig, explicit: Optional[Collection[str]] = None) -> Di
     #
     # No rollback and no transactional writing: the refusal simply moves ahead of
     # the side effects.
+    #
+    # **The workspace's first check is its manifest read** (P22-S2): no stat of
+    # the directory or its files comes before it, so a workspace that is gone,
+    # or replaced by another, after a caller showed its fingerprint is refused
+    # as changed (`DatasetChanged`), and without a fingerprint as a workspace
+    # with no manifest, with the command that builds one.
     data_dir = Path(config.data_dir)
-    if not data_dir.exists():
-        logger.error(f"Data directory not found: {data_dir}")
-        logger.info("Please run data preprocessing first:")
-        logger.info("  python scripts/preprocess_data.py")
-        return {}
 
     # An explicit run directory that holds files is refused here, before the
     # first artifact exists (contract M3a-2). It is claimed below, after every
@@ -984,8 +1079,9 @@ def train(config: TrainConfig, explicit: Optional[Collection[str]] = None) -> Di
     if config.run_dir:
         check_run_dir_free(config.run_dir)
 
-    inputs = read_training_inputs(data_dir)
-    parent = read_resume_parent(config.resume_from, inputs, device)
+    inputs = read_training_inputs(data_dir, expected_manifest_sha256=expected_dataset_sha256)
+    parent = read_resume_parent(config.resume_from, inputs, device,
+                                expected_sha256=expected_resume_sha256)
 
     # **How the run continues from its parent, decided once, before any output**
     # (contract M3a-3, M3a-4): from the parent's own record, its learning
@@ -1233,6 +1329,21 @@ def _allocator_record() -> Dict[str, Optional[str]]:
 def main():
     """Main entry point"""
     args = parse_args()
+    # **One managed GPU job at a time** (M5): the deployment's GPU lock, taken
+    # before anything is read and held until this returns; the kernel releases
+    # it however the process ends (src/utils/gpu_lock.py).
+    try:
+        gpu_lock = take_gpu_lock("training", "train_model.py", log=logger)
+    except (OSError, GpuLockMisconfigured) as exc:  # GpuLockBusy is an OSError; not
+        # configured is a GpuLockMisconfigured (review of 8242b47, P2-4)
+        logger.error(f"train_model: refused: {exc} Nothing was written.")
+        return 1
+    with gpu_lock:
+        return _train_main(args)
+
+
+def _train_main(args: argparse.Namespace) -> int:
+    """`main`'s run, under the GPU lock."""
     record = _allocator_record()
     logger.info(
         "CUDA allocator: %s (%s)",
@@ -1247,28 +1358,20 @@ def main():
     # Load configuration
     config, explicit = load_config_with_explicit(args)
 
-    # Validate training data exists
-    data_dir = Path(config.data_dir)
-    has_graph_data = (data_dir / "node_features.pt").exists()
-    has_train_samples = (data_dir / "train_samples.json").exists()
-
-    if has_graph_data and not has_train_samples:
-        logger.error(
-            f"Workspace {data_dir} has graph data but no train_samples.json. "
-            f"Re-run build_knowledge_graph.py with --generate-samples."
-        )
-        return 1
-    elif not data_dir.exists() or not has_graph_data:
-        logger.error(f"Training data not found in {data_dir}")
-        logger.error("Required files: train_samples.json, node_features.pt, edge_indices.pt")
-        logger.error("Build training data first:")
-        logger.error("  python scripts/build_knowledge_graph.py --workspace <dir> --external-dir data/external --generate-samples")
-        return 1
-
-    # Run training
+    # Run training. The workspace is checked by its readers, the manifest's
+    # first (`read_training_inputs`), each refusal naming the missing file.
     try:
-        metrics = train(config, explicit)
+        metrics = train(config, explicit, expected_dataset_sha256=args.expect_dataset_sha256,
+                        expected_resume_sha256=args.expect_resume_sha256)
         return 0 if metrics else 1
+    except DatasetChanged as exc:  # a refusal, said once, not a failure with a traceback
+        logger.error(f"train_model: refused: {exc} Nothing was written.")
+        return 1
+    except CheckpointChanged as exc:  # the resume parent's read, the one `train` makes
+        # with an expectation (`--expect-resume-sha256`); the reader states the facts
+        logger.error("train_model: refused: The checkpoint changed since it was chosen; "
+                     f"choose it again. {exc} Nothing was written.")
+        return 1
     except KeyboardInterrupt:
         logger.info("Training interrupted by user")
         return 1

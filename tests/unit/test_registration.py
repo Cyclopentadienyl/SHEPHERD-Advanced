@@ -23,10 +23,21 @@ phase 1 step 2). What is pinned here:
   - **the CLI**: the checkpoint must be beside the ledger, every refusal exits
     non-zero with one message and no traceback, and `--show` reads the ledger
     once;
-  - **the standing text** a surface renders beside a record (`caveats.py`).
+  - **the standing text** a surface renders beside a record (`caveats.py`);
+  - **since M5-1 (D5, 2026-10-19)**: only a report the registry's report store
+    holds is registered, found through the registry's structure (a copy, a path
+    off that structure, a link out of the store refused; a registry moved as a
+    whole once `SHEPHERD_REGISTRY` names its new place, a link to a stored
+    report accepted), naming its version exactly and
+    kept in a run directory named for its checkpoint; runs that disagree under
+    one key block every registration under it, checked or unchecked, a store
+    that cannot be checked refuses too, and a note does not lift the block; a
+    registration is in the version's usage history; `report_state` reads kept
+    and registered from disk.
 
 The reports are built by `MeasurementManifest` itself
-(`tests/unit/test_evaluation_sidecar.registered_report`).
+(`tests/unit/test_evaluation_sidecar.registered_report`) and kept in a report
+store by `tests/fixtures/report_store.py`.
 
 Module: tests/unit/test_registration.py
 """
@@ -51,6 +62,7 @@ from src.evaluation.registration import (
 )
 from src.utils.fingerprint import ReadIdentity
 from src.evaluation.sidecar import empty_ledger, read_ledger, write_ledger
+from tests.fixtures.report_store import store_bytes, store_report, version_of
 from tests.unit.test_evaluation_sidecar import (
     generated_report,
     r10_block,
@@ -68,6 +80,15 @@ def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+@pytest.fixture(autouse=True)
+def _deployment_registry(tmp_path, monkeypatch):
+    """``tmp_path/registry``, where `_report` keeps its reports, is the
+    deployment's registry (`SHEPHERD_REGISTRY`): a report is registered only
+    from it (BACKLOG 37)."""
+    (tmp_path / "registry").mkdir(exist_ok=True)
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(tmp_path / "registry"))
+
+
 @pytest.fixture
 def checkpoints(tmp_path):
     """A run's checkpoint directory holding the weights the reports measured."""
@@ -77,14 +98,14 @@ def checkpoints(tmp_path):
     return directory
 
 
-def _report(tmp_path, name="report.json", **overrides) -> Path:
-    """A report file of a registered cohort version, measuring `WEIGHTS`."""
+def _report(tmp_path, **overrides) -> Path:
+    """A report of a registered cohort version, measuring `WEIGHTS`, kept in a
+    new run directory of its version's report store under ``tmp_path/registry``
+    (`tests/fixtures/report_store.py`): since M5-1 only a report the store holds
+    is registered."""
     report = registered_report(**overrides)
     report["manifest"]["artifact_digests"]["checkpoint"] = DIGEST
-    path = tmp_path / "reports" / name
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(report, indent=2, allow_nan=False))
-    return path
+    return store_report(tmp_path / "registry", report)
 
 
 def _measured(report_path, ledger_dir, *, checkpoint_sha256=DIGEST) -> MeasuredRun:
@@ -171,7 +192,7 @@ def test_another_report_with_the_same_result_corroborates(tmp_path, checkpoints)
     first = _register(_report(tmp_path), checkpoints)
     moved = registered_manifest()["environment"]
     moved["facts"]["gpu"]["driver"] = "999.0"
-    other = _report(tmp_path, "moved.json", checkpoint_path="/moved/best.pt",
+    other = _report(tmp_path, checkpoint_path="/moved/best.pt",
                     data_dir="/moved", environment=moved)
 
     result = _register(other, checkpoints)
@@ -196,10 +217,10 @@ def test_a_corroboration_says_which_uncompared_fields_this_report_measured_diffe
     say."""
     report = _report(tmp_path)
     first = _register(report, checkpoints)
-    same = _register(_report(tmp_path, "same.json", data_dir="/elsewhere"), checkpoints)
+    same = _register(_report(tmp_path, data_dir="/elsewhere"), checkpoints)
     environment = registered_manifest()["environment"]
     environment["facts"]["gpu"]["driver"] = "999.0"
-    other = _report(tmp_path, "found.json", data_dir="/again",
+    other = _report(tmp_path, data_dir="/again",
                     r10=r10_block(training_state="overlap"), environment=environment)
 
     result = _register(other, checkpoints)
@@ -223,7 +244,7 @@ def test_the_cli_prints_the_note_when_a_corroborating_report_found_other_r10(
     import scripts.record_evaluation as record_evaluation
 
     _register(_report(tmp_path), checkpoints)
-    other = _report(tmp_path, "found.json", data_dir="/again",
+    other = _report(tmp_path, data_dir="/again",
                     r10=r10_block(training_state="overlap"))
 
     with caplog.at_level(logging.INFO, logger=record_evaluation.logger.name):
@@ -236,12 +257,18 @@ def test_the_cli_prints_the_note_when_a_corroborating_report_found_other_r10(
             f"record keeps its own and this report's are in {other}.") in said
 
 
-def test_a_contradiction_is_refused_naming_what_differs_and_the_ledger_stays(
+def test_the_ledger_refuses_a_contradiction_the_store_no_longer_shows(
     tmp_path, checkpoints
 ):
-    first = _register(_report(tmp_path), checkpoints)
+    """The ledger's own rule still stands behind D5's block: the first report
+    is registered and then removed from the store (deleting a report lifts the
+    block, D5), so the store shows no disagreement; a report under the same key
+    with other results is still refused by the ledger, naming what differs."""
+    first_report = _report(tmp_path)
+    first = _register(first_report, checkpoints)
     before = first.ledger_path.read_bytes()
-    edited = _report(tmp_path, "edited.json", metrics={
+    first_report.unlink()
+    edited = _report(tmp_path, metrics={
         "untruncated_mrr": 0.9, "mean_rank": 1.5, "hits@1": 0.25, "hits@10": 0.75})
 
     with pytest.raises(RegistrationRefused) as refused:
@@ -251,6 +278,301 @@ def test_a_contradiction_is_refused_naming_what_differs_and_the_ledger_stays(
     assert "disagrees on: mean_rank, untruncated_mrr" in message
     assert message.endswith(f"Nothing was written to {first.ledger_path}.")
     assert first.ledger_path.read_bytes() == before
+
+
+# ---------------------------------------------------------------------------
+# D5: runs that disagree under one key block every registration under it
+# ---------------------------------------------------------------------------
+_OTHER_METRICS = {"untruncated_mrr": 0.9, "mean_rank": 1.5, "hits@1": 0.25, "hits@10": 0.75}
+
+
+def test_runs_that_disagree_block_every_registration_under_their_key(tmp_path, checkpoints):
+    """A registered report, then a second run under the same key with other
+    results: the second is refused "runs disagree -- investigate", naming the
+    metrics, before the ledger is read; the first, registered before the
+    disagreement appeared, cannot be registered again either (checked or
+    unchecked, any report under the key), and its record stays as it was."""
+    from src.evaluation.registration import RunsDisagree
+
+    first_report = _report(tmp_path)
+    first = _register(first_report, checkpoints)
+    before = first.ledger_path.read_bytes()
+    edited = _report(tmp_path, metrics=_OTHER_METRICS)
+
+    for report, beside in ((edited, False), (edited, True), (first_report, True)):
+        with pytest.raises(RunsDisagree) as refused:
+            _register(report, checkpoints, beside=beside)
+        message = str(refused.value)
+        assert message.startswith("runs disagree — investigate.")
+        assert "disagree on: mean_rank, untruncated_mrr" in message
+        assert first_report.parent.name in message and edited.parent.name in message
+        # Refused before the checkpoint is looked for, so a directory search
+        # has not named the ledger yet.
+        assert message.endswith(f"Nothing was written to {first.ledger_path}." if not beside
+                                else "Nothing was written.")
+        assert refused.value.status.state == "contested"
+    assert first.ledger_path.read_bytes() == before
+
+
+def test_disagreeing_runs_block_a_key_nothing_was_registered_under(tmp_path, checkpoints):
+    """Within one key, picking the better run is prevented: two disagreeing
+    reports, neither registered, and neither can be. A report under another
+    key (another batch size is another measurement) is not affected."""
+    from src.evaluation.registration import RunsDisagree
+
+    one, two = _report(tmp_path), _report(tmp_path, metrics=_OTHER_METRICS)
+    other_key = _report(tmp_path, batch_size=8)
+
+    for report in (one, two):
+        with pytest.raises(RunsDisagree):
+            _register(report, checkpoints)
+    assert not (checkpoints / "evaluations.json").exists()
+    assert _register(other_key, checkpoints).outcome == "registered"
+
+
+def test_an_investigation_note_does_not_lift_the_block(tmp_path, checkpoints):
+    """The note is kept in the store with the key's reports, never in the
+    ledger, and the block stands after it."""
+    from src.evaluation.registration import RunsDisagree
+    from src.evaluation.report_store import add_investigation_note, read_investigation_notes
+    from src.evaluation.sidecar import build_record, record_key
+
+    one, two = _report(tmp_path), _report(tmp_path, metrics=_OTHER_METRICS)
+    key = record_key(build_record(json.loads(one.read_text()), _sha(one)))
+    add_investigation_note(version_of(one), key, who="technician", what="driver differs")
+
+    with pytest.raises(RunsDisagree):
+        _register(two, checkpoints)
+    notes, problems = read_investigation_notes(version_of(one), key)
+    assert [note["what"] for note in notes] == ["driver differs"] and problems == []
+    assert not (checkpoints / "evaluations.json").exists()
+
+
+def test_a_store_that_cannot_be_checked_refuses_rather_than_reading_uncontested(
+    tmp_path, checkpoints
+):
+    """D5: a contested state that cannot be checked is never read as
+    uncontested. A report in the store whose key cannot be told (here damaged
+    JSON) leaves every key of the version unable to be checked, and the
+    refusal names the file; with it moved out, the registration goes ahead."""
+    from src.evaluation.registration import DisagreementNotChecked
+
+    report = _report(tmp_path)
+    damaged = store_bytes(tmp_path / "registry", b"{broken", version=version_of(report))
+
+    with pytest.raises(DisagreementNotChecked) as refused:
+        _register(report, checkpoints)
+
+    assert "cannot be checked" in str(refused.value)
+    assert str(damaged) in str(refused.value)
+    assert not (checkpoints / "evaluations.json").exists()
+    damaged.rename(tmp_path / "moved-out.json")
+    assert _register(report, checkpoints).outcome == "registered"
+
+
+# ---------------------------------------------------------------------------
+# Only a report the registry's report store holds (D5, 2026-10-19)
+# ---------------------------------------------------------------------------
+def test_a_copy_outside_the_report_store_is_refused_saying_how_to_register(
+    tmp_path, checkpoints, capsys
+):
+    """A byte-identical copy of a stored report, anywhere else, is refused
+    before it is read, saying to register the store's original; the original
+    registers through the CLI as it is printed."""
+    import scripts.record_evaluation as record_evaluation
+    from tests.fixtures.opens import count_opens
+
+    original = _report(tmp_path)
+    copy = tmp_path / "shared" / "report.json"
+    copy.parent.mkdir()
+    copy.write_bytes(original.read_bytes())
+
+    for named in ({"checkpoint_dir": checkpoints}, {"checkpoint": checkpoints / "best.pt"}):
+        with count_opens() as opens, pytest.raises(RegistrationRefused) as refused:
+            register_report(copy, registered_at=WHEN, **named)
+        message = str(refused.value)
+        assert f"{copy} is not a report the registry's report store holds" in message
+        assert "Register the store's original instead" in message
+        assert "Nothing was written" in message
+        assert opens.opens(copy) == 0, "the copy was read"
+    with pytest.raises(SystemExit, match="is not a report the registry's report store holds"):
+        record_evaluation.main(["--checkpoint-dir", str(checkpoints), "--report", str(copy)])
+    assert not (checkpoints / "evaluations.json").exists()
+
+    assert record_evaluation.main(["--checkpoint-dir", str(checkpoints),
+                                   "--report", str(original)]) == 0
+
+
+@pytest.mark.parametrize("where", ["not_report_json", "not_a_run_dir", "no_reports_dir",
+                                   "no_versions_dir", "link_out_of_the_store"])
+def test_a_path_that_is_not_the_stores_structure_is_refused(tmp_path, checkpoints, where):
+    """Each step of `<registry>/versions/<label>/reports/<run id>/report.json`
+    is the store's own structure, and a path missing any is refused, never
+    guessed at. A `report.json` in the store that is a link to a file elsewhere
+    is that file, which is not in the store."""
+    original = _report(tmp_path)
+    data = original.read_bytes()
+    run_dir = original.parent
+    path = {
+        "not_report_json": run_dir / "report-copy.json",
+        "not_a_run_dir": run_dir.parent / "backup" / "report.json",
+        "no_reports_dir": run_dir.parents[1] / "kept" / run_dir.name / "report.json",
+        "no_versions_dir": (tmp_path / "other-root" / "elsewhere" / run_dir.parents[1].name
+                            / "reports" / run_dir.name / "report.json"),
+        "link_out_of_the_store": None,
+    }[where]
+    if path is None:
+        outside = tmp_path / "outside.json"
+        outside.write_bytes(data)
+        original.unlink()
+        original.symlink_to(outside)
+        path = original
+    else:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+
+    with pytest.raises(RegistrationRefused, match="is not a report the registry's report "
+                                                  "store holds"):
+        _register(path, checkpoints, beside=True)
+    assert not (checkpoints / "evaluations.json").exists()
+
+
+def test_a_registry_moved_as_a_whole_registers_once_the_setting_names_its_new_place(
+    tmp_path, checkpoints, monkeypatch
+):
+    """The registry is found from the report's path where it now is, and its
+    version is the same version by digest; **it is the deployment's once
+    `SHEPHERD_REGISTRY` names its new place** (BACKLOG 37). Before that it is
+    refused, saying the setting resolves elsewhere, and nothing is written."""
+    import shutil
+
+    from src.evaluation.registration import NotFromTheDeploymentRegistry
+
+    report = _report(tmp_path)
+    moved = tmp_path / "elsewhere" / "registry"
+    moved.parent.mkdir()
+    shutil.move(str(tmp_path / "registry"), str(moved))
+    (tmp_path / "registry").mkdir()               # the setting's old place, now empty
+    relative = report.relative_to(tmp_path / "registry")
+
+    with pytest.raises(NotFromTheDeploymentRegistry, match="is not the deployment's"):
+        _register(moved / relative, checkpoints, beside=True)
+    assert not (checkpoints / "evaluations.json").exists()
+
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(moved))
+    result = _register(moved / relative, checkpoints, beside=True)
+
+    assert result.outcome == "registered"
+    assert result.record["cohort_digest"] == version_of(moved / relative).identity.sha256
+
+
+def test_a_link_to_a_stored_report_registers_its_original(tmp_path, checkpoints):
+    """A link elsewhere that names a report in the store is that report: its
+    resolved path is the store's original."""
+    report = _report(tmp_path)
+    link = tmp_path / "pointer.json"
+    link.symlink_to(report)
+
+    result = _register(link, checkpoints, beside=True)
+
+    assert result.record["source_artifact_digest"] == _sha(report)
+
+
+@pytest.mark.parametrize("edit", ["another_label_store", "edited_counts"])
+def test_a_report_must_name_the_version_it_is_kept_under(tmp_path, checkpoints, edit):
+    """The report's cohort block must be the block of the version holding it
+    (`cohort_version_block`): a report moved into another version's store, or
+    whose counts were edited (its manifest digest left as it was), is refused
+    naming what differs."""
+    from tests.unit.test_evaluation_sidecar import cohort_version
+
+    report = _report(tmp_path)
+    data = json.loads(report.read_text())
+    if edit == "another_label_store":
+        other = store_report(tmp_path / "registry", registered_report(
+            cohort_version=cohort_version(label="mygene2-2026-11")))
+        target = other.parent.parent / report.parent.name / "report.json"
+        target.parent.mkdir()
+        target.write_text(json.dumps(data))
+        fragment = "differing in: label, manifest_sha256"
+    else:
+        data["manifest"]["cohort_version"]["counts"]["n_excluded"] += 1
+        target = report
+        target.write_text(json.dumps(data))
+        fragment = "differing in: counts"
+
+    with pytest.raises(RegistrationRefused, match=fragment) as refused:
+        _register(target, checkpoints, beside=True)
+
+    assert "registered only under the version it measured" in str(refused.value)
+    assert not (checkpoints / "evaluations.json").exists()
+
+
+def test_a_report_in_a_run_directory_named_for_other_weights_is_refused(
+    tmp_path, checkpoints
+):
+    """A run directory is named for the checkpoint it measured
+    (`create_report_dir`); a report moved into another checkpoint's run
+    directory is not where the measurement kept it."""
+    from tests.fixtures.report_store import new_run_id
+
+    report = _report(tmp_path)
+    moved = report.parents[1] / new_run_id("d" * 64) / "report.json"
+    moved.parent.mkdir()
+    report.rename(moved)
+
+    with pytest.raises(RegistrationRefused, match="is named for dddddddddddd"):
+        _register(moved, checkpoints, beside=True)
+    assert not (checkpoints / "evaluations.json").exists()
+
+
+def test_a_registration_is_appended_to_the_versions_usage_history(tmp_path, checkpoints):
+    """D4: a registration that wrote a ledger is in the version's usage history,
+    whichever entry point made it; the same report again writes nothing there
+    either. A failed append does not undo the registration, and says so."""
+    from src.evaluation.report_store import read_usage_history
+
+    report = _report(tmp_path)
+    first = _register(report, checkpoints, beside=True)
+    again = _register(report, checkpoints, beside=True)
+    other = _register(_report(tmp_path, data_dir="/elsewhere"), checkpoints, beside=True)
+
+    entries, problems = read_usage_history(version_of(report))
+    assert problems == []
+    assert [(e["kind"], e["outcome"], e["sequence"]) for e in entries] == [
+        ("registered", "registered", 1), ("registered", "corroborated", 1)]
+    assert entries[0]["report_sha256"] == _sha(report)
+    assert entries[0]["run_id"] == report.parent.name
+    assert entries[0]["checkpoint_sha256"] == DIGEST
+    assert (first.usage_history_problem, again.usage_history_problem,
+            other.usage_history_problem) == (None, None, None)
+
+
+def test_a_failed_usage_history_append_is_reported_with_the_registration(
+    tmp_path, checkpoints, monkeypatch, caplog
+):
+    import logging
+
+    import scripts.record_evaluation as record_evaluation
+    import src.evaluation.registration as registration
+
+    def fail(*args, **kwargs):
+        raise PermissionError(13, "Permission denied", "usage.jsonl")
+
+    monkeypatch.setattr(registration, "record_registration", fail)
+    report = _report(tmp_path)
+
+    result = _register(report, checkpoints, beside=True)
+
+    assert result.outcome == "registered"
+    assert "usage history could not be appended" in result.usage_history_problem
+    assert "Permission denied" in result.usage_history_problem
+    assert read_ledger(result.ledger_path)[0]["records"], "the registration stands"
+    with caplog.at_level(logging.INFO, logger=record_evaluation.logger.name):
+        assert record_evaluation.main(["--checkpoint-dir", str(checkpoints), "--report",
+                                       str(_report(tmp_path, data_dir="/b"))]) == 0
+    assert any("usage history could not be appended" in r.getMessage()
+               for r in caplog.records)
 
 
 @pytest.mark.parametrize(
@@ -266,8 +588,7 @@ def test_a_contradiction_is_refused_naming_what_differs_and_the_ledger_stays(
 def test_a_damaged_report_is_refused_and_nothing_is_written(
     tmp_path, checkpoints, data, fragment
 ):
-    report = tmp_path / "report.json"
-    report.write_bytes(data)
+    report = store_bytes(tmp_path / "registry", data, checkpoint_sha256=DIGEST)
     before = _listing(checkpoints)
 
     with pytest.raises(RegistrationRefused, match=fragment) as refused:
@@ -281,14 +602,15 @@ def test_a_damaged_report_is_refused_and_nothing_is_written(
 def test_a_missing_report_or_a_directory_is_refused(tmp_path, checkpoints):
     with pytest.raises(RegistrationRefused, match="does not exist.*Nothing was written"):
         _register(tmp_path / "absent.json", checkpoints)
+    a_directory = _report(tmp_path).parents[1] / "20261016T120000Z-aaaaaaaaaaaa-00000000"
+    (a_directory / "report.json").mkdir(parents=True)
     with pytest.raises(RegistrationRefused, match="could not be read.*Nothing was written"):
-        _register(tmp_path, checkpoints)
+        _register(a_directory / "report.json", checkpoints)
     assert not (checkpoints / "evaluations.json").exists()
 
 
 def test_a_generated_splits_report_is_refused(tmp_path, checkpoints):
-    report = tmp_path / "val.json"
-    report.write_text(json.dumps(generated_report()))
+    report = store_report(tmp_path / "registry", generated_report())
 
     with pytest.raises(RegistrationRefused, match="generated split's report is not registered"):
         _register(report, checkpoints)
@@ -381,6 +703,8 @@ def test_a_report_replaced_after_its_read_is_recorded_as_the_bytes_read(
     b = registered_report(metrics={"untruncated_mrr": 0.1, "mean_rank": 9.0,
                                    "hits@1": 0.0, "hits@10": 0.1})
     b["manifest"]["artifact_digests"]["checkpoint"] = DIGEST
+    # B names the version it is kept under, as a measurement's report would.
+    b["manifest"]["cohort_version"]["manifest_sha256"] = version_of(report).identity.sha256
     bytes_b = json.dumps(b).encode("utf-8")
     replaced = replace_after_read(monkeypatch, after=report, target=report, data=bytes_b,
                                   how=how)
@@ -421,9 +745,10 @@ def test_the_report_and_the_ledger_are_each_read_once(tmp_path, checkpoints):
 
 
 def test_neither_raw_buffer_outlives_its_parse(tmp_path, checkpoints, monkeypatch):
-    """The readers' release check (contract M2.1, S2): the report's bytes are
-    gone before the ledger is read, and the ledger's before the function
-    returns. Both reads go through `read_once`, in that order."""
+    """The readers' release check (contract M2.1, S2): no read's bytes outlive
+    its parse. Every read goes through `read_once`, in this order: the version's
+    `cohort.json` (the report store is located through it, since M5-1), the
+    report, and the ledger; the store holds no other report to compare."""
     from tests.fixtures.release import check_release
 
     report = _report(tmp_path)
@@ -432,7 +757,7 @@ def test_neither_raw_buffer_outlives_its_parse(tmp_path, checkpoints, monkeypatc
     result, reads = check_release(monkeypatch, lambda: _register(report, checkpoints))
 
     assert result.outcome == "registered"
-    assert [p.name for p in reads] == ["report.json", "evaluations.json"]
+    assert [p.name for p in reads] == ["cohort.json", "report.json", "evaluations.json"]
 
 
 def test_no_path_hash_reaches_the_record(tmp_path, checkpoints, monkeypatch):
@@ -468,9 +793,9 @@ def test_another_writers_append_between_this_read_and_this_write_is_refused(
     from tests.fixtures.replacement import hook_read_once
 
     ledger_path = checkpoints / "evaluations.json"
-    seed = _report(tmp_path, "seed.json")
-    report_a = _report(tmp_path, "a.json", batch_size=8)
-    report_b = _report(tmp_path, "b.json", batch_size=16)
+    seed = _report(tmp_path)
+    report_a = _report(tmp_path, batch_size=8)
+    report_b = _report(tmp_path, batch_size=16)
     _register(seed, checkpoints)
     seeded = ledger_path.read_bytes()
 
@@ -706,8 +1031,7 @@ def test_the_cli_refuses_to_show_a_ledger_it_does_not_read(tmp_path):
 def test_the_cli_refuses_a_report_that_is_not_a_measurement_artifact(tmp_path, checkpoints):
     import scripts.record_evaluation as record_evaluation
 
-    report = tmp_path / "not_a_report.json"
-    report.write_text(json.dumps({"hello": "world"}))
+    report = store_bytes(tmp_path / "registry", json.dumps({"hello": "world"}).encode())
 
     with pytest.raises(SystemExit, match="not a measurement report"):
         record_evaluation.main(["--checkpoint-dir", str(checkpoints),
@@ -720,8 +1044,7 @@ def test_the_cli_refuses_a_report_from_an_earlier_revision(tmp_path, checkpoints
     report = registered_report()
     report["manifest"]["python_seed"] = 0
     report["manifest"]["artifact_digests"]["checkpoint"] = DIGEST
-    path = tmp_path / "old.json"
-    path.write_text(json.dumps(report))
+    path = store_report(tmp_path / "registry", report)
 
     with pytest.raises(SystemExit, match="python_seed"):
         record_evaluation.main(["--checkpoint-dir", str(checkpoints),
@@ -741,8 +1064,7 @@ def test_a_refusal_exits_non_zero_with_one_message_and_no_traceback(
     tmp_path, checkpoints, data
 ):
     """Run as an operator runs it: a damaged report is a message, not a crash."""
-    report = tmp_path / "report.json"
-    report.write_bytes(data)
+    report = store_bytes(tmp_path / "registry", data, checkpoint_sha256=DIGEST)
 
     done = subprocess.run(
         [sys.executable, str(REPO / "scripts" / "record_evaluation.py"),
@@ -916,6 +1238,88 @@ def test_a_run_never_gets_back_a_lost_report_as_kept(tmp_path, checkpoints, lost
     assert not (checkpoints / "evaluations.json").exists()
 
 
+def test_a_runs_own_report_replaced_by_a_link_out_of_the_store_is_lost(tmp_path, checkpoints):
+    """The reviewer's P3 (2026-10-20): the run published its report into the
+    store at this path, so a path that now resolves elsewhere -- here a link to
+    a byte-identical copy outside any store -- was replaced: refused as not the
+    run's report (`ReportNotAsPublished`), never as an outside copy whose
+    store original could still be registered. Nothing is written."""
+    published = _report(tmp_path)
+    measured = _measured(published, checkpoints)
+    outside = tmp_path / "outside.json"
+    outside.write_bytes(published.read_bytes())
+    published.unlink()
+    published.symlink_to(outside)
+
+    with pytest.raises(ReportNotAsPublished) as refused:
+        register_report(published, measured=measured, registered_at=WHEN)
+
+    message = str(refused.value)
+    assert f"{published} is no longer a report the store holds" in message
+    assert "replaced or moved after it was written" in message and "re-measure" in message
+    assert "Register the store's original" not in message
+    assert not (checkpoints / "evaluations.json").exists()
+    # By hand, the same path is an outside copy, refused as such.
+    with pytest.raises(RegistrationRefused) as by_hand:
+        register_report(published, checkpoint=checkpoints / "best.pt", registered_at=WHEN)
+    assert not isinstance(by_hand.value, ReportNotAsPublished)
+    assert "Register the store's original instead" in str(by_hand.value)
+
+
+def test_a_report_nested_too_deeply_to_build_is_refused_not_raised(tmp_path, checkpoints):
+    """A hand-edited report that parses but nests deeper than `build_record`
+    can copy is one refusal, not a `RecursionError` traceback."""
+    report = _report(tmp_path)
+    deep = json.loads(report.read_text())
+    node = deep["manifest"]["r10"]
+    for _ in range(600):
+        node["x"] = {}
+        node = node["x"]
+    report.write_text(json.dumps(deep))
+
+    with pytest.raises(RegistrationRefused, match="nests too deeply to be read as a report"):
+        register_report(report, checkpoint=checkpoints / "best.pt", registered_at=WHEN)
+    assert not (checkpoints / "evaluations.json").exists()
+
+
+def test_a_report_nested_too_deeply_is_refused_whatever_the_recursion_limit(tmp_path, checkpoints):
+    """The depth is counted, not recursed: a raised recursion limit (a library
+    may raise it) or a deep caller stack never changes the answer."""
+    import sys
+
+    from src.evaluation.sidecar import MAX_REPORT_DEPTH
+
+    report = _report(tmp_path)
+    deep = json.loads(report.read_text())
+    node = deep["manifest"]["r10"]
+    for _ in range(MAX_REPORT_DEPTH):
+        node["x"] = {}
+        node = node["x"]
+    report.write_text(json.dumps(deep))
+    before = sys.getrecursionlimit()
+    sys.setrecursionlimit(100_000)
+    try:
+        with pytest.raises(RegistrationRefused, match="nests too deeply to be read as a report"):
+            register_report(report, checkpoint=checkpoints / "best.pt", registered_at=WHEN)
+    finally:
+        sys.setrecursionlimit(before)
+    assert not (checkpoints / "evaluations.json").exists()
+
+
+def test_the_nesting_count_stops_exactly_at_its_limit():
+    from src.evaluation.sidecar import _nests_deeper_than
+
+    def nested(levels):
+        value = {}
+        for _ in range(levels - 1):
+            value = {"x": value}
+        return value
+
+    assert not _nests_deeper_than(nested(64), 64)
+    assert _nests_deeper_than(nested(65), 64)
+    assert _nests_deeper_than([[[]]], 2) and not _nests_deeper_than([[[]]], 3)
+
+
 def test_a_later_registration_still_names_a_missing_report_plainly(tmp_path, checkpoints):
     """A registration by hand has no run behind it: a missing report is the
     ordinary refusal, not a run's lost report."""
@@ -924,3 +1328,327 @@ def test_a_later_registration_still_names_a_missing_report_plainly(tmp_path, che
                         registered_at=WHEN)
     assert not isinstance(refused.value, ReportNotAsPublished)
     assert "re-measure" not in str(refused.value)
+
+
+# ---------------------------------------------------------------------------
+# Kept? Registered? Read from disk (`report_state`), never from a job's exit
+# ---------------------------------------------------------------------------
+def test_report_state_reads_kept_and_registered_from_the_store_and_the_ledger(
+    tmp_path, checkpoints
+):
+    from src.evaluation.registration import report_state
+
+    report = _report(tmp_path)
+    published = _sha(report)
+
+    state = report_state(report, checkpoint=checkpoints / "best.pt", expected_sha256=published)
+    assert (state.kept, state.registered) == ("kept", "not_registered")
+    assert state.report_sha256 == published and state.sequence is None
+    assert state.ledger_path == checkpoints.resolve() / "evaluations.json"
+
+    _register(report, checkpoints, beside=True)
+    state = report_state(report, checkpoint=checkpoints / "best.pt")
+    assert (state.kept, state.registered, state.sequence) == ("kept", "registered", 1)
+
+    corroborating = _report(tmp_path, data_dir="/elsewhere")
+    _register(corroborating, checkpoints, beside=True)
+    state = report_state(corroborating, checkpoint=checkpoints / "best.pt")
+    assert (state.registered, state.sequence) == ("registered", 1), "a corroborating report"
+
+
+def test_report_state_never_calls_a_replaced_or_missing_report_kept(tmp_path, checkpoints):
+    """The run's published digest decides: other bytes at the path are not its
+    report, and a report removed after its registration is still registered
+    (by the digest the run published), but not kept."""
+    from src.evaluation.registration import report_state
+
+    report = _report(tmp_path)
+    published = _sha(report)
+    _register(report, checkpoints, beside=True)
+    data = json.loads(report.read_text())
+    report.write_text(json.dumps(data, indent=3))
+
+    replaced = report_state(report, checkpoint=checkpoints / "best.pt",
+                            expected_sha256=published)
+    assert replaced.kept == "not_kept" and "replaced or changed" in replaced.why_kept
+    assert replaced.registered == "registered", "looked up by the digest the run published"
+
+    report.unlink()
+    gone = report_state(report, checkpoint=checkpoints / "best.pt", expected_sha256=published)
+    assert (gone.kept, gone.registered) == ("not_kept", "registered")
+    unknown = report_state(report, checkpoint=checkpoints / "best.pt")
+    assert (unknown.kept, unknown.registered) == ("not_kept", "cannot_be_checked")
+
+
+def test_report_state_says_cannot_be_checked_rather_than_no(tmp_path, checkpoints):
+    """A ledger that cannot be read is not "not registered"; a path outside a
+    store is not a kept report."""
+    from src.evaluation.registration import report_state
+
+    report = _report(tmp_path)
+    (checkpoints / "evaluations.json").write_text(
+        json.dumps({"schema_version": 2, "records": []}))
+    state = report_state(report, checkpoint=checkpoints / "best.pt")
+    assert (state.kept, state.registered) == ("kept", "cannot_be_checked")
+    assert "schema 2" in state.why_registered
+
+    copy = tmp_path / "copy.json"
+    copy.write_bytes(report.read_bytes())
+    outside = report_state(copy, checkpoint=checkpoints / "best.pt")
+    assert outside.kept == "not_kept" and "not in a registry's report store" in outside.why_kept
+
+
+# ---------------------------------------------------------------------------
+# Without a checkpoint: the server's list of kept reports (M5-1)
+# ---------------------------------------------------------------------------
+def test_report_state_without_a_checkpoint_reads_the_ledger_the_report_names(
+    tmp_path, checkpoints
+):
+    """A list of a version's kept reports knows no checkpoint file: the
+    ledger read is the one beside the checkpoint path the report records, from
+    the same read. Found there, the report is registered; not found, that is
+    all that can be said: never "not registered"."""
+    from src.evaluation.registration import report_state
+
+    report = _report(tmp_path, checkpoint_path=str(checkpoints / "best.pt"))
+    ledger = checkpoints.resolve() / "evaluations.json"
+    state = report_state(report)
+    assert (state.kept, state.registered) == ("kept", "cannot_be_checked")
+    assert state.why_registered.startswith(
+        f"not registered beside the checkpoint this run read (there is no {ledger});")
+    assert "another copy of the same weights" in state.why_registered
+    assert state.ledger_path == ledger
+
+    _register(report, checkpoints, beside=True)
+    state = report_state(report)
+    assert (state.kept, state.registered, state.sequence) == ("kept", "registered", 1)
+
+
+def test_a_report_registered_beside_a_copy_is_never_listed_as_not_registered(
+    tmp_path, checkpoints
+):
+    """`record_evaluation --checkpoint` files the record beside whichever file
+    with the measured bytes it is given, a served copy say. Given that copy,
+    the report reads as registered; the list, which knows only the checkpoint
+    the run read, cannot rule that out and says so (review of M5-1 WP2)."""
+    from src.evaluation.registration import report_state
+
+    report = _report(tmp_path, checkpoint_path=str(checkpoints / "best.pt"))
+    release = tmp_path / "release"
+    release.mkdir()
+    (release / "best.pt").write_bytes(WEIGHTS)
+    _register(report, release, beside=True)
+
+    served = report_state(report, checkpoint=release / "best.pt")
+    assert (served.registered, served.sequence) == ("registered", 1)
+    measured = report_state(report, checkpoint=checkpoints / "best.pt")
+    assert measured.registered == "not_registered", "scoped by the checkpoint given"
+
+    listed = report_state(report)
+    assert listed.registered == "cannot_be_checked"
+    assert str(checkpoints.resolve() / "evaluations.json") in listed.why_registered
+    assert "cannot be checked here" in listed.why_registered
+
+
+def test_report_state_without_a_checkpoint_never_guesses_a_ledger(tmp_path, checkpoints):
+    """A relative recorded path meant whatever that run's working directory
+    made of it; a report that cannot be read names nothing. Either way the
+    registration cannot be checked, and says why; kept is still answered."""
+    from src.evaluation.registration import report_state
+
+    relative = _report(tmp_path, checkpoint_path="runs/shepherd/r1/checkpoints/best.pt")
+    state = report_state(relative)
+    assert (state.kept, state.registered) == ("kept", "cannot_be_checked")
+    assert "relative path" in state.why_registered and state.ledger_path is None
+
+    gone = _report(tmp_path, checkpoint_path=str(checkpoints / "best.pt"))
+    gone.unlink()
+    state = report_state(gone)
+    assert (state.kept, state.registered) == ("not_kept", "cannot_be_checked")
+
+
+# ---------------------------------------------------------------------------
+# The report that was shown (the M5 review's P2-1)
+# ---------------------------------------------------------------------------
+def _usage(tmp_path) -> bytes:
+    """The version's usage history as bytes ("" when there is none)."""
+    files = list((tmp_path / "registry").glob("versions/*/reports/usage.jsonl"))
+    return files[0].read_bytes() if files else b""
+
+
+def test_the_digest_shown_is_compared_on_the_read_registered_before_it_is_parsed(
+    tmp_path, checkpoints
+):
+    """`expected_report_sha256`: other bytes than the ones shown are refused
+    from the digest of the one read, before they are decoded -- a plain
+    refusal, not `ReportNotAsPublished`, which belongs to a run's own report
+    -- and nothing is written; the digest shown registers."""
+    report = _report(tmp_path)
+    usage_before = _usage(tmp_path)
+
+    with pytest.raises(RegistrationRefused) as refused:
+        register_report(report, checkpoint_dir=checkpoints, expected_report_sha256="0" * 64)
+    assert not isinstance(refused.value, ReportNotAsPublished)
+    said = str(refused.value)
+    assert f"{report} is not the report that was shown: it now holds bytes {_sha(report)[:12]}" in said
+    assert "0" * 12 + "... was shown" in said and "select it again" in said
+    assert said.endswith("Nothing was written.")      # the directory is not searched yet
+    assert not (checkpoints / "evaluations.json").exists()
+    assert _usage(tmp_path) == usage_before
+
+    damaged = report.read_bytes()[:20]
+    shown = _sha(report)
+    report.write_bytes(damaged)
+    with pytest.raises(RegistrationRefused, match="is not the report that was shown") as refused:
+        register_report(report, checkpoint_dir=checkpoints, expected_report_sha256=shown)
+    assert "not a measurement report" not in str(refused.value), "it was parsed"
+
+
+def test_the_digest_shown_registers_the_report_it_names(tmp_path, checkpoints):
+    report = _report(tmp_path)
+
+    result = register_report(report, checkpoint_dir=checkpoints,
+                             expected_report_sha256=_sha(report), registered_at=WHEN)
+
+    assert result.outcome == "registered"
+    assert result.record["source_artifact_digest"] == _sha(report)
+
+
+@pytest.mark.parametrize("digest", ["ABC", "A" * 64, "a" * 63, 123, b"0" * 64])
+def test_a_digest_that_is_not_a_sha256_is_a_callers_error(tmp_path, checkpoints, digest):
+    report = _report(tmp_path)
+    with pytest.raises(TypeError, match="64 lowercase hex"):
+        register_report(report, checkpoint_dir=checkpoints, expected_report_sha256=digest)
+    assert not (checkpoints / "evaluations.json").exists()
+
+
+def test_a_run_and_a_shown_digest_together_are_a_callers_error(tmp_path, checkpoints):
+    """`measured` carries the digest its run published; a second one would be
+    two answers to one question."""
+    report = _report(tmp_path)
+    with pytest.raises(TypeError, match="measured carries the digest"):
+        register_report(report, measured=_measured(report, checkpoints),
+                        expected_report_sha256=_sha(report))
+
+
+# ---------------------------------------------------------------------------
+# Only from the deployment's registry (BACKLOG 37; the M5 review's P2-7)
+# ---------------------------------------------------------------------------
+def _whole_copy(tmp_path) -> Path:
+    import shutil
+
+    copy = tmp_path / "registry-copy"
+    shutil.copytree(tmp_path / "registry", copy, symlinks=True)
+    return copy
+
+
+def test_a_copy_of_the_whole_registry_is_refused_before_anything_in_it_is_read(
+    tmp_path, checkpoints, monkeypatch
+):
+    """The reviewer's counter-example: a copy holds the same bytes in the same
+    structure, so only where it is tells it apart. Refused from the path's shape
+    (its `cohort.json` never resolved), nothing written beside the checkpoint,
+    nothing appended to the copy's usage history; the original registers."""
+    from src.evaluation import cohort_registry
+    from src.evaluation.registration import NotFromTheDeploymentRegistry
+
+    report = _report(tmp_path)
+    copy = _whole_copy(tmp_path)
+    in_copy = copy / report.relative_to(tmp_path / "registry")
+    copy_before = {p: p.read_bytes() for p in copy.rglob("*") if p.is_file()}
+    resolved = []
+    real = cohort_registry.resolve_version
+    monkeypatch.setattr(cohort_registry, "resolve_version",
+                        lambda *a, **k: resolved.append(a) or real(*a, **k))
+
+    with pytest.raises(NotFromTheDeploymentRegistry) as refused:
+        _register(in_copy, checkpoints, beside=True)
+
+    said = str(refused.value)
+    assert f"{in_copy} is not registered: the registry {copy} is not the deployment's" in said
+    assert (f"SHEPHERD_REGISTRY ({tmp_path / 'registry'}) resolves to "
+            f"{(tmp_path / 'registry').resolve()}") in said
+    assert "Nothing was written" in said and "is a copy" not in said
+    assert resolved == [], "something in the copy was read"
+    assert not (checkpoints / "evaluations.json").exists()
+    assert {p: p.read_bytes() for p in copy.rglob("*") if p.is_file()} == copy_before
+    assert _register(report, checkpoints, beside=True).outcome == "registered"
+
+
+def test_a_runs_own_report_in_another_registry_is_not_called_lost(tmp_path, checkpoints,
+                                                                 monkeypatch):
+    """For `--record`, the run's report is where it published it: the refusal is
+    of the registry, not `ReportNotAsPublished`."""
+    from src.evaluation.registration import NotFromTheDeploymentRegistry
+
+    report = _report(tmp_path)
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(_whole_copy(tmp_path)))
+    with pytest.raises(NotFromTheDeploymentRegistry) as refused:
+        _register(report, checkpoints)
+    assert not isinstance(refused.value, ReportNotAsPublished)
+
+
+@pytest.mark.parametrize("setting, said", [
+    (None, "SHEPHERD_REGISTRY is not set here, so which registry is the deployment's cannot "
+           "be told"),
+    ("relative/registry", "SHEPHERD_REGISTRY is refused: the registry 'relative/registry' is "
+                          "not an absolute path"),
+], ids=["unset", "refused"])
+def test_with_no_usable_setting_every_registration_is_refused_saying_so(
+    tmp_path, checkpoints, monkeypatch, setting, said
+):
+    """A fresh shell without the service's settings: refused, never "any
+    registry", with words true on the command line (nothing about features
+    that are off) and nothing written."""
+    report = _report(tmp_path)
+    if setting is None:
+        monkeypatch.delenv("SHEPHERD_REGISTRY")
+    else:
+        monkeypatch.setenv("SHEPHERD_REGISTRY", setting)
+
+    with pytest.raises(RegistrationRefused) as refused:
+        _register(report, checkpoints, beside=True)
+
+    assert said in str(refused.value)
+    assert "features" not in str(refused.value)
+    assert not (checkpoints / "evaluations.json").exists()
+
+
+def test_a_link_to_the_deployments_registry_is_that_registry(tmp_path, checkpoints,
+                                                             monkeypatch):
+    """Compared by resolved path: the setting through a link, or the report
+    reached through one, names the same registry."""
+    report = _report(tmp_path)
+    alias = tmp_path / "alias"
+    alias.symlink_to(tmp_path / "registry", target_is_directory=True)
+
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(alias))
+    assert _register(report, checkpoints, beside=True).outcome == "registered"
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(tmp_path / "registry"))
+    through = alias / report.relative_to(tmp_path / "registry")
+    assert _register(through, checkpoints, beside=True).outcome == "already_registered"
+
+
+def test_the_settings_passed_say_which_registry_is_the_deployments(tmp_path, checkpoints,
+                                                                   monkeypatch):
+    """`environ` (the page's settings) is read, not the process's."""
+    report = _report(tmp_path)
+    monkeypatch.delenv("SHEPHERD_REGISTRY")
+
+    result = _register(report, checkpoints, beside=True,
+                       environ={"SHEPHERD_REGISTRY": str(tmp_path / "registry")})
+
+    assert result.outcome == "registered"
+
+
+def test_record_evaluation_refuses_a_report_in_a_copy_of_the_registry(tmp_path, checkpoints):
+    import scripts.record_evaluation as record_evaluation
+
+    report = _report(tmp_path)
+    in_copy = _whole_copy(tmp_path) / report.relative_to(tmp_path / "registry")
+
+    with pytest.raises(SystemExit) as refused:
+        record_evaluation.main(["--report", str(in_copy), "--checkpoint-dir", str(checkpoints)])
+
+    assert "is not the deployment's" in str(refused.value.code)
+    assert not (checkpoints / "evaluations.json").exists()

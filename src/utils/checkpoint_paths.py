@@ -31,12 +31,16 @@ Module: src/utils/checkpoint_paths.py
 """
 from __future__ import annotations
 
+import copy
 import math
 import re
 import secrets
+import threading
+import time
+from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple, Union
 
 ScoreFn = Callable[[Path], Optional[float]]
 
@@ -285,9 +289,20 @@ def run_checkpoints(run_dir: PathLike) -> List[Path]:
     return sorted(directory.glob("*.pt")) if directory.is_dir() else []
 
 
+def _mtime(path: Path) -> float:
+    """A listed file's modification time, for ordering only; 0 when it cannot
+    be read: a link whose target is gone, or a checkpoint training removed
+    (beyond `save_top_k`) between the listing and this call. Such a file sorts
+    last and stays listed; a reader says what became of it."""
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
 def _run_recency(run_dir: Path) -> float:
     """When the run last wrote a checkpoint (0 for none)."""
-    return max((p.stat().st_mtime for p in run_checkpoints(run_dir)), default=0.0)
+    return max((_mtime(p) for p in run_checkpoints(run_dir)), default=0.0)
 
 
 def list_runs(data_dir: PathLike, conv_type: Optional[str] = None) -> List[Path]:
@@ -323,9 +338,231 @@ def list_run_checkpoints(
     caller, never from where it sits."""
     entries: List[Tuple[Path, Path]] = []
     for run in list_runs(data_dir, conv_type):
-        files = sorted(run_checkpoints(run),
-                       key=lambda p: (p.stat().st_mtime, p.name), reverse=True)
+        files = sorted(run_checkpoints(run), key=lambda p: (_mtime(p), p.name), reverse=True)
         entries.extend((run, path) for path in files)
+    return entries
+
+
+class ListedCheckpoint(NamedTuple):
+    """One checkpoint of the listing, as one read of its file found it.
+
+    `sha256` is the digest of the bytes that read returned: the model
+    fingerprint, which a ledger record and a served identity name. The rest is
+    the file's own record, parsed from those same bytes: its kind, its epoch,
+    its `logs` (`{}` when it records none), the Trainer's validation figure
+    (`ranking_score_detail` of those logs: the trainer's top-20 selection
+    metric, never a test result) and the dataset fingerprint it was trained on
+    (`training_input_digests["split_manifest"]`, the SHA-256 of that
+    workspace's `split_manifest.json`).
+
+    **A file the read refuses is listed, never dropped:** `problem` says why
+    (a format `weights_only=True` refuses, a file gone since it was listed),
+    and the digest and record are `None`. A file that loads as something other
+    than a checkpoint record keeps its digest and says so in `problem`. A file
+    that resolves outside the directory the caller bounds the listing by is
+    listed with `problem` and is not read at all (`read_run_checkpoints`'
+    `within`).
+
+    `size_bytes` is the file's size as listed (a `stat` beside the read,
+    descriptive only); `None` for a file not read because it is outside, or one
+    that cannot be found.
+
+    `completed_epochs` and `end` are the file's progress record, as a training
+    state writes it (`progress.completed_epochs`, `progress.end`): how many
+    epochs it completed and how its stage ended (`None` while it runs, or
+    "paused", "finished", "stopped_early"). A file that records no progress (a
+    weights-only file, an older format) has `None` for both; nothing is derived
+    from `epoch` in their place.
+    """
+
+    run_dir: Path
+    path: Path
+    sha256: Optional[str] = None
+    checkpoint_kind: Optional[str] = None
+    epoch: Any = None
+    logs: Optional[Dict[str, Any]] = None
+    validation: Optional[Tuple[str, float]] = None
+    dataset_fingerprint: Optional[str] = None
+    problem: Optional[str] = None
+    size_bytes: Optional[int] = None
+    completed_epochs: Any = None
+    end: Optional[str] = None
+
+
+#: How much of a refusal's text a listing keeps: its first line, bounded, so a
+#: multi-paragraph loader message stays one readable reason.
+_PROBLEM_LIMIT = 300
+
+
+def _first_line(exc: BaseException) -> str:
+    text = next((line.strip() for line in str(exc).splitlines() if line.strip()), "")
+    if len(text) > _PROBLEM_LIMIT:
+        text = text[:_PROBLEM_LIMIT - 3] + "..."
+    return f"{type(exc).__name__}: {text}" if text else type(exc).__name__
+
+
+def _outside(path: Path, within: Path) -> Optional[str]:
+    """Why `path` is not read under `within` (resolved), or `None` when it
+    resolves inside it."""
+    try:
+        resolved = path.resolve()
+    except (OSError, RuntimeError) as exc:  # a link loop: RuntimeError before 3.13
+        return f"cannot be resolved ({type(exc).__name__}), so it is not read"
+    if resolved == within or within not in resolved.parents:
+        return "resolves outside the workspace, so it is not read"
+    return None
+
+
+def _size(path: Path) -> Optional[int]:
+    try:
+        return path.stat().st_size
+    except OSError:
+        return None
+
+
+#: Each listed file's last read in this process, by its path: the file's
+#: identity as `os.stat` gave it around that read, and what the read found
+#: (`ListedCheckpoint` without its two paths). Least recently listed first.
+_READS: "OrderedDict[str, Tuple[Tuple[int, ...], Dict[str, Any]]]" = OrderedDict()
+_READS_LOCK = threading.Lock()
+#: How many files' reads are kept (a few kilobytes each).
+READS_KEPT = 4096
+#: A file whose content or metadata changed less than this long before its
+#: read is read again at every listing: a rewrite within one tick of the file
+#: system's clock could leave its `stat` unchanged.
+SETTLED_NS = 2_000_000_000
+
+
+def _identity(path: Path) -> Optional[Tuple[int, ...]]:
+    """What tells one state of a file from another without reading it: its
+    device, inode, size, and modification and change times (the change time
+    moves with any write or metadata change and cannot be set back)."""
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+
+
+def _recalled(path: Path, identity: Optional[Tuple[int, ...]]) -> Optional[Dict[str, Any]]:
+    if identity is None:
+        return None
+    with _READS_LOCK:
+        kept = _READS.get(str(path))
+        if kept is None or kept[0] != identity:
+            return None
+        _READS.move_to_end(str(path))
+        fields = kept[1]
+    return {**fields, "logs": copy.deepcopy(fields["logs"])}
+
+
+def _remember(path: Path, before: Optional[Tuple[int, ...]], started_ns: int,
+              entry: ListedCheckpoint) -> None:
+    """Keep `entry` for `path` when the file did not change during the read
+    and had settled before it (`SETTLED_NS`)."""
+    if before is None or _identity(path) != before:
+        return
+    if max(before[3], before[4]) > started_ns - SETTLED_NS:
+        return
+    fields = entry._asdict()
+    del fields["run_dir"], fields["path"]
+    fields["logs"] = copy.deepcopy(fields["logs"])
+    with _READS_LOCK:
+        _READS[str(path)] = (before, fields)
+        _READS.move_to_end(str(path))
+        while len(_READS) > READS_KEPT:
+            _READS.popitem(last=False)
+
+
+def _read_one(run: Path, path: Path) -> ListedCheckpoint:
+    """One file's entry, from one read of its bytes."""
+    from src.utils.checkpoint_io import read_checkpoint
+
+    size = _size(path)
+    try:
+        read = read_checkpoint(path, map_location="cpu", weights_only=True)
+    except Exception as exc:  # noqa: BLE001 — listed with its reason, never dropped
+        return ListedCheckpoint(run, path, problem=_first_line(exc), size_bytes=size)
+    meta = read.checkpoint
+    if not isinstance(meta, dict):
+        return ListedCheckpoint(
+            run, path, sha256=read.identity.sha256,
+            problem=(f"it loads as {type(meta).__name__}, not a checkpoint record, so it "
+                     "carries no metadata"),
+            size_bytes=size)
+    logs = meta.get("logs") if isinstance(meta.get("logs"), dict) else {}
+    digests = meta.get("training_input_digests")
+    fingerprint = digests.get("split_manifest") if isinstance(digests, dict) else None
+    progress = meta.get("progress") if isinstance(meta.get("progress"), dict) else {}
+    end = progress.get("end")
+    return ListedCheckpoint(
+        run, path, sha256=read.identity.sha256,
+        checkpoint_kind=meta.get("checkpoint_kind"),
+        epoch=meta.get("epoch"),
+        logs=logs,
+        validation=ranking_score_detail(logs),
+        dataset_fingerprint=fingerprint if isinstance(fingerprint, str) else None,
+        size_bytes=size,
+        completed_epochs=progress.get("completed_epochs"),
+        end=end if isinstance(end, str) else None,
+    )
+
+
+def read_run_checkpoints(
+    data_dir: PathLike, conv_type: Optional[str] = None, *,
+    within: Optional[PathLike] = None,
+) -> List[ListedCheckpoint]:
+    """The listing (`list_run_checkpoints`, same order), each file read once,
+    and again only when it changes.
+
+    Each file is loaded through `read_checkpoint` with `weights_only=True`
+    (tensors and plain data only, contract decision 10) on the CPU, and what
+    the entry shows and its digest come from that one read (BACKLOG 19.3), so
+    a file rewritten while it is listed is never shown with another file's
+    digest. Reading opens every checkpoint, which SPEC_4 classes as checkpoint
+    inspection (C3): a caller that offers this list over the network is gated
+    as D8 says. `list_run_checkpoints` stays the read-free form, for a caller
+    that only needs to know which files exist.
+
+    **A file is not read again while it is unchanged** (M5-3 review, UI-2:
+    every opening of a model list read every checkpoint of the workspace, so
+    the lists slowed with every run). What a read found is kept in this
+    process by the file's path and its identity (`_identity`: device, inode,
+    size, modification and change times, taken before and after the read), and
+    a later listing that finds the same identity shows it without opening the
+    file; any write, replacement or metadata change reads it again, as does a
+    file that changed in the `SETTLED_NS` before its read. The bytes are still
+    checked where they are used: a load, a start or a measurement re-reads them
+    against the digest shown. The kept reads are shown only through the
+    callers that read them, which D8 gates as before.
+
+    `within`, the workspace directory, bounds what is read: a file that
+    resolves outside it (a run or a checkpoint that is a link out of the
+    workspace) is listed with that reason and **never opened**, so nothing of
+    a file elsewhere is read or shown. The check runs before the read (and
+    before a kept read is used); the server's list passes its workspace
+    (`server_lists.list_checkpoints`).
+
+    torch is imported only here, when a file is read, so this module stays
+    importable without it.
+    """
+    bound = Path(within).resolve() if within is not None else None
+    entries: List[ListedCheckpoint] = []
+    for run, path in list_run_checkpoints(data_dir, conv_type):
+        outside = _outside(path, bound) if bound is not None else None
+        if outside is not None:
+            entries.append(ListedCheckpoint(
+                run, path, problem=f"{run.name}/{path.name} {outside}"))
+            continue
+        identity = _identity(path)
+        kept = _recalled(path, identity)
+        if kept is not None:
+            entries.append(ListedCheckpoint(run, path, **kept))
+            continue
+        started_ns = time.time_ns()
+        entry = _read_one(run, path)
+        _remember(path, identity, started_ns, entry)
+        entries.append(entry)
     return entries
 
 
@@ -366,6 +603,7 @@ __all__ = [
     "RUNS_DIRNAME",
     "RUN_CHECKPOINTS_DIRNAME",
     "RUN_LOGS_DIRNAME",
+    "ListedCheckpoint",
     "RunDirectoryTaken",
     "allocate_run_dir",
     "check_run_dir_free",
@@ -373,6 +611,7 @@ __all__ = [
     "list_run_checkpoints",
     "list_runs",
     "propose_run_dir",
+    "read_run_checkpoints",
     "refuse_retired_locations",
     "run_architecture",
     "run_checkpoint_dir",

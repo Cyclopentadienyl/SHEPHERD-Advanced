@@ -77,8 +77,9 @@ of them P2 and none P1, are fixed in `f3108c4`. The reviewer's code review of `5
 it (`2c94a4e`). **Its GB10 functional acceptance, within the scope agreed, passed at `2c94a4e`**
 (2026-10-17; §4, "M4's acceptance on the GB10"; evidence
 [`m4-acceptance-2026-10-17/`](m4-acceptance-2026-10-17/README.md)): 84 of 84 probes, demo and
-real data. The owner merged M4 into `main` afterwards (#126, `d2d31dd`, 2026-10-17). M5 is not
-implemented. Facts about the
+real data. The owner merged M4 into `main` afterwards (#126, `d2d31dd`, 2026-10-17). M5 was implemented on the branch and reviewed by the reviewer (`150105f..8242b47`, 2026-10-22: no P1, seven P2,
+fixed and closed in the incremental reviews) (`PLAN_TEST_RESULTS.md` §6, "M5's boundaries", with each step's "as
+implemented" note). **M5's agreed functional scope is complete, reviewed and accepted, awaiting its pull request's merge (2026-10-25)**: the GB10 functional acceptance of a clean deployment at `b14c4de` (99 of 99 probes), the WebUI's manual acceptance in rounds (the training rounds at `b14c4de`, the local recheck at `f9202b6`, the close-out at `773dc4a`; [`m5-webui-acceptance-2026-10-25/`](m5-webui-acceptance-2026-10-25/README.md)), and the reviewer's reviews of every increment, the last (`b326ee3..a9e375c`) with no P1 or P2. This is not an acceptance of the WebUI's usability (BACKLOG 52 stays open, with the owner's report that the pages are overloaded), not a release (BACKLOG 50, the PyG pin, is required before one) and not an institutional or clinical test. Facts about the
 code are cited at `627ed08`, before M1;
 the code was unchanged at `463a0df`. §1 records decisions already made; §4 is the order of work.
 
@@ -3680,10 +3681,16 @@ deployment mode M1 under SPEC_4/D8, §4.9 question 3):
 - the network-side restrictions those operations need;
 - the advanced ordering and arbitration.
 
+*In progress (2026-10-21):* M5-0 to M5-2 are on the branch and M5-3 is under way (the internal
+review of all of M5 and its fixes included). Each step is recorded where `PLAN_TEST_RESULTS.md`
+decides it (D4, D5, D7, D8, §6). Not yet reviewed.
+
 **Training start's explicit `checkpoint_dir`** is honoured verbatim today. **Superseded by M3a-2
 (2026-10-15):** every run writes into its own run directory, the listing moves with it, and an
 explicitly given output path obeys the same protection. What phase 2 adds here is the network-side
-restriction of the operations that start training.
+restriction of the operations that start training. *Since 2026-10-19* that is D8's one check,
+which gates training start and stop like the test controls, with no exception left
+(`PLAN_TEST_RESULTS.md` D8).
 
 ### Not prerequisites
 

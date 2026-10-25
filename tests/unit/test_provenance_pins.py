@@ -80,6 +80,10 @@ ALLOWED = {
     # 19.15; the old status readers are gone).
     ("src/kg/artifacts.py", "verify_dataset_record", "json.loads"): (1, _READER),
     ("src/kg/artifacts.py", "verify_dataset_record", "read_once"): (1, _READER),
+    # M5-1: the build record beside the manifest, descriptive and never an input;
+    # read once and parsed from those bytes like the readers above.
+    ("src/kg/artifacts.py", "read_workspace_build", "json.loads"): (1, _READER),
+    ("src/kg/artifacts.py", "read_workspace_build", "read_once"): (1, _READER),
     # Contract M3b: the writers' digests are of the bytes they write (BACKLOG
     # 19.16, 19.17); every writer that binds a digest writes through this.
     ("src/utils/fingerprint.py", "DigestingFile.__init__", "hashlib.sha256"):
@@ -119,8 +123,18 @@ ALLOWED = {
             "not compare-and-swap"),
     ("src/evaluation/sidecar.py", "read_ledger", "read_once"): (1, _READER),
     ("src/evaluation/sidecar.py", "read_ledger", "json.loads"): (1, _READER),
-    ("src/evaluation/registration.py", "_read_report", "read_once"): (1, _READER),
-    ("src/evaluation/registration.py", "_read_report", "json.loads"): (1, _READER),
+    # The one reader of a kept report (moved from registration.py in M5-1): the
+    # registration, the report store's D5 scan and report_state read through it.
+    ("src/evaluation/report_store.py", "read_report", "read_once"): (1, _READER),
+    ("src/evaluation/report_store.py", "read_report", "json.loads"): (1, _READER),
+    ("src/evaluation/report_store.py", "_read_entries", "read_once"):
+        (1, _NOT_INPUT.format(what="a report store's usage history or investigation notes, "
+                                   "append-only, read for display (M5-1, D4/D5); no record "
+                                   "or comparison is taken from them")),
+    ("src/evaluation/report_store.py", "_read_entries", "json.loads"):
+        (1, _NOT_INPUT.format(what="one line of a report store's usage history or "
+                                   "investigation notes, parsed from the bytes of its one "
+                                   "read_once")),
     # --- The cohort registry (contract M4) ------------------------------------
     ("src/evaluation/cohort_registry.py", "prepare_import", "read_once"):
         (1, "M4: the cohort source file, parsed by parse_source and kept verbatim from the "
@@ -132,8 +146,6 @@ ALLOWED = {
             "must hash to its name before an import relies on it; records nothing"),
     ("src/evaluation/cohort_registry.py", "resolve_version", "read_once"): (1, _READER),
     ("src/evaluation/cohort_registry.py", "resolve_version", "json.loads"): (1, _READER),
-    ("src/api/services/training_manager.py", "TrainingManager.get_checkpoints", "torch.load"):
-        (1, "M2.1 decision 4, BACKLOG 19.3: the training console's checkpoint list"),
     ("src/ontology/loader.py", "OntologyLoader.load", "hashlib.sha256"):
         (1, "KG build, unchanged by M2.1 (BACKLOG 19.13): the digest of the handle that "
             "is parsed, M2.1's precedent"),
@@ -167,15 +179,22 @@ ALLOWED = {
      "json.load"): (1, _NOT_INPUT.format(what="a training run's progress, for display")),
     ("src/api/services/training_manager.py", "TrainingManager.get_metrics_history",
      "json.load"): (1, _NOT_INPUT.format(what="a training run's metrics, for display")),
+    ("src/api/services/training_manager.py", "TrainingManager._test_outcome", "json.loads"):
+        (1, _NOT_INPUT.format(what="a test run's own outcome file (`--outcome`), naming the "
+                                   "report it published and that report's digest; kept and "
+                                   "registered are read from the store and the ledger by "
+                                   "`registration.report_state` (M5-1)")),
     ("src/config/runtime_presets.py", "load_runtime_settings", "json.load"):
         (1, _NOT_INPUT.format(what="a user's persisted runtime UI settings")),
+    ("src/utils/gpu_lock.py", "read_holder", "json.loads"):
+        (1, _NOT_INPUT.format(what="the GPU lock holder's own description, for the "
+                                   "\"held by\" message (M5); the lock is the flock")),
     ("src/retrieval/backends/base.py", "VectorIndexBase.load", "json.load"):
         (1, _NOT_INPUT.format(what="a retrieval index's id map (build_index.py is outside "
                                     "the pin)")),
-    ("src/webui/components/diagnosis_panel.py", "_load_saved_config", "json.load"):
-        (1, _NOT_INPUT.format(what="saved UI settings")),
-    ("src/webui/components/training_console.py", "_load_training_config", "json.load"):
-        (1, _NOT_INPUT.format(what="saved UI settings")),
+    ("src/webui/components/charts.py", "_versioned", "hashlib.sha256"):
+        (1, _NOT_INPUT.format(what="the dashboard's own chart script, its digest in the "
+                                   "script's URL so a browser never runs an old copy (M5-2)")),
     # --- The deployment probe: identification of files nobody parses there ---
     ("scripts/probe_deployment.py", "snapshot", "file_sha256"):
         (1, _PROBE + "An untouched-directory check (a location check, contract §2 rule "
@@ -206,6 +225,19 @@ ALLOWED = {
     ("scripts/probe_deployment.py", "_training_settings", "read_once"):
         (1, _PROBE + "Phase R's training settings, parsed from the bytes of one read whose "
             "digest the report gives"),
+    # --- The deployment probe's M5 acceptance (M5-3): the lock and HTTP answers ---
+    ("scripts/probe_deployment.py", "installed_against_lock", "read_once"):
+        (1, _PROBE + "A5: the committed uv.lock, parsed from the bytes of one read whose "
+            "digest the report gives; the environment's description, not an input"),
+    ("scripts/probe_deployment.py", "_ProbeServer.json", "json.loads"):
+        (1, _PROBE + "M5: an HTTP answer of the service the probe started; not a file"),
+    ("scripts/probe_deployment.py", "_ProbeServer.event", "json.loads"):
+        (1, _PROBE + "M5: Gradio's HTTP answer naming a called event's id; not a file"),
+    ("scripts/probe_deployment.py", "_check_allowed", "json.loads"):
+        (1, _PROBE + "M5: the gated checkpoint list's HTTP answer; not a file"),
+    ("scripts/probe_deployment.py", "_socket_room", "json.loads"):
+        (1, _PROBE + "A5: the socket check's one-line answer on a child Python's standard "
+            "output; not a file"),
 }
 
 _MODULES = ("hashlib", "json", "torch")

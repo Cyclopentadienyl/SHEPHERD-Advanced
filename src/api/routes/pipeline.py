@@ -11,6 +11,16 @@ Endpoints:
     GET  /pipeline/config   — Get saved UI config (.shepherd_ui_config.json)
     POST /pipeline/config  — Save UI config
 
+**The two POSTs are operator controls** (D8, M5-1): each route takes the one
+D8 dependency (`src/api/operator_access.py`), and does its work through one
+function: `run_reload`, which the dashboard's shared Load
+(`src/webui/components/model_list.py`, "Change model…" and Research › Models)
+also calls in process after its own check, each entrance judging its own
+request (the Load binds it to the model fingerprint it showed,
+`expected_checkpoint_sha256`, which an API client can pass too); and
+`write_ui_config`, which only the route calls since M5-2 removed the Diagnosis
+tab's Save Config. The GETs stay open.
+
 Version: 1.0.0
 """
 from __future__ import annotations
@@ -25,6 +35,7 @@ from fastapi import APIRouter, HTTPException, status
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field
 
+from src.api.operator_access import OPERATOR_ONLY
 from src.api.routes.diagnose import ServedIdentity
 from src.utils.file_modes import create_staging_file
 
@@ -97,6 +108,16 @@ class PipelineReloadRequest(BaseModel):
         "it (contract M3c); 'cuda' or 'cuda:N'; 'cpu' for development. Null falls "
         "back to SHEPHERD_DEVICE first. The served identity records what was asked "
         "for and what took effect.",
+    )
+    expected_checkpoint_sha256: Optional[str] = Field(
+        None,
+        pattern=r"^[0-9a-f]{64}$",
+        description="The model fingerprint the caller was shown (the checkpoint's "
+        "SHA-256, 64 lowercase hex). When given, the reload serves only those "
+        "bytes: the build's own checkpoint read is compared with it before the "
+        "bytes are parsed, and other bytes, or no file, are refused as not the "
+        "model that was shown, with the running pipeline still serving. Null "
+        "keeps the reload unbound (automatic selection serves what it reads).",
     )
 
 
@@ -242,6 +263,13 @@ def _live_status() -> PipelineStatusResponse:
     )
 
 
+def live_status() -> PipelineStatusResponse:
+    """The status `GET /pipeline/status` answers, for a caller in this process:
+    the dashboard reads what is served through this one function (M5-2), never
+    a second reader. Reads application state only."""
+    return _live_status()
+
+
 def _refused(message: str, files: Dict[str, Any], **extra: Any) -> PipelineReloadResponse:
     """A refused reload, built so it can actually reach the client.
 
@@ -283,13 +311,36 @@ async def get_pipeline_status() -> PipelineStatusResponse:
     return _live_status()
 
 
-@router.post("/pipeline/reload", response_model=PipelineReloadResponse)
+@router.post("/pipeline/reload", response_model=PipelineReloadResponse,
+             dependencies=OPERATOR_ONLY)
 async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadResponse:
     """
     Reload the diagnosis pipeline with new data directory and/or checkpoint.
 
+    An operator control: refused by D8's dependency before anything here runs.
+    `run_reload` does the work. **Still ``async`` with nothing awaited**, so the
+    reload runs on the event loop and waits behind a running diagnosis, as it
+    always has (BACKLOG 28 records that this serialisation is the blocked loop).
+    """
+    return run_reload(request)
+
+
+def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
+    """
+    The one reload: the route above and the dashboard's shared Load
+    (`model_list`'s confirmation) both call this, each after D8's check on its
+    own request. Synchronous; a caller on
+    the event loop calls it without awaiting anything, so a reload never runs
+    beside a diagnosis.
+
     Builds the replacement first and swaps it in only once it is complete and
-    verified; a rejected candidate leaves the running pipeline serving.
+    verified; a rejected candidate leaves the running pipeline serving. **A
+    caller that was shown a model binds the reload to it**
+    (`expected_checkpoint_sha256`): the build's one checkpoint read is compared
+    with it before torch parses the bytes (`read_checkpoint(expected_sha256=)`,
+    inside the build), so the bytes served are the bytes confirmed or nothing
+    changes, and other bytes -- a checkpoint or not, or no file -- are refused
+    as not the model that was shown.
     """
     data_dir = request.data_dir
 
@@ -321,7 +372,7 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
     # candidate in the run layout. The same resolution `build_pipeline` applies
     # (the request, then SHEPHERD_DEVICE, then `auto`), and the request is still
     # passed on as given, so the served identity records what was asked for.
-    from src.api.main import requested_serving_device
+    from src.config.serving_device import requested_serving_device
     from src.inference.pipeline import PipelineBuildError, resolve_serving_device
 
     try:
@@ -402,7 +453,11 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
         if selected is not None:
             checkpoint_path = str(selected)
 
-    if not checkpoint_path or not Path(checkpoint_path).exists():
+    # **With an expectation, the build's read decides whether the file is
+    # there**: a file removed since it was shown is not the model shown
+    # (`CheckpointChanged`, below), not "no checkpoint found, train a model".
+    expected = request.expected_checkpoint_sha256
+    if not checkpoint_path or (expected is None and not Path(checkpoint_path).exists()):
         # If checkpoints exist outside the run layout, say so: they are not
         # selected automatically (decision 9: no runtime fallback), so guide the
         # user rather than contradict files_found.
@@ -437,13 +492,31 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
     # the served pipeline exactly as it was, whereas freeing first buys headroom
     # by making every later failure unrecoverable.
     from src.api.main import build_pipeline, publish_pipeline
+    from src.utils.checkpoint_io import CheckpointChanged
 
+    # **The model the caller was shown is a precondition of this reload**,
+    # compared on the build's one checkpoint read before torch parses the bytes.
+    # A file rewritten after the caller hashed it (a training run renames a new
+    # `last.pt` into place every epoch, and the build reads the whole graph
+    # before the checkpoint), torn, of another graph, or removed, is refused as
+    # what it is -- not the model that was shown -- before any model is built
+    # from it; there is no "reloaded, but with other bytes" to report afterwards.
+    # Without an expectation the reload is unbound, as before: automatic
+    # selection serves what the build read (19.1, below).
     try:
         candidate = build_pipeline(
             kg_path=kg_path,
             checkpoint_path=checkpoint_path,
             data_dir=data_dir,
             device=device,
+            expected_checkpoint_sha256=expected,
+        )
+    except CheckpointChanged as exc:
+        held = (f"it holds {exc.found[:12]} now, not {exc.expected[:12]}"
+                if exc.found is not None else f"it is gone; {exc.expected[:12]} was shown")
+        return _refused(
+            f"{checkpoint_path} is not the model that was shown: {held}. Nothing was "
+            f"published; read it again to see what it holds.{_still_serving()}", files
         )
     except Exception as e:
         logger.error(f"Pipeline reload failed: {e}")
@@ -457,6 +530,11 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
             f"No pipeline could be built from {data_dir}. "
             f"Check server logs.{_still_serving()}", files
         )
+
+    # The digest of the build's own single checkpoint read: the model it serves
+    # (19.1's note below compares the scan's read with it).
+    served_sha = ((candidate.config.get("served_identity") or {}).get("checkpoint")
+                  or {}).get("sha256")
 
     if selected is not None:
         # **The metric reported is the served read's** (contract M3c, BACKLOG
@@ -474,8 +552,6 @@ async def reload_pipeline(request: PipelineReloadRequest) -> PipelineReloadRespo
         # against the others. Either way the loaded file's metric, if its
         # metadata has one, is shown as the loaded file's, never as a winner.
         detail = ranking_score_detail(candidate.config.get("checkpoint_meta"))
-        served_identity = candidate.config.get("served_identity") or {}
-        served_sha = (served_identity.get("checkpoint") or {}).get("sha256")
         scored_sha = scored_digests.get(str(selected))
         replaced = scored_sha is not None and scored_sha != served_sha
         if str(selected) not in scored_paths:
@@ -556,9 +632,26 @@ async def get_ui_config() -> UIConfigResponse:
     return UIConfigResponse()
 
 
-@router.post("/pipeline/config", response_model=UIConfigResponse)
+@router.post("/pipeline/config", response_model=UIConfigResponse,
+             dependencies=OPERATOR_ONLY)
 async def save_ui_config(config: UIConfigResponse) -> UIConfigResponse:
-    """Save UI configuration to .shepherd_ui_config.json.
+    """Save UI configuration to .shepherd_ui_config.json (`write_ui_config`).
+
+    An operator control: refused by D8's dependency before anything is written.
+    """
+    try:
+        return write_ui_config(config)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to save config: {e}",
+        )
+
+
+def write_ui_config(config: UIConfigResponse, target: Optional[Path] = None) -> UIConfigResponse:
+    """The one writer of .shepherd_ui_config.json, called by the route above
+    after D8's check (the dashboard's Save Config was removed in M5-2). `target`
+    is the file, `CONFIG_FILE` unless a test names another one to write.
 
     **Written beside the target and renamed onto it**, so an interrupted write
     leaves the previous selection intact instead of a truncated file. This is
@@ -568,23 +661,21 @@ async def save_ui_config(config: UIConfigResponse) -> UIConfigResponse:
     and the operator sees that default in the path field rather than being
     served from it silently — but the failure it removes is a real one, and
     losing an operator's workspace selection has no upside.
+
+    Raises whatever the write raised (``OSError``, typically), after removing
+    its staged file: the file named is then as it was.
     """
+    path = CONFIG_FILE if target is None else Path(target)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle, staged = create_staging_file(path, binary=False)
     try:
-        CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
-        handle, staged = create_staging_file(CONFIG_FILE, binary=False)
-        try:
-            with handle:
-                json.dump(config.model_dump(), handle, indent=2)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(staged, CONFIG_FILE)
-        except BaseException:
-            Path(staged).unlink(missing_ok=True)
-            raise
-        logger.info(f"UI config saved to {CONFIG_FILE}")
-        return config
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to save config: {e}",
-        )
+        with handle:
+            json.dump(config.model_dump(), handle, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(staged, path)
+    except BaseException:
+        Path(staged).unlink(missing_ok=True)
+        raise
+    logger.info(f"UI config saved to {path}")
+    return config

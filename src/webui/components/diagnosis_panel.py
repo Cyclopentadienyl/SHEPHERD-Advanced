@@ -1,63 +1,92 @@
 """
-SHEPHERD-Advanced Diagnosis Panel Component
-=============================================
-Gradio UI component for clinician-facing rare disease diagnosis (Tab 2).
+Diagnosis (clinical): the dashboard's first screen (M5-2, UI-B).
+================================================================
+`docs/working/PLAN_TEST_RESULTS.md` §6, "M5's boundaries", and the M5 mockups
+(round 2): the clinician's page for one question — which rare diseases fit
+these phenotypes, and what produced the answer.
+
+**Layout** (the page contract, `src/webui/shell.py`; this module's ``PAGE_CSS``):
+wide (at least 1400 × 760 CSS px) one screen in three panels — the input column
+| the candidates | the selected candidate's details — each long region
+scrolling inside its own panel; narrow, the panels stack and only the page
+scrolls.
+
+- **The input column**: HPO terms, Patient ID (a blank field is sent as no id,
+  so the API gives the result its own), Options (Top-K, Explanations), then the
+  **"Model in use" card** and Run Diagnosis, the last item of the column's
+  scroll body and sticky at its bottom: they follow Options when there is room
+  and pin when the column overflows. The card (`diagnosis_card`) is the one
+  place the served identity appears; the header's "Serving now" strip and the
+  Model Configuration accordion (paths, Load/Reload, Save Config, Reset) are
+  gone, their gated operations living on in the shared Load
+  (`model_list`, through "Change model…"); ``POST /pipeline/config`` stays
+  for API clients, gated by WP2.
+- **Run Diagnosis** is greyed out and not clickable when no model is loaded
+  (a bubble on hover and on keyboard focus says why, and the reason is visible
+  text under it) and while a model change is open; while this page's Load
+  reloads, the card says "Loading <12 hex> for every session… <elapsed>" and
+  Run Diagnosis says the load is in progress (the mockup's state 3; set in the
+  list's step before the reload, taken back after its answer). The API's demo
+  answer for API clients is unchanged.
+- **The candidates**: the results badge ("Produced by the model in use" /
+  "Produced by an earlier model or pipeline — N parts differ ›" / "Cannot
+  check against the model in use yet" with its one reason), the identity
+  banners of the result, its warnings and the ranked table. **The badge
+  compares the whole served identity**, part by part, as the identity table
+  reads it (`_identity_rows`), the result's against the card's last read; a
+  read that failed or is older than the result never leaves "equal" showing.
+  The footer holds the exports (unchanged: CSV and report keep the result's own
+  identity; not shown until a result exists) and the medical-device line, once.
+- **The details** of the selected row: Evidence · Explanation · Matching
+  phenotypes · Paths (in-page segments).
+- **Two drawers**, one open at a time: the identity drawer ("Model in use |
+  This result") over the details column, and "Change model…" (the clinical
+  preset of the shared model list and its Load) over the candidates and the
+  details. A request D8 refuses gets Change model… disabled with the reason;
+  the list is never shown to it.
+
+**Architecture note.** The diagnosis itself goes through the shared API over
+HTTP (`_call_diagnose`, `_self_request`), as every frontend's does. What is
+served is read through the dashboard's one status reader, in process
+(`served_status.read_status`, by the card), and the Load is the shared one
+(`model_list`: D8 on its own request, WP2's in-process reload). This module
+calls no reload and writes no configuration.
+
+**Per browser session**: the result, the selection, the card's last read and
+the drawers are `gr.State`; nothing here is module state (BACKLOG 28).
 
 Module: src/webui/components/diagnosis_panel.py
-
-Purpose:
-    Provide the Inference Testing tab with:
-    - HPO phenotype input (manual entry with validation)
-    - Top-K and options configuration
-    - Ranked disease candidate display with scores
-    - Evidence panel showing Mode A (direct path) or Mode B (analogy-based)
-    - Confidence labels (Strong/Weak/Analogy/Insufficient) as colored badges
-    - What produced each result (the served identity, contract M3c): a summary
-      line and a full identity table under the results, banners for a synthetic
-      workspace, a missing model or the demo answer, and the same identity in
-      the CSV and Markdown exports and in the model status
-    - The loaded model's recorded test results (Mode C) under the model status,
-      read from the read-only `/api/v1/evaluations/loaded-model` and shown only
-      for the checkpoint the status names
-
-Architecture Note:
-    This component calls the /api/v1/diagnose endpoint via HTTP (requests),
-    NOT by importing pipeline directly. This keeps the Gradio UI decoupled
-    from the inference layer and ensures the same code path as external
-    API clients.
-
-Dependencies:
-    - gradio: UI components
-    - requests: HTTP client for API calls
-
-Version: 1.0.0
 """
 from __future__ import annotations
 
 import csv
 import io
-import json
 import logging
 import re
 import tempfile
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 import gradio as gr
 import requests
 
-from src.evaluation.caveats import (
-    MODE_C_RESULT_LABEL,
-    PRE_B1_NOTE,
-    R10_LABEL_TEXT,
-    R10_STATE_TEXT,
-    R10_UNVERIFIABLE_REASON,
-    RECORD_ABSENCE,
-    RELATION_DISPLAY_NAMES,
-)
 from src.utils.server_address import ServerAddressUnknownError, api_base_url
+from src.webui.components import diagnosis_card as card
+from src.webui.components.chips import D8_SHORT
+from src.webui.components.help import copy_button, help_button, text_id
+from src.webui.components.renderers import IDENTITY_BANNERS
+from src.webui.components.renderers import NOT_A_MEDICAL_DEVICE as _NOT_A_MEDICAL_DEVICE
+from src.webui.components.renderers import e as _e
+from src.webui.components.renderers import short_hex as _short_hex
+from src.webui.operator_access import operator_access
 
 logger = logging.getLogger(__name__)
+
+#: This page's id in the shell (`src.webui.shell.CLINICAL`; the shell and the
+#: model list are imported where the page is built, since the shell imports
+#: this package while it loads).
+CLINICAL = "clinical"
 
 
 def _api_url(path: str) -> str:
@@ -86,23 +115,6 @@ def _self_request(method: str, path: str, **kwargs: Any) -> requests.Response:
         return session.request(method, _api_url(path), **kwargs)
 
 
-# Shown when the pipeline loads but the GNN did not. This is not cosmetic: the
-# ranking then comes from path reasoning over the knowledge graph alone, so a
-# disease with no qualifying path cannot appear at all, and the confidence
-# figures are on a different footing from the GNN-fused ones. The system has
-# previously served in this state for a whole session without anyone noticing,
-# because the only signals were a tick turning into a cross and one INFO line.
-GNN_UNAVAILABLE_TOAST = (
-    "GNN not loaded — running in path-reasoning mode. Rankings come from "
-    "knowledge-graph paths only, without GNN embedding scores. Check the "
-    "checkpoint path, and the runtime status at the bottom of the page."
-)
-GNN_UNAVAILABLE_BANNER = (
-    "🔴 **Running WITHOUT the GNN — path-reasoning mode.** Rankings come from "
-    "knowledge-graph paths only; diseases with no qualifying path are not scored, "
-    "and confidence values are not comparable with GNN-fused ones. "
-    "Check the checkpoint path and the runtime line at the bottom of the page.\n"
-)
 
 # Canonical HPO term id, e.g. HP:0001250. Tolerant of case, an optional / missing
 # colon, and surrounding whitespace ("hp 0001250", "HP:0001250", "HP_0001250"),
@@ -127,7 +139,13 @@ def _parse_hpo_ids(text: str) -> List[str]:
     """
     return [f"HP:{match.group(1)}" for match in _HPO_ID_RE.finditer(text or "")]
 
-# Confidence label → (emoji, CSS color)
+#: What a candidate's score is, said under the report's table and in the
+#: Score column's help. The API field stays ``confidence_score`` (and the CSV
+#: column with it); the words shown say what the number is.
+SCORE_NOTE = ("Score ranks the candidates of this result. It is not a calibrated "
+              "disease probability.")
+
+# Evidence label (the API's confidence_label) → (emoji, CSS color)
 LABEL_STYLES = {
     "Strong path support": ("🟢", "#22c55e"),
     "Weak path support": ("🟡", "#eab308"),
@@ -136,19 +154,25 @@ LABEL_STYLES = {
 }
 
 
-
 # =============================================================================
 # API Client
 # =============================================================================
 def _call_diagnose(
     phenotypes: List[str],
-    patient_id: str = "",
+    patient_id: Optional[str] = None,
     top_k: int = 10,
     include_explanations: bool = True,
 ) -> Dict[str, Any]:
-    """Call the /api/v1/diagnose endpoint and return parsed JSON."""
+    """Call the /api/v1/diagnose endpoint and return parsed JSON.
+
+    **A blank Patient ID is sent as None**, not "" and not a fixed placeholder:
+    the API then gives the result its own id (``patient_…``), as the field
+    promises ("auto-generated if blank"). A fixed placeholder named every blank
+    result from every browser as one patient.
+    """
+    patient = patient_id.strip() if isinstance(patient_id, str) else None
     payload = {
-        "patient_id": patient_id or "webui_patient",
+        "patient_id": patient or None,
         "phenotypes": phenotypes,
         "top_k": top_k,
         "include_explanations": include_explanations,
@@ -244,253 +268,10 @@ def _refusal_line(entry: Dict[str, Any]) -> Optional[str]:
 
 
 # =============================================================================
-# Formatting helpers
-def _api_get(path: str) -> Tuple[Any, Optional[str]]:
-    """One GET to this server's API: ``(body, None)``, or ``(None, reason)``.
-
-    The reason is the real one, so an answer that did arrive -- an HTTP error, a
-    body that is not JSON -- is not reported as an API that could not be reached.
-    Shared by the status read and the recorded-results read, so the two cannot
-    describe one failure two ways.
-    """
-    try:
-        resp = _self_request("GET", path, timeout=5)
-        resp.raise_for_status()
-        return resp.json(), None
-    except ServerAddressUnknownError as e:
-        return None, str(e)
-    except requests.ConnectionError:
-        # ConnectTimeout is a ConnectionError too: the connection was never made.
-        return None, "API not reachable"
-    except requests.Timeout:
-        # Connected, but no answer in time -- a reload holds the server meanwhile.
-        return None, "API did not answer within 5 s"
-    except requests.HTTPError as e:
-        return None, f"API error {e.response.status_code}"
-    except requests.exceptions.InvalidJSONError:
-        # Narrower than ValueError, which requests also uses for a malformed URL
-        # or header -- a request that was never sent is not a reply.
-        return None, "the API's reply was not JSON"
-    except Exception as e:
-        return None, f"unexpected error: {e}"
-
-
-def _get_pipeline_status() -> Dict[str, Any]:
-    """Get pipeline status from API.
-
-    A failure carries its real reason (`_api_get`): the status line shows it
-    instead of "Pipeline not loaded".
-    """
-    body, error = _api_get("/api/v1/pipeline/status")
-    if error is not None:
-        return {"initialized": False, "error": error}
-    return body
-
-
-def _reload_pipeline(
-    data_dir: str, checkpoint_path: str, conv_type: str = "auto"
-) -> Dict[str, Any]:
-    """Reload pipeline via API."""
-    payload: Dict[str, Any] = {"data_dir": data_dir}
-    if checkpoint_path and checkpoint_path.strip():
-        payload["checkpoint_path"] = checkpoint_path.strip()
-    if conv_type:
-        payload["conv_type"] = conv_type
-    try:
-        resp = _self_request("POST", "/api/v1/pipeline/reload", json=payload, timeout=180)
-        resp.raise_for_status()
-        return resp.json()
-    except ServerAddressUnknownError as e:
-        return {"success": False, "message": str(e)}
-    except requests.ConnectionError:
-        return {"success": False, "message": "API server not reachable."}
-    except Exception as e:
-        return {"success": False, "message": str(e)}
-
-
-CONFIG_FILE = Path(".shepherd_ui_config.json")
-DEFAULT_WORKSPACE = "data/workspaces/default"
-#: Said by Save. The saved paths are read once, when the app is built, and fill
-#: the fields only until a page load finds a pipeline loaded (`_on_load_status`).
-CONFIG_SAVED = (
-    "Saved the paths shown; from the next start they pre-fill these fields only "
-    "while no pipeline is loaded."
-)
-#: The Data Directory field while a pipeline started from ``SHEPHERD_KG_PATH``
-#: alone is served. There is no workspace to show, and the saved preference
-#: would name one that is not served.
-PATH_ONLY_PLACEHOLDER = "(no workspace: graph served from SHEPHERD_KG_PATH)"
-
-
-def _load_saved_config() -> Dict[str, Any]:
-    """Load saved UI config directly from file (not HTTP — avoids startup race)."""
-    if CONFIG_FILE.exists():
-        try:
-            with open(CONFIG_FILE) as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {"data_dir": DEFAULT_WORKSPACE, "checkpoint_path": None}
-
-
-def _save_config_to_file(data_dir: str, checkpoint_path: str) -> str:
-    """Save current path config directly to file."""
-    try:
-        with open(CONFIG_FILE, "w") as f:
-            json.dump({"data_dir": data_dir, "checkpoint_path": checkpoint_path or None}, f, indent=2)
-        return CONFIG_SAVED
-    except Exception as e:
-        return f"Failed to save: {e}"
-
-
-#: `checkpoint_meta` entries that describe the run rather than measure the model.
-#: Everything else in it is a training-log metric the pipeline chose to copy
-#: (`src/inference/pipeline.py:CHECKPOINT_LOG_METRICS`), shown in the order it
-#: arrives, so the choice of metrics lives in one place.
-_CHECKPOINT_DESCRIPTIVE_KEYS = ("epoch", "params", "device")
-
-#: Shown until the first status read after the page loads. The status is not read
-#: while the app is being built: that happens before the server is serving, so
-#: what it found was stale by the time anyone looked.
-STATUS_CHECKING = "⏳ Checking pipeline status…"
-
-
-def _checkpoint_metric_label(key: str) -> str:
-    """``val_mrr`` -> ``Val MRR``; ``val_hits@10`` -> ``Val Hits@10``."""
-    return " ".join("MRR" if w == "mrr" else w[:1].upper() + w[1:] for w in key.split("_"))
-
-
-def _served_paths_line(status_data: Dict[str, Any]) -> str:
-    """The workspace and checkpoint file a loaded pipeline was built from, as one
-    status line (BACKLOG 17, F5).
-
-    The Data Directory and Checkpoint fields show the same paths after a page
-    load, but they are inputs the user edits; this line keeps naming what is
-    served whatever they hold. A path the status did not report is said to be
-    one, never guessed.
-    """
-    data_dir = _field(status_data, "current_data_dir")
-    if data_dir is _MISSING:
-        workspace = "Workspace not reported"
-    elif data_dir is None:
-        # A start from SHEPHERD_KG_PATH without SHEPHERD_DATA_DIR: a reload
-        # always names a workspace, so this is the one way to have none.
-        workspace = "No workspace: graph served from `SHEPHERD_KG_PATH`"
-    else:
-        workspace = f"Workspace {_md_code(data_dir, in_table=False)}"
-    checkpoint = _field(status_data, "current_checkpoint_path")
-    if checkpoint is _MISSING:
-        model = "checkpoint file not reported"
-    elif checkpoint is None:
-        model = "no checkpoint file"
-    else:
-        model = f"Checkpoint file {_md_code(checkpoint, in_table=False)}"
-    return f"- {workspace} · {model}"
-
-
-def _format_pipeline_status(status_data: Dict[str, Any]) -> str:
-    """Format pipeline status as Markdown."""
-    if not status_data.get("initialized", False):
-        error = status_data.get("error")
-        if error:
-            # The status could not be read at all. "Not loaded" here would be a
-            # guess shown as a fact -- it is how a tab calling the wrong port
-            # reported a serving pipeline as unloaded.
-            return f"⚠️ **Pipeline status unavailable:** {error}"
-        return "⚪ **Pipeline not loaded.** Configure paths below and click Load / Reload Pipeline."
-
-    gnn_ready = bool(status_data.get("gnn_ready"))
-    gnn = "✅" if gnn_ready else "❌"
-    sp = "✅" if status_data.get("sp_ready") else "❌"
-    mode = status_data.get("scoring_mode", "not reported")
-    kg_n = status_data.get("kg_nodes", 0)
-    kg_e = status_data.get("kg_edges", 0)
-    # What the loaded pipeline serves (contract M3c). It describes the pipeline
-    # loaded now, which a reload can replace; a result's own identity is shown
-    # beside that result, never taken from here.
-    identity = status_data.get("served_identity")
-    if not isinstance(identity, dict):
-        identity = None
-
-    lines = []
-    if not gnn_ready:
-        # A tick that has turned into a cross is too quiet for this: without the
-        # GNN the ranking comes from path reasoning alone, which is a different
-        # and narrower answer. The toast on load says so once; this says so for
-        # as long as it is true, so it survives a tab change, a refresh, or a
-        # screenshot pasted into a note.
-        lines.append(GNN_UNAVAILABLE_BANNER)
-    if identity is not None and _is_synthetic(identity):
-        lines.append(_identity_banner_md(_IDENTITY_BANNERS["synthetic"]))
-    lines += [
-        f"🟢 **Pipeline loaded** | Mode: `{mode}`",
-        f"- GNN: {gnn} | SP: {sp} | KG: {kg_n} nodes, {kg_e} edges",
-        _served_paths_line(status_data),
-    ]
-
-    # Checkpoint training info
-    ckpt_meta = status_data.get("checkpoint_meta", {})
-    if ckpt_meta:
-        epoch = ckpt_meta.get("epoch")
-        params = ckpt_meta.get("params")
-        device = ckpt_meta.get("device", "?")
-        meta_parts = []
-        if epoch is not None:
-            meta_parts.append(f"Epoch {epoch}")
-        if params is not None:
-            meta_parts.append(f"{params:,} params")
-        meta_parts.append(f"device={device}")
-        # Training-log metrics, as the pipeline copied them
-        for key, val in ckpt_meta.items():
-            if key in _CHECKPOINT_DESCRIPTIVE_KEYS:
-                continue
-            if isinstance(val, (int, float)) and not isinstance(val, bool):
-                meta_parts.append(f"{_checkpoint_metric_label(key)}: {val:.4f}")
-        lines.append(f"- Checkpoint: {' | '.join(meta_parts)}")
-
-    if identity is not None:
-        lines.append(f"- {_identity_summary_md(_SERVED, identity, lead='Serving')}")
-        # **The boundary and its qualifier, by the identity block's rule.** A
-        # path-only or in-memory pipeline has nothing marked ✓, and the §6 line
-        # alone would then read as a claim that its graph file was checked
-        # against a record; `_claim_boundary_lines` adds what the report and
-        # the tab add for the same identity.
-        for sentence in _claim_boundary_lines(_SERVED, identity,
-                                              IDENTITY_NOTHING_CHECKED_LOADED):
-            lines += ["", f"<sub>{sentence}</sub>"]
-    else:
-        lines.append(
-            "- **Serving:** not reported — the API's status did not say what the "
-            "loaded pipeline serves."
-        )
-
-    # **Structural fingerprint warnings, not identity.** `verify_fingerprint`
-    # compares the node types, node counts, edge-type count and feature sizes the
-    # checkpoint recorded with the served graph's. Which graph the model was
-    # trained on is a different question, settled by digest before the model is
-    # built (contract M2.4) and stated in the served identity above; this heading
-    # used to read "KG version mismatch", which a verified graph digest beside it
-    # contradicted.
-    fp_warns = status_data.get("fingerprint_warnings", [])
-    if fp_warns:
-        lines.append("")
-        lines.append(
-            f"⚠️ **Graph structure differs from the checkpoint's structural "
-            f"fingerprint** ({len(fp_warns)} warning{'s' if len(fp_warns) != 1 else ''}; "
-            "node types and counts, edge-type count and feature sizes compared, "
-            "not the graph's identity):"
-        )
-        for w in fp_warns[:3]:
-            lines.append(f"- {w}")
-
-    return "\n".join(lines)
-
-
-# =============================================================================
 # Formatting helpers — diagnosis results
 # =============================================================================
 def _format_results_table(candidates: List[Dict]) -> str:
-    """Format candidates as a Markdown table for the results area."""
+    """Format candidates as a Markdown table (the exported report)."""
     if not candidates:
         return "*No candidates found.*"
 
@@ -508,14 +289,15 @@ def _format_results_table(candidates: List[Dict]) -> str:
         )
 
     header = (
-        "| Rank | Disease | Confidence | GNN | SP | Evidence |\n"
-        "|:----:|---------|:----------:|:---:|:--:|----------|\n"
+        "| Rank | Disease | Score | GNN | SP | Evidence |\n"
+        "|:----:|---------|:-----:|:---:|:--:|----------|\n"
     )
-    return header + "\n".join(rows)
+    return header + "\n".join(rows) + "\n\n" + SCORE_NOTE
 
 
 def _format_evidence_detail(candidate: Dict) -> str:
-    """Format evidence package for a single selected candidate."""
+    """Format a candidate's evidence package in Markdown (the exported report;
+    the page draws it as escaped HTML, `evidence_html`)."""
     pkg = candidate.get("evidence_package")
     if not pkg:
         return "*No evidence package available. Run with `include_explanations=true`.*"
@@ -589,12 +371,12 @@ def _format_full_explanation(candidate: Dict) -> str:
 # =============================================================================
 # What produced a result: the served identity (contract M3c)
 # =============================================================================
-# **One reading of the identity for every surface.** The report, the tab's
-# identity block and summary line, the model status and the CSV all read the
-# `served_identity` the API copied from the result it answered with (the status
-# reads the loaded pipeline's). The table rows are built once, by
-# `_identity_rows`, so the report and the tab cannot describe one result two
-# ways. Every part states its state in the contract's words (verified,
+# **One reading of the identity for every surface.** The report, the identity
+# drawer's "This result", the results badge and the CSV all read the
+# `served_identity` the API copied from the result it answered with (the card
+# reads the loaded pipeline's, from the status). The table rows are built once,
+# by `_identity_rows`, so the report, the drawer and the badge's comparison
+# cannot describe one result two ways. Every part states its state in the contract's words (verified,
 # unverified, in_memory, supplied_in_memory, absent); a value that is not there
 # is written as that state and its reason, never left blank and never "unknown".
 
@@ -610,8 +392,8 @@ IDENTITY_CLAIM_BOUNDARY = (
 IDENTITY_NOTHING_CHECKED = (
     "No relation is marked ✓ for this result: nothing in it was checked against a record."
 )
-#: The same, said of the loaded pipeline: the model status describes what is
-#: loaded now, not a result.
+#: The same, said of the loaded pipeline: the identity drawer's "Model in use"
+#: describes what is loaded now, not a result.
 IDENTITY_NOTHING_CHECKED_LOADED = (
     "No relation is marked ✓ for the loaded pipeline: nothing it serves was "
     "checked against a record."
@@ -622,10 +404,9 @@ IDENTITY_NOTHING_CHECKED_LOADED = (
 IDENTITY_CHECKS_NOT_REPORTED = (
     "The response did not say what produced it or what was checked."
 )
-#: README's statement, carried by every report and identity block.
-NOT_A_MEDICAL_DEVICE = (
-    "Not a certified medical device; decision support for a qualified clinician."
-)
+#: README's statement, carried by every report and identity block (one place
+#: for the words: the shared renderers, which Model Facts also uses).
+NOT_A_MEDICAL_DEVICE = _NOT_A_MEDICAL_DEVICE
 
 #: The word for the demo answer (`served_identity` null: no pipeline is
 #: configured, nothing was served). It fills every identity cell and column.
@@ -674,37 +455,10 @@ _PATH_SETTING_KEYS = (
 
 #: (headline, detail) for each state a reader must not miss. Words carry the
 #: meaning; the tab adds an icon, the report a blockquote, neither relies on it.
-_IDENTITY_BANNERS = {
-    IDENTITY_DEMO: (
-        "DEMO ANSWER: not computed.",
-        "No pipeline is configured on this server, so these candidates are "
-        "illustrative, not computed from any model, graph or table. Nothing here "
-        "is a diagnosis.",
-    ),
-    IDENTITY_NOT_REPORTED: (
-        "WHAT PRODUCED THIS RESULT WAS NOT REPORTED.",
-        "The API's response carried no served identity, so these candidates "
-        "cannot be attributed to a model, graph or table.",
-    ),
-    "synthetic": (
-        "SYNTHETIC WORKSPACE: not a clinical result.",
-        "The served workspace's dataset record gives its origin as synthetic: a "
-        "generated stand-in, not a clinical knowledge graph. Results are for "
-        "testing only.",
-    ),
-    "no_model": (
-        "NO TRAINED MODEL: path-reasoning fallback.",
-        "No checkpoint is served, so candidates are ranked by path reasoning over "
-        "the knowledge graph alone: a disease with no qualifying path is not "
-        "scored, and scores are not comparable with GNN scores.",
-    ),
-    "no_sp": (
-        "NO SHORTEST-PATH TABLE: GNN score alone.",
-        "A trained model is served without a shortest-path table, so each score is "
-        "the GNN's alone (scoring mode gnn_only, mixing weight eta 1.0) and differs "
-        "from one computed with the table.",
-    ),
-}
+#: Defined once in the shared renderers (Model Facts' warnings say the same).
+_IDENTITY_BANNERS = IDENTITY_BANNERS
+assert set(_IDENTITY_BANNERS) >= {IDENTITY_DEMO, IDENTITY_NOT_REPORTED, "synthetic",
+                                  "no_model", "no_sp"}
 
 
 def _identity_of(container: Dict[str, Any]) -> Tuple[str, Optional[Dict[str, Any]]]:
@@ -783,15 +537,6 @@ def _md_digest(value: Any) -> str:
     return f"`sha256:{value}`" if _is_sha256(value) else _md_code(value)
 
 
-def _md_short(value: Any) -> str:
-    """The first `_SHORT_HEX` characters of a digest or identifier, for a
-    summary line (never a table cell)."""
-    if _is_sha256(value):
-        return f"`sha256:{value[:_SHORT_HEX]}…`"
-    text = _plain_value(value)
-    return _md_code(text[:_SHORT_HEX] + "…" if len(text) > _SHORT_HEX else text, in_table=False)
-
-
 _NOT_REPORTED_CELLS = (
     "not\\_reported", "not reported — the response did not include this value"
 )
@@ -862,8 +607,8 @@ def _shortest_path_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
     return _NOT_REPORTED_CELLS
 
 
-#: What a dataset record's origin means, wherever the panel names one: the
-#: served identity and the recorded results.
+#: What a dataset record's origin means, where the panel names one (the
+#: served identity).
 _DATASET_ORIGIN_MEANING = {
     "synthetic": "a generated stand-in, not a clinical knowledge graph",
     "files": "built from identified source files",
@@ -957,9 +702,9 @@ def _claim_boundary_lines(kind: str, identity: Optional[Dict[str, Any]],
                           nothing_checked: str = IDENTITY_NOTHING_CHECKED) -> List[str]:
     """The §6 claim boundary and the sentence that qualifies it, if any.
 
-    The one rule for every surface that shows the boundary: the report and the
-    tab's identity block (through `_identity_table_lines`) and the model status,
-    which passes the sentence worded for the loaded pipeline.
+    The one rule for every surface that shows the boundary: the report (through
+    `_identity_table_lines`), the identity drawer's "This result", and its
+    "Model in use", which passes the sentence worded for the loaded pipeline.
     "Nothing marked ✓" is read from `_identity_rows`, the rows the table shows.
     """
     lines = [IDENTITY_CLAIM_BOUNDARY]
@@ -998,437 +743,6 @@ def _identity_banners(kind: str, identity: Optional[Dict[str, Any]]) -> List[Tup
     elif _has_model(identity) and _field(_field(identity, "shortest_paths"), "state") == "absent":
         banners.append(_IDENTITY_BANNERS["no_sp"])
     return banners
-
-
-def _identity_banner_md(banner: Tuple[str, str]) -> str:
-    """A banner for the tab, built like `GNN_UNAVAILABLE_BANNER`: the words carry
-    it, the icon only draws the eye."""
-    headline, detail = banner
-    return f"⚠️ **{headline}** {detail}\n"
-
-
-def _identity_summary_md(
-    kind: str, identity: Optional[Dict[str, Any]], lead: str = "Produced by"
-) -> str:
-    """One line naming what produced a result, with short digests.
-
-    The full values are in the identity table (`_identity_rows`); this line is
-    for reading at a glance, never for copying a digest from.
-    """
-    if kind == IDENTITY_DEMO:
-        return (f"**{lead}:** demo answer — no pipeline is configured; these "
-                "candidates were not computed.")
-    if kind != _SERVED or identity is None:
-        return (f"**{lead}:** not reported — the API's response did not say what "
-                "produced this result.")
-
-    checkpoint = _field(identity, "checkpoint")
-    graph = _field(identity, "graph")
-    shortest_paths = _field(identity, "shortest_paths")
-    record = _field(identity, "dataset_record")
-    mode = _field(identity, "scoring_mode")
-    device = _field(_field(identity, "settings"), "device")
-
-    parts = []
-    state = _field(checkpoint, "state")
-    if state == "verified":
-        parts.append(f"checkpoint {_md_short(_field(checkpoint, 'sha256'))} {_VERIFIED_MARK}")
-    elif state == "supplied_in_memory":
-        parts.append("model supplied in memory (no checkpoint)")
-    elif state == "absent":
-        parts.append("no trained model (checkpoint absent)")
-    else:
-        parts.append("checkpoint not reported")
-
-    state = _field(graph, "state")
-    if state in ("verified", "unverified"):
-        mark = _VERIFIED_MARK if state == "verified" else "unverified"
-        parts.append(f"graph {_md_short(_field(graph, 'kg_sha256'))} {mark}")
-    elif state == "in_memory":
-        parts.append("graph in memory (no file)")
-    else:
-        parts.append("graph not reported")
-
-    state = _field(shortest_paths, "state")
-    if state == "verified":
-        parts.append(f"SP table {_md_short(_field(shortest_paths, 'build_id'))} {_VERIFIED_MARK}")
-    elif state == "absent":
-        parts.append("no SP table")
-    else:
-        parts.append("SP table not reported")
-
-    parts.append(_md_code(mode, in_table=False) if isinstance(mode, str)
-                 else "scoring mode not reported")
-    if isinstance(device, str):
-        parts.append(_md_code(device, in_table=False))
-
-    state = _field(record, "state")
-    if state == "verified":
-        parts.append(f"dataset {_md_text(_field(record, 'origin'))} {_VERIFIED_MARK}")
-    elif state == "absent":
-        parts.append("no dataset record")
-    else:
-        parts.append("dataset record not reported")
-    return f"**{lead}:** " + " · ".join(parts)
-
-
-def _identity_details_md(kind: str, identity: Optional[Dict[str, Any]]) -> str:
-    """The full identity table in a closed block under the result (the tab)."""
-    return "\n".join([
-        "<details><summary>What produced this result — full identity</summary>",
-        "",
-        *_identity_table_lines(kind, identity),
-        "",
-        "</details>",
-    ])
-
-
-# =============================================================================
-# Recorded test results for the loaded model (PLAN_TEST_RESULTS D8; M4)
-# =============================================================================
-# **Read from the API, worded by the caveats.** The records come from
-# `GET /api/v1/evaluations/loaded-model`, never from the ledger file: this tab
-# reads nothing in its own process (architecture note above). What every record
-# says beside its numbers -- the Mode C label, the B-1 note, R10's label names,
-# states and definitions, what an empty ledger means, the relation names -- is the
-# text in `src/evaluation/caveats.py`, rendered and never reworded here. The block
-# is appended to the model status Markdown (`_status_with_recorded_results`), so
-# the status stays one output component of the load and reload events.
-
-#: The block's heading.
-RECORDED_RESULTS_HEADING = "Recorded test results (Mode C)"
-#: Said instead of the records when they describe another checkpoint than the
-#: status read just before them: a reload landed between the two reads.
-RECORDS_MODEL_CHANGED = (
-    "The loaded model changed while its recorded results were read; refresh the page."
-)
-#: The states the API answers with (`src/api/routes/evaluations.py`).
-_RECORD_STATES = (
-    "no_model", "not_identified", "no_ledger", "ledger_not_read", "no_records", "records",
-)
-_R10_EVIDENCE_WORDS = {
-    "found": "found",
-    "not_found": "not found",
-    "unreadable": "found, not readable",
-    "not_recorded": "not recorded by the checkpoint",
-}
-#: A relation named by its contract number (R1, R2, ...), shown with it.
-_NUMBERED_RELATION_RE = re.compile(r"R\d+")
-
-
-def _get_loaded_model_evaluations() -> Dict[str, Any]:
-    """The loaded model's recorded results, from one GET.
-
-    Any failure is ``{"state": "unavailable", "error": <reason>}``, with the
-    reason `_api_get` gives: the records are read beside the model status, and
-    failing to read them must never become a failure of the status.
-    """
-    body, error = _api_get("/api/v1/evaluations/loaded-model")
-    if error is None and not isinstance(body, dict):
-        error = "the API's reply was not an object"
-    if error is not None:
-        return {"state": "unavailable", "error": error}
-    return body
-
-
-def _served_checkpoint_sha(status_data: Dict[str, Any]) -> Optional[str]:
-    """The checkpoint digest a status names as served, or ``None`` where it
-    names none (no model, a model supplied in memory, no identity reported)."""
-    checkpoint = _field(_field(status_data, "served_identity"), "checkpoint")
-    sha = _field(checkpoint, "sha256")
-    if _field(checkpoint, "state") == "verified" and _is_sha256(sha):
-        return sha
-    return None
-
-
-def _record_text(value: Any) -> str:
-    """A value from the records reply as Markdown-safe text; "not reported" for
-    one the reply left out."""
-    return "not reported" if value is _MISSING else _md_text(value)
-
-
-def _metric_order(name: str) -> Tuple[int, int, str]:
-    """MRR, mean rank, Hits@k by k, then anything else by name."""
-    if name == "untruncated_mrr":
-        return (0, 0, name)
-    if name == "mean_rank":
-        return (1, 0, name)
-    k = name[len("hits@"):]
-    if name.startswith("hits@") and k.isdigit():
-        return (2, int(k), name)
-    return (3, 0, name)
-
-
-def _mode_c_metric_label(name: str) -> str:
-    """``untruncated_mrr`` -> ``Mode C MRR (untruncated)``; ``hits@10`` ->
-    ``Mode C Hits@10``.
-
-    **Always "Mode C".** The Checkpoint line above shows the trainer's "Val MRR",
-    a top-20 metric on the selection split; a recorded result read under the same
-    name would be quoted as that number, or that number as this one.
-    """
-    if name == "untruncated_mrr":
-        return "Mode C MRR (untruncated)"
-    if name == "mean_rank":
-        return "Mode C mean rank"
-    if name.startswith("hits@"):
-        return f"Mode C Hits@{_md_text(name[len('hits@'):])}"
-    return f"Mode C {_md_text(name)}"
-
-
-def _metrics_text(metrics: Any) -> str:
-    if not isinstance(metrics, dict) or not metrics:
-        return "no metrics recorded"
-    parts = []
-    for name in sorted((str(key) for key in metrics), key=_metric_order):
-        value = metrics[name]
-        number = isinstance(value, (int, float)) and not isinstance(value, bool)
-        parts.append(f"{_mode_c_metric_label(name)} "
-                     f"{f'{value:.4f}' if number else _md_text(value)}")
-    return " · ".join(parts)
-
-
-def _coverage_text(record: Any) -> str:
-    """Ranked of source, and every exclusion with its count (D6): the
-    denominators a coverage figure needs."""
-    counts = _field(record, "counts")
-    excluded = _field(counts, "excluded")
-    if isinstance(excluded, dict):
-        reasons = " · ".join(
-            f"{_md_text(str(name).replace('_', ' '))} {_record_text(count)}"
-            for name, count in excluded.items()
-        ) or "none"
-    else:
-        reasons = "not reported"
-    return (
-        f"Coverage: {_record_text(_field(record, 'n_ranked'))} of "
-        f"{_record_text(_field(counts, 'source_cases'))} source cases ranked "
-        f"({_record_text(_field(counts, 'ranked_eligible'))} eligible) · "
-        f"{_record_text(_field(counts, 'n_excluded'))} excluded: {reasons}"
-    )
-
-
-def _relations_text(relations: Any) -> str:
-    """Each relation's state on the bytes the measurement read: ✓ where it was
-    verified, "not applicable" where it does not apply to this kind of cohort."""
-    if not isinstance(relations, dict):
-        return "not reported"
-    names = [*(name for name in RELATION_DISPLAY_NAMES if name in relations),
-             *(name for name in relations if name not in RELATION_DISPLAY_NAMES)]
-    parts = []
-    for name in names:
-        display = RELATION_DISPLAY_NAMES.get(name)
-        if display is None:
-            label = _md_text(name)
-        elif _NUMBERED_RELATION_RE.fullmatch(name):
-            label = f"{name} {display}"
-        else:
-            label = display
-        state = relations[name]
-        if state == "verified":
-            parts.append(f"{label} {_VERIFIED_MARK}")
-        elif state == "not_applicable":
-            parts.append(f"{label}: not applicable")
-        else:
-            parts.append(f"{label}: {_md_text(state)}")
-    return " · ".join(parts) or "none reported"
-
-
-def _r10_label_text(label: str, name: str, part: Any, evidence: Any) -> str:
-    """One R10 label: its state in the caveats' words, and its count with the
-    denominator only where the state has one.
-
-    **"unverifiable" and "no validation inputs recorded" are words, never a
-    number:** neither a 0 that would read as "no overlap" nor a denominator that
-    would read as a count.
-
-    **An unverifiable label gives its scope's reason** (`evidence`, the scope's
-    evidence state): bytes not found, found and not readable, or a checkpoint
-    that names no such file, which no evidence directory can help. The generic
-    words are used only when the evidence state is not one of those.
-    """
-    state = _field(part, "state")
-    words = R10_STATE_TEXT.get(state) if isinstance(state, str) else None
-    if state == "unverifiable" and isinstance(evidence, str):
-        words = R10_UNVERIFIABLE_REASON.get(evidence, words)
-    if words is None:
-        return f"{name}: not reported"
-    if state not in ("overlap", "none"):
-        return f"{name}: {words}"
-    unit = "distinct test diseases" if label == "disease_overlap" else "test cases"
-    count = f"{_record_text(_field(part, 'k'))} of {_record_text(_field(part, 'n'))} {unit}"
-    if label == "disease_overlap":
-        count += f"; {_record_text(_field(part, 'cases'))} test cases with one of them"
-    return f"{name}: {words} — {count}"
-
-
-def _r10_scope_text(scope: str, labels: Dict[str, Dict[str, str]], part: Any) -> str:
-    evidence = _field(_field(part, "evidence"), "state")
-    found = _R10_EVIDENCE_WORDS.get(evidence) if isinstance(evidence, str) else None
-    return f"R10, {scope} inputs (evidence {found or 'not reported'}): " + " · ".join(
-        _r10_label_text(label, text["name"], _field(part, label), evidence)
-        for label, text in labels.items()
-    )
-
-
-def _environment_text(record: Any) -> str:
-    text = _record_text(_field(record, "environment_class"))
-    gpu = _field(record, "gpu")
-    if isinstance(gpu, dict):
-        name, driver = _field(gpu, "name"), _field(gpu, "driver")
-        text += (f" · GPU {_md_text(name) if isinstance(name, str) else 'name not read'}, "
-                 f"driver {_md_text(driver) if isinstance(driver, str) else 'not read'}")
-    return text
-
-
-def _dataset_origin_text(origin: Any) -> str:
-    meaning = _DATASET_ORIGIN_MEANING.get(origin) if isinstance(origin, str) else None
-    if meaning is None:
-        return _record_text(origin)
-    # Called out, as the synthetic banner calls out the served workspace.
-    word = f"**{origin}**" if origin == "synthetic" else origin
-    return f"{word} — {meaning}"
-
-
-def _registration_text(record: Any) -> str:
-    registration = _field(record, "registration")
-    n = _field(record, "n_corroborating")
-    if isinstance(n, int) and not isinstance(n, bool):
-        corroborating = ("no corroborating report" if n == 0
-                         else f"{n} corroborating report{'s' if n != 1 else ''}")
-    else:
-        corroborating = "corroborating reports not reported"
-    report = _field(record, "source_artifact_digest")
-    return (
-        f"Registered #{_record_text(_field(registration, 'sequence'))} at "
-        f"{_record_text(_field(registration, 'registered_at'))} · {corroborating} · "
-        f"from report {'not reported' if report is _MISSING else _md_short(report)}"
-    )
-
-
-def _recorded_result_lines(record: Any) -> List[str]:
-    """One record: the cohort role and version, the Mode C metrics over the cases
-    ranked, then coverage, relations, R10, environment, dataset and registration.
-
-    **The version is shown by its manifest digest, beside its label.** A label is
-    unique only within one registry: the same source imported again under the
-    same label, in a recreated or second registry, is another version with
-    another manifest digest, and so another record key. Without the digest the
-    two records would read as one cohort measured twice.
-    """
-    cohort = _field(record, "cohort")
-    version = _field(cohort, "version_manifest_sha256")
-    lines = [
-        f"- **{_record_text(_field(cohort, 'role'))} · "
-        f"{_record_text(_field(cohort, 'label'))}** "
-        f"(version {'not reported' if version is _MISSING else _md_short(version)}) — "
-        f"{_metrics_text(_field(record, 'metrics'))}, over "
-        f"{_record_text(_field(record, 'n_ranked'))} ranked cases",
-        f"  - {_coverage_text(record)}",
-        f"  - Relations: {_relations_text(_field(record, 'relations'))}",
-    ]
-    r10 = _field(record, "r10")
-    lines += [f"  - {_r10_scope_text(scope, labels, _field(r10, scope))}"
-              for scope, labels in R10_LABEL_TEXT.items()]
-    lines += [
-        f"  - Environment: {_environment_text(record)}",
-        f"  - Dataset: {_dataset_origin_text(_field(record, 'dataset_origin'))}",
-        f"  - {_registration_text(record)}",
-    ]
-    return lines
-
-
-def _recorded_records_lines(evals: Dict[str, Any]) -> List[str]:
-    """The "records" state: the label and note, each record shown, the count of
-    those not shown, and once for the block the R10 definitions and the §6 line."""
-    records = _field(evals, "records")
-    records = records if isinstance(records, list) else []
-    not_shown = _field(evals, "records_not_shown")
-    lines: List[str] = []
-    if records:
-        lines += [f"{MODE_C_RESULT_LABEL}. {PRE_B1_NOTE}", ""]
-        for record in records:
-            lines += _recorded_result_lines(record)
-    if isinstance(not_shown, int) and not isinstance(not_shown, bool) and not_shown > 0:
-        many = not_shown != 1
-        lines += ["", (
-            f"{not_shown} record{'s' if many else ''} for these weights "
-            f"{'are' if many else 'is'} not shown: {'they do' if many else 'it does'} "
-            "not have the shape registration writes (the server's log says why)."
-        )]
-    if records:
-        definitions = " · ".join(
-            f"{text['name']}: {text['definition']}"
-            for labels in R10_LABEL_TEXT.values() for text in labels.values()
-        )
-        # Once for the block, not per record: the boundary is the same claim for
-        # every record, and the relations it refers to are the ones marked ✓.
-        lines += ["", f"<sub>R10 labels. {definitions}.</sub>",
-                  "", f"<sub>{IDENTITY_CLAIM_BOUNDARY}</sub>"]
-    return lines
-
-
-def _format_recorded_results(evals: Dict[str, Any], served_sha: Optional[str]) -> str:
-    """The recorded-results block for the model status, in Markdown.
-
-    ``served_sha`` is the checkpoint digest of the status read just before
-    (`_served_checkpoint_sha`). **The block is shown only for that digest:** the
-    API echoes the digest it filtered the ledger by, and an answer about another
-    checkpoint -- a reload landed between the two reads -- is said to be one,
-    never shown under this status.
-    """
-    heading = f"**{RECORDED_RESULTS_HEADING}**"
-    state = _field(evals, "state")
-    if state == "unavailable":
-        return f"⚠️ {heading} could not be read: {_record_text(_field(evals, 'error'))}"
-    echoed = _field(evals, "checkpoint_sha256")
-    if state not in _RECORD_STATES or echoed is _MISSING:
-        return f"⚠️ {heading}: the API's reply was not in a shape this page reads."
-    if echoed != served_sha:
-        return f"⚠️ {heading}: {RECORDS_MODEL_CHANGED}"
-    if state == "no_model":
-        return (f"{heading}: no trained model is loaded, so there are no recorded "
-                "results to look up.")
-    if state == "not_identified":
-        return (f"{heading}: the loaded model was supplied in memory, not read from a "
-                "checkpoint file, so it has no digest to look recorded results up by.")
-
-    ledger = _field(evals, "ledger")
-    name = _field(ledger, "file")
-    file = _md_code(name, in_table=False) if isinstance(name, str) else "not reported"
-    lines = [f"{heading} for checkpoint {_md_short(echoed)}", ""]
-    if state == "no_ledger":
-        lines.append(
-            f"No ledger ({file}) is beside the loaded checkpoint, so no recorded result "
-            "can be shown; that does not mean these weights were never evaluated."
-        )
-    elif state == "ledger_not_read":
-        lines.append(
-            f"The ledger ({file}) beside the loaded checkpoint was not read, so none of "
-            f"its records are shown: {_record_text(_field(ledger, 'problem'))}"
-        )
-    elif state == "no_records":
-        lines.append(RECORD_ABSENCE)
-    else:
-        lines += _recorded_records_lines(evals)
-    return "\n".join(lines)
-
-
-def _status_with_recorded_results(status_data: Dict[str, Any]) -> str:
-    """The model status, with the loaded model's recorded results under it.
-
-    The status is read first and the records second, and the block is shown only
-    for the checkpoint the status names (`_format_recorded_results`). With no
-    pipeline loaded, or no status read, nothing is looked up: there is no loaded
-    model to have results, and no second error line to add.
-    """
-    rendered = _format_pipeline_status(status_data)
-    if not status_data.get("initialized", False):
-        return rendered
-    block = _format_recorded_results(
-        _get_loaded_model_evaluations(), _served_checkpoint_sha(status_data)
-    )
-    return f"{rendered}\n\n{block}"
 
 
 # =============================================================================
@@ -1659,7 +973,7 @@ def _build_results_report_md(result: Dict[str, Any]) -> str:
         lines += [
             "",
             f"### #{c.get('rank')} — {c.get('disease_name')}",
-            f"`{_clean_disease_id(c.get('disease_id', ''))}` · confidence "
+            f"`{_clean_disease_id(c.get('disease_id', ''))}` · score "
             f"{_fmt_num(c.get('confidence_score')) or 'n/a'}",
             "",
             "**Evidence**",
@@ -1724,514 +1038,1546 @@ def _write_exports(result: Dict[str, Any]) -> Tuple[str, str]:
     return str(csv_path), str(md_path)
 
 
+
+# =============================================================================
+# The page: help texts and fixed words
+# =============================================================================
+#: DownloadButton update for the "no downloadable result" state.
+#: No result: the exports are not shown at all (the mockup's first screen has
+#: none), but stay mounted (``"hidden"``), so the next result only shows them.
+_EXPORTS_HIDDEN = gr.update(value=None, interactive=False, visible="hidden")
+#: A result whose export files could not be written (or that has no
+#: candidate): the exports are shown, disabled, beside the reason.
+_DOWNLOAD_DISABLED = gr.update(value=None, interactive=False, visible=True)
+
+#: The fields' help, behind the shared ⓘ (`src/webui/components/help.py`):
+#: ``{elem_id: (title, text)}``, registered by the tab builder. Only a
+#: state-bearing text stays visible.
+FIELD_HELP = {
+    "dx_hpo_terms": (
+        "HPO terms",
+        "Paste HPO ids in any format — one per line, or comma/space-separated. Names and "
+        "stray punctuation are ignored; only HP:####### ids are used. Repeats are sent as "
+        "typed; the service removes them and says how many.",
+    ),
+    "dx_patient_id": (
+        "Patient ID (optional)",
+        "An identifier for this diagnosis, carried by the result and its exports. Left blank, "
+        "the server gives the result its own id, so results from different browsers never "
+        "share one.",
+    ),
+    "dx_top_k": (
+        "Top-K",
+        "Number of candidate diagnoses to return (1 to 20).",
+    ),
+    "dx_explanations": (
+        "Explanations",
+        "Ask for each candidate's evidence and written explanation. Off, the ranking is the "
+        "same, and Evidence, Explanation and Paths stay empty.",
+    ),
+}
+
+#: Help that rendered HTML names by key (`help_button`), registered as topics.
+TOPIC_HELP = {
+    "dx-card": card.CARD_HELP,
+    "dx-badge": (
+        "Compared with the model in use",
+        "The whole served identity is compared, part by part: checkpoint, knowledge graph, "
+        "workspace manifest, shortest-path table, dataset record, scoring mode, device, "
+        "mixing weight eta, path settings and phenotype rule — never the checkpoint alone. "
+        "The model in use is the card's last status read. A read that failed, or one older "
+        "than the result, never shows \"Produced by the model in use\". The result, its CSV "
+        "and its report keep their own identity whatever the badge says.",
+    ),
+    "dx-score": (
+        "Score",
+        SCORE_NOTE + " A score of 0.72 does not mean a 72% chance of the disease.\n\n"
+        "GNN and SP are its parts, mixed as the result's identity records (Scoring mode, "
+        "Mixing weight eta). The CSV keeps the API's name for it, confidence_score.",
+    ),
+    "dx-exports": (
+        "Exports",
+        "CSV = one row per candidate (all Top-K) for spreadsheets · report = full evidence + "
+        "explanation for every candidate · both say what produced the result (the served_ "
+        "columns; the report's identity section).",
+    ),
+    "dx-candidate": (
+        "Candidate details",
+        "Select a row of Diagnosis results (click it, or focus it and press Enter) to show "
+        "that candidate here. Evidence, explanation, matching phenotypes and paths come from "
+        "this result only.",
+    ),
+    "dx-run-no-model": (
+        "Run Diagnosis is disabled",
+        "No model loaded: no pipeline is configured on this server, so nothing would compute "
+        "a diagnosis. An operator loads one with \"Load a model…\" on the card above. (An API "
+        "client asking now gets the demo answer, marked as such.)",
+    ),
+    "dx-run-change": (
+        "Run Diagnosis is disabled",
+        "A model change is open: finish it (Reload with …) or cancel it (Keep … or Cancel) "
+        "first. Diagnoses wait while the pipeline reloads.",
+    ),
+    "dx-run-loading": (
+        "Run Diagnosis is disabled",
+        "This page started a model load: the pipeline reloads for every session, and the server "
+        "answers no diagnosis until it finishes. Closing the change-model drawer does not stop "
+        "it.",
+    ),
+    **{f"dx-banner-{key}": (headline, detail) for key, (headline, detail) in IDENTITY_BANNERS.items()},
+}
+
+#: Why Run Diagnosis is off, as visible text under it.
+RUN_DISABLED_NO_MODEL = "Disabled: no model loaded. Load one with “Load a model…” above."
+RUN_DISABLED_NO_MODEL_READ_ONLY = (
+    "Disabled: no model loaded. An operator on the server's machine can load one.")
+RUN_DISABLED_CHANGE = "Disabled: finish or cancel the model change first."
+RUN_DISABLED_LOADING = "Disabled: a model load is in progress; diagnoses wait until it finishes."
+
+#: The change drawer's link to Research › Models: each "›" held to the word
+#: before it by a no-break space, so it is never alone on a line.
+COMPARE_LINK = "Compare in Research\u00a0› Models\u00a0›"
+
+#: The details segments: (label, value); the counts are added per candidate.
+SEGMENTS = (("Evidence", "evidence"), ("Explanation", "explanation"),
+            ("Matching phenotypes", "phenotypes"), ("Paths", "paths"))
+_SEGMENT_VALUES = tuple(value for _, value in SEGMENTS)
+#: The identity drawer's views.
+IDENTITY_VIEWS = (("Model in use", "model"), ("This result", "result"))
+
+#: What the matching phenotypes are (the API's own definition, in short).
+MATCHING_NOTE = (
+    "The query's phenotypes, as used, that the knowledge graph annotates directly to this "
+    "disease (the exact term; not ancestors or descendants, not gene-mediated). An empty "
+    "list does not mean no clinical overlap."
+)
+
+_DOT_CLASS = {
+    "Strong path support": "strong",
+    "Weak path support": "weak",
+    "Analogy-based (no direct KG path)": "analogy",
+    "Insufficient evidence": "none",
+}
+_CHECK_SVG = ('<svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" focusable="false">'
+              '<circle cx="8" cy="8" r="7" fill="currentColor"/><path d="M4.6 8.3l2.3 2.3 4.5-4.9" '
+              'fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round" '
+              'stroke-linejoin="round"/></svg>')
+
+
+# =============================================================================
+# The result, as the page shows it
+# =============================================================================
+def _num(value: Any) -> str:
+    return (f"{value:.3f}" if isinstance(value, (int, float)) and not isinstance(value, bool)
+            else "—")
+
+
+def _produced_at(result: Optional[Mapping[str, Any]]) -> Optional[str]:
+    """When the result was produced: the server's timestamp (this machine's
+    local time), else when the page received it."""
+    if not isinstance(result, Mapping):
+        return None
+    stamp = result.get("timestamp")
+    return stamp if card.parse_local(stamp) is not None else result.get("_received_at")
+
+
+def _sp_absent(result: Mapping[str, Any]) -> bool:
+    kind, identity = _identity_of(result)
+    return kind == _SERVED and _field(_field(identity, "shortest_paths"), "state") == "absent"
+
+
+def results_header_html(result: Optional[Mapping[str, Any]]) -> str:
+    """"Diagnosis results" and, at its right, how many candidates, how long and
+    when it was produced (or "no result yet")."""
+    if not isinstance(result, Mapping):
+        right = '<span class="shep-panel-right">no result yet</span>'
+    else:
+        n = len(result.get("candidates") or [])
+        ms = result.get("inference_time_ms")
+        took = f" · {ms:.1f} ms" if isinstance(ms, (int, float)) else ""
+        right = (f'<span class="shep-panel-right"><b>{n} candidate{"s" if n != 1 else ""}</b>'
+                 f'{_e(took)} · produced {_e(card.hhmmss(_produced_at(result)))}</span>')
+    return f'<div class="shep-panel-hd"><h2>Diagnosis results</h2>{right}</div>'
+
+
+def empty_results_html(no_model: bool = False, notice: Optional[str] = None) -> str:
+    """The results panel with no result: what to do, or `notice` (a refusal,
+    an error, inputs changed since the last run)."""
+    if notice:
+        return f'<div class="shep-dx-notice">{notice}</div>'
+    first = ("Run Diagnosis needs a loaded model. The card on the left says what is loaded."
+             if no_model else
+             "Enter the HPO terms, check the model in use on the left, then Run Diagnosis.")
+    return ('<div class="shep-dx-empty"><p class="shep-dx-empty-h">No result yet</p>'
+            f'<p>{_e(first)}</p><p class="shep-note">Each result says what produced it, compared '
+            'with the model in use.</p></div>')
+
+
+def compare_with_served(result: Mapping[str, Any], state: Mapping[str, Any]) -> Dict[str, Any]:
+    """The result's served identity against the card's last read, part by part
+    (`_identity_rows`, the one reading of an identity): ``equal``, ``differs``
+    (with the parts) or ``unknown`` (with one reason)."""
+    kind, identity = _identity_of(result)
+    total = len(_IDENTITY_PARTS)
+    keep = "This result keeps its own identity; its exports use it."
+    mode = card.card_mode(state, _produced_at(result))
+    if kind == IDENTITY_NOT_REPORTED:
+        return {"state": "unknown", "total": total, "differ": [],
+                "reason": f"The response did not say what produced it. {keep}"}
+    if mode == "checking":
+        return {"state": "unknown", "total": total, "differ": [],
+                "reason": f"The model in use has not been read yet. {keep}"}
+    if mode in ("unknown", "cannot_check"):
+        return {"state": "unknown", "total": total, "differ": [],
+                "reason": (f"The status read failed ({card.problem_sentence(state.get('problem'))}), "
+                           f"so \"Produced by the model in use\" is not shown. {keep}")}
+    if mode == "stale":
+        return {"state": "unknown", "total": total, "differ": [],
+                "reason": (f"The status was last read at {card.hhmmss(state.get('good_at'))}, "
+                           f"before this result was produced "
+                           f"({card.hhmmss(_produced_at(result))}), so \"Produced by the model in "
+                           f"use\" is not shown. {keep}")}
+    status = state.get("status") or {}
+    served = status.get("served_identity") if status.get("initialized") else None
+    served_kind_ = _SERVED if isinstance(served, dict) else IDENTITY_DEMO
+    if kind == IDENTITY_DEMO and served_kind_ == IDENTITY_DEMO:
+        return {"state": "unknown", "total": total, "differ": [],
+                "reason": "This is the demo answer: no pipeline is configured, so no model "
+                          "produced it."}
+    mine = _identity_rows(kind, identity)
+    now = _identity_rows(served_kind_, served if isinstance(served, dict) else None)
+    differ = [part for (part, s1, v1), (_, s2, v2) in zip(mine, now, strict=True)
+              if (s1, v1) != (s2, v2)]
+    return {"state": "differs" if differ else "equal", "total": total, "differ": differ,
+            "reason": None}
+
+
+def _parts_differ(n: int) -> str:
+    return f"{n} part differs" if n == 1 else f"{n} parts differ"
+
+
+def badge_html(result: Optional[Mapping[str, Any]], state: Mapping[str, Any]) -> str:
+    """The results badge, in the card's noun; its › opens "This result"."""
+    if not isinstance(result, Mapping):
+        return ""
+    compared = compare_with_served(result, state)
+    help_html = help_button("dx-badge", "Compared with the model in use")
+    if compared["state"] == "equal":
+        return (f'<div class="shep-dx-badge-row"><button type="button" class="shep-dx-badge '
+                f'shep-dx-badge-ok" data-key="result">{_CHECK_SVG} Produced by the model in use '
+                f'<span aria-hidden="true">›</span></button>{help_html}</div>')
+    if compared["state"] == "differs":
+        n = len(compared["differ"])
+        return (f'<div class="shep-dx-badge-row"><button type="button" class="shep-dx-badge '
+                f'shep-dx-badge-amber" data-key="result"><span aria-hidden="true">⇄</span> '
+                f'Produced by an earlier model or pipeline — <span class="shep-dx-u">'
+                f'{_parts_differ(n)} ›</span></button>{help_html}</div>')
+    return (f'<div class="shep-dx-badge-row"><button type="button" class="shep-dx-badge '
+            f'shep-dx-badge-grey" data-key="result"><span aria-hidden="true">?</span> Cannot '
+            f'check against the model in use yet</button>{help_html}</div>'
+            f'<p class="shep-dx-badge-why">{_e(compared["reason"])}</p>')
+
+
+_BANNER_KEYS = {headline: key for key, (headline, _detail) in IDENTITY_BANNERS.items()}
+
+
+def banners_html(result: Mapping[str, Any]) -> str:
+    """The result's identity banners: each headline visible, its detail behind
+    the ⓘ (the banners' own words, `renderers.IDENTITY_BANNERS`)."""
+    kind, identity = _identity_of(result)
+    out = []
+    for headline, _detail in _identity_banners(kind, identity):
+        key = _BANNER_KEYS.get(headline, "")
+        tone = "red" if key in ("demo", "not_reported", "no_model") else "amber"
+        out.append(f'<div class="shep-dx-banner shep-dx-banner-{tone}" role="note">'
+                   f'<span class="shep-dx-banner-ic" aria-hidden="true">⚠</span>'
+                   f'<b>{_e(headline)}</b>'
+                   f'{help_button(f"dx-banner-{key}", headline) if key else ""}</div>')
+    return "".join(out)
+
+
+def candidates_table_html(candidates: List[Mapping[str, Any]], selected: Any,
+                          sp_absent: bool = False) -> str:
+    """The ranked candidates; a row is selected by click, or by Enter or Space
+    when focused. Every value is escaped; a long name is clamped to two lines
+    with the full name in its title. With no shortest-path table served
+    (`sp_absent`), the SP column reads "—": no table contributed, whatever
+    number the API filled in (the exports keep the API's values)."""
+    if not candidates:
+        return '<div class="shep-reason">No candidates found.</div>'
+    rows = []
+    selected_class = ' class="shep-on"'
+    for c in candidates:
+        rank = c.get("rank")
+        on = rank == selected
+        name = _e(c.get("disease_name"))
+        label = c.get("confidence_label") or "—"
+        dot = _DOT_CLASS.get(label, "none")
+        rows.append(
+            f'<tr data-key="{_e(rank)}" tabindex="0" aria-selected="{"true" if on else "false"}"'
+            f'{selected_class if on else ""}><td class="shep-num">{_e(rank)}</td>'
+            f'<td class="shep-dx-dis"><span class="shep-dx-clamp" title="{name}">{name}</span></td>'
+            f'<td class="shep-num">{_num(c.get("confidence_score"))}</td>'
+            f'<td class="shep-num">{_num(c.get("gnn_score"))}</td>'
+            f'<td class="shep-num">{"—" if sp_absent else _num(c.get("sp_score"))}</td>'
+            f'<td><span class="shep-dx-dot shep-dx-dot-{dot}" aria-hidden="true"></span>'
+            f'{_e(label)}</td></tr>')
+    head = ('<tr><th scope="col" class="shep-num">Rank</th><th scope="col">Disease</th>'
+            f'<th scope="col" class="shep-num">Score{help_button("dx-score", "Score")}</th>'
+            '<th scope="col" class="shep-num">GNN'
+            '</th><th scope="col" class="shep-num">SP</th><th scope="col">Evidence</th></tr>')
+    return ('<div class="shep-tbl-wrap shep-dx-tbl-wrap"><table class="shep-tbl shep-dx-tbl" '
+            f'aria-label="Ranked candidates"><thead>{head}</thead><tbody>{"".join(rows)}</tbody>'
+            '</table></div>')
+
+
+def results_body_html(result: Mapping[str, Any], selected: Any) -> str:
+    """Under the badge: the banners, the result's warnings and the table."""
+    warnings = result.get("warnings") or []
+    note = (f'<p class="shep-dx-warnings">⚠ Warnings: {_e("; ".join(str(w) for w in warnings))}'
+            '</p>' if warnings else "")
+    return banners_html(result) + note + candidates_table_html(result.get("candidates") or [],
+                                                               selected, _sp_absent(result))
+
+
+# ----------------------------------------------------------------- details
+def _candidate(result: Optional[Mapping[str, Any]], rank: Any) -> Optional[Mapping[str, Any]]:
+    if not isinstance(result, Mapping):
+        return None
+    return next((c for c in result.get("candidates") or [] if c.get("rank") == rank), None)
+
+
+def _paths(candidate: Mapping[str, Any]) -> List[List[str]]:
+    pkg = candidate.get("evidence_package") or {}
+    paths = [p for p in pkg.get("direct_paths") or [] if isinstance(p, list)]
+    for analogy in pkg.get("analogies") or []:
+        paths += [p for p in (analogy or {}).get("known_paths") or [] if isinstance(p, list)]
+    return paths
+
+
+def segment_choices(candidate: Optional[Mapping[str, Any]]) -> List[Tuple[str, str]]:
+    """The segments' labels, with the counts this candidate has."""
+    if candidate is None:
+        return list(SEGMENTS)
+    counts = {"phenotypes": len(candidate.get("matching_phenotypes") or []),
+              "paths": len(_paths(candidate))}
+    return [(f"{label} {counts[value]}" if value in counts else label, value)
+            for label, value in SEGMENTS]
+
+
+def details_header_html(candidate: Optional[Mapping[str, Any]], sp_absent: bool = False) -> str:
+    if candidate is None:
+        return '<div class="shep-panel-hd"><h2>Candidate details</h2></div>'
+    sp_text = "— (no table)" if sp_absent else _num(candidate.get("sp_score"))
+    return (f'<div class="shep-panel-hd shep-dx-det-hd"><h2><span class="shep-dx-rank">'
+            f'#{_e(candidate.get("rank"))}</span> {_e(candidate.get("disease_name"))}</h2>'
+            f'<p class="shep-dx-det-sub"><code>{_e(_clean_disease_id(candidate.get("disease_id")))}'
+            f'</code> Score <b>{_num(candidate.get("confidence_score"))}</b> · GNN '
+            f'{_num(candidate.get("gnn_score"))} · SP {_e(sp_text)}</p></div>')
+
+
+def details_empty_html() -> str:
+    return ('<div class="shep-dx-empty"><p>After a diagnosis, the selected candidate\'s evidence, '
+            'explanation, matching phenotypes and paths appear here.</p></div>')
+
+
+def evidence_html(candidate: Mapping[str, Any], explanations: bool = True) -> str:
+    """The candidate's evidence package, escaped: its label and summary, the
+    path or analogy evidence, and the supporting genes."""
+    pkg = candidate.get("evidence_package")
+    if not pkg:
+        why = ("Explanations were off for this run (Options), so no evidence package was asked "
+               "for." if not explanations else "No evidence package was returned for this "
+               "candidate.")
+        return f'<p class="shep-muted">{_e(why)}</p>'
+    label = pkg.get("confidence_label") or "—"
+    parts = [f'<p class="shep-dx-ev-label"><span class="shep-dx-dot shep-dx-dot-'
+             f'{_DOT_CLASS.get(label, "none")}" aria-hidden="true"></span><b>{_e(label)}</b></p>']
+    if pkg.get("summary"):
+        parts.append(f'<blockquote class="shep-dx-quote">{_e(pkg.get("summary"))}</blockquote>')
+    mode = pkg.get("mode")
+    if mode == "direct_path":
+        n = len(pkg.get("direct_paths") or [])
+        hops = pkg.get("min_path_length")
+        hop_text = f"{hops} hop{'s' if hops != 1 else ''}" if isinstance(hops, int) else "not stated"
+        parts.append('<h3 class="shep-dx-h">Mode A — Direct path evidence</h3>'
+                     f'<p>Shortest: {_e(hop_text)} · {n} direct path{"s" if n != 1 else ""}, '
+                     'listed under <button type="button" class="shep-dx-link" data-key="seg:paths">'
+                     'Paths ›</button></p>')
+    elif mode == "analogy_based":
+        items = []
+        for analogy in pkg.get("analogies") or []:
+            analogy = analogy or {}
+            similarity = analogy.get("embedding_similarity")
+            sim = f" (similarity {similarity:.2f})" if isinstance(similarity, (int, float)) else ""
+            shared = analogy.get("shared_features") or []
+            items.append(f'<li><b>{_e(analogy.get("similar_gene_name") or "?")}</b>{_e(sim)}'
+                         + (f'<br><span class="shep-sub">Shared: {_e(", ".join(map(str, shared)))}'
+                            '</span>' if shared else "") + "</li>")
+        parts.append('<h3 class="shep-dx-h">Mode B — Analogy-based evidence</h3>'
+                     f'<ul class="shep-dx-list">{"".join(items)}</ul>')
+    elif mode == "insufficient":
+        parts.append('<p><b>No usable evidence found.</b> This candidate should be validated via '
+                     'independent clinical judgment.</p>')
+    genes = candidate.get("supporting_genes") or []
+    if genes:
+        parts.append('<h3 class="shep-dx-h">Supporting genes</h3><p class="shep-dx-genes">'
+                     + "".join(f'<span class="shep-dx-gene">{_e(g)}</span>' for g in genes) + "</p>")
+    return "".join(parts)
+
+
+def phenotypes_html(candidate: Mapping[str, Any]) -> str:
+    found = candidate.get("matching_phenotypes") or []
+    listed = ("".join(f'<li><code>{_e(p)}</code></li>' for p in found) if found else "")
+    body = (f'<ul class="shep-dx-list">{listed}</ul>' if found else
+            '<p class="shep-muted">None of the query\'s phenotypes is annotated directly to this '
+            'disease.</p>')
+    return body + f'<p class="shep-note">{_e(MATCHING_NOTE)}</p>'
+
+
+def paths_html(candidate: Mapping[str, Any]) -> str:
+    paths = _paths(candidate)
+    if not paths:
+        return '<p class="shep-muted">No path is listed for this candidate.</p>'
+    items = "".join(
+        "<li>" + ' <span class="shep-dx-arrow" aria-label="to">→</span> '.join(
+            f"<code>{_e(_node_display_name(str(node)))}</code>" for node in path) + "</li>"
+        for path in paths)
+    return f'<ol class="shep-dx-paths">{items}</ol>'
+
+
+def details_footer_html(result: Optional[Mapping[str, Any]], rank: Any) -> str:
+    if not isinstance(result, Mapping) or _candidate(result, rank) is None:
+        return ""
+    candidates = result.get("candidates") or []
+    index = next((i for i, c in enumerate(candidates, 1) if c.get("rank") == rank), 0)
+    return (f'<div class="shep-dx-det-ft"><span>Candidate {index} of {len(candidates)}</span>'
+            f'{help_button("dx-candidate", "Candidate details")}</div>')
+
+
+#: The page's class that hides a view (`PAGE_CSS`), and the views' own classes
+#: (never empty: Gradio 6.30 ignores an update to no class at all).
+VIEW_OFF = "shep-dx-off"
+_HTML_VIEW = ("shep-html",)     # `shell.plain_html`'s class
+_MD_VIEW = ("shep-dx-md",)
+
+
+def view_update(shown: bool, *classes: str, value: Any = _MISSING, **props: Any) -> Dict[str, Any]:
+    """A view shown or hidden **by a class, never by ``visible``**: in Gradio
+    6.30, ``visible`` unmounts and re-mounts a component (and a column's
+    children), and switching it while the content changes leaves detached
+    page elements behind each time (measured after garbage collection: 77 and
+    114 per switch of the details' and the identity drawer's views, about 200
+    and 600 with each view in a column of its own); a class toggle keeps the
+    component mounted (flat). `classes` are the component's own (its update
+    replaces them all); `value` and `props` are sent only for a view that is
+    shown (a hidden view keeps its last content until it is shown again, with
+    its new content)."""
+    update = {"elem_classes": [*classes] if shown else [*classes, VIEW_OFF]}
+    if shown:
+        if value is not _MISSING:
+            update["value"] = value
+        update.update(props)
+    return gr.update(**update)
+
+
+def details_outputs(result: Optional[Mapping[str, Any]], rank: Any,
+                    segment: str = "evidence") -> Dict[str, Any]:
+    """Everything the details panel shows for one candidate and segment (each
+    view shown or hidden by `view_update`)."""
+    candidate = _candidate(result, rank)
+    if candidate is None:
+        return {"details_hd": details_header_html(None),
+                "details_seg": view_update(False, "shep-seg"),
+                "details_html": view_update(True, *_HTML_VIEW, value=details_empty_html()),
+                "details_md": view_update(False, *_MD_VIEW), "details_ft": ""}
+    segment = segment if segment in _SEGMENT_VALUES else "evidence"
+    explanations = bool(result.get("_explanations", True))
+    html_: Optional[str] = None
+    if segment == "evidence":
+        html_ = evidence_html(candidate, explanations)
+    elif segment == "phenotypes":
+        html_ = phenotypes_html(candidate)
+    elif segment == "paths":
+        html_ = paths_html(candidate)
+    explanation = candidate.get("explanation")
+    if segment == "explanation" and not explanation:
+        why = ("No explanation was returned for this candidate." if explanations
+               else "Explanations were off for this run (Options).")
+        html_ = f'<p class="shep-muted">{why}</p>'
+    return {
+        "details_hd": details_header_html(candidate, _sp_absent(result)),
+        "details_seg": view_update(True, "shep-seg", value=segment,
+                                   choices=segment_choices(candidate)),
+        "details_html": view_update(html_ is not None, *_HTML_VIEW, value=html_),
+        "details_md": view_update(html_ is None, *_MD_VIEW, value=explanation),
+        "details_ft": details_footer_html(result, rank),
+    }
+
+
+# ----------------------------------------------------------------- identity drawer
+def _short_digests(cell: str) -> str:
+    return _SHA256_RE.sub(lambda m: m.group(0)[:_SHORT_HEX] + "…", cell)
+
+
+def result_identity_md(result: Optional[Mapping[str, Any]], state: Mapping[str, Any]) -> str:
+    """The identity drawer's "This result": only what the result carries, each
+    part beside what is in use now when the card's read can be compared, then
+    the claim boundary and the medical-device line."""
+    if not isinstance(result, Mapping):
+        return "No result yet: run a diagnosis to see what produced it."
+    kind, identity = _identity_of(result)
+    compared = compare_with_served(result, state)
+    mine = _identity_rows(kind, identity)
+    lines: List[str] = []
+    if compared["state"] in ("equal", "differs"):
+        status = state.get("status") or {}
+        served = status.get("served_identity") if status.get("initialized") else None
+        now = _identity_rows(_SERVED if isinstance(served, dict) else IDENTITY_DEMO,
+                             served if isinstance(served, dict) else None)
+        when = card.hhmmss(state.get("good_at"))
+        if compared["state"] == "differs":
+            n = len(compared["differ"])
+            verb = "differs" if n == 1 else "differ"
+            lines += [f"**This result came from an earlier model or pipeline:** {n} of "
+                      f"{compared['total']} parts {verb} from what is in use now (status read "
+                      f"{when}). The result and its CSV and report keep their own identity.", ""]
+        else:
+            lines += [f"**Produced by the model in use:** all {compared['total']} parts are the "
+                      f"same as what is in use now (status read {when}).", ""]
+        lines += ["| Part | This result | In use now |", "|------|-------------|------------|"]
+        for (part, state_, value), (_, now_state, now_value) in zip(mine, now, strict=True):
+            this = _short_digests(f"{state_} · {value}")
+            there = ("= same" if (state_, value) == (now_state, now_value)
+                     else _short_digests(f"{now_state} · {now_value}") + " **· differs**")
+            lines.append(f"| {part} | {this} | {there} |")
+    else:
+        lines += [f"**Cannot check against the model in use yet:** {compared['reason']}", "",
+                  "| Part | State | Value |", "|------|-------|-------|"]
+        lines += [f"| {part} | {state_} | {_short_digests(value)} |" for part, state_, value in mine]
+    for sentence in _claim_boundary_lines(kind, identity):
+        lines += ["", sentence]
+    lines += ["", f"**{NOT_A_MEDICAL_DEVICE}**"]
+    return "\n".join(lines)
+
+
+def result_digests_html(result: Optional[Mapping[str, Any]]) -> str:
+    """"This result in full": the full digests the result carries, each with
+    Copy."""
+    if not isinstance(result, Mapping):
+        return ""
+    kind, identity = _identity_of(result)
+    if kind != _SERVED or identity is None:
+        return ""
+    record = _field(identity, "dataset_record")
+    rows = [("Checkpoint · model fingerprint", _field(_field(identity, "checkpoint"), "sha256")),
+            ("Knowledge graph (kg.json)", _field(_field(identity, "graph"), "kg_sha256")),
+            ("Served workspace manifest (split_manifest.json) · its dataset fingerprint",
+             _field(_field(identity, "graph"), "split_manifest_sha256")),
+            (f"Dataset record (kg.provenance.json) · origin {_field(record, 'origin')}",
+             _field(record, "sha256"))]
+    items = "".join(
+        f'<div class="shep-digest"><span class="shep-dl">{_e(label)}</span>'
+        f'<code class="shep-full">{_e(value)}</code>{copy_button(value, "the full " + label)}</div>'
+        for label, value in rows if _is_sha256(value))
+    if not items:
+        return ""
+    return ('<div class="shep-dx-digests"><p class="shep-dx-digests-h"><b>This result in full</b> '
+            f'<span class="shep-muted">digests to copy (sha256)</span></p>{items}</div>')
+
+
+def model_identity_html(state: Mapping[str, Any], section: str = "identity") -> str:
+    """The identity drawer's "Model in use": Model Facts of the served model
+    (`diagnosis_card.served_facts_html`), then the claim boundary for what is
+    loaded and the medical-device line."""
+    status = state.get("status")
+    boundary = ""
+    if isinstance(status, Mapping) and status.get("initialized"):
+        identity = status.get("served_identity")
+        kind = _SERVED if isinstance(identity, dict) else IDENTITY_NOT_REPORTED
+        sentences = _claim_boundary_lines(kind, identity if isinstance(identity, dict) else None,
+                                          IDENTITY_NOTHING_CHECKED_LOADED)
+        boundary = "".join(f"<p>{_e(s)}</p>" for s in sentences)
+    return (card.served_facts_html(state, open_section=section)
+            + f'<div class="shep-dx-boundary">{boundary}<p><b>{_e(NOT_A_MEDICAL_DEVICE)}</b></p>'
+              '</div>')
+
+
+def identity_outputs(view: Mapping[str, Any], state: Mapping[str, Any],
+                     result: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
+    """The identity drawer as `view` asks: open or closed, on "Model in use"
+    (opened at a section) or "This result"."""
+    if not view.get("open"):
+        return {"identity_drawer": gr.update(visible=False)}
+    on_model = view.get("seg", "model") == "model"
+    # Each view shown or hidden by a class (`view_update`); a hidden one is
+    # not rendered.
+    return {
+        "identity_drawer": gr.update(visible=True),
+        "identity_seg": gr.update(value="model" if on_model else "result"),
+        "id_model": view_update(on_model, *_HTML_VIEW,
+                                value=model_identity_html(state, view.get("section") or "identity")
+                                if on_model else None),
+        "id_result_md": view_update(not on_model, *_MD_VIEW,
+                                    value=None if on_model else result_identity_md(result, state)),
+        "id_result_html": view_update(not on_model, *_HTML_VIEW,
+                                      value=None if on_model else result_digests_html(result)),
+    }
+
+
+# =============================================================================
+# The card's outputs, the Run controls
+# =============================================================================
+def run_controls(state: Mapping[str, Any], phase: Any) -> Dict[str, Any]:
+    """Run Diagnosis: off while a model change is open, or when no model is
+    loaded; greyed and not clickable, with the reason as visible text under it
+    and a bubble on hover and on keyboard focus (a transparent ⓘ over the
+    button: the shared help control)."""
+    if phase == "loading":
+        key, why = "dx-run-loading", RUN_DISABLED_LOADING
+    elif phase not in (None, "idle"):
+        key, why = "dx-run-change", RUN_DISABLED_CHANGE
+    elif card.run_blocked(state):
+        key = "dx-run-no-model"
+        why = RUN_DISABLED_NO_MODEL if state.get("operator") else RUN_DISABLED_NO_MODEL_READ_ONLY
+    else:
+        return {"run_btn": gr.update(interactive=True), "run_cover": "", "run_reason": ""}
+    title = TOPIC_HELP[key][0]
+    cover = (f'<button type="button" class="shep-i shep-i-cover" data-help="{key}" '
+             f'data-help-title="{_e(title)}" aria-label="Run Diagnosis is disabled: why?" '
+             f'aria-expanded="false" aria-describedby="{text_id(key)}"></button>')
+    return {"run_btn": gr.update(interactive=False), "run_cover": cover,
+            "run_reason": f'<p class="shep-dx-why"><span aria-hidden="true">⊖</span> {_e(why)}</p>'}
+
+
+def loading_line_html(plan: Any) -> str:
+    """The card's line while this page's Load reloads the pipeline (the
+    mockup's state 3): "Loading <12 hex> for every session… 00:00:00", the
+    count kept by the page's own script (`model_list.start_wait_js`, which
+    also swaps in the second sentence when the page stops waiting after
+    `PAGE_WAIT_SECONDS`, as the drawer says). "" without a plan."""
+    from src.webui.components.model_list import PAGE_WAIT_SECONDS
+
+    if not isinstance(plan, Mapping) or not isinstance(plan.get("to"), Mapping):
+        return ""
+    new = _e(_short_hex(plan["to"].get("sha256")))
+    return ('<p class="shep-dx-loading" role="status" data-shep-load-card>'
+            '<span class="shep-load-on"><span class="shep-spinner" aria-hidden="true"></span> '
+            f'Loading <code>{new}</code> for every session…\u00a0'
+            '<span class="shep-elapsed" data-shep-load-elapsed>00:00:00</span></span>'
+            f'<span class="shep-load-off" hidden>The page stopped waiting for <code>{new}</code> '
+            f'after {PAGE_WAIT_SECONDS} s; the server may still finish the reload.</span></p>')
+
+
+def _run_tuple(state: Mapping[str, Any], phase: Any) -> Tuple[Any, Any, Any]:
+    run = run_controls(state, phase)
+    return run["run_btn"], run["run_cover"], run["run_reason"]
+
+
+def card_loading_outputs(plan: Any, state: Any) -> Tuple[Any, ...]:
+    """The card's part of the step "Reload with …" runs before the reload (the
+    shared list's ``on_loading``): the "Loading …" line and Run Diagnosis off
+    with its reason, shown before the reload holds the server. Nothing when
+    there was no plan (nothing is loading)."""
+    if not plan:
+        return gr.update(), gr.update(), gr.update(), gr.update()
+    state = state if isinstance(state, Mapping) else card.new_state()
+    return (loading_line_html(plan), *_run_tuple(state, "loading"))
+
+
+def card_loaded_outputs(state: Mapping[str, Any], phase: Any) -> Tuple[Any, ...]:
+    """After the reload's answer: no "Loading …" line, and Run Diagnosis as
+    the phase now says (idle, or a confirmation shown again)."""
+    return ("", *_run_tuple(state, phase))
+
+
+def card_outputs(state: Mapping[str, Any], result: Optional[Mapping[str, Any]], phase: Any,
+                 view: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+    """Every output that follows the card's state, sending only what changed
+    since this session's last send (kept in the state's ``rendered``): a
+    focused control is never redrawn by the timer for nothing."""
+    produced = _produced_at(result)
+    button = card.change_button(state)
+    run = run_controls(state, phase)
+    view = view or {}
+    fresh: Dict[str, Any] = {
+        "card_time": card.time_html(state, produced),
+        "card_body": card.body_html(state, produced),
+        "change_btn": button,
+        "change_reason": card.change_reason_html(state),
+        "details_btn": card.details_visible(state),
+        "run_btn": run["run_btn"].get("interactive"),
+        "run_cover": run["run_cover"],
+        "run_reason": run["run_reason"],
+        "badge": badge_html(result, state),
+    }
+    if not isinstance(result, Mapping):
+        fresh["results_body"] = empty_results_html(card.run_blocked(state))
+    if view.get("open"):
+        for name, update in identity_outputs(view, state, result).items():
+            fresh[name] = update
+    previous = state.get("rendered") if isinstance(state.get("rendered"), Mapping) else {}
+    out: Dict[str, Any] = {}
+    for name, value in fresh.items():
+        if previous.get(name) == value:
+            continue
+        if name == "change_btn":
+            out[name] = gr.update(**value)
+        elif name == "details_btn":
+            out[name] = gr.update(visible=value)
+        elif name == "run_btn":
+            out[name] = gr.update(interactive=value)
+        else:
+            out[name] = value
+    out["card_state"] = {**state, "rendered": {**previous, **fresh}}
+    return out
+
+
+def _operator(request: Any) -> Tuple[bool, Optional[str]]:
+    access = operator_access(request)
+    return access.allowed, (None if access.allowed
+                            else D8_SHORT.get(access.condition, D8_SHORT["unreadable_request"]))
+
+
+def read_card(state: Any, request: Any, *, open_checkpoints: bool, reread: bool = False,
+              now: Optional[datetime] = None) -> Dict[str, Any]:
+    """One status read (5 s limit) for this session's card, and its new state."""
+    status, problem = card.read_status_within()
+    allowed, short = _operator(request)
+    return card.advance(state if isinstance(state, Mapping) else card.new_state(), status,
+                        problem, now=now or datetime.now(), operator=allowed, d8_short=short,
+                        open_checkpoints=open_checkpoints, reread=reread)
+
+
+def refresh_card(state: Any, result: Any, phase: Any, view: Any, request: Any, *,
+                 reread: bool = False) -> Dict[str, Any]:
+    """Page load, Diagnosis shown, ↻, a Load: read and show (queued: the
+    trained-on dataset may be read from the served checkpoint)."""
+    return card_outputs(read_card(state, request, open_checkpoints=True, reread=reread),
+                        result, phase, view)
+
+
+def poll_card(location: Any, state: Any, result: Any, phase: Any, view: Any,
+              request: Any) -> Dict[str, Any]:
+    """The shell's slow timer, while Diagnosis is shown: one status read, no
+    checkpoint opened (`queue=False`); nothing while another page is shown."""
+    if location != CLINICAL:
+        return {}
+    return card_outputs(read_card(state, request, open_checkpoints=False), result, phase, view)
+
+
 # =============================================================================
 # Event handlers
 # =============================================================================
-# DownloadButton update for the "no downloadable result" state.
-_DOWNLOAD_DISABLED = gr.update(value=None, interactive=False)
+def _clamped_top_k(top_k: Any) -> int:
+    try:
+        value = int(top_k)
+    except (TypeError, ValueError):
+        value = 10
+    return max(1, min(20, value))
 
 
-def _on_diagnose(
-    phenotype_text: str,
-    patient_id: str,
-    top_k: int,
-):
-    """
-    Handle the Diagnose button click.
+def _no_result_outputs(state: Mapping[str, Any], notice: Optional[str]) -> Dict[str, Any]:
+    return {
+        "results_hd": results_header_html(None), "badge": "",
+        "results_body": empty_results_html(card.run_blocked(state), notice),
+        "results_state": None, "selected": None,
+        "export_csv": _EXPORTS_HIDDEN, "export_report": _EXPORTS_HIDDEN,
+        **details_outputs(None, None),
+    }
 
-    Returns: (results_table, evidence_detail, explanation,
-              candidate_dropdown_update, results_state,
-              export_csv_update, export_report_update)
 
-    The full API result is stashed in results_state so the candidate dropdown
-    reuses it without re-running inference. Export files are generated up front
-    here and set as the DownloadButtons' values, so a single click downloads
-    them (avoids the gr.DownloadButton "download current value, then update"
-    two-click behaviour).
-    """
+def diagnose(phenotype_text: str, patient_id: str, top_k: Any, explanations: bool,
+             state: Any, phase: Any, view: Any, request: Any) -> Dict[str, Any]:
+    """Run Diagnosis: the shared API (`_call_diagnose`), then the status read
+    again for the badge, so a result never meets an older read. The full
+    result is kept in this session's state; the export files are written up
+    front, so one click downloads them."""
+    state = state if isinstance(state, Mapping) else card.new_state()
+    view = view if isinstance(view, Mapping) else {}
     hpo_ids = _parse_hpo_ids(phenotype_text)
-
     if not hpo_ids:
-        return (
-            "⚠️ **No valid HPO terms found.** Enter HPO ids like `HP:0001250` — "
-            "one per line, or comma/space-separated; names are optional.",
-            "",
-            "",
-            gr.update(choices=[], value=None),
-            None,
-            _DOWNLOAD_DISABLED,
-            _DOWNLOAD_DISABLED,
-        )
-
-    # Call API
-    result = _call_diagnose(
-        phenotypes=hpo_ids,
-        patient_id=patient_id,
-        top_k=int(top_k),
-        include_explanations=True,
-    )
-
+        out = _no_result_outputs(state, (
+            '<p class="shep-dx-warn"><b>No valid HPO terms found.</b> Enter HPO ids like '
+            '<code>HP:0001250</code> — one per line, or comma/space-separated; names are '
+            'optional.</p>'))
+        return out
+    explanations = bool(explanations)
+    result = _call_diagnose(phenotypes=hpo_ids, patient_id=patient_id, top_k=_clamped_top_k(top_k),
+                            include_explanations=explanations)
     if "error" in result:
-        return (
-            f"❌ **Error**: {result['error']}",
-            "",
-            "",
-            gr.update(choices=[], value=None),
-            None,
-            _DOWNLOAD_DISABLED,
-            _DOWNLOAD_DISABLED,
-        )
-
-    candidates = result.get("candidates", [])
-    warnings = result.get("warnings", [])
-    inference_ms = result.get("inference_time_ms", 0)
-
-    # **What produced this result, attached to it** (contract M3c): the banners
-    # above the table, a summary line under it and the full identity in a closed
-    # block, all from the result's own `served_identity`. The model status
-    # describes whatever is loaded now, which a reload can change; this cannot.
-    kind, identity = _identity_of(result)
-    banners_md = "".join(
-        _identity_banner_md(banner) + "\n" for banner in _identity_banners(kind, identity)
-    )
-
-    # Build results table
-    table_md = _format_results_table(candidates)
-    meta = f"\n\n*{len(candidates)} candidates found in {inference_ms:.1f}ms*"
-    meta += f"\n\n{_identity_summary_md(kind, identity)}"
-    meta += f"\n\n{_identity_details_md(kind, identity)}"
-    if warnings:
-        meta += f"\n\n⚠️ Warnings: {'; '.join(warnings)}"
-
-    # Build candidate selector dropdown
-    choices = [
-        f"#{c['rank']} — {c['disease_name']} ({c['confidence_score']:.3f})"
-        for c in candidates
-    ]
-
-    # Show evidence for rank #1 by default
-    evidence_md = _format_evidence_detail(candidates[0]) if candidates else ""
-    explain_md = _format_full_explanation(candidates[0]) if candidates else ""
-
-    # Stash the parsed query so an exported report records what was asked.
+        error = _e(result["error"]).replace("\n\n", "<br><br>")
+        return _no_result_outputs(state, f'<p class="shep-dx-error"><b>Error:</b> {error}</p>')
     result["_query_phenotypes"] = hpo_ids
-
-    # Pre-generate the export files (single-click download). Export is secondary
-    # to showing the diagnosis, so a write failure must never hide the results:
-    # keep the downloads disabled and note it — re-running retries the export.
+    result["_explanations"] = explanations
+    result["_received_at"] = card.stamp(datetime.now())
+    candidates = result.get("candidates") or []
+    first = candidates[0].get("rank") if candidates else None
     export_note = ""
     if candidates:
         try:
             csv_path, md_path = _write_exports(result)
-            csv_update = gr.update(value=csv_path, interactive=True)
-            md_update = gr.update(value=md_path, interactive=True)
+            csv_update = gr.update(value=csv_path, interactive=True, visible=True)
+            md_update = gr.update(value=md_path, interactive=True, visible=True)
         except Exception as exc:  # noqa: BLE001 — never let export break the result
             logger.warning("Export file generation failed: %s", exc)
             csv_update = md_update = _DOWNLOAD_DISABLED
-            export_note = (
-                "\n\n⚠️ *Export files could not be written (disk/permissions?). "
-                "Results are shown above; click 'Run Diagnosis' again to retry the "
-                "export.*"
-            )
+            export_note = ('<p class="shep-dx-warn">Export files could not be written '
+                           '(disk/permissions?). Results are shown; Run Diagnosis again to retry '
+                           'the export.</p>')
     else:
         csv_update = md_update = _DOWNLOAD_DISABLED
-
-    return (
-        banners_md + table_md + meta + export_note,
-        evidence_md,
-        explain_md,
-        gr.update(choices=choices, value=choices[0] if choices else None),
-        result,
-        csv_update,
-        md_update,
-    )
-
-
-def _on_phenotype_change(result_state: Optional[Dict[str, Any]]):
-    """Clear stale results/exports when the phenotype input is edited *after* a run.
-
-    Only the phenotype list is watched — it defines the diagnosis, so editing it
-    genuinely invalidates the shown/exported results. Patient ID (a per-keystroke
-    textbox that doesn't affect the run) and Top-K are intentionally NOT watched.
-    No-ops until there is a result to invalidate, so typing the first query
-    doesn't disturb the placeholder. Output order matches ``_diagnosis_outputs``.
-    """
-    if not result_state:
-        no_change = gr.update()
-        return (no_change, no_change, no_change, no_change, None,
-                no_change, no_change)
-    return (
-        "*Inputs changed — click 'Run Diagnosis' to refresh results.*",
-        "",
-        "",
-        gr.update(choices=[], value=None),
-        None,
-        _DOWNLOAD_DISABLED,
-        _DOWNLOAD_DISABLED,
-    )
+    new_state = read_card(state, request, open_checkpoints=True)
+    out = card_outputs(new_state, result, phase, view)
+    out.update({
+        "results_hd": results_header_html(result),
+        "badge": badge_html(result, new_state),
+        "results_body": results_body_html(result, first) + export_note,
+        "results_state": result, "selected": first,
+        "export_csv": csv_update, "export_report": md_update,
+        **details_outputs(result, first),
+    })
+    out["card_state"]["rendered"] = {**out["card_state"]["rendered"],
+                                     "badge": out["badge"]}
+    if view.get("open"):
+        out.update(identity_outputs(view, new_state, result))
+    return out
 
 
-def _on_candidate_select(
-    selection: str,
-    result_state: Optional[Dict[str, Any]],
-) -> Tuple[str, str]:
-    """
-    Handle candidate dropdown selection change.
+def phenotypes_changed(result: Any, state: Any) -> Dict[str, Any]:
+    """Editing the phenotypes after a run clears the result and its exports,
+    so nothing stale can be read or exported. Nothing happens before a
+    result exists (typing the first query)."""
+    if not result:
+        return {}
+    state = state if isinstance(state, Mapping) else card.new_state()
+    out = _no_result_outputs(state, '<p class="shep-dx-notice-p">Inputs changed — Run Diagnosis '
+                                    'to refresh the results.</p>')
+    out["card_state"] = {**state, "rendered": {
+        **(state.get("rendered") or {}), "badge": ""}}
+    return out
 
-    Reads the already-fetched result from ``result_state`` instead of re-calling
-    the API, so switching candidates for detail view no longer re-runs inference.
-    """
-    if not selection or not result_state:
-        return "", ""
 
-    # Extract rank from "#{rank} — ..."
+def select_candidate(result: Any, segment: Any, key: Any) -> Dict[str, Any]:
+    """A row of the table selected: its details, on the segment shown."""
+    if not isinstance(result, Mapping):
+        return {}
     try:
-        rank = int(selection.split("#")[1].split("—")[0].strip())
-    except (IndexError, ValueError):
-        return "⚠️ Could not parse selection.", ""
-
-    candidates = result_state.get("candidates", [])
-    target = next((c for c in candidates if c.get("rank") == rank), None)
-    if not target:
-        return f"⚠️ Rank #{rank} not found in current results.", ""
-
-    return _format_evidence_detail(target), _format_full_explanation(target)
+        rank = int(key)
+    except (TypeError, ValueError):
+        return {}
+    if _candidate(result, rank) is None:
+        return {}
+    return {"selected": rank,
+            "results_body": results_body_html(result, rank),
+            **details_outputs(result, rank, segment if segment in _SEGMENT_VALUES else "evidence")}
 
 
-def _served_path_updates(status_data: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-    """Updates for the Data Directory and Checkpoint fields from one status
-    (BACKLOG 17, F5).
-
-    **The fields are what Load / Reload sends**, so while they showed the saved
-    preferences rather than the served paths, pressing it could switch the
-    service to another workspace than the one it was serving. With a pipeline
-    loaded they name what it was built from, an automatically chosen checkpoint
-    included, so when a checkpoint file is served from a workspace Reload
-    reloads exactly that; clearing the Checkpoint field asks for automatic
-    selection again. Otherwise Reload cannot rebuild what is served: with no
-    checkpoint served the Checkpoint field is blank, so Reload selects one
-    automatically (serving a GNN checkpoint where none was served, or refused
-    when the workspace holds no run); after a start from `SHEPHERD_KG_PATH`
-    alone Data Directory is blank, and Reload needs a workspace typed. With
-    nothing loaded, or no status read, both are left alone: the saved
-    preferences stand, and an unreadable status says nothing about what is
-    served. A path the status did not report leaves its field alone too.
-    """
-    if not status_data.get("initialized", False):
-        return gr.update(), gr.update()
-    data_dir = _field(status_data, "current_data_dir")
-    if data_dir is _MISSING:
-        data_dir_update = gr.update()
-    elif data_dir is None:
-        # Served from SHEPHERD_KG_PATH with no workspace (`_served_paths_line`):
-        # blank, never the saved preference, which would name one not served.
-        data_dir_update = gr.update(value="", placeholder=PATH_ONLY_PLACEHOLDER)
-    else:
-        # The placeholder is cleared in case a path-only status set it earlier
-        # in this session; Gradio drops an update's None, so "" rather than None.
-        data_dir_update = gr.update(value=data_dir, placeholder="")
-    checkpoint = _field(status_data, "current_checkpoint_path")
-    checkpoint_update = (
-        gr.update() if checkpoint is _MISSING else gr.update(value=checkpoint or "")
-    )
-    return data_dir_update, checkpoint_update
+def open_identity(state: Any, result: Any, seg: str = "model",
+                  section: str = "identity", phase: Any = "idle") -> Dict[str, Any]:
+    """Details › (Model in use, at Identity), Recorded tests › (at Evidence) or
+    the badge (This result): the identity drawer, in the details column's
+    slot; the change-model drawer closes. While a model change is open (its
+    confirmation, or a reload running: `phase` not idle) the change drawer
+    stays and the identity drawer does not open: the confirmation, and the
+    reload's outcome, are never hidden behind it (Run Diagnosis says to finish
+    or cancel the change first)."""
+    if phase not in (None, "idle"):
+        return {"change_drawer": gr.update(visible=True)}
+    view = {"open": True, "seg": seg, "section": section}
+    state = state if isinstance(state, Mapping) else card.new_state()
+    return {"identity_view": view, "change_drawer": gr.update(visible=False),
+            **identity_outputs(view, state, result)}
 
 
-def _on_reload_pipeline(
-    data_dir: str, checkpoint_path: str, conv_type: str
-) -> Tuple[str, str, Dict[str, Any], Dict[str, Any]]:
-    """Handle Reload Pipeline button click.
-
-    Returns the status, the message, and updates for the Data Directory and
-    Checkpoint fields: after a reload that succeeded they name what is now
-    served (`_served_path_updates`); after a refusal they keep what the user
-    typed, so it can be corrected and sent again.
-    """
-    if not data_dir or not data_dir.strip():
-        return "⚠️ Data directory is required.", "", gr.update(), gr.update()
-
-    result = _reload_pipeline(
-        data_dir.strip(),
-        checkpoint_path.strip() if checkpoint_path else "",
-        (conv_type or "auto").strip().lower(),
-    )
-
-    status_md = ""
-    fields = (gr.update(), gr.update())
-    if result.get("success"):
-        status = result.get("status", {})
-        # The new model's recorded results, or the stated absence of any: a
-        # status naming the new checkpoint over the previous one's records
-        # would be the one thing this block must never show.
-        status_md = _status_with_recorded_results(status)
-        # How the checkpoint was chosen (auto must not be opaque). Its path is
-        # on the status's served-paths line, the same string as the response's
-        # `checkpoint_path`, so it is not named a second time.
-        sel_reason = result.get("selection_reason")
-        if sel_reason:
-            status_md += f"\n\n<sub>Checkpoint selection: {sel_reason}</sub>"
-        fields = _served_path_updates(status)
-        if status.get("initialized") and not status.get("gnn_ready"):
-            # Attached to the load action rather than to the status renderer:
-            # the renderer also runs on the initial page render, and a toast that
-            # repeats is a toast people learn to dismiss unread.
-            gr.Warning(GNN_UNAVAILABLE_TOAST, duration=20)
-    else:
-        status_md = f"❌ {result.get('message', 'Unknown error')}"
-
-    # Format file check results
-    files = result.get("files_found", {})
-    if files:
-        file_lines = []
-        for fname, exists in files.items():
-            if isinstance(exists, bool):
-                icon = "✅" if exists else "❌"
-                file_lines.append(f"  {icon} {fname}")
-        status_md += "\n\n**Files:**\n" + "\n".join(file_lines)
-
-    msg = result.get("message", "")
-    return status_md, msg, *fields
+def close_identity() -> Dict[str, Any]:
+    return {"identity_view": {"open": False}, "identity_drawer": gr.update(visible=False)}
 
 
-def _on_save_config(data_dir: str, checkpoint_path: str) -> str:
-    """Handle Save Config button click: saves what the fields show, which with
-    a pipeline loaded is the served paths (`CONFIG_SAVED`)."""
-    return _save_config_to_file(data_dir, checkpoint_path)
+def open_change(request: gr.Request) -> Dict[str, Any]:
+    """"🔒 Change model…" / "🔒 Load a model…": D8 on this request first. A
+    request D8 refuses gets the reason and no list (listing opens checkpoint
+    files); otherwise the change-model drawer opens (its list is read next, by
+    the shared list's own refresh, which asks D8 again)."""
+    access = operator_access(request)
+    if not access.allowed:
+        return {"change_reason": f'<p class="shep-dx-why">{_e(access.refusal)}</p>',
+                "change_drawer": gr.update(visible=False)}
+    return {"change_drawer": gr.update(visible=True), "identity_drawer": gr.update(visible=False),
+            "identity_view": {"open": False}}
 
 
-def _on_reset_defaults() -> Tuple[str, str, str]:
-    """Handle Reset Defaults button click."""
-    return DEFAULT_WORKSPACE, "", "Paths reset to defaults."
+#: The outputs of `_on_change_model`, in order.
+CHANGE_OUTPUTS = ("change_reason", "change_drawer", "identity_drawer", "identity_view")
 
 
-def _on_load_status() -> Tuple[str, Dict[str, Any], Dict[str, Any]]:
-    """Read the pipeline status for a page that has just loaded.
+def _on_change_model(request: gr.Request) -> Tuple[Any, ...]:
+    """The "Change model…" event: `open_change` on this event's own request
+    (`operator_access(request)` first), as the outputs `CHANGE_OUTPUTS` name."""
+    opened = open_change(request)
+    return tuple(opened.get(name, gr.update()) for name in CHANGE_OUTPUTS)
 
-    Wired to the Blocks' load event, so every page opened shows the server's
-    status at that moment rather than what it was while the app was being built,
-    with the loaded model's recorded results under it in the same Markdown.
-    Returns that Markdown and the Data Directory and Checkpoint field updates
-    (`_served_path_updates`), **all from one status read**: two reads could
-    describe two pipelines if a reload landed between them.
-    """
-    status_data = _get_pipeline_status()
-    return (_status_with_recorded_results(status_data), *_served_path_updates(status_data))
+
+#: While this page's reload runs, its Close, × and Cancel close the whole
+#: drawer at once in the page (the card keeps the reload's "Loading …" line),
+#: and the × is clicked for the server once the reload has answered; "Change
+#: model…" meanwhile shows the drawer again, on the reload's status
+#: (`model_list.load_guard`).
+CLOSE_WHILE_LOADING = {
+    "hide": "#shep-dx-change",
+    "then": "#shep-dx-change-close button",
+    "also": ["#shep-dx-change-close button", "#shep-dx-change-cancel"],
+    "openers": ["#shep-dx-change-btn"],
+}
+
+
+def close_change(phase: Any) -> Dict[str, Any]:
+    """Cancel or ×: the drawer closes and an open confirmation is dropped
+    (nothing was reloaded: the reload runs only on its own button). A close
+    while a reload runs is done in the page at once and reaches this only
+    after the reload's answer (`CLOSE_WHILE_LOADING`); one that still finds
+    `phase` "loading" (sent before the reload began, not from the page) leaves
+    the drawer open: the reload cannot be stopped, and its outcome must be
+    seen. The confirmation box inside the
+    drawer is reset in a second step (`reset_change`): a response that hides a
+    column and updates a component inside it leaves detached page elements in
+    the browser (Gradio 6.30, measured), so this one changes no component in
+    the drawer; ``change_closed`` tells the second step that it closed."""
+    if phase == "loading":
+        return {"change_drawer": gr.update(visible=True), "change_closed": False}
+    return {"change_drawer": gr.update(visible=False), "plan": None, "phase": "idle",
+            "change_closed": True}
+
+
+def reset_change(closed: Any) -> Dict[str, Any]:
+    """After `close_change` closed the drawer (`closed`), inside the hidden
+    drawer: the confirmation box hidden and emptied, the list's reason
+    cleared. Nothing otherwise."""
+    if closed is not True:
+        return {}
+    return {"confirm": gr.update(visible=False), "confirm_html": "", "list_reason": "",
+            "change_closed": False}
 
 
 # =============================================================================
-# Tab builder (called from app.py)
+# Tab builder (called by the shell)
 # =============================================================================
-def create_diagnosis_tab(blocks: gr.Blocks) -> None:
-    """
-    Build the Diagnosis Panel tab inside a gr.Blocks context.
+def _close_html(what: str) -> str:
+    return (f'<button type="button" class="shep-dx-close" data-key="close" aria-label="Close the '
+            f'{_e(what)}" title="Close">×</button>')
 
-    ``blocks`` is the enclosing app, which the model status and the Data
-    Directory and Checkpoint fields refresh from on every page load
-    (`_on_load_status`).
 
-    Layout:
-        Left column (input):
-            - Phenotype text input (one per line)
-            - Load Demo button
-            - Patient ID, Top-K
-            - Diagnose button
-        Right column (results):
-            - Ranked results table (Markdown)
-            - Candidate selector dropdown
-            - Evidence detail panel (Markdown)
-            - Full explanation accordion (Markdown)
-    """
+def _event_key(evt: Any) -> Optional[str]:
+    raw = getattr(evt, "_data", None)
+    key = raw.get("key") if isinstance(raw, Mapping) else None
+    return key if isinstance(key, str) else None
 
-    # Holds the full API result of the latest diagnosis so the candidate
-    # dropdown and the export buttons reuse it (no re-running inference).
+
+def create_diagnosis_tab(ctx: Any) -> None:
+    """Build Diagnosis (clinical), the first screen (the page contract:
+    `src/webui/shell.py`). The card is read on page load, each time the page
+    is shown, on the shell's slow timer while it is shown, after a diagnosis
+    and after a model change; its help and the fields' go behind the shared
+    ⓘ."""
+    from src.webui.components.model_list import MODEL_LIST_JS
+    from src.webui.shell import plain_html
+
+    ctx.help.fields(FIELD_HELP)
+    ctx.help.topics(TOPIC_HELP)
+
     results_state = gr.State(None)
+    selected = gr.State(None)
+    card_state = gr.State(card.new_state())
+    identity_view = gr.State({"open": False})
+    change_closed = gr.State(False)
 
-    # === MODEL CONFIGURATION (top accordion) ===
-    # The saved preferences are only the fields' starting values: a page load
-    # that finds a pipeline loaded replaces them with its paths
-    # (`_served_path_updates`).
-    saved_cfg = _load_saved_config()
+    with gr.Row(elem_id="shep-dx", elem_classes=["shep-page", "shep-dx"], equal_height=False):
+        # --- the input column ------------------------------------------------
+        with gr.Column(elem_id="shep-dx-input", elem_classes=["shep-panel"], min_width=0):
+            plain_html('<div class="shep-panel-hd"><h2>Patient phenotypes</h2></div>',
+                       elem_id="shep-dx-input-hd")
+            with gr.Column(elem_id="shep-dx-input-bd", elem_classes=["shep-dx-scroll"]):
+                with gr.Column(elem_id="shep-dx-fields", elem_classes=["shep-dx-fields"]):
+                    phenotype_input = gr.Textbox(
+                        label="HPO terms", lines=3, max_lines=12, elem_id="dx_hpo_terms",
+                        placeholder=("HP:0001250 — Seizure\n"
+                                     "HP:0001263, HP:0002376   (commas / spaces are fine too)"))
+                    with gr.Column(elem_id="shep-dx-side", elem_classes=["shep-dx-side"]):
+                        patient_id_input = gr.Textbox(label="Patient ID (optional)", value="",
+                                                      placeholder="(auto-generated if blank)",
+                                                      max_lines=1, elem_id="dx_patient_id")
+                        with gr.Row(elem_id="shep-dx-options", elem_classes=["shep-dx-options"]):
+                            plain_html('<span class="shep-dx-opt">Options</span>',
+                                       elem_id="shep-dx-options-label")
+                            top_k_input = gr.Number(label="Top-K", value=10, minimum=1,
+                                                    maximum=20, step=1, precision=0,
+                                                    elem_id="dx_top_k", min_width=0, scale=0)
+                            explanations_input = gr.Checkbox(label="Explanations", value=True,
+                                                             elem_id="dx_explanations", scale=0,
+                                                             min_width=0)
+                with gr.Column(elem_id="shep-dx-sticky", elem_classes=["shep-dx-sticky"]):
+                    with gr.Column(elem_id="shep-dx-card", elem_classes=["shep-dx-card"]):
+                        with gr.Row(elem_id="shep-dx-card-hd", elem_classes=["shep-dx-card-hd"]):
+                            plain_html('<span class="shep-dx-card-title">Model in use</span>'
+                                       + help_button("dx-card", "Model in use"),
+                                       elem_id="shep-dx-card-title")
+                            # "checked HH:MM:SS ↻" stay together: on a narrow column
+                            # they move under the title as one, at its right.
+                            with gr.Row(elem_id="shep-dx-card-when",
+                                        elem_classes=["shep-dx-card-when"]):
+                                card_time = plain_html("", elem_id="shep-dx-card-time")
+                                reread = plain_html(
+                                    '<button type="button" class="shep-dx-reread" '
+                                    'data-key="refresh" aria-label="Read the model in use again" '
+                                    'title="Read again">↻</button>', elem_id="shep-dx-reread",
+                                    js_on_load=MODEL_LIST_JS)
+                        # "Loading <12 hex> for every session… 00:00:42" while this
+                        # page's Load reloads the pipeline (`loading_line_html`).
+                        card_loading = plain_html("", elem_id="shep-dx-card-loading")
+                        card_body = plain_html(card.body_html(card.new_state()),
+                                               elem_id="shep-dx-card-body",
+                                               js_on_load=MODEL_LIST_JS)
+                        with gr.Row(elem_id="shep-dx-card-actions",
+                                    elem_classes=["shep-dx-card-actions"]):
+                            details_btn = gr.Button("Details ›", size="sm", visible=False,
+                                                    elem_id="shep-dx-details-btn", scale=0,
+                                                    min_width=0)
+                            change_btn = gr.Button("🔒 Change model…", size="sm",
+                                                   interactive=False, scale=0, min_width=0,
+                                                   elem_id="shep-dx-change-btn")
+                        change_reason = plain_html("", elem_id="shep-dx-change-why")
+                    with gr.Row(elem_id="shep-dx-run", elem_classes=["shep-dx-run"]):
+                        with gr.Column(elem_id="shep-dx-run-wrap", min_width=0, scale=1):
+                            run_btn = gr.Button("▶ Run Diagnosis", variant="primary", size="lg",
+                                                elem_id="shep-dx-run-btn")
+                            run_cover = plain_html("", elem_id="shep-dx-run-cover")
+                        gr.ClearButton(components=[phenotype_input], value="Clear", size="lg",
+                                       elem_id="shep-dx-clear", scale=0, min_width=0)
+                    run_reason = plain_html("", elem_id="shep-dx-run-why")
 
-    with gr.Accordion("Model Configuration", open=False):
-        config_status_md = gr.Markdown(value=STATUS_CHECKING)
+        # --- the drawers (wide: over the columns; narrow: in the page's flow) -
+        with gr.Column(visible=False, elem_id="shep-dx-identity",
+                       elem_classes=["shep-panel", "shep-dx-drawer"], min_width=0) as identity_drawer:
+            with gr.Row(elem_classes=["shep-dx-drawer-hd"], elem_id="shep-dx-identity-hd"):
+                plain_html("<h2>Identity</h2>", elem_id="shep-dx-identity-title")
+                identity_seg = gr.Radio(choices=list(IDENTITY_VIEWS), value="model",
+                                        label="Identity view", show_label=False, container=False,
+                                        elem_classes=["shep-seg"], elem_id="shep-dx-identity-seg")
+                identity_close = plain_html(_close_html("identity drawer"),
+                                            elem_id="shep-dx-identity-close",
+                                            js_on_load=MODEL_LIST_JS)
+            with gr.Column(elem_id="shep-dx-identity-bd", elem_classes=["shep-dx-scroll"]):
+                # The views are shown and hidden by a class, never `visible`
+                # (`view_update`).
+                id_model = plain_html("", elem_id="shep-dx-id-model", js_on_load=MODEL_LIST_JS)
+                id_result_md = gr.Markdown("", elem_id="shep-dx-id-result",
+                                           elem_classes=[*_MD_VIEW, VIEW_OFF])
+                id_result_html = plain_html("", elem_id="shep-dx-id-digests",
+                                            elem_classes=[VIEW_OFF])
+        with gr.Column(visible=False, elem_id="shep-dx-change",
+                       elem_classes=["shep-panel", "shep-dx-drawer"], min_width=0) as change_drawer:
+            with gr.Row(elem_classes=["shep-dx-drawer-hd"], elem_id="shep-dx-change-hd"):
+                plain_html('<h2>Change model</h2><span class="shep-dx-drawer-note">🔒 operator '
+                           'controls · one model is served to every session</span>',
+                           elem_id="shep-dx-change-title")
+                change_close = plain_html(_close_html("change-model drawer"),
+                                          elem_id="shep-dx-change-close", js_on_load=MODEL_LIST_JS)
+            with gr.Column(elem_id="shep-dx-change-bd"):
+                links: Dict[str, Any] = {}
 
-        with gr.Row():
-            data_dir_input = gr.Textbox(
-                label="Data Directory",
-                value=saved_cfg.get("data_dir", "data/workspaces/default"),
-                info="Folder containing kg.json, node_features.pt, edge_indices.pt, etc.",
-            )
-            checkpoint_input = gr.Textbox(
-                label="Checkpoint Path (optional)",
-                value=saved_cfg.get("checkpoint_path") or "",
-                placeholder="(auto-detect from data directory)",
-                info="Explicit .pt path; shows the served file while a pipeline is "
-                "loaded. Clear it to auto-select by architecture.",
-            )
-            arch_input = gr.Dropdown(
-                label="Architecture",
-                choices=["auto", "hgt", "gat", "sage"],
-                value="auto",
-                info="Which GNN to serve: the latest run under {data}/runs/<arch>/. "
-                "'auto' = latest trained. Ignored if a checkpoint path is given.",
-            )
+                def _head() -> Any:
+                    # Each "›" keeps to the word before it (a no-break space):
+                    # at 1440 x 900 the last one was left alone on a line.
+                    links["compare"] = plain_html(
+                        f'<button type="button" class="shep-dx-link" data-key="models">'
+                        f'{COMPARE_LINK}</button>', elem_id="shep-dx-compare",
+                        js_on_load=MODEL_LIST_JS)
+                    return links["compare"]
 
-        with gr.Row():
-            reload_btn = gr.Button("🔄 Load / Reload Pipeline", variant="primary", size="sm")
-            save_cfg_btn = gr.Button("💾 Save Config", variant="secondary", size="sm")
-            reset_btn = gr.Button("↩️ Reset Defaults", variant="secondary", size="sm")
+                def _foot() -> Any:
+                    links["cancel"] = gr.Button("Cancel", size="sm", scale=0, min_width=0,
+                                                elem_id="shep-dx-change-cancel")
+                    plain_html('<span class="shep-note">Load reloads the pipeline and asks once, '
+                               'from → to. Replaces what every session is served; results already '
+                               'produced keep their own identity.</span>',
+                               elem_id="shep-dx-change-note")
+                    return links["cancel"]
 
-        config_msg = gr.Markdown(value="")
+                handle = ctx.create_model_list(
+                    "clinical", head=_head, foot=_foot,
+                    on_loading={"fn": card_loading_outputs, "inputs": [card_state],
+                                "outputs": [card_loading, run_btn, run_cover, run_reason]},
+                    close_while_loading=CLOSE_WHILE_LOADING)
 
-    # === MAIN LAYOUT ===
-    with gr.Row():
-        # === LEFT COLUMN: Input ===
-        with gr.Column(scale=1):
-            gr.Markdown("### Patient Phenotypes")
+        # --- the candidates ---------------------------------------------------
+        with gr.Column(elem_id="shep-dx-results", elem_classes=["shep-panel"], min_width=0):
+            results_hd = plain_html(results_header_html(None), elem_id="shep-dx-results-hd")
+            with gr.Column(elem_id="shep-dx-results-bd", elem_classes=["shep-dx-scroll"]):
+                badge = plain_html("", elem_id="shep-dx-badge", js_on_load=MODEL_LIST_JS)
+                results_body = plain_html(empty_results_html(), elem_id="shep-dx-results-body",
+                                          js_on_load=MODEL_LIST_JS)
+            with gr.Row(elem_id="shep-dx-results-ft", elem_classes=["shep-panel-ft"]):
+                # Not shown until a result exists (`_EXPORTS_HIDDEN`).
+                export_csv = gr.DownloadButton("⬇ Export CSV", size="sm", interactive=False,
+                                               scale=0, min_width=0, elem_id="shep-dx-export-csv",
+                                               visible="hidden")
+                export_report = gr.DownloadButton("⬇ Export report (.md)", size="sm",
+                                                  interactive=False, scale=0, min_width=0,
+                                                  elem_id="shep-dx-export-md", visible="hidden")
+                plain_html(help_button("dx-exports", "Exports"), elem_id="shep-dx-exports-help")
+                plain_html(f'<p class="shep-dx-device">{_e(NOT_A_MEDICAL_DEVICE)}</p>',
+                           elem_id="shep-dx-device")
 
-            phenotype_input = gr.Textbox(
-                label="HPO Terms",
-                placeholder=(
-                    "HP:0001250 — Seizure\n"
-                    "HP:0001263, HP:0002376   (commas / spaces are fine too)"
-                ),
-                lines=8,
-                info=(
-                    "Paste HPO ids in any format — one per line, or comma/space-"
-                    "separated. Names and stray punctuation are ignored; only "
-                    "HP:####### ids are used."
-                ),
-            )
+        # --- the selected candidate's details ----------------------------------
+        with gr.Column(elem_id="shep-dx-details", elem_classes=["shep-panel"], min_width=0):
+            details_hd = plain_html(details_header_html(None), elem_id="shep-dx-details-hd")
+            # The segmented control and the views are shown and hidden by a
+            # class, never `visible` (`view_update`).
+            details_seg = gr.Radio(choices=list(SEGMENTS), value="evidence",
+                                   label="Candidate details view", show_label=False,
+                                   container=False, elem_classes=["shep-seg", VIEW_OFF],
+                                   elem_id="shep-dx-seg")
+            with gr.Column(elem_id="shep-dx-details-bd", elem_classes=["shep-dx-scroll"]):
+                details_html = plain_html(details_empty_html(), elem_id="shep-dx-details-body",
+                                          js_on_load=MODEL_LIST_JS)
+                details_md = gr.Markdown("", elem_id="shep-dx-explanation",
+                                         elem_classes=[*_MD_VIEW, VIEW_OFF])
+            details_ft = plain_html("", elem_id="shep-dx-details-ft")
 
-            clear_btn = gr.ClearButton(
-                components=[phenotype_input],
-                value="🗑️ Clear",
-                size="sm",
-                variant="secondary",
-            )
+    named = {
+        "card_state": card_state, "card_time": card_time, "card_body": card_body,
+        "change_btn": change_btn, "change_reason": change_reason, "details_btn": details_btn,
+        "run_btn": run_btn, "run_cover": run_cover, "run_reason": run_reason, "badge": badge,
+        "results_hd": results_hd, "results_body": results_body, "results_state": results_state,
+        "selected": selected, "export_csv": export_csv, "export_report": export_report,
+        "details_hd": details_hd, "details_seg": details_seg, "details_html": details_html,
+        "details_md": details_md, "details_ft": details_ft, "identity_view": identity_view,
+        "identity_drawer": identity_drawer, "identity_seg": identity_seg, "id_model": id_model,
+        "id_result_md": id_result_md, "id_result_html": id_result_html,
+        "change_drawer": change_drawer, "plan": handle.plan, "confirm": handle.confirm,
+        "confirm_html": handle.confirm_html, "list_reason": handle.reason, "phase": handle.phase,
+        "change_closed": change_closed,
+    }
 
-            with gr.Accordion("Options", open=False):
-                patient_id_input = gr.Textbox(
-                    label="Patient ID",
-                    value="",
-                    placeholder="(auto-generated if blank)",
-                    info="Optional identifier for this diagnosis session.",
-                )
-                top_k_input = gr.Slider(
-                    label="Top-K results",
-                    minimum=1,
-                    maximum=20,
-                    value=10,
-                    step=1,
-                    info="Number of candidate diagnoses to return.",
-                )
+    def outputs(*names: str) -> List[Any]:
+        return [named[n] for n in names]
 
-            diagnose_btn = gr.Button(
-                "🔍 Run Diagnosis",
-                variant="primary",
-                size="lg",
-            )
+    def mapped(values: Dict[str, Any]) -> Any:
+        # Gradio reads an empty dict as one value; "nothing to update" is skip().
+        if not values:
+            return gr.skip()
+        return {named[n]: v for n, v in values.items()}
 
-        # === RIGHT COLUMN: Results ===
-        with gr.Column(scale=2):
-            gr.Markdown("### Diagnosis Results")
+    card_names = ("card_state", "card_time", "card_body", "change_btn", "change_reason",
+                  "details_btn", "run_btn", "run_cover", "run_reason", "badge", "results_body",
+                  "identity_drawer", "identity_seg", "id_model", "id_result_md", "id_result_html")
+    card_inputs = [card_state, results_state, handle.phase, identity_view]
 
-            results_md = gr.Markdown(
-                value="*Enter phenotypes and click 'Run Diagnosis' to see results.*",
-                label="Ranked Candidates",
-            )
+    def _card_refresh(state, result, phase, view, request: gr.Request):
+        return mapped(refresh_card(state, result, phase, view, request))
 
-            with gr.Row():
-                export_csv_btn = gr.DownloadButton(
-                    "⬇️ Export CSV (all candidates)",
-                    size="sm",
-                    variant="secondary",
-                    interactive=False,
-                )
-                export_report_btn = gr.DownloadButton(
-                    "⬇️ Export report (.md)",
-                    size="sm",
-                    variant="secondary",
-                    interactive=False,
-                )
-            gr.Markdown(
-                "<sub>CSV = one row per candidate (all Top-K) for spreadsheets · "
-                "report = full evidence + explanation for every candidate · "
-                "both say what produced the result (the served_ columns; the "
-                "report's identity section).</sub>"
-            )
+    def _card_reread(state, result, phase, view, request: gr.Request):
+        return mapped(refresh_card(state, result, phase, view, request, reread=True))
 
-            candidate_selector = gr.Dropdown(
-                label="Select candidate for evidence detail",
-                choices=[],
-                value=None,
-                interactive=True,
-            )
+    def _card_poll(location, state, result, phase, view, request: gr.Request):
+        return mapped(poll_card(location, state, result, phase, view, request))
 
-            with gr.Accordion("Evidence Panel", open=True):
-                evidence_md = gr.Markdown(
-                    value="",
-                    label="Evidence",
-                )
+    refresh = {"fn": _card_refresh, "inputs": card_inputs, "outputs": outputs(*card_names),
+               "show_progress": "hidden"}
+    # Diagnosis is shown at page load with no tab select, and on each select.
+    ctx.blocks.load(**refresh)
+    ctx.on_page_open(CLINICAL, refresh)
+    ctx.served_model_changed.change(**refresh)
+    ctx.timer_slow.tick(_card_poll, inputs=[ctx.location, *card_inputs],
+                        outputs=outputs(*card_names), queue=False, show_progress="hidden")
+    reread.click(_card_reread, inputs=card_inputs, outputs=outputs(*card_names),
+                 show_progress="hidden")
 
-            with gr.Accordion("Full Explanation", open=False):
-                explanation_md = gr.Markdown(
-                    value="",
-                    label="Explanation",
-                )
+    def _phase_changed(state, phase):
+        run = run_controls(state if isinstance(state, Mapping) else card.new_state(), phase)
+        return mapped(run)
 
-    # === Event wiring ===
-    _diagnosis_outputs = [
-        results_md, evidence_md, explanation_md, candidate_selector, results_state,
-        export_csv_btn, export_report_btn,
-    ]
-    diagnose_btn.click(
-        fn=_on_diagnose,
-        inputs=[phenotype_input, patient_id_input, top_k_input],
-        outputs=_diagnosis_outputs,
-    )
+    handle.phase.change(_phase_changed, inputs=[card_state, handle.phase],
+                        outputs=outputs("run_btn", "run_cover", "run_reason"),
+                        show_progress="hidden")
 
-    candidate_selector.change(
-        fn=_on_candidate_select,
-        inputs=[candidate_selector, results_state],
-        outputs=[evidence_md, explanation_md],
-    )
+    # The reload's answer (reloaded or not): the card's "Loading …" line goes
+    # and Run Diagnosis follows the phase again, whatever the answer was (a
+    # refused reload changes nothing served, so no card refresh would run).
+    def _reload_answered(state, phase):
+        return card_loaded_outputs(state if isinstance(state, Mapping) else card.new_state(),
+                                   phase)
 
-    # Editing the phenotype list invalidates the shown/exported results — clear
-    # them (and disable the downloads) so nothing stale can be exported.
-    phenotype_input.change(
-        fn=_on_phenotype_change,
-        inputs=[results_state],
-        outputs=_diagnosis_outputs,
-    )
+    handle.reload_done.then(_reload_answered, inputs=[card_state, handle.phase],
+                            outputs=[card_loading, run_btn, run_cover, run_reason],
+                            show_progress="hidden")
 
-    # Note: export files are pre-generated in _on_diagnose and set as each
-    # DownloadButton's value, so a single click downloads them — no click handler.
+    # --- the card's own links: dismiss, Retry / read it, Recorded tests ›
+    identity_names = ("identity_view", "identity_drawer", "change_drawer", "identity_seg",
+                      "id_model", "id_result_md", "id_result_html")
 
-    # === Model config event wiring ===
-    # Read on each page load, not once at build time: the app is built before
-    # the server is serving, so a status computed then is stale on arrival. The
-    # fields Reload sends are set from the same read.
-    blocks.load(
-        fn=_on_load_status,
-        inputs=[],
-        outputs=[config_status_md, data_dir_input, checkpoint_input],
-    )
+    def _card_link(state, result, phase, view, evt: gr.EventData, request: gr.Request):
+        key = _event_key(evt)
+        if key == "dismiss":
+            return mapped(card_outputs(card.dismiss_change(state), result, phase, view))
+        if key == "refresh":
+            return mapped(refresh_card(state, result, phase, view, request, reread=True))
+        if key == "evidence":
+            return mapped(open_identity(state, result, "model", "evidence", phase))
+        return gr.skip()
 
-    reload_btn.click(
-        fn=_on_reload_pipeline,
-        inputs=[data_dir_input, checkpoint_input, arch_input],
-        outputs=[config_status_md, config_msg, data_dir_input, checkpoint_input],
-    )
+    card_body.click(_card_link, inputs=card_inputs,
+                    outputs=outputs(*dict.fromkeys(card_names + identity_names)),
+                    show_progress="hidden")
 
-    save_cfg_btn.click(
-        fn=_on_save_config,
-        inputs=[data_dir_input, checkpoint_input],
-        outputs=[config_msg],
-    )
+    def _open_details(state, result, phase):
+        return mapped(open_identity(state, result, "model", "identity", phase))
 
-    reset_btn.click(
-        fn=_on_reset_defaults,
-        inputs=[],
-        outputs=[data_dir_input, checkpoint_input, config_msg],
-    )
+    details_btn.click(_open_details, inputs=[card_state, results_state, handle.phase],
+                      outputs=outputs(*identity_names), show_progress="hidden")
+
+    def _open_result(state, result, phase, evt: gr.EventData):
+        if _event_key(evt) != "result":
+            return gr.skip()
+        return mapped(open_identity(state, result, "result", phase=phase))
+
+    badge.click(_open_result, inputs=[card_state, results_state, handle.phase],
+                outputs=outputs(*identity_names), show_progress="hidden")
+
+    def _switch_identity(state, result, seg, view):
+        new_view = {**(view or {}), "open": True, "seg": seg, "section": "identity"}
+        return mapped({"identity_view": new_view, **identity_outputs(new_view, state, result)})
+
+    identity_seg.input(_switch_identity,
+                       inputs=[card_state, results_state, identity_seg, identity_view],
+                       outputs=outputs(*identity_names), show_progress="hidden")
+
+    def _close_identity_drawer(evt: gr.EventData):
+        return mapped(close_identity()) if _event_key(evt) == "close" else gr.skip()
+
+    identity_close.click(_close_identity_drawer, inputs=None,
+                         outputs=outputs("identity_view", "identity_drawer"),
+                         show_progress="hidden")
+
+    def _to_models(evt: gr.EventData):
+        return ctx.go("models") if _event_key(evt) == "models" else ctx.no_nav()
+
+    id_model.click(_to_models, inputs=None, outputs=ctx.nav_outputs, show_progress="hidden")
+    links["compare"].click(_to_models, inputs=None, outputs=ctx.nav_outputs,
+                           show_progress="hidden")
+
+    # --- Change model…: D8 first, then the shared list's own refresh, then the chips
+    change_btn.click(_on_change_model, inputs=None, outputs=outputs(*CHANGE_OUTPUTS),
+                     show_progress="hidden").then(**handle.refresh).then(**ctx.chip_refresh)
+
+    change_names = ("change_drawer", "plan", "phase", "change_closed")
+    reset_names = ("confirm", "confirm_html", "list_reason", "change_closed")
+
+    def _reset_change(closed):
+        return mapped(reset_change(closed))
+
+    reset = {"fn": _reset_change, "inputs": [change_closed], "outputs": outputs(*reset_names),
+             "show_progress": "hidden"}
+
+    def _close_change_drawer(phase, evt: gr.EventData):
+        return mapped(close_change(phase)) if _event_key(evt) == "close" else gr.skip()
+
+    # Each close ends with the shared list's page step: a close done in the
+    # page while a reload ran (`CLOSE_WHILE_LOADING`) is now done here too.
+    change_close.click(_close_change_drawer, inputs=[handle.phase],
+                       outputs=outputs(*change_names), show_progress="hidden").then(
+        **reset).then(None, js=handle.after_close_js)
+
+    def _cancel_change(phase):
+        return mapped(close_change(phase))
+
+    links["cancel"].click(_cancel_change, inputs=[handle.phase], outputs=outputs(*change_names),
+                          show_progress="hidden").then(**reset).then(None, js=handle.after_close_js)
+
+    # --- Run Diagnosis, the phenotypes, the table, the segments
+    result_names = ("results_hd", "badge", "results_body", "results_state", "selected",
+                    "export_csv", "export_report", "details_hd", "details_seg", "details_html",
+                    "details_md", "details_ft")
+
+    def _run_diagnosis(text, patient, top_k, explanations, state, phase, view,
+                       request: gr.Request):
+        return mapped(diagnose(text, patient, top_k, explanations, state, phase, view, request))
+
+    run_btn.click(_run_diagnosis,
+                  inputs=[phenotype_input, patient_id_input, top_k_input, explanations_input,
+                          card_state, handle.phase, identity_view],
+                  outputs=outputs(*dict.fromkeys(result_names + card_names + identity_names)))
+
+    def _phenotypes_edited(result, state):
+        return mapped(phenotypes_changed(result, state))
+
+    phenotype_input.change(_phenotypes_edited, inputs=[results_state, card_state],
+                           outputs=outputs(*dict.fromkeys(result_names + ("card_state",))),
+                           show_progress="hidden")
+
+    def _select_candidate(result, segment, evt: gr.EventData):
+        return mapped(select_candidate(result, segment, _event_key(evt)))
+
+    details_names = ("details_hd", "details_seg", "details_html", "details_md", "details_ft")
+    results_body.click(_select_candidate, inputs=[results_state, details_seg],
+                       outputs=outputs("selected", "results_body", *details_names),
+                       show_progress="hidden")
+
+    def _switch_segment(result, rank, segment):
+        return mapped(details_outputs(result, rank, segment))
+
+    details_seg.input(_switch_segment, inputs=[results_state, selected, details_seg],
+                      outputs=outputs(*details_names), show_progress="hidden")
+
+    def _details_link(result, rank, evt: gr.EventData):
+        key = _event_key(evt) or ""
+        if not key.startswith("seg:"):
+            return gr.skip()
+        return mapped(details_outputs(result, rank, key[len("seg:"):]))
+
+    details_html.click(_details_link, inputs=[results_state, selected],
+                       outputs=outputs(*details_names), show_progress="hidden")
+
+
+# =============================================================================
+# The page's style sheet (the page contract: listed in `src/webui/app.py`)
+# =============================================================================
+#: The page's tab (`src.webui.shell.tab_elem_id(CLINICAL)`).
+_TAB = "#shep-tab-clinical"
+
+#: Diagnosis' layout: the input column 370 px wide from 1800 px of window, 320
+#: px from 1600, 300 px below; the candidates and the details share the rest
+#: 5:4. Wide, each panel scrolls inside and the input column's card and Run
+#: Diagnosis stick to the bottom of its scroll body; narrow, the panels stack.
+#: While the Load confirmation is open (UI-A's confirmation box is mounted only
+#: then) the list's footer is hidden and its rows give up their height to it
+#: (all of it below 820 px of height), so the from → to rows and the warning
+#: sentence are never scrolled out of view.
+PAGE_CSS = f"""
+{_TAB} {{ --dx-in-w: 300px; }}
+@media (min-width: 1600px) {{ {_TAB} {{ --dx-in-w: 320px; }} }}
+@media (min-width: 1800px) {{ {_TAB} {{ --dx-in-w: 370px; }} }}
+{_TAB} #shep-dx {{ position: relative; gap: 16px; align-items: stretch; }}
+{_TAB} #shep-dx-input {{ flex: 0 0 var(--dx-in-w) !important; width: var(--dx-in-w); max-width: var(--dx-in-w); }}
+{_TAB} #shep-dx-results {{ flex: 5 1 0 !important; min-width: 0 !important; }}
+{_TAB} #shep-dx-details {{ flex: 4 1 0 !important; min-width: 0 !important; }}
+{_TAB} .shep-dx-scroll {{ gap: 12px !important; padding: 14px 16px !important; }}
+{_TAB} .shep-dx-scroll > * {{ flex-shrink: 0 !important; }}
+{_TAB} #shep-dx-input-bd {{ padding-top: 12px !important; padding-bottom: 0 !important; gap: 0 !important; }}
+{_TAB} .shep-dx-fields, {_TAB} .shep-dx-side {{ gap: 8px !important; }}
+{_TAB} #shep-dx-fields {{ padding-bottom: 8px; }}
+{_TAB} #shep-dx-fields > .form {{ background: none !important; border: 0 !important; box-shadow: none !important; }}
+{_TAB} #shep-dx-fields .block.padded {{ padding: 6px 8px !important; }}
+{_TAB} #shep-dx-fields [data-testid="block-info"] {{ margin-bottom: 4px !important; }}
+{_TAB} #shep-dx-options .form {{ display: contents !important; }}
+{_TAB} #shep-dx-options .block.padded {{ padding: 0 !important; }}
+{_TAB} #dx_top_k input[type=number] {{ height: 34px; padding: 4px 8px; }}
+{_TAB} .shep-dx-options {{ align-items: center !important; flex-wrap: wrap !important; gap: 8px 14px !important;
+  border: 1px solid var(--shep-border); border-radius: 8px; background: var(--shep-panel-2); padding: 8px 10px !important; }}
+{_TAB} .shep-dx-options > * {{ flex: 0 0 auto !important; width: auto !important; min-width: 0 !important; }}
+{_TAB} .shep-dx-options .form {{ display: flex !important; flex-direction: row !important; flex-wrap: wrap; align-items: center;
+  gap: 8px 14px; background: none !important; border: 0 !important; box-shadow: none !important; }}
+{_TAB} .shep-dx-options .block {{ padding: 0 !important; background: none !important; border: 0 !important; box-shadow: none !important;
+  width: auto !important; flex: 0 0 auto !important; overflow: visible !important; }}
+{_TAB} .shep-dx-opt {{ font-size: 14px; color: var(--shep-text-2); font-weight: 500; }}
+{_TAB} #dx_top_k label.container {{ display: flex; align-items: center; gap: 6px; }}
+{_TAB} #dx_top_k [data-testid="block-info"] {{ margin: 0; background: none; padding: 0; font-size: 15px; color: var(--shep-text); }}
+{_TAB} #dx_top_k input[type=number] {{ width: 72px; }}
+{_TAB} #shep-dx-input-bd > *, {_TAB} #shep-dx-sticky > *, {_TAB} #shep-dx-card > * {{ flex: none !important; }}
+{_TAB} .shep-dx-sticky {{ position: sticky; bottom: 0; z-index: 50; gap: 0 !important; margin: 0 -16px !important;
+  width: calc(100% + 32px) !important; max-width: none !important; background: var(--shep-panel); }}
+{_TAB} .shep-dx-card {{ background: var(--shep-panel-2); border-top: 1px solid var(--shep-border);
+  border-bottom: 1px solid var(--shep-border); padding: 5px 16px 6px !important; gap: 3px !important; }}
+{_TAB} .shep-dx-card-hd {{ align-items: center !important; flex-wrap: wrap !important; gap: 2px 6px !important; }}
+{_TAB} .shep-dx-card-hd > *, {_TAB} .shep-dx-card-when > * {{ flex: 0 0 auto !important; width: auto !important;
+  min-width: 0 !important; }}
+{_TAB} .shep-dx-card-when {{ margin-left: auto !important; flex-wrap: nowrap !important; gap: 4px !important;
+  align-items: center !important; }}
+{_TAB} .shep-dx-card-title {{ white-space: nowrap; }}
+{_TAB} .shep-dx-card-title {{ font-size: 14px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--shep-text-2); }}
+{_TAB} .shep-dx-checked {{ font-size: 14px; color: var(--shep-text-2); white-space: nowrap; }}
+{_TAB} button.shep-dx-reread {{ border: 0; background: none; color: var(--shep-accent-text); font-size: 16px; cursor: pointer; padding: 0 4px; line-height: 1; }}
+{_TAB} .shep-dx-card-bd {{ display: flex; flex-direction: column; gap: 1px; font-size: 15px; line-height: 1.3; }}
+{_TAB} .shep-dx-card-bd p {{ margin: 0; }}
+{_TAB} .shep-dx-name {{ font-weight: 600; }}
+{_TAB} .shep-dx-sub {{ font-weight: 400; color: var(--shep-text-2); }}
+{_TAB} .shep-dx-line {{ overflow-wrap: anywhere; }}
+{_TAB} .shep-dx-line .shep-fp {{ white-space: normal; }}
+{_TAB} .shep-dx-tail {{ display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }}
+{_TAB} .shep-dx-chips {{ display: inline-flex; flex-wrap: wrap; gap: 4px 6px; }}
+{_TAB} .shep-dx-tests {{ white-space: normal; }}
+{_TAB} .shep-dx-card-grey .shep-dx-name, {_TAB} .shep-dx-card-grey .shep-dx-line {{ color: var(--shep-grey-600); }}
+{_TAB} .shep-dx-card-grey .shep-fpv {{ font-weight: 400; color: var(--shep-grey-600); }}
+{_TAB} .shep-tag-dashed {{ border-style: dashed !important; }}
+{_TAB} .shep-dx-state {{ display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 14px; color: var(--shep-grey-800); margin-bottom: 2px; }}
+{_TAB} .shep-dx-state .shep-dx-retry {{ height: 24px; padding: 0 6px; }}
+/* This page's Load in progress (the mockup's state 3): one accent line over the card's model. */
+{_TAB} #shep-dx-card-loading:not(:has(.shep-dx-loading)) {{ display: none !important; }}
+{_TAB} .shep-dx-loading {{ margin: 0; font-size: 15px; line-height: 1.35; color: var(--shep-accent-text); overflow-wrap: anywhere; }}
+{_TAB} .shep-dx-loading .shep-load-off {{ color: var(--shep-grey-800); }}
+{_TAB} .shep-dx-change {{ display: flex; align-items: flex-start; gap: 8px; margin-bottom: 2px; padding: 4px 8px; }}
+{_TAB} button.shep-dx-x {{ margin-left: auto; border: 0; background: none; color: var(--shep-amber-800); font-size: 18px; line-height: 1; cursor: pointer; padding: 0 2px; }}
+{_TAB} button.shep-dx-link {{ border: 0; background: none; padding: 0; color: var(--shep-accent-text); font: inherit; cursor: pointer; }}
+{_TAB} button.shep-dx-link:hover {{ text-decoration: underline; }}
+{_TAB} .shep-dx-card-actions {{ justify-content: space-between !important; align-items: center !important; flex-wrap: wrap !important; gap: 8px !important; margin-top: 2px; }}
+{_TAB} .shep-dx-card-actions > * {{ flex: 0 0 auto !important; width: auto !important; }}
+{_TAB} #shep-dx-details-btn {{ border: 0 !important; background: none !important; box-shadow: none !important; color: var(--shep-accent-text) !important; padding: 0 2px !important; font-weight: 500; }}
+{_TAB} #shep-dx-change-btn {{ margin-left: auto; }}
+{_TAB} .shep-dx-why {{ margin: 2px 0 0; font-size: 14px; color: var(--shep-text-2); text-align: right; }}
+{_TAB} #shep-dx-run-why .shep-dx-why {{ text-align: left; margin: 0 16px 8px; }}
+{_TAB} .shep-dx-run {{ padding: 6px 16px !important; gap: 10px !important; flex-wrap: nowrap !important; align-items: stretch !important; }}
+{_TAB} #shep-dx-run-wrap {{ position: relative; gap: 0 !important; flex: 1 1 auto !important; }}
+{_TAB} #shep-dx-clear {{ flex: 0 0 auto !important; min-width: 84px !important; padding: 0 18px !important; }}
+{_TAB} #shep-dx-run-cover {{ position: absolute !important; inset: 0; pointer-events: none; z-index: 3; }}
+{_TAB} #shep-dx-run-cover .html-container, {_TAB} #shep-dx-run-cover .prose {{ height: 100%; }}
+{_TAB} button.shep-i.shep-i-cover {{ position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; border: 0;
+  border-radius: 8px; background: transparent !important; cursor: not-allowed; pointer-events: auto; color: transparent; }}
+{_TAB} button.shep-i.shep-i-cover:focus-visible {{ outline: 2px solid var(--shep-accent); outline-offset: 2px; }}
+{_TAB} #shep-dx-results-hd .shep-panel-right b {{ color: var(--shep-text); }}
+{_TAB} .shep-dx-badge-row {{ display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }}
+{_TAB} button.shep-dx-badge {{ display: inline-flex; align-items: center; gap: 8px; min-height: 34px; padding: 4px 12px;
+  border-radius: 8px; border: 1px solid; font: inherit; font-size: 15px; font-weight: 600; cursor: pointer; text-align: left; }}
+{_TAB} .shep-dx-badge-ok {{ background: var(--shep-green-50); border-color: var(--shep-green-200) !important; color: var(--shep-green-800); }}
+{_TAB} .shep-dx-badge-amber {{ background: var(--shep-amber-50); border-color: var(--shep-amber-300) !important; color: var(--shep-amber-800); }}
+{_TAB} .shep-dx-badge-grey {{ background: var(--shep-grey-50); border-color: var(--shep-grey-200) !important; color: var(--shep-grey-800); }}
+{_TAB} .shep-dx-u {{ text-decoration: underline; }}
+{_TAB} .shep-dx-badge-why {{ margin: 6px 0 0; font-size: 14px; color: var(--shep-text-2); }}
+{_TAB} .shep-dx-banner {{ display: flex; align-items: center; gap: 8px; padding: 7px 12px; border-radius: 6px; margin: 0 0 8px; font-size: 15px; }}
+{_TAB} .shep-dx-banner button.shep-i {{ margin-left: auto; }}
+{_TAB} .shep-dx-banner-amber {{ background: var(--shep-amber-50); border: 1px solid var(--shep-amber-100); border-left: 4px solid var(--shep-amber-600); color: var(--shep-amber-800); }}
+{_TAB} .shep-dx-banner-red {{ background: var(--shep-red-50); border: 1px solid var(--shep-red-200); border-left: 4px solid var(--shep-red-700); color: var(--shep-red-700); }}
+{_TAB} .shep-dx-warnings {{ font-size: 14px; color: var(--shep-amber-800); margin: 0 0 8px; overflow-wrap: anywhere; }}
+{_TAB} .shep-dx-tbl-wrap {{ margin: 0; }}
+{_TAB} .shep-dx-tbl td, {_TAB} .shep-dx-tbl th {{ white-space: nowrap; }}
+{_TAB} .shep-dx-tbl td.shep-dx-dis {{ white-space: normal; width: 100%; min-width: 9em; }}
+{_TAB} .shep-dx-tbl tbody tr[data-key] {{ cursor: pointer; }}
+{_TAB} .shep-dx-tbl tbody tr.shep-on td.shep-dx-dis {{ color: var(--shep-accent-text); font-weight: 600; }}
+{_TAB} .shep-dx-clamp {{ display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }}
+{_TAB} .shep-dx-dot {{ display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 7px; vertical-align: 1px; }}
+{_TAB} .shep-dx-dot-strong {{ background: #1f9d55; }}
+{_TAB} .shep-dx-dot-weak {{ background: #d69e00; }}
+{_TAB} .shep-dx-dot-analogy {{ background: #3b6fe0; }}
+{_TAB} .shep-dx-dot-none {{ background: #8a909b; }}
+{_TAB} .shep-dx-empty {{ margin: auto; max-width: 440px; text-align: center; color: var(--shep-text-2); padding: 24px 8px; }}
+{_TAB} .shep-dx-empty p {{ margin: 4px 0; }}
+{_TAB} .shep-dx-empty-h {{ font-size: 16px; font-weight: 600; color: var(--shep-text); }}
+{_TAB} .shep-dx-notice p {{ margin: 0 0 6px; }}
+{_TAB} .shep-dx-error {{ color: var(--shep-red-700); overflow-wrap: anywhere; }}
+{_TAB} .shep-dx-warn {{ color: var(--shep-amber-800); }}
+{_TAB} #shep-dx-results-ft {{ flex-wrap: wrap !important; gap: 8px 10px !important; }}
+{_TAB} #shep-dx-results-ft > * {{ flex: 0 0 auto !important; width: auto !important; }}
+{_TAB} #shep-dx-device {{ flex-basis: 100% !important; }}
+/* No result, no exports: their ⓘ goes with them (Gradio's "hidden" class). */
+{_TAB} #shep-dx-results-ft:has(#shep-dx-export-csv.hidden) #shep-dx-exports-help {{ display: none !important; }}
+{_TAB} .shep-dx-device {{ margin: 0; font-size: 14px; color: var(--shep-text-2); }}
+{_TAB} .shep-dx-det-hd {{ flex-direction: column; align-items: flex-start !important; gap: 2px !important; }}
+{_TAB} .shep-dx-det-hd h2 {{ display: flex; align-items: center; gap: 8px; overflow-wrap: anywhere; }}
+{_TAB} .shep-dx-rank {{ font-size: 14px; font-weight: 600; color: var(--shep-accent-text); background: var(--shep-accent-50); border: 1px solid var(--shep-accent-100); border-radius: 6px; padding: 1px 7px; }}
+{_TAB} .shep-dx-det-sub {{ margin: 0; font-size: 14px; color: var(--shep-text-2); }}
+{_TAB} #shep-dx-seg {{ padding: 10px 16px 0 !important; }}
+{_TAB} .shep-dx-off {{ display: none !important; }}
+{_TAB} .shep-dx-ev-label {{ margin: 0 0 8px; }}
+{_TAB} .shep-dx-quote {{ margin: 0 0 12px; padding: 8px 12px; border-left: 3px solid var(--shep-border-2); background: var(--shep-panel-2); color: var(--shep-text-2); overflow-wrap: anywhere; }}
+{_TAB} .shep-dx-h {{ font-size: 15px; font-weight: 600; margin: 10px 0 4px; }}
+{_TAB} .shep-dx-genes {{ display: flex; flex-wrap: wrap; gap: 6px; margin: 0; }}
+{_TAB} .shep-dx-gene {{ font-family: var(--shep-mono); font-size: 14px; border: 1px solid var(--shep-accent-100); background: var(--shep-accent-50); border-radius: 6px; padding: 2px 8px; }}
+{_TAB} .shep-dx-list, {_TAB} .shep-dx-paths {{ margin: 0 0 8px; padding-left: 22px; }}
+{_TAB} .shep-dx-paths li {{ margin: 0 0 6px; overflow-wrap: anywhere; }}
+{_TAB} .shep-dx-arrow {{ color: var(--shep-muted); }}
+{_TAB} #shep-dx-details-ft {{ border-top: 1px solid var(--shep-border); }}
+{_TAB} .shep-dx-det-ft {{ display: flex; align-items: center; gap: 4px; padding: 10px 16px; font-size: 14px; color: var(--shep-text-2); }}
+{_TAB} #shep-dx-explanation {{ font-size: 15px; }}
+{_TAB} .shep-dx-drawer {{ box-shadow: 0 10px 30px rgba(20, 24, 40, .14); }}
+{_TAB} .shep-dx-drawer-hd {{ align-items: center !important; flex-wrap: wrap !important; gap: 8px 12px !important; padding: 10px 16px !important; border-bottom: 1px solid var(--shep-border); }}
+{_TAB} .shep-dx-drawer-hd > * {{ flex: 0 0 auto !important; width: auto !important; min-width: 0 !important; }}
+{_TAB} .shep-dx-drawer-hd h2 {{ font-size: 16px; font-weight: 600; margin: 0; display: inline; }}
+{_TAB} .shep-dx-drawer-note {{ margin-left: 10px; font-size: 14px; color: var(--shep-text-2); }}
+{_TAB} #shep-dx-identity-close, {_TAB} #shep-dx-change-close {{ margin-left: auto; }}
+{_TAB} button.shep-dx-close {{ border: 0; background: none; font-size: 22px; line-height: 1; cursor: pointer; color: var(--shep-text-2); padding: 0 4px; }}
+{_TAB} .shep-dx-boundary {{ margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--shep-border); font-size: 14px; color: var(--shep-text-2); }}
+{_TAB} .shep-dx-boundary p {{ margin: 0 0 6px; }}
+{_TAB} .shep-dx-digests {{ display: flex; flex-direction: column; gap: 8px; }}
+{_TAB} .shep-dx-digests-h {{ margin: 4px 0 0; }}
+{_TAB} #shep-dx-id-result table {{ font-size: 14px; table-layout: fixed; width: 100%; }}
+{_TAB} #shep-dx-id-result td, {_TAB} #shep-dx-id-result th {{ overflow-wrap: anywhere; vertical-align: top; }}
+/* A code chip is text in its line, breaking only where it must (M5-3: Gradio
+   draws a Markdown chip as an inline flex box, a box a line may break before,
+   which left "(" alone: "Knowledge graph (" / "kg.json)"). */
+{_TAB} #shep-dx-id-result code {{ display: inline; white-space: normal; word-break: normal;
+  overflow-wrap: anywhere; -webkit-box-decoration-break: clone; box-decoration-break: clone; }}
+{_TAB} #shep-dx-id-result p {{ font-size: 15px; }}
+/* The labels of the drawers' Model Facts are short (a digest's long label takes a
+   line of its own, `renderers.kv_cells`), so the values get the width. */
+{_TAB} .shep-dx-drawer .shep-kv {{ grid-template-columns: minmax(6em, max-content) minmax(0, 1fr); }}
+{_TAB} .shep-dx-drawer .shep-k, {_TAB} .shep-dx-drawer .shep-v {{ min-width: 0; overflow-wrap: anywhere; }}
+{_TAB} .shep-dx-drawer .shep-facts-sum {{ overflow-wrap: anywhere; }}
+{_TAB} #shep-dx-change button.shep-row {{ display: block; }}
+{_TAB} #shep-dx-change button.shep-row > .shep-row-sub {{ display: block; margin-top: 2px; }}
+{_TAB} #shep-dx-change button.shep-row > .shep-tag {{ margin-left: 6px; }}
+{_TAB} #shep-dx-change-bd {{ padding: 12px 16px !important; gap: 10px !important; }}
+{_TAB} #shep-dx-change .shep-model-head {{ align-items: flex-end !important; flex-wrap: wrap !important; gap: 8px 14px !important; }}
+{_TAB} #shep-dx-change .shep-model-head > * {{ min-width: 0 !important; }}
+{_TAB} #shep-dx-change .shep-model-body {{ gap: 14px !important; align-items: flex-start !important; flex-wrap: nowrap !important; }}
+{_TAB} #shep-dx-change .shep-model-rows {{ flex: 3 1 0 !important; min-width: 0 !important; }}
+{_TAB} #shep-dx-change .shep-model-facts {{ flex: 2 1 0 !important; min-width: 0 !important; }}
+{_TAB} #shep-dx-change .shep-model-foot {{ align-items: center !important; flex-wrap: wrap !important; gap: 8px 12px !important;
+  border-top: 1px solid var(--shep-border); padding-top: 10px !important; }}
+{_TAB} #shep-dx-change .shep-model-foot > * {{ flex: 0 0 auto !important; width: auto !important; min-width: 0 !important; }}
+{_TAB} #shep-dx-change-note {{ flex: 1 1 280px !important; }}
+{_TAB} #shep-dx-change .shep-model-confirm-box > .row > button {{ flex: 0 0 auto !important; white-space: nowrap; }}
+{_TAB} #shep-dx-change .shep-model-list:has(.shep-model-confirm-box) > .shep-model-foot {{ display: none !important; }}
+{_TAB} #shep-dx-change .shep-confirm .shep-ftbl th, {_TAB} #shep-dx-change .shep-confirm .shep-ftbl td {{ padding-top: 5px; padding-bottom: 5px; }}
+{_TAB} #shep-dx-change .shep-confirm .shep-ftbl tbody th {{ white-space: nowrap; }}
+@media (min-width: 1400px) and (min-height: 760px) {{
+  {_TAB} > .column {{ height: 100%; box-sizing: border-box; }}
+  {_TAB} #shep-dx {{ height: 100%; }}
+  {_TAB} #shep-dx > .shep-panel {{ max-height: 100%; }}
+  {_TAB} .shep-dx-scroll {{ flex: 1 1 auto !important; min-height: 0; overflow: auto; }}
+  {_TAB} #shep-dx-input-bd {{ display: flex; flex-direction: column; }}
+  {_TAB} .shep-dx-drawer {{ position: absolute !important; top: 0; bottom: 0; z-index: 20; }}
+  {_TAB} #shep-dx-identity {{ right: 0; width: max(600px, calc((100% - var(--dx-in-w) - 32px) * 4 / 9 + 16px)); }}
+  {_TAB} #shep-dx-change {{ left: calc(var(--dx-in-w) + 16px); right: 0; }}
+  {_TAB} #shep-dx-identity-bd {{ flex: 1 1 auto !important; min-height: 0; overflow: auto; }}
+  {_TAB} #shep-dx-change-bd {{ flex: 1 1 auto !important; min-height: 0; display: flex; flex-direction: column; }}
+  {_TAB} #shep-dx-change .shep-model-list {{ flex: 1 1 auto !important; min-height: 0; display: flex !important; flex-direction: column; }}
+  {_TAB} #shep-dx-change .shep-model-body {{ flex: 1 1 0 !important; min-height: 120px; overflow: auto; }}
+  {_TAB} #shep-dx-change .shep-model-confirm-box {{ flex: 0 1 auto !important; min-height: 0; overflow: hidden; }}
+  {_TAB} #shep-models-clinical-confirm {{ flex: 0 1 auto !important; min-height: 0; overflow: auto !important; }}
+  {_TAB} #shep-dx-change .shep-model-confirm-box > .row {{ flex: none !important; }}
+  {_TAB} #shep-dx-change .shep-model-list:has(.shep-model-confirm-box) > .shep-model-body {{ min-height: 0 !important; }}
+}}
+@media (min-width: 1400px) and (min-height: 760px) and (max-height: 819px) {{
+  {_TAB} #shep-dx-change .shep-model-list:has(.shep-model-confirm-box) > .shep-model-body {{ display: none !important; }}
+}}
+@media (max-width: 1399px), (max-height: 759px) {{
+  {_TAB} #shep-dx-input, {_TAB} #shep-dx-results, {_TAB} #shep-dx-details {{ flex: 1 1 auto !important; width: 100% !important; max-width: none !important; }}
+  {_TAB} .shep-dx-fields {{ display: grid !important; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px 18px !important; }}
+  {_TAB} .shep-dx-sticky {{ position: static; }}
+  {_TAB} #shep-dx-change .shep-model-body {{ flex-direction: column !important; }}
+  {_TAB} #shep-dx-change .shep-model-rows, {_TAB} #shep-dx-change .shep-model-facts {{ width: 100% !important; }}
+}}
+@media (max-width: 760px) {{
+  {_TAB} .shep-dx-fields {{ grid-template-columns: minmax(0, 1fr); }}
+}}
+"""
+
+
+__all__ = [
+    "CLOSE_WHILE_LOADING",
+    "FIELD_HELP",
+    "PAGE_CSS",
+    "SEGMENTS",
+    "TOPIC_HELP",
+    "badge_html",
+    "card_outputs",
+    "compare_with_served",
+    "create_diagnosis_tab",
+    "details_outputs",
+    "diagnose",
+    "open_change",
+    "poll_card",
+    "refresh_card",
+    "result_identity_md",
+    "results_body_html",
+    "run_controls",
+]

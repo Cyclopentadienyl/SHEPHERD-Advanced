@@ -15,10 +15,19 @@ Config authority (decision record: docs/CONFIG_AUTHORITY.md):
 Contents:
     - model_types.py       : torch-free conv-type constants
                              (SUPPORTED_CONV_TYPES, DEFAULT_CONV_TYPE).
+    - server_settings.py   : the service's M5 settings, read from the environment
+                             at each use (deployment mode, workspaces root,
+                             cohort registry, intake directory, R10 evidence
+                             directories, ordering roles), the one rule for a
+                             directory an operator names, and the network-bind
+                             rule (SPEC_4 §3.1) the launcher and
+                             `src.api.main:main()` apply.
     - config_validator.py,
       schema_loader.py     : RESERVED homes for committed-config validation
                              (configs/deployment.yaml + configs/schemas/*.json).
                              Empty by design until deployment validation is built.
+    - serving_device.py    : the deployment's device setting (SHEPHERD_DEVICE), read
+                             by serving and by the job runner's test runs.
 
 Module: src/config/__init__.py
 """

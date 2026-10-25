@@ -755,6 +755,10 @@ def child_env(base: dict[str, str], workspace: Path, checkpoint: Path) -> dict[s
         "SHEPHERD_DATA_DIR": str(workspace),
         "SHEPHERD_CHECKPOINT_PATH": str(checkpoint),
         "SHEPHERD_DEVICE": "cuda",
+        # R3's reload is an operator control since M5-1 (D8): it is allowed
+        # only under mode M1, for a request that arrives on loopback with a
+        # loopback Host, as this script's requests do.
+        "SHEPHERD_DEPLOYMENT_MODE": "M1",
     })
     return env
 
@@ -1401,7 +1405,8 @@ def _run(args: argparse.Namespace) -> int:
             "through": "scripts/launch/shep_launch.py --no-auto-install --no-browser "
                        "-- --host 127.0.0.1 --port <free port>",
             "environment_set": ["PYTHONUNBUFFERED", "SHEPHERD_KG_PATH", "SHEPHERD_DATA_DIR",
-                                "SHEPHERD_CHECKPOINT_PATH", "SHEPHERD_DEVICE"],
+                                "SHEPHERD_CHECKPOINT_PATH", "SHEPHERD_DEVICE",
+                                "SHEPHERD_DEPLOYMENT_MODE"],
             "environment_removed_if_present": sorted(CHILD_ENV_REMOVED) + [
                 f"{CHILD_ENV_REMOVED_PREFIX}*"],
             "reload_request": "the same workspace and checkpoint, device cuda",

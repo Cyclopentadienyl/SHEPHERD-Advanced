@@ -1,0 +1,81 @@
+{
+  "counts": {
+    "cases_with_lost_terms": 1,
+    "cases_with_repeats": 1,
+    "excluded": {
+      "ground_truth_absent": 1,
+      "phenotype_unmappable": 1
+    },
+    "n_excluded": 2,
+    "ranked_eligible": 10,
+    "repeats_removed": 1,
+    "source_cases": 12,
+    "terms_unmappable": 2
+  },
+  "dataset_record": {
+    "hpo": null,
+    "mondo": null,
+    "origin": "synthetic",
+    "sha256": "9170959de0d57ea33dce4a05393e8f67232bb6332ac1cc879352a3c9a0af4396"
+  },
+  "exclusions": [
+    {
+      "case_id": "probe-case-11",
+      "category": "ground_truth_absent",
+      "reasons": [
+        "ground_truth_absent"
+      ],
+      "terms_total": 2,
+      "terms_unmappable": 0
+    },
+    {
+      "case_id": "probe-case-12",
+      "category": "phenotype_unmappable",
+      "reasons": [
+        "phenotype_unmappable"
+      ],
+      "terms_total": 1,
+      "terms_unmappable": 1
+    }
+  ],
+  "graph": {
+    "edge_indices": "7624169d26decbe534873d25e385817c01485df08e5c6fe3df82222f2c854bec",
+    "kg": "7980bf7d7492f139e92d71cf7cfe971030567a1a3fc79d715b6ef34d8631fae1",
+    "node_features": "d52da31dff4f4b67e0af78e6205565e46a0aee9fa38a68e75b94b25c0709fbdb",
+    "num_nodes": "2e747928e24494e04ddb4dd8b2135afbeef63cb5a64172ad4bc24b8b9c509bee"
+  },
+  "imported": {
+    "at": "2026-10-25T14:30:40Z",
+    "code_revision": {
+      "dirty": false,
+      "modified_tracked": 0,
+      "revision": "773dc4afb5629bad9ec463980ea49b878121492c",
+      "state": "recorded",
+      "untracked": 0
+    }
+  },
+  "label": "m5-closeout-demo-01",
+  "mapping": {
+    "disease_namespace": "MONDO",
+    "partial_phenotypes": "keep",
+    "phenotype_namespace": "HP",
+    "phenotype_normalisation_version": 1
+  },
+  "role": "webui-synthetic",
+  "samples": {
+    "n": 10,
+    "sha256": "91b77e24e5fc7023894b5791df156f3c9c5f552e6e2e82168117fae77c45ca6e"
+  },
+  "schema_version": 1,
+  "source": {
+    "filename": "m5-closeout-demo-cases-01.json",
+    "format": "shepherd-cases/1",
+    "n_cases": 12,
+    "sha256": "cd305fa92e20e0755c76b53758993d23880c833132b1e9d6f2f0a59796a169b0"
+  },
+  "unmappable_terms": {
+    "HP:9999998": 1,
+    "HP:9999999": 1
+  },
+  "what_this_is": "a test cohort version: a source case set mapped to one graph's node indices"
+}

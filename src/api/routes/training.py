@@ -14,6 +14,11 @@ Purpose:
     - GET  /training/metrics: Get full metrics history
     - GET  /training/checkpoints: List model checkpoints
 
+    Start, stop and the checkpoint list (which opens checkpoint files, SPEC_4
+    C3) are operator controls: each takes D8's one dependency
+    (`src/api/operator_access.py`) and is refused before it runs unless D8
+    allows the request. Status and metrics stay open.
+
 Dependencies:
     - fastapi: Router, request/response models
     - pydantic: Request validation
@@ -27,9 +32,10 @@ import logging
 import re
 from typing import Annotated, Any, Dict, List, Literal, Mapping, Optional
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from src.api.operator_access import OPERATOR_ONLY
 from src.api.services.training_manager import training_manager
 
 logger = logging.getLogger(__name__)
@@ -218,6 +224,12 @@ class TrainingStatusResponse(BaseModel):
     # How the run stands once its process is not running, from its last
     # snapshot's record (contract M3a); None when it saved none.
     outcome: Optional[Dict[str, Any]] = None
+    # The job runner's own record of the latest training job (M5).
+    job_id: Optional[str] = None
+    end_time: Optional[str] = None
+    exit_code: Optional[int] = None
+    # The one GPU slot: the job holding it, of either type, and the GPU lock.
+    gpu: Optional[Dict[str, Any]] = None
 
 
 class CheckpointInfo(BaseModel):
@@ -233,13 +245,30 @@ class CheckpointInfo(BaseModel):
     run_dir: Optional[str] = None
     architecture: Optional[str] = None
     checkpoint_kind: Optional[str] = None
+    # From the same one read as the metadata (M5-1, BACKLOG 19.3): the SHA-256
+    # of the bytes read, the Trainer's validation figure, the dataset
+    # fingerprint the checkpoint records, and why a file could not be read.
+    sha256: Optional[str] = None
+    validation: Optional[Dict[str, Any]] = None
+    dataset_fingerprint: Optional[str] = None
+    metadata_problem: Optional[str] = None
 
 
 # =============================================================================
 # Endpoints
 # =============================================================================
-@router.post("/training/start", response_model=Dict[str, Any])
-async def start_training(request: TrainingStartRequest) -> Dict[str, Any]:
+@router.post("/training/start", response_model=Dict[str, Any], dependencies=OPERATOR_ONLY)
+async def start_training(
+    request: TrainingStartRequest,
+    expected_dataset_fingerprint: Annotated[Optional[str], Query(
+        pattern=r"^[0-9a-f]{64}$",
+        description="Refuse the start (409) unless the workspace's dataset fingerprint, the "
+                    "SHA-256 of its split_manifest.json, is still this one")] = None,
+    expected_parent_sha256: Annotated[Optional[str], Query(
+        pattern=r"^[0-9a-f]{64}$",
+        description="With resume_from: refuse the start (409) unless the parent checkpoint "
+                    "still has this SHA-256 (the model fingerprint shown)")] = None,
+) -> Dict[str, Any]:
     """
     Start a new training run.
 
@@ -249,18 +278,35 @@ async def start_training(request: TrainingStartRequest) -> Dict[str, Any]:
     defaults are the training script's own, and a run continued from a parent
     inherits every learning setting the caller did not set, and refuses one it
     set to another value.
+
+    ``expected_dataset_fingerprint`` (an optional query parameter, M5-2: a
+    precondition on the request, not a training setting, so it is not in the
+    body the training field spec pins) makes the start refuse (409) unless the
+    workspace's split manifest is still the one the caller showed. The
+    dashboard's Start always sends it, through this same service call.
+
+    ``expected_parent_sha256`` (optional, the same kind of precondition, for a
+    run continued from ``resume_from``) makes the start refuse (409) unless the
+    parent is still the checkpoint the caller showed. Without it the training
+    process is still bound to the parent the service decided on (root-cause
+    round, P22-S1): a file replaced after that is refused before it is loaded.
     """
     config = request.model_dump(exclude_unset=True, exclude_none=True)
 
     # A continued run's cross-field rules apply to the settings it will use,
     # resolved from its parent by the shared run plan, inside the service.
-    result = training_manager.start_training(config, effective_rules=cross_field_errors)
+    result = training_manager.start_training(
+        config, effective_rules=cross_field_errors,
+        expected_dataset_fingerprint=expected_dataset_fingerprint,
+        expected_parent_sha256=expected_parent_sha256)
     # Each field's own type and range apply to every request, a value repeating
     # the parent's included; omitting a field inherits it.
 
     if not result.get("success"):
         raise HTTPException(
-            status_code=(status.HTTP_422_UNPROCESSABLE_ENTITY if result.get("invalid_settings")
+            # 422 under its RFC 9110 name: Starlette 1.x warns on the old
+            # HTTP_422_UNPROCESSABLE_ENTITY. Same status code.
+            status_code=(status.HTTP_422_UNPROCESSABLE_CONTENT if result.get("invalid_settings")
                          else status.HTTP_409_CONFLICT),
             detail=result.get("error", "Failed to start training"),
         )
@@ -268,12 +314,17 @@ async def start_training(request: TrainingStartRequest) -> Dict[str, Any]:
     return result
 
 
-@router.post("/training/stop", response_model=Dict[str, Any])
-async def stop_training() -> Dict[str, Any]:
+@router.post("/training/stop", response_model=Dict[str, Any], dependencies=OPERATOR_ONLY)
+def stop_training() -> Dict[str, Any]:
     """
-    Stop the currently running training.
+    Stop the currently running training; a test run is never stopped by it.
 
-    Sends SIGINT for graceful shutdown, falls back to SIGTERM if needed.
+    Sends SIGINT to the job's main process for graceful shutdown, falls back to
+    SIGTERM, then SIGKILL, to its whole process group; answers once no process
+    of the job is left.
+    **A plain `def`**: the stop waits for the process to end (tens of seconds
+    at worst), so FastAPI runs it in its threadpool instead of on the event
+    loop, which the rest of the API and the mounted dashboard share.
     """
     result = training_manager.stop_training()
 
@@ -302,8 +353,10 @@ async def get_training_metrics() -> Dict[str, Any]:
     return training_manager.get_metrics_history()
 
 
-@router.get("/training/checkpoints", response_model=List[CheckpointInfo])
+@router.get("/training/checkpoints", response_model=List[CheckpointInfo],
+            dependencies=OPERATOR_ONLY)
 async def get_checkpoints() -> List[Dict[str, Any]]:
     """List the checkpoints of the last requested workspace's runs, with
-    each file's own metadata (contract M3a-2)."""
+    each file's own metadata (contract M3a-2). It opens every file (SPEC_4
+    C3), so D8 gates it like the controls."""
     return training_manager.get_checkpoints()

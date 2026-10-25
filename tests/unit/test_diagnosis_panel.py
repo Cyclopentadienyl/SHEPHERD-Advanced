@@ -1,5 +1,8 @@
 """
-Unit tests for the Diagnosis panel: tolerant HPO parsing and result export.
+Unit tests for the Diagnosis page: tolerant HPO parsing, result export, the
+handlers (Run Diagnosis, the phenotypes, the table and the details), the
+results badge, Run Diagnosis' states, Change model…'s D8 check, the identity
+drawer, and the page as built in the shell.
 """
 import os
 
@@ -10,6 +13,7 @@ pytest.importorskip("gradio")
 import gradio as gr  # noqa: E402
 
 from src.webui.components import diagnosis_panel as dp  # noqa: E402
+from tests.fixtures.clock_zone import utc_clock  # noqa: E402,F401
 
 
 # ------------------------------------------------------------------- HPO parsing
@@ -194,6 +198,22 @@ def test_report_includes_meta_and_all_candidates_with_cleaned_ids():
     assert "`MONDO:0011073`" in md and "mondo:MONDO" not in md  # cleaned id
 
 
+def test_the_score_is_named_for_what_it_is_and_the_csv_keeps_the_api_name():
+    """The combined score is a ranking score, not a calibrated probability: the
+    page and the report say "Score" and say so; the CSV keeps confidence_score."""
+    result = _sample_result()
+    md = dp._build_results_report_md(result)
+    table = md.split("## Ranked candidates")[1].split("## Per-candidate detail")[0]
+    assert "| Rank | Disease | Score | GNN | SP | Evidence |" in table
+    assert dp.SCORE_NOTE in table and "not a calibrated disease probability" in dp.SCORE_NOTE
+    assert "· score 0.720" in md and "· confidence" not in md
+    page = dp.results_body_html(result, 1) + dp.details_header_html(result["candidates"][0])
+    assert "Confidence" not in page and "> Score <b>0.720</b>" in page
+    assert 'data-help="dx-score"' in page and "dx-score" in dp.TOPIC_HELP
+    assert dp._build_results_csv(result).splitlines()[0].startswith(
+        "rank,disease_id,disease_name,confidence_score,confidence_label")
+
+
 # ------------------------------------------------------------------- disease id cleaning
 @pytest.mark.parametrize(
     "raw,expected",
@@ -239,72 +259,169 @@ def test_export_basename_falls_back_when_ids_missing():
     assert base == "diagnosis_webui_patient_run"
 
 
-# ------------------------------------------------------------------- stale-state clear
+# ------------------------------------------------------------------- the page's handlers
+def _no_model_status():
+    return {"initialized": False}
+
+
+def _loaded_status(**extra):
+    """A status serving `_served_identity()` (the records tests use it too)."""
+    status = {
+        "initialized": True, "gnn_ready": True, "sp_ready": True,
+        "scoring_mode": "gnn_plus_shortest_path", "kg_nodes": 10, "kg_edges": 20,
+        "served_identity": _served_identity(),
+    }
+    status.update(extra)
+    return status
+
+
+def _status_serving(identity, **extra):
+    status = {"initialized": True, "gnn_ready": True, "served_identity": identity,
+              "checkpoint_meta": {"epoch": 5}, "fingerprint_warnings": []}
+    status.update(extra)
+    return status
+
+
+# The local stamps these tests write are in UTC, the zone the page shows.
+pytestmark = pytest.mark.usefixtures("utc_clock")
+
+
+@pytest.fixture
+def status_read(monkeypatch):
+    """The card's status read, answered by the test (a list, popped in order;
+    the last answer stays); returns the list of reads made."""
+    from src.webui.components import diagnosis_card as card
+
+    answers = [(_no_model_status(), None)]
+    reads = []
+
+    def read(seconds=card.STATUS_TIMEOUT_SECONDS, reader=None):
+        reads.append(seconds)
+        return answers.pop(0) if len(answers) > 1 else answers[0]
+
+    monkeypatch.setattr(card, "read_status_within", read)
+    monkeypatch.setattr(card, "served_facts", lambda status, **kw: {
+        "key": dp.card.served_key(status), "operator": kw.get("operator"), "workspaces": [],
+        "serving": None, "item": None, "item_problem": None, "recorded": None, "trained": None})
+    return {"answers": answers, "reads": reads}
+
+
+def _run(text, patient="", top_k=10, explanations=True, state=None, phase="idle", view=None,
+         request=None):
+    """Run Diagnosis as the page does; the outputs by name."""
+    return dp.diagnose(text, patient, top_k, explanations, state, phase, view or {}, request)
+
+
 def test_phenotype_change_noops_without_results():
-    out = dp._on_phenotype_change(None)
-    assert len(out) == 7
-    assert out[4] is None  # results_state stays cleared/None
-    # component outputs are gr.update() no-ops (leave UI untouched)
-    assert out[0] is not dp._DOWNLOAD_DISABLED
+    assert dp.phenotypes_changed(None, None) == {}
 
 
 def test_phenotype_change_clears_after_a_run():
-    out = dp._on_phenotype_change(_sample_result())
-    assert len(out) == 7
-    assert "Inputs changed" in out[0]
-    assert out[4] is None  # results_state cleared
-    assert out[5] is dp._DOWNLOAD_DISABLED and out[6] is dp._DOWNLOAD_DISABLED
+    out = dp.phenotypes_changed(_sample_result(), None)
+    assert "Inputs changed" in out["results_body"]
+    assert out["results_state"] is None and out["selected"] is None and out["badge"] == ""
+    assert out["export_csv"] is dp._EXPORTS_HIDDEN
+    assert out["export_report"] is dp._EXPORTS_HIDDEN
 
 
-# ------------------------------------------------------------------- diagnose download wiring
-def test_on_diagnose_no_hpo_disables_downloads():
-    out = dp._on_diagnose("no ids here", "", 10)
-    assert len(out) == 7
-    assert out[4] is None  # results_state
-    assert out[5] is dp._DOWNLOAD_DISABLED and out[6] is dp._DOWNLOAD_DISABLED
+def test_on_diagnose_no_hpo_disables_downloads(status_read):
+    out = _run("no ids here")
+    assert "No valid HPO terms found" in out["results_body"]
+    assert out["results_state"] is None
+    assert out["export_csv"] is dp._EXPORTS_HIDDEN and out["export_report"] is dp._EXPORTS_HIDDEN
+    assert status_read["reads"] == []   # nothing was asked of the server
 
 
-def test_on_diagnose_success_sets_download_values(monkeypatch):
+def test_on_diagnose_success_sets_download_values(monkeypatch, status_read):
     monkeypatch.setattr(dp, "_call_diagnose", lambda **kw: _sample_result())
-    out = dp._on_diagnose("HP:0001250", "", 10)
-    assert len(out) == 7
-    assert out[4] is not None and out[4].get("candidates")  # results_state populated
-    # downloads enabled with a real file value (not the disabled sentinel)
-    assert out[5] is not dp._DOWNLOAD_DISABLED and out[6] is not dp._DOWNLOAD_DISABLED
+    out = _run("HP:0001250")
+    assert out["results_state"] is not None and out["results_state"].get("candidates")
+    assert out["export_csv"] is not dp._DOWNLOAD_DISABLED
+    assert out["export_report"] is not dp._DOWNLOAD_DISABLED
+    # A result shows the exports, which no result had shown (M5-3).
+    assert out["export_csv"]["visible"] is True and out["export_csv"]["interactive"] is True
+    assert out["export_report"]["visible"] is True and out["export_report"]["interactive"] is True
+    assert out["selected"] == 1 and "Dravet syndrome" in out["details_hd"]
 
 
-def test_on_diagnose_export_failure_still_shows_results(monkeypatch):
+def test_on_diagnose_export_failure_still_shows_results(monkeypatch, status_read):
     monkeypatch.setattr(dp, "_call_diagnose", lambda **kw: _sample_result())
 
     def boom(_result):
         raise OSError("disk full")
 
     monkeypatch.setattr(dp, "_write_exports", boom)
-    out = dp._on_diagnose("HP:0001250", "", 10)
-    assert len(out) == 7
-    # results still shown, with a note; state still populated
-    assert "Dravet syndrome" in out[0] and "could not be written" in out[0]
-    assert out[4] is not None and out[4].get("candidates")
-    # downloads stay disabled (recoverable by re-running once disk is free)
-    assert out[5] is dp._DOWNLOAD_DISABLED and out[6] is dp._DOWNLOAD_DISABLED
+    out = _run("HP:0001250")
+    assert "Dravet syndrome" in out["results_body"]
+    assert "could not be written" in out["results_body"]
+    assert out["results_state"] is not None and out["results_state"].get("candidates")
+    assert out["export_csv"] is dp._DOWNLOAD_DISABLED and out["export_report"] is dp._DOWNLOAD_DISABLED
+    # A result exists: its exports are shown, disabled, beside the reason.
+    assert dp._DOWNLOAD_DISABLED["visible"] is True
 
 
-# ------------------------------------------------------------ status on page load
+def test_no_export_buttons_are_shown_before_a_result():
+    """M5-3: the first screen showed two disabled Export buttons; the mockup
+    shows none until a result exists. They are built hidden (kept mounted),
+    no result keeps them hidden, and their ⓘ is hidden with them."""
+    from src.webui import shell
+
+    pages = {page: (lambda ctx: None) for page in (*shell.RESEARCH_PAGES, shell.SETTINGS)}
+    with gr.Blocks() as blocks:
+        shell.build_shell(blocks, {**pages, shell.CLINICAL: dp.create_diagnosis_tab})
+    buttons = {c.elem_id: c for c in blocks.blocks.values()
+               if getattr(c, "elem_id", None) in ("shep-dx-export-csv", "shep-dx-export-md")}
+    assert set(buttons) == {"shep-dx-export-csv", "shep-dx-export-md"}
+    assert all(b.visible == "hidden" for b in buttons.values())
+    assert dp._EXPORTS_HIDDEN["visible"] == "hidden" and dp._EXPORTS_HIDDEN["value"] is None
+    assert "#shep-dx-results-ft:has(#shep-dx-export-csv.hidden) #shep-dx-exports-help" in dp.PAGE_CSS
+
+
+def test_a_blank_patient_id_is_sent_as_none(monkeypatch):
+    sent = []
+
+    class _Ok:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"candidates": []}
+
+    monkeypatch.setattr(dp, "_self_request",
+                        lambda method, path, **kw: sent.append(kw["json"]) or _Ok())
+    dp._call_diagnose(["HP:0001250"], patient_id="   ")
+    dp._call_diagnose(["HP:0001250"], patient_id="")
+    dp._call_diagnose(["HP:0001250"], patient_id=" pt_7 ")
+    assert [payload["patient_id"] for payload in sent] == [None, None, "pt_7"]
+
+
+def test_the_status_is_read_again_after_each_diagnosis(monkeypatch, status_read):
+    """The badge compares the result with a read made after it: one read per
+    diagnosis, within the 5 s limit, after the API answered."""
+    order = []
+    monkeypatch.setattr(dp, "_call_diagnose", lambda **kw: order.append("api") or _sample_result())
+    status_read["answers"][:] = [(_status_serving(_served_identity()), None)]
+    real = dp.card.read_status_within
+
+    def read(*a, **k):
+        order.append("status")
+        return real(*a, **k)
+
+    monkeypatch.setattr(dp.card, "read_status_within", read)
+    out = _run("HP:0001250")
+    assert order == ["api", "status"]
+    assert "shep-dx-badge-ok" in out["badge"]
+
+
+# ------------------------------------------------------------ the page as built
 def _build_tab(monkeypatch):
-    """Build the tab and fail if the build made any call to the API.
+    """Build the page in the real shell and fail if the build made any call to
+    the API or read the status: the app is built before the server serves, so a
+    read then would be stale on arrival."""
+    from src.webui import shell
+    from src.webui.components import diagnosis_card as card
 
-    Calls are recorded, not refused: the status helpers catch every exception, so
-    a fake that raised would be swallowed and the build would look clean. Three
-    layers are watched -- the status read itself, the HTTP helper under every call,
-    and requests' own Session.request beneath both -- so a status read or any other
-    HTTP call during the build is caught whether or not an address is recorded.
-    """
     calls = []
-    real_status = dp._get_pipeline_status
-
-    def watched_status():
-        calls.append("_get_pipeline_status")
-        return real_status()
 
     def watched_request(method, path, **kwargs):
         calls.append(f"{method} {path}")
@@ -314,61 +431,92 @@ def _build_tab(monkeypatch):
         calls.append(f"requests {method} {url}")
         raise AssertionError("no HTTP request is expected while the app is built")
 
-    monkeypatch.setattr(dp, "_get_pipeline_status", watched_status)
     monkeypatch.setattr(dp, "_self_request", watched_request)
-    # Underneath both: any requests call, including a direct requests.get.
     monkeypatch.setattr(dp.requests.Session, "request", watched_session_request)
+    monkeypatch.setattr(card, "read_status_within",
+                        lambda *a, **k: calls.append("status") or (None, "x"))
     with gr.Blocks() as demo:
-        dp.create_diagnosis_tab(demo)
-    assert calls == [], f"the tab called the API while the app was being built: {calls}"
-    return demo
+        # Every page needs a builder (a missing one is a KeyError): the others
+        # build nothing here.
+        ctx = shell.build_shell(demo, {**{page: (lambda ctx: None)
+                                          for page in (*shell.RESEARCH_PAGES, shell.SETTINGS)},
+                                       shell.CLINICAL: dp.create_diagnosis_tab})
+    assert calls == [], f"the page called the API while the app was being built: {calls}"
+    return demo, ctx
 
 
-def test_the_model_status_is_not_read_while_the_app_is_built(monkeypatch):
-    """The app is built before the server serves, so a status read then was stale
-    on arrival -- and under the systemd unit it was also aimed at the wrong port.
-    `_build_tab` fails on any API call during the build; the placeholder stands
-    until the first page load reads the real status."""
-    demo = _build_tab(monkeypatch)
-
-    placeholders = [
-        block for block in demo.blocks.values()
-        if isinstance(block, gr.Markdown) and block.value == dp.STATUS_CHECKING
-    ]
-    assert len(placeholders) == 1
+def _named(demo, name):
+    found = [fn for fn in demo.fns.values() if fn.name == name]
+    assert found, name
+    return found
 
 
-def test_the_model_status_is_read_on_every_page_load(monkeypatch):
-    """One load event writes the status and the two path fields (BACKLOG 17,
-    F5), from the one status read `_on_load_status` makes."""
-    demo = _build_tab(monkeypatch)
-
-    on_load = [
-        fn for fn in demo.fns.values()
-        if fn.fn is dp._on_load_status and (demo._id, "load") in fn.targets
-    ]
-    assert len(on_load) == 1
-    status_md, data_dir, checkpoint = on_load[0].outputs
-    assert isinstance(status_md, gr.Markdown) and status_md.value == dp.STATUS_CHECKING
-    assert isinstance(data_dir, gr.Textbox) and data_dir.label == "Data Directory"
-    assert isinstance(checkpoint, gr.Textbox)
-    assert checkpoint.label == "Checkpoint Path (optional)"
+def test_the_model_in_use_is_not_read_while_the_app_is_built(monkeypatch):
+    """`_build_tab` fails on any read during the build; the card says it is
+    checking until the first page load reads the real status."""
+    demo, _ctx = _build_tab(monkeypatch)
+    bodies = [b for b in demo.blocks.values() if getattr(b, "elem_id", None) == "shep-dx-card-body"]
+    assert len(bodies) == 1 and "Checking the model in use" in bodies[0].value
 
 
-def test_the_reload_button_still_writes_the_same_status(monkeypatch):
-    """Reload already refreshed the status; the load event targets the same
-    component rather than a second copy of it. The path fields the page load
-    sets are the ones Reload sends and, after it, sets."""
-    demo = _build_tab(monkeypatch)
+def test_the_card_is_read_on_load_when_shown_after_a_load_and_on_the_timer(monkeypatch):
+    demo, ctx = _build_tab(monkeypatch)
+    refreshes = _named(demo, "_card_refresh")
+    targets = {t for fn in refreshes for t in fn.targets}
+    assert (demo._id, "load") in targets
+    assert (ctx.tabs["clinical"]._id, "select") in targets
+    assert (ctx.served_model_changed._id, "change") in targets
+    assert all(fn.queue is not False for fn in refreshes)   # may open the checkpoint list
+    (poll,) = _named(demo, "_card_poll")
+    assert poll.targets == [(ctx.timer_slow._id, "tick")]
+    assert poll.queue is False and poll.inputs[0] is ctx.location
 
-    (on_load,) = [fn for fn in demo.fns.values() if fn.fn is dp._on_load_status]
-    (on_reload,) = [fn for fn in demo.fns.values() if fn.fn is dp._on_reload_pipeline]
-    assert on_reload.outputs[0] is on_load.outputs[0]
-    _, data_dir, checkpoint = on_load.outputs
-    _, _, set_dir, set_checkpoint = on_reload.outputs
-    sent_dir, sent_checkpoint, _ = on_reload.inputs
-    assert set_dir is data_dir and set_checkpoint is checkpoint
-    assert sent_dir is data_dir and sent_checkpoint is checkpoint
+
+def test_change_model_asks_d8_then_reads_the_list_then_the_chips(monkeypatch):
+    from src.webui.components.chips import read_chips
+
+    demo, ctx = _build_tab(monkeypatch)
+    (opened,) = [fn for fn in demo.fns.values() if fn.fn is dp._on_change_model]
+    listing = next(fn for fn in demo.fns.values() if fn.trigger_after == opened._id)
+    assert listing.name == "_refresh" and listing.fn.__qualname__.startswith("create_model_list")
+    chips = next(fn for fn in demo.fns.values() if fn.trigger_after == listing._id)
+    assert chips.fn is read_chips
+
+
+def test_run_diagnosis_is_off_while_a_model_change_is_open(monkeypatch):
+    demo, _ctx = _build_tab(monkeypatch)
+    (changed,) = _named(demo, "_phase_changed")
+    assert changed.targets[0][1] == "change"
+    run = [b for b in demo.blocks.values() if getattr(b, "elem_id", None) == "shep-dx-run-btn"][0]
+    assert run in changed.outputs
+
+
+def test_the_page_css_is_registered_and_scoped_to_the_page():
+    from src.webui import app, shell
+
+    assert dp.PAGE_CSS in app.PAGE_CSS
+    assert dp._TAB == "#" + shell.tab_elem_id(shell.CLINICAL)
+    assert dp.CLINICAL == shell.CLINICAL
+    rules = [line for line in dp.PAGE_CSS.splitlines() if "{" in line and not line.startswith(("@", "}"))]
+    assert all(line.lstrip().startswith(dp._TAB) for line in rules), [
+        line for line in rules if not line.lstrip().startswith(dp._TAB)]
+
+
+def test_the_page_css_hides_a_view_by_its_class_and_keeps_the_confirmation_in_view():
+    """The views are hidden by `VIEW_OFF` (never ``visible``), so the page's
+    stylesheet must hide that class. Seen in review: the Load confirmation's
+    from → to rows and its warning sentence scrolled out of view at 1707x870,
+    1440x900 and 1536x760 (checked in a browser at the wide sizes); while the
+    confirmation box is mounted the list's footer is hidden and the list gives
+    up its height to it (all of it below 820 px of height)."""
+    css = " ".join(dp.PAGE_CSS.split())
+    assert f"{dp._TAB} .{dp.VIEW_OFF} {{ display: none !important; }}" in css
+    confirming = f"{dp._TAB} #shep-dx-change .shep-model-list:has(.shep-model-confirm-box)"
+    assert f"{confirming} > .shep-model-foot {{ display: none !important; }}" in css
+    wide = css.index("@media (min-width: 1400px) and (min-height: 760px) {")
+    assert css.index(f"{confirming} > .shep-model-body {{ min-height: 0 !important; }}") > wide
+    low = css.index("@media (min-width: 1400px) and (min-height: 760px) and (max-height: 819px) {")
+    assert css.index(f"{confirming} > .shep-model-body {{ display: none !important; }}") > low
 
 
 # ------------------------------------------------- the phenotype list and the API
@@ -402,7 +550,7 @@ def _as_requests_response(response):
 
 
 @pytest.fixture
-def served(monkeypatch):
+def served(monkeypatch, status_read):
     """The panel's API calls reach the real app, which serves a real
     path-reasoning pipeline. Returns the payloads sent and the pipeline runs."""
     pytest.importorskip("fastapi")
@@ -433,21 +581,23 @@ def served(monkeypatch):
 
 
 def _assert_refused_without_results(out):
-    assert out[1] == "" and out[2] == ""
-    assert out[4] is None  # results_state cleared: no earlier result passes as this one
-    assert out[5] is dp._DOWNLOAD_DISABLED and out[6] is dp._DOWNLOAD_DISABLED
+    assert "After a diagnosis" in out["details_html"]["value"]
+    assert dp.VIEW_OFF not in out["details_html"]["elem_classes"]
+    assert out["results_state"] is None  # no earlier result passes as this one
+    assert out["export_csv"] is dp._EXPORTS_HIDDEN
+    assert out["export_report"] is dp._EXPORTS_HIDDEN
 
 
 def test_one_hundred_repeats_then_another_is_refused_with_both_numbers(served):
     """Several ids to a line: the message counts entries, not lines."""
     text = "\n".join(" ".join([SEIZURE] * 10) for _ in range(10)) + f"\n{DELAY}"
 
-    out = dp._on_diagnose(text, "", 10)
+    out = _run(text)
 
     assert served["payloads"][0]["phenotypes"] == [SEIZURE] * 100 + [DELAY]
-    assert "Recognised 101 " + _TOO_MANY in out[0]
-    assert "at most 100" in out[0]
-    assert "was not shortened" in out[0]
+    assert "Recognised 101 " + _TOO_MANY in out["results_body"]
+    assert "at most 100" in out["results_body"]
+    assert "was not shortened" in out["results_body"]
     assert served["runs"] == 0  # the pipeline is never reached
     _assert_refused_without_results(out)
 
@@ -455,38 +605,38 @@ def test_one_hundred_repeats_then_another_is_refused_with_both_numbers(served):
 def test_one_hundred_and_one_distinct_ids_get_the_same_refusal(served):
     text = ", ".join(f"HP:{n:07d}" for n in range(1, 102))
 
-    out = dp._on_diagnose(text, "", 10)
+    out = _run(text)
 
-    assert "Recognised 101 " + _TOO_MANY in out[0]
+    assert "Recognised 101 " + _TOO_MANY in out["results_body"]
     assert served["runs"] == 0
     _assert_refused_without_results(out)
 
 
 def test_repeats_within_the_limit_are_sent_and_removed_by_the_service(served):
-    out = dp._on_diagnose(f"{SEIZURE} {SEIZURE} {DELAY}", "", 10)
+    out = _run(f"{SEIZURE} {SEIZURE} {DELAY}")
 
     assert served["payloads"][0]["phenotypes"] == [SEIZURE, SEIZURE, DELAY]
     assert served["runs"] == 1
-    assert out[4]["summary"].endswith("for 2 phenotypes (3 received)")
-    assert "Removed 1 repeated phenotype entry" in out[0]
+    assert out["results_state"]["summary"].endswith("for 2 phenotypes (3 received)")
+    assert "Removed 1 repeated phenotype entry" in out["results_body"]
 
 
 def test_a_corrected_list_shows_its_own_result_and_no_stale_error(served):
-    refused = dp._on_diagnose(" ".join([SEIZURE] * 101), "", 10)
-    assert _TOO_MANY in refused[0]
+    refused = _run(" ".join([SEIZURE] * 101))
+    assert _TOO_MANY in refused["results_body"]
 
-    out = dp._on_diagnose(f"{SEIZURE}\n{DELAY}", "", 10)
+    out = _run(f"{SEIZURE}\n{DELAY}")
 
-    assert _TOO_MANY not in out[0] and "Error" not in out[0]
-    assert out[4] is not None and out[4].get("candidates")
-    assert out[4]["summary"].endswith("for 2 phenotypes")
+    assert _TOO_MANY not in out["results_body"] and "Error" not in out["results_body"]
+    assert out["results_state"] is not None and out["results_state"].get("candidates")
+    assert out["results_state"]["summary"].endswith("for 2 phenotypes")
 
 
 def test_the_input_box_is_never_an_output(monkeypatch):
     """A refusal leaves the user's text where it was: the handler cannot write
     to the box it reads from."""
-    demo = _build_tab(monkeypatch)
-    (handler,) = [f for f in demo.fns.values() if f.fn is dp._on_diagnose]
+    demo, _ctx = _build_tab(monkeypatch)
+    (handler,) = _named(demo, "_run_diagnosis")
 
     phenotype_box = handler.inputs[0]
     assert isinstance(phenotype_box, gr.Textbox)
@@ -585,7 +735,7 @@ def test_a_confidence_refusal_is_not_presented_as_too_many_phenotypes():
     )
 
 
-def test_a_connection_failure_is_reported_without_raising(monkeypatch):
+def test_a_connection_failure_is_reported_without_raising(monkeypatch, status_read):
     import requests
 
     def unreachable(method, path, **kwargs):
@@ -593,9 +743,9 @@ def test_a_connection_failure_is_reported_without_raising(monkeypatch):
 
     monkeypatch.setattr(dp, "_self_request", unreachable)
 
-    out = dp._on_diagnose(SEIZURE, "", 10)
+    out = _run(SEIZURE)
 
-    assert "API server not reachable" in out[0]
+    assert "API server not reachable" in out["results_body"]
     _assert_refused_without_results(out)
 
 
@@ -611,10 +761,10 @@ def test_other_http_errors_keep_their_message(monkeypatch):
 
 
 def test_an_unknown_id_is_reported_and_not_counted(served):
-    out = dp._on_diagnose(f"{SEIZURE} {UNKNOWN} {DELAY}", "", 10)
+    out = _run(f"{SEIZURE} {UNKNOWN} {DELAY}")
 
-    assert f"Unknown phenotype: {UNKNOWN}" in out[0]
-    assert out[4]["summary"].endswith("for 2 phenotypes (3 received)")
+    assert f"Unknown phenotype: {UNKNOWN}" in out["results_body"]
+    assert out["results_state"]["summary"].endswith("for 2 phenotypes (3 received)")
 
 
 # -------------------------------------------- what produced the result (M3c)
@@ -833,9 +983,6 @@ def test_values_from_the_api_cannot_break_the_table():
     assert len(rows) == len(dp._IDENTITY_PARTS)
     assert all(len(row) == 3 for row in rows)
     assert "``a\\|b`c*d<script>``" in rows[3][2]
-    # Outside a table a code span keeps backslashes, so the pipe is not escaped.
-    summary = dp._identity_summary_md("served", identity)
-    assert "SP table ``a|b`c*d<scri…`` ✓" in summary
 
 
 # ------------------------------------------------------------------- the CSV
@@ -940,135 +1087,480 @@ def test_export_names_carry_synthetic_and_demo():
     assert dp._export_basename(_result_with(_path_only_identity())) == "diagnosis_pt_01_sess_abc"
 
 
-# ------------------------------------------------------------------- the tab
-def test_the_tab_shows_what_produced_the_result(monkeypatch):
+# ------------------------------------------------------------------- the page
+def test_the_page_shows_what_produced_the_result(monkeypatch, status_read):
     monkeypatch.setattr(dp, "_call_diagnose", lambda **kw: _sample_result())
 
-    shown = dp._on_diagnose("HP:0001250", "", 10)[0]
+    out = _run("HP:0001250")
 
-    # The banner, above the table.
-    assert shown.index("**SYNTHETIC WORKSPACE: not a clinical result.**") < shown.index("| Rank |")
-    # One summary line under the meta line, with short digests.
-    assert shown.index("candidates found in") < shown.index("**Produced by:**")
-    summary = shown[shown.index("**Produced by:**"):].splitlines()[0]
-    assert f"checkpoint `sha256:{CHECKPOINT_SHA[:12]}…` ✓" in summary
-    assert CHECKPOINT_SHA not in summary
-    assert "`gnn_plus_shortest_path`" in summary and "dataset synthetic ✓" in summary
-    # The full identity, one click away, closed, and the report's own table.
-    assert "<details><summary>" in shown and "<details open" not in shown
-    details = shown[shown.index("<details>"):shown.index("</details>")]
-    assert f"`sha256:{CHECKPOINT_SHA}`" in details
-    report = dp._build_results_report_md(_sample_result())
-    assert _table_rows(details) == _table_rows(_report_section(report))
-    assert _CLAIM_BOUNDARY in details and _NOT_A_DEVICE in details
+    body = out["results_body"]
+    # The banner, above the table; its detail behind the shared ⓘ.
+    assert body.index("SYNTHETIC WORKSPACE: not a clinical result.") < body.index("<table")
+    assert 'aria-describedby="shep-help-text-dx-banner-synthetic"' in body
+    # "This result" (the identity drawer): the result's own rows, as the
+    # report reads them, with full digests shortened in the table only.
+    shown = dp.result_identity_md(out["results_state"], out["card_state"])
+    for part, state, value in dp._identity_rows("served", _served_identity()):
+        assert f"| {part} | {dp._short_digests(f'{state} · {value}')} |" in shown
+    assert CHECKPOINT_SHA not in shown and f"{CHECKPOINT_SHA[:12]}…" in shown
+    assert _CLAIM_BOUNDARY in shown and _NOT_A_DEVICE in shown
+    digests = dp.result_digests_html(out["results_state"])
+    for digest in (CHECKPOINT_SHA, KG_SHA, MANIFEST_SHA, RECORD_SHA):
+        assert f'data-copy="{digest}"' in digests
 
 
-def test_the_tab_marks_the_demo_answer(monkeypatch):
+def test_the_page_marks_the_demo_answer(monkeypatch, status_read):
     monkeypatch.setattr(dp, "_call_diagnose", lambda **kw: _result_with(None))
 
-    shown = dp._on_diagnose("HP:0001250", "", 10)[0]
+    out = _run("HP:0001250")
 
-    assert shown.startswith("⚠️ **DEMO ANSWER: not computed.**")
-    assert "**Produced by:** demo answer" in shown
-
-
-def _details_block(shown):
-    return shown[shown.index("<details>"):shown.index("</details>")]
+    assert "DEMO ANSWER: not computed." in out["results_body"]
+    assert "shep-dx-banner-red" in out["results_body"]
+    assert "This is the demo answer" in out["badge"]
+    assert "Produced by the model in use" not in out["badge"]
 
 
-def test_the_tab_does_not_say_nothing_was_checked_without_an_identity(monkeypatch):
-    """Catches the tab's identity block claiming nothing was checked for a
-    response that carried no served identity: like the report, it says the
-    response did not say, under the same claim boundary."""
+def test_the_page_does_not_say_nothing_was_checked_without_an_identity(monkeypatch, status_read):
+    """Like the report, "This result" says the response did not say, under the
+    same claim boundary."""
     monkeypatch.setattr(dp, "_call_diagnose", lambda **kw: _without_an_identity("missing"))
 
-    shown = dp._on_diagnose("HP:0001250", "", 10)[0]
+    out = _run("HP:0001250")
+    shown = dp.result_identity_md(out["results_state"], out["card_state"])
 
     assert "nothing in it was checked" not in shown
-    details = _details_block(shown)
-    assert details.index(_CLAIM_BOUNDARY) < details.index(_CHECKS_NOT_REPORTED)
+    assert shown.index(_CLAIM_BOUNDARY) < shown.index(_CHECKS_NOT_REPORTED)
+    assert "did not say what produced it" in out["badge"]
 
 
-def test_the_demo_answer_still_says_nothing_was_checked(monkeypatch):
-    """Catches the not-reported wording spreading to the demo answer, where
-    nothing was served: its report and its tab block keep saying, in the same
-    words as before, that nothing in it was checked against a record."""
+def test_the_demo_answer_still_says_nothing_was_checked(monkeypatch, status_read):
     monkeypatch.setattr(dp, "_call_diagnose", lambda **kw: _result_with(None))
 
     report = _report_section(dp._build_results_report_md(_result_with(None)))
-    details = _details_block(dp._on_diagnose("HP:0001250", "", 10)[0])
+    out = _run("HP:0001250")
+    shown = dp.result_identity_md(out["results_state"], out["card_state"])
 
     assert dp.IDENTITY_NOTHING_CHECKED == _NOTHING_CHECKED
-    for text in (report, details):
+    for text in (report, shown):
         assert text.index(_CLAIM_BOUNDARY) < text.index(_NOTHING_CHECKED)
         assert _CHECKS_NOT_REPORTED not in text
 
 
-def test_the_tab_shows_the_served_pipelines_own_identity(served):
+def test_the_page_shows_the_served_pipelines_own_identity(served):
     """End to end through the real route: a path-reasoning pipeline over an
     in-memory graph says so beside its result, and in its export."""
-    out = dp._on_diagnose(f"{SEIZURE}\n{DELAY}", "", 10)
+    out = _run(f"{SEIZURE}\n{DELAY}")
 
-    identity = out[4]["served_identity"]
+    identity = out["results_state"]["served_identity"]
     assert identity["scoring_mode"] == "path_reasoning_fallback"
     assert identity["checkpoint"] == {"state": "absent", "sha256": None}
-    assert "**NO TRAINED MODEL: path-reasoning fallback.**" in out[0]
-    assert "no trained model (checkpoint absent)" in out[0]
-    assert "graph in memory (no file)" in out[0]
-    _, records, _ = _csv_records(dp._build_results_csv(out[4]))
+    assert "NO TRAINED MODEL: path-reasoning fallback." in out["results_body"]
+    shown = dp.result_identity_md(out["results_state"], out["card_state"])
+    assert "absent — no trained model is served" in shown
+    assert "none — the graph was supplied in memory" in shown
+    _, records, _ = _csv_records(dp._build_results_csv(out["results_state"]))
     assert {r["served_checkpoint_state"] for r in records} == {"absent"}
     assert {r["served_kg_state"] for r in records} == {"in_memory"}
 
 
-# ---------------------------------------------------------- the model status
-def _loaded_status(**extra):
-    status = {
-        "initialized": True, "gnn_ready": True, "sp_ready": True,
-        "scoring_mode": "gnn_plus_shortest_path", "kg_nodes": 10, "kg_edges": 20,
-        "served_identity": _served_identity(),
-    }
-    status.update(extra)
-    return status
+# -------------------------------------------------- the badge: the result against what is served
+_NOW = "2026-07-07T16:00:00"
 
 
-def test_the_model_status_shows_what_the_loaded_pipeline_serves():
-    rendered = dp._format_pipeline_status(_loaded_status())
+def _card(status=None, problem=None, *, at=_NOW, state=None, operator=True):
+    from datetime import datetime
 
-    serving = next(line for line in rendered.splitlines() if "**Serving:**" in line)
-    assert f"checkpoint `sha256:{CHECKPOINT_SHA[:12]}…` ✓" in serving
-    assert f"SP table `{BUILD_ID[:12]}…` ✓" in serving
-    assert _CLAIM_BOUNDARY in rendered
-    assert "SYNTHETIC WORKSPACE" in rendered
+    return dp.card.advance(state, status, problem, now=datetime.fromisoformat(at),
+                           operator=operator, d8_short=None if operator else "request not local",
+                           open_checkpoints=False, facts=lambda s, **k: {
+                               "key": dp.card.served_key(s), "operator": operator,
+                               "workspaces": [], "serving": None, "item": None,
+                               "item_problem": None, "recorded": None, "trained": None})
+
+
+def _produced(at="2026-07-07T15:59:59"):
+    result = _sample_result()
+    result["timestamp"] = at
+    return result
+
+
+def test_the_badge_says_equal_only_for_the_whole_identity_read_after_the_result():
+    state = _card(_status_serving(_served_identity()))
+    assert dp.compare_with_served(_produced(), state)["state"] == "equal"
+    assert "shep-dx-badge-ok" in dp.badge_html(_produced(), state)
+    # One part of the served identity differs (the SP table): never equal.
+    other = _served_identity()
+    other["shortest_paths"] = {"state": "absent", "build_id": None, "max_hops": None}
+    other["scoring_mode"] = "gnn_only"
+    other["settings"] = _settings(eta=1.0)
+    compared = dp.compare_with_served(_produced(), _card(_status_serving(other)))
+    assert compared["state"] == "differs"
+    assert compared["differ"] == ["Shortest-path table", "Scoring mode", "Mixing weight eta"]
+    badge = dp.badge_html(_produced(), _card(_status_serving(other)))
+    assert "Produced by an earlier model or pipeline" in badge and "3 parts differ" in badge
+
+
+def test_a_stale_or_unreadable_status_never_leaves_equal_showing():
+    good = _card(_status_serving(_served_identity()))
+    stale = dp.compare_with_served(_produced("2026-07-07T16:00:30"), good)
+    assert stale["state"] == "unknown"
+    assert ("last read at 16:00:00 UTC, before this result was produced (16:00:30 UTC)"
+            in stale["reason"])
+    failed = _card(None, "timed out (5 s)", state=good)
+    unknown = dp.compare_with_served(_produced(), failed)
+    # The mockup's words, one level of parentheses (seen in review: "failed
+    # (timed out (5 s))").
+    assert unknown["state"] == "unknown"
+    assert unknown["reason"].startswith("The status read failed (timed out after 5 s), so ")
+    from src.webui.components.served_status import STATUS_NOT_READ
+
+    unreadable = dp.compare_with_served(_produced(), _card(None, STATUS_NOT_READ, state=good))
+    assert f"The status read failed ({STATUS_NOT_READ}), so " in unreadable["reason"]
+    for state, result in ((good, _produced("2026-07-07T16:00:30")), (failed, _produced())):
+        badge = dp.badge_html(result, state)
+        assert "Cannot check against the model in use yet" in badge
+        assert "shep-dx-badge-ok" not in badge and "shep-dx-badge-grey" in badge
+        assert "keeps its own identity" in badge
+
+
+def test_a_result_older_than_a_load_says_how_many_parts_differ():
+    load = _card(_status_serving(_served_identity()))
+    other = _served_identity()
+    other["checkpoint"] = {"state": "verified", "sha256": "b" * 64}
+    later = _card(_status_serving(other), state=load, at="2026-07-07T16:31:12")
+    assert dp.compare_with_served(_produced(), later)["differ"] == ["Checkpoint"]
+    assert "1 part differs" in dp.badge_html(_produced(), later)
+    shown = dp.result_identity_md(_produced(), later)
+    assert "1 of 10 parts differs" in shown and "status read 16:31:12" in shown
+    assert "· differs**" in shown and "= same" in shown
+
+
+# -------------------------------------------------- Run Diagnosis
+def test_run_is_greyed_with_a_bubble_and_a_reason_when_no_model_is_loaded():
+    from src.webui.components.help import text_id
+
+    run = dp.run_controls(_card(_no_model_status()), "idle")
+    assert run["run_btn"]["interactive"] is False
+    assert f'aria-describedby="{text_id("dx-run-no-model")}"' in run["run_cover"]
+    assert 'class="shep-i shep-i-cover"' in run["run_cover"]
+    assert dp.RUN_DISABLED_NO_MODEL in run["run_reason"]
+    read_only = dp.run_controls(_card(_no_model_status(), operator=False), "idle")
+    assert dp._e(dp.RUN_DISABLED_NO_MODEL_READ_ONLY) in read_only["run_reason"]
+    assert "dx-run-no-model" in dp.TOPIC_HELP
+
+
+def test_run_stays_on_for_path_reasoning_and_an_unreadable_status_but_not_a_model_change():
+    graph = _status_serving(_path_only_identity(), gnn_ready=False)
+    assert dp.run_controls(_card(graph), "idle")["run_btn"]["interactive"] is True
+    assert dp.run_controls(_card(None, "timed out (5 s)"), "idle")["run_cover"] == ""
+    change = dp.run_controls(_card(_status_serving(_served_identity())), "confirming")
+    assert change["run_btn"]["interactive"] is False
+    assert dp.RUN_DISABLED_CHANGE in change["run_reason"] and "dx-run-change" in change["run_cover"]
+    # While this page's Load reloads, the reason is the load's (the mockup's state 3).
+    loading = dp.run_controls(_card(_status_serving(_served_identity())), "loading")
+    assert loading["run_btn"]["interactive"] is False
+    assert dp.RUN_DISABLED_LOADING in loading["run_reason"]
+    assert "dx-run-loading" in loading["run_cover"] and "dx-run-loading" in dp.TOPIC_HELP
+
+
+# -------------------------------------------------- the card's outputs and the timer
+def test_the_card_sends_only_what_changed():
+    state = _card(_status_serving(_served_identity()))
+    first = dp.card_outputs(state, None, "idle")
+    assert {"card_body", "badge", "run_btn", "change_btn"} <= set(first)
+    again = dp.card_outputs(first["card_state"], None, "idle")
+    assert set(again) == {"card_state"}
+
+
+def test_the_timer_reads_only_while_diagnosis_is_shown_and_opens_no_checkpoint(monkeypatch):
+    seen = []
+
+    def read_card(state, request, *, open_checkpoints, reread=False, now=None):
+        seen.append(open_checkpoints)
+        return _card(_no_model_status())
+
+    monkeypatch.setattr(dp, "read_card", read_card)
+    assert dp.poll_card("datasets", None, None, "idle", {}, None) == {}
+    out = dp.poll_card("clinical", None, None, "idle", {}, None)
+    assert seen == [False] and "No model loaded" in out["card_body"]
+
+
+# -------------------------------------------------- Change model…
+def test_change_model_is_refused_with_the_reason_and_opens_nothing(monkeypatch):
+    from tests.fixtures.operator_access import gradio_request, operator_request
+
+    refused = dp.open_change(gradio_request())
+    assert "Refused: " in refused["change_reason"]
+    assert refused["change_drawer"]["visible"] is False
+    allowed = dp.open_change(operator_request(monkeypatch))
+    assert allowed["change_drawer"]["visible"] is True
+    assert allowed["identity_drawer"]["visible"] is False
+    outputs = dp._on_change_model(operator_request(monkeypatch))
+    assert len(outputs) == len(dp.CHANGE_OUTPUTS)
+
+
+def test_closing_the_change_drawer_drops_an_open_confirmation():
+    closed = dp.close_change("confirming")
+    assert closed["plan"] is None and closed["phase"] == "idle"
+    assert closed["change_drawer"]["visible"] is False and closed["change_closed"] is True
+    # Nothing inside the drawer is updated in the response that hides it (seen
+    # in review: +738 detached elements per open and Cancel); the second step
+    # resets the confirmation inside the hidden drawer.
+    assert set(closed) == {"change_drawer", "plan", "phase", "change_closed"}
+    reset = dp.reset_change(closed["change_closed"])
+    assert reset["confirm"]["visible"] is False and reset["confirm_html"] == ""
+    assert reset["list_reason"] == "" and reset["change_closed"] is False
+    assert dp.reset_change(False) == {}
+
+
+def test_a_running_reload_keeps_the_change_drawer_open():
+    """The reload cannot be stopped and its outcome must be seen: a close that
+    still finds the phase "loading" (one the page did not hold until the
+    answer, `CLOSE_WHILE_LOADING`) keeps the drawer, the plan and the phase."""
+    kept = dp.close_change("loading")
+    assert kept == {"change_drawer": kept["change_drawer"], "change_closed": False}
+    assert kept["change_drawer"]["visible"] is True
+    assert dp.reset_change(kept["change_closed"]) == {}
+
+
+@pytest.mark.parametrize("phase", ["confirming", "loading"])
+def test_details_never_hide_a_model_change_in_progress(phase):
+    """Seen in review: Details ›, Recorded tests › or the badge during a Load
+    confirmation hid the change drawer and kept the phase, so Run Diagnosis
+    stayed disabled ("finish or cancel the model change first") with no
+    model change on screen."""
+    state = _card(_status_serving(_served_identity()))
+    for seg, section in (("model", "identity"), ("model", "evidence"), ("result", "identity")):
+        out = dp.open_identity(state, _sample_result(), seg, section, phase)
+        assert out == {"change_drawer": out["change_drawer"]}
+        assert out["change_drawer"]["visible"] is True
+    opened = dp.open_identity(state, _sample_result(), "model", "identity", "idle")
+    assert opened["identity_view"]["open"] is True and opened["change_drawer"]["visible"] is False
+
+
+def test_the_page_passes_the_model_change_phase_to_the_identity_drawer(monkeypatch):
+    demo, _ctx = _build_tab(monkeypatch)
+    phases = {fn.name: fn for fn in demo.fns.values()
+              if fn.name in ("_open_details", "_open_result", "_card_link")}
+    assert set(phases) == {"_open_details", "_open_result", "_card_link"}
+    phase_states = [b for b in demo.blocks.values()
+                    if isinstance(b, gr.State) and b.value == "idle"]
+    for name, fn in phases.items():
+        assert any(i in phase_states for i in fn.inputs), name
+
+
+def test_the_card_says_this_pages_load_is_in_progress_until_its_answer(monkeypatch):
+    """M5-3 (the mockup's state 3): while this page's Load reloads, the card says
+    "Loading <12 hex> for every session… <elapsed>" (the page's script keeps
+    the count and swaps in the second sentence when it stops waiting) and Run
+    Diagnosis is off with the load's reason; both are sent in the step before
+    the reload, and taken back after its answer, whatever it was."""
+    plan = {"to": {"sha256": "e" * 64}}
+    line = dp.loading_line_html(plan)
+    assert "Loading <code>eeeeeeeeeeee</code> for every session…\u00a0" in line
+    assert "data-shep-load-elapsed>00:00:00<" in line and "data-shep-load-card" in line
+    assert '<span class="shep-load-off" hidden>The page stopped waiting for' in line
+    assert "after 180 s; the server may still finish the reload." in line
+    assert dp.loading_line_html(None) == "" and dp.loading_line_html({"to": None}) == ""
+    state = _card(_status_serving(_served_identity()))
+    html, run_btn, cover, reason = dp.card_loading_outputs(plan, state)
+    assert html == line and run_btn["interactive"] is False
+    assert "dx-run-loading" in cover and dp.RUN_DISABLED_LOADING in reason
+    assert dp.card_loading_outputs(None, state) == (gr.update(),) * 4
+    html, run_btn, cover, reason = dp.card_loaded_outputs(state, "idle")
+    assert html == "" and run_btn["interactive"] is True and cover == "" and reason == ""
+    # The page as built: the card's line rides on the list's step before the
+    # reload, and is taken back by a step after the reload's answer.
+    demo, _ctx = _build_tab(monkeypatch)
+    card_line = next(b for b in demo.blocks.values()
+                     if getattr(b, "elem_id", None) == "shep-dx-card-loading")
+    run_button = next(b for b in demo.blocks.values()
+                      if getattr(b, "elem_id", None) == "shep-dx-run-btn")
+    (loading,) = _named(demo, "_loading")
+    assert card_line in loading.outputs and run_button in loading.outputs
+    (confirm,) = _named(demo, "_confirm")
+    after = [fn for fn in demo.fns.values() if fn.trigger_after == confirm._id]
+    answered = [fn for fn in after if fn.name == "_reload_answered"]
+    assert len(answered) == 1 and card_line in answered[0].outputs
+    assert run_button in answered[0].outputs
+
+
+def test_the_compare_link_keeps_each_arrow_with_its_word(monkeypatch):
+    """M5-3: at 1440 x 900 "Compare in Research › Models ›" left its last "›"
+    alone on a line; each is held to the word before it."""
+    assert dp.COMPARE_LINK == "Compare in Research\u00a0› Models\u00a0›"
+    demo, _ctx = _build_tab(monkeypatch)
+    link = next(b for b in demo.blocks.values() if getattr(b, "elem_id", None) == "shep-dx-compare")
+    assert dp.COMPARE_LINK in link.value and "Models ›" not in link.value
+
+
+def test_closing_the_change_drawer_resets_it_in_a_second_step(monkeypatch):
+    demo, _ctx = _build_tab(monkeypatch)
+    drawer = next(b for b in demo.blocks.values() if getattr(b, "elem_id", None) == "shep-dx-change")
+    inside = {b for b in demo.blocks.values()
+              if getattr(b, "elem_id", None) in ("shep-models-clinical-confirm",
+                                                 "shep-models-clinical-reason")}
+    assert len(inside) == 2
+    for name in ("_close_change_drawer", "_cancel_change"):
+        (closing,) = _named(demo, name)
+        assert drawer in closing.outputs and not inside & set(closing.outputs), name
+        reset = next(fn for fn in demo.fns.values() if fn.trigger_after == closing._id)
+        assert reset.name == "_reset_change" and inside <= set(reset.outputs)
+
+
+def test_while_a_reload_runs_the_drawer_closes_at_once_and_its_close_follows_the_answer(
+        monkeypatch):
+    """M5-3 review: Close and × did nothing while the reload held the server,
+    then closed the drawer after it in no fixed order with its answer. Close,
+    × and Cancel now hide the whole drawer at once in the page (the card keeps
+    its "Loading …" line); × is clicked for the server after the answer;
+    "Change model…" shows the drawer again meanwhile; and each close ends
+    with the list's page step that drops the page's own hiding."""
+    from src.webui.components import model_list as ml
+    from src.webui.components.help import as_json_for_script
+
+    demo, _ctx = _build_tab(monkeypatch)
+    guard = ml.load_guard("shep-models-clinical", dp.CLOSE_WHILE_LOADING)
+    assert guard["hide"] == "#shep-dx-change" and guard["then"] == "#shep-dx-change-close button"
+    assert guard["closers"] == ["#shep-models-clinical-keep", "#shep-dx-change-close button",
+                                "#shep-dx-change-cancel"]
+    assert guard["openers"] == ["#shep-dx-change-btn"]
+    (loading,) = _named(demo, "_loading")
+    assert as_json_for_script(guard) in loading.js
+    blocks = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
+    assert {"shep-dx-change", "shep-dx-change-cancel", "shep-dx-change-btn",
+            "shep-models-clinical-keep"} <= set(blocks)
+    assert '<button type="button" class="shep-dx-close" data-key="close"' in \
+        blocks["shep-dx-change-close"].value
+    for name in ("_close_change_drawer", "_cancel_change"):
+        (closing,) = _named(demo, name)
+        reset = next(fn for fn in demo.fns.values() if fn.trigger_after == closing._id)
+        done = next(fn for fn in demo.fns.values() if fn.trigger_after == reset._id)
+        assert done.fn is None and done.js == ml.load_closed_js("shep-models-clinical"), name
+
+
+# -------------------------------------------------- the candidates and the details
+def test_values_from_the_api_are_escaped_in_the_table_and_the_details():
+    result = _sample_result()
+    evil = "<img src=x onerror=alert(1)>"
+    result["candidates"][0].update(disease_name=evil, supporting_genes=[evil],
+                                   matching_phenotypes=[evil])
+    result["candidates"][0]["evidence_package"].update(summary=evil, direct_paths=[[evil, "b"]])
+    html = (dp.results_body_html(result, 1) + dp.details_header_html(result["candidates"][0])
+            + dp.evidence_html(result["candidates"][0]) + dp.paths_html(result["candidates"][0])
+            + dp.phenotypes_html(result["candidates"][0]))
+    assert "<img" not in html and "&lt;img src=x onerror=alert(1)&gt;" in html
+
+
+def test_the_sp_column_reads_a_dash_when_no_table_is_served():
+    result = _result_with(_gnn_only_identity())
+    result["candidates"][0]["sp_score"] = 0.0
+    assert ">0.000</td>" not in dp.results_body_html(result, 1).split("<tbody>")[1].split(
+        "</tr>")[0].replace(">0.720</td>", "")
+    assert "SP — (no table)" in dp.details_header_html(result["candidates"][0], True)
+    assert ">0.550</td>" in dp.results_body_html(_sample_result(), 1)
+
+
+def test_a_selected_row_shows_its_details_with_its_counts():
+    out = dp.select_candidate(_sample_result(), "evidence", "2")
+    assert out["selected"] == 2 and "Other disease" in out["details_hd"]
+    choices = dp.segment_choices(_sample_result()["candidates"][0])
+    assert choices == [("Evidence", "evidence"), ("Explanation", "explanation"),
+                       ("Matching phenotypes 1", "phenotypes"), ("Paths 1", "paths")]
+    assert dp.select_candidate(_sample_result(), "evidence", "99") == {}
+    paths = dp.details_outputs(_sample_result(), 1, "paths")
+    assert "MONDO:0011073" in paths["details_html"]["value"]
+    explanation = dp.details_outputs(_sample_result(), 1, "explanation")
+    assert dp.VIEW_OFF not in explanation["details_md"]["elem_classes"]
+    assert explanation["details_md"]["value"] == "Because ..."
+    assert dp.VIEW_OFF in explanation["details_html"]["elem_classes"]
+
+
+#: What may still be shown or hidden with ``visible``: the two drawers (whole
+#: columns) and Details › (which changes only with what is served).
+_VISIBLE_ALLOWED = {"identity_drawer", "change_drawer", "details_btn"}
+
+
+def _shown(update):
+    return dp.VIEW_OFF not in update["elem_classes"]
+
+
+def _assert_views_switch_by_class(out):
+    """Seen in review: switching ``visible`` on single components (+77 and +114
+    detached elements per switch) and updating a component in the response
+    that hides its column (+738) leave detached page elements in Gradio 6.30.
+    The views are shown and hidden by a class instead, which keeps them
+    mounted, and a hidden view is not rendered."""
+    for name, value in out.items():
+        if not isinstance(value, dict):
+            continue
+        if "visible" in value:
+            assert name in _VISIBLE_ALLOWED, name
+        if "elem_classes" in value:
+            assert value["elem_classes"], name          # never empty (ignored by Gradio)
+            if not _shown(value):
+                assert set(value) == {"__type__", "elem_classes"}, (name, value)
+
+
+def test_the_details_switch_views_by_class():
+    result = _sample_result()
+    for rank in (None, 1, 2):
+        for segment in ("evidence", "explanation", "phenotypes", "paths"):
+            out = dp.details_outputs(result, rank, segment)
+            _assert_views_switch_by_class(out)
+            assert _shown(out["details_seg"]) is (rank is not None)
+            assert _shown(out["details_html"]) is not _shown(out["details_md"])
+            assert "shep-html" in out["details_html"]["elem_classes"]
+    _assert_views_switch_by_class(dp.select_candidate(result, "explanation", "1"))
+
+
+def test_the_identity_drawer_switches_views_by_class():
+    state = _card(_status_serving(_served_identity()))
+    result = _produced()
+    for seg in ("model", "result"):
+        view = {"open": True, "seg": seg, "section": "identity"}
+        out = dp.identity_outputs(view, state, result)
+        _assert_views_switch_by_class(out)
+        assert _shown(out["id_model"]) is (seg == "model")
+        assert _shown(out["id_result_md"]) is _shown(out["id_result_html"]) is (seg == "result")
+        _assert_views_switch_by_class(dp.card_outputs(state, result, "idle", view))
+    _assert_views_switch_by_class(dp.open_identity(state, result, "result"))
+
+
+def test_the_views_start_as_their_first_update_leaves_them(monkeypatch):
+    """The built components' classes are the ones `view_update` sends for the
+    first screen (no result): the segmented control and the explanation
+    hidden, the identity drawer on "Model in use"."""
+    demo, _ctx = _build_tab(monkeypatch)
+    by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
+    first = dp.details_outputs(None, None)
+    for elem_id, name in (("shep-dx-seg", "details_seg"), ("shep-dx-details-body", "details_html"),
+                          ("shep-dx-explanation", "details_md")):
+        assert list(by_id[elem_id].elem_classes) == first[name]["elem_classes"], elem_id
+    model = dp.identity_outputs({"open": True, "seg": "model"},
+                                _card(_status_serving(_served_identity())), None)
+    for elem_id, name in (("shep-dx-id-model", "id_model"), ("shep-dx-id-result", "id_result_md"),
+                          ("shep-dx-id-digests", "id_result_html")):
+        assert list(by_id[elem_id].elem_classes) == model[name]["elem_classes"], elem_id
+    for block in demo.blocks.values():
+        if getattr(block, "elem_id", "") in ("shep-dx-seg", "shep-dx-details-body",
+                                              "shep-dx-explanation", "shep-dx-id-model",
+                                              "shep-dx-id-result", "shep-dx-id-digests"):
+            assert block.visible is True
+
+
+# -------------------------------------------------- the model in use (identity drawer)
+def test_the_model_in_use_shows_the_boundary_for_what_is_loaded():
+    html = dp.model_identity_html(_card(_status_serving(_served_identity())))
+    assert _CLAIM_BOUNDARY in html and _NOT_A_DEVICE in html
+    assert _NOTHING_CHECKED_LOADED not in html and "SYNTHETIC WORKSPACE" in html
 
 
 @pytest.mark.parametrize("name", ["path_only", "in_memory"])
-def test_a_status_with_nothing_marked_says_nothing_was_checked(name):
-    """Catches the model status showing the §6 line alone under an identity
-    with no part marked ✓, which reads as a claim that its graph file was
-    checked against a record; the report and the tab add the qualifier."""
-    rendered = dp._format_pipeline_status(_loaded_status(served_identity=_IDENTITIES[name]()))
-
-    serving = next(line for line in rendered.splitlines() if "**Serving:**" in line)
-    assert "✓" not in serving
-    after = rendered[rendered.index(serving):]
-    assert after.index(f"<sub>{_CLAIM_BOUNDARY}</sub>") < after.index(
-        f"<sub>{_NOTHING_CHECKED_LOADED}</sub>")
-    # Said of the loaded pipeline, not of a result: the status shows no result.
-    assert _NOTHING_CHECKED not in rendered
-    assert _CHECKS_NOT_REPORTED not in rendered
-
-
-@pytest.mark.parametrize("name", ["verified_synthetic", "verified_files", "gnn_only"])
-def test_a_status_with_a_verified_part_does_not_say_nothing_was_checked(name):
-    """Catches the qualifier being added to every status: where a part is
-    marked ✓, the §6 line refers to it and "nothing was checked" would be
-    false."""
-    rendered = dp._format_pipeline_status(_loaded_status(served_identity=_IDENTITIES[name]()))
-
-    assert f"<sub>{_CLAIM_BOUNDARY}</sub>" in rendered
-    assert "nothing in it was checked" not in rendered
-    assert _NOTHING_CHECKED_LOADED not in rendered
-    assert _CHECKS_NOT_REPORTED not in rendered
+def test_a_model_in_use_with_nothing_marked_says_nothing_was_checked(name):
+    html = dp.model_identity_html(_card(_status_serving(_IDENTITIES[name]())))
+    assert html.index(_CLAIM_BOUNDARY) < html.index(_NOTHING_CHECKED_LOADED)
+    assert _NOTHING_CHECKED not in html and _CHECKS_NOT_REPORTED not in html
 
 
 _STATUS_IDENTITIES = {
@@ -1078,42 +1570,40 @@ _STATUS_IDENTITIES = {
 
 
 @pytest.mark.parametrize("name", sorted(_STATUS_IDENTITIES))
-def test_the_status_and_the_report_agree_on_whether_anything_was_checked(name):
-    """Catches the model status deciding "nothing checked" by a rule of its own
-    (for example from the checkpoint alone): for every served identity it adds
-    the qualifier exactly when the report's identity table does."""
+def test_the_model_in_use_and_the_report_agree_on_whether_anything_was_checked(name):
+    """The drawer adds the qualifier exactly when the report's identity table
+    does, for every served identity (one rule, `_claim_boundary_lines`)."""
     make = _STATUS_IDENTITIES[name]
-    status = dp._format_pipeline_status(_loaded_status(served_identity=make()))
+    html = dp.model_identity_html(_card(_status_serving(make())))
     section = _report_section(dp._build_results_report_md(_result_with(make())))
     nothing_marked = "✓" not in "".join(row[1] for row in _table_rows(section))
 
     assert (_NOTHING_CHECKED in section) is nothing_marked
-    assert (_NOTHING_CHECKED_LOADED in status) is nothing_marked
-    assert _CLAIM_BOUNDARY in status and _CLAIM_BOUNDARY in section
+    assert (_NOTHING_CHECKED_LOADED in html) is nothing_marked
+    assert _CLAIM_BOUNDARY in html and _CLAIM_BOUNDARY in section
 
 
 def test_a_status_without_an_identity_says_so():
-    status = _loaded_status()
+    status = _status_serving(_served_identity())
     del status["served_identity"]
-
-    rendered = dp._format_pipeline_status(status)
-
-    assert "**Serving:** not reported" in rendered
-    assert "SYNTHETIC" not in rendered
-
-
-def test_fingerprint_warnings_are_named_for_what_they_compare():
-    rendered = dp._format_pipeline_status(_loaded_status(fingerprint_warnings=[
-        "Graph structure differs from the checkpoint's structural fingerprint.",
-        "Node count mismatch for 'gene': checkpoint expects 3, current data has 4",
-    ]))
-
-    assert "KG version mismatch" not in rendered
-    assert "structural fingerprint** (2 warnings;" in rendered
-    assert "not the graph's identity" in rendered
+    state = _card(status)
+    assert "The status did not say what is served." in dp.card.body_html(state)
+    assert _CHECKS_NOT_REPORTED in dp.model_identity_html(state)
 
 
 def test_the_panel_no_longer_reads_a_model_version():
     from pathlib import Path
 
     assert "model_version" not in Path(dp.__file__).read_text(encoding="utf-8")
+
+
+
+def test_a_code_chip_in_this_result_is_text_in_its_line():
+    """M5-3: Gradio draws a Markdown code chip as an inline flex box, before
+    which a line may break, and the rule broke anywhere inside it: "Knowledge
+    graph (" / "kg.json)". The chip is inline text, breaking only where it
+    must."""
+    start = dp.PAGE_CSS.index("#shep-dx-id-result code {")
+    rule = dp.PAGE_CSS[start:dp.PAGE_CSS.index("}", start)]
+    assert "display: inline;" in rule and "word-break: normal" in rule
+    assert "break-all" not in rule

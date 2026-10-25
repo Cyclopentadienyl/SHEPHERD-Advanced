@@ -20,6 +20,7 @@ Module: src/kg/artifacts.py
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Dict, Mapping, NamedTuple, Optional, Tuple
 
@@ -82,7 +83,28 @@ class ManifestRead(NamedTuple):
     identity: ReadIdentity
 
 
-def read_split_manifest(data_dir: Path) -> ManifestRead:
+class DatasetChanged(ValueError):
+    """The workspace's `split_manifest.json` is not the one a caller was shown.
+
+    Raised by `read_split_manifest` when it is given the fingerprint shown
+    (``expected_sha256``) and its one read has other bytes, or finds no
+    manifest. The message is the single wording of this refusal: the job
+    runner's early check (`TrainingManager.dataset_refusal`) and the training
+    process (`read_training_inputs`, `--expect-dataset-sha256`) both say it
+    (review of 8242b47, P2-2, and the root-cause round's P22-S2). A
+    ``ValueError``, so a handler of the reader's other refusals still catches it.
+    """
+
+    def __init__(self, expected: str, found: Optional[str]) -> None:
+        now = (f"Its {MANIFEST_FILENAME} holds {found[:12]}... now" if found is not None
+               else f"Its {MANIFEST_FILENAME} is gone")
+        super().__init__(f"The dataset changed since it was shown; select it again. "
+                         f"{now} (shown: {expected[:12]}...).")
+
+
+def read_split_manifest(
+    data_dir: Path, *, expected_sha256: Optional[str] = None
+) -> ManifestRead:
     """Read `split_manifest.json` once, and refuse one this revision cannot read.
 
     The refusals are the ones each verifier made when it parsed the manifest
@@ -91,24 +113,41 @@ def read_split_manifest(data_dir: Path) -> ManifestRead:
     JSON object, is refused naming the file; it used to surface as a bare
     decoding or attribute error.
 
+    **`expected_sha256` compares before it decodes** (the dataset fingerprint a
+    caller showed): the digest of this one read against it, before the bytes
+    are decoded, parsed or schema-checked, so other bytes, valid or not, raise
+    `DatasetChanged` and are never interpreted; an absent manifest raises the
+    same, since the bytes shown are no longer there. As `read_report` and
+    `read_samples_file` do.
+
     Decoded as UTF-8, as the generator writes it; the bytes are released before
     the text is parsed.
     """
     from src.utils.fingerprint import read_once
 
     manifest_path = data_dir / MANIFEST_FILENAME
-    if not manifest_path.is_file():
+    try:
+        if not manifest_path.is_file():
+            raise FileNotFoundError(manifest_path)
+        read = read_once(manifest_path)
+    except FileNotFoundError:
+        if expected_sha256 is not None:
+            raise DatasetChanged(expected_sha256, None) from None
         raise ValueError(
             f"{data_dir} has no {MANIFEST_FILENAME}, so nothing records which "
             f"graph export its artifacts are. {_REBUILD}"
-        )
-    read = read_once(manifest_path)
+        ) from None
     identity = read.identity
+    if expected_sha256 is not None and identity.sha256 != expected_sha256:
+        del read
+        raise DatasetChanged(expected_sha256, identity.sha256)
+    # `RecursionError` is how `json` meets nesting deeper than the interpreter's
+    # limit: a file this revision cannot read, refused like any other (M5-1).
     try:
         text = read.data.decode("utf-8")
         del read
         manifest = json.loads(text)
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
         raise ValueError(f"{manifest_path} is not UTF-8 JSON ({exc}). {_REBUILD}") from exc
     if not isinstance(manifest, dict):
         raise ValueError(
@@ -579,6 +618,133 @@ def require_graph_export_recipe(
         ) from exc
 
 
+#: The file the workspace builder writes beside the manifest: when the workspace
+#: was built and from which code revision (M5, the owner, 2026-10-19).
+#:
+#: **Descriptive, and not bound by the manifest**, so two byte-identical builds
+#: keep one dataset fingerprint (the SHA-256 of `split_manifest.json`). It names
+#: the manifest it describes by that digest, the other way round: a record left
+#: beside another manifest (a rebuild that stopped after its manifest, or a
+#: rebuild by a revision that does not write this file) is never shown as that
+#: manifest's build. A workspace without one reads "not recorded", never a file
+#: modification time.
+WORKSPACE_BUILD_FILENAME = "workspace_build.json"
+
+#: Bumped when the build record's shape changes; a reader shows another value as
+#: not recorded rather than guessing.
+WORKSPACE_BUILD_SCHEMA_VERSION = 1
+
+#: `built_at`: UTC, ISO 8601, to the second (`2026-10-20T08:15:00Z`).
+_BUILT_AT = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z")
+_HEX_SHA256 = re.compile(r"[0-9a-f]{64}")
+
+
+class WorkspaceBuild(NamedTuple):
+    """A workspace's build record as read: `recorded`, with when and from which
+    code revision, or `not_recorded`, with why. Never an error: a workspace
+    without a usable record is still a workspace."""
+
+    state: str
+    built_at: Optional[str] = None
+    code_revision: Optional[Dict[str, Any]] = None
+    reason: Optional[str] = None
+
+
+def _build_record_problems(record: Any) -> list:
+    """What makes `record` not a build record this revision reads: the shape
+    rules, shared by the writer (before it writes) and the reader."""
+    if not isinstance(record, dict):
+        return [f"it is not a JSON object ({type(record).__name__})"]
+    problems = []
+    if record.get("schema_version") != WORKSPACE_BUILD_SCHEMA_VERSION or isinstance(
+            record.get("schema_version"), bool):
+        problems.append(f"its schema_version is {record.get('schema_version')!r}, not "
+                        f"{WORKSPACE_BUILD_SCHEMA_VERSION}")
+    if not (isinstance(record.get("built_at"), str) and _BUILT_AT.fullmatch(record["built_at"])):
+        problems.append("its built_at is not a UTC time like 2026-10-20T08:15:00Z")
+    if not isinstance(record.get("code_revision"), dict):
+        problems.append("its code_revision is not an object")
+    if not (isinstance(record.get("split_manifest_sha256"), str)
+            and _HEX_SHA256.fullmatch(record["split_manifest_sha256"])):
+        problems.append("its split_manifest_sha256 is not a SHA-256 hexdigest")
+    return problems
+
+
+def encode_workspace_build(
+    *, built_at: str, code_revision: Mapping[str, Any], split_manifest_sha256: str
+) -> bytes:
+    """The bytes of a build record, refused before anything is written when the
+    reader would not read them back (`_build_record_problems`).
+
+    `code_revision` is `src.utils.run_environment.code_revision`'s result, the
+    collector training records as a checkpoint's producer.
+    """
+    record = {
+        "schema_version": WORKSPACE_BUILD_SCHEMA_VERSION,
+        "what_this_is": ("when this workspace was built and from which code revision; "
+                         "descriptive, not bound by split_manifest.json"),
+        "built_at": built_at,
+        "code_revision": dict(code_revision),
+        "split_manifest_sha256": split_manifest_sha256,
+    }
+    problems = _build_record_problems(record)
+    if problems:
+        raise ValueError(f"the build record is refused before it is written: "
+                         f"{'; '.join(problems)}")
+    return (json.dumps(record, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
+def read_workspace_build(data_dir: Path, split_manifest_sha256: Optional[str]) -> WorkspaceBuild:
+    """The build record beside a workspace's manifest, read once, for the
+    manifest whose digest is `split_manifest_sha256` (`None` when the workspace
+    has no readable manifest, so nothing can be paired with a record).
+
+    `recorded` only when the record is readable, has this revision's shape, and
+    names this manifest; every other case is `not_recorded` with the reason. It
+    never falls back to a file modification time.
+
+    Without a manifest the record is not read: a graph-only build writes
+    neither, and nothing could be paired with one. An absent record beside a
+    manifest has two causes this cannot tell apart (a build by a revision
+    before M5-1, or a build that stopped between the two files), and the
+    reason names both.
+    """
+    from src.utils.fingerprint import read_once
+
+    if split_manifest_sha256 is None:
+        return WorkspaceBuild("not_recorded", reason=(
+            f"there is no readable {MANIFEST_FILENAME} for a {WORKSPACE_BUILD_FILENAME} to "
+            "describe"))
+    path = Path(data_dir) / WORKSPACE_BUILD_FILENAME
+    try:
+        read = read_once(path)
+    except FileNotFoundError:
+        return WorkspaceBuild("not_recorded", reason=(
+            f"no {WORKSPACE_BUILD_FILENAME} beside this {MANIFEST_FILENAME}: it was built "
+            "by a revision before M5-1, or its build stopped before writing one"))
+    except OSError as exc:
+        return WorkspaceBuild("not_recorded", reason=(
+            f"{WORKSPACE_BUILD_FILENAME} could not be read ({type(exc).__name__})"))
+    try:
+        text = read.data.decode("utf-8")
+        del read
+        record = json.loads(text)
+    except (ValueError, RecursionError) as exc:
+        return WorkspaceBuild("not_recorded", reason=(
+            f"{WORKSPACE_BUILD_FILENAME} is not UTF-8 JSON ({type(exc).__name__})"))
+    problems = _build_record_problems(record)
+    if problems:
+        return WorkspaceBuild("not_recorded", reason=(
+            f"{WORKSPACE_BUILD_FILENAME} is not a build record this revision reads: "
+            f"{'; '.join(problems)}"))
+    if record["split_manifest_sha256"] != split_manifest_sha256:
+        return WorkspaceBuild("not_recorded", reason=(
+            f"{WORKSPACE_BUILD_FILENAME} describes another {MANIFEST_FILENAME} "
+            f"({record['split_manifest_sha256'][:12]}..., this one is "
+            f"{split_manifest_sha256[:12]}...), so this dataset's build time is not recorded"))
+    return WorkspaceBuild("recorded", record["built_at"], record["code_revision"])
+
+
 def require_manifest_schema(manifest: Dict[str, Any], manifest_path: Path) -> None:
     version = manifest.get("schema_version")
     if version != SPLIT_MANIFEST_SCHEMA_VERSION:
@@ -618,6 +784,11 @@ __all__ = [
     "validate_graph_export_recipe",
     "require_graph_export_recipe",
     "require_manifest_schema",
+    "WORKSPACE_BUILD_FILENAME",
+    "WORKSPACE_BUILD_SCHEMA_VERSION",
+    "WorkspaceBuild",
+    "encode_workspace_build",
+    "read_workspace_build",
     "DATASET_RECORD_ROLE",
     "DatasetRecord",
     "DatasetRecordRefused",

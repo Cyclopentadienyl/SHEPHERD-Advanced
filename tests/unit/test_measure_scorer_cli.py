@@ -269,14 +269,24 @@ _BASE = ["--checkpoint", "c.pt", "--data-dir", "d", "--device", "cpu"]
     (["--split", "val", "--output", "o.json", "--record"], "--record apply to"),
     (["--split", "val", "--output", "o.json", "--record", "--registry", "/r"],
      "--registry, --record apply to"),
+    (["--split", "val", "--output", "o.json", "--expect-version-sha256", "a" * 64],
+     "--expect-version-sha256 apply to"),
+    (["--split", "val", "--output", "o.json", "--outcome", "out.json"],
+     "--outcome apply to"),
+    (["--cohort", "demo-test-1", "--registry", "/r", "--expect-checkpoint-sha256", "A" * 64],
+     "is not a SHA-256"),
+    (["--cohort", "demo-test-1", "--registry", "/r", "--expect-version-sha256", "a" * 63],
+     "is not a SHA-256"),
     (["--split", "val"], "--split needs --output"),
     (["--cohort", "demo-test-1"], "--cohort needs --registry"),
     (["--cohort", "demo-test-1", "--registry", "/r", "--output", "o.json"],
      "--output does not apply to --cohort"),
     (["--split", "val", "--cohort", "demo-test-1", "--output", "o.json"], "not allowed with"),
     ([], "one of the arguments --split --cohort is required"),
-], ids=["split+registry", "split+evidence", "split+record", "split+two", "split-no-output",
-        "cohort-no-registry", "cohort+output", "both", "neither"])
+], ids=["split+registry", "split+evidence", "split+record", "split+two",
+        "split+expect-version", "split+outcome", "checkpoint-digest-not-hex",
+        "version-digest-short", "split-no-output", "cohort-no-registry", "cohort+output",
+        "both", "neither"])
 def test_an_argument_of_the_other_kind_of_cohort_is_refused_before_anything_runs(
     extra, fragment, capsys, monkeypatch, tmp_path
 ):
@@ -318,3 +328,23 @@ def test_each_kind_of_cohort_parses_with_its_own_arguments(extra):
             ["/e1", "/e2"] if "--training-evidence" in extra else [])
     else:
         assert args.training_evidence == [] and args.record is False
+
+
+@pytest.mark.parametrize("extra", [
+    ["--split", "val", "--output", "o.json"],
+    ["--cohort", "demo-test-1", "--registry", "/r", "--expect-version-sha256", "b" * 64,
+     "--outcome", "out.json"],
+], ids=["split", "cohort"])
+def test_the_m5_options_parse_with_the_cohort_they_belong_to(extra):
+    """M5-1: `--deterministic` and `--expect-checkpoint-sha256` apply to both
+    kinds; `--expect-version-sha256` and `--outcome` to a registered version.
+    None has a default that does anything."""
+    from scripts.measure_scorer import parse_args
+
+    args = parse_args([*_BASE, *extra, "--deterministic", "--expect-checkpoint-sha256",
+                       "a" * 64])
+
+    assert args.deterministic is True and args.expect_checkpoint_sha256 == "a" * 64
+    defaults = parse_args([*_BASE, *extra[:4]] if args.cohort else [*_BASE, *extra])
+    assert (defaults.deterministic, defaults.expect_checkpoint_sha256,
+            defaults.expect_version_sha256, defaults.outcome) == (False, None, None, None)

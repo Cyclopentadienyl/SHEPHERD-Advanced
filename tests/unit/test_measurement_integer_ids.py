@@ -131,6 +131,8 @@ def test_a_versions_samples_edited_to_a_non_integer_id_are_refused_by_digest(
     from tests.fixtures.registered_cohort import build_registered_cohort
 
     cohort = build_registered_cohort(tmp_path / "root")
+    # The deployment's registry: a --cohort run measures only there (BACKLOG 37).
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(cohort.registry))
     _rewrite_first_sample(cohort.version.samples_path, field, value)
     monkeypatch.setattr(shepherd_gnn, "build_shepherd_model",
                         lambda *a, **k: pytest.fail("a model was built"))

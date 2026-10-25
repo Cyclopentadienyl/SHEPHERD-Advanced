@@ -206,13 +206,9 @@ def test_the_diagnosis_tab_calls_the_recorded_address(monkeypatch):
     calls = _record_self_calls(monkeypatch, panel)
     record_server_address(("127.0.0.1", 8264))
 
-    panel._get_pipeline_status()
-    panel._reload_pipeline("data/workspaces/default", "")
     panel._call_diagnose(["HP:0001250"])
 
     assert [(method, url) for method, url, _ in calls] == [
-        ("GET", "http://127.0.0.1:8264/api/v1/pipeline/status"),
-        ("POST", "http://127.0.0.1:8264/api/v1/pipeline/reload"),
         ("POST", "http://127.0.0.1:8264/api/v1/diagnose"),
     ]
 
@@ -252,106 +248,20 @@ def test_the_tab_never_sends_its_self_calls_through_a_proxy(monkeypatch):
     assert sent[-1][1].get("http") == proxy, "control: the proxy variable is not live"
 
     sent.clear()
-    panel._get_pipeline_status()
-    panel._reload_pipeline("data/workspaces/default", "")
     panel._call_diagnose(["HP:0001250"])
 
-    assert [url for url, _ in sent] == [
-        "http://192.0.2.10:8264/api/v1/pipeline/status",
-        "http://192.0.2.10:8264/api/v1/pipeline/reload",
-        "http://192.0.2.10:8264/api/v1/diagnose",
-    ]
+    assert [url for url, _ in sent] == ["http://192.0.2.10:8264/api/v1/diagnose"]
     assert all(not proxies.get("http") and not proxies.get("all") for _, proxies in sent)
 
 
 def test_an_unknown_address_is_reported_not_disguised_as_not_loaded(monkeypatch):
     """Before this, any failure to read the status rendered as "Pipeline not
-    loaded", which is how the wrong port went unnoticed."""
+    loaded", which is how the wrong port went unnoticed. (The status itself is
+    read in process since M5-2; the diagnosis call keeps the rule.)"""
     pytest.importorskip("gradio")
     from src.webui.components import diagnosis_panel as panel
 
     calls = _record_self_calls(monkeypatch, panel)
 
-    status = panel._get_pipeline_status()
-    rendered = panel._format_pipeline_status(status)
-
-    assert "Pipeline status unavailable" in rendered
-    assert "no TCP request has been recorded" in rendered
-    assert "not loaded" not in rendered
-    assert "no TCP request has been recorded" in panel._reload_pipeline("d", "")["message"]
     assert "no TCP request has been recorded" in panel._call_diagnose(["HP:0001250"])["error"]
     assert calls == [], "no request should be attempted without an address"
-
-
-def test_an_unreachable_api_is_reported_too(monkeypatch):
-    pytest.importorskip("gradio")
-    from src.webui.components import diagnosis_panel as panel
-
-    _record_self_calls(monkeypatch, panel, error=panel.requests.ConnectionError("refused"))
-    record_server_address(("127.0.0.1", 8264))
-
-    rendered = panel._format_pipeline_status(panel._get_pipeline_status())
-
-    assert "Pipeline status unavailable:** API not reachable" in rendered
-    assert "not loaded" not in rendered
-
-
-@pytest.mark.parametrize(
-    "error_name, reason",
-    [("ConnectTimeout", "API not reachable"), ("ReadTimeout", "API did not answer within 5 s")],
-)
-def test_a_timeout_says_whether_the_connection_was_made(monkeypatch, error_name, reason):
-    """A connect timeout never reached the server; a read timeout did, and is
-    what a status read sees while a reload holds the server."""
-    pytest.importorskip("gradio")
-    from src.webui.components import diagnosis_panel as panel
-
-    _record_self_calls(monkeypatch, panel, error=getattr(panel.requests, error_name)("slow"))
-    record_server_address(("127.0.0.1", 8264))
-
-    rendered = panel._format_pipeline_status(panel._get_pipeline_status())
-
-    assert f"Pipeline status unavailable:** {reason}" in rendered
-
-
-def test_an_api_that_answered_with_an_error_is_not_called_unreachable(monkeypatch):
-    """It was reached; the reason shown says what it answered."""
-    pytest.importorskip("gradio")
-    from src.webui.components import diagnosis_panel as panel
-
-    _record_self_calls(monkeypatch, panel, response=_Response(status=503))
-    record_server_address(("127.0.0.1", 8264))
-
-    rendered = panel._format_pipeline_status(panel._get_pipeline_status())
-
-    assert "API error 503" in rendered
-    assert "not reachable" not in rendered
-
-
-def test_a_reply_that_is_not_json_is_named_as_such(monkeypatch):
-    pytest.importorskip("gradio")
-    from src.webui.components import diagnosis_panel as panel
-
-    bad = panel.requests.exceptions.JSONDecodeError("Expecting value", "<html>", 0)
-    _record_self_calls(monkeypatch, panel, response=_Response(json_error=bad))
-    record_server_address(("127.0.0.1", 8264))
-
-    rendered = panel._format_pipeline_status(panel._get_pipeline_status())
-
-    assert "the API's reply was not JSON" in rendered
-    assert "not reachable" not in rendered
-
-
-def test_a_request_that_was_never_sent_is_not_called_a_bad_reply(monkeypatch):
-    """requests raises ValueError subclasses for a malformed URL or header too.
-    Nothing was sent then, so "the API's reply was not JSON" would be false."""
-    pytest.importorskip("gradio")
-    from src.webui.components import diagnosis_panel as panel
-
-    _record_self_calls(monkeypatch, panel, error=panel.requests.exceptions.InvalidURL("bad"))
-    record_server_address(("127.0.0.1", 8264))
-
-    rendered = panel._format_pipeline_status(panel._get_pipeline_status())
-
-    assert "unexpected error" in rendered
-    assert "not JSON" not in rendered

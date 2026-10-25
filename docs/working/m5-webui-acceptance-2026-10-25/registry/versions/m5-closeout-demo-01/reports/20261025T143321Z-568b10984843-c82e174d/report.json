@@ -1,0 +1,272 @@
+{
+  "authoritative_metrics": {
+    "hits@1": 0.2,
+    "hits@10": 1.0,
+    "hits@100": 1.0,
+    "hits@20": 1.0,
+    "hits@5": 1.0,
+    "hits@50": 1.0,
+    "mean_rank": 2.9,
+    "untruncated_mrr": 0.4733333333333333
+  },
+  "manifest": {
+    "amp_dtype": null,
+    "amp_enabled": false,
+    "artifact_digests": {
+      "checkpoint": "568b109848430c92de8d13bd5e24d7836bc16fe32f17a088952be4b322a856bf",
+      "edge_indices": "7624169d26decbe534873d25e385817c01485df08e5c6fe3df82222f2c854bec",
+      "kg": "7980bf7d7492f139e92d71cf7cfe971030567a1a3fc79d715b6ef34d8631fae1",
+      "node_features": "d52da31dff4f4b67e0af78e6205565e46a0aee9fa38a68e75b94b25c0709fbdb",
+      "num_nodes": "2e747928e24494e04ddb4dd8b2135afbeef63cb5a64172ad4bc24b8b9c509bee",
+      "samples": "91b77e24e5fc7023894b5791df156f3c9c5f552e6e2e82168117fae77c45ca6e"
+    },
+    "batch_size": 32,
+    "candidate_construction": "every disease in the knowledge graph",
+    "canonical_tie_policy_version": "score-desc-then-global-id-asc/v1",
+    "checkpoint_path": "/home/user/shepherd-data/workspaces/m5_webui_demo_01/runs/gat/20261024-173909_ui-live-stop-02_c1d9cf/checkpoints/last.pt",
+    "cohort_kind": "supplied",
+    "cohort_version": {
+      "counts": {
+        "cases_with_lost_terms": 1,
+        "cases_with_repeats": 1,
+        "excluded": {
+          "ground_truth_absent": 1,
+          "phenotype_unmappable": 1
+        },
+        "n_excluded": 2,
+        "ranked_eligible": 10,
+        "repeats_removed": 1,
+        "source_cases": 12,
+        "terms_unmappable": 2
+      },
+      "dataset_record_sha256": "9170959de0d57ea33dce4a05393e8f67232bb6332ac1cc879352a3c9a0af4396",
+      "graph": {
+        "edge_indices": "7624169d26decbe534873d25e385817c01485df08e5c6fe3df82222f2c854bec",
+        "kg": "7980bf7d7492f139e92d71cf7cfe971030567a1a3fc79d715b6ef34d8631fae1",
+        "node_features": "d52da31dff4f4b67e0af78e6205565e46a0aee9fa38a68e75b94b25c0709fbdb",
+        "num_nodes": "2e747928e24494e04ddb4dd8b2135afbeef63cb5a64172ad4bc24b8b9c509bee"
+      },
+      "label": "m5-closeout-demo-01",
+      "manifest_sha256": "1c2c6050951155df6ccad39e07579c0df83536a35779f7ce916bda9561bb96c3",
+      "mapping": {
+        "disease_namespace": "MONDO",
+        "partial_phenotypes": "keep",
+        "phenotype_namespace": "HP",
+        "phenotype_normalisation_version": 1
+      },
+      "role": "webui-synthetic",
+      "samples_sha256": "91b77e24e5fc7023894b5791df156f3c9c5f552e6e2e82168117fae77c45ca6e",
+      "source_format": "shepherd-cases/1",
+      "source_sha256": "cd305fa92e20e0755c76b53758993d23880c833132b1e9d6f2f0a59796a169b0"
+    },
+    "cuda_executed": true,
+    "cuda_version": "13.0",
+    "cudnn_benchmark": false,
+    "cudnn_deterministic": false,
+    "data_dir": "/home/user/shepherd-data/workspaces/m5_webui_demo_01",
+    "dataset_record": {
+      "binding": "verified",
+      "incomplete_by_design": [
+        "ontology imports resolved at parse time are not identified",
+        "parser and builder versions are not recorded",
+        "graph construction parameters are not recorded"
+      ],
+      "origin": "synthetic",
+      "sha256": "9170959de0d57ea33dce4a05393e8f67232bb6332ac1cc879352a3c9a0af4396",
+      "sources": []
+    },
+    "deterministic_algorithms": false,
+    "device": "cuda",
+    "dtype": "torch.float32",
+    "environment": {
+      "code": {
+        "dirty": false,
+        "modified_tracked": 0,
+        "revision": "773dc4afb5629bad9ec463980ea49b878121492c",
+        "state": "recorded",
+        "untracked": 0
+      },
+      "facts": {
+        "cuda_build": "13.0",
+        "cudnn": 91501,
+        "cudnn_benchmark": false,
+        "cudnn_deterministic": false,
+        "deterministic_algorithms": false,
+        "deterministic_warn_only": false,
+        "gpu": {
+          "capability": [
+            12,
+            1
+          ],
+          "driver": "580.178.04",
+          "name": "NVIDIA GB10"
+        },
+        "pyg": {
+          "native": {
+            "pyg_lib": {
+              "available": true,
+              "version": "0.6.0"
+            },
+            "torch_cluster": {
+              "available": true,
+              "version": "1.6.3"
+            },
+            "torch_scatter": {
+              "available": true,
+              "version": "2.1.2"
+            },
+            "torch_sparse": {
+              "available": true,
+              "version": "0.6.18"
+            }
+          },
+          "version": "2.8.1"
+        },
+        "python": "3.12.3",
+        "tf32": {
+          "cudnn_allow_tf32": true,
+          "cudnn_fp32_precision": "none",
+          "matmul_allow_tf32": false,
+          "matmul_fp32_precision": "none"
+        },
+        "torch": "2.10.0+cu130",
+        "torch_git_version": "449b1768410104d3ed79d3bcfe4ba1d65c7f22c0"
+      }
+    },
+    "graph_fingerprint": {
+      "edge_types": [
+        [
+          "disease",
+          "rev_gene_associated_with_disease",
+          "gene"
+        ],
+        [
+          "disease",
+          "rev_phenotype_of_disease",
+          "phenotype"
+        ],
+        [
+          "gene",
+          "gene_associated_with_disease",
+          "disease"
+        ],
+        [
+          "gene",
+          "gene_has_phenotype",
+          "phenotype"
+        ],
+        [
+          "gene",
+          "human_mouse_ortholog",
+          "mouse_gene"
+        ],
+        [
+          "mouse_gene",
+          "rev_human_mouse_ortholog",
+          "gene"
+        ],
+        [
+          "phenotype",
+          "phenotype_of_disease",
+          "disease"
+        ],
+        [
+          "phenotype",
+          "rev_gene_has_phenotype",
+          "gene"
+        ]
+      ],
+      "feature_dims": {
+        "disease": 64,
+        "gene": 64,
+        "mouse_gene": 64,
+        "phenotype": 64
+      },
+      "node_counts": {
+        "disease": 5,
+        "gene": 8,
+        "mouse_gene": 1,
+        "phenotype": 10
+      },
+      "node_types": [
+        "disease",
+        "gene",
+        "mouse_gene",
+        "phenotype"
+      ],
+      "num_edge_types": 8
+    },
+    "metric_schema_version": 1,
+    "mode": "C",
+    "model_construction": "production (build_shepherd_model)",
+    "n_samples": 10,
+    "r10": {
+      "candidates_examined": 2,
+      "definition_version": 1,
+      "training": {
+        "disease_overlap": {
+          "cases": 7,
+          "k": 3,
+          "n": 5,
+          "state": "overlap"
+        },
+        "evidence": {
+          "path": "/home/user/shepherd-data/workspaces/m5_webui_demo_01/train_samples.json",
+          "problem": null,
+          "state": "found"
+        },
+        "phenotype_set_overlap": {
+          "k": 2,
+          "n": 10,
+          "state": "overlap"
+        },
+        "recorded_sha256": "cba70e5284fcc9ae395fae10bee81c2de317d575b94bce99f10112c9d9cd3cb2"
+      },
+      "validation": {
+        "disease_overlap": {
+          "cases": 2,
+          "k": 1,
+          "n": 5,
+          "state": "overlap"
+        },
+        "evidence": {
+          "path": "/home/user/shepherd-data/workspaces/m5_webui_demo_01/val_samples.json",
+          "problem": null,
+          "state": "found"
+        },
+        "phenotype_set_overlap": {
+          "k": 0,
+          "n": 10,
+          "state": "none"
+        },
+        "recorded_sha256": "f653fa0535506e832d02e805a037c86c9392c29cc63d9bab27d2ecd00c3527f6"
+      }
+    },
+    "relations": {
+      "R1": "verified",
+      "R2": "not_applicable",
+      "R3": "verified",
+      "R5": "verified",
+      "cohort_graph": "verified"
+    },
+    "score_semantics": "raw cosine, no eta mixture and no shortest-path term",
+    "software_revision": "773dc4afb5629bad9ec463980ea49b878121492c",
+    "split": "webui-synthetic",
+    "torch_compile_wrapped": false,
+    "torch_version": "2.10.0+cu130"
+  },
+  "n_ground_truth_absent": 0,
+  "n_ranked": 10,
+  "ranks": {
+    "file": "ranks.json",
+    "sha256": "ed8890010a72208d5e8c33e97449d0b3404496ea12420f4d323c3e60a80c0f07"
+  },
+  "sampler_evidence": {
+    "candidate_columns": {
+      "max": 5,
+      "mean": 5.0,
+      "min": 5
+    },
+    "n_batches": 1
+  }
+}

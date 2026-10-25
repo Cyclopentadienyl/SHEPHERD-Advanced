@@ -12,8 +12,11 @@ Traditional Chinese Windows, where an unnamed read fails before any assertion.
 """
 import ast
 import importlib.util
+import json
+import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -66,7 +69,8 @@ def test_the_unit_starts_through_the_launcher_with_service_flags():
     own, app_args = argv[2:argv.index("--")], argv[argv.index("--") + 1:]
     assert "--no-auto-install" in own
     assert "--no-browser" in own
-    assert app_args == ["--port", "8264"]
+    # Loopback, stated where an operator would change it (SPEC_4 B1, M5-1).
+    assert app_args == ["--host", "127.0.0.1", "--port", "8264"]
 
     app = _constant(LAUNCHER, "UVICORN_APP")
     module, _, attr = app.partition(":")
@@ -90,10 +94,12 @@ def _run_launcher(monkeypatch, launcher_args, env=None, hand_over=True):
     """Run the launcher's own main with the server, installs and browser stubbed.
 
     Returns what it did: the server command, whether it exec'd or waited,
-    browser threads started, pip installs attempted, and main's status.
+    browser threads started, browser openers started beside an exec (their
+    URLs), pip installs attempted, and main's status.
     """
     launcher = _launcher()
-    record = {"exec": [], "run": [], "browsers": 0, "threads": [], "installs": []}
+    record = {"exec": [], "run": [], "browsers": 0, "threads": [], "installs": [],
+              "openers": []}
 
     class _Thread:
         def __init__(self, *args, **kwargs):
@@ -104,10 +110,14 @@ def _run_launcher(monkeypatch, launcher_args, env=None, hand_over=True):
 
     def _execve(program, argv, environ):
         record["exec"].append(list(argv))
+        record["exec_env"] = dict(environ)
         raise _ExecReachedError
 
     monkeypatch.setattr(launcher, "run", lambda cmd, check=False: (
         record["run"].append(list(cmd)) or subprocess.CompletedProcess(cmd, 0)))
+    monkeypatch.setattr(launcher, "serve", lambda cmd: record["run"].append(list(cmd)) or 0)
+    monkeypatch.setattr(launcher, "start_browser_opener",
+                        lambda url, health: record["openers"].append((url, health)))
     monkeypatch.setattr(launcher, "pip_install", lambda spec, name, **kwargs: (
         record["installs"].append(name) or False))
     # Every accelerator absent, so a requested one reaches the install decision.
@@ -124,8 +134,15 @@ def _run_launcher(monkeypatch, launcher_args, env=None, hand_over=True):
         record["status"] = launcher.main()
     except _ExecReachedError:
         record["status"] = None
-    record["server"] = (record["exec"] or record["run"])[-1]
-    record["app_args"] = record["server"][4:]  # after python -m uvicorn APP
+    record["environ"] = dict(launcher.os.environ)
+    started = record["exec"] or record["run"]
+    record["server"] = started[-1] if started else None
+    if record["server"] is not None:
+        # After python -m uvicorn APP, and before what the launcher always
+        # appends last (`UVICORN_FORCED_ARGS`), which the tests below check.
+        forced = launcher.UVICORN_FORCED_ARGS
+        assert record["server"][-len(forced):] == forced
+        record["app_args"] = record["server"][4:-len(forced)]
     return record
 
 
@@ -141,6 +158,177 @@ def test_the_launcher_runs_the_units_command_by_becoming_the_server(monkeypatch)
     # uvicorn takes the last of a repeated option, so the unit's port is the
     # one served, after the launcher's defaults.
     assert done["app_args"][-2:] == ["--port", "8264"]
+
+
+def test_the_launcher_binds_loopback_by_default_and_says_so(monkeypatch, capsys):
+    """SPEC_4 B1 (M5-1): no --host given, uvicorn is given 127.0.0.1, and the
+    launcher prints the address it binds beside the URLs it shows."""
+    done = _run_launcher(monkeypatch, ["--no-auto-install", "--no-browser"])
+    assert done["app_args"][:2] == ["--host", "127.0.0.1"]
+    out = capsys.readouterr().out
+    assert "Listening on          : 127.0.0.1:8000 (loopback: this machine only)" in out
+
+
+@pytest.mark.parametrize("host", ["0.0.0.0", "::", "192.0.2.10", "", "myhost.lan"])
+def test_a_network_bind_without_risk_acceptance_starts_nothing(monkeypatch, capsys, host):
+    done = _run_launcher(monkeypatch, ["--no-auto-install", "--no-browser", "--",
+                                       f"--host={host}", "--port", "8264"])
+    assert done["status"] == 2 and done["server"] is None
+    out = capsys.readouterr().out
+    assert "ERROR: refusing to bind" in out and "Nothing was started." in out
+    assert "SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND=1" in out
+
+
+def _seconds(value: str) -> float:
+    """A systemd time span as TimeoutStopSec= takes it (``150``, ``150s``,
+    ``2min 30s``), in seconds."""
+    units = {"": 1, "s": 1, "sec": 1, "m": 60, "min": 60, "h": 3600}
+    total = 0.0
+    for number, unit in re.findall(r"(\d+(?:\.\d+)?)\s*([a-z]*)", value):
+        assert unit in units, f"unexpected time unit {unit!r} in {value!r}"
+        total += float(number) * units[unit]
+    return total
+
+
+def test_stopping_the_unit_hands_the_job_s_stop_to_the_backend():
+    """Root-cause review, P23-3: the default KillMode=control-group SIGTERMs
+    every process of the service at once, the GPU job's main process and its
+    workers too, ahead of the backend's own stop (SIGINT first, which a test
+    run holds across publishing its report); and the stop timeout was the
+    manager's default, which can be shorter than that stop. KillMode=mixed
+    sends SIGTERM to the main process only, the server (the launcher execs
+    into it, test_the_launcher_runs_the_units_command_by_becoming_the_server),
+    and SIGKILLs the rest once it has exited; TimeoutStopSec is explicit and
+    covers the backend's longest stop of its job, computed from the job
+    runner's own constants, so a change there fails here."""
+    from src.api.services import training_manager as tm  # builds no application
+
+    assert _directive("KillMode") == "mixed"
+    bound = tm.END_ACTIVE_JOB_SECONDS
+    assert bound == (tm.STOP_GRACE_SECONDS + tm.TERMINATE_GRACE_SECONDS
+                     + tm.KILL_GRACE_SECONDS + tm.RESULT_WAIT_SECONDS)
+    # Room beyond the job's stop for the server's own shutdown and exit.
+    assert _seconds(_directive("TimeoutStopSec")) >= bound + 20
+
+
+def test_the_unit_does_not_restart_a_refused_bind(monkeypatch, capsys):
+    """The launcher refuses its own configuration with exit status 2, which a
+    restart cannot fix, so the unit must not restart on it."""
+    assert _directive("Restart") == "on-failure"
+    assert _directive("RestartPreventExitStatus").split() == ["2"]
+    done = _run_launcher(monkeypatch, ["--no-auto-install", "--no-browser", "--",
+                                       "--host", "0.0.0.0"])
+    assert done["status"] == 2 and done["server"] is None
+
+
+def test_an_ipv6_bind_is_shown_with_brackets(monkeypatch, capsys):
+    """`::1:8000` cannot be read as an address and a port; `[::1]:8000` can."""
+    done = _run_launcher(monkeypatch, ["--no-auto-install", "--no-browser", "--",
+                                       "--host", "::1"])
+    assert done["exec"] and done["app_args"][-2:] == ["--host", "::1"]
+    assert "Listening on          : [::1]:8000 (loopback: this machine only)" in \
+        capsys.readouterr().out
+
+
+def test_risk_acceptance_starts_a_network_bind_and_says_it_is_no_control(monkeypatch, capsys):
+    done = _run_launcher(
+        monkeypatch, ["--no-auto-install", "--no-browser", "--", "--host", "0.0.0.0"],
+        env={"SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND": "1"})
+    assert done["exec"] and done["app_args"][-2:] == ["--host", "0.0.0.0"]
+    out = capsys.readouterr().out
+    assert "WARNING: binding all interfaces" in out and "not a control" in out
+    assert "Listening on          : 0.0.0.0:8000 (all interfaces)" in out
+
+
+def test_the_bind_guard_refuses_before_anything_is_installed(monkeypatch, capsys):
+    """A refused bind starts nothing, a pip install of an accelerator
+    included: the guard runs right after the arguments are read."""
+    done = _run_launcher(monkeypatch, ["--no-browser", "--xformers", "--", "--host", "0.0.0.0"])
+    assert done["status"] == 2 and done["server"] is None
+    assert done["installs"] == []
+    assert "ERROR: refusing to bind all interfaces" in capsys.readouterr().out
+
+
+def test_the_host_bound_is_passed_to_application_startup(monkeypatch):
+    """SPEC_4 §3.1's third enforcement point reads SHEPHERD_BIND_HOST, which
+    the launcher sets to the host uvicorn binds, over any value inherited."""
+    done = _run_launcher(monkeypatch, ["--no-auto-install", "--no-browser"],
+                         env={"SHEPHERD_BIND_HOST": "0.0.0.0"})
+    assert done["exec_env"]["SHEPHERD_BIND_HOST"] == "127.0.0.1"
+    done = _run_launcher(
+        monkeypatch, ["--no-auto-install", "--no-browser", "--", "--host=0.0.0.0"],
+        env={"SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND": "1"})
+    assert done["exec_env"]["SHEPHERD_BIND_HOST"] == "0.0.0.0"
+
+
+@pytest.mark.parametrize("app_args, env", [
+    (["--fd", "3"], {}), (["--fd=3"], {}), ([], {"UVICORN_FD": "3"}),
+    (["--uds", "/run/shepherd.sock", "--fd", "3"], {}),
+], ids=["fd", "fd-equals", "fd-from-environment", "fd-beside-uds"])
+def test_a_socket_handed_to_uvicorn_counts_as_a_network_bind(monkeypatch, capsys, app_args,
+                                                             env):
+    """uvicorn listens on an inherited socket (--fd, or UVICORN_FD) before
+    --host, and a socket unit's ListenStream binds every interface: its
+    address is not read here, so it needs the risk acceptance, and the
+    launcher never calls it loopback."""
+    done = _run_launcher(monkeypatch, ["--no-auto-install", "--no-browser", "--", *app_args],
+                         env=env)
+    assert done["status"] == 2 and done["server"] is None
+    out = capsys.readouterr().out
+    assert "ERROR: refusing to serve on the inherited socket (file descriptor 3)" in out
+    assert "loopback: this machine only" not in out
+
+    done = _run_launcher(monkeypatch, ["--no-auto-install", "--no-browser", "--", *app_args],
+                         env={**env, "SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND": "1"})
+    assert done["exec"]
+    out = capsys.readouterr().out
+    assert "WARNING: serving on the inherited socket (file descriptor 3)" in out
+    assert ("Listening on          : the inherited socket (file descriptor 3), whose address "
+            "is not read here") in out
+    assert "http://127.0.0.1:8000/ui" not in out and "no URL is shown" in out
+    assert "SHEPHERD_BIND_HOST" not in done["exec_env"]
+
+
+@pytest.mark.parametrize("app_args, env", [
+    (["--uds", "/run/shepherd.sock"], {}), (["--uds=/run/shepherd.sock"], {}),
+    ([], {"UVICORN_UDS": "/run/shepherd.sock"}),
+], ids=["uds", "uds-equals", "uds-from-environment"])
+def test_a_unix_socket_is_shown_as_its_path_not_as_a_url(monkeypatch, capsys, app_args, env):
+    """A unix socket is reachable on this machine only (no acceptance needed),
+    has no URL to show or open, and passes no host to startup."""
+    done = _run_launcher(monkeypatch, ["--no-auto-install", "--", *app_args],
+                         env={**env, "SHEPHERD_BIND_HOST": "0.0.0.0"})
+    assert done["exec"] and not done["run"]
+    assert done["browsers"] == 0 and done["openers"] == []
+    out = capsys.readouterr().out
+    assert "Listening on          : unix socket /run/shepherd.sock (this machine only" in out
+    assert "http://" not in out and "No browser is opened" in out
+    assert "SHEPHERD_BIND_HOST" not in done["environ"]
+
+
+def test_an_empty_socket_variable_is_unset_as_uvicorn_reads_it(monkeypatch, capsys):
+    done = _run_launcher(monkeypatch, ["--no-auto-install", "--no-browser"],
+                         env={"UVICORN_FD": "", "UVICORN_UDS": ""})
+    assert done["exec"]
+    assert "Listening on          : 127.0.0.1:8000 (loopback" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("value", ["0", "true", "yes", " 1"])
+def test_only_the_exact_value_accepts_the_risk(monkeypatch, value):
+    done = _run_launcher(
+        monkeypatch, ["--no-auto-install", "--no-browser", "--", "--host", "0.0.0.0"],
+        env={"SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND": value})
+    assert done["status"] == 2 and done["server"] is None
+
+
+def test_uvicorn_never_trusts_proxy_headers(monkeypatch):
+    """`--no-proxy-headers` is last, so a `--proxy-headers` passed through
+    cannot turn it back on: uvicorn would rewrite the client address from
+    X-Forwarded-For for a peer on 127.0.0.1."""
+    done = _run_launcher(monkeypatch, ["--no-auto-install", "--no-browser", "--",
+                                       "--proxy-headers", "--port", "8264"])
+    assert done["server"][-1] == "--no-proxy-headers"
+    assert done["server"].index("--proxy-headers") < done["server"].index("--no-proxy-headers")
 
 
 def test_the_launcher_logs_the_port_the_unit_serves_on(monkeypatch, capsys):
@@ -177,10 +365,57 @@ def test_the_displayed_address_follows_uvicorns_own_rules(uvicorn_args, expected
     assert _launcher().display_base_url(uvicorn_args) == expected
 
 
-def test_without_no_browser_the_launcher_waits_and_opens_one(monkeypatch):
-    # The control for the test above: the stubs do see the other path.
+def test_with_a_browser_to_open_the_launcher_still_becomes_the_server(monkeypatch):
+    """Round 3 of the review fixes, P3-2: the browser mode used to wait beside
+    the server, so a SIGTERM sent to the PID that was started ended the
+    launcher alone and the server served on with its job. On POSIX it execs
+    as the headless mode does, and the browser opener is a helper started
+    first, given the URLs."""
     done = _run_launcher(monkeypatch, ["--no-auto-install"])
-    assert done["run"] and not done["exec"]
+    assert done["exec"] and not done["run"]
+    assert done["threads"] == [] and done["browsers"] == 0
+    assert done["openers"] == [("http://127.0.0.1:8000/ui", "http://127.0.0.1:8000/health")]
+
+
+@pytest.mark.skipif(os.name != "posix", reason="launch_shepherd.sh is the POSIX start; "
+                                               "Windows starts through launch_shepherd.cmd")
+def test_launch_shepherd_sh_puts_the_launcher_in_the_pid_that_was_started(tmp_path):
+    """Round 3 of the review fixes, P3-2: the script ran the launcher as its
+    child, so a SIGTERM sent to the PID a supervisor started reached bash
+    alone, and the server served on with its job. It execs the launcher now,
+    which execs into uvicorn (the tests above). Run here beside a stub
+    virtual environment and a stub launcher that says its PID, so this holds
+    without the checkout's .venv, which the end-to-end case in
+    tests/integration/test_backend_stops_its_job.py needs."""
+    script = REPO_ROOT / "launch_shepherd.sh"
+    shutil.copy(script, tmp_path / script.name)
+    venv_bin = tmp_path / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    (venv_bin / "python").symlink_to(sys.executable)
+    (venv_bin / "activate").write_text(f'PATH={shlex.quote(str(venv_bin))}:"$PATH"\n',
+                                       encoding="utf-8")
+    launcher = tmp_path / "scripts" / "launch" / "shep_launch.py"
+    launcher.parent.mkdir(parents=True)
+    launcher.write_text("import json, os, sys\n"
+                        "print(json.dumps({'pid': os.getpid(), 'argv': sys.argv[1:]}))\n",
+                        encoding="utf-8")
+
+    args = ["--no-auto-install", "--", "--port", "8264"]
+    process = subprocess.Popen(["bash", script.name, *args], cwd=tmp_path,
+                               stdout=subprocess.PIPE, text=True)
+    out, _ = process.communicate(timeout=60)
+    said = json.loads(out.strip().splitlines()[-1])
+    assert said["pid"] == process.pid, (
+        f"the launcher ran as pid {said['pid']}, not as the pid that was started "
+        f"({process.pid}): a SIGTERM sent to that pid would not reach it")
+    assert said["argv"] == args
+    assert process.returncode == 0
+
+
+def test_where_exec_would_change_the_pid_the_browser_opens_from_a_thread(monkeypatch):
+    # The control for the tests around it: the stubs do see the other path.
+    done = _run_launcher(monkeypatch, ["--no-auto-install"], hand_over=False)
+    assert done["run"] and not done["exec"] and done["openers"] == []
     assert done["browsers"] == 1
     assert done["status"] == 0
     # A daemon: the opener waits for /health with no deadline, so only the
@@ -267,6 +502,24 @@ def test_the_unit_runs_the_project_interpreter_in_the_user_manager():
     # default.target, not multi-user.target.
     assert working_directory.startswith("%h/")
     assert _directive("WantedBy") == "default.target"
+
+
+def test_the_unit_names_each_setting_the_operator_sets_for_the_service():
+    """Round 3 of the review fixes, P3-7: the unit offered only the deployment
+    mode, whose comment read as if M1 alone enabled training and the lists,
+    while the workspaces root (the GPU lock's one name) and the registry,
+    which the deployment guide tells the CLI shell to copy from the unit,
+    had no line. Each is there to set, commented, named by the settings'
+    own constants, and the M1 comment says it is not enough."""
+    from src.config import server_settings  # imports nothing of the application
+
+    text = _unit_text()
+    for name in (server_settings.ENV_DEPLOYMENT_MODE, server_settings.ENV_WORKSPACES_ROOT,
+                 server_settings.ENV_REGISTRY):
+        assert re.search(rf"^#?Environment={name}=\S", text, flags=re.MULTILINE), \
+            f"the unit has no Environment={name}= line"
+    assert "M1 is necessary, not sufficient" in text
+    assert server_settings.GPU_LOCK_FILE_NAME in text
 
 
 def test_the_unit_leaves_the_allocator_to_the_saved_preset():

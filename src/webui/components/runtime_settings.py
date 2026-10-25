@@ -17,10 +17,20 @@ Apply model:
     at the repo root (path + presets defined in ``src.config.runtime_presets``) and are
     consumed at launch time by ``scripts/launch/shep_launch.py`` (allocator) and
     by the training subprocess it spawns (which inherits the environment).
+
+Operator controls (D8, M5-1):
+    Restart Backend and Apply Settings each check their own Gradio request
+    first (`src/webui/operator_access.py`) and are refused, changing nothing,
+    unless D8 allows it. For a request D8 refuses, both buttons are greyed out
+    with D8's reason as visible text when the page is opened and on its timer
+    (M5-2, the general D8 rule); like the restart lock, the greyed-out buttons
+    are a display, never the control.
 """
 from __future__ import annotations
 
+import html
 import os
+from typing import Any
 
 import gradio as gr
 
@@ -31,6 +41,8 @@ from src.config.runtime_presets import (
     load_runtime_settings,
     save_runtime_settings,
 )
+from src.webui.operator_access import operator_access
+from src.webui.shell import SETTINGS as SETTINGS_PAGE
 
 
 def _active_env_override() -> str | None:
@@ -48,10 +60,10 @@ def _badge_row(*badges: str) -> str:
     return "<div class='shep-badge-row'>" + "".join(badges) + "</div>"
 
 
-# Red warning shown beside the Restart button while training is in progress.
+# Red warning shown beside the Restart button while a GPU job is in progress.
 _RESTART_LOCKED_HTML = (
-    "<span class='shep-restart-locked'>⛔ Training in progress — "
-    "restart is locked.</span>"
+    "<span class='shep-restart-locked'>⛔ A GPU job (training or a test run) is in "
+    "progress — restart is locked.</span>"
 )
 
 # Browser-side poller chained after the restart click. Re-exec'ing the backend
@@ -94,8 +106,111 @@ async () => {
 """
 
 
-def create_runtime_settings_tab() -> None:
-    """Build the Runtime Settings tab (call inside a gr.Tab/gr.Blocks context)."""
+def _on_restart(request: gr.Request):
+    """Restart Backend: an operator control (D8), checked on this event's own
+    request before the backend is asked for anything. The backend's own guard
+    refuses while a GPU job runs."""
+    access = operator_access(request)
+    if not access.allowed:
+        return gr.update(value=f"⛔ **{access.refusal}**")
+    result = restart_backend()
+    if not result.get("success"):
+        return gr.update(
+            value=f"⛔ **{result.get('error', 'Cannot restart right now.')}**"
+        )
+    return gr.update(
+        value="🔄 **Restarting backend…** This page will reload "
+        "automatically once the backend is back (a few seconds)."
+    )
+
+
+def _on_apply(alloc, compile_on, request: gr.Request):
+    """Apply Settings: an operator control (D8), checked on this event's own
+    request before the settings file is read or written."""
+    access = operator_access(request)
+    if not access.allowed:
+        return access.refusal
+    data = load_runtime_settings()
+    prev_alloc = data.get("allocator_preset", DEFAULT_ALLOCATOR)
+    data["allocator_preset"] = alloc
+    data["torch_compile"] = bool(compile_on)
+    save_runtime_settings(data)
+
+    parts = [
+        f"✓ Applied. Memory Allocator = **{alloc}**, "
+        f"torch.compile = **{'on' if compile_on else 'off'}**."
+    ]
+    if alloc != prev_alloc:
+        parts.append(
+            "🔄 **Restart the backend** for the new allocator to take effect "
+            "(read once at startup)."
+        )
+    parts.append("torch.compile applies to the **next training run** (no restart).")
+    if _active_env_override():
+        parts.append(
+            "⚠️ An explicit `PYTORCH_ALLOC_CONF` env override is active and takes "
+            "precedence over the allocator until removed."
+        )
+    return "  ".join(parts)
+
+
+def _refresh_restart_lock(request: gr.Request):
+    """Apply and Restart as this request may use them: both greyed out with
+    D8's reason for a refused request; Restart also while training runs (the
+    lock note). A display: each button's handler checks its own request."""
+    locked = is_training_active()
+    access = operator_access(request)
+    reason = ("" if access.allowed else
+              '<div class="shep-reason shep-reason-grey">Apply Settings and Restart Backend are '
+              f'operator controls, off for this request: {html.escape(access.reason)}</div>')
+    return (
+        gr.update(interactive=access.allowed),
+        gr.update(interactive=access.allowed and not locked),
+        gr.update(visible=locked, value=_RESTART_LOCKED_HTML if locked else ""),
+        gr.update(visible=not access.allowed, value=reason),
+    )
+
+
+def _poll_restart_lock(location, request: gr.Request):
+    """The shell's slow timer (``queue=False``): the lock and D8's answer read
+    again only while Settings is shown; on any other page, no work and no
+    change (M5-3 review ARCH-8: the page kept a queued 4 s timer of its own
+    that ticked on every page once Settings had been opened)."""
+    if location != SETTINGS_PAGE:
+        return (gr.update(),) * 4
+    return _refresh_restart_lock(request)
+
+
+#: The fields' help, behind the shared ⓘ (M5-2): ``{elem_id: (title, text)}``.
+#: The badges (impact, scope) and the Details stay visible on the page.
+FIELD_HELP = {
+    "allocator_preset": (
+        "Memory Allocator",
+        "GPU memory allocation strategy — governs fragmentation and peak usage. The "
+        "backend also runs CUDA in-process (for diagnosis/inference), so a change applies "
+        "only after the backend is restarted.",
+    ),
+    "torch_compile": (
+        "Enable torch.compile",
+        "Attempts to compile supported model regions to reduce overhead; dynamic PyG/HGT "
+        "workloads may graph-break, fall back to eager, or run slower. Applies to the next "
+        "training run — no backend restart needed.",
+    ),
+}
+
+
+def create_runtime_settings_tab(ctx: Any) -> None:
+    """Build the Runtime Settings page under ⚙ Settings (call inside its gr.Tab).
+
+    ``ctx`` is the page context (`src/webui/shell.py`). The restart lock is
+    read each time the page is shown (``ctx.on_page_open``) and then on the
+    shell's slow timer while it is shown (`_poll_restart_lock`, ``queue=False``,
+    no work on another page); the page has no timer of its own. The backend
+    refuses a restart while any GPU job runs either way (``restart_backend``);
+    this keeps the button and the note honest. The fields' help is behind the
+    shared ⓘ (`FIELD_HELP`); Apply and Restart refresh the header's chips.
+    """
+    ctx.help.fields(FIELD_HELP)
     settings = load_runtime_settings()
     current_alloc = settings.get("allocator_preset", DEFAULT_ALLOCATOR)
     if current_alloc not in ALLOCATOR_PRESETS:
@@ -105,8 +220,8 @@ def create_runtime_settings_tab() -> None:
     gr.Markdown(
         "### Runtime Settings\n"
         "These settings change **how computation runs on the hardware** — speed, "
-        "memory, and numerical precision — and are separate from the Training "
-        "Console (which configures the model). Changes take effect only after you "
+        "memory, and numerical precision — and are separate from Research › "
+        "Training (which configures the model). Changes take effect only after you "
         "click **Apply Settings**; items tagged **🔄 Restart required** also need a "
         "backend restart.\n\n"
         "_An explicit `PYTORCH_ALLOC_CONF` / `PYTORCH_CUDA_ALLOC_CONF` set in the "
@@ -143,21 +258,23 @@ def create_runtime_settings_tab() -> None:
         elem_id="runtime_status",
     )
     # Restart feedback + training lock (kept next to the button it belongs to).
+    # padding=True: the Gradio 5 default, which this layout was made with
+    # (Gradio 6 defaults to no padding).
     restart_lock_note = gr.HTML(
         _RESTART_LOCKED_HTML if _locked_now else "",
         visible=_locked_now,
         elem_id="runtime_restart_lock",
+        padding=True,
     )
     restart_status = gr.Markdown("", elem_id="runtime_restart_status")
+    # Read-only: why both buttons are greyed out (D8's reason for this request).
+    access_note = gr.HTML("", visible=False, elem_id="runtime_access_reason")
     gr.Markdown(
-        "<sub>**Restart Backend** relaunches the backend (REST API + this UI) so a "
+        "**Restart Backend** relaunches the backend (REST API + this UI) so a "
         "newly applied **Memory Allocator** takes effect. Locked while training is "
-        "running; the page reconnects automatically a few seconds after a restart."
-        "</sub>"
+        "running; the page reconnects automatically a few seconds after a restart.",
+        elem_classes=["shep-note"],
     )
-    # Keep the lock state live without manual refresh (cheap status read).
-    restart_lock_timer = gr.Timer(4.0)
-
     gr.Markdown("#### Memory")
     with gr.Group():
         allocator = gr.Dropdown(
@@ -166,12 +283,8 @@ def create_runtime_settings_tab() -> None:
             value=current_alloc,
             elem_id="allocator_preset",
         )
-        gr.HTML(_badge_row(_badge("Memory", "mem"), _badge("Restart required", "restart")))
-        gr.Markdown(
-            "GPU memory allocation strategy — governs fragmentation and peak usage. "
-            "The backend also runs CUDA in-process (for diagnosis/inference), so a "
-            "change applies only after the backend is restarted."
-        )
+        gr.HTML(_badge_row(_badge("Memory", "mem"), _badge("Restart required", "restart")),
+                padding=True)
         with gr.Accordion("Details — what each option does", open=False):
             gr.Markdown(
                 "- **cuda_async** *(default)* — NVIDIA driver's stream-ordered memory "
@@ -202,12 +315,8 @@ def create_runtime_settings_tab() -> None:
                 _badge("Precision ⚠", "prec"),
                 _badge("Experimental", "exp"),
                 _badge("Next run", "nextrun"),
-            )
-        )
-        gr.Markdown(
-            "Attempts to compile supported model regions to reduce overhead; dynamic "
-            "PyG/HGT workloads may graph-break, fall back to eager, or run slower. "
-            "Applies to the **next training run** — no backend restart needed."
+            ),
+            padding=True,
         )
         with gr.Accordion("Details", open=False):
             gr.Markdown(
@@ -219,65 +328,25 @@ def create_runtime_settings_tab() -> None:
                 "compare MRR / Hits@K against an eager run before trusting any result."
             )
 
-    def _refresh_restart_lock():
-        locked = is_training_active()
-        return (
-            gr.update(interactive=not locked),
-            gr.update(visible=locked, value=_RESTART_LOCKED_HTML if locked else ""),
-        )
-
-    def _on_restart():
-        result = restart_backend()
-        if not result.get("success"):
-            return gr.update(
-                value=f"⛔ **{result.get('error', 'Cannot restart right now.')}**"
-            )
-        return gr.update(
-            value="🔄 **Restarting backend…** This page will reload "
-            "automatically once the backend is back (a few seconds)."
-        )
-
-    restart_lock_timer.tick(
-        fn=_refresh_restart_lock, outputs=[restart_btn, restart_lock_note]
-    )
+    lock_outputs = [apply_btn, restart_btn, restart_lock_note, access_note]
+    ctx.timer_slow.tick(fn=_poll_restart_lock, inputs=[ctx.location], outputs=lock_outputs,
+                        queue=False, show_progress="hidden")
+    ctx.on_page_open(SETTINGS_PAGE, {"fn": _refresh_restart_lock, "outputs": lock_outputs,
+                                     "queue": False, "show_progress": "hidden"})
     # After the click handler runs, kick off a browser-side poller that reloads
     # the page once the fresh backend is up (a new process means a new Gradio
     # session; without a reload the old page's pollers hang). The poller no-ops
     # if the restart was refused.
     restart_btn.click(fn=_on_restart, outputs=[restart_status]).then(
-        fn=None, inputs=None, outputs=None, js=_RESTART_RELOAD_JS
-    )
+        **ctx.chip_refresh).then(fn=None, inputs=None, outputs=None, js=_RESTART_RELOAD_JS)
 
     def _on_change(*_values):
         return "● **Unsaved changes** — click **Apply Settings** to persist."
 
-    def _on_apply(alloc, compile_on):
-        data = load_runtime_settings()
-        prev_alloc = data.get("allocator_preset", DEFAULT_ALLOCATOR)
-        data["allocator_preset"] = alloc
-        data["torch_compile"] = bool(compile_on)
-        save_runtime_settings(data)
-
-        parts = [
-            f"✓ Applied. Memory Allocator = **{alloc}**, "
-            f"torch.compile = **{'on' if compile_on else 'off'}**."
-        ]
-        if alloc != prev_alloc:
-            parts.append(
-                "🔄 **Restart the backend** for the new allocator to take effect "
-                "(read once at startup)."
-            )
-        parts.append("torch.compile applies to the **next training run** (no restart).")
-        if _active_env_override():
-            parts.append(
-                "⚠️ An explicit `PYTORCH_ALLOC_CONF` env override is active and takes "
-                "precedence over the allocator until removed."
-            )
-        return "  ".join(parts)
-
     allocator.change(fn=_on_change, inputs=[allocator], outputs=[status])
     torch_compile.change(fn=_on_change, inputs=[torch_compile], outputs=[status])
-    apply_btn.click(fn=_on_apply, inputs=[allocator, torch_compile], outputs=[status])
+    apply_btn.click(fn=_on_apply, inputs=[allocator, torch_compile], outputs=[status]).then(
+        **ctx.chip_refresh)
 
 
-__all__ = ["create_runtime_settings_tab"]
+__all__ = ["FIELD_HELP", "create_runtime_settings_tab"]

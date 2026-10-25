@@ -289,3 +289,270 @@ def test_the_listing_is_by_run_then_newest_file(tmp_path):
     assert [(r.name, p.name) for r, p in list_run_checkpoints(tmp_path)] == [
         (new.name, "last.pt"), (new.name, "model-1.pt"), (old.name, "last.pt")]
     assert [p.name for _, p in list_run_checkpoints(tmp_path, "gat")] == ["last.pt"]
+
+
+# ---------------------------------------------------------------------------
+# The listing, read (M5-1, BACKLOG 19.3)
+# ---------------------------------------------------------------------------
+class _Pickled:
+    """A pickled class, which torch's weights-only loader refuses."""
+
+
+def _write_checkpoint(path, payload):
+    from src.utils.checkpoint_io import write_checkpoint
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return write_checkpoint(payload, path)
+
+
+def test_the_read_listing_keeps_the_order_and_each_reads_digest(tmp_path):
+    from src.utils.checkpoint_paths import list_run_checkpoints, read_run_checkpoints
+    from src.utils.fingerprint import file_sha256
+
+    old = tmp_path / "runs" / "gat" / "20261001-000000_a_111111" / "checkpoints"
+    new = tmp_path / "runs" / "hgt" / "20261002-000000_b_222222" / "checkpoints"
+    digest = _write_checkpoint(new / "last.pt", {
+        "checkpoint_kind": "training_state", "epoch": 4,
+        "logs": {"val_loss": 0.3, "val_mrr": 0.25},
+        "training_input_digests": {"split_manifest": "1" * 64, "kg": "2" * 64}})
+    _write_checkpoint(old / "last.pt", {"checkpoint_kind": "weights", "epoch": 1})
+    os.utime(old / "last.pt", (100, 100))
+    os.utime(new / "last.pt", (200, 200))
+
+    entries = read_run_checkpoints(tmp_path)
+    assert [(e.run_dir, e.path) for e in entries] == list_run_checkpoints(tmp_path)
+    first, second = entries
+    assert first.path == new / "last.pt"
+    assert first.sha256 == digest == file_sha256(new / "last.pt")
+    assert (first.checkpoint_kind, first.epoch) == ("training_state", 4)
+    assert first.logs == {"val_loss": 0.3, "val_mrr": 0.25}
+    assert first.validation == ("val_mrr", 0.25)
+    assert first.dataset_fingerprint == "1" * 64 and first.problem is None
+    # A weights file records no logs and no validation: none, never zero.
+    assert second.logs == {} and second.validation is None
+    assert second.dataset_fingerprint is None and second.problem is None
+
+
+def test_a_file_the_read_refuses_is_listed_with_its_reason(tmp_path):
+    import torch
+
+    from src.utils.checkpoint_paths import read_run_checkpoints
+
+    run = tmp_path / "runs" / "gat" / "20261001-000000_a_111111" / "checkpoints"
+    run.mkdir(parents=True)
+    (run / "garbage.pt").write_bytes(b"not a checkpoint")
+    torch.save({"model": _Pickled()}, run / "pickled.pt")
+    torch.save([1, 2, 3], run / "list.pt")
+
+    entries = {e.path.name: e for e in read_run_checkpoints(tmp_path)}
+    assert set(entries) == {"garbage.pt", "pickled.pt", "list.pt"}
+    for name in ("garbage.pt", "pickled.pt"):
+        entry = entries[name]
+        assert entry.sha256 is None and entry.logs is None and entry.validation is None
+        assert entry.problem and "\n" not in entry.problem and len(entry.problem) <= 330
+    assert "UnpicklingError" in entries["pickled.pt"].problem
+    # Loads, but is not a record: its digest is kept, its metadata is not there.
+    assert entries["list.pt"].sha256 is not None and entries["list.pt"].logs is None
+    assert "not a checkpoint record" in entries["list.pt"].problem
+
+
+def test_the_read_is_weights_only_through_read_checkpoint(tmp_path, monkeypatch):
+    import src.utils.checkpoint_io as checkpoint_io
+    from src.utils.checkpoint_paths import read_run_checkpoints
+
+    run = tmp_path / "runs" / "sage" / "20261001-000000_a_111111" / "checkpoints"
+    _write_checkpoint(run / "a.pt", {"epoch": 1})
+    _write_checkpoint(run / "b.pt", {"epoch": 2})
+    seen = []
+    original = checkpoint_io.read_checkpoint
+
+    def spy(path, **kwargs):
+        seen.append((path.name, kwargs))
+        return original(path, **kwargs)
+
+    monkeypatch.setattr(checkpoint_io, "read_checkpoint", spy)
+    read_run_checkpoints(tmp_path, "sage")
+    assert sorted(seen) == [("a.pt", {"map_location": "cpu", "weights_only": True}),
+                            ("b.pt", {"map_location": "cpu", "weights_only": True})]
+
+
+def _counted_reads(monkeypatch):
+    import src.utils.checkpoint_io as checkpoint_io
+
+    seen = []
+    original = checkpoint_io.read_checkpoint
+
+    def spy(path, **kwargs):
+        seen.append(path.name)
+        return original(path, **kwargs)
+
+    monkeypatch.setattr(checkpoint_io, "read_checkpoint", spy)
+    return seen
+
+
+def test_a_second_listing_of_unchanged_files_opens_none_of_them(tmp_path, monkeypatch):
+    """M5-3 review UI-2: every opening of a model list read every checkpoint
+    of the workspace again. An unchanged file is now shown from its last read
+    (the same digest and record); a changed one is read again."""
+    from collections import OrderedDict
+
+    import src.utils.checkpoint_paths as cp
+    from src.utils.fingerprint import file_sha256
+
+    monkeypatch.setattr(cp, "_READS", OrderedDict())
+    monkeypatch.setattr(cp, "SETTLED_NS", 0)  # these files were written just now
+    run = tmp_path / "runs" / "gat" / "20261001-000000_a_111111" / "checkpoints"
+    _write_checkpoint(run / "a.pt", {"epoch": 1, "logs": {"val_mrr": 0.2}})
+    _write_checkpoint(run / "b.pt", {"epoch": 2})
+    seen = _counted_reads(monkeypatch)
+
+    first = cp.read_run_checkpoints(tmp_path, within=tmp_path)
+    assert sorted(seen) == ["a.pt", "b.pt"]
+    first_a = next(e for e in first if e.path.name == "a.pt")
+    first_a.logs["val_mrr"] = 99.0  # a caller's change never reaches the kept read
+    again = cp.read_run_checkpoints(tmp_path, within=tmp_path)
+    assert sorted(seen) == ["a.pt", "b.pt"], "an unchanged file was opened again"
+    assert [(e.path, e.sha256, e.epoch, e.size_bytes) for e in again] == [
+        (e.path, e.sha256, e.epoch, e.size_bytes) for e in first]
+    assert next(e for e in again if e.path.name == "a.pt").logs == {"val_mrr": 0.2}
+
+    _write_checkpoint(run / "a.pt", {"epoch": 3, "logs": {"val_mrr": 0.3, "val_loss": 1.0}})
+    changed = {e.path.name: e for e in cp.read_run_checkpoints(tmp_path, within=tmp_path)}
+    assert sorted(seen) == ["a.pt", "a.pt", "b.pt"]
+    assert changed["a.pt"].epoch == 3 and changed["a.pt"].sha256 == file_sha256(run / "a.pt")
+
+
+def test_a_file_changed_just_before_its_read_is_read_again_every_time(tmp_path, monkeypatch):
+    """A rewrite within one tick of the file system's clock could leave the
+    file's `stat` as it was, so a read is kept only for a file that had not
+    changed for `SETTLED_NS` before it."""
+    from collections import OrderedDict
+
+    import src.utils.checkpoint_paths as cp
+
+    monkeypatch.setattr(cp, "_READS", OrderedDict())
+    run = tmp_path / "runs" / "gat" / "20261001-000000_a_111111" / "checkpoints"
+    _write_checkpoint(run / "a.pt", {"epoch": 1})
+    seen = _counted_reads(monkeypatch)
+    cp.read_run_checkpoints(tmp_path)
+    cp.read_run_checkpoints(tmp_path)
+    assert seen == ["a.pt", "a.pt"]
+
+
+def test_the_kept_reads_are_bounded_and_an_outside_file_is_never_kept(tmp_path, monkeypatch):
+    from collections import OrderedDict
+
+    import src.utils.checkpoint_paths as cp
+
+    monkeypatch.setattr(cp, "_READS", OrderedDict())
+    monkeypatch.setattr(cp, "SETTLED_NS", 0)
+    monkeypatch.setattr(cp, "READS_KEPT", 2)
+    run = tmp_path / "ws" / "runs" / "gat" / "20261001-000000_a_111111" / "checkpoints"
+    for name in ("a.pt", "b.pt", "c.pt"):
+        _write_checkpoint(run / name, {"epoch": 1})
+    outside = tmp_path / "elsewhere.pt"
+    _write_checkpoint(outside, {"epoch": 9})
+    (run / "link.pt").symlink_to(outside)
+    cp.read_run_checkpoints(tmp_path / "ws", within=tmp_path / "ws")
+    assert len(cp._READS) == 2
+    assert all(not key.endswith("link.pt") for key in cp._READS)
+
+
+def test_importing_the_listing_does_not_import_torch():
+    """`checkpoint_paths` promises no torch at import, so the API's lighter
+    callers can import it; the read imports torch only when it runs."""
+    import subprocess
+    import sys
+
+    code = ("import sys; import src.utils.checkpoint_paths; "
+            "sys.exit(1 if 'torch' in sys.modules else 0)")
+    done = subprocess.run([sys.executable, "-c", code], cwd=str(Path(__file__).parents[2]))
+    assert done.returncode == 0
+
+
+def test_a_link_whose_target_is_gone_is_listed_not_fatal(tmp_path):
+    """A `.pt` link whose target is gone, or a checkpoint training removes
+    beyond `save_top_k` between the listing and its `stat`, sorts last and stays
+    listed; the read says what became of it (M5-1 review)."""
+    from src.utils.checkpoint_paths import (
+        list_run_checkpoints,
+        list_runs,
+        read_run_checkpoints,
+    )
+
+    run = tmp_path / "runs" / "gat" / "20261001-000000_a_111111"
+    _write_checkpoint(run / "checkpoints" / "last.pt", {"epoch": 1})
+    (run / "checkpoints" / "gone.pt").symlink_to(run / "checkpoints" / "removed.pt")
+
+    assert list_runs(tmp_path) == [run]
+    assert [p.name for _, p in list_run_checkpoints(tmp_path)] == ["last.pt", "gone.pt"]
+    good, gone = read_run_checkpoints(tmp_path)
+    assert good.problem is None and good.sha256 is not None
+    assert gone.path.name == "gone.pt" and gone.sha256 is None
+    assert gone.problem.startswith("FileNotFoundError") and gone.size_bytes is None
+
+
+def test_the_size_is_the_listed_files(tmp_path):
+    from src.utils.checkpoint_paths import read_run_checkpoints
+
+    path = tmp_path / "runs" / "gat" / "20261001-000000_a_111111" / "checkpoints" / "last.pt"
+    _write_checkpoint(path, {"epoch": 1})
+    (entry,) = read_run_checkpoints(tmp_path)
+    assert entry.size_bytes == path.stat().st_size > 0
+
+
+class TestWithinBoundsWhatIsRead:
+    """`within`: a file that resolves outside the workspace is listed and never
+    opened, so nothing of a file elsewhere is read or shown (M5-1 review)."""
+
+    def _layout(self, tmp_path):
+        workspace = tmp_path / "ws"
+        run = workspace / "runs" / "gat" / "20261001-000000_a_111111" / "checkpoints"
+        _write_checkpoint(run / "inside.pt", {"epoch": 1})
+        elsewhere = tmp_path / "elsewhere"
+        _write_checkpoint(elsewhere / "secret.pt", {
+            "epoch": 9, "logs": {"val_mrr": 0.9},
+            "training_input_digests": {"split_manifest": "1" * 64}})
+        (run / "link.pt").symlink_to(elsewhere / "secret.pt")
+        far = workspace / "runs" / "sage" / "20261002-000000_b_222222"
+        far.parent.mkdir(parents=True)
+        far.symlink_to(elsewhere.parent / "far_run")
+        _write_checkpoint(elsewhere.parent / "far_run" / "checkpoints" / "far.pt", {"epoch": 2})
+        return workspace
+
+    def _reads(self, monkeypatch):
+        import src.utils.checkpoint_io as checkpoint_io
+
+        original = checkpoint_io.read_checkpoint
+        reads = []
+
+        def counting(path, **kwargs):
+            reads.append(Path(path).name)
+            return original(path, **kwargs)
+
+        monkeypatch.setattr(checkpoint_io, "read_checkpoint", counting)
+        return reads
+
+    def test_outside_entries_are_listed_and_never_opened(self, tmp_path, monkeypatch):
+        from src.utils.checkpoint_paths import read_run_checkpoints
+
+        workspace = self._layout(tmp_path)
+        reads = self._reads(monkeypatch)
+        entries = {e.path.name: e for e in read_run_checkpoints(workspace, within=workspace)}
+        assert set(entries) == {"inside.pt", "link.pt", "far.pt"}
+        assert reads == ["inside.pt"]
+        assert entries["inside.pt"].problem is None and entries["inside.pt"].sha256
+        for name in ("link.pt", "far.pt"):
+            entry = entries[name]
+            assert "resolves outside the workspace, so it is not read" in entry.problem
+            assert (entry.sha256, entry.epoch, entry.logs, entry.validation,
+                    entry.dataset_fingerprint, entry.size_bytes) == (None,) * 6
+
+    def test_without_within_every_file_is_read(self, tmp_path, monkeypatch):
+        """The training service's own listing is unchanged: it passes none."""
+        from src.utils.checkpoint_paths import read_run_checkpoints
+
+        workspace = self._layout(tmp_path)
+        reads = self._reads(monkeypatch)
+        read_run_checkpoints(workspace)
+        assert sorted(reads) == ["far.pt", "inside.pt", "link.pt"]

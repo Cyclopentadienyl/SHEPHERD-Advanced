@@ -13,13 +13,24 @@ Purpose:
     process startup, so applying a new value requires relaunching that process.
     This service provides an in-process restart by re-exec'ing the interpreter
     with the same arguments (``os.execve``), which keeps the same PID and parent
-    -- the launcher's ``subprocess.run`` waiting on it, or, where the launcher
-    exec'd into the server (``--no-browser`` on POSIX), the service manager --
+    -- on POSIX, where the launcher exec'd into the server, whoever started it
+    (a terminal, the service manager); on Windows the launcher waiting on it --
     while giving CUDA a fresh start under the newly chosen allocator.
 
 Safety:
-    A restart is REFUSED while training is in progress — the UI also greys the
-    button out, but this server-side guard is the real safety net.
+    A restart is REFUSED while a GPU job (training or a test run) is in
+    progress — the UI also greys the button out, but this server-side guard is
+    the real safety net. After its delay the restart closes the job runner's
+    GPU slot only if it is still idle and open, in one step (`close_if_idle`),
+    and keeps it closed through the exec, so no job can start in between. The
+    final check that the backend has not begun to stop and the exec are one
+    step under the runner's lock (`exec_if_closed_for_restart`), and a stop
+    signal is recorded by its handler before anything else, so a backend
+    that began to stop is not restarted; only a stop signal that arrives as
+    the exec is made, before its handler has recorded it, is lost with the
+    old process image. That is a limit of this self-exec design, not of
+    every restart: a restart made by a supervisor could close it, and none
+    is built (BACKLOG 47).
 
 Allocator re-resolution:
     The launcher records HOW ``PYTORCH_ALLOC_CONF`` was set via the
@@ -28,7 +39,7 @@ Allocator re-resolution:
     allocator actually takes effect; an explicit user override is preserved.
 
 Dependencies:
-    - src.api.services.training_manager: training status (the restart lock)
+    - src.api.services.training_manager: the job runner's GPU slot (the restart lock)
     - src.config.runtime_presets: allocator preset resolution (gradio-free)
 
 Called by:
@@ -58,12 +69,10 @@ logger = logging.getLogger(__name__)
 # defined beside the rule that reads it (`src.config.runtime_presets`) and
 # re-exported here for the callers that already import it from this module.
 
-# Statuses during which a restart must be blocked (a subprocess is alive).
-_BUSY_STATUSES = ("running", "stopping")
-
-
 def is_training_active(default_on_error: bool = False) -> bool:
-    """True if a training run is in progress (restart must be blocked).
+    """True while any GPU job, training or a test run, is running or stopping
+    (restart must be blocked: a re-exec would orphan its subprocess). The name
+    predates test runs (M5); the job runner's one GPU slot is what it reads.
 
     ``default_on_error`` is what to return when the status can't be read:
     callers that gate a destructive restart pass ``True`` (fail closed — treat
@@ -71,7 +80,7 @@ def is_training_active(default_on_error: bool = False) -> bool:
     ``False`` (fail open — a transient read error must not break the page).
     """
     try:
-        return training_manager.get_status().get("status") in _BUSY_STATUSES
+        return training_manager.active_job() is not None
     except Exception:
         logger.debug("is_training_active: status check failed", exc_info=True)
         return default_on_error
@@ -123,7 +132,7 @@ def restart_backend(
 ) -> Dict[str, object]:
     """Restart the backend (uvicorn) process after a short delay.
 
-    Refuses if training is in progress. The delay lets the triggering HTTP
+    Refuses while a GPU job (training or a test run) is in progress. The delay lets the triggering HTTP
     response flush to the browser before the process image is replaced; the page
     then reconnects once the fresh backend is up.
 
@@ -132,28 +141,45 @@ def restart_backend(
     """
     # Fail closed for this destructive action: an unreadable status blocks it.
     if is_training_active(default_on_error=True):
-        return {"success": False, "error": "Training in progress — restart is locked."}
+        return {"success": False,
+                "error": "A GPU job (training or a test run) is in progress — restart is locked."}
 
     executable = sys.executable
     argv = build_restart_argv(executable, sys.argv)
 
     def _worker() -> None:
         time.sleep(delay)
-        # Re-check after the delay: training may have started (via the REST API
-        # or another tab) during the window. Aborting here prevents orphaning a
-        # live training subprocess. Fail closed if the status can't be read.
-        if is_training_active(default_on_error=True):
-            logger.warning(
-                "Backend restart aborted: training became active during the "
-                "restart delay."
-            )
+        # **The GPU slot is closed before the image is replaced** (root-cause
+        # review, P23-1): checked idle and open, and closed, in one step under
+        # the job runner's lock, so a job started during the delay (through
+        # the REST API or another tab) is seen here and the restart aborted,
+        # and one asked for after it is refused at the slot; none is orphaned
+        # by the exec. A slot the backend's stop closed during the delay
+        # aborts the restart too (T2-V2). **The final check and the exec are
+        # one step** (round 3 of the review fixes, P3-3): after the environment
+        # is resolved, the exec runs under the runner's lock only while the
+        # restart still owns the slot and no stop signal has been recorded (its
+        # handler records it first), so a stop that began meanwhile aborts the
+        # restart, and one that begins during the exec waits for the lock until
+        # the image is gone. Lost, as no check in this self-exec design can
+        # prevent (BACKLOG 47): a stop signal whose handler had not recorded it
+        # when the final check ran. The slot stays closed through execve,
+        # which does not return; only a failed execve opens it again, and only
+        # the close this restart made, never a stop's that came meanwhile.
+        aborted = ("Backend restart aborted: a GPU job became active, or the backend "
+                   "began to stop, before the process was replaced.")
+        if not training_manager.close_if_idle():
+            logger.warning(aborted)
             return
-        env = resolve_restart_env(dict(os.environ))
-        logger.info("Restarting backend: %s", " ".join(argv))
         try:
-            _execv(executable, argv, env)
+            env = resolve_restart_env(dict(os.environ))
+            logger.info("Restarting backend: %s", " ".join(argv))
+            if not training_manager.exec_if_closed_for_restart(
+                    lambda: _execv(executable, argv, env)):
+                logger.warning(aborted)
         except Exception:  # noqa: BLE001 — log and leave the process running
             logger.exception("Backend restart failed (execve)")
+            training_manager.open(closed_by=training_manager.CLOSED_BY_RESTART)
 
     scheduler = _scheduler or (
         lambda fn: threading.Thread(

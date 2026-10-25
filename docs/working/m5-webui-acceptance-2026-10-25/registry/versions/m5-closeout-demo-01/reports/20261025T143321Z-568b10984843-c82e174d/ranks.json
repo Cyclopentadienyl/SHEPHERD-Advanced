@@ -1,0 +1,52 @@
+[
+  {
+    "ground_truth": 0,
+    "rank": 1,
+    "sample_id": "probe-case-01"
+  },
+  {
+    "ground_truth": 1,
+    "rank": 3,
+    "sample_id": "probe-case-02"
+  },
+  {
+    "ground_truth": 2,
+    "rank": 2,
+    "sample_id": "probe-case-03"
+  },
+  {
+    "ground_truth": 3,
+    "rank": 4,
+    "sample_id": "probe-case-04"
+  },
+  {
+    "ground_truth": 4,
+    "rank": 2,
+    "sample_id": "probe-case-05"
+  },
+  {
+    "ground_truth": 0,
+    "rank": 5,
+    "sample_id": "probe-case-06"
+  },
+  {
+    "ground_truth": 1,
+    "rank": 1,
+    "sample_id": "probe-case-07"
+  },
+  {
+    "ground_truth": 2,
+    "rank": 5,
+    "sample_id": "probe-case-08"
+  },
+  {
+    "ground_truth": 0,
+    "rank": 2,
+    "sample_id": "probe-case-09"
+  },
+  {
+    "ground_truth": 1,
+    "rank": 4,
+    "sample_id": "probe-case-10"
+  }
+]

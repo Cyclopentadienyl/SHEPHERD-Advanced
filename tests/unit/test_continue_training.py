@@ -308,10 +308,17 @@ def test_a_pause_at_or_before_the_start_is_refused(parent):
         _plan(record, path, _request(record, pause_after_epoch=1))
 
 
-def test_a_missing_or_replaced_best_weights_file_is_refused(parent, tmp_path, train_model):
+def test_a_missing_or_replaced_best_weights_file_is_refused(parent, tmp_path, train_model,
+                                                           monkeypatch):
+    """The file the parent's record names is read against the digest the
+    record gives it, by the reader before it loads the file
+    (`read_checkpoint(expected_sha256=)`; verification of the root-cause
+    round, P3-5): other bytes are never unpickled, and a file gone between
+    the plan and the read is refused the same way."""
     import copy
     import shutil
 
+    import src.utils.run_plan as run_plan
     from src.utils.run_plan import RunPlanRefused
     from src.utils.checkpoint_io import read_checkpoint
 
@@ -326,10 +333,44 @@ def test_a_missing_or_replaced_best_weights_file_is_refused(parent, tmp_path, tr
 
     shutil.copyfile(moved / "last.pt", moved / "model-best.pt")
     torch.save(record, moved / "edited.pt")
-    with pytest.raises(RunPlanRefused, match="the file there now has"):
-        train_model.plan_from_parent(
-            read_checkpoint(moved / "edited.pt", map_location="cpu", weights_only=True),
-            train_model.TrainConfig(**_request(record)), set(), "cpu")
+    edited = read_checkpoint(moved / "edited.pt", map_location="cpu", weights_only=True)
+    config = train_model.TrainConfig(**_request(record))
+    with monkeypatch.context() as patched:
+        patched.setattr(torch, "load", lambda *a, **k: pytest.fail("loaded before compared"))
+        with pytest.raises(RunPlanRefused, match=f"the file there now has {_sha(moved / 'last.pt')}"):
+            train_model.plan_from_parent(edited, config, set(), "cpu")
+
+    planned = run_plan.plan_continuation
+
+    def plan_then_remove(*args, **kwargs):
+        plan = planned(*args, **kwargs)
+        (moved / "model-best.pt").unlink()
+        return plan
+
+    monkeypatch.setattr(run_plan, "plan_continuation", plan_then_remove)
+    with pytest.raises(RunPlanRefused, match="there is no file there now"):
+        train_model.plan_from_parent(edited, config, set(), "cpu")
+
+
+def test_best_weights_named_without_their_digest_are_refused(parent, tmp_path):
+    """The digest is what the named file is read against, so a record that
+    names the file without it is refused when the plan is made (the preview
+    included), never read unchecked."""
+    import copy
+    import shutil
+
+    from src.utils.run_plan import RunPlanRefused
+
+    path, record = parent
+    moved = tmp_path / "checkpoints"
+    shutil.copytree(path.parent, moved)
+    shutil.copyfile(moved / "last.pt", moved / "model-best.pt")
+    record = copy.deepcopy(record)
+    record["callbacks"]["best_weights_source"] = {
+        "kind": "file", "file": "model-best.pt", "sha256": None}
+    with pytest.raises(RunPlanRefused, match="model-best.pt as early stopping's best weights "
+                                             "without the SHA-256"):
+        _plan(record, moved / "last.pt", _request(record))
 
 
 def test_a_schedule_the_record_cannot_rebuild_is_refused_before_the_run_exists(
@@ -453,8 +494,20 @@ def test_extending_takes_the_restored_rate_and_says_so(parent):
 
     assert plan.mode == "extend" and (plan.start_epoch, plan.end_epoch) == (4, 7)
     assert plan.stage["schedule"]["lrs"] == [2e-5, 2e-5]
-    assert plan.action == ("Extend training by 3 epochs at a fixed rate of 2e-05, 2e-05 "
+    # Two parameter groups at one rate: the rate is said once (M5-3).
+    assert plan.action == ("Extend training by 3 epochs at a fixed rate of 2e-05 "
                            "(epochs 5-7, new target 7)")
+
+
+def test_extending_groups_at_different_rates_says_each(parent):
+    path, record = parent
+    finished = _finished(record, 2e-5)
+    finished["optimizer_state_dict"]["param_groups"][1]["lr"] = 1e-5
+    plan = _plan(finished, path, _request(record, extend_epochs=3))
+
+    assert plan.stage["schedule"]["lrs"] == [2e-5, 1e-5]
+    assert plan.action == ("Extend training by 3 epochs at fixed rates of 2e-05, 1e-05 (one per "
+                           "parameter group) (epochs 5-7, new target 7)")
 
 
 def test_a_zero_rate_is_replaced_only_by_an_explicit_rate(parent):

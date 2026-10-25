@@ -58,11 +58,17 @@ bash launch_shepherd.sh          # Linux
 launch_shepherd.cmd              # Windows
 ```
 
-Both start the FastAPI service with the Gradio dashboard mounted on it:
+Both start the FastAPI service with the Gradio dashboard mounted on it. Neither reads an
+environment file: give the service its settings in the shell that runs the launcher, or in the
+systemd unit, as [deployment guide §4.12](deployment-guide.en.md) states them. Without them the
+service starts read-only and lists nothing to train or test: the operator controls (Start, Load,
+a test run) need `SHEPHERD_DEPLOYMENT_MODE=M1`, every training and test run needs
+`SHEPHERD_WORKSPACES_ROOT`, the GPU lock's one name (§4.11), and the Test page needs
+`SHEPHERD_REGISTRY`, the deployment's registry (and `SHEPHERD_INTAKE_DIR` to import a cohort).
 
 | | |
 |---|---|
-| Dashboard (training console, diagnosis panel, runtime settings) | http://127.0.0.1:8000/ui |
+| Dashboard (Diagnosis; Research › Datasets, Training, Test, Models; Settings) | http://127.0.0.1:8000/ui |
 | API docs (Swagger) | http://127.0.0.1:8000/docs |
 | Health check | http://127.0.0.1:8000/health |
 
@@ -75,7 +81,7 @@ Three steps, in order. Full walkthrough with data sources and expected artifacts
 |---|---|---|
 | 1. Knowledge graph | `scripts/build_knowledge_graph.py` | `kg.json`, `node_features.pt`, `edge_indices.pt` |
 | 2. Shortest paths | `scripts/compute_shortest_paths.py` | `shortest_paths.pt` |
-| 3. Train | dashboard training console, or `scripts/train_model.py` | `runs/<arch>/<run>/checkpoints/*.pt` |
+| 3. Train | the dashboard's Research › Prepare › Training, or `scripts/train_model.py --data-dir <workspace>` in a shell given the service's `SHEPHERD_WORKSPACES_ROOT` (deployment guide §4.11) | `runs/<arch>/<run>/checkpoints/*.pt` |
 
 Artifacts live under `data/workspaces/<kg>/`, keeping each knowledge graph's outputs separate from
 the KG-independent models in `models/pretrained/`. See
@@ -89,19 +95,24 @@ the KG-independent models in `models/pretrained/`. See
 
 ## Test a model
 
-A checkpoint is tested from the CLI on a registered test cohort version, and its result is
-recorded beside it (provenance contract M4; deployment guide §4.9):
+A checkpoint is tested on a registered test cohort version, from the CLI below or from the
+dashboard's Research › Evaluate › Test, and its result is recorded beside it (provenance contract
+M4; deployment guide §4.9). Run the commands in a shell given the service's settings (deployment
+guide §4.11): `SHEPHERD_REGISTRY` naming the deployment's registry, the `<registry>` below
+(registration and `--cohort` refuse any other, and refuse while it is unset), and, for step 2,
+`SHEPHERD_WORKSPACES_ROOT`, the GPU lock's one name.
 
 | Step | Command | Produces |
 |---|---|---|
-| 1. Import a cohort | `scripts/import_cohort.py`: a preview, then `--commit <preview id>` | an immutable cohort version, mapped to one workspace's graph, in a registry outside the repository |
-| 2. Measure | `scripts/measure_scorer.py --cohort <label> --registry <dir>` | a Mode C report, kept in the registry's report store |
+| 1. Import a cohort | `scripts/import_cohort.py --registry <registry> --data-dir <workspace> --source <cases.json> --label <label> --role <role>`: a preview, then the same with `--commit <preview id>` | an immutable cohort version, mapped to one workspace's graph, in a registry outside the repository |
+| 2. Measure | `scripts/measure_scorer.py --checkpoint <file> --data-dir <workspace> --cohort <label> --registry <registry>` | a Mode C report, kept in the registry's report store |
 | 3. Record | `--record` on step 2, or later `scripts/record_evaluation.py --report <report> --checkpoint <file>`, the command step 2 prints | a record in `evaluations.json` beside the checkpoint's resolved path, where the service reads it |
 
-The Diagnosis tab's model status shows the loaded checkpoint's recorded results, read through
-`GET /api/v1/evaluations/loaded-model`. They are the model's own Mode C disease ranking: until
-work item B-1 ships, the tab itself ranks by the GNN + shortest-path mixture above, so a recorded
-number does not describe the tab's ranking.
+The Diagnosis page's "Model in use" card shows the loaded checkpoint's recorded results as a
+state (how many, how many contested); Research › Evaluate › Models lists them, and API clients
+read them through `GET /api/v1/evaluations/loaded-model`. They are the model's own Mode C disease
+ranking: until work item B-1 ships, the Diagnosis page itself ranks by the GNN + shortest-path
+mixture above, so a recorded number does not describe its ranking.
 
 ## Development
 

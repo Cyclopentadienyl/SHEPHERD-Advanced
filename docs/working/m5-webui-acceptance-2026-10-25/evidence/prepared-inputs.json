@@ -1,0 +1,24 @@
+{
+  "workspace": "/home/user/shepherd-data/workspaces/m5_webui_demo_01",
+  "label": "m5-closeout-demo-01",
+  "role": "webui-synthetic",
+  "partial_policy": "keep",
+  "source_original": "/home/user/m5-acceptance-b14c4de-01/work/m4/cases.json",
+  "intake": "/home/user/shepherd-data/intake/m5-closeout-demo-cases-01.json",
+  "expected_preview": {
+    "source_cases": 12,
+    "ranked_eligible": 10,
+    "excluded": {
+      "ground_truth_absent": 1,
+      "phenotype_unmappable": 1
+    },
+    "n_excluded": 2,
+    "cases_with_lost_terms": 1,
+    "terms_unmappable": 2,
+    "repeats_removed": 1,
+    "cases_with_repeats": 1
+  },
+  "checkpoint": "/home/user/shepherd-data/workspaces/m5_webui_demo_01/runs/gat/20261024-173909_ui-live-stop-02_c1d9cf/checkpoints/last.pt",
+  "checkpoint_sha256": "568b109848430c92de8d13bd5e24d7836bc16fe32f17a088952be4b322a856bf",
+  "scope": "Synthetic functional UI acceptance only. No new training; no quality or clinical claim."
+}

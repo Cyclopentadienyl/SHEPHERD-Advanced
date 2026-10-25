@@ -36,12 +36,28 @@ class TestGradioApp:
     def test_create_training_tab(self):
         """Training tab can be created inside a Blocks context."""
         from src.webui.components.training_console import create_training_tab
+        from src.webui.shell import standalone_context
 
         with gr.Blocks() as demo:
-            create_training_tab()
+            create_training_tab(standalone_context(demo))
 
         # If we get here without error, the tab was created successfully
         assert demo is not None
+
+    def test_no_page_names_the_retired_training_console(self):
+        """The Training Console became Research › Training (M5-2); Settings
+        still named it (M5-3). No text the dashboard shows names it."""
+        from src.webui.app import create_gradio_app
+
+        app = create_gradio_app()
+        shown = []
+        for block in app.blocks.values():
+            for attribute in ("value", "label", "info"):
+                value = getattr(block, attribute, None)
+                if isinstance(value, str):
+                    shown.append(value)
+        assert not [text for text in shown if "Training Console" in text]
+        assert any("separate from Research › Training" in text for text in shown)
 
 
 # ==============================================================================
@@ -50,26 +66,27 @@ class TestGradioApp:
 class TestTrainingConsoleHelpers:
     """Test helper functions in the training console module."""
 
-    def test_format_status_idle(self):
-        from src.webui.components.training_console import _format_status
+    def test_the_status_pill_idle(self):
+        from src.webui.components.training_console import pill_html, pill_state
 
-        result = _format_status({"status": "idle"})
-        assert "IDLE" in result
+        assert pill_state({"status": "idle"}) == (
+            "idle", "Idle · no training job since the server started")
+        assert "shep-pill-idle" in pill_html({"status": "idle"})
 
-    def test_format_status_running(self):
-        from src.webui.components.training_console import _format_status
+    def test_the_status_pill_running(self):
+        from src.webui.components.training_console import pill_state
 
-        result = _format_status({
+        kind, words = pill_state({
             "status": "running",
             "pid": 12345,
             "current_epoch": 5,
             "total_epochs": 100,
+            "batch": 340,
+            "total_batches": 812,
             "elapsed_seconds": 3661,
         })
-        assert "RUNNING" in result
-        assert "12345" in result
-        assert "5 / 100" in result
-        assert "01:01:01" in result
+        assert kind == "running"
+        assert words == "RUNNING · epoch 5/100 · batch 340/812 · 01:01:01"
 
     def test_format_resources_no_gpu(self):
         from src.webui.components.training_console import _format_resources
@@ -78,8 +95,8 @@ class TestTrainingConsoleHelpers:
             "gpu": {"available": False, "devices": []},
             "ram": {"total_gb": 32.0, "used_gb": 16.0, "percent": 50.0},
         })
-        assert "Not available" in result
-        assert "32.0" in result
+        assert "GPU: not available" in result
+        assert "memory 16.0 / 32.0 GB" in result
 
     def test_format_resources_with_gpu(self):
         from src.webui.components.training_console import _format_resources
@@ -99,17 +116,33 @@ class TestTrainingConsoleHelpers:
             "ram": {"total_gb": 64.0, "used_gb": 32.0, "percent": 50.0},
         })
         assert "RTX 5070 Ti" in result
-        assert "85" in result
+        assert "GPU 0 85 %" in result and "72 °C" in result and "VRAM 7.8 / 17.0 GB" in result
 
-    def test_build_loss_df_empty(self):
-        from src.webui.components.training_console import _build_loss_df
+    def test_the_resources_line_has_no_text_under_14px(self):
+        """The resource display used 13 px (and 11 px) inline text; it is one
+        line now, sized by the page's style sheet (nothing under 14 px)."""
+        from src.webui.components.training_console import _format_resources
 
-        df = _build_loss_df([], [])
-        assert len(df) == 0
-        assert list(df.columns) == ["epoch", "loss", "split"]
+        result = _format_resources({
+            "gpu": {"available": True, "devices": [{"index": 0, "name": "GB10",
+                                                     "utilization_percent": None,
+                                                     "temperature_c": None}]},
+            "ram": {"total_gb": 119.7, "available_gb": 113.6, "used_gb": 2.0},
+            "unified_memory": True,
+        })
+        assert "font-size" not in result and "style=" not in result
+        assert "unified memory 6.1 / 119.7 GB (shared CPU + GPU pool)" in result
+        assert "VRAM" not in result                     # the shared pool is shown once
+        assert "GPU 0 N/A" in result
 
-    def test_build_loss_df_with_data(self):
-        from src.webui.components.training_console import _build_loss_df
+    def test_the_loss_chart_from_an_empty_log(self):
+        from src.webui.components.training_console import training_charts
+
+        loss = training_charts({"train": [], "validation": []})[0]
+        assert loss["id"] == "loss" and loss["x"] == [] and loss["series"] == []
+
+    def test_the_loss_chart_with_data(self):
+        from src.webui.components.training_console import training_charts
 
         train_data = [
             {"epoch": 0, "total": 2.5},
@@ -119,24 +152,23 @@ class TestTrainingConsoleHelpers:
             {"epoch": 0, "val_loss": 3.0},
             {"epoch": 1, "val_loss": 2.5},
         ]
-        df = _build_loss_df(train_data, val_data)
-        assert len(df) == 4
-        assert set(df["split"].unique()) == {"train", "val"}
-        # Epochs should be 1-indexed for display (0-indexed log + 1)
-        assert list(sorted(df["epoch"].unique())) == [1, 2]
+        loss = training_charts({"train": train_data, "validation": val_data})[0]
+        assert [s["label"] for s in loss["series"]] == ["train", "validation"]
+        # Epochs are 1-indexed for display (0-indexed log + 1)
+        assert loss["x"] == [1, 2]
+        assert loss["series"][0]["values"] == [2.5, 2.0]
 
-    def test_build_hits_df(self):
-        from src.webui.components.training_console import _build_hits_df
+    def test_the_hits_chart(self):
+        from src.webui.components.training_console import training_charts
 
         val_data = [
             {"epoch": 0, "val_hits@1": 0.05, "val_hits@10": 0.2},
             {"epoch": 1, "val_hits@1": 0.1, "val_hits@10": 0.3},
         ]
-        df = _build_hits_df(val_data)
-        assert len(df) == 4
-        assert set(df["metric"].unique()) == {"Hits@1", "Hits@10"}
+        hits = training_charts({"train": [], "validation": val_data})[2]
+        assert [s["label"] for s in hits["series"]] == ["Hits@1", "Hits@10"]
         # Epochs should be 1-indexed for display
-        assert list(sorted(df["epoch"].unique())) == [1, 2]
+        assert hits["x"] == [1, 2]
 
     def test_collect_config(self, monkeypatch):
         from src.webui.components import training_console as tc
@@ -295,7 +327,7 @@ class TestErrorBanner:
             {"error_message": "RuntimeError: CUDA out of memory"}, None
         )
         assert html is not None
-        assert "#dc2626" in html  # red accent
+        assert "shep-banner-red" in html and 'role="alert"' in html  # red, announced
         assert key.startswith("ERR:")
         assert "PYG:" not in key
 
@@ -304,7 +336,7 @@ class TestErrorBanner:
 
         html, key = _build_error_banner_payload({}, "pyg_lib missing")
         assert html is not None
-        assert "#d97706" in html  # yellow accent
+        assert "shep-banner-amber" in html  # yellow
         assert key.startswith("PYG:")
 
     def test_error_rendered_before_warning(self):
@@ -312,7 +344,22 @@ class TestErrorBanner:
 
         html, key = _build_error_banner_payload({"error_message": "boom"}, "slow")
         assert "ERR:" in key and "PYG:" in key
-        assert html.index("#dc2626") < html.index("#d97706")
+        assert html.index("shep-banner-red") < html.index("shep-banner-amber")
+
+    def test_a_failed_run_shows_its_epoch_its_exit_and_its_output_tail(self):
+        from src.webui.components.training_console import (
+            BANNER_TAIL_LINES,
+            _build_error_banner_payload,
+        )
+
+        tail = "\n".join(f"line {i}" for i in range(30))
+        html, _key = _build_error_banner_payload(
+            {"error_message": f"Process exited with code 1\n\n--- Last output ---\n{tail}",
+             "current_epoch": 7, "total_epochs": 60}, None, run="gat/20261019-081500_run_7b10e4")
+        assert "Training failed at epoch 7 of 60: Process exited with code 1" in html
+        assert "run <code>gat/20261019-081500_run_7b10e4</code>" in html
+        assert "line 29" in html and f"line {29 - BANNER_TAIL_LINES}" not in html
+        assert 'data-act="dismiss"' in html
 
     def test_html_is_escaped(self):
         from src.webui.components.training_console import _build_error_banner_payload
@@ -333,10 +380,9 @@ class TestErrorBanner:
         assert k1 != k3  # a different error re-shows
 
     def test_error_not_in_status_text(self):
-        """error_message must live in the banner, not the status markdown."""
-        from src.webui.components.training_console import _format_status
+        """error_message must live in the banner, not the status pill; a failed
+        run's pill is red."""
+        from src.webui.components.training_console import pill_html
 
-        text = _format_status(
-            {"status": "failed", "error_message": "RuntimeError: boom"}
-        )
-        assert "boom" not in text
+        text = pill_html({"status": "failed", "error_message": "RuntimeError: boom"})
+        assert "boom" not in text and "shep-pill-red" in text and "FAILED" in text

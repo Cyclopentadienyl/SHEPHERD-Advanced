@@ -21,7 +21,8 @@ decision 8): exactly one of `--split` and `--cohort`.
         --checkpoint <workspace>/runs/<arch>/<run>/checkpoints/best.pt \
         --data-dir <workspace> \
         --cohort mygene2-2026-10 --registry /srv/shepherd/registry \
-        [--training-evidence DIR ...] [--record]
+        [--training-evidence DIR ...] [--record] [--deterministic] \
+        [--expect-checkpoint-sha256 HEX] [--expect-version-sha256 HEX] [--outcome FILE]
 
     # A generated split. --split val is the checkpoint-selection split, not
     # held-out data, and its report is not registrable (decision 9).
@@ -38,37 +39,133 @@ ranks, patient-level, so kept in the registry outside the repository) and then
 commit point. Each file is staged and renamed into place (`publish_bytes`), and
 the run directory is new for every run, so no report is ever overwritten.
 `--record` registers it right away through the one registration function the
-later `scripts/record_evaluation.py --report` uses; a refused registration keeps
-the report and exits 3.
+later `scripts/record_evaluation.py --report` uses; a refused registration exits
+3, and the report is kept unless it is no longer the one the run published (see
+the exit status below). Each run is appended to the version's usage history
+right after its report is published (`src/evaluation/report_store.py`), so a
+run from the command line counts as one started from the Test tab.
+
+**Only in the deployment's registry** (D7, BACKLOG 37): a `--cohort` run is
+refused before the GPU lock is taken, the device resolved or anything read,
+unless `--registry`, resolved, is the directory `SHEPHERD_REGISTRY` names,
+resolved (`server_settings.deployment_registry_refusal`, the rule every
+registration applies). **The root checked is the root the run reads and
+writes through**: resolved once, before the lock, and passed on, so a
+`--registry` link retargeted after the check cannot move the run into another
+directory. So every run on a cohort version is in the usage history
+the service reads, and its report in the store a registration accepts; a copy
+of the registry keeps its own. Unset, every `--cohort` run is refused saying to
+set it here as the service's environment sets it. The variable is read from
+this process's environment, so a command run with it set to another directory
+on purpose measures there (D2: the rule catches a registry named by mistake; it
+is not tamper-proof).
+
+**For a job that chose its inputs beforehand** (M5's job runner):
+`--expect-checkpoint-sha256` and `--expect-version-sha256` refuse the run before
+anything is measured when the checkpoint or the version's `cohort.json` read now
+is not the one chosen; `--outcome FILE` writes a small JSON once the report is
+published and again at the end (`_write_outcome`): the report's path, run id and
+digest, and whether it was registered and why. FILE must not exist yet, so a
+file an earlier run left is never read as this one's. The file says what the
+run did; the report store and the ledger stay the record, and
+`src/evaluation/registration.report_state` reads kept and registered from them.
+
+**`--deterministic`** turns on PyTorch's deterministic algorithms (never
+warn-only), makes cuDNN deterministic and turns its benchmark off, and sets
+`CUBLAS_WORKSPACE_CONFIG` itself, all before CUDA is initialised
+(`_execution_settings`). An operation with no deterministic implementation
+refuses the run (`DeterministicExecutionUnsupported`); it never falls back. The
+manifest observes the settings in effect, and they are in the semantics digest,
+so a deterministic run is another key (D5).
 
 **A generated split's report goes to `--output`**, with `<output stem>_ranks.json`
 beside it, both staged and renamed into place; an existing `--output` is
 replaced, as it always was.
 
-Exit status, run as a program (`_run_as_program`): 0 measured (and, with
+Exit status, run as a program (`_exit_as_program`): 0 measured (and, with
 `--record`, registered or already held); 1 refused before anything was written,
 with one message and no traceback, or measured but the report could not be
 written, with a message saying what may be on disk (or the run failed after
 writing it, with a message naming it); 2 the command line was rejected; 3
-measured and kept, but not registered. `main` itself raises its refusals, typed,
-for the tests and the deployment probe that call it.
+measured, but not registered: the registration was refused and the report is
+kept, or the report was no longer the one the run published
+(`ReportNotAsPublished`: it may be gone, so it is not called kept); the message
+says which, and `registration.report_state` reads whether it is kept. **A
+cancel** (SIGINT: the job runner's stop on POSIX, or Ctrl+C) prints one line,
+`measure_scorer: cancelled ...`, and no traceback, then ends the process by
+SIGINT on POSIX (the signal's default action, raised again once the line is
+printed), so a parent reads "ended by SIGINT" as before; elsewhere it exits
+130 (on Windows the runner's stop is CTRL_BREAK_EVENT, which this program does
+not catch). The run unwinds first: a staged file is removed, the GPU lock
+released, nothing more is written, and what it had published stays as it is.
+A cancel while the program's modules still load (`_cancelled_while_loading`)
+prints the same line and ends the same way. **Only the program ends itself**
+(`_exit_as_program`, the `__main__` entry): an in-process caller of
+`_run_as_program` (the tests) gets the line and then the KeyboardInterrupt
+back, so its own cleanup runs. `main` itself raises its refusals, typed, for
+the tests and the deployment probe that call it.
+
+**One managed GPU job at a time** (M5): `main` takes the deployment's GPU lock
+(`src/utils/gpu_lock.py`) before the device is resolved or anything is read and
+holds it until it returns; a busy lock is a refusal naming its holder, and so
+is a lock that is not configured (SHEPHERD_WORKSPACES_ROOT, the lock's one
+name, not set) or set but unusable, each with exit 1 and nothing written
+(review of 8242b47, P2-4).
 
 Module: scripts/measure_scorer.py
 """
 from __future__ import annotations
 
 import argparse
-import copy
+import contextlib
 import json
 import logging
 import os
 import platform
 import re
+import signal
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, NamedTuple, Optional, Sequence, Tuple
 
-import torch
+#: What a cancelled run prints, once, instead of a KeyboardInterrupt traceback.
+CANCELLED_LINE = (
+    "measure_scorer: cancelled by an interrupt (SIGINT); the run stopped where it was and "
+    "nothing more was written. The report store and the ledger say whether a report was "
+    "kept and registered."
+)
+
+
+def _end_as_cancelled() -> int:
+    """End the process as the interrupt would have, without its traceback: on
+    POSIX, SIGINT again with the default action, so the parent (the job
+    runner) reads the exit status as "ended by SIGINT"; elsewhere, 130
+    (128 + SIGINT, the shells' convention). **Called only where this file runs
+    as the program** (`_exit_as_program`, `_cancelled_while_loading`), never
+    from a function an in-process caller runs: it would end that caller's
+    process, its cleanup and `finally` blocks unrun."""
+    if os.name == "posix":
+        with contextlib.suppress(OSError, ValueError, AttributeError):
+            sys.stderr.flush()
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
+        os.kill(os.getpid(), signal.SIGINT)
+    return 130
+
+
+def _cancelled_while_loading(signum: int, frame: Any) -> None:
+    """SIGINT while this program's modules load, before `_run_as_program`
+    (importing torch takes seconds, and a Cancel right after Start lands
+    there): the same line and ending as a cancel during the run, not an
+    import's traceback. Nothing has been read or written yet."""
+    with contextlib.suppress(OSError, ValueError, AttributeError):
+        print(CANCELLED_LINE, file=sys.stderr)
+    raise SystemExit(_end_as_cancelled())
+
+
+if __name__ == "__main__":
+    signal.signal(signal.SIGINT, _cancelled_while_loading)
+
+import torch  # noqa: E402 - after the loading guard, which must cover this import
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -76,6 +173,9 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.evaluation.caveats import COHORT_ARGUMENT_HELP, SPLIT_ARGUMENT_HELP
 from src.evaluation.cohort import GENERATED_SPLITS, CohortProvenance, resolve_cohort
+from src.evaluation.cohort_registry import RANKS_FILE, REPORT_FILE, cohort_version_block
+from src.utils.gpu_lock import take_gpu_lock
+from src.utils.interrupts import interrupt_deferred
 
 if TYPE_CHECKING:
     from src.evaluation.cohort_registry import CohortVersionRead
@@ -94,15 +194,24 @@ CANDIDATE_CONSTRUCTION = "every disease in the knowledge graph"
 #: the deployed pipeline uses.
 MODEL_CONSTRUCTION = "production (build_shepherd_model)"
 
-#: A run's two files in the report store, in the order they are published: the
-#: ranks, then the report that names them by digest (the run's commit point).
-RANKS_FILE = "ranks.json"
-REPORT_FILE = "report.json"
+#: A run's two files in the report store, in the order they are published (the
+#: ranks, then the report that names them by digest: the run's commit point),
+#: and the version as a report records it (`cohort_version_block`) are the
+#: registry's own definitions, imported above: the registration compares a kept
+#: report with the same block of the version the store holds it under.
 
-#: The exit status of a run that measured and kept its report but whose
-#: `--record` registration was refused: not a refusal before writing (exit 1,
-#: one message), and not a success, since the ledger holds nothing new.
+#: The exit status of a run that measured and published its report but whose
+#: `--record` registration was refused (the report kept), or found the report
+#: no longer as published (it may be gone): not a refusal before writing
+#: (exit 1, one message), and not a success, since the ledger holds nothing new.
 EXIT_NOT_REGISTERED = 3
+
+#: The cuBLAS workspace settings PyTorch documents as deterministic (CUDA 10.2
+#: and later); `--deterministic` sets the first when the variable is unset.
+DETERMINISTIC_CUBLAS_CONFIGS: Tuple[str, ...] = (":4096:8", ":16:8")
+
+#: The version of the `--outcome` file's shape.
+OUTCOME_SCHEMA_VERSION = 1
 
 #: How a refusal says nothing was written, in the words this codebase uses
 #: ("Nothing was written.", R10's "nothing was read or written"), so the
@@ -120,6 +229,20 @@ class UnparseableCheckpoint(ValueError):
         cause = f"{type(exc).__name__}: {reason}" if reason else type(exc).__name__
         super().__init__(f"{path} could not be parsed as a weights-only checkpoint ({cause})")
         self.path = path
+
+
+class DeterministicExecutionUnsupported(ValueError):
+    """`--deterministic` was asked for and this run cannot honour it: an
+    operation it needs has no deterministic implementation on the device, or
+    the process is in a state where deterministic execution cannot be set up.
+    Raised before anything is written; the run does not fall back to
+    non-deterministic execution or to another device (D5)."""
+
+
+class ExpectedDigestMismatch(ValueError):
+    """The checkpoint or the cohort version read is not the one the run was
+    started for (`--expect-checkpoint-sha256`, `--expect-version-sha256`):
+    refused before anything is measured or written."""
 
 
 class ReportNotWritten(Exception):
@@ -184,46 +307,6 @@ class MeasurementInputs(NamedTuple):
     r10: Optional[Dict[str, Any]]
 
 
-def cohort_version_block(version: CohortVersionRead) -> Dict[str, Any]:
-    """The registered version as a report records it: exactly the fields
-    `src.evaluation.sidecar.COHORT_VERSION_FIELDS` names, aggregates only.
-
-    `manifest_sha256` is the digest of the `cohort.json` bytes this run parsed,
-    the ledger's cohort identity (M4 decision 11). No case id, exclusion entry or
-    unmappable term goes in: those stay in the version, in the registry on the
-    operator's machine (D7), and the ledger refuses a block naming them.
-
-    Built right after the version is resolved, so a manifest the report could
-    not carry is refused before anything else is read.
-
-    Raises:
-        CohortVersionRefused: the manifest does not state its source format,
-            which `resolve_version`'s shape checks do not cover.
-    """
-    from src.evaluation.cohort_registry import CohortVersionRefused
-
-    manifest = version.manifest
-    source_format = manifest["source"].get("format")
-    if not isinstance(source_format, str) or not source_format:
-        raise CohortVersionRefused(
-            f"{version.identity.path} records no source format, so a report of it could "
-            "not say what its source was. Nothing was written."
-        )
-    return {
-        "label": manifest["label"],
-        "role": manifest["role"],
-        "manifest_sha256": version.identity.sha256,
-        "source_sha256": manifest["source"]["sha256"],
-        "source_format": source_format,
-        "samples_sha256": manifest["samples"]["sha256"],
-        "graph": dict(manifest["graph"]),
-        "dataset_record_sha256": manifest["dataset_record"]["sha256"],
-        # Copies, so the report cannot alias the version read.
-        "mapping": copy.deepcopy(manifest["mapping"]),
-        "counts": copy.deepcopy(manifest["counts"]),
-    }
-
-
 def read_measurement_inputs(
     checkpoint: Path,
     data_dir: Path,
@@ -233,6 +316,8 @@ def read_measurement_inputs(
     cohort: Optional[str] = None,
     registry: Optional[Path] = None,
     training_evidence: Sequence[Path] = (),
+    expect_checkpoint_sha256: Optional[str] = None,
+    expect_version_sha256: Optional[str] = None,
 ) -> MeasurementInputs:
     """Read the manifest, the graph tensors, the cohort and the checkpoint once
     each, and verify from those reads (contract M2.1, S7; M4 §6).
@@ -240,6 +325,17 @@ def read_measurement_inputs(
     Exactly one of `split` (a generated split) and `cohort` (a registered
     version's label, with `registry`) is given; `training_evidence` applies to a
     registered version only (R10).
+
+    **What the run was started for** (M5's job runner): with
+    `expect_version_sha256`, the version's `cohort.json` read must have that
+    digest, compared on that read before it is decoded
+    (`resolve_version(expected_sha256=)`); with `expect_checkpoint_sha256`, the
+    checkpoint read must, compared on that read before torch parses it (so
+    before R3). Either refuses (`ExpectedDigestMismatch`) before anything is
+    measured or written, so a file replaced after it was chosen -- torn, of
+    another schema or format, valid but other, or gone -- is refused as changed
+    since it was chosen, never parsed. No file is read again for it: each
+    comparison is with the digest of the read the run makes anyway.
 
     **Before any model is built or any output written.** `main` calls this
     right after the device is resolved, and every refusal below raises before
@@ -307,8 +403,10 @@ def read_measurement_inputs(
 
     if (split is None) == (cohort is None):
         raise ValueError("measure exactly one of a generated split and a registered cohort")
-    if split is not None and (registry is not None or training_evidence):
-        raise ValueError("a registry and training evidence apply to a registered cohort only")
+    if split is not None and (registry is not None or training_evidence
+                              or expect_version_sha256 is not None):
+        raise ValueError("a registry, training evidence and an expected version digest apply "
+                         "to a registered cohort only")
 
     if split is not None:
         resolved, siblings = _resolve_generated(data_dir, split)
@@ -316,7 +414,8 @@ def read_measurement_inputs(
     else:
         resolved, siblings = None, ()
         version, cohort_version, candidates = _resolve_registered(
-            data_dir, cohort, registry, training_evidence
+            data_dir, cohort, registry, training_evidence,
+            expected_sha256=expect_version_sha256,
         )
 
     manifest = read_split_manifest(data_dir)
@@ -340,7 +439,10 @@ def read_measurement_inputs(
     # **Read at its resolved path**, so the read's identity names the file whose
     # bytes were measured, and `--record`'s ledger directory is fixed now: a link
     # retargeted during the run cannot move this run's record beside other weights.
-    read = _read_checkpoint(checkpoint, device)
+    # `--expect-checkpoint-sha256` is compared on that one read, before torch
+    # parses the bytes (`read_checkpoint(expected_sha256=)`), so other bytes at
+    # the chosen path, a checkpoint or not, are refused as changed, never parsed.
+    read = _read_checkpoint(checkpoint, device, expected_sha256=expect_checkpoint_sha256)
     # **The model scored must have been trained on this graph** (contract M2.4):
     # the checkpoint's recorded graph roles against `bound`, whose `kg` is the
     # manifest-bound source graph and whose tensor digests equal this run's
@@ -369,6 +471,20 @@ def read_measurement_inputs(
                              bound, dataset_record, r10)
 
 
+def _changed_since_chosen(what: str, found: Optional[str],
+                          expected: str) -> ExpectedDigestMismatch:
+    """The one wording of `ExpectedDigestMismatch`, for both expectations, each
+    compared by its reader before parsing: the cohort version's
+    (`CohortVersionChanged`, `_resolve_registered`) and the checkpoint's
+    (`CheckpointChanged`, `_read_checkpoint`). `found` is the digest the read
+    has, None when there was nothing to read."""
+    held = f"holds bytes {found[:12]}..." if found is not None else "is gone"
+    return ExpectedDigestMismatch(
+        f"{what} {held}, not the {expected[:12]}... this run was started for: it changed "
+        "after it was chosen, so it is not measured under that choice. Nothing was written."
+    )
+
+
 def _resolve_generated(data_dir: Path, split: str) -> Tuple[CohortProvenance, Tuple[str, ...]]:
     """The split and its sibling, resolved. Stat only."""
     resolved = resolve_cohort(data_dir, split)
@@ -379,21 +495,30 @@ def _resolve_generated(data_dir: Path, split: str) -> Tuple[CohortProvenance, Tu
 
 
 def _resolve_registered(
-    data_dir: Path, label: str, registry: Optional[Path], training_evidence: Sequence[Path]
+    data_dir: Path, label: str, registry: Optional[Path], training_evidence: Sequence[Path],
+    *, expected_sha256: Optional[str] = None,
 ) -> Tuple[CohortVersionRead, Dict[str, Any], List[Path]]:
     """The evidence candidates (listed, nothing read) and the version (one read
     of its `cohort.json`), with the block its report records.
 
     The evidence directories come first: they are the operator's arguments, and
     one that is not a directory is refused before anything is read.
+
+    With `expected_sha256` (`--expect-version-sha256`) the read is compared
+    before it is decoded: other bytes, or no version, are
+    `ExpectedDigestMismatch`, never a malformed version or an interrupted import.
     """
-    from src.evaluation.cohort_registry import resolve_version
+    from src.evaluation.cohort_registry import CohortVersionChanged, resolve_version
     from src.evaluation.r10 import evidence_candidates
 
     if registry is None:
         raise ValueError("a registered cohort is resolved in a registry; none was given")
     candidates = evidence_candidates(data_dir, training_evidence)
-    version = resolve_version(registry, label)
+    try:
+        version = resolve_version(registry, label, expected_sha256=expected_sha256)
+    except CohortVersionChanged as exc:
+        raise _changed_since_chosen(f"the cohort version {label!r} ({exc.path})",
+                                    exc.found, exc.expected) from None
     return version, cohort_version_block(version), candidates
 
 
@@ -473,8 +598,14 @@ def _verify_version_binding(
     verify_cohort_binding(version.manifest, bound, dataset_record.identity.sha256)
 
 
-def _read_checkpoint(checkpoint: Path, device: torch.device) -> CheckpointRead:
+def _read_checkpoint(checkpoint: Path, device: torch.device, *,
+                     expected_sha256: Optional[str] = None) -> CheckpointRead:
     """The checkpoint, one read at its resolved path, or a refusal naming it.
+
+    With `expected_sha256` (`--expect-checkpoint-sha256`) the read is compared
+    before torch parses it: other bytes, or no file, are `ExpectedDigestMismatch`
+    (root-cause round, BACKLOG 43), never `UnparseableCheckpoint` or a
+    `FileNotFoundError`.
 
     `read_checkpoint` passes on whatever torch raises for the bytes, as its
     contract says, and for bytes that are not a weights-only checkpoint that is
@@ -485,10 +616,15 @@ def _read_checkpoint(checkpoint: Path, device: torch.device) -> CheckpointRead:
     torch's error chained (`UnparseableCheckpoint`). A file that cannot be read
     keeps the read's own `OSError`, which names it.
     """
-    from src.utils.checkpoint_io import read_checkpoint
+    from src.utils.checkpoint_io import CheckpointChanged, read_checkpoint
 
+    resolved = Path(checkpoint).resolve()
     try:
-        return read_checkpoint(Path(checkpoint).resolve(), map_location=device, weights_only=True)
+        return read_checkpoint(resolved, map_location=device, weights_only=True,
+                               expected_sha256=expected_sha256)
+    except CheckpointChanged as exc:
+        raise _changed_since_chosen(f"the checkpoint {checkpoint} (read at {resolved})",
+                                    exc.found, exc.expected) from None
     except (OSError, MemoryError):
         # A MemoryError is not a property of the file. Converting it would send
         # a capacity shortfall to whoever reads the message as a corrupt file.
@@ -621,6 +757,77 @@ def _resolve_device(requested: str) -> Tuple[torch.device, bool]:
     return device, device.type == "cuda"
 
 
+@contextlib.contextmanager
+def _execution_settings(deterministic: bool):
+    """The run's numerical execution settings, set for the run and put back as
+    they were after it, however it ends (`main` is also called in process, by
+    the tests and the deployment probe, and torch's settings are global).
+
+    **With `--deterministic`** (D5): PyTorch's deterministic algorithms on,
+    **never warn-only**; cuDNN deterministic, its benchmark off; and
+    `CUBLAS_WORKSPACE_CONFIG` set to `DETERMINISTIC_CUBLAS_CONFIGS[0]` when it
+    is unset, which cuBLAS reads when CUDA first creates its handle -- so this
+    runs before the device is resolved. Refused (`DeterministicExecutionUnsupported`,
+    nothing read or written) rather than run in a state that is not what it
+    would be recorded as: the variable set to a value PyTorch does not document
+    as deterministic, or CUDA already initialised in this process with the
+    variable unset. The manifest observes the settings in effect
+    (`build_manifest`), and all three are in the semantics digest.
+
+    **Without it**, nothing is changed, but deterministic algorithms left on in
+    warn-only mode by an in-process caller are refused: the manifest would
+    record a deterministic run whose non-deterministic operations only warned.
+    """
+    if (not deterministic and torch.are_deterministic_algorithms_enabled()
+            and torch.is_deterministic_algorithms_warn_only_enabled()):
+        raise DeterministicExecutionUnsupported(
+            "deterministic algorithms are on in warn-only mode in this process, so the run "
+            "would be recorded as deterministic although a non-deterministic operation "
+            "would only warn. Run it as its own process, or with --deterministic. Nothing "
+            "was read or written."
+        )
+    if not deterministic:
+        yield
+        return
+    config = os.environ.get("CUBLAS_WORKSPACE_CONFIG")
+    if config is not None and config not in DETERMINISTIC_CUBLAS_CONFIGS:
+        raise DeterministicExecutionUnsupported(
+            f"--deterministic: CUBLAS_WORKSPACE_CONFIG is {config!r}, which PyTorch does not "
+            f"document as deterministic ({' or '.join(DETERMINISTIC_CUBLAS_CONFIGS)}). Unset "
+            "it, and the run sets the first, or set one of those. Nothing was read or written."
+        )
+    if config is None and torch.cuda.is_initialized():
+        raise DeterministicExecutionUnsupported(
+            "--deterministic: CUDA was initialised in this process before "
+            "CUBLAS_WORKSPACE_CONFIG could be set, so cuBLAS may already run without it. Run "
+            "the measurement as its own process. Nothing was read or written."
+        )
+    saved = (torch.are_deterministic_algorithms_enabled(),
+             torch.is_deterministic_algorithms_warn_only_enabled(),
+             torch.backends.cudnn.deterministic, torch.backends.cudnn.benchmark)
+    if config is None:
+        os.environ["CUBLAS_WORKSPACE_CONFIG"] = DETERMINISTIC_CUBLAS_CONFIGS[0]
+    try:
+        torch.use_deterministic_algorithms(True, warn_only=False)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+        yield
+    finally:
+        torch.use_deterministic_algorithms(saved[0], warn_only=saved[1])
+        torch.backends.cudnn.deterministic = saved[2]
+        torch.backends.cudnn.benchmark = saved[3]
+        if config is None:
+            os.environ.pop("CUBLAS_WORKSPACE_CONFIG", None)
+
+
+def _is_determinism_error(exc: BaseException) -> bool:
+    """Whether torch refused an operation because deterministic execution was
+    asked for: its messages name it ("does not have a deterministic
+    implementation", "Deterministic behavior was enabled ..."), and nothing
+    else this run raises does."""
+    return "deterministic" in str(exc).lower()
+
+
 def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
                    n_samples: int, device: torch.device, *,
                    digests: Mapping[str, str],
@@ -738,9 +945,9 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--record", action="store_true",
                         help="Register the kept report in evaluations.json beside the "
                              "checkpoint, as scripts/record_evaluation.py --report "
-                             "would. A refused registration keeps the report and exits "
-                             "3. --cohort only: a generated split's report is not "
-                             "registered")
+                             "would. A refused registration exits 3; the report is kept "
+                             "unless it is no longer the one the run published. --cohort "
+                             "only: a generated split's report is not registered")
     parser.add_argument("--output", type=Path, default=None,
                         help="Where a generated split's measurement JSON is written; the "
                              "per-sample ranks go beside it, as <output stem>_ranks.json. "
@@ -753,10 +960,40 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
                         help="auto requires CUDA and fails without it. Explicit cpu "
                              "is permitted for development and records "
                              "cuda_executed=false in the manifest")
+    parser.add_argument("--deterministic", action="store_true",
+                        help="Run with PyTorch's deterministic algorithms (never warn-only), "
+                             "cuDNN deterministic and its benchmark off, and "
+                             f"CUBLAS_WORKSPACE_CONFIG={DETERMINISTIC_CUBLAS_CONFIGS[0]} when "
+                             "unset. An operation with no deterministic implementation "
+                             "refuses the run; it never falls back. Recorded on the manifest, "
+                             "so a deterministic run is a different measurement key")
+    parser.add_argument("--expect-checkpoint-sha256", type=_sha256_argument, default=None,
+                        metavar="HEX",
+                        help="Refuse before measuring unless the checkpoint read has this "
+                             "SHA-256 (the one chosen for this run)")
+    parser.add_argument("--expect-version-sha256", type=_sha256_argument, default=None,
+                        metavar="HEX",
+                        help="Refuse before measuring unless the cohort version's "
+                             "cohort.json read has this SHA-256. --cohort only")
+    parser.add_argument("--outcome", type=Path, default=None, metavar="FILE",
+                        help="Write the run's outcome as JSON to FILE (a new file: it must "
+                             "not exist, and its directory must): the report's path, run id "
+                             "and digest, and whether it "
+                             "was registered and why. Written once the report is published "
+                             "and again at the end; nothing is written to it when the run is "
+                             "refused before its report. --cohort only")
     args = parser.parse_args(argv)
     args.training_evidence = list(args.training_evidence or [])
     _refuse_mixed_arguments(parser, args)
     return args
+
+
+def _sha256_argument(value: str) -> str:
+    """A SHA-256 as the lists show it: 64 lowercase hexadecimal digits."""
+    if re.fullmatch(r"[0-9a-f]{64}", value) is None:
+        raise argparse.ArgumentTypeError(
+            f"{value!r} is not a SHA-256 (64 lowercase hexadecimal digits)")
+    return value
 
 
 def _refuse_mixed_arguments(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
@@ -766,12 +1003,15 @@ def _refuse_mixed_arguments(parser: argparse.ArgumentParser, args: argparse.Name
     if args.split is not None:
         given = [flag for flag, value in (("--registry", args.registry),
                                           ("--training-evidence", args.training_evidence),
-                                          ("--record", args.record)) if value]
+                                          ("--record", args.record),
+                                          ("--expect-version-sha256",
+                                           args.expect_version_sha256),
+                                          ("--outcome", args.outcome)) if value]
         if given:
             parser.error(
                 f"{', '.join(given)} apply to a registered cohort version (--cohort LABEL "
-                "--registry DIR) only: a generated split's report is not registered and "
-                "R10 is not computed for it. Nothing was read or written."
+                "--registry DIR) only: a generated split has no version, its report is not "
+                "registered and R10 is not computed for it. Nothing was read or written."
             )
         if args.output is None:
             parser.error(
@@ -924,9 +1164,29 @@ def register_later_command(report_path: Path, checkpoint: Path) -> str:
             f'--checkpoint "{checkpoint}"')
 
 
-def _register(report_path: Path, report_sha256: str, inputs: MeasurementInputs) -> int:
+def _registration_outcome(requested: bool, **fields: Any) -> Dict[str, Any]:
+    """The ``registration`` block of the `--outcome` file. Before an attempt it
+    says so (``registered`` is `None`: not yet established); without
+    `--record` it says the report was not registered because none was asked,
+    and ``why`` may say what a later registration would meet
+    (`_offer_later_registration`)."""
+    if not requested:
+        return {"requested": False, "registered": False, "outcome": "not_requested",
+                "sequence": None, "ledger": None,
+                "why": fields.get("why", "--record was not given; the report is kept for a "
+                                         "later registration")}
+    block = {"requested": True, "registered": None, "outcome": None, "sequence": None,
+             "ledger": None, "why": "registration had not been attempted when this was written"}
+    block.update(fields)
+    return block
+
+
+def _register(
+    report_path: Path, report_sha256: str, inputs: MeasurementInputs
+) -> Tuple[int, Dict[str, Any]]:
     """`--record`: the report this run published into the ledger beside the
-    checkpoint this run read.
+    checkpoint this run read. Returns the status and what the `--outcome` file
+    says about the registration.
 
     Through `register_report`, the function `record_evaluation.py --report`
     uses, given what this run holds about itself (`MeasuredRun`): its checkpoint
@@ -938,14 +1198,26 @@ def _register(report_path: Path, report_sha256: str, inputs: MeasurementInputs) 
 
     A refusal returns `EXIT_NOT_REGISTERED` with the reason. When the report is
     still the one published, it is kept and the command that registers it later
-    is printed; when the file no longer holds it -- replaced, changed, damaged,
-    removed or unreadable (`ReportNotAsPublished`) -- the
-    run's own report may be gone, and the operator is told to re-measure.
+    is printed -- unless runs under its key disagree (`RunsDisagree`, D5), when
+    no later registration under that key would be accepted either, or its
+    registry is no longer the deployment's (`NotFromTheDeploymentRegistry`: the
+    deployment's `SHEPHERD_REGISTRY` resolves elsewhere than when the run was
+    allowed to start, the link it names retargeted during the run, say; the run
+    itself reads and writes through the registry root resolved once before it
+    started, so a retargeted `--registry` cannot cause this), when that command
+    would be refused the same way; when the
+    file no longer holds it -- replaced, changed, damaged, removed, unreadable
+    or no longer in the store (`ReportNotAsPublished`) -- the run's own report
+    may be gone, and the operator is told to re-measure. A registration that
+    stands although the version's usage history could not be appended says so
+    on stderr.
     """
     from src.evaluation.registration import (
         MeasuredRun,
+        NotFromTheDeploymentRegistry,
         RegistrationRefused,
         ReportNotAsPublished,
+        RunsDisagree,
         corroboration_note,
         register_report,
     )
@@ -963,7 +1235,27 @@ def _register(report_path: Path, report_sha256: str, inputs: MeasurementInputs) 
             "later registration in this run's name.",
             file=sys.stderr,
         )
-        return EXIT_NOT_REGISTERED
+        return EXIT_NOT_REGISTERED, _registration_outcome(
+            True, registered=False, outcome="refused", why=str(exc))
+    except RunsDisagree as exc:
+        print(
+            f"\nNOT REGISTERED. {exc}\n"
+            f"The measurement succeeded and its report is kept at {report_path}, where the "
+            "investigation can read it beside the others.",
+            file=sys.stderr,
+        )
+        return EXIT_NOT_REGISTERED, _registration_outcome(
+            True, registered=False, outcome="refused", why=str(exc))
+    except NotFromTheDeploymentRegistry as exc:
+        print(
+            f"\nNOT REGISTERED. {exc}\n"
+            f"The measurement succeeded and its report is kept at {report_path}. No "
+            "register-later command is offered: from that registry it would be refused the "
+            "same way.",
+            file=sys.stderr,
+        )
+        return EXIT_NOT_REGISTERED, _registration_outcome(
+            True, registered=False, outcome="refused", why=str(exc))
     except RegistrationRefused as exc:
         print(
             f"\nNOT REGISTERED. {exc}\n"
@@ -972,7 +1264,8 @@ def _register(report_path: Path, report_sha256: str, inputs: MeasurementInputs) 
             f"  {register_later_command(report_path, measured)}",
             file=sys.stderr,
         )
-        return EXIT_NOT_REGISTERED
+        return EXIT_NOT_REGISTERED, _registration_outcome(
+            True, registered=False, outcome="refused", why=str(exc))
     sequence = registered.record["registration"]["sequence"]
     said = {
         "registered": f"Registered as record {sequence}",
@@ -984,7 +1277,148 @@ def _register(report_path: Path, report_sha256: str, inputs: MeasurementInputs) 
     note = corroboration_note(registered, report_path)
     if note is not None:
         print(note)
-    return 0
+    why = said
+    if registered.usage_history_problem is not None:
+        print(f"NOTE: {registered.usage_history_problem}.", file=sys.stderr)
+        why = f"{said}; {registered.usage_history_problem}"
+    return 0, _registration_outcome(
+        True, registered=True, outcome=registered.outcome, sequence=sequence,
+        ledger=str(registered.ledger_path), why=why)
+
+
+def _offer_later_registration(
+    inputs: MeasurementInputs, result: ModeResult, report_path: Path
+) -> Dict[str, Any]:
+    """Without `--record`: say the report was not registered and how to
+    register it later -- unless D5 would refuse that now. Returns what the
+    `--outcome` file says about the registration.
+
+    The store is checked under this report's key (`key_refusal`, the check
+    `register_report` makes), so the message stays true: **while runs under
+    the key disagree no register-later command is printed**, as under
+    `--record`, since none would be accepted; while that cannot be checked,
+    the command is printed saying it is refused until it can be. The key is
+    read from the report this run published (`report_key`, which is the
+    record's key for a report `build_record` accepts).
+    """
+    from src.evaluation.registration import RunsDisagree, key_refusal
+    from src.evaluation.sidecar import report_key
+
+    command = register_later_command(report_path, Path(inputs.checkpoint.identity.path))
+    key = report_key(result.to_dict())
+    block = key_refusal(inputs.version, key) if key is not None else None
+    if isinstance(block, RunsDisagree):
+        print(f"\nNot registered (no --record), and {block}\n"
+              f"The report is kept at {report_path}, where the investigation can read it "
+              "beside the others. No register-later command is offered: none would be "
+              "accepted while the runs disagree.\n")
+        return _registration_outcome(False, why=(
+            f"--record was not given, and {block} The report is kept for the "
+            "investigation; no registration under its key is accepted while the runs "
+            "disagree"))
+    if block is not None:
+        print(f"\nNot registered (no --record), and {block}\n"
+              "A later registration is refused until that can be checked; then register it "
+              f"with:\n  {command}\n")
+        return _registration_outcome(False, why=(
+            f"--record was not given; the report is kept for a later registration, which is "
+            f"refused until this can be checked: {block}"))
+    print(f"\nNot registered (no --record). Register it with:\n  {command}\n")
+    return _registration_outcome(False)
+
+
+def _check_outcome_target(path: Optional[Path]) -> None:
+    """Refuse an `--outcome` file that cannot be written, before anything is
+    read: its directory must exist (none is created), and it must not be one.
+
+    **Nor may it exist** (a link, even a dangling one, included). A run refused
+    before its report writes no outcome file, so a file already there -- an
+    earlier run's, with ``"complete": true`` -- would be read as this run's
+    outcome; and a path named by mistake would replace a file that is not an
+    outcome at all. The run's own second write still replaces its first.
+    """
+    if path is None:
+        return
+    if path.is_dir():
+        raise ValueError(f"--outcome {path} is a directory; it names the file the run writes "
+                         "its outcome to. Nothing was read or written.")
+    if not path.parent.is_dir():
+        raise ValueError(f"--outcome {path}: its directory {path.parent} does not exist, and "
+                         "none is created. Nothing was read or written.")
+    if os.path.lexists(path):
+        raise ValueError(
+            f"--outcome {path} already exists. The run writes a new file there and never "
+            "replaces one, so a file an earlier run left is not read as this run's outcome "
+            "and a file named by mistake is not overwritten. Name a new file, or move that "
+            "one away. Nothing was read or written."
+        )
+
+
+def _write_outcome(
+    path: Path,
+    *,
+    complete: bool,
+    inputs: MeasurementInputs,
+    run_id: str,
+    report_path: Path,
+    report_sha256: str,
+    deterministic: bool,
+    registration: Mapping[str, Any],
+) -> None:
+    """The `--outcome` file: what this run did, once its report is published
+    (``complete`` false) and again at the end (``complete`` true), each time
+    staged and renamed into place, so a reader sees one whole version.
+
+    It names the report the run published (path, run id, digest), the checkpoint
+    it read (resolved path and digest), the version, whether the run was
+    deterministic, and whether the report was registered and why. **What the
+    run did, not the record:** whether the report is still kept and registered
+    is read from the store and the ledger (`registration.report_state`), and
+    ``complete`` false means the run stopped after publishing, so its later
+    steps are unknown here. No path in it is an identity; the digests are.
+    """
+    from src.evaluation.cohort_registry import encode_json
+    from src.utils.file_modes import publish_bytes
+
+    block = inputs.cohort_version
+    publish_bytes(path, encode_json({
+        "what_this_is": ("the outcome of one measure_scorer run, written by the run; the "
+                         "report store and the ledger beside the checkpoint are the record"),
+        "schema_version": OUTCOME_SCHEMA_VERSION,
+        "complete": complete,
+        "run_id": run_id,
+        "report": str(report_path),
+        "report_sha256": report_sha256,
+        "checkpoint": str(inputs.checkpoint.identity.path),
+        "checkpoint_sha256": inputs.checkpoint.identity.sha256,
+        "cohort": {"label": block["label"], "role": block["role"],
+                   "manifest_sha256": block["manifest_sha256"]},
+        "deterministic": deterministic,
+        "registration": dict(registration),
+    }))
+
+
+def _record_run(inputs: MeasurementInputs, result: ModeResult, run_id: str,
+                report_sha256: str, record_requested: bool) -> None:
+    """This run in its version's usage history (D4), right after its report is
+    published: which weights, which report, its result and whether it was
+    deterministic. A failure is re-raised saying this run is not in it."""
+    from src.evaluation.report_store import record_test_run
+
+    manifest = result.manifest
+    try:
+        record_test_run(
+            inputs.version, run_id=run_id, report_sha256=report_sha256,
+            checkpoint_sha256=inputs.checkpoint.identity.sha256,
+            metrics=result.authoritative_metrics, n_ranked=result.n_ranked,
+            deterministic=bool(manifest.deterministic_algorithms), device=manifest.device,
+            record_requested=record_requested,
+        )
+    except (OSError, ValueError) as exc:
+        raise ValueError(
+            f"the cohort version's usage history could not be appended, so this run is not "
+            f"in it ({type(exc).__name__}: {exc})"
+        ) from exc
 
 
 def _r10_label_text(label: str, value: Mapping[str, Any], evidence_state: str) -> str:
@@ -1055,7 +1489,58 @@ def _print_registered_summary(inputs: MeasurementInputs, result: ModeResult, run
 def main(argv: Optional[List[str]] = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     args = parse_args(argv)
+    _check_outcome_target(args.outcome)
+    registry = _refuse_another_registry(args)
+    # **One managed GPU job at a time** (M5): the deployment's GPU lock, taken
+    # before the device is resolved or anything is read, and held until this
+    # returns; the kernel releases it however the process ends. A busy lock is
+    # `GpuLockBusy`, an OSError, so the program entry refuses with exit 1 and
+    # "Nothing was written." The execution settings are set inside it, before
+    # the device is resolved and CUDA initialised, and put back as they were
+    # when the run ends, whatever ended it (`_execution_settings`).
+    with take_gpu_lock("test" if args.cohort is not None else "split measurement",
+                       "measure_scorer.py", log=logger):
+        with _execution_settings(args.deterministic):
+            return _run(args, registry=registry)
 
+
+def _refuse_another_registry(args: argparse.Namespace) -> Optional[Path]:
+    """**A `--cohort` run measures in the deployment's registry only** (D7,
+    BACKLOG 37), checked before the GPU lock, the device or any input: the
+    registry rule first (`validate_registry`, its own refusal), then the rule
+    every registration applies (`deployment_registry_refusal`: `--registry`
+    and `SHEPHERD_REGISTRY` compared by resolved path; unset, refused). A run
+    in another directory -- a copy of the registry, say -- would be in that
+    copy's usage history only, which the service never reads, and its report
+    could not be registered. A generated split has no registry (None).
+
+    **Returns the root it checked**, resolved (`validate_registry`'s contract:
+    every later step joins onto it), and the run reads and writes through that
+    root, never through `--registry` resolved again: a link named there and
+    retargeted after this check, while the lock is taken or the device comes up,
+    cannot move the measurement, its report or its usage history into another
+    directory."""
+    if args.cohort is None:
+        return None
+    from src.config.server_settings import deployment_registry_refusal
+    from src.evaluation.cohort_registry import validate_registry
+    from src.evaluation.report_store import NotTheDeploymentRegistry
+
+    root = validate_registry(args.registry)
+    why = deployment_registry_refusal(root)
+    if why is not None:
+        raise NotTheDeploymentRegistry(
+            f"--cohort measures a version of the deployment's registry only, and {why}. Every "
+            "run on a cohort version belongs in its usage history, the deployment registry's "
+            "(D4, D7), and only a report kept there can be registered. Nothing was read or "
+            "written.")
+    return root
+
+
+def _run(args: argparse.Namespace, *, registry: Optional[Path]) -> int:
+    """`main`'s run, under the GPU lock and inside its execution settings, in
+    the registry root `main` checked (`registry`, resolved; None for a
+    generated split)."""
     device, cuda_executed = _resolve_device(args.device)
     logger.info("Device: %s (%s)", device, platform.platform())
     if not cuda_executed:
@@ -1071,45 +1556,101 @@ def main(argv: Optional[List[str]] = None) -> int:
     # any model is built or any output written (contract M2.1, S7; M4 §6).
     inputs = read_measurement_inputs(
         args.checkpoint, args.data_dir, device, split=args.split, cohort=args.cohort,
-        registry=args.registry, training_evidence=args.training_evidence,
+        registry=registry, training_evidence=args.training_evidence,
+        expect_checkpoint_sha256=args.expect_checkpoint_sha256,
+        expect_version_sha256=args.expect_version_sha256,
     )
     graph_data, samples = inputs.graph.graph_data, inputs.samples.samples
     digests = measurement_input_digests(inputs)
 
-    model = build_shepherd_model(inputs.checkpoint.checkpoint, graph_data, device)
-    # Kept **whole**: `run_mode_c` checks that its manifest describes the regime
-    # these embeddings were computed under, which a bare dict could not carry.
-    encoded = encode_full_graph(model, graph_data, device)
-
-    result = run_mode_c(
-        full_graph_embeddings=encoded,
-        samples=samples,
-        manifest=build_manifest(
-            args, graph_data, len(samples), device, digests=digests,
-            dataset_record=inputs.dataset_record.summary(),
-            cohort_version=inputs.cohort_version, r10=inputs.r10,
-            cuda_executed=cuda_executed, model=model, regime=encoded.regime,
-        ),
-        device=device,
-        batch_size=args.batch_size,
-    )
-
-    # **Publication is the first write**, so a failure in it is no refusal: the
-    # run measured, and what it published before failing may be on disk. It is
-    # re-raised saying so (`ReportNotWritten`), never as a ValueError or OSError,
-    # which the program entry prints as a refusal before anything was written.
     try:
-        if inputs.version is None:
-            report_path, ranks_path = _publish_generated(result, args.output)
-            logger.info("Mode C -> %s, %s", report_path, ranks_path)
-        else:
-            run_id, report_path, report_sha256 = _publish_to_store(result, inputs)
-            logger.info("Mode C -> %s", report_path)
-    except (ValueError, OSError) as exc:
-        raise _publication_failure(exc, inputs, args.output) from exc
+        model = build_shepherd_model(inputs.checkpoint.checkpoint, graph_data, device)
+        # Kept **whole**: `run_mode_c` checks that its manifest describes the regime
+        # these embeddings were computed under, which a bare dict could not carry.
+        encoded = encode_full_graph(model, graph_data, device)
 
-    # Nor is a failure after it (the console closed under the run, say): it is
-    # re-raised saying the report was written (`FailedAfterPublishing`).
+        result = run_mode_c(
+            full_graph_embeddings=encoded,
+            samples=samples,
+            manifest=build_manifest(
+                args, graph_data, len(samples), device, digests=digests,
+                dataset_record=inputs.dataset_record.summary(),
+                cohort_version=inputs.cohort_version, r10=inputs.r10,
+                cuda_executed=cuda_executed, model=model, regime=encoded.regime,
+            ),
+            device=device,
+            batch_size=args.batch_size,
+        )
+    except RuntimeError as exc:
+        # **No fallback** (D5): an operation without a deterministic
+        # implementation ends the run, before anything is written, saying so.
+        if args.deterministic and _is_determinism_error(exc):
+            raise DeterministicExecutionUnsupported(
+                f"--deterministic was asked for, and this run needs an operation with no "
+                f"deterministic implementation on {device} ({type(exc).__name__}: "
+                f"{' '.join(str(exc).split())}). It does not fall back to non-deterministic "
+                "execution or to another device, so it did not complete as requested. "
+                "Nothing was written."
+            ) from exc
+        raise
+
+    # **Publication, the usage history and the first outcome file are one step
+    # against a cancel** (M5-3 review EVAL-1, `interrupt_deferred`): a SIGINT
+    # (the job runner's Cancel) arriving among them is held until all three
+    # are done, then ends the run as before, so a kept report is never left out
+    # of its version's usage history by a cancel.
+    with interrupt_deferred():
+        # **Publication is the first write**, so a failure in it is no refusal:
+        # the run measured, and what it published before failing may be on
+        # disk. It is re-raised saying so (`ReportNotWritten`), never as a
+        # ValueError or OSError, which the program entry prints as a refusal
+        # before anything was written.
+        try:
+            if inputs.version is None:
+                report_path, ranks_path = _publish_generated(result, args.output)
+                logger.info("Mode C -> %s, %s", report_path, ranks_path)
+            else:
+                run_id, report_path, report_sha256 = _publish_to_store(result, inputs)
+                logger.info("Mode C -> %s", report_path)
+        except (ValueError, OSError) as exc:
+            raise _publication_failure(exc, inputs, args.output) from exc
+
+        # Nor is a failure after it (the console closed under the run, say): it
+        # is re-raised saying the report was written (`FailedAfterPublishing`).
+        try:
+            if inputs.version is not None:
+                # The run in its version's usage history (D4), the record, and
+                # what this run did so far (`--outcome`), the job runner's view,
+                # before anything else can fail. **Each is tried whatever the
+                # other did**: a failed outcome write must not keep a published
+                # run out of the history, nor a failed history append leave a
+                # published run with no outcome file. The first failure is then
+                # raised, saying both.
+                deterministic = bool(result.manifest.deterministic_algorithms)
+                history_failure: Optional[ValueError] = None
+                try:
+                    _record_run(inputs, result, run_id, report_sha256, args.record)
+                except ValueError as exc:
+                    history_failure = exc
+                if args.outcome is not None:
+                    try:
+                        _write_outcome(args.outcome, complete=False, inputs=inputs,
+                                       run_id=run_id, report_path=report_path,
+                                       report_sha256=report_sha256,
+                                       deterministic=deterministic,
+                                       registration=_registration_outcome(args.record))
+                    except (ValueError, OSError) as exc:
+                        raise ValueError(
+                            f"the --outcome file {args.outcome} could not be written "
+                            f"({type(exc).__name__}: {exc}); "
+                            + (f"and {history_failure}" if history_failure is not None
+                               else "this run is in its version's usage history")
+                        ) from exc
+                if history_failure is not None:
+                    raise history_failure
+        except (ValueError, OSError) as exc:
+            raise _failure_after_publishing(exc, inputs, report_path) from exc
+
     try:
         print(f"\nMode C — {result.n_ranked} ranked, {result.n_ground_truth_absent} absent")
         for name, value in result.authoritative_metrics.items():
@@ -1139,17 +1680,19 @@ def main(argv: Optional[List[str]] = None) -> int:
                 # unbuffered one is at its first print: the run registers
                 # nothing, and the failure's line offers the registration.
                 _flush_stdout()
-                status = _register(report_path, report_sha256, inputs)
-                if status != 0:
-                    # Decided, and said on stderr: a refusal writes nothing to
-                    # stdout, and `_run_as_program` settles it, so this status
-                    # stands rather than becoming a failure after the fact.
-                    return status
+                status, registration = _register(report_path, report_sha256, inputs)
             else:
-                measured = Path(inputs.checkpoint.identity.path)
-                print("\nNot registered (no --record). Register it with:\n"
-                      f"  {register_later_command(report_path, measured)}\n")
-                status = 0
+                status, registration = 0, _offer_later_registration(inputs, result,
+                                                                     report_path)
+            if args.outcome is not None:
+                _write_outcome(args.outcome, complete=True, inputs=inputs, run_id=run_id,
+                               report_path=report_path, report_sha256=report_sha256,
+                               deterministic=deterministic, registration=registration)
+            if status != 0:
+                # Decided, and said on stderr: a refusal writes nothing to
+                # stdout, and `_run_as_program` settles it, so this status
+                # stands rather than becoming a failure after the fact.
+                return status
         # **Flushed here**: on a pipe or a file stdout is buffered, and a closed
         # console would otherwise fail only when the interpreter flushes at exit,
         # outside this handler.
@@ -1209,15 +1752,30 @@ def _run_as_program(argv: Optional[List[str]] = None) -> int:
     ValueError that is really a bug becomes one line too, without its
     traceback; nothing had been written when it was raised. A failure in or
     after publication is neither (`ReportNotWritten`, `FailedAfterPublishing`)
-    and is printed in its own words, also with exit 1. Anything else keeps its
+    and is printed in its own words, also with exit 1. A cancel
+    (`KeyboardInterrupt`, from SIGINT) is `CANCELLED_LINE`, printed after
+    stdout is settled, and then **the KeyboardInterrupt goes on to the
+    caller**: `_exit_as_program` ends the process by SIGINT, and an in-process
+    caller (the tests) unwinds as it would from any interrupt, never killed
+    here. Stdout is settled first because that ending skips the
+    interpreter's last flush, which would lose what a pipe's buffer still
+    holds. Anything else keeps its
     traceback -- an out-of-memory error, a regime mismatch -- and `SystemExit`
     (exit 2 for the command line, 1 for the device check) and the status `main`
     returns (3 for a refused registration) pass through as they are; stdout is
     settled first, so output a closed console could not take cannot turn that
     status into 120 at the interpreter's last flush.
     """
+    if signal.getsignal(signal.SIGINT) is _cancelled_while_loading:
+        # Loaded: a cancel is a KeyboardInterrupt again, so the run unwinds
+        # (a staged file removed, the GPU lock released) before it ends.
+        signal.signal(signal.SIGINT, signal.default_int_handler)
     try:
         status = main(argv)
+    except KeyboardInterrupt:
+        _settle_stdout()
+        print(CANCELLED_LINE, file=sys.stderr)
+        raise
     except ReportNotWritten as exc:
         print(f"measure_scorer: measured, but the report was not written: {exc}",
               file=sys.stderr)
@@ -1236,5 +1794,18 @@ def _run_as_program(argv: Optional[List[str]] = None) -> int:
     return status
 
 
+def _exit_as_program(argv: Optional[List[str]] = None) -> None:
+    """The program's entry (`__main__`), and the only place a cancel ends the
+    process: `_run_as_program`'s status is the exit status, and its
+    KeyboardInterrupt (the cancel, whose line it has printed) ends the process
+    by SIGINT (`_end_as_cancelled`), so the job runner reads "ended by SIGINT"
+    as the cancel's doing. Raises `SystemExit`."""
+    try:
+        status = _run_as_program(argv)
+    except KeyboardInterrupt:
+        status = _end_as_cancelled()
+    sys.exit(status)
+
+
 if __name__ == "__main__":
-    sys.exit(_run_as_program())
+    _exit_as_program()

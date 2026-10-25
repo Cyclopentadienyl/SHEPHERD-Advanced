@@ -7,6 +7,9 @@ performed. The pure helpers (env re-resolution, argv reconstruction, the
 training lock) are exercised directly.
 """
 import os
+import signal
+import sys
+import threading
 
 import pytest
 
@@ -19,27 +22,44 @@ from src.config.runtime_presets import ALLOCATOR_PRESETS, DEFAULT_ALLOCATOR
 
 
 # --------------------------------------------------------------------------- lock
-def test_is_training_active_true_when_running(monkeypatch):
-    monkeypatch.setattr(bc.training_manager, "get_status", lambda: {"status": "running"})
+@pytest.mark.parametrize("job_type", ["training", "test"])
+@pytest.mark.parametrize("status", ["running", "stopping"])
+def test_is_training_active_true_while_any_job_holds_the_gpu_slot(monkeypatch, job_type, status):
+    """The restart lock reads the job runner's one GPU slot (M5): a test run
+    is orphaned by a re-exec as surely as training is."""
+    job = {"job_type": job_type, "status": status}
+    monkeypatch.setattr(bc.training_manager, "active_job", lambda: job)
     assert bc.is_training_active() is True
 
 
-def test_is_training_active_true_when_stopping(monkeypatch):
-    monkeypatch.setattr(bc.training_manager, "get_status", lambda: {"status": "stopping"})
+def test_is_training_active_false_when_no_job_holds_the_slot(monkeypatch):
+    monkeypatch.setattr(bc.training_manager, "active_job", lambda: None)
+    assert bc.is_training_active() is False
+
+
+def test_is_training_active_follows_a_real_test_job(monkeypatch, tmp_path):
+    """Through the real runner: a running test run locks the restart, and its
+    end unlocks it."""
+    from src.api.services.training_manager import TrainingManager
+    from tests.fixtures.job_processes import FakeProcess
+
+    manager = TrainingManager()
+    monkeypatch.setattr(bc, "training_manager", manager)
+    process = FakeProcess()
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr("subprocess.Popen", lambda *a, **k: process)
+        assert manager.start_training({"data_dir": str(tmp_path)})["success"]
     assert bc.is_training_active() is True
-
-
-def test_is_training_active_false_when_idle(monkeypatch):
-    for s in ("idle", "completed", "failed"):
-        monkeypatch.setattr(bc.training_manager, "get_status", lambda s=s: {"status": s})
-        assert bc.is_training_active() is False, s
+    process.finish(0)
+    manager._last["training"].done.wait(5)
+    assert bc.is_training_active() is False
 
 
 def test_is_training_active_swallows_errors(monkeypatch):
     def boom():
         raise RuntimeError("status backend down")
 
-    monkeypatch.setattr(bc.training_manager, "get_status", boom)
+    monkeypatch.setattr(bc.training_manager, "active_job", boom)
     assert bc.is_training_active() is False  # UI default: fail open
 
 
@@ -47,7 +67,7 @@ def test_is_training_active_fail_closed_on_error(monkeypatch):
     def boom():
         raise RuntimeError("status backend down")
 
-    monkeypatch.setattr(bc.training_manager, "get_status", boom)
+    monkeypatch.setattr(bc.training_manager, "active_job", boom)
     # Destructive-restart path passes default_on_error=True -> treat as busy.
     assert bc.is_training_active(default_on_error=True) is True
     assert bc.is_training_active(default_on_error=False) is False
@@ -162,20 +182,35 @@ def test_restart_backend_refused_while_training(monkeypatch):
     calls = []
     res = bc.restart_backend(_scheduler=lambda fn: calls.append(fn))
     assert res["success"] is False
-    assert "Training in progress" in res["error"]
+    assert "A GPU job (training or a test run) is in progress" in res["error"]
     assert calls == []  # nothing scheduled
 
 
-def test_restart_backend_aborts_if_training_starts_during_delay(monkeypatch):
-    # Guard sees idle (schedule), but the worker re-check sees training active
-    # (started during the delay) -> must NOT exec.
-    checks = {"n": 0}
+@pytest.fixture
+def runner(monkeypatch):
+    """A job runner of the test's own in place of the singleton, its processes
+    stand-ins, so a start in the restart's window can be made for real."""
+    from unittest.mock import patch
 
-    def flaky_active(default_on_error=False):
-        checks["n"] += 1
-        return checks["n"] > 1  # False on the first call, True afterwards
+    from src.api.services.training_manager import TrainingManager
+    from tests.fixtures.job_processes import FakeProcess
 
-    monkeypatch.setattr(bc, "is_training_active", flaky_active)
+    manager = TrainingManager()
+    monkeypatch.setattr(bc, "training_manager", manager)
+    with patch("subprocess.Popen", side_effect=lambda *a, **k: FakeProcess(pid=4321)):
+        yield manager
+    if manager.active_job() is not None:
+        manager.end_active_job()
+
+
+def _start(manager, tmp_path):
+    return manager.start_training({"data_dir": str(tmp_path / "ws")})
+
+
+def test_restart_backend_aborts_if_a_job_starts_during_delay(runner, tmp_path):
+    # The guard sees idle (schedule); a job starts during the delay; the
+    # worker sees it when it closes the slot, so it must NOT exec, and the
+    # slot stays open for that job's runner.
     executed = []
     worker_box = []
     res = bc.restart_backend(
@@ -184,11 +219,186 @@ def test_restart_backend_aborts_if_training_starts_during_delay(monkeypatch):
         _execv=lambda *a: executed.append(a),
     )
     assert res["success"] is True  # scheduled at guard time
-    worker_box[0]()  # run the worker — it should abort on the second check
+    assert _start(runner, tmp_path)["success"]
+    worker_box[0]()  # run the worker — it should abort at the slot
     assert executed == []  # execve never called
+    runner.end_active_job()
+    assert _start(runner, tmp_path)["success"], "the aborted restart left the slot closed"
 
 
-def test_restart_backend_schedules_and_execs(monkeypatch):
+def test_a_start_racing_the_restart_is_refused_while_its_exec_runs(runner, tmp_path):
+    """Root-cause review, P23-1: the worker closes the slot in the same step
+    as it finds it idle and keeps it closed through execve, so a start asked
+    for in that window (through the REST API or another tab) is refused, not
+    orphaned by the exec. It used to re-check, then exec with nothing held.
+    The exec runs under the runner's lock (round 3 of the review fixes,
+    P3-3), so the start waits on it while the exec runs and is refused once
+    the stand-in exec has returned."""
+    racing = []
+
+    def execv(executable, argv, env):
+        assert runner._lock.locked(), "the exec ran without the runner's lock"
+        start = threading.Thread(target=lambda: racing.append(_start(runner, tmp_path)))
+        start.start()
+        start.join(0.3)
+        assert racing == [], "a start went through while the exec ran"
+        racing.append(start)
+
+    worker_box = []
+    assert bc.restart_backend(delay=0, _scheduler=worker_box.append, _execv=execv)["success"]
+    worker_box[0]()
+    racing[0].join(10)
+    assert racing[1]["success"] is False
+    assert racing[1]["error"] == "The backend is stopping; nothing was started."
+    assert runner.active_job() is None
+
+
+def test_a_failed_exec_opens_the_slot_again(runner, tmp_path):
+    def execv(executable, argv, env):
+        raise OSError("exec format error")
+
+    worker_box = []
+    assert bc.restart_backend(delay=0, _scheduler=worker_box.append, _execv=execv)["success"]
+    worker_box[0]()
+    assert _start(runner, tmp_path)["success"], "the process serves on, so jobs start"
+
+
+def _the_backend_stops(monkeypatch, runner):
+    """The backend's own stop, as its shutdown signal runs it
+    (`src.api.main._stop_the_active_job`), on the test's runner."""
+    import src.api.main as api
+    import src.api.services.training_manager as tm
+
+    monkeypatch.setattr(tm, "training_manager", runner)
+    api._stop_the_active_job()
+
+
+def test_a_stop_during_the_restart_delay_is_never_overridden_by_the_exec(
+        monkeypatch, runner, tmp_path):
+    """Verification of P23-1, T2-V2: Restart Backend is clicked, and the
+    backend begins to stop (Ctrl-C, ``systemctl stop``) before its delay has
+    passed. The stop owns the closed slot, so the restart is aborted: no exec
+    replaces the stopping process (a new image would serve on and ignore the
+    stop), and the slot stays closed. It used to exec, and a failed exec
+    opened the slot the stop had closed."""
+    executed = []
+    worker_box = []
+    assert bc.restart_backend(delay=0, _scheduler=worker_box.append,
+                              _execv=lambda *a: executed.append(a))["success"]
+    _the_backend_stops(monkeypatch, runner)
+    worker_box[0]()
+    assert executed == [], "execve was called while the backend stops"
+    assert _start(runner, tmp_path)["error"] == "The backend is stopping; nothing was started."
+
+
+def test_a_failed_exec_never_opens_a_slot_the_stop_closed_meanwhile(
+        monkeypatch, runner, tmp_path):
+    """The other order: the restart closed the slot, then the backend began
+    to stop while the exec ran, and the exec failed. The stop's close waits
+    for the runner's lock, which the exec holds (P3-3); the failed exec opens
+    only its own close, so whichever runs first, the stop's stays and
+    nothing starts."""
+    import src.api.main as api
+    import src.api.services.training_manager as tm
+
+    monkeypatch.setattr(tm, "training_manager", runner)
+    stopping = []
+
+    def execv(executable, argv, env):
+        stop = threading.Thread(target=api._stop_the_active_job)
+        stop.start()
+        stopping.append(stop)
+        raise OSError("exec format error")
+
+    worker_box = []
+    assert bc.restart_backend(delay=0, _scheduler=worker_box.append, _execv=execv)["success"]
+    worker_box[0]()
+    stopping[0].join(10)
+    assert _start(runner, tmp_path)["error"] == "The backend is stopping; nothing was started."
+
+
+def test_a_stop_between_the_restart_s_check_and_its_exec_aborts_the_exec(
+        monkeypatch, runner, tmp_path):
+    """Round 3 of the review fixes, P3-3: the restart has closed the slot
+    (`close_if_idle`), and the backend's stop closes it while the restart
+    resolves its environment, before the exec. The final check and the exec
+    are one step under the runner's lock, so the exec is refused and the
+    slot stays the stop's. It used to exec all the same: the new image
+    opened the slot at startup and served on, and the stop's signal was
+    lost with the old image."""
+    resolve = bc.resolve_restart_env
+
+    def resolve_while_the_backend_stops(env):
+        _the_backend_stops(monkeypatch, runner)
+        return resolve(env)
+
+    monkeypatch.setattr(bc, "resolve_restart_env", resolve_while_the_backend_stops)
+    executed = []
+    worker_box = []
+    assert bc.restart_backend(delay=0, _scheduler=worker_box.append,
+                              _execv=lambda *a: executed.append(a))["success"]
+    worker_box[0]()
+    assert executed == [], "execve was called after the stop closed the slot"
+    assert runner._closed_by == runner.CLOSED_BY_STOP
+    assert _start(runner, tmp_path)["error"] == "The backend is stopping; nothing was started."
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
+def test_a_stop_signal_aborts_the_restart_before_its_stop_has_closed_the_slot(
+        monkeypatch, runner, tmp_path):
+    """P3-3: the signal's handler records the stop before anything else, so
+    a restart whose delay ends after the handler ran, but before the stop it
+    started has closed the slot (that stop runs in a thread the event loop
+    starts), is refused at the exec. Through the backend's real handler: the
+    server's SIGTERM handler wrapped, SIGTERM delivered, the stop held back.
+    The next startup forgets the signal, and a restart execs again."""
+    import asyncio
+
+    import src.api.main as api
+    import src.api.services.training_manager as tm
+
+    monkeypatch.setattr(tm, "training_manager", runner)
+    held = threading.Event()
+    monkeypatch.setattr(api, "_stop_the_active_job", lambda: held.wait(10))
+    monkeypatch.setattr(api, "_end_dashboard_streams", lambda application: None)
+    seen = []
+    previous = signal.getsignal(signal.SIGTERM)
+    signal.signal(signal.SIGTERM, lambda number, frame: seen.append(number))
+    executed = []
+
+    async def scenario():
+        signals = api._ShutdownSignals(api.app)
+        signals.install()
+        try:
+            os.kill(os.getpid(), signal.SIGTERM)
+            await asyncio.sleep(0.2)
+            worker_box = []
+            assert bc.restart_backend(delay=0, _scheduler=worker_box.append,
+                                      _execv=lambda *a: executed.append(a))["success"]
+            worker_box[0]()
+            return runner._closed_by
+        finally:
+            held.set()
+            signals.end_jobs()
+            signals.restore()
+
+    try:
+        closed_by = asyncio.run(scenario())
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+    assert seen == [signal.SIGTERM]
+    assert closed_by == runner.CLOSED_BY_RESTART, "the stop closed the slot: not this case"
+    assert executed == [], "execve was called after a stop signal"
+
+    runner.open()                                   # the next startup's
+    worker_box = []
+    assert bc.restart_backend(delay=0, _scheduler=worker_box.append,
+                              _execv=lambda *a: executed.append(a))["success"]
+    worker_box[0]()
+    assert len(executed) == 1
+
+
+def test_restart_backend_schedules_and_execs(monkeypatch, runner):
     monkeypatch.setattr(bc, "is_training_active", lambda **_: False)
     monkeypatch.setattr(bc.sys, "executable", "/usr/bin/python")
     monkeypatch.setattr(

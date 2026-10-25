@@ -455,6 +455,8 @@ def test_the_shell_cannot_turn_the_preset_into_an_override(tmp_path):
         "SHEPHERD_DATA_DIR": str(tmp_path / "ws"),
         "SHEPHERD_CHECKPOINT_PATH": str(tmp_path / "ck.pt"),
         "SHEPHERD_DEVICE": "cuda",
+        # R3's reload is an operator control (D8, M5-1): mode M1, set here.
+        "SHEPHERD_DEPLOYMENT_MODE": "M1",
     }
 
 

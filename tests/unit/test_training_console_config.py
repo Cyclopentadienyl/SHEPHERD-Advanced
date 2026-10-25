@@ -14,6 +14,16 @@ import pytest
 pytest.importorskip("gradio")
 
 from src.webui.components import training_console as tc  # noqa: E402
+from tests.fixtures.operator_access import gradio_request, operator_mode  # noqa: E402
+
+#: A request D8 allows once the deployment is in mode M1 (`_operator_mode`):
+#: Start is an operator control since M5-1.
+OP = gradio_request()
+
+
+@pytest.fixture(autouse=True)
+def _operator_mode(monkeypatch):
+    operator_mode(monkeypatch)
 
 
 # _collect_config is positional; keep a valid baseline in signature order.
@@ -154,45 +164,103 @@ def test_seed_field_lock_toggles_interactive():
     assert _ufield(tc._seed_field_lock(False), "interactive") is True
 
 
-def test_on_start_randomize_overrides_and_echoes_seed(monkeypatch):
-    captured = {}
+#: The run bar's workspace as a session holds it (`_workspace_state`): the
+#: Start handler resolves the name through the server's list (here replaced)
+#: and sends the full fingerprint shown.
+FP = "a" * 64
+WS = {"name": "demo", "row": {"name": "demo", "dataset_fingerprint": FP, "trainable": True}}
+
+
+@pytest.fixture
+def listed(monkeypatch, tmp_path):
+    """The server's list resolves "demo" to a directory (`_workspace_path`)."""
+    monkeypatch.setattr(tc, "_workspace_path", lambda name: tmp_path / name)
+    return tmp_path / "demo"
+
+
+def _form(**overrides):
+    """The form's values as Start receives them: `_collect_config`'s order
+    after the workspace's directory."""
+    return _args(**overrides)[1:]
+
+
+def _starts(captured, kwargs_seen=None):
+    def start(config, **kwargs):
+        captured.update(config)
+        if kwargs_seen is not None:
+            kwargs_seen.update(kwargs)
+        return {"success": True, "pid": 1}
+    return start
+
+
+def test_on_start_randomize_overrides_and_echoes_seed(monkeypatch, listed):
+    captured, kwargs = {}, {}
     monkeypatch.setattr(tc, "_random_seed", lambda: 777)
-    monkeypatch.setattr(
-        tc.training_manager,
-        "start_training",
-        lambda config: (captured.update(config), {"success": True, "pid": 1})[1],
-    )
+    monkeypatch.setattr(tc.training_manager, "start_training", _starts(captured, kwargs))
     # randomize=True overrides a typed seed (999) with the generated one, and the
     # seed field (last output) echoes the seed actually used.
-    out = tc._on_start(*_args(seed=999), True)
+    out = tc._on_start(OP, WS, *_form(seed=999), True)
     assert captured.get("seed") == 777
     assert _ufield(out[-1], "value") == 777
-    assert len(out) == 9
+    assert len(out) == 2 and out[0] == ""
+    # The workspace is the one the server lists, and the start carries the
+    # full dataset fingerprint this session showed.
+    assert captured["data_dir"] == str(listed)
+    assert kwargs == {"expected_dataset_fingerprint": FP}
 
 
-def test_on_start_randomize_empty_seed_still_launches(monkeypatch):
+def test_on_start_randomize_empty_seed_still_launches(monkeypatch, listed):
     captured = {}
     monkeypatch.setattr(tc, "_random_seed", lambda: 4242)
-    monkeypatch.setattr(
-        tc.training_manager,
-        "start_training",
-        lambda config: (captured.update(config), {"success": True, "pid": 1})[1],
-    )
+    monkeypatch.setattr(tc.training_manager, "start_training", _starts(captured))
     # An empty/locked seed field must still launch when randomize is on.
-    tc._on_start(*_args(seed=None), True)
+    tc._on_start(OP, WS, *_form(seed=None), True)
     assert captured.get("seed") == 4242
 
 
-def test_on_start_no_randomize_empty_seed_aborts(monkeypatch):
-    calls = []
-    monkeypatch.setattr(tc.gr, "Warning", lambda *a, **k: None)
-    monkeypatch.setattr(
-        tc.training_manager, "start_training", lambda config: calls.append(config)
-    )
-    out = tc._on_start(*_args(seed=None), False)
+def test_on_start_no_randomize_empty_seed_aborts(monkeypatch, listed):
+    calls, warned = [], []
+    monkeypatch.setattr(tc.gr, "Warning", lambda message, **k: warned.append(message))
+    monkeypatch.setattr(tc.training_manager, "start_training",
+                        lambda config, **kwargs: calls.append(config))
+    out = tc._on_start(OP, WS, *_form(seed=None), False)
     assert calls == []  # validation aborted -> never launched
-    assert "Invalid configuration" in out[0]
-    assert len(out) == 9
+    assert "invalid parameters" in out[0] and "Seed" in warned[0]
+    assert len(out) == 2
+
+
+def test_on_start_refuses_without_a_trainable_listed_dataset(monkeypatch, listed):
+    """No dataset selected, one not trainable, or one the server no longer
+    lists: nothing is started, and the notice says why."""
+    from src.api.services.server_lists import ServerListRefused
+
+    calls = []
+    monkeypatch.setattr(tc.training_manager, "start_training",
+                        lambda config, **kwargs: calls.append(config))
+    out = tc._on_start(OP, {"name": None, "row": None}, *_form(), False)
+    assert "select a dataset" in out[0]
+    untrainable = {"name": "x", "row": {"name": "x", "dataset_fingerprint": FP, "trainable": False,
+                                        "not_trainable": "files missing", "manifest": "read"}}
+    out = tc._on_start(OP, untrainable, *_form(), False)
+    assert "x is not trainable: files missing" in out[0]
+
+    def unlisted(name):
+        raise ServerListRefused("gone")
+
+    monkeypatch.setattr(tc, "_workspace_path", unlisted)
+    out = tc._on_start(OP, WS, *_form(), False)
+    assert "no longer listed" in out[0]
+    assert calls == []
+
+
+def test_on_start_says_the_runners_refusal(monkeypatch, listed):
+    monkeypatch.setattr(tc.training_manager, "start_training",
+                        lambda config, **kwargs: {"success": False,
+                                                  "error": "The dataset changed since it was "
+                                                           "shown; select it again."})
+    out = tc._on_start(OP, WS, *_form(), False)
+    assert out[0] == tc.notice_html("Not started: The dataset changed since it was shown; "
+                                    "select it again.")
 
 
 def test_nonnumeric_value_reports_friendly_error():

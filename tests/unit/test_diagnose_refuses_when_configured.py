@@ -23,11 +23,14 @@ pytest.importorskip("fastapi")
 
 
 def _client():
+    """A client D8 allows (mode M1, set by `_clean_state`, and a loopback
+    request): the reload route is an operator control since M5-1."""
     from fastapi.testclient import TestClient
 
     from src.api.main import app
+    from tests.fixtures.operator_access import OPERATOR_BASE_URL
 
-    return TestClient(app)
+    return TestClient(app, base_url=OPERATOR_BASE_URL)
 
 
 def _request():
@@ -44,6 +47,9 @@ def _clean_state(monkeypatch):
         api_main.app_state, "real_pipeline_requested", False, raising=False
     )
     monkeypatch.delenv("SHEPHERD_KG_PATH", raising=False)
+    from tests.fixtures.operator_access import operator_mode
+
+    operator_mode(monkeypatch)
 
 
 def test_a_startup_configured_deployment_refuses(monkeypatch, tmp_path):
@@ -79,6 +85,25 @@ def test_a_workspace_named_only_through_reload_refuses_too(monkeypatch, tmp_path
         "a caller who named a real workspace was treated as a demo user"
     )
     assert "Marfan" not in response.text
+
+
+def test_a_reload_d8_refuses_requests_nothing(monkeypatch, tmp_path):
+    """A reload refused by D8 (here: arriving on a LAN address) is refused
+    before the route runs, so it is not a request for a real pipeline: the
+    demo still answers. Before D8, any caller's reload, refused or not,
+    switched every frontend's diagnosis to 503 (the multi-frontend audit)."""
+    from fastapi.testclient import TestClient
+
+    from src.api.main import app
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    refused = TestClient(app, base_url="http://192.0.2.10").post(
+        "/api/v1/pipeline/reload", json={"data_dir": str(workspace)})
+    assert refused.status_code == 403
+
+    response = _client().post("/api/v1/diagnose", json=_request())
+    assert response.status_code == 200 and "using mock data" in response.text
 
 
 def test_no_fabricated_candidate_reaches_a_configured_caller(monkeypatch, tmp_path):

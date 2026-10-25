@@ -8,8 +8,8 @@ review closed it and found one P3, fixed in `2c94a4e`. **Its GB10 functional acc
 the scope agreed, passed at `2c94a4e`** (2026-10-17; 84 of 84 probes, demo and real data; the
 contract's §4, "M4's acceptance on the GB10"). Functional only: not model quality and not an
 institutional test. Merged into `main` by the owner (#126, `d2d31dd`, 2026-10-17). Phase 2 (M5)
-is not implemented; its boundaries are recorded (§6, "M5's boundaries", 2026-10-19), and it runs
-under deployment mode M1 (§4.9 question 3). §4 lists the decisions; phase 1
+is implemented on this branch, reviewed once and not merged: M5-0 (`14176c3`, `84371dd`), M5-1 (`85af1fa..bfc0b7c`), M5-2 (`badf546..da2a8b1`) and M5-3 (`4c7d12f..b2db17d`: the shared follow-ups, the probe's M5 acceptance, the internal review of all of M5 — 42 findings, none P1, every P2 fixed — and two UI polishes from the acceptance screenshots) are pushed; full suite 5116 passed, 14 skipped. Delivered for the reviewer's review on 2026-10-22 (`150105f..8242b47`), which found no P1, seven P2 and the probe's W11/RW3 timing. M5 is implemented, reviewed once with seven P2 now fixed, incremental review next, GB10 acceptance after: the fixes are implemented and not yet reviewed (P2-1, P2-6 and P2-7, the evaluation boundaries, under D5; P2-2 under §6, the Training Console; P2-3 and P2-4 under §6, the GPU lock; P2-5 under §6, the charts; W11/RW3 under §6, Acceptance), and neither "review passed" nor "GB10 acceptance passed" (the probe's M5 phase) is claimed. The owner decided on 2026-10-22 that stopping the backend stops its jobs. Before the incremental review our own root-cause review of those fixes (five lenses, each finding checked by a skeptic; the owner said the incremental review checks that problems are solved at their root, not patched on the surface) found four P2 and seventeen P3 of the same classes at entry points the fixes had not reached; they are fixed too, implemented and not reviewed: the dashboard's Load is bound to the model it showed (EB-1), a continued run to the parent it showed (P22-S1), the workspaces root is the GPU lock's one name and `SHEPHERD_GPU_LOCK_FILE` is no longer read (P24-S1), and the probe's M4 flow reads its own registry and checks P2-6's state end to end (INT-1); what was left is BACKLOG 42, 45 and 46. Our integration review of that round found, after each finding's verification, no P1 or P2 and sixteen P3 where one concern still had two mechanisms or a guard sat at a consumer; round 3 of the review fixes closes them, implemented and not reviewed: a shown checkpoint, cohort version or report is compared on the one read that parses it, before parsing (the Load, the test job's version, the Test page's Register, the Diagnosis card); on the Test page what the session saw of the job has one writer, the poll, and the selection with Start and its reason is written in one queued order, as is the Training run bar's workspace (the display pieces, Training's cache and its chosen parent keep the writers BACKLOG 46 lists); the backend stops its job once per shutdown and says when it cannot attach to the server's signals, Restart Backend's last check and its exec are one step, and on POSIX the process a supervisor starts is the server. What is left is BACKLOG 42, 45 (the README and the playbook), 46 (narrowed) and 47 (a limit of the self-exec restart). **The reviewer's incremental review of `8242b47..2887506` (2026-10-23)** checked the seven P2 as fixed (P2-1's original hook now registers the bytes shown, which it judged correct), found one new P2 and two P3 classes, and asked for a narrow close-out, implemented and not yet reviewed: on the Training page every piece drawn from the selection is written only by the queued render in the run bar's group, and the fast poll writes only the job runner's status pill and hands a change to that render, so a late poll can no longer show one dataset while Start trains another (P2-NEW-1); the tests that read process states share one reader that treats a process reaped mid-read as gone, the real trainer's stop test holds its workers by construction, and the job runner reaps an adopted worker that ends while its group is checked (found by that close-out's verification); README and the training playbook work as written and point to the guide's settings (BACKLOG 45). The reviewer's incremental review of that close-out (`2887506..87d189c`, 2026-10-23) found no P1 or P2 and closed the three, keeping `99616a9`; **the GB10 functional acceptance of a clean deployment passed at `b14c4de` (2026-10-24)**: a fresh clone and environment from `deploy.sh`, the identified real workspace and an explicit preset; 99 of 99 probes and the run's closing check 102 of 102 (checks of the run, not product tests), reviewed by the reviewer (evidence [`m5-acceptance-2026-10-24/`](m5-acceptance-2026-10-24/README.md)); the code tested is `b14c4de`, later documentation commits not tested again. As it stood on 2026-10-24, the actual service configuration and the WebUI's manual acceptance were next, so M5 was not closed (both done since, below). **The WebUI's manual acceptance (2026-10-24/25):** its Training findings were fixed in two rounds (`4764faa`, `1f4eb05`), and the reviewer's review of `4764faa..e6ab1c3` found no new P1 or P2. A design review ([`WEBUI_UX_REVIEW_2026-10-25.md`](WEBUI_UX_REVIEW_2026-10-25.md)) found no redesign needed, and the owner and the reviewer chose a narrow close-out (its §4–§5). *Must-fix, done and reviewed (the reviewer's incremental review of `e6ab1c3..f9202b6`, 2026-10-25: no P1 or P2):* the score named "Score" and said not to be a calibrated disease probability (API field, scoring and CSV unchanged); `info=` lines and placeholders readable through the existing tokens; the Hits@K legend's own dash patterns; report rows that read alike told apart. *Passed:* the functional acceptance above (its evidence stays tied to `b14c4de`; the UI increments since carry their own tests). *The owner's local UI recheck at `f9202b6`* (2026-10-25, read by the reviewer) accepted F1 and F5 at the real window and evidenced a normal start and stop, the existing model's load, a diagnosis and its exports, whose identity matches the files on disk; it found the written explanation still saying "Confidence: HIGH", fixed after it at the explanation's generators (`ff664f6`; the reviewer's incremental review of `d486839..773dc4a`, 2026-10-25: no P1, P2 or P3). *The close-out round at `773dc4a`* (2026-10-25, read by the reviewer; [`m5-webui-acceptance-2026-10-25/`](m5-webui-acceptance-2026-10-25/README.md)) supplied the rest of the planned manual acceptance: Test's import, measurement, registration by hand and read-back, Models' record and ordering warning, the operator controls refused to a read-only tab, and a normal stop; the Test run card's "Not registered" from the run's end, beside Result's "Registered", now says it is the run's end (`9a4273d`; the reviewer's review of `b326ee3..a9e375c`, 2026-10-25: no P1 or P2). **M5's agreed functional scope is complete, reviewed and accepted, awaiting its pull request's merge (2026-10-25)**: the GB10 functional acceptance of a clean deployment at `b14c4de` (99 of 99 probes), the WebUI's manual acceptance in rounds (the training rounds at `b14c4de`, the local recheck at `f9202b6`, the close-out at `773dc4a`; [`m5-webui-acceptance-2026-10-25/`](m5-webui-acceptance-2026-10-25/README.md)), and the reviewer's reviews of every increment, the last (`b326ee3..a9e375c`) with no P1 or P2. This is not an acceptance of the WebUI's usability (BACKLOG 52 stays open, with the owner's report that the pages are overloaded), not a release (BACKLOG 50, the PyG pin, is required before one) and not an institutional or clinical test. The owner authorised the pull request; its merge follows the repository's CI and review. *Later, not M5 gates:* BACKLOG 52. *Not M5's (cross-reference, 2026-10-25):* the GNN's own disease ranking (every disease scored, raw cosine), SP taken out of the ranking and offered only as an optional post-ranking analysis surface (sort or filter the view, the canonical rank kept, conditions C1–C10), and SP computed once for the whole selected set when the result is produced (path evidence lazily, per page) are work item B-1 ([`DISEASE_SCORER_POLICY.md`](../DISEASE_SCORER_POLICY.md) §1, §1.1, §1.2, §2; gated, §6): decided, not implemented, not part of M5's close and not asked again; M5 keeps to its small fixes, the remaining manual acceptance and recording its evidence, with no UI redo and no new scorer. Each step's "as implemented" note is in D4, D5, D7, D8 and
+§6, "M5's boundaries" (2026-10-19). It runs under deployment mode M1 (§4.9 question 3). §4 lists the decisions; phase 1
 runs on the engineering defaults §4.9 records, each asked of the owner once, and an answer
 changes a default without adding a second path.
 
@@ -27,6 +27,13 @@ changes a default without adding a second path.
   step 5).
 - §2.1's ledger location follows the run layout; citations in the sections touched name
   functions rather than lines.
+
+**Amended 2026-10-19, later:** the reviewer's six decisions, relayed by the owner: D8 gates every
+administrative operation, training start and stop included, with no exceptions left; ordering by
+test score is answered (§4.9 question 1); import sources come from a server intake directory
+(D7); registration takes reports from the registry's report store only (D5); and §6, "M5's
+boundaries", adds the loopback default bind and one GPU lock for managed training and
+evaluation jobs.
 
 **Amended 2026-10-19:** §4.9 question 3 is answered (deployment mode M1), and §6 records M5's
 boundaries ("M5's boundaries"), both from the reviewer's M5 boundaries as the owner relayed
@@ -313,7 +320,8 @@ last one says what M4 changed.
   (`scripts/launch/shep_launch.py:17`), and the systemd unit keeps it while SPEC_4 item C1 is
   open. Gradio is mounted at `/ui` in the same app, and every UI callback is an HTTP endpoint.
   Anyone who can reach the port can therefore trigger any UI action, the Training Console's
-  included.
+  included. *Since M5-1 (2026-10-20):* the bind defaults to `127.0.0.1` and every operator
+  control, in the API and in the dashboard, checks D8 (D8, "As implemented").
 - **Authentication.** The API has none. `docs/working/results-review/SPEC_4_DEPLOYMENT_SECURITY.md`
   (normative, draft) classes reload, config and checkpoint inspection (C3), and training start
   and stop (C4), as **disable or protect**. The Gradio handlers call the managers directly, so
@@ -532,10 +540,31 @@ so the aim is to make that use visible and comparable, not to forbid it.
 
   Nothing removes an entry: not a rename, re-map, relabel or "baseline" label. The history
   makes use for selection visible; it does not pretend to prevent it.
-- **Per role.** Ordering is offered for research roles, MyGene2 among them. For the
+- **Per role.** Ordering is offered for research roles, MyGene2 among them. *Since 2026-10-19
+  (§4.9 question 1):* by the cohort version's declared purpose, its role, never by the source's
+  name; a MyGene2 cohort offers ordering only when its role declares that purpose. For the
   institutional acceptance role, ordering by its score *is* selecting by it.
   **Recommendation:** off by default there, unless the institution decides otherwise (§4.9
   question 1).
+
+**As implemented in M5-1 (2026-10-20), backend only:** `order_by_test_score`
+(`src/evaluation/ordering.py`) is one pure function over ledger records of one cohort version
+(its manifest digest) and one scoring-semantics digest. It is offered only for a role the caller
+passes from `SHEPHERD_ORDERING_ROLES`, and never for `institutional_acceptance`, even when listed.
+The fixed rule (`chosen_record`) takes the lowest registration sequence among records with
+`regime.deterministic_algorithms` true, else the lowest overall. A record whose sequence or flag
+cannot be read is not picked around. A pick whose key is contested, or whose state cannot be
+checked (`StoreScan.state`, D5), is listed as not ordered, and the next record is never promoted.
+Mean rank is lower-better and ties share a position. One digest with records in two ledgers is
+not ordered. A row whose regime is not the most common one is marked. A record on the version
+naming another role than the caller's stops the ordering, and each candidate names its ledger
+(review, 2026-10-20). The usage history is `<version>/reports/usage.jsonl`
+(`src/evaluation/report_store.py`), append-only. The measurement appends each run after its
+report is published, before its outcome file, `register_report` each registration that wrote a
+ledger, and `record_model_load` serves M5-2's Load from an ordered list. Automatic selection is
+kept away from the ledger by the import-linter contract `selection-ignores-test-results` (direct
+imports of the reload route and `checkpoint_paths`) and a behavioural test. Model Management and
+the Load control are M5-2's (done: §6, "M5's boundaries", Model Management as implemented).
 
 ### D5 — The checkbox, reports and records
 
@@ -549,6 +578,18 @@ The owner's semantics, followed as stated:
   the Test tab, as a **whole report**.
 - **"By hand" means choosing which report, never what it says.** No metric is typed, edited or
   copied in by hand.
+- **Registration takes a report from the registry's report store only** (the reviewer's decisions, relayed by the owner, 2026-10-19).
+  Checking for disagreeing reports under the key needs the store, which an outside copy cannot
+  give, so `--record`, the Test tab and `record_evaluation.py --report` all go through the one
+  registration function on a report the store holds. Its place in the store is not taken as
+  proof: the source is located through the registry's own structure and refused when that
+  cannot be established, never guessed and never falling back to a copy; the digest,
+  checkpoint and cohort checks all stay; and a registry moved as a whole still works once
+  `SHEPHERD_REGISTRY` names its new place, so no original absolute path becomes a permanent
+  identity. A copy can still be shared and read; it is not an entry point for registration,
+  since only the deployment's registry, the one `SHEPHERD_REGISTRY` names, is (compared by
+  resolved path; the M5 review's P2-7, 2026-10-22). No database, signature or second writer is added.
+  This narrows M4's `record_evaluation.py --report`, which accepted a report anywhere.
 - **No status gate.** Revision 1 required a candidate→baseline promotion before recording; that
   is dropped. A cohort version is usable once it is imported and verified. "Baseline" may be
   shown as a label. Setting it writes no data and clears no usage history.
@@ -644,6 +685,151 @@ record: the record keeps its first report's R10 and environment, and when the la
 differ, the registration says so in one sentence naming the report that keeps them. The
 disagreement block, contested states and investigation notes are phase 2.
 
+**As implemented in M5-1 (2026-10-20):**
+- **Registration from the store only.** `register_report` (both entry points) finds the version
+  from the report's resolved path, `<registry>/versions/<label>/reports/<run id>/report.json`,
+  and resolves it (`locate_store_report`). It then requires the report's cohort block to equal
+  `cohort_version_block` of that version, and the run directory to be named for the measured
+  checkpoint. A copy elsewhere, or a path off that structure, is refused before it is read,
+  saying to register the store's original. The
+  digest, checkpoint and ledger checks are unchanged.
+- **Only the deployment's registry** (the M5 review's P2-7, BACKLOG 37; implemented
+  2026-10-22, its core issue checked by the reviewer's incremental review of `2887506`,
+  2026-10-23). A copy of the whole registry holds the same bytes in the same
+  structure, so it used to register too, with its own usage history and its own block. Now the
+  registry a report's path names must be the one `SHEPHERD_REGISTRY` names, both resolved
+  (`server_settings.deployment_registry_refusal`; never device and inode, which can be 0 for
+  every file on some Windows volumes): `locate_store_report` checks it before anything in the
+  registry is read, and `register_report` refuses otherwise with `NotFromTheDeploymentRegistry`,
+  the Test page, `--record` and `record_evaluation.py` alike. Unset, every registration is
+  refused saying to set it as the service's environment sets it. A link to the deployment's
+  registry is that registry; the same directory reached through a bind mount resolves elsewhere
+  and is refused, the message naming the path to use. A registry moved as a whole registers once
+  `SHEPHERD_REGISTRY` names its new place. **`measure_scorer.py --cohort` measures only there
+  too**, refused before the GPU lock, the device or any input (D7: every run on the acceptance
+  cohort is in its usage history, D4), so the "cannot be registered later" cases are gone.
+  *Since the review of `8242b47` (EB-2 of the root-cause round; implemented, its incremental
+  review next):* the root checked is the root the run reads and writes through
+  (`_refuse_another_registry` returns it and `main` passes it to the run), so a `--registry`
+  link retargeted while the lock is taken or the device starts cannot move the measurement, its
+  report or its usage-history entry into another directory. `--record` whose deployment
+  registry stops being the one `SHEPHERD_REGISTRY` names during the run (that link retargeted)
+  offers no register-later command. The command line reads the variable from its own shell, so
+  a command run with it set to another directory on purpose uses that one: the rule catches a
+  registry reached by mistake, as D2 says of the store's other rules, and is not tamper-proof.
+- **The report that was shown** (the M5 review's P2-1; implemented 2026-10-22, not yet
+  reviewed). `register_report(..., expected_report_sha256=...)` compares the digest shown on
+  the one read it registers, before the bytes are decoded (M4's compare-before-parse,
+  `read_report`), and refuses other bytes, another valid report or damaged ones, with "… is not
+  the report that was shown … select it again", nothing written; the Test page's Register passes
+  the digest it showed and the settings it found the report by. Since round 3 of the review
+  fixes (F2, implemented) that read is the page's only one and its comparison the only judge:
+  the page no longer reads the report first, and the ledger's place comes from the same read.
+  So a swap is refused when it lands before that read (before the click, or when the page has
+  found the report, `resolve_report` returning) and registers the bytes shown when it lands
+  after it: the reviewer's reproduction swaps the file when `ledger_checkpoint` returns, which
+  since F2 runs inside the registration after its one read (the placement passed in), and the
+  record names the digest shown, the replacement never recorded. Refusing there would need a
+  second read, a second judge. That reproduction as written therefore expects a refusal it no
+  longer gets; the same swap at `resolve_report`'s return is refused in the registration's
+  words, nothing written (both in
+  `test_the_reviewers_swap_is_refused_before_the_one_read_and_registers_the_bytes_shown_after_it`).
+- **The block.** `scan_report_store` builds every stored report with `build_record`, groups the
+  records by `record_key` and compares them with `differing_fields`, the comparison
+  `append_record` now uses too. A contested key refuses every registration under it
+  (`RunsDisagree`), the same report again included. A key that cannot be checked is refused too
+  (`DisagreementNotChecked`): an unreadable report, a link out of the store, or a report whose
+  key cannot be told affects every key; a report `build_record` refuses affects only the key its
+  manifest names. Under `--record` the refusal exits 3 and offers no register-later command;
+  without it, the run checks the same way after publishing (`key_refusal`) and prints "runs
+  disagree — investigate" instead of the command (review, 2026-10-20). A run's own report that
+  no longer resolves into the store is refused as not the one it published.
+- **Notes** (`add_investigation_note`) go to `<version>/reports/notes.jsonl`: the key, who (as
+  typed, unverified under M1), when and what. They are accepted only for a key that a stored
+  report holds, and nothing reads them to decide anything.
+- **The switch.** `measure_scorer --deterministic` sets deterministic algorithms (never
+  warn-only), cuDNN deterministic, benchmark off and `CUBLAS_WORKSPACE_CONFIG` before CUDA
+  starts, refuses rather than falls back, and restores the process's settings. The job runner's
+  hooks are `--expect-checkpoint-sha256`, `--expect-version-sha256`, `--outcome FILE` (a new
+  file: an existing one is refused, so no earlier run's outcome reads as this one's) and
+  `registration.report_state` (kept and registered, read from disk).
+- **Where the contested state is shown (M5-2, 2026-10-21):** the Diagnosis card's "Recorded
+  tests: N · K contested", the model list's rows and Models' records read it from the version's
+  report store (`model_list.recorded_tests_for`, `scan_report_store`). With `SHEPHERD_REGISTRY`
+  unset, or a record's version not listed, they say "contested state not checked", never
+  uncontested; since the M5-3 review the contested and the uncheckable records are counted
+  apart ("3 · 1 contested · contested state of 1 not checked"). **Since the M5 review's P2-6
+  (BACKLOG 36; implemented 2026-10-22, its core issue checked by the reviewer's incremental
+  review of `2887506`, 2026-10-23)** `GET /api/v1/evaluations/loaded-model`
+  gives each record it shows its state (`contest`: uncontested, contested with the differing
+  fields and runs, or cannot_be_checked) from the same function the dashboard uses
+  (`src/api/services/record_states.contest_states`, moved there from the dashboard's model list
+  so that the API imports no UI module), computed for the records shown only, without the
+  problems' words, in the thread pool once the served identity is taken; the read-only Models
+  view shows the route's answer and computes nothing itself, so an API client and the dashboard
+  cannot disagree. A contested state is never downgraded by a value it cannot show: a run's
+  value that is not a finite number is null in the route (and "not a finite number" on the
+  page), and a contested state whose details cannot be carried (they fail validation, or cannot
+  be built) is shown contested without them. *Since the review of `8242b47` (EB-3 and EB-4 of
+  the root-cause round; implemented, its incremental review next):* **the runs too.** D5's
+  state of each run's key is part of the one run listing (`server_lists._report_items`, from
+  one scan of the version's store), so `GET /api/v1/cohorts` carries it (`contest`, without the
+  problems' words) and Research › Test shows the same state from the same listing instead of
+  its own join; the scan names every report it read by its run id (`StoreScan.run_key`,
+  `run_status`), so a report whose key cannot be told is "cannot be checked" on both, never no
+  state, and no run id is read out of a problem's words. A run's lookup is bound to the digest
+  of the bytes its kept/registered state read, so the two describe one byte string: a report
+  replaced between the scan's read and the state's is "cannot be checked" and is given no key.
+  Records and runs turn a scan into a shown state through one layer
+  (`record_states.read_report_store`, `run_contest`): one wording for a store that cannot be
+  scanned, one place that leaves the problems' words out of an open route. The cost is one
+  scan of each listed version's store per request of the open route, each kept report read by
+  the scan and again by the state (BACKLOG 36). The loaded-model route finds a record's
+  version by reading each version manifest once (`CohortVersions.listed` on `list_versions`),
+  and its docstring says what it reads: the ledger, the manifests and the shown records'
+  stores.
+  Neither Models nor the API shows the investigation notes D5 keeps with a key (BACKLOG 40). The
+  scan is not atomic with a run publishing into the version (one writer).
+
+**As implemented in M5-2 (2026-10-20), the Test page** (`src/webui/components/test_page.py`):
+each run directory of a version's store is listed with kept and registered from
+`stored_report_state` and its key's state from `scan_report_store`; a contested key reads "runs
+disagree — investigate" with the fields that differ, its reports' Register is off, and the
+investigation notes kept with the key (who, when, what) are listed and added, gated, lifting
+nothing. Register calls `register_report` (store only), which, since the M5 review's P2-1,
+compares the digest shown on the one read it registers (above), and files the record beside the
+checkpoint the server lists holding the weights the report measured, found by full digest in the
+workspace's checkpoint list (never the report's recorded path); the one function checks the
+store, the version, the block and the checkpoint's bytes again. *Since round 3 of the review
+fixes (F2), implemented:* Register reads and compares no report itself; the listed file is found
+from the registration's own read (`place`, the page's placement passed in). For
+the selected report, an operator's page asks `report_state` again with that listed file, so "not
+registered" is said for the ledger a registration from the page would write; *since that round's
+verification (A-3), implemented,* that answer too comes from one read, `report_state`'s, which
+places the ledger through the same `place` (a report changed since the list is never decoded to
+place one, and the list's answer stands), so the page reads no report itself. *Review fixes
+(2026-10-21):* Register and that answer find the listed file in one order: the file the run read
+when it is listed with those weights (the ledger `stored_report_state` reads), then a listed copy
+in the workspace the run measured, then one in the workspace shown, so a report measured on one
+workspace is not filed beside a copy in another (a digest with records in two ledgers is left
+out of D4's ordering). Every row is asked again from the session's checkpoint listing; another
+workspace is listed only for the selected report, D8 asked on that request. Notes that cannot be
+read are said, never shown as "no note". *Since the root-cause round (2026-10-22, P2-5-F2;
+implemented, not reviewed):* every event that writes the session's selection (the checkpoint
+listing, the version's reports, the report shown, and the list and result drawn from them) runs
+in one queued group of one (`SELECTION_CONCURRENCY`: page open, workspace, version, a report's
+row, ↻, the read after an act or an import), first asked first run, each from what the one
+before it wrote; Gradio orders no two events of a session otherwise, so an answer that ended late
+wrote back the selection it started from. Every choice joins it, also one made while an earlier
+one waits (`trigger_mode="multiple"`: Gradio's default drops it). The 5-second poll writes no
+selection: on the tick that sees the job change it hands the store's re-read to that group.
+*Round 3 (2026-10-22, F6; implemented, not reviewed):* the poll is the one writer of what the
+session saw of the job, so it hands each change over once, and only that hand-off chooses an
+ended run's report (a run the poll saw busy, or one that started and ended between two ticks;
+the read after an act decides no end; the consumer-side guard of the first version is deleted);
+the poll writes the job card and Cancel only, and Start and its reason are written in the group
+(BACKLOG 46).
+
 ### D6 — How a test cohort is imported, identified and versioned
 
 **Two levels:**
@@ -702,6 +888,26 @@ two about the data (questions 3 and 4).
   are the source file, the mapped samples, and the per-patient rank and prediction files.
 - **The UI shows aggregate metrics only.** The import preview lists excluded cases by their
   case identifier only, on the machine.
+- **Sources come from a server intake directory** (the reviewer's decisions, relayed by the owner, 2026-10-19). The operator places a
+  `shepherd-cases/1` file in it and chooses it from the Test tab's list; the same importer
+  previews and commits it. The intake directory and the registry are both outside the
+  repository and set by server configuration; the backend checks the chosen file again and
+  refuses any other path or a link that leaves the directory. The browser preview shows only
+  the exclusion reasons and their counts; the per-case exclusion detail stays in a controlled
+  record on the machine, for troubleshooting. **No browser upload in M5:** that is this
+  round's scope, not a judgement that an upload is unsafe; it would later feed the same
+  importer once a controlled staging area and its cleanup exist (BACKLOG item 25). *As
+  implemented in M5-2 (2026-10-20):* the Test page lists the intake directory's `*.json` files
+  by name (`server_lists.list_intake_files`; nothing read to list them) and resolves the chosen
+  name in that listing again (`resolve_intake_file`), refusing any other name, a path or a link
+  that leaves the directory; the preview and the commit run `prepare_import` and
+  `commit_import` in the service (on the CPU; the graph is read), one at a time, and the page
+  keeps the manifest's aggregates only, so no case id reaches the browser; Commit prepares again
+  and commits under the preview id shown. There is no upload component. *Review fixes
+  (2026-10-21):* a source refused as malformed (`MalformedSource`, whose problems name case ids)
+  is shown by case index only, at most ten problems, with the command-line preview named for
+  the ids; the job card's output tail and error line leave out the patient id a measurement
+  refusal names.
 - **They are stored outside the repository tree**, at a path set by server configuration and
   never by a request (SPEC_4: a client-supplied path is not trusted). *As implemented in M4:*
   phase 1 is CLI only, so the registry is the operator's `--registry DIR` on the machine: an
@@ -711,7 +917,12 @@ two about the data (questions 3 and 4).
   atomic with the write (one writer, the operator's machine). A refusal of a malformed source
   names where a value is wrong, never a phenotype or a diagnosis. No request can name the
   registry, and no configuration key is read for it yet; phase 2's controls need the server
-  configuration this rule names.
+  configuration this rule names. *As implemented in M5-1 (2026-10-20):* the service reads the
+  registry from `SHEPHERD_REGISTRY` and the intake directory from `SHEPHERD_INTAKE_DIR`
+  (`src/config/server_settings.py`), at each use and never from a request. Both are checked by
+  the registry's one rule (`check_registry_root`, which `validate_registry` applies to
+  `--registry` too: absolute, existing, outside the repository). Unset or refused, their
+  features are off and say why; no default path is assumed.
 - **Every run on the acceptance cohort is in its usage history** (D4): when it ran, on which
   checkpoint, and its result. Condition 6 is the institution's rule. The history makes its
   observance visible; it does not pretend to enforce it.
@@ -786,6 +997,75 @@ Test-tab button is a Gradio callback, an HTTP endpoint reachable by anyone who r
   - **the Training Console's resume dropdown** calls the same listing function (§6 step 5) and
     stays ungated with the rest of the Console. It is a C3 listing outside D8 until SPEC_4's
     C3 and C4 are addressed.
+- **Since 2026-10-19 there are no such exceptions** (the reviewer's decisions, relayed by the owner, 2026-10-19). Administrative
+  operations are restricted in the backend (§6, "M5's boundaries"), so one check covers, in M5:
+  - import, test start, registration and the checkpoint list, as above;
+  - **training start and stop**, through the Training Console, the API routes and the Gradio
+    events alike; the stop stays per job type;
+  - **the operations the multi-frontend audit found ungated:** pipeline reload, the UI
+    configuration save, Runtime Settings' restart and apply, the training-path save, and
+    loading a model from Model Management;
+  - the Training Console's workspace comes from the server's list; a parent checkpoint for
+    resume or extend, if still typed, only locates an item the server lists and is checked
+    like the rest. The CLI keeps its typed paths: it runs on the machine.
+  The check reads the triggering request's own arrival: a WebUI handler that reaches the API
+  through a loopback self-call is checked in the handler, never by the API's view of that
+  self-call.
+- **As implemented (M5-1, 2026-10-20).** One check, `check_operator_access`
+  (`src/utils/operator_access.py`), a pure function of the triggering request's own ASGI scope
+  and the deployment setting; one FastAPI dependency (`src/api/operator_access.py`) and one
+  Gradio helper (`src/webui/operator_access.py`, reading `gr.Request.request.scope`, the HTTP
+  call that started the event under the queue and with `queue=False` alike) call it, and
+  nothing else decides. An operator control is allowed only when all hold, and the first that
+  fails is named:
+  - `SHEPHERD_DEPLOYMENT_MODE` is exactly `M1` (read at each check);
+  - the request can be read (an HTTP or WebSocket scope with a host and port `server`, and
+    headers as byte pairs): anything unreadable, or an exception while reading, is refused;
+  - `scope["server"]` is a loopback address (127.0.0.0/8, `::1` or an IPv4-mapped form);
+    `scope["client"]`, which uvicorn rewrites from `X-Forwarded-For`, is never read;
+  - no forwarding header: the four above, and also `X-Forwarded-Proto`,
+    `X-Original-Forwarded-For`, `CF-Connecting-IP` and `True-Client-IP`;
+  - exactly one `Host`, naming `localhost`, `127.0.0.1` or `[::1]` with any port (the DNS
+    rebinding guard, added to D8's three checks);
+  - an `Origin`, when present, equal to `http://<Host>` or `https://<Host>` (the cross-site
+    request guard, added likewise);
+  - a `Sec-Fetch-Site`, when present, equal to `same-origin` or `none` (added after review,
+    2026-10-20): a GET another site's page makes with an image, a script or a link carries no
+    Origin, so the Origin check alone let such a page make the server open every checkpoint of
+    a workspace through the two gated lists. Current browsers (Chrome and Edge 76, Firefox 90,
+    Safari 16.4) send the header; an older one that sends neither is not caught on such a GET.
+  A refusal names the condition in words an operator can act on, ends "Nothing was done." and
+  never repeats a header's value. Gated: the API's reload, configuration save, training start
+  and stop, and both checkpoint lists (`GET /training/checkpoints`, and
+  `GET /workspaces/{name}/checkpoints`, mounted now); in the dashboard, Diagnosis Reload and
+  Save Config, Runtime Settings Restart and Apply, and the Training Console's Start, Stop,
+  Continue, Check checkpoint, run list and path save. The Console's run list and Check
+  checkpoint open checkpoint files, so they follow C3 like the route; the earlier exception for
+  the resume dropdown is closed. Gated handlers call the shared services in process: the
+  Diagnosis Reload runs the route's own function (`run_reload`), on the event loop as the route
+  does, and Save Config the API's one atomic writer (`write_ui_config`); none calls the API over
+  HTTP. Read-only routes stay open. A read-only status, `GET /api/v1/system/operator-access`,
+  answers for the request that asks (for M5-2's chip). A reload D8 refuses no longer marks a
+  real pipeline as requested. Tests call every gated route and every gated event through
+  Gradio's HTTP API, refused and allowed. *M5-2 changed the dashboard's set:* Diagnosis' Reload and
+  Save Config and the Training Console's path save are gone (the gated save function stays,
+  unused). "Change model…" and Models list and load through the shared model list, whose
+  listing, Load and confirmation each call the Gradio helper on their own request
+  (`model_list.list_models`, `request_load`, `finish_load`). The Diagnosis card and the Training
+  page open a checkpoint for display only for a request the helper allows. *M5-3 review
+  (2026-10-21):* a parent checkpoint typed in Continue… only locates a checkpoint the run bar's
+  workspace lists (`server_lists.locate_checkpoint`), as decided on 2026-10-19; until then the
+  typed path was opened as typed. **D8 cannot see framing**: a dashboard loaded inside another
+  site's frame makes same-origin requests D8 allows, so every response refuses to be framed
+  (`X-Frame-Options: DENY`, `Content-Security-Policy: frame-ancestors 'none'`,
+  `src/api/middleware/frame_guard.py`); "D8 protects the operator controls" holds with it.
+  *M5-2 (2026-10-20), the
+  Test page:* listing the intake directory, Preview, Commit, Start, Cancel, Register, Add note
+  and the checkpoint list each call the Gradio helper on their own request first and then the
+  shared service in process (the job runner, the importer, the registration, the report store);
+  a read-only request is shown every control disabled with the reason and no checkpoint list,
+  and the lists a start uses are the session's state, never values a client posts. No API route
+  was added.
 
 **Left to the owner** (§4.9 question 3): who operates, and which deployment mode applies on the
 machine where the controls are enabled. *Answered 2026-10-19:* deployment mode M1, operated by
@@ -804,7 +1084,24 @@ gates phase 2; question 4 is answered:
    - For the institutional cohort: which metrics, and which acceptance rule, are declared
      before the first result (EC §4.1)? **Open, and not an engineering question:** it is the
      institution's, and it is declared before the first institutional result.
-   - Is ordering by its score offered (D4)? Phase 2.
+   - Is ordering by its score offered (D4)? Phase 2. **Answered 2026-10-19** (the reviewer's decisions, relayed by the owner, 2026-10-19):
+     - a cohort version whose declared purpose is exploration, comparison and model selection
+       offers ordering; the purpose is its role, never inferred from the source's name;
+     - `institutional_acceptance` does not, until the institution's formal evaluation rules
+       exist; *as implemented (M5-1, 2026-10-20):* the roles that offer ordering are
+       `SHEPHERD_ORDERING_ROLES` (none by default), and `institutional_acceptance` is ignored
+       even when listed (`role_offers_ordering`, the one predicate D4 asks);
+     - only records of one cohort version with comparable scoring semantics are ordered
+       together, and a contested record (D5) is left out;
+     - "Load this model" from that list is offered, gated by D8 and recorded in the usage
+       history; no model is ever chosen automatically by its test score; *as implemented
+       (M5-2, 2026-10-20):* Models' shared Load writes a `model_load` entry
+       (`record_model_load`) for a list ordered by test score, whether or not it took effect;
+       newest first writes none; the sentence below is shown wherever ordering is offered;
+     - **a cohort whose scores were used to choose a model has taken part in model selection**,
+       so it is no longer an independent final test for that model; a manual choice is no
+       different, and its record in the usage history does not undo that. The UI says so where
+       ordering is offered.
 2. **The data.**
    - The actual file formats: M4 question 5 below.
    - D6's exclusion rules: a case with some lost phenotype terms (M4 question 1), and whether
@@ -1097,6 +1394,23 @@ This is one pipeline extended, not a second one.
     reported, and no record is written.
   - **There is no automatic CPU fallback.** `device` is a semantic field, so a CPU run is a
     different measurement, not a degraded one.
+  - *As implemented (M5-1, 2026-10-20):* `src/api/services/training_manager.py`, reshaped in
+    place, with job types `training` and `test`. Running and stopping both hold the one slot
+    for either type (a start during a stop was accepted before, with a regression test now);
+    `stop(job_type)` refuses across types; each monitor holds its own process; each job keeps
+    its own output tail; a test run ends `completed`, `failed` or `cancelled` (training keeps
+    `stopped`). The test command line is built from `TestRunInputs` (server lists and
+    settings), with expected digests and `SHEPHERD_DEVICE` as the device, no batch size, and
+    `--outcome` naming a new file in a directory made for the job. Once a test run ends, what
+    it published is read from that outcome file, and kept and registered from the report store
+    and the ledger by the registration's one helper (`registration.report_state`, given the
+    published digest), never from the exit status; no outcome file means no report was
+    published, unless a run directory for its checkpoint appeared meanwhile (a run stopped
+    between publishing and writing its outcome), which is read the same way and said so. A
+    stop that arrives after the process ended on its own is refused and changes nothing; a
+    test run is `cancelled` only when the stop ended it. The restart lock reads any job; the
+    stop route is a plain `def`.
+    Routes for test runs, and the Test tab, are not in this step.
 - **UI:**
   - **Test tab** (new):
     - cohorts: import with preview, source sets and mapped versions, usage history;
@@ -1231,14 +1545,22 @@ the GB10").
    - **it lists by a workspace and architecture** chosen among those the server lists, and the
      server resolves the directory. The two Training Console handlers stop setting
      `checkpoint_dir` from request values. *The handlers no longer set it since M3a-2; the
-     choice among server-listed workspaces is still to do;*
+     choice among server-listed workspaces is still to do;* *M5-1 (2026-10-20): the server
+     lists the workspaces under `SHEPHERD_WORKSPACES_ROOT` and resolves one only by finding its
+     name in that list (`src/api/services/server_lists.py`); moving the console onto it is
+     M5-2's; done in M5-2 (the Training page's run bar and Continue… list through it; §6, "M5's
+     boundaries");*
    - **training start's explicit `checkpoint_dir`**, honoured verbatim at the time, is restricted
      to directories the server resolves in this same change, since it shares the write path
      (contract M5). *Superseded by M3a-2:* every run writes into its own run directory, and what
      phase 2 adds is the network-side restriction (contract M5);
    - **its load becomes `weights_only=True`** (SPEC_4 A1). A checkpoint whose format that
      refuses is listed without metadata. *Done in M3a* (decision 10); the read keeps no digest
-     yet (BACKLOG 19.3).
+     yet (BACKLOG 19.3). *M5-1 (2026-10-20):* `read_run_checkpoints` reads each listed file once
+     through `read_checkpoint` and keeps the SHA-256 of those bytes, the Trainer's validation
+     figure, the dataset fingerprint it records and a load problem as a value;
+     `TrainingManager.get_checkpoints`, and so the route and the resume dropdown, use it.
+     `list_run_checkpoints` stays the read-free form for the reload's file check.
 6. **The UI.** The Test tab, with progress and cancellation, and Model Management. It also
    carries D8: the refusal in each state-changing handler, and the direct-call acceptance
    test.
@@ -1256,7 +1578,187 @@ neither is a prerequisite here.
 The reviewer's boundaries for M5, relayed by the owner. They narrow phase 2 above; this plan, the
 contract and BACKLOG stay the record, and no new planning document is added.
 
-- **Deployment:** mode M1 (§4.9 question 3; D8 above).
+- **Deployment:** mode M1 (§4.9 question 3; D8 above). *Its setting (M5-1, 2026-10-20):*
+  `SHEPHERD_DEPLOYMENT_MODE`, read at each use. D8's check applies it (D8, "As implemented"):
+  only the exact value `M1` enables operator controls, and unset or anything else is read-only
+  for them.
+- **The default bind is `127.0.0.1`** (the reviewer's decisions, relayed by the owner, 2026-10-19; SPEC_4 B1, §3.1). Another address
+  stays possible by explicit configuration, under SPEC_4's rules, and never lifts D8's checks on
+  operator controls; a deployment that relied on the old `0.0.0.0` default gets migration notes.
+  No account system or institutional SSO is added. *As implemented (M5-1, 2026-10-20):* the
+  launcher, `src.api.main:main()` and the systemd unit bind `127.0.0.1`; a bind to any other
+  address is refused, nothing started, unless `SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND=1`
+  (`server_settings.network_bind`), whose warning says it is risk acceptance, not a control,
+  at SPEC_4 §3.1's three enforcement points (the launcher, before it installs anything, reading
+  `--fd`, `--uds` and `--host` as uvicorn does; `main()`; and application startup, on the host
+  those two pass in as `SHEPHERD_BIND_HOST`); the launcher prints what it binds and starts
+  uvicorn with `--no-proxy-headers`; migration notes in the deployment guide (§4.13).
+- **One GPU lock for managed training and evaluation jobs** (the reviewer's decisions, relayed by the owner, 2026-10-19). Jobs the
+  WebUI or the API start and the formal training and evaluation CLIs (`train_model.py`,
+  `measure_scorer.py`) take the same lock, one per deployment whatever the workspace (since the
+  root-cause round, the deployment's workspaces root is its one name, below); a busy
+  lock is refused with who holds it, never queued. The lock covers the working process's whole
+  life, with tests for a stop, an abnormal exit and a parent and child process. What is claimed
+  is exactly that: managed training and evaluation jobs exclude each other. `flock` is
+  released only when every descriptor of its file is closed, which a child can inherit, and it
+  is cooperative, so a GPU process that does not take it is not stopped; the resident
+  inference service may still hold memory. No cross-process inference scheduling, multi-GPU
+  allocation or automatic model unloading is added; the owner's requirement that training and
+  inference exclude each other (2026-10-23) is BACKLOG 48, recorded and not started.
+  *As implemented (M5-1, 2026-10-20):* `src/utils/gpu_lock.py`. The lock file was
+  `SHEPHERD_GPU_LOCK_FILE`, or `.shepherd-gpu.lock` under `SHEPHERD_WORKSPACES_ROOT` (since the
+  root-cause round only the latter, below); with
+  neither set the lock was not configured and a CLI said so in its log and ran (changed after
+  the review of `8242b47`, below); a setting that is set but unusable refuses. `train_model.py` and `measure_scorer.py` take it right after
+  argument parsing, before the device or any input is read, and refuse naming the holder from
+  its descriptive `<lock file>.json` (exit 1, "Nothing was written."); the runner checks it
+  before a start and its child takes it itself. The descriptor is close-on-exec; tests cover a
+  normal exit, SIGTERM, SIGKILL, a program the holder starts (does not keep it), a child
+  forked without exec (a holder that ends normally releases it for the child too; one that is
+  killed or exits without releasing leaves it with the child until it exits, and the message
+  says the recorded holder exited) and two workspaces sharing one lock. Windows uses
+  `msvcrt.locking`, untested.
+  *After the reviewer's review of `150105f..8242b47` (2026-10-22; implemented, its incremental
+  review next, the GB10 acceptance after):* **no managed job runs without the lock** (P2-4):
+  with neither setting set, the runner refuses every start and `train_model.py`,
+  `measure_scorer.py` and `setup_demo.py --train-model` (which trains through the same trainer
+  and now takes the lock) refuse before anything is read, each saying how to configure it; the
+  location's one rule is the server settings' (`server_settings.gpu_lock_location`), which
+  `gpu_lock.lock_location` applies, and the dashboard's chip says the lock is not configured and
+  jobs are refused. **A job's processes end with it** (P2-3): each job the runner starts leads
+  its own process group (POSIX `process_group=0`; Windows its own console group); a stop sends
+  SIGINT to the main process only, then SIGTERM and SIGKILL to the group (systemd's
+  `KillMode=mixed`), and once the main process has been waited for the runner ends what is
+  left of the group, reaping zombies it adopted and, on Linux, counting only members that are
+  not zombies (`/proc/<pid>/stat`), before it records how the job ended and frees the slot; a
+  group is recorded only for a process it started, with a pid above 1, that leads it. On Windows
+  a stop that cannot send CTRL_BREAK_EVENT (no console) goes on to TerminateProcess; DataLoader
+  workers are spawned there and do not inherit the lock's handle; a Job Object is not added
+  while the Windows backend is untested. A training CLI (`train_model.py`, `setup_demo.py
+  --train-model`) whose main process alone is ended, by `kill <pid>` or `kill -9 <pid>`, leaves
+  its forked DataLoader workers holding the lock until they notice (torch's 5 s watchdog plus
+  the sample in progress, longer if one hangs); `kill -INT <pid>` releases it at once, even sent
+  to the main process alone, and `kill -TERM -- -<pid>` ends the whole group when the CLI leads
+  one; `measure_scorer.py` forks no workers (a worker's PR_SET_PDEATHSIG, the critic's optional
+  measure, is not added). **Stopping the backend stops its jobs** (the owner's decision,
+  2026-10-22): the backend stops the runner's active job (`TrainingManager.end_active_job`,
+  bounded by the stop's escalation) from the shutdown signal on: `src/api/main.py` wraps the
+  server's SIGINT and SIGTERM handlers and routes a hangup and a Ctrl-\ (SIGQUIT) to the
+  SIGTERM one, so the stop starts at the signal, not after uvicorn's wait for open connections,
+  which an open dashboard tab's heartbeat stream held until the tab was closed (found by the
+  verification of the fix, 2026-10-22), and the dashboard's heartbeat streams end at the same
+  signal; the stop closes the job runner's GPU slot first, so no job starts while the backend
+  waits for its connections, and the lifespan's shutdown waits for that stop. The launcher in its browser
+  mode waits for the server through a Ctrl-C (since round 3 of the review fixes it waits beside
+  the server only on Windows, and becomes the server on POSIX, below); a second Ctrl-C ends uvicorn's wait for
+  connections and the backend still waits for the job's stop; SIGKILL or the out-of-memory
+  killer still leave the job running, and `--reload` is gone from the printed commands and from
+  `python -m src.api.main`, since each reload's shutdown would stop a training. Tests:
+  `tests/unit/test_job_process_group.py`, `tests/unit/test_backend_shutdown.py`,
+  `tests/integration/test_backend_stops_its_job.py`, `tests/unit/test_gpu_lock.py`.
+  *Root-cause round (2026-10-22; implemented, not reviewed):* **the workspaces root is the
+  lock's one name** (P24-S1). The location's one rule had two sources with a precedence
+  (`SHEPHERD_GPU_LOCK_FILE` won over the root), so a service with a lock file and the root and a
+  shell given only the root both counted as configured, locked two files and ran side by side.
+  A first form kept the lock file where no root was set, which left the split reachable (the
+  round's verification, T2-V1: a service with a lock file and no root lists no workspace, but
+  `POST /api/v1/training/start` takes a workspace path and runs a job beside a shell given only
+  the root). So **`SHEPHERD_GPU_LOCK_FILE` is no longer read**: the lock is
+  `<root>/.shepherd-gpu.lock` and nothing else names one; with no root, the runner, the CLIs and
+  the chip refuse as not configured; the tests and the probe take a lock of their own by naming
+  a workspaces root of their own (an empty directory), and the status's `source` field went with
+  the second name (BACKLOG 44, closed by it). The limit that remains is inherent to a
+  cooperative lock named by each process's environment: a process that names another root takes
+  another file. **One reader of the lock's state** (P24-S3): `gpu_lock.lock_state` alone turns the location and the
+  probe into a status (with the holder's record), the chip reads it, and "not configured" is
+  the setting's structural `unset`, never its words. **The GPU slot has a closed state**
+  (P23-1): the backend's stop closes it at the signal (`TrainingManager.close`, which returns the
+  job holding it read in the same step), so a start still under way is refused ("The backend is
+  stopping; nothing was started.") by every route; Restart Backend closes it only when idle and
+  open (a stop begun during its delay owns the slot and aborts the restart; a failed exec opens
+  only the restart's own close; T2-V2) and keeps it closed through the exec. **The signals a job
+  no longer gets are defined once** (P23-2): `training_manager.JOB_DETACHED_SIGNALS`, beside the
+  spawn; the backend and the probe route each of them, Ctrl-\ (SIGQUIT) included, which used to
+  leave the job training with the lock (the backend still ends by SIGQUIT, after the job's
+  stop); the backend tells the server's own handlers by the handler, the one SIGTERM has, never
+  by a copy of uvicorn's list of signal names (T2-V4). **The systemd unit hands its
+  stop to the backend** (P23-3): `KillMode=mixed` (SIGTERM to the server, the main process since
+  the launcher execs into it; SIGKILL to what is left once it exits) and `TimeoutStopSec=150`,
+  which covers `END_ACTIVE_JOB_SECONDS` (110 s), checked against the runner's constants by a
+  test. **One wording for a CLI killed by hand** (P23-4, above), and `build_knowledge_graph.py`'s
+  printed training step says the lock this shell takes, or the rule's own refusal (INT-3).
+  Tests: `tests/unit/test_gpu_lock.py` (the cross-process service/shell case through the
+  runner's start check and `train_model.py`), `tests/unit/test_webui_chips.py`,
+  `tests/unit/test_backend_shutdown.py`, `tests/unit/test_backend_control.py`,
+  `tests/unit/test_service_unit.py`, `tests/unit/test_probe_m5_acceptance.py`,
+  `tests/unit/test_data_pipeline.py`, `tests/integration/test_backend_stops_its_job.py` (a start
+  under way at SIGTERM refused; Ctrl-\; the unit's start and stop).
+  *Round 3 of the review fixes (2026-10-22; implemented, not reviewed):* **one stop of the job
+  per shutdown** (P3-4): the lifespan's end waits for the stop a signal began and no longer stops
+  again, which for a job SIGKILL cannot end waited a second `END_ACTIVE_JOB_SECONDS`; the backend
+  now spends at most the one bound `TimeoutStopSec=150` covers. **Restart Backend's last check and
+  its exec are one step** (P3-3): `TrainingManager.exec_if_closed_for_restart` runs the exec under
+  the runner's lock only while the restart still owns the closed slot and no shutdown signal has
+  been recorded, and the backend's signal handler records the stop before anything else
+  (`record_stop_signal`, a plain store), so a stop whose thread has not yet closed the slot refuses
+  the exec too. The one residual, a limit of this self-exec restart that no check in the process
+  can close (a restart made by a supervisor could close it; none is built): a stop signal whose
+  handler had not recorded it when that check ran is lost with the old image (systemd then
+  SIGKILLs the service after `TimeoutStopSec`; in a terminal a second Ctrl-C stops the new
+  backend; BACKLOG 47). **The PID
+  that was started is the server on every POSIX start path** (P3-2): `launch_shepherd.sh` execs
+  the launcher, and the launcher execs into uvicorn in its browser mode too, the browser opened by
+  a helper (a new interpreter that forks once and exits, so the server has no child of the start);
+  chosen over a forwarding path in the waiting launcher, which would have been a second mechanism
+  for the same rule and could not reach the script's case. `serve` waits beside the server only on
+  Windows, where exec changes the PID; there Ctrl-C and Ctrl-Break reach the server through the
+  console, and a SIGTERM is TerminateProcess, which nothing can pass on. **The shutdown's
+  fallbacks say so** (F4): a warning when the server's SIGTERM handler cannot be wrapped in the
+  main thread (the job's stop and the closed slot then begin only at the lifespan's end, after
+  every open connection), a debug line off the main thread, and a warning when the mounted
+  dashboard has no `stop_event`. **Why the dashboard's streams are ended through `stop_event`,
+  not uvicorn's `timeout_graceful_shutdown`**: setting the served Gradio app's `stop_event` is
+  what Gradio's own server does when it stops (`Blocks._end_streaming_responses`), and it ends the
+  heartbeat streams only. `timeout_graceful_shutdown` (unset by default: no bound) cancels every
+  request still in flight once it runs out, real unfinished requests included, which the backend
+  deliberately waits for (`test_the_job_stops_at_the_signal_while_a_connection_holds_the_backend`),
+  and holds the exit for its whole length whenever a tab is open. It could only bound what is
+  left of the drain, as a complement; for the service, systemd's `TimeoutStopSec` already bounds
+  it. **The operator's files:** the unit template offers commented `SHEPHERD_WORKSPACES_ROOT` and
+  `SHEPHERD_REGISTRY` lines and says M1 is necessary, not sufficient (P3-7); `.gitignore` ignores
+  everything under `data/workspaces/` but its `.gitkeep`, and the lock's name anywhere, so
+  `git clean -fd` or `git stash -u` no longer delete a held lock (P3-8); `measure_scorer.py`'s
+  docstring states the lock rule as implemented (P3-5). **An upgrade precondition** (P3-1): a job
+  started by an earlier build is not seen by this build's lock (a build from `main` takes none; an
+  M5 build from before the root-cause round may hold the file `SHEPHERD_GPU_LOCK_FILE` named), so
+  the deployment guide (§4.11) says to upgrade only while no training or test run is running and
+  to remove `SHEPHERD_GPU_LOCK_FILE` afterwards; no check of the retired name is put back into the
+  code. Tests: `tests/unit/test_backend_shutdown.py`, `tests/unit/test_backend_control.py`,
+  `tests/unit/test_service_unit.py`, `tests/unit/test_launcher_browser_wait.py`,
+  `tests/unit/test_gpu_lock.py`, `tests/integration/test_backend_stops_its_job.py`
+  (`launcher-sigterm`, `script-sigterm`).
+- **Gradio 6.30.0 is M5's first commit** (the owner, 2026-10-20, with the reviewer's
+  boundaries). The smallest dependency change: `gradio==6.30.0`, and in `uv.lock` only what it
+  forces (gradio-client, starlette, huggingface-hub; brotli and hf-gradio new). The mount
+  switches off run history, monitoring, MCP and server-side rendering, and a guard in front of
+  the mount refuses the two routes Gradio gives no switch for, `file=<URL>` (fetched
+  server-side since 6.20) and `process_recording` (deployment guide §4.10; BACKLOG item 34).
+  CORS is tightened in the D8 batch: by default no cross-origin browser access is granted;
+  administrative operations are still checked by D8 in the backend; the parent app keeps its
+  `CORSMiddleware`, with an empty allow list, so the mounted Gradio follows it. Until then the
+  CORS configuration was unchanged (`allow_origins=["*"]`, `allow_credentials=True`), and under
+  Starlette 1.9 it echoed every `Origin` with credentials allowed on every response (0.52.1 did
+  so only when a cookie was sent, and sent `*` otherwise). *As implemented (M5-1, 2026-10-20):*
+  `fastapi.middleware.cors.CORSMiddleware` itself (Gradio defers only to that class, never a
+  subclass) with `allow_origins=[]`: no `Access-Control-Allow-Origin` for another origin on
+  `/api`, `/ui/config` or `file=`, on a LAN Host too, and every cross-origin preflight is 400;
+  same-origin works. Gradio's upload route, which the dashboard does not use and which a
+  cross-origin multipart POST still reaches (up to 1000 files a request), is refused in front of
+  the mount before its body is read; its 1 MB per-file limit (`max_file_size`) stays as a second
+  line of defence (deployment guide §4.10, §4.13). Platforms are
+  accepted on the backends actually run: Linux x86_64 (the development environment) and Linux
+  ARM64 (the homelab, checked by the reviewer); Windows browsers are in the browser checks, and
+  a Windows backend is marked untested until one exists.
 - **Several frontends stay possible** (the reviewer's advice on the owner's question, relayed by
   the owner, 2026-10-19). M5 is built for mode M1 and opens nothing on the LAN, but keeps the
   architecture able to serve several frontends through the shared API from one inference
@@ -1274,28 +1776,323 @@ contract and BACKLOG stay the record, and no new planning document is added.
   - **one job runner**, reshaped from `training_manager`, for training and tests alike; a test
     runs the real `measure_scorer`, never a second evaluator;
   - **the Test tab** on M4's flow: the import preview and commit, the version choice, start,
-    progress, cancel, the report and registration;
+    progress, cancel, the report and registration; *as implemented (M5-2, 2026-10-20):* Research
+    › Test (`src/webui/components/test_page.py`; deployment guide §4.14): the workspace and the
+    cohort version from the server's lists, with whether the version was mapped against the
+    workspace's graph; the model from the workspace's checkpoint list (operator only, read once
+    per workspace); Start through the job runner with the inputs the server resolves again and
+    the digests shown as the expected ones, the batch size and device fixed by the server and
+    only the deterministic switch and "Register the result" chosen; the job's state (never green
+    when failed or cancelled), elapsed time and output tail, read every 5 s while the page is
+    shown; Cancel for test runs only; the outcome as the runner reads it from disk; the report as
+    its record (Mode C apart from the Trainer's validation, *unverifiable* never a number);
+    Register, the D5 block and notes (D5 above); the import (D7 above). No absolute server path
+    is shown;
   - **Model Management** on the shared model list, keeping Trainer validation figures and each
-    cohort's Mode C results apart;
+    cohort's Mode C results apart; *as implemented (M5-2, 2026-10-20):* Research › Models
+    (`src/webui/components/models_page.py`) places the research preset of the one shared list
+    and Load and shapes it through the list's view and ordering, drawing no row and loading
+    nothing itself. Ordering by test score is offered only for a version whose role WP1's list
+    says offers it (`SHEPHERD_ORDERING_ROLES`; `institutional_acceptance` listed, off, with its
+    reason) and comes from WP4's one function over the records each listed checkpoint's ledger
+    holds (`read_ledger`), one metric, one version and one scoring semantics (a second semantics
+    is a choice, never interleaved), each record key's state from the version's report store
+    (`scan_report_store`): groups "Ordered by …", "Contested on this version · not ordered",
+    "Contested status cannot be checked · not ordered" (a state that cannot be read is never
+    put under "Contested", nor ordered), "Not compared on this version · not ordered" and "Not
+    tested on this cohort version · newest first", the regime on each ordered row and "regime
+    differs" (with its ⓘ) where it is not the most common;
+    the independence sentence of §4.9 question 1 wherever ordering is offered; a refusal by the
+    function itself (records naming another role) said, the list left newest first. The detail
+    keeps the Trainer's figure in its own card and shows every record as the API's record view
+    (`_record_view`) with its contested state ("cannot be checked" is never uncontested), D4's
+    pick and the others' difference, and the checkpoint's entries in every listed version's
+    usage history. A Load from the ordered list passes the ordering to the shared Load, which
+    writes the `model_load` entry; newest first writes none. A request D8 refuses gets no list
+    (D8's three conditions named) and "Recorded test results of the model in use" from the API's
+    read-only route function, by the served digest, opening no checkpoint, with each record's
+    contested state as that route answers it (reasons naming no server path; since the M5
+    review's P2-6, D5). *Review fixes
+    (2026-10-21):* the page reads its data again after every Load, also one that leaves the
+    listing unchanged (a refused reload, the model in use loaded again), so the usage history
+    shows the entry that Load wrote, and selects the same checkpoint again after it; the
+    dataset identity under the workspace select; narrow, choosing a row scrolls to its detail;
+    the confirmation's buttons stay in view on a short window;
   - **D4 and D5 as planned:** ordering, disagreement and contested states, usage history, the
     deterministic-execution switch, with no change to scoring semantics;
   - **the Diagnosis tab's integration:** the shared layout, the identity display and the
     recorded results;
   - **the Training Console:** only its move onto the job runner and what shared components
-    need, not a redesign of its forms.
+    need, not a redesign of its forms. *Amended at the owner's request (2026-10-19, second
+    mockup round):* its move onto the job runner; D8 on start and stop; the workspace chosen
+    from the server list; its controls in a top run bar; the dataset identity shown at all
+    times; a start refused when that dataset changed after it was shown; and the metric charts
+    replaced by zoomable ones, with the Epoch Window removed. Its parameter fields are not
+    redesigned; *as implemented (M5-2, 2026-10-21):* `src/webui/components/training_console.py`,
+    one page under the shell's contract. A run bar that never scrolls: the Dataset select over
+    the server's workspace list (the shared option label and dataset identity, a "Details ›"
+    popover with the full fingerprint, what the manifest binds and the path relative to the
+    workspace root), disabled and showing the running job's dataset while a training job runs;
+    the status pill (never green for a failed or stopped run); one reason line (D8's short words,
+    or the GPU job from the job runner and the lock's holder record, with "Open Test ›" for a
+    test run); 🔒 Start, 🔒 Continue… and 🔒 Stop with the code's stop confirmation; a failed
+    run's banner with its output tail. **Start sends the full dataset fingerprint the session
+    showed**, and `TrainingManager.start_training(…, expected_dataset_fingerprint=…)` reads the
+    manifest again through its one reader and refuses another one ("The dataset changed since
+    it was shown; select it again.") before a parent is read, a run named or anything written
+    or started; the API route takes the same check as an optional query parameter (409 on a
+    mismatch, 422 for a value that is not a full lowercase SHA-256), through the same service
+    call. *Since the review of `8242b47` (P2-2; implemented, its incremental review next):* the
+    training process checks it again on its own one manifest read (`train_model.py
+    --expect-dataset-sha256`, an argument, neither a configuration key nor a recorded setting,
+    compared inside `read_training_inputs` before the graph and the samples are read), so a
+    workspace republished after the runner's check is refused (`DatasetChanged`, exit 1, no
+    run directory) rather than trained on (`tests/unit/test_training_dataset_expected.py`).
+    *Root-cause round (implemented, not yet reviewed):* the comparison is the manifest reader's
+    own (P22-S2): `read_split_manifest(…, expected_sha256=)` compares the digest of its one read
+    before the bytes are decoded and raises the one `DatasetChanged`, also for a manifest that
+    is gone, and both the runner's check and the process call it, the process checking nothing
+    about the workspace before it, so a manifest torn, of another schema or gone with its whole
+    workspace is said as changed by both instead of a traceback or "build training data" advice
+    in the process. A continued
+    run is bound to the parent shown the same way (P22-S1): `read_checkpoint(…,
+    expected_sha256=)` compares before torch loads the file (`CheckpointChanged`, which carries
+    the facts while each caller words the refusal, the console with the action for where the
+    fingerprint was shown; early stopping's best weights a parent names are read through it
+    too);
+    `preview_continuation(expected_sha256=)` is the one comparison of a caller's digest (the
+    Continue drawer sends the run list's model fingerprint, or the one a typed path's Check
+    showed, and deletes its own comparison; the API takes an optional `expected_parent_sha256`);
+    and `start_training` always hands the process `--expect-resume-sha256` with the digest of its
+    own preview read, the read its placement, cross-field verdict and extend mode came from, so a
+    parent replaced after the start is refused before it is loaded, never continued from or placed
+    under another architecture's runs (`tests/unit/test_training_parent_expected.py`). The Data Paths section, its gated Save Path and the startup read of
+    `.shepherd_training_config.json` are gone; the gated save function stays unused (nothing
+    else calls it) for the owner's question "Save as the default dataset". "Continue…" is a
+    drawer over the parameters: the run bar's workspace's checkpoints from the server's list (D8,
+    since listing opens them) or a typed path, which only locates a checkpoint that list holds
+    (since the M5-3 review; D8), the one check, the parent's recorded dataset
+    fingerprint against the workspace's current one, and Continue Training disabled with the
+    reason while they differ. The run view shows the job runner's latest run, or the run bar's
+    workspace's latest (listed again every 10 seconds while the page is open): the used
+    dataset fingerprint from its checkpoint (operators only; a read-only request is told why it
+    is not shown), the snapshot sentence, the shared chart figure and the resources line. The
+    page keeps its state in `gr.State` (the selection, the drawer, the last values sent, the
+    dismissed banners) and is refreshed by the shell's timers (`queue=False`, no work while
+    another page is shown), sending only what changed. *Round 3 (2026-10-22, F7; implemented,
+    not reviewed):* the fast poll writes no session selection; a training job seen running in
+    another workspace than the session's is handed to a queued render, which follows it only if
+    it still runs there (the workspace change it makes runs the same chain as a dataset chosen by
+    hand: with Continue… open, the parents are listed again), and every writer of the run bar's
+    workspace (page open and its render, the select, Datasets' "Use for training ›", every
+    render) runs in one queued group of one (`shell.TRAINING_SELECTION_CONCURRENCY`), so a
+    workspace chosen after a job ended is never set back (BACKLOG 46). *Since the reviewer's
+    incremental review of `2887506` (P2-NEW-1, 2026-10-23; implemented, not reviewed):* every
+    piece of the run bar and the run view drawn from the session's selection (the select's
+    value, the chip, the reason, Start, Continue…, Stop and Continue Training, the drawer's line,
+    the run head, the snapshot sentence, the chart token) is written only by the queued
+    listeners of that group; the fast poll writes the status pill (the job runner's state) and
+    the chips, and hands every other change it finds to a queued render as it hands over a job
+    running in another workspace (one hand-off), so a tick that crosses a choice never shows
+    another dataset than the one Start would train (BACKLOG 46). The Datasets page's
+    temporary bridge into the old Data Directory is
+    deleted;
+  - **added at the owner's request (2026-10-19):**
+    - **navigation in two levels**: "Diagnosis (clinical)" and "Research (pre-clinical)";
+      under Research one row of tabs in two labelled groups, Prepare (Datasets, Training) and
+      Evaluate (Test, Models); Settings at the header's right; Diagnosis is the first screen;
+      *as implemented (M5-2, 2026-10-20):* `src/webui/shell.py`, two `gr.Tabs` (so a cross-link
+      switches both levels from Python, `PageContext.go`) that wrap and never use an overflow
+      menu; Training is the default research page; the group labels are generated content, not
+      clickable, with the grouping in the tablist's accessible name; the browser title follows
+      the location; the header row holds the brand, two chips read per request (D8's answer for
+      that browser, never a header value; the GPU job from the job runner and the lock's holder
+      record, never "free") and Settings. The shell's docstring is the page contract the other
+      pages build on (one builder per page, one context: the shared ⓘ, the timers outside the
+      tabs and the page shown for their listeners to skip work, the chips, the shared model
+      list, the served-model-changed trigger, each page's own style sheet registered beside its
+      builder). A research page is read again only when it is the page shown (returning to
+      Research refreshes that one page, never the other three, since Models' list opens every
+      checkpoint). The page is always drawn light (Gradio's dark mode left its text unreadable on
+      the dashboard's colours) and Gradio's own footer is off. Test and Models are built (the Test
+      tab and Model Management, above; deployment guide §4.14);
+    - **the Diagnosis tab's "Model in use" card**, directly above Run Diagnosis, so the model
+      is known before a diagnosis, with "Change model…": a drawer on the one shared model list
+      and the one gated Load that Models also uses (one component, two views, no second
+      implementation); it replaces the Model Configuration accordion and the header's
+      "Serving now" strip, so the identity is shown once; *the shared component as implemented
+      (M5-2, 2026-10-20):* `src/webui/components/model_list.py`, with a clinical preset (the
+      latest four runs, "In use" pinned) and a research preset (Models' table, every run); a
+      page shapes its view (one architecture, groups such as "Ordered by …", one extra column,
+      a note beside Load) without drawing rows itself. Listing opens checkpoints, so it is
+      checked by D8 like the Load; the Load is D8 on its own request, the item found again in
+      the server's list and its bytes hashed again, one confirmation from → to with the changed
+      rows marked, D8 again on the confirm, **both columns read again** (what is served, as the
+      whole served identity and data directory, and what would be loaded: the file's bytes, the
+      workspace's graph and SP table; a change in either is said with the new values and
+      nothing is reloaded until that is confirmed), the API's one reload (`run_reload`) with
+      what the server resolves, bound to the model fingerprint shown (*since the review of
+      `8242b47`, EB-1 of the root-cause round; implemented, its incremental review next:* the
+      request's `expected_checkpoint_sha256` is compared on the build's own checkpoint read
+      before publication, so bytes rewritten after the confirmation are refused, never served,
+      and the after-the-fact "Reloaded, but not with the model shown." is gone; the API route
+      takes the same optional field; *since round 3 of the review fixes, INT-R1, implemented:*
+      the comparison is that read's own, before torch parses the bytes
+      (`read_checkpoint(expected_sha256=)` inside the build), so a file rewritten, torn, of
+      another graph or removed is refused as "not the model that was shown" before any model is
+      built from it, and the comparison after the build is deleted), the served-model-changed
+      trigger set when any part of what is served changed, and a usage history entry only for
+      a list ordered by a cohort version's score; the page stops waiting
+      after 180 s, counting in that list's own confirmation, and offers "Read again". Placing it
+      (the card's drawer, Models) is the Diagnosis and Models pages' part; *the card and its
+      drawer as implemented (M5-2, UI-B, 2026-10-21):* `src/webui/components/diagnosis_card.py`
+      and `diagnosis_panel.py`. The card reads the status through the dashboard's one reader
+      with a 5 s limit, per browser session (on load, when Diagnosis is shown, on the shell's
+      5 s timer while it is shown, after each diagnosis, after a Load and on ↻), and names the
+      model, its fingerprint and the dataset the checkpoint records it was trained on (that
+      file alone read, only for a request D8 allows and only on a queued refresh; a read-only
+      request is told "not shown"), the mode chips only when true and the recorded tests as a
+      state from the ledger (read again on every refresh but the 5 s timer's, so a test
+      recorded since shows when Diagnosis is shown again). Its states are words, not only
+      colour: a change since this session's last read (dismissable), cannot check and stale
+      (grey, "last known", never current), read-only (Change model… disabled with D8's
+      reason), no model loaded, a graph without a trained model, and a model change open (the
+      identity drawer never opens over it). The results badge compares the
+      result's whole served identity, part by part, with the card's last read, read again
+      after each diagnosis; a failed or older read never shows "Produced by the model in use".
+      Change model… is D8 on its own request before the clinical list is read, and the drawer
+      holds UI-A's list and Load unchanged; the Model Configuration accordion, its saved
+      settings file read at build time and the "Serving now" strip are removed, and the page
+      calls neither reload nor configuration writer itself (`POST /pipeline/config` stays for
+      API clients). Diagnosis shows no Mode C number: the records are Models' (deployment guide
+      §4.14, "Diagnosis (clinical)");
+    - **Run Diagnosis greyed out and not clickable while no model is loaded**, with a bubble on
+      hover saying no model is loaded; the API's demo answer for API clients is unchanged; *as
+      implemented (M5-2, UI-B, 2026-10-21):* disabled when the card's last read succeeded and
+      found no pipeline (an unreadable status leaves it on; a graph without a trained model
+      too), and while this session's model change is open; a transparent shared ⓘ over the
+      button opens the bubble on hover and on keyboard focus, and the reason is also written
+      under it. A primary button's white text is at least 4.5:1 at rest and on hover (the
+      theme's own was 2.98:1 on hover), and a disabled one is grey, not a faded accent;
+    - **the dataset identity**: the workspace name, its build time and one fingerprint, the
+      first 12 hex digits of the SHA-256 of its `split_manifest.json` (compared in full,
+      never by the short form), which binds the graph files, both sample files and the dataset
+      record, so two different dataset builds always differ; *as implemented (M5-2,
+      2026-10-20):* one renderer for every page (`src/webui/components/renderers.py`): 12 hex
+      shown, all 64 in the tooltip and on Copy, more digits when two listed workspaces share the
+      first 12, every comparison on the full digest; the same module draws a model row and the
+      Model Facts, with a checkpoint's recorded tests as a state from its ledger, never a
+      result's number;
+    - **the build time is recorded from now on** (the owner, 2026-10-19): the workspace builder
+      writes a `workspace_build.json` beside the manifest (`built_at` in UTC and the code
+      revision), descriptive and not bound by the manifest, so two byte-identical builds keep
+      one fingerprint; a workspace built before it shows "build time not recorded" with its
+      sources' declared releases, never a file modification time; *as implemented (M5-1,
+      2026-10-20):* `write_workspace` writes it after the manifest, with schema version 1 and
+      `split_manifest_sha256`, the digest of the manifest it describes, so a record left
+      beside another manifest reads "not recorded" (`read_workspace_build`); the server's
+      workspace list shows it with the full fingerprint, the dataset record's origin and
+      binding state, the declared releases, the sample counts and whether it is trainable;
+    - **a read-only Datasets page** over the server's workspace list; *as implemented (M5-2,
+      2026-10-20):* `src/webui/components/datasets_page.py`, on the server's list
+      (`list_workspaces`, read through the dashboard's one workspace reader,
+      `src/webui/components/workspaces.py`, which the model list's select uses too), with the
+      markers "serving reads this workspace", "same dataset as served" (the full fingerprint),
+      "in your Training run bar" and "not trainable: <why>" ("no split manifest" when the file
+      is absent, "no readable split manifest" when it cannot be read); the details show the path
+      relative to the workspace root and how the workspace compares with the others ("Same
+      graph build as …, another cut: …"), and no reason shows an absolute path to any request (a
+      link's target outside the root, a refused root setting); the manifests are read once per
+      refresh; "Use for training ›" sets this browser session's workspace for Training and opens
+      it, changing nothing on the server. Nothing on it opens a checkpoint, so it is not gated;
+    - **the charts**: axis-aware wheel zoom (over the X axis only X, over the Y axis only Y,
+      inside the plot both, centred on the cursor), drag to pan, one-click and double-click
+      reset, keyboard equivalents, and the view kept across the periodic refresh. Neither
+      Gradio 5.29.1 nor 6.30.0 does this with its own components (tested in a browser: the
+      native plots have no wheel or Y zoom, and `gr.Plot` rebuilds the chart on every data
+      change), so a small vendored chart library (uPlot, MIT) with the project's own interaction
+      code is used, loading nothing from the network; *as implemented (M5-2, 2026-10-21):*
+      uPlot 1.6.32, byte-identical to its npm tarball with its licence and a README of digests
+      (`src/webui/static/vendor/uplot-1.6.32/`, a test checks each sha256 and that each file is
+      served), and one chart component: a Python builder (`src/webui/components/charts.py`,
+      one `gr.HTML` with a static template, its scripts only in that component's `head=`) and
+      one script (`src/webui/static/js/shep_charts.js`, `window.ShepCharts`) taking curve
+      groups as data, colours by label, the second series also dashed. The value is a small
+      token (the run and its row count); the data comes through the component's server function
+      for a run the server lists (never a path), rounded to about six significant digits, and
+      only when the token changed. The four charts share one epoch view and keep one value view
+      each; the view is kept per run in the browser tab across refreshes, page switches and a
+      reconnect reload, and while zoomed during a live run a button counts the new epochs. Two
+      uPlot 1.6.32 defects are worked around in our code (log-axis ticks for a minimum that is
+      not a power of ten; a locale `Intl` refuses), as is its leaked mouse listener. Checked in a
+      browser with controlled metrics: the gestures, a zoomed view held through polling, a
+      changing series set, a re-mount and a server restart, and a log grown to 5000 epochs with
+      flat listener, chart, canvas and observer counts. *As fixed after the reviewer's review of
+      M5 (2026-10-22, its P2-5; implemented, the incremental review and the GB10 acceptance to
+      follow):* a reply is drawn only if it answers the newest request and the token the
+      component holds now, so a late reply no longer brings a run back after the selection was
+      cleared, or after A shown, B pending and A again (the sequence number alone was never
+      advanced by a clear or by a return to the run drawn). Each condition has its own job,
+      pinned by its own scenarios since the root-cause round (P2-5-F1; implemented): the token
+      held now drops a reply for a token no longer asked, and the sequence number lets the
+      newer of two calls for the same token win, since the server's answer can change between
+      them (the run no longer listed, more rows read). Found while fixing it and fixed in
+      the same change: Gradio 6.30's client answers a failed server call with `undefined`, which
+      the chart read as "This run is no longer listed."; it is now a failure, retried every 3 s up
+      to 20 times for each token (the budget was shared by every run) and said ("The charts could
+      not be loaded. Trying again…") unless the run is already drawn; another run's curves never
+      stay under the run asked for, a clear leaves no zoom note, and a zoom made within 250 ms of
+      a clear is kept for its run. While the reply for a run other than the one drawn is
+      outstanding the figure is busy (`aria-busy`, hidden with `visibility` so its charts are
+      kept and measured, the toolbar's view buttons idle) and says "Charts loading…"; never for a
+      retry or for new epochs of the run drawn. Checked again in a browser (Chromium, a scratch
+      app whose server function is delayed or fails on demand): the cue, A pending then cleared,
+      A to B pending to A, the chart, run label and Export CSV agreeing, new epochs without the
+      cue, a failed call and its retry, the narrow layout and a server restart; `8242b47` fails
+      the same check (A drawn after the clear, B drawn under A, "no longer listed" for a failed
+      call). Left as it is: the run drawn whose newer rows keep failing until its retries are
+      spent stays at its older epochs without saying so (BACKLOG item 41);
+    - **the Epoch Window's two defects** fixed with its removal: returning to "All" never
+      cleared the locked range (Gradio drops `x_lim=None` from an update), and the refresh
+      cache shared by every browser session left a reloaded page or a second browser showing
+      "IDLE" and empty charts. *As implemented (M5-2, 2026-10-21):* the Epoch Window is
+      removed, and the poll cache, the banner and the last values sent are each browser
+      session's `gr.State`, so a reloaded page or a second browser shows the real state at once.
+    Recorded for later, not in M5: dataset building and management in the WebUI, a release
+    designation for diagnosis, model comparison and housekeeping, navigation follow-ups, and
+    exporting and importing a model with its dataset (BACKLOG items 29 to 33).
 - **Layout and help** (BACKLOG item 27): in an ordinary window at normal text size, with no
   details expanded, the main operations fit on one screen as far as possible, clear and
   uncrowded. Text is never shrunk, content never clipped and warnings never hidden to avoid
   scrolling. The layout follows the browser's usable width and height, not the monitor's
   resolution.
   - **Wide:** the Diagnosis tab is input, candidate list and the selected candidate's details;
-    selecting a candidate updates one fixed details area instead of adding content below.
+    selecting a candidate updates one fixed details area instead of adding content below. *As
+    implemented (M5-2, UI-B, 2026-10-21):* three panels, each scrolling inside itself; the card
+    and Run Diagnosis are the last item of the input panel's scroll body, sticky at its bottom,
+    and from 1707 × 870 up the input panel does not scroll in any one card state (checked in a
+    browser; a change notice together with a grey state can still scroll it a little at that
+    size); the identity drawer covers the details panel, the change-model drawer the
+    candidates and the details.
   - **Narrow or portrait:** candidates and details can be switched, and the necessary vertical
-    scrolling is allowed, without nested scroll containers.
+    scrolling is allowed, without nested scroll containers. *As implemented (M5-2, UI-B,
+    2026-10-21):* the panels stack (input, the card and Run, the results, the details) and only
+    the page scrolls, as the mockup draws it, rather than a switch between them.
   - **Help:** an ordinary field's help sits behind one shared "i" control that works with the
     mouse, the keyboard and a click, can be dismissed, and stays readable when the pointer
     moves into the bubble. Long explanations go into the details area. A refusal's reason, a
     job's state, a synthetic workspace and an unverified source stay visible as short text.
+    *As implemented (M5-2, 2026-10-20):* `src/webui/components/help.py`, a registry of help
+    texts by component `elem_id` and one head script (the alternative, restyling Gradio's
+    `info=` in place, was not taken: Gradio 6.30 puts `info=` inside the field's label, and a
+    state-bearing text such as the HGT/AMP refusal travels in it). Every ordinary help text of
+    Diagnosis, the Training Console and Runtime Settings moved behind it; `info=` now carries
+    only texts that must stay visible. The texts are escaped once in Python and shown with
+    `textContent`; the bubble opens on hover, focus and click, stays open while the pointer is
+    in it, pins on click and closes on Esc or a click outside; the field's input is labelled by
+    its title and described by the help, and a click on the title still focuses the field; the
+    bubble is drawn in the dashboard's font, on the side of its ⓘ with room, and never taller
+    than the window.
 - **The served identity is shown together, never merged.** The identity serving now and each
   result's own identity are kept apart. One shared block shows a readable summary by default;
   expanded, it shows either one in full, with its digests to copy. Beside a result, one of
@@ -1327,9 +2124,99 @@ contract and BACKLOG stay the record, and no new planning document is added.
   - the layout is checked landscape and portrait, at high DPI and zoom, with long disease names,
     many results and warnings, recording the viewport and zoom used; neither content nor the
     main operations are clipped.
+  *Checked against the code (M5-3, 2026-10-21):*
+  - shared checks: the Test page's import calls `prepare_import`/`commit_import`
+    (`src/evaluation/cohort_registry.py`, as `scripts/import_cohort.py` does), Start test runs the
+    real `scripts/measure_scorer.py` through `TrainingManager.start_test`, and Register calls
+    `register_report`. Holds;
+  - exclusion, stop per type, never green: `src/utils/gpu_lock.py` and the job runner
+    (`tests/unit/test_job_runner.py`),
+    `test_training_page.py::test_a_failed_or_stopped_run_is_never_green`,
+    `test_webui_test_page.py::test_the_pill_is_never_green_for_a_failed_or_cancelled_run`, probe
+    W7, W8, W11. Holds;
+  - kept and registered from the publication contract: the runner reads the outcome file and
+    `registration.report_state`
+    (`test_kept_and_registered_come_from_the_disk_not_the_exit_status`; probe W8, W9). Holds;
+    since the M5-3 review a cancel cannot fall between publishing and the usage history, or
+    between a ledger record and its history entry (`src/utils/interrupts.py`);
+  - direct calls: every gated API route (`OPERATOR_ONLY`; probe W2, W5) and the M5-1 dashboard
+    events (`test_operator_access.py`) are called through Gradio's HTTP API. Of M5-2's events,
+    Test's Start and the model list's refresh are called that way in unit tests, and Training's
+    Stop, Test's Start and Register in the probe. Preview, Commit, Cancel, Add note, the intake
+    and checkpoint lists, and Load with its confirmation are refused in handler tests with a
+    read-only request; adding an HTTP call for each would complete this item;
+  - checked again at start: `--expect-checkpoint-sha256`/`--expect-version-sha256`
+    (`tests/integration/test_job_runner_measure.py`, probe W10), the dataset fingerprint at
+    training start, and the import's commit preparing again. Holds;
+  - no other model's records after a switch, states apart, *unverifiable* never 0: records are
+    found by full digest (`model_list.recorded_tests_for`, the read-only route), and Trainer
+    validation and Mode C sit in separate cards and columns. Holds; since the M5 review's P2-6
+    the API route carries each record's contested state too, from the function the dashboard
+    uses (D5);
+  - A's source kept: exports carry the result's own `served_identity`, and the badge compares the
+    whole identity (`test_a_result_older_than_a_load_says_how_many_parts_differ`). Holds;
+  - layout: **not yet recorded**. The screenshot matrix (1920×1080, 1707×870, 1536×760,
+    1440×900, 1280×720, 1080×1920, 200 % zoom; M1 and read-only) is M5-3's next step.
   The GPU acceptance uses the existing tools and a qualified model, centred on starting and
   stopping jobs, their exclusion, registration and UI operation; long training, S10 and the
-  memory investigation are not rerun unless a related regression appears.
+  memory investigation are not rerun unless a related regression appears. *The probe's part,
+  as implemented (M5-3, 2026-10-21):* the deployment probe's acceptance run
+  (`scripts/probe_deployment.py --m2-acceptance --device cuda`) carries M5's acceptance where
+  it runs headless, every probe required. A5 records the installed packages against the
+  `uv.lock` beside the checkout by name and version, and whether that lock is the one
+  committed at the tested commit, so a set that differs from it (versions moved past the lock,
+  a package installed twice, packages an older lock left behind, told apart from what the
+  deploy scripts install after the sync) is stated, never hidden, and said again beside the
+  acceptance's verdict. On the demo, after M4's T1–T6 and on the probe's own deployment under
+  its work directory: the server's lists by name and digest, resolving only what they list
+  (W1); the service started as the launcher starts it, in M1 and read-only, where D8 allows a
+  loopback request and refuses a forwarding header, a foreign Host, a foreign Origin and a
+  cross-site request on every API route its dependency gates and on three gated dashboard
+  events (Training's Stop, Test's Start and Register), and refuses them all without M1 (W2,
+  W5), with off loopback asked of the application in process (W6); no cross-origin grant on
+  `/api` or `/ui` (W3); the route guard refusing the `file=` URL forms it tries, none
+  reaching Gradio's URL fetch (counted in process), and `process_recording` and uploads before
+  the body is read (W4); a busy GPU lock refusing the runner and both CLIs naming its holder,
+  released when the holder is killed (W7); a test run through the job runner from the
+  server's lists, its outcome file, its report kept and not registered, its usage-history
+  entry, a training stop meanwhile refused (W8), then registered from the store, a copy
+  outside it refused (W9); a start for another model or cohort failing before measuring,
+  nothing kept (W10); a training job holding the lock while a test start, a test cancel and
+  the CLI are refused, its stop ending it as stopped (W11). On the real workspace, before R8:
+  the workspace as the server lists it, a test run through the runner kept and registered,
+  and a training job started and stopped (RW1–RW3). Every M5 setting is the probe's own
+  while M5's probes run, so they never use the deployment's lock, root or registry (W1 and RW1
+  read the deployment's lock once, as M5's probes begin, and state whether a job holds it
+  then). Not the layout or a browser
+  session, which the screenshots and the owner's use cover. *After the review of `8242b47`
+  (implemented, its incremental review next):* W11's and RW3's training job holds the GPU by
+  configuration (a million epochs, early stopping as long), and that it runs and is the lock's
+  recorded holder is checked before a test start is tried and after the measurement CLI is, so
+  a job that ended meanwhile fails the probe as one that could not hold the lock, never as a
+  pass, a skip, or a start or the lock failing to refuse, and a test run that a start not
+  refused began is stopped (W11/RW3: on the reviewer's CPU the demo job stopped early within a
+  second and released the lock before the CLI ran); without `os.waitid` (Windows, macOS before
+  Python 3.13) they fail saying so. The earlier measurement probes take a lock of the probe's
+  own under its work directory, since a CLI now refuses without one, and so do not exclude a
+  deployment job running meanwhile. *Since the review of `8242b47` (INT-1, W11-1, W11-2, W11-4
+  and INT-2 of the root-cause round; implemented, its incremental review next):* the hold is
+  applied where both probes start their job (`_held_config`: no pause, no parent and no
+  extension either, whatever the settings name), and one bracket covers the whole check: the
+  start, the cancel, the training status and the CLI are observed, the job is checked again,
+  and only then is any answer judged. The runner's record of training, read after the start,
+  the cancel and the CLI, says what reached it: the first of them after which the runner says
+  a stop was asked of it fails as reaching training, and a job that ended with no stop asked
+  fails naming the action during which it ended and how the runner says it ended (a crash and
+  a signal sent outside the runner's stop look alike there); without `os.waitid` W11 and RW3
+  fail before they start a job. M4's flow names the
+  probe's registry as the deployment's once for T1–T6 and once for RT1–RT3, not per call, so
+  T5 and RT3 read the loaded-model route's D5 state from the probe's report store and require
+  their record uncontested, observing P2-6 end to end (before, they accepted "cannot be checked"
+  from a fresh shell, and from the operator's shell listed the deployment's registry). The
+  training probes (D1, M2, M9, R3, R4) take no GPU lock at all, not even the probe's own: they
+  call the production trainer in process, and `train()` takes no lock, only the program entries
+  do (`train_model.py`, `measure_scorer.py`, `setup_demo.py --train-model`); they exclude
+  nothing either, so the acceptance is run while no managed GPU job runs.
 - **Two checkpoints:** the layout direction, confirmed once on a thin, operable prototype in the
   existing Gradio, showing representative wide and narrow layouts and the identity switch (a
   static image may help, but cannot stand in for zoom, scrolling and keyboard checks); then M5's

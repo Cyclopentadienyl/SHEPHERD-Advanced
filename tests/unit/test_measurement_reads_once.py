@@ -90,8 +90,11 @@ def _generated(root):
                            output=root / "out" / "measurement.json")
 
 
-def _registered(base, root):
+def _registered(base, root, monkeypatch):
+    """A copy of the built cohort, its registry the deployment's
+    (`SHEPHERD_REGISTRY`): a ``--cohort`` run measures only there (BACKLOG 37)."""
     cohort = copy_registered_cohort(base, root)
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(cohort.registry))
     return SimpleNamespace(kind="registered", data_dir=cohort.data_dir,
                            checkpoint=cohort.checkpoint, registry=cohort.registry,
                            version=cohort.version, label=cohort.version.manifest["label"],
@@ -107,10 +110,10 @@ def cli():
 
 
 @pytest.fixture(params=KINDS)
-def ws(request, tmp_path, registered_base):
+def ws(request, tmp_path, registered_base, monkeypatch):
     if request.param == "generated":
         return _generated(tmp_path / "a")
-    return _registered(registered_base, tmp_path / "a")
+    return _registered(registered_base, tmp_path / "a", monkeypatch)
 
 
 @pytest.fixture
@@ -119,8 +122,8 @@ def generated(tmp_path):
 
 
 @pytest.fixture
-def registered(tmp_path, registered_base):
-    return _registered(registered_base, tmp_path / "a")
+def registered(tmp_path, registered_base, monkeypatch):
+    return _registered(registered_base, tmp_path / "a", monkeypatch)
 
 
 @pytest.fixture

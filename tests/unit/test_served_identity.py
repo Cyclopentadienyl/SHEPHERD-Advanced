@@ -24,7 +24,8 @@ pinned here:
 - the reload route reports the metric of the checkpoint it served, from the
   build's own read (BACKLOG 19.2), calls it "best" only when the scan ranked the
   file by it, and says so when the file it chose was replaced before that read
-  (19.1).
+  (19.1); a reload given the model fingerprint its caller was shown serves
+  those bytes or nothing (EB-1).
 
 The device rule itself (`resolve_serving_device`) is in
 `test_serving_device.py`.
@@ -35,6 +36,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import hashlib
 import json
 import re
 import shutil
@@ -1082,3 +1084,161 @@ def test_an_unreplaced_selection_reports_its_metric_and_no_replacement(api, work
     assert "replaced" not in result.selection_reason
     assert result.status.served_identity.checkpoint.sha256 == _sha(selected)
     assert opens.opens(selected) == 2
+
+
+def test_a_reload_bound_to_the_fingerprint_shown_serves_those_bytes_or_nothing(
+    api, workspace, tmp_path, monkeypatch
+):
+    """EB-1, the API's half: ``POST /pipeline/reload`` takes the model
+    fingerprint its caller was shown (`expected_checkpoint_sha256`) and compares
+    the build's own checkpoint read with it before anything is published. The
+    fingerprint shown is served (the positive control); a file replaced after
+    the caller hashed it, between the build's graph read and its checkpoint
+    read, is refused with the running pipeline still serving; a value that is
+    not a lowercase SHA-256 is refused before anything runs. Without the field
+    the reload is unbound, as `test_the_reported_metric_is_the_loaded_files_*`
+    pins."""
+    from fastapi.testclient import TestClient
+
+    from tests.fixtures.operator_access import OPERATOR_BASE_URL, operator_mode
+    from tests.fixtures.replacement import replace_after_read
+
+    data_dir, checkpoint = workspace
+    shown = _sha(checkpoint)
+    operator_mode(monkeypatch)
+    client = TestClient(api.app, base_url=OPERATOR_BASE_URL)
+    body = {"data_dir": str(data_dir), "checkpoint_path": str(checkpoint)}
+
+    malformed = client.post("/api/v1/pipeline/reload",
+                            json={**body, "expected_checkpoint_sha256": shown.upper()})
+    assert malformed.status_code == 422 and api.app_state.pipeline is None
+
+    bound = client.post("/api/v1/pipeline/reload",
+                        json={**body, "expected_checkpoint_sha256": shown})
+    assert bound.status_code == 200 and bound.json()["success"] is True, bound.text
+    serving = api.app_state.pipeline
+    assert serving.served_identity().checkpoint.sha256 == shown
+
+    replacement = _with_val_mrr(checkpoint, tmp_path / "b.pt", 0.5, shift=1.0)
+    swap = replace_after_read(monkeypatch, after=data_dir / "kg.json", target=checkpoint,
+                              data=replacement.read_bytes(), how="rename")
+    refused = client.post("/api/v1/pipeline/reload",
+                          json={**body, "expected_checkpoint_sha256": shown})
+    answer = refused.json()
+
+    assert swap.fired == 1 and refused.status_code == 200
+    assert answer["success"] is False
+    assert answer["message"] == (
+        f"{checkpoint} is not the model that was shown: it holds "
+        f"{_sha(replacement)[:12]} now, not {shown[:12]}. Nothing was published; read it "
+        "again to see what it holds. The previously loaded pipeline is still being served.")
+    assert api.app_state.pipeline is serving
+    assert answer["status"]["served_identity"]["checkpoint"]["sha256"] == shown
+
+
+#: What can be at a shown checkpoint's path when the reload reads it (INT-R1).
+NOT_THE_SHOWN_BYTES = ("torn", "another graph", "not a dict", "gone")
+
+
+def not_the_shown_bytes(source, bytes_now):
+    """Bytes put at `source`'s path after it was shown: torn mid-write, a valid
+    checkpoint recorded for another graph, a pickle that is not the trainer's
+    dictionary; None for a file removed."""
+    import io
+
+    if bytes_now == "gone":
+        return None
+    data = source.read_bytes()
+    if bytes_now == "torn":
+        return data[:len(data) // 2]
+    buffer = io.BytesIO()
+    if bytes_now == "another graph":
+        contents = torch.load(source, map_location="cpu", weights_only=False)
+        contents["training_input_digests"] = {**contents["training_input_digests"],
+                                              "kg": "0" * 64}
+        torch.save(contents, buffer)
+    else:
+        torch.save([1, 2, 3], buffer)
+    return buffer.getvalue()
+
+
+def change_after_the_graph_read(monkeypatch, data_dir, target, data):
+    """Put `data` at `target` (remove it for None) right after the build's read
+    of `data_dir`'s ``kg.json``, by an atomic rename: the window between the
+    caller hashing the file and the build's checkpoint read. Returns a list
+    that holds one entry once it has fired."""
+    import os
+
+    from tests.fixtures.replacement import hook_read_once, replace_file
+
+    kg = os.path.realpath(data_dir / "kg.json")
+    fired = []
+
+    def on_return(path):
+        if fired or os.path.realpath(path) != kg:
+            return
+        fired.append(path)
+        if data is None:
+            target.unlink()
+        else:
+            replace_file(target, data, "rename")
+
+    hook_read_once(monkeypatch, on_return=on_return)
+    return fired
+
+
+def never_parsed_or_built(monkeypatch):
+    """Fail the test if torch is handed a checkpoint's bytes (the reader's
+    `BytesIO`; the graph's tensor files are parsed elsewhere, before it) or a
+    model is built."""
+    import src.models.gnn.shepherd_gnn as shepherd_gnn
+    import src.utils.checkpoint_io as checkpoint_io
+
+    monkeypatch.setattr(checkpoint_io, "BytesIO",
+                        lambda *a, **k: pytest.fail("torch was handed the checkpoint's bytes"))
+    monkeypatch.setattr(shepherd_gnn, "build_shepherd_model",
+                        lambda *a, **k: pytest.fail("a model was built from them"))
+
+
+@pytest.mark.parametrize("bytes_now", NOT_THE_SHOWN_BYTES)
+def test_a_bound_reload_refuses_any_other_bytes_as_not_the_model_shown_before_parsing_them(
+    api, workspace, monkeypatch, bytes_now
+):
+    """Root-cause round 3 (INT-R1): the reload's expectation is compared on the
+    build's one checkpoint read before torch parses the bytes
+    (`read_checkpoint(expected_sha256=)`), so whatever replaced the file shown
+    -- torn bytes, a checkpoint recorded for another graph, a pickle that is
+    not a checkpoint, or nothing -- is refused as "not the model that was
+    shown", never as unreadable, another graph's, not a checkpoint or "no
+    checkpoint found". Torch is never handed the bytes and no model is built;
+    nothing is published and the running pipeline goes on serving. The
+    positive control is the first reload, bound to the same digest."""
+    from fastapi.testclient import TestClient
+
+    from tests.fixtures.operator_access import OPERATOR_BASE_URL, operator_mode
+
+    data_dir, checkpoint = workspace
+    shown = _sha(checkpoint)
+    operator_mode(monkeypatch)
+    client = TestClient(api.app, base_url=OPERATOR_BASE_URL)
+    body = {"data_dir": str(data_dir), "checkpoint_path": str(checkpoint),
+            "expected_checkpoint_sha256": shown}
+
+    bound = client.post("/api/v1/pipeline/reload", json=body)
+    assert bound.status_code == 200 and bound.json()["success"] is True, bound.text
+    serving = api.app_state.pipeline
+
+    data = not_the_shown_bytes(checkpoint, bytes_now)
+    fired = change_after_the_graph_read(monkeypatch, data_dir, checkpoint, data)
+    never_parsed_or_built(monkeypatch)
+    answer = client.post("/api/v1/pipeline/reload", json=body).json()
+
+    assert fired, "the build never read the graph"
+    held = (f"it is gone; {shown[:12]} was shown" if data is None
+            else f"it holds {hashlib.sha256(data).hexdigest()[:12]} now, not {shown[:12]}")
+    assert answer["success"] is False
+    assert answer["message"] == (
+        f"{checkpoint} is not the model that was shown: {held}. Nothing was published; read "
+        "it again to see what it holds. The previously loaded pipeline is still being served.")
+    assert api.app_state.pipeline is serving
+    assert answer["status"]["served_identity"]["checkpoint"]["sha256"] == shown

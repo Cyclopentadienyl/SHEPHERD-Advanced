@@ -887,6 +887,14 @@ readings already taken (§7.4) and S10's evidence ran the script before this
 amendment and carry its earlier subject form, three path digests, which stays
 what those files say.*
 
+*Amended for M5-1 (2026-10-20), with the script in the same change: R3's reload
+is an operator control since D8 is applied (`PLAN_TEST_RESULTS.md` D8, "As
+implemented"), allowed only under deployment mode M1 and for a request that
+arrives on loopback, addressed to a loopback host. The script therefore also
+sets `SHEPHERD_DEPLOYMENT_MODE=M1` for the service it starts; its requests
+already go to `127.0.0.1` with no `Origin`. The launcher's bind default is now
+`127.0.0.1` too, which the script already passed. Nothing measured changes.*
+
 **The service itself, started the way the unit starts it:** through the
 launcher, `.venv/bin/python scripts/launch/shep_launch.py --no-auto-install
 --no-browser -- --host 127.0.0.1 --port <p>` (loopback, overriding the
@@ -1068,7 +1076,8 @@ code:
   the attention variables, the launcher's `COMMANDLINE_ARGS` and every
   `SHEPHERD_*` name are removed from the environment passed to the launcher.
   Then the four settings above are set, with `PYTHONUNBUFFERED=1` as the unit
-  sets it. The unit starts the service with none of them, so this is the start
+  sets it, and, since M5-1, `SHEPHERD_DEPLOYMENT_MODE=M1`, so R3's reload is
+  allowed (above). The unit starts the service with none of them, so this is the start
   it gives. Without this, an allocator exported in the shell, as it was for the
   training run behind the subject, would reach the server as an explicit
   override. The evidence still records what the server carries, read from its

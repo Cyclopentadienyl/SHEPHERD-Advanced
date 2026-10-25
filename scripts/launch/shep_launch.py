@@ -3,7 +3,7 @@
 from __future__ import annotations
 import argparse, json, os, platform, subprocess, sys, textwrap, threading, time, webbrowser
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Mapping, NamedTuple, Optional, Tuple
 import shlex
 from urllib.request import ProxyHandler, build_opener
 from urllib.error import URLError
@@ -14,7 +14,14 @@ ACCEL_TABLE = CONFIG_DIR / "accelerators.json"
 DEPLOYMENT_CONFIG = CONFIG_DIR / "deployment.yaml"
 DEFAULT_ENTRY = "uvicorn"
 UVICORN_APP = "src.api.main:app"
-UVICORN_DEFAULT_ARGS = ["--host", "0.0.0.0", "--port", "8000"]
+# Loopback by default (SPEC_4 B1, since M5-1); another --host, --fd or --uds
+# after `--` is checked by the bind guard below (`bind_plan`).
+UVICORN_DEFAULT_ARGS = ["--host", "127.0.0.1", "--port", "8000"]
+# Always last on uvicorn's command line, so a --proxy-headers passed through
+# cannot turn it back on: uvicorn would otherwise rewrite the client address
+# from X-Forwarded-For for a peer on 127.0.0.1. M1 has no proxy, and D8 reads
+# the socket's own address and the headers, never the client address.
+UVICORN_FORCED_ARGS = ["--no-proxy-headers"]
 
 # Ensure repo root is importable so the shared, gradio-free runtime presets
 # module loads regardless of how the launcher is invoked.
@@ -26,6 +33,12 @@ from src.config.runtime_presets import (  # noqa: E402
     load_runtime_settings,
     resolve_allocator,
 )
+from src.config.server_settings import (  # noqa: E402
+    ENV_BIND_HOST,
+    bind_is_loopback,
+    inherited_socket_bind,
+    network_bind,
+)
 
 def log(msg: str) -> None:
     print(f"[SHEPHERD] {msg}")
@@ -33,6 +46,31 @@ def log(msg: str) -> None:
 def run(cmd: List[str], check: bool = False) -> subprocess.CompletedProcess:
     log("$ " + " ".join(cmd))
     return subprocess.run(cmd, check=check)
+
+def serve(cmd: List[str]) -> int:
+    """Run the server beside this process until it exits; its exit status.
+    Only where this process cannot become the server (`can_hand_over`:
+    Windows, where ``os.exec*`` changes the PID). There Ctrl-C and Ctrl-Break
+    are console events that reach the server too, since it shares this
+    console, and a SIGTERM from another process is TerminateProcess, which no
+    process can catch or pass on, so nothing is forwarded.
+
+    **A Ctrl-C waits for the server, never kills it.** The server is in this
+    terminal's process group and gets the same SIGINT; it then stops the GPU
+    job it runs, which leads a process group of its own and so no longer gets
+    the terminal's signal (`src/api/main.py`, review of 8242b47).
+    `subprocess.run` would kill the server 0.25 s after the first Ctrl-C,
+    before that stop ends, and leave the job running. A second Ctrl-C makes
+    uvicorn stop waiting for open connections; the server still waits for the
+    job's stop before it exits.
+    """
+    log("$ " + " ".join(cmd))
+    process = subprocess.Popen(cmd)
+    while True:
+        try:
+            return process.wait()
+        except KeyboardInterrupt:
+            continue
 
 # No proxy, the environment's or the Windows system one: an operator's
 # http_proxy (the deployment guide sets one for downloads) would take the
@@ -43,25 +81,28 @@ def urlopen(url: str, timeout: float):
     """Open ``url`` on this host's own server, never through a proxy."""
     return _LOCAL_OPENER.open(url, timeout=timeout)
 
-def _open_browser_when_ready(url: str, health_url: str, progress_every: float = 30.0) -> None:
+def _open_browser_when_ready(url: str, health_url: str, progress_every: float = 30.0,
+                             server: Optional[int] = None) -> None:
     """Poll ``health_url`` until it answers, then open ``url`` once.
 
-    Runs in a daemon thread beside the server. **There is no deadline.**
+    Runs beside the server: in the helper `start_browser_opener` starts,
+    given the server's PID as ``server``, or on Windows in a daemon thread of
+    the launcher that waits for the server. **There is no deadline.**
     uvicorn runs the app's lifespan, where an eager pipeline build loads,
     before it binds the socket, so the first answer is the end of startup
     however long the load takes. A fixed 60 s bound only guessed that time,
     and gave up on a start that loads a large SP table eagerly (about 84 s
-    on a GB10; BACKLOG item 17). The wait cannot outlive the server: when it
-    exits, ``run`` returns, ``main`` exits and this daemon thread ends with
-    the process. A line about every ``progress_every`` seconds says the
-    server is still starting.
+    on a GB10; BACKLOG item 17). The wait cannot outlive the server: the
+    helper returns once no process ``server`` is left, and the daemon thread
+    ends with the launcher, which exits when the server does. A line about
+    every ``progress_every`` seconds says the server is still starting.
 
     ``/health``, not ``/ready``: ``/ready`` stays 503 after a failed startup,
     and the dashboard is where an operator then reloads a pipeline.
     """
     started = time.monotonic()
     next_progress = progress_every
-    while True:
+    while server is None or _is_running(server):
         try:
             resp = urlopen(health_url, timeout=3)
             if resp.status == 200:
@@ -75,6 +116,43 @@ def _open_browser_when_ready(url: str, health_url: str, progress_every: float = 
             log(f"Server still starting ({elapsed:.0f} s); the browser opens when {health_url} answers")
             next_progress = elapsed + progress_every
         time.sleep(1.0)
+
+def _is_running(pid: int) -> bool:
+    """Whether a process ``pid`` exists (one of another user's counts)."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+#: The browser opener as a program of its own (`start_browser_opener`). Its
+#: first process forks and exits at once, so the launcher, which waits for
+#: that one, has no child left when it becomes the server; the second, whose
+#: parent is then the system's, polls (`_open_browser_when_ready`). It stays
+#: in the terminal's process group, so a Ctrl-C ends it too.
+_BROWSER_OPENER = (
+    "import importlib.util, os, sys\n"
+    "if os.fork():\n"
+    "    os._exit(0)\n"
+    "try:\n"
+    "    spec = importlib.util.spec_from_file_location('shep_launch', sys.argv[1])\n"
+    "    launcher = importlib.util.module_from_spec(spec)\n"
+    "    spec.loader.exec_module(launcher)\n"
+    "    launcher._open_browser_when_ready(sys.argv[2], sys.argv[3], server=int(sys.argv[4]))\n"
+    "except KeyboardInterrupt:\n"
+    "    pass\n"
+)
+
+def start_browser_opener(url: str, health_url: str) -> None:
+    """Start the browser opener detached from this process, which then becomes
+    the server (`exec_server`) and keeps its PID, the one the opener is given
+    to watch. A new interpreter rather than a fork of this one: the launcher
+    has imported torch, whose threads a forked copy would not have."""
+    sys.stdout.flush()
+    subprocess.run([sys.executable, "-c", _BROWSER_OPENER, str(Path(__file__).resolve()),
+                    url, health_url, str(os.getpid())], check=False)
 
 def apply_allocator(env, settings: Dict[str, Any]) -> List[str]:
     """Put the CUDA allocator into ``env`` and return what to log.
@@ -236,7 +314,7 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--skip-launch", action="store_true", help="Do not start main app after setup")
     m = p.add_argument_group("Main app")
     m.add_argument("--entry", type=str, default=DEFAULT_ENTRY, help="Python module to run with -m (default: uvicorn)")
-    m.add_argument("--no-browser", action="store_true", help="Do not open a browser once the server is ready. On Linux/macOS the launcher then\nreplaces itself with the server (exec) instead of waiting beside it.")
+    m.add_argument("--no-browser", action="store_true", help="Do not open a browser once the server is ready.")
     return p
 
 def split_passthrough(argv: List[str]) -> Tuple[List[str], List[str]]:
@@ -251,30 +329,93 @@ def split_passthrough(argv: List[str]) -> Tuple[List[str], List[str]]:
         return argv[:split], argv[split + 1:]
     return argv, []
     
-def display_base_url(uvicorn_args: List[str]) -> str:
-    """The URL to show for a server started with these uvicorn arguments.
-
-    uvicorn takes the last of a repeated option, in either spelling --
-    ``--port 8264`` or ``--port=8264`` -- so this does too. A wildcard host is
-    shown as the matching loopback address, which a browser on this machine can
-    open -- an empty ``--host=`` binds all interfaces too, so it counts as one. An
-    IPv6 literal is bracketed, as a URL requires, unless it already is.
-    """
-    host, port = "127.0.0.1", "8000"
+def last_option(uvicorn_args: List[str], name: str) -> Optional[str]:
+    """The value of the last ``name`` option in these arguments, in either
+    spelling -- ``--port 8264`` or ``--port=8264`` -- as uvicorn takes a
+    repeated option; `None` without one."""
+    value = None
     for i, arg in enumerate(uvicorn_args):
-        name, sep, inline = arg.partition("=")
-        if name not in ("--host", "--port"):
+        option, sep, inline = arg.partition("=")
+        if option != name:
             continue
         if sep:
             value = inline
         elif i + 1 < len(uvicorn_args):
             value = uvicorn_args[i + 1]
-        else:
-            continue
-        if name == "--port":
-            port = value
-        else:
-            host = value
+    return value
+
+
+def bind_address(uvicorn_args: List[str]) -> Tuple[str, str]:
+    """The host and port uvicorn binds with these arguments (`last_option`).
+    Without either, uvicorn's own defaults."""
+    host = last_option(uvicorn_args, "--host")
+    port = last_option(uvicorn_args, "--port")
+    return ("127.0.0.1" if host is None else host), ("8000" if port is None else port)
+
+
+def socket_option(uvicorn_args: List[str], environ: Mapping[str, str], name: str) -> Optional[str]:
+    """uvicorn's ``--fd`` or ``--uds`` as it reads one: from its command line,
+    else from ``UVICORN_FD`` / ``UVICORN_UDS`` (its options' environment
+    variables, click's ``auto_envvar_prefix``; an empty value counts as unset).
+    `None` when neither gives it."""
+    value = last_option(uvicorn_args, f"--{name}")
+    if value is None:
+        value = environ.get(f"UVICORN_{name.upper()}") or None
+    return value
+
+
+class BindPlan(NamedTuple):
+    """What uvicorn will listen on, and SPEC_4 §3.1's decision for it."""
+
+    #: The bind guard's decision (`allowed`, `message`); `None` for a unix
+    #: socket, which is not a network bind.
+    decision: Any
+    #: What the "Listening on" line says.
+    listening: str
+    #: The host passed to application startup as ``SHEPHERD_BIND_HOST`` and
+    #: shown as URLs; `None` when uvicorn binds no host.
+    host: Optional[str]
+
+
+def bind_plan(uvicorn_args: List[str], environ: Mapping[str, str]) -> BindPlan:
+    """What uvicorn listens on with these arguments and this environment:
+    a socket it is handed (``--fd``), else a unix socket (``--uds``), else
+    ``--host`` and ``--port``. (One server process takes ``--fd`` first; with
+    ``--reload`` or ``--workers`` uvicorn takes ``--uds`` first, and the
+    stricter ``--fd`` rule is applied whenever one is given.)
+
+    - ``--fd``: an inherited socket, whose address this launcher does not
+      read: a network bind (`inherited_socket_bind`), refused without
+      ``SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND=1``;
+    - ``--uds``: a unix socket, reachable on this machine only, and every
+      operator control is refused through it (D8 sees no loopback address);
+    - otherwise the host (`network_bind`).
+    """
+    fd = socket_option(uvicorn_args, environ, "fd")
+    if fd is not None:
+        decision = inherited_socket_bind(fd, environ)
+        return BindPlan(decision, f"{decision.host}, whose address is not read here", None)
+    uds = socket_option(uvicorn_args, environ, "uds")
+    if uds is not None:
+        return BindPlan(None, (f"unix socket {uds} (this machine only; the operator controls "
+                               "are refused through it, D8)"), None)
+    host, port = bind_address(uvicorn_args)
+    reach = ("loopback: this machine only" if bind_is_loopback(host)
+             else "all interfaces" if host.strip() in ("", "0.0.0.0", "::")
+             else "this address")
+    shown = f"[{host}]" if ":" in host and not host.startswith("[") else host
+    return BindPlan(network_bind(host, environ), f"{shown}:{port} ({reach})", host)
+
+
+def display_base_url(uvicorn_args: List[str]) -> str:
+    """The URL to show for a server started with these uvicorn arguments.
+
+    The address is `bind_address`'s. A wildcard host is shown as the matching
+    loopback address, which a browser on this machine can open -- an empty
+    ``--host=`` binds all interfaces too, so it counts as one. An IPv6 literal
+    is bracketed, as a URL requires, unless it already is.
+    """
+    host, port = bind_address(uvicorn_args)
     host = {"": "127.0.0.1", "0.0.0.0": "127.0.0.1", "::": "::1"}.get(host, host)
     if ":" in host and not host.startswith("["):
         host = f"[{host}]"
@@ -282,12 +423,15 @@ def display_base_url(uvicorn_args: List[str]) -> str:
 
 
 def can_hand_over() -> bool:
-    """Whether this process may become the server by ``exec``.
+    """Whether this process may become the server by ``exec``, as it then does
+    on every start, a browser to open or not.
 
     POSIX only. There ``execve`` replaces the process image and keeps the PID,
-    so a service manager's main PID becomes the server and its signals reach
-    it. On Windows ``os.exec*`` starts a new process and ends this one: the PID
-    changes and a supervisor loses track, so the launcher waits instead.
+    so whoever started the launcher -- a terminal, launch_shepherd.sh, a
+    service manager -- holds the server's PID and its signals reach the
+    server. On Windows ``os.exec*`` starts a new process and ends this one:
+    the PID changes and a supervisor loses track, so the launcher waits
+    instead (`serve`).
     """
     return os.name == "posix"
 
@@ -327,6 +471,30 @@ def main() -> int:
     own_args, passthrough_args = collect_args_from_env_and_cli()
     args = parser.parse_args(own_args)
     args.passthrough = passthrough_args
+
+    # Collect passthrough args
+    passthrough: List[str] = []
+    if args.passthrough:
+        passthrough = list(args.passthrough)
+        if passthrough and passthrough[0] == "--":
+            passthrough = passthrough[1:]
+
+    # **The bind guard** (SPEC_4 §3.1), before anything is installed or
+    # started: what uvicorn will listen on (`bind_plan`) other than loopback is
+    # refused unless SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND=1 accepts the
+    # risk (no control: D8 still refuses operator controls off loopback). Only
+    # for the uvicorn entry, whose options this launcher can read. The host is
+    # passed to application startup, which checks it again; no host, none.
+    bind: Optional[BindPlan] = None
+    os.environ.pop(ENV_BIND_HOST, None)
+    if args.entry == "uvicorn":
+        bind = bind_plan(UVICORN_DEFAULT_ARGS + passthrough, os.environ)
+        if bind.decision is not None and not bind.decision.allowed:
+            log(f"ERROR: {bind.decision.message}")
+            return 2
+        if bind.host is not None:
+            os.environ[ENV_BIND_HOST] = bind.host
+
     os_name = "windows" if is_windows() else ("linux" if sys.platform.startswith("linux") else sys.platform)
     arch = platform.machine().lower()
     py_v = pep440_python()
@@ -421,13 +589,6 @@ def main() -> int:
     for message in apply_allocator(os.environ, load_runtime_settings()):
         log(message)
 
-    # Collect passthrough args
-    passthrough: List[str] = []
-    if args.passthrough:
-        passthrough = list(args.passthrough)
-        if passthrough and passthrough[0] == "--":
-            passthrough = passthrough[1:]
-
     plan = textwrap.dedent(f"""
     === PLAN ===
     Platform              : {platform_key}
@@ -446,35 +607,57 @@ def main() -> int:
     # bookmark a port nothing listened on.
     base_url = display_base_url(UVICORN_DEFAULT_ARGS + passthrough)
 
-    log("Access points (bookmark these):")
-    log(f"  Swagger UI (API docs) : {base_url}/docs")
-    log(f"  Gradio Dashboard      : {base_url}/ui")
+    # What the guard above decided, said where the access points are.
+    if bind is not None:
+        if bind.decision is not None and bind.decision.message:
+            log(f"WARNING: {bind.decision.message}")
+        log(f"Listening on          : {bind.listening}")
+    # A socket has no URL this launcher knows: none is shown, and no browser
+    # is opened on one.
+    has_urls = bind is None or bind.host is not None
+    if has_urls:
+        log("Access points (bookmark these):")
+        log(f"  Swagger UI (API docs) : {base_url}/docs")
+        log(f"  Gradio Dashboard      : {base_url}/ui")
+    else:
+        log("Access points         : no URL is shown: uvicorn listens on a socket, not on a "
+            "host and port this launcher knows")
     if args.print_plan or args.dry_run or args.skip_launch:
         return 0
 
     # Print web interface endpoints
-    print(textwrap.dedent(f"""\
-    ===  Web Interfaces  ===
-      Swagger UI (API docs) : {base_url}/docs
-      Gradio Dashboard      : {base_url}/ui
-    ========================
-    """))
+    if has_urls:
+        print(textwrap.dedent(f"""\
+        ===  Web Interfaces  ===
+          Swagger UI (API docs) : {base_url}/docs
+          Gradio Dashboard      : {base_url}/ui
+        ========================
+        """))
 
     # Build launch command
     if args.entry == "uvicorn":
-        cmd = [sys.executable, "-m", "uvicorn", UVICORN_APP] + UVICORN_DEFAULT_ARGS + ["--no-access-log"] + passthrough
+        cmd = ([sys.executable, "-m", "uvicorn", UVICORN_APP] + UVICORN_DEFAULT_ARGS
+               + ["--no-access-log"] + passthrough + UVICORN_FORCED_ARGS)
     else:
         cmd = [sys.executable, "-m", args.entry] + passthrough
-    # **Headless: become the server.** The only reason to keep this process
-    # alive is the browser thread below, and --no-browser has none. Everything
-    # above -- allocator, attention, plugin, retrieval -- is already in
-    # os.environ, so exec hands it over whole. No launcher is left resident,
-    # the service's main PID is the server, and Restart Backend re-execs it in
-    # place as it would a bare uvicorn start.
-    if args.no_browser and can_hand_over():
-        return exec_server(cmd)
     # Auto-open browser once server is ready (polls /health until it answers)
-    if not args.no_browser:
+    opens_browser = not args.no_browser and has_urls
+    if not args.no_browser and not has_urls:
+        log("No browser is opened: the server has no URL this launcher knows")
+    # **Become the server, on every POSIX start** (round 3 of the review
+    # fixes, P3-2). Everything above -- allocator, attention, plugin,
+    # retrieval -- is already in os.environ, so exec hands it over whole. No
+    # launcher is left resident: the PID that was started is the server's, so
+    # a SIGTERM sent to it alone (a service manager, `kill`) is the server's
+    # orderly stop, which stops its job; a launcher waiting beside the server
+    # was ended by it alone, and the server served on with its job. Restart
+    # Backend re-execs it in place as it would a bare uvicorn start. The
+    # browser, when one is to be opened, is a helper started first.
+    if can_hand_over():
+        if opens_browser:
+            start_browser_opener(f"{base_url}/ui", f"{base_url}/health")
+        return exec_server(cmd)
+    if opens_browser:
         opener = threading.Thread(
             target=_open_browser_when_ready,
             args=(f"{base_url}/ui", f"{base_url}/health"),
@@ -482,8 +665,7 @@ def main() -> int:
         )
         opener.start()
 
-    res = run(cmd)
-    return res.returncode
+    return serve(cmd)
 
 if __name__ == "__main__":
     sys.exit(main())

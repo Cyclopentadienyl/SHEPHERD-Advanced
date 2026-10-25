@@ -1,6 +1,6 @@
 """
-The loaded checkpoint's training metrics reach the Diagnosis tab.
-=================================================================
+The loaded checkpoint's training metrics reach the Diagnosis page.
+==================================================================
 The pipeline copied `mrr`, `hits_at_1` and `hits_at_10` from a checkpoint's
 `logs` -- names no trainer in this repository has written -- while the trainer
 writes `val_mrr` and `val_hits@k` there. The status line therefore showed the
@@ -123,14 +123,18 @@ def test_the_ranking_keys_are_not_listed_a_second_time():
 
 def test_a_current_trainer_checkpoint_shows_its_ranking_metrics(tmp_path):
     """End to end: logs as the trainer writes them, loaded by the pipeline,
-    returned by the status route's model, rendered by the Diagnosis tab."""
+    returned by the status route's model, shown by the Diagnosis page (the
+    card and Model Facts)."""
     torch = pytest.importorskip("torch")
     pytest.importorskip("gradio")
+    from datetime import datetime
+
     from fastapi.encoders import jsonable_encoder
 
     from src.api.routes.pipeline import _status_of
     from src.inference.pipeline import DiagnosisPipeline
     from src.kg.graph import KnowledgeGraph
+    from src.webui.components import diagnosis_card as card
     from src.webui.components import diagnosis_panel as panel
     from tests.fixtures.synthetic_workspace import build_workspace
 
@@ -157,51 +161,61 @@ def test_a_current_trainer_checkpoint_shows_its_ranking_metrics(tmp_path):
     assert "val_ndcg@1" not in meta and "learning_rate" not in meta
 
     status = jsonable_encoder(_status_of(pipeline.get_pipeline_config(), None, None))
-    rendered = panel._format_pipeline_status(status)
+    state = card.advance(None, status, None, now=datetime(2026, 10, 20, 10, 0), operator=True,
+                         d8_short=None, open_checkpoints=False, facts=_no_listing)
+    details = panel.model_identity_html(state)
 
-    assert f"Val MRR: {logs['val_mrr']:.4f}" in rendered
-    assert f"Val Hits@1: {logs['val_hits@1']:.4f}" in rendered
-    assert f"Val Hits@10: {logs['val_hits@10']:.4f}" in rendered
-    assert f"Val Loss: {logs['val_loss']:.4f}" in rendered
-    assert f"Train Loss: {logs['train_loss']:.4f}" in rendered
+    # Model Facts' Evidence: the Trainer's selection metric, named as such.
+    assert (f"Validation MRR (Trainer, top-20) {logs['val_mrr']:.4f} — selection metric on "
+            "val, not an independent test") in details
 
     # The same status names what the loaded pipeline serves (contract M3c),
     # taken from the pipeline's own served identity: the digest of the
     # checkpoint read it was built from, and the workspace's synthetic origin.
     served = pipeline.served_identity()
     assert served.checkpoint.state == "verified"
-    assert f"checkpoint `sha256:{served.checkpoint.sha256[:12]}…` ✓" in rendered
-    assert "dataset synthetic ✓" in rendered
-    assert "SYNTHETIC WORKSPACE: not a clinical result." in rendered
-    assert panel.IDENTITY_CLAIM_BOUNDARY in rendered
+    body = card.body_html(state)
+    assert f">{served.checkpoint.sha256[:12]}</code>" in body and "synthetic data" in body
+    assert "SYNTHETIC WORKSPACE: not a clinical result." in details
+    assert panel.IDENTITY_CLAIM_BOUNDARY in details
 
 
-def test_the_status_line_labels_the_metrics_and_skips_the_descriptive_ones():
+def _no_listing(status, **kwargs):
+    """What the card adds, without a workspaces root (no list read)."""
+    from src.webui.components import diagnosis_card as card
+
+    return {"key": card.served_key(status), "operator": kwargs.get("operator"), "workspaces": [],
+            "serving": None, "item": None, "item_problem": None, "recorded": None,
+            "trained": None}
+
+
+@pytest.mark.parametrize("meta, shown", [
+    ({"epoch": 3, "params": 1000, "device": "cpu", "val_loss": 0.25, "train_loss": 0.5,
+      "val_mrr": 0.5, "val_hits@10": 0.75, "val_hits@1": 0.25, "flag": True,
+      "note": "not a number"}, "Validation MRR (Trainer, top-20) 0.5000"),
+    ({"epoch": 3, "val_hits@10": 0.75, "val_hits@1": 0.25}, "Validation Hits@10 (Trainer) 0.7500"),
+    ({"epoch": 3, "val_loss": 0.25}, "Validation (Trainer): not recorded in this checkpoint"),
+])
+def test_details_show_the_selection_metric_by_the_ranking_keys(meta, shown):
+    """The figure is the first of `RANKING_SCORE_KEYS` the status's
+    ``checkpoint_meta`` carries (the one definition of a checkpoint's ranking
+    metric); losses and descriptive keys are not a validation figure."""
     pytest.importorskip("gradio")
-    from src.webui.components import diagnosis_panel as panel
+    from datetime import datetime
 
-    rendered = panel._format_pipeline_status({
-        "initialized": True,
-        "gnn_ready": True,
-        "checkpoint_meta": {
-            "epoch": 3,
-            "params": 1000,
-            "device": "cpu",
-            "val_loss": 0.25,
-            "train_loss": 0.5,
-            "val_mrr": 0.5,
-            "val_hits@10": 0.75,
-            "val_hits@1": 0.25,
-            "flag": True,
-            "note": "not a number",
-        },
-    })
+    from src.webui.components import diagnosis_card as card
 
-    checkpoint_line = next(
-        line for line in rendered.splitlines() if line.startswith("- Checkpoint:")
-    )
-    assert checkpoint_line == (
-        "- Checkpoint: Epoch 3 | 1,000 params | device=cpu | Val Loss: 0.2500 | "
-        "Train Loss: 0.5000 | Val MRR: 0.5000 | Val Hits@10: 0.7500 | "
-        "Val Hits@1: 0.2500"
-    )
+    status = {"initialized": True, "gnn_ready": True, "checkpoint_meta": meta,
+              "served_identity": {
+                  "scoring_mode": "gnn_only",
+                  "checkpoint": {"state": "verified", "sha256": "a" * 64},
+                  "graph": {"state": "verified", "kg_sha256": "b" * 64,
+                            "split_manifest_sha256": "c" * 64},
+                  "shortest_paths": {"state": "absent", "build_id": None, "max_hops": None},
+                  "dataset_record": {"state": "verified", "origin": "files", "sha256": "d" * 64},
+                  "settings": {}}}
+    state = card.advance(None, status, None, now=datetime(2026, 10, 20), operator=True,
+                         d8_short=None, open_checkpoints=False, facts=_no_listing)
+    details = card.served_facts_html(state)
+    assert shown in details
+    assert "Val Loss" not in details and "Train Loss" not in details

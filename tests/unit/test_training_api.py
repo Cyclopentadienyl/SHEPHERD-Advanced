@@ -29,6 +29,8 @@ pytest.importorskip("fastapi")
 pytest.importorskip("pydantic")
 
 from src.api.services.training_manager import TrainingManager
+from tests.fixtures.job_processes import FakeProcess
+from tests.fixtures.operator_access import OPERATOR_BASE_URL, operator_mode
 
 
 # ==============================================================================
@@ -119,11 +121,7 @@ class TestTrainingManagerStartStop:
 
     def test_start_training_success(self, manager, sample_config):
         """Start training with mocked subprocess."""
-        mock_proc = MagicMock()
-        mock_proc.pid = 12345
-        mock_proc.poll.return_value = None
-        mock_proc.stdout = MagicMock()
-        mock_proc.stdout.readline.return_value = ""
+        mock_proc = FakeProcess(pid=12345)
 
         with patch("subprocess.Popen", return_value=mock_proc):
             result = manager.start_training(sample_config)
@@ -136,9 +134,7 @@ class TestTrainingManagerStartStop:
         """The directory is named here and claimed by the training process
         after its refusals (contract M3a-2), so a refused run leaves nothing."""
         manager = TrainingManager()
-        mock_proc = MagicMock(pid=1)
-        mock_proc.poll.return_value = None
-        mock_proc.stdout.readline.return_value = ""
+        mock_proc = FakeProcess(pid=1)
         config = {"data_dir": str(tmp_path / "ws"), "conv_type": "hgt", "run_name": "Pilot A"}
 
         with patch("subprocess.Popen", return_value=mock_proc) as popen:
@@ -175,11 +171,7 @@ class TestTrainingManagerStartStop:
 
     def test_start_training_already_running(self, manager, sample_config):
         """Cannot start training when already running."""
-        mock_proc = MagicMock()
-        mock_proc.pid = 12345
-        mock_proc.poll.return_value = None
-        mock_proc.stdout = MagicMock()
-        mock_proc.stdout.readline.return_value = ""
+        mock_proc = FakeProcess(pid=12345)
 
         with patch("subprocess.Popen", return_value=mock_proc):
             manager.start_training(sample_config)
@@ -194,11 +186,13 @@ class TestTrainingManagerStartStop:
         assert result["success"] is False
         assert "No training" in result["error"]
 
-    def test_a_stop_is_reported_as_stopped_with_the_latest_snapshot(self, manager):
-        """Contract M3a: an operator's stop is not a completed stage."""
-        process = MagicMock(pid=7)
-        process.wait.return_value = 0
-        manager._process, manager._status = process, "running"
+    def test_a_stop_is_reported_as_stopped_with_the_latest_snapshot(self, tmp_path):
+        """Contract M3a: an operator's stop is not a completed stage, even
+        when the process exits 0 on it."""
+        manager = TrainingManager()
+        process = FakeProcess(pid=7, on_sigint=0)
+        with patch("subprocess.Popen", return_value=process):
+            manager.start_training({"data_dir": str(tmp_path / "ws")})
 
         result = manager.stop_training()
 
@@ -218,15 +212,16 @@ class TestTrainingManagerStartStop:
 
     def test_a_continued_run_is_placed_under_its_parents_architecture(self, tmp_path):
         manager = TrainingManager()
-        mock_proc = MagicMock(pid=3)
-        mock_proc.poll.return_value = None
-        mock_proc.stdout.readline.return_value = ""
-        preview = {"ok": True, "architecture": "hgt"}
+        mock_proc = FakeProcess(pid=3)
+        preview = {"ok": True, "architecture": "hgt", "sha256": "c" * 64}
         with patch.object(manager, "preview_continuation", return_value=preview), \
-                patch("subprocess.Popen", return_value=mock_proc):
+                patch("subprocess.Popen", return_value=mock_proc) as popen:
             result = manager.start_training({"data_dir": str(tmp_path / "ws"),
                                              "resume_from": "p.pt"})
         assert Path(result["run_dir"]).parent == tmp_path / "ws" / "runs" / "hgt"
+        # The process is bound to the parent this placement was decided on (P22-S1).
+        argv = popen.call_args[0][0]
+        assert argv[argv.index("--expect-resume-sha256") + 1] == "c" * 64
 
 
 class TestTrainingManagerMetrics:
@@ -284,6 +279,38 @@ class TestTrainingManagerCheckpoints:
         assert "model-01-0.5000.pt" in filenames
         # size_mb should be very small for dummy files
         assert all(c["size_mb"] >= 0 for c in checkpoints)
+        # Unloadable: listed with why, no digest, no metadata (M5-1), never dropped.
+        for entry in checkpoints:
+            assert entry["metadata_problem"] and entry["sha256"] is None
+            assert entry["validation"] is None and "epoch" not in entry
+
+    def test_each_entry_carries_its_reads_digest_and_record(self, manager, tmp_dirs):
+        """One read per file (`read_run_checkpoints`): the digest, the Trainer's
+        validation figure and the dataset fingerprint come from the bytes the
+        metadata came from (BACKLOG 19.3)."""
+        from src.utils.checkpoint_io import write_checkpoint
+
+        ckpt_dir = Path(tmp_dirs["checkpoint_dir"])
+        digest = write_checkpoint(
+            {"checkpoint_kind": "training_state", "epoch": 3,
+             "logs": {"val_mrr": 0.4, "val_loss": 0.2},
+             "training_input_digests": {"split_manifest": "5" * 64}},
+            ckpt_dir / "last.pt")
+
+        (entry,) = manager.get_checkpoints(tmp_dirs["data_dir"])
+        assert entry["sha256"] == digest
+        assert entry["validation"] == {"metric": "val_mrr", "value": 0.4}
+        assert entry["dataset_fingerprint"] == "5" * 64
+        assert entry["metadata_problem"] is None
+        assert (entry["epoch"], entry["checkpoint_kind"]) == (3, "training_state")
+        assert entry["metrics"] == {"val_mrr": 0.4, "val_loss": 0.2}
+
+    def test_the_manager_no_longer_loads_a_file_itself(self):
+        """The one read is `read_checkpoint`'s, inside the listing."""
+        import inspect
+
+        source = inspect.getsource(TrainingManager.get_checkpoints)
+        assert "torch.load" not in source and "read_run_checkpoints" in source
 
 
 class TestTrainingManagerResources:
@@ -330,7 +357,10 @@ class TestTrainingAPIEndpoints:
 
     @pytest.fixture(autouse=True)
     def setup_client(self, manager, monkeypatch):
-        """Patch the global training_manager with our test instance."""
+        """Patch the global training_manager with our test instance. The
+        client is one D8 allows (mode M1, loopback): start, stop and the
+        checkpoint list are operator routes; `TestTrainingRoutesAreGated`
+        covers the refusals."""
         monkeypatch.setattr(
             "src.api.routes.training.training_manager", manager
         )
@@ -338,9 +368,10 @@ class TestTrainingAPIEndpoints:
         from src.api.routes.training import router
         from fastapi import FastAPI
 
+        operator_mode(monkeypatch)
         test_app = FastAPI()
         test_app.include_router(router, prefix="/api/v1")
-        self.client = TestClient(test_app)
+        self.client = TestClient(test_app, base_url=OPERATOR_BASE_URL)
 
     def test_get_status_idle(self):
         resp = self.client.get("/api/v1/training/status")
@@ -360,12 +391,44 @@ class TestTrainingAPIEndpoints:
         assert resp.status_code == 200
         assert resp.json() == []
 
+    def test_the_route_passes_the_reads_digest_on(self, manager, tmp_dirs):
+        """The response model keeps the fields the listing adds (M5-1)."""
+        from src.utils.checkpoint_io import write_checkpoint
+
+        digest = write_checkpoint(
+            {"epoch": 2, "logs": {"val_hits@1": 0.1},
+             "training_input_digests": {"split_manifest": "6" * 64}},
+            Path(tmp_dirs["checkpoint_dir"]) / "last.pt")
+        (Path(tmp_dirs["checkpoint_dir"]) / "broken.pt").write_bytes(b"x")
+        manager._config = {"data_dir": tmp_dirs["data_dir"]}
+
+        listed = {c["filename"]: c for c in self.client.get(
+            "/api/v1/training/checkpoints").json()}
+        assert listed["last.pt"]["sha256"] == digest
+        assert listed["last.pt"]["validation"] == {"metric": "val_hits@1", "value": 0.1}
+        assert listed["last.pt"]["dataset_fingerprint"] == "6" * 64
+        assert listed["last.pt"]["metadata_problem"] is None
+        assert listed["broken.pt"]["sha256"] is None and listed["broken.pt"]["metadata_problem"]
+
+    def test_a_link_whose_target_is_gone_does_not_break_the_list(self, manager, tmp_dirs):
+        """A `.pt` link whose target is gone (or a checkpoint training removed
+        between the listing and its `stat`) used to fail the whole list with
+        `FileNotFoundError`. The file has no size or time to show, so this
+        list leaves it out, as before for a file gone since it was listed
+        (M5-1 review)."""
+        from src.utils.checkpoint_io import write_checkpoint
+
+        checkpoints = Path(tmp_dirs["checkpoint_dir"])
+        write_checkpoint({"epoch": 1}, checkpoints / "last.pt")
+        (checkpoints / "gone.pt").symlink_to(checkpoints / "removed.pt")
+        manager._config = {"data_dir": tmp_dirs["data_dir"]}
+
+        response = self.client.get("/api/v1/training/checkpoints")
+        assert response.status_code == 200
+        assert [c["filename"] for c in response.json()] == ["last.pt"]
+
     def test_start_training(self, sample_config):
-        mock_proc = MagicMock()
-        mock_proc.pid = 99999
-        mock_proc.poll.return_value = None
-        mock_proc.stdout = MagicMock()
-        mock_proc.stdout.readline.return_value = ""
+        mock_proc = FakeProcess(pid=99999)
 
         with patch("subprocess.Popen", return_value=mock_proc):
             resp = self.client.post("/api/v1/training/start", json=sample_config)
@@ -391,9 +454,7 @@ class TestTrainingAPIEndpoints:
         """Defaults are the training script's own; a continued run inherits
         what the caller did not set (contract M3a-3)."""
         import yaml
-        mock_proc = MagicMock(pid=4)
-        mock_proc.poll.return_value = None
-        mock_proc.stdout.readline.return_value = ""
+        mock_proc = FakeProcess(pid=4)
         with patch("subprocess.Popen", return_value=mock_proc):
             resp = self.client.post("/api/v1/training/start",
                                     json={"num_epochs": 3, "device": "cpu"})
@@ -401,13 +462,81 @@ class TestTrainingAPIEndpoints:
         assert set(written) == {"num_epochs", "device", "run_dir"}
 
     def test_an_empty_retired_location_is_the_old_default(self, sample_config):
-        mock_proc = MagicMock(pid=2)
-        mock_proc.poll.return_value = None
-        mock_proc.stdout.readline.return_value = ""
+        mock_proc = FakeProcess(pid=2)
         with patch("subprocess.Popen", return_value=mock_proc):
             resp = self.client.post("/api/v1/training/start",
                                     json={**sample_config, "checkpoint_dir": ""})
         assert resp.status_code == 200 and resp.json()["run_dir"]
+
+
+class TestTrainingRoutesAreGated:
+    """Start, stop and the checkpoint list are operator controls (D8, M5-1):
+    refused with 403 before the route runs, nothing started, stopped or
+    opened, unless the deployment is in mode M1 and the request arrived on
+    loopback. Status and metrics stay open."""
+
+    GATED = [("post", "/api/v1/training/start", {"num_epochs": 1, "device": "cpu"}),
+             ("post", "/api/v1/training/stop", None),
+             ("get", "/api/v1/training/checkpoints", None)]
+
+    @pytest.fixture
+    def guarded(self, monkeypatch):
+        """The routes over a manager whose every action fails the test."""
+        from fastapi import FastAPI
+
+        from src.api.routes.training import router
+
+        class Untouchable:
+            def __getattr__(self, name):
+                pytest.fail(f"a refused request reached the service ({name})")
+
+        monkeypatch.setattr("src.api.routes.training.training_manager", Untouchable())
+        app = FastAPI()
+        app.include_router(router, prefix="/api/v1")
+        return app
+
+    @pytest.mark.parametrize("method, path, body", GATED)
+    @pytest.mark.parametrize("mode, base_url, headers, says", [
+        (None, "http://127.0.0.1", {}, "SHEPHERD_DEPLOYMENT_MODE is not set"),
+        ("M1", "http://192.0.2.10", {}, "did not arrive on a loopback address"),
+        ("M1", "http://127.0.0.1", {"X-Forwarded-For": "203.0.113.9"}, "forwarding header"),
+        ("M1", "http://127.0.0.1", {"Origin": "https://evil.example"}, "origin"),
+        ("M1", "http://127.0.0.1", {"Host": "evil.example"}, "not addressed to localhost"),
+    ], ids=["mode-unset", "lan", "forwarded", "foreign-origin", "rebinding-host"])
+    def test_refused_before_the_service_is_reached(self, guarded, monkeypatch, method, path,
+                                                   body, mode, base_url, headers, says):
+        from fastapi.testclient import TestClient
+
+        if mode is not None:
+            monkeypatch.setenv("SHEPHERD_DEPLOYMENT_MODE", mode)
+        client = TestClient(guarded, base_url=base_url)
+        response = getattr(client, method)(path, headers=headers,
+                                           **({"json": body} if body is not None else {}))
+        assert response.status_code == 403, response.text
+        assert says in response.json()["detail"]
+        assert "203.0.113.9" not in response.text and "evil.example" not in response.text
+
+    def test_an_invalid_body_from_a_refused_request_is_refused_not_validated(self, guarded):
+        """The gate comes first: a request D8 refuses learns nothing about
+        which settings the service would accept."""
+        from fastapi.testclient import TestClient
+
+        response = TestClient(guarded, base_url="http://192.0.2.10").post(
+            "/api/v1/training/start", json={"num_epochs": -5})
+        assert response.status_code == 403
+
+    def test_status_and_metrics_stay_open(self, manager, monkeypatch):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from src.api.routes.training import router
+
+        monkeypatch.setattr("src.api.routes.training.training_manager", manager)
+        app = FastAPI()
+        app.include_router(router, prefix="/api/v1")
+        client = TestClient(app, base_url="http://192.0.2.10")
+        assert client.get("/api/v1/training/status").status_code == 200
+        assert client.get("/api/v1/training/metrics").status_code == 200
 
 
 class TestSystemAPIEndpoint:
@@ -507,13 +636,13 @@ def real_client(monkeypatch):
 
     manager = TrainingManager()
     monkeypatch.setattr("src.api.routes.training.training_manager", manager)
+    operator_mode(monkeypatch)
     app = FastAPI()
     app.include_router(router, prefix="/api/v1")
-    process = MagicMock(pid=11)
-    process.poll.return_value = None
-    process.stdout.readline.return_value = ""
+    process = FakeProcess(pid=11)
     with patch("subprocess.Popen", return_value=process) as popen:
-        yield TestClient(app), popen
+        yield TestClient(app, base_url=OPERATOR_BASE_URL), popen
+    process.finish(0)
 
 
 class TestContinuationRulesOnResolvedSettings:
@@ -572,6 +701,31 @@ class TestContinuationRulesOnResolvedSettings:
             resp = client.post("/api/v1/training/start", json=body)
             assert resp.status_code == 422 and fragment in resp.text, (body, resp.text)
         popen.assert_not_called()
+
+
+def test_the_services_422_does_not_use_the_name_starlette_deprecated(monkeypatch):
+    """The route's own 422 (settings the service refuses): Starlette 1.x, which
+    Gradio 6.30 brings, renamed 422 after RFC 9110 and warns on the old
+    HTTP_422_UNPROCESSABLE_ENTITY. Same status code, without the warning."""
+    import warnings
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from src.api.routes import training as training_routes
+
+    monkeypatch.setattr(training_routes.training_manager, "start_training",
+                        lambda config, **kwargs: {"success": False, "invalid_settings": True,
+                                                  "error": "refused by the service"})
+    operator_mode(monkeypatch)
+    app = FastAPI()
+    app.include_router(training_routes.router, prefix="/api/v1")
+    client = TestClient(app, base_url=OPERATOR_BASE_URL)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        resp = client.post("/api/v1/training/start", json={})
+    assert resp.status_code == 422 and "refused by the service" in resp.text
+    assert not [w for w in caught if "HTTP_422" in str(w.message)], [str(w.message) for w in caught]
 
 
 def torch_load(path):

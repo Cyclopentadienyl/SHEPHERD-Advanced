@@ -17,7 +17,8 @@ importer), built once per module and copied per test:
   for the same inputs; R10's states for each kind of training record;
 - the report store's commit order; `--record` registers through
   `register_report` into the ledger beside the checkpoint read, without hashing
-  the directory again; a refused registration keeps the report and exits 3.
+  the directory again; a refused registration exits 3 and keeps the report
+  unless it is no longer the one the run published.
 
 The end-to-end acceptance list, through the real CLIs, is
 `tests/integration/test_m4_flow.py`.
@@ -28,6 +29,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 import shutil
 from pathlib import Path
 
@@ -54,8 +56,13 @@ def base(tmp_path_factory):
 
 
 @pytest.fixture
-def cohort(base, tmp_path):
-    return copy_registered_cohort(base, tmp_path / "root")
+def cohort(base, tmp_path, monkeypatch):
+    """A copy of the built cohort, its registry the deployment's
+    (`SHEPHERD_REGISTRY`): a ``--cohort`` run measures, and a report is
+    registered, only there (BACKLOG 37)."""
+    copied = copy_registered_cohort(base, tmp_path / "root")
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(copied.registry))
+    return copied
 
 
 @pytest.fixture
@@ -290,13 +297,14 @@ def test_the_r10_block_is_compute_r10_over_the_checkpoints_record(cli, cohort):
     ("graph_only", "not_recorded", "not_recorded", 0),
 ])
 def test_r10_states_follow_what_the_checkpoint_records(
-    cli, tmp_path, record, training, validation, val_opens
+    cli, tmp_path, monkeypatch, record, training, validation, val_opens
 ):
     """A pipeline record finds both scopes in the workspace; with no validation
     recorded, validation is `no_validation_inputs_recorded` and `val` is never
     read; a graph-only record is not the pipeline's, so both scopes are
     unverifiable and no candidate is read. Never a count without evidence."""
     cohort = build_registered_cohort(tmp_path / "root", training_record=record)
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(cohort.registry))
 
     with count_opens() as opens:
         assert cli.main(_argv(cohort)) == 0
@@ -499,7 +507,7 @@ def test_the_register_later_command_quotes_each_path_for_every_shell():
 
 @pytest.mark.parametrize("record", ["pipeline", "graph_only"])
 def test_the_console_gives_each_r10_label_in_the_caveats_words_and_the_definitions_once(
-    cli, tmp_path, capsys, record
+    cli, tmp_path, monkeypatch, capsys, record
 ):
     """Finding 9: each label's state is rendered through `R10_STATE_TEXT`, an
     unverifiable one through its scope's `R10_UNVERIFIABLE_REASON`, with no
@@ -514,6 +522,7 @@ def test_the_console_gives_each_r10_label_in_the_caveats_words_and_the_definitio
     )
 
     cohort = build_registered_cohort(tmp_path / "root", training_record=record)
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(cohort.registry))
 
     assert cli.main(_argv(cohort)) == 0
 
@@ -554,3 +563,857 @@ def test_no_patient_level_data_reaches_the_ledger(cli, cohort):
     for forbidden in ("phenotype_ids", "patient_id", "sample_id", "exclusions",
                       "unmappable_terms"):
         assert forbidden not in text, forbidden
+
+
+# ---------------------------------------------------------------------------
+# M5-1: expected digests, the outcome file, the usage history, --deterministic
+# ---------------------------------------------------------------------------
+def _usage(cohort):
+    from src.evaluation.report_store import read_usage_history
+
+    entries, problems = read_usage_history(cohort.version)
+    assert problems == []
+    return entries
+
+
+def test_the_expected_digests_let_the_chosen_run_through(cli, cohort):
+    assert cli.main(_argv(cohort, "--expect-checkpoint-sha256", cohort.checkpoint_sha256,
+                          "--expect-version-sha256", cohort.version.identity.sha256)) == 0
+    assert len(_reports(cohort)) == 1
+
+
+@pytest.mark.parametrize("which", ["version", "checkpoint"])
+def test_a_read_that_is_not_the_chosen_one_is_refused_before_anything_is_measured(
+    cli, cohort, monkeypatch, which
+):
+    """The version's `cohort.json` is compared right after it is read, before
+    the workspace is; the checkpoint right after its read, before R3. Nothing
+    is built or written, and the message names both digests."""
+    import src.kg.artifacts as artifacts
+    import src.models.gnn.shepherd_gnn as shepherd_gnn
+    import src.utils.fingerprint as fingerprint
+
+    other = "f" * 64
+    monkeypatch.setattr(shepherd_gnn, "build_shepherd_model",
+                        lambda *a, **k: pytest.fail("a model was built after a refusal"))
+    if which == "version":
+        monkeypatch.setattr(artifacts, "read_split_manifest",
+                            lambda *a, **k: pytest.fail("the workspace was read"))
+        flag, read = "--expect-version-sha256", cohort.version.identity.sha256
+    else:
+        monkeypatch.setattr(fingerprint, "verify_training_record",
+                            lambda *a, **k: pytest.fail("R3 ran after the refusal"))
+        flag, read = "--expect-checkpoint-sha256", cohort.checkpoint_sha256
+
+    with pytest.raises(cli.ExpectedDigestMismatch) as refused:
+        cli.main(_argv(cohort, flag, other, "--record"))
+
+    message = str(refused.value)
+    assert f"holds bytes {read[:12]}..., not the {other[:12]}..." in message
+    assert "Nothing was written" in message
+    assert _nothing_written(cohort) and _usage(cohort) == []
+
+
+@pytest.mark.parametrize("bytes_now", ["not a checkpoint", "another checkpoint", "gone"])
+def test_other_bytes_at_the_chosen_checkpoint_are_refused_before_torch_parses_them(
+    cli, cohort, monkeypatch, bytes_now
+):
+    """Root-cause round, BACKLOG 43: `--expect-checkpoint-sha256` is compared on
+    the checkpoint's one read before torch parses it, so bytes put at the chosen
+    path after the choice are refused as changed, whatever they are: junk is not
+    called unparseable, a valid other checkpoint is never loaded, and a removed
+    file is not a bare FileNotFoundError. Nothing is written."""
+    import hashlib
+
+    import torch
+
+    import src.utils.checkpoint_io as checkpoint_io
+
+    chosen = cohort.checkpoint_sha256
+    if bytes_now == "not a checkpoint":
+        cohort.checkpoint.write_bytes(b"torn mid-overwrite")
+    elif bytes_now == "another checkpoint":
+        torch.save({"state_dict": {}}, cohort.checkpoint)
+    else:
+        cohort.checkpoint.unlink()
+    found = (None if bytes_now == "gone"
+             else hashlib.sha256(cohort.checkpoint.read_bytes()).hexdigest())
+    # The checkpoint reader hands torch the bytes through its module's BytesIO
+    # (the graph's tensor files are parsed elsewhere, before the checkpoint).
+    monkeypatch.setattr(checkpoint_io, "BytesIO",
+                        lambda *a, **k: pytest.fail("torch parsed the checkpoint's bytes"))
+
+    with pytest.raises(cli.ExpectedDigestMismatch) as refused:
+        cli.main(_argv(cohort, "--expect-checkpoint-sha256", chosen, "--record"))
+
+    message = str(refused.value)
+    held = "is gone" if found is None else f"holds bytes {found[:12]}..."
+    assert f"{held}, not the {chosen[:12]}... this run was started for" in message
+    assert "Nothing was written" in message
+    assert _nothing_written(cohort) and _usage(cohort) == []
+
+
+@pytest.mark.parametrize("bytes_now", ["torn", "another schema", "another version", "gone"])
+def test_other_bytes_at_the_chosen_version_are_refused_before_they_are_decoded(
+    cli, cohort, monkeypatch, bytes_now
+):
+    """Root-cause round 3 (INT-R2): `--expect-version-sha256` is compared on
+    the version's one `cohort.json` read before it is decoded
+    (`resolve_version(expected_sha256=)`), as the checkpoint's expectation is
+    before torch parses it: bytes put at the chosen version after the choice
+    are refused as changed, whatever they are. Torn bytes are not called
+    malformed, another schema is not refused as one, another valid version is
+    never decoded, and a removed `cohort.json` is not "an interrupted import"
+    with the advice to remove the directory. Nothing is written and the usage
+    history stays empty."""
+    import src.evaluation.cohort_registry as cohort_registry
+
+    path, label = cohort.version.identity.path, cohort.version.manifest["label"]
+    chosen = cohort.version.identity.sha256
+    if bytes_now == "gone":
+        path.unlink()
+    elif bytes_now == "torn":
+        data = path.read_bytes()
+        path.write_bytes(data[:len(data) // 2])
+    else:
+        manifest = json.loads(path.read_bytes())
+        if bytes_now == "another schema":
+            manifest["schema_version"] = 99
+        else:
+            manifest["imported"]["at"] = "2026-10-22T00:00:00Z"
+        path.write_bytes(cohort_registry.encode_json(manifest))
+    found = None if bytes_now == "gone" else _sha(path)
+
+    class Undecoded:
+        """The registry module's `json`, whose `loads` fails the test."""
+
+        def __getattr__(self, name):
+            return getattr(json, name)
+
+        @staticmethod
+        def loads(*args, **kwargs):
+            pytest.fail("the chosen version's cohort.json was decoded")
+
+    monkeypatch.setattr(cohort_registry, "json", Undecoded())
+
+    with pytest.raises(cli.ExpectedDigestMismatch) as refused:
+        cli.main(_argv(cohort, "--expect-version-sha256", chosen, "--record"))
+
+    message = str(refused.value)
+    held = "is gone" if found is None else f"holds bytes {found[:12]}..."
+    assert message.startswith(f"the cohort version {label!r} ({path}) {held}, not the "
+                              f"{chosen[:12]}... this run was started for: it changed after it "
+                              "was chosen"), message
+    assert "Nothing was written" in message
+    assert _nothing_written(cohort) and _usage(cohort) == []
+
+
+def _outcome(path):
+    return json.loads(Path(path).read_text())
+
+
+def test_the_outcome_file_says_what_the_run_did_and_report_state_agrees(
+    cli, cohort, tmp_path
+):
+    from src.evaluation.registration import report_state
+
+    out = tmp_path / "jobs" / "outcome.json"
+    out.parent.mkdir()
+
+    assert cli.main(_argv(cohort, "--outcome", str(out))) == 0
+
+    path, _ = _report(cohort)
+    outcome = _outcome(out)
+    assert outcome["complete"] is True and outcome["schema_version"] == 1
+    assert outcome["report"] == str(path) and outcome["run_id"] == path.parent.name
+    assert outcome["report_sha256"] == _sha(path)
+    assert outcome["checkpoint"] == str(cohort.checkpoint.resolve())
+    assert outcome["checkpoint_sha256"] == cohort.checkpoint_sha256
+    assert outcome["cohort"] == {"label": cohort.version.manifest["label"],
+                                 "role": cohort.version.manifest["role"],
+                                 "manifest_sha256": cohort.version.identity.sha256}
+    assert outcome["deterministic"] is False
+    assert outcome["registration"] == {
+        "requested": False, "registered": False, "outcome": "not_requested", "sequence": None,
+        "ledger": None,
+        "why": "--record was not given; the report is kept for a later registration"}
+    state = report_state(outcome["report"], checkpoint=outcome["checkpoint"],
+                         expected_sha256=outcome["report_sha256"])
+    assert (state.kept, state.registered) == ("kept", "not_registered")
+
+
+def test_the_outcome_file_records_a_registration_and_a_refused_one(cli, cohort, tmp_path):
+    from src.evaluation.registration import report_state
+
+    out = tmp_path / "outcome.json"
+    assert cli.main(_argv(cohort, "--record", "--outcome", str(out))) == 0
+    registration = _outcome(out)["registration"]
+    assert registration == {
+        "requested": True, "registered": True, "outcome": "registered", "sequence": 1,
+        "ledger": str(cohort.checkpoint.parent.resolve() / LEDGER),
+        "why": "Registered as record 1"}
+
+    ledger = cohort.checkpoint.parent / LEDGER
+    ledger.write_text(json.dumps({"schema_version": 2, "records": []}))
+    out = tmp_path / "outcome-2.json"  # a new file for each run
+    assert cli.main(_argv(cohort, "--record", "--outcome", str(out))) == 3
+    outcome = _outcome(out)
+    assert outcome["complete"] is True
+    assert outcome["registration"]["registered"] is False
+    assert outcome["registration"]["outcome"] == "refused"
+    assert "evaluations.v2.json" in outcome["registration"]["why"]
+    state = report_state(outcome["report"], checkpoint=outcome["checkpoint"],
+                         expected_sha256=outcome["report_sha256"])
+    assert (state.kept, state.registered) == ("kept", "cannot_be_checked")
+
+
+def test_no_outcome_file_is_written_when_the_run_is_refused_before_its_report(
+    cli, cohort, tmp_path
+):
+    out = tmp_path / "outcome.json"
+    _without_source_format(cohort)
+
+    with pytest.raises(ValueError):
+        cli.main(_argv(cohort, "--outcome", str(out)))
+    assert not out.exists()
+
+
+@pytest.mark.parametrize("where", ["missing_directory", "a_directory", "an_earlier_runs_file",
+                                   "a_dangling_link"])
+def test_an_outcome_file_that_cannot_be_written_is_refused_before_anything_is_read(
+    cli, cohort, tmp_path, monkeypatch, where
+):
+    """Its directory must exist and it must not: an existing file -- an
+    earlier run's outcome, or a file named by mistake -- is neither read as
+    this run's nor replaced (the reviewers' P3, 2026-10-20)."""
+    import src.evaluation.cohort_registry as cohort_registry
+
+    monkeypatch.setattr(cohort_registry, "resolve_version",
+                        lambda *a, **k: pytest.fail("something was read"))
+    out = {"missing_directory": tmp_path / "absent" / "outcome.json",
+           "a_directory": tmp_path}.get(where, tmp_path / "outcome.json")
+    earlier = json.dumps({"complete": True, "registration": {"registered": True}})
+    if where == "an_earlier_runs_file":
+        out.write_text(earlier)
+    elif where == "a_dangling_link":
+        out.symlink_to(tmp_path / "nowhere.json")
+
+    with pytest.raises(ValueError, match="--outcome .*Nothing was read or written") as refused:
+        cli.main(_argv(cohort, "--outcome", str(out), "--record"))
+    assert _nothing_written(cohort)
+    if where == "an_earlier_runs_file":
+        assert "already exists" in str(refused.value)
+        assert out.read_text() == earlier
+    elif where == "a_dangling_link":
+        assert out.is_symlink() and not (tmp_path / "nowhere.json").exists()
+
+
+def test_a_run_refused_before_its_report_never_leaves_an_earlier_outcome_as_its_own(
+    cli, cohort, tmp_path
+):
+    """The reviewers' scenario: an outcome path reused by a run that is then
+    refused (here by an expected digest) is refused first, so no file there
+    reads as this run's "complete" outcome."""
+    out = tmp_path / "outcome.json"
+    assert cli.main(_argv(cohort, "--record", "--outcome", str(out))) == 0
+    first = out.read_bytes()
+
+    with pytest.raises(ValueError, match="already exists"):
+        cli.main(_argv(cohort, "--record", "--outcome", str(out),
+                       "--expect-checkpoint-sha256", "f" * 64))
+    assert out.read_bytes() == first and len(_reports(cohort)) == 1
+
+
+def test_a_run_that_stops_after_publishing_leaves_an_incomplete_outcome(
+    cli, cohort, tmp_path, monkeypatch
+):
+    """The outcome is written once the report is published: a run that fails
+    after that (here its console) leaves `complete` false naming the report,
+    and says nothing it did not do."""
+    out = tmp_path / "outcome.json"
+    monkeypatch.setattr(cli, "_print_registered_summary",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError(5, "I/O error")))
+
+    with pytest.raises(cli.FailedAfterPublishing):
+        cli.main(_argv(cohort, "--record", "--outcome", str(out)))
+
+    outcome = _outcome(out)
+    path, _ = _report(cohort)
+    assert outcome["complete"] is False and outcome["report"] == str(path)
+    assert outcome["registration"]["registered"] is None
+    assert "had not been attempted" in outcome["registration"]["why"]
+    assert not (cohort.checkpoint.parent / LEDGER).exists()
+
+
+def test_each_run_and_each_registration_is_in_the_versions_usage_history(cli, cohort):
+    """D4: the measurement appends the run (its result, aggregates only) right
+    after its report is published, and the registration function the
+    registration, so command-line runs count."""
+    assert cli.main(_argv(cohort)) == 0
+    assert cli.main(_argv(cohort, "--record")) == 0
+
+    first, second = _reports(cohort)
+    entries = _usage(cohort)
+    assert [e["kind"] for e in entries] == ["test_run", "test_run", "registered"]
+    runs = {e["run_id"]: e for e in entries if e["kind"] == "test_run"}
+    for path in (first, second):
+        entry, report = runs[path.parent.name], json.loads(path.read_text())
+        assert entry["report_sha256"] == _sha(path)
+        assert entry["checkpoint_sha256"] == cohort.checkpoint_sha256
+        assert entry["metrics"] == report["authoritative_metrics"]
+        assert entry["n_ranked"] == report["n_ranked"]
+        assert (entry["deterministic"], entry["device"]) == (False, "cpu")
+    assert sorted(e["record_requested"] for e in runs.values()) == [False, True]
+    assert entries[2]["outcome"] in ("registered", "already_registered", "corroborated")
+    text = (cohort.version.directory / "reports" / "usage.jsonl").read_text()
+    assert "case-" not in text and "phenotype_ids" not in text
+
+
+def test_a_usage_history_that_cannot_be_appended_stops_the_run_after_its_report(
+    cli, cohort, monkeypatch
+):
+    """The report is kept; the run says it is not in the usage history, and it
+    does not go on to register."""
+    import src.evaluation.report_store as report_store
+
+    def fail(*args, **kwargs):
+        raise PermissionError(13, "Permission denied", "usage.jsonl")
+
+    monkeypatch.setattr(report_store, "record_test_run", fail)
+    out = cohort.checkpoint.parent.parent / "outcome.json"
+
+    with pytest.raises(cli.FailedAfterPublishing) as failed:
+        cli.main(_argv(cohort, "--record", "--outcome", str(out)))
+
+    assert "usage history could not be appended, so this run is not in it" in str(failed.value)
+    assert "The report was written" in str(failed.value)
+    assert len(_reports(cohort)) == 1
+    assert not (cohort.checkpoint.parent / LEDGER).exists()
+    # The outcome file is written all the same: the run published, then stopped.
+    outcome = _outcome(out)
+    assert outcome["complete"] is False and outcome["registration"]["registered"] is None
+
+
+def test_a_failed_outcome_write_does_not_keep_a_published_run_out_of_the_history(
+    cli, cohort, tmp_path, monkeypatch
+):
+    """The reviewers' P3 (2026-10-20): the usage history is the record and the
+    outcome file the job runner's view, so the history is appended first and
+    whatever the outcome write does; the failure then stops the run after
+    publishing, saying the run is in the history."""
+    def fail(*args, **kwargs):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(cli, "_write_outcome", fail)
+
+    with pytest.raises(cli.FailedAfterPublishing) as failed:
+        cli.main(_argv(cohort, "--record", "--outcome", str(tmp_path / "outcome.json")))
+
+    message = str(failed.value)
+    assert "--outcome file" in message and "No space left on device" in message
+    assert "this run is in its version's usage history" in message
+    assert "The report was written" in message
+    (path,) = _reports(cohort)
+    assert [(e["kind"], e["run_id"]) for e in _usage(cohort)] == [
+        ("test_run", path.parent.name)]
+    assert not (cohort.checkpoint.parent / LEDGER).exists(), "it stops before registering"
+
+
+def test_when_both_the_history_and_the_outcome_fail_the_message_says_both(
+    cli, cohort, tmp_path, monkeypatch
+):
+    import src.evaluation.report_store as report_store
+
+    monkeypatch.setattr(report_store, "record_test_run",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError(5, "I/O error")))
+    monkeypatch.setattr(cli, "_write_outcome",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError(28, "No space left")))
+
+    with pytest.raises(cli.FailedAfterPublishing) as failed:
+        cli.main(_argv(cohort, "--outcome", str(tmp_path / "outcome.json")))
+
+    message = str(failed.value)
+    assert "--outcome file" in message and "No space left" in message
+    assert "usage history could not be appended, so this run is not in it" in message
+    assert "this run is in its version's usage history" not in message
+
+
+def test_a_disagreeing_run_is_kept_and_not_registered_without_a_later_command(
+    cli, cohort, capsys
+):
+    """D5 through --record: a second run under a key whose stored reports
+    disagree exits 3, keeps its report, and offers no register-later command,
+    since none would be accepted while they disagree."""
+    import secrets
+
+    assert cli.main(_argv(cohort, "--record")) == 0
+    (first,) = _reports(cohort)
+    edited = json.loads(first.read_text())
+    edited["authoritative_metrics"]["hits@1"] = 0.5 + edited["authoritative_metrics"]["hits@1"] / 2
+    stamp, checkpoint, _ = first.parent.name.split("-")
+    other = first.parents[1] / f"{stamp}-{checkpoint}-{secrets.token_hex(4)}"
+    other.mkdir()
+    (other / "report.json").write_text(json.dumps(edited))
+    capsys.readouterr()
+
+    assert cli.main(_argv(cohort, "--record")) == 3
+
+    err = capsys.readouterr().err
+    assert "runs disagree — investigate" in err and "hits@1" in err
+    assert "where the investigation can read it" in err
+    assert "Register it later with" not in err
+    assert len(_reports(cohort)) == 3
+
+
+def _disagreeing_report(cohort):
+    """A second report under the key of the store's one report, its hits@1
+    another number: the store now holds runs that disagree."""
+    import secrets
+
+    (first,) = _reports(cohort)
+    edited = json.loads(first.read_text())
+    edited["authoritative_metrics"]["hits@1"] = 0.5 + edited["authoritative_metrics"]["hits@1"] / 2
+    stamp, checkpoint, _ = first.parent.name.split("-")
+    other = first.parents[1] / f"{stamp}-{checkpoint}-{secrets.token_hex(4)}"
+    other.mkdir()
+    (other / "report.json").write_text(json.dumps(edited))
+    return other / "report.json"
+
+
+def test_without_record_a_disagreeing_run_offers_no_register_later_command(
+    cli, cohort, capsys, tmp_path
+):
+    """The reviewer's P3 (2026-10-20): without --record the run checks the
+    store as a registration would, so it never prints a command D5 would
+    refuse: it says the runs disagree, and its outcome says so too."""
+    assert cli.main(_argv(cohort)) == 0
+    _disagreeing_report(cohort)
+    capsys.readouterr()
+    out = tmp_path / "outcome.json"
+
+    assert cli.main(_argv(cohort, "--outcome", str(out))) == 0
+
+    printed = capsys.readouterr().out
+    assert "Not registered (no --record), and runs disagree — investigate" in printed
+    assert "hits@1" in printed and "No register-later command is offered" in printed
+    assert "Register it with" not in printed and "record_evaluation.py" not in printed
+    registration = _outcome(out)["registration"]
+    assert (registration["registered"], registration["outcome"]) == (False, "not_requested")
+    assert "runs disagree — investigate" in registration["why"]
+    assert not (cohort.checkpoint.parent / LEDGER).exists()
+
+
+def test_without_record_a_key_that_cannot_be_checked_says_registering_waits_for_it(
+    cli, cohort, capsys, tmp_path
+):
+    from tests.fixtures.report_store import store_bytes
+
+    damaged = store_bytes(cohort.registry, b"{broken", version=cohort.version)
+    out = tmp_path / "outcome.json"
+
+    assert cli.main(_argv(cohort, "--outcome", str(out))) == 0
+
+    printed = capsys.readouterr().out
+    assert "cannot be checked" in printed and str(damaged) in printed
+    assert "A later registration is refused until that can be checked" in printed
+    assert "record_evaluation.py --report" in printed
+    assert "cannot be checked" in _outcome(out)["registration"]["why"]
+
+
+def test_a_runs_report_replaced_by_a_link_out_of_the_store_is_not_offered_later(
+    cli, cohort, monkeypatch, capsys, tmp_path
+):
+    """The reviewer's P3 (2026-10-20): the run's `report.json` replaced, after
+    its publication, by a link to a copy outside any store is not the run's
+    report, so --record refuses it as such and offers no later registration;
+    `report_state` agrees it is not kept."""
+    from src.evaluation.registration import report_state
+
+    real = cli._print_registered_summary
+    outside = tmp_path / "outside.json"
+
+    def summary_then_replace(inputs, result, run_id, report_path):
+        real(inputs, result, run_id, report_path)
+        outside.write_bytes(Path(report_path).read_bytes())
+        Path(report_path).unlink()
+        Path(report_path).symlink_to(outside)
+
+    monkeypatch.setattr(cli, "_print_registered_summary", summary_then_replace)
+    out = tmp_path / "outcome.json"
+
+    assert cli.main(_argv(cohort, "--record", "--outcome", str(out))) == 3
+
+    err = capsys.readouterr().err
+    assert "is no longer a report the store holds" in err and "re-measure" in err
+    assert "nothing at that path is offered for a later registration" in err
+    assert "Register it later with" not in err and "kept at" not in err
+    outcome = _outcome(out)
+    state = report_state(outcome["report"], checkpoint=outcome["checkpoint"],
+                         expected_sha256=outcome["report_sha256"])
+    assert state.kept == "not_kept"
+    assert not (cohort.checkpoint.parent / LEDGER).exists()
+
+
+def test_a_report_in_the_store_too_deep_to_compare_is_a_refusal_not_a_traceback(
+    cli, cohort, capsys, tmp_path
+):
+    """The reviewer's P3 (2026-10-20): a hand-edited report in the store that
+    nests too deeply to be built leaves its key "cannot be checked"; --record
+    exits 3 saying so, and the outcome file is complete."""
+    assert cli.main(_argv(cohort)) == 0
+    deep_path = _disagreeing_report(cohort)
+    deep = json.loads(deep_path.read_text())
+    node = deep["manifest"]["r10"]
+    for _ in range(600):
+        node["x"] = {}
+        node = node["x"]
+    deep_path.write_text(json.dumps(deep))
+    capsys.readouterr()
+    out = tmp_path / "outcome.json"
+
+    assert cli.main(_argv(cohort, "--record", "--outcome", str(out))) == 3
+
+    err = capsys.readouterr().err
+    assert "cannot be checked" in err and "nests too deeply" in err and str(deep_path) in err
+    outcome = _outcome(out)
+    assert outcome["complete"] is True and outcome["registration"]["registered"] is False
+
+
+def test_deterministic_runs_are_recorded_so_and_the_settings_are_put_back(
+    cli, cohort, monkeypatch
+):
+    """--deterministic: deterministic algorithms on (not warn-only) and
+    CUBLAS_WORKSPACE_CONFIG set while the run measures; the manifest records it,
+    which makes it another key than a run without it; after the run, the
+    process's settings are as they were."""
+    import os
+
+    import src.evaluation.measurement as measurement
+    from src.evaluation.measurement import run_mode_c as real_run_mode_c
+
+    monkeypatch.delenv("CUBLAS_WORKSPACE_CONFIG", raising=False)
+    seen = []
+
+    def observing(**kwargs):
+        seen.append((torch.are_deterministic_algorithms_enabled(),
+                     torch.is_deterministic_algorithms_warn_only_enabled(),
+                     torch.backends.cudnn.deterministic, torch.backends.cudnn.benchmark,
+                     os.environ.get("CUBLAS_WORKSPACE_CONFIG")))
+        return real_run_mode_c(**kwargs)
+
+    monkeypatch.setattr(measurement, "run_mode_c", observing)
+    before = (torch.are_deterministic_algorithms_enabled(), torch.backends.cudnn.deterministic,
+              torch.backends.cudnn.benchmark)
+
+    assert cli.main(_argv(cohort, "--deterministic", "--record")) == 0
+    assert cli.main(_argv(cohort, "--record")) == 0
+
+    assert seen[0] == (True, False, True, False, ":4096:8")
+    assert seen[1][0] is before[0] and seen[1][4] is None
+    assert (torch.are_deterministic_algorithms_enabled(), torch.backends.cudnn.deterministic,
+            torch.backends.cudnn.benchmark) == before
+    assert "CUBLAS_WORKSPACE_CONFIG" not in os.environ
+    manifests = [json.loads(p.read_text())["manifest"] for p in _reports(cohort)]
+    assert sorted(m["deterministic_algorithms"] for m in manifests) == [False, True]
+    records = json.loads((cohort.checkpoint.parent / LEDGER).read_text())["records"]
+    assert len(records) == 2, "a deterministic run is another key"
+
+
+def test_an_operation_without_a_deterministic_implementation_refuses_the_run(
+    cli, cohort, monkeypatch
+):
+    """No fallback: torch's refusal becomes one refusal saying the run did not
+    complete as requested, nothing written, and the settings are put back.
+    Without --deterministic the same error is not reworded."""
+    import src.evaluation.measurement as measurement
+
+    error = RuntimeError("scatter_reduce_cuda does not have a deterministic implementation, "
+                         "but you set 'torch.use_deterministic_algorithms(True)'.")
+
+    def refuse(**kwargs):
+        raise error
+
+    monkeypatch.setattr(measurement, "run_mode_c", refuse)
+
+    with pytest.raises(cli.DeterministicExecutionUnsupported) as refused:
+        cli.main(_argv(cohort, "--deterministic", "--record"))
+
+    message = str(refused.value)
+    assert "no deterministic implementation" in message and "does not fall back" in message
+    assert "scatter_reduce_cuda" in message and message.endswith("Nothing was written.")
+    assert _nothing_written(cohort) and _usage(cohort) == []
+    assert torch.are_deterministic_algorithms_enabled() is False
+    with pytest.raises(RuntimeError) as raw:
+        cli.main(_argv(cohort))
+    assert raw.value is error
+
+
+@pytest.mark.parametrize("state", ["bad_cublas_config", "cuda_initialised",
+                                   "warn_only_inherited"])
+def test_a_process_state_deterministic_execution_cannot_trust_is_refused(
+    cli, cohort, monkeypatch, state
+):
+    import os
+
+    import src.evaluation.cohort_registry as cohort_registry
+
+    monkeypatch.setattr(cohort_registry, "resolve_version",
+                        lambda *a, **k: pytest.fail("something was read"))
+    if state == "bad_cublas_config":
+        monkeypatch.setenv("CUBLAS_WORKSPACE_CONFIG", ":0:0")
+        argv, fragment = _argv(cohort, "--deterministic"), "not document as deterministic"
+    elif state == "cuda_initialised":
+        # CUDA started in this process before the variable could be set: cuBLAS
+        # may already run without it (a CPU-only host never gets here alone).
+        monkeypatch.delenv("CUBLAS_WORKSPACE_CONFIG", raising=False)
+        monkeypatch.setattr(torch.cuda, "is_initialized", lambda: True)
+        argv, fragment = _argv(cohort, "--deterministic"), "CUDA was initialised in this process"
+    else:
+        torch.use_deterministic_algorithms(True, warn_only=True)
+        argv, fragment = _argv(cohort), "warn-only mode"
+    try:
+        with pytest.raises(cli.DeterministicExecutionUnsupported, match=fragment) as refused:
+            cli.main(argv)
+    finally:
+        torch.use_deterministic_algorithms(False)
+    assert "Nothing was read or written" in str(refused.value)
+    assert _nothing_written(cohort)
+    assert "CUBLAS_WORKSPACE_CONFIG" not in os.environ or state == "bad_cublas_config"
+
+
+def _cancel_inside(monkeypatch, module, name):
+    """`module.name` that sends this process a SIGINT (the runner's Cancel)
+    after it ran, and waits long enough for it to be delivered."""
+    import os
+    import signal
+    import time
+
+    real = getattr(module, name)
+
+    def cancelled(*args, **kwargs):
+        answer = real(*args, **kwargs)
+        os.kill(os.getpid(), signal.SIGINT)
+        time.sleep(0.2)                       # a held SIGINT is not delivered here
+        return answer
+
+    monkeypatch.setattr(module, name, cancelled)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
+def test_a_cancel_right_after_publishing_still_leaves_the_run_in_its_history(
+        cli, cohort, tmp_path, monkeypatch):
+    """M5-3 review EVAL-1: a Cancel landing between publishing the report and
+    appending it to the version's usage history kept the report out of the
+    history (D4, D7), and nothing said so. The three steps are one against a
+    cancel: the SIGINT is held until the history entry and the first outcome
+    file are written, then ends the run."""
+    _cancel_inside(monkeypatch, cli, "_publish_to_store")
+    out = tmp_path / "outcome.json"
+    with pytest.raises(KeyboardInterrupt):
+        cli.main(_argv(cohort, "--outcome", str(out)))
+    path, _ = _report(cohort)
+    entries = [e for e in _usage(cohort) if e.get("kind") == "test_run"]
+    assert [e.get("run_id") for e in entries] == [path.parent.name]
+    outcome = _outcome(out)
+    assert outcome["complete"] is False and outcome["run_id"] == path.parent.name
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
+def test_a_cancel_right_after_the_ledger_write_still_records_the_registration(
+        cli, cohort, monkeypatch):
+    """EVAL-1, the registration's half: the ledger record and its "registered"
+    history entry are written together, a cancel between them held."""
+    import src.evaluation.registration as registration
+
+    _cancel_inside(monkeypatch, registration, "write_ledger")
+    with pytest.raises(KeyboardInterrupt):
+        cli.main(_argv(cohort, "--record"))
+    ledger = json.loads((cohort.checkpoint.parent / LEDGER).read_text())
+    assert [r["registration"]["sequence"] for r in ledger["records"]] == [1]
+    kinds = [e.get("kind") for e in _usage(cohort)]
+    assert kinds.count("registered") == 1 and kinds.count("test_run") == 1
+
+
+# ---------------------------------------------------------------------------
+# Only in the deployment's registry (BACKLOG 37; the M5 review's P2-7)
+# ---------------------------------------------------------------------------
+def _nothing_before_the_lock(cli, monkeypatch):
+    """The lock and the device, each failing the test if reached."""
+    monkeypatch.setattr(cli, "take_gpu_lock",
+                        lambda *a, **k: pytest.fail("the GPU lock was taken"))
+    monkeypatch.setattr(cli, "_resolve_device",
+                        lambda *a, **k: pytest.fail("the device was resolved"))
+
+
+def _tree(directory: Path):
+    return {p: p.read_bytes() for p in sorted(directory.rglob("*")) if p.is_file()}
+
+
+@pytest.mark.parametrize("record", [False, True], ids=["measure", "record"])
+def test_a_cohort_run_in_a_copy_of_the_registry_is_refused_before_the_lock_and_any_input(
+    cli, cohort, tmp_path, monkeypatch, capsys, record
+):
+    """D7 and D4: every run on a cohort version is in the usage history the
+    deployment reads. A run measuring a copy -- with or without `--record` --
+    is refused before the GPU lock is taken, the device resolved or any input
+    read, and the copy is left as it was (no run directory, no usage entry)."""
+    copy = tmp_path / "registry-copy"
+    shutil.copytree(cohort.registry, copy, symlinks=True)
+    before = _tree(copy)
+    _nothing_before_the_lock(cli, monkeypatch)
+    argv = ["--checkpoint", str(cohort.checkpoint), "--data-dir", str(cohort.data_dir),
+            "--cohort", cohort.version.manifest["label"], "--registry", str(copy),
+            "--device", "cpu", *(["--record"] if record else [])]
+
+    with count_opens() as opens:
+        assert cli._run_as_program(argv) == 1
+
+    err = capsys.readouterr().err
+    assert err.startswith("measure_scorer: refused: --cohort measures a version of the "
+                          f"deployment's registry only, and the registry {copy.resolve()} is "
+                          "not the deployment's")
+    assert f"SHEPHERD_REGISTRY ({cohort.registry}) resolves to {cohort.registry.resolve()}" in err
+    assert "Nothing was read or written." in err and "cannot be registered" not in err
+    assert not [p for p, n in opens.counts.items() if n and (
+        str(copy) in p or str(cohort.data_dir) in p or str(cohort.checkpoint) in p)]
+    assert _tree(copy) == before
+    assert _nothing_written(cohort)
+
+
+def test_with_the_setting_unset_a_cohort_run_is_refused_saying_how_to_set_it(
+    cli, cohort, monkeypatch, capsys
+):
+    """A fresh SSH shell: which registry is the deployment's cannot be told, so
+    the run is refused before anything, in words true there (no "features ...
+    are off", no "cannot be registered later")."""
+    monkeypatch.delenv("SHEPHERD_REGISTRY")
+    _nothing_before_the_lock(cli, monkeypatch)
+
+    assert cli._run_as_program(_argv(cohort)) == 1
+
+    err = capsys.readouterr().err
+    assert ("SHEPHERD_REGISTRY is not set here, so which registry is the deployment's cannot be "
+            "told. Set SHEPHERD_REGISTRY in this environment to the value the service's "
+            "environment gives it") in err
+    assert "features" not in err and "cannot be registered" not in err
+    assert _nothing_written(cohort)
+
+
+def test_a_registry_named_through_a_link_to_the_deployments_is_measured(
+    cli, cohort, tmp_path, capsys
+):
+    """Compared by resolved path: `--registry` through a link to the
+    deployment's registry is that registry, and its report registers."""
+    alias = tmp_path / "registry-link"
+    alias.symlink_to(cohort.registry, target_is_directory=True)
+    argv = ["--checkpoint", str(cohort.checkpoint), "--data-dir", str(cohort.data_dir),
+            "--cohort", cohort.version.manifest["label"], "--registry", str(alias),
+            "--device", "cpu", "--record"]
+
+    assert cli.main(argv) == 0
+
+    assert "Registered as record 1" in capsys.readouterr().out
+    assert len(_reports(cohort)) == 1
+
+
+@pytest.mark.parametrize("when", ["the lock is taken", "the device comes up"])
+@pytest.mark.parametrize("record", [False, True], ids=["measure", "record"])
+def test_a_registry_link_retargeted_after_the_check_does_not_move_the_run(
+    cli, cohort, tmp_path, monkeypatch, capsys, when, record
+):
+    """EB-2: the root checked is the root the run reads and writes through.
+    `--registry` names a link to the deployment's registry (not the link
+    `SHEPHERD_REGISTRY` names), and the link is retargeted to a copy after the
+    check: while the GPU lock is taken, or while the device is resolved. The
+    run measures the deployment's version: its report and its usage-history
+    entry are there, the copy is left as it was, and the register-later
+    command names the deployment registry's report (with `--record`, the
+    report registers). Catches `--registry` resolved again for the read."""
+    import contextlib
+
+    from src.evaluation.report_store import read_usage_history
+
+    copy = tmp_path / "registry-copy"
+    shutil.copytree(cohort.registry, copy, symlinks=True)
+    before = _tree(copy)
+    alias = tmp_path / "registry-link"
+    alias.symlink_to(cohort.registry, target_is_directory=True)
+    retargeted = []
+
+    def retarget():
+        alias.unlink()
+        alias.symlink_to(copy, target_is_directory=True)
+        retargeted.append(when)
+
+    if when == "the lock is taken":
+        take = cli.take_gpu_lock
+
+        @contextlib.contextmanager
+        def lock_then_retarget(*args, **kwargs):
+            with take(*args, **kwargs):
+                retarget()
+                yield
+
+        monkeypatch.setattr(cli, "take_gpu_lock", lock_then_retarget)
+    else:
+        resolve = cli._resolve_device
+
+        def retarget_then_resolve(*args, **kwargs):
+            retarget()
+            return resolve(*args, **kwargs)
+
+        monkeypatch.setattr(cli, "_resolve_device", retarget_then_resolve)
+    argv = ["--checkpoint", str(cohort.checkpoint), "--data-dir", str(cohort.data_dir),
+            "--cohort", cohort.version.manifest["label"], "--registry", str(alias),
+            "--device", "cpu", *(["--record"] if record else [])]
+
+    assert cli.main(argv) == 0
+
+    out = capsys.readouterr().out
+    assert retargeted == [when] and alias.resolve() == copy.resolve()
+    (report,) = _reports(cohort)
+    entries, problems = read_usage_history(cohort.version)
+    runs = [e for e in entries if e["kind"] == "test_run"]
+    assert problems == [] and [e["run_id"] for e in runs] == [report.parent.name]
+    assert _tree(copy) == before
+    if record:
+        assert "Registered as record 1" in out
+    else:
+        assert f'record_evaluation.py --report "{report}"' in out
+        assert str(copy) not in out
+
+
+def test_a_registry_that_stops_being_the_deployments_during_the_run_offers_no_command(
+    cli, cohort, tmp_path, monkeypatch, capsys
+):
+    """The critic's case: `SHEPHERD_REGISTRY` names a link retargeted after the
+    run was allowed to start. The registration refuses it as not the
+    deployment's registry (exit 3), the report is kept, and no register-later
+    command is printed: it would be refused the same way."""
+    from src.evaluation import registration
+
+    link = tmp_path / "deployment-link"
+    link.symlink_to(cohort.registry, target_is_directory=True)
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(link))
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    real = registration.register_report
+
+    def retargeted_then_registered(*args, **kwargs):
+        link.unlink()
+        link.symlink_to(elsewhere, target_is_directory=True)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(registration, "register_report", retargeted_then_registered)
+    outcome = tmp_path / "outcome.json"
+
+    assert cli.main(_argv(cohort, "--record", "--outcome", str(outcome))) == 3
+
+    path, _ = _report(cohort)
+    err = capsys.readouterr().err
+    assert "NOT REGISTERED." in err and "is not the deployment's" in err
+    assert f"report is kept at {path}" in err
+    assert "No register-later command is offered" in err
+    assert "record_evaluation.py" not in err and "Register it later" not in err
+    assert json.loads(outcome.read_text())["registration"]["outcome"] == "refused"
+    assert not (cohort.checkpoint.parent / LEDGER).exists()

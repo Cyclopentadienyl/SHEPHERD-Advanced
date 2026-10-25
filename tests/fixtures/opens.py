@@ -13,6 +13,10 @@ file a second time through any of those.
 directory. For torch readers, the release check's tracked-`BytesIO` rule is what
 keeps them on the hashed buffer.
 
+**Directories listed** (`os.listdir`, `os.scandir`, which `Path.iterdir` and
+`os.walk` use) are counted too, apart (`listings`), for a test that pins every
+place a reader looks, not only the files it opens.
+
 Audit hooks cannot be removed. One hook is installed for the process, the first
 time a counter is used, and it returns at once unless a counter is active.
 
@@ -35,8 +39,11 @@ def _key(path: str | bytes | os.PathLike) -> str:
     return os.path.realpath(os.fsdecode(path))
 
 
+_LISTING_EVENTS = ("os.listdir", "os.scandir")
+
+
 def _hook(event: str, args: tuple) -> None:
-    if event != "open" or not _active:
+    if not _active or (event != "open" and event not in _LISTING_EVENTS):
         return
     target = args[0] if args else None
     if target is None or isinstance(target, int):
@@ -46,17 +53,22 @@ def _hook(event: str, args: tuple) -> None:
     except (TypeError, ValueError):
         return
     for counter in _active:
-        counter.counts[key] += 1
+        (counter.counts if event == "open" else counter.listings)[key] += 1
 
 
 class OpenCounter:
-    """Opens seen while the counter was active, keyed by real path."""
+    """Opens, and directories listed, seen while the counter was active, keyed
+    by real path."""
 
     def __init__(self) -> None:
         self.counts: Counter = Counter()
+        self.listings: Counter = Counter()
 
     def opens(self, path: str | Path) -> int:
         return self.counts[_key(path)]
+
+    def listed(self, path: str | Path) -> int:
+        return self.listings[_key(path)]
 
 
 @contextlib.contextmanager

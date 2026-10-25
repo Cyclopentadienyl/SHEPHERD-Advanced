@@ -1,0 +1,81 @@
+[
+  {
+    "disease_id": 0,
+    "patient_id": "probe-case-01",
+    "phenotype_ids": [
+      0,
+      3
+    ]
+  },
+  {
+    "disease_id": 1,
+    "patient_id": "probe-case-02",
+    "phenotype_ids": [
+      1,
+      4
+    ]
+  },
+  {
+    "disease_id": 2,
+    "patient_id": "probe-case-03",
+    "phenotype_ids": [
+      2,
+      5
+    ]
+  },
+  {
+    "disease_id": 3,
+    "patient_id": "probe-case-04",
+    "phenotype_ids": [
+      3,
+      6
+    ]
+  },
+  {
+    "disease_id": 4,
+    "patient_id": "probe-case-05",
+    "phenotype_ids": [
+      4,
+      7
+    ]
+  },
+  {
+    "disease_id": 0,
+    "patient_id": "probe-case-06",
+    "phenotype_ids": [
+      5,
+      8
+    ]
+  },
+  {
+    "disease_id": 1,
+    "patient_id": "probe-case-07",
+    "phenotype_ids": [
+      6,
+      9
+    ]
+  },
+  {
+    "disease_id": 2,
+    "patient_id": "probe-case-08",
+    "phenotype_ids": [
+      7,
+      0
+    ]
+  },
+  {
+    "disease_id": 0,
+    "patient_id": "probe-case-09",
+    "phenotype_ids": [
+      0,
+      1
+    ]
+  },
+  {
+    "disease_id": 1,
+    "patient_id": "probe-case-10",
+    "phenotype_ids": [
+      2
+    ]
+  }
+]

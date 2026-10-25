@@ -14,12 +14,22 @@ record_evaluation, the reload route and the read-only view, and the overlap
 audit, each through its entry point. The tests check the probes' evidence
 against what those entry points left on disk, that the report carries no path,
 and that a registry inside the repository fails T1 in the probe's own words.
+The flow uses the probe's registry as the deployment's whatever the shell
+names: T5 and RT3 see their record uncontested (D5) from a fresh shell, and
+phase R also from the operator's shell, whose directories stay untouched.
+
+M5's acceptance rides on them too (W1-W11 after T6, RW1-RW3 before R8): the
+service started as the launcher starts it, in M1 and read-only, the job runner
+running the real CLIs on CPU, the GPU lock. The phase tests require every one to
+pass and check its evidence against the disk; the helpers' own checks are shown
+to fire in tests/unit/test_probe_m5_acceptance.py.
 
 Module: tests/unit/test_probe_m2_phase.py
 """
 from __future__ import annotations
 
 import importlib.util
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -96,6 +106,34 @@ def _ledger_records(directory):
     return json.loads((directory / "evaluations.json").read_text())["records"]
 
 
+def test_the_probes_reload_is_bound_to_the_digest_it_expects(tmp_path, served_state,
+                                                            monkeypatch):
+    """The verification of EB-1 (R-6): the acceptance's reloads (T5, RT3) go
+    through the precondition the dashboard's Load uses, so a GB10 run exercises
+    it. The digest expected is served (the positive control); another is refused
+    by the reload itself, before anything is published -- the pipeline served
+    before stays the same object -- never published and then caught by the
+    status's digest afterwards."""
+    import hashlib
+
+    from tests.fixtures.synthetic_workspace import build_workspace
+
+    probe = _probe()
+    for name in ("SHEPHERD_KG_PATH", "SHEPHERD_DATA_DIR", "SHEPHERD_CHECKPOINT_PATH"):
+        monkeypatch.delenv(name, raising=False)
+    data_dir, checkpoint = build_workspace(tmp_path / "ws")
+    expected = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
+
+    served, answer = probe._serve_and_view(data_dir, checkpoint, expected, "cpu")
+    assert served == expected and answer["checkpoint_sha256"] == expected
+    serving = served_state.app_state.pipeline
+
+    with pytest.raises(AssertionError, match="the reload naming the checkpoint was refused: "
+                                             ".* is not the model that was shown"):
+        probe._serve_and_view(data_dir, checkpoint, "a" * 64, "cpu")
+    assert served_state.app_state.pipeline is serving
+
+
 def test_the_m4_probes_are_required_in_both_parts():
     probe = _probe()
     assert set(M4_DEMO_PROBES) <= set(probe.M2_DEMO_REQUIRED)
@@ -170,9 +208,13 @@ def test_the_demo_phase_passes_and_every_required_probe_runs(tmp_path, served_st
     assert facts["T1"]["counts"] == probe.M4_DEMO_COUNTS
     assert facts["T1"]["manifest_sha256"] == hashlib.sha256(
         (version / "cohort.json").read_bytes()).hexdigest()
-    # T2: the one kept report is what the one record names, beside the copy of
-    # D1's checkpoint (the bytes D1 trained), and R10's evidence was found.
-    (kept,) = (version / "reports").glob("*/report.json")
+    # T2: the one report kept for D1's weights is what the one record names,
+    # beside the copy of D1's checkpoint (the bytes D1 trained), and R10's
+    # evidence was found. (W8's run keeps another, for M2's resumed weights;
+    # a run directory is named for the checkpoint it measured.)
+    d1_sha = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
+    (kept,) = [path for path in (version / "reports").glob("*/report.json")
+               if f"-{d1_sha[:12]}-" in path.parent.name]
     checkpoints = tmp_path / "m4" / "checkpoints"
     (record,) = _ledger_records(checkpoints)
     assert record["source_artifact_digest"] == facts["T2"]["report_sha256"] == hashlib.sha256(
@@ -189,8 +231,11 @@ def test_the_demo_phase_passes_and_every_required_probe_runs(tmp_path, served_st
     assert (registry / "versions" / probe.M4_OTHER_GRAPH_LABEL / "cohort.json").is_file()
     assert not (registry / "versions" / probe.M4_OTHER_GRAPH_LABEL / "reports").exists()
     assert "kg" in facts["T4"]["differing_roles"]
-    # T5: the record for the measured checkpoint, none for M2's beside it.
+    # T5: the record for the measured checkpoint, uncontested in the probe's
+    # registry (this shell names none: root-cause round, INT-1), none for M2's
+    # beside it.
     assert facts["T5"]["measured"]["state"] == "records"
+    assert facts["T5"]["measured"]["contest_state"] == "uncontested"
     assert facts["T5"]["measured"]["checkpoint_sha256"] == record["checkpoint_digest"]
     assert facts["T5"]["other"]["state"] == "no_records"
     assert facts["T5"]["other"]["checkpoint_sha256"] == child
@@ -201,12 +246,92 @@ def test_the_demo_phase_passes_and_every_required_probe_runs(tmp_path, served_st
     training = facts["T2"]["r10"]["training"]["disease_overlap"]
     assert facts["T6"]["overlap"] == f"{training['k']} of {training['n']}"
 
+    # ---- M5's acceptance (W1-W11), after T6, every probe passed, and its
+    # evidence holds no path.
+    m5 = _statuses(report, "W")
+    assert list(m5) == list(probe.M5_DEMO_PROBES)
+    assert {k: v[0] for k, v in m5.items()} == dict.fromkeys(m5, "passed"), (
+        {k: v[1] for k, v in m5.items() if v[0] != "passed"}
+    )
+    assert str(tmp_path) not in json.dumps({k: facts[k] for k in probe.M5_DEMO_PROBES})
+    # W1: the probe's own deployment; the listed checkpoint is a copy of M2's
+    # resumed weights, named by the digest of its bytes.
+    workspace = tmp_path / "m5" / "workspaces" / probe.M5_WORKSPACE
+    listed = (workspace / "runs" / "gat" / probe.M5_LISTED_RUN / "checkpoints"
+              / probe.M5_CHECKPOINT)
+    assert hashlib.sha256(listed.read_bytes()).hexdigest() == child
+    assert facts["W1"]["checkpoints"][0] == {"run": probe.M5_LISTED_RUN, "filename": "last.pt",
+                                             "sha256": child, "listed_with_a_problem": False}
+    assert facts["W1"]["workspaces"][0]["dataset_fingerprint"] == hashlib.sha256(
+        (workspace / "split_manifest.json").read_bytes()).hexdigest()
+    # W2 and W5: every request shape was decided by the condition named for it,
+    # on every gated API route (D8's six) and the three gated dashboard events.
+    assert sorted({seen["condition"] for seen in facts["W2"]["requests"].values()}) == [
+        "cross_site", "enabled", "forwarding_header", "host_not_loopback", "origin_mismatch"]
+    operator = sorted(f"{method} {path}" for method, path, _ in probe.OPERATOR_ROUTES)
+    assert facts["W2"]["gated"]["api_routes"] == operator
+    assert len(facts["W2"]["gated"]["gradio_events"]) == 3
+    for seen in (*facts["W2"]["requests"].values(), facts["W5"]["loopback_request"]):
+        expected = 403 if seen["condition"] != "enabled" else None
+        assert sorted(seen["routes"]) == operator
+        assert expected is None or set(seen["routes"].values()) == {403}
+        assert len(seen["gradio_events"]) == 3
+    assert facts["W5"]["loopback_request"]["condition"] == "deployment_mode"
+    # W4: no file= URL request reached Gradio's URL fetch; the control past the
+    # guard did, so the count is where a fetch happens.
+    assert (facts["W4"]["url_fetches_through_the_guard"],
+            facts["W4"]["url_fetch_control_past_the_guard"]) == (0, 1)
+    # W1: the deployment's own lock (none configured here) was read and stated.
+    assert facts["W1"]["deployment_gpu_lock"]["held"] is False
+    # W8: a training stop while the run ran was refused, and the run completed.
+    assert facts["W8"]["training_stop_while_it_ran"].startswith("refused")
+    # Both services were stopped (uvicorn's own last words in each log).
+    for mode in ("m1", "read-only"):
+        assert "Finished server process" in (
+            tmp_path / "m5" / f"service-{mode}" / "server.log").read_text()
+    # W8 and W9: the run's report is kept in T1's version, and the one record
+    # beside the listed checkpoint is built from those bytes; the usage history
+    # holds the run and its registration. W10 left no third report.
+    reports = sorted((version / "reports").glob("*/report.json"))
+    assert len(reports) == 2
+    (w8_report,) = [path for path in reports if f"-{child[:12]}-" in path.parent.name]
+    assert hashlib.sha256(w8_report.read_bytes()).hexdigest() == facts["W8"]["report_sha256"]
+    (w9_record,) = _ledger_records(listed.parent)
+    assert w9_record["source_artifact_digest"] == facts["W8"]["report_sha256"]
+    usage = [json.loads(line) for line in
+             (version / "reports" / "usage.jsonl").read_text().splitlines()]
+    assert [entry["kind"] for entry in usage
+            if entry.get("run_id") == w8_report.parent.name] == ["test_run", "registered"]
+    # W11: stopped, never completed; the lock is the probe's, under its root.
+    assert facts["W11"]["stop"]["status"] == "stopped"
+    assert (tmp_path / "m5" / "workspaces" / ".shepherd-gpu.lock").is_file()
 
-def test_the_real_phase_passes_and_leaves_the_workspace_as_it_was(tmp_path, served_state):
+
+def _operator_shell(monkeypatch, base):
+    """The deployment's settings as the shell the guide prepares holds them
+    (§4.11): its registry and its workspace root, which names the lock, each
+    an empty directory under `base`."""
+    (base / "registry").mkdir(parents=True)
+    (base / "workspaces").mkdir()
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(base / "registry"))
+    monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(base / "workspaces"))
+
+
+@pytest.mark.parametrize("shell", ["fresh", "operator"])
+def test_the_real_phase_passes_and_leaves_the_workspace_as_it_was(
+        tmp_path, served_state, monkeypatch, tmp_path_factory, shell):
+    """Phase R end to end, from a fresh shell (no registry named) and from the
+    operator's shell (the deployment's registry, root and lock named, BACKLOG
+    37 and the guide's §4.11). Either way M4's flow uses the probe's registry
+    as the deployment's, so RT3 sees its record uncontested, and the
+    deployment's directories are not touched (root-cause round, INT-1)."""
     import shutil
 
     import yaml
 
+    if shell == "operator":
+        operator = tmp_path_factory.mktemp("operator")
+        _operator_shell(monkeypatch, operator)
     probe = _probe()
     from src.kg.workspace import write_workspace
     from src.utils.checkpoint_io import read_checkpoint
@@ -264,7 +389,7 @@ def test_the_real_phase_passes_and_leaves_the_workspace_as_it_was(tmp_path, serv
     # ---- Contract M4's flow on the (stand-in) real workspace: RT1-RT3 run
     # after R7 and before R8, whose comparison therefore covers them.
     order = [p.probe_id for p in report.probes]
-    assert order[order.index("R7") + 1:] == [*M4_REAL_PROBES, "R8"]
+    assert order[order.index("R7") + 1:] == [*M4_REAL_PROBES, *probe.M5_REAL_PROBES, "R8"]
     import json
 
     assert str(tmp_path) not in json.dumps({k: facts[k] for k in M4_REAL_PROBES})
@@ -282,7 +407,33 @@ def test_the_real_phase_passes_and_leaves_the_workspace_as_it_was(tmp_path, serv
     assert record["source_artifact_digest"] == facts["RT2"]["report_sha256"]
     assert facts["RT3"]["state"] == "records"
     assert facts["RT3"]["checkpoint_sha256"] == facts["R4"]["child_sha256"]
+    assert facts["RT3"]["contest_state"] == "uncontested"
     assert not list(real.rglob("evaluations.json")) and not (real / "registry").exists()
+
+    # ---- M5's acceptance on the (stand-in) real workspace, before R8: listed
+    # by its manifest's digest; RW2's record beside R3's checkpoint, under the
+    # work directory; RW3 stopped. The lock is the probe's own, under a
+    # workspaces root of its own in the work directory, never the one under
+    # the deployment's root.
+    import hashlib
+
+    assert str(tmp_path) not in json.dumps({k: facts[k] for k in probe.M5_REAL_PROBES})
+    assert facts["RW1"]["dataset_fingerprint"] == hashlib.sha256(
+        (real / "split_manifest.json").read_bytes()).hexdigest()
+    assert facts["RW1"]["dataset_record"] == {"binding": "verified", "origin": "files"}
+    (rw2_record,) = _ledger_records(work / "real" / "initial" / "checkpoints")
+    assert rw2_record["source_artifact_digest"] == facts["RW2"]["report_sha256"]
+    assert facts["RW2"]["training_stop_while_it_ran"].startswith("refused")
+    assert facts["RW1"]["deployment_gpu_lock"]["held"] is False
+    assert facts["RW3"]["stop"]["status"] == "stopped"
+    assert (work / "real" / "m5" / "gpu-lock-root" / ".shepherd-gpu.lock").is_file()
+    assert not list(root.glob(".shepherd-gpu.lock*"))
+    if shell == "operator":
+        # Nothing of the deployment's was written or created, and its settings
+        # are as the shell had them.
+        assert sorted(path.relative_to(operator).as_posix()
+                      for path in operator.rglob("*")) == ["registry", "workspaces"]
+        assert os.environ["SHEPHERD_REGISTRY"] == str(operator / "registry")
 
 
 def test_an_architecture_other_than_the_reference_s_is_refused(tmp_path):
@@ -463,7 +614,9 @@ def test_a_preview_that_writes_or_prints_no_id_is_caught(tmp_path, monkeypatch):
 def test_the_m4_evidence_checks_fire(tmp_path):
     """The checks T2, T5, RT2 and RT3 rest on, each shown to fail: ranks that
     are not the bytes the report names, a ledger record from another report or
-    a second record, and a view that shows another report's record or none."""
+    a second record, and a view that shows another report's record or none, or
+    the record with a D5 state other than uncontested (root-cause round,
+    INT-1: before it, "cannot_be_checked" passed)."""
     import json
     from types import SimpleNamespace
 
@@ -496,10 +649,12 @@ def test_the_m4_evidence_checks_fire(tmp_path):
     view = {"source_artifact_digest": "r", "registration": {"sequence": 1},
             "cohort": {"label": "l", "role": "o"}, "n_ranked": 1,
             "r10": {"validation": {"evidence": {"state": "found"}}},
-            "environment_class": "CPU"}
+            "environment_class": "CPU",
+            "contest": {"state": "uncontested", "differing": [], "runs": []}}
     answer = {"state": "records", "checkpoint_sha256": "c", "ledger": {"sha256": "L"},
               "records": [view], "records_not_shown": 0}
-    assert probe._the_view_shows(answer, record, "L", ("validation",))["records"] == 1
+    shown = probe._the_view_shows(answer, record, "L", ("validation",))
+    assert (shown["records"], shown["contest_state"]) == (1, "uncontested")
     for broken, message in (
         (dict(answer, records=[dict(view, source_artifact_digest="x")]), "another report"),
         (dict(answer, state="no_records", records=[]), "state is no_records"),
@@ -507,6 +662,14 @@ def test_the_m4_evidence_checks_fire(tmp_path):
         (dict(answer, records=[dict(view, r10={"validation": {"evidence": {"state":
                                                                          "not_found"}}})]),
          "as not found"),
+        (dict(answer, records=[dict(view, contest={"state": "cannot_be_checked",
+                                                   "differing": [], "runs": []})]),
+         "D5 state as cannot_be_checked"),
+        (dict(answer, records=[dict(view, contest={"state": "contested", "differing": ["mrr"],
+                                                   "runs": []})]),
+         "D5 state as contested"),
+        (dict(answer, records=[{k: v for k, v in view.items() if k != "contest"}]),
+         "D5 state as None"),
     ):
         with pytest.raises(AssertionError, match=message):
             probe._the_view_shows(broken, record, "L", ("validation",))

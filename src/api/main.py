@@ -50,18 +50,24 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import signal
 import sys
+import threading
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, NamedTuple, Optional
+from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple
 
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.routing import Mount
 
+from src.api.middleware.frame_guard import RefuseFraming
+from src.api.middleware.gradio_routes import RefuseUnusedGradioRoutes
 from src.api.middleware.server_address import RecordServerAddress
+from src.config.serving_device import requested_serving_device
 
 # Configure logging
 logging.basicConfig(
@@ -132,7 +138,43 @@ async def lifespan(app: FastAPI):
     Application lifespan manager
 
     Handles startup and shutdown events.
+
+    **The bind guard's third enforcement point** (SPEC_4 §3.1), first: the
+    host the launcher or `main()` passed in (`SHEPHERD_BIND_HOST`) goes
+    through the same rule they applied (`server_settings.startup_bind`), and
+    a refused one ends startup by raising, so uvicorn exits without serving.
+    None passed in (a uvicorn started by hand) is not checked, as §3.1 says.
+
+    **Stopping the backend stops its jobs** (the owner's decision of
+    2026-10-22): each GPU job leads its own process group (review of 8242b47,
+    P2-3), so a Ctrl-C, a Ctrl-\\ or a hangup of the terminal the backend
+    runs in no longer reaches it, and neither does a SIGTERM sent to the
+    backend alone (`JOB_DETACHED_SIGNALS`).
+    So the backend stops the job its runner holds (`end_active_job`: SIGINT,
+    then SIGTERM, then SIGKILL to its group) **from the signal on**, and ends
+    the dashboard's heartbeat streams at the same signal (`_ShutdownSignals`):
+    uvicorn waits for every open connection to close before it runs the
+    lifespan's end, and an open dashboard tab keeps one open, so a stop begun
+    there waited for every tab to be closed. A hangup (SIGHUP, a closed
+    terminal) and a Ctrl-\\ (SIGQUIT), which uvicorn does not handle, are
+    routed to its SIGTERM handler while the application runs, so it shuts
+    down the same way (the backend still ends by SIGQUIT after it). **The
+    stop closes the job runner's GPU slot first** (`TrainingManager.close`,
+    root-cause review P23-1), so no job starts while uvicorn waits for its
+    connections: a start still under way at the signal is refused, by every
+    route. The lifespan's end waits for that stop, then closes the slot and
+    stops its job itself when no signal began the shutdown (an in-process
+    client, a server off the main thread). A second Ctrl-C (uvicorn's forced
+    quit, which stops waiting for connections and skips the lifespan's
+    shutdown event) leaves no job either: the stop began at the first, and
+    the backend waits for it before it exits. Not covered: a SIGKILL or the out-of-memory killer; the
+    job then keeps running and keeps the GPU lock until it is stopped by its
+    pid. Under systemd the unit's ``KillMode=mixed`` sends its stop's SIGTERM
+    to the server alone, which stops the job this same way, and systemd's
+    SIGKILL then finds nothing of it (root-cause review, P23-3).
     """
+    _check_startup_bind()
+
     # Startup
     logger.info("Starting SHEPHERD-Advanced API...")
     app_state.start_time = datetime.now()
@@ -181,11 +223,241 @@ async def lifespan(app: FastAPI):
         logger.error(f"Startup failed: {e}")
         app_state.is_ready = False
 
-    yield
+    _open_the_gpu_slot()
+    shutdown_signals = _ShutdownSignals(app)
+    shutdown_signals.install()
+    try:
+        yield
+    finally:
+        # Shutdown
+        logger.info("Shutting down SHEPHERD-Advanced API...")
+        app_state.is_ready = False
+        try:
+            await asyncio.to_thread(shutdown_signals.end_jobs)
+        finally:
+            shutdown_signals.restore()
 
-    # Shutdown
-    logger.info("Shutting down SHEPHERD-Advanced API...")
-    app_state.is_ready = False
+
+class _ShutdownSignals:
+    """**The job's stop starts at the signal that stops the backend**
+    (verification of the owner's decision, 2026-10-22). uvicorn's shutdown
+    waits for every open connection to close ("Waiting for connections to
+    close") before it runs the lifespan's end, and each open dashboard tab
+    keeps one open: Gradio's session heartbeat, which the dashboard asks for
+    because it keeps session state, and which mounted ends only when the tab
+    is closed. A stop begun at the lifespan's end left the job training, and
+    holding the GPU lock, until every tab was closed; a SIGTERM or a closed
+    terminal has no second signal to force the shutdown on.
+
+    So, while the application runs, **every signal that no longer reaches a
+    job because it leads its own group** (`JOB_DETACHED_SIGNALS`, defined
+    once beside the spawn; root-cause review P23-2) ends in the server's
+    orderly shutdown: each one whose handler is the server's own, the one
+    SIGTERM has, is wrapped (uvicorn's SIGINT and SIGTERM, and SIGBREAK on
+    Windows), and each other one that still has its default action (SIGHUP,
+    a closed terminal; SIGQUIT, the terminal's Ctrl-\\, which used to leave
+    the job training with the lock) gets the SIGTERM handler, wrapped the
+    same way. **The server's handlers are told by the handler, never by a
+    list of signal names** (verification of P23-2, T2-V4), so whatever set
+    of signals the server handles itself, each is wrapped. SIGQUIT keeps its meaning: uvicorn
+    raises the signal it captured again once it has shut down, so the backend
+    still ends by SIGQUIT, after the job's stop. Each first records the stop
+    with the job runner (`record_stop_signal`, a plain store), so Restart
+    Backend's exec is refused from the signal on (round 3 of the review
+    fixes, P3-3), then runs the server's handler as before (a second Ctrl-C
+    is still uvicorn's forced quit), then
+    hands the event loop `begin`: the first time, the job's stop starts in a
+    thread of its own (it closes the GPU slot, then stops the job that held
+    it: `_stop_the_active_job`), and every time, the dashboard's
+    heartbeat streams end (`_end_dashboard_streams`), so an open tab holds up
+    neither the job nor the backend. The thread is not a daemon, so the
+    interpreter waits for it before it exits, after a forced quit too.
+    `end_jobs`, at the lifespan's end, waits for it and does not repeat it;
+    it closes the slot and stops the job itself only when no signal began
+    the shutdown.
+
+    Installed only in the main thread, where a server sets its handlers (an
+    in-process test client runs the lifespan elsewhere), and only when
+    SIGTERM has a handler to route to (a server's); **neither fallback is
+    silent** (round 3 of the review fixes, F4): in the main thread a SIGTERM
+    with no server's handler is a warning, since the job's stop and the
+    closed slot then wait for the lifespan's end, and off it a debug line. A
+    handler that is not the server's is not wrapped (SIGINT's default
+    handler, which no server set, or one of someone else's), and a routed
+    signal is taken only where it still has its default action (SIGHUP
+    ignored under ``nohup`` is left as it is). `restore` puts back each
+    handler replaced here that is still the one installed here (after a
+    forced quit uvicorn has already put back its own).
+    """
+
+    def __init__(self, application: FastAPI) -> None:
+        self._application = application
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        #: signal -> (the handler it had, the one installed here)
+        self._installed: Dict[int, Tuple[Any, Callable[[int, Any], None]]] = {}
+        self._stopping: Optional[threading.Thread] = None
+        #: The job runner's record of a shutdown signal, called first in each
+        #: wrapped handler (`TrainingManager.record_stop_signal`).
+        self._record_stop_signal: Callable[[], None] = lambda: None
+
+    def install(self) -> None:
+        """Wrap the server's handlers (each listed signal whose handler is
+        SIGTERM's), and route the other signals that no longer reach a job
+        (`JOB_DETACHED_SIGNALS`) to its SIGTERM handler; in the event loop,
+        at startup."""
+        from src.api.services.training_manager import JOB_DETACHED_SIGNALS, training_manager
+
+        if threading.current_thread() is not threading.main_thread():
+            logger.debug("The application runs off the main thread (an in-process client), "
+                         "so the shutdown signals are not taken here: the lifespan's end "
+                         "stops the job.")
+            return
+        termination = signal.getsignal(signal.SIGTERM)
+        if not callable(termination):
+            logger.warning(
+                "The backend cannot attach to the server's shutdown signals (SIGTERM has no "
+                "handler of the server's: %r), so a stop of the backend begins the job's stop, "
+                "and closes the GPU slot, only at the lifespan's end, after every open "
+                "connection has closed (an open dashboard tab holds it).", termination)
+            return
+        self._loop = asyncio.get_running_loop()
+        self._record_stop_signal = training_manager.record_stop_signal
+        for name in JOB_DETACHED_SIGNALS:
+            number = getattr(signal, name, None)
+            if number is None:
+                continue
+            handler = signal.getsignal(number)
+            if handler is signal.SIG_DFL:
+                self._wrap(number, termination, replaced=signal.SIG_DFL)
+            elif handler == termination:  # the server's own: a bound method, compared equal
+                self._wrap(number, handler, replaced=handler)
+
+    def _wrap(self, number: int, server_handler: Callable[[int, Any], Any],
+              replaced: Any) -> None:
+        def handler(signum: int, frame: Any) -> None:
+            # Recorded before anything else, a plain store (round 3 of the
+            # review fixes, P3-3): from here on Restart Backend's exec is
+            # refused, before this stop has closed the GPU slot.
+            self._record_stop_signal()
+            try:
+                server_handler(signum, frame)
+            finally:
+                self._hand_to_the_loop()
+
+        signal.signal(number, handler)
+        self._installed[number] = (replaced, handler)
+
+    def _hand_to_the_loop(self) -> None:
+        """In the signal handler, only a callback handed to the event loop
+        (`call_soon_threadsafe` also wakes it): a thread started or a lock
+        taken here could wait on one the interrupted main thread holds."""
+        try:
+            self._loop.call_soon_threadsafe(self.begin)
+        except RuntimeError:  # the event loop has closed: nothing is served
+            pass
+
+    def begin(self) -> None:
+        """In the event loop: the job's stop started (once), the dashboard's
+        heartbeat streams ended."""
+        if self._stopping is None:
+            self._stopping = threading.Thread(target=_stop_the_active_job, daemon=False,
+                                              name="backend-stops-its-job")
+            self._stopping.start()
+        _end_dashboard_streams(self._application)
+
+    def end_jobs(self) -> None:
+        """At the lifespan's end, **one stop per shutdown** (round 3 of the
+        review fixes, P3-4): the stop a signal began is waited for, never
+        repeated; only when no signal began the shutdown are the slot closed
+        and its job stopped here. After a signal's `close` no job can start,
+        so the only job that can still hold the slot is the one that stop
+        ended or gave up on (one that SIGKILL cannot end) and said so; a
+        second stop would only wait `END_ACTIVE_JOB_SECONDS` more for it.
+        Blocks; call it from a thread."""
+        if self._stopping is not None:
+            self._stopping.join()
+            return
+        _stop_the_active_job()
+
+    def restore(self) -> None:
+        """Put back each handler replaced here that is still ours; at the
+        lifespan's end, in the event loop."""
+        for number, (replaced, installed) in self._installed.items():
+            if signal.getsignal(number) is installed:
+                signal.signal(number, replaced)
+        self._installed.clear()
+
+
+def _end_dashboard_streams(application: FastAPI) -> None:
+    """End the session heartbeat streams of the dashboard mounted at
+    `DASHBOARD_PATH`, as Gradio's own server does when it stops
+    (`Blocks._end_streaming_responses` sets the served app's `stop_event`;
+    mounted, nothing sets it). Each open tab keeps one, which otherwise ends
+    only when the tab is closed. In the event loop; with no dashboard
+    mounted, there is nothing to end; a dashboard with no `stop_event` (a
+    Gradio that renamed it) is a warning, never a silent no-op."""
+    for route in application.routes:
+        if isinstance(route, Mount) and route.path == DASHBOARD_PATH:
+            stop_event = getattr(route.app, "stop_event", None)
+            if stop_event is None:
+                logger.warning("The dashboard mounted at %s has no stop_event to end its "
+                               "heartbeat streams with, so each open dashboard tab holds the "
+                               "backend's shutdown until it is closed.", DASHBOARD_PATH)
+                return
+            stop_event.set()
+
+
+def _stop_the_active_job() -> None:
+    """At shutdown: the job runner's GPU slot closed, so no job starts from
+    here on, whatever request is still being handled (root-cause review,
+    P23-1), and the job that held it stopped, or one an operator is already
+    stopping waited for (`TrainingManager.close`, `end_active_job`), bounded
+    by the stop's escalation; said in the log either way. The slot is closed
+    and its job read in one step, so a start either came first and is the
+    job stopped here, or comes after and is refused."""
+    from src.api.services.training_manager import training_manager
+
+    active = training_manager.close()
+    if active is None:
+        return
+    logger.warning("The backend is stopping, so it stops the %s job %s it runs (pid %s): "
+                   "SIGINT, then SIGTERM, then SIGKILL to its process group.",
+                   active["job_type"], active["job_id"], active["pid"])
+    ended = training_manager.end_active_job()
+    if ended is None:
+        return
+    if ended.get("success"):
+        logger.info("The %s job %s ended as %s.", ended["job_type"], ended["job_id"],
+                    ended.get("status"))
+    else:
+        logger.warning("The %s job %s: %s", ended["job_type"], ended["job_id"],
+                       ended.get("error") or f"still {ended.get('status')}")
+
+
+def _open_the_gpu_slot() -> None:
+    """At startup: the job runner's GPU slot open. A shutdown closes it
+    (`_stop_the_active_job`), and the runner is a process-wide singleton, so
+    an in-process client's next lifespan would otherwise find it closed."""
+    from src.api.services.training_manager import training_manager
+
+    training_manager.open()
+
+
+def _check_startup_bind() -> None:
+    """Raise `RuntimeError` when the host passed in to startup is a bind
+    `network_bind` refuses; log the warning of an accepted network bind."""
+    from src.config.server_settings import ENV_BIND_HOST, startup_bind
+
+    decision = startup_bind()
+    if decision is None:
+        return
+    if not decision.allowed:
+        message = (f"Startup refused: {ENV_BIND_HOST}, the address the launcher or "
+                   f"src.api.main:main() passed in, is {decision.host!r}; {decision.message}")
+        logger.error(message)
+        raise RuntimeError(message)
+    if decision.message:
+        logger.warning(decision.message)
 
 
 # =============================================================================
@@ -201,18 +473,39 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# **By default no cross-origin browser access is granted; administrative
+# operations are still checked by D8 in the backend** (M5-1). An empty allow
+# list sends no Access-Control-Allow-Origin to any other origin and answers
+# every preflight 400, on /api and on the mounted dashboard alike: since Gradio
+# 6.25 a mounted app adds no CORS headers of its own when the parent's
+# middleware is exactly this class (`middleware.cls is CORSMiddleware`), so
+# **it must stay `fastapi.middleware.cors.CORSMiddleware` itself, never a
+# subclass**, or Gradio's own middleware reflects any origin on a LAN Host.
+# CORS only decides what a browser lets a page read: a cross-origin request
+# that needs no preflight still reaches the server, which is why D8, not CORS,
+# guards the operator controls.
+app.add_middleware(CORSMiddleware, allow_origins=[])
 
 # The in-process WebUI calls this API at the address the server accepted its
 # requests on, recorded from each request (`src/utils/server_address.py`).
 app.add_middleware(RecordServerAddress)
+
+#: Where the Gradio dashboard is mounted (below).
+DASHBOARD_PATH = "/ui"
+
+# The routes Gradio registers on the dashboard with no switch to turn them off
+# and the dashboard does not use (`file=<URL>`, fetched server-side,
+# `process_recording`, and `upload` with its progress stream, which another
+# site's page can post to) are refused here, before the body is read. Added
+# after RecordServerAddress and before the request logging below, so it runs
+# inside the logging and each refusal is logged.
+app.add_middleware(RefuseUnusedGradioRoutes, mount_path=DASHBOARD_PATH)
+
+# No other page may frame the dashboard or the API (clickjacking): D8 sees the
+# request's arrival, not the frame it was made from, so this is the control
+# (`src/api/middleware/frame_guard.py`). Added after the guard above, so a
+# refusal carries the headers too.
+app.add_middleware(RefuseFraming)
 
 
 # =============================================================================
@@ -222,6 +515,9 @@ app.add_middleware(RecordServerAddress)
 _QUIET_PREFIXES = (
     "/ui/gradio_api/queue/",
     "/ui/gradio_api/heartbeat/",
+    # Events run without the queue (M5-2): the header chips' read on the
+    # shell's timer, every 5 s per open page, is a plain POST here.
+    "/ui/gradio_api/run/",
 )
 
 
@@ -333,7 +629,7 @@ async def readiness_check() -> Dict[str, Any]:
 # =============================================================================
 # Import and Register Routes
 # =============================================================================
-from src.api.routes import diagnose, search, disease, training, system, pipeline, evaluations
+from src.api.routes import diagnose, search, disease, training, system, pipeline, evaluations, lists
 
 app.include_router(diagnose.router, prefix="/api/v1", tags=["Diagnosis"])
 app.include_router(pipeline.router, prefix="/api/v1", tags=["Pipeline"])
@@ -344,6 +640,9 @@ app.include_router(search.router, prefix="/api/v1", tags=["Search"])
 app.include_router(disease.router, prefix="/api/v1", tags=["Disease"])
 app.include_router(training.router, prefix="/api/v1", tags=["Training"])
 app.include_router(system.router, prefix="/api/v1", tags=["System"])
+# The server's lists (M5-1): workspaces and cohort versions, open; a workspace's
+# checkpoints, behind D8's dependency (SPEC_4 C3; routes/lists.py).
+app.include_router(lists.router, prefix="/api/v1", tags=["Lists"])
 
 
 # =============================================================================
@@ -359,15 +658,21 @@ if _static_dir.is_dir():
 # =============================================================================
 # Mount Gradio Dashboard
 # =============================================================================
+# `mount_dashboard` passes the theme, CSS and switches to the mount, where
+# Gradio 6 reads them (src/webui/app.py).
 try:
-    import gradio as gr
-    from src.webui.app import create_gradio_app
+    from src.webui.app import mount_dashboard
 
-    gradio_app = create_gradio_app()
-    gr.mount_gradio_app(app, gradio_app, path="/ui")
-    logger.info("Gradio dashboard mounted at /ui")
+    mount_dashboard(app, DASHBOARD_PATH)
+    logger.info(f"Gradio dashboard mounted at {DASHBOARD_PATH}")
+except ModuleNotFoundError as e:
+    if (e.name or "").split(".")[0] != "gradio":
+        logger.error(f"The dashboard could not be imported, so it is not mounted: {e}")
+    else:
+        logger.warning(f"Gradio not available, dashboard disabled: {e}")
 except ImportError as e:
-    logger.warning(f"Gradio not available, dashboard disabled: {e}")
+    # Not a missing Gradio: a defect (a circular import, say), said as one.
+    logger.error(f"The dashboard could not be imported, so it is not mounted: {e}")
 except Exception as e:
     logger.warning(f"Failed to mount Gradio dashboard: {e}")
 
@@ -420,21 +725,6 @@ def get_app_state() -> AppState:
     return app_state
 
 
-def requested_serving_device(device: Optional[str]) -> Optional[str]:
-    """The device a build is asked for: the request's, else `SHEPHERD_DEVICE`,
-    else None (`auto`).
-
-    **Blank is unset at both steps**, so `""` and `"  "` defer to the
-    deployment's setting alike, as `resolve_serving_device` treats them alike
-    (contract M3c). The value is passed on as given, not resolved: the served
-    identity records what was asked for beside what took effect.
-    """
-    for value in (device, os.environ.get("SHEPHERD_DEVICE")):
-        if value is not None and value.strip():
-            return value.strip()
-    return None
-
-
 class PipelineBundle(NamedTuple):
     """A constructed, fully checked pipeline that nothing is serving yet.
 
@@ -457,6 +747,7 @@ def build_pipeline(
     checkpoint_path: Optional[str] = None,
     data_dir: Optional[str] = None,
     device: Optional[str] = None,
+    expected_checkpoint_sha256: Optional[str] = None,
 ) -> Optional[PipelineBundle]:
     """
     Build a diagnosis pipeline without publishing it.
@@ -483,6 +774,10 @@ def build_pipeline(
         checkpoint_path: Path to trained model checkpoint (overrides env var)
         data_dir: Path to processed data directory (overrides env var)
         device: Inference device (overrides env var)
+        expected_checkpoint_sha256: The checkpoint's SHA-256 a caller was shown
+            (a bound reload); the build's one checkpoint read is compared with
+            it before the bytes are parsed, and other bytes, or no file, raise
+            `CheckpointChanged` (`DiagnosisPipeline`). None at startup.
 
     Returns:
         The built pipeline and the paths it was built from, or None if the
@@ -580,6 +875,7 @@ def build_pipeline(
             checkpoint_path=checkpoint_path,
             data_dir=data_dir,
             device=device,
+            expected_checkpoint_sha256=expected_checkpoint_sha256,
         )
         # Read the configuration back **before returning**, not after publishing.
         # It is the last thing that can fail, and a caller that published first
@@ -689,17 +985,38 @@ def initialize_ontology():
 # =============================================================================
 # CLI Entry Point
 # =============================================================================
-def main():
-    """Run the API server"""
+def main(host: Optional[str] = None, port: int = 8000):
+    """Run the API server (``python -m src.api.main``), on ``127.0.0.1`` unless
+    `host` names another address.
+
+    **The bind guard** (SPEC_4 §3.1): a bind other than loopback is refused
+    (`network_bind`) unless ``SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND=1``,
+    which accepts the risk and is no control. The host goes to application
+    startup as ``SHEPHERD_BIND_HOST``, which checks it again (`lifespan`).
+    Proxy headers are not trusted: the client address uvicorn reports is the
+    socket's, though D8 never reads it anyway.
+
+    **No auto-reload**: uvicorn's reloader restarts the server by SIGTERM on
+    every saved source file, and shutdown stops the GPU job the server runs
+    (`lifespan`), so a code save would stop a training.
+    """
     import uvicorn
 
+    from src.config.server_settings import DEFAULT_BIND_HOST, ENV_BIND_HOST, network_bind
+
+    decision = network_bind(DEFAULT_BIND_HOST if host is None else host)
+    if not decision.allowed:
+        raise SystemExit(f"src.api.main: {decision.message}")
+    if decision.message:
+        logger.warning(decision.message)
+    os.environ[ENV_BIND_HOST] = decision.host
     uvicorn.run(
         "src.api.main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
+        host=decision.host,
+        port=port,
         log_level="info",
         access_log=False,
+        proxy_headers=False,
     )
 
 

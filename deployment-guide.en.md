@@ -327,7 +327,8 @@ by hand.
 **After setup**:
 1. Build the knowledge graph: `python scripts/build_knowledge_graph.py`
 2. Precompute shortest paths: `python scripts/compute_shortest_paths.py`
-3. Train: `python scripts/train_model.py` (optionally `--config <hyperparameters.yaml>`)
+3. Train: `python scripts/train_model.py` (optionally `--config <hyperparameters.yaml>`), in a
+   shell where the GPU lock is configured: it refuses without one (§4.11)
 4. Launch: `./launch_shepherd.sh`
 
 **Things to know**:
@@ -646,9 +647,10 @@ wherever its record is shown:
 - since contract M3c, the served identity (§4.7): `dataset_record` `verified`
   with origin `synthetic`, in every diagnosis response and in the API's
   pipeline status;
-- the Diagnosis tab: a `SYNTHETIC WORKSPACE: not a clinical result.` banner
-  above the results and in the model status, and `dataset synthetic ✓` on the
-  result's "Produced by" line;
+- the Diagnosis page: a `SYNTHETIC WORKSPACE: not a clinical result.` banner
+  above the results, the amber `synthetic data` chip on the "Model in use" card
+  (the banner again in its Details), and `verified · synthetic` on the dataset
+  record's row of the result's identity ("This result"; since M5-2, §4.14);
 - the downloadable report: the same banner in its "What produced this result"
   section, and its file name, `diagnosis_SYNTHETIC_<patient>_<session>_report.md`;
 - the CSV export: `served_dataset_origin` `synthetic` on every row, and its file
@@ -988,22 +990,21 @@ The WebUI shows **the result's own identity**, never the status's:
   path-reasoning fallback.`, `NO SHORTEST-PATH TABLE: GNN score alone.`,
   `DEMO ANSWER: not computed.`, and `WHAT PRODUCED THIS RESULT WAS NOT
   REPORTED.` for a response without the field (a server from before M3c).
-- **A "Produced by" line** under the results, with shortened digests, and a
-  closed block, "What produced this result — full identity", holding the full
-  table, the claim boundary and "Not a certified medical device; decision
-  support for a qualified clinician."
-- **The model status** (Model Configuration) shows the loaded pipeline's
-  identity on its "Serving" line, and names the served workspace and
-  checkpoint file on one line. Once a pipeline is loaded, the Data Directory
-  and Checkpoint fields show those two paths, a file chosen automatically
-  included, so Load / Reload reloads the checkpoint file that is served;
-  clear the Checkpoint field to let the server choose again. Two cases
-  differ: with no checkpoint served the Checkpoint field is blank, and a
-  reload then chooses one automatically (or is refused when the workspace
-  has none); after a start from `SHEPHERD_KG_PATH` alone, Data Directory is
-  blank and a reload needs a workspace typed. With nothing loaded the fields
-  show the paths Save Config had stored when the service started; a Save
-  takes effect from the next start.
+- **A badge above the results** (since M5-2) compares the result's whole
+  identity, part by part, with the model in use as the "Model in use" card last
+  read it: "Produced by the model in use", "Produced by an earlier model or
+  pipeline — N parts differ ›", or "Cannot check against the model in use yet"
+  with its one reason. Its › opens the identity drawer on "This result": each
+  part beside what is in use now, the full digests with Copy, the claim
+  boundary and "Not a certified medical device; decision support for a
+  qualified clinician." (§4.14, "Diagnosis (clinical)").
+- **What is served now** is on the page's "Model in use" card (§4.14). Since
+  M5-2 the Model Configuration accordion (its path fields, Load / Reload, Save
+  Config and Reset) and the header's "Serving now" line are gone: an operator
+  changes the model with "🔒 Change model…" on the card, which lists the
+  server's workspaces and their checkpoints and reloads only what the server
+  lists. `POST /api/v1/pipeline/config` stays for API clients, checked by D8
+  (§4.13); the dashboard no longer writes it.
 - **The Markdown report** has a "What produced this result" section before the
   candidates: the same banners, a Part | State | Value table with digests in
   full (`sha256:<64 hex>`), the claim boundary and the fixed statement. An
@@ -1137,17 +1138,38 @@ acceptance — and its result is recorded beside the checkpoint. The flow is:
    C) and keeps the full report;
 3. `--record`, or later `scripts/record_evaluation.py --report`, registers the report in
    `evaluations.json` beside the checkpoint;
-4. the Diagnosis tab's model status shows the loaded checkpoint's recorded results.
+4. the Diagnosis page's "Model in use" card shows the loaded checkpoint's recorded tests as a
+   state (since M5-2; the records themselves are listed under Research › Evaluate › Models).
 
-All of it runs on the machine, by the operator. No UI control and no API request imports,
-measures or records anything.
+The commands run on the machine, by the operator. Since M5-2 the dashboard's Research ›
+Evaluate › Test page runs the same import, measurement and registration from a browser, each an
+operator control D8 checks (§4.13, §4.14); no API request imports, measures or records
+anything.
 
 ### The registry
 
 The registry is a directory **you create**, given to every command as an **absolute path outside
 the repository**. A relative path, a path that does not exist, and a path that resolves inside
-the repository (through a symlink too) are refused. Nothing creates it for you, and no request,
-environment variable or configuration key names it.
+the repository (through a symlink too) are refused. Nothing creates it for you, and no request
+names it. The commands take it as `--registry`; the service reads it from `SHEPHERD_REGISTRY`
+(§4.12), checked by the same rule.
+
+**The commands need `SHEPHERD_REGISTRY` too** (since the M5 review, BACKLOG 37): a report is
+registered (`--record`, `record_evaluation.py --report`, the Test page), and `measure_scorer.py
+--cohort` measures, only in the deployment's registry, the one `SHEPHERD_REGISTRY` names. The
+two are compared as resolved paths, so `--registry` through a link to that directory is
+accepted, while a copy of the registry, or the same directory reached through a bind mount or
+another mount, is another registry and is refused before anything in it is read. A
+`measure_scorer.py --cohort` run resolves `--registry` once, when it is allowed to start, and
+reads and writes through that directory: a link retargeted while the run takes the GPU lock or
+starts the device does not move it. With the
+variable unset, every such command is refused, saying to set it as the service's environment
+sets it. Set it in the shell where you run the commands, from the same file the service reads
+(§4.11):
+
+```
+measure_scorer: refused: --cohort measures a version of the deployment's registry only, and SHEPHERD_REGISTRY is not set here, so which registry is the deployment's cannot be told. Set SHEPHERD_REGISTRY in this environment to the value the service's environment gives it (deployment guide §4.11: one file that both the service and this shell read). [...] Nothing was read or written.
+```
 
 The directories below it are checked too. Each one (`sources/`, `versions/`, a version's
 directory, its `reports/` and each run directory) is resolved again just before anything is
@@ -1251,6 +1273,9 @@ python scripts/measure_scorer.py \
     [--training-evidence DIR ...] [--record] [--device auto|cuda|cpu] [--batch-size 32]
 ```
 
+Run it in a shell where the GPU lock is configured, the same lock as the service's (§4.11);
+without one it refuses, exit 1, with nothing written.
+
 Before anything is written the run checks, on the bytes it read: the version's `cohort.json` and
 its `samples.json` against the digest it binds; **the version's counts**, which become the
 report's and the ledger's denominators — they must be present and agree with each other and with
@@ -1301,9 +1326,9 @@ hex>/`, a new directory for every run: `ranks.json` (per case, patient-level) an
 report is kept whether or not it is registered. `--output` is refused with `--cohort`.
 
 The console prints Mode C's metrics, the coverage (`N ranked of M source cases; K excluded`, with
-each category), the four R10 labels in the words the Diagnosis tab uses (an `unverifiable` label
-with its reason), the label definitions once, the report's path and the run id. The report itself
-keeps the states and holds no prose.
+each category), the four R10 labels in the shared words of `src/evaluation/caveats.py` (an
+`unverifiable` label with its reason), the label definitions once, the report's path and the run
+id. The report itself keeps the states and holds no prose.
 
 ### Record
 
@@ -1361,7 +1386,7 @@ keeps the states and holds no prose.
 | Command | 0 | 1 | 2 | 3 |
 |---|---|---|---|---|
 | `import_cohort.py` | preview printed, or version committed | refused, with one message ending "Nothing was written." (also a preview in which no case can be ranked) | the command line was rejected | — |
-| `measure_scorer.py` | measured (with `--record`: registered, already held or agreeing) | a check refused the run: one message, nothing written (so does `--device auto` or `cuda` on a host without CUDA, before anything is read); or **measured, but the report was not written** (a full or read-only disk, for example): one message saying what may be left, which is never a report that can be registered -- this run's ranks beside `--output`, or a run directory without `report.json` in the report store (a run that fails after writing its report, its console closed for example, says where the report is) | the command line was rejected, including an argument of the other kind of cohort | **measured, but the registration refused**: the message names the report and the `record_evaluation.py` command to register it later; or, when the report file no longer holds the bytes the run published, says so and asks for a re-measurement instead (that report may be gone) |
+| `measure_scorer.py` | measured (with `--record`: registered, already held or agreeing) | a check refused the run: one message, nothing written (so does `--device auto` or `cuda` on a host without CUDA, before anything is read); or **measured, but the report was not written** (a full or read-only disk, for example): one message saying what may be left, which is never a report that can be registered -- this run's ranks beside `--output`, or a run directory without `report.json` in the report store (a run that fails after writing its report, its console closed for example, says where the report is) | the command line was rejected, including an argument of the other kind of cohort | **measured, but the registration refused**: the message names the report and the `record_evaluation.py` command to register it later; or, when the report file no longer holds the bytes the run published, says so and asks for a re-measurement instead (that report may be gone); or, when runs under the report's key disagree, says "runs disagree — investigate" and keeps the report, with no register-later command (none would be accepted while they disagree) |
 | `record_evaluation.py` | registered, already held, agreeing, or shown | refused, with one message; nothing written | the command line was rejected, including neither or both of `--checkpoint` and `--checkpoint-dir` | — |
 | `audit_split_overlap.py` | report written | refused, with one message; nothing written | the command line was rejected (for example the removed `--evaluation-cohort-kind`, `--registry` without `--cohort` or the reverse, or `--splits` beside `--cohort`), with the usage line | — |
 
@@ -1374,20 +1399,36 @@ run keeps the digest of the report bytes it wrote and the identity of its checkp
 registration reads the report back and compares the digest of that read before anything in it is
 decoded, then the checkpoint it names. If the file was replaced, changed, damaged, removed or
 cannot be read in between -- even when it now holds another valid report, of another checkpoint or
-of another cohort version -- nothing is registered, the run exits 3, and it says the report at that
-path is not the one it published (or is gone), so the run's own report may not exist any more:
-measure again to register this measurement. The command for a later registration is printed only
-when the report read back is the one published and something else refused it, such as the
-ledger. A later registration with `record_evaluation.py` checks the checkpoint file it is
-given against the report, as before.
+of another cohort version, or is now a link to a file outside the report store -- nothing is
+registered, the run exits 3, and it says the report at that path is not the one it published (or
+is gone), so the run's own report may not exist any more: measure again to register this
+measurement. The command for a later registration is printed only when the report read back is
+the one published and something else refused it, such as the ledger, and never while runs under
+its key disagree. A later registration with `record_evaluation.py` checks the checkpoint file it
+is given against the report, as before.
 
-### What the Diagnosis tab shows
+### What the Diagnosis page shows
 
-The model status (Model Configuration), under its "Serving" line, adds **"Recorded test results
-(Mode C)"** for the loaded checkpoint (`sha256:<first 12>…`). It is read through
-`GET /api/v1/evaluations/loaded-model` each time the status is read, and found by the checkpoint's
-digest, not its file name: after another model is loaded the previous model's results are never
-shown, and a checkpoint moved with its ledger and unchanged bytes still finds them.
+**Since M5-2 (2026-10-21) the Diagnosis page shows the loaded checkpoint's recorded tests as a
+state only**, on its "Model in use" card: "Recorded tests: 3 · 1 contested", "3 · contested state
+not checked" (no registry is set, or no record's cohort version or report store can be read;
+never shown as uncontested), "3 · 1 contested · contested state of 1 not checked" (some
+records' state cannot be checked; counted apart), "none in ledger", "no ledger", "ledger not
+readable" or "not read", the same words as the checkpoint's row in
+"Change model…", found by the checkpoint's digest, not its file name (after another model is
+loaded the previous model's state is never shown). Its › opens Details at Evidence, where the same
+state stands beside the Trainer's validation figure ("Validation MRR (Trainer, top-20) … —
+selection metric on val, not an independent test"); no Mode C number is shown on the page. The
+records themselves are listed under Research › Evaluate › Models.
+
+Until M5-2 the model status (Model Configuration) listed them in full under its "Serving" line,
+as **"Recorded test results (Mode C)"** for the loaded checkpoint (`sha256:<first 12>…`), read
+through `GET /api/v1/evaluations/loaded-model`, in the words below. The route still answers API
+clients with those records, and since the M5 review (BACKLOG 36) each record carries its D5
+state (`contest`: `uncontested`; `contested`, with the fields and the runs that differ;
+`cannot_be_checked`, never to be read as uncontested), from the dashboard's own implementation
+over the service's `SHEPHERD_REGISTRY`, without the reasons' own words, which may name a server
+path. D5's investigation notes are not shown (BACKLOG 40):
 
 - The records are introduced once, above the first, by **"Disease ranking by the model,
   approved scorer policy (Mode C)."** and the note **"This is the model's own Mode C disease
@@ -1428,8 +1469,9 @@ shown, and a checkpoint moved with its ledger and unchanged bytes still finds th
 - **A generated split's report and ranks are staged and renamed into place** (ranks first); an
   existing `--output` is still replaced.
 - **Ledger schema 3.** An existing `evaluations.json` of schema 1 or 2 is refused — by
-  `--record`, by `record_evaluation.py` (`--report` and `--show`) and by the model status, which
-  reports the ledger as not read. Nothing migrates it and its results are not carried over:
+  `--record`, by `record_evaluation.py` (`--report` and `--show`) and by the recorded-results
+  readers, which report the ledger as not read (on the Diagnosis card: "Recorded tests: ledger
+  not readable"). Nothing migrates it and its results are not carried over:
   **archive it by hand**, for example `mv evaluations.json evaluations.v2.json`, read it with the
   revision that wrote it, and re-measure what you need with this revision, then register the new
   reports (the refusal says the same). A report written before M4 is refused too, with an
@@ -1442,6 +1484,1300 @@ shown, and a checkpoint moved with its ledger and unchanged bytes still finds th
   and `--splits` beside `--cohort`, are rejected command lines (exit 2, with the usage line). The
   version's graph and dataset record digests are compared with those this workspace's manifest
   records, without loading tensors; only `train` is read. The report's `schema_version` is 6.
+
+### Since M5-1: registration from the report store, disagreeing runs, history, determinism
+
+These apply to `measure_scorer.py --record` and `record_evaluation.py --report` alike, since
+both go through the one registration function. The exit codes above are unchanged.
+
+**A report is registered only from the registry's report store.** `--report` must name
+`<registry>/versions/<label>/reports/<run id>/report.json`: the path the measurement printed as
+`Report:`. Before anything is written, the registration checks four things:
+
+- it finds the registry and the version from that path, and reads the version;
+- the report must name that version exactly (label, role, manifest digest, sources, graph,
+  mapping and counts);
+- its run directory must carry the first 12 hex digits of the checkpoint it measured;
+- the checkpoint and ledger checks above still apply.
+
+A copy anywhere else is refused before it is read: "… is not a report the registry's report
+store holds … Register the store's original instead". You can still read and share a copy, but
+you cannot register it. A link to a stored report counts as the stored original. A `report.json`
+in the store that is a link to a file elsewhere does not count. **The registry must be the
+deployment's** (since the M5 review, BACKLOG 37): a copy of the whole registry holds the same
+bytes in the same structure, but it would keep its own usage history and its own disagreement
+block, which Research › Models and the job runner never read, so its reports are refused ("…
+is not registered: the registry … is not the deployment's: SHEPHERD_REGISTRY (…) resolves to …").
+A registry moved as a whole works again once `SHEPHERD_REGISTRY` names its new place, for the
+service and in your shell; no absolute path is stored as an identity. If `--record` finds its
+registry is no longer the deployment's (a link retargeted during the run), the run exits 3,
+keeps its report and offers no register-later command, since that command would be refused the
+same way. The check catches a registry reached by mistake; a command run with the variable set to
+a copy on purpose uses that copy. A generated split's report,
+written to `--output`, is never in a store, so this is now why it is refused.
+
+**Runs that disagree block their key ("runs disagree — investigate").** The store's reports
+under one key (same checkpoint, cohort version and measurement settings) are compared with the
+same comparison the ledger uses. If two of them differ in results, no report under that key is
+registered. This applies to a run with `--record` or without it, to a later
+`record_evaluation.py`, and to registering again a report that was already registered. The
+message names what differs and which runs. A record registered before the disagreement appeared
+stays in the ledger. Under `--record` the run exits 3 and keeps its report, but prints no
+register-later command, since none would be accepted while the runs disagree. Without `--record`
+the run checks the store the same way after publishing: it exits 0, as a run that registers
+nothing does, prints "Not registered (no --record), and runs disagree — investigate" with what
+differs instead of the command, and its `--outcome` file's `registration.why` says the same.
+When whether the runs disagree cannot be checked (below), the run without `--record` prints the
+command and says a registration is refused until that can be checked. To move forward:
+
+- compare the reports' environment facts (each `report.json`'s `manifest.environment`);
+- re-run with `--deterministic`, which is a different key.
+
+An investigation note records who looked, when and what they found. Notes go to
+`<registry>/versions/<label>/reports/notes.jsonl`, kept with the key's reports and never in the
+ledger, and they do not lift the block. Research › Test adds one from the dashboard, as an
+operator control (§4.14). The block rests on plain files: deleting a disagreeing report lifts it. The tools
+never delete anything.
+
+**"Cannot be checked" is refused too, and never read as uncontested.** The whole version cannot
+be checked when the store holds:
+
+- a report that cannot be read or parsed;
+- a run directory or `report.json` that is a link out of the store;
+- a report whose key cannot be told.
+
+A report from an earlier revision, whose manifest this one does not read, blocks only the key
+it names. The refusal names each file. Move the file out of `reports/`, or repair it, and
+register again.
+
+**The usage history** is `<registry>/versions/<label>/reports/usage.jsonl`, one JSON object
+per line, appended and never rewritten. It records:
+
+- every measurement of the version (`test_run`: when, run id, checkpoint and report digests,
+  Mode C's metrics, `n_ranked`, whether it was deterministic, the device, whether `--record`
+  was asked);
+- every registration that wrote a ledger (`registered`: outcome and sequence);
+- every model loaded from a list ordered by the version's score (`model_load`: the metric and
+  scoring group that ordered the list, and whether the load took effect, with why; written by
+  the dashboard's one Load when it is used from Research › Models ordered by test score,
+  §4.14).
+
+It holds aggregates only, no case id. The measurement appends its entry right after the report
+is published, before it writes its `--outcome` file. If that append fails, the run stops with
+exit 1 ("measured, but the run did not finish"), says the report was written and that the run is
+not in the history, and does not register; its outcome file is still written, with
+`"complete": false`. If the outcome file cannot be written, the run stops the same way and says
+it is in the history. If a registration's own entry cannot be appended, the registration stands
+and says so on a `NOTE:` line. Every entry starts a line of its own: an append that was cut short
+(a crash, a power loss) leaves a broken last line, which the next entry closes rather than
+continues, and which a reader names as a line that is not an entry. An append whose write fails
+is taken back, so it leaves no part of its entry; if even that fails, the error says the end of
+the file may hold part of it.
+
+**New `measure_scorer.py` options.** They are there for M5's job runner, and you can use them
+by hand too, in a shell where the GPU lock is configured (§4.11). `--expect-version-sha256` and `--outcome` apply to `--cohort` runs only (exit 2
+with `--split`); the other two apply to both:
+
+```bash
+python scripts/measure_scorer.py --checkpoint <file>.pt --data-dir data/workspaces/<ws> \
+    --cohort <label> --registry /srv/shepherd/cohorts [--record] \
+    [--deterministic] [--expect-checkpoint-sha256 HEX] [--expect-version-sha256 HEX] \
+    [--outcome FILE]
+```
+
+- `--deterministic` turns on several settings before CUDA starts: PyTorch's deterministic
+  algorithms (never warn-only), deterministic cuDNN with its benchmark off, and
+  `CUBLAS_WORKSPACE_CONFIG=:4096:8` when that variable is unset. It never falls back to
+  non-deterministic execution or to another device. An operation with no deterministic
+  implementation refuses the run with nothing written, and so does a `CUBLAS_WORKSPACE_CONFIG`
+  that PyTorch does not document as deterministic. The manifest records the settings, so a
+  deterministic run is a different key. PyTorch promises reproducibility only on the same
+  platform, device and versions; deterministic mode guards against known non-deterministic
+  operations and does not certify a number.
+- `--expect-checkpoint-sha256` and `--expect-version-sha256` refuse the run before anything is
+  measured or written when the checkpoint read, or the version's `cohort.json`, has another
+  SHA-256: the file changed after it was chosen.
+- `--outcome FILE` writes a small JSON file. FILE must be new and its directory must exist; the
+  run refuses before reading anything otherwise, so a file an earlier run left at that path is
+  never read as this run's outcome, and a file named by mistake is never overwritten. Name a new
+  file for each run (a job's own directory, say). The file is written once the report is published
+  (`"complete": false`) and again at the end (`"complete": true`). It gives the report's path,
+  run id and digest, the checkpoint and version digests, whether the run was deterministic, and
+  under `registration` whether the report was registered and why. A run refused before its
+  report writes no outcome file. The file says what the run did. The report store and the ledger
+  remain the record, and "kept" and "registered" are read from them. The job runner gives every
+  test run it starts a new outcome file in a directory of its own (§4.11).
+
+---
+
+## 4.10 The dashboard on Gradio 6.30.0 (since M5, 2026-10-20)
+
+The dashboard at `/ui` runs on **Gradio 6.30.0** (it was 5.29.1). `pyproject.toml` pins it
+exactly, and `uv.lock` changed only in what that forces: gradio-client 2.7.2, starlette 1.9.0
+and huggingface-hub 1.16.1, with brotli 1.2.0 and hf-gradio 0.4.1 added and aiofiles and ffmpy
+no longer needed. No other package changed version.
+
+**Run `uv sync --inexact` after pulling** (or rerun `deploy.sh` / `deploy.cmd`, which do the
+same; `--inexact` keeps the PyG extensions the deploy scripts install outside the lock, see
+`requirements.txt`). There is no fallback to Gradio 5: with 5.29.1 still installed the service
+starts and the REST API works, but the log says
+`Failed to mount Gradio dashboard: mount_gradio_app() got an unexpected keyword argument 'theme'`
+and there is no `/ui`.
+
+### What is switched off, and why
+
+The dashboard is mounted with these settings, whatever the `GRADIO_*` environment variables say
+(`src/webui/app.py`, `mount_options`):
+
+| Setting | Why |
+|---|---|
+| `run_history=False` | Gradio 6 otherwise records each call's inputs and outputs in the browser and offers to save them to a Hugging Face bucket. Diagnosis inputs are a patient's phenotypes. The run-history page answers 404 |
+| `enable_monitoring=False` | Left unset, `/ui/monitoring/summary` serves the queue's event analytics. It answers 403 |
+| `mcp_server=False` | It would publish every dashboard event as an MCP tool. Its routes are absent |
+| `ssr_mode=False` | Server-side rendering starts a Node.js process |
+| `analytics_enabled=False` | On the dashboard itself, since 2026-10-12: no usage analytics and no version check |
+| `max_file_size="1mb"` | Gradio's per-file upload limit, a second line of defence behind the guard's refusal of the upload route (below; §4.13) |
+| `footer_links=[]` | Since M5-2: Gradio's footer (its API page, "Built with Gradio" and its own Settings, with a dark mode the dashboard's colours lack and the screen recorder) is not shown |
+
+**CORS** is tightened since M5-1, together with D8 (§4.13): **by default no cross-origin
+browser access is granted; administrative operations are still checked by D8 in the backend.**
+The parent app keeps its `CORSMiddleware`, now with an empty allow list (`src/api/main.py`), and
+since Gradio 6.25 a mounted app adds no CORS headers of its own when the parent app has exactly
+that class, so `/ui` follows the same policy. Until M5-1 the configuration was
+`allow_origins=["*"]` with `allow_credentials=True`, which under Starlette 1.9 echoed every
+request's `Origin` with `Access-Control-Allow-Credentials: true`: a page on any site, opened in a
+browser holding HTTP credentials or a client certificate for the service, could read the
+responses of `/api/*` and `/ui/gradio_api/*`. It no longer can.
+
+**Framing** is refused since M5-3: every response, the dashboard's and the API's, carries
+`X-Frame-Options: DENY` and `Content-Security-Policy: frame-ancestors 'none'`
+(`src/api/middleware/frame_guard.py`). D8 (§4.13) checks where a request arrives from, not the
+page it was made from: a dashboard loaded inside another site's frame makes same-origin requests
+that D8 allows, so without this an invisible frame laid over a hostile page could turn the
+operator's click into Restart Backend or a Load. No page frames the dashboard, its own included.
+
+### The route guard
+
+Gradio 6.30 adds two routes to every mounted app that cannot be switched off upstream, and keeps
+an upload route the dashboard does not use. The service refuses them before Gradio sees the
+request (`src/api/middleware/gradio_routes.py`):
+
+- **`/ui/gradio_api/file=<URL>`** (and the older `file/<URL>`). Since Gradio 6.20 (issue
+  #13593, PR #13596) the server fetches an `http(s)://` target itself, ignoring `HTTPS_PROXY`,
+  and streams it back on the dashboard's own address; for some URLs it serves a remote HTML page
+  inline, as if it were the dashboard's own page. Every spelling of a URL scheme is refused:
+  upper or mixed case, percent-encoded, `//host`.
+- **`/ui/gradio_api/process_recording`**, which turns an uploaded screen recording into
+  temporary files and may run ffmpeg. Gradio's Settings panel, whose
+  screen recorder posts there, is hidden since M5-2 with the rest of Gradio's footer; a recording
+  posted by any other means is refused like the rest.
+- **`/ui/gradio_api/upload`** and its progress stream `upload_progress` (since M5-1). The
+  dashboard has no upload control, and another site's page can post files there with no
+  preflight: Gradio writes up to 1000 files a request into its temporary directory and never
+  removes them.
+
+A refusal is `403` with a one-line reason and `connection: close`. The request body is not
+read, and the request log shows the refusal like any other response. Local downloads are not
+affected: the Diagnosis tab's CSV and Markdown exports download as before, `HEAD` and `Range`
+requests included. (Since M5-2 the Training page's Export CSV comes as text through the page's
+own server function and the browser saves it; no file is served for it.)
+
+### What else changed in the dashboard
+
+- **Training Console charts** look as before (the y axis starts at 0, each series keeps its
+  colour). The Epoch Window now only filters rows; the x axis follows them. (Replaced in M5-2 by
+  one zoomable figure without an Epoch Window: §4.14, Research › Prepare › Training.)
+- **Runtime Settings** refreshes the restart lock when its tab is opened: Gradio 6 does not run
+  a timer in a tab that has not been opened yet. Since M5-3 it then reads it again on the
+  dashboard's shared slow timer while the page is shown, and has no timer of its own. The backend
+  refuses a restart while any GPU job runs, training or a test run (§4.11), either way.
+
+### Platforms
+
+Tested backends: Linux x86_64 (the development environment) and Linux ARM64 (the homelab,
+checked by the reviewer). **A Windows backend has not been tested with Gradio 6.30.0** and stays
+marked untested until one is available; Windows browsers are part of the browser checks.
+
+## 4.11 One GPU job at a time: the GPU lock and the job runner (since M5, 2026-10-20)
+
+Managed training and evaluation jobs exclude each other: the jobs the WebUI and the API start,
+and `scripts/train_model.py` and `scripts/measure_scorer.py` run from a shell. A job that cannot
+have the GPU is refused, naming who has it; nothing is queued.
+
+### The GPU lock
+
+One lock file per deployment, whatever the workspace, named by the workspaces root alone:
+
+| Settings | Lock file |
+|---|---|
+| `SHEPHERD_WORKSPACES_ROOT=/absolute/root` | `<root>/.shepherd-gpu.lock`: **the root is the lock's one name** (since the root-cause round of 2026-10-22); no other setting names a lock |
+| not set | **not configured**: every managed job is refused (since the review of 8242b47): the CLIs exit 1 before anything is read, the service refuses every start, each saying how to configure the lock |
+
+**`SHEPHERD_GPU_LOCK_FILE` is no longer read** (since the root-cause round of 2026-10-22). It
+named a lock file of its own, beside the root or instead of it, so a service configured with it
+and a shell given only the root each counted as configured, locked two files and ran side by
+side (a service with no root lists no workspace, but `POST /api/v1/training/start` takes a
+workspace path). Remove it from the service's environment and from your shell; where it was the
+only setting, every job is now refused as not configured until the root is set.
+
+**Upgrade only while no training or test run is running** (since round 3 of the review fixes,
+2026-10-22), from a shell or from the service: a job started by an earlier build is not seen by
+this build's lock. A build from `main` takes no GPU lock at all, and an M5 build from before the
+root-cause round may hold the file `SHEPHERD_GPU_LOCK_FILE` named, which this build does not
+check. Stopping the service for the upgrade stops the jobs it started; for a CLI started from a
+shell, check first with `pgrep -af 'train_model.py|measure_scorer.py|setup_demo.py'` (or
+`nvidia-smi`). After the upgrade, remove `SHEPHERD_GPU_LOCK_FILE` from the service's environment
+and from your shells.
+
+A root that is set but unusable (a relative path, a directory that does not exist, a path under a
+directory the service account may not search) refuses every job rather than running it unlocked,
+and the status shows why (`gpu.lock.problem`).
+
+`train_model.py` and `measure_scorer.py` take the lock right after reading their command line,
+before the device or any input is read, and hold it until they end. When it is busy they keep
+trying for about a second (so a job that is just ending does not refuse the next one), then
+refuse with exit 1 and write nothing:
+
+```
+measure_scorer: refused: the GPU lock /srv/shepherd/workspaces/.shepherd-gpu.lock is held by a training job (train_model.py, pid 41234 on gb10, since 2026-10-20T09:12:03+00:00, as it described itself). One managed GPU job runs at a time: wait for it to end, or stop it where it was started. Nothing was written.
+```
+
+`train_model.py` logs the same sentence after `train_model: refused:`. The WebUI and the API
+check the lock before starting a job and refuse the start with the same holder
+("Nothing was started."); the job's own process then takes the lock itself.
+
+**Set the root for the service and in the shell where you run the CLIs** (for example, the
+`Environment=` lines you set in the systemd unit (§4.12; its template has a commented line for
+the root and one for the registry), which reads no environment file of its own, or one file that
+both the unit's `EnvironmentFile=` and your shell read). A CLI that sees no root
+is refused, exit 1, with nothing written (`train_model: refused: SHEPHERD_WORKSPACES_ROOT is not
+set, so the GPU lock is not configured ...`); so is `setup_demo.py --train-model`, which trains
+through the same trainer. **Give the shell the service's workspaces root**: every process that
+names the root takes `<root>/.shepherd-gpu.lock`, the service, your shell and its CLIs alike,
+and nothing else names a lock. What one environment variable cannot settle, since each process
+reads its own: a process that names another root takes another lock.
+
+**`SHEPHERD_REGISTRY` is required in that shell as well** (since the M5 review, BACKLOG 37):
+`measure_scorer.py --cohort`, `--record` and `record_evaluation.py --report` work only in the
+registry it names and refuse while it is unset (§4.9). An `EnvironmentFile=` is not read the way
+a shell reads it: systemd keeps interior whitespace and keeps quotes that do not open the value
+(systemd.exec(5)), so a line such as `SHEPHERD_REGISTRY=/srv/my cohorts` gives the service and a
+shell that sources the file two different values. Use a path without spaces or quotes. A
+difference is refused, never guessed: the refusal shows the value as set and the path it
+resolves to.
+
+The holder describes itself in `<lock file>.json` (job type, command, pid, host, start time)
+while it holds the lock, for the message above. That file is descriptive only: the lock is the
+`flock` on the lock file. One left behind by a killed job is harmless: the next holder removes
+it as soon as it holds the lock, and a description whose process has exited is never named as the
+holder (the refusal says instead that the lock is held by a process that inherited its descriptor,
+or by a new holder that has not described itself). **Never delete the lock file while a job
+runs**: a new file would be a second lock. Git ignores it and its description wherever a root in
+the checkout puts them (since round 3 of the review fixes), so `git clean -fd` and `git stash -u`
+leave them alone; `git clean -x` and `git stash -a`, which remove ignored files too, still delete
+it, so do not run them in the deploy checkout while a job runs.
+
+What the lock does and does not guarantee:
+
+- **It is released however the holder ends**: a normal exit or an error releases it, and after
+  SIGTERM or SIGKILL the kernel does, so there is no stale lock to clean up after a crash.
+- **It is cooperative.** A GPU program that does not take it is not stopped by it. The inference
+  service does not take it and may hold GPU memory; a test run that cannot get memory fails as a
+  run, is reported, and registers nothing.
+- **Inherited descriptors.** A program a job starts does not keep the lock (the descriptor is
+  close-on-exec). A process the job forks without starting a new program — DataLoader workers
+  under the `fork` start method, for example — shares it: a job that ends normally releases it
+  for that process too, but when the job is killed (or exits without releasing), that process
+  keeps the lock until it exits; the refusal then says the recorded holder has exited. **A job
+  the service starts leads its own process group** (since the review of 8242b47), and a stop and
+  the runner end the whole group, those processes included (below). A training CLI
+  (`train_model.py`, `setup_demo.py --train-model`) whose main process alone is ended, by
+  `kill <pid>` or `kill -9 <pid>`, leaves its forked DataLoader workers holding the lock until
+  they notice (torch's 5 s watchdog plus the sample in progress, longer if one hangs);
+  `kill -INT <pid>` (Ctrl-C's signal, the runner's own graceful step) releases it at once, even
+  sent to the main process alone, and `kill -TERM -- -<pid>` ends the whole group when the CLI
+  leads one (a CLI started in an interactive shell does, through job control).
+  `measure_scorer.py` forks no workers.
+- **Keep the workspaces root, where the lock file is, on a local filesystem.**
+- **Windows** uses `msvcrt.locking` on the file's first byte; a Windows backend is untested.
+  There DataLoader workers are spawned, not forked, and do not inherit the lock's handle; the
+  system's release of a dead process's file lock can be delayed; a stop sends CTRL_BREAK_EVENT
+  to the job's console process group, and a backend with no console, which cannot send it, goes
+  on to TerminateProcess, which ends the main process only. A Job Object, the true equivalent of
+  a process group, is not added while the Windows backend is untested.
+
+### The job runner
+
+The service behind the Training Console and the training API now runs two kinds of job, each its
+own script: training (`train_model.py`) and test runs (`measure_scorer.py` on a registered
+cohort version, the same CLI an operator runs). One job at a time:
+
+- **A job that is running or still stopping holds the GPU**, whatever its type. A training start
+  while a stop is still waiting for its process is now refused (it used to be accepted, and could
+  start a second process beside the one being stopped).
+- **A stop reaches only its own job type**: a training stop never stops a test run, nor the
+  reverse. It sends SIGINT to the job's main process (its graceful stop), then SIGTERM to the
+  job's whole process group after 30 s, then SIGKILL to the group after 10 s more, and answers
+  once no process of the job is left: each job leads its own process group, so the DataLoader
+  workers it forked, which share the GPU lock, end with it, and once the main process has ended
+  the runner ends what is left of the group before it says how the job ended and frees the slot
+  (since the review of 8242b47: a worker used to outlive a stop that said "stopped" and keep the
+  lock). A worker left as a zombie (a container whose PID 1 never reaps) holds nothing and does
+  not keep the slot. `POST /api/v1/training/stop` no longer holds up the rest of the API
+  and the dashboard while it waits. **A stop that arrives after the process has ended on its own**
+  (while its result is still being read) is refused (`409`, "had already ended on its own ...;
+  nothing was stopped") and changes nothing: a failure stays `failed`, with its message.
+- **How a job ended:** training `completed`, `failed` or `stopped` (as before); a test run
+  `completed`, `failed` or `cancelled`, `cancelled` only when the cancel is what ended it (a run
+  that ended on its own as the cancel arrived keeps that ending). A failure caused by a signal
+  says which (`Process ended by SIGKILL`, for the out-of-memory killer).
+- **A test run's report is read from the disk once it ends.** Each test run writes its outcome
+  file (`measure_scorer.py --outcome`, §4.9) into a directory made for that job alone, naming the
+  report it published and the digest of those bytes; whether that report is kept and registered
+  is then read from the report store and the ledger by the registration's own helper, with that
+  digest, never inferred from the exit status (the status's `outcome` gives `kept`, `registered`,
+  a `summary` with the reasons, and the run's own `run_outcome`). **No outcome file means no
+  report was published**, unless a run directory for its checkpoint appeared in the store during
+  the run (a run stopped between publishing its report and writing its outcome), which is then
+  read the same way and said so. The job's directory is removed once the run has been read.
+  After a cancel the status says what was left; after SIGTERM or SIGKILL it also names where
+  staged files (`*.tmp`) may be left: the run directory and, for a run that was registering its
+  report, the checkpoint's directory, where its ledger is.
+- **Runtime Settings' Restart Backend** is refused while any job runs, training or a test run
+  (its note now says "A GPU job (training or a test run) is in progress"). After its short delay
+  it closes the job runner's GPU slot, only if no job holds it and in the same step as that
+  check, and keeps it closed until the process is replaced: a job started during the delay
+  aborts the restart, and a start asked for after that is refused, never orphaned by the restart
+  (since the root-cause round of 2026-10-22). A stop of the backend begun before the process is
+  replaced (Ctrl-C, `systemctl stop`) aborts the restart too: its signal is recorded before
+  anything else, and the restart's last check and its exec are one step (since round 3 of the
+  review fixes). One case this self-exec restart cannot close: a stop signal that arrives as the
+  exec is made, before its handler has recorded it, is lost with the old process, and the new one
+  serves on; under systemd the unit then SIGKILLs the whole service, a job started meanwhile
+  included, after `TimeoutStopSec`, and in a terminal a second Ctrl-C stops the new backend. It is
+  a limit of the restart replacing its own process image: a restart made by a supervisor could
+  close it, and none is built (BACKLOG 47).
+- **Stopping the backend stops its job** (the owner's decision of 2026-10-22). Because a job
+  leads its own process group, a Ctrl-C, a Ctrl-\ or a hangup of the terminal the backend runs
+  in, or a SIGTERM sent to the backend alone, no longer reaches the job itself; the backend stops
+  it instead, as a stop above does, starting when the signal arrives (a Ctrl-\ is routed there
+  too since the root-cause round of 2026-10-22: it used to leave the job training with the lock;
+  the backend still ends by it, after the job's stop). **The process that was started is the
+  server on every POSIX start path** (since round 3 of the review fixes): `launch_shepherd.sh`
+  execs the launcher, and the launcher execs into uvicorn, in its browser mode too (the browser is
+  opened by a helper of its own), so a SIGTERM sent to the PID you or a supervisor started is the
+  server's; a launcher waiting beside the server used to end alone, and the server served on with
+  its job. On Windows the launcher waits beside the server, and the stop goes through the
+  console's Ctrl-C or Ctrl-Break. Under systemd the unit's
+  `KillMode=mixed` sends the stop's SIGTERM to the server alone (the launcher execs into it),
+  which stops its job the same way, and systemd SIGKILLs what is left only once the server has
+  exited, within `TimeoutStopSec=150`, which covers the backend's longest stop of its job; the
+  unit used to SIGTERM the job's processes directly, ahead of the backend's graceful stop. When
+  the server crashes, systemd SIGKILLs the job's processes. **From the signal on, the job
+  runner's GPU slot is closed**: a start still under way (a request in flight, a dashboard event
+  already queued) is refused ("The backend is stopping; nothing was started."), so no job can be
+  running while the backend waits. Open dashboard tabs do not hold this up: uvicorn waits for
+  every open connection before it finishes shutting down, and each tab keeps one open (its
+  session heartbeat), so the backend ends those streams at the same signal. Another connection
+  that does not close (a client that never finishes its request) keeps the backend waiting
+  ("Waiting for connections to close") with the job already stopped; a second Ctrl-C ends that
+  wait, and the backend still waits for the job's stop before it exits. A backend that is killed (SIGKILL, the
+  out-of-memory killer) leaves the job running and holding the lock; the GPU chip names it; stop
+  it with `kill -INT <pid>` or `kill -TERM -- -<pid>`. **Do not run the backend with
+  `--reload`**: uvicorn's reloader restarts the server on every saved source file, and each
+  restart's shutdown would stop a running training. The commands `setup_demo.py` prints have no
+  `--reload`, and `python -m src.api.main` no longer reloads.
+- `GET /api/v1/training/status` adds `job_id`, `end_time`, `exit_code` and `gpu`: the job holding
+  the GPU, of either type, and the lock (`configured`, `path`, `held_by` with the holder's own
+  record `holder` and `holder_alive`, `problem`, and `unset` when no workspaces root is set), the
+  same reading the GPU chip shows (the `source` field went with `SHEPHERD_GPU_LOCK_FILE`: the
+  root is the only one).
+  A test run holding the GPU shows there, never as training.
+
+Since M5-2, Research › Test starts and cancels test runs from the dashboard through this runner
+(§4.14); no API route starts one. The exit codes of both CLIs are unchanged: a busy lock is a refusal before anything was written.
+
+---
+
+## 4.12 Server settings and the server's lists (since M5-1, 2026-10-20)
+
+M5's controls act on what the server lists, never on a path a request names (`docs/working/PLAN_TEST_RESULTS.md` D7 and D8; D8 decides who may trigger an operator control, §4.13). What the
+server lists, and the deployment mode its operator controls depend on, come from **environment
+variables of the service**. Set them where the service starts (the shell that runs
+`launch_shepherd.sh`, or `Environment=` lines in the systemd unit) and restart it. Each is read
+when it is used. No request, form or saved UI file can set one. A missing or refused setting
+turns off what needs it and says why. **Nothing falls back to a default directory**, the
+repository's `data/workspaces/` included.
+
+| Variable | Value | Unset or refused |
+|---|---|---|
+| `SHEPHERD_DEPLOYMENT_MODE` | `M1`, exactly (`m1`, ` M1` or `M2` are other values) | read-only: every operator control is refused (D8, §4.13) |
+| `SHEPHERD_WORKSPACES_ROOT` | absolute path of an existing directory; its subdirectories are the workspaces, and `.shepherd-gpu.lock` directly under it is the GPU lock (§4.11) | no workspace is listed, and no GPU lock: every training and test run is refused |
+| `SHEPHERD_REGISTRY` | the cohort registry (§4.9), the directory the commands take as `--registry`: absolute, existing, outside the repository; the only registry reports are registered from and `--cohort` runs measure in, for the service and the commands alike | no cohort version is listed; every registration and `--cohort` measurement is refused |
+| `SHEPHERD_INTAKE_DIR` | an existing directory outside the repository where you place `shepherd-cases/1` files to import; absolute | no import source is offered |
+| `SHEPHERD_TRAINING_EVIDENCE_DIRS` | optional: R10 evidence directories, as `--training-evidence` takes them, separated by `:` (`;` on Windows); each absolute and existing | none; one bad entry refuses the whole setting |
+| `SHEPHERD_ORDERING_ROLES` | optional: cohort roles that offer ordering by test score (D4), comma-separated | none; `institutional_acceptance` is ignored even when listed (`docs/working/PLAN_TEST_RESULTS.md` §4.9 question 1) |
+
+```bash
+export SHEPHERD_DEPLOYMENT_MODE=M1
+export SHEPHERD_WORKSPACES_ROOT=/home/you/SHEPHERD-Advanced/data/workspaces
+export SHEPHERD_REGISTRY=/srv/shepherd/cohorts
+export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
+```
+
+- **`M1`** is SPEC_4's single-workspace deployment, reached on the machine or through SSH
+  forwarding, operated by the owner or a designated technician (`docs/working/PLAN_TEST_RESULTS.md` §4.9 question 3). It is one of the
+  conditions an operator control checks, not an authorisation. D8 checks each request it handles
+  for the others. Do not set it behind a reverse proxy or on a machine other people can log in to.
+- **The deployment mode is applied by D8** (§4.13), on every operator control at the moment it
+  handles a request: unset or any other value, each one is refused and the deployment is
+  read-only for them. Diagnosis, the status pages and the read-only lists work either way.
+- **The workspaces root may be inside the repository**, as the usual `data/workspaces/` is, but
+  only when you name it. A relative path, a missing directory and a file are refused.
+- **The GPU lock follows the workspaces root** (§4.11): the lock is `<root>/.shepherd-gpu.lock`,
+  the lock's one name; `SHEPHERD_GPU_LOCK_FILE` is no longer read. A shell where you run the
+  formal CLIs needs the same root, and with no root set every training and test run is refused.
+- **The registry and the intake directory hold patient-level data.** They follow the
+  registry's rule (§4.9): a relative path, a missing directory, and a path that resolves inside
+  the repository (through a symlink too) are refused. `--registry` on the command line and
+  `SHEPHERD_REGISTRY` are checked by the same function. Create both where only the accounts that
+  run the service and the commands can read them, for example `mkdir -m 700`.
+- **A directory the service account cannot reach** (a parent it may not enter) is refused as
+  "cannot be checked", with the error, and its feature is off. Inside the registry, a `versions/`
+  the service cannot read refuses the cohort list with that reason; a version, a `reports/` or a
+  run directory it cannot read is listed with the reason, and the rest of the list stands.
+- **Evidence directories**: an empty entry (a doubled or trailing separator) is skipped, never
+  read as the working directory. A repeated one is kept once.
+
+### What the server lists
+
+Each item is named by a name and a digest, never by a path: a request names a workspace, a run
+and a file, or a label, and the server finds that name in its own list again.
+
+- **Workspaces** (`GET /api/v1/workspaces`): each subdirectory of the root, by name. A name
+  starting with `.` is skipped. A subdirectory that is a symlink out of the root is listed but
+  not offered. Each workspace shows:
+  - its **dataset fingerprint**, the full SHA-256 of its `split_manifest.json`. The manifest
+    binds the graph files, both sample files and the dataset record, so two different dataset
+    builds always differ. A display may shorten it to 12 hex digits; comparisons use all 64;
+  - its dataset record's binding state and origin, kept apart (§4.4);
+  - its **build time** from `workspace_build.json` (below), or "not recorded" with the reason;
+  - its sources' declared releases, from the dataset record (none for a synthetic workspace);
+  - its train and val sample counts;
+  - whether it is **trainable**, and why not: no readable `split_manifest.json`, a dataset record
+    that is not verified, or a file the manifest binds is missing or cannot be checked. The list
+    hashes no graph file. A training run checks every file on the bytes it reads, and may still
+    refuse.
+- **A workspace's checkpoints**: the run layout's checkpoints of one listed workspace, every
+  architecture's or one's, latest run first. Each file is read once, weights only, and shows:
+  - the SHA-256 of the bytes read;
+  - the Trainer's validation figure: the trainer's top-20 selection metric, never a test result,
+    and none when the file records none;
+  - the dataset fingerprint the checkpoint records, and whether it is this workspace's now;
+  - for a file that cannot be read, why (a link whose target is gone included). No file is
+    dropped;
+  - for a file that resolves outside the workspace (a run or a checkpoint that is a symlink out of
+    it), that reason only: it is never opened, so it shows no digest, size or record.
+
+  Each item names the workspace as the list does: for `current -> builds/2026-10-20`, it says
+  `current`. Listing opens every checkpoint, which SPEC_4 classes as checkpoint inspection (C3),
+  and D8 offers that only where the operator controls are: it is served as
+  `GET /api/v1/workspaces/{name}/checkpoints` (`?architecture=gat`, say, for one architecture)
+  behind D8's check (§4.13), and a refused request opens nothing.
+- **The existing checkpoint list** (`GET /api/v1/training/checkpoints`; since M5-2 the
+  Training page's parent list is the per-workspace list above) reads each file the same way.
+  Each entry gains `sha256`, `validation`, `dataset_fingerprint` and `metadata_problem`, all
+  from the one read. Before, it loaded each
+  file without keeping its digest, and dropped a load error without a word. A file that is gone
+  by the time it is read (a link whose target was removed) has no size or time to show and is
+  left out of this list; it no longer fails the whole list. Since M5-1 D8 checks it like the
+  controls (§4.13).
+- **Cohort versions** (`GET /api/v1/cohorts`): each version in the registry, by label and the
+  SHA-256 of its `cohort.json`, with its role and whether that role offers ordering. It also shows
+  its counts, the graph and dataset record it is bound to, and when it was imported. The list
+  never shows a case identifier or the exclusion list: D7 keeps those in the registry, on the
+  machine. An interrupted import is listed with its reason. Each version's report store is
+  listed by run id, and each run says whether its report is kept and whether it is registered
+  (`kept`, `registered`, each with its reason, the report's digest and the record's sequence),
+  from the registration's own reading of the store and of the ledger beside the checkpoint the
+  report records it measured. `registered` is `registered` when that ledger names the report,
+  and otherwise `cannot_be_checked`, never `not_registered`: a registration filed beside
+  another copy of the same weights (`record_evaluation --checkpoint` takes any file with the
+  measured bytes) is not looked for, and the reason names the ledger that was. A report that
+  names its checkpoint by a relative path, or that cannot be read, has no ledger to look in:
+  `registered` is then `cannot_be_checked` too, saying why. A checkpoint moved since the run is
+  looked for where the run read it. Each run with a `report.json` also carries D5's state of
+  its report's key (`contest`: `uncontested`; `contested`, with the fields and the runs that
+  differ; `cannot_be_checked`, never to be read as uncontested), the same state Research › Test
+  shows for that run, without the reasons' own words, which may name a server path (since the
+  root-cause round of the review fixes). `contest` is `null` for a run directory with no
+  `report.json` (an interrupted, cancelled or refused run) and for a run whose state was not
+  read (its `problem` says why). A run whose report cannot be read, or whose key cannot be told,
+  is `cannot_be_checked`; one that can be read but not compared is `cannot_be_checked` unless
+  the reports under its key already disagree (then `contested`). So is every run of a store
+  that cannot be scanned, and a run whose report was replaced between the store's scan and the
+  read of its state: a run's state and its `contest` always describe the same bytes. Each
+  request scans every listed version's report store once.
+
+### The build time: `workspace_build.json`
+
+Since M5-1, every build through the workspace writer (`scripts/build_knowledge_graph.py
+--generate-samples`, `scripts/setup_demo.py`, the probe) writes `workspace_build.json` beside
+`split_manifest.json`, after it:
+
+```json
+{
+  "built_at": "2026-10-20T08:15:00Z",
+  "code_revision": {"state": "recorded", "revision": "84371dd...", "dirty": false, "modified_tracked": 0, "untracked": 0},
+  "schema_version": 1,
+  "split_manifest_sha256": "...",
+  "what_this_is": "when this workspace was built and from which code revision; descriptive, not bound by split_manifest.json"
+}
+```
+
+- `built_at` is UTC. `code_revision` is the record training stores as a checkpoint's producer: the
+  commit and whether the checkout was dirty, with no path.
+- **Descriptive, not bound by the manifest.** The manifest does not name it, so two
+  byte-identical builds keep one dataset fingerprint, whatever their build times.
+- **It names the manifest it describes.** A record beside another manifest reads "not recorded",
+  never another build's time. That happens after a rebuild that stopped after writing its
+  manifest, or a rebuild by a revision older than M5-1, which does not write this file.
+- **A workspace built before M5-1 has none.** Its build time reads "not recorded", shown with its
+  sources' declared releases; never a file modification time. It does not need rebuilding for
+  that. The reason says "built by a revision before M5-1, or its build stopped before writing
+  one": a first build stopped between the manifest and this file looks the same.
+- **A graph-only build** (no `--generate-samples`) writes neither a manifest nor this file. Its
+  build time reads "not recorded" because there is no `split_manifest.json` to describe.
+
+---
+
+## 4.13 Operator controls, the bind and CORS (since M5-1, 2026-10-20)
+
+M5 runs under SPEC_4's deployment mode **M1**: the owner or a designated technician operates the
+service on the machine, or from elsewhere through SSH forwarding (`docs/working/PLAN_TEST_RESULTS.md` §4.9 question 3). Three things
+changed together, and a deployment may need to act on each:
+
+- the operator controls are refused unless D8 allows the request;
+- the service binds `127.0.0.1` by default, not `0.0.0.0`;
+- no other website's page can read the service's responses (CORS).
+
+### What an operator sets
+
+Set `SHEPHERD_DEPLOYMENT_MODE=M1` where the service starts (§4.12; in the systemd unit, the
+commented `Environment=` line) and restart it. Unset or any other value, every operator control
+is refused and the deployment is read-only for them. Diagnosis, the lookups, the status pages and
+the read-only lists keep working.
+
+### Which controls are checked
+
+| Where | Controls |
+|---|---|
+| API | `POST /api/v1/pipeline/reload`, `POST /api/v1/pipeline/config`, `POST /api/v1/training/start`, `POST /api/v1/training/stop`, `GET /api/v1/training/checkpoints`, `GET /api/v1/workspaces/{name}/checkpoints` |
+| Dashboard | Diagnosis: Change model… (its list of checkpoints and its Load; since M5-2). ⚙ Settings (Runtime Settings): Restart Backend and Apply Settings. Research › Training: Start, Stop (its confirmation reads the run's last checkpoint), Continue… (it lists the parents), the parent list's Refresh, Check checkpoint and Continue Training |
+
+The two checkpoint lists, and Check checkpoint, open checkpoint files, which SPEC_4 classes as
+checkpoint inspection (C3), so they are checked like the controls. So are the reads that open a
+checkpoint for display: the Diagnosis card's "trained on" line (the served checkpoint) and the
+Training page's run header (the run's checkpoint). A read-only browser is told "not shown ·
+reading the checkpoint is an operator control" on the card, and "dataset not shown · operator
+control" in the run header. Research › Test (§4.14)
+uses the same check for its import (the intake list, Preview and Commit), Start test, Cancel,
+Register this report, Add note and its model list, and Research › Models for its checkpoint
+list and its Load (§4.14). Everything else stays open:
+diagnosis, the HPO and disease lookups, the pipeline status and the saved UI paths, the training
+status and metrics, the workspace and cohort lists, the recorded results and the system pages.
+
+### When a request is allowed
+
+Each control checks the request it is handling, at the moment it handles it, and allows it only
+when all of these hold:
+
+1. `SHEPHERD_DEPLOYMENT_MODE` is exactly `M1`;
+2. the request arrived on a loopback address of this machine: the server's own socket decides,
+   never an address the client states;
+3. it carries no header a proxy adds (`Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`,
+   `X-Forwarded-Proto`, `X-Real-IP`, `X-Original-Forwarded-For`, `CF-Connecting-IP`,
+   `True-Client-IP`): M1 has no reverse proxy;
+4. it was addressed to `localhost`, `127.0.0.1` or `[::1]`, with any port (its `Host` header),
+   which guards against DNS rebinding;
+5. if it carries an `Origin`, that is the dashboard's own address (`http://` or `https://`, the
+   same host and port). A browser sends the page's origin with every `POST` and with every
+   cross-origin request a script makes;
+6. if it carries `Sec-Fetch-Site`, that says `same-origin` (the dashboard's own page) or `none`
+   (a request you started outside any web page: the address bar, a bookmark, a link opened from
+   another program). A browser sends **no** `Origin` on a `GET` that
+   another site's page makes with an image, a script or a link, and current browsers (Chrome and
+   Edge 76, Firefox 90, Safari 16.4 and later) say here where it came from: `cross-site`, or
+   `same-site` for another port of the same host. So a page on another website cannot trigger a
+   control from a current browser, the two checkpoint lists included.
+
+A request whose arrival cannot be read is refused. The checks are in the backend: a greyed-out
+button is only a display, and a direct call, to the API or to a dashboard event through Gradio's
+HTTP API (`/ui/gradio_api/...`, as `gradio_client` makes one), meets the same check. The
+dashboard's controls call the services in process; they never call the API over HTTP. The
+dashboard's Load (Change model… and Research › Models) runs the API's reload function in
+process, where the API's reload runs, so it waits behind a running diagnosis as before. A
+reload still running after 180 s is no longer shown as failed: the page says "The page stopped
+waiting after 180 s; the server may still finish the reload." with Read again, and "The reload
+finished after the page stopped waiting." if its answer arrives later.
+
+**A refusal** is `403` from the API, with an `error` that names the condition that failed in
+words to act on and ends "Nothing was done."; it never repeats a header's value. The dashboard
+shows the same sentence where the control shows its result (the run list, which cannot hold a
+sentence, is emptied and the sentence appears as a notice). For example:
+
+```
+Refused: This request did not arrive on a loopback address of this machine. The operator controls work only on the machine itself, or through an SSH forward to localhost (for example ssh -L 8264:localhost:8264 <server>, then http://localhost:8264/ui). Nothing was done.
+```
+
+**Is it enabled for this browser?** `GET /api/v1/system/operator-access` answers for the request
+that asks: `enabled`, the `condition` that decided it and its `reason`. It is read-only and open;
+showing it is not the control.
+
+**A reload that D8 refuses changes nothing.** Before, any caller's reload request, refused or
+not, turned every later diagnosis from the demo answer into "configured but not served" (503).
+
+**Not claimed.** Loopback is not authorisation: whoever reaches the machine's loopback, through
+an SSH forward of their own too, passes. M1 therefore means one verified workspace deployment
+operated by its owner or a designated technician. A reverse proxy on the same host that adds no
+forwarding header is excluded by this guide, not detected: do not put one in front of an M1
+service. An old browser that sends neither `Origin` nor `Sec-Fetch-Site` on such a `GET` is not
+caught by condition 6: operate the dashboard from a current browser.
+
+### Operating from another machine: SSH forwarding
+
+Forward a local port to the service's **localhost**, not to its network address:
+
+```bash
+ssh -N -L 8264:localhost:8264 you@gb10
+# then open http://localhost:8264/ui on your own machine
+```
+
+The forwarded connection arrives on the server's loopback addressed to `localhost:8264`, so the
+controls work. `ssh -L 8264:<server LAN address>:8264` would arrive on the LAN address and be
+refused, and with the new bind it finds nothing listening. Another local port works too
+(`-L 9000:localhost:8264`, then `http://localhost:9000/ui`).
+
+### The bind: `127.0.0.1` by default
+
+The launcher (`launch_shepherd.sh`, `shep_launch.py`), the systemd unit and `python -m
+src.api.main` bind `127.0.0.1` unless told otherwise, and the launcher prints what it binds:
+
+```
+[SHEPHERD] Listening on          : 127.0.0.1:8264 (loopback: this machine only)
+```
+
+**A bind to any other address is refused and nothing is started** (the launcher exits 2, before
+it installs anything) unless `SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND=1` is set, because the
+service has no authentication. That flag is **risk acceptance, not a control**: it authenticates
+nobody, and it never lifts D8, so on a network bind the operator controls stay refused for every
+request that does not arrive on loopback, while diagnosis and the read-only pages are open to
+whoever reaches the address. The launcher prints a `WARNING:` line that says so. The launcher
+always starts uvicorn with `--no-proxy-headers`, last on its command line, so the client address
+uvicorn reports is the connection's.
+
+The launcher reads what uvicorn will listen on as uvicorn does: a socket it is handed (`--fd`,
+as a systemd socket unit passes one) before a unix socket (`--uds`) before the last `--host`,
+each from the command line or else from `UVICORN_FD` / `UVICORN_UDS`. An inherited socket's
+address is not read, so it counts as a network bind and needs the flag. A unix socket reaches
+this machine only and needs none; the operator controls are refused through it (D8 sees no
+loopback address there). For either, the launcher prints the socket instead of a URL and opens
+no browser.
+
+The launcher and `python -m src.api.main` pass the host they bind to the application as
+`SHEPHERD_BIND_HOST`, and application startup applies the same rule to it before serving (a
+refused one ends startup, and uvicorn exits). They set it every time; it is not yours to set.
+
+Not covered: a uvicorn started by hand (`uvicorn src.api.main:app --host 0.0.0.0`), which the
+application cannot see and which passes no host to startup. Use the launcher.
+
+**Migrating a deployment that relied on `0.0.0.0`.** Until M5-1 the launcher and the unit bound
+every interface. After this update:
+
+- whoever opened `http://<server LAN address>:8264/ui` gets no connection. Give them an SSH
+  forward (above): that is the M1 way;
+- if the LAN must keep reaching diagnosis, set `--host 0.0.0.0` (in the unit's `ExecStart`, or
+  after `--` on the launcher's command line) **and** `SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND=1`
+  in the same environment. Without the flag the launcher refuses to start (exit status 2), and under
+  systemd the unit stops without restarting (`RestartPreventExitStatus=2`;
+  `journalctl --user -u shepherd` shows the reason). The
+  operator controls then work only on the machine itself or through an SSH forward;
+- a script that reloads the pipeline over HTTP needs the service in mode M1 and must call
+  `http://127.0.0.1:<port>`. `scripts/measure_served_pipeline.py` starts its own service with
+  `SHEPHERD_DEPLOYMENT_MODE=M1` for that reason.
+
+### CORS: no cross-origin browser access
+
+**By default no cross-origin browser access is granted; administrative operations are still
+checked by D8 in the backend.** No response carries `Access-Control-Allow-Origin` for another
+origin, on `/api` or on the dashboard, whatever address the browser used, and every cross-origin
+preflight is answered 400. Same-origin use (the dashboard itself, `curl`, scripts,
+`gradio_client`) is unaffected.
+
+CORS only decides what a page may read. A cross-origin request that needs no preflight still
+reaches the server: that is why the operator controls are checked by D8, not by CORS. For the
+same reason Gradio's upload route is refused in front of the dashboard, before the request body
+is read (§4.10, the route guard): the dashboard has no upload control (import sources come from
+`SHEPHERD_INTAKE_DIR`), and another site's page could otherwise write up to 1000 files a request
+into Gradio's temporary directory. Gradio's limit of 1 MB per file stays as a second line of
+defence; it bounds each file, not their number.
+
+## 4.14 Finding your way in the dashboard (since M5-2, 2026-10-20)
+
+The dashboard at `/ui` is laid out in two levels, with two status chips in its header and one
+help control for every field. Nothing an operator sets changed; what moved is where things are.
+
+### Navigation
+
+| Where | What is there |
+|---|---|
+| **Diagnosis (clinical)** | Patient phenotypes, the results and the selected candidate's details, with the model in use on a card (below). It is the first screen |
+| **Research (pre-clinical)** › Prepare › **Datasets** | The server's workspaces, read-only (below) |
+| **Research (pre-clinical)** › Prepare › **Training** | The run bar, the parameters for the next run, Continue… and the run view with its charts (below). It is the research page shown first |
+| **Research (pre-clinical)** › Evaluate › **Test** | Import a cohort version from the server's intake directory, run a test, keep and register its report (below) |
+| **Research (pre-clinical)** › Evaluate › **Models** | The server's checkpoints of a workspace, their recorded test results, ordering by test score and Load (below) |
+| **⚙ Settings**, at the right of the header | Runtime Settings, as before. For a read-only browser, Apply Settings and Restart Backend are greyed out, with the reason written below them |
+
+- The selected stage (Diagnosis or Research) is filled and bold; the selected research page is
+  underlined and bold; Settings, when selected, has a light fill and an underline. Prepare and
+  Evaluate are group labels, not buttons.
+- No tab is ever hidden in a menu. In a narrow window, or at a large zoom, the chips and
+  Settings move onto a second header line, and the research pages wrap.
+- The browser tab's title says where you are, for example `Training · Research —
+  SHEPHERD-Advanced`. Reloading the page opens Diagnosis again: the address does not keep the
+  location.
+- In a window at least 1400 × 760 CSS pixels the page itself does not scroll; a region too long
+  for its space scrolls inside its own panel. Narrower, or in portrait, the regions stack and
+  the page scrolls. The theme's smallest text is 14 px.
+- The dashboard is always drawn in its light colours, whatever dark mode the system or the
+  browser asks for (its colours have no dark version, and Gradio's dark mode left its text
+  unreadable on the page); the address gains `?__theme=light`. Gradio's own footer (its API
+  page, "Built with Gradio" and its own "Settings") is not shown.
+- A research page is read again each time it is shown: when you select it, and when you return
+  to Research while it is the page shown. The other research pages are not read then.
+
+### The two chips in the header
+
+Both are read again for your own browser when the page loads, every 5 seconds, and after each
+operator control you use. They are displays: every control still checks its own request in the
+backend (§4.13).
+
+**Operator controls** says what D8 answers for this browser's requests:
+
+| Chip | Meaning |
+|---|---|
+| `🔒 Operator controls: on (this machine)` | D8 allows this browser's requests |
+| `Read-only: deployment mode not set to M1` | `SHEPHERD_DEPLOYMENT_MODE` is not exactly `M1` |
+| `Read-only: request not local` | The request did not arrive on this machine's loopback: use an SSH forward to `localhost` |
+| `Read-only: forwarded by a proxy` | The request carries a header a proxy adds |
+| `Read-only: not addressed to localhost` | The browser used another host name than `localhost`, `127.0.0.1` or `[::1]` |
+| `Read-only: sent from another origin` / `sent from another site` | The request came from another page |
+| `Read-only: request not readable` | The server could not read how the request arrived |
+
+Its ⓘ lists every operator control, how to reach them (the SSH forward of §4.13) and, when
+read-only, the full reason D8 gives. It never repeats a header's value.
+
+**GPU jobs** says which managed job holds the one GPU slot (§4.11):
+
+| Chip | Meaning |
+|---|---|
+| `GPU jobs: none` | No managed training or evaluation job is running. It never says "free": the lock is cooperative, and the resident inference service is outside it and may still hold GPU memory |
+| `GPU job: training (job runner)`, `GPU job: test run (job runner)` | A job this service started; `· stopping` while it stops |
+| `GPU job: train_model.py (pid 41822, since 09:58 UTC)` | A process this service did not start holds the GPU lock (a formal CLI, or another server's job runner on the same lock); the chip says what its holder record says: the command, the pid and the start |
+| `GPU job: lock held, holder not described` | The lock is held, but no running process is described as its holder |
+| `GPU jobs: refused, lock not configured` | No GPU lock is configured (`SHEPHERD_WORKSPACES_ROOT`, which names it, is not set), so every training and test run is refused until it is set (§4.11) |
+| `GPU jobs: not read` (grey) | The state could not be read. When the lock setting cannot be used, the ⓘ says so, naming the path only to a browser D8 allows |
+
+### Help: the ⓘ buttons
+
+The explanations that were printed under each field of Diagnosis, the Training Console and
+Runtime Settings are now behind a ⓘ after the field's name. Point at it, reach it with Tab, or
+click it: the help appears in a bubble you can move the pointer into. A click keeps it open; Esc
+or a click elsewhere closes it. A click on the field's name still puts the cursor in the field.
+The bubble opens below or above the ⓘ, wherever there is room, and is never taller than the
+window: a long text scrolls inside it. What must stay visible is still printed: a refusal's
+reason, a job's state, the synthetic marker, an unverified source, and the Training Console's
+AMP refusal for HGT ("Disabled: HGT requires full float32 …").
+
+### Diagnosis (clinical)
+
+The first screen, in three panels: the patient's phenotypes, the ranked candidates, and the
+selected candidate's details (Evidence · Explanation · Matching phenotypes · Paths). Selecting a
+row (a click, or Enter on a focused row) shows that candidate in the details panel. In a window
+at least 1400 × 760 CSS pixels each panel scrolls inside itself; narrower, or in portrait, the
+three panels stack and the page scrolls.
+
+**Patient ID** left blank is sent as no id: the server gives the result its own (`patient_…`), so
+results from different browsers never share one (before M5-2 a blank field was sent as
+`webui_patient`).
+
+**The "Model in use" card** is the last item of the input panel, with Run Diagnosis right below
+it: both follow Options, and stay pinned at the panel's bottom when the inputs need to scroll (at
+1536 × 760, for example). It shows:
+
+- the title row "MODEL IN USE ⓘ · checked HH:MM:SS ↻": what is served is read for this browser
+  when the page opens, every 5 seconds while Diagnosis is shown, after each diagnosis, after a
+  model change and with ↻; a read that takes more than 5 seconds is "timed out (5 s)";
+- the model, "GAT · run 2026-10-17 09:15 · epoch 5", and "model fingerprint <12 hex> ✓ verified"
+  (the SHA-256 of the checkpoint file served);
+- "trained on <workspace> · dataset fingerprint <12 hex>": the dataset the checkpoint records it
+  was trained on (`training_input_digests.split_manifest`), named by the listed workspaces with
+  that full fingerprint, or "matches no listed workspace"; never the served workspace's own
+  manifest. Reading it opens the checkpoint file, an operator control (§4.13): a read-only
+  browser sees "not shown · reading the checkpoint is an operator control". When another browser
+  has changed the model, this card says "not read yet · read it" until the page is opened again
+  or "read it" is clicked (the 5-second read never opens a checkpoint);
+- chips, only when true: `synthetic data` (amber), `no SP table`, `no trained model` or `GNN not
+  loaded` (red), `unverified` (amber: a graph checked against no workspace manifest);
+- "Recorded tests: <state>" (§4.9), whose › opens Details at Evidence; "Details ›"; "🔒 Change
+  model…". The recorded tests, and the workspace names, are read again each time Diagnosis is
+  shown, after each diagnosis, after a model change and with ↻ (the 5-second read reads only what
+  is served): a test recorded in Research › Test shows when you come back to Diagnosis.
+
+| The card shows | Meaning |
+|---|---|
+| "Model changed at HH:MM — was <old>, now <new>" with × | A read found another model, or another part of what is served, than this browser's previous read (another browser's Change model, for example). × dismisses it |
+| grey: "cannot check · <reason> · Retry", "last known HH:MM:SS · not current" | What is served could not be read: "status not read" (the full reason is in the badge's line and in Details) or "timed out (5 s)". The lines shown are the last known state, without ✓, with grey dashed chips |
+| grey: "read HH:MM:SS · older than this result" | The last good read is older than the result shown |
+| "No model loaded" and "🔒 Load a model…" | No pipeline is configured. Run Diagnosis is greyed out and cannot be clicked: pointing at it, or reaching it with Tab, shows why, and "Disabled: no model loaded. …" is written under it. An API client asking now still gets the demo answer |
+| "No trained model · path reasoning only" and a red chip | A graph is served without a trained model. Run Diagnosis stays on, and the result carries `NO TRAINED MODEL: path-reasoning fallback.` |
+| "🔒 Change model…" greyed, "Operator controls only: <reason>" | A read-only browser (§4.13). It never sees the list of checkpoints |
+
+**The badge** above the results (§4.7) compares the result's whole served identity with the card's
+last read, and the card is read again after each diagnosis; a read that failed, or one older than
+the result, never shows "Produced by the model in use". The CSV and the report keep the result's
+own identity whatever the badge says. "Not a certified medical device; decision support for a
+qualified clinician." is at the foot of the results.
+
+**The identity drawer** opens over the details panel, with two views. "Model in use" is the
+served model's facts in five sections (Identity, with the full digests and Copy; Uses; Data;
+Evidence; Warnings, always open), the structural-fingerprint line (what differs, counted, or
+"not compared" when the checkpoint records no structural fingerprint) and a link to the full
+records in Research › Models. "This result" shows only what the result carries, each part beside
+what is in use now. "Details ›" and "Recorded tests ›" open the first, the badge the second; while
+a model change is open (its confirmation, or a reload running) they leave the Change model drawer
+in place.
+
+**🔒 Change model…** (an operator control) opens a drawer over the results and the details: the
+workspace select (the server's list; the serving workspace is chosen first), "In use now" on top,
+the latest four runs ("Show older runs" for the rest), the selected checkpoint's facts, "Compare
+in Research › Models ›", and "🔒 Load this model" / Cancel. Load asks once ("Reload the pipeline
+with <12 hex> for every session?", from → to, with the changed rows marked) and reloads the
+pipeline with the workspace and checkpoint the server lists. **The reload serves only the model
+the question named**: it compares its own read of the checkpoint with that fingerprint before
+anything is published, so a file rewritten in the meantime (a running training job rewrites its
+`last.pt` every epoch, and the reload reads the graph first) changes nothing, and the outcome is
+"Not reloaded; the model in use is unchanged." with the reason. The API takes the same check as
+an optional field of the reload request, `expected_checkpoint_sha256` (64 lowercase hex digits,
+else 422): other bytes are refused and the running pipeline goes on serving; without it nothing
+is checked, as before. It replaces what every browser is served; results already produced keep
+their own identity, and diagnoses wait while the pipeline reloads. While the confirmation is
+open the list's own footer is hidden, so the from → to rows and that sentence stay in view;
+"Keep <old>" drops the confirmation. While the confirmation is open, Run Diagnosis is disabled:
+"Disabled: finish or cancel the model change first." Once "🔒 Reload with <new>" is clicked, the
+confirmation shows only the reload's status ("Loading <12 hex> for every session… 00:00:42") and
+Close (closing does not stop it; after 180 s, Read again and Close), so a second reload cannot
+be asked for; the card says the same "Loading …" line and Run Diagnosis says "Disabled: a model
+load is in progress; diagnoses wait until it finishes." Cancel or × closes the drawer without
+reloading. While the reload runs, Close or × closes the drawer at once and the reload goes on
+(it cannot be stopped): the card keeps its "Loading …" line, and when the reload answers, the
+card shows the model then in use and its outcome is not shown again; "Change model…" meanwhile
+opens the drawer again on the reload's status. In Research › Models, Close closes the
+confirmation the same way. A Load from Research › Models refreshes this card too. Only one
+drawer is open at a time.
+
+### Research › Prepare › Datasets
+
+A read-only list of the workspaces the server lists under `SHEPHERD_WORKSPACES_ROOT` (§4.12):
+the same list Training, Test and Models choose from. Each row shows the name; when it was built
+(UTC, from `workspace_build.json`), or "build time not recorded" with its sources' declared
+releases; the **dataset fingerprint**, the first 12 hex digits of the SHA-256 of its
+`split_manifest.json` (Copy gives all 64, and more digits are shown when two workspaces share
+the first 12); the origin (`synthetic` in amber); whether the dataset record is verified; the
+train and validation sample counts. The markers:
+
+- **serving reads this workspace**: the pipeline is serving from it;
+- **same dataset as served**: another workspace with the same full fingerprint;
+- **in your Training run bar**: this browser tab's choice for Training;
+- **not trainable: <why>**: listed, but training would refuse it, with the reason: `no split
+  manifest` when the workspace has no `split_manifest.json`, `no readable split manifest` when
+  it has one that cannot be read, or the list's own reason (for example a workspace that is a
+  link to a directory outside the root: "… resolves outside the workspaces root").
+
+A long name or source list wraps in its cell, so the "In use" column stays in view. Selecting a
+row shows its details: the full fingerprint with Copy, what the manifest binds (short digests),
+the seeds and split counts, the sources and the build record, the workspace's path relative to
+the server's workspace root, and how it compares with the other listed workspaces: "Same dataset
+as …" (the same full fingerprint) or "Same graph build as … (kg, tensors and record identical),
+another cut: the allocation seed differs …". No absolute server path is shown, to any browser:
+a path under the root is shown relative to it, any other one reads "a path outside the
+workspaces root", and a refused `SHEPHERD_WORKSPACES_ROOT` is said without its path. The page
+reads the manifests when it is opened, not on each selection.
+
+**Use for training ›** opens Research › Training with that workspace chosen in its run bar, for
+this browser tab only. Nothing changes on the server; Start is still the control D8 checks. A
+workspace that is not trainable cannot be used, and the line beside the button says why ("Not
+available: scratch_ws is not trainable — no split manifest."). Choosing another dataset in the run
+bar moves the "in your Training run bar" marker to it.
+
+Nothing on this page is an operator control: it reads the workspaces' small JSON files, never a
+checkpoint, so a read-only browser sees the same page. With `SHEPHERD_WORKSPACES_ROOT` unset,
+the page says so. Datasets are still built on the server with the CLI
+(`scripts/build_knowledge_graph.py --generate-samples`; the demo with `scripts/setup_demo.py`).
+
+### Research › Prepare › Training
+
+The Training Console is now one page in three parts: the run bar across the top, the parameters
+for the next run on the left (or the Continue… drawer in their place), and the run view on the
+right. How training runs did not change; what changed is how the page picks the dataset and shows
+a run.
+
+**The run bar** never scrolls:
+
+- **Dataset**: the server's workspace list, the same as Datasets'; each option is the workspace's
+  name (one that cannot be trained also says why), its identity said once, by the chip beside the
+  select. Choosing one reads its manifest and record, and the chip shows when it was built, the
+  dataset fingerprint
+  (Copy gives all 64), `synthetic`, whether the record is verified and **Details ›** (what the
+  manifest binds, the seeds and counts, the sources, the path relative to the workspaces root,
+  **All datasets ›**). The page opens on the workspace Datasets' **Use for training ›** chose,
+  else this tab's earlier choice, else the running job's, else the one serving reads (when it is
+  trainable), else the first trainable one. While a training job runs, the select is disabled and
+  shows that job's dataset: "in use by the running job".
+- **The status pill**: `Idle`, `Starting`, `RUNNING · epoch 12/100 · batch 340/812 · 00:14:32`,
+  `Stopping`, `Completed`, `Stopped` (grey) or `FAILED` (red). A failed or stopped run is never
+  green.
+- **Run name**, then **one reason line** saying why an action is disabled: "Stop disabled: no
+  training is running.", D8's reason for a read-only browser ("Operator controls only: request
+  not local"), or the GPU job holding the slot ("GPU job: test run (…) · Open Test ›",
+  "GPU job: train_model.py (pid …, since …)").
+- **🔒 Start, 🔒 Continue…, 🔒 Stop.** Stop asks first: "Stop training now? The job stops. The
+  checkpoints it has saved are kept and progress not yet saved is lost; if it has saved none yet,
+  this run cannot be continued. Once it has stopped, the page says where it can be continued
+  from." with **■ Stop training** and **Keep training**. The question names no epoch: the job
+  trains on while it is open, so an epoch read when it was asked would be out of date by the
+  answer; once stopped, the notice names the checkpoint the stop left. The question belongs to the job it was
+  asked for: if that job ends before you answer, it closes, and a job started later never shows
+  it; **■ Stop training** answered for a job that is no longer the one running stops nothing
+  ("Not stopped: …; click Stop again").
+- **Start sends the dataset fingerprint the chip showed**, and the job runner reads the manifest
+  again before anything else: if the workspace was rebuilt in the meantime, nothing is written or
+  started, and the page says "Not started: The dataset changed since it was shown; select it
+  again. Its split_manifest.json holds … now (shown: …). Nothing was started." The API takes the
+  same check as an optional query parameter,
+  `POST /api/v1/training/start?expected_dataset_fingerprint=<64 hex digits>`: another manifest is
+  refused with 409, a value that is not 64 lowercase hex digits with 422 before the service is
+  reached; without it nothing is checked, as before. **The training process checks it again on
+  its own manifest read** (`train_model.py --expect-dataset-sha256`, since the review of
+  8242b47), so a workspace republished after the runner's check is refused there too, before the
+  graph and the samples are read: the run fails with `train_model: refused: The dataset changed
+  since it was shown; select it again. …` in its output, exit 1, and no run directory. Both
+  checks are the manifest reader's own, made before the file is decoded (implemented in the
+  root-cause round), and the process checks nothing about the workspace before it, so a
+  manifest that no longer parses, or is gone (its whole workspace included), is refused in the
+  same words; a manifest that is the one shown but cannot be read now is refused as such.
+- A failed run's **error banner** spans the page. Under its headline ("Training failed: Process
+  exited with code 1") is the last error line the run printed ("Last error printed:
+  TrainingDeviceUnavailable: --device auto requires CUDA, …"), redacted for a read-only browser
+  as the output is. Beside the run it says where the run's log is only when there is one (its
+  `logs/train_….json`), else that there is none ("no run directory, so no log" for a run refused
+  before it made its run directory). The last lines of its output follow
+  under "Last output (N lines)": open in a window at least 1000 px tall, closed to that one line
+  in a shorter one so the charts keep their room (opening or closing it holds for this page);
+  four lines show at a time, the rest scroll in the box (in a narrow window all of them show).
+  Dismiss hides the banner for this browser tab. Every notice in the run bar shows names and
+  paths as text, whatever characters a workspace or run name holds.
+
+**Parameters, "for the next run"**: the same fields, groups, defaults and validation as before,
+Basic open, Advanced and Expert closed. **Data Paths and its Save Path are gone**: the workspace
+is the run bar's choice, and the dashboard no longer reads or writes
+`.shepherd_training_config.json` in the server's working directory (a file left there is
+ignored; whether to offer "Save as the default dataset" is an owner question). When the three
+groups do not fit the window (they fit at 1920 × 1080), the parameters scroll inside their
+column; the run bar never scrolls. The run view is three rows: its header and state line, the
+charts, and the resources line. The charts take what the other two leave, and each of the four
+plots keeps a plot area of at least 140 px: when the window is too short for that (1536 × 760,
+for example), only the charts' row scrolls, its toolbar staying at its top; the resources line is
+a row of its own under it, so nothing is ever drawn over an axis (at 1920 × 1080 and at about
+1850 × 960 the four charts, their axes and labels and the resources line all show at once). A
+plot's box is sized by the layout alone, never by the canvas drawn in it, so the same window size
+gives the same plots whether the page was opened there, reloaded, or came back from a narrow
+window.
+
+**Continue…** opens a drawer in place of the parameters: the checkpoints of the run bar's
+workspace (the server's list: an operator control, since listing opens every checkpoint), chosen
+in two steps, or the path of one of those checkpoints typed by hand. **Run**: the runs, latest
+first, each as its name, architecture and start time ("ui-live-stop-02 · GAT · 2026-10-24
+17:39"; an unnamed run is its architecture and time). **Checkpoint**: that run's files, newest
+first, each in a few words from its own record: "Latest save · 195 epochs completed", or
+"Top-k save · 21 epochs completed · Trainer val MRR 0.2867" (a file the trainer kept for its
+validation MRR, the Trainer's, not a test result); the epochs are the file's progress record
+(a file without one says the epoch it records, never a count made from it), and what limits
+continuing is said in the option ("finished", "stopped early, cannot continue", "weights only,
+cannot continue", "cannot be read"). Choosing another run offers its files with its latest save
+chosen. Under the two, a table says what the option does not: the file, what it holds, what
+continuing does when its stage ended, its model fingerprint (Copy gives all 64) and its run's
+directory. Since M5-3 a typed path only
+finds a checkpoint that list holds, and any other file is refused without being opened
+(`PLAN_TEST_RESULTS.md` D8). **Check checkpoint** shows what continuing would do, and the
+dataset fingerprint the parent recorded against the workspace's current one: ✓ the same, or amber
+when it differs (with the listed workspace it matches, or "matches no listed workspace"). While
+the drawer is open the run bar shows Start (disabled: "close Continue… to start a new run"),
+**🔒 Continue Training** (disabled while the datasets differ, with the reason) and **Cancel**.
+A listed checkpoint is found again in the server's list. **The model fingerprint shown is the one
+continued from** (implemented in the root-cause round). For a listed checkpoint, Check checkpoint
+and Continue Training send the list's fingerprint; for a typed path, Check checkpoint reads the
+file and shows its fingerprint, and Continue Training sends the one shown. The job runner's
+preview compares it on its read of the file, before loading it: another file is refused with
+"The checkpoint changed since it was chosen. It holds … now (chosen: …)." and what to do for
+where it was shown: "Refresh the list, then choose it again." for a listed checkpoint (the same
+option sends the list's fingerprint again until the list is read again), "Click Check checkpoint
+to read the file there now." for a typed path. The job runner then gives the
+training process the digest of the parent it decided on (`train_model.py
+--expect-resume-sha256`, always, for every continued run): the run's placement under the
+parent's architecture and its settings come from that read, and a file replaced after the start
+is refused by the process before it is loaded (`train_model: refused: The checkpoint changed
+since it was chosen; choose it again. …`, exit 1, no run directory; Continue… lists the
+checkpoints again when it opens). The API takes the parent's digest as an
+optional query parameter too, `expected_parent_sha256=<64 hex digits>` beside `resume_from`
+(409 when it is not the file's, 422 when malformed); without it the process is still bound to
+the parent the runner read. The job runner and the training process still check everything
+else at start. Check checkpoint names the listed file it read ("Checked gat/<run>/<file> from
+the run list"; a typed path's check gives its path and fingerprint), and a matching dataset is said
+once, as "✓ Trained on the dataset selected in the run bar" (the fingerprint is the run bar's).
+While the drawer is open the run bar's line reads "Run: a new one, continued from the checkpoint
+chosen in Continue a run": a continued run trains in a run directory of its own. The drawer has
+its own **Device** (auto, cuda or cpu), which starts from the
+parameters' Device each time it opens and is what Check checkpoint and Continue Training use.
+When the run bar's dataset changes while the drawer is open (by hand, with Datasets'
+"Use for training ›", or to follow a training job started on another dataset), the list
+becomes that workspace's runs, read again the same way.
+
+**The run view** shows the run the job runner started last or, before one since the server
+started, the latest run of the run bar's workspace (listed again every 10 seconds while the page
+is open, so a run started from the CLI appears once it writes its first checkpoint). Its header
+is one line: "Run shown" and the run as a person names it ("ui-live-stop-02 · GAT · 2026-10-24
+17:39"), "latest" for the workspace's latest run, and how the dataset the run used, read from its
+checkpoint, stands to the run bar's: "✓ same dataset as the run bar", amber "≠ not the selected
+dataset", "dataset recorded at the first checkpoint" while it runs without one yet, or "dataset
+not recorded (no checkpoint)" once it has ended without one. While Continue… is open with a
+listed checkpoint chosen, it also says whether this is "the run continued from" or "not the run
+continued from": the curves are the run shown's, whatever the drawer chose. **Details ›** holds
+what is read less often: the run's directory, its checkpoint (relative to the workspaces root;
+the newest one while it runs), its logs and the dataset fingerprint it used (Copy gives all 64);
+its workspace when it is not the run bar's. Under the header, one state line: "195 of 1000
+epochs completed · can be continued", "Finished · 5000 of 5000 epochs completed · to train
+further, use Continue…", "Stopped early (…) · … · cannot be continued", "Running · epoch 12 of
+100", or "No checkpoint saved, so nothing can be continued"; a run that has no run directory
+(refused before it made its run directory) says so, with no checkpoint, no log and nothing to
+chart. Below them, one figure of four charts sharing the epoch
+axis: Loss (train, and validation dashed), MRR (validation, Trainer top-20), Hits@K (validation,
+Trainer) and the learning rate on a log axis (a 0 or a missing value is a gap). Under it, the
+resources line (GPU and memory).
+
+- **Zoom and pan**: the wheel over a chart zooms around the pointer; over the epoch axis it zooms
+  only the epochs (the four charts follow), over a value axis only that chart's values. Drag pans;
+  a double-click or **Reset view** fits the data again; + and − zoom. With a chart focused: + − x
+  X y Y, the arrows, 0 and End. The view stays while new epochs arrive, across page switches and a
+  reload in the same browser tab (for the last 20 runs shown); a run not shown before fits its
+  data, its epochs and every chart's values. The epoch axis counts whole epochs. While zoomed,
+  "N new epochs →" jumps to the latest at the same width. The epoch axis never starts below
+  epoch 0: a view that would (a zoom out, a pan, a view kept from before) is moved right with its
+  width kept; a value axis has no such bound. The wheel zooms in a narrow window too; over
+  anything but a chart's plot or axes it scrolls the page, and in a narrow window a touch on a
+  chart scrolls the page. The gestures are listed in the ⓘ beside Reset view, not kept on the
+  toolbar.
+- **Export CSV** saves the run's metrics log (epoch, split and each logged value) from the browser
+  as `training_metrics_<architecture>_<run>.csv`.
+- The charts read the run's metrics log through the page's own server function, for a run the
+  server lists (never a path), and only when it has new rows. The page is read again every 1.5 s
+  while it is shown, and not at all on another page. The chart library is uPlot 1.6.32, served by
+  the dashboard itself (`src/webui/static/vendor/uplot-1.6.32/`, MIT); nothing comes from a CDN.
+- While another run's charts load, the figure says "Charts loading…" instead of showing the
+  previous run's charts under the new run's name, and an answer that arrives after the selection
+  changed is never drawn. If the charts of the run asked for cannot be read (the server
+  unreachable, or an error), the figure says "The charts could not be loaded. Trying again…" and
+  asks again every 3 s, up to 20 times; a run already drawn keeps its charts while its newer
+  epochs are asked for again.
+
+**A read-only browser** sees the same page with every action disabled and D8's reason, and no
+checkpoint is opened for it: the run header's tag says "dataset not shown · operator control",
+the state line gives only the run's state, and the parent list is not shown. The metrics, the charts and the dataset records are read for it as for an operator.
+
+### Research › Evaluate › Test
+
+The page for the flow of §4.9: import a cohort version, measure a model on it, keep its report
+and register it. Three panels:
+
+- **Cohort.** The workspace (the server's list, shown by its dataset fingerprint as on Datasets)
+  and the cohort version (the registry's list, `SHEPHERD_REGISTRY`), with its role, its counts,
+  its version digest and whether it was mapped against this workspace's graph ("bound to this
+  graph", or "mapped against another graph", which a run would refuse). Below them, every run
+  directory of the version's report store, newest first: when it ran, on which model, whether a
+  report was kept, whether it is registered, and "runs disagree — investigate" when reports
+  under its key disagree (D5). A run that kept no report says so; a test running now is the top
+  row, and the last test run on this server that ended with nothing in the store (cancelled
+  before its run directory, or failed) stays a row until the next start or a restart. The
+  newest 8 reports are listed, and the selected one; **Show all N reports** lists the rest
+  (this browser tab keeps the choice). For an operator, each row's registration is checked in
+  the ledger beside the listed checkpoint, in the workspace shown, that holds the weights it
+  measured, so a report left to register reads "not registered" whichever row is selected; one
+  whose checkpoint is listed only in another workspace says "registration cannot be checked
+  from the list" until it is selected.
+- **Run.** The model: the workspace's checkpoints from the server's list, by run, epoch, file
+  and model fingerprint. Listing them opens every checkpoint, so it is an operator control: a
+  read-only browser is not shown it, and the page lists them once per workspace (↻ reads the
+  list again). Then the R10 evidence the run will look in (the measured workspace, and
+  `SHEPHERD_TRAINING_EVIDENCE_DIRS`), **Register the result**, **Deterministic execution**, and
+  the batch size and device the server fixes (the measurement's default; `SHEPHERD_DEVICE`).
+  **🔒 Start test** starts the real `measure_scorer.py` through the job runner (§4.11), with the
+  workspace, version and checkpoint the server finds again in its lists, and **the full model
+  fingerprint and version digest the page showed as the expected ones**: the run refuses before
+  measuring when the file or the version it reads holds other bytes. Start says why it is off:
+  a GPU job first ("Disabled: GPU job: … One managed GPU job at a time (training or
+  evaluation)."), since no choice enables it while one runs, then a choice missing or another
+  graph. The job card shows the state (Running, Completed, Failed in red, Cancelled in grey:
+  never green for a failed or cancelled run), the elapsed time, what the run was given, its
+  start and end times in UTC (as the report rows name runs) and the last 12 lines of its output
+  (folded after a cancel, whose last line says the run was cancelled, with no traceback; a
+  patient id a measurement refusal names is left out, D7); **🔒 Cancel**, beside the state,
+  stops the test run only, never a training job. On a wide screen, Start, its reason and the job card stay at the foot of the panel (the
+  choices above scroll) and the output scrolls inside the card under the line with Cancel, so
+  both stay in view. Once the run has ended, the card shows what the runner read
+  from disk as the run ended (headed "When the run ended:"): whether a report was kept and whether
+  it was registered then, with the runner's sentence ("No report was published …" when the run
+  wrote no outcome file; after a cancel, what was left). A report registered afterwards with
+  Register this report keeps the card's reading of the run's end, and the card points to Result,
+  which shows the report's registration now. While the page is shown it reads the job every 5 seconds; the report of a run that has
+  just ended is selected, once for that run. A choice made while the page reads the version's
+  store again (after the job changed, an act or an import) applies once that read has ended;
+  the read never undoes it, and of several choices made meanwhile the last one stays.
+- **Result.** The selected report as the record the ledger would hold: the Mode C metrics over
+  the cases ranked, coverage with each exclusion, the relations, R10 in words (*unverifiable* is
+  never a 0), the environment, the dataset origin, and whether it is registered (for an
+  operator, checked in the ledger beside the listed checkpoint holding the weights it
+  measured). **🔒 Register this report** registers a kept report through the one registration
+  function (§4.9): the server finds the report in the version's store, checks that its bytes
+  are the ones shown, finds where its ledger goes from its own checkpoint list (the listed file
+  holding the weights, by full digest, never the path the report records: the file the run read
+  when it is listed with those weights, which is where the list looks, else another listed copy
+  in the workspace the run measured, else one in the workspace shown) and registers it. A
+  checkpoint moved since the run is not found that way; the page says so, and
+  `scripts/record_evaluation.py` on the machine remains. While runs under the report's key
+  disagree, the page shows the block, Register is off, and **investigation notes** (who, when,
+  what; 🔒 Add note) are listed and kept with the key's reports. A note never lifts the block.
+  On a wide screen the note form (Who, What was found, 🔒 Add note) stays at the panel's foot,
+  above Register, so it is in view however long the report or the note (What was found grows
+  to four lines, then scrolls inside itself).
+  When the notes file cannot be read, the page says so (a note may be missing), never "no
+  note is kept".
+
+**🔒 Import a new version…** opens a drawer over Run and Result: the file in the intake directory
+(`SHEPHERD_INTAKE_DIR`, §4.12: its `*.json` files by name, size and modification time; one that
+is a link leaving the directory is listed and not offered; nothing is uploaded from the
+browser), the version label, the role (with whether it offers ordering by test score in Models:
+`SHEPHERD_ORDERING_ROLES`, and `institutional_acceptance` never does) and the lost-terms
+policy. **🔒 Preview** runs the importer in the service, on the CPU (it reads the workspace's
+graph), and writes nothing. The preview shows the counts, the exclusion reasons and their
+counts, the unmappable terms with how many cases list each, and what the version binds; **case
+ids are not sent to the browser** (the command-line preview on the machine lists them, and the
+committed version records them). A file that does not fit `shepherd-cases/1` is refused with its
+problems listed by case index (at most 10), never by case id; the command-line preview
+(`scripts/import_cohort.py`) lists each one with its case id. **🔒 Commit as version …**
+prepares again from the same inputs and commits under the preview id shown: a form changed
+since the preview, or a source or graph changed since, is refused. One preview or commit runs
+at a time; after a commit the drawer closes and the new version is chosen. Below 1400 × 760 the
+drawer is an overlay at the right that scrolls inside, and the keyboard focus moves to its
+title.
+
+A **read-only browser** sees the versions, their reports and states, the job and the results:
+every control is disabled with "Operator controls only: <reason>" (the note's Who and What
+fields too), and the checkpoint list is not shown. Every control checks its own request in the
+backend (§4.13). No absolute server path is shown: a path under the registry, the workspaces
+root, the intake directory, an evidence directory or the repository is written under its name
+(`<registry>/versions/…`), any other as "a server path".
+
+### Research › Evaluate › Models
+
+The research view of the same model list the Diagnosis tab's "Change model…" uses, over the
+checkpoints the server lists for one workspace (choose the **Workspace**; **Architecture**
+narrows the list). Under the workspace select, the chosen workspace's dataset identity is said
+again (build time, dataset fingerprint, `synthetic`, the record's state), so a long workspace
+name that the select cuts never hides it. Every run is shown, newest first. Columns:
+
+- **Model**: architecture, the run's start time, the epoch; **In use (Diagnosis)** on the
+  checkpoint being served (matched by its full model fingerprint);
+- **Fingerprints: model · dataset trained on**: the model fingerprint (12 hex digits of the
+  checkpoint's SHA-256) over the listed workspace whose full dataset fingerprint the checkpoint
+  records, or "matches no listed workspace"; `synthetic` in amber;
+- **Validation MRR (Trainer, top-20)**: the Trainer's own figure on the val samples, the metric
+  training selects by. It is never a test result and never shares a column with one;
+- **Recorded tests**: what the ledger beside the checkpoint holds, as a state ("none in
+  ledger", "no ledger", "3 · 1 contested", …), never a number of a result.
+
+**Listing opens every checkpoint of the workspace**, so the list is an operator control (§4.13).
+Since M5-3 the server reads each checkpoint file once and again only when it changes (its
+device, inode, size, modification and change times), so opening the list again, or the re-read
+after a Load, opens no unchanged file; a load, a start or a measurement still checks the bytes it
+uses against the digest shown.
+A read-only browser gets no list: the page says why, naming the three conditions (deployment
+mode M1, a request on this machine's loopback, here or through an SSH forward, and no forwarding
+header), and shows instead **Recorded test results of the model in use**, read from the ledger
+beside the served checkpoint by its model fingerprint, opening no checkpoint. Each record's
+regime (device, deterministic on or off) is the one the record holds, as an operator sees it
+(`GET /api/v1/evaluations/loaded-model` carries each record's `deterministic_algorithms` for
+this; a CPU record's environment class alone does not say it). There are no Trainer validation
+figures and no Load there.
+
+**Order: Newest first | By test score.** Ordering by test score is offered only for a cohort
+version whose role is in `SHEPHERD_ORDERING_ROLES` (§4.12); the other versions are listed with
+why they are off, and `institutional_acceptance` is always off ("awaits the institution's formal
+evaluation rules"), even when the setting names it. Choose the metric (Mode C MRR (untruncated),
+Hits@k, or mean rank, which is ordered lowest first) and the cohort version. Records under
+another scoring semantics are never ordered with these; when the version's records are under
+more than one, a **Scoring semantics** choice appears. Wherever ordering is offered the page
+says: "A cohort version whose scores were used to choose a model is no longer an independent
+final test for that model." No model is ever chosen automatically by its test score. The
+groups:
+
+| Group | What is in it |
+|---|---|
+| Ordered by … on … · highest first | One number per checkpoint, by a fixed rule: its first registered record from a deterministic regime, else its first registered record (`#3 · D4 rule` when it had several). Each row shows the record's regime (`CUDA · deterministic`), and **regime differs** with its ⓘ where it is not the one most ordered rows share |
+| Contested on this version · not ordered | The record the rule picks is contested: reports under its key in the version's report store disagree. It is not ordered, and the next record is never put in its place |
+| Contested status cannot be checked · not ordered | Whether the reports under that key disagree cannot be read (the version's report store, or a report in it, cannot be read; the version is not one the registry lists). It is not ordered either, and never shown as uncontested |
+| Not compared on this version · not ordered | Records under another scoring semantics, records in two ledgers, a record or a ledger that cannot be read, or a checkpoint that cannot be read; the row says which |
+| Not tested on this cohort version · newest first | No record on this version |
+
+Just after choosing another workspace, its rows may show for a moment under "Records not read
+yet", until the page has read their ledgers.
+
+**Selecting a row** shows its full model fingerprint with Copy, what it was trained on (and
+whether that is this workspace's current dataset), the Trainer's validation figure in its own
+card, any warning, and two segments:
+
+- **Recorded test results (Mode C)**: every record the ledger holds for these weights: the
+  cohort version and its role, Mode C MRR and Hits@10, coverage with every exclusion, and
+  `registered #N` or amber `contested #N` with what the runs disagree on (or "contested status
+  cannot be checked", never shown as uncontested), deterministic on or off; when the list is
+  ordered, which record the fixed rule picks and how the others differ from it; then the
+  relations, the other Mode C metrics, R10 as states (*unverifiable* is a reason, never 0), the
+  environment, the dataset and the registration;
+- **Usage history**: the entries that name this checkpoint in every listed cohort version's
+  usage history: test runs, registrations and loads from an ordered list, newest first.
+
+**🔒 Load this model** is the shared Load (the same confirmation as Diagnosis' "Change model…";
+it covers the detail while it is open, its buttons stay in view under its table however short
+the window, and Close returns to the detail with the same checkpoint still selected). When the
+list is ordered by test score, the note beside the button says so, and the Load is written to
+that version's usage history as a model load ordered by that metric, whether or not it took
+effect, with why. A Load from the list newest first writes nothing there. The page is read when
+it is shown, when the workspace changes and after every Load, including one that changed nothing
+served (a refused reload, the model in use loaded again), so the usage history shows the entry
+that Load wrote; nothing on it runs on a timer.
+
+**Narrow** (below 1400 × 760, where the regions stack under one another), choosing a row scrolls
+to its detail and moves the keyboard focus there; **↑ Back to the list** in the detail's header
+returns to the row.
 
 ---
 
@@ -1457,6 +2793,7 @@ shown, and a checkpoint moved with its ledger and unchanged bytes still finds th
 - [ ] ✅ Voyager available (CPU vector search)
 - [ ] ✅ All unit tests pass
 - [ ] ✅ Model trains (watch VRAM)
+- [ ] ⚠️ Dashboard on Gradio 6.30.0 (`uv sync --inexact` after pulling): a Windows backend is not tested yet (§4.10)
 
 ### ARM + Blackwell (DGX Spark)
 
@@ -1468,6 +2805,7 @@ shown, and a checkpoint moved with its ledger and unchanged bytes still finds th
 - [ ] ✅ Vector index: cuVS (GPU) or Voyager (CPU fallback)
 - [ ] ✅ Unified memory correctly identified
 - [ ] ✅ Model trains (check the 128GB advantage)
+- [ ] ✅ Dashboard on Gradio 6.30.0 (`uv sync --inexact` after pulling; `/ui` loads, §4.10)
 
 ---
 

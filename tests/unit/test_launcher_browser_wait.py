@@ -6,7 +6,7 @@ about 84 s, so the browser never opened (BACKLOG 17, F7). uvicorn binds only
 after the lifespan, where that load runs, so the first `/health` answer is the
 end of startup and there is no deadline to guess.
 
-Nothing here waits, and only the last test opens a socket. The launcher's own
+Nothing here waits, and only the socket test opens a socket. The launcher's own
 `time`, `urlopen` and `webbrowser` names are replaced by a simulated clock and
 recorders, and the poll runs in the test's thread, not in a real daemon thread.
 A poll that would not end on its own is ended by the simulated clock raising.
@@ -15,7 +15,10 @@ proxy set in the environment: the poll must reach the server, not the proxy.
 """
 import http.server
 import importlib.util
+import os
 import re
+import subprocess
+import sys
 import threading
 import time
 import types
@@ -195,3 +198,23 @@ def test_the_poll_reaches_the_local_server_past_an_operators_proxy(monkeypatch, 
     assert opened == [f"{base}/ui"]
     assert server.paths == ["/health"]
     assert "Server still starting" not in capsys.readouterr().out
+
+
+def test_the_helper_stops_waiting_once_the_server_is_gone(monkeypatch):
+    # On POSIX the opener is a helper beside the server (round 3 of the review
+    # fixes, P3-2), given the server's PID: a server that ended before it
+    # answered leaves no helper polling forever. A process that has exited
+    # and been reaped stands in for it; this process, which is running, is
+    # the control.
+    ended = subprocess.Popen([sys.executable, "-c", "pass"])
+    ended.wait()
+    server = _Server(refusals=None, stop_at=60)
+    launcher = _launcher()
+    server.install(monkeypatch, launcher)
+    launcher._open_browser_when_ready(UI, HEALTH, server=ended.pid)
+    assert server.attempts == [] and server.opened == []
+
+    running = _Server(refusals=3)
+    running.install(monkeypatch, launcher)
+    launcher._open_browser_when_ready(UI, HEALTH, server=os.getpid())
+    assert running.opened == [UI] and len(running.attempts) == 4

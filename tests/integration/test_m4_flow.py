@@ -118,8 +118,14 @@ def flow(tmp_path_factory):
 
 
 @pytest.fixture
-def cohort(flow, tmp_path):
-    return copy_registered_cohort(flow.cohort, tmp_path / "root")
+def cohort(flow, tmp_path, monkeypatch):
+    """A copy of the imported cohort, its registry the deployment's
+    (`SHEPHERD_REGISTRY`, inherited by a command run as printed): a
+    ``--cohort`` run measures, and a report is registered, only there
+    (BACKLOG 37)."""
+    copied = copy_registered_cohort(flow.cohort, tmp_path / "root")
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(copied.registry))
+    return copied
 
 
 def _measure(cohort, *extra, data_dir=None, checkpoint=None, label=LABEL):
@@ -290,34 +296,67 @@ def test_a_remeasurement_with_other_report_bytes_corroborates(cohort, tmp_path, 
     assert "Agrees with record 1" in capsys.readouterr().out
 
 
-def test_a_contradicting_report_is_refused_and_the_ledger_is_unchanged(cohort, tmp_path):
-    """A copy of the report with an edited metric: same key, different result.
-    Refused naming the metric; the ledger keeps its bytes."""
+def _beside_in_the_store(report: Path, data: bytes) -> Path:
+    """`data` as the report of a new run directory beside `report`'s, named for
+    the same checkpoint, as another run of it would be kept."""
+    import secrets
+
+    stamp, checkpoint, _ = report.parent.name.split("-")
+    run_dir = report.parents[1] / f"{stamp}-{checkpoint}-{secrets.token_hex(4)}"
+    run_dir.mkdir()
+    (run_dir / "report.json").write_bytes(data)
+    return run_dir / "report.json"
+
+
+def test_a_contradicting_run_blocks_its_key_and_the_ledger_is_unchanged(cohort):
+    """D5 (since M5-1): a second run under the same key with an edited metric,
+    kept in the store. Registering it is refused ("runs disagree --
+    investigate"), naming the metric, and so is registering the first report
+    again; the ledger keeps its bytes."""
     assert _measure(cohort, "--record") == 0
+    first = _only_report(cohort)
     before = _ledger(cohort).read_bytes()
-    edited = json.loads(_only_report(cohort).read_text())
+    edited = json.loads(first.read_text())
     edited["authoritative_metrics"]["hits@1"] = 0.5 + edited["authoritative_metrics"]["hits@1"] / 2
-    copy = tmp_path / "edited_report.json"
-    copy.write_text(json.dumps(edited))
+    second = _beside_in_the_store(first, json.dumps(edited).encode("utf-8"))
 
-    message = _record_refused(copy, cohort.checkpoint.parent)
-
-    assert "hits@1" in message
-    assert "Nothing was written" in message
+    for report in (second, first):
+        message = _record_refused(report, cohort.checkpoint.parent)
+        assert "runs disagree — investigate" in message and "hits@1" in message
+        assert "Nothing was written" in message
     assert _ledger(cohort).read_bytes() == before
 
 
-@pytest.mark.parametrize("damage", ["truncated", "not_json", "not_a_report"])
-def test_a_damaged_report_is_refused_and_nothing_is_written(cohort, tmp_path, damage):
+def test_a_copy_outside_the_store_is_refused_and_the_original_registers(cohort, tmp_path):
+    """Only the store's original is registered (D5, 2026-10-19): a copy is
+    refused saying so, and the original the run printed registers."""
     assert _measure(cohort) == 0
-    data = _only_report(cohort).read_bytes()
-    copy = tmp_path / "damaged.json"
-    copy.write_bytes({"truncated": data[: len(data) // 2], "not_json": b"\xff\xfe",
-                      "not_a_report": b"[1, 2, 3]"}[damage])
+    original = _only_report(cohort)
+    copy = tmp_path / "shared" / "report.json"
+    copy.parent.mkdir()
+    copy.write_bytes(original.read_bytes())
 
     message = _record_refused(copy, cohort.checkpoint.parent)
 
-    assert str(copy) in message and "Nothing was written" in message
+    assert "is not a report the registry's report store holds" in message
+    assert "Register the store's original instead" in message
+    assert not _ledger(cohort).exists()
+    assert _record(original, cohort.checkpoint.parent) == 0
+
+
+@pytest.mark.parametrize("damage", ["truncated", "not_json", "not_a_report"])
+def test_a_damaged_report_is_refused_and_nothing_is_written(cohort, damage):
+    assert _measure(cohort) == 0
+    original = _only_report(cohort)
+    data = original.read_bytes()
+    original.unlink()  # the store holds only the damaged report, so D5 has nothing to compare
+    damaged = _beside_in_the_store(original, {
+        "truncated": data[: len(data) // 2], "not_json": b"\xff\xfe",
+        "not_a_report": b"[1, 2, 3]"}[damage])
+
+    message = _record_refused(damaged, cohort.checkpoint.parent)
+
+    assert str(damaged) in message and "Nothing was written" in message
     assert not _ledger(cohort).exists()
 
 
@@ -512,7 +551,11 @@ def test_not_registering_keeps_the_report_for_a_later_registration(cohort):
 
 def test_a_generated_split_report_is_refused_by_record_evaluation(tmp_path):
     """BEHAVIOUR CHANGE (M4 decision 9): the ledger records results on registered
-    test cohort versions only; a generated `val` report is selection data."""
+    test cohort versions only; a generated `val` report is selection data. Since
+    M5-1 it is refused first for where it is: written to `--output`, never into a
+    report store, it is not a report the store holds. (One placed in a store is
+    refused by `build_record` as a generated split's,
+    `tests/unit/test_registration.py`.)"""
     import scripts.measure_scorer as measure_scorer
     from tests.fixtures.synthetic_workspace import build_workspace
 
@@ -524,7 +567,8 @@ def test_a_generated_split_report_is_refused_by_record_evaluation(tmp_path):
 
     message = _record_refused(output, checkpoint.parent)
 
-    assert "generated split's report is not registered" in message
+    assert "is not a report the registry's report store holds" in message
+    assert "Nothing was written" in message
     assert not (checkpoint.parent / LEDGER).exists()
 
 
@@ -853,11 +897,12 @@ def test_r10_missing_or_altered_evidence_is_unverifiable(cohort, case):
     assert r10[kept]["evidence"]["state"] == "found"
 
 
-def test_r10_a_cohort_of_validation_cases_overlaps_validation_entirely(tmp_path):
+def test_r10_a_cohort_of_validation_cases_overlaps_validation_entirely(tmp_path, monkeypatch):
     """A source built from the workspace's own val cases: every test case's
     phenotype set is a validation case's (k = n), and the allocation keeps its
     diseases out of training."""
     cohort = build_registered_cohort(tmp_path / "root", source="val_cases")
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(cohort.registry))
 
     assert _measure(cohort) == 0
 

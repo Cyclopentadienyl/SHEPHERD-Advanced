@@ -156,6 +156,30 @@ deployment*, not merely a loopback bind.
   application cannot read Uvicorn's CLI. That path is addressed by corrected instructions and by
   fixing the launcher's misleading URL display, not by an in-process guard.
 
+*As implemented (M5-1, 2026-10-20):* one rule, `network_bind` in `src/config/server_settings.py`:
+a loopback bind (`127.0.0.0/8`, `::1`, `localhost`) is allowed; any other, the wildcards included,
+is refused unless `SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND` is exactly `1`, and then allowed
+with a warning that names it risk acceptance, not a control, and says the operator controls stay
+refused off loopback (D8, `PLAN_TEST_RESULTS.md`). Applied at the three enforcement points:
+- the launcher (default `--host 127.0.0.1`), right after reading its arguments, before it installs
+  or starts anything: it reads what uvicorn will listen on as uvicorn does, a socket it is handed
+  (`--fd`) before a unix socket (`--uds`) before the last `--host`, from the command line or else
+  `UVICORN_FD` / `UVICORN_UDS`; refuses with exit 2; and prints what it binds. An inherited
+  socket's address is not read, so it counts as a network bind (`inherited_socket_bind`); a unix
+  socket reaches this machine only and is allowed, with no URL shown (D8 refuses every operator
+  control through it);
+- `src.api.main:main()` (default `127.0.0.1`, refusing with `SystemExit`);
+- application startup (`startup_bind`, first in the lifespan): both entry points pass the host
+  they bind as `SHEPHERD_BIND_HOST`, set every time and removed when they bind no host, and
+  startup applies the same rule to it, a refusal ending startup so uvicorn exits without serving.
+  A hand-typed uvicorn passes no host and stays outside, as above.
+
+The launcher also starts uvicorn with `--no-proxy-headers`, last on its command line. The service
+has no authentication, so every network bind counts as one "without authentication". *Corrected
+after review (2026-10-20):* the first version of this note said startup "cannot read the bind
+uvicorn was given" and left it out; startup reads the host the other two pass in, as this section
+asks. The launcher's check also ran after its accelerator installs, and it read `--host` only.
+
 ---
 
 ## 4. P0 work
@@ -167,11 +191,11 @@ deployment*, not merely a loopback bind.
 | # | Item |
 |---|---|
 | A1 | Audit and convert every client-reachable `torch.load` (§2.1) |
-| A2 | Fix the launcher's misleading display (`shep_launch.py:323-333`) — see below |
+| A2 | Fix the launcher's misleading display (`shep_launch.py:323-333`) — see below. *Done in M5-1 (2026-10-20):* the launcher prints `Listening on : <host>:<port> (<reach>)` before the URLs, which name the loopback address a browser on the machine can open. No "Network UI" line is printed: a network bind needs `SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND=1`, and the operator controls stay refused off loopback (§3.1) |
 | A3 | Fix the unbounded eager export accumulation (`diagnosis_panel.py:487-496`) |
-| A4 | **Fix the systemd unit's invalid module path** (`app.main:app` → `src.api.main:app`) and any shipped command that cannot start as written. **Done for the unit:** module path, the project's interpreter in place of `/usr/bin/python`, `default.target` for a user unit, and a start through the launcher (`shep_launch.py --no-auto-install --no-browser -- --port 8264`), the path `launch_shepherd.sh` takes, so the service gets the saved allocator preset and the attention settings a manual start gets, after which the launcher execs into uvicorn (POSIX, `--no-browser`). A bare uvicorn start gets neither; `tests/unit/test_service_unit.py`. The bind address is the launcher's default and stays with C1. **Still owed, on a deployment host:** a real systemd start, stop and crash restart, and a UI Restart Backend in the running service. Function-level tests and the container smoke do not stand in for them |
+| A4 | **Fix the systemd unit's invalid module path** (`app.main:app` → `src.api.main:app`) and any shipped command that cannot start as written. **Done for the unit:** module path, the project's interpreter in place of `/usr/bin/python`, `default.target` for a user unit, and a start through the launcher (`shep_launch.py --no-auto-install --no-browser -- --port 8264`), the path `launch_shepherd.sh` takes, so the service gets the saved allocator preset and the attention settings a manual start gets, after which the launcher execs into uvicorn (POSIX, `--no-browser`). A bare uvicorn start gets neither; `tests/unit/test_service_unit.py`. The bind address is the launcher's default and stays with C1. *Since M5-1 (2026-10-20):* the unit starts with `-- --host 127.0.0.1 --port 8264`, the bind stated where an operator would change it, and C1 is done (B1 below). **Still owed, on a deployment host:** a real systemd start, stop and crash restart, and a UI Restart Backend in the running service. Function-level tests and the container smoke do not stand in for them |
 
-**A2 in detail.** The launcher currently prints `127.0.0.1` while binding `0.0.0.0`. The fix is not
+**A2 in detail** (the record before M5-1, when the launcher bound `0.0.0.0` by default). The launcher then printed `127.0.0.1` while binding `0.0.0.0`. The fix is not
 to print `0.0.0.0` as a URL — that is not a browser destination either. Report the bind and the
 destinations as separate lines:
 
@@ -203,6 +227,36 @@ decision. **Do not keep shipping a known-broken service unit while a bind decisi
 | C1 | Correct the **host values** in `setup_demo.py` (the `0.0.0.0` commands and the contradictory line 29), `src/api/__init__.py`, and the systemd unit |
 | C2 | Document the actual deployment contract; withdraw the concurrency-safety claim wherever it appears |
 
+**Decided 2026-10-19** (the reviewer's decisions, relayed by the owner, 2026-10-19; `PLAN_TEST_RESULTS.md` §4.9 question 3 and §6,
+"M5's boundaries"): M5's first version runs under M1, and **B1 is taken: the bind defaults to
+`127.0.0.1`**. Another address stays possible by explicit configuration under §3.1, never
+lifting the operator controls' checks (D8); deployments that relied on the old default get
+migration notes. LAN inference for several frontends is kept possible, not built (BACKLOG item
+28). The question below is the record as it stood.
+
+*As implemented (M5-1, 2026-10-20):*
+- **B1:** the launcher (`UVICORN_DEFAULT_ARGS`), `src.api.main:main()` and the systemd unit
+  (`-- --host 127.0.0.1 --port 8264`, stated where an operator would change it) bind `127.0.0.1`,
+  with §3.1's guard ("as implemented" there). The launcher prints `Listening on : <host>:<port>`
+  with what it reaches beside the URLs; migration notes for deployments that relied on `0.0.0.0`
+  are in the deployment guide (§4.13). B2 has no audience under M1: C3 and C4 are not unmounted
+  but checked by D8 on every request, under any bind, in the API (one FastAPI dependency) and in
+  the dashboard (one Gradio helper), refused unless mode M1 and a loopback arrival with no
+  forwarding header, a loopback Host, no foreign Origin and no `Sec-Fetch-Site` other than
+  `same-origin` or `none` (a GET another site's page makes carries no Origin). CORS, reviewed
+  with it (§6): the parent app's `CORSMiddleware` has an empty allow list, so no other origin may
+  read a response, `/ui` included; Gradio's upload route, which the dashboard does not use, is
+  refused in front of the mount, with its 1 MB per-file limit kept as a second line of defence.
+  *M5-3 review (2026-10-21):* D8 cannot see framing (a dashboard loaded in another site's frame
+  makes same-origin requests it allows), so every response refuses to be framed
+  (`X-Frame-Options: DENY`, `Content-Security-Policy: frame-ancestors 'none'`,
+  `src/api/middleware/frame_guard.py`); without it a framed dashboard would be open to
+  clickjacking (a click turned into Restart Backend or a Load).
+- **C1:** `src/api/__init__.py`'s usage example names `--host 127.0.0.1`, and the unit's comment
+  no longer defers the bind. `scripts/setup_demo.py` already printed `--host 127.0.0.1` in both of
+  its commands (since `0bc79d9`, 2026-09-09), and the instruction that omitted `--host` is gone,
+  so it needed no change here. C2's deployment contract is the guide's §4.13.
+
 **One operational answer decides group B:** *does anyone reach the WebUI by the server's LAN address
 rather than through SSH?*
 
@@ -222,11 +276,22 @@ or synchronisation contract in the module. **Concurrency safety is unverified.**
 with an in-flight diagnosis has no defined behaviour. Any multi-user deployment requires an explicit
 concurrency model — locking or serialised execution — plus load testing.
 
+*Observed 2026-10-19 (the multi-frontend audit for M5, BACKLOG item 28):* the routes are `async`
+and call the pipeline on the event loop, so two diagnoses never overlap and a reload waits behind
+a diagnosis; a running diagnosis keeps the pipeline and identity it started with. That is
+serialisation by a blocked event loop, not a bounded queue: nothing reports busy or bounds the
+wait, and `/health` stalls meanwhile. The bounded queue and a reload-while-busy rule are BACKLOG
+item 28's, before any LAN opening. Managed training and evaluation jobs share one GPU lock
+(`PLAN_TEST_RESULTS.md` §6); inference is not scheduled by it.
+
 ---
 
 ## 6. Multi-user target state (P4) — not designed here
 
-Recorded so the answer is not re-derived, not to be built.
+Recorded so the answer is not re-derived, not to be built. *Since 2026-10-19:* BACKLOG item 28
+records LAN inference for several frontends as kept possible (inference apart from management, a
+candidate first version, the acceptance before opening), and `PLAN_TEST_RESULTS.md` §6 the
+boundaries M5 keeps for it.
 
 The front/back boundary is already HTTP: the WebUI calls the API rather than importing the pipeline
 (`src/webui/components/diagnosis_panel.py:18, 116-117`), which makes separate deployment tractable.

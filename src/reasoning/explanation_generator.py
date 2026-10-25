@@ -53,6 +53,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+#: What a candidate's score is, wherever the pipeline writes it for a reader
+#: (each candidate's explanation, the run's summary): the combined ranking
+#: score, the API's ``confidence_score``. It is not a calibrated probability,
+#: so the text names no confidence band; `EvidenceSummary.confidence_level`
+#: keeps its bands for programs.
+SCORE_MEANING = "a ranking score, not a calibrated disease probability"
+
 
 # ==============================================================================
 # Evidence Data Structures
@@ -230,10 +237,9 @@ class ExplanationGenerator:
         sections = []
 
         # Header
-        confidence = self._get_confidence_level(candidate.confidence_score)
         sections.append(
             f"## Diagnosis Candidate: {disease_name}\n"
-            f"Confidence: {confidence.upper()} (score: {candidate.confidence_score:.3f})\n"
+            f"Score: {candidate.confidence_score:.3f} ({SCORE_MEANING})\n"
         )
 
         # Matching phenotypes

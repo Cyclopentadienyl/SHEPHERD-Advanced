@@ -159,7 +159,7 @@ class TestARequestedModelIsBuiltOrRefused:
         data_dir, checkpoint = workspace
         monkeypatch.setattr(
             DiagnosisPipeline, "_load_model_from_checkpoint",
-            lambda self, checkpoint_path, device: None,
+            lambda self, checkpoint_path, device, *, expected_sha256=None: None,
         )
 
         with pytest.raises(PipelineBuildError, match="no node embeddings"):
@@ -544,10 +544,14 @@ class TestReadinessFollowsWhatIsServed:
     def _start(api, monkeypatch, data_dir, checkpoint):
         from fastapi.testclient import TestClient
 
+        from tests.fixtures.operator_access import OPERATOR_BASE_URL, operator_mode
+
         monkeypatch.setenv("SHEPHERD_KG_PATH", str(data_dir / "kg.json"))
         monkeypatch.setenv("SHEPHERD_DATA_DIR", str(data_dir))
         monkeypatch.setenv("SHEPHERD_CHECKPOINT_PATH", str(checkpoint))
-        return TestClient(api.app)
+        # The reload is an operator control (D8): mode M1, loopback requests.
+        operator_mode(monkeypatch)
+        return TestClient(api.app, base_url=OPERATOR_BASE_URL)
 
     @staticmethod
     def _reload(client, data_dir, checkpoint):
@@ -697,17 +701,21 @@ class TestReadinessFollowsWhatIsServed:
             assert "reload" in client.get("/ready").json()["error"]
 
     def test_a_service_with_nothing_configured_is_ready_until_a_workspace_is_refused(
-        self, api, tmp_path
+        self, api, tmp_path, monkeypatch
     ):
         """Nothing configured is the demo, and it answers. A reload that names a
         workspace is a request for a real pipeline; refused, every diagnosis is
-        refused, and the probe says so."""
+        refused, and the probe says so. (The reload is an operator's, which D8
+        allows: mode M1, loopback requests.)"""
         from fastapi.testclient import TestClient
+
+        from tests.fixtures.operator_access import OPERATOR_BASE_URL, operator_mode
 
         empty = tmp_path / "not_a_workspace"
         empty.mkdir()
+        operator_mode(monkeypatch)
 
-        with TestClient(api.app) as client:
+        with TestClient(api.app, base_url=OPERATOR_BASE_URL) as client:
             demo = {"ready": 200, "diagnose": 200, "initialized": False, "gnn_ready": False}
             assert self._answers(client) == demo
 

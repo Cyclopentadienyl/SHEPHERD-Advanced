@@ -1502,6 +1502,45 @@ class TestBuildPathOrdering:
         assert (tmp_dir / "kg.json").exists()
         assert not (tmp_dir / "split_manifest.json").exists()
 
+    def test_the_printed_training_step_says_the_lock_this_shell_takes(
+        self, monkeypatch, tmp_dir, wide_kg, capsys
+    ):
+        """Root-cause review, INT-3: `train_model.py` refuses without a
+        configured GPU lock, and the build printed it bare. The step now asks
+        the lock's one rule for this shell: the lock it takes, or the rule's
+        own refusal and the export that configures it, before the command."""
+        from src.config.server_settings import GPU_LOCK_NOT_CONFIGURED
+        from src.utils.gpu_lock import WORKSPACES_ROOT_ENV
+
+        build = self._stub_build_stages(monkeypatch, wide_kg)
+        self._satisfy_input_validation(tmp_dir)
+        eligible = build_eligible_disease_profiles(wide_kg, 2)
+        allocation = allocate_diseases(eligible, 0.15, seed=42)
+        workspace = tmp_dir / "ws"
+
+        def printed_step() -> str:
+            build.build_knowledge_graph(
+                external_dir=tmp_dir, workspace=workspace, generate_samples=True,
+                num_train=max(30, len(allocation.train)),
+                num_val=max(10, len(allocation.val)),
+                val_disease_fraction=0.15, sample_seed=42,
+            )
+            out = capsys.readouterr().out
+            step = out[out.index("# Train model"):]
+            return " ".join(line.strip().lstrip("#").strip() for line in
+                            step[:step.index("scripts/train_model.py")].splitlines())
+
+        monkeypatch.delenv(WORKSPACES_ROOT_ENV, raising=False)
+        unset = printed_step()
+        assert " ".join(GPU_LOCK_NOT_CONFIGURED.split()) in unset
+        assert f"export {WORKSPACES_ROOT_ENV}={workspace.resolve().parent}" in unset
+
+        monkeypatch.setenv(WORKSPACES_ROOT_ENV, str(tmp_dir))
+        configured = printed_step()
+        assert (f"takes the GPU lock {tmp_dir.resolve() / '.shepherd-gpu.lock'}, "
+                f"under {WORKSPACES_ROOT_ENV}") in configured
+        assert "Refused" not in configured and "export" not in configured
+
     def test_a_sufficient_build_writes_a_manifest_bound_to_the_graph_it_wrote(
         self, monkeypatch, tmp_dir, wide_kg
     ):

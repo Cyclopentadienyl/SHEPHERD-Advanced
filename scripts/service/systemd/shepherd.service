@@ -4,8 +4,14 @@
 # and `loginctl enable-linger <user>` if it should start at boot rather than at
 # first login.
 #
-# The bind address is the launcher's default and waits on the bind decision
-# (SPEC_4 §4, item C1); it is deliberately left as it was.
+# The service binds 127.0.0.1 (SPEC_4 B1, since M5-1): it is reached on the
+# machine, or from elsewhere through an SSH forward to localhost
+# (ssh -L 8264:localhost:8264 <user>@<host>, then http://localhost:8264/ui).
+# To bind another address, change --host below AND accept the risk with
+# Environment=SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND=1; without it the
+# launcher refuses to start. That flag is risk acceptance, not a control: the
+# service has no authentication, and the operator controls stay refused for
+# any request that does not arrive on loopback (D8). Deployment guide §4.13.
 [Unit]
 Description=SHEPHERD-Advanced API Service
 After=network.target
@@ -14,16 +20,47 @@ After=network.target
 Type=simple
 WorkingDirectory=%h/SHEPHERD-Advanced
 Environment=PYTHONUNBUFFERED=1
+# The operator controls (reload, configuration save, restart, training, the
+# checkpoint lists) are enabled only by the exact value M1, set by the operator
+# who runs this machine as SPEC_4's deployment mode M1; unset, the service is
+# read-only for them. M1 is necessary, not sufficient: training, test runs and
+# the checkpoint lists also need the workspaces root below, and the Test page
+# the registry. Deployment guide §4.12 and §4.13.
+#Environment=SHEPHERD_DEPLOYMENT_MODE=M1
+# The workspaces root, absolute: its subdirectories are the workspaces listed,
+# and its .shepherd-gpu.lock is the deployment's only GPU lock; while it is
+# unset every training and test run is refused.
+#Environment=SHEPHERD_WORKSPACES_ROOT=/absolute/workspaces/root
+# The cohort registry: absolute, existing, outside the repository, with no
+# spaces or quotes.
+#Environment=SHEPHERD_REGISTRY=/absolute/registry
+# The shell where you run train_model.py or measure_scorer.py needs the same
+# two values (deployment guide §4.11 and §4.12).
 # Started through the launcher, the same path launch_shepherd.sh takes, so the
 # service gets what a manual start gets: the allocator preset saved in Runtime
 # Settings (the rule Restart Backend applies) and the attention settings.
 # --no-auto-install: a service never pip-installs. --no-browser: nobody to show
-# it to, and the launcher then execs into uvicorn, so the main PID is the
-# server and nothing waits beside it. Arguments after -- go to uvicorn; the
-# launcher's own --host default applies (SPEC_4 C1). To pin an allocator, set PYTORCH_ALLOC_CONF here; an
-# explicit value is kept on every start and restart.
-ExecStart=%h/SHEPHERD-Advanced/.venv/bin/python %h/SHEPHERD-Advanced/scripts/launch/shep_launch.py --no-auto-install --no-browser -- --port 8264
+# it to. The launcher execs into uvicorn (on every POSIX start), so the main
+# PID is the server and nothing waits beside it. Arguments after -- go to
+# uvicorn. To pin an allocator, set PYTORCH_ALLOC_CONF here; an explicit value
+# is kept on every start and restart.
+ExecStart=%h/SHEPHERD-Advanced/.venv/bin/python %h/SHEPHERD-Advanced/scripts/launch/shep_launch.py --no-auto-install --no-browser -- --host 127.0.0.1 --port 8264
+# Stopping the service stops its GPU job through the backend (deployment guide
+# §4.11): SIGTERM goes to the main process only, which is the server (the
+# launcher execs into it, above), and the server stops its job as every other
+# stop does (SIGINT first, so a test run finishes recording what it published);
+# once the server has exited, systemd SIGKILLs whatever is left of the service.
+# The default (control-group) would SIGTERM the job's processes directly, ahead
+# of the server's stop. The timeout covers the server's longest stop of its job
+# (training_manager.END_ACTIVE_JOB_SECONDS, 110 s) with room for its own
+# shutdown; when the server crashes, systemd SIGKILLs the job.
+KillMode=mixed
+TimeoutStopSec=150
 Restart=on-failure
+# The launcher exits 2 when it refuses its own configuration (a network bind
+# without SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND=1): restarting cannot fix
+# that, so the unit stops and journalctl shows the reason.
+RestartPreventExitStatus=2
 RestartSec=5
 
 [Install]

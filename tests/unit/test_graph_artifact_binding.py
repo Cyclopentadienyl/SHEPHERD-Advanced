@@ -128,8 +128,9 @@ class TestTrainingRefusesBeforeItActs:
             (lambda root, other: (root / "kg.json").write_bytes(
                 (other / "kg.json").read_bytes()),
              "kg.json is not the kg artifact"),
+            # The samples reader's own refusal, which lists the splits there are.
             (lambda root, other: (root / "val_samples.json").unlink(),
-             "val_samples.json does not exist"),
+             "Samples file not found: .*val_samples.json — this workspace has: train"),
             (lambda root, other: (root / "split_manifest.json").unlink(),
              "(?i)rebuild it with"),
         ],
@@ -148,7 +149,8 @@ class TestTrainingRefusesBeforeItActs:
         other = _workspace(tmp_path / "other")
         break_it(root, other)
 
-        with pytest.raises(ValueError, match=expected):
+        # A missing file is the readers' `FileNotFoundError`, an `OSError`.
+        with pytest.raises((ValueError, OSError), match=expected):
             train_model.train(self._config(train_model, root, tmp_path))
 
         assert not (tmp_path / "run").exists(), "run directory was created"
@@ -197,7 +199,7 @@ class TestTheClinicalPathIsAGraphConsumer:
         import src.inference.pipeline as pipeline
         from src.utils.fingerprint import ReadIdentity
 
-        def _model_built(self, checkpoint_path, device):
+        def _model_built(self, checkpoint_path, device, *, expected_sha256=None):
             reached.append("model")
             self._checkpoint_identity = ReadIdentity(
                 path=Path(checkpoint_path), sha256="c" * 64)

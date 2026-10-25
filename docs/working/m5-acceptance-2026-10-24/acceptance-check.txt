@@ -1,0 +1,104 @@
+PASS  the probe exited 0: 0
+PASS  no probe failed: {'error': 0, 'failed': 0, 'passed': 99, 'skipped': 0}
+PASS  no probe errored: {'error': 0, 'failed': 0, 'passed': 99, 'skipped': 0}
+PASS  demo: requested: True
+PASS  demo: the required list is the tested commit's: 51
+PASS  demo: A2 passed: passed
+PASS  demo: B1 passed: passed
+PASS  demo: C1 passed: passed
+PASS  demo: D1 passed: passed
+PASS  demo: D2 passed: passed
+PASS  demo: E1 passed: passed
+PASS  demo: E7 passed: passed
+PASS  demo: E8 passed: passed
+PASS  demo: M1 passed: passed
+PASS  demo: M2 passed: passed
+PASS  demo: M3 passed: passed
+PASS  demo: M4 passed: passed
+PASS  demo: M5.pre_contract passed: passed
+PASS  demo: M5.other_graph passed: passed
+PASS  demo: M5.other_samples passed: passed
+PASS  demo: M5.validated_parent passed: passed
+PASS  demo: M5.missing passed: passed
+PASS  demo: M6 passed: passed
+PASS  demo: M7 passed: passed
+PASS  demo: M8 passed: passed
+PASS  demo: M9 passed: passed
+PASS  demo: M10 passed: passed
+PASS  demo: C5.missing passed: passed
+PASS  demo: C5.replaced passed: passed
+PASS  demo: C5.other_graph passed: passed
+PASS  demo: C5.unbound passed: passed
+PASS  demo: C5.unreadable passed: passed
+PASS  demo: C5.unidentified passed: passed
+PASS  demo: B22 passed: passed
+PASS  demo: B23 passed: passed
+PASS  demo: M11.training passed: passed
+PASS  demo: M11.serving passed: passed
+PASS  demo: M11.measurement passed: passed
+PASS  demo: T1 passed: passed
+PASS  demo: T2 passed: passed
+PASS  demo: T3 passed: passed
+PASS  demo: T4 passed: passed
+PASS  demo: T5 passed: passed
+PASS  demo: T6 passed: passed
+PASS  demo: A5 passed: passed
+PASS  demo: W1 passed: passed
+PASS  demo: W2 passed: passed
+PASS  demo: W3 passed: passed
+PASS  demo: W4 passed: passed
+PASS  demo: W5 passed: passed
+PASS  demo: W6 passed: passed
+PASS  demo: W7 passed: passed
+PASS  demo: W8 passed: passed
+PASS  demo: W9 passed: passed
+PASS  demo: W10 passed: passed
+PASS  demo: W11 passed: passed
+PASS  demo: complete, nothing not passed: {}
+PASS  real_data: requested: True
+PASS  real_data: the required list is the tested commit's: 14
+PASS  real_data: R1 passed: passed
+PASS  real_data: R2 passed: passed
+PASS  real_data: R3 passed: passed
+PASS  real_data: R4 passed: passed
+PASS  real_data: R5 passed: passed
+PASS  real_data: R6 passed: passed
+PASS  real_data: R7 passed: passed
+PASS  real_data: R8 passed: passed
+PASS  real_data: RT1 passed: passed
+PASS  real_data: RT2 passed: passed
+PASS  real_data: RT3 passed: passed
+PASS  real_data: RW1 passed: passed
+PASS  real_data: RW2 passed: passed
+PASS  real_data: RW3 passed: passed
+PASS  real_data: complete, nothing not passed: {}
+PASS  the acceptance is complete: True
+PASS  tested commit: b14c4def5082edae3ac948ce55ffbd770897c2df
+PASS  no tracked file modified during the run: False
+PASS  allocator backend cudaMallocAsync: cudaMallocAsync
+PASS  allocator from the saved preset: saved preset
+PASS  PYTORCH_ALLOC_CONF backend:cudaMallocAsync: backend:cudaMallocAsync
+PASS  torch not imported before the allocator was set: False
+PASS  environment device_name = NVIDIA GB10: NVIDIA GB10
+PASS  environment capability = 12.1: 12.1
+PASS  environment cuda_available = True: True
+PASS  environment resolved_device = cuda: cuda
+PASS  environment platform = Linux aarch64: Linux aarch64
+PASS  environment torch_version = 2.10.0+cu130: 2.10.0+cu130
+PASS  environment torch_cuda_build = 13.0: 13.0
+PASS  environment allocator_backend = cudaMallocAsync: cudaMallocAsync
+PASS  environment python 3.12: 3.12.3
+PASS  environment: all four PyG native extensions present: ['pyg_lib', 'torch_cluster', 'torch_scatter', 'torch_sparse']
+INFO  torch_geometric 2.8.1 (unpinned, BACKLOG 50)
+PASS  settings: device cuda: cuda
+PASS  settings: M2 acceptance requested: True
+PASS  settings: real data requested: True
+PASS  A5 passed: passed
+PASS  A5: the lock is the one committed at the tested commit: True
+PASS  A5: installed versions match the lock: []
+PASS  A5 read this checkout's uv.lock: 3ffc2f4a7a4a232919b48a7793a2326c69693d2c94f5806079620081f5f3e676
+PASS  R1: the graph digest is M4's: 6cae2d1a58690eec9aa9c5e3ca9182c2fc942db0f468a5123983251bd4c51e43
+PASS  R2: the training settings digest is M4's: 14bf8eea14bc4fcdcbcbea1e2fb457346ba53d29bb1367bbb246e2d55607970e
+PASS  R2: the reference checkpoint digest is M4's: 33a7b39a58519ff4974ed61266a5a35204edbb253d23c845340d0dcdf5eb8b79
+PASS  R8: 19 entries unchanged: 19
+102 passed, 0 failed

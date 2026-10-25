@@ -336,6 +336,29 @@ def test_a_failed_publish_leaves_the_target_and_no_staged_file(fail_at, tmp_path
     assert sorted(p.name for p in tmp_path.iterdir()) == ["out.json"]
 
 
+@pytest.mark.parametrize("fail_at", ["fsync", "replace"])
+def test_a_failed_ui_config_save_leaves_the_saved_paths_and_no_staged_file(
+        fail_at, tmp_path, monkeypatch):
+    """`write_ui_config`, the one writer of .shepherd_ui_config.json (the API's
+    save and the Diagnosis tab's Save Config, since M5-1): a write that fails
+    removes its staged file and leaves the file as it was, which is what the
+    tab's "The saved paths are as they were." says."""
+    pytest.importorskip("fastapi")
+    from src.api.routes import pipeline
+
+    target = tmp_path / ".shepherd_ui_config.json"
+    target.write_text('{"data_dir": "/srv/old"}')
+
+    def _fail(*args, **kwargs):
+        raise OSError(f"{fail_at} failed")
+
+    monkeypatch.setattr(file_modes.os, fail_at, _fail)
+    with pytest.raises(OSError, match=fail_at):
+        pipeline.write_ui_config(pipeline.UIConfigResponse(data_dir="/srv/new"), target)
+    assert target.read_text() == '{"data_dir": "/srv/old"}'
+    assert sorted(p.name for p in tmp_path.iterdir()) == [".shepherd_ui_config.json"]
+
+
 @pytest.mark.parametrize("data", ["text", bytearray(b"mutable")], ids=["str", "bytearray"])
 def test_publish_bytes_refuses_anything_but_bytes_before_staging(data, tmp_path):
     # A bytearray could change between the hash and the write, so the digest

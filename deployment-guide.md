@@ -535,7 +535,7 @@ Write-Host ""
 Write-Host "下一步："
 Write-Host "  1. 下載資料: python scripts/download_data.py"
 Write-Host "  2. 構建知識圖譜: python scripts/build_kg.py"
-Write-Host "  3. 訓練模型: python scripts/train_model.py"
+Write-Host "  3. 訓練模型: python scripts/train_model.py（須在已設定 GPU 鎖的視窗中執行，§4.11）"
 ```
 
 ### 手動安裝步驟（如果腳本失敗）
@@ -759,7 +759,7 @@ echo ""
 echo -e "下一步："
 echo -e "  1. 構建知識圖譜: python scripts/build_knowledge_graph.py"
 echo -e "  2. 計算最短路徑: python scripts/compute_shortest_paths.py"
-echo -e "  3. 訓練模型:     python scripts/train_model.py  (可選 --config <hyperparameters.yaml>)"
+echo -e "  3. 訓練模型:     python scripts/train_model.py  (可選 --config <hyperparameters.yaml>；須在已設定 GPU 鎖的 shell 中執行，§4.11)"
 echo -e "  4. 啟動系統:     ./launch_shepherd.sh"
 echo ""
 echo -e "${YELLOW}注意事項：${NC}"
@@ -1135,8 +1135,10 @@ OBO 的 format version 冒充 release。
   判定、綁定狀態與來源；
 - 自 contract M3c 起，served identity（§4.7）：`dataset_record` 為 `verified`、來源
   `synthetic`，出現在每一個診斷回應與 API 的 pipeline 狀態裡；
-- Diagnosis 分頁：結果上方與模型狀態裡的 `SYNTHETIC WORKSPACE: not a clinical result.`
-  橫幅，以及結果「Produced by」那一行的 `dataset synthetic ✓`；
+- Diagnosis 頁面：結果上方的 `SYNTHETIC WORKSPACE: not a clinical result.` 橫幅、
+  「Model in use」卡片上琥珀色的 `synthetic data` 標籤（其 Details 裡也有同一個橫幅），以及
+  結果身分（「This result」）中 dataset record 那一列的 `verified · synthetic`（自 M5-2 起，
+  §4.14）；
 - 可下載的報告：「What produced this result」段落裡的同一個橫幅，以及檔名
   `diagnosis_SYNTHETIC_<patient>_<session>_report.md`；
 - CSV 匯出：每一列的 `served_dataset_origin` 都是 `synthetic`，檔名為
@@ -1416,17 +1418,17 @@ WebUI 顯示的是**結果自己的身分**，絕不是狀態的：
   result.`、`NO TRAINED MODEL: path-reasoning fallback.`、`NO SHORTEST-PATH TABLE: GNN
   score alone.`、`DEMO ANSWER: not computed.`，以及回應沒有這個欄位時（M3c 之前的伺服器）
   的 `WHAT PRODUCED THIS RESULT WAS NOT REPORTED.`。
-- 結果下方的 **「Produced by」一行**（digest 縮短顯示），以及一個預設收合的區塊
-  「What produced this result — full identity」，內含完整表格、宣稱界線與
-  "Not a certified medical device; decision support for a qualified clinician."。
-- **模型狀態**（Model Configuration）在「Serving」那一行顯示目前載入之 pipeline 的身分，
-  並另以一行列出正在服務的 workspace 與 checkpoint 檔。載入 pipeline 後，Data Directory
-  與 Checkpoint 欄位顯示這兩個路徑（自動選出的檔案也照實顯示），因此 Load / Reload 重新載入的
-  就是正在服務的 checkpoint 檔；清空 Checkpoint 欄位即讓伺服器重新自動選擇。有兩種情況不同：
-  沒有服務任何 checkpoint 時，Checkpoint 欄位是空白的，重新載入會自動選擇一個（workspace 裡
-  沒有時則被拒絕）；只以 `SHEPHERD_KG_PATH` 啟動時，Data Directory 是空白的，重新載入需要先
-  填入 workspace。未載入任何 pipeline 時，欄位顯示服務啟動時 Save Config 已儲存的路徑；新的
-  儲存自下次啟動起生效。
+- **結果上方的標記（badge）**（自 M5-2 起）把結果的整個身分逐項與「Model in use」卡片最近一次
+  讀到的使用中模型比對："Produced by the model in use"、"Produced by an earlier model or
+  pipeline — N parts differ ›"，或附一個原因的 "Cannot check against the model in use yet"。
+  它的 › 會在「This result」上打開身分抽屜：每一項與目前使用中的對照、可 Copy 的完整 digest、
+  宣稱界線與 "Not a certified medical device; decision support for a qualified clinician."
+  （§4.14「Diagnosis (clinical)」）。
+- **目前服務的是什麼**顯示在頁面的「Model in use」卡片上（§4.14）。自 M5-2 起，Model
+  Configuration 折疊區（其路徑欄位、Load / Reload、Save Config 與 Reset）以及頁首的
+  「Serving now」一行都已移除：操作者以卡片上的「🔒 Change model…」更換模型，它列出伺服器的
+  workspace 與其 checkpoint，只重新載入伺服器列出的項目。`POST /api/v1/pipeline/config`
+  仍保留給 API 用戶端，由 D8 檢查（§4.13）；儀表板不再寫入它。
 - **Markdown 報告**在候選之前有「What produced this result」段落：同樣的橫幅、一個
   Part | State | Value 表格（digest 完整寫出，`sha256:<64 hex>`）、宣稱界線與固定聲明。
   缺少的部分寫成它的狀態與原因，絕不留白。
@@ -1543,15 +1545,31 @@ CSV 仍然**只有一列標題**、沒有前言。原本的 15 個候選欄位�
    （Mode C），並保留完整報告；
 3. `--record`，或之後用 `scripts/record_evaluation.py --report`，把報告登錄到 checkpoint 旁的
    `evaluations.json`；
-4. Diagnosis 分頁的模型狀態顯示目前載入之 checkpoint 已登錄的結果。
+4. Diagnosis 頁面的「Model in use」卡片以狀態顯示目前載入之 checkpoint 已登錄的測試（自 M5-2
+   起；紀錄本身列在 Research › Evaluate › Models）。
 
-以上都由操作者在機器上執行。沒有任何 UI 控制項或 API 請求會匯入、量測或登錄任何東西。
+這些指令由操作者在機器上執行。自 M5-2 起，儀表板的 Research › Evaluate › Test 頁面也能從瀏覽器執行同樣的匯入、量測與登錄，每一項都是由 D8 檢查的操作者控制項（§4.13、§4.14）；沒有任何 API 請求會匯入、量測或登錄任何東西。
 
 ### registry
 
 registry 是**由你建立**的目錄，每個指令都以**位於 repository 之外的絕對路徑**傳入。相對路徑、
 不存在的路徑，以及解析後落在 repository 內的路徑（包括經由 symlink）一律拒絕。不會有任何東西
-替你建立它，也沒有任何請求、環境變數或設定鍵指定它。
+替你建立它，也沒有任何請求指定它。各指令以 `--registry` 接收它；服務則從 `SHEPHERD_REGISTRY`
+讀取（§4.12），以同一個規則檢查。
+
+**各指令也需要 `SHEPHERD_REGISTRY`**（自 M5 審查起，BACKLOG 37）：報告只從部署的 registry 登錄
+（`--record`、`record_evaluation.py --report`、Test 頁面），`measure_scorer.py --cohort` 也只在
+部署的 registry 中量測，也就是 `SHEPHERD_REGISTRY` 所指名的那一個。兩者以解析後的路徑比較，所以
+經由指向該目錄的連結給出的 `--registry` 會被接受；registry 的副本，或經由 bind mount 或另一個
+掛載點到達的同一個目錄，則是另一個 registry，在讀取其中任何東西之前就會被拒絕。
+`measure_scorer.py --cohort` 只在獲准開始時解析一次 `--registry`，之後都經由那個目錄讀寫：在它取得
+GPU 鎖或啟動裝置期間被改指向別處的連結，不會讓這次執行搬到別的目錄。這個變數未設定時，
+每個這類指令都會被拒絕，並說明要像服務的環境那樣設定它。請在執行指令的 shell 中，從服務讀取的
+同一個檔案設定它（§4.11）：
+
+```
+measure_scorer: refused: --cohort measures a version of the deployment's registry only, and SHEPHERD_REGISTRY is not set here, so which registry is the deployment's cannot be told. Set SHEPHERD_REGISTRY in this environment to the value the service's environment gives it (deployment guide §4.11: one file that both the service and this shell read). [...] Nothing was read or written.
+```
 
 registry 之下的目錄也會檢查。每一個目錄（`sources/`、`versions/`、版本目錄、其 `reports/` 與每個
 run 目錄）在寫入任何東西、或從中讀取版本之前，都會再解析一次；若某個連結把它帶進 repository，
@@ -1642,6 +1660,9 @@ python scripts/measure_scorer.py \
     [--training-evidence DIR ...] [--record] [--device auto|cuda|cpu] [--batch-size 32]
 ```
 
+請在已設定 GPU 鎖、且與服務使用同一把鎖的 shell 中執行（§4.11）；沒有鎖時它會拒絕，結束碼 1，
+不寫出任何東西。
+
 在寫入任何東西之前，這次執行會以它實際讀到的位元組檢查：版本的 `cohort.json`，以及其
 `samples.json` 是否符合它所綁定的 digest；**版本的計數**——它們會成為報告與 ledger 的分母——必須
 存在，且彼此一致、也與版本一致（`ranked_eligible` = `samples.n`；`source_cases` =
@@ -1684,7 +1705,7 @@ recorded`（checkpoint 記錄了訓練輸入，而且完全沒有驗證的條目
 `--output` 會被拒絕。
 
 主控台會印出 Mode C 的指標、覆蓋率（`N ranked of M source cases; K excluded`，附各類別）、
-以 Diagnosis 分頁所用字句表示的四個 R10 標籤（`unverifiable` 附其原因）、一次標籤定義、報告路徑
+以 `src/evaluation/caveats.py` 共用字句表示的四個 R10 標籤（`unverifiable` 附其原因）、一次標籤定義、報告路徑
 與 run id。報告本身只保存狀態，不含任何說明文字。
 
 ### 登錄
@@ -1734,7 +1755,7 @@ recorded`（checkpoint 記錄了訓練輸入，而且完全沒有驗證的條目
 | 指令 | 0 | 1 | 2 | 3 |
 |---|---|---|---|---|
 | `import_cohort.py` | 已印出預覽，或已提交版本 | 拒絕，一則以 "Nothing was written." 結尾的訊息（沒有任何案例可排名的預覽也是） | 命令列被拒絕 | — |
-| `measure_scorer.py` | 已量測（加 `--record` 時：已登錄、已存在或一致） | 某項檢查拒絕了這次執行：一則訊息，不寫入任何東西（在沒有 CUDA 的主機上給 `--device auto` 或 `cuda` 也是，在讀取任何東西之前）；或**已量測，但報告沒有寫出**（例如磁碟已滿或唯讀）：一則訊息說明可能留下了什麼，而那絕不會是可登錄的報告——`--output` 旁這次執行的排名檔，或報告存放處中沒有 `report.json` 的執行目錄（寫出報告之後才失敗的執行，例如主控台被關閉，會說明報告在哪裡） | 命令列被拒絕，包括屬於另一種 cohort 的參數 | **已量測，但登錄被拒絕**：訊息會指出報告與之後登錄用的 `record_evaluation.py` 指令；若報告檔已不是這次執行發佈的位元組，則如實說明，並要求重新量測（那份報告可能已不存在） |
+| `measure_scorer.py` | 已量測（加 `--record` 時：已登錄、已存在或一致） | 某項檢查拒絕了這次執行：一則訊息，不寫入任何東西（在沒有 CUDA 的主機上給 `--device auto` 或 `cuda` 也是，在讀取任何東西之前）；或**已量測，但報告沒有寫出**（例如磁碟已滿或唯讀）：一則訊息說明可能留下了什麼，而那絕不會是可登錄的報告——`--output` 旁這次執行的排名檔，或報告存放處中沒有 `report.json` 的執行目錄（寫出報告之後才失敗的執行，例如主控台被關閉，會說明報告在哪裡） | 命令列被拒絕，包括屬於另一種 cohort 的參數 | **已量測，但登錄被拒絕**：訊息會指出報告與之後登錄用的 `record_evaluation.py` 指令；若報告檔已不是這次執行發佈的位元組，則如實說明，並要求重新量測（那份報告可能已不存在）；若這份報告的鍵下有結果不一致的執行，則說明 "runs disagree — investigate" 並保留報告，不印出之後登錄用的指令（只要這些執行仍不一致，任何登錄都不會被接受） |
 | `record_evaluation.py` | 已登錄、已存在、一致，或已顯示 | 拒絕，一則訊息；不寫入任何東西 | 命令列被拒絕，包括 `--checkpoint` 與 `--checkpoint-dir` 都沒給或都給 | — |
 | `audit_split_overlap.py` | 已寫出報告 | 拒絕，一則訊息；不寫入任何東西 | 命令列被拒絕（例如已移除的 `--evaluation-cohort-kind`、只給 `--registry` 不給 `--cohort` 或反之，或與 `--cohort` 一起給出 `--splits`），並印出 usage 行 | — |
 
@@ -1744,19 +1765,31 @@ recorded`（checkpoint 記錄了訓練輸入，而且完全沒有驗證的條目
 **`--record` 只登錄這次執行發佈的報告，且必須是這次執行讀取的 checkpoint。** 執行會保留它寫入的
 報告位元組的 digest，以及這次 checkpoint 讀取的 identity；登錄時重新讀取報告，在解碼任何內容之前先
 核對這次讀取的 digest，再核對它記錄的 checkpoint。若報告檔在這之間被替換、修改、損壞、刪除或無法讀取
-——即使換成另一份合法報告（另一個 checkpoint 的，或另一個 cohort 版本的）——就不登錄任何東西，以結束碼
-3 結束，並說明該路徑上的檔案不是它發佈的報告（或已不存在），因此這次執行自己的報告可能已不存在：請重新
-量測以登錄這次量測。只有在讀回的報告確實是發佈的那份、而是其他環節（例如 ledger）拒絕時，才會印出之後
-登錄用的指令。之後用 `record_evaluation.py` 登錄時，仍照舊以指定的
-checkpoint 檔核對報告。
+——即使換成另一份合法報告（另一個 checkpoint 的，或另一個 cohort 版本的），或已變成指向報告存放處之外
+檔案的連結——就不登錄任何東西，以結束碼 3 結束，並說明該路徑上的檔案不是它發佈的報告（或已不存在），
+因此這次執行自己的報告可能已不存在：請重新量測以登錄這次量測。只有在讀回的報告確實是發佈的那份、而是
+其他環節（例如 ledger）拒絕時，才會印出之後登錄用的指令；這個鍵下的執行結果不一致時則絕不印出。之後用
+`record_evaluation.py` 登錄時，仍照舊以指定的 checkpoint 檔核對報告。
 
-### Diagnosis 分頁顯示什麼
+### Diagnosis 頁面顯示什麼
 
-模型狀態（Model Configuration）在「Serving」那一行下方，為目前載入的 checkpoint
-（`sha256:<前 12 字元>…`）加上 **「Recorded test results (Mode C)」**。每次讀取狀態時，都透過
-`GET /api/v1/evaluations/loaded-model` 讀取，並以 checkpoint 的 digest 而不是檔名來找：換成另一個
-模型之後，絕不會顯示前一個模型的結果；連同 ledger 一起搬移且位元組不變的 checkpoint，仍找得到
-自己的結果。
+**自 M5-2 起（2026-10-21），Diagnosis 頁面只以狀態顯示目前載入之 checkpoint 已登錄的測試**，
+位於「Model in use」卡片上："Recorded tests: 3 · 1 contested"、"3 · contested state not checked"（未設定 registry，
+或沒有任何一筆紀錄的 cohort 版本或其報告存放處能讀取；絕不顯示為沒有爭議）、"3 · 1 contested ·
+contested state of 1 not checked"（部分紀錄的狀態無法檢查；分開計數）、"none in ledger"、
+"no ledger"、"ledger not readable" 或 "not read"，與該 checkpoint 在「Change model…」中那一列的用語相同，並以
+checkpoint 的 digest 而不是檔名來找（換成另一個模型之後，絕不會顯示前一個模型的狀態）。它的 ›
+會打開 Details 的 Evidence，同一個狀態在那裡與訓練器的驗證數值並列（"Validation MRR (Trainer,
+top-20) … — selection metric on val, not an independent test"）；頁面上不顯示任何 Mode C 數字。
+紀錄本身列在 Research › Evaluate › Models。
+
+在 M5-2 之前，模型狀態（Model Configuration）在「Serving」那一行下方，為目前載入的 checkpoint
+（`sha256:<前 12 字元>…`）完整列出 **「Recorded test results (Mode C)」**，透過
+`GET /api/v1/evaluations/loaded-model` 讀取，用語如下。這個 route 仍以這些紀錄回應 API 用戶端，
+且自 M5 審查起（BACKLOG 36）每筆紀錄都附上它的 D5 狀態（`contest`：`uncontested`；`contested`，
+附上不一致的欄位與各次執行；`cannot_be_checked`，絕不視為沒有爭議），由儀表板本身的實作依服務的
+`SHEPHERD_REGISTRY` 算出，但不附原因本身的文字，因為那些文字可能指名伺服器上的路徑。D5 的調查
+備註（investigation notes）不會顯示（BACKLOG 40）：
 
 - 紀錄區塊開頭（第一筆紀錄之前）出現一次 **"Disease ranking by the model, approved scorer
   policy (Mode C)."** 與說明 **"This is the model's own Mode C disease ranking. Until B-1 ships,
@@ -1791,8 +1824,8 @@ checkpoint 檔核對報告。
 - **產生的 split 的報告與排名檔改為先寫入暫存檔再改名就位**（排名檔先）；已存在的 `--output`
   仍會被取代。
 - **ledger schema 3。** 既有的 schema 1 或 2 的 `evaluations.json` 會被拒絕——`--record`、
-  `record_evaluation.py`（`--report` 與 `--show`）以及模型狀態都會拒絕，模型狀態會回報 ledger
-  未讀取。沒有任何東西會遷移它，其結果也不會被帶過來：**請手動封存**，例如
+  `record_evaluation.py`（`--report` 與 `--show`）以及讀取已登錄結果的程式都會拒絕，後者會回報
+  ledger 未讀取（Diagnosis 卡片上為 "Recorded tests: ledger not readable"）。沒有任何東西會遷移它，其結果也不會被帶過來：**請手動封存**，例如
   `mv evaluations.json evaluations.v2.json`，以寫出它的版本讀取，並以這個版本重新量測需要的
   結果，再登錄新的報告（拒絕訊息也這麼說）。M4 之前寫出的報告同樣會被拒絕，並指示重新量測。
 - **`record_evaluation.py`** 接受 `--checkpoint FILE` 或 `--checkpoint-dir DIR`，恰好一個。不論
@@ -1803,6 +1836,1109 @@ checkpoint 檔核對報告。
   `--cohort` 一起給出 `--splits`，都是被拒絕的命令列（結束碼 2，並印出 usage 行）。版本的圖與
   dataset record digest 會與這個 workspace 的 manifest 所記錄的比對，不載入 tensor；只讀
   `train`。報告的 `schema_version` 為 6。
+
+### 自 M5-1 起：只從報告存放處登錄、結果不一致的執行、使用紀錄、確定性執行
+
+以下同時適用於 `measure_scorer.py --record` 與 `record_evaluation.py --report`，因為兩者走同一個
+登錄函式。上面的結束碼不變。
+
+**只有 registry 報告存放處中的報告才能登錄。** `--report` 必須指向
+`<registry>/versions/<label>/reports/<run id>/report.json`，也就是量測印出的 `Report:` 路徑。
+寫入任何東西之前，登錄會檢查四件事：
+
+- 從這個路徑找出 registry 與版本，並讀取該版本；
+- 報告必須完全指名這個版本（label、role、manifest digest、來源、圖、mapping 與計數）；
+- 它的執行目錄名稱必須含有它量測的 checkpoint 的前 12 個十六進位字元；
+- 上述 checkpoint 與 ledger 的檢查照舊適用。
+
+放在其他任何地方的副本，在讀取之前就會被拒絕：「… is not a report the registry's report store
+holds … Register the store's original instead」。副本仍可閱讀與分享，但不能登錄。指向存放處中
+報告的連結，視為存放處中的原件；存放處中那個本身是連結、指向別處檔案的 `report.json` 則不算。
+**registry 必須是部署的 registry**（自 M5 審查起，BACKLOG 37）：整個 registry 的副本以相同的結構
+持有相同的位元組，但它會有自己的使用紀錄與自己的不一致封鎖，而 Research › Models 與 job runner
+從不讀取它們，所以副本中的報告會被拒絕（「… is not registered: the registry … is not the
+deployment's: SHEPHERD_REGISTRY (…) resolves to …」）。整個搬移的 registry，在服務與你的 shell
+中的 `SHEPHERD_REGISTRY` 都指名它的新位置之後，便可再次使用；沒有任何絕對路徑被存成身分。如果
+`--record` 發現它的 registry 已不再是部署的 registry（執行期間連結被改指向別處），執行會以 exit 3
+結束、保留報告，且不提供稍後登錄的命令，因為那個命令也會以同樣的原因被拒絕。這項檢查攔下的是
+誤用的 registry；刻意把這個變數設成副本後執行的指令，就會使用那個副本。產生的 split 的報告寫在
+`--output`，從不在存放處中，所以現在它是因為這個原因被拒絕。
+
+**結果不一致的執行會封鎖其鍵（"runs disagree — investigate"）。** 存放處中同一個鍵（同一個
+checkpoint、cohort 版本與量測設定）下的報告，會用 ledger 所用的同一種比對互相比較。只要其中兩份
+結果不同，這個鍵下的任何報告都不會被登錄。這適用於加或不加 `--record` 的執行、之後的
+`record_evaluation.py`，以及再次登錄一份已登錄的報告。訊息會指出哪些不同、是哪些執行。在不一致
+出現之前已登錄的紀錄仍留在 ledger 中。在 `--record` 之下，執行以結束碼 3 結束並保留報告，但不會
+印出之後登錄用的指令，因為只要這些執行仍不一致，任何登錄都不會被接受。不加 `--record` 時，執行在
+發佈報告後以同樣方式檢查存放處：它以結束碼 0 結束（如同任何不登錄的執行），印出
+"Not registered (no --record), and runs disagree — investigate" 與不同之處，取代那行指令；它的
+`--outcome` 檔中 `registration.why` 也這樣說明。若無法檢查這些執行是否不一致（見下文），不加
+`--record` 的執行會印出指令，並說明在能夠檢查之前登錄都會被拒絕。往下走的方式：
+
+- 比較各報告的環境資訊（每份 `report.json` 的 `manifest.environment`）；
+- 以 `--deterministic` 重跑，這是不同的鍵。
+
+調查備註記錄誰看過、何時看過、發現了什麼。備註存在
+`<registry>/versions/<label>/reports/notes.jsonl`，與該鍵的報告放在一起，絕不寫進 ledger，也不會
+解除封鎖。Research › Test 可從儀表板新增備註，這是操作者控制項（§4.14）。封鎖建立在一般檔案上：刪除不一致的
+報告就會解除它。這些工具從不刪除任何東西。
+
+**「無法檢查」同樣會被拒絕，絕不視為沒有爭議。** 存放處中有下列任一情形時，整個版本都無法檢查：
+
+- 一份無法讀取或解析的報告；
+- 一個是連結、指向存放處之外的執行目錄或 `report.json`；
+- 一份無法判斷其鍵的報告。
+
+較早版本寫出、本版本不讀取其 manifest 的報告，只會封鎖它所指名的那個鍵。拒絕訊息會指出每個檔案。
+把檔案移出 `reports/` 或加以修復，再登錄一次。
+
+**使用紀錄**是 `<registry>/versions/<label>/reports/usage.jsonl`，每行一個 JSON 物件，只追加、
+從不改寫。它記錄：
+
+- 這個版本的每一次量測（`test_run`：時間、run id、checkpoint 與報告的 digest、Mode C 的指標、
+  `n_ranked`、是否為確定性執行、裝置、是否要求 `--record`）；
+- 每一次寫入 ledger 的登錄（`registered`：結果與序號）；
+- 每一次從依該版本分數排序的清單載入的模型（`model_load`：排序清單所用的指標與 scoring 分組，以及
+  載入是否生效並附原因；由儀表板唯一的 Load 在 Research › Models 依測試分數排序時使用而寫入，
+  §4.14）。
+
+它只保存彙總資料，不含任何 case id。量測會在報告發佈後、寫出 `--outcome` 檔之前，立即追加它的
+條目。若追加失敗，執行會以結束碼 1 停止（"measured, but the run did not finish"），說明報告已寫出、
+這次執行不在紀錄中，並且不會登錄；它的 outcome 檔仍會寫出，內容為 `"complete": false`。若 outcome 檔
+無法寫出，執行也同樣停止，並說明它已在紀錄中。若登錄自己的條目無法追加，登錄仍然成立，並以一行
+`NOTE:` 說明。每個條目都從新的一行開始：被中斷的追加（當機、斷電）會留下一行不完整的最後一行，下一個
+條目會先把它結束，而不是接在它後面，讀取時則把它指出為不是條目的一行。寫入失敗的追加會被收回，不留下
+條目的任何部分；若連收回也失敗，錯誤訊息會說明檔案末端可能留有它的一部分。
+
+**`measure_scorer.py` 的新選項。** 它們是為 M5 的工作執行器準備的，也可以在已設定 GPU 鎖的
+shell 中手動使用（§4.11）。
+`--expect-version-sha256` 與 `--outcome` 只適用於 `--cohort` 的執行（與 `--split` 一起給出時
+結束碼為 2）；另外兩個兩者皆適用：
+
+```bash
+python scripts/measure_scorer.py --checkpoint <file>.pt --data-dir data/workspaces/<ws> \
+    --cohort <label> --registry /srv/shepherd/cohorts [--record] \
+    [--deterministic] [--expect-checkpoint-sha256 HEX] [--expect-version-sha256 HEX] \
+    [--outcome FILE]
+```
+
+- `--deterministic` 會在 CUDA 啟動之前開啟幾項設定：PyTorch 的 deterministic algorithms（絕不是
+  warn-only）、確定性的 cuDNN 並關閉其 benchmark，以及在該變數未設定時設定
+  `CUBLAS_WORKSPACE_CONFIG=:4096:8`。它絕不退回非確定性執行或改用其他裝置。沒有確定性實作的運算會
+  讓這次執行被拒絕、不寫入任何東西；PyTorch 未記載為確定性的 `CUBLAS_WORKSPACE_CONFIG` 也是。
+  manifest 會記錄這些設定，所以確定性執行是不同的鍵。PyTorch 只在相同平台、裝置與版本上承諾可重現；
+  確定性模式防範已知的非確定性運算，並不為某個數字背書。
+- `--expect-checkpoint-sha256` 與 `--expect-version-sha256`：當讀到的 checkpoint，或版本的
+  `cohort.json`，具有其他 SHA-256 時（檔案在被選定之後改變了），在量測或寫入任何東西之前就拒絕這次
+  執行。
+- `--outcome FILE` 寫出一個小 JSON 檔。FILE 必須是新檔案，且所在目錄必須存在，否則在讀取任何東西
+  之前就會被拒絕；因此先前執行留在該路徑的檔案絕不會被當成這次執行的 outcome，誤指的檔案也絕不會被
+  覆寫。每次執行請指定一個新檔案（例如該工作自己的目錄中）。
+  它在報告發佈後寫一次（`"complete": false`），結束時再寫一次（`"complete": true`）。內容包括報告的
+  路徑、run id 與 digest、checkpoint 與版本的 digest、是否為確定性執行，以及在 `registration` 之下
+  報告是否已登錄與原因。在報告之前就被拒絕的執行不會寫出 outcome 檔。這個檔說明的是這次執行做了什麼；
+  紀錄仍是報告存放處與 ledger，「已保留」與「已登錄」從它們讀取。job runner 為它啟動的每次測試執行，
+  在一個只屬於該執行的目錄中指定一個新的 outcome 檔（§4.11）。
+
+---
+
+## 4.10 Gradio 6.30.0 上的儀表板（自 M5 起，2026-10-20）
+
+`/ui` 的儀表板現在執行於 **Gradio 6.30.0**（原為 5.29.1）。`pyproject.toml` 精確鎖定此版本，
+`uv.lock` 只改了它強制帶來的部分：gradio-client 2.7.2、starlette 1.9.0 與 huggingface-hub
+1.16.1，新增 brotli 1.2.0 與 hf-gradio 0.4.1，不再需要 aiofiles 與 ffmpy。其他套件的版本都沒有
+改變。
+
+**拉取這個版本後請執行 `uv sync --inexact`**（或重新執行 `deploy.sh` / `deploy.cmd`，兩者做的
+是同一件事；`--inexact` 會保留 deploy 腳本在 lock 之外安裝的 PyG 擴充，見 `requirements.txt`）。
+沒有退回 Gradio 5 的路徑：若仍裝著 5.29.1，服務會啟動、REST API 可用，但日誌會出現
+`Failed to mount Gradio dashboard: mount_gradio_app() got an unexpected keyword argument 'theme'`，
+而且沒有 `/ui`。
+
+### 關閉了什麼，以及原因
+
+儀表板以下列設定掛載，不論 `GRADIO_*` 環境變數怎麼設（`src/webui/app.py` 的 `mount_options`）：
+
+| 設定 | 原因 |
+|---|---|
+| `run_history=False` | 否則 Gradio 6 會在瀏覽器中記錄每次呼叫的輸入與輸出，並提供存到 Hugging Face bucket 的選項。診斷的輸入是病人的表型。run history 頁面回 404 |
+| `enable_monitoring=False` | 未設定時，`/ui/monitoring/summary` 會提供佇列的事件分析資料。現在回 403 |
+| `mcp_server=False` | 否則會把儀表板的每個事件公開為 MCP 工具。相關 routes 不存在 |
+| `ssr_mode=False` | 伺服器端渲染會啟動一個 Node.js 行程 |
+| `analytics_enabled=False` | 設在儀表板本身，自 2026-10-12 起：不送使用分析，也不檢查版本 |
+| `max_file_size="1mb"` | Gradio 每個上傳檔案的上限，作為 route guard 拒絕上傳路由之外的第二道防線（見下文；§4.13） |
+| `footer_links=[]` | 自 M5-2 起：不顯示 Gradio 的頁尾（它的 API 頁面、「Built with Gradio」與它自己的 Settings——含儀表板配色沒有的深色模式與螢幕錄影） |
+
+**CORS** 自 M5-1 起與 D8 一起收緊（§4.13）：**預設不允許任何跨來源的瀏覽器存取；管理操作仍由
+後端的 D8 檢查。** 上層 app 保留它的 `CORSMiddleware`，但允許清單現在是空的（`src/api/main.py`）；
+自 Gradio 6.25 起，上層 app 恰好使用這個類別時，掛載的 app 不再加上自己的 CORS 標頭，因此 `/ui`
+也遵循同一政策。在 M5-1 之前，設定是 `allow_origins=["*"]` 與 `allow_credentials=True`，在
+Starlette 1.9 下會回送每個請求的 `Origin` 並附上 `Access-Control-Allow-Credentials: true`：任何
+網站的頁面，只要在持有服務的 HTTP 憑證或用戶端憑證的瀏覽器中打開，都能讀取 `/api/*` 與
+`/ui/gradio_api/*` 的回應。現在不能了。
+
+**被嵌入框架（framing）** 自 M5-3 起一律拒絕：每個回應——儀表板的與 API 的——都附上
+`X-Frame-Options: DENY` 與 `Content-Security-Policy: frame-ancestors 'none'`
+（`src/api/middleware/frame_guard.py`）。D8（§4.13）檢查的是請求從哪裡抵達，而不是它是從哪個頁面
+發出的：在其他網站的 frame 中載入的儀表板，發出的是 D8 會允許的同源請求；沒有這項設定時，蓋在
+惡意頁面上的隱形 frame 可能把操作者的點擊變成 Restart Backend 或 Load。沒有任何頁面嵌入儀表板，
+包括它自己的頁面。
+
+### route guard
+
+Gradio 6.30 在每個掛載的 app 上加入兩個無法從上游關閉的 routes，並保留一個儀表板用不到的上傳
+route。服務會在 Gradio 看到請求之前拒絕它們（`src/api/middleware/gradio_routes.py`）：
+
+- **`/ui/gradio_api/file=<URL>`**（以及舊的 `file/<URL>`）。自 Gradio 6.20 起（issue #13593，
+  PR #13596），伺服器會自己抓取 `http(s)://` 目標——不經過 `HTTPS_PROXY`——再以儀表板自己的位址
+  回傳；對某些 URL，它會把遠端的 HTML 頁面以 inline 方式提供，就像儀表板自己的頁面一樣。任何
+  URL scheme 的寫法都會被拒絕：大寫或大小寫混用、percent-encoded、`//host`。
+- **`/ui/gradio_api/process_recording`**：把上傳的螢幕錄影轉成暫存檔，並可能執行 ffmpeg。Gradio 的
+  設定面板（其螢幕錄影功能會送到這裡）自 M5-2 起已隨 Gradio 的頁尾一起隱藏；以其他方式送來的錄影
+  同樣會被拒絕。
+- **`/ui/gradio_api/upload`** 及其進度串流 `upload_progress`（自 M5-1 起）。儀表板沒有上傳
+  控制項，而其他網站的頁面不需預檢就能把檔案 POST 到這裡：Gradio 每個請求最多會把 1000 個檔案
+  寫進它的暫存目錄，而且從不刪除。
+
+拒絕的回應是 `403`，附一行原因與 `connection: close`。請求本體不會被讀取，請求日誌會像其他
+回應一樣記下這次拒絕。本機下載不受影響：Diagnosis 分頁的 CSV 與 Markdown 匯出照常下載，
+`HEAD` 與 `Range` 請求也一樣。（自 M5-2 起，Training 頁面的 Export CSV 以文字經由頁面自己的
+server function 傳來，由瀏覽器存檔；伺服器不為它提供檔案。）
+
+### 儀表板的其他變更
+
+- **Training Console 的圖表**外觀與以前相同（y 軸從 0 開始，每條數列維持自己的顏色）。Epoch
+  Window 現在只篩選資料列，x 軸隨之調整。（M5-2 以一張可縮放、沒有 Epoch Window 的圖取代：
+  §4.14，Research › Prepare › Training。）
+- **Runtime Settings** 在打開分頁時會重新整理重啟鎖定狀態：Gradio 6 不會在尚未打開過的分頁中
+  執行 timer。自 M5-3 起，頁面顯示期間它改由儀表板共用的慢速 timer 再次讀取，自己不再有 timer。
+  不論如何，只要有 GPU 工作（訓練或測試執行）正在執行，後端都會拒絕重啟（§4.11）。
+
+### 平台
+
+已測試的後端：Linux x86_64（開發環境）與 Linux ARM64（homelab，由 reviewer 檢查）。
+**Windows 後端尚未以 Gradio 6.30.0 測試**，在有 Windows 後端可測之前一律標為未測試；Windows
+瀏覽器則包含在瀏覽器檢查中。
+
+## 4.11 一次只跑一個 GPU 工作：GPU 鎖與 job runner（自 M5 起，2026-10-20）
+
+受管理的訓練與評估工作彼此互斥：WebUI 與 API 啟動的工作，以及從 shell 執行的
+`scripts/train_model.py` 與 `scripts/measure_scorer.py`。拿不到 GPU 的工作會被拒絕，並指出是誰
+占用；不會排隊等候。
+
+### GPU 鎖
+
+每個部署一個鎖檔，不論使用哪個 workspace，只由 workspace 根目錄指名：
+
+| 設定 | 鎖檔 |
+|---|---|
+| `SHEPHERD_WORKSPACES_ROOT=/絕對路徑的根目錄` | `<根目錄>/.shepherd-gpu.lock`：**根目錄是這把鎖唯一的名稱**（自 2026-10-22 的根因修正輪起）；沒有其他設定能指名一把鎖 |
+| 未設定 | **未設定鎖**：所有受管理的工作都會被拒絕（自 8242b47 的審查起）：CLI 在讀取任何東西之前以結束碼 1 結束，服務拒絕每一次啟動，並各自說明如何設定這把鎖 |
+
+**`SHEPHERD_GPU_LOCK_FILE` 不再被讀取**（自 2026-10-22 的根因修正輪起）。它會在根目錄旁或取代
+根目錄指名一個自己的鎖檔，所以設定了它的服務與只設定根目錄的 shell 都算已設定，卻鎖住兩個檔案、
+並排執行（沒有根目錄的服務不會列出任何 workspace，但 `POST /api/v1/training/start` 接受
+workspace 路徑）。請從服務的環境與你的 shell 中移除它；原本只設定它的地方，在設定根目錄之前，
+每個工作都會以「未設定鎖」被拒絕。
+
+**請只在沒有任何訓練或測試執行進行中時升級**（自審查修正第三輪起，2026-10-22），不論工作是從
+shell 或從服務啟動：這個版本的鎖看不到較早版本所啟動的工作。來自 `main` 的版本完全不取 GPU 鎖，
+而根因修正輪之前的 M5 版本可能持有 `SHEPHERD_GPU_LOCK_FILE` 所指名的檔案，這個版本不會檢查它。
+為升級而停止服務會停止它所啟動的工作；從 shell 啟動的 CLI，請先用
+`pgrep -af 'train_model.py|measure_scorer.py|setup_demo.py'`（或 `nvidia-smi`）確認。升級之後，
+請從服務的環境與你的 shell 中移除 `SHEPHERD_GPU_LOCK_FILE`。
+
+設定了卻無法使用的根目錄（相對路徑、不存在的目錄、服務帳號無權進入的目錄底下的路徑）會拒絕
+所有工作，而不是在沒有鎖的情況下執行，狀態也會說明原因（`gpu.lock.problem`）。
+
+`train_model.py` 與 `measure_scorer.py` 在讀完命令列後立刻取鎖——在解析裝置或讀取任何輸入
+之前——並持有到結束。鎖被占用時，它們會再嘗試約一秒（讓剛要結束的工作不會擋下下一個），
+然後以結束碼 1 拒絕，且不寫出任何東西：
+
+```
+measure_scorer: refused: the GPU lock /srv/shepherd/workspaces/.shepherd-gpu.lock is held by a training job (train_model.py, pid 41234 on gb10, since 2026-10-20T09:12:03+00:00, as it described itself). One managed GPU job runs at a time: wait for it to end, or stop it where it was started. Nothing was written.
+```
+
+`train_model.py` 會在 `train_model: refused:` 之後記錄同樣的句子。WebUI 與 API 在啟動工作前會
+先檢查鎖，並以同樣的占用者拒絕這次啟動（"Nothing was started."）；工作自己的行程隨後再自行
+取鎖。
+
+**請在服務與執行 CLI 的 shell 中設定同一個根目錄**（例如你在 systemd unit 中設定的
+`Environment=` 行（§4.12；unit 的範本為根目錄與 registry 各留有一行註解掉的設定）——unit 本身不讀取
+任何環境檔——或一個同時由 unit 的 `EnvironmentFile=` 與你的 shell 讀取的檔案）。看不到根目錄的
+CLI 會被拒絕，結束碼 1，不寫出任何東西（`train_model:
+refused: SHEPHERD_WORKSPACES_ROOT is not set, so the GPU lock is not configured ...`）；
+`setup_demo.py --train-model` 透過同一個訓練器訓練，同樣如此。**請給 shell 與服務相同的
+workspace 根目錄**：每個指定了這個根目錄的行程——服務、你的 shell 與其中的 CLI——都取
+`<根目錄>/.shepherd-gpu.lock`，沒有其他東西能指名一把鎖。單靠環境變數無法解決的情況（每個行程
+讀的是自己的環境）：指定了另一個根目錄的行程，取的是另一把鎖。
+
+**那個 shell 中也必須設定 `SHEPHERD_REGISTRY`**（自 M5 審查起，BACKLOG 37）：
+`measure_scorer.py --cohort`、`--record` 與 `record_evaluation.py --report` 只在它所指名的
+registry 中運作，它未設定時一律拒絕（§4.9）。`EnvironmentFile=` 的讀法和 shell 不同：systemd
+會保留值中間的空白，也會保留不是出現在值開頭的引號（systemd.exec(5)），所以像
+`SHEPHERD_REGISTRY=/srv/my cohorts` 這樣的一行，服務與 source 這個檔案的 shell 會得到兩個不同的
+值。請使用不含空白與引號的路徑。兩者不同時會被拒絕，絕不會猜測：拒絕訊息會列出設定的值，以及它
+解析成的路徑。
+
+持有者在持有鎖期間會把自己的描述寫在 `<鎖檔>.json`（工作類型、命令、pid、主機、開始時間），
+供上面的訊息使用。這個檔案只是描述：鎖是鎖檔上的 `flock`。被強制結束的工作留下的描述檔無害：
+下一個持有者一取得鎖就會移除它；而所描述的行程已經結束的描述檔，絕不會被當成持有者說出來
+（拒絕訊息會改為說明：鎖由繼承了其描述子的行程持有，或由尚未描述自己的新持有者持有）。**工作執行中絕不要刪除鎖檔**：新建的檔案會成為第二把鎖。
+不論根目錄位於檢出目錄中的何處，git 都會忽略鎖檔及其描述檔（自審查修正第三輪起），所以
+`git clean -fd` 與 `git stash -u` 不會動到它們；但 `git clean -x` 與 `git stash -a` 連被忽略的檔案
+也會移除，仍會刪掉它，所以工作執行中請勿在部署的檢出目錄執行它們。
+
+這把鎖保證什麼、不保證什麼：
+
+- **不論持有者如何結束都會釋放**：正常結束或發生錯誤時由持有者自己釋放；遭 SIGTERM 或
+  SIGKILL 結束時由核心釋放，因此當機後沒有殘留的鎖需要清理。
+- **它是合作式的。** 不取鎖的 GPU 程式不會被它擋住。推論服務不取這把鎖，可能占用 GPU 記憶體；
+  拿不到記憶體的測試執行會以執行失敗回報，不登錄任何東西。
+- **繼承的檔案描述子。** 工作啟動的程式不會保有這把鎖（描述子設為 close-on-exec）。工作以 fork
+  產生、卻沒有啟動新程式的行程——例如 `fork` 啟動方式下的 DataLoader worker——與工作共用這把鎖：
+  工作正常結束時，鎖也會一併對該行程釋放；但工作被強制結束（或未釋放就結束）時，該行程會保有
+  鎖直到它自己結束；這時拒絕訊息會說明所記錄的持有者已經結束。**服務啟動的工作各自是自己行程群組
+  的 leader**（自 8242b47 的審查起），停止與 job runner 會結束整個群組，包括這些行程（見下）。
+  訓練 CLI（`train_model.py`、`setup_demo.py --train-model`）若只有主行程被結束——`kill <pid>`
+  或 `kill -9 <pid>`——它 fork 出的 DataLoader worker 會保有鎖，直到它們察覺為止（torch 的 5 秒
+  watchdog 加上正在處理的樣本，若有 worker 卡住則更久）；`kill -INT <pid>`（Ctrl-C 的訊號，也是
+  runner 自己的正常停止步驟）即使只送給主行程也會立即釋放鎖，而當 CLI 是自己群組的 leader 時
+  （在互動式 shell 中啟動的 CLI 透過 job control 就是），`kill -TERM -- -<pid>` 會結束整個群組。
+  `measure_scorer.py` 不會 fork 任何 worker。
+- **工作區根目錄（鎖檔所在之處）請放在本機檔案系統上。**
+- **Windows** 使用 `msvcrt.locking` 鎖住檔案的第一個位元組；Windows 後端尚未測試。在那裡
+  DataLoader worker 是以 spawn 而非 fork 產生，不會繼承鎖的 handle；系統釋放已結束行程的檔案鎖可能
+  有延遲；停止時對工作的主控台行程群組送出 CTRL_BREAK_EVENT，沒有主控台、無法送出的後端會改用
+  TerminateProcess，它只結束主行程。在 Windows 後端未經測試之前，不加入行程群組真正的對應物 Job
+  Object。
+
+### job runner
+
+Training Console 與訓練 API 背後的服務現在執行兩種工作，各自使用自己的腳本：訓練
+（`train_model.py`）與測試執行（在已登錄的 cohort 版本上執行 `measure_scorer.py`，與操作者
+執行的是同一個 CLI）。一次一個工作：
+
+- **正在執行或仍在停止中的工作占用 GPU**，不論類型。停止仍在等待其行程結束時的訓練啟動，現在
+  會被拒絕（以前會被接受，可能在正被停止的行程旁再啟動第二個行程）。
+- **停止只作用於自己的工作類型**：訓練的停止永遠不會停止測試執行，反之亦然。它先對工作的主行程送
+  SIGINT（它的正常停止），30 秒後對工作的整個行程群組送 SIGTERM，再過 10 秒對群組送 SIGKILL，並在
+  工作沒有任何行程留下之後才回應：每個工作是自己行程群組的 leader，所以它 fork 出、與它共用 GPU 鎖的
+  DataLoader worker 會跟著結束；主行程結束後，runner 先結束群組中剩下的行程，才說明工作如何結束並
+  釋出 GPU（自 8242b47 的審查起：以前 worker 可能在停止回答 "stopped" 之後仍存活並保有鎖）。成為
+  zombie 的 worker（PID 1 從不回收的容器中）不持有任何東西，不會占住 GPU。
+  `POST /api/v1/training/stop` 等待期間不再卡住 API 的其他部分與儀表板。**行程已經自行結束後
+  才送達的停止**（其結果仍在讀取中）會被拒絕（`409`，"had already ended on its own ...;
+  nothing was stopped"），且不改變任何東西：失敗仍是 `failed`，並保留其訊息。
+- **工作如何結束：** 訓練為 `completed`、`failed` 或 `stopped`（與以前相同）；測試執行為
+  `completed`、`failed` 或 `cancelled`，只有在取消確實結束了它時才是 `cancelled`（取消送達時
+  正好自行結束的執行，保留它自己的結束狀態）。因訊號而失敗時會說明是哪個訊號（例如記憶體不足被系統
+  結束時為 `Process ended by SIGKILL`）。
+- **測試執行結束後，它的報告從磁碟讀取。** 每次測試執行都把它的 outcome 檔
+  （`measure_scorer.py --outcome`，§4.9）寫進一個只屬於這個工作的目錄，其中寫明它發布的報告與那些
+  位元組的 digest；這份報告是否保留、是否登錄，接著由登錄流程本身的 helper 以這個 digest 從
+  report store 與 ledger 讀取，絕不從結束碼推斷（狀態的 `outcome` 提供 `kept`、`registered`、
+  附原因的 `summary`，以及執行本身的 `run_outcome`）。**沒有 outcome 檔就表示沒有發布任何報告**，
+  除非執行期間 store 中出現了它的 checkpoint 的執行目錄（在發布報告與寫出 outcome 之間被停止的
+  執行），這時會以同樣的方式讀取，並說明這一點。執行讀取完畢後，工作目錄會被移除。取消後，狀態會
+  說明留下了什麼；遭 SIGTERM 或 SIGKILL 結束時，還會指出暫存檔（`*.tmp`）可能留在哪裡：執行目錄，
+  以及正在登錄報告的執行所屬 checkpoint 的目錄（其 ledger 所在處）。
+- **Runtime Settings 的 Restart Backend** 在任何工作執行中時都會被拒絕，不論是訓練或測試執行
+  （提示文字現在是 "A GPU job (training or a test run) is in progress"）。在短暫延遲之後，它只在
+  沒有工作占用時、並在與這個檢查同一步中關閉 job runner 的 GPU 槽位，並保持關閉直到行程被替換：
+  延遲期間啟動的工作會讓重啟中止，之後才要求的啟動會被拒絕，絕不會因重啟而成為孤兒（自
+  2026-10-22 的根因修正輪起）。在行程被替換之前開始的後端停止（Ctrl-C、`systemctl stop`）也會讓
+  重啟中止：它的訊號會先被記錄下來，而重啟的最後檢查與 exec 是同一步（自審查修正第三輪起）。只有
+  一種情況是這種自我 exec 的重啟無法避免的：在 exec 進行的那一刻到達、其處理函式還來不及記錄的停止
+  訊號，會隨舊行程一起遺失，新行程則繼續服務；在 systemd 下，unit 會在 `TimeoutStopSec` 之後對整個
+  服務送 SIGKILL（包括這期間啟動的工作），在終端機中則再按一次 Ctrl-C 即可停止新的後端。這是重啟以
+  新映像取代自己行程的設計限制：由 supervisor 進行的重啟可以消除它，目前沒有建置（BACKLOG 47）。
+- **停止後端就會停止它的工作**（owner 的決定，2026-10-22）。因為工作是自己行程群組的 leader，在
+  執行後端的終端機按 Ctrl-C、Ctrl-\、終端機掛斷，或只對後端送 SIGTERM，都不再直接到達工作本身；改由
+  後端在訊號到達時就開始像上面的停止一樣停止它（自 2026-10-22 的根因修正輪起，Ctrl-\ 也會導向這裡：
+  以前它會讓工作帶著鎖繼續訓練；後端在工作停止之後仍以這個訊號結束）。**在每一種 POSIX 啟動方式下，
+  被啟動的行程就是伺服器**（自審查修正第三輪起）：`launch_shepherd.sh` 以 exec 執行 launcher，
+  launcher 再 exec 成 uvicorn，瀏覽器模式也是如此（瀏覽器由另一個獨立的輔助行程開啟），所以送給你或
+  監管程式所啟動之 PID 的 SIGTERM 就是送給伺服器；以前在伺服器旁等待的 launcher 會獨自結束，伺服器則
+  帶著它的工作繼續服務。在 Windows 上，launcher 在伺服器旁等待，停止要透過主控台的 Ctrl-C 或
+  Ctrl-Break。在 systemd 下，unit 的
+  `KillMode=mixed` 只把停止的 SIGTERM 送給伺服器（launcher 會 exec 成伺服器），伺服器以同樣方式停止
+  它的工作，systemd 要等伺服器結束後才對剩下的行程送 SIGKILL，且在 `TimeoutStopSec=150` 之內——
+  這涵蓋後端停止工作的最長時間；以前 unit 會在後端的正常停止之前，直接對工作的行程送 SIGTERM。伺服器
+  當掉時，systemd 會對工作的行程送 SIGKILL。**從訊號起，job runner 的 GPU 槽位就關閉**：仍在進行中的
+  啟動（傳送中的請求、已排入佇列的儀表板事件）會被拒絕（"The backend is stopping; nothing was
+  started."），所以後端等待期間不可能有工作在執行。開著的儀表板分頁不會拖延它：uvicorn 結束前會等待每個開著的連線，
+  而每個分頁都保有一個（它的 session heartbeat），所以後端在同一個訊號就結束這些串流。其他不會關閉的
+  連線（例如一個永遠沒送完請求的客戶端）會讓後端繼續等待（"Waiting for connections to close"），
+  但工作已經停止；第二次 Ctrl-C 會結束這個等待，而後端仍會等工作的停止完成才退出。後端被直接結束
+  （SIGKILL、記憶體不足被系統結束）會讓工作繼續執行並保有鎖；GPU chip 會指出它；請用
+  `kill -INT <pid>` 或 `kill -TERM -- -<pid>` 停止它。**不要以 `--reload` 執行後端**：uvicorn 的
+  reloader 每次儲存原始碼都會重啟伺服器，每次重啟的關閉程序都會停止正在進行的訓練。
+  `setup_demo.py` 印出的命令不再含 `--reload`，`python -m src.api.main` 也不再自動重新載入。
+- `GET /api/v1/training/status` 新增 `job_id`、`end_time`、`exit_code` 與 `gpu`：占用 GPU 的
+  工作（任一類型），以及鎖的狀態（`configured`、`path`、`held_by` 及持有者自己的紀錄 `holder`
+  與 `holder_alive`、`problem`，以及沒有設定 workspace 根目錄時的 `unset`），與 GPU chip 顯示的是
+  同一份讀取結果（`source` 欄位隨 `SHEPHERD_GPU_LOCK_FILE` 一起移除：根目錄是唯一的來源）。占用
+  GPU 的測試執行會顯示在這裡，絕不會顯示成訓練。
+
+自 M5-2 起，Research › Test 透過這個 job runner 從儀表板啟動與取消測試執行（§4.14）；沒有任何 API
+route 會啟動測試執行。兩個 CLI 的
+結束碼都沒有改變：鎖被占用屬於「寫出任何東西之前的拒絕」。
+
+---
+
+## 4.12 伺服器設定與伺服器的清單（自 M5-1 起，2026-10-20）
+
+M5 的控制項只作用於伺服器列出的項目，從不作用於請求指定的路徑（`docs/working/PLAN_TEST_RESULTS.md` 的 D7 與 D8；D8 決定誰可以觸發操作者控制項，§4.13）。伺服器列出什麼，以及
+操作者控制項所依賴的部署模式，都來自**服務的環境變數**。請在啟動服務的地方設定它們（執行
+`launch_shepherd.sh` 的 shell，或 systemd unit 中的 `Environment=` 行），然後重啟服務。每個
+設定都在使用時讀取。沒有任何請求、表單或儲存的 UI 檔案能設定它們。缺少或被拒絕的設定會關閉
+需要它的功能，並說明原因。**沒有任何東西會退回預設目錄**，repository 的 `data/workspaces/`
+也一樣。
+
+| 變數 | 值 | 未設定或被拒絕時 |
+|---|---|---|
+| `SHEPHERD_DEPLOYMENT_MODE` | 恰好是 `M1`（`m1`、` M1` 或 `M2` 都算其他值） | 唯讀：每個操作者控制項都被拒絕（D8，§4.13） |
+| `SHEPHERD_WORKSPACES_ROOT` | 一個已存在目錄的絕對路徑；其子目錄就是各個 workspace，其正下方的 `.shepherd-gpu.lock` 就是 GPU 鎖（§4.11） | 不列出任何 workspace，也沒有 GPU 鎖：每個訓練與測試執行都會被拒絕 |
+| `SHEPHERD_REGISTRY` | cohort registry（§4.9），即各指令以 `--registry` 接收的目錄：絕對路徑、已存在、位於 repository 之外；服務與各指令唯一從中登錄報告、在其中進行 `--cohort` 量測的 registry | 不列出任何 cohort 版本；每次登錄與 `--cohort` 量測都被拒絕 |
+| `SHEPHERD_INTAKE_DIR` | 位於 repository 之外的已存在目錄，你把要匯入的 `shepherd-cases/1` 檔案放在這裡；絕對路徑 | 不提供任何匯入來源 |
+| `SHEPHERD_TRAINING_EVIDENCE_DIRS` | 選填：R10 證據目錄，與 `--training-evidence` 接收的相同，以 `:` 分隔（Windows 為 `;`）；每一個都必須是已存在的絕對路徑 | 無；只要有一個項目不合格，整個設定就被拒絕 |
+| `SHEPHERD_ORDERING_ROLES` | 選填：提供依測試分數排序（D4）的 cohort 角色，以逗號分隔 | 無；`institutional_acceptance` 即使列出也會被忽略（`docs/working/PLAN_TEST_RESULTS.md` §4.9 問題 1） |
+
+```bash
+export SHEPHERD_DEPLOYMENT_MODE=M1
+export SHEPHERD_WORKSPACES_ROOT=/home/you/SHEPHERD-Advanced/data/workspaces
+export SHEPHERD_REGISTRY=/srv/shepherd/cohorts
+export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
+```
+
+- **`M1`** 是 SPEC_4 的單一 workspace 部署：在本機上，或經由 SSH forwarding 存取，由 owner 或
+  指定的技術人員操作（`docs/working/PLAN_TEST_RESULTS.md` §4.9 問題 3）。它是操作者控制項檢查的條件之一，而不是授權。其餘條件由
+  D8 在處理每個請求時檢查。不要在 reverse proxy 後面、或在其他人也能登入的機器上設定它。
+- **部署模式由 D8 套用**（§4.13）：每個操作者控制項在處理請求的當下都會讀取它；未設定或任何
+  其他值時，每個控制項都被拒絕，部署對它們而言是唯讀的。診斷、狀態頁面與唯讀清單不受影響。
+- **workspace 根目錄可以位於 repository 內**，一般使用的 `data/workspaces/` 就是如此，但必須
+  由你明確指定。相對路徑、不存在的目錄與檔案都會被拒絕。
+- **GPU 鎖跟著 workspace 根目錄走**（§4.11）：鎖是 `<根目錄>/.shepherd-gpu.lock`，這是這把鎖
+  唯一的名稱；`SHEPHERD_GPU_LOCK_FILE` 不再被讀取。執行正式 CLI 的 shell 需要相同的根目錄；沒有
+  設定根目錄時，每個訓練與測試執行都會被拒絕。
+- **registry 與 intake 目錄存放病人層級的資料。** 兩者都遵循 registry 的規則（§4.9）：相對
+  路徑、不存在的目錄，以及解析後落在 repository 內的路徑（包括經由 symlink）一律拒絕。命令列的
+  `--registry` 與 `SHEPHERD_REGISTRY` 由同一個函式檢查。請把兩者建在只有執行服務與指令的帳號
+  讀得到的地方，例如 `mkdir -m 700`。
+- **服務帳號無法到達的目錄**（它無權進入的上層目錄）會以「無法檢查」（cannot be checked）
+  拒絕並附上錯誤，其功能關閉。在 registry 內，服務讀不到的 `versions/` 會讓 cohort 清單附上
+  這個原因、不列出任何項目；讀不到的版本、`reports/` 或 run 目錄會附原因列出，清單的其餘部分
+  照常列出。
+- **證據目錄**：空的項目（重複或結尾的分隔符）會被略過，絕不會被當成工作目錄讀取。重複的項目
+  只保留一次。
+
+### 伺服器列出什麼
+
+每個項目都以名稱與 digest 識別，從不以路徑識別：請求指定的是 workspace、run 與檔名，或 label，
+伺服器會在自己的清單中重新找到這個名稱。
+
+- **Workspace**（`GET /api/v1/workspaces`）：根目錄下的每個子目錄，依名稱列出。以 `.` 開頭的
+  名稱會被略過。指向根目錄之外的 symlink 子目錄會列出，但不提供使用。每個 workspace 顯示：
+  - 它的**資料集指紋**：其 `split_manifest.json` 完整的 SHA-256。manifest 綁定了圖檔案、兩個
+    樣本檔與資料集紀錄，因此兩次不同的資料集建置一定不同。顯示時可以縮短為前 12 個十六進位
+    數字；比較時一律使用完整的 64 個；
+  - 它的資料集紀錄的綁定狀態與來源，兩者分開呈現（§4.4）；
+  - 它的**建置時間**，來自 `workspace_build.json`（見下文），或附原因的「未記錄」；
+  - 它的各來源宣告的版本，取自資料集紀錄（合成 workspace 沒有）；
+  - 它的 train 與 val 樣本數；
+  - 它是否**可訓練**，以及不可訓練的原因：沒有可讀取的 `split_manifest.json`、資料集紀錄未
+    通過驗證，或 manifest 綁定的某個檔案不存在或無法檢查。清單不計算任何圖檔案的雜湊。訓練
+    執行時會以實際讀取的位元組檢查每個檔案，仍可能拒絕。
+- **某個 workspace 的 checkpoint**：某個已列出 workspace 的 run 版面中的 checkpoint，所有
+  架構或單一架構，最新的 run 在前。每個檔案只讀取一次，且只載入權重，並顯示：
+  - 所讀位元組的 SHA-256；
+  - Trainer 的驗證數字：trainer 的 top-20 選擇指標，絕不是測試結果；檔案沒有記錄時為無；
+  - checkpoint 記錄的資料集指紋，以及它是否就是這個 workspace 目前的指紋；
+  - 無法讀取的檔案會附上原因（包括目標已不存在的連結）。沒有任何檔案被略去；
+  - 解析後落在 workspace 之外的檔案（以 symlink 指向 workspace 之外的 run 或 checkpoint）只
+    附上這個原因：它絕不會被開啟，因此不顯示 digest、大小或紀錄。
+
+  每個項目都以清單中的名稱指稱 workspace：對 `current -> builds/2026-10-20` 而言，它寫的是
+  `current`。列出時會開啟每個 checkpoint，SPEC_4 將此歸類為 checkpoint 檢視（C3），而 D8 只在
+  操作者控制項所在之處提供它：它以 `GET /api/v1/workspaces/{name}/checkpoints` 提供（例如
+  `?architecture=gat` 只列一種架構），位於 D8 的檢查之後（§4.13），被拒絕的請求不會開啟任何檔案。
+- **既有的 checkpoint 清單**（`GET /api/v1/training/checkpoints`；自 M5-2 起，Training
+  頁面的 parent 清單是上面那份依 workspace 的清單）以同樣的方式讀取每個檔案。每個項目新增
+  `sha256`、`validation`、`dataset_fingerprint` 與 `metadata_problem`，全部來自同一次讀取。以前它載入每個檔案卻不保留
+  digest，而且載入錯誤時一聲不響地略過。讀取時已經不存在的檔案（目標已被移除的連結）沒有
+  大小或時間可顯示，會從這份清單中略去；它不再讓整份清單失敗。自 M5-1 起，D8 像檢查控制項
+  一樣檢查它（§4.13）。
+- **Cohort 版本**（`GET /api/v1/cohorts`）：registry 中的每個版本，以 label 及其 `cohort.json`
+  的 SHA-256 識別，附上它的角色，以及這個角色是否提供排序。它也顯示版本的計數、所綁定的圖與
+  資料集紀錄，以及匯入時間。清單絕不顯示病例識別碼或排除清單：D7 把它們留在這台機器上的
+  registry 中。中斷的匯入會附原因列出。每個版本的報告庫以 run id 列出，每個 run 都會說明它的
+  報告是否保留、是否已登錄（`kept`、`registered`，各附原因，以及報告的 digest 與紀錄的序號），
+  來自登錄流程本身對報告庫的讀取，以及對報告所記錄、它量測的 checkpoint 旁邊那份 ledger 的讀取。
+  那份 ledger 載有這份報告時，`registered` 為 `registered`，否則為 `cannot_be_checked`，絕不是
+  `not_registered`：登錄在同一份權重的其他副本旁邊的紀錄（`record_evaluation --checkpoint` 接受
+  任何位元組相同的檔案）不會被查找，原因會指出查過的是哪一份 ledger。以相對路徑記錄 checkpoint 的
+  報告，或無法讀取的報告，沒有可查的 ledger：這時 `registered` 同樣為 `cannot_be_checked`，並說明
+  原因。執行之後被移走的 checkpoint，會在執行讀取它的位置查找。有 `report.json` 的每個 run 也帶有
+  它的報告所屬 key 的 D5 狀態（`contest`：`uncontested`；`contested`，附上不同的欄位與 run；
+  `cannot_be_checked`，絕不能當成 uncontested 解讀），與 Research › Test 對那個 run 顯示的狀態相同，
+  但不含原因本身的文字，因為它可能指出伺服器路徑（自審查修正的根因回合起）。沒有 `report.json` 的
+  run 目錄（中斷、取消或被拒絕的執行），以及狀態沒有被讀取的 run（它的 `problem` 說明原因），
+  `contest` 為 `null`。報告無法讀取、或無法得知其 key 的 run 是 `cannot_be_checked`；可以讀取但無法
+  比較的 run 是 `cannot_be_checked`，除非它的 key 底下的報告已經不一致（這時是 `contested`）。無法
+  掃描的報告庫中的每個 run 也是 `cannot_be_checked`，報告在報告庫的掃描與其狀態的讀取之間被替換的
+  run 也是：一個 run 的狀態與它的 `contest` 永遠描述同一份位元組。每個請求會把每個列出版本的報告庫
+  掃描一次。
+
+### 建置時間：`workspace_build.json`
+
+自 M5-1 起，每次經由 workspace writer 的建置（`scripts/build_knowledge_graph.py
+--generate-samples`、`scripts/setup_demo.py`、probe）都會在 `split_manifest.json` 旁、於其後
+寫入 `workspace_build.json`：
+
+```json
+{
+  "built_at": "2026-10-20T08:15:00Z",
+  "code_revision": {"state": "recorded", "revision": "84371dd...", "dirty": false, "modified_tracked": 0, "untracked": 0},
+  "schema_version": 1,
+  "split_manifest_sha256": "...",
+  "what_this_is": "when this workspace was built and from which code revision; descriptive, not bound by split_manifest.json"
+}
+```
+
+- `built_at` 為 UTC。`code_revision` 與訓練存為 checkpoint producer 的紀錄相同：commit，以及
+  checkout 是否有未提交的變更，不含任何路徑。
+- **描述性的，不受 manifest 綁定。** manifest 不會提到它，因此兩次位元組完全相同的建置保有
+  同一個資料集指紋，不論建置時間為何。
+- **它指明自己描述的是哪一份 manifest。** 放在另一份 manifest 旁的紀錄會顯示「未記錄」，絕不
+  顯示另一次建置的時間。這發生在寫完 manifest 後中斷的重建之後，或是由早於 M5-1、不寫這個檔案
+  的版本所做的重建之後。
+- **M5-1 之前建置的 workspace 沒有這個檔案。** 它的建置時間顯示為「未記錄」，並附上各來源
+  宣告的版本；絕不使用檔案修改時間。不需要為此重建。原因寫的是「由 M5-1 之前的版本建置，或
+  其建置在寫入這個檔案之前就停止」：在 manifest 與這個檔案之間停止的首次建置看起來也一樣。
+- **只建圖的建置**（沒有 `--generate-samples`）既不寫 manifest，也不寫這個檔案。它的建置時間
+  顯示為「未記錄」，原因是沒有可描述的 `split_manifest.json`。
+
+---
+
+## 4.13 操作者控制項、綁定位址與 CORS（自 M5-1 起，2026-10-20）
+
+M5 在 SPEC_4 的部署模式 **M1** 下執行：由 owner 或指定的技術人員在本機上操作服務，或從其他地方
+經由 SSH forwarding 操作（`docs/working/PLAN_TEST_RESULTS.md` §4.9 問題 3）。三件事一起改變，部署可能需要對每一件採取行動：
+
+- 除非 D8 允許該請求，否則操作者控制項會被拒絕；
+- 服務預設綁定 `127.0.0.1`，不再是 `0.0.0.0`；
+- 其他網站的頁面無法讀取服務的回應（CORS）。
+
+### 操作者要設定什麼
+
+在啟動服務的地方設定 `SHEPHERD_DEPLOYMENT_MODE=M1`（§4.12；systemd unit 中是被註解掉的那行
+`Environment=`），然後重啟服務。未設定或任何其他值時，每個操作者控制項都被拒絕，部署對它們而言是
+唯讀的。診斷、查詢、狀態頁面與唯讀清單照常運作。
+
+### 哪些控制項會被檢查
+
+| 位置 | 控制項 |
+|---|---|
+| API | `POST /api/v1/pipeline/reload`、`POST /api/v1/pipeline/config`、`POST /api/v1/training/start`、`POST /api/v1/training/stop`、`GET /api/v1/training/checkpoints`、`GET /api/v1/workspaces/{name}/checkpoints` |
+| 儀表板 | Diagnosis：Change model…（其 checkpoint 清單與它的 Load；自 M5-2 起）。⚙ Settings（Runtime Settings）：Restart Backend 與 Apply Settings。Research › Training：Start、Stop（它的確認會讀取該 run 最後的 checkpoint）、Continue…（它列出 parent）、parent 清單的 Refresh、Check checkpoint 與 Continue Training |
+
+兩份 checkpoint 清單與 Check checkpoint 會開啟 checkpoint 檔案，SPEC_4 將此歸類為 checkpoint 檢視
+（C3），因此它們與控制項一樣受檢查。為了顯示而開啟 checkpoint 的讀取也一樣：Diagnosis 卡片的
+「trained on」一行（所服務的 checkpoint）與 Training 頁面的 run 標題（該 run 的 checkpoint）；
+唯讀的瀏覽器在卡片上會看到 "not shown · reading the checkpoint is an operator control"，在 run 標題則看到
+"dataset not shown · operator control"。Research › Test（§4.14）對它的匯入（intake 清單、Preview 與
+Commit）、Start test、Cancel、Register this report、Add note 與模型清單使用同一個檢查，Research ›
+Models 的 checkpoint 清單與 Load（§4.14）也一樣。其餘一切保持開放：診斷、HPO 與疾病查詢、pipeline 狀態與儲存的 UI 路徑、訓練狀態與指標、
+workspace 與 cohort 清單、已記錄的結果，以及系統頁面。
+
+### 什麼時候允許一個請求
+
+每個控制項都檢查它正在處理的請求，在處理的當下檢查，只有在下列條件全部成立時才允許：
+
+1. `SHEPHERD_DEPLOYMENT_MODE` 恰好是 `M1`；
+2. 請求抵達這台機器的 loopback 位址：由伺服器自己的 socket 決定，絕不採用用戶端自稱的位址；
+3. 請求不帶 proxy 會加上的標頭（`Forwarded`、`X-Forwarded-For`、`X-Forwarded-Host`、
+   `X-Forwarded-Proto`、`X-Real-IP`、`X-Original-Forwarded-For`、`CF-Connecting-IP`、
+   `True-Client-IP`）：M1 沒有 reverse proxy；
+4. 請求的目標是 `localhost`、`127.0.0.1` 或 `[::1]`，任何埠號皆可（它的 `Host` 標頭），以防範
+   DNS rebinding；
+5. 若帶有 `Origin`，它就是儀表板自己的位址（`http://` 或 `https://`，相同的主機與埠號）。
+   瀏覽器在每個 `POST`，以及每個由腳本發出的跨來源請求中，都會送出頁面的來源；
+6. 若帶有 `Sec-Fetch-Site`，它的值是 `same-origin`（儀表板自己的頁面）或 `none`（你在任何網頁
+   之外發起的請求：網址列、書籤、從其他程式打開的連結）。其他網站的頁面以圖片、腳本或連結發出的 `GET`，瀏覽器**不會**附上 `Origin`，而目前的
+   瀏覽器（Chrome 與 Edge 76、Firefox 90、Safari 16.4 及更新版本）會在這個標頭說明請求從哪裡來：
+   `cross-site`，或對同一主機的其他埠號是 `same-site`。因此其他網站的頁面無法從目前的瀏覽器觸發
+   控制項，兩份 checkpoint 清單也包括在內。
+
+無法讀取抵達資訊的請求一律拒絕。檢查在後端：反灰的按鈕只是顯示，直接呼叫 API，或透過 Gradio 的
+HTTP API（`/ui/gradio_api/...`，像 `gradio_client` 那樣）直接呼叫儀表板事件，都會遇到同一個檢查。
+儀表板的控制項在行程內呼叫服務，從不透過 HTTP 呼叫 API。儀表板的 Load（Change model… 與
+Research › Models）在行程內執行 API 的 reload 函式，與 API 的 reload 在同一處執行，因此和以前
+一樣會排在正在執行的診斷之後。180 秒後仍在執行的重新載入不再被顯示為失敗：頁面顯示 "The page
+stopped waiting after 180 s; the server may still finish the reload." 並提供 Read again；若回應
+之後才抵達，則顯示 "The reload finished after the page stopped waiting."。
+
+**拒絕時**，API 回應 `403`，其 `error` 以可據以行動的文字說明哪個條件未通過，並以 "Nothing was
+done." 結尾；絕不重複任何標頭的值。儀表板在控制項顯示結果的地方顯示同一句話（run 清單無法容納
+句子，因此會被清空，這句話以通知的形式出現）。例如：
+
+```
+Refused: This request did not arrive on a loopback address of this machine. The operator controls work only on the machine itself, or through an SSH forward to localhost (for example ssh -L 8264:localhost:8264 <server>, then http://localhost:8264/ui). Nothing was done.
+```
+
+**這個瀏覽器是否啟用了？** `GET /api/v1/system/operator-access` 針對發出詢問的請求回答：
+`enabled`、決定結果的 `condition`，以及它的 `reason`。它是唯讀且開放的；顯示它並不是控制本身。
+
+**被 D8 拒絕的重新載入不改變任何東西。** 以前，任何人的重新載入請求，不論是否被拒絕，都會讓之後的
+每次診斷從 demo 回答變成「已設定但未提供服務」（503）。
+
+**不宣稱的事。** loopback 不是授權：任何能到達這台機器 loopback 的人，包括經由他自己的 SSH
+forward，都會通過。因此 M1 指的是一個經過驗證、由 owner 或指定技術人員操作的單一 workspace 部署。
+同一台主機上、不加任何轉送標頭的 reverse proxy 由本指南排除，而不是被偵測：不要在 M1 服務前面
+放置這樣的 proxy。在這類 `GET` 上既不送 `Origin` 也不送 `Sec-Fetch-Site` 的舊瀏覽器，條件 6
+攔不住：請用目前的瀏覽器操作儀表板。
+
+### 從其他機器操作：SSH forwarding
+
+把本機的一個埠轉送到服務的 **localhost**，而不是它的網路位址：
+
+```bash
+ssh -N -L 8264:localhost:8264 you@gb10
+# 然後在你自己的機器上打開 http://localhost:8264/ui
+```
+
+轉送的連線會以 `localhost:8264` 為目標抵達伺服器的 loopback，因此控制項可以使用。
+`ssh -L 8264:<伺服器的區域網路位址>:8264` 會抵達區域網路位址而被拒絕，而且在新的綁定設定下那裡
+根本沒有服務在監聽。使用其他本機埠也可以（`-L 9000:localhost:8264`，然後打開
+`http://localhost:9000/ui`）。
+
+### 綁定位址：預設 `127.0.0.1`
+
+launcher（`launch_shepherd.sh`、`shep_launch.py`）、systemd unit 與 `python -m src.api.main`
+在沒有另外指定時都綁定 `127.0.0.1`，launcher 會印出它綁定的位址：
+
+```
+[SHEPHERD] Listening on          : 127.0.0.1:8264 (loopback: this machine only)
+```
+
+**綁定任何其他位址都會被拒絕，什麼都不會啟動**（launcher 在安裝任何東西之前就以 2 結束），除非
+設定了 `SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND=1`，因為服務沒有任何認證。這個旗標是**風險承擔，
+而不是控制**：它不認證任何人，也從不解除 D8，因此在網路綁定下，操作者控制項對每個不是從 loopback
+抵達的請求仍然拒絕，而診斷與唯讀頁面對任何能到達該位址的人開放。launcher 會印出一行說明這點的
+`WARNING:`。launcher 一律以 `--no-proxy-headers` 啟動 uvicorn，並放在其命令列的最後，因此 uvicorn
+回報的用戶端位址就是連線本身的位址。
+
+launcher 以 uvicorn 自己的方式判讀 uvicorn 會在哪裡監聽：交給它的 socket（`--fd`，systemd 的
+socket unit 會這樣傳入）優先於 unix socket（`--uds`），再優先於最後一個 `--host`；每一項都取自
+命令列，沒有時取自 `UVICORN_FD` / `UVICORN_UDS`。繼承來的 socket 的位址不會被讀取，因此算作網路
+綁定，需要這個旗標。unix socket 只有本機到得了，不需要旗標；經由它的操作者控制項一律被拒絕（D8
+在那裡看不到 loopback 位址）。這兩種情況下，launcher 都印出 socket 而不是 URL，也不開啟瀏覽器。
+
+launcher 與 `python -m src.api.main` 會把它們綁定的主機以 `SHEPHERD_BIND_HOST` 傳給應用程式，
+應用程式啟動時在提供服務之前對它套用同一個規則（被拒絕時啟動中止，uvicorn 結束）。它們每次都會
+設定它；這不是由你設定的。
+
+不涵蓋：手動啟動的 uvicorn（`uvicorn src.api.main:app --host 0.0.0.0`），應用程式看不到它的綁定，
+它也不會把任何主機傳給啟動程序。請使用 launcher。
+
+**依賴 `0.0.0.0` 的部署如何遷移。** 在 M5-1 之前，launcher 與 unit 綁定所有介面。這次更新之後：
+
+- 原本打開 `http://<伺服器的區域網路位址>:8264/ui` 的人會連不上。請給他們一個 SSH forward
+  （見上文）：這就是 M1 的方式；
+- 如果區域網路必須繼續使用診斷，請設定 `--host 0.0.0.0`（在 unit 的 `ExecStart` 中，或放在
+  launcher 命令列的 `--` 之後），**並且**在同一個環境中設定
+  `SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND=1`。沒有這個旗標時 launcher 會拒絕啟動（結束狀態
+  2），在 systemd 下 unit 會停止而不重啟（`RestartPreventExitStatus=2`；`journalctl --user -u
+  shepherd` 會顯示原因）。這時操作者
+  控制項只能在本機上或經由 SSH forward 使用；
+- 透過 HTTP 重新載入 pipeline 的腳本需要服務處於 M1 模式，並且必須呼叫
+  `http://127.0.0.1:<port>`。`scripts/measure_served_pipeline.py` 因此在它自己啟動的服務中設定
+  `SHEPHERD_DEPLOYMENT_MODE=M1`。
+
+### CORS：沒有跨來源的瀏覽器存取
+
+**預設不允許任何跨來源的瀏覽器存取；管理操作仍由後端的 D8 檢查。** 不論瀏覽器使用哪個位址，
+`/api` 與儀表板的回應都不會對其他來源帶上 `Access-Control-Allow-Origin`，每個跨來源的預檢請求
+（preflight）都回應 400。同源的使用（儀表板本身、`curl`、腳本、`gradio_client`）不受影響。
+
+CORS 只決定頁面能讀取什麼。不需要預檢的跨來源請求仍會抵達伺服器：這正是操作者控制項由 D8 而不是
+由 CORS 檢查的原因。基於同樣的理由，Gradio 的上傳路由在儀表板前面就被拒絕，請求本體不會被讀取
+（§4.10 的 route guard）：儀表板沒有上傳控制項（匯入來源來自 `SHEPHERD_INTAKE_DIR`），否則其他網站
+的頁面每個請求最多能把 1000 個檔案寫進 Gradio 的暫存目錄。Gradio 每個檔案 1 MB 的上限保留作為
+第二道防線；它限制的是每個檔案，而不是檔案的數量。
+
+## 4.14 在儀表板中找到方向（自 M5-2 起，2026-10-20）
+
+`/ui` 的儀表板改為兩層導覽，頁首有兩個狀態標籤（chip），每個欄位共用同一個說明控制項。操作者
+要設定的東西都沒有改變；改變的是各項功能所在的位置。
+
+### 導覽
+
+| 位置 | 內容 |
+|---|---|
+| **Diagnosis (clinical)** | 病患表型、結果與選中候選的細節，使用中的模型顯示在一張卡片上（見下文）。它是第一個畫面 |
+| **Research (pre-clinical)** › Prepare › **Datasets** | 伺服器的 workspace，唯讀（見下文） |
+| **Research (pre-clinical)** › Prepare › **Training** | run bar、下一次 run 的參數、Continue… 與附圖表的 run 檢視（見下文）。它是 Research 下最先顯示的頁面 |
+| **Research (pre-clinical)** › Evaluate › **Test** | 從伺服器的 intake 目錄匯入 cohort 版本、執行測試、保留並登錄其報告（見下文） |
+| **Research (pre-clinical)** › Evaluate › **Models** | 伺服器為某個 workspace 列出的 checkpoint、它們已記錄的測試結果、依測試分數排序與 Load（見下文） |
+| 頁首右側的 **⚙ Settings** | Runtime Settings，與以前相同。對唯讀的瀏覽器，Apply Settings 與 Restart Backend 會呈灰色不可用，原因寫在它們下方 |
+
+- 選中的階段（Diagnosis 或 Research）以填色加粗體顯示；選中的研究頁面以底線加粗體顯示；
+  Settings 被選中時有淺色填色與底線。Prepare 與 Evaluate 是分組標籤，不是按鈕。
+- 不會有任何分頁被收進選單。視窗較窄或放大倍率較高時，兩個 chip 與 Settings 會移到頁首的第二
+  行，研究頁面的分頁也會換行。
+- 瀏覽器分頁的標題會說明目前位置，例如 `Training · Research — SHEPHERD-Advanced`。重新載入
+  頁面會再次打開 Diagnosis：網址不保留位置。
+- 視窗至少 1400 × 760 CSS 像素時，頁面本身不捲動；某個區域的內容超出空間時，在它自己的面板
+  內捲動。視窗較窄或直向時，各區域上下堆疊，由頁面捲動。佈景主題
+  最小的文字為 14 px。
+- 無論系統或瀏覽器要求深色模式，儀表板一律以它的淺色配色顯示（它的配色沒有深色版本，而
+  Gradio 的深色模式會讓頁面上的文字無法閱讀）；網址會加上 `?__theme=light`。Gradio 自己的頁尾
+  （它的 API 頁面、「Built with Gradio」與它自己的「Settings」）不再顯示。
+- 每次顯示某個研究頁面時都會重新讀取它：選取它時，以及在它是目前顯示的頁面時回到 Research
+  時。這時其他研究頁面不會被讀取。
+
+### 頁首的兩個 chip
+
+兩者都會針對你自己的瀏覽器重新讀取：頁面載入時、每 5 秒，以及你每次使用操作者控制項之後。
+它們只是顯示：每個控制項仍在後端檢查它自己的請求（§4.13）。
+
+**Operator controls** 顯示 D8 對這個瀏覽器的請求的回答：
+
+| Chip | 意義 |
+|---|---|
+| `🔒 Operator controls: on (this machine)` | D8 允許這個瀏覽器的請求 |
+| `Read-only: deployment mode not set to M1` | `SHEPHERD_DEPLOYMENT_MODE` 不完全等於 `M1` |
+| `Read-only: request not local` | 請求不是經由本機的 loopback 抵達：請使用轉發到 `localhost` 的 SSH forward |
+| `Read-only: forwarded by a proxy` | 請求帶有 proxy 會加上的標頭 |
+| `Read-only: not addressed to localhost` | 瀏覽器使用的主機名稱不是 `localhost`、`127.0.0.1` 或 `[::1]` |
+| `Read-only: sent from another origin` / `sent from another site` | 請求來自另一個頁面 |
+| `Read-only: request not readable` | 伺服器無法讀取請求是如何抵達的 |
+
+它的 ⓘ 列出每一個操作者控制項、如何使用它們（§4.13 的 SSH forward），在唯讀時並附上 D8 給出
+的完整原因。它從不重複任何標頭的值。
+
+**GPU jobs** 顯示哪個受管理的工作佔用唯一的 GPU 名額（§4.11）：
+
+| Chip | 意義 |
+|---|---|
+| `GPU jobs: none` | 沒有受管理的訓練或評估工作在執行。它從不說「free」：這個鎖是協作式的，常駐的推論服務不在鎖的範圍內，仍可能佔用 GPU 記憶體 |
+| `GPU job: training (job runner)`、`GPU job: test run (job runner)` | 本服務啟動的工作；停止中時加上 `· stopping` |
+| `GPU job: train_model.py (pid 41822, since 09:58 UTC)` | 某個不是本服務啟動的行程持有 GPU 鎖（正式的 CLI，或同一把鎖上另一台伺服器的 job runner）；chip 只顯示其持有者紀錄所寫的內容：指令、pid 與開始時間 |
+| `GPU job: lock held, holder not described` | 鎖被持有，但沒有任何仍在執行的行程被描述為持有者 |
+| `GPU jobs: refused, lock not configured` | 沒有設定 GPU 鎖（指名它的 `SHEPHERD_WORKSPACES_ROOT` 沒有設定），因此在設定之前每個訓練與測試執行都會被拒絕（§4.11） |
+| `GPU jobs: not read`（灰色） | 無法讀取狀態。鎖的設定無法使用時，ⓘ 會說明，但只對 D8 允許的瀏覽器顯示路徑 |
+
+### 說明：ⓘ 按鈕
+
+以前印在 Diagnosis、Training Console 與 Runtime Settings 各欄位下方的說明，現在放在欄位名稱
+後面的 ⓘ 裡。把滑鼠指向它、用 Tab 移到它，或點擊它：說明會出現在一個泡泡中，滑鼠可以移進泡泡
+閱讀。點擊會讓它保持打開；按 Esc 或點擊其他地方會關閉它。點擊欄位名稱仍會把游標放進欄位。
+泡泡會在 ⓘ 的下方或上方有空間的一側打開，而且永遠不會比視窗高：較長的文字在泡泡內捲動。必須
+一直可見的內容仍然直接印出：拒絕的原因、工作的狀態、合成資料的標記、未經驗證的來源，以及
+Training Console 對 HGT 的 AMP 拒絕（「Disabled: HGT requires full float32 …」）。
+
+### Diagnosis (clinical)
+
+第一個畫面分為三個面板：病患的表型、排名的候選，以及選中候選的細節（Evidence · Explanation ·
+Matching phenotypes · Paths）。選取一列（點擊，或在聚焦的列上按 Enter）就會在細節面板顯示該
+候選。視窗至少 1400 × 760 CSS 像素時，每個面板在自己內部捲動；視窗較窄或直向時，三個面板上下
+堆疊，由頁面捲動。
+
+**Patient ID** 留空時以「沒有 id」送出：伺服器為結果給它自己的 id（`patient_…`），因此不同
+瀏覽器的結果絕不會共用同一個（M5-2 之前，空白欄位會以 `webui_patient` 送出）。
+
+**「Model in use」卡片**是輸入面板的最後一項，Run Diagnosis 緊接在它下方：兩者跟在 Options
+後面；當輸入欄位需要捲動時（例如 1536 × 760），兩者固定在面板底部。卡片顯示：
+
+- 標題列 "MODEL IN USE ⓘ · checked HH:MM:SS ↻"：目前服務的內容會為這個瀏覽器讀取——頁面打開
+  時、Diagnosis 顯示期間每 5 秒、每次診斷之後、更換模型之後，以及按 ↻ 時；超過 5 秒的讀取顯示
+  為 "timed out (5 s)"；
+- 模型 "GAT · run 2026-10-17 09:15 · epoch 5"，以及 "model fingerprint <12 hex> ✓ verified"
+  （所服務之 checkpoint 檔的 SHA-256）；
+- "trained on <workspace> · dataset fingerprint <12 hex>"：checkpoint 記錄的訓練所用 dataset
+  （`training_input_digests.split_manifest`），以具有相同完整 fingerprint 的已列出 workspace
+  命名，或 "matches no listed workspace"；絕不是所服務 workspace 自己的 manifest。讀取它需要打開
+  checkpoint 檔，屬於操作者控制項（§4.13）：唯讀的瀏覽器看到 "not shown · reading the checkpoint
+  is an operator control"。若另一個瀏覽器更換了模型，這張卡片會顯示 "not read yet · read it"，
+  直到頁面再次打開或按下 "read it"（每 5 秒的讀取絕不打開 checkpoint）；
+- 只在成立時出現的標籤：`synthetic data`（琥珀色）、`no SP table`、`no trained model` 或
+  `GNN not loaded`（紅色）、`unverified`（琥珀色：圖未對照任何 workspace manifest 檢查）；
+- "Recorded tests: <狀態>"（§4.9），它的 › 會打開 Details 的 Evidence；"Details ›"；
+  "🔒 Change model…"。紀錄的測試與 workspace 名稱會在每次顯示 Diagnosis、每次診斷後、更換模型後
+  以及按下 ↻ 時重新讀取（每 5 秒的讀取只讀目前服務的內容）：在 Research › Test 記錄的測試，回到
+  Diagnosis 時就會出現。
+
+| 卡片顯示 | 意義 |
+|---|---|
+| "Model changed at HH:MM — was <舊>, now <新>"，附 × | 這次讀取發現的模型（或所服務內容的其他部分）與這個瀏覽器上一次讀取的不同（例如另一個瀏覽器做了 Change model）。× 可關閉它 |
+| 灰色："cannot check · <原因> · Retry"、"last known HH:MM:SS · not current" | 無法讀取目前服務的內容："status not read"（完整原因寫在標記下方那一行與 Details 中）或 "timed out (5 s)"。顯示的是最後已知的狀態，沒有 ✓，標籤為灰色虛線 |
+| 灰色："read HH:MM:SS · older than this result" | 最後一次成功的讀取早於畫面上的結果 |
+| "No model loaded" 與 "🔒 Load a model…" | 沒有設定任何 pipeline。Run Diagnosis 呈灰色且無法點擊：滑鼠指向它，或以 Tab 移到它，會說明原因，下方也寫著 "Disabled: no model loaded. …"。API 用戶端此時提出請求，仍會得到 demo 回答 |
+| "No trained model · path reasoning only" 與紅色標籤 | 服務的是沒有訓練模型的圖。Run Diagnosis 仍可使用，結果帶有 `NO TRAINED MODEL: path-reasoning fallback.` |
+| "🔒 Change model…" 呈灰色，附 "Operator controls only: <原因>" | 唯讀的瀏覽器（§4.13）。它永遠看不到 checkpoint 清單 |
+
+結果上方的**標記（badge）**（§4.7）把結果的整個 served identity 與卡片最近一次的讀取比對，而
+卡片在每次診斷後都會再讀一次；讀取失敗或早於結果的讀取，絕不會顯示 "Produced by the model in
+use"。不論標記怎麼說，CSV 與報告都保留結果自己的身分。"Not a certified medical device; decision
+support for a qualified clinician." 位於結果的底部。
+
+**身分抽屜**蓋在細節面板上，有兩個檢視。"Model in use" 是所服務模型的資料，分五節（Identity，
+附完整 digest 與 Copy；Uses；Data；Evidence；Warnings，永遠展開）、結構 fingerprint 那一行（列出
+並計數不同之處；checkpoint 沒有記錄結構 fingerprint 時為 "not compared"），以及通往 Research ›
+Models 完整紀錄的連結。"This result" 只顯示結果本身帶有的內容，每一項與目前使用中的對照。
+"Details ›" 與 "Recorded tests ›" 打開前者，標記打開後者；更換模型進行中（確認畫面打開，或正在
+重新載入）時，它們不會蓋掉 Change model 抽屜。
+
+**🔒 Change model…**（操作者控制項）會打開一個蓋住結果與細節的抽屜：workspace 選單（伺服器的
+清單；預設選中正在服務的 workspace）、置頂的 "In use now"、最近四個 run（其餘在 "Show older
+runs"）、選中 checkpoint 的資料、"Compare in Research › Models ›"，以及 "🔒 Load this model" /
+Cancel。Load 只詢問一次（"Reload the pipeline with <12 hex> for every session?"，from → to，
+變更的列會標出），並以伺服器列出的 workspace 與 checkpoint 重新載入 pipeline。**重新載入只服務
+問句中的那個模型**：它在發布任何東西之前，把自己讀到的 checkpoint 與那個指紋比對，因此期間被改寫
+的檔案（執行中的訓練工作每個 epoch 都會改寫它的 `last.pt`，而重新載入會先讀圖譜）不會改變任何
+東西，結果是 "Not reloaded; the model in use is unchanged." 加上原因。API 以重新載入請求的選用
+欄位 `expected_checkpoint_sha256` 提供同樣的檢查（64 個小寫十六進位數字，否則 422）：其他位元組
+會被拒絕，正在服務的 pipeline 照常服務；沒有這個欄位時與以前一樣不做檢查。它會取代每個瀏覽器
+所服務的內容；已產生的結果保留自己的身分，重新載入期間診斷會等待。確認畫面打開期間，清單本身的
+底部列會隱藏，讓 from → to 各列與這句話保持在畫面內；"Keep <舊>" 會放棄這次確認。確認畫面打開
+期間，Run Diagnosis 停用："Disabled: finish or cancel the model change first."。按下
+"🔒 Reload with <新>" 之後，確認畫面只顯示重新載入的狀態（"Loading <12 hex> for every
+session… 00:00:42"）與 Close（關閉不會中止重新載入；180 秒後為 Read again 與 Close），因此無法
+再要求第二次重新載入；卡片顯示同一行 "Loading …"，Run Diagnosis 顯示 "Disabled: a model load is
+in progress; diagnoses wait until it finishes."。Cancel 或 × 關閉抽屜而不重新載入。重新載入期間，
+Close 或 × 會立即關閉抽屜，重新載入照常進行（無法中止）：卡片保留那一行 "Loading …"，重新載入
+回應後，卡片顯示當時使用中的模型，結果不會再顯示；期間按 "Change model…" 會重新打開抽屜，顯示
+重新載入的狀態。在 Research › Models 中，Close 也以同樣方式關閉確認畫面。
+從 Research › Models 做的 Load 也會更新這張卡片。同一時間只會打開一個抽屜。
+
+### Research › Prepare › Datasets
+
+伺服器在 `SHEPHERD_WORKSPACES_ROOT` 下列出的 workspace 的唯讀清單（§4.12）：也就是 Training、
+Test 與 Models 選擇時使用的同一份清單。每一列顯示名稱；建置時間（UTC，來自
+`workspace_build.json`），或「build time not recorded」加上各來源宣告的版本；**資料集指紋**，
+即其 `split_manifest.json` 的 SHA-256 的前 12 個十六進位數字（Copy 會複製完整的 64 個；兩個
+workspace 前 12 個相同時會顯示更多位數）；來源（`synthetic` 以琥珀色顯示）；資料集紀錄是否通過
+驗證；train 與 validation 的樣本數。標記：
+
+- **serving reads this workspace**：pipeline 正從它提供服務；
+- **same dataset as served**：另一個完整指紋相同的 workspace；
+- **in your Training run bar**：這個瀏覽器分頁為 Training 選擇的 workspace；
+- **not trainable: <原因>**：有列出，但訓練會拒絕它，並附上原因：workspace 沒有
+  `split_manifest.json` 時為 `no split manifest`，有但無法讀取時為 `no readable split
+  manifest`，否則為清單本身給出的原因（例如一個連結到根目錄之外目錄的 workspace：「… resolves
+  outside the workspaces root」）。
+
+較長的名稱或來源清單會在儲存格內換行，因此「In use」欄一直保持在視野內。選取一列會顯示它的細節：
+完整指紋與 Copy、manifest 綁定的內容（短 digest）、種子與切分數量、來源與建置紀錄、workspace
+相對於伺服器 workspace 根目錄的路徑，以及它與其他列出的 workspace 的比較：「Same dataset as …」
+（完整指紋相同）或「Same graph build as … (kg, tensors and record identical), another cut: the
+allocation seed differs …」。對任何瀏覽器都不會顯示伺服器的絕對路徑：根目錄之下的路徑以相對於
+根目錄的方式顯示，其他路徑寫作「a path outside the workspaces root」，被拒絕的
+`SHEPHERD_WORKSPACES_ROOT` 會說明被拒絕但不顯示它的路徑。頁面在打開時讀取 manifest，而不是每次
+選取時讀取。
+
+**Use for training ›** 會打開 Research › Training，並在它的 run bar 中選好該 workspace，只對
+這個瀏覽器分頁有效。伺服器上什麼都不會改變；Start 仍是 D8 檢查的控制項。不可訓練的 workspace
+無法使用，按鈕旁的說明會寫出原因（「Not available: scratch_ws is not trainable — no split
+manifest.」）。在 run bar 中改選另一個資料集，「in your Training run bar」標記會隨之移到那一個。
+
+這個頁面上沒有任何操作者控制項：它只讀取 workspace 的小型 JSON 檔案，從不開啟 checkpoint，因此
+唯讀的瀏覽器看到的是同樣的頁面。沒有設定 `SHEPHERD_WORKSPACES_ROOT` 時，頁面會說明這一點。資料集
+仍在伺服器上以 CLI 建置（`scripts/build_knowledge_graph.py --generate-samples`；示範資料用 `scripts/setup_demo.py`）。
+
+### Research › Prepare › Training
+
+Training Console 現在是分成三部分的一個頁面：上方橫跨整頁的 run bar、左側下一次 run 的參數
+（或取而代之的 Continue… 抽屜），以及右側的 run 檢視。訓練的執行方式沒有改變；改變的是頁面
+選擇資料集與顯示 run 的方式。
+
+**run bar** 永遠不捲動：
+
+- **Dataset**：伺服器的 workspace 清單，與 Datasets 的相同；每個選項就是 workspace 的名稱
+  （無法訓練的另附原因），它的身分只由選單旁的 chip 說一次。選擇一個時會讀取它的 manifest 與
+  紀錄，chip 顯示建置時間、資料集指紋（Copy 會複製完整的 64 個）、`synthetic`、紀錄是否通過驗證，以及
+  **Details ›**（manifest 綁定的內容、種子與數量、來源、相對於 workspace 根目錄的路徑、
+  **All datasets ›**）。頁面打開時選的是 Datasets 的 **Use for training ›** 所選的 workspace，
+  否則是這個分頁先前的選擇，否則是執行中工作的，否則是 serving 讀取的那一個（它可訓練時），
+  否則是第一個可訓練的。訓練工作執行期間，選單會停用並顯示該工作的資料集：「in use by the
+  running job」。
+- **狀態標籤**：`Idle`、`Starting`、`RUNNING · epoch 12/100 · batch 340/812 · 00:14:32`、
+  `Stopping`、`Completed`、`Stopped`（灰色）或 `FAILED`（紅色）。失敗或停止的 run 永遠不會是
+  綠色。
+- **Run name**，接著是**一行原因**，說明某個動作為何停用：「Stop disabled: no training is
+  running.」、對唯讀瀏覽器顯示 D8 的原因（「Operator controls only: request not local」），或
+  占用 GPU 的工作（「GPU job: test run (…) · Open Test ›」、「GPU job: train_model.py (pid …,
+  since …)」）。
+- **🔒 Start、🔒 Continue…、🔒 Stop。** Stop 會先詢問：「Stop training now? The job stops. The
+  checkpoints it has saved are kept and progress not yet saved is lost; if it has saved none
+  yet, this run cannot be continued. Once it has stopped, the page says where it can be
+  continued from.」，按鈕為 **■ Stop training** 與 **Keep training**。詢問不提任何 epoch：
+  詢問開著時工作仍在訓練，提問當下讀到的 epoch 到回答時已經過時；停止後，通知會說明停止留下的
+  checkpoint。這個詢問屬於提出它時正在執行的
+  工作：若該工作在你回答前結束，詢問就會關閉，之後啟動的工作不會顯示它；對已不是目前執行中的
+  工作按下 **■ Stop training** 不會停止任何東西（「Not stopped: …; click Stop again」）。
+- **Start 會送出 chip 顯示的資料集指紋**，job runner 在做任何事之前會再讀一次 manifest：若
+  workspace 在這段時間內重建過，什麼都不會寫入或啟動，頁面會顯示「Not started: The dataset
+  changed since it was shown; select it again. Its split_manifest.json holds … now (shown: …).
+  Nothing was started.」。API 以選用的查詢參數
+  提供同樣的檢查，`POST /api/v1/training/start?expected_dataset_fingerprint=<64 個十六進位數字>`：
+  manifest 不同時以 409 拒絕，不是 64 個小寫十六進位數字的值在到達服務之前就以 422 拒絕；沒有
+  這個參數時與以前一樣不做檢查。**訓練行程會在它自己讀取 manifest 時再檢查一次**
+  （`train_model.py --expect-dataset-sha256`，自 8242b47 的審查起），所以在 runner 檢查之後才重新
+  發布的 workspace 也會在那裡被拒絕，在讀取圖譜與樣本之前：這次執行會失敗，輸出中有
+  `train_model: refused: The dataset changed since it was shown; select it again. …`，結束碼 1，
+  不建立 run 目錄。這兩處檢查都由 manifest 讀取器自己在解碼檔案之前完成（於根因修正輪實作），
+  訓練行程在這之前不檢查 workspace 的任何東西，所以已無法解析或已不存在的 manifest（連整個
+  workspace 都不在了也一樣）也以同樣的文字拒絕；正是所顯示的那份、但現在讀不了的 manifest，
+  則以讀不了為由拒絕。
+- 失敗的 run 的**錯誤橫幅**橫跨整頁。標題（"Training failed: Process exited with code 1"）
+  之下是 run 印出的最後一行錯誤（"Last error printed: TrainingDeviceUnavailable: --device auto
+  requires CUDA, …"），對唯讀瀏覽器與輸出一樣經過遮蔽。run 旁邊只在有日誌時說明日誌在哪裡（它的
+  `logs/train_….json`），否則說明沒有日誌（在建立 run 目錄之前就被拒絕的 run 顯示 "no run
+  directory, so no log"）。接著是輸出的最後幾行，放在「Last output (N lines)」之下：視窗高度至少 1000 px 時展開，較矮的視窗則收合成這一行，讓圖表保有空間（你展開或收合
+  後，在這個頁面中會保持）；一次顯示四行，其餘在框內捲動（窄視窗中全部顯示）。Dismiss 會在這個
+  瀏覽器分頁中隱藏橫幅。run bar 中的每則通知都把名稱與路徑當作文字顯示，不論 workspace 或 run
+  名稱含有什麼字元。
+
+**參數，「for the next run」**：欄位、分組、預設值與驗證都與以前相同，Basic 展開，Advanced 與
+Expert 收合。**Data Paths 與它的 Save Path 已移除**：workspace 由 run bar 選擇，儀表板不再
+讀取或寫入伺服器工作目錄中的 `.shepherd_training_config.json`（留在那裡的檔案會被忽略；是否
+提供「Save as the default dataset」是擁有者要決定的問題）。三個分組放不進視窗時（1920 × 1080
+放得下），參數在自己的欄內捲動；run bar 永遠不捲動。run 檢視分成三列：標題與狀態行、圖表、
+資源列。圖表使用另外兩列剩下的高度，四張圖各自至少保留 140 px 的繪圖區：視窗太矮放不下時
+（例如 1536 × 760），只有圖表那一列在內部捲動，工具列固定在它的頂端；資源列是它下方獨立的一列，
+所以任何座標軸都不會被蓋住（在 1920 × 1080 與約 1850 × 960 下，四張圖、座標軸與標籤以及資源列
+會同時完整顯示）。繪圖區的大小
+只由版面決定，不受畫在裡面的 canvas 影響，所以同一個視窗大小下，不論是直接開啟、重新載入，
+還是從窄視窗恢復，圖表大小都相同。
+
+**Continue…** 會打開一個取代參數欄的抽屜：run bar 所選 workspace 的 checkpoint（伺服器的清單：
+列出時會開啟每個 checkpoint，所以是操作者控制項），分兩步選擇，或手動輸入其中某個 checkpoint
+的路徑。**Run**：各個 run，最新的在前，每個以名稱、架構與開始時間表示（「ui-live-stop-02 · GAT ·
+2026-10-24 17:39」；沒有命名的 run 只有架構與時間）。**Checkpoint**：該 run 的檔案，最新的在前，
+每個以它自己紀錄中的幾個詞表示：「Latest save · 195 epochs completed」，或「Top-k save · 21
+epochs completed · Trainer val MRR 0.2867」（訓練器因 validation MRR 保留的檔案，是 Trainer 的
+數字，不是測試結果）；epoch 數取自檔案的進度紀錄（沒有進度紀錄的檔案只說它記錄的 epoch，從不由此
+推算完成數），限制繼續訓練的條件直接寫在選項裡（「finished」、「stopped early, cannot continue」、
+「weights only, cannot continue」、「cannot be read」）。改選另一個 run 時，會列出它的檔案並選好它
+的 Latest save。兩個選單下方有一張表，列出選項沒說的部分：檔案、保存的內容、階段已結束時繼續訓練
+會做什麼、模型指紋（Copy 會複製完整的 64 個）與 run 的目錄名稱。自 M5-3 起，手動輸入的路徑只會找到該清單中的 checkpoint，其他任何檔案都會在
+開啟之前被拒絕（`PLAN_TEST_RESULTS.md` D8）。
+**Check checkpoint** 顯示繼續訓練會做什麼，並比較 parent 記錄的資料集指紋與 workspace 目前的
+指紋：相同時為 ✓，不同時為琥珀色（附上相符的已列出 workspace，或「matches no listed
+workspace」）。抽屜打開期間，run bar 顯示 Start（停用：「close Continue… to start a new
+run」）、**🔒 Continue Training**（資料集不同時停用，並附原因）與 **Cancel**。從清單選的
+checkpoint 會在伺服器的清單中重新找到。**繼續訓練所用的就是所顯示的模型指紋**（於根因修正輪
+實作）。從清單選的 checkpoint，Check checkpoint 與 Continue Training 都送出清單上的指紋；手動
+輸入的路徑，則由 Check checkpoint 讀取檔案並顯示它的指紋，Continue Training 再送出所顯示的那個。
+job runner 的預覽在讀取檔案時、載入之前比對：不是那個檔案就以「The checkpoint changed since it
+was chosen. It holds … now (chosen: …).」拒絕，並依指紋顯示的地方說明該怎麼做：從清單選的是
+「Refresh the list, then choose it again.」（在清單重新讀取之前，同一個選項送出的仍是清單上的
+指紋），手動輸入的路徑是「Click Check checkpoint to read the file there now.」。接著 job runner 把它
+所決定的 parent 的 digest 交給訓練行程（`train_model.py --expect-resume-sha256`，每個繼續訓練的
+run 都會帶）：run 放在 parent 架構之下的位置與它的設定都來自那次讀取，啟動之後才被替換的檔案
+會在載入之前被訓練行程拒絕（`train_model: refused: The checkpoint changed since it was
+chosen; choose it again. …`，結束碼 1，不建立 run 目錄；Continue… 打開時會重新列出
+checkpoint）。API 也以選用的查詢參數接受 parent 的 digest，
+`expected_parent_sha256=<64 個十六進位數字>`，與 `resume_from` 一起使用（不是該檔案時 409，
+格式錯誤時 422）；沒有這個參數時，訓練行程仍綁定在 runner 讀到的 parent。job runner 與訓練
+行程在啟動時仍會檢查其他一切。Check checkpoint 會說明它讀取的是清單上的哪個檔案（「Checked
+gat/<run>/<file> from the run list」；手動輸入的路徑則顯示路徑與指紋），資料集相符時只說一次
+「✓ Trained on the dataset selected in the run bar」（指紋在 run bar）。抽屜打開期間，run bar 的
+那一行是「Run: a new one, continued from the checkpoint chosen in Continue a run」：繼續訓練的
+run 會在自己的 run 目錄中訓練。抽屜有自己的 **Device**（auto、cuda 或 cpu），每次打開時
+從參數的 Device 開始，Check checkpoint 與 Continue Training 使用的就是它。抽屜打開期間若 run
+bar 的資料集改變（手動選擇、從 Datasets 的「Use for training ›」，或跟隨在另一個資料集上啟動的
+訓練工作），清單會以同樣的方式重新讀取，改為該 workspace 的 run。
+
+**run 檢視**顯示 job runner 最後啟動的 run；伺服器啟動後還沒有啟動過時，顯示 run bar 所選
+workspace 最新的 run（頁面開著時每 10 秒重新列出一次，所以從 CLI 啟動的 run 在寫下第一個
+checkpoint 後就會出現）。標題只有一行：「Run shown」與 run 的易讀名稱（「ui-live-stop-02 · GAT ·
+2026-10-24 17:39」）、workspace 最新的 run 標「latest」，以及從 checkpoint 讀到的、這個 run 使用的
+資料集與 run bar 所選資料集的關係：「✓ same dataset as the run bar」、琥珀色的「≠ not the
+selected dataset」、執行中還沒有 checkpoint 時的「dataset recorded at the first checkpoint」，或
+已結束而沒有 checkpoint 時的「dataset not recorded (no checkpoint)」。Continue… 打開且選了清單上的
+checkpoint 時，標題也會說明這是「the run continued from」還是「not the run continued from」：曲線
+屬於顯示中的 run，與抽屜選了什麼無關。**Details ›** 收著較少看的資訊：run 的目錄名稱、它的
+checkpoint（相對於 workspace 根目錄；執行中為最新的一個）、日誌，以及它使用的資料集指紋（Copy 會
+複製完整的 64 個）；run 所在的 workspace 不是 run bar 所選的時候也列在這裡。標題下是一行狀態：
+「195 of 1000 epochs completed · can be continued」、「Finished · 5000 of 5000 epochs completed ·
+to train further, use Continue…」、「Stopped early (…) · … · cannot be continued」、「Running ·
+epoch 12 of 100」或「No checkpoint saved, so nothing can be continued」；沒有 run 目錄的 run（在
+建立 run 目錄之前就被拒絕）會如實說明：沒有 checkpoint、沒有日誌，也沒有可畫的圖。下方是一張共用 epoch 軸的四格圖：Loss（train，以及以虛線表示的
+validation）、MRR（validation，Trainer top-20）、Hits@K（validation，Trainer），以及對數軸的
+learning rate（0 或缺少的值為空隙）。圖下是資源列（GPU 與記憶體）。
+
+- **縮放與平移**：在圖上滾動滾輪會以指標為中心縮放；在 epoch 軸上只縮放 epoch（四張圖一起），
+  在數值軸上只縮放該圖的數值。拖曳可平移；雙擊或 **Reset view** 會重新容納全部資料；+ 與 −
+  可縮放。圖表取得焦點時：+ − x X y Y、方向鍵、0 與 End。新的 epoch 到來時、切換頁面時，以及在
+  同一個瀏覽器分頁中重新載入時，檢視範圍都會保留（最近顯示的 20 個 run）；之前沒顯示過的 run
+  會容納它的資料，包括 epoch 與每張圖的數值。epoch 軸以整數 epoch 計。縮放中時，
+  「N new epochs →」會以相同寬度跳到最新的 epoch。epoch 軸的起點永遠不會小於 epoch 0：會落到
+  0 以下的檢視（縮小、平移、之前保留的檢視）會保持寬度向右移；數值軸沒有這個下限。窄視窗中滾輪
+  同樣會縮放；不在圖表繪圖區或座標軸上時，滾輪捲動頁面；窄視窗中在圖表上觸控是捲動頁面。操作方式
+  列在 Reset view 旁的 ⓘ 中，不再常駐於工具列。
+- **Export CSV** 由瀏覽器把 run 的 metrics log（epoch、split 與每個記錄的值）存成
+  `training_metrics_<architecture>_<run>.csv`。
+- 圖表經由頁面自己的 server function 讀取 run 的 metrics log，只針對伺服器列出的 run（從不
+  使用路徑），而且只在有新資料列時讀取。頁面顯示期間每 1.5 秒重新讀取一次，在其他頁面時完全
+  不讀。圖表函式庫是 uPlot 1.6.32，由儀表板自己提供（`src/webui/static/vendor/uplot-1.6.32/`，
+  MIT）；沒有任何東西來自 CDN。
+- 載入另一個 run 的圖表時，圖區顯示「Charts loading…」，不會把前一個 run 的圖表放在新 run 的名稱
+  之下；選擇改變之後才到的回應一律不畫。所要求 run 的圖表讀取失敗時（伺服器無法連線或發生錯誤），
+  圖區顯示「The charts could not be loaded. Trying again…」，每 3 秒重試一次，最多 20 次；已畫出的
+  run 在重新要求較新 epoch 的期間保留它的圖表。
+
+**唯讀的瀏覽器**看到同一個頁面，每個動作都停用並附上 D8 的原因，而且不會為它開啟任何
+checkpoint：run 標題的標籤顯示「dataset not shown · operator control」，狀態行只給出 run 的
+狀態，也不顯示 parent 清單。metrics、圖表與資料集紀錄對它的讀取方式與對操作者
+相同。
+
+### Research › Evaluate › Test
+
+§4.9 流程的頁面：匯入 cohort 版本、在其上量測模型、保留報告並登錄它。共有三個面板：
+
+- **Cohort。** workspace（伺服器的清單，與 Datasets 相同以資料集指紋顯示）與 cohort 版本
+  （registry 的清單，`SHEPHERD_REGISTRY`），附上它的 role、各項數量、版本 digest，以及它是否
+  對照這個 workspace 的圖譜映射（「bound to this graph」，或「mapped against another graph」，
+  執行時會被拒絕）。其下是該版本 report store 的每一個執行目錄，最新的在前：何時執行、用哪個
+  模型、是否保留了報告、是否已登錄；當同一個 key 下的報告不一致時顯示「runs disagree —
+  investigate」（D5）。沒有保留報告的執行會說明這一點；目前正在執行的測試位於最上方一列，而這台
+  伺服器上最後一次結束時 store 中什麼也沒有的測試執行（在建立執行目錄之前就被取消，或失敗）會
+  保留為一列，直到下一次啟動或重新啟動伺服器。清單列出最新的 8 份報告以及選取的那一份；
+  **Show all N reports** 會列出其餘的（這個瀏覽器分頁會記住這個選擇）。對操作者而言，每一列的
+  登錄狀態都是在所顯示的 workspace 中、持有它所量測權重的已列出 checkpoint 旁的帳本中檢查，因此
+  尚待登錄的報告無論選取哪一列都顯示「not registered」；其 checkpoint 只列在另一個 workspace 的
+  報告，在被選取之前顯示「registration cannot be checked from the list」。
+- **Run。** 模型：伺服器清單中該 workspace 的 checkpoint，依執行、epoch、檔案與模型指紋列出。
+  列出它們會開啟每一個 checkpoint，因此這是操作者控制項：唯讀的瀏覽器不會看到它，而且頁面對
+  每個 workspace 只列出一次（↻ 會重新讀取清單）。接著是執行時會尋找的 R10 證據（被量測的
+  workspace，以及 `SHEPHERD_TRAINING_EVIDENCE_DIRS`）、**Register the result**、
+  **Deterministic execution**，以及由伺服器固定的 batch size 與裝置（量測程式的預設值；
+  `SHEPHERD_DEVICE`）。**🔒 Start test** 透過 job runner（§4.11）啟動真正的
+  `measure_scorer.py`，使用伺服器在自己的清單中重新找到的 workspace、版本與 checkpoint，並以
+  **頁面顯示過的完整模型指紋與版本 digest 作為預期值**：執行時讀到的檔案或版本若是其他位元組，
+  會在量測之前拒絕。Start 會說明它為何不可用：先說 GPU 工作（「Disabled: GPU job: … One
+  managed GPU job at a time (training or evaluation).」），因為工作執行期間任何選擇都無法讓它
+  可用，然後才是缺少某個選擇或另一個圖譜。工作卡片顯示狀態（Running、Completed、紅色的
+  Failed、灰色的 Cancelled：失敗或取消的執行從不顯示為綠色）、已經過的時間、執行收到的輸入、
+  以 UTC 表示的開始與結束時間（與報告列命名執行的方式相同），以及其輸出的最後 12 行（取消後
+  會收合，其最後一行說明執行已被取消，沒有 traceback；量測拒絕訊息中提到的病患 id 會被略去，
+  D7）；狀態旁的 **🔒 Cancel** 只停止測試執行，從不停止訓練工作。在寬螢幕上，Start、其原因與工作卡片固定在
+  面板底部（上方的選擇會捲動），輸出則在卡片內、Cancel 所在那一行之下捲動，所以兩者都保持
+  可見。執行結束後，卡片顯示 job runner 在執行結束當時從磁碟讀到的結果（標為「When the run
+  ended:」）：是否保留了報告、當時是否已登錄，並附上 job runner 的說明（執行沒有寫出 outcome
+  檔案時為「No report was published …」；取消後說明留下了什麼）。之後才以 Register this report
+  登錄的報告，卡片仍保留執行結束時的狀態，並指向 Result：報告現在的登錄狀態以 Result 為準。頁面顯示時每 5 秒讀取一次工作狀態；剛結束的執行的報告會被選取，
+  每次執行只選取一次。頁面重新讀取版本的報告庫期間（工作狀態改變、某個操作或匯入之後）所做的
+  選擇，會在那次讀取結束後套用，絕不會被它改回；期間做了多次選擇時，留下的是最後一次。
+- **Result。** 選取的報告，以帳本將會保存的紀錄形式顯示：對已排名案例的 Mode C 指標、含每一類
+  排除的涵蓋率、各項關係、以文字表示的 R10（*unverifiable* 從不顯示為 0）、環境、資料集來源，
+  以及是否已登錄（對操作者而言，是在清單中持有它所量測權重的 checkpoint 旁的帳本中檢查）。
+  **🔒 Register this report** 透過唯一的登錄函式（§4.9）登錄一份已保留的報告：伺服器在版本的
+  store 中找到報告、確認其位元組就是顯示過的那些、從它自己的 checkpoint 清單找出帳本應在的
+  位置（以完整 digest 找到持有該權重的已列出檔案，從不使用報告記錄的路徑：若執行讀取的那個
+  檔案以這些權重列出，就用它，這也是清單查看的地方；否則用執行所量測的 workspace 中另一個已
+  列出的副本；再否則用所顯示 workspace 中的副本），然後登錄。執行之後
+  被移動過的 checkpoint 無法以這種方式找到；頁面會說明，機器上的
+  `scripts/record_evaluation.py` 仍然可用。當報告所屬 key 下的多次執行不一致時，頁面顯示這個
+  封鎖、Register 不可用，並列出與新增 **investigation notes**（誰、何時、發現了什麼；🔒 Add
+  note），與該 key 的報告保存在一起。筆記從不解除封鎖。在寬螢幕上，筆記表單（Who、What was
+  found、🔒 Add note）固定在面板底部、Register 之上，所以無論報告或筆記多長都保持可見（What
+  was found 最多長到四行，之後在框內捲動）。筆記檔案無法讀取時，頁面會說明這一點（可能缺少某
+  則筆記），從不顯示「沒有保存筆記」。
+
+**🔒 Import a new version…** 會在 Run 與 Result 上方打開一個抽屜：intake 目錄中的檔案
+（`SHEPHERD_INTAKE_DIR`，§4.12：其中的 `*.json` 檔案，依名稱、大小與修改時間列出；連結到目錄
+之外的檔案會列出但不提供選擇；不會從瀏覽器上傳任何東西）、版本標籤、role（並說明它是否在
+Models 中提供依測試分數排序：`SHEPHERD_ORDERING_ROLES`，`institutional_acceptance` 永遠不提供）
+以及遺失 term 的政策。**🔒 Preview** 在服務內以 CPU 執行匯入程式（它會讀取 workspace 的圖譜），
+不寫入任何東西。預覽顯示各項數量、排除原因及其數量、無法映射的 term 及列出每個 term 的案例數，
+以及版本綁定的內容；**案例 id 不會傳送到瀏覽器**（機器上的命令列預覽會列出它們，提交後的版本
+會記錄它們）。不符合 `shepherd-cases/1` 的檔案會被拒絕，其問題依案例索引列出（最多 10 項），
+從不依案例 id；機器上的命令列預覽（`scripts/import_cohort.py`）會連同案例 id 列出每一項。
+**🔒 Commit as version …** 以相同的輸入重新準備，並在顯示過的 preview id 下提交：
+預覽之後表單有變更，或之後來源或圖譜有變更，都會被拒絕。一次只執行一個預覽或提交；提交之後
+抽屜會關閉，並選取新的版本。寬度或高度低於 1400 × 760 時，抽屜是右側的覆蓋層，在其內部捲動，
+鍵盤焦點會移到它的標題。
+
+**唯讀的瀏覽器**可以看到各版本、它們的報告與狀態、工作與結果：每個控制項都不可用，並寫明
+「Operator controls only: <原因>」（筆記的 Who 與 What 欄位也一樣），checkpoint 清單也不顯示。每個控制項都在後端檢查它自己的
+請求（§4.13）。不會顯示伺服器的絕對路徑：registry、workspace 根目錄、intake 目錄、證據目錄或
+repository 之下的路徑以其名稱書寫（`<registry>/versions/…`），其他路徑寫作「a server path」。
+
+### Research › Evaluate › Models
+
+這是 Diagnosis 分頁「Change model…」所用的同一份模型清單的研究檢視，列出伺服器為某一個 workspace
+列出的 checkpoint（選擇 **Workspace**；**Architecture** 可縮小清單）。Workspace 選單下方會再次列出所選
+workspace 的資料集識別（建置時間、資料集指紋、`synthetic`、紀錄的狀態），因此即使選單截斷了很長的
+workspace 名稱，這些資訊也不會被遮住。所有 run 都會顯示，最新的在前。各欄：
+
+- **Model**：架構、run 的開始時間、epoch；正在提供服務的 checkpoint 標示 **In use (Diagnosis)**
+  （以完整的模型指紋比對）；
+- **Fingerprints: model · dataset trained on**：模型指紋（checkpoint 的 SHA-256 的前 12 個十六進位
+  數字），下方是 checkpoint 所記錄的完整資料集指紋所對應的已列出 workspace，或「matches no listed
+  workspace」；`synthetic` 以琥珀色顯示；
+- **Validation MRR (Trainer, top-20)**：Trainer 自己在 val 樣本上的數值，也就是訓練用來挑選
+  checkpoint 的指標。它從來不是測試結果，也從不與測試結果放在同一欄；
+- **Recorded tests**：checkpoint 旁的 ledger 所記錄的內容，以狀態顯示（「none in ledger」、「no
+  ledger」、「3 · 1 contested」……），從不顯示某個結果的數值。
+
+**列出清單會開啟該 workspace 的每一個 checkpoint**，因此清單是操作者控制項（§4.13）。
+自 M5-3 起，伺服器對每個 checkpoint 檔案只讀一次，檔案改變時（依其裝置、inode、大小、修改與
+變更時間判斷）才再讀，因此再次打開清單或 Load 之後的重新讀取不會開啟未改變的檔案；載入、開始
+訓練或量測時，仍會以所顯示的摘要檢查它所使用的位元組。唯讀的瀏覽器
+看不到清單：頁面會說明原因，並列出三個條件（部署模式 M1、請求經由本機的 loopback 抵達——在本機上或
+經由 SSH forward——且沒有轉發標頭），改為顯示 **Recorded test results of the model in use**：依模型指紋
+從正在服務的 checkpoint 旁的 ledger 讀取，不開啟任何 checkpoint。每筆紀錄的 regime（裝置，deterministic
+開或關）就是紀錄本身所寫的，與操作者看到的相同（為此 `GET /api/v1/evaluations/loaded-model` 會為每筆
+紀錄附上 `deterministic_algorithms`；CPU 紀錄單憑 environment class 看不出來）。那裡沒有 Trainer 的
+驗證數值，也沒有 Load。
+
+**Order: Newest first | By test score。** 只有角色列在 `SHEPHERD_ORDERING_ROLES`（§4.12）中的 cohort
+version 才提供依測試分數排序；其他 version 會列出並說明為何關閉，而 `institutional_acceptance` 一律
+關閉（「awaits the institution's formal evaluation rules」），即使設定中列出它也一樣。選擇指標（Mode C
+MRR (untruncated)、Hits@k，或 mean rank——它以最低者在前排序）與 cohort version。其他 scoring
+semantics 下的紀錄從不與這些一起排序；當該 version 的紀錄分屬不止一種時，會出現 **Scoring
+semantics** 選項。凡是提供排序的地方，頁面都會說明：「A cohort version whose scores were used to
+choose a model is no longer an independent final test for that model.」系統從不依測試分數自動選擇
+模型。各分組：
+
+| 分組 | 內容 |
+|---|---|
+| Ordered by … on … · highest first | 每個 checkpoint 一個數值，依固定規則：它第一筆以 deterministic 環境登錄的紀錄，否則為它第一筆登錄的紀錄（有多筆時顯示 `#3 · D4 rule`）。每一列顯示該紀錄的數值環境（`CUDA · deterministic`），若不是多數已排序列共有的環境則標示 **regime differs** 並附 ⓘ |
+| Contested on this version · not ordered | 規則選中的紀錄有爭議：該 version 的報告庫中同一鍵下的報告彼此不一致。它不參與排序，也從不以下一筆紀錄遞補 |
+| Contested status cannot be checked · not ordered | 無法讀出該鍵下的報告是否彼此一致（該 version 的報告庫或其中某份報告無法讀取；該 version 不在登錄庫的清單中）。它同樣不參與排序，也從不顯示為無爭議 |
+| Not compared on this version · not ordered | 其他 scoring semantics 下的紀錄、分在兩個 ledger 中的紀錄、無法讀取的紀錄或 ledger，或無法讀取的 checkpoint；該列會說明是哪一種 |
+| Not tested on this cohort version · newest first | 在此 version 上沒有紀錄 |
+
+剛選擇另一個 workspace 時，它的各列可能短暫顯示在「Records not read yet」之下，直到頁面讀完它們的
+ledger。
+
+**選取一列**會顯示完整的模型指紋與 Copy、它在什麼資料上訓練（以及那是否為此 workspace 目前的資料
+集）、自成一張卡片的 Trainer 驗證數值、任何警告，以及兩個分段：
+
+- **Recorded test results (Mode C)**：ledger 為這組權重記錄的每一筆紀錄：cohort version 與其角色、
+  Mode C MRR 與 Hits@10、列出每一項排除的涵蓋率，以及 `registered #N` 或琥珀色的 `contested #N` 並
+  說明各次執行在哪裡不一致（或「contested status cannot be checked」，從不顯示為無爭議）、
+  deterministic 開或關；清單已排序時，標出固定規則選中哪一筆，以及其他紀錄與它的差異；接著是各項
+  關係、其他 Mode C 指標、以狀態顯示的 R10（*unverifiable* 是一個原因，從不是 0）、執行環境、資料集
+  與登錄資訊；
+- **Usage history**：每一個已列出的 cohort version 的使用紀錄中提及此 checkpoint 的項目：測試執行、
+  登錄，以及從已排序清單進行的載入，最新的在前。
+
+**🔒 Load this model** 是共用的 Load（與 Diagnosis 的「Change model…」相同的確認；確認開啟時會蓋住
+細節區，不論視窗多矮，它的按鈕都留在表格下方的可見範圍內；按 Close 回到細節區，且仍選取同一個
+checkpoint）。清單依測試分數排序時，按鈕旁的說明會指出這一點，而這次 Load 會以「依該指標排序的模型
+載入」寫入該 version 的使用紀錄，不論是否生效，並附上原因。從「Newest first」清單進行的 Load 不會在
+那裡寫入任何內容。頁面在顯示時、更換 workspace 時以及每一次 Load 之後讀取，包括沒有改變任何服務內容
+的 Load（重新載入被拒絕、再次載入正在使用的模型），因此使用紀錄會顯示該次 Load 寫入的項目；頁面上
+沒有任何東西依計時器執行。
+
+**窄版**（寬度低於 1400 或高度低於 760，各區域上下堆疊時），選取一列會捲動到它的細節區並把鍵盤焦點
+移到那裡；細節區標題列的 **↑ Back to the list** 會回到該列。
 
 ---
 
@@ -1818,6 +2954,7 @@ checkpoint 檔核對報告。
 - [ ] ✅ Voyager 可用 (CPU vector search)
 - [ ] ✅ 所有單元測試通過
 - [ ] ✅ 模型可訓練（檢查VRAM使用）
+- [ ] ⚠️ 儀表板使用 Gradio 6.30.0（拉取後執行 `uv sync --inexact`）：Windows 後端尚未測試（§4.10）
 
 ### ARM + Blackwell (DGX Spark)
 
@@ -1829,6 +2966,7 @@ checkpoint 檔核對報告。
 - [ ] ✅ Vector Index: cuVS (GPU) 或 Voyager (CPU fallback)
 - [ ] ✅ 統一記憶體正確識別
 - [ ] ✅ 模型可訓練（檢查128GB優勢）
+- [ ] ✅ 儀表板使用 Gradio 6.30.0（拉取後執行 `uv sync --inexact`；`/ui` 可載入，§4.10）
 
 ---
 

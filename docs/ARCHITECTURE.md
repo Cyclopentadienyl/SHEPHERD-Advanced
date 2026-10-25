@@ -261,6 +261,25 @@ When neither mode produces usable evidence, the candidate is labeled **INSUFFICI
 #### Critical invariant
 EvidencePanel is run **after** scoring/ranking is complete. Toggling `include_explanations` does not change `confidence_score` or candidate ordering — verified by `TestEvidencePanel.test_evidence_panel_does_not_affect_ranking`.
 
+### Two families called "Mode": they share letters, nothing else
+
+The evidence modes above and the scorer-measurement modes are unrelated. Evidence Mode A has nothing to do with measurement Mode A, and there is no evidence Mode C or D.
+
+| Family | Mode | What it is | Status |
+|---|---|---|---|
+| **Evidence**: the "why" in Diagnosis' candidate details, built after ranking (`src/reasoning/evidence_panel.py`) | A | Direct paths in the KG from the patient's phenotypes to the candidate | in use |
+| | B | Analogy: the nearest known nodes in the GNN's embedding space, and their paths | in use |
+| | INSUFFICIENT | Neither found usable evidence | in use |
+| **Scorer measurement**: how a disease ranker is measured, work item B-0 (`src/evaluation/measurement.py`, `scripts/measure_scorer.py`) | A | Subgraph encoder; each batch's 2-hop subgraph seeded from the answers (the trainer's validation shape); the ladder's control | retired (R2, 2026-10-12) |
+| | B | Full-graph encoder; the same candidates as A, so A→B isolates the encoder's scope | retired (R2, 2026-10-12) |
+| | C | Full-graph encoder; every disease in the KG; raw cosine; ties go to the lower disease id. B→C isolates the candidate universe. The approved scorer, measured | implemented: the formal Test's measurement, labelled "approved scorer policy (Mode C)" on the Test page |
+| | D | Full-graph encoder; production's path-reachable candidates; the η/SP mixture. The ranking the Diagnosis tab serves today (the formula above), measured | not built (B-0.5); its design has an open problem |
+
+**How the measurement modes were decided.**
+- The deploying institution decided (2026-08), before any measurement, that disease ranking is GNN-primary (every disease scored, raw cosine as the interim score) and that SP leaves the ranking for an optional, separate analysis (`docs/DISEASE_SCORER_POLICY.md` §1, §3.4). In the reference paper the disease task uses embedding distance alone; the SP fusion belongs to the candidate-gene task, which has a short candidate list. Mode C measures that scorer. Work item B-1 makes the Diagnosis tab rank by it; until then a Mode C result says the tab's ranking differs (`src/evaluation/caveats.py`).
+- Modes A and B were retired on 2026-10-12: the formal Test's mode was settled as C (`docs/working/PLAN_TEST_RESULTS.md` D3), Mode A could not build a model from any checkpoint the current writer produces, and the institution had authorised retiring the old pipeline (`docs/working/scorer-measurement/ASSESSMENT_MODE_AB_RETIREMENT.md` §9).
+- B-1 may not start before Policy Gate 1, a B-0 report comparing the served ranking (Mode D) with the planned GNN ranking (Mode C) (`docs/DISEASE_SCORER_POLICY.md` §6). C→D changes the candidates and the scorer at once, so B-0.5 adds an intermediate step to tell the two apart (`docs/working/scorer-measurement/README.md`).
+
 ---
 
 ## 9. Platform Support

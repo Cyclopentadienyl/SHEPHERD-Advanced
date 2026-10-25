@@ -284,8 +284,10 @@ class TestTheDemoWorkspaceIsAProductionWorkspace:
         before = {
             p.name: (p.stat().st_mtime_ns, file_sha256(p)) for p in artifacts
         }
-        # The six the manifest binds, plus the manifest itself.
-        assert len(before) == 8, f"expected eight files, got {sorted(before)}"
+        # The six the manifest binds, the manifest itself, and the build record
+        # beside it (M5-1), which a refused rebuild must not rewrite either.
+        assert len(before) == 9, f"expected nine files, got {sorted(before)}"
+        assert "workspace_build.json" in before
 
         ckpt_dir = workspace / "checkpoints" / "gat"
         ckpt_dir.mkdir(parents=True, exist_ok=True)
