@@ -1,0 +1,154 @@
+[0;36mSHEPHERD-Advanced Launcher[0m
+
+[0;36m[SHEPHERD][0m Activating virtual environment...
+[0;32m  ✓[0m Virtual environment activated
+
+[0;36m[SHEPHERD][0m Launching SHEPHERD via shep_launch.py...
+
+[SHEPHERD] OS=linux arch=aarch64 py=3.12 torch=2.10.0+cu130 cuda=13.0
+[SHEPHERD] Platform config: linux_aarch64
+[SHEPHERD] Runtime: PYTORCH_ALLOC_CONF=backend:cudaMallocAsync (allocator preset=cuda_async)
+
+=== PLAN ===
+Platform              : linux_aarch64
+Final attention order : ['cudnn_sdpa', 'torch_sdpa', 'naive']
+Retrieval backend     : cuvs
+Plugin                : 
+FLASHATTN_FORCE_DISAB : 
+Entry module          : uvicorn
+App                   : src.api.main:app
+Passthrough args      : ['--host', '127.0.0.1', '--port', '8264']
+
+[SHEPHERD] Listening on          : 127.0.0.1:8264 (loopback: this machine only)
+[SHEPHERD] Access points (bookmark these):
+[SHEPHERD]   Swagger UI (API docs) : http://127.0.0.1:8264/docs
+[SHEPHERD]   Gradio Dashboard      : http://127.0.0.1:8264/ui
+===  Web Interfaces  ===
+  Swagger UI (API docs) : http://127.0.0.1:8264/docs
+  Gradio Dashboard      : http://127.0.0.1:8264/ui
+========================
+
+[SHEPHERD] $ /home/user/Desktop/SHEPHERD-Advanced/.venv/bin/python -m uvicorn src.api.main:app --host 127.0.0.1 --port 8000 --no-access-log --host 127.0.0.1 --port 8264 --no-proxy-headers
+2026-10-25 22:24:05,925 - src.api.main - INFO - Static files mounted at /static from /home/user/Desktop/SHEPHERD-Advanced/src/webui/static
+/home/user/Desktop/SHEPHERD-Advanced/.venv/lib/python3.12/site-packages/torch/cuda/__init__.py:435: UserWarning: 
+    Found GPU0 NVIDIA GB10 which is of cuda capability 12.1.
+    Minimum and Maximum cuda capability supported by this version of PyTorch is
+    (8.0) - (12.0)
+    
+  queued_call()
+2026-10-25 22:24:08,288 - src.api.main - INFO - Gradio dashboard mounted at /ui
+INFO:     Started server process [621952]
+INFO:     Waiting for application startup.
+2026-10-25 22:24:08,297 - src.api.main - INFO - Starting SHEPHERD-Advanced API...
+2026-10-25 22:24:08,297 - src.api.main - INFO - No SHEPHERD_KG_PATH set. Pipeline will initialize lazily on first request if configured later.
+2026-10-25 22:24:08,297 - src.api.main - INFO - API service ready
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8264 (Press CTRL+C to quit)
+2026-10-25 22:24:19,529 - src.api.main - INFO - GET /ui/ - 200 - 0.042s
+2026-10-25 22:24:19,637 - src.api.main - INFO - GET /ui/theme.css - 200 - 0.001s
+2026-10-25 22:24:29,203 - src.api.main - INFO - GET /static/js/shep_charts.js - 304 - 0.001s
+2026-10-25 22:25:52,534 - src.kg.graph - INFO - KnowledgeGraph initialized
+2026-10-25 22:25:52,534 - src.kg.graph - INFO - KG loaded from /home/user/shepherd-data/workspaces/m5_webui_demo_01/kg.json: 24 nodes, 32 edges
+2026-10-25 22:26:17,319 - src.kg.graph - INFO - KnowledgeGraph initialized
+2026-10-25 22:26:17,319 - src.kg.graph - INFO - KG loaded from /home/user/shepherd-data/workspaces/m5_webui_demo_01/kg.json: 24 nodes, 32 edges
+2026-10-25 22:30:40,792 - src.kg.graph - INFO - KnowledgeGraph initialized
+2026-10-25 22:30:40,792 - src.kg.graph - INFO - KG loaded from /home/user/shepherd-data/workspaces/m5_webui_demo_01/kg.json: 24 nodes, 32 edges
+2026-10-25 22:33:19,282 - src.api.services.training_manager - INFO - Starting test job test-20261025-223319-aa6647: /home/user/Desktop/SHEPHERD-Advanced/.venv/bin/python /home/user/Desktop/SHEPHERD-Advanced/scripts/measure_scorer.py --checkpoint /home/user/shepherd-data/workspaces/m5_webui_demo_01/runs/gat/20261024-173909_ui-live-stop-02_c1d9cf/checkpoints/last.pt --data-dir /home/user/shepherd-data/workspaces/m5_webui_demo_01 --cohort m5-closeout-demo-01 --registry /home/user/shepherd-data/registry --expect-checkpoint-sha256 568b109848430c92de8d13bd5e24d7836bc16fe32f17a088952be4b322a856bf --expect-version-sha256 1c2c6050951155df6ccad39e07579c0df83536a35779f7ce916bda9561bb96c3 --outcome /tmp/shepherd-test-job-y8vqv1y1/outcome.json --device cuda
+2026-10-25 22:33:21,939 - src.api.services.training_manager - INFO - Test process ended (code=0, status=completed)
+2026-10-25 22:34:57,794 - src.api.main - INFO - GET /ui/ - 200 - 0.042s
+2026-10-25 22:34:57,898 - src.api.main - INFO - GET /ui/theme.css - 200 - 0.001s
+2026-10-25 22:58:06,371 - src.api.main - INFO - GET /ui/ - 200 - 0.155s
+2026-10-25 22:58:06,424 - src.api.main - INFO - GET /ui/assets/index-DuOipanW.css - 200 - 0.004s
+2026-10-25 22:58:06,424 - src.api.main - INFO - GET /ui/assets/index-D88pgWqG.js - 200 - 0.006s
+2026-10-25 22:58:06,432 - src.api.main - INFO - GET /ui/static/js/iframeResizer.contentWindow.min.js - 200 - 0.002s
+2026-10-25 22:58:06,449 - src.api.main - INFO - GET /ui/assets/Index-BNEsVTPO2.js - 200 - 0.002s
+2026-10-25 22:58:06,454 - src.api.main - INFO - GET /ui/assets/core-DZ_8y5W8.js - 200 - 0.002s
+2026-10-25 22:58:06,459 - src.api.main - INFO - GET /ui/assets/src-36BzIQt3.js - 200 - 0.002s
+2026-10-25 22:58:06,465 - src.api.main - INFO - GET /ui/assets/runtime-CdhHgN5_.js - 200 - 0.002s
+2026-10-25 22:58:06,469 - src.api.main - INFO - GET /ui/assets/dist-Kll2twSG.js - 200 - 0.001s
+2026-10-25 22:58:06,474 - src.api.main - INFO - GET /ui/assets/core-DcJb0oGd.css - 200 - 0.001s
+2026-10-25 22:58:06,480 - src.api.main - INFO - GET /ui/assets/HistoryStorageControl-B2s_hDWW.js - 200 - 0.001s
+2026-10-25 22:58:06,485 - src.api.main - INFO - GET /ui/assets/HistoryStorageControl-WpXJfujP.css - 200 - 0.002s
+2026-10-25 22:58:06,490 - src.api.main - INFO - GET /ui/assets/logo-D4NPp-_W.js - 200 - 0.001s
+2026-10-25 22:58:06,496 - src.api.main - INFO - GET /ui/assets/statustracker-XFksEMum.js - 200 - 0.002s
+2026-10-25 22:58:06,502 - src.api.main - INFO - GET /ui/assets/src-CC39XcQU.js - 200 - 0.003s
+2026-10-25 22:58:06,506 - src.api.main - INFO - GET /ui/assets/legacy-B8FggjVV.js - 200 - 0.001s
+2026-10-25 22:58:06,511 - src.api.main - INFO - GET /ui/assets/src-B8NTxzPO.css - 200 - 0.001s
+2026-10-25 22:58:06,517 - src.api.main - INFO - GET /ui/assets/browser-BZcrnZlS.js - 200 - 0.001s
+2026-10-25 22:58:06,522 - src.api.main - INFO - GET /ui/assets/statustracker-CouyIdTk.css - 200 - 0.001s
+2026-10-25 22:58:06,527 - src.api.main - INFO - GET /ui/assets/Index-EfSyqQsq.css - 200 - 0.001s
+2026-10-25 22:58:06,538 - src.api.main - INFO - GET /favicon.ico - 404 - 0.000s
+2026-10-25 22:58:06,563 - src.api.main - INFO - GET /ui/theme.css - 200 - 0.001s
+2026-10-25 22:58:06,570 - src.api.main - INFO - GET /ui/assets/Blocks-DmKAmlrw.js - 200 - 0.007s
+2026-10-25 22:58:06,572 - src.api.main - INFO - GET /ui/assets/settings-logo-AL7zGNml.js - 200 - 0.007s
+2026-10-25 22:58:06,572 - src.api.main - INFO - GET /ui/assets/Blocks-0aNuD791.css - 200 - 0.006s
+2026-10-25 22:58:06,572 - src.api.main - INFO - GET /ui/assets/api-logo-CCEtYehn.js - 200 - 0.008s
+2026-10-25 22:58:06,608 - src.api.main - INFO - GET /ui/assets/Index-Bhs_KVDQ.js - 200 - 0.002s
+2026-10-25 22:58:06,609 - src.api.main - INFO - GET /ui/assets/Index-DrCM5gzc.css - 200 - 0.002s
+2026-10-25 22:58:06,610 - src.api.main - INFO - GET /ui/assets/Index-BiBThEq_.js - 200 - 0.001s
+2026-10-25 22:58:06,612 - src.api.main - INFO - GET /ui/assets/Index-DiRhyWFA.js - 200 - 0.002s
+2026-10-25 22:58:06,614 - src.api.main - INFO - GET /ui/assets/Index-CDJ7bs8I.js - 200 - 0.002s
+2026-10-25 22:58:06,619 - src.api.main - INFO - GET /ui/assets/Example-bDO7g5TM.js - 200 - 0.005s
+2026-10-25 22:58:06,622 - src.api.main - INFO - GET /ui/assets/HTML-BuYIBbeV.css - 200 - 0.006s
+2026-10-25 22:58:06,622 - src.api.main - INFO - GET /ui/assets/Example-BG5zdIqX.css - 200 - 0.007s
+2026-10-25 22:58:06,622 - src.api.main - INFO - GET /ui/assets/HTML-nXzWgPg4.js - 200 - 0.007s
+2026-10-25 22:58:06,625 - src.api.main - INFO - GET /ui/assets/Index-VzTVYr-q.css - 200 - 0.008s
+2026-10-25 22:58:06,629 - src.api.main - INFO - GET /ui/assets/Index-Bvh1mu-b2.js - 200 - 0.006s
+2026-10-25 22:58:06,629 - src.api.main - INFO - GET /ui/assets/Index-Bl9A3fpy2.js - 200 - 0.010s
+2026-10-25 22:58:06,629 - src.api.main - INFO - GET /ui/assets/Index-C3tGjNLZ.js - 200 - 0.006s
+2026-10-25 22:58:06,631 - src.api.main - INFO - GET /ui/assets/Index-2bqFdrPw.js - 200 - 0.005s
+2026-10-25 22:58:06,633 - src.api.main - INFO - GET /ui/assets/Index-rQ7sGSx5.js - 200 - 0.007s
+2026-10-25 22:58:06,636 - src.api.main - INFO - GET /ui/assets/Example-CQdfd5zG.js - 200 - 0.006s
+2026-10-25 22:58:06,636 - src.api.main - INFO - GET /ui/assets/Index-DuUB0zr0.js - 200 - 0.006s
+2026-10-25 22:58:06,636 - src.api.main - INFO - GET /ui/assets/Index-aHUUuV8d.js - 200 - 0.006s
+2026-10-25 22:58:06,638 - src.api.main - INFO - GET /ui/assets/Index-C0eJ9aPa.js - 200 - 0.006s
+2026-10-25 22:58:06,640 - src.api.main - INFO - GET /ui/assets/Image-D80gk2B9.js - 200 - 0.006s
+2026-10-25 22:58:06,642 - src.api.main - INFO - GET /ui/assets/shared-BhQ0vYrF.js - 200 - 0.005s
+2026-10-25 22:58:06,643 - src.api.main - INFO - GET /ui/assets/Index-cPrwRDCc.js - 200 - 0.005s
+2026-10-25 22:58:06,643 - src.api.main - INFO - GET /ui/assets/ImagePreview-mao1r4F1.js - 200 - 0.007s
+2026-10-25 22:58:06,646 - src.api.main - INFO - GET /ui/assets/Example-BQeMFJfl.js - 200 - 0.006s
+2026-10-25 22:58:06,648 - src.api.main - INFO - GET /ui/assets/Index-DpkqE-K6.js - 200 - 0.007s
+2026-10-25 22:58:06,650 - src.api.main - INFO - GET /ui/assets/markdown-code-pNU2apjG.js - 200 - 0.007s
+2026-10-25 22:58:06,653 - src.api.main - INFO - GET /ui/assets/prism-BCG1-F_o.js - 200 - 0.008s
+2026-10-25 22:58:06,653 - src.api.main - INFO - GET /ui/assets/Example-DvcNP0pl.js - 200 - 0.008s
+2026-10-25 22:58:06,655 - src.api.main - INFO - GET /ui/assets/Index-CDyOSUJJ.css - 200 - 0.008s
+2026-10-25 22:58:06,658 - src.api.main - INFO - GET /ui/assets/Index-CZooJg7N.js - 200 - 0.009s
+2026-10-25 22:58:06,658 - src.api.main - INFO - GET /ui/assets/Example-BLKfr5DZ.js - 200 - 0.006s
+2026-10-25 22:58:06,660 - src.api.main - INFO - GET /ui/assets/Index-Dx8MxtAM.css - 200 - 0.006s
+2026-10-25 22:58:06,661 - src.api.main - INFO - GET /ui/assets/Index-Cy46r5i1.js - 200 - 0.007s
+2026-10-25 22:58:06,662 - src.api.main - INFO - GET /ui/assets/Index-LKTY8Jbn.css - 200 - 0.006s
+2026-10-25 22:58:06,665 - src.api.main - INFO - GET /ui/assets/Index-C1GyojFs.css - 200 - 0.006s
+2026-10-25 22:58:06,665 - src.api.main - INFO - GET /ui/assets/Index-BSx4efE_.js - 200 - 0.007s
+2026-10-25 22:58:06,667 - src.api.main - INFO - GET /ui/assets/Example-B1swpn2y.css - 200 - 0.006s
+2026-10-25 22:58:06,668 - src.api.main - INFO - GET /ui/assets/Index-Ba0kRe4M.css - 200 - 0.006s
+2026-10-25 22:58:06,669 - src.api.main - INFO - GET /ui/assets/Index-BHng8pvl.css - 200 - 0.006s
+2026-10-25 22:58:06,672 - src.api.main - INFO - GET /ui/assets/Index-nz772N1q.css - 200 - 0.006s
+2026-10-25 22:58:06,672 - src.api.main - INFO - GET /ui/assets/Index-BxdrSKgm.js - 200 - 0.005s
+2026-10-25 22:58:06,674 - src.api.main - INFO - GET /ui/assets/Index-xeBx2-Z3.js - 200 - 0.006s
+2026-10-25 22:58:06,676 - src.api.main - INFO - GET /ui/assets/Image-Da_XA0w6.css - 200 - 0.006s
+2026-10-25 22:58:06,676 - src.api.main - INFO - GET /ui/assets/ImagePreview-B2sIO-1d.css - 200 - 0.006s
+2026-10-25 22:58:06,679 - src.api.main - INFO - GET /ui/assets/Example-DWDv4qx4.css - 200 - 0.006s
+2026-10-25 22:58:06,680 - src.api.main - INFO - GET /ui/assets/Index-CvOXDAXN.css - 200 - 0.005s
+2026-10-25 22:58:06,680 - src.api.main - INFO - GET /ui/assets/Index-CcsdfK63.css - 200 - 0.008s
+2026-10-25 22:58:06,683 - src.api.main - INFO - GET /ui/assets/markdown-code-CcdvG8OS.css - 200 - 0.006s
+2026-10-25 22:58:06,684 - src.api.main - INFO - GET /ui/assets/Example-CgIc4GLa.css - 200 - 0.007s
+2026-10-25 22:58:06,686 - src.api.main - INFO - GET /ui/assets/Example-BeU1J4ps.css - 200 - 0.005s
+2026-10-25 22:58:06,687 - src.api.main - INFO - GET /ui/assets/Index-BGK55NKF.css - 200 - 0.007s
+2026-10-25 22:58:06,687 - src.api.main - INFO - GET /ui/assets/Index-CUQnb8lN.css - 200 - 0.005s
+2026-10-25 22:58:06,689 - src.api.main - INFO - GET /ui/assets/Index-3FqI08xq.css - 200 - 0.006s
+2026-10-25 22:58:06,690 - src.api.main - INFO - GET /ui/assets/Index-CSQTwOT5.css - 200 - 0.005s
+2026-10-25 22:58:06,691 - src.api.main - INFO - GET /ui/assets/Index-CA1QTtuq.css - 200 - 0.004s
+2026-10-25 22:58:06,691 - src.api.main - INFO - GET /ui/assets/Index-Cr_YPqE0.css - 200 - 0.003s
+2026-10-25 22:58:06,790 - src.api.main - INFO - GET /static/fonts/ibm-plex-sans-400.woff2 - 200 - 0.001s
+2026-10-25 22:58:06,883 - src.api.main - INFO - GET /static/fonts/ibm-plex-sans-500.woff2 - 200 - 0.004s
+2026-10-25 22:58:06,885 - src.api.main - INFO - GET /static/fonts/ibm-plex-sans-700.woff2 - 200 - 0.006s
+2026-10-25 22:58:06,888 - src.api.main - INFO - GET /static/fonts/ibm-plex-sans-600.woff2 - 200 - 0.009s
+2026-10-25 22:58:37,133 - src.api.main - INFO - GET /static/js/shep_charts_locale.js - 200 - 0.002s
+2026-10-25 22:58:37,135 - src.api.main - INFO - GET /static/js/shep_charts.js - 200 - 0.003s
+2026-10-25 22:58:37,135 - src.api.main - INFO - GET /static/vendor/uplot-1.6.32/uPlot.iife.min.js - 200 - 0.004s
+2026-10-25 22:58:37,136 - src.api.main - INFO - GET /static/vendor/uplot-1.6.32/uPlot.min.css - 200 - 0.005s
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+2026-10-25 23:07:57,774 - src.api.main - INFO - Shutting down SHEPHERD-Advanced API...
+INFO:     Application shutdown complete.
+INFO:     Finished server process [621952]
