@@ -69,7 +69,8 @@ for Training and Datasets, and 4–6 for Test and Models: about 2½ to 3½ worki
 layout or navigation. A two-part split (about a week within M5, then a design pass) was proposed; the owner and the
 reviewer chose a **narrow close-out** instead (2026-10-25).
 
-**Must-fix within M5** (done in the close-out batch, each with a regression test that fails on the code before it):
+**Must-fix within M5** (done in the close-out batch `f9202b6`, each with a regression test that fails on the code before
+it; the reviewer's incremental review of `e6ab1c3..f9202b6` found no P1 or P2):
 
 - the score named for what it is: "Score" in the table, the details header and the human-readable report, with an ⓘ
   and a report line saying it ranks the candidates and is not a calibrated disease probability (appendix 1, in part);
@@ -121,9 +122,10 @@ needed warning that cannot be seen, or a control that cannot be operated.
 ## 6. For the reviewer, on M5's close
 
 M5's functional acceptance passed (99 of 99 probes); that evidence stays tied to `b14c4de`, and the UI increments
-since carry their own tests. The close needs: the review of the close-out batch; the owner's local UI recheck
-(section 4); and the remaining manual acceptance, compared against the notes already taken and adding only what is
-missing (models the probe made may be reused):
+since carry their own tests. The close needs: the review of the close-out batch (passed, 2026-10-25); the owner's
+local UI recheck at `f9202b6` (section 4), which the code review does not replace; and the remaining manual
+acceptance, compared against the notes already taken and adding only what is missing (models the probe made may be
+reused):
 
 - launcher and service settings;
 - Datasets selection;
