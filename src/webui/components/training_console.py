@@ -2631,8 +2631,10 @@ FIELD_HELP = {
     ),
     "device": (
         "Device",
-        "auto: use GPU if available, otherwise CPU. Continue… has its own Device field, which "
-        "starts from this one.",
+        "auto: the GPU (CUDA). With no CUDA device visible, Start is refused: training never "
+        "falls back to the CPU on its own.\n\n"
+        "- cpu: for development, recorded as asked.\n"
+        "- Continue… has its own Device, which starts from this one.",
     ),
     "seed": (
         "Seed",
@@ -2763,8 +2765,8 @@ FIELD_HELP = {
     ),
     "continue_device": (
         "Device",
-        "Where the continued run trains: auto uses the GPU if there is one, otherwise the "
-        "CPU.\n\n"
+        "Where the continued run trains: auto is the GPU (CUDA), and with no CUDA device "
+        "visible the start is refused; choose cpu for development.\n\n"
         "Check checkpoint and Continue Training both use it. Mixed precision works only on "
         "CUDA; the check says when the checkpoint's setting would not hold here.\n\n"
         "It starts from the Parameters' Device each time Continue… opens.",

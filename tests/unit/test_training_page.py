@@ -1811,6 +1811,16 @@ def test_the_chosen_checkpoints_details_say_what_its_option_does_not():
     assert tc.parent_details_html(None) == ""
 
 
+def test_the_device_help_says_auto_needs_cuda_as_the_trainer_does():
+    """train_model.py refuses --device auto without CUDA (contract M3a-1a); the
+    help said it fell back to the CPU, so the default could start a run the
+    trainer refuses without the page saying why (the WebUI audit, 2026-10-25)."""
+    for key in ("device", "continue_device"):
+        text = tc.FIELD_HELP[key][1]
+        assert "CUDA" in text and "refused" in text, key
+        assert "otherwise CPU" not in text and "otherwise the CPU" not in text, key
+
+
 def test_the_chart_help_leads_with_the_gestures_in_paragraphs():
     title, text = tc.TOPIC_HELP["training-charts"]
     assert text.startswith(tc.charts.GESTURES + "\n\n") and "\n• over the epoch axis" in text
