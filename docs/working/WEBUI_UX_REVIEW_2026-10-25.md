@@ -161,18 +161,24 @@ since carry their own tests. The close needs: the review of the close-out batch 
 local UI recheck at `f9202b6` (done, section 4), which the code review does not replace; the review of the
 explanation wording fixed after it (passed, 2026-10-25; the wording is confirmed with the next diagnosis, no round of
 its own); and the remaining manual acceptance, compared against the notes already taken and adding only what is
-missing (models the probe made may be reused). What the recheck at `f9202b6` evidenced is marked:
+missing (models the probe made may be reused). The close-out round at `773dc4a` (2026-10-25,
+[`m5-webui-acceptance-2026-10-25/`](m5-webui-acceptance-2026-10-25/README.md)) supplied what had no evidence yet;
+the other items keep the earlier rounds' evidence, as the reviewer read it:
 
-- launcher and service settings (a normal launcher start: evidenced);
+- launcher and service settings (a normal start at `f9202b6`; the server's settings in M1 at `773dc4a`);
 - Datasets selection;
-- Training, the items this round changed: Start, live zoom, Keep training, Stop, the Continue preview (evidenced),
+- Training, the items this round changed: Start, live zoom, Keep training, Stop, the Continue preview (`f9202b6`),
   Export CSV, session isolation;
-- Diagnosis: load, inference, results, CSV and report identity (evidenced; the explanation's wording fixed after);
-- Test: preview import → version → measure → register → read back;
-- Models: display and the ordering warning;
-- read-only refusals and a normal service stop (the stop: evidenced).
+- Diagnosis: load, inference, results, CSV and report identity (`f9202b6`; the explanation's wording fixed after);
+- Test: preview import → version → measure → register → read back (`773dc4a`; the job card's "Not registered" from
+  the run's end now says so, fixed after it);
+- Models: display and the ordering warning (`773dc4a`, one tested model);
+- read-only refusals and a normal service stop (`773dc4a`: the page's refusals in a read-only tab, not a backend
+  security test; the stop at both).
 
-M1's scope is unchanged and BACKLOG 50 (pin PyG) stays open. The later improvements need not be cleared to close.
+M1's scope is unchanged and BACKLOG 50 (pin PyG) stays open. The later improvements need not be cleared to close;
+the owner's report that the pages are still overloaded and hard to read stands (BACKLOG 52): a functional pass is
+not a UX acceptance.
 
 ## Appendix: every finding
 

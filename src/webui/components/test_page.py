@@ -1373,10 +1373,14 @@ def job_html(job: Mapping[str, Any], roots: Sequence[Tuple[str, str]],
 
 
 def outcome_html(outcome: Mapping[str, Any], roots: Sequence[Tuple[str, str]]) -> str:
-    """What an ended run left, as the runner read it from disk: kept and
-    registered (True, False or None for "cannot be checked") and its summary."""
+    """What an ended run left, as the runner read it from disk when the run
+    ended: kept and registered (True, False or None for "cannot be checked")
+    and its summary. It is that moment's reading and says so; a report
+    registered afterwards (Register this report) reads "Registered" in Result,
+    which is where its registration now is shown (the M5 close-out,
+    2026-10-25)."""
     kept, registered = outcome.get("kept"), outcome.get("registered")
-    chips = []
+    chips = ['<span class="shep-sub">When the run ended:</span>']
     chips.append(f'<span class="shep-tag shep-tag-ok">Report kept {OK_MARK}</span>' if kept is True
                  else r.chip("No report kept", "grey") if kept is False
                  else r.chip("Kept: cannot be checked", "grey"))
@@ -1386,8 +1390,10 @@ def outcome_html(outcome: Mapping[str, Any], roots: Sequence[Tuple[str, str]]) -
                      else r.chip("Not registered", "neutral") if registered is False
                      else r.chip("Registered: cannot be checked", "grey"))
     summary = outcome.get("summary") or ""
+    now = ('<div class="shep-sub">The report\'s registration now is shown in Result.</div>'
+           if kept is True else "")
     return (f'<div class="shep-test-outcome"><div class="shep-test-chips">{"".join(chips)}</div>'
-            f'<div>{e(redact(summary, roots))}</div></div>')
+            f'<div>{e(redact(summary, roots))}</div>{now}</div>')
 
 
 # ---------------------------------------------------------------------------

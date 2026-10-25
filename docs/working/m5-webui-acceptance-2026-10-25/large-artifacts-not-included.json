@@ -1,0 +1,72 @@
+[
+  {
+    "path": "/home/user/shepherd-data/workspaces/m5_webui_demo_01/edge_indices.pt",
+    "size": 4237,
+    "expected_sha256": "7624169d26decbe534873d25e385817c01485df08e5c6fe3df82222f2c854bec",
+    "actual_sha256": "7624169d26decbe534873d25e385817c01485df08e5c6fe3df82222f2c854bec",
+    "unchanged": true
+  },
+  {
+    "path": "/home/user/shepherd-data/workspaces/m5_webui_demo_01/node_features.pt",
+    "size": 8349,
+    "expected_sha256": "d52da31dff4f4b67e0af78e6205565e46a0aee9fa38a68e75b94b25c0709fbdb",
+    "actual_sha256": "d52da31dff4f4b67e0af78e6205565e46a0aee9fa38a68e75b94b25c0709fbdb",
+    "unchanged": true
+  },
+  {
+    "path": "/home/user/shepherd-data/workspaces/m5_webui_demo_01/runs/gat/20261024-163856_run_559817/checkpoints/last.pt",
+    "size": 25446289,
+    "expected_sha256": "a33f4766581a12fc2a39455dea8674da86c5682d25ea488a2483397492379a67",
+    "actual_sha256": "a33f4766581a12fc2a39455dea8674da86c5682d25ea488a2483397492379a67",
+    "unchanged": true
+  },
+  {
+    "path": "/home/user/shepherd-data/workspaces/m5_webui_demo_01/runs/gat/20261024-163856_run_559817/checkpoints/model-00-0.2427.pt",
+    "size": 25442257,
+    "expected_sha256": "7e7955ceb632b76727bc88fbd7282d5243f066f84340c09593eb37cc4eddfd0c",
+    "actual_sha256": "7e7955ceb632b76727bc88fbd7282d5243f066f84340c09593eb37cc4eddfd0c",
+    "unchanged": true
+  },
+  {
+    "path": "/home/user/shepherd-data/workspaces/m5_webui_demo_01/runs/gat/20261024-163856_run_559817/checkpoints/model-01-0.2160.pt",
+    "size": 25442769,
+    "expected_sha256": "b6f02cf188f82e3f57e72d82652dfb3d86231398344f5ae068e30bbff4f84503",
+    "actual_sha256": "b6f02cf188f82e3f57e72d82652dfb3d86231398344f5ae068e30bbff4f84503",
+    "unchanged": true
+  },
+  {
+    "path": "/home/user/shepherd-data/workspaces/m5_webui_demo_01/runs/gat/20261024-163856_run_559817/checkpoints/model-02-0.2160.pt",
+    "size": 25443281,
+    "expected_sha256": "55d7b5b89fa21a474cb6d3dd562350acb11b8a59574fb91e061adfdbeb2930b2",
+    "actual_sha256": "55d7b5b89fa21a474cb6d3dd562350acb11b8a59574fb91e061adfdbeb2930b2",
+    "unchanged": true
+  },
+  {
+    "path": "/home/user/shepherd-data/workspaces/m5_webui_demo_01/runs/gat/20261024-173909_ui-live-stop-02_c1d9cf/checkpoints/last.pt",
+    "size": 25510865,
+    "expected_sha256": "568b109848430c92de8d13bd5e24d7836bc16fe32f17a088952be4b322a856bf",
+    "actual_sha256": "568b109848430c92de8d13bd5e24d7836bc16fe32f17a088952be4b322a856bf",
+    "unchanged": true
+  },
+  {
+    "path": "/home/user/shepherd-data/workspaces/m5_webui_demo_01/runs/gat/20261024-173909_ui-live-stop-02_c1d9cf/checkpoints/model-00-0.2880.pt",
+    "size": 25442321,
+    "expected_sha256": "3a8b56907c4662ac66e3e1b7447ad63a0f90fac4a97e93a0358887202a176dae",
+    "actual_sha256": "3a8b56907c4662ac66e3e1b7447ad63a0f90fac4a97e93a0358887202a176dae",
+    "unchanged": true
+  },
+  {
+    "path": "/home/user/shepherd-data/workspaces/m5_webui_demo_01/runs/gat/20261024-173909_ui-live-stop-02_c1d9cf/checkpoints/model-20-0.2867.pt",
+    "size": 25449809,
+    "expected_sha256": "a044749a4abcf498cba9da8c8c95d6af7c230f316f424b1606981dafa6ca3794",
+    "actual_sha256": "a044749a4abcf498cba9da8c8c95d6af7c230f316f424b1606981dafa6ca3794",
+    "unchanged": true
+  },
+  {
+    "path": "/home/user/shepherd-data/workspaces/m5_webui_demo_01/runs/gat/20261024-173909_ui-live-stop-02_c1d9cf/checkpoints/model-21-0.2867.pt",
+    "size": 25450129,
+    "expected_sha256": "0e1f31ecf4f656394599752d621f834b619b1fefa40b4da661841b7ee8af54ec",
+    "actual_sha256": "0e1f31ecf4f656394599752d621f834b619b1fefa40b4da661841b7ee8af54ec",
+    "unchanged": true
+  }
+]

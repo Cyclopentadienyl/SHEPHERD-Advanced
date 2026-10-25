@@ -1,0 +1,158 @@
+[
+  {
+    "source": "/home/user/Documents/Codex/2026-09-20/github-plugin-github-openai-curated-remote/outputs/m5-closeout-773dc4a-20261025/REVIEW.txt",
+    "package_path": "REVIEW.txt",
+    "size": 7529,
+    "sha256": "9eb4a99a25cf1ee1f3369c11095043b5b0f954836f90c2b5d6f00ab7825e5256"
+  },
+  {
+    "source": "/home/user/m5-webui-closeout-773dc4a-01/cases-source.json",
+    "package_path": "evidence/cases-source.json",
+    "size": 1899,
+    "sha256": "cd305fa92e20e0755c76b53758993d23880c833132b1e9d6f2f0a59796a169b0"
+  },
+  {
+    "source": "/home/user/m5-webui-closeout-773dc4a-01/checkout-before.txt",
+    "package_path": "evidence/checkout-before.txt",
+    "size": 46,
+    "sha256": "46f0c817385fbb7fe31de383324338cf9555554b31c3d3f5a6b6a02c471975bf"
+  },
+  {
+    "source": "/home/user/m5-webui-closeout-773dc4a-01/inputs-before.sha256",
+    "package_path": "evidence/inputs-before.sha256",
+    "size": 4351,
+    "sha256": "08561002feb935692d45fdeb2179582a3a856bfb7730f1ce9882750d85b9f7ff"
+  },
+  {
+    "source": "/home/user/m5-webui-closeout-773dc4a-01/intake.sha256",
+    "package_path": "evidence/intake.sha256",
+    "size": 129,
+    "sha256": "a1b2293b8629a6fe81be2a010f300f29e9ee6c86c8558a6fe03dc75ed2599bc3"
+  },
+  {
+    "source": "/home/user/m5-webui-closeout-773dc4a-01/launch-b5rbkl/checkout-tested.txt",
+    "package_path": "evidence/launch-b5rbkl/checkout-tested.txt",
+    "size": 41,
+    "sha256": "b02583c3c54fd40eb69ab3a53fdad101ed0a61538c85f0c0dc39f5bd93c51178"
+  },
+  {
+    "source": "/home/user/m5-webui-closeout-773dc4a-01/launch-b5rbkl/exit.txt",
+    "package_path": "evidence/launch-b5rbkl/exit.txt",
+    "size": 26,
+    "sha256": "44e1b47d6d1dace68324f10cebfff81bc0759324aee861a6fb7a7f573e5ba8d9"
+  },
+  {
+    "source": "/home/user/m5-webui-closeout-773dc4a-01/launch-b5rbkl/service.log",
+    "package_path": "evidence/launch-b5rbkl/service.log",
+    "size": 13319,
+    "sha256": "e0202cb66eb4714916370dda4c66c3dad44d70f1da2fe984cc788031dcb6035d"
+  },
+  {
+    "source": "/home/user/m5-webui-closeout-773dc4a-01/prepared-inputs.json",
+    "package_path": "evidence/prepared-inputs.json",
+    "size": 958,
+    "sha256": "84afaf249abb4eba293b72bed14c2c6d692397d93544b8d99a29acd9500e92ac"
+  },
+  {
+    "source": "/home/user/m5-webui-closeout-773dc4a-01/screenshots/01-import-preview.png",
+    "package_path": "evidence/screenshots/01-import-preview.png",
+    "size": 716181,
+    "sha256": "02167e249f78ed01ee03e3316a9edbe762e3500195748e0861ce2ce1b4dbde41"
+  },
+  {
+    "source": "/home/user/m5-webui-closeout-773dc4a-01/screenshots/02-test-kept.png",
+    "package_path": "evidence/screenshots/02-test-kept.png",
+    "size": 1139487,
+    "sha256": "497e7d27ac0d48e1ea80b708064a6525143396c93e4d58d0a842dc573942e7da"
+  },
+  {
+    "source": "/home/user/m5-webui-closeout-773dc4a-01/screenshots/03-test-registered.png",
+    "package_path": "evidence/screenshots/03-test-registered.png",
+    "size": 1100958,
+    "sha256": "0ecef0365a7a59c9936b859cc8f8f5dfa58b6583b0e687757bc6a0c04577e2b6"
+  },
+  {
+    "source": "/home/user/m5-webui-closeout-773dc4a-01/screenshots/04-models-record.png",
+    "package_path": "evidence/screenshots/04-models-record.png",
+    "size": 1098564,
+    "sha256": "945da72c1e13361202871ec55b9745eecc9e2871744ac7113defefa6ee1cbf5e"
+  },
+  {
+    "source": "/home/user/m5-webui-closeout-773dc4a-01/screenshots/05-ordering-warning.png",
+    "package_path": "evidence/screenshots/05-ordering-warning.png",
+    "size": 1098081,
+    "sha256": "44ded4832d34886f7b6faee36a0d546016f444c8c7f1a73ea0701f89e14215d9"
+  },
+  {
+    "source": "/home/user/m5-webui-closeout-773dc4a-01/screenshots/06-readonly-test.png",
+    "package_path": "evidence/screenshots/06-readonly-test.png",
+    "size": 1214198,
+    "sha256": "1290eadeb6f6f9eb79d8ee84b6a8368d3eb3d20ae1fcb7d23e03da7f93f08b98"
+  },
+  {
+    "source": "/home/user/m5-webui-closeout-773dc4a-01/screenshots/07-readonly-models.png",
+    "package_path": "evidence/screenshots/07-readonly-models.png",
+    "size": 321357,
+    "sha256": "fae374311599d5d8bbdfe904bf65ad963c3eb95d23a2411346845dccb9113925"
+  },
+  {
+    "source": "/home/user/m5-webui-closeout-773dc4a-01/screenshots/08-readonly-settings.png",
+    "package_path": "evidence/screenshots/08-readonly-settings.png",
+    "size": 441514,
+    "sha256": "c572abb6bc3c819d99d56056d3ea7241f8a10f548c31646e2076dbd459971eac"
+  },
+  {
+    "source": "/home/user/m5-webui-closeout-773dc4a-01/screenshots/09-weird.png",
+    "package_path": "evidence/screenshots/09-weird.png",
+    "size": 381770,
+    "sha256": "d1dbf0c96a2fb1be06d4802a9a839e8e9029770fe38b7343d12554ade2d51a32"
+  },
+  {
+    "source": "/home/user/m5-webui-closeout-773dc4a-01/service.env",
+    "package_path": "evidence/service.env",
+    "size": 296,
+    "sha256": "f977e0747f2ff87cfcc132967c49883db680eb06020542c01529e7124a73cc23"
+  },
+  {
+    "source": "/home/user/shepherd-data/registry/versions/m5-closeout-demo-01/cohort.json",
+    "package_path": "registry/versions/m5-closeout-demo-01/cohort.json",
+    "size": 2220,
+    "sha256": "1c2c6050951155df6ccad39e07579c0df83536a35779f7ce916bda9561bb96c3"
+  },
+  {
+    "source": "/home/user/shepherd-data/registry/versions/m5-closeout-demo-01/reports/20261025T143321Z-568b10984843-c82e174d/ranks.json",
+    "package_path": "registry/versions/m5-closeout-demo-01/reports/20261025T143321Z-568b10984843-c82e174d/ranks.json",
+    "size": 802,
+    "sha256": "ed8890010a72208d5e8c33e97449d0b3404496ea12420f4d323c3e60a80c0f07"
+  },
+  {
+    "source": "/home/user/shepherd-data/registry/versions/m5-closeout-demo-01/reports/20261025T143321Z-568b10984843-c82e174d/report.json",
+    "package_path": "registry/versions/m5-closeout-demo-01/reports/20261025T143321Z-568b10984843-c82e174d/report.json",
+    "size": 8042,
+    "sha256": "4f3286b09d61f9aab669ef5dd13810d38e60c25ad6716ddca95300e9a78771e0"
+  },
+  {
+    "source": "/home/user/shepherd-data/registry/versions/m5-closeout-demo-01/reports/usage.jsonl",
+    "package_path": "registry/versions/m5-closeout-demo-01/reports/usage.jsonl",
+    "size": 799,
+    "sha256": "429e6519616fa53957a1a22abbb914542e3fe522d9caf7ab8bdf89b234d76056"
+  },
+  {
+    "source": "/home/user/shepherd-data/registry/versions/m5-closeout-demo-01/samples.json",
+    "package_path": "registry/versions/m5-closeout-demo-01/samples.json",
+    "size": 1103,
+    "sha256": "91b77e24e5fc7023894b5791df156f3c9c5f552e6e2e82168117fae77c45ca6e"
+  },
+  {
+    "source": "/home/user/shepherd-data/registry/sources/cd305fa92e20e0755c76b53758993d23880c833132b1e9d6f2f0a59796a169b0.json",
+    "package_path": "registry/sources/cd305fa92e20e0755c76b53758993d23880c833132b1e9d6f2f0a59796a169b0.json",
+    "size": 1899,
+    "sha256": "cd305fa92e20e0755c76b53758993d23880c833132b1e9d6f2f0a59796a169b0"
+  },
+  {
+    "source": "/home/user/shepherd-data/workspaces/m5_webui_demo_01/runs/gat/20261024-173909_ui-live-stop-02_c1d9cf/checkpoints/evaluations.json",
+    "package_path": "ledger/evaluations.json",
+    "size": 6577,
+    "sha256": "3b77717198236dd0948277e3540b8a995f7c19e329122d87c793ef8f8795e25f"
+  }
+]

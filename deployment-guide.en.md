@@ -2644,9 +2644,11 @@ and register it. Three panels:
   stops the test run only, never a training job. On a wide screen, Start, its reason and the job card stay at the foot of the panel (the
   choices above scroll) and the output scrolls inside the card under the line with Cancel, so
   both stay in view. Once the run has ended, the card shows what the runner read
-  from disk: whether a report was kept and whether it is registered, with the runner's sentence
-  ("No report was published …" when the run wrote no outcome file; after a cancel, what was
-  left). While the page is shown it reads the job every 5 seconds; the report of a run that has
+  from disk as the run ended (headed "When the run ended:"): whether a report was kept and whether
+  it was registered then, with the runner's sentence ("No report was published …" when the run
+  wrote no outcome file; after a cancel, what was left). A report registered afterwards with
+  Register this report keeps the card's reading of the run's end, and the card points to Result,
+  which shows the report's registration now. While the page is shown it reads the job every 5 seconds; the report of a run that has
   just ended is selected, once for that run. A choice made while the page reads the version's
   store again (after the job changed, an act or an import) applies once that read has ended;
   the read never undoes it, and of several choices made meanwhile the last one stays.

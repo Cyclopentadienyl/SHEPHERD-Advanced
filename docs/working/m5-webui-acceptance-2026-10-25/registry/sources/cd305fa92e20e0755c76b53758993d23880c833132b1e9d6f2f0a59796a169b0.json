@@ -1,0 +1,101 @@
+{
+  "format": "shepherd-cases/1",
+  "cases": [
+    {
+      "case_id": "probe-case-01",
+      "phenotypes": [
+        "HP:0001250",
+        "HP:0001252"
+      ],
+      "disease": "MONDO:0011073"
+    },
+    {
+      "case_id": "probe-case-02",
+      "phenotypes": [
+        "HP:0001263",
+        "HP:0000256"
+      ],
+      "disease": "MONDO:0010582"
+    },
+    {
+      "case_id": "probe-case-03",
+      "phenotypes": [
+        "HP:0002311",
+        "HP:0001290"
+      ],
+      "disease": "MONDO:0010730"
+    },
+    {
+      "case_id": "probe-case-04",
+      "phenotypes": [
+        "HP:0001252",
+        "HP:0002069"
+      ],
+      "disease": "MONDO:0007037"
+    },
+    {
+      "case_id": "probe-case-05",
+      "phenotypes": [
+        "HP:0000256",
+        "HP:0000729"
+      ],
+      "disease": "MONDO:0012091"
+    },
+    {
+      "case_id": "probe-case-06",
+      "phenotypes": [
+        "HP:0001290",
+        "HP:0000486"
+      ],
+      "disease": "MONDO:0011073"
+    },
+    {
+      "case_id": "probe-case-07",
+      "phenotypes": [
+        "HP:0002069",
+        "HP:0002360"
+      ],
+      "disease": "MONDO:0010582"
+    },
+    {
+      "case_id": "probe-case-08",
+      "phenotypes": [
+        "HP:0000729",
+        "HP:0001250"
+      ],
+      "disease": "MONDO:0010730"
+    },
+    {
+      "case_id": "probe-case-09",
+      "phenotypes": [
+        "HP:0001250",
+        "HP:0001263",
+        "HP:0001250"
+      ],
+      "disease": "MONDO:0011073"
+    },
+    {
+      "case_id": "probe-case-10",
+      "phenotypes": [
+        "HP:0002311",
+        "HP:9999999"
+      ],
+      "disease": "MONDO:0010582"
+    },
+    {
+      "case_id": "probe-case-11",
+      "phenotypes": [
+        "HP:0001252",
+        "HP:0000256"
+      ],
+      "disease": "MONDO:9999998"
+    },
+    {
+      "case_id": "probe-case-12",
+      "phenotypes": [
+        "HP:9999998"
+      ],
+      "disease": "MONDO:0010730"
+    }
+  ]
+}

@@ -603,8 +603,9 @@ def test_what_the_run_published_is_read_from_its_outcome_and_the_disk(popen, inp
     assert outcome["report_dir"] == str(run_dir) and outcome["kept"] is True
     assert outcome["registered"] is False and outcome["run_outcome"]["report_sha256"] == REPORT_SHA
     assert outcome["summary"] == (
-        f"A report was kept at {run_dir}; it is not registered (there is no "
-        "evaluations.json). The run said of its registration: runs disagree — investigate.")
+        f"When the run ended, a report was kept at {run_dir}; it was not registered (at that "
+        "time: there is no evaluations.json). The run said of its registration: runs disagree — "
+        "investigate.")
 
 
 def test_a_refused_registration_is_said_even_when_an_earlier_record_names_the_same_bytes(
@@ -622,8 +623,9 @@ def test_a_refused_registration_is_said_even_when_an_earlier_record_names_the_sa
     assert outcome["registered"] is True
     run_dir = reports(inputs) / RUN_ID
     assert outcome["summary"] == (
-        f"A report was kept at {run_dir}; it is registered (record 2 in evaluations.json names "
-        "this report). This run's own registration was refused: runs disagree — investigate. "
+        f"When the run ended, a report was kept at {run_dir}; it was registered (at that time: "
+        "record 2 in evaluations.json names this report). This run's own registration was "
+        "refused: runs disagree — investigate. "
         "The record found names the same report bytes, which an earlier run of this "
         "measurement registered; it says nothing of this run's refusal.")
     # Not asked to register: the record found is the whole answer.
@@ -634,12 +636,12 @@ def test_a_refused_registration_is_said_even_when_an_earlier_record_names_the_sa
 
 
 @pytest.mark.parametrize("kept, registered, says", [
-    (False, False, "The run published a report at {report}, but it is not kept: "
-                   "the reader's kept reason."),
-    (None, None, "Whether the report at {report} is kept cannot be checked "
-                 "(the reader's kept reason)."),
-    (True, True, "A report was kept at {run_dir}; it is registered (the reader's registered "
-                 "reason)."),
+    (False, False, "The run published a report at {report}, but when it ended the report was "
+                   "not kept: the reader's kept reason."),
+    (None, None, "When the run ended, whether the report at {report} was kept could not be "
+                 "checked (the reader's kept reason)."),
+    (True, True, "When the run ended, a report was kept at {run_dir}; it was registered (at "
+                 "that time: the reader's registered reason)."),
 ])
 def test_kept_and_registered_come_from_the_disk_not_the_exit_status(popen, inputs, kept,
                                                                     registered, says):
@@ -705,7 +707,8 @@ def test_a_report_left_without_an_outcome_file_is_still_found(popen, inputs):
     assert status["outcome"]["kept"] is True
     assert status["outcome"]["summary"].startswith(
         f"The run wrote no outcome file, but a report directory for this checkpoint appeared "
-        f"during it: {run_dir}. A report was kept at {run_dir}; it is not registered")
+        f"during it: {run_dir}. When the run ended, a report was kept at {run_dir}; it was not "
+        "registered")
 
 
 def test_two_candidate_reports_are_never_guessed_between(popen, inputs):
@@ -724,7 +727,7 @@ def test_the_runners_reader_is_the_registrations_one_helper(popen, inputs, tmp_p
     status = _run(TrainingManager(), popen, inputs, code=0, outcome=True)
     outcome = status["outcome"]
     assert outcome["kept"] is False and outcome["registered"] is False
-    assert "but it is not kept: there is no" in outcome["summary"]
+    assert "but when it ended the report was not kept: there is no" in outcome["summary"]
     assert tm.TrainingManager()._report_state is tm._registration_report_state
 
 

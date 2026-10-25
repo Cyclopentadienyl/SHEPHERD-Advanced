@@ -1469,7 +1469,10 @@ class TrainingManager:
                         base: Dict[str, Any]) -> Dict[str, Any]:
         """Kept and registered for the report this run published (`published`,
         from its outcome file) or left without an outcome (`published` None),
-        from the registration's helper, and the summary that says so."""
+        from the registration's helper, and the summary that says so. Both are
+        read once, as the run ends, and the summary says them as that moment's
+        reading: a report registered later reads so in the Test page's Result,
+        not here (the M5 close-out, 2026-10-25)."""
         state = self._report_state(report, checkpoint=Path(job.inputs["checkpoint"]),
                                    expected_sha256=published)
         kept = _STATE_ANSWER.get(state.kept)
@@ -1479,16 +1482,20 @@ class TrainingManager:
                 f"The run wrote no outcome file, but a report directory for this checkpoint "
                 f"appeared during it: {run_dir}. ")
         if kept is True:
-            said += f"A report was kept at {run_dir}; " + (
-                f"it is registered ({state.why_registered})." if registered is True
-                else f"it is not registered ({state.why_registered})." if registered is False
-                else f"whether it is registered cannot be checked ({state.why_registered}).")
+            said += f"When the run ended, a report was kept at {run_dir}; " + (
+                f"it was registered (at that time: {state.why_registered})." if registered is True
+                else f"it was not registered (at that time: {state.why_registered})."
+                if registered is False
+                else f"whether it was registered could not be checked (at that time: "
+                     f"{state.why_registered}).")
         elif kept is False:
-            said += (f"The run published a report at {report}, but it is not kept: "
-                     f"{state.why_kept}." if run_outcome is not None
-                     else f"No report was kept in {run_dir} ({state.why_kept}).")
+            said += (f"The run published a report at {report}, but when it ended the report was "
+                     f"not kept: {state.why_kept}." if run_outcome is not None
+                     else f"When the run ended, no report was kept in {run_dir} "
+                          f"({state.why_kept}).")
         else:
-            said += f"Whether the report at {report} is kept cannot be checked ({state.why_kept})."
+            said += (f"When the run ended, whether the report at {report} was kept could not be "
+                     f"checked ({state.why_kept}).")
         registration = (run_outcome or {}).get("registration")
         why = registration.get("why") if isinstance(registration, dict) else None
         refused_itself = (isinstance(registration, dict) and registration.get("requested") is True

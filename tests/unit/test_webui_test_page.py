@@ -231,6 +231,9 @@ def test_the_outcome_is_the_runners_kept_and_registered():
     kept = tp.outcome_html({"kept": True, "registered": False, "summary": "A report was kept."},
                            [])
     assert "Report kept" in kept and "Not registered" in kept
+    # That moment's reading, said as such; the registration now is Result's.
+    assert kept.index("When the run ended:") < kept.index("Not registered")
+    assert "The report's registration now is shown in Result." in kept
     none = tp.outcome_html({"kept": False, "registered": False,
                             "summary": "No report was published: the run wrote no outcome file"},
                            [])

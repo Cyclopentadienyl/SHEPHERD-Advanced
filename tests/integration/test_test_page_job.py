@@ -87,3 +87,18 @@ def test_a_run_started_from_the_page_is_kept_shown_and_registered(site, monkeypa
     shown = tp.refine_registration(page, tp.read_reports(LABEL), run["run_id"], models)
     assert shown["runs"][0]["state"]["registered"] == "registered"
     assert tp.register_state(page, shown, run["run_id"]) == (False, "Already registered.")
+
+    # The M5 close-out on the GB10 (2026-10-25): registered from Result after
+    # a run that did not register, the card still read "Not registered" and
+    # said in the present tense that no ledger existed, beside Result's
+    # "Registered". The card is the run's end, said as such, and points to
+    # Result for the registration now; the two no longer disagree.
+    card = tp.job_html(tp.read_job(manager=manager), tp.path_roots(), ("none", ""))
+    result = tp.result_html(shown, run["run_id"], tp.path_roots())
+    assert "registered as record 1" in result
+    assert card.index("When the run ended:") < card.index("Not registered")
+    assert "The report's registration now is shown in Result." in card
+    assert "When the run ended, a report was kept at" in card
+    assert "it was not registered (at that time: " in card
+    assert "it is not registered" not in card and "there is no" not in card.split(
+        "at that time: ", 1)[0]
