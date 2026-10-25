@@ -129,6 +129,13 @@ target, mixed state, a needed warning that cannot be seen, or a control that can
   kept in reach; (D) a training lineage view belongs to a later model-management design and must follow the recorded
   parents and runs, never treat one run's checkpoints at different epochs as branches.
 
+**Not a design item, and not M5's:** the Diagnosis table's SP column. The GNN's own ranking, SP taken out of the
+ranking and offered only as an optional analysis surface (sorting or filtering the view with the canonical rank kept),
+and SP computed once for the selected set when the result is produced, are work item B-1
+([`DISEASE_SCORER_POLICY.md`](../DISEASE_SCORER_POLICY.md) §1, §1.1, §1.2, §2; gated, §6), decided and not
+implemented (BACKLOG 52 cross-references it). Until then the column stays, reading "—" when no shortest-path table is
+served.
+
 ## 5. Decisions (2026-10-25, owner and reviewer)
 
 1. **Scope:** the narrow close-out of section 4, not the A/B split.
