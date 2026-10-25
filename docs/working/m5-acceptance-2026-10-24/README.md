@@ -5,7 +5,8 @@ environment from `deploy.sh`, the identified real workspace `hpo_2026_0929_5a` a
 allocator preset, through the deployment probe's acceptance run, which carries M5's acceptance where it runs
 headless together with what M2, M3a–M3c and M4's acceptances require. The reviewer reviewed the evidence
 the same day. **The actual service configuration and the WebUI's manual acceptance are still to
-be done**, so M5 is not closed. This is a functional acceptance: not a measure of model quality, a
+be done**, so M5 is not closed (as it stood on 2026-10-24: both were done since, and M5's agreed functional scope was
+accepted on 2026-10-25; [`../m5-webui-acceptance-2026-10-25/`](../m5-webui-acceptance-2026-10-25/README.md)). This is a functional acceptance: not a measure of model quality, a
 capacity reading or an institutional test, and not a merge.
 
 **The code tested is `b14c4def5082edae3ac948ce55ffbd770897c2df`.** The documentation commits after

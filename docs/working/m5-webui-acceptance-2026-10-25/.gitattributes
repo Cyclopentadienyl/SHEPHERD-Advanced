@@ -1,0 +1,3 @@
+# The service log is copied byte for byte from the evidence package (its SHA256SUMS);
+# the launcher prints lines that end in spaces, which are evidence, not style.
+evidence/launch-b5rbkl/service.log whitespace=-blank-at-eol

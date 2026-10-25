@@ -167,8 +167,10 @@ the other items keep the earlier rounds' evidence, as the reviewer read it:
 
 - launcher and service settings (a normal start at `f9202b6`; the server's settings in M1 at `773dc4a`);
 - Datasets selection;
-- Training, the items this round changed: Start, live zoom, Keep training, Stop, the Continue preview (`f9202b6`),
-  Export CSV, session isolation;
+- Training, the items this round changed: Start, the live view's zoom kept as new epochs arrive, Keep training and a
+  manual Stop from the training rounds at `b14c4de` (Keep training by the owner's report, not an event-level record);
+  the Continue preview at `f9202b6`, on the existing runs (that recheck made no new run and redid none of these);
+  Export CSV and session isolation from the earlier rounds' notes;
 - Diagnosis: load, inference, results, CSV and report identity (`f9202b6`; the explanation's wording fixed after);
 - Test: preview import → version → measure → register → read back (`773dc4a`; the job card's "Not registered" from
   the run's end now says so, fixed after it);

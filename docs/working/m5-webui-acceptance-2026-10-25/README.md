@@ -18,8 +18,8 @@ a model-quality, capacity, AMP or multi-user reading, and it authorises no merge
 | Round | Commit tested | What it covered | Evidence |
 |---|---|---|---|
 | Functional acceptance of a clean deployment | `b14c4de` | 99 of 99 probes, M5's headless part included | [`../m5-acceptance-2026-10-24/`](../m5-acceptance-2026-10-24/README.md) |
-| Training page, first rounds | `b14c4de`, `4764faa` | Training findings F1–F5, fixed in `4764faa` and `1f4eb05` | the design review, [`../WEBUI_UX_REVIEW_2026-10-25.md`](../WEBUI_UX_REVIEW_2026-10-25.md) §4 |
-| Local UI recheck | `f9202b6` | F1 and F5 at the real window; a normal start and stop; the existing model's load, a diagnosis and its exports, their identity matching the files on disk; found the written explanation's "Confidence: HIGH", fixed in `ff664f6` | on the deployment machine, `m5-webui-recheck-f9202b6-01`; summarised in the design review §4 |
+| Training rounds | `b14c4de`; the recheck of their fixes at `4764faa` | Start, the live view's zoom kept as new epochs arrive, Keep training (the owner's report, not an event-level record) and a manual Stop, at `b14c4de`; findings F1–F5, fixed in `4764faa` and `1f4eb05` | the reviewer's reading of those rounds; the design review, [`../WEBUI_UX_REVIEW_2026-10-25.md`](../WEBUI_UX_REVIEW_2026-10-25.md) §4 |
+| Local UI recheck | `f9202b6` | F1 and F5 at the real window on the existing runs (no new run; live epochs, Keep training and Stop not redone), the Continue preview; a normal start and stop; the existing model's load, a diagnosis and its exports, their identity matching the files on disk; found the written explanation's "Confidence: HIGH", fixed in `ff664f6` | on the deployment machine, `m5-webui-recheck-f9202b6-01`; summarised in the design review §4 |
 | Close-out | `773dc4a` | this directory | below |
 
 ## 2. The close-out round at `773dc4a`
