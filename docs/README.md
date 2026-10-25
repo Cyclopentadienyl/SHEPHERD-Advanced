@@ -25,7 +25,7 @@ editing history to match the present.
 
 | Document | Contents |
 |---|---|
-| [`ARCHITECTURE.md`](ARCHITECTURE.md) | Layered design, the η scoring model, and the design principles the system must satisfy |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md) | Layered design, the η scoring model, and the design principles the system must satisfy; §8 tells the two families called "Mode" apart (evidence A/B, scorer measurement A–D) |
 | [`CONFIG_AUTHORITY.md`](CONFIG_AUTHORITY.md) | Decision record: which module owns which configuration, and why there is no central config manager |
 | [`DIRECTORY_STRUCTURE.md`](DIRECTORY_STRUCTURE.md) | Where artifacts live and why KG-derived outputs are separated from KG-independent models |
 | [`TRAINING_PIPELINE_PLAYBOOK.md`](TRAINING_PIPELINE_PLAYBOOK.md) | End-to-end build walkthrough: data sources, the four build steps, expected artifacts |
