@@ -366,6 +366,13 @@ class ListedCheckpoint(NamedTuple):
     `size_bytes` is the file's size as listed (a `stat` beside the read,
     descriptive only); `None` for a file not read because it is outside, or one
     that cannot be found.
+
+    `completed_epochs` and `end` are the file's progress record, as a training
+    state writes it (`progress.completed_epochs`, `progress.end`): how many
+    epochs it completed and how its stage ended (`None` while it runs, or
+    "paused", "finished", "stopped_early"). A file that records no progress (a
+    weights-only file, an older format) has `None` for both; nothing is derived
+    from `epoch` in their place.
     """
 
     run_dir: Path
@@ -378,6 +385,8 @@ class ListedCheckpoint(NamedTuple):
     dataset_fingerprint: Optional[str] = None
     problem: Optional[str] = None
     size_bytes: Optional[int] = None
+    completed_epochs: Any = None
+    end: Optional[str] = None
 
 
 #: How much of a refusal's text a listing keeps: its first line, bounded, so a
@@ -484,6 +493,8 @@ def _read_one(run: Path, path: Path) -> ListedCheckpoint:
     logs = meta.get("logs") if isinstance(meta.get("logs"), dict) else {}
     digests = meta.get("training_input_digests")
     fingerprint = digests.get("split_manifest") if isinstance(digests, dict) else None
+    progress = meta.get("progress") if isinstance(meta.get("progress"), dict) else {}
+    end = progress.get("end")
     return ListedCheckpoint(
         run, path, sha256=read.identity.sha256,
         checkpoint_kind=meta.get("checkpoint_kind"),
@@ -492,6 +503,8 @@ def _read_one(run: Path, path: Path) -> ListedCheckpoint:
         validation=ranking_score_detail(logs),
         dataset_fingerprint=fingerprint if isinstance(fingerprint, str) else None,
         size_bytes=size,
+        completed_epochs=progress.get("completed_epochs"),
+        end=end if isinstance(end, str) else None,
     )
 
 

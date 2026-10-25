@@ -2079,7 +2079,8 @@ The two checkpoint lists, and Check checkpoint, open checkpoint files, which SPE
 checkpoint inspection (C3), so they are checked like the controls. So are the reads that open a
 checkpoint for display: the Diagnosis card's "trained on" line (the served checkpoint) and the
 Training page's run header (the run's checkpoint). A read-only browser is told "not shown ·
-reading the checkpoint is an operator control". Research › Test (§4.14)
+reading the checkpoint is an operator control" on the card, and "dataset not shown · operator
+control" in the run header. Research › Test (§4.14)
 uses the same check for its import (the intake list, Preview and Commit), Start test, Cancel,
 Register this report, Add note and its model list, and Research › Models for its checkpoint
 list and its Load (§4.14). Everything else stays open:
@@ -2433,9 +2434,10 @@ a run.
 
 **The run bar** never scrolls:
 
-- **Dataset**: the server's workspace list, the same as Datasets'; each option names the
-  workspace, the first 12 hex digits of its dataset fingerprint and its origin. Choosing one reads
-  its manifest and record, and the chip beside it shows when it was built, the dataset fingerprint
+- **Dataset**: the server's workspace list, the same as Datasets'; each option is the workspace's
+  name (one that cannot be trained also says why), its identity said once, by the chip beside the
+  select. Choosing one reads its manifest and record, and the chip shows when it was built, the
+  dataset fingerprint
   (Copy gives all 64), `synthetic`, whether the record is verified and **Details ›** (what the
   manifest binds, the seeds and counts, the sources, the path relative to the workspaces root,
   **All datasets ›**). The page opens on the workspace Datasets' **Use for training ›** chose,
@@ -2454,7 +2456,7 @@ a run.
   this run cannot be continued. Once it has stopped, the page says where it can be continued
   from." with **■ Stop training** and **Keep training**. The question names no epoch: the job
   trains on while it is open, so an epoch read when it was asked would be out of date by the
-  answer; once stopped, the snapshot sentence names the checkpoint the stop left. The question belongs to the job it was
+  answer; once stopped, the notice names the checkpoint the stop left. The question belongs to the job it was
   asked for: if that job ends before you answer, it closes, and a job started later never shows
   it; **■ Stop training** answered for a job that is no longer the one running stops nothing
   ("Not stopped: …; click Stop again").
@@ -2492,16 +2494,30 @@ is the run bar's choice, and the dashboard no longer reads or writes
 `.shepherd_training_config.json` in the server's working directory (a file left there is
 ignored; whether to offer "Save as the default dataset" is an owner question). When the three
 groups do not fit the window (they fit at 1920 × 1080), the parameters scroll inside their
-column; the run bar never scrolls. Each of the four plots keeps a plot area of at least 140 px:
-when the window is too short for that (1536 × 760, for example), the run view scrolls inside its
-own panel, with its header, the run's sentence and the chart toolbar staying at its top and the
-resources line at its foot, a compact line the plots scroll under. A plot's box is sized by the
-layout alone, never by the canvas drawn in it, so the same window size gives the same plots
-whether the page was opened there, reloaded, or came back from a narrow window.
+column; the run bar never scrolls. The run view is three rows: its header and state line, the
+charts, and the resources line. The charts take what the other two leave, and each of the four
+plots keeps a plot area of at least 140 px: when the window is too short for that (1536 × 760,
+for example), only the charts' row scrolls, its toolbar staying at its top; the resources line is
+a row of its own under it, so nothing is ever drawn over an axis (at 1920 × 1080 and at about
+1850 × 960 the four charts, their axes and labels and the resources line all show at once). A
+plot's box is sized by the layout alone, never by the canvas drawn in it, so the same window size
+gives the same plots whether the page was opened there, reloaded, or came back from a narrow
+window.
 
 **Continue…** opens a drawer in place of the parameters: the checkpoints of the run bar's
-workspace, newest first (the server's list: an operator control, since listing opens every
-checkpoint), or the path of one of those checkpoints typed by hand: since M5-3 a typed path only
+workspace (the server's list: an operator control, since listing opens every checkpoint), chosen
+in two steps, or the path of one of those checkpoints typed by hand. **Run**: the runs, latest
+first, each as its name, architecture and start time ("ui-live-stop-02 · GAT · 2026-10-24
+17:39"; an unnamed run is its architecture and time). **Checkpoint**: that run's files, newest
+first, each in a few words from its own record: "Latest save · 195 epochs completed", or
+"Top-k save · 21 epochs completed · Trainer val MRR 0.2867" (a file the trainer kept for its
+validation MRR, the Trainer's, not a test result); the epochs are the file's progress record
+(a file without one says the epoch it records, never a count made from it), and what limits
+continuing is said in the option ("finished", "stopped early, cannot continue", "weights only,
+cannot continue", "cannot be read"). Choosing another run offers its files with its latest save
+chosen. Under the two, a table says what the option does not: the file, what it holds, what
+continuing does when its stage ended, its model fingerprint (Copy gives all 64) and its run's
+directory. Since M5-3 a typed path only
 finds a checkpoint that list holds, and any other file is refused without being opened
 (`PLAN_TEST_RESULTS.md` D8). **Check checkpoint** shows what continuing would do, and the
 dataset fingerprint the parent recorded against the workspace's current one: ✓ the same, or amber
@@ -2526,9 +2542,12 @@ checkpoints again when it opens). The API takes the parent's digest as an
 optional query parameter too, `expected_parent_sha256=<64 hex digits>` beside `resume_from`
 (409 when it is not the file's, 422 when malformed); without it the process is still bound to
 the parent the runner read. The job runner and the training process still check everything
-else at start. Each entry names the run, the epoch, the file
-and what it holds (`last.pt (training state)`, a model file `(weights only)`, which cannot be
-continued). The drawer has its own **Device** (auto, cuda or cpu), which starts from the
+else at start. Check checkpoint names the listed file it read ("Checked gat/<run>/<file> from
+the run list"; a typed path's check gives its path and fingerprint), and a matching dataset is said
+once, as "✓ Trained on the dataset selected in the run bar" (the fingerprint is the run bar's).
+While the drawer is open the run bar's line reads "Run: a new one, continued from the checkpoint
+chosen in Continue a run": a continued run trains in a run directory of its own. The drawer has
+its own **Device** (auto, cuda or cpu), which starts from the
 parameters' Device each time it opens and is what Check checkpoint and Continue Training use.
 When the run bar's dataset changes while the drawer is open (by hand, with Datasets'
 "Use for training ›", or to follow a training job started on another dataset), the list
@@ -2537,12 +2556,21 @@ becomes that workspace's runs, read again the same way.
 **The run view** shows the run the job runner started last or, before one since the server
 started, the latest run of the run bar's workspace (listed again every 10 seconds while the page
 is open, so a run started from the CLI appears once it writes its first checkpoint). Its header
-names the run and the dataset fingerprint the run used, read from its checkpoint: "✓ same as the
-run bar", amber "≠ not the selected dataset", "recorded at the first checkpoint" while it runs
-without one yet, or "not recorded (the run saved no checkpoint)" once it has ended without one.
-The snapshot sentence says how the run ended and the checkpoint to continue from, as a path
-relative to the workspaces root; a run that has no run directory (refused before it made its run
-directory) says so, with no checkpoint, no log and nothing to chart. Below them, one figure of four charts sharing the epoch
+is one line: "Run shown" and the run as a person names it ("ui-live-stop-02 · GAT · 2026-10-24
+17:39"), "latest" for the workspace's latest run, and how the dataset the run used, read from its
+checkpoint, stands to the run bar's: "✓ same dataset as the run bar", amber "≠ not the selected
+dataset", "dataset recorded at the first checkpoint" while it runs without one yet, or "dataset
+not recorded (no checkpoint)" once it has ended without one. While Continue… is open with a
+listed checkpoint chosen, it also says whether this is "the run continued from" or "not the run
+continued from": the curves are the run shown's, whatever the drawer chose. **Details ›** holds
+what is read less often: the run's directory, its checkpoint (relative to the workspaces root;
+the newest one while it runs), its logs and the dataset fingerprint it used (Copy gives all 64);
+its workspace when it is not the run bar's. Under the header, one state line: "195 of 1000
+epochs completed · can be continued", "Finished · 5000 of 5000 epochs completed · to train
+further, use Continue…", "Stopped early (…) · … · cannot be continued", "Running · epoch 12 of
+100", or "No checkpoint saved, so nothing can be continued"; a run that has no run directory
+(refused before it made its run directory) says so, with no checkpoint, no log and nothing to
+chart. Below them, one figure of four charts sharing the epoch
 axis: Loss (train, and validation dashed), MRR (validation, Trainer top-20), Hits@K (validation,
 Trainer) and the learning rate on a log axis (a 0 or a missing value is a gap). Under it, the
 resources line (GPU and memory).
@@ -2557,7 +2585,8 @@ resources line (GPU and memory).
   epoch 0: a view that would (a zoom out, a pan, a view kept from before) is moved right with its
   width kept; a value axis has no such bound. The wheel zooms in a narrow window too; over
   anything but a chart's plot or axes it scrolls the page, and in a narrow window a touch on a
-  chart scrolls the page.
+  chart scrolls the page. The gestures are listed in the ⓘ beside Reset view, not kept on the
+  toolbar.
 - **Export CSV** saves the run's metrics log (epoch, split and each logged value) from the browser
   as `training_metrics_<architecture>_<run>.csv`.
 - The charts read the run's metrics log through the page's own server function, for a run the
@@ -2572,9 +2601,8 @@ resources line (GPU and memory).
   epochs are asked for again.
 
 **A read-only browser** sees the same page with every action disabled and D8's reason, and no
-checkpoint is opened for it: the run header says "not shown · reading the checkpoint is an
-operator control", the snapshot sentence gives only the run's state, and the parent list is not
-shown. The metrics, the charts and the dataset records are read for it as for an operator.
+checkpoint is opened for it: the run header's tag says "dataset not shown · operator control",
+the state line gives only the run's state, and the parent list is not shown. The metrics, the charts and the dataset records are read for it as for an operator.
 
 ### Research › Evaluate › Test
 

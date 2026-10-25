@@ -180,7 +180,9 @@ _DOWNLOAD = ('<svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true"
              '<path d="M8 2.5v7.5M4.8 7l3.2 3.2L11.2 7M3 13.2h10" fill="none" stroke="currentColor" '
              'stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>')
 
-#: The gestures, as visible text where the toolbar has room (its ⓘ always).
+#: The gestures in one line: the lead of the figure's ⓘ (the page's help
+#: topic), not text kept on the toolbar (the GB10 WebUI recheck: one line less
+#: over the plots).
 GESTURES = "Wheel: zoom · drag: pan · double-click: reset"
 
 
@@ -198,9 +200,8 @@ def figure_template(*, series_fn: str, csv_fn: Optional[str], help_key: Optional
         f'data-csv-fn="{escape(csv_fn or "")}" data-empty="{escape(empty)}">'
         '<div class="shep-charts-bar">'
         '<span class="shep-charts-zoom" hidden></span>'
-        f'<span class="shep-charts-hint">{escape(GESTURES)}</span>'
-        f'{help_html}'
         '<span class="shep-charts-tools">'
+        f'{help_html}'
         f'<button type="button" class="shep-charts-btn" data-chart-act="reset">{_HOME}'
         '<span>Reset view</span></button>'
         f'{csv}'
@@ -258,7 +259,6 @@ CHART_CSS = """
 .shep-charts-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 0 0 8px; min-height: 40px; }
 .shep-charts-zoom { display: inline-flex; align-items: center; height: 28px; padding: 0 8px; border-radius: 6px; background: var(--shep-accent-50); border: 1px solid var(--shep-accent-100); color: var(--shep-accent-text); font-size: 14px; white-space: nowrap; }
 .shep-charts-zoom[hidden] { display: none; }
-.shep-charts-hint { font-size: 14px; color: var(--shep-text-2); }
 .shep-charts-tools { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .shep-charts .shep-charts-btn { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--shep-border-2); background: #fff; color: var(--shep-text); font-size: 14px; font-weight: 500; cursor: pointer; white-space: nowrap; }
 .shep-charts .shep-charts-btn:hover, .shep-charts .shep-charts-icon:hover { background: var(--shep-panel-2); }

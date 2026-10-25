@@ -151,9 +151,10 @@ def test_the_toolbar_offers_reset_export_zoom_and_the_gestures():
     template = _figure().html_template
     for act in ("reset", "csv", "zoom-in", "zoom-out", "follow"):
         assert f'data-chart-act="{act}"' in template
-    # The same gestures in every layout: the wheel zooms in a narrow window too
-    # (the GB10 acceptance), so no note says otherwise.
-    assert charts.GESTURES in template and "scrolls the page here" not in template
+    # The gestures are the ⓘ's lead line, not text kept on the toolbar (the GB10
+    # WebUI recheck: one line less over the plots); the ⓘ sits with the tools.
+    assert charts.GESTURES not in template and "shep-charts-hint" not in template
+    assert template.index('<span class="shep-charts-tools">') < template.index("shep-help-text-training-charts")
     assert "shep-charts-narrow" not in template and not hasattr(charts, "NARROW_NOTE")
     assert 'aria-describedby="shep-help-text-training-charts"' in template
 

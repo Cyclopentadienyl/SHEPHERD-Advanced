@@ -346,7 +346,8 @@ def checkpoint_root(demo_workspace, tmp_path_factory):
     digests["other"] = write_checkpoint(
         {"checkpoint_kind": "training_state", "epoch": 7,
          "logs": {"val_loss": 0.1, "val_hits@10": 0.4},
-         "training_input_digests": {"split_manifest": "9" * 64}}, newest / "other.pt")
+         "training_input_digests": {"split_manifest": "9" * 64},
+         "progress": {"completed_epochs": 8, "end": "paused"}}, newest / "other.pt")
     older = _run(ws, "sage", "20261019-120000_old_bbbbbb")
     digests["weights"] = write_checkpoint({"checkpoint_kind": "weights", "epoch": 2},
                                           older / "weights.pt")
@@ -387,6 +388,18 @@ class TestCheckpoints:
         assert item.trained_on_this_dataset is False
         assert item.validation == {"metric": "val_hits@10", "value": 0.4}
         assert item.checkpoint_kind == "training_state" and item.epoch == 7
+
+    def test_the_progress_record_is_the_files_own_never_derived(self, checkpoint_root):
+        """The epochs a file completed and how its stage ended, as its progress
+        record says (the GB10 WebUI recheck: the list said "epoch 194" of a run
+        whose curves showed 195 completed); a file with no progress record has
+        none, never its epoch index plus one."""
+        items = self._items(checkpoint_root)
+        assert (items["other.pt"].epoch, items["other.pt"].completed_epochs,
+                items["other.pt"].end) == (7, 8, "paused")
+        assert (items["weights.pt"].epoch, items["weights.pt"].completed_epochs,
+                items["weights.pt"].end) == (2, None, None)
+        assert items["garbage.pt"].completed_epochs is None and items["garbage.pt"].end is None
 
     def test_no_validation_figure_is_none_not_zero(self, checkpoint_root):
         item = self._items(checkpoint_root)["weights.pt"]

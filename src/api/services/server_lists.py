@@ -179,6 +179,10 @@ class CheckpointItem:
     workspace is listed with `problem` and every field read from a file
     (digest, size, record) `None`, since it was never opened. `workspace` is the
     name the server lists, which `resolve_checkpoint` takes back.
+    `completed_epochs` and `end` are the file's progress record (epochs
+    completed; how its stage ended), `None` where the file records none (a
+    weights-only file, an older format): `epoch` is the record's epoch index,
+    never adjusted into a count.
     """
 
     workspace: str
@@ -193,6 +197,8 @@ class CheckpointItem:
     dataset_fingerprint: Optional[str]
     trained_on_this_dataset: Optional[bool]
     problem: Optional[str]
+    completed_epochs: Optional[int] = None
+    end: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -521,6 +527,8 @@ def list_checkpoints(
                                      if recorded is not None and fingerprint is not None
                                      else None),
             problem=entry.problem,
+            completed_epochs=_count(entry.completed_epochs),
+            end=entry.end,
         ))
     return Listing(tuple(items))
 

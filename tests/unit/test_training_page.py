@@ -211,12 +211,22 @@ def test_every_gated_act_checks_d8_and_reads_the_chips_after():
 
 
 # --------------------------------------------------------------------------- the run bar's workspace
-def test_the_select_offers_the_servers_list_with_the_shared_labels(root):
+def test_the_select_names_the_servers_workspaces_and_leaves_their_identity_to_the_chip(root):
+    """The server's list, in the shared order; a trainable workspace's option
+    is its name, its identity (fingerprint, synthetic) the chip's beside it
+    (the GB10 WebUI recheck: said twice side by side); one that cannot be
+    trained keeps its reason in its option, read before choosing."""
     from src.webui.components import renderers as r
     from src.webui.components.workspaces import read_workspaces
 
     state = tc._workspace_state("demo")
-    assert [tuple(c) for c in state["choices"]] == r.workspace_choices(read_workspaces()["rows"])
+    rows = read_workspaces()["rows"]
+    trainable = {x["name"] for x in rows if r.is_digest(x.get("dataset_fingerprint"))}
+    assert [tuple(c) for c in state["choices"]] == [
+        (name if name in trainable else label, name) for label, name in r.workspace_choices(rows)]
+    assert ("demo", "demo") in [tuple(c) for c in state["choices"]]
+    assert any(label != name for label, name in state["choices"])      # a reason kept
+    assert "dataset fingerprint" in tc.chip_html(state)
     assert state["name"] == "demo" and r.is_digest(state["row"]["dataset_fingerprint"])
     assert state["latest_run"] == "gat/20261018-142000_run_d41f8b"
     assert tc._workspace_state("not-listed")["row"] is None
@@ -502,7 +512,7 @@ def test_the_used_dataset_fingerprint_is_an_operators_and_compared_in_full():
                     latest=True)
     same = tc.run_head_html(run, ws, operator=True,
                             snapshot={"readable": True, "dataset_fingerprint": "a" * 64})
-    assert "same as the run bar" in same and "a" * 12 in same
+    assert "same dataset as the run bar" in same and "a" * 12 in same     # the tag; Details
     other = tc.run_head_html(run, ws, operator=True,
                              snapshot={"readable": True, "dataset_fingerprint": "a" * 12 + "b" * 52})
     assert "≠ not the selected dataset" in other            # 12 equal digits are not equal
@@ -510,7 +520,8 @@ def test_the_used_dataset_fingerprint_is_an_operators_and_compared_in_full():
                                                                   snapshot=None, live=True)
     read_only = tc.run_head_html(run, ws, operator=False,
                                  snapshot={"readable": True, "dataset_fingerprint": "a" * 64})
-    assert "not shown · reading the checkpoint is an operator control" in read_only
+    assert "dataset not shown · operator control" in read_only
+    assert "not shown: reading the checkpoint is an operator control" in read_only
     assert "a" * 12 not in read_only
 
 
@@ -522,11 +533,20 @@ def test_the_snapshot_sentence_names_no_path_to_a_read_only_request(root):
                 "completed_epochs": 60, "target_epochs": 60, "end": "finished"}
     status = {"status": "completed", "current_epoch": 60, "total_epochs": 60}
     operator = tc.run_snapshot_html(run, status, operator=True, snapshot=snapshot)
-    assert "Finished (epoch 60 of 60): demo/runs/gat/r/checkpoints/last.pt" in operator
-    assert str(root) not in operator
+    assert "Finished · 60 of 60 epochs completed · to train further, use Continue…" in operator
+    assert str(root) not in operator and "last.pt" not in operator     # the path: Details
+    ws = {"row": {"dataset_fingerprint": "a" * 64}, "digits": 12}
+    head = tc.run_head_html(run, ws, operator=True, snapshot=snapshot)
+    assert "demo/runs/gat/r/checkpoints/last.pt" in head and str(root) not in head
     read_only = tc.run_snapshot_html(run, status, operator=False, snapshot=None)
-    assert "Completed (epoch 60 of 60)." in read_only and "last.pt" not in read_only
-    assert "reading the run’s checkpoint is checkpoint inspection" in read_only
+    assert "Completed · epoch 60 of 60 · checkpoint details are an operator control" in read_only
+    early = {**snapshot, "end": "stopped_early", "completed_epochs": 40, "target_epochs": 60}
+    assert "Stopped early · 40 of 60 epochs completed · cannot be continued" in tc.run_snapshot_html(
+        run, status, operator=True, snapshot=early)
+    assert "Stopped early (patience) · " in tc.run_snapshot_html(
+        run, status, operator=True, snapshot={**early, "stop_reason": "patience"})
+    assert "last.pt" not in read_only
+    assert "last.pt" not in tc.run_head_html(run, ws, operator=False, snapshot=None)
 
 
 def test_the_runs_checkpoint_is_read_again_only_when_it_changed(root, monkeypatch):
@@ -1107,7 +1127,7 @@ def test_new_epochs_reach_the_charts_and_the_run_head_while_nobody_acts(
     (job_run / "checkpoints" / "last.pt").write_bytes(b"saved state")
     assert "head" in page.tick()
     head = page.shown("shep-train-run-head")
-    assert fingerprint[:12] in head and "same as the run bar" in head
+    assert fingerprint[:12] in head and "same dataset as the run bar" in head
     assert page.tick() == []
 
 
@@ -1227,8 +1247,9 @@ def test_a_read_only_request_sees_every_action_disabled_and_no_checkpoint(root, 
     pieces = tc.render(tc._workspace_state("demo"), {}, {}, [], READ_ONLY)["pieces"]
     assert not any(pieces[k] for k in ("start", "cont", "stop", "resume", "run_name"))
     assert "Operator controls only: deployment mode not set to M1" in pieces["reason"]
-    assert "not shown · reading the checkpoint is an operator control" in pieces["head"]
+    assert "dataset not shown · operator control" in pieces["head"]
     assert "last.pt" not in pieces["snap"] and "runs/" not in pieces["snap"]
+    assert "last.pt" not in pieces["head"]
 
 
 # --------------------------------------------------------------------------- the banner
@@ -1352,9 +1373,12 @@ def test_a_run_with_no_run_directory_is_not_called_no_longer_listed(root):
         snap = tc.run_snapshot_html(run, failed, operator=operator, snapshot=None)
         assert "Failed. No run directory exists for this run, so it has no checkpoint and no log." in snap
         assert "logs/" not in snap
-    # Running before the run made its directory: no logs pointed to yet.
+    # Running before the run made its directory: no logs pointed to yet, and
+    # the header's Details says no checkpoint is written yet.
     live = tc.run_snapshot_html(run, {"status": "running"}, operator=True, snapshot=None)
-    assert "No checkpoint has been written yet." in live and "logs/" not in live
+    assert live == '<p class="shep-rv-snap">Running</p>'
+    head = tc.run_head_html(run, {}, operator=True, snapshot=None, live=True)
+    assert "Newest checkpoint" in head and "none written yet" in head
 
 
 def test_an_ended_run_with_no_checkpoint_is_headed_as_its_snapshot_says(root, monkeypatch,
@@ -1367,7 +1391,7 @@ def test_an_ended_run_with_no_checkpoint_is_headed_as_its_snapshot_says(root, mo
     run = tc.RunRef(id="demo/gat/r", label="gat/r", path=root / "demo" / "runs" / "gat" / "r",
                     workspace="demo", latest=False)
     ended = tc.run_head_html(run, ws, operator=True, snapshot=None)
-    assert "not recorded (the run saved no checkpoint)" in ended
+    assert "dataset not recorded (no checkpoint)" in ended
     assert "first checkpoint" not in ended
     assert "recorded at the first checkpoint" in tc.run_head_html(run, ws, operator=True,
                                                                   snapshot=None, live=True)
@@ -1384,11 +1408,11 @@ def test_an_ended_run_with_no_checkpoint_is_headed_as_its_snapshot_says(root, mo
             pieces = tc.render(tc._workspace_state("demo"), {}, {}, [], operator)["pieces"]
             if live:
                 assert "recorded at the first checkpoint" in pieces["head"]
-                assert "No checkpoint has been written yet." in pieces["snap"]
+                assert "none written yet" in pieces["head"]          # its Details
             else:
-                assert "not recorded (the run saved no checkpoint)" in pieces["head"]
+                assert "dataset not recorded (no checkpoint)" in pieces["head"]
                 assert ("it has no checkpoint" in pieces["snap"] if not made
-                        else "No checkpoint was saved" in pieces["snap"])
+                        else "No checkpoint saved, so nothing can be continued" in pieces["snap"])
 
 
 def test_a_read_only_banner_keeps_the_tails_indentation(root, monkeypatch):
@@ -1480,9 +1504,14 @@ def test_the_run_view_and_drawer_builders_escape_names_and_paths(root):
           "listed": [{"name": ODD, "dataset_fingerprint": "a" * 64}]}
     head = tc.run_head_html(run, ws, operator=True, snapshot={"readable": True,
                                                                "dataset_fingerprint": "a" * 64})
-    assert _no_tag(head) and "latest in &lt;b&gt;odd&amp;name" in head and "&lt;img src=x" in head
-    note = tc._parents_note(ws, {"k": {}}, None)
-    assert _no_tag(note) and "&lt;b&gt;odd&amp;name’s runs" in note
+    assert _no_tag(head) and "&lt;img src=x" in head
+    # The run's workspace is named in Details when it is not the run bar's.
+    elsewhere = tc.run_head_html(run, {**ws, "name": "demo"}, operator=True,
+                                 snapshot={"readable": True, "dataset_fingerprint": "a" * 64})
+    assert _no_tag(elsewhere) and "Workspace" in elsewhere and "&lt;b&gt;odd&amp;name" in elsewhere
+    assert "Workspace" not in head
+    note = tc._parents_note(ws, {"k": {"architecture": "gat", "run": TAG}}, None)
+    assert _no_tag(note) and "1 run, 1 checkpoint" in note
     for fingerprint in ("a" * 64, "e" * 64):          # the same dataset, and another
         compare = tc.compare_html({"chosen": True, "fingerprint": fingerprint,
                                    "source": tc.CONTINUE_FROM_LIST}, ws)
@@ -1493,6 +1522,8 @@ def test_the_run_view_and_drawer_builders_escape_names_and_paths(root):
                "reason": f"refused: {TAG}", "sha256": "c" * 64}
     check = tc._check_html(preview, tc.CONTINUE_FROM_LIST)
     assert _no_tag(check) and "&lt;b&gt;odd&amp;name/runs/gat/&lt;img" in check
+    listed = tc._check_html(preview, tc.CONTINUE_FROM_LIST, listed=f"gat/{TAG}/last.pt")
+    assert _no_tag(listed) and "<code>gat/&lt;img" in listed
 
 
 def _rendered_for(status, mode, operator, monkeypatch, ws):
@@ -1578,19 +1609,20 @@ def test_the_parent_list_follows_the_run_bars_workspace_while_the_drawer_is_open
     monkeypatch.setattr(server_lists, "list_checkpoints",
                         lambda name: listed.append(name) or _listing([_item(name)]))
     ws = tc._workspace_state("resampled")
-    assert tc._relist_parents(operator, ws, {"drawer": False}) == (gr.update(),) * 6
+    assert tc._relist_parents(operator, ws, {"drawer": False}) == (gr.update(),) * 7
     assert listed == []
-    parents, select, note, compare, preview, extend = tc._relist_parents(
+    parents, runs, select, note, compare, preview, extend = tc._relist_parents(
         operator, ws, {"drawer": True})
     assert listed == ["resampled"] and list(parents) == ["gat/r/last.pt"]
     assert parents["gat/r/last.pt"]["workspace"] == "resampled"
-    assert select["value"] == "gat/r/last.pt" and "resampled’s runs" in note
+    assert runs["value"] == "gat/r" and select["value"] == "gat/r/last.pt"
+    assert "1 run, 1 checkpoint" in note
     assert compare == "" and tc._CONTINUE_PROMPT in preview
     assert extend == gr.update(visible=False, value=None)
     monkeypatch.delenv("SHEPHERD_DEPLOYMENT_MODE", raising=False)    # read-only from here
     refused = tc._relist_parents(READ_ONLY, ws, {"drawer": True})
-    assert refused[0] == {} and refused[1] == gr.update(choices=[], value=None)
-    assert "Refused" in refused[2] and listed == ["resampled"]
+    assert refused[0] == {} and refused[1] == refused[2] == gr.update(choices=[], value=None)
+    assert "Refused" in refused[3] and listed == ["resampled"]
 
 
 def test_a_parent_listed_for_another_workspace_is_never_continued_on_this_one(root):
@@ -1676,7 +1708,8 @@ def test_a_live_run_reads_its_checkpoint_once_for_the_fingerprint(root, monkeypa
         last.write_bytes(b"epoch %d" % epoch * epoch)                  # a new size each epoch
         rendered = tc.render(ws, {}, cache, [], operator)
         cache = rendered["cache"]
-        assert fp[:12] in rendered["pieces"]["head"] and "same as the run bar" in rendered["pieces"]["head"]
+        assert fp[:12] in rendered["pieces"]["head"]
+        assert "same dataset as the run bar" in rendered["pieces"]["head"]
     assert len(reads) == 1
     status = {"status": "completed", "job_id": "j", "current_epoch": 9, "total_epochs": 9}
     tc.render(ws, {}, cache, [], operator)
@@ -1692,13 +1725,99 @@ def test_the_reason_lines_sentence_ends_once():
     assert re.sub(r"<[^>]+>", "", cli["reason"]).endswith("since 09:58 UTC).")
 
 
-def test_a_parents_option_names_its_file_and_what_it_holds():
-    last = tc._parent_label(_item("demo").__dict__)
-    weights = tc._parent_label(_item("demo", filename="model-03-0.2.pt", kind="weights").__dict__)
-    assert "epoch 3 · last.pt (training state) · model fingerprint cccccccccccc" in last
-    assert "epoch 3 · model-03-0.2.pt (weights only)" in weights and last != weights
-    unknown = tc._parent_label({**_item("demo").__dict__, "checkpoint_kind": None, "epoch": None})
-    assert "· last.pt · model fingerprint" in unknown
+def test_a_checkpoints_option_says_what_it_is_how_far_it_trained_and_its_limit():
+    """In a few words, from the file's own record (the GB10 WebUI recheck: one
+    long line per file read as a wall of text): the latest save or a top-k
+    save, the epochs its progress record says it completed (never epoch + 1
+    for a file without one), what limits continuing, and the Trainer's
+    validation figure, named as the Trainer's."""
+    item = {**_item("demo").__dict__, "completed_epochs": 195, "end": "paused",
+            "validation": {"metric": "val_mrr", "value": 0.28}}
+    assert tc.checkpoint_words(item) == "Latest save · 195 epochs completed · Trainer val MRR 0.2800"
+    top = {**item, "filename": "model-20-0.2867.pt", "completed_epochs": 21, "end": None}
+    assert tc.checkpoint_words(top).startswith("Top-k save · 21 epochs completed")
+    assert tc.checkpoint_words({**item, "end": "finished"}).startswith(
+        "Latest save · 195 epochs completed · finished")
+    assert "stopped early, cannot continue" in tc.checkpoint_words({**item, "end": "stopped_early"})
+    weights = _item("demo", filename="model-03-0.2.pt", kind="weights").__dict__
+    assert tc.checkpoint_words(weights) == "Top-k save · weights only, cannot continue"
+    older = {**_item("demo", epoch=194).__dict__}                     # no progress record
+    assert tc.checkpoint_words(older) == "Latest save · recorded epoch 194"
+    assert tc.checkpoint_words({**older, "problem": "ValueError: x"}) == "last.pt · cannot be read"
+    other = {**item, "filename": "best.pt", "completed_epochs": 1}
+    assert tc.checkpoint_words(other).startswith("best.pt · 1 epoch completed")
+
+
+def test_a_run_reads_as_its_name_architecture_and_start_time():
+    assert tc.run_words("gat", "20261024-173909_ui-live-stop-02_c1d9cf") == \
+        "ui-live-stop-02 · GAT · 2026-10-24 17:39"
+    assert tc.run_words("gat", "20261024-163856_run_559817") == "GAT · 2026-10-24 16:38"
+    assert tc.run_words("hgt", "my-old-run") == "HGT · my-old-run"
+
+
+def test_the_drawer_lists_runs_then_the_chosen_runs_checkpoints():
+    """Two steps over the same server list (the same keys, digests and check):
+    the runs, latest first; the chosen run's files, newest first. Choosing
+    another run offers its files with its latest save chosen; a checkpoint
+    kept by key stays chosen; two runs that would read alike are told apart
+    by their directory's name."""
+    def item(run, filename, completed, mrr=None):
+        return {**_item("demo", run=run, filename=filename).__dict__, "completed_epochs": completed,
+                "validation": {"metric": "val_mrr", "value": mrr} if mrr else None}
+    new, old = "20261024-173909_a_c1d9cf", "20261024-163856_run_559817"
+    parents = {f"gat/{new}/last.pt": item(new, "last.pt", 195),
+               f"gat/{new}/model-20-0.2867.pt": item(new, "model-20-0.2867.pt", 21, 0.2867),
+               f"gat/{old}/last.pt": item(old, "last.pt", 11),
+               f"gat/{old}/model-02-0.2160.pt": item(old, "model-02-0.2160.pt", 3, 0.216),
+               f"gat/{old}/model-01-0.2160.pt": item(old, "model-01-0.2160.pt", 2, 0.216)}
+    runs, files = tc._parents_update(parents)
+    assert runs["choices"] == [("a · GAT · 2026-10-24 17:39", f"gat/{new}"),
+                               ("GAT · 2026-10-24 16:38", f"gat/{old}")]
+    assert runs["value"] == f"gat/{new}" and files["value"] == f"gat/{new}/last.pt"
+    assert [label for label, _key in files["choices"]] == [
+        "Latest save · 195 epochs completed", "Top-k save · 21 epochs completed · Trainer val MRR 0.2867"]
+    others = tc._on_run_chosen(f"gat/{old}", parents, f"gat/{new}/last.pt")
+    assert others["value"] == f"gat/{old}/last.pt"                       # its latest save
+    assert [key for _label, key in others["choices"]] == [k for k in parents if old in k]
+    labels = [label for label, _key in others["choices"]]
+    assert len(set(labels)) == len(labels)                                # same MRR, told apart
+    kept = tc._on_run_chosen(f"gat/{old}", parents, f"gat/{old}/model-01-0.2160.pt")
+    assert kept["value"] == f"gat/{old}/model-01-0.2160.pt"
+    assert tc._parents_update(parents, f"gat/{old}/model-02-0.2160.pt")[0]["value"] == f"gat/{old}"
+    twins = {"gat/20261024-163856_run_111111/last.pt": item("20261024-163856_run_111111", "last.pt", 1),
+             "gat/20261024-163801_run_222222/last.pt": item("20261024-163801_run_222222", "last.pt", 1)}
+    assert [label for label, _key in tc._run_choices(twins)] == [
+        "GAT · 2026-10-24 16:38 · 20261024-163856_run_111111",
+        "GAT · 2026-10-24 16:38 · 20261024-163801_run_222222"]
+    assert tc._on_run_chosen(None, {}, None) == gr.update(choices=[], value=None)
+
+
+def test_the_chosen_checkpoints_details_say_what_its_option_does_not():
+    """A table: the file, what it holds, what continuing does when its stage
+    ended, its model fingerprint (copyable) and its run's directory; its
+    progress and validation figure are its option's, not repeated."""
+    item = {**_item("demo", run="20261024-163856_run_559817").__dict__, "completed_epochs": 11,
+            "end": "finished", "validation": {"metric": "val_mrr", "value": 0.214}}
+    html = tc.parent_details_html(item)
+    for words in ("File", "last.pt", "Holds", "training state", "Continuing",
+                  "extends it by the Extra epochs you enter", "Model fingerprint", "cccccccccccc",
+                  'data-copy="' + "c" * 64, "gat/20261024-163856_run_559817"):
+        assert words in html, words
+    assert "epochs completed" not in html and "MRR" not in html
+    weights = tc.parent_details_html(_item("demo", kind="weights").__dict__)
+    assert "weights only (cannot be continued)" in weights and "Continuing" not in weights
+    unread = tc.parent_details_html({**_item("demo").__dict__, "problem": "ValueError: <b>x"})
+    assert "shep-ckpt-amber" in unread and "Cannot be read" in unread and "&lt;b&gt;x" in unread
+    assert tc.parent_details_html(None) == ""
+
+
+def test_the_chart_help_leads_with_the_gestures_in_paragraphs():
+    title, text = tc.TOPIC_HELP["training-charts"]
+    assert text.startswith(tc.charts.GESTURES + "\n\n") and "\n• over the epoch axis" in text
+    for key in ("continue_source", "checkpoint_dropdown", "continue_device", "run_name",
+                "training-used-dataset", "continue_run"):
+        help_text = {**tc.FIELD_HELP, **tc.TOPIC_HELP}[key][1]
+        assert "\n\n" in help_text, key                      # a lead, then the rest
 
 
 def test_continue_has_its_own_device_which_its_check_and_start_use():
@@ -1742,6 +1861,7 @@ def test_the_page_styles_hold_the_reviewed_layout():
     # The selects: a border, the text clear of the chevron, grey while disabled.
     assert any("border: 1px solid" in b for _s, b in _rules(css, "#shep-train-dataset .wrap:has"))
     assert any("padding-right: 30px" in b for _s, b in _rules(css, "#checkpoint_dropdown input"))
+    assert any("padding-right: 30px" in b for _s, b in _rules(css, "#continue_run input"))
     assert any("grey" in b for _s, b in _rules(css, "input:disabled"))
     # Disabled actions: neutral grey, full opacity.
     disabled = [b for _s, b in _rules(css, ".shep-rb-row > button:disabled")]
@@ -1754,7 +1874,7 @@ def test_the_page_styles_hold_the_reviewed_layout():
     assert ".shep-banner-tail {{ max-height: none; overflow: visible; }}".replace(
         "{{", "{").replace("}}", "}") in narrow
     wide = css[css.index("@media (min-width: 1400px) and (min-height: 760px)"):]
-    assert "#shep-train-runview { overflow-y: auto !important; }" in wide
+    assert "#shep-train-runview > #shep-train-charts { flex: 1 1 0 !important; min-height: 0 !important; overflow-y: auto !important;" in wide
     # A failed run's banner takes height: the plots keep their minimum then too
     # (M5-3: one minimum per plot box replaced the charts' 240/370 px).
     assert "min-height: 370px" not in wide and "min-height: 240px" not in wide
@@ -1798,7 +1918,7 @@ def test_extra_epochs_sits_above_every_check_result():
     wide = tc.PAGE_CSS[tc.PAGE_CSS.index("@media (min-width: 1400px) and (min-height: 760px) {"):]
     wide = wide.replace(f"{tc._PAGE} ", "")
     assert "#continue_source, #continue_device { display: flex !important;" in wide
-    assert "#checkpoint_dropdown .container { display: flex;" in wide
+    assert "#checkpoint_dropdown .container { display: flex;" not in wide   # labels above
     assert "#shep-train-drawer-why { padding: 8px 16px !important; }" in wide
     # When the datasets differ, the comparison says the start refuses; the
     # check does not add its general line, and a rate is never split.
@@ -1841,19 +1961,32 @@ def test_a_two_sentence_reason_breaks_between_its_sentences():
     assert ".shep-rb-why .shep-wg { text-wrap: pretty; }" in tc.PAGE_CSS.replace(f"{tc._PAGE} ", "")
 
 
-def test_the_plots_keep_a_usable_minimum_with_the_toolbar_in_view():
-    """M5-3: at 1536 x 760 the plots were 70 to 100 px tall. Each plot box keeps
-    room for a plot area of PLOT_MIN_HEIGHT px; when that does not fit, the run
-    view scrolls inside with its top (header and snapshot) and the charts'
-    toolbar staying in view, and the resources line yielding below."""
+def test_the_plots_keep_a_usable_minimum_and_the_resources_line_its_own_row():
+    """M5-3: at 1536 x 760 the plots were 70 to 100 px tall; each plot box keeps
+    room for a plot area of PLOT_MIN_HEIGHT px. The GB10 WebUI recheck: the
+    resources line, kept over the scrolling plots (sticky), hid the last axis
+    and its label. The run view is now three rows, and only the charts' row
+    scrolls when their minimum does not fit: the header and the resources
+    line are rows of their own, nothing is drawn over an axis, and no axis
+    label is hidden to make room."""
     assert tc.PLOT_MIN_HEIGHT >= 140
     css = tc.PAGE_CSS
     wide = css[css.index("@media (min-width: 1400px) and (min-height: 760px) {"):]
+    wide = wide[:wide.index("\n}\n")]
     plot_box = tc.PLOT_MIN_HEIGHT + tc.PLOT_AXIS_ROOM
     assert f"#shep-train-charts .shep-chart-plot {{ min-height: {plot_box}px; }}" in wide
     assert "#shep-train-charts .shep-charts-grid { grid-auto-rows: minmax(min-content, 1fr); }" in wide
-    assert "#shep-train-runview > #shep-train-rv-top { position: sticky; top: 0;" in wide
-    assert ".shep-charts-bar { position: sticky; top: var(--shep-rv-top-h" in wide
+    # Only !important beats the inline "overflow: visible" Gradio writes on the block.
+    assert ("#shep-train-runview > #shep-train-charts { flex: 1 1 0 !important; min-height: 0 "
+            "!important; overflow-y: auto !important;") in wide
+    assert "#shep-train-runview > #resource_display { flex: none !important; }" in wide
+    assert "position: sticky; bottom" not in css and "#shep-train-runview { overflow-y" not in css
+    assert ".shep-charts-bar { position: sticky; top: 0;" in wide
+    # The boxes inside the row take its height, the cards keep their content's minimum.
+    assert "#shep-train-charts .shep-charts-grid { min-height: 0; }" in wide
+    assert "#shep-train-charts .shep-chart { min-height: auto; }" in wide
+    assert ".shep-chart-xl { display: none; }" not in css.replace(f"{tc._PAGE} ", "")
     _demo, _ctx, by_id = _page()
-    assert by_id["shep-train-run-head"].js_on_load == tc._RUN_HEAD_JS
-    assert "--shep-rv-top-h" in tc._RUN_HEAD_JS and "ResizeObserver" in tc._RUN_HEAD_JS
+    assert by_id["shep-train-run-head"].js_on_load == tc._POPOVER_JS
+    assert by_id["shep-train-chip"].js_on_load == tc._POPOVER_JS
+    assert "--shep-rv-top-h" not in css

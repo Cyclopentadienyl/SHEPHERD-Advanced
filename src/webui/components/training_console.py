@@ -123,7 +123,7 @@ from src.utils.gpu_lock import lock_state
 from src.webui.components import charts
 from src.webui.components import renderers as r
 from src.webui.components.chips import D8_SHORT, chips_on_change, gpu_chip_from
-from src.webui.components.help import help_button
+from src.webui.components.help import copy_button, help_button
 from src.webui.components.workspaces import (
     manifest_facts,
     read_workspaces,
@@ -409,7 +409,12 @@ def _workspace_state(name: Optional[str], listed: Optional[Mapping[str, Any]] = 
     listed = listed if listed is not None else read_workspaces()
     rows = listed["rows"]
     state = _empty_workspace()
-    state["choices"] = [list(choice) for choice in r.workspace_choices(rows)]
+    # The options name the workspace; its identity (fingerprint, synthetic) is
+    # the chip's, beside the select (said once on the page). A workspace that
+    # cannot be trained keeps its reason in its option, read before choosing.
+    trainable = {x["name"] for x in rows if r.is_digest(x.get("dataset_fingerprint"))}
+    state["choices"] = [[name if name in trainable else label, name]
+                        for label, name in r.workspace_choices(rows)]
     state["listed"] = [{"name": x["name"], "dataset_fingerprint": x.get("dataset_fingerprint"),
                         "dataset_record": x.get("dataset_record")} for x in rows]
     state["digits"] = r.distinguishing_digits(x.get("dataset_fingerprint") for x in rows)
@@ -478,16 +483,18 @@ def chip_html(ws: Optional[Mapping[str, Any]], *, in_use: bool = False) -> str:
             f'aria-label="Dataset details" hidden>{details_html(ws)}</div></div>')
 
 
-#: The chip's popover and cross-link (element-scoped listeners; the chip is
-#: never re-mounted, and a replaced value keeps them, being delegated).
-_CHIP_JS = r"""
+#: A "Details ›" popover's behaviour, element-scoped (the element is never
+#: re-mounted, and a replaced value keeps the listeners, being delegated): the
+#: dataset chip's, with its "All datasets ›" cross-link, and the run view
+#: header's. Escape, a click outside or focus leaving it closes it.
+_POPOVER_JS = r"""
 function pop() { return element.querySelector('.shep-pop'); }
 function toggle(open) {
   var p = pop(), b = element.querySelector('[data-act="details"]');
   if (!p || !b) { return; }
   p.hidden = !open;
   b.setAttribute('aria-expanded', open ? 'true' : 'false');
-  if (open) { var c = p.querySelector('.shep-copy'); if (c) { c.focus(); } }
+  if (open) { var c = p.querySelector('.shep-copy, .shep-pop-x'); if (c) { c.focus(); } }
 }
 element.addEventListener('click', function (e) {
   var a = e.target.closest ? e.target.closest('[data-act]') : null;
@@ -523,20 +530,6 @@ element.addEventListener('click', function (e) {
 #: A wide window at least this tall shows a failed run's output tail open;
 #: a shorter one shows its summary line, so the charts keep their room.
 BANNER_OPEN_HEIGHT = 1000
-
-#: The run view's top (its header and the snapshot sentence) keeps its height
-#: in ``--shep-rv-top-h`` on the run view, so the charts' toolbar sticks right
-#: under it while the plots scroll (`PAGE_CSS`; a long run name or sentence may
-#: wrap). The toolbar then never moves under a pointer that scrolls over it.
-_RUN_HEAD_JS = r"""
-var view = element.closest('#shep-train-runview');
-var top = element.closest('#shep-train-rv-top');
-if (view && top && window.ResizeObserver) {
-  new ResizeObserver(function () {
-    view.style.setProperty('--shep-rv-top-h', top.offsetHeight + 'px');
-  }).observe(top);
-}
-"""
 
 #: The banner: Dismiss (`_TRIGGER_JS`) and its output tail's disclosure, sent
 #: open and closed here once per banner on a wide window under
@@ -1111,46 +1104,106 @@ def _newest_checkpoint(run_dir: Path) -> Optional[Path]:
     return best
 
 
-def run_head_html(run: Optional[RunRef], ws: Mapping[str, Any], *, operator: bool,
-                  snapshot: Optional[Mapping[str, Any]], live: bool = False) -> str:
-    """"Run gat/<run>" and the dataset fingerprint the run used: from its
-    checkpoint for an operator ("✓ same as the run bar" / amber "≠ not the
-    selected dataset"; with no checkpoint, "recorded at the first checkpoint"
-    while the run is `live`, else "not recorded (the run saved no
-    checkpoint)", as the snapshot sentence under it says); for a read-only
-    request "not shown · reading the checkpoint is an operator control"."""
-    if run is None:
-        return ('<div class="shep-panel-hd shep-rv-hd"><h2>Run</h2><span class="shep-muted">'
-                'none to show yet</span></div>')
-    latest = (f'<span class="shep-muted">latest in {r.e(run["workspace"])}</span>'
-              if run.get("latest") else "")
-    label = "used dataset fingerprint"
+def _digest_html(digest: Any, digits: int = r.SHORT_HEX, what: str = "fingerprint") -> str:
+    """A digest's short form in bold monospace, the full value in its title
+    and on an icon Copy; "not recorded" when there is none."""
+    if not r.is_digest(digest):
+        return '<span class="shep-muted">not recorded</span>'
+    return (f'<code class="shep-fpv" title="{r.e(digest)}">{r.e(str(digest)[:digits])}</code> '
+            + copy_button(str(digest), f"the full {what}", icon_only=True))
+
+
+def _dataset_relation(ws: Mapping[str, Any], *, operator: bool,
+                      snapshot: Optional[Mapping[str, Any]], live: bool) -> Tuple[str, str]:
+    """How the run's recorded dataset stands to the run bar's: ``(tag, row)``,
+    the header's short tag (always shown: a mismatch, a missing record or a
+    refusal changes what the curves mean) and the Details row with the
+    fingerprint itself. Reading it opens the run's checkpoint: an operator's
+    only."""
     if not operator:
-        used = (f'<span class="shep-fpk">{label}:</span><span class="shep-tag shep-tag-grey">'
-                f'{_LOCK} not shown · reading the checkpoint is an operator control</span>')
-    elif snapshot is None:
-        none = "recorded at the first checkpoint" if live else "not recorded (the run saved no checkpoint)"
-        used = f'<span class="shep-fpk">{label}:</span><span class="shep-muted">{none}</span>'
-    elif not snapshot.get("readable", True):
-        used = f'<span class="shep-fpk">{label}:</span><span class="shep-muted">not read (the checkpoint cannot be read)</span>'
-    else:
-        recorded = snapshot.get("dataset_fingerprint")
-        current = _fingerprint(ws)
-        used = r.fingerprint_html(label, recorded, digits=ws.get("digits") or r.SHORT_HEX, copy=False)
-        if r.is_digest(recorded) and current:
-            used += (f'<span class="shep-tag shep-tag-ok">{r.CHECK} same as the run bar</span>'
-                     if recorded == current else
-                     '<span class="shep-tag shep-tag-amber">≠ not the selected dataset</span>')
-    return (f'<div class="shep-panel-hd shep-rv-hd"><h2>Run <code>{r.e(run["label"])}</code></h2>'
-            f'{latest}<span class="shep-rv-used">{used}'
-            f'{help_button("training-used-dataset", "Used dataset fingerprint")}</span></div>')
+        return (f'<span class="shep-tag shep-tag-grey">{_LOCK} dataset not shown · operator '
+                'control</span>',
+                '<span class="shep-muted">not shown: reading the checkpoint is an operator '
+                'control</span>')
+    if snapshot is None:
+        words = "recorded at the first checkpoint" if live else "not recorded (no checkpoint)"
+        return f'<span class="shep-muted">dataset {words}</span>', f'<span class="shep-muted">{words}</span>'
+    if not snapshot.get("readable", True):
+        return ('<span class="shep-tag shep-tag-amber">checkpoint cannot be read</span>',
+                '<span class="shep-muted">not read (the checkpoint cannot be read)</span>')
+    recorded, current = snapshot.get("dataset_fingerprint"), _fingerprint(ws)
+    row = _digest_html(recorded, ws.get("digits") or r.SHORT_HEX, "dataset fingerprint")
+    if not (r.is_digest(recorded) and current):
+        return '<span class="shep-muted">dataset not recorded</span>', row
+    if recorded == current:
+        return f'<span class="shep-tag shep-tag-ok">{r.CHECK} same dataset as the run bar</span>', row
+    return '<span class="shep-tag shep-tag-amber">≠ not the selected dataset</span>', row
+
+
+def run_head_html(run: Optional[RunRef], ws: Mapping[str, Any], *, operator: bool,
+                  snapshot: Optional[Mapping[str, Any]], live: bool = False,
+                  continuing: Optional[str] = None) -> str:
+    """The run view's header, one line: "Run shown" and the run as a person
+    names it (`run_words`), whether it is the workspace's latest, how its
+    recorded dataset stands to the run bar's (`_dataset_relation`), and, while
+    Continue… is open with a listed checkpoint chosen, whether this is the run
+    continued from (`continuing`, its "<architecture>/<run>"): the drawer's
+    parent and the run shown are different runs unless chosen so. The rest,
+    read less often (the run's directory, its checkpoint and logs, the dataset
+    fingerprint it used; its workspace when it is not the run bar's), is in
+    Details."""
+    if run is None:
+        return ('<div class="shep-panel-hd shep-rv-hd"><h2>Run shown</h2><span class="shep-muted">'
+                'none yet</span></div>')
+    label = str(run["label"])
+    arch, _, directory = label.partition("/")
+    tag, used = _dataset_relation(ws, operator=operator, snapshot=snapshot, live=live)
+    latest = '<span class="shep-muted">latest</span>' if run.get("latest") else ""
+    relation = ""
+    if continuing:
+        relation = ('<span class="shep-tag shep-tag-accent">the run continued from</span>'
+                    if continuing == label else
+                    '<span class="shep-tag shep-tag-grey">not the run continued from</span>')
+    rows = [("Run", f"<code>{r.e(label)}</code>")]
+    if run.get("workspace") and run.get("workspace") != ws.get("name"):
+        # Said here only when it is not the run bar's (which names its own).
+        rows.append(("Workspace", r.e(run["workspace"])))
+    if operator:
+        if live:
+            newest = _newest_checkpoint(run["path"])
+            rows.append(("Newest checkpoint", f"<code>{r.e(_shown_path(newest))}</code>" if newest
+                         else '<span class="shep-muted">none written yet</span>'))
+        elif snapshot and snapshot.get("checkpoint"):
+            rows.append(("Checkpoint", f"<code>{r.e(_shown_path(snapshot['checkpoint']))}</code>"))
+    rows.append(("Logs", "the run directory’s <code>logs/</code>"))
+    rows.append(("Dataset used", used + help_button("training-used-dataset",
+                                                    "Used dataset fingerprint")))
+    cells = "".join(f'<span class="shep-k">{k}</span><span class="shep-v">{v}</span>' for k, v in rows)
+    details = ('<button type="button" class="shep-link shep-rv-details" data-act="details" '
+               'aria-expanded="false" aria-controls="shep-train-run-details">Details ›</button>'
+               '<div class="shep-pop shep-rv-pop" id="shep-train-run-details" role="dialog" '
+               'aria-label="Run details" hidden><div class="shep-pop-hd"><b>Run details</b>'
+               '<button type="button" class="shep-pop-x" data-act="close" '
+               f'aria-label="Close the run details">×</button></div><div class="shep-kv">{cells}'
+               '</div></div>')
+    return (f'<div class="shep-panel-hd shep-rv-hd"><h2><span class="shep-rv-k">Run shown</span> '
+            f'<span class="shep-rv-name" title="{r.e(label)}">'
+            f'{r.e(run_words(arch, directory))}</span></h2>{latest}{tag}{relation}'
+            f'<span class="shep-rv-tools">{details}</span></div>')
+
+
+def _epochs_done(snapshot: Mapping[str, Any]) -> str:
+    """"195 of 1000 epochs completed" from a snapshot's progress record."""
+    done, target = snapshot.get("completed_epochs"), snapshot.get("target_epochs")
+    return f"{done} of {target} epochs completed" if target else f"{done} epochs completed"
 
 
 def run_snapshot_html(run: Optional[RunRef], status: Mapping[str, Any], *, operator: bool,
                       snapshot: Optional[Mapping[str, Any]]) -> str:
-    """The snapshot sentence: for an operator, where the run can be continued
-    from (its checkpoint, named relative to the workspaces root); for a
-    read-only request, the run's state and why the rest is not shown."""
+    """The run's state in one short line under the header: how far it got and
+    whether it can be continued, for an operator from its checkpoint's record;
+    for a read-only request its state and that the rest is an operator's. The
+    checkpoint's and the logs' paths are in the header's Details."""
     if run is None:
         return ('<p class="shep-rv-snap">No training job since the server started, and the run '
                 'bar’s dataset has no runs yet: start one with the parameters on the left.</p>')
@@ -1160,37 +1213,40 @@ def run_snapshot_html(run: Optional[RunRef], status: Mapping[str, Any], *, opera
         exists = Path(run["path"]).is_dir()
     except OSError:
         exists = False
+    ended = pill_state(status)[1].split(" · ")[0].capitalize()
     if not exists and not live:
         # A run refused before it made its run directory (e.g. "--device
         # auto requires CUDA" on a host without it): there is no
         # checkpoint and no log to point to (for any request: a directory's
         # existence is not checkpoint inspection).
-        ended = pill_state(status)[1].split(" · ")[0].capitalize()
         state = (f"{ended} ({_epochs(status)}). " if _epochs(status) else f"{ended}. ") \
             if s in ("completed", "stopped", "failed") else ""
         return (f'<p class="shep-rv-snap">{r.e(state)}No run directory exists for this run, so '
                 'it has no checkpoint and no log.</p>')
-    # A live run's directory may not exist yet (it is made after the run's
-    # checks): the logs are pointed to once it does.
-    logs = "Logs: the run directory’s <code>logs/</code>." if exists else ""
-    if not operator:
-        state = (f"Running: {_epochs(status)}." if live and _epochs(status) else
-                 "Running." if live else
-                 f"{pill_state(status)[1].split(' · ')[0].capitalize()} ({_epochs(status)})."
-                 if s in ("completed", "stopped", "failed") and _epochs(status) else "")
-        where = (" Logs: the run directory’s <code>logs/</code> on the server." if exists else "")
-        return (f'<p class="shep-rv-snap">{r.e(state)} The checkpoint path and snapshot are shown '
-                'where the operator controls are: reading the run’s checkpoint is checkpoint '
-                f'inspection.{where}</p>')
     if live:
-        newest = _newest_checkpoint(run["path"])
-        where = (f" The newest checkpoint file is {r.e(_shown_path(newest))}." if newest
-                 else " No checkpoint has been written yet.")
         epochs = _epochs(status)
-        return (f'<p class="shep-rv-snap">Running{": " + r.e(epochs) if epochs else ""}.{where}'
-                f'{" " + logs if logs else ""}</p>')
-    sentence = _snapshot_sentence(dict(snapshot) if snapshot else None)
-    return f'<p class="shep-rv-snap">{r.e(sentence)} · {logs}</p>'
+        return f'<p class="shep-rv-snap">Running{" · " + r.e(epochs) if epochs else ""}</p>'
+    if not operator:
+        state = (f"{ended} · {_epochs(status)}" if s in ("completed", "stopped", "failed")
+                 and _epochs(status) else "")
+        return (f'<p class="shep-rv-snap">{r.e(state)}{" · " if state else ""}'
+                'checkpoint details are an operator control</p>')
+    if not snapshot:
+        return '<p class="shep-rv-snap">No checkpoint saved, so nothing can be continued</p>'
+    if not snapshot.get("readable", True):
+        return (f'<p class="shep-rv-snap">The latest checkpoint cannot be read '
+                f'({r.e(snapshot.get("reason"))})</p>')
+    end = snapshot.get("end")
+    if end == "finished":
+        line = f"Finished · {_epochs_done(snapshot)} · to train further, use Continue…"
+    elif end == "stopped_early":
+        reason = snapshot.get("stop_reason")
+        line = (f"Stopped early{f' ({reason})' if reason else ''} · {_epochs_done(snapshot)} · "
+                "cannot be continued")
+    else:
+        line = _epochs_done(snapshot) + (" · can be continued" if snapshot.get("resumable", True)
+                                         else "")
+    return f'<p class="shep-rv-snap">{r.e(line)}</p>'
 
 
 # =============================================================================
@@ -1521,7 +1577,9 @@ def render(ws: Optional[Mapping[str, Any]], mode: Optional[Mapping[str, Any]],
         "run_name": bool(access.allowed),
         "banner": banner_html or "",
         "head": run_head_html(run, ws, operator=access.allowed, snapshot=snapshot,
-                              live=in_use and run is not None and not run.get("latest")),
+                              live=in_use and run is not None and not run.get("latest"),
+                              continuing=((mode.get("parent") or {}).get("run_label")
+                                          if mode.get("drawer") else None)),
         "snap": run_snapshot_html(run, status, operator=access.allowed, snapshot=snapshot),
         "charts": _chart_token(run, cache, live=in_use),
         "drawer_reason": (f'<div class="shep-drawer-why">{view["drawer_reason"]}</div>'
@@ -1740,7 +1798,7 @@ def _on_training_workspace(name, ws, mode):
 
 
 def _act(evt: Any) -> Optional[str]:
-    """The ``act`` a page element's trigger sent (`_TRIGGER_JS`, `_CHIP_JS`)."""
+    """The ``act`` a page element's trigger sent (`_TRIGGER_JS`, `_POPOVER_JS`)."""
     data = getattr(evt, "_data", None)
     return data.get("act") if isinstance(data, Mapping) else None
 
@@ -1910,23 +1968,107 @@ _CONTINUE_PROMPT = "Select a checkpoint, then click <b>Check checkpoint</b>."
 
 #: What a checkpoint file holds, as its record says (`checkpoint_kind`).
 CHECKPOINT_KINDS = {"training_state": "training state", "weights": "weights only"}
+#: A file the trainer keeps as one of its top-k by the validation metric
+#: (`ModelCheckpoint`'s ``model-{epoch:02d}-{val_mrr:.4f}.pt``).
+_TOP_K_FILE = re.compile(r"^model-\d+-\d+(?:\.\d+)?\.pt$")
+#: The Trainer's validation metrics, in the words the list uses.
+_METRIC_WORDS = {"val_mrr": "MRR", "val_hits@10": "Hits@10", "val_hits@1": "Hits@1"}
+#: How a stage ended (`progress.end`), where it limits what continuing can do.
+_END_WORDS = {"finished": "finished", "stopped_early": "stopped early, cannot continue"}
 
 
-def _parent_label(item: Mapping[str, Any]) -> str:
-    """A parent's option: the run, the epoch, the file and what it holds
-    (a run's ``last.pt`` and its model file of the same epoch differ there),
-    and its model fingerprint."""
-    epoch = item.get("epoch")
-    parts = [r.run_label(item.get("architecture"), item.get("run"))]
+def run_words(architecture: Any, run: Any) -> str:
+    """A run as a person names it: its name (when it was given one), the
+    architecture and its start time, "ui-live-stop-02 · GAT · 2026-10-24 17:39"
+    from ``20261024-173909_ui-live-stop-02_c1d9cf``; an unnamed run ("run") is
+    its architecture and time; a directory not named by its start time is its
+    whole name."""
+    arch = str(architecture or "").upper() or "MODEL"
+    started = r.run_started(run)
+    if not started:
+        return f"{arch} · {run}"
+    rest = r.run_suffix(run) or ""
+    name = re.sub(r"_[0-9a-f]{6}$", "", rest)
+    return f"{name} · {arch} · {started}" if name and name != "run" else f"{arch} · {started}"
+
+
+def _run_key(item: Mapping[str, Any]) -> str:
+    return f"{item.get('architecture')}/{item.get('run')}"
+
+
+def _runs_of(parents: Mapping[str, Any]) -> Dict[str, List[str]]:
+    """The listed checkpoints by run, in the list's order (latest run first,
+    newest file first): ``{"<architecture>/<run>": [key, ...]}``."""
+    runs: Dict[str, List[str]] = {}
+    for key, item in parents.items():
+        runs.setdefault(_run_key(item), []).append(key)
+    return runs
+
+
+def _progress_words(item: Mapping[str, Any]) -> Optional[str]:
+    """"195 epochs completed" from the file's progress record; a file with no
+    progress record says the epoch index it records, never a count made from
+    it; None when it records neither."""
+    completed, epoch = item.get("completed_epochs"), item.get("epoch")
+    if isinstance(completed, int) and not isinstance(completed, bool):
+        return f"{completed} epoch{'s' if completed != 1 else ''} completed"
     if isinstance(epoch, int) and not isinstance(epoch, bool):
-        parts.append(f"epoch {epoch}")
-    kind = CHECKPOINT_KINDS.get(item.get("checkpoint_kind") or "")
-    parts.append(f"{item.get('filename')} ({kind})" if kind else str(item.get("filename")))
+        return f"recorded epoch {epoch}"
+    return None
+
+
+def _validation_words(item: Mapping[str, Any]) -> Optional[str]:
+    """"Trainer val MRR 0.2867": the Trainer's validation figure the file
+    records, never a test result."""
+    validation = item.get("validation") or {}
+    metric, value = validation.get("metric"), validation.get("value")
+    if metric not in _METRIC_WORDS or not isinstance(value, (int, float)):
+        return None
+    return f"Trainer val {_METRIC_WORDS[metric]} {value:.4f}"
+
+
+def checkpoint_words(item: Mapping[str, Any]) -> str:
+    """A checkpoint's option in its run: what it is, how far it trained, and
+    what limits continuing from it. "Latest save · 195 epochs completed";
+    "Top-k save · 21 epochs completed · Trainer val MRR 0.2867"; a file that
+    cannot be read or holds weights only says so. The file's name, kind and
+    model fingerprint are in its details (`parent_details_html`)."""
+    filename = str(item.get("filename") or "")
     if item.get("problem") or not r.is_digest(item.get("sha256")):
-        parts.append("metadata not readable")
-    else:
-        parts.append(f"model fingerprint {r.short_hex(item['sha256'])}")
+        return f"{filename} · cannot be read"
+    what = ("Latest save" if filename == "last.pt" else
+            "Top-k save" if _TOP_K_FILE.match(filename) else filename)
+    if item.get("checkpoint_kind") == "weights":
+        return f"{what} · weights only, cannot continue"
+    parts = [what]
+    for words in (_progress_words(item), _END_WORDS.get(item.get("end") or ""),
+                  _validation_words(item)):
+        if words:
+            parts.append(words)
     return " · ".join(parts)
+
+
+def _choices(labels: Sequence[Tuple[str, str]], fallback: Mapping[str, str]) -> List[Tuple[str, str]]:
+    """Options whose label another option also has get their own distinct
+    words (`fallback`), so no two options read the same."""
+    seen: Dict[str, int] = {}
+    for label, _key in labels:
+        seen[label] = seen.get(label, 0) + 1
+    return [(f"{label} · {fallback[key]}" if seen[label] > 1 else label, key)
+            for label, key in labels]
+
+
+def _run_choices(parents: Mapping[str, Any]) -> List[Tuple[str, str]]:
+    runs = _runs_of(parents)
+    first = {run: parents[keys[0]] for run, keys in runs.items()}
+    return _choices([(run_words(item.get("architecture"), item.get("run")), run)
+                     for run, item in first.items()],
+                    {run: str(item.get("run")) for run, item in first.items()})
+
+
+def _checkpoint_choices(parents: Mapping[str, Any], keys: Sequence[str]) -> List[Tuple[str, str]]:
+    return _choices([(checkpoint_words(parents[key]), key) for key in keys],
+                    {key: str(parents[key].get("filename")) for key in keys})
 
 
 def _list_parents(ws: Mapping[str, Any]) -> Tuple[Dict[str, Any], Optional[str]]:
@@ -1949,17 +2091,62 @@ def _list_parents(ws: Mapping[str, Any]) -> Tuple[Dict[str, Any], Optional[str]]
     return parents, None
 
 
-def _parents_update(parents: Mapping[str, Any], keep: Optional[str] = None) -> Any:
-    choices = [(_parent_label(item), key) for key, item in parents.items()]
-    value = keep if keep in parents else (choices[0][1] if choices else None)
-    return gr.update(choices=choices, value=value)
+def _parents_update(parents: Mapping[str, Any], keep: Optional[str] = None) -> Tuple[Any, Any]:
+    """The two selects for `parents`: the runs, and the chosen run's
+    checkpoints. `keep` (a checkpoint's key) stays chosen while it is listed;
+    otherwise the first run and its first checkpoint (its latest save)."""
+    runs = _runs_of(parents)
+    run = _run_key(parents[keep]) if keep in parents else next(iter(runs), None)
+    keys = runs.get(run, []) if run else []
+    value = keep if keep in keys else (keys[0] if keys else None)
+    return (gr.update(choices=_run_choices(parents), value=run),
+            gr.update(choices=_checkpoint_choices(parents, keys), value=value))
+
+
+def _on_run_chosen(run, parents, current):
+    """A run chosen: its checkpoints, the latest save first. The checkpoint
+    chosen stays when it is this run's (opening the drawer sets both)."""
+    keys = _runs_of(parents or {}).get(run or "", [])
+    value = current if current in keys else (keys[0] if keys else None)
+    return gr.update(choices=_checkpoint_choices(parents or {}, keys), value=value)
 
 
 def _parents_note(ws: Mapping[str, Any], parents: Mapping[str, Any], problem: Optional[str]) -> str:
     if problem:
         return f'<span class="shep-muted">{r.e(problem)}</span>'
-    return (f'<span class="shep-muted">{_LOCK} server list · {r.e(ws.get("name"))}’s runs · '
-            f'latest first · {len(parents)}</span>')
+    runs = len(_runs_of(parents))
+    return (f'<span class="shep-muted">{_LOCK} server list · {runs} run{"s" if runs != 1 else ""}, '
+            f'{len(parents)} checkpoint{"s" if len(parents) != 1 else ""} · latest first</span>')
+
+
+def parent_details_html(item: Optional[Mapping[str, Any]]) -> str:
+    """The chosen checkpoint's details, as a two-column table, saying what its
+    option does not (`checkpoint_words` gives its progress and validation
+    figure): its file, what it holds, what continuing does when its stage
+    ended, its model fingerprint (copyable) and its run's directory. A file
+    that cannot be read says why, in amber. Empty when none is chosen from the
+    list."""
+    if not item:
+        return ""
+    filename = str(item.get("filename") or "")
+    rows = [("File", f"<code>{r.e(filename)}</code>")]
+    if item.get("problem") or not r.is_digest(item.get("sha256")):
+        why = item.get("problem") or "it records no metadata"
+        return (f'<div class="shep-ckpt shep-ckpt-amber"><div class="shep-kv">'
+                f'<span class="shep-k">File</span><span class="shep-v"><code>{r.e(filename)}</code></span>'
+                f'<span class="shep-k">Cannot be read</span><span class="shep-v">{r.e(why)}</span>'
+                '</div></div>')
+    kind = item.get("checkpoint_kind")
+    rows.append(("Holds", "weights only (cannot be continued)" if kind == "weights" else
+                 r.e(CHECKPOINT_KINDS.get(kind or "", "not recorded"))))
+    going_on = {"finished": "extends it by the Extra epochs you enter",
+                "stopped_early": "not possible: it stopped early"}.get(item.get("end") or "")
+    if going_on and kind != "weights":
+        rows.append(("Continuing", r.e(going_on)))
+    rows.append(("Model fingerprint", _digest_html(item["sha256"], what="model fingerprint")))
+    rows.append(("Run", f"<code>{r.e(_run_key(item))}</code>"))
+    cells = "".join(f'<span class="shep-k">{k}</span><span class="shep-v">{v}</span>' for k, v in rows)
+    return f'<div class="shep-ckpt"><div class="shep-kv">{cells}</div></div>'
 
 
 def _on_continue_open(request: gr.Request, ws, mode):
@@ -1967,19 +2154,19 @@ def _on_continue_open(request: gr.Request, ws, mode):
     workspace's checkpoints (an operator control: D8 first; refused, the
     drawer stays closed and nothing is opened).
 
-    Returns the notice, the session's mode, the parents (state), the parent
-    select, its note, and the check's text."""
+    Returns the notice, the session's mode, the parents (state), the run and
+    checkpoint selects, their note, and the check's text."""
     access = operator_access(request)
     mode = dict(mode or {})
     if not access.allowed:
         return (notice_html(access.refusal), mode, gr.update(), gr.update(), gr.update(),
-                gr.update())
+                gr.update(), gr.update())
     parents, problem = _list_parents(ws or {})
     mode.update(drawer=True, confirm=None, parent={})
-    update = _parents_update(parents)
-    first = update.get("value") if isinstance(update, dict) else None
+    runs, checkpoints = _parents_update(parents)
+    first = checkpoints.get("value") if isinstance(checkpoints, dict) else None
     mode["parent"] = _chosen(CONTINUE_FROM_LIST, first, "", parents, ws)
-    return ("", mode, parents, update, _parents_note(ws or {}, parents, problem),
+    return ("", mode, parents, runs, checkpoints, _parents_note(ws or {}, parents, problem),
             _CONTINUE_PROMPT)
 
 
@@ -1994,11 +2181,14 @@ def _refresh_checkpoints(request: gr.Request, ws, mode, current):
 
 
 def _parents_listed(access: Any, ws: Optional[Mapping[str, Any]], current: Any):
-    """The parent list for `ws` as D8 allows it: ``(parents, select, note)``."""
+    """The parent list for `ws` as D8 allows it: ``(parents, run select,
+    checkpoint select, note)``."""
     if not access.allowed:
-        return {}, gr.update(choices=[], value=None), f'<span class="shep-muted">{r.e(access.refusal)}</span>'
+        return ({}, gr.update(choices=[], value=None), gr.update(choices=[], value=None),
+                f'<span class="shep-muted">{r.e(access.refusal)}</span>')
     parents, problem = _list_parents(ws or {})
-    return parents, _parents_update(parents, current), _parents_note(ws or {}, parents, problem)
+    return (parents, *_parents_update(parents, current),
+            _parents_note(ws or {}, parents, problem))
 
 
 def _relist_parents(request: gr.Request, ws, mode):
@@ -2011,14 +2201,14 @@ def _relist_parents(request: gr.Request, ws, mode):
     about the old list, are cleared. With the drawer closed nothing is listed
     (it lists when opened).
 
-    Returns the parents (state), the parent select, its note, the
-    comparison, the check's text and the Extra epochs field."""
+    Returns the parents (state), the run and checkpoint selects, their note,
+    the comparison, the check's text and the Extra epochs field."""
     access = operator_access(request)
     if not (mode or {}).get("drawer"):
-        return (gr.update(),) * 6
-    parents, select, note = _parents_listed(access, ws, None)
-    return (parents, select, note, "", f'<p class="shep-note">{_CONTINUE_PROMPT}</p>',
-            gr.update(visible=False, value=None))
+        return (gr.update(),) * 7
+    parents, runs, checkpoints, note = _parents_listed(access, ws, None)
+    return (parents, runs, checkpoints, note, "",
+            f'<p class="shep-note">{_CONTINUE_PROMPT}</p>', gr.update(visible=False, value=None))
 
 
 def _on_continue_close(mode):
@@ -2042,7 +2232,7 @@ def _chosen(source: str, listed: Any, manual: Any, parents: Mapping[str, Any],
     if not item:
         return {"chosen": False, "source": source}
     return {"chosen": True, "source": source, "fingerprint": item.get("dataset_fingerprint"),
-            "run_label": f"{item.get('architecture')}/{item.get('run')}", "key": listed,
+            "run_label": _run_key(item), "key": listed,
             "workspace": item.get("workspace"), "sha256": item.get("sha256")}
 
 
@@ -2063,8 +2253,9 @@ def compare_html(parent: Mapping[str, Any], ws: Mapping[str, Any]) -> str:
     now = (f'this workspace now: <b>{r.e(ws.get("name"))}</b> · '
            + r.fingerprint_html("dataset fingerprint", current, digits=digits, copy=False))
     if current and recorded == current:
-        return (f'<div class="shep-cmp shep-cmp-ok">{r.CHECK} The parent trained on this '
-                f'workspace’s current dataset · {r.fingerprint_html("dataset fingerprint", recorded, digits=digits, copy=False)}</div>')
+        # Said once, as a relation: the fingerprint itself is the run bar's.
+        return (f'<div class="shep-cmp shep-cmp-ok">{r.CHECK} Trained on the dataset selected '
+                'in the run bar</div>')
     listed = ws.get("listed") or []
     trained = r.trained_on_html(recorded, listed, digits=digits)
     built = r.built_text((ws.get("row") or {}).get("build"))
@@ -2074,13 +2265,21 @@ def compare_html(parent: Mapping[str, Any], ws: Mapping[str, Any]) -> str:
             f'workspace’s current one</b><p>parent {trained}</p><p>{now}</p>{rebuilt}</div>')
 
 
-def _check_html(preview: Mapping[str, Any], source: str, *, differs: bool = False) -> str:
+def _check_html(preview: Mapping[str, Any], source: str, *, differs: bool = False,
+                listed: Optional[str] = None) -> str:
     """The check result, what continuing does, and the settings taken from the
     checkpoint (a closed disclosure), as a read-only summary (contract M3a-3;
     not disabled inputs, which screen readers skip)."""
-    origin = "manual path" if source == CONTINUE_FROM_PATH else "run list"
-    lines = [f'<div><b>Checkpoint</b> ({origin}): <code>{r.e(_shown_path(preview.get("parent", "")))}</code></div>']
-    if preview.get("sha256"):
+    # The file read: named in full for a typed path; for a listed one by its
+    # key in the server's list (`listed`, "<architecture>/<run>/<file>"), which
+    # the server resolved to the file it read, its details shown above.
+    if source == CONTINUE_FROM_PATH or not listed:
+        lines = [f'<div><b>Checkpoint</b> (manual path): <code>{r.e(_shown_path(preview.get("parent", "")))}</code></div>'
+                 if source == CONTINUE_FROM_PATH else
+                 f'<div><b>Checkpoint</b> (run list): <code>{r.e(_shown_path(preview.get("parent", "")))}</code></div>']
+    else:
+        lines = [f'<div><b>Checked</b> <code>{r.e(listed)}</code> from the run list</div>']
+    if preview.get("sha256") and source == CONTINUE_FROM_PATH:
         arch = preview.get("architecture")
         lines.append('<div>' + r.fingerprint_html("model fingerprint", preview["sha256"], copy=False)
                      + (f", architecture <b>{r.e(str(arch).upper())}</b>" if arch else "") + "</div>")
@@ -2163,12 +2362,14 @@ def _on_continue_device_changed():
 
 def _on_parent_chosen(source, listed, manual, parents, ws, mode):
     """The session records the chosen parent (for the run bar's actions and
-    the dataset comparison)."""
+    the dataset comparison), and the chosen listed checkpoint's details are
+    shown (none for a typed path, whose Check shows what it read)."""
     mode = dict(mode or {})
     if not mode.get("drawer"):
-        return gr.update(), gr.update()
+        return gr.update(), gr.update(), gr.update()
     mode["parent"] = _chosen(source, listed, manual, parents, ws)
-    return mode, compare_html(mode["parent"], ws or {})
+    item = (parents or {}).get(listed) if source != CONTINUE_FROM_PATH and listed else None
+    return mode, compare_html(mode["parent"], ws or {}), parent_details_html(item)
 
 
 def _strip_display_prefix(path: str) -> str:
@@ -2297,7 +2498,7 @@ def _on_check_continue(source, listed, manual, device, extend_epochs, ws, parent
         return (f'<div class="shep-reason">Nothing to check: {r.e(why)}.</div>',
                 gr.update(visible=False, value=None), mode, compare_html(record, ws or {}))
     differs = continue_refusal(record, ws or {}) is not None and preview.get("ok")
-    text = _check_html(preview, source, differs=bool(differs))
+    text = _check_html(preview, source, differs=bool(differs), listed=listed)
     if preview.get("end") == "finished" and not preview.get("ok") and not extend_epochs:
         text += '<p class="shep-note">Enter <b>Extra epochs</b> above, then click <b>Check checkpoint</b> again.</p>'
     return text, _extra_epochs_update(preview), mode, compare_html(record, ws or {})
@@ -2341,7 +2542,8 @@ def _resume(ws, device, source, listed, manual, extend_epochs, parents, mode):
     if preview is None:
         return f"Not started: {why}.", gr.update(), gr.update(visible=False, value=None), mode
     refusal = continue_refusal(record, ws)
-    text = _check_html(preview, source, differs=preview.get("ok") and refusal is not None)
+    text = _check_html(preview, source, differs=preview.get("ok") and refusal is not None,
+                       listed=listed)
     if not preview.get("ok"):
         if preview.get("end") == "finished" and not extend_epochs:
             text += ('<p class="shep-note">Enter <b>Extra epochs</b> above, then click '
@@ -2378,8 +2580,11 @@ def _resume(ws, device, source, listed, manual, extend_epochs, parents, mode):
 
 
 def _toggle_continue_source(source):
+    """The run list's two selects, its Refresh and the chosen checkpoint's
+    details, or the typed path."""
     from_list = source != CONTINUE_FROM_PATH
     return (gr.update(visible=from_list), gr.update(visible=from_list),
+            gr.update(visible=from_list), gr.update(visible=from_list),
             gr.update(visible=not from_list))
 
 
@@ -2392,17 +2597,17 @@ def _toggle_continue_source(source):
 FIELD_HELP = {
     "shep-train-dataset": (
         "Dataset",
-        "The server's workspace list, the same as Research › Datasets. Choosing one reads its "
-        "split manifest and dataset record; nothing changes on the server. Start sends the full "
-        "dataset fingerprint shown here, and the server refuses the start if the workspace "
-        "changed since.",
+        "The server's workspace list, as on Research › Datasets. Choosing one only reads it; "
+        "nothing changes on the server.\n\n"
+        "Start sends the dataset fingerprint shown, and the server refuses the start if the "
+        "workspace changed since.",
     ),
     "run_name": (
         "Run name",
-        "Optional. Each run is saved in a new folder of its own: "
-        "`<workspace>/runs/<architecture>/<date-time>_<name>_<id>/`. Letters, digits and "
-        "hyphens are kept; blank uses \"run\". The run view names the folder once training "
-        "starts.",
+        "Optional. Each run is saved in a new folder of its own:\n"
+        "<workspace>/runs/<architecture>/<date-time>_<name>_<id>/\n\n"
+        "Letters, digits and hyphens are kept; blank uses \"run\". The run view shows the "
+        "name once training starts.",
     ),
     "num_epochs": (
         "Epochs",
@@ -2530,27 +2735,39 @@ FIELD_HELP = {
     ),
     "continue_source": (
         "Checkpoint source",
-        "From run list: the run bar's workspace's runs, as the server lists them (listing "
-        "opens each checkpoint, an operator control). Manual path: the path of one of those "
-        "listed checkpoints, typed; it only finds a checkpoint the server lists in the run "
-        "bar's workspace (any other file is refused, unopened) and is checked the same way.",
+        "Where the checkpoint to continue from comes from.\n\n"
+        "• From run list: the run bar's dataset's runs, as the server lists them.\n"
+        "• Manual path: a typed path. It only finds a checkpoint that list has; any other "
+        "file is refused, unopened.\n\n"
+        "Both are checked the same way. Listing opens each checkpoint, so it is an operator "
+        "control.",
+    ),
+    "continue_run": (
+        "Run",
+        "The run to continue from, latest first: its name, architecture and start time.\n\n"
+        "Continuing trains a new run of its own; the run chosen here is not changed.",
     ),
     "checkpoint_dropdown": (
-        "Run checkpoint",
-        "The run bar's workspace's runs, latest first, each with its model fingerprint. The "
-        "server resolves the one chosen from its list again and compares its bytes with the "
-        "fingerprint listed. Refresh lists them again.",
+        "Checkpoint",
+        "The chosen run's checkpoints, newest first.\n\n"
+        "• Latest save: last.pt, the run's last training state.\n"
+        "• Top-k save: kept for its Trainer validation MRR (not a test result).\n\n"
+        "The table under it shows the file, what it holds and its model fingerprint. The server "
+        "finds the file in its list again and compares its bytes with that fingerprint. "
+        "Refresh lists them again.",
     ),
     "manual_checkpoint": (
         "Checkpoint path",
-        "A .pt file, in the run layout or not; checked the same way as a listed one.",
+        "The path of a checkpoint the run list has, typed or pasted. It is checked the same "
+        "way as a listed one.",
     ),
     "continue_device": (
         "Device",
-        "Where the continued run trains: auto uses the GPU if available, otherwise CPU. Check "
-        "checkpoint and Continue Training use it; mixed precision takes effect only on CUDA, so "
-        "the check says when the checkpoint's setting would not hold on this device. Each time "
-        "Continue… opens it starts from the Parameters' Device.",
+        "Where the continued run trains: auto uses the GPU if there is one, otherwise the "
+        "CPU.\n\n"
+        "Check checkpoint and Continue Training both use it. Mixed precision works only on "
+        "CUDA; the check says when the checkpoint's setting would not hold here.\n\n"
+        "It starts from the Parameters' Device each time Continue… opens.",
     ),
     "extend_epochs": (
         "Extra epochs",
@@ -2563,22 +2780,24 @@ FIELD_HELP = {
 TOPIC_HELP = {
     "training-charts": (
         "Chart gestures",
-        "Wheel over a chart zooms around the pointer: over the epoch axis only the epochs, "
-        "over the value axis only the values, inside the plot both. Drag pans. Double-click "
-        "or Reset view shows the whole run again. Keys, with a chart focused: + and − zoom, "
-        "x and y zoom one axis (Shift zooms out), the arrows pan, End jumps to the latest "
-        "epochs, 0 resets. The four charts share one epoch range; each keeps its own value "
-        "range. While zoomed during a live run, a button counts the new epochs beyond the "
-        "view. The view is kept per run in this browser tab. The epoch axis never starts "
-        "below epoch 0. Away from the charts the wheel scrolls the page.",
+        charts.GESTURES + "\n\n"
+        "The wheel zooms around the pointer:\n"
+        "• over the epoch axis, the epochs (the four charts share them);\n"
+        "• over a value axis, that chart's values;\n"
+        "• inside a plot, both.\n\n"
+        "Keys, with a chart focused: + and − zoom, x and y zoom one axis (Shift zooms out), "
+        "the arrows pan, End jumps to the latest epochs, 0 resets.\n\n"
+        "The view is kept per run in this browser tab, and the epoch axis never starts below "
+        "0. While zoomed in a live run, a button counts the new epochs beyond the view. Away "
+        "from the charts the wheel scrolls the page.",
     ),
     "training-used-dataset": (
         "Used dataset fingerprint",
-        "The dataset fingerprint the run's checkpoint records (the split manifest it trained "
-        "on), compared in full with the run bar's dataset. Reading it opens the checkpoint, "
-        "which is an operator control (checkpoint inspection); a read-only request is not "
-        "shown it. Before the first checkpoint nothing records it yet, and a run that ended "
-        "without one never recorded it.",
+        "The dataset the run trained on, as its checkpoint records it (the split manifest's "
+        "fingerprint), compared in full with the run bar's dataset.\n\n"
+        "• Shown to the operator only: reading it opens the checkpoint.\n"
+        "• Before the first checkpoint nothing records it yet; a run that ended without one "
+        "never recorded it.",
     ),
 }
 
@@ -2624,7 +2843,7 @@ def create_training_tab(ctx: Any) -> None:
                 dataset = gr.Dropdown(label="Dataset", choices=[], value=None,
                                       elem_id="shep-train-dataset", scale=0, min_width=240,
                                       container=False)
-                chip = plain_html(chip_html(None), elem_id="shep-train-chip", js_on_load=_CHIP_JS)
+                chip = plain_html(chip_html(None), elem_id="shep-train-chip", js_on_load=_POPOVER_JS)
                 pill = plain_html(pill_html({"status": "idle"}), elem_id="shep-train-pill")
             with gr.Row(elem_classes=["shep-rb-row", "shep-rb-row2"]):
                 run_name = gr.Textbox(label="Run name", value="", max_lines=1, elem_id="run_name",
@@ -2757,11 +2976,18 @@ def create_training_tab(ctx: Any) -> None:
                                                value=CONTINUE_FROM_LIST, label="Checkpoint source",
                                                elem_id="continue_source")
                     parents_note = plain_html("", elem_id="shep-train-parents-note")
+                    # Two steps (the GB10 WebUI recheck: one option per file, each the
+                    # run, epoch, file, kind and fingerprint, read as a wall of text):
+                    # the run, then its checkpoint, each in a few words; the chosen
+                    # file's details in a table under them.
                     with gr.Row(elem_classes=["shep-train-parent-row"]):
-                        checkpoint_dropdown = gr.Dropdown(label="Run checkpoint", choices=[],
-                                                          value=None, elem_id="checkpoint_dropdown")
+                        continue_run = gr.Dropdown(label="Run", choices=[], value=None,
+                                                   elem_id="continue_run")
                         refresh_ckpt_btn = gr.Button("Refresh", size="sm", scale=0,
                                                      elem_id="shep-train-refresh")
+                    checkpoint_dropdown = gr.Dropdown(label="Checkpoint", choices=[], value=None,
+                                                      elem_id="checkpoint_dropdown")
+                    parent_details = plain_html("", elem_id="shep-train-parent-details")
                     manual_checkpoint = gr.Textbox(label="Checkpoint path", value="", max_lines=1,
                                                    visible=False, elem_id="manual_checkpoint")
                     # The device is part of the check, so it is here, not only
@@ -2790,11 +3016,11 @@ def create_training_tab(ctx: Any) -> None:
 
             # ------------------------------------------------------- run view
             with gr.Column(elem_id="shep-train-runview", elem_classes=["shep-panel"], scale=22):
-                # The header and the snapshot sentence: the run view's top, which
-                # stays while the plots scroll (at a wide size, `PAGE_CSS`).
+                # The header and the state line: the run view's first row; the
+                # charts and the resources line are the others (`PAGE_CSS`).
                 with gr.Column(elem_id="shep-train-rv-top"):
                     run_head = plain_html(run_head_html(None, {}, operator=False, snapshot=None),
-                                          elem_id="shep-train-run-head", js_on_load=_RUN_HEAD_JS)
+                                          elem_id="shep-train-run-head", js_on_load=_POPOVER_JS)
                     run_snap = plain_html("", elem_id="shep-train-run-snap")
                 figure = charts.chart_figure(
                     key="training", elem_id="shep-train-charts", series_fn=training_chart_series,
@@ -2868,13 +3094,14 @@ def create_training_tab(ctx: Any) -> None:
     # chips again). A follow therefore costs its render and this chain.
     chosen_step = {"fn": _on_parent_chosen,
                    "inputs": [continue_source, checkpoint_dropdown, manual_checkpoint, parents, ws,
-                              mode], "outputs": [mode, compare], "show_progress": "hidden"}
+                              mode], "outputs": [mode, compare, parent_details],
+                   "show_progress": "hidden"}
     ctx.training_workspace.change(_on_training_workspace, inputs=[ctx.training_workspace, ws, mode],
                                   outputs=[ws, dataset, chip, mode],
                                   show_progress="hidden", **in_order, **every_one).then(
         _relist_parents, inputs=[ws, mode],
-        outputs=[parents, checkpoint_dropdown, parents_note, compare, continue_preview,
-                 extend_epochs], show_progress="hidden").then(**chosen_step).then(
+        outputs=[parents, continue_run, checkpoint_dropdown, parents_note, compare,
+                 continue_preview, extend_epochs], show_progress="hidden").then(**chosen_step).then(
         **view_step).then(**ctx.chip_refresh)
     def _on_chip_click(evt: gr.EventData):
         """The chip's "All datasets ›": Research › Datasets."""
@@ -2905,8 +3132,8 @@ def create_training_tab(ctx: Any) -> None:
 
     # Continue…
     cont_btn.click(_on_continue_open, inputs=[ws, mode],
-                   outputs=[notice, mode, parents, checkpoint_dropdown, parents_note,
-                            continue_preview],
+                   outputs=[notice, mode, parents, continue_run, checkpoint_dropdown,
+                            parents_note, continue_preview],
                    show_progress="hidden").then(
         _continue_device, inputs=[device], outputs=[continue_device],
         show_progress="hidden").then(**chosen_step).then(**view_step).then(**ctx.chip_refresh)
@@ -2914,8 +3141,12 @@ def create_training_tab(ctx: Any) -> None:
         closer.click(_on_continue_close, inputs=[mode], outputs=[mode],
                      show_progress="hidden").then(**view_step)
     refresh_ckpt_btn.click(_refresh_checkpoints, inputs=[ws, mode, checkpoint_dropdown],
-                           outputs=[parents, checkpoint_dropdown, parents_note],
+                           outputs=[parents, continue_run, checkpoint_dropdown, parents_note],
                            show_progress="hidden").then(**ctx.chip_refresh)
+    # A run chosen: its checkpoints (the checkpoint select's change then
+    # clears the last check and records the parent, as for any choice).
+    continue_run.change(_on_run_chosen, inputs=[continue_run, parents, checkpoint_dropdown],
+                        outputs=[checkpoint_dropdown], show_progress="hidden")
     check_continue_btn.click(
         _on_check_continue,
         inputs=[continue_source, checkpoint_dropdown, manual_checkpoint, continue_device,
@@ -2929,7 +3160,8 @@ def create_training_tab(ctx: Any) -> None:
         outputs=[notice, continue_preview, extend_epochs, mode],
         show_progress="hidden").then(**view_step).then(**ctx.chip_refresh)
     continue_source.change(fn=_toggle_continue_source, inputs=[continue_source],
-                           outputs=[checkpoint_dropdown, refresh_ckpt_btn, manual_checkpoint])
+                           outputs=[continue_run, checkpoint_dropdown, refresh_ckpt_btn,
+                                    parent_details, manual_checkpoint])
     # A changed selection, or source, makes the last check and its Extra
     # epochs stale: both are cleared (contract M3a review of 094b90d, P2-2).
     # `.change` fires on updates from other events too (Refresh), so the run
@@ -2944,7 +3176,8 @@ def create_training_tab(ctx: Any) -> None:
     # The session's record of the chosen parent (the run bar's actions).
     chosen_inputs = [continue_source, checkpoint_dropdown, manual_checkpoint, parents, ws, mode]
     for component in (continue_source, checkpoint_dropdown, manual_checkpoint):
-        component.change(_on_parent_chosen, inputs=chosen_inputs, outputs=[mode, compare],
+        component.change(_on_parent_chosen, inputs=chosen_inputs,
+                         outputs=[mode, compare, parent_details],
                          show_progress="hidden").then(**view_step)
 
     # HGT requires float32 (AMP disabled): the refusal is state, so it stays
@@ -2952,13 +3185,16 @@ def create_training_tab(ctx: Any) -> None:
     # as None).
     conv_type.change(fn=_on_conv_type_change, inputs=[conv_type], outputs=[amp_mode])
 
-    # The run bar's line for a continued run (while the drawer is open).
+    # The run bar's line for a continued run (while the drawer is open): a new
+    # run of its own (contract M3a-2), continued from the checkpoint the drawer
+    # shows chosen (named there once; the run view's header says whether the
+    # run it shows is that one).
     def _continues(mode_value):
-        label = ((mode_value or {}).get("parent") or {}).get("run_label")
-        return (f'<span class="shep-rb-k">Run</span> continues the parent’s run '
-                f'<code>{r.e(label)}</code>' if label else
-                '<span class="shep-rb-k">Run</span> <span class="shep-muted">continues the chosen '
-                'checkpoint’s run</span>')
+        chosen = ((mode_value or {}).get("parent") or {}).get("chosen")
+        return ('<span class="shep-rb-k">Run</span> a new one, continued from the checkpoint '
+                'chosen in Continue a run' if chosen else
+                '<span class="shep-rb-k">Run</span> <span class="shep-muted">a new one, once a '
+                'checkpoint is chosen in Continue a run</span>')
 
     mode.change(_continues, inputs=[mode], outputs=[continues], show_progress="hidden")
 
@@ -2994,12 +3230,12 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} #shep-train-dataset .icon-wrap {{ flex: none !important; }}
 /* The two selects drawn as fields: a border, the text clear of the chevron, grey while disabled
    (a value too long ends in the shell's titled ellipsis, the rule for every select). */
-{_PAGE} #shep-train-dataset .wrap:has(> .wrap-inner), {_PAGE} #checkpoint_dropdown .wrap:has(> .wrap-inner) {{ border: 1px solid var(--shep-border-2) !important; border-radius: 8px !important; background: #fff !important; box-shadow: none !important; }}
-{_PAGE} #shep-train-dataset .wrap:has(> .wrap-inner):focus-within, {_PAGE} #checkpoint_dropdown .wrap:has(> .wrap-inner):focus-within {{ border-color: var(--shep-accent) !important; }}
-{_PAGE} #shep-train-dataset input, {_PAGE} #checkpoint_dropdown input {{ padding-right: 30px !important; }}
-{_PAGE} #shep-train-dataset .icon-wrap, {_PAGE} #checkpoint_dropdown .icon-wrap {{ color: var(--shep-text-2) !important; }}
-{_PAGE} #shep-train-dataset .wrap:has(input:disabled), {_PAGE} #checkpoint_dropdown .wrap:has(input:disabled) {{ background: var(--shep-grey-50) !important; border-color: var(--shep-grey-200) !important; }}
-{_PAGE} #shep-train-dataset input:disabled, {_PAGE} #checkpoint_dropdown input:disabled {{ color: var(--shep-grey-600) !important; -webkit-text-fill-color: var(--shep-grey-600); cursor: not-allowed; }}
+{_PAGE} #shep-train-dataset .wrap:has(> .wrap-inner), {_PAGE} #continue_run .wrap:has(> .wrap-inner), {_PAGE} #checkpoint_dropdown .wrap:has(> .wrap-inner) {{ border: 1px solid var(--shep-border-2) !important; border-radius: 8px !important; background: #fff !important; box-shadow: none !important; }}
+{_PAGE} #shep-train-dataset .wrap:has(> .wrap-inner):focus-within, {_PAGE} #continue_run .wrap:has(> .wrap-inner):focus-within, {_PAGE} #checkpoint_dropdown .wrap:has(> .wrap-inner):focus-within {{ border-color: var(--shep-accent) !important; }}
+{_PAGE} #shep-train-dataset input, {_PAGE} #continue_run input, {_PAGE} #checkpoint_dropdown input {{ padding-right: 30px !important; }}
+{_PAGE} #shep-train-dataset .icon-wrap, {_PAGE} #continue_run .icon-wrap, {_PAGE} #checkpoint_dropdown .icon-wrap {{ color: var(--shep-text-2) !important; }}
+{_PAGE} #shep-train-dataset .wrap:has(input:disabled), {_PAGE} #continue_run .wrap:has(input:disabled), {_PAGE} #checkpoint_dropdown .wrap:has(input:disabled) {{ background: var(--shep-grey-50) !important; border-color: var(--shep-grey-200) !important; }}
+{_PAGE} #shep-train-dataset input:disabled, {_PAGE} #continue_run input:disabled, {_PAGE} #checkpoint_dropdown input:disabled {{ color: var(--shep-grey-600) !important; -webkit-text-fill-color: var(--shep-grey-600); cursor: not-allowed; }}
 {_PAGE} #shep-train-dataset .wrap:has(input:disabled) .icon-wrap {{ color: var(--shep-grey-600) !important; }}
 {_PAGE} #run_name .input-container {{ width: 260px; }}
 {_PAGE} #run_name input {{ border: 1px solid var(--shep-border-2) !important; border-radius: 8px; padding: 6px 10px !important; background: #fff; }}
@@ -3101,8 +3337,13 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} #shep-train-drawer-why:not(:has(.shep-drawer-why)) {{ display: none !important; }}
 {_PAGE} #shep-train-rv-top {{ gap: 0 !important; flex: none !important; }}
 {_PAGE} .shep-rv-hd {{ gap: 6px 10px !important; }}
-{_PAGE} .shep-rv-hd h2 code {{ font-size: 15px; font-weight: 600; }}
-{_PAGE} .shep-rv-used {{ display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 15px; }}
+{_PAGE} .shep-rv-k {{ font-size: 14px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--shep-text-2); margin-right: 6px; }}
+{_PAGE} .shep-rv-name {{ overflow-wrap: anywhere; }}
+{_PAGE} .shep-rv-hd > .shep-muted {{ font-size: 14px; }}
+/* Details, at the header's end: its popover opens under it, aligned to the right. */
+{_PAGE} .shep-rv-tools {{ margin-left: auto; position: relative; }}
+{_PAGE} .shep-rv-pop {{ left: auto; right: 0; width: min(560px, calc(100vw - 48px)); }}
+{_PAGE} .shep-rv-pop .shep-kv {{ font-size: 14px; gap: 4px 14px; }}
 {_PAGE} .shep-rv-snap {{ margin: 0; padding: 8px 16px 0; font-size: 15px; color: var(--shep-text-2); overflow-wrap: anywhere; }}
 {_PAGE} #shep-train-charts {{ padding: 8px 16px 6px !important; }}
 {_PAGE} .shep-rv-res {{ display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 6px; padding: 8px 16px; border-top: 1px solid var(--shep-border); font-size: 15px; color: var(--shep-text-2); }}
@@ -3110,12 +3351,18 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} .shep-lock {{ flex: none; }}
 {_PAGE} .shep-html svg {{ display: inline-block; vertical-align: -2px; }}
 {_PAGE} .shep-train-parent-row {{ align-items: flex-end !important; flex-wrap: nowrap !important; }}
-{_PAGE} #checkpoint_dropdown {{ flex: 1 1 auto !important; min-width: 0 !important; }}
-/* Its open list wider than the select (Gradio sizes the list and each entry to the box, inline),
-   so an entry (run, epoch, file, what it holds, model fingerprint) reads in two lines instead of
-   four; still fixed and opaque, as Gradio draws it, and kept inside the window. */
-{_PAGE} #checkpoint_dropdown .options {{ min-width: min(36rem, calc(100vw - 48px)); }}
-{_PAGE} #checkpoint_dropdown .options li {{ min-width: 100%; }}
+{_PAGE} #continue_run {{ flex: 1 1 auto !important; min-width: 0 !important; }}
+/* An open list at least as wide as its few words need (Gradio sizes the list and each entry to
+   the box, inline), so an option reads on one line; still fixed and opaque, as Gradio draws it,
+   and kept inside the window. */
+{_PAGE} #continue_run .options, {_PAGE} #checkpoint_dropdown .options {{ min-width: min(28rem, calc(100vw - 48px)); }}
+{_PAGE} #continue_run .options li, {_PAGE} #checkpoint_dropdown .options li {{ min-width: 100%; }}
+/* The chosen checkpoint's details: a two-column table (`parent_details_html`). */
+{_PAGE} #shep-train-parent-details:not(:has(.shep-ckpt)) {{ display: none !important; }}
+{_PAGE} .shep-ckpt {{ border: 1px solid var(--shep-border); border-radius: 8px; background: #fff; padding: 8px 12px; }}
+{_PAGE} .shep-ckpt .shep-kv {{ font-size: 14px; gap: 4px 14px; }}
+{_PAGE} .shep-ckpt .shep-v {{ overflow-wrap: anywhere; min-width: 0; }}
+{_PAGE} .shep-ckpt-amber {{ background: var(--shep-amber-50); border-color: var(--shep-amber-300); color: var(--shep-amber-800); }}
 {_PAGE} #shep-train-refresh {{ flex: none !important; width: auto !important; min-width: max-content !important; }}
 /* Extra epochs (when shown) beside Check checkpoint, above what the check says. */
 {_PAGE} .shep-train-check-row {{ align-items: flex-end !important; flex-wrap: wrap !important; gap: 8px 12px !important; }}
@@ -3151,10 +3398,8 @@ PAGE_CSS = charts.CHART_CSS + f"""
      choices, and the results' lines closer. */
   {_PAGE} #continue_source, {_PAGE} #continue_device {{ display: flex !important; flex-wrap: wrap; align-items: center; gap: 2px 10px; }}
   {_PAGE} #continue_source > [data-testid="block-info"], {_PAGE} #continue_device > [data-testid="block-info"] {{ margin: 0 !important; }}
-  {_PAGE} #checkpoint_dropdown .container {{ display: flex; align-items: center; gap: 8px; }}
-  {_PAGE} #checkpoint_dropdown .container > [data-testid="block-info"] {{ flex: none; margin: 0 !important; }}
-  {_PAGE} #checkpoint_dropdown .container > .wrap {{ flex: 1 1 auto; min-width: 0; }}
-  {_PAGE} .shep-train-parent-row {{ align-items: center !important; }}
+  /* The run and checkpoint selects keep their labels above them, so each box has the drawer's
+     width for its option's few words (the run's Refresh beside its box). */
   {_PAGE} #shep-train-drawer-bd {{ gap: 6px !important; }}
   {_PAGE} #shep-train-drawer-why {{ padding: 8px 16px !important; }}
   {_PAGE} #shep-train-drawer-why .html-container, {_PAGE} #shep-train-drawer-why .shep-html {{ padding: 0 !important; }}
@@ -3165,20 +3410,26 @@ PAGE_CSS = charts.CHART_CSS + f"""
   {_PAGE} #shep-train-drawer-bd .shep-inherit > summary {{ padding: 4px 10px; }}
   /* Never clipped, and never cramped: each of the four plots keeps a plot area of at least
      PLOT_MIN_HEIGHT px whatever its title's keys take (the minimum is the plot box's, and each
-     box around it grows to hold its content). When that does not fit, the run view's body
-     scrolls inside: its header and the charts' toolbar stay at its top, and the resources line
-     stays at its foot, a compact line over the plots that scroll under it, never pushed out of
-     view. */
-  {_PAGE} #shep-train-runview {{ overflow-y: auto !important; }}
-  {_PAGE} #shep-train-runview > #shep-train-charts {{ flex: 1 1 auto !important; min-height: auto; display: flex; flex-direction: column; }}
+     box around it grows to hold its content). The run view is three rows: its header and
+     state line, the charts, and the resources line. The charts take what the other two leave
+     (the GB10 WebUI recheck: the resources line, kept over the plots, hid the last axis); when
+     their minimum does not fit, the charts scroll inside their own row, the toolbar staying at
+     its top, and nothing is ever drawn over an axis. */
+  /* (Gradio writes "overflow: visible" on the block itself, inline: only !important wins.) */
+  {_PAGE} #shep-train-runview > #shep-train-charts {{ flex: 1 1 0 !important; min-height: 0 !important; overflow-y: auto !important; display: flex; flex-direction: column; }}
   {_PAGE} #shep-train-charts .shep-chart-plot {{ min-height: {PLOT_MIN_HEIGHT + PLOT_AXIS_ROOM}px; }}
-  {_PAGE} #shep-train-charts .shep-charts, {_PAGE} #shep-train-charts .shep-charts-body, {_PAGE} #shep-train-charts .shep-charts-grid, {_PAGE} #shep-train-charts .shep-chart {{ min-height: auto; }}
+  /* The boxes between the charts' row and the grid take the row's height (min-height 0), so
+     the grid's two rows share it, each at least what its own cards need (a card keeps its
+     content's minimum: title, keys, the plot's minimum, the axis label); rows that need more
+     than the row has overflow it, and the row scrolls. */
+  {_PAGE} #shep-train-charts .shep-charts, {_PAGE} #shep-train-charts .shep-charts-body, {_PAGE} #shep-train-charts .shep-charts-grid {{ min-height: 0; }}
+  {_PAGE} #shep-train-charts .shep-chart {{ min-height: auto; }}
   {_PAGE} #shep-train-charts .shep-charts-grid {{ grid-auto-rows: minmax(min-content, 1fr); }}
-  {_PAGE} #shep-train-runview > #shep-train-rv-top {{ position: sticky; top: 0; z-index: 6; background: var(--shep-panel); }}
-  {_PAGE} #shep-train-runview > #resource_display {{ position: sticky; bottom: 0; z-index: 6; background: var(--shep-panel); }}
-  {_PAGE} #shep-train-charts .shep-charts-bar {{ position: sticky; top: var(--shep-rv-top-h, 92px); z-index: 5; background: var(--shep-panel); }}
-  {_PAGE} #shep-train-charts > .html-container {{ flex: 1 1 auto; min-height: auto; display: flex; flex-direction: column; }}
-  {_PAGE} #shep-train-charts > .html-container > div {{ flex: 1 1 auto; min-height: auto; display: flex; flex-direction: column; }}
+  {_PAGE} #shep-train-runview > #shep-train-rv-top {{ position: relative; z-index: 6; }}
+  {_PAGE} #shep-train-runview > #resource_display {{ flex: none !important; }}
+  {_PAGE} #shep-train-charts .shep-charts-bar {{ position: sticky; top: 0; z-index: 5; background: var(--shep-panel); }}
+  {_PAGE} #shep-train-charts > .html-container {{ flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }}
+  {_PAGE} #shep-train-charts > .html-container > div {{ flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }}
   {_PAGE} .shep-rb-row1 {{ flex-wrap: nowrap !important; }}
   {_PAGE} #shep-train-chip {{ flex: 1 1 auto !important; }}
   {_PAGE} #shep-train-charts .shep-charts {{ flex: 1 1 auto; }}
@@ -3192,11 +3443,7 @@ PAGE_CSS = charts.CHART_CSS + f"""
   {_PAGE} .shep-charts-btn {{ height: 30px; }}
   {_PAGE} .shep-charts-icon {{ height: 28px; }}
   {_PAGE} .shep-charts-grid {{ row-gap: 6px; }}
-  {_PAGE} .shep-chart-xl {{ display: none; }}
   {_PAGE} .shep-rv-res {{ padding-top: 6px; padding-bottom: 6px; }}
-}}
-@container shep-runview (max-width: 1099px) {{
-  {_PAGE} .shep-charts-hint {{ display: none; }}
 }}
 @media (max-width: 1399px), (max-height: 759px) {{
   {_PAGE} #shep-train-params-bd .gr-group, {_PAGE} #shep-train-params-bd .gr-group > .styler, {_PAGE} #shep-train-params-bd .gr-group .styler > .form {{ background: transparent !important; border: 0 !important; box-shadow: none !important; }}

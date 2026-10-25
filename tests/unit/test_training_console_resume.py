@@ -56,16 +56,22 @@ def test_the_parent_list_is_the_run_bars_workspaces_runs_only(tmp_path, monkeypa
     _run_file(other, "gat", "20261003-000000_c_333333", "last.pt")
     monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(root))
 
-    parents, update, note = tc._refresh_checkpoints(OP, {"name": "ws"}, {}, None)
+    parents, runs, update, note = tc._refresh_checkpoints(OP, {"name": "ws"}, {}, None)
     assert set(parents) == {"hgt/20261001-000000_a_111111/last.pt",
                             "gat/20261002-000000_b_222222/model-1-0.9.pt"}
+    run_labels = {value: label for label, value in runs["choices"]}
+    assert run_labels == {"hgt/20261001-000000_a_111111": "a · HGT · 2026-10-01 00:00",
+                          "gat/20261002-000000_b_222222": "b · GAT · 2026-10-02 00:00"}
+    # The chosen run's files only; the chosen run is the first listed.
     labels = dict((value, label) for label, value in update["choices"])
-    assert labels["hgt/20261001-000000_a_111111/last.pt"].startswith("HGT · run 2026-10-01 00:00")
+    assert set(labels) == {key for key in parents if key.startswith(runs["value"] + "/")}
     # A file the read refuses is listed, never offered as loadable.
-    assert "metadata not readable" in labels["gat/20261002-000000_b_222222/model-1-0.9.pt"]
-    assert "ws’s runs" in note and "· 2" in note
+    gat_files = tc._on_run_chosen("gat/20261002-000000_b_222222", parents, None)
+    assert gat_files["choices"] == [("model-1-0.9.pt · cannot be read",
+                                     "gat/20261002-000000_b_222222/model-1-0.9.pt")]
+    assert "2 runs, 2 checkpoints" in note
     # No client path anywhere: the values are keys the server resolves again.
-    assert all(str(root) not in value for value in labels)
+    assert all(str(root) not in value for value in (*labels, *run_labels))
     assert {hgt.name, gat.name} == {key.rsplit("/", 1)[1] for key in parents}
 
 
@@ -76,8 +82,9 @@ def test_the_parent_list_does_not_list_the_old_layout(tmp_path, monkeypatch):
     (ws / "checkpoints" / "hgt" / "last.pt").write_text("x")
     monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(root))
 
-    parents, update, _note = tc._refresh_checkpoints(OP, {"name": "ws"}, {}, None)
+    parents, runs, update, _note = tc._refresh_checkpoints(OP, {"name": "ws"}, {}, None)
     assert parents == {} and update["choices"] == [] and update["value"] is None
+    assert runs["choices"] == [] and runs["value"] is None
 
 
 def test_the_manager_lists_every_architecture_with_its_run(tmp_path):
@@ -162,17 +169,19 @@ def test_the_listed_and_the_typed_checkpoint_go_through_one_check(checkpoints):
     typed, *_rest = _check(checkpoints, tc.CONTINUE_FROM_PATH, "ignored",
                            str(checkpoints["paused"]))
 
-    assert "(run list)" in from_list and "(manual path)" in typed
+    assert "from the run list" in from_list and "(manual path)" in typed
     for text in (from_list, typed):
         assert "Resume the original training (1/2 done, 1 left)" in text
         assert "<td>learning_rate</td>" in text and "start a new run" in text
-    # The listed parent was resolved by the server from its list: the path
-    # shown is the one inside the listed workspace.
-    assert f"data/runs/gat/{PAUSED_RUN}/checkpoints/last.pt" in from_list
+    # The listed parent was resolved by the server from its list: the file
+    # read is the one listed (its run and name; its fingerprint is in the
+    # chosen checkpoint's details, not repeated here).
+    assert f"<b>Checked</b> <code>gat/{PAUSED_RUN}/last.pt</code> from the run list" in from_list
+    assert "model fingerprint" not in from_list and "model fingerprint" in typed
     # The parent recorded this workspace's dataset: the same, so Continue
     # Training is on.
     assert mode["parent"]["fingerprint"] == checkpoints["state"]["row"]["dataset_fingerprint"]
-    assert "trained on this workspace’s current dataset" in compare
+    assert "Trained on the dataset selected in the run bar" in compare
     assert tc.continue_refusal(mode["parent"], checkpoints["state"]) is None
 
 

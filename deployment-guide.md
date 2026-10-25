@@ -2346,7 +2346,8 @@ M5 在 SPEC_4 的部署模式 **M1** 下執行：由 owner 或指定的技術人
 兩份 checkpoint 清單與 Check checkpoint 會開啟 checkpoint 檔案，SPEC_4 將此歸類為 checkpoint 檢視
 （C3），因此它們與控制項一樣受檢查。為了顯示而開啟 checkpoint 的讀取也一樣：Diagnosis 卡片的
 「trained on」一行（所服務的 checkpoint）與 Training 頁面的 run 標題（該 run 的 checkpoint）；
-唯讀的瀏覽器會看到 "not shown · reading the checkpoint is an operator control"。Research › Test（§4.14）對它的匯入（intake 清單、Preview 與
+唯讀的瀏覽器在卡片上會看到 "not shown · reading the checkpoint is an operator control"，在 run 標題則看到
+"dataset not shown · operator control"。Research › Test（§4.14）對它的匯入（intake 清單、Preview 與
 Commit）、Start test、Cancel、Register this report、Add note 與模型清單使用同一個檢查，Research ›
 Models 的 checkpoint 清單與 Load（§4.14）也一樣。其餘一切保持開放：診斷、HPO 與疾病查詢、pipeline 狀態與儲存的 UI 路徑、訓練狀態與指標、
 workspace 與 cohort 清單、已記錄的結果，以及系統頁面。
@@ -2655,9 +2656,9 @@ Training Console 現在是分成三部分的一個頁面：上方橫跨整頁的
 
 **run bar** 永遠不捲動：
 
-- **Dataset**：伺服器的 workspace 清單，與 Datasets 的相同；每個選項列出 workspace 名稱、
-  資料集指紋的前 12 個十六進位數字與來源。選擇一個時會讀取它的 manifest 與紀錄，旁邊的 chip
-  顯示建置時間、資料集指紋（Copy 會複製完整的 64 個）、`synthetic`、紀錄是否通過驗證，以及
+- **Dataset**：伺服器的 workspace 清單，與 Datasets 的相同；每個選項就是 workspace 的名稱
+  （無法訓練的另附原因），它的身分只由選單旁的 chip 說一次。選擇一個時會讀取它的 manifest 與
+  紀錄，chip 顯示建置時間、資料集指紋（Copy 會複製完整的 64 個）、`synthetic`、紀錄是否通過驗證，以及
   **Details ›**（manifest 綁定的內容、種子與數量、來源、相對於 workspace 根目錄的路徑、
   **All datasets ›**）。頁面打開時選的是 Datasets 的 **Use for training ›** 所選的 workspace，
   否則是這個分頁先前的選擇，否則是執行中工作的，否則是 serving 讀取的那一個（它可訓練時），
@@ -2674,7 +2675,7 @@ Training Console 現在是分成三部分的一個頁面：上方橫跨整頁的
   checkpoints it has saved are kept and progress not yet saved is lost; if it has saved none
   yet, this run cannot be continued. Once it has stopped, the page says where it can be
   continued from.」，按鈕為 **■ Stop training** 與 **Keep training**。詢問不提任何 epoch：
-  詢問開著時工作仍在訓練，提問當下讀到的 epoch 到回答時已經過時；停止後，快照句會說明停止留下的
+  詢問開著時工作仍在訓練，提問當下讀到的 epoch 到回答時已經過時；停止後，通知會說明停止留下的
   checkpoint。這個詢問屬於提出它時正在執行的
   工作：若該工作在你回答前結束，詢問就會關閉，之後啟動的工作不會顯示它；對已不是目前執行中的
   工作按下 **■ Stop training** 不會停止任何東西（「Not stopped: …; click Stop again」）。
@@ -2705,15 +2706,25 @@ Training Console 現在是分成三部分的一個頁面：上方橫跨整頁的
 Expert 收合。**Data Paths 與它的 Save Path 已移除**：workspace 由 run bar 選擇，儀表板不再
 讀取或寫入伺服器工作目錄中的 `.shepherd_training_config.json`（留在那裡的檔案會被忽略；是否
 提供「Save as the default dataset」是擁有者要決定的問題）。三個分組放不進視窗時（1920 × 1080
-放得下），參數在自己的欄內捲動；run bar 永遠不捲動。四張圖各自至少保留 140 px 的繪圖區：
-視窗太矮放不下時（例如 1536 × 760），run 檢視在自己的面板內捲動，其標題、run 的說明句與圖表
-工具列固定在頂端，資源列則固定在底部，是一行精簡的狀態列，圖表從它下方捲過。繪圖區的大小
+放得下），參數在自己的欄內捲動；run bar 永遠不捲動。run 檢視分成三列：標題與狀態行、圖表、
+資源列。圖表使用另外兩列剩下的高度，四張圖各自至少保留 140 px 的繪圖區：視窗太矮放不下時
+（例如 1536 × 760），只有圖表那一列在內部捲動，工具列固定在它的頂端；資源列是它下方獨立的一列，
+所以任何座標軸都不會被蓋住（在 1920 × 1080 與約 1850 × 960 下，四張圖、座標軸與標籤以及資源列
+會同時完整顯示）。繪圖區的大小
 只由版面決定，不受畫在裡面的 canvas 影響，所以同一個視窗大小下，不論是直接開啟、重新載入，
 還是從窄視窗恢復，圖表大小都相同。
 
-**Continue…** 會打開一個取代參數欄的抽屜：run bar 所選 workspace 的 checkpoint，最新的在前
-（伺服器的清單：列出時會開啟每個 checkpoint，所以是操作者控制項），或手動輸入其中某個
-checkpoint 的路徑：自 M5-3 起，手動輸入的路徑只會找到該清單中的 checkpoint，其他任何檔案都會在
+**Continue…** 會打開一個取代參數欄的抽屜：run bar 所選 workspace 的 checkpoint（伺服器的清單：
+列出時會開啟每個 checkpoint，所以是操作者控制項），分兩步選擇，或手動輸入其中某個 checkpoint
+的路徑。**Run**：各個 run，最新的在前，每個以名稱、架構與開始時間表示（「ui-live-stop-02 · GAT ·
+2026-10-24 17:39」；沒有命名的 run 只有架構與時間）。**Checkpoint**：該 run 的檔案，最新的在前，
+每個以它自己紀錄中的幾個詞表示：「Latest save · 195 epochs completed」，或「Top-k save · 21
+epochs completed · Trainer val MRR 0.2867」（訓練器因 validation MRR 保留的檔案，是 Trainer 的
+數字，不是測試結果）；epoch 數取自檔案的進度紀錄（沒有進度紀錄的檔案只說它記錄的 epoch，從不由此
+推算完成數），限制繼續訓練的條件直接寫在選項裡（「finished」、「stopped early, cannot continue」、
+「weights only, cannot continue」、「cannot be read」）。改選另一個 run 時，會列出它的檔案並選好它
+的 Latest save。兩個選單下方有一張表，列出選項沒說的部分：檔案、保存的內容、階段已結束時繼續訓練
+會做什麼、模型指紋（Copy 會複製完整的 64 個）與 run 的目錄名稱。自 M5-3 起，手動輸入的路徑只會找到該清單中的 checkpoint，其他任何檔案都會在
 開啟之前被拒絕（`PLAN_TEST_RESULTS.md` D8）。
 **Check checkpoint** 顯示繼續訓練會做什麼，並比較 parent 記錄的資料集指紋與 workspace 目前的
 指紋：相同時為 ✓，不同時為琥珀色（附上相符的已列出 workspace，或「matches no listed
@@ -2733,20 +2744,30 @@ chosen; choose it again. …`，結束碼 1，不建立 run 目錄；Continue…
 checkpoint）。API 也以選用的查詢參數接受 parent 的 digest，
 `expected_parent_sha256=<64 個十六進位數字>`，與 `resume_from` 一起使用（不是該檔案時 409，
 格式錯誤時 422）；沒有這個參數時，訓練行程仍綁定在 runner 讀到的 parent。job runner 與訓練
-行程在啟動時仍會檢查其他一切。每個項目列出 run、epoch、檔案以及它保存的內容
-（`last.pt (training state)`，或模型檔 `(weights only)`，後者無法繼續訓練）。抽屜有自己的 **Device**（auto、cuda 或 cpu），每次打開時
+行程在啟動時仍會檢查其他一切。Check checkpoint 會說明它讀取的是清單上的哪個檔案（「Checked
+gat/<run>/<file> from the run list」；手動輸入的路徑則顯示路徑與指紋），資料集相符時只說一次
+「✓ Trained on the dataset selected in the run bar」（指紋在 run bar）。抽屜打開期間，run bar 的
+那一行是「Run: a new one, continued from the checkpoint chosen in Continue a run」：繼續訓練的
+run 會在自己的 run 目錄中訓練。抽屜有自己的 **Device**（auto、cuda 或 cpu），每次打開時
 從參數的 Device 開始，Check checkpoint 與 Continue Training 使用的就是它。抽屜打開期間若 run
 bar 的資料集改變（手動選擇、從 Datasets 的「Use for training ›」，或跟隨在另一個資料集上啟動的
 訓練工作），清單會以同樣的方式重新讀取，改為該 workspace 的 run。
 
 **run 檢視**顯示 job runner 最後啟動的 run；伺服器啟動後還沒有啟動過時，顯示 run bar 所選
 workspace 最新的 run（頁面開著時每 10 秒重新列出一次，所以從 CLI 啟動的 run 在寫下第一個
-checkpoint 後就會出現）。標題列出 run 名稱與這個 run 使用的資料集指紋，從它的 checkpoint 讀取：
-「✓ same as the run bar」、琥珀色的「≠ not the selected dataset」、執行中還沒有 checkpoint 時的
-「recorded at the first checkpoint」，或已結束而沒有 checkpoint 時的「not recorded (the run saved
-no checkpoint)」。快照句說明 run 如何結束，以及可從哪個 checkpoint 繼續，
-路徑相對於 workspace 根目錄；沒有 run 目錄的 run（在建立 run 目錄之前就被拒絕）會如實說明：沒有
-checkpoint、沒有日誌，也沒有可畫的圖。下方是一張共用 epoch 軸的四格圖：Loss（train，以及以虛線表示的
+checkpoint 後就會出現）。標題只有一行：「Run shown」與 run 的易讀名稱（「ui-live-stop-02 · GAT ·
+2026-10-24 17:39」）、workspace 最新的 run 標「latest」，以及從 checkpoint 讀到的、這個 run 使用的
+資料集與 run bar 所選資料集的關係：「✓ same dataset as the run bar」、琥珀色的「≠ not the
+selected dataset」、執行中還沒有 checkpoint 時的「dataset recorded at the first checkpoint」，或
+已結束而沒有 checkpoint 時的「dataset not recorded (no checkpoint)」。Continue… 打開且選了清單上的
+checkpoint 時，標題也會說明這是「the run continued from」還是「not the run continued from」：曲線
+屬於顯示中的 run，與抽屜選了什麼無關。**Details ›** 收著較少看的資訊：run 的目錄名稱、它的
+checkpoint（相對於 workspace 根目錄；執行中為最新的一個）、日誌，以及它使用的資料集指紋（Copy 會
+複製完整的 64 個）；run 所在的 workspace 不是 run bar 所選的時候也列在這裡。標題下是一行狀態：
+「195 of 1000 epochs completed · can be continued」、「Finished · 5000 of 5000 epochs completed ·
+to train further, use Continue…」、「Stopped early (…) · … · cannot be continued」、「Running ·
+epoch 12 of 100」或「No checkpoint saved, so nothing can be continued」；沒有 run 目錄的 run（在
+建立 run 目錄之前就被拒絕）會如實說明：沒有 checkpoint、沒有日誌，也沒有可畫的圖。下方是一張共用 epoch 軸的四格圖：Loss（train，以及以虛線表示的
 validation）、MRR（validation，Trainer top-20）、Hits@K（validation，Trainer），以及對數軸的
 learning rate（0 或缺少的值為空隙）。圖下是資源列（GPU 與記憶體）。
 
@@ -2757,7 +2778,8 @@ learning rate（0 或缺少的值為空隙）。圖下是資源列（GPU 與記�
   會容納它的資料，包括 epoch 與每張圖的數值。epoch 軸以整數 epoch 計。縮放中時，
   「N new epochs →」會以相同寬度跳到最新的 epoch。epoch 軸的起點永遠不會小於 epoch 0：會落到
   0 以下的檢視（縮小、平移、之前保留的檢視）會保持寬度向右移；數值軸沒有這個下限。窄視窗中滾輪
-  同樣會縮放；不在圖表繪圖區或座標軸上時，滾輪捲動頁面；窄視窗中在圖表上觸控是捲動頁面。
+  同樣會縮放；不在圖表繪圖區或座標軸上時，滾輪捲動頁面；窄視窗中在圖表上觸控是捲動頁面。操作方式
+  列在 Reset view 旁的 ⓘ 中，不再常駐於工具列。
 - **Export CSV** 由瀏覽器把 run 的 metrics log（epoch、split 與每個記錄的值）存成
   `training_metrics_<architecture>_<run>.csv`。
 - 圖表經由頁面自己的 server function 讀取 run 的 metrics log，只針對伺服器列出的 run（從不
@@ -2770,8 +2792,8 @@ learning rate（0 或缺少的值為空隙）。圖下是資源列（GPU 與記�
   run 在重新要求較新 epoch 的期間保留它的圖表。
 
 **唯讀的瀏覽器**看到同一個頁面，每個動作都停用並附上 D8 的原因，而且不會為它開啟任何
-checkpoint：run 標題顯示「not shown · reading the checkpoint is an operator control」，快照句
-只給出 run 的狀態，也不顯示 parent 清單。metrics、圖表與資料集紀錄對它的讀取方式與對操作者
+checkpoint：run 標題的標籤顯示「dataset not shown · operator control」，狀態行只給出 run 的
+狀態，也不顯示 parent 清單。metrics、圖表與資料集紀錄對它的讀取方式與對操作者
 相同。
 
 ### Research › Evaluate › Test
