@@ -78,10 +78,11 @@ it; the reviewer's incremental review of `e6ab1c3..f9202b6` found no P1 or P2):
   restart-locked note in the red token (appendix 2 and 31, in part);
 - the Hits@K legend and tooltip swatches drawn with each series' own dash pattern (appendix 33, in part);
 - report rows that would read the same told apart by seconds, then the run id's last part (appendix 62);
-- found by the owner's recheck below and fixed after it (awaiting review): the pipeline's written explanation and its
-  summary, shown in the Explanation segment and the report's Full explanation, still headed each candidate
-  "Confidence: HIGH (score: 0.806)"; both now say "Score: 0.806 (a ranking score, not a calibrated disease
-  probability)", the words set once in `src/reasoning/explanation_generator.py`, with no confidence band.
+- found by the owner's recheck below and fixed after it (`ff664f6`, reviewed with no P1, P2 or P3): the pipeline's
+  written explanation and its summary, shown in the Explanation segment and the report's Full explanation, still
+  headed each candidate "Confidence: HIGH (score: 0.806)"; both now say "Score: 0.806 (a ranking score, not a
+  calibrated disease probability)", the words set once in `src/reasoning/explanation_generator.py`, with no
+  confidence band.
 
 **The owner's local UI recheck at `f9202b6`** (2026-10-25, on the runs already made, no retraining; read by the
 reviewer from its screenshots, logs and exports, which stay in the recheck's evidence directory on the deployment
@@ -158,8 +159,9 @@ served.
 M5's functional acceptance passed (99 of 99 probes); that evidence stays tied to `b14c4de`, and the UI increments
 since carry their own tests. The close needs: the review of the close-out batch (passed, 2026-10-25); the owner's
 local UI recheck at `f9202b6` (done, section 4), which the code review does not replace; the review of the
-explanation wording fixed after it; and the remaining manual acceptance, compared against the notes already taken and
-adding only what is missing (models the probe made may be reused). What the recheck at `f9202b6` evidenced is marked:
+explanation wording fixed after it (passed, 2026-10-25; the wording is confirmed with the next diagnosis, no round of
+its own); and the remaining manual acceptance, compared against the notes already taken and adding only what is
+missing (models the probe made may be reused). What the recheck at `f9202b6` evidenced is marked:
 
 - launcher and service settings (a normal launcher start: evidenced);
 - Datasets selection;
