@@ -326,3 +326,29 @@ def test_the_csv_column_carries_the_matches(client):
         D2.local_id: ATAXIA,
         D3.local_id: "",
     }
+
+
+# ------------------------------------------------------------------ the score's words
+def test_the_written_explanation_names_a_ranking_score_not_a_confidence_band(client, pipeline):
+    """The M5 UI recheck at `f9202b6` (2026-10-25): the table and the details
+    header said "Score" while the Explanation segment and the report's Full
+    explanation, the pipeline's own text, still read "Confidence: HIGH (score:
+    0.806)". The real generator's text, as the API serves it and the WebUI shows
+    and exports it, and the pipeline's summary, name the score for what it is."""
+    pytest.importorskip("gradio")
+    from src.reasoning import SCORE_MEANING
+    from src.webui.components import diagnosis_panel as dp
+
+    body = _post(client, phenotypes=[SEIZURE, ATAXIA, DELAY], include_explanations=True)
+    assert body["candidates"]
+    for candidate in body["candidates"]:
+        explanation = candidate["explanation"]
+        assert f"Score: {candidate['confidence_score']:.3f} ({SCORE_MEANING})" in explanation
+        shown = dp.select_candidate(body, "explanation", str(candidate["rank"]))
+        assert shown["details_md"]["value"] == explanation
+    report = dp._build_results_report_md(body)
+    assert "Full explanation" in report and SCORE_MEANING in report
+    summary = _run(pipeline, [SEIZURE, ATAXIA, DELAY], True).summary_explanation
+    assert "(Score: " in summary and SCORE_MEANING in summary
+    for text in (report, summary):
+        assert "Confidence" not in text and not re.search(r"\b(HIGH|MEDIUM|LOW)\b", text)

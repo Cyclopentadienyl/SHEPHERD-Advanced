@@ -88,6 +88,7 @@ from src.reasoning import (
     EvidencePanel,
     EvidencePanelConfig,
     EvidencePackage,
+    SCORE_MEANING,
     create_path_reasoner,
     create_explanation_generator,
     create_evidence_panel,
@@ -2018,14 +2019,9 @@ class DiagnosisPipeline:
         ]
 
         for candidate in top_candidates:
-            confidence_level = (
-                "HIGH" if candidate.confidence_score >= 0.7
-                else "MEDIUM" if candidate.confidence_score >= 0.4
-                else "LOW"
-            )
             lines.append(
                 f"**{candidate.rank}. {candidate.disease_name}** "
-                f"(Confidence: {confidence_level}, Score: {candidate.confidence_score:.3f})"
+                f"(Score: {candidate.confidence_score:.3f})"
             )
             if candidate.supporting_genes:
                 lines.append(
@@ -2035,6 +2031,7 @@ class DiagnosisPipeline:
 
         lines.extend([
             "---",
+            f"*Score: {SCORE_MEANING}.*",
             "*Note: These results are computational predictions for clinical review. "
             "Final diagnosis should be made by qualified healthcare professionals.*",
         ])

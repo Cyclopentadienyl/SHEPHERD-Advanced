@@ -77,12 +77,31 @@ it; the reviewer's incremental review of `e6ab1c3..f9202b6` found no P1 or P2):
 - readable `info=` lines (refusals among them) and placeholders through the existing tokens, and the Settings
   restart-locked note in the red token (appendix 2 and 31, in part);
 - the Hits@K legend and tooltip swatches drawn with each series' own dash pattern (appendix 33, in part);
-- report rows that would read the same told apart by seconds, then the run id's last part (appendix 62).
+- report rows that would read the same told apart by seconds, then the run id's last part (appendix 62);
+- found by the owner's recheck below and fixed after it (awaiting review): the pipeline's written explanation and its
+  summary, shown in the Explanation segment and the report's Full explanation, still headed each candidate
+  "Confidence: HIGH (score: 0.806)"; both now say "Score: 0.806 (a ranking score, not a calibrated disease
+  probability)", the words set once in `src/reasoning/explanation_generator.py`, with no confidence band.
 
-**Still to accept within M5:** the owner's local UI recheck of the Training round (F1, F5 and its help) on the runs
-already made (wide, narrow, back to wide, the Continue preview; no retraining), then the remaining manual acceptance
-(section 6). A finding there blocks the close only when it is a concrete defect: a wrong target, mixed state, a
-needed warning that cannot be seen, or a control that cannot be operated.
+**The owner's local UI recheck at `f9202b6`** (2026-10-25, on the runs already made, no retraining; read by the
+reviewer from its screenshots, logs and exports, which stay in the recheck's evidence directory on the deployment
+machine, `m5-webui-recheck-f9202b6-01`):
+
+- accepted: F1 at the real window (wide, and wide again after narrow: the four charts, the bottom axes and epoch
+  labels, Resources in its own row); F5 (Run → Checkpoint, the Latest save at 195 completed epochs and a Top-k save at
+  22, the preview and summary following the choice); the Device help in paragraphs; the Hits@K keys' line patterns;
+  "Score" in the table and the details header;
+- evidenced: a normal launcher start and stop (the log through "Application shutdown complete", exit 0); the existing
+  model loaded and a diagnosis (gnn_only, a synthetic dataset, CUDA, the missing shortest-path table said on the page
+  and in the report); the CSV's `served_*` identity, whose checkpoint, graph, split manifest and dataset record digests
+  match the files on disk and the report; the training runs and checkpoints unchanged (17 files re-hashed);
+- by the owner's report or by tests only, not by a screenshot: the narrow layout's lower charts, the chart tooltip,
+  the report rows (the registry was empty) and the restart-locked note (nothing was training); no Training CSV was
+  exported in this round, so the earlier round's CSV evidence stands (its code is unchanged); live epochs, Keep
+  training, Stop and session isolation were not redone and keep their earlier evidence.
+
+A finding in the remaining manual acceptance (section 6) blocks the close only when it is a concrete defect: a wrong
+target, mixed state, a needed warning that cannot be seen, or a control that cannot be operated.
 
 **Later improvements, not in M5** (the rest of the appendix, including the unfinished parts of the items above):
 
@@ -100,7 +119,15 @@ needed warning that cannot be seen, or a control that cannot be operated.
 - Models and Datasets: details as summary lists, an empty state with its next step;
 - Training: a one-row run bar, Continue's buttons in the drawer's footer, a higher chart floor (about 200 px), the
   chart palette's two colours below 3:1, checkpoint words "best" (decision 4);
-- a UI audit in the repository (screenshots, geometry, repeats, axe offline).
+- a UI audit in the repository (screenshots, geometry, repeats, axe offline);
+- from the recheck at `f9202b6` (the owner's screenshots 04_1, 06_1 and 06_2): (A) under "Settings taken from this
+  checkpoint" the note and the summary table have different side padding: one shared padding for that block, its
+  inheritance rules unchanged; (B) Diagnosis' model list lays every run's checkpoints out flat, so runs are hard to
+  tell apart and facts repeat: group by run, fold each run's checkpoints, show the chosen one's details and short
+  names, in the shared model list (no second scan or chooser for Diagnosis); (C) the list and the details beside it
+  share one scroll, so reading the details moves the list: each gets a bounded height and its own scroll, with Load
+  kept in reach; (D) a training lineage view belongs to a later model-management design and must follow the recorded
+  parents and runs, never treat one run's checkpoints at different epochs as branches.
 
 ## 5. Decisions (2026-10-25, owner and reviewer)
 
@@ -123,18 +150,18 @@ needed warning that cannot be seen, or a control that cannot be operated.
 
 M5's functional acceptance passed (99 of 99 probes); that evidence stays tied to `b14c4de`, and the UI increments
 since carry their own tests. The close needs: the review of the close-out batch (passed, 2026-10-25); the owner's
-local UI recheck at `f9202b6` (section 4), which the code review does not replace; and the remaining manual
-acceptance, compared against the notes already taken and adding only what is missing (models the probe made may be
-reused):
+local UI recheck at `f9202b6` (done, section 4), which the code review does not replace; the review of the
+explanation wording fixed after it; and the remaining manual acceptance, compared against the notes already taken and
+adding only what is missing (models the probe made may be reused). What the recheck at `f9202b6` evidenced is marked:
 
-- launcher and service settings;
+- launcher and service settings (a normal launcher start: evidenced);
 - Datasets selection;
-- Training, the items this round changed: Start, live zoom, Keep training, Stop, the Continue preview, Export CSV,
-  session isolation;
-- Diagnosis: load, inference, results, CSV and report identity;
+- Training, the items this round changed: Start, live zoom, Keep training, Stop, the Continue preview (evidenced),
+  Export CSV, session isolation;
+- Diagnosis: load, inference, results, CSV and report identity (evidenced; the explanation's wording fixed after);
 - Test: preview import → version → measure → register → read back;
 - Models: display and the ordering warning;
-- read-only refusals and a normal service stop.
+- read-only refusals and a normal service stop (the stop: evidenced).
 
 M1's scope is unchanged and BACKLOG 50 (pin PyG) stays open. The later improvements need not be cleared to close.
 
