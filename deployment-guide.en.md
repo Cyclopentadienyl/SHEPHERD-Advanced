@@ -2815,11 +2815,27 @@ carry over.
 one the project declares but that is not installed is named with the lock's version; in either
 case A5 no longer reads "the installed versions are the lock's".
 
-**Upgrading** PyTorch, CUDA or PyG goes through the same flow: change the versions in
-`pyproject.toml`, run `uv lock`, redeploy with the same scripts, run the deployment probe and keep
-its record; the new set becomes the baseline once verified. There is no second pipeline for old
-environments, and no rule refuses a model only because a package version differs: loading
-follows the model contract.
+**This pins today's formal deployment set, not a permanent limit** on PyG, torch or CUDA. The
+versions live in the dependency and deployment layer only: no training, inference or UI code
+checks a package version (the runtime check asks only whether torch and PyG import), and no
+model is refused because a version differs: loading and resume follow the model contract.
+
+**Upgrading** PyTorch, CUDA or PyG, for instance when today's combination is no longer
+maintained, goes through the same entry points:
+
+1. In `pyproject.toml`: the versions of torch, torchvision, torchaudio and torch-geometric, and,
+   for another CUDA, the PyTorch wheel index (`pytorch-cu130`, its name and URL).
+2. `uv lock`; then redeploy with `deploy.sh` / `deploy.cmd`. The PyG extension index follows the
+   installed torch by itself.
+3. On ARM, the prebuilt extension release (`PYG_PREBUILT_*` in `deploy.sh`) matches one torch and
+   CUDA only. Another torch takes the source build (`scripts/build_pyg_arm.sh`, which builds
+   against whatever torch is installed) or the fallback, so the release never blocks an upgrade;
+   publishing a new release and updating those four values is optional.
+4. Run the deployment probe and keep its record; checks follow what the upgrade changed, not a
+   rerun of every past acceptance. The new set becomes the baseline once verified, and an older
+   acceptance stays with the environment it ran in.
+
+There is no second pipeline for old environments and no matrix of historical combinations.
 
 **The launcher's optional accelerators** (`--flash-attn`, `--xformers`, `--sage-attn`, and on x86
 FlashAttention by default) install with `python -m pip`. The `.venv` the deploy scripts create

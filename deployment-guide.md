@@ -2968,9 +2968,22 @@ pyparsing 3.3.3、xxhash 4.0.2：與 M5 GB10 驗收時的版本相同）。`uv s
 **A5 的說法**：已安裝的 `torch_geometric` 版本不同時，會列出兩個版本；專案宣告了但沒有安裝時，
 會列出 lock 的版本；這兩種情況下 A5 都不再顯示「已安裝版本與 lock 相同」。
 
-**升級** PyTorch、CUDA 或 PyG 走同一套流程：修改 `pyproject.toml` 中的版本，執行 `uv lock`，
-用同一套腳本重新部署，執行部署探針並保留其記錄；新的組合驗證後成為新的基準。不另設舊環境用的
-第二條管線，也不因套件版本不同就拒絕模型：載入依模型契約判定。
+**這裡固定的是目前正式部署的組合，不是對 PyG、torch 或 CUDA 版本的永久限制。** 版本只存在於
+依賴與部署層：訓練、推理與 UI 的程式都不檢查套件版本（執行時的檢查只問 torch 與 PyG 能否匯入），
+也不會因版本不同而拒絕模型：載入與續訓依模型契約判定。
+
+**升級** PyTorch、CUDA 或 PyG（例如目前的組合不再維護時）走同一套入口：
+
+1. 在 `pyproject.toml` 中修改 torch、torchvision、torchaudio 與 torch-geometric 的版本；換 CUDA
+   時，一併修改 PyTorch 的 wheel 索引（`pytorch-cu130` 的名稱與網址）。
+2. 執行 `uv lock`，再用 `deploy.sh`／`deploy.cmd` 重新部署。PyG 擴充的索引會自動跟隨已安裝的 torch。
+3. 在 ARM 上，預編譯擴充 release（`deploy.sh` 中的 `PYG_PREBUILT_*`）只對應一組 torch 與 CUDA。
+   其他 torch 會改走原始碼編譯（`scripts/build_pyg_arm.sh`，依已安裝的 torch 編譯）或替代實作，
+   因此這個 release 不會擋住升級；發布新的 release 並更新那四個值是可選的。
+4. 執行部署探針並保留其記錄；驗證依升級實際改動的範圍進行，不重跑所有歷史驗收。新的組合驗證後
+   成為新的基準，較舊的驗收只屬於它當時的環境。
+
+不設舊環境專用的第二條管線，也不維護歷史版本相容矩陣。
 
 **Launcher 的可選加速套件**（`--flash-attn`、`--xformers`、`--sage-attn`，以及在 x86 上預設的
 FlashAttention）用 `python -m pip` 安裝。部署腳本建立的 `.venv` 沒有 pip，所以在正式部署中它們

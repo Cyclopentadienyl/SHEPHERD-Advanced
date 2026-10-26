@@ -255,18 +255,21 @@ def test_the_deploy_scripts_install_the_roots_a5_names(probe):
 
 
 def test_the_pyg_core_is_locked_and_no_deploy_script_installs_it_unpinned(probe):
-    """BACKLOG 50: torch_geometric is declared once, in pyproject.toml at the
-    verified version, and locked; deploy.sh and deploy.cmd install it through
-    the sync, never again with no version, and take the PyG wheel index from
-    the installed torch rather than writing the torch version a second time."""
+    """BACKLOG 50: torch_geometric is declared once, in pyproject.toml as an
+    exact pin, and the lock holds that version; deploy.sh and deploy.cmd install
+    it through the sync, never again with no version, and take the PyG wheel
+    index from the installed torch rather than writing the torch version a
+    second time. No version number is written here either: an upgrade changes
+    pyproject.toml and the lock, not this test."""
     import tomllib
 
     declared = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))
     pins = [d for d in declared["project"]["dependencies"]
             if probe._normalised(re.split(r"[=<>!~ ;\[]", d, maxsplit=1)[0]) == "torch-geometric"]
-    assert pins == ["torch-geometric==2.8.1"]
+    assert len(pins) == 1 and re.fullmatch(r"torch-geometric==[0-9][^,;\s]*", pins[0]), pins
     lock = tomllib.loads((REPO / "uv.lock").read_text(encoding="utf-8"))
-    assert [p["version"] for p in lock["package"] if p["name"] == "torch-geometric"] == ["2.8.1"]
+    assert [p["version"] for p in lock["package"] if p["name"] == "torch-geometric"] == [
+        pins[0].split("==", 1)[1]]
     assert "torch-geometric" not in probe.DEPLOY_INSTALLED_ROOTS
     for script in ("deploy.sh", "deploy.cmd"):
         text = (REPO / script).read_text(encoding="utf-8")

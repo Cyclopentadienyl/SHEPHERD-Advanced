@@ -484,3 +484,7 @@ it replaces an old entry**.
   environment records its own evidence and does not inherit an older acceptance; a model is never
   refused only because a package version string differs: loading follows the model contract and the
   compatibility checks it needs (BACKLOG 50).
+  The pinned set is today's formal deployment set, not a permanent limit on PyG, torch or CUDA: the
+  versions live in `pyproject.toml` and `uv.lock` only, and no training, inference or UI code checks
+  a package version (deployment guide §4.15 lists what an upgrade changes). No general package
+  manager and no matrix of historical combinations.
