@@ -98,8 +98,8 @@ RENDERER_HELP = {
         "Validation (Trainer)",
         "The Trainer's own figure on the workspace's val samples (MRR over its top 20, or "
         "Hits@K), recorded in the checkpoint. It is the metric training selects a "
-        "checkpoint by, so it is not an independent test; recorded tests (Mode C) are kept "
-        "apart from it.",
+        "checkpoint by, so it is not an independent test; recorded test results (Mode C, "
+        "Mode D) are kept apart from it.",
     ),
 }
 

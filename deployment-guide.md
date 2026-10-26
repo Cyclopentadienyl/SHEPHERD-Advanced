@@ -1733,7 +1733,10 @@ python scripts/measure_scorer.py --mode D \
 
 - **同一次執行、同一套規則。** 上面的每項檢查、GPU 鎖、報告庫與登錄都照常適用。`--mode D` 搭配
   `--split` 會被拒絕（結束碼 2）：它的比較以版本的匯入後合格病例為準。會只以路徑推理提供服務的
-  pipeline，以及綁定到另一個工作區的版本，都在任何病例排名之前被拒絕。
+  pipeline、綁定到另一個工作區的版本，以及以不同於服務端的 phenotype 正規化版本匯入的版本（兩側
+  會為不同的 term 評分），都在任何病例排名之前被拒絕；`--batch-size` 小於 1 會在命令列就被拒絕
+  （結束碼 2）。排名過程中，若某個病例送進服務的輸入不是版本所對應的 term，整次執行被拒絕，不寫出
+  任何東西。主控台會輸出約 20 行進度，說明已有多少病例經過服務路徑、花了多少時間與目前的結果。
 - **一次一個病例。** Mode D 經由服務路徑逐案排名（manifest 中 `batch_size` 為 1；`--batch-size`
   是 Mode C 那一側的），所以比 Mode C 慢：大型 cohort 請先跑一次試量計時。
 - **報告多了什麼。** 每份報告都有的欄位，加上 `outcomes`（`ranked`、`not_reached`——其中
@@ -1746,7 +1749,9 @@ python scripts/measure_scorer.py --mode D \
 - **分開登錄。** 加 `--record` 時它成為 checkpoint 旁自己的一筆紀錄。它的評分語意與 Mode C
   不同，所以兩者永不互相比對是否不一致，Mode D 紀錄在 Models 頁只顯示、永不參與排序。主控台、
   Test 頁的 Result 與 Models 頁都以「Served ranking today (Mode D) … not the approved scorer
-  policy」標示，並附上服務的評分模式與 η。沒有任何頁面能啟動 Mode D 執行。
+  policy」標示，並附上服務的評分模式與 η（Models 頁上，若所列 Mode D 紀錄的評分模式與 η 都相同，
+  就寫在標籤裡，否則寫在各紀錄的明細列）；Models 頁每種模式的紀錄各列一張表。沒有任何頁面能
+  啟動 Mode D 執行：Test 頁的 Start 執行的是 Mode C。
 
 ### 登錄
 
@@ -1975,8 +1980,8 @@ python scripts/measure_scorer.py --checkpoint <file>.pt --data-dir data/workspac
   之前就會被拒絕；因此先前執行留在該路徑的檔案絕不會被當成這次執行的 outcome，誤指的檔案也絕不會被
   覆寫。每次執行請指定一個新檔案（例如該工作自己的目錄中）。
   它在報告發佈後寫一次（`"complete": false`），結束時再寫一次（`"complete": true`）。內容包括報告的
-  路徑、run id 與 digest、checkpoint 與版本的 digest、是否為確定性執行，以及在 `registration` 之下
-  報告是否已登錄與原因。在報告之前就被拒絕的執行不會寫出 outcome 檔。這個檔說明的是這次執行做了什麼；
+  路徑、run id 與 digest、checkpoint 與版本的 digest、量測模式（`mode`：`C` 或 `D`，自 Batch 3
+  起）、是否為確定性執行，以及在 `registration` 之下報告是否已登錄與原因。在報告之前就被拒絕的執行不會寫出 outcome 檔。這個檔說明的是這次執行做了什麼；
   紀錄仍是報告存放處與 ledger，「已保留」與「已登錄」從它們讀取。job runner 為它啟動的每次測試執行，
   在一個只屬於該執行的目錄中指定一個新的 outcome 檔（§4.11）。
 
@@ -2856,8 +2861,8 @@ checkpoint：run 標題的標籤顯示「dataset not shown · operator control�
   列出它們會開啟每一個 checkpoint，因此這是操作者控制項：唯讀的瀏覽器不會看到它，而且頁面對
   每個 workspace 只列出一次（↻ 會重新讀取清單）。接著是執行時會尋找的 R10 證據（被量測的
   workspace，以及 `SHEPHERD_TRAINING_EVIDENCE_DIRS`）、**Register the result**、
-  **Deterministic execution**，以及由伺服器固定的 batch size 與裝置（量測程式的預設值；
-  `SHEPHERD_DEVICE`）。**🔒 Start test** 透過 job runner（§4.11）啟動真正的
+  **Deterministic execution**，以及由伺服器固定的 batch size、裝置與模式（量測程式的預設值；
+  `SHEPHERD_DEVICE`；Mode C，模型自己的排名：Mode D 是操作者以命令列執行的）。**🔒 Start test** 透過 job runner（§4.11）啟動真正的
   `measure_scorer.py`，使用伺服器在自己的清單中重新找到的 workspace、版本與 checkpoint，並以
   **頁面顯示過的完整模型指紋與版本 digest 作為預期值**：執行時讀到的檔案或版本若是其他位元組，
   會在量測之前拒絕。Start 會說明它為何不可用：先說 GPU 工作（「Disabled: GPU job: … One
@@ -2960,11 +2965,13 @@ ledger。
 **選取一列**會顯示完整的模型指紋與 Copy、它在什麼資料上訓練（以及那是否為此 workspace 目前的資料
 集）、自成一張卡片的 Trainer 驗證數值、任何警告，以及兩個分段：
 
-- **Recorded test results (Mode C)**：ledger 為這組權重記錄的每一筆紀錄：cohort version 與其角色、
-  Mode C MRR 與 Hits@10、列出每一項排除的涵蓋率，以及 `registered #N` 或琥珀色的 `contested #N` 並
+- **Recorded test results**：ledger 為這組權重記錄的每一筆紀錄，每種量測模式各一張表，各自在該模式的
+  標籤與說明之下（自 Batch 3 起：先 Mode C 的紀錄，再 Mode D 的）。每一列有 cohort version 與其角色、
+  該模式的 MRR 與 Hits@10（表頭寫出全名：Mode C MRR (untruncated) 與 Hits@10；Mode D 的以匯入後合格
+  病例為分母）、列出每一項排除的涵蓋率（Mode D 的寫成匯入後合格病例中觸及的數目），以及 `registered #N` 或琥珀色的 `contested #N` 並
   說明各次執行在哪裡不一致（或「contested status cannot be checked」，從不顯示為無爭議）、
   deterministic 開或關；清單已排序時，標出固定規則選中哪一筆，以及其他紀錄與它的差異；接著是各項
-  關係、其他 Mode C 指標、以狀態顯示的 R10（*unverifiable* 是一個原因，從不是 0）、執行環境、資料集
+  關係、該紀錄的其他指標、以狀態顯示的 R10（*unverifiable* 是一個原因，從不是 0）、執行環境、資料集
   與登錄資訊；
 - **Usage history**：每一個已列出的 cohort version 的使用紀錄中提及此 checkpoint 的項目：測試執行、
   登錄，以及從已排序清單進行的載入，最新的在前。

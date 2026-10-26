@@ -35,6 +35,15 @@
      1.0
     ]
    ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0001250",
+     "HP:0001252"
+    ]
+   },
    "warnings": []
   },
   "fallback|1": {
@@ -80,6 +89,15 @@
      0.666632
     ]
    ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0001263",
+     "HP:0000256"
+    ]
+   },
    "warnings": []
   },
   "fallback|10": {
@@ -125,22 +143,55 @@
      0.519413
     ]
    ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0001252",
+     "HP:0000256"
+    ]
+   },
    "warnings": []
   },
   "fallback|11": {
    "candidates": [],
+   "phenotype_input": {
+    "received": 1,
+    "repeats_removed": 0,
+    "unknown": [
+     "HP:9999998"
+    ],
+    "used": []
+   },
    "warnings": [
     "No valid phenotypes after validation"
    ]
   },
   "fallback|12": {
    "candidates": [],
+   "phenotype_input": {
+    "received": 1,
+    "repeats_removed": 0,
+    "unknown": [
+     "HP:9999999"
+    ],
+    "used": []
+   },
    "warnings": [
     "No valid phenotypes after validation"
    ]
   },
   "fallback|13": {
    "candidates": [],
+   "phenotype_input": {
+    "received": 1,
+    "repeats_removed": 0,
+    "unknown": [
+     "HP:9999999"
+    ],
+    "used": []
+   },
    "warnings": [
     "No valid phenotypes after validation"
    ]
@@ -180,6 +231,17 @@
      1.0
     ]
    ],
+   "phenotype_input": {
+    "received": 4,
+    "repeats_removed": 1,
+    "unknown": [
+     "HP:9999999"
+    ],
+    "used": [
+     "HP:0001250",
+     "HP:0001252"
+    ]
+   },
    "warnings": [
     "Unknown phenotype: HP:9999999",
     "Removed 1 repeated phenotype entry; each phenotype is scored once."
@@ -187,12 +249,178 @@
   },
   "fallback|15": {
    "candidates": [],
+   "phenotype_input": {
+    "received": 150,
+    "repeats_removed": 0,
+    "unknown": [
+     "HP:0000000",
+     "HP:0000001",
+     "HP:0000002",
+     "HP:0000003",
+     "HP:0000004",
+     "HP:0000005",
+     "HP:0000006",
+     "HP:0000007",
+     "HP:0000008",
+     "HP:0000009",
+     "HP:0000010",
+     "HP:0000011",
+     "HP:0000012",
+     "HP:0000013",
+     "HP:0000014",
+     "HP:0000015",
+     "HP:0000016",
+     "HP:0000017",
+     "HP:0000018",
+     "HP:0000019",
+     "HP:0000020",
+     "HP:0000021",
+     "HP:0000022",
+     "HP:0000023",
+     "HP:0000024",
+     "HP:0000025",
+     "HP:0000026",
+     "HP:0000027",
+     "HP:0000028",
+     "HP:0000029",
+     "HP:0000030",
+     "HP:0000031",
+     "HP:0000032",
+     "HP:0000033",
+     "HP:0000034",
+     "HP:0000035",
+     "HP:0000036",
+     "HP:0000037",
+     "HP:0000038",
+     "HP:0000039",
+     "HP:0000040",
+     "HP:0000041",
+     "HP:0000042",
+     "HP:0000043",
+     "HP:0000044",
+     "HP:0000045",
+     "HP:0000046",
+     "HP:0000047",
+     "HP:0000048",
+     "HP:0000049",
+     "HP:0000050",
+     "HP:0000051",
+     "HP:0000052",
+     "HP:0000053",
+     "HP:0000054",
+     "HP:0000055",
+     "HP:0000056",
+     "HP:0000057",
+     "HP:0000058",
+     "HP:0000059",
+     "HP:0000060",
+     "HP:0000061",
+     "HP:0000062",
+     "HP:0000063",
+     "HP:0000064",
+     "HP:0000065",
+     "HP:0000066",
+     "HP:0000067",
+     "HP:0000068",
+     "HP:0000069",
+     "HP:0000070",
+     "HP:0000071",
+     "HP:0000072",
+     "HP:0000073",
+     "HP:0000074",
+     "HP:0000075",
+     "HP:0000076",
+     "HP:0000077",
+     "HP:0000078",
+     "HP:0000079",
+     "HP:0000080",
+     "HP:0000081",
+     "HP:0000082",
+     "HP:0000083",
+     "HP:0000084",
+     "HP:0000085",
+     "HP:0000086",
+     "HP:0000087",
+     "HP:0000088",
+     "HP:0000089",
+     "HP:0000090",
+     "HP:0000091",
+     "HP:0000092",
+     "HP:0000093",
+     "HP:0000094",
+     "HP:0000095",
+     "HP:0000096",
+     "HP:0000097",
+     "HP:0000098",
+     "HP:0000099",
+     "HP:0000100",
+     "HP:0000101",
+     "HP:0000102",
+     "HP:0000103",
+     "HP:0000104",
+     "HP:0000105",
+     "HP:0000106",
+     "HP:0000107",
+     "HP:0000108",
+     "HP:0000109",
+     "HP:0000110",
+     "HP:0000111",
+     "HP:0000112",
+     "HP:0000113",
+     "HP:0000114",
+     "HP:0000115",
+     "HP:0000116",
+     "HP:0000117",
+     "HP:0000118",
+     "HP:0000119",
+     "HP:0000120",
+     "HP:0000121",
+     "HP:0000122",
+     "HP:0000123",
+     "HP:0000124",
+     "HP:0000125",
+     "HP:0000126",
+     "HP:0000127",
+     "HP:0000128",
+     "HP:0000129",
+     "HP:0000130",
+     "HP:0000131",
+     "HP:0000132",
+     "HP:0000133",
+     "HP:0000134",
+     "HP:0000135",
+     "HP:0000136",
+     "HP:0000137",
+     "HP:0000138",
+     "HP:0000139",
+     "HP:0000140",
+     "HP:0000141",
+     "HP:0000142",
+     "HP:0000143",
+     "HP:0000144",
+     "HP:0000145",
+     "HP:0000146",
+     "HP:0000147",
+     "HP:0000148",
+     "HP:0000149"
+    ],
+    "used": []
+   },
    "warnings": [
     "No valid phenotypes after validation"
    ]
   },
   "fallback|2": {
    "candidates": [],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0002311",
+     "HP:0001290"
+    ]
+   },
    "warnings": [
     "No paths found from phenotypes to diseases"
    ]
@@ -232,6 +460,15 @@
      0.507499
     ]
    ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0001252",
+     "HP:0002069"
+    ]
+   },
    "warnings": []
   },
   "fallback|4": {
@@ -277,6 +514,15 @@
      0.386043
     ]
    ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0000256",
+     "HP:0000729"
+    ]
+   },
    "warnings": []
   },
   "fallback|5": {
@@ -314,6 +560,15 @@
      0.197584
     ]
    ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0001290",
+     "HP:0000486"
+    ]
+   },
    "warnings": []
   },
   "fallback|6": {
@@ -351,6 +606,15 @@
      0.366564
     ]
    ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0002069",
+     "HP:0002360"
+    ]
+   },
    "warnings": []
   },
   "fallback|7": {
@@ -388,6 +652,15 @@
      1.0
     ]
    ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0000729",
+     "HP:0001250"
+    ]
+   },
    "warnings": []
   },
   "fallback|8": {
@@ -433,12 +706,31 @@
      0.184025
     ]
    ],
+   "phenotype_input": {
+    "received": 3,
+    "repeats_removed": 1,
+    "unknown": [],
+    "used": [
+     "HP:0001250",
+     "HP:0001263"
+    ]
+   },
    "warnings": [
     "Removed 1 repeated phenotype entry; each phenotype is scored once."
    ]
   },
   "fallback|9": {
    "candidates": [],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [
+     "HP:9999999"
+    ],
+    "used": [
+     "HP:0002311"
+    ]
+   },
    "warnings": [
     "Unknown phenotype: HP:9999999",
     "No paths found from phenotypes to diseases"
@@ -479,6 +771,15 @@
      1.0
     ]
    ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0001250",
+     "HP:0001252"
+    ]
+   },
    "warnings": []
   },
   "gnn_only|1": {
@@ -524,6 +825,15 @@
      1.0
     ]
    ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0001263",
+     "HP:0000256"
+    ]
+   },
    "warnings": []
   },
   "gnn_only|10": {
@@ -569,22 +879,55 @@
      0.519413
     ]
    ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0001252",
+     "HP:0000256"
+    ]
+   },
    "warnings": []
   },
   "gnn_only|11": {
    "candidates": [],
+   "phenotype_input": {
+    "received": 1,
+    "repeats_removed": 0,
+    "unknown": [
+     "HP:9999998"
+    ],
+    "used": []
+   },
    "warnings": [
     "No valid phenotypes after validation"
    ]
   },
   "gnn_only|12": {
    "candidates": [],
+   "phenotype_input": {
+    "received": 1,
+    "repeats_removed": 0,
+    "unknown": [
+     "HP:9999999"
+    ],
+    "used": []
+   },
    "warnings": [
     "No valid phenotypes after validation"
    ]
   },
   "gnn_only|13": {
    "candidates": [],
+   "phenotype_input": {
+    "received": 1,
+    "repeats_removed": 0,
+    "unknown": [
+     "HP:9999999"
+    ],
+    "used": []
+   },
    "warnings": [
     "No valid phenotypes after validation"
    ]
@@ -624,6 +967,17 @@
      1.0
     ]
    ],
+   "phenotype_input": {
+    "received": 4,
+    "repeats_removed": 1,
+    "unknown": [
+     "HP:9999999"
+    ],
+    "used": [
+     "HP:0001250",
+     "HP:0001252"
+    ]
+   },
    "warnings": [
     "Unknown phenotype: HP:9999999",
     "Removed 1 repeated phenotype entry; each phenotype is scored once."
@@ -631,12 +985,178 @@
   },
   "gnn_only|15": {
    "candidates": [],
+   "phenotype_input": {
+    "received": 150,
+    "repeats_removed": 0,
+    "unknown": [
+     "HP:0000000",
+     "HP:0000001",
+     "HP:0000002",
+     "HP:0000003",
+     "HP:0000004",
+     "HP:0000005",
+     "HP:0000006",
+     "HP:0000007",
+     "HP:0000008",
+     "HP:0000009",
+     "HP:0000010",
+     "HP:0000011",
+     "HP:0000012",
+     "HP:0000013",
+     "HP:0000014",
+     "HP:0000015",
+     "HP:0000016",
+     "HP:0000017",
+     "HP:0000018",
+     "HP:0000019",
+     "HP:0000020",
+     "HP:0000021",
+     "HP:0000022",
+     "HP:0000023",
+     "HP:0000024",
+     "HP:0000025",
+     "HP:0000026",
+     "HP:0000027",
+     "HP:0000028",
+     "HP:0000029",
+     "HP:0000030",
+     "HP:0000031",
+     "HP:0000032",
+     "HP:0000033",
+     "HP:0000034",
+     "HP:0000035",
+     "HP:0000036",
+     "HP:0000037",
+     "HP:0000038",
+     "HP:0000039",
+     "HP:0000040",
+     "HP:0000041",
+     "HP:0000042",
+     "HP:0000043",
+     "HP:0000044",
+     "HP:0000045",
+     "HP:0000046",
+     "HP:0000047",
+     "HP:0000048",
+     "HP:0000049",
+     "HP:0000050",
+     "HP:0000051",
+     "HP:0000052",
+     "HP:0000053",
+     "HP:0000054",
+     "HP:0000055",
+     "HP:0000056",
+     "HP:0000057",
+     "HP:0000058",
+     "HP:0000059",
+     "HP:0000060",
+     "HP:0000061",
+     "HP:0000062",
+     "HP:0000063",
+     "HP:0000064",
+     "HP:0000065",
+     "HP:0000066",
+     "HP:0000067",
+     "HP:0000068",
+     "HP:0000069",
+     "HP:0000070",
+     "HP:0000071",
+     "HP:0000072",
+     "HP:0000073",
+     "HP:0000074",
+     "HP:0000075",
+     "HP:0000076",
+     "HP:0000077",
+     "HP:0000078",
+     "HP:0000079",
+     "HP:0000080",
+     "HP:0000081",
+     "HP:0000082",
+     "HP:0000083",
+     "HP:0000084",
+     "HP:0000085",
+     "HP:0000086",
+     "HP:0000087",
+     "HP:0000088",
+     "HP:0000089",
+     "HP:0000090",
+     "HP:0000091",
+     "HP:0000092",
+     "HP:0000093",
+     "HP:0000094",
+     "HP:0000095",
+     "HP:0000096",
+     "HP:0000097",
+     "HP:0000098",
+     "HP:0000099",
+     "HP:0000100",
+     "HP:0000101",
+     "HP:0000102",
+     "HP:0000103",
+     "HP:0000104",
+     "HP:0000105",
+     "HP:0000106",
+     "HP:0000107",
+     "HP:0000108",
+     "HP:0000109",
+     "HP:0000110",
+     "HP:0000111",
+     "HP:0000112",
+     "HP:0000113",
+     "HP:0000114",
+     "HP:0000115",
+     "HP:0000116",
+     "HP:0000117",
+     "HP:0000118",
+     "HP:0000119",
+     "HP:0000120",
+     "HP:0000121",
+     "HP:0000122",
+     "HP:0000123",
+     "HP:0000124",
+     "HP:0000125",
+     "HP:0000126",
+     "HP:0000127",
+     "HP:0000128",
+     "HP:0000129",
+     "HP:0000130",
+     "HP:0000131",
+     "HP:0000132",
+     "HP:0000133",
+     "HP:0000134",
+     "HP:0000135",
+     "HP:0000136",
+     "HP:0000137",
+     "HP:0000138",
+     "HP:0000139",
+     "HP:0000140",
+     "HP:0000141",
+     "HP:0000142",
+     "HP:0000143",
+     "HP:0000144",
+     "HP:0000145",
+     "HP:0000146",
+     "HP:0000147",
+     "HP:0000148",
+     "HP:0000149"
+    ],
+    "used": []
+   },
    "warnings": [
     "No valid phenotypes after validation"
    ]
   },
   "gnn_only|2": {
    "candidates": [],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0002311",
+     "HP:0001290"
+    ]
+   },
    "warnings": [
     "No paths found from phenotypes to diseases"
    ]
@@ -676,6 +1196,15 @@
      1.0
     ]
    ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0001252",
+     "HP:0002069"
+    ]
+   },
    "warnings": []
   },
   "gnn_only|4": {
@@ -721,6 +1250,15 @@
      0.519413
     ]
    ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0000256",
+     "HP:0000729"
+    ]
+   },
    "warnings": []
   },
   "gnn_only|5": {
@@ -758,6 +1296,15 @@
      0.44157
     ]
    ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0001290",
+     "HP:0000486"
+    ]
+   },
    "warnings": []
   },
   "gnn_only|6": {
@@ -795,6 +1342,15 @@
      1.0
     ]
    ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0002069",
+     "HP:0002360"
+    ]
+   },
    "warnings": []
   },
   "gnn_only|7": {
@@ -832,6 +1388,15 @@
      1.0
     ]
    ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0000729",
+     "HP:0001250"
+    ]
+   },
    "warnings": []
   },
   "gnn_only|8": {
@@ -877,12 +1442,31 @@
      1.0
     ]
    ],
+   "phenotype_input": {
+    "received": 3,
+    "repeats_removed": 1,
+    "unknown": [],
+    "used": [
+     "HP:0001250",
+     "HP:0001263"
+    ]
+   },
    "warnings": [
     "Removed 1 repeated phenotype entry; each phenotype is scored once."
    ]
   },
   "gnn_only|9": {
    "candidates": [],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [
+     "HP:9999999"
+    ],
+    "used": [
+     "HP:0002311"
+    ]
+   },
    "warnings": [
     "Unknown phenotype: HP:9999999",
     "No paths found from phenotypes to diseases"
@@ -923,6 +1507,15 @@
      1.0
     ]
    ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0001250",
+     "HP:0001252"
+    ]
+   },
    "warnings": []
   },
   "gnn_plus_sp|1": {
@@ -968,6 +1561,15 @@
      0.666632
     ]
    ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0001263",
+     "HP:0000256"
+    ]
+   },
    "warnings": []
   },
   "gnn_plus_sp|10": {
@@ -1013,22 +1615,55 @@
      0.519413
     ]
    ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0001252",
+     "HP:0000256"
+    ]
+   },
    "warnings": []
   },
   "gnn_plus_sp|11": {
    "candidates": [],
+   "phenotype_input": {
+    "received": 1,
+    "repeats_removed": 0,
+    "unknown": [
+     "HP:9999998"
+    ],
+    "used": []
+   },
    "warnings": [
     "No valid phenotypes after validation"
    ]
   },
   "gnn_plus_sp|12": {
    "candidates": [],
+   "phenotype_input": {
+    "received": 1,
+    "repeats_removed": 0,
+    "unknown": [
+     "HP:9999999"
+    ],
+    "used": []
+   },
    "warnings": [
     "No valid phenotypes after validation"
    ]
   },
   "gnn_plus_sp|13": {
    "candidates": [],
+   "phenotype_input": {
+    "received": 1,
+    "repeats_removed": 0,
+    "unknown": [
+     "HP:9999999"
+    ],
+    "used": []
+   },
    "warnings": [
     "No valid phenotypes after validation"
    ]
@@ -1068,6 +1703,17 @@
      1.0
     ]
    ],
+   "phenotype_input": {
+    "received": 4,
+    "repeats_removed": 1,
+    "unknown": [
+     "HP:9999999"
+    ],
+    "used": [
+     "HP:0001250",
+     "HP:0001252"
+    ]
+   },
    "warnings": [
     "Unknown phenotype: HP:9999999",
     "Removed 1 repeated phenotype entry; each phenotype is scored once."
@@ -1075,12 +1721,178 @@
   },
   "gnn_plus_sp|15": {
    "candidates": [],
+   "phenotype_input": {
+    "received": 150,
+    "repeats_removed": 0,
+    "unknown": [
+     "HP:0000000",
+     "HP:0000001",
+     "HP:0000002",
+     "HP:0000003",
+     "HP:0000004",
+     "HP:0000005",
+     "HP:0000006",
+     "HP:0000007",
+     "HP:0000008",
+     "HP:0000009",
+     "HP:0000010",
+     "HP:0000011",
+     "HP:0000012",
+     "HP:0000013",
+     "HP:0000014",
+     "HP:0000015",
+     "HP:0000016",
+     "HP:0000017",
+     "HP:0000018",
+     "HP:0000019",
+     "HP:0000020",
+     "HP:0000021",
+     "HP:0000022",
+     "HP:0000023",
+     "HP:0000024",
+     "HP:0000025",
+     "HP:0000026",
+     "HP:0000027",
+     "HP:0000028",
+     "HP:0000029",
+     "HP:0000030",
+     "HP:0000031",
+     "HP:0000032",
+     "HP:0000033",
+     "HP:0000034",
+     "HP:0000035",
+     "HP:0000036",
+     "HP:0000037",
+     "HP:0000038",
+     "HP:0000039",
+     "HP:0000040",
+     "HP:0000041",
+     "HP:0000042",
+     "HP:0000043",
+     "HP:0000044",
+     "HP:0000045",
+     "HP:0000046",
+     "HP:0000047",
+     "HP:0000048",
+     "HP:0000049",
+     "HP:0000050",
+     "HP:0000051",
+     "HP:0000052",
+     "HP:0000053",
+     "HP:0000054",
+     "HP:0000055",
+     "HP:0000056",
+     "HP:0000057",
+     "HP:0000058",
+     "HP:0000059",
+     "HP:0000060",
+     "HP:0000061",
+     "HP:0000062",
+     "HP:0000063",
+     "HP:0000064",
+     "HP:0000065",
+     "HP:0000066",
+     "HP:0000067",
+     "HP:0000068",
+     "HP:0000069",
+     "HP:0000070",
+     "HP:0000071",
+     "HP:0000072",
+     "HP:0000073",
+     "HP:0000074",
+     "HP:0000075",
+     "HP:0000076",
+     "HP:0000077",
+     "HP:0000078",
+     "HP:0000079",
+     "HP:0000080",
+     "HP:0000081",
+     "HP:0000082",
+     "HP:0000083",
+     "HP:0000084",
+     "HP:0000085",
+     "HP:0000086",
+     "HP:0000087",
+     "HP:0000088",
+     "HP:0000089",
+     "HP:0000090",
+     "HP:0000091",
+     "HP:0000092",
+     "HP:0000093",
+     "HP:0000094",
+     "HP:0000095",
+     "HP:0000096",
+     "HP:0000097",
+     "HP:0000098",
+     "HP:0000099",
+     "HP:0000100",
+     "HP:0000101",
+     "HP:0000102",
+     "HP:0000103",
+     "HP:0000104",
+     "HP:0000105",
+     "HP:0000106",
+     "HP:0000107",
+     "HP:0000108",
+     "HP:0000109",
+     "HP:0000110",
+     "HP:0000111",
+     "HP:0000112",
+     "HP:0000113",
+     "HP:0000114",
+     "HP:0000115",
+     "HP:0000116",
+     "HP:0000117",
+     "HP:0000118",
+     "HP:0000119",
+     "HP:0000120",
+     "HP:0000121",
+     "HP:0000122",
+     "HP:0000123",
+     "HP:0000124",
+     "HP:0000125",
+     "HP:0000126",
+     "HP:0000127",
+     "HP:0000128",
+     "HP:0000129",
+     "HP:0000130",
+     "HP:0000131",
+     "HP:0000132",
+     "HP:0000133",
+     "HP:0000134",
+     "HP:0000135",
+     "HP:0000136",
+     "HP:0000137",
+     "HP:0000138",
+     "HP:0000139",
+     "HP:0000140",
+     "HP:0000141",
+     "HP:0000142",
+     "HP:0000143",
+     "HP:0000144",
+     "HP:0000145",
+     "HP:0000146",
+     "HP:0000147",
+     "HP:0000148",
+     "HP:0000149"
+    ],
+    "used": []
+   },
    "warnings": [
     "No valid phenotypes after validation"
    ]
   },
   "gnn_plus_sp|2": {
    "candidates": [],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0002311",
+     "HP:0001290"
+    ]
+   },
    "warnings": [
     "No paths found from phenotypes to diseases"
    ]
@@ -1120,6 +1932,15 @@
      1.0
     ]
    ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0001252",
+     "HP:0002069"
+    ]
+   },
    "warnings": []
   },
   "gnn_plus_sp|4": {
@@ -1165,6 +1986,15 @@
      0.519413
     ]
    ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0000256",
+     "HP:0000729"
+    ]
+   },
    "warnings": []
   },
   "gnn_plus_sp|5": {
@@ -1202,6 +2032,15 @@
      0.44157
     ]
    ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0001290",
+     "HP:0000486"
+    ]
+   },
    "warnings": []
   },
   "gnn_plus_sp|6": {
@@ -1239,6 +2078,15 @@
      1.0
     ]
    ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0002069",
+     "HP:0002360"
+    ]
+   },
    "warnings": []
   },
   "gnn_plus_sp|7": {
@@ -1276,6 +2124,15 @@
      1.0
     ]
    ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0000729",
+     "HP:0001250"
+    ]
+   },
    "warnings": []
   },
   "gnn_plus_sp|8": {
@@ -1321,17 +2178,137 @@
      1.0
     ]
    ],
+   "phenotype_input": {
+    "received": 3,
+    "repeats_removed": 1,
+    "unknown": [],
+    "used": [
+     "HP:0001250",
+     "HP:0001263"
+    ]
+   },
    "warnings": [
     "Removed 1 repeated phenotype entry; each phenotype is scored once."
    ]
   },
   "gnn_plus_sp|9": {
    "candidates": [],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [
+     "HP:9999999"
+    ],
+    "used": [
+     "HP:0002311"
+    ]
+   },
    "warnings": [
     "Unknown phenotype: HP:9999999",
     "No paths found from phenotypes to diseases"
    ]
   }
  },
- "what_this_is": "DiagnosisPipeline.run(top_k=1000, include_explanations=False) over the registered-cohort fixture's demo workspace, captured with the serving code at e61253e, before the rank() split (Batch 3), in three scoring modes. Each candidate: [disease, rank, confidence, gnn, sp, reasoning], scores rounded to 6 places. Cases 0..12 are the fixture's graph source cases; 13 an unknown term; 14 an unknown term, case 0 and a repeat; 15 150 unknown terms."
+ "served_identity": {
+  "fallback": {
+   "checkpoint": {
+    "sha256": null,
+    "state": "absent"
+   },
+   "dataset_record": {
+    "origin": null,
+    "sha256": null,
+    "state": "absent"
+   },
+   "graph": {
+    "kg_sha256": "<present>",
+    "split_manifest_sha256": null,
+    "state": "unverified"
+   },
+   "scoring_mode": "path_reasoning_fallback",
+   "settings": {
+    "aggregation_method": "weighted_sum",
+    "device": null,
+    "device_requested": null,
+    "eta": null,
+    "max_path_length": 4,
+    "max_paths_per_candidate": 10,
+    "path_length_penalty": 0.9,
+    "phenotype_normalisation_version": 1,
+    "use_direct_path_optimization": true
+   },
+   "shortest_paths": {
+    "build_id": null,
+    "max_hops": null,
+    "state": "absent"
+   }
+  },
+  "gnn_only": {
+   "checkpoint": {
+    "sha256": "<present>",
+    "state": "verified"
+   },
+   "dataset_record": {
+    "origin": "synthetic",
+    "sha256": "<present>",
+    "state": "verified"
+   },
+   "graph": {
+    "kg_sha256": "<present>",
+    "split_manifest_sha256": "<present>",
+    "state": "verified"
+   },
+   "scoring_mode": "gnn_only",
+   "settings": {
+    "aggregation_method": "weighted_sum",
+    "device": "cpu",
+    "device_requested": "cpu",
+    "eta": 1.0,
+    "max_path_length": 4,
+    "max_paths_per_candidate": 10,
+    "path_length_penalty": 0.9,
+    "phenotype_normalisation_version": 1,
+    "use_direct_path_optimization": true
+   },
+   "shortest_paths": {
+    "build_id": null,
+    "max_hops": null,
+    "state": "absent"
+   }
+  },
+  "gnn_plus_sp": {
+   "checkpoint": {
+    "sha256": "<present>",
+    "state": "verified"
+   },
+   "dataset_record": {
+    "origin": "synthetic",
+    "sha256": "<present>",
+    "state": "verified"
+   },
+   "graph": {
+    "kg_sha256": "<present>",
+    "split_manifest_sha256": "<present>",
+    "state": "verified"
+   },
+   "scoring_mode": "gnn_plus_shortest_path",
+   "settings": {
+    "aggregation_method": "weighted_sum",
+    "device": "cpu",
+    "device_requested": "cpu",
+    "eta": 0.7,
+    "max_path_length": 4,
+    "max_paths_per_candidate": 10,
+    "path_length_penalty": 0.9,
+    "phenotype_normalisation_version": 1,
+    "use_direct_path_optimization": true
+   },
+   "shortest_paths": {
+    "build_id": "<present>",
+    "max_hops": 5,
+    "state": "verified"
+   }
+  }
+ },
+ "what_this_is": "DiagnosisPipeline.run(top_k=1000, include_explanations=False) over the registered-cohort fixture's demo workspace, captured with the serving code at e61253e, before the rank() split (Batch 3), in three scoring modes. Each candidate: [disease, rank, confidence, gnn, sp, reasoning], scores rounded to 6 places. Cases 0..12 are the fixture's graph source cases; 13 an unknown term; 14 an unknown term, case 0 and a repeat; 15 150 unknown terms. Each result also holds its phenotype account (phenotype_input), and served_identity each mode's served identity, both captured at e61253e; in the identity each digest and build id is reduced to whether it is there: the test checks each digest against the fixture's own files, and the shortest-path table's build id is random per build."
 }

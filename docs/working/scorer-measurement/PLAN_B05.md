@@ -1,8 +1,9 @@
 # B-0.5 — minimal Mode D: the served ranking, measured
 
 **Status:** designed in Batch 2 (2026-10-26; the reviewer passed `a5652c1..e61253e`) and
-**implemented in Batch 3** (2026-10-26, for one review; §11 says what was built where). The short
-GB10 run of §8 is the owner's and the reviewer's, after that review. It resolves the design
+**implemented in Batch 3** (2026-10-26, for one review; §11 says what was built where), and
+**revised after an internal review** of that implementation (§12: one P2 and nineteen P3, each
+fixed; every code fix pinned by a test, and the fixes themselves verified once more, §12.1). The short GB10 run of §8 is the owner's and the reviewer's, after the review. It resolves the design
 problem `PLAN_B03.md` §4 recorded. Mode D is the input to Policy Gate 1's comparison, not B-1:
 building it changes no ranking anyone is served. The statistical protocol for the institutional
 run stays BACKLOG 8a's, and the run 8b's.
@@ -93,13 +94,16 @@ reads it.
 |---|---|
 | Checkpoint | the served identity's checkpoint digest equals `--expect-checkpoint-sha256` when given, and is recorded |
 | Graph and dataset record | `verify_cohort_binding(version, bound)` with the pipeline's bound digests (the four graph roles and the dataset-record digest), through a new public read-only `DiagnosisPipeline.bound_inputs()`; today they are private (`_bound_digests`) |
-| SP table | recorded by its `build_id` and digest; whichever the workspace holds is what the deployment serves, so Mode D measures `gnn_plus_shortest_path` with a table and `gnn_only` without |
+| SP table | recorded by its `build_id`, which the loader pairs with the table's sidecar, and the sidecar binds the table to the graph whose `kg` digest the manifest records; the tensor's bytes are not hashed (`src/inference/sp_artifact.py`, by decision), so a table built again has a new `build_id` and a new `score_semantics`. Whichever the workspace holds is what the deployment serves, so Mode D measures `gnn_plus_shortest_path` with a table and `gnn_only` without |
 | Settings in effect | the served identity's `settings` (η, discovery settings, normalisation version) recorded whole; folded into the manifest's semantic values (§6) so a change of settings is a different measurement |
-| Numerical regime | the pipeline's embedding forward observes and exposes its regime (`embedding_regime`: dtype, autocast); the manifest's `amp_*` and `dtype` fields must equal it, as Mode C's `assert_manifest_describes_regime` requires of `encode_full_graph` |
+| Numerical regime | the pipeline's embedding forward observes and exposes its autocast regime (`embedding_regime`: enabled and the autocast dtype); the manifest's `amp_*` fields must equal it, as Mode C's `assert_manifest_describes_regime` requires of `encode_full_graph`. The manifest's `dtype` is the process's default dtype, recorded as Mode C records it: the weights are float32, so the embeddings are float32 unless autocast is on, which the check covers |
 
 **Refusals, before ranking:** a scoring mode of `path_reasoning_fallback` (no model); a generated
 split (`--split`: Mode D measures a registered cohort version only, the form Gate 1's report needs);
-any alignment check above failing.
+any alignment check above failing; a cohort version mapped under another phenotype normalisation
+version than the served one (the two sides would not score the same terms); a `--batch-size` that is
+not a positive integer, refused at the command line. During the pass, a case whose served validation
+uses other terms than the version mapped refuses the run (the premise below would not hold).
 
 **Each case's input.** `samples.json` holds graph indices. Mode D turns them into the served input
 form through the graph's own reverse mapping (`kg.get_reverse_node_mapping`), the mapping the
@@ -195,7 +199,11 @@ ledger record.
 
 C→D is the joint difference of the three, and is labelled so. The report gives each step's rank of
 the truth per case and the paired counts per step: truth ranked better, equal or worse; D not
-reached while C ranked it in the top 10, or the top 100. **A worked tie case, also a pass condition
+reached while C ranked it in the top 10, or the top 100, and D refused while C ranked it, counted
+apart (a refusal is not a case discovery failed to reach). The rank differences are after minus
+before (negative: the truth moved up), their quantiles by nearest rank. **G1 and G2 see a tie only
+where the C side's cosines are exactly equal**, as computed at its batch size (recorded in the
+comparison's `mode_c.run_conditions`); the report says so beside the steps. **A worked tie case, also a pass condition
 (§8):** two served candidates in discovery order [9, 2], both with cosine 0.5. G1 orders them [2, 9]
 (lower id first), G2 [9, 2] (discovery order), and `gnn_only` serves [9, 2]: both score 0.75. The
 change from G1 to D is the tie policy, all of it at G1→G2; G2→D changes nothing. The score
@@ -399,3 +407,77 @@ Mode D group by asking for it. No ordering rule changed for Mode C.
 **Not built, as §7 says:** a job-runner or Test-page start for Mode D (the institutional run is an
 operator's CLI run). The Test and Models pages already show a Mode D record by its own label, so
 that start, if wanted, is the UI batch's.
+
+**What removing Mode D touches beyond §10.3's three** (found by the internal review, §12): probe
+T7 and the run list W1 is given (`scripts/probe_deployment.py`) with T7's assertions in
+`tests/unit/test_probe_m2_phase.py`; the provenance pin's entry for `mode_d.served_semantics`
+(`tests/unit/test_provenance_pins.py`, which fails once an entry is stale); and the import-linter
+contract `mode-d-one-way`, which enforces §10.2. The labels by record (`caveats`, the pages) stay,
+as §10.4 says.
+
+---
+
+## 12. The internal review of `71bdad6` and its fixes (2026-10-26)
+
+Before the reviewer's review, an internal read-only review (four reviewers, one per dimension, each
+finding retried by an independent verifier, then a gap critic) read `e61253e..71bdad6`. It found no
+P1, one P2 and nineteen P3 confirmed (one refuted: the candidate-construction digest, since a code
+change is already another `software_revision`). Each is fixed here. **Every code fix is pinned by a
+test that fails without it**, checked by reverting the fix in a copy (§12.1); the two documentation
+rows (marked —) and cli-3's Windows URL part, which this Linux host cannot run, have none. **What it
+confirmed sound** is not repeated: serving unchanged across the split (28,512
+runs compared field by field with the pre-split code), the served build's verification at least
+Mode C's, the D5 comparison covering Mode D's metrics, `rank()` holding no shared state.
+
+| Finding | Fix | Where | Pinned by |
+|---|---|---|---|
+| **ui_api-1 (P2)**: the Models page's mixed C/D table named its columns "MRR" and "Hits@10", dropping each figure's case set and Mode C's "(untruncated)" | one table per mode, each under its mode's label and note, its columns named in full (`metric_text`), each named for its mode for assistive technology, the next mode's label set apart by 16 px; the row mode lines removed | `models_page.py` (`records_table_html`, `_mode_table`, `_by_mode`, `_column_head`, `records_block_html`) | `test_mode_d.py` (each surface): the order label → columns per mode |
+| ui_api-2: the Models detail's segment read "Recorded test results (Mode C)" over every record | "Recorded test results · N"; the module docstring and the Validation help text | `models_page.py`, `renderers.py` | `test_webui_models_page.py` (the detail) |
+| ui_api-3: the Models page's Mode D label lacked §5's "(scoring mode, η)" (the guides said it was there) | in the label when every Mode D record shown shares it, else on each record's line | `models_page.py` (`_uniform_semantics`); both guides | `test_mode_d.py` (one and two served settings) |
+| ui_api-4: an unknown or unreadable mode got Mode C's coverage words; a usage entry with a malformed `mode` read as Mode C | neutral wording (the record's count, "what they are is not described for this mode"); `mode_label(None)` "Measurement mode not recorded", a blank mode included; `entry_mode` returns None for a key that is there and unreadable (still "C" when absent) | `caveats.py`, `models_page.py`, `test_page.py`, `report_store.py` | `test_webui_models_page.py`, `test_webui_test_page.py` (another or no mode) |
+| ui_api-5: the Test page's report rows did not name their mode, and nothing said Start runs Mode C | each row's state line starts with its mode ("served ranking (Mode D): report kept · …", one separator); the fixed settings show "Mode: model ranking (Mode C)" and its help says Mode D is a CLI run | `test_page.py` (`_row_state`, `fixed_html`, `test-fixed`) | `test_mode_d.py`, `test_webui_test_page.py` |
+| ui_api-6: Mode D's note read as if a Mode C row shown were its same-embeddings comparison | reworded, in shorter sentences: its report sets Mode C beside it; a Mode C record shown here is a separate run | `caveats.py` (`MODE_D_NOTE`) | `test_mode_d.py` (the note's wording) |
+| gap: a version mapped under another phenotype normalisation, or a served input dropping a mapped term, would compare different inputs silently | refused before the served pass (versions differ) and during it (a case's used terms differ from the mapped ones) | `mode_d.py` (`run_mode_d`, `rank_served_cases`) | `test_mode_d.py` (two refusal tests) |
+| cli-5, mode_d-4: `--batch-size` 0 or below failed only after the served pass, once with a message pointing at the cohort | positive integers only at the command line (both modes); `run_mode_d` checks the C side's manifest, mode and batch size before the served pass | `measure_scorer.py` (`_positive_int`), `mode_d.py` | `test_mode_d.py` (the command line; `run_mode_d` called directly), `test_measure_scorer_cli.py` |
+| mode_d-1: refused cases were counted as "not reached while C ranked" | counted only for `not_reached`; `d_refused_while_c_ranked` beside it; in the paired steps a refused case is `ranked_then_refused`, never `ranked_then_not` (the candidate set did not lose it) | `mode_d.py` (`paired`, the comparison) | `test_mode_d.py` (a refused case; `paired`) |
+| mode_d-2: a kept Mode C report whose `ranks` block is not an object ended every Mode D run with a traceback | listed as unreadable with the reason | `mode_d.py` (`kept_mode_c_reports`) | `test_mode_d.py` |
+| mode_d-5: C→D was not labelled the joint difference | `what_changes["C->D"]` says so | `mode_d.py` | `test_mode_d.py` (the report's blocks) |
+| mode_d-6: the quantiles were not nearest rank as named; the sign was unstated | nearest rank; `rank_difference_is` states after minus before, negative = moved up | `mode_d.py` (`_quantiles`, `paired`) | `test_mode_d.py` |
+| mode_d-7: G1/G2's ties depend on the C side's float scores at its batch size, unstated | `steps.ties_are` says so; §5 too | `mode_d.py`; §5 | `test_mode_d.py` (the report's blocks) |
+| mode_d-8, cli-4: §3 said the SP table is recorded "by build_id and digest" | §3 says what is recorded and why (build_id paired with the sidecar, bound to the graph; the tensor not hashed by decision) | this document | — |
+| serving-2: the golden lacked §8's phenotype account and served identity | both added, captured from the pre-split code (`e61253e`, the same fixture; old and new identities byte-identical); in the golden the identity's digests are reduced to whether they are there, and the test checks each against the fixture's own files (the SP build id is random per build) | `tests/fixtures/served_rank_golden.json`, `test_served_rank.py` | the golden test |
+| serving-3: §3 promised a dtype in `embedding_regime` and a manifest dtype check | §3 says what is built (the autocast regime; the manifest's dtype the process default, as Mode C) | this document | — |
+| serving-1: `bound_inputs` said "serves no model" for a model supplied in memory | its own message for that state | `pipeline.py` | `test_served_rank.py` |
+| cli-1: the ordering's Mode C-only guard refused a whole group when one record had no readable `scoring` ("mode None") | only a readable mode other than C refuses the group; a record whose mode cannot be read makes its own checkpoint unreadable, never ordered on it | `ordering.py` | `test_test_score_ordering.py` |
+| cli-2: probe W1 depended on T7, so one Mode D failure failed W1-W11 | W1 lists exactly the runs M4's flow published (T2's, T7's when it published one), checks each kept and each whose probe passed listed as registered, and keeps what later probes need before its own checks | `probe_deployment.py` (`_m5_demo`, T7) | `test_probe_m2_phase.py` (a Mode D failure is T7's alone) |
+| cli-3: BACKLOG 59's fix merged any source-tree copy in the checkout, and missed Windows file URLs | only exactly one copy, where the editable install puts the project (its `.pth`, else `src/`); `url2pathname` for the URL (not testable on this Linux host) | `probe_deployment.py` (`_editable_paths`, `_in_source_tree`) | `test_probe_m5_acceptance.py` (nested copy, copy elsewhere, `.pth`) |
+| cli-6: the CLI's docstring was Mode C only, a doc comment had moved to the wrong constant, the outcome file did not name its mode | docstring and usage for Mode D; the comment back; `--outcome` gains `mode` (an added key) | `measure_scorer.py` | `test_mode_d.py` (the outcome file) |
+| gaps: no progress during the long served pass; §10.2's one-way rule unenforced | a progress line about 20 times a pass, each after its case; the import-linter contract `mode-d-one-way`, a protected module only itself may import (the package's own __init__ and any later module included) | `mode_d.py`; `.import-linter.ini` | `test_mode_d.py`; `lint-imports` |
+
+### 12.1 The fixes, verified (2026-10-26)
+
+The fixes above were then verified read-only by four reviewers, one per group, and a cross-check of
+the whole fix diff. Each reproduced the original scenario against the fixed tree and reverted each
+fix in a copy to see its test fail. They found no regression and no change no finding asked for,
+and thirteen P3 in the fixes themselves, each addressed here:
+
+- the guides still described the Models segment as "Recorded test results (Mode C)", the Run
+  panel's fixed settings without the mode, the `--outcome` file without `mode`, and Mode D's
+  section without its new refusals and progress lines: all four updated, in both guides;
+- texts past the WebUI skill's word rules (the Mode D note's and the fixed-settings help's long
+  sentences, two separators in a report row, the bare field name `n_ranked`): reworded;
+- the two per-mode tables shared one accessible name and the second label sat on the first table:
+  each table named for its mode, the label set apart;
+- refused cases were still counted as lost at the candidate-set step: kept apart in `paired`;
+- `run_mode_d`'s checks before the served pass and the Mode D note's wording were pinned by no test:
+  both pinned now;
+- `run_mode_d`'s docstring claimed no refusal after the pass: narrowed;
+- the last progress line left out the last case: logged after each case;
+- the fix record claimed a failing test for every row: reworded (§12's lead);
+- the golden pinned the identity's digests only by presence on a reason that was not true: each is
+  checked against the fixture's files;
+- the Mode D import contract listed today's modules only: a protected-module contract instead;
+- the ordering took a record whose mode cannot be read for Mode C's, even as the chosen one: its
+  checkpoint is unreadable;
+- W1 no longer checked T7's run as registered: it does, when T7 passed;
+- a blank mode string read as a mode: read as not recorded.

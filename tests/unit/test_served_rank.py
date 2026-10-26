@@ -95,18 +95,52 @@ def _row(candidate):
             candidate.gnn_score, candidate.sp_score, candidate.reasoning_score]
 
 
+def _stable(value, key=None):
+    """A served identity as the golden records it: each digest and build id
+    reduced to whether it is there. The digests are checked against the
+    fixture's own files beside it (`test_run_reproduces_...`); the shortest-path
+    table's build id is random per build."""
+    if isinstance(value, dict):
+        return {k: _stable(v, k) for k, v in value.items()}
+    if key is not None and (key.endswith("sha256") or key == "build_id"):
+        return "<present>" if value else value
+    return value
+
+
 def test_run_reproduces_the_output_captured_before_the_split(served):
-    """The order, ranks and warnings exactly, the four scores within 1e-5, in each
-    mode and for every case, the fallback's exact ties at 1.0 included. Catches a
-    split that moved a value, reordered a tie or changed what an empty or
-    refused input returns."""
-    golden = json.loads(GOLDEN.read_text())["results"]
+    """The order, ranks, warnings and phenotype account exactly, the four scores
+    within 1e-5, in each mode and for every case, the fallback's exact ties at
+    1.0 included; and each mode's served identity, its digests reduced to
+    whether they are there (PLAN_B05 §8's fields; the phenotype account and the
+    identity added after the internal review, serving-2). Catches a split that
+    moved a value, reordered a tie or changed what an empty or refused input
+    returns."""
+    from dataclasses import asdict
+
+    from src.kg.provenance import PROVENANCE_FILENAME
+
+    fixture = json.loads(GOLDEN.read_text())
+    golden = fixture["results"]
+    cohort = served["cohort"]
     for name, pipeline in served["pipelines"].items():
+        identity = pipeline.served_identity().to_dict()
+        assert _stable(identity) == fixture["served_identity"][name], name
+        # Each digest the identity names is the digest of the fixture's own file.
+        workspace = served["with_table"] if name == "gnn_plus_sp" else cohort.data_dir
+        files = {("checkpoint", "sha256"): cohort.checkpoint,
+                 ("graph", "kg_sha256"): workspace / "kg.json",
+                 ("graph", "split_manifest_sha256"): workspace / "split_manifest.json",
+                 ("dataset_record", "sha256"): workspace / PROVENANCE_FILENAME}
+        for (part, field), path in files.items():
+            if identity[part].get(field) is not None:
+                assert identity[part][field] == _sha(path), (name, part, field)
         for index, phenotypes in enumerate(served["patients"]):
             result = pipeline.run(_patient(phenotypes, f"p{index}"), top_k=1000,
                                   include_explanations=False)
             expected = golden[f"{name}|{index}"]
             assert result.warnings == expected["warnings"], (name, index)
+            account = json.loads(json.dumps(asdict(result.phenotype_input)))
+            assert account == expected["phenotype_input"], (name, index)
             rows = [_row(c) for c in result.candidates]
             assert [r[:2] for r in rows] == [e[:2] for e in expected["candidates"]], (name, index)
             for row, want in zip(rows, expected["candidates"]):
@@ -172,7 +206,9 @@ def test_bound_inputs_are_the_reads_the_build_took(served):
     """Against an independent account of the files: the four graph digests, the
     checkpoint's bytes, its recorded training inputs and the dataset record. A
     pipeline that serves no model verified no workspace and refuses."""
+    from src.inference.pipeline import DiagnosisPipeline
     from src.kg.artifacts import GRAPH_TENSOR_ROLES
+    from src.kg.graph import KnowledgeGraph
     from src.kg.provenance import PROVENANCE_FILENAME
 
     cohort = served["cohort"]
@@ -189,6 +225,16 @@ def test_bound_inputs_are_the_reads_the_build_took(served):
     assert bound.graph_data is not None
     with pytest.raises(ValueError, match="not built over a verified workspace"):
         served["pipelines"]["fallback"].bound_inputs()
+    # A model supplied in memory over a verified workspace serves a GNN, and is
+    # refused for what it is: no checkpoint names its weights (the internal
+    # review's serving-1; the message used to say it served no model).
+    in_memory = DiagnosisPipeline(
+        graph=KnowledgeGraph.read_json(cohort.data_dir / "kg.json"),
+        data_dir=str(cohort.data_dir), model=served["pipelines"]["gnn_only"].model,
+        device="cpu")
+    assert in_memory.served_identity().scoring_mode == "gnn_only"
+    with pytest.raises(ValueError, match="supplied in memory, not read from a checkpoint"):
+        in_memory.bound_inputs()
 
 
 def test_the_embedding_regime_is_observed_at_the_forward(served):

@@ -221,6 +221,18 @@ def test_the_cli_has_no_option_mode_c_would_ignore(retired):
                     "--output", "o.json", *retired])
 
 
+@pytest.mark.parametrize("value", ["0", "-1", "1.5"])
+def test_a_batch_size_that_is_not_a_positive_integer_is_refused_at_the_command_line(value):
+    """Exit 2 before the GPU lock or any read (Batch 3's internal review, cli-5:
+    the same check Mode D needs before its served pass)."""
+    from scripts.measure_scorer import parse_args
+
+    with pytest.raises(SystemExit) as raised:
+        parse_args(["--checkpoint", "c.pt", "--data-dir", "d", "--split", "val",
+                    "--output", "o.json", "--batch-size", value])
+    assert raised.value.code == 2
+
+
 # ==============================================================================
 # --split is required, and a missing split says what the workspace has (at the
 # reader; a measurement refuses it earlier, at `resolve_cohort`)

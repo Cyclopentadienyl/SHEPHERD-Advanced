@@ -140,9 +140,9 @@ MODE_D_RESULT_LABEL = _MODE_D_LABEL_HEAD + _MODE_D_LABEL_TAIL
 #: Shown beside a Mode D record, as `PRE_B1_NOTE` is beside a Mode C one.
 MODE_D_NOTE = (
     "Mode D measures what the Diagnosis page serves today, over the cohort's import-eligible "
-    "cases, and sets Mode C beside it on the same embeddings. Mode C and Mode D are different "
-    "ranking policies: a Mode D number is not the model's approved ranking, and the cases "
-    "excluded at import are counted beside it, not in it."
+    "cases. Its report sets Mode C beside it on the same embeddings; a Mode C record shown "
+    "here is a separate run. A Mode D number is not the model's approved ranking, and the "
+    "cases excluded at import are counted beside it, not in it."
 )
 
 #: Each recorded mode's label, by the record's `scoring.mode`.
@@ -152,11 +152,18 @@ MODE_RESULT_LABELS = {"C": MODE_C_RESULT_LABEL, "D": MODE_D_RESULT_LABEL}
 MODE_RESULT_NOTES = {"C": PRE_B1_NOTE, "D": MODE_D_NOTE}
 
 
-def mode_label(mode: str, score_semantics: Optional[str] = None) -> str:
+#: The label of a record whose mode cannot be read: never taken for Mode C.
+MODE_NOT_RECORDED_LABEL = "Measurement mode not recorded"
+
+
+def mode_label(mode: Optional[str], score_semantics: Optional[str] = None) -> str:
     """The label a record of `mode` is shown under. A Mode D record's served
     scoring mode and mixing weight are added from its `score_semantics`
     (``served:<scoring mode>:eta=<eta>:sp=<build id>``) when given. A mode this
-    version does not know is named as such, never shown under another's label."""
+    version does not know is named as such, and a mode that cannot be read
+    (None) says so: neither is shown under another mode's label."""
+    if not mode or not mode.strip():
+        return MODE_NOT_RECORDED_LABEL
     label = MODE_RESULT_LABELS.get(mode)
     if label is None:
         return f"Mode {mode} (a measurement mode this version does not describe)"
@@ -175,10 +182,10 @@ def served_scoring(score_semantics: Optional[str]) -> Optional[str]:
     return f"{fields[1]}, \u03b7 = {parts.get('eta', '?')}"
 
 
-def mode_note(mode: str) -> Optional[str]:
+def mode_note(mode: Optional[str]) -> Optional[str]:
     """The note a record of `mode` is shown with, or None for a mode this
-    version does not know."""
-    return MODE_RESULT_NOTES.get(mode)
+    version does not know or cannot read."""
+    return MODE_RESULT_NOTES.get(mode) if mode and mode.strip() else None
 
 
 #: Mode D's metric families by name prefix (PLAN_B05 §5), as a surface names
@@ -197,10 +204,13 @@ def _metric_words(name: str) -> str:
     return name
 
 
-def metric_text(mode: str, name: str) -> str:
+def metric_text(mode: Optional[str], name: str) -> str:
     """A recorded metric as a surface names it, never without its mode: "Mode C
     MRR (untruncated)", "Mode C Hits@10", "Mode D MRR (import-eligible)", "Mode D
-    mean rank (reached only)", "Mode D coverage"."""
+    mean rank (reached only)", "Mode D coverage"; "MRR (mode not recorded)" when
+    the mode cannot be read."""
+    if not mode or not mode.strip():
+        return f"{_metric_words(name)} (mode not recorded)"
     if mode == "C" and name == "untruncated_mrr":
         return "Mode C MRR (untruncated)"
     if mode == "D":

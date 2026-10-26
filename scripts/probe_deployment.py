@@ -237,7 +237,7 @@ import time
 import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
@@ -917,8 +917,9 @@ def _declared_here(dependencies: Any) -> set:
 def _editable_install_of(distribution: Any, root: Path) -> bool:
     """Whether a distribution is an editable install of the checkout at `root`,
     by its ``direct_url.json`` (PEP 610: ``dir_info.editable`` and a file URL
-    naming that directory)."""
-    from urllib.parse import unquote, urlparse
+    naming that directory; `url2pathname` reads a Windows drive letter too)."""
+    from urllib.parse import urlparse
+    from urllib.request import url2pathname
 
     try:
         text = distribution.read_text("direct_url.json")
@@ -931,20 +932,40 @@ def _editable_install_of(distribution: Any, root: Path) -> bool:
     if data["dir_info"].get("editable") is not True or not isinstance(url, str) \
             or not url.startswith("file://"):
         return False
-    return Path(unquote(urlparse(url).path)).resolve() == root.resolve()
+    return Path(url2pathname(urlparse(url).path)).resolve() == root.resolve()
 
 
-def _in_source_tree(distribution: Any, root: Path) -> bool:
-    """Whether a distribution's metadata is the checkout's own build output: in
-    the checkout at `root`, outside this environment's prefix, and with no
-    ``direct_url.json`` (an editable build's ``src/<name>.egg-info``)."""
+def _editable_paths(distribution: Any, root: Path) -> set:
+    """The directories an editable install puts on the path: the lines of the
+    ``.pth`` files its RECORD lists (``__editable__.<name>.pth``), or, when none
+    can be read, the checkout's ``src`` (this project's layout)."""
+    paths = set()
+    for entry in getattr(distribution, "files", None) or ():
+        if not str(entry).endswith(".pth"):
+            continue
+        try:
+            text = Path(distribution.locate_file(entry)).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError, TypeError, ValueError):
+            continue
+        for line in text.splitlines():
+            line = line.strip()
+            if line and not line.startswith(("#", "import ", "import\t")):
+                paths.add(Path(line).resolve())
+    return paths or {(root / "src").resolve()}
+
+
+def _in_source_tree(distribution: Any, places: set) -> bool:
+    """Whether a distribution's metadata is the project's own build output left
+    where its editable install puts the project on the path (`places`,
+    `_editable_paths`), with no ``direct_url.json``: the ``src/<name>.egg-info``
+    an editable build leaves. A copy anywhere else (a nested worktree, a build
+    directory) is not this, and stays reported."""
     try:
         where = Path(distribution.locate_file("")).resolve()
         installed_record = distribution.read_text("direct_url.json")
     except (AttributeError, OSError, TypeError):
         return False
-    return (not installed_record and where.is_relative_to(root.resolve())
-            and not where.is_relative_to(Path(sys.prefix).resolve()))
+    return not installed_record and where in places
 
 
 def installed_against_lock(lock_path: Path) -> Dict[str, Any]:
@@ -975,11 +996,11 @@ def installed_against_lock(lock_path: Path) -> Dict[str, Any]:
       the path (a stale ``.dist-info`` beside the current one, say): each
       version is compared, and which one ``import`` finds is not told from
       the metadata, so both are stated. **One exception, itself stated in
-      ``counted_once``** (BACKLOG 59): this project's own metadata in the
-      checkout's source tree (the ``.egg-info`` an editable build leaves in
-      ``src/``, `_in_source_tree`) beside its editable install of the same
-      checkout (`_editable_install_of`), at the same version, is one
-      installation, not two;
+      ``counted_once``** (BACKLOG 59): this project's own metadata where its
+      editable install puts it on the path (the ``.egg-info`` an editable build
+      leaves in ``src/``, `_in_source_tree`, `_editable_paths`) beside that
+      editable install of the same checkout (`_editable_install_of`), at the
+      same version, and nothing else of the name, is one installation, not two;
     - ``installed_not_in_lock``: installed and not in the lock at all, each
       with why it is there as far as the installed metadata tells:
       `OUTSIDE_LOCK_DEPLOY` for what the deploy scripts install after the
@@ -1036,8 +1057,11 @@ def installed_against_lock(lock_path: Path) -> Dict[str, Any]:
     for key in sorted(this_project & set(found)):
         copies = found[key]
         editable = [d for d in copies if _editable_install_of(d, lock_path.parent)]
-        if (len(copies) > 1 and len(editable) == 1 and len(set(installed[key])) == 1
-                and all(d in editable or _in_source_tree(d, lock_path.parent) for d in copies)):
+        # Exactly two: the editable install and one copy where it puts the
+        # project on the path; a third copy anywhere is a real duplicate.
+        if (len(copies) == 2 and len(editable) == 1 and len(set(installed[key])) == 1
+                and all(d in editable or _in_source_tree(
+                    d, _editable_paths(editable[0], lock_path.parent)) for d in copies)):
             installed[key] = [str(editable[0].version)]
             counted_once.append({"name": key, "version": installed[key][0],
                                  "why": "its editable install and the metadata its build "
@@ -4017,10 +4041,15 @@ def _stop_training_job(manager: Any, lock_path: Path) -> Dict[str, Any]:
 
 
 def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: str,
-             child: Optional[Path], registry: Path, version: Any) -> None:
+             child: Optional[Path], registry: Path, version: Any,
+             m4_runs: Sequence[str] = (), m4_registered: Sequence[str] = ()) -> None:
     """M5's acceptance on the demo workspace (W1-W11), after M4's flow, on the
     probe's own deployment under <work>/m5 with M2's resumed checkpoint
-    (`child`) and T1's cohort version (`version` in `registry`).
+    (`child`) and T1's cohort version (`version` in `registry`). `m4_runs` are
+    the run ids M4's flow published in that version's store, T2's first, then
+    T7's (Mode D) when it published one: W1 lists exactly those, so a Mode D
+    failure is T7's alone and never W1's. `m4_registered` are those of them
+    whose probe passed, so registered: W1 checks each is listed as registered.
 
     Functional only: what M5 adds to serving and evaluation (the server's
     lists, D8 on every operator control, no cross-origin access, the route
@@ -4127,21 +4156,26 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
         assert (demo.manifest_sha256, demo.role, demo.offers_ordering) == (
             version.identity.sha256, M4_ROLE, False), (
             "the version is not listed by T1's digest and role, ordering off by default")
-        # The store's run directories (its own files, the usage history and
-        # the notes, are not runs): T2's and T7's (Mode D), each listed, kept
-        # and registered.
-        runs_listed = [run for run in demo.reports if is_run_id(run.run_id)]
-        stored = sorted(path.parent.name for path in
-                        (registry / "versions" / M4_DEMO_LABEL / "reports").glob("*/report.json"))
-        kept = [(run.state or {}).get("kept") for run in runs_listed]
-        registered = [(run.state or {}).get("registered") for run in runs_listed]
-        assert len(stored) == 2 and sorted(run.run_id for run in runs_listed) == stored, (
-            f"the store keeps {len(stored)} reports and lists {len(runs_listed)} runs, not T2's "
-            "and T7's")
-        assert kept == ["kept"] * 2 and registered == ["registered"] * 2, (
-            f"T2's and T7's runs are listed as kept {kept} and registered {registered}")
+        # What the later probes need is kept before W1's own run checks, so a
+        # failure here is W1's and never W2-W11's.
         state.update(workspace=workspace, listed=listed, listed_sha=listed_sha,
                      fingerprint=fingerprint, link_made=link_made)
+        # The store's run directories (its own files, the usage history and
+        # the notes, are not runs): exactly the runs M4's flow published, each
+        # kept, and each whose probe passed (T2's, T7's) listed as registered.
+        assert m4_runs, "T2's run (M4) is not available"
+        listed_runs = {run.run_id: run.state or {} for run in demo.reports
+                       if is_run_id(run.run_id)}
+        assert sorted(listed_runs) == sorted(m4_runs), (
+            f"the store lists {len(listed_runs)} runs, not the {len(m4_runs)} M4's flow "
+            "published (T2's, and T7's when it published one)")
+        not_kept = [run for run in m4_runs if listed_runs[run].get("kept") != "kept"]
+        assert not not_kept, f"M4's runs {not_kept} are not listed as kept"
+        unregistered = [run for run in m4_registered
+                        if listed_runs[run].get("registered") != "registered"]
+        assert not unregistered, (
+            f"M4's runs {unregistered} registered by their probes (T2, T7) are not listed as "
+            "registered")
         return "listed by name and digest, resolved only from the lists, no server path", {
             "workspaces": [{"name": item.name, "dataset_fingerprint": item.dataset_fingerprint,
                             "trainable": item.trainable, "dataset_record": {
@@ -4156,8 +4190,9 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
             "names_refused_by_resolution": len(refused),
             "cohort_version": {"label": demo.label, "manifest_sha256": demo.manifest_sha256,
                                "role": demo.role, "offers_ordering": demo.offers_ordering,
-                               "reports": [{"kept": k, "registered": r}
-                                           for k, r in zip(kept, registered, strict=True)]},
+                               "reports": [{"kept": listed_runs[run].get("kept"),
+                                            "registered": listed_runs[run].get("registered")}
+                                           for run in m4_runs]},
             "items_carry_no_server_path": True,
             "deployment_gpu_lock": deployment_lock,
         }
@@ -5448,9 +5483,12 @@ def phase_m2_demo(
         before = {path.parent.name for path in store.glob(f"*/{REPORT_FILE}")}
         code = _measure_cohort(measured, sound, registry, M4_DEMO_LABEL, device,
                                "--mode", "D", "--record")
-        assert code == 0, f"the Mode D measurement with --record exited {code}"
         created = [path for path in store.glob(f"*/{REPORT_FILE}")
                    if path.parent.name not in before]
+        if len(created) == 1:
+            # Whatever T7 concludes, W1 lists exactly what M4's flow published.
+            m4["mode_d_run"] = created[0].parent.name
+        assert code == 0, f"the Mode D measurement with --record exited {code}"
         assert len(created) == 1, f"the Mode D run left {len(created)} reports, not one"
         report_d, identity = _read_json(created[0])
         manifest, c_manifest = report_d["manifest"], _read_json(m4["report"])[0]["manifest"]
@@ -5489,6 +5527,7 @@ def phase_m2_demo(
         kept = report_d["comparison"]["kept_mode_c_reports"]
         assert m4["report"].parent.name in [entry.get("run_id") for entry in kept], (
             "the cross-check does not read T2's kept Mode C report")
+        m4["mode_d_registered"] = True      # W1 then checks the run is listed as registered
         metrics = report_d["authoritative_metrics"]
         return "the served ranking measured over the import-eligible cases, kept and " \
                "registered apart from Mode C's", {
@@ -5537,7 +5576,12 @@ def phase_m2_demo(
     # ---- M5's acceptance on the same workspace: M2's resumed checkpoint, T1's
     # version and registry, the probe's own deployment under <work>/m5.
     _m5_demo(report, work, sound, checkpoint, device, state.get("child"), registry,
-             m4.get("version"))
+             m4.get("version"),
+             [run for run in (m4["report"].parent.name if m4.get("report") else None,
+                              m4.get("mode_d_run")) if run],
+             [run for run in (m4["report"].parent.name if m4.get("record") else None,
+                              m4.get("mode_d_run") if m4.get("mode_d_registered") else None)
+              if run])
 
 
 # =============================================================================

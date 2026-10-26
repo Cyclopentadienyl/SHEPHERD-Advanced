@@ -2214,9 +2214,16 @@ class DiagnosisPipeline:
                 "can name"
             )
         if self._checkpoint_identity is None:
+            if self.model is None or not self._gnn_ready:
+                raise ValueError(
+                    "this pipeline serves no model (path_reasoning_fallback), so there "
+                    "is no checkpoint to name and no embeddings to measure"
+                )
+            # A model supplied in memory over a verified workspace serves a GNN,
+            # but no checkpoint read names the weights a measurement would score.
             raise ValueError(
-                "this pipeline serves no model (path_reasoning_fallback), so there "
-                "is no checkpoint to name and no embeddings to measure"
+                "this pipeline's model was supplied in memory, not read from a "
+                "checkpoint, so nothing binds the weights a measurement would score"
             )
         return BoundInputs(
             graph=dict(self._bound_digests),

@@ -634,11 +634,15 @@ def record_test_run(
     return entry
 
 
-def entry_mode(entry: Mapping[str, Any]) -> str:
-    """A `test_run` entry's measurement mode: its `mode`, or "C" for an entry
-    written before the key existed, when Mode C was the only mode that wrote."""
+def entry_mode(entry: Mapping[str, Any]) -> Optional[str]:
+    """A `test_run` entry's measurement mode: its `mode`; "C" for an entry
+    written before the key existed (the key absent), when Mode C was the only
+    mode that wrote; None when the key is there and is not a non-empty string (a
+    hand edit), which is never taken for Mode C."""
+    if "mode" not in entry:
+        return "C"
     mode = entry.get("mode")
-    return mode if isinstance(mode, str) and mode else "C"
+    return mode if isinstance(mode, str) and mode.strip() else None
 
 
 def record_registration(

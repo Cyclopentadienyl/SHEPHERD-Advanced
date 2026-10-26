@@ -1,15 +1,22 @@
 #!/usr/bin/env python
 r"""
-Measure the disease scorer — Mode C.
-====================================
-Every patient in a cohort scored against every disease in the knowledge graph,
-with the model the deployed pipeline builds and raw cosine. This is the formal
-Test's measurement (`docs/working/PLAN_TEST_RESULTS.md`, "This is Mode C").
+Measure the disease scorer — Mode C, and Mode D beside it.
+==========================================================
+**Mode C** (the default): every patient in a cohort scored against every disease
+in the knowledge graph, with the model the deployed pipeline builds and raw
+cosine. This is the formal Test's measurement (`docs/working/PLAN_TEST_RESULTS.md`,
+"This is Mode C").
+
+**Mode D** (`--mode D`, a registered cohort version only): what the Diagnosis
+page serves today, each import-eligible case ranked through the served
+pipeline's own `rank()`, with Mode C run beside it on the same embeddings
+(`docs/working/scorer-measurement/PLAN_B05.md`; `src/evaluation/mode_d.py`). It is
+policy gate 1's comparison, not the approved policy.
 
 **A thin CLI.** Argument parsing, one read of each input, manifest assembly, one
-call into `src.evaluation.measurement.run_mode_c`, and publishing what it
-returns. No measurement logic lives here, so the harness stays testable without
-a subprocess.
+call into `src.evaluation.measurement.run_mode_c` (or `mode_d.run_mode_d`), and
+publishing what it returns. No measurement logic lives here, so the harness stays
+testable without a subprocess.
 
 **Two kinds of cohort, named by the argument that names them** (contract M4,
 decision 8): exactly one of `--split` and `--cohort`.
@@ -23,6 +30,13 @@ decision 8): exactly one of `--split` and `--cohort`.
         --cohort mygene2-2026-10 --registry /srv/shepherd/registry \
         [--training-evidence DIR ...] [--record] [--deterministic] \
         [--expect-checkpoint-sha256 HEX] [--expect-version-sha256 HEX] [--outcome FILE]
+
+    # Mode D on the same version: the served ranking, with the same checks,
+    # GPU lock, report store and registration; refused with --split.
+    python scripts/measure_scorer.py --mode D \
+        --checkpoint <workspace>/runs/<arch>/<run>/checkpoints/best.pt \
+        --data-dir <workspace> \
+        --cohort mygene2-2026-10 --registry /srv/shepherd/registry [--record]
 
     # A generated split. --split val is the checkpoint-selection split, not
     # held-out data, and its report is not registrable (decision 9).
@@ -65,7 +79,7 @@ is not tamper-proof).
 anything is measured when the checkpoint or the version's `cohort.json` read now
 is not the one chosen; `--outcome FILE` writes a small JSON once the report is
 published and again at the end (`_write_outcome`): the report's path, run id and
-digest, and whether it was registered and why. FILE must not exist yet, so a
+digest, the measurement mode, and whether it was registered and why. FILE must not exist yet, so a
 file an earlier run left is never read as this one's. The file says what the
 run did; the report store and the ledger stay the record, and
 `src/evaluation/registration.report_state` reads kept and registered from them.
@@ -186,12 +200,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: What Mode C ranks each patient against, as its manifest records it. There is
-#: no expansion to describe: the candidates are every disease in the graph.
 #: The measurement modes this program runs: Mode C, and Mode D beside it
 #: (`docs/working/scorer-measurement/PLAN_B05.md`).
 MODES = ("C", "D")
 
+#: What Mode C ranks each patient against, as its manifest records it. There is
+#: no expansion to describe: the candidates are every disease in the graph.
 CANDIDATE_CONSTRUCTION = "every disease in the knowledge graph"
 
 #: How the scored model was built: through `build_shepherd_model`, the builder
@@ -1002,9 +1016,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
                              "per-sample ranks go beside it, as <output stem>_ranks.json. "
                              "Required with --split; refused with --cohort, whose report "
                              "the registry's report store keeps")
-    parser.add_argument("--batch-size", type=int, default=32,
-                        help="Patients scored per chunk. Recorded on the manifest: "
-                             "it can move the numbers at floating-point level")
+    parser.add_argument("--batch-size", type=_positive_int, default=32,
+                        help="Patients scored per chunk (a positive integer; with --mode "
+                             "D, the Mode C side's). Recorded on the manifest: it can move "
+                             "the numbers at floating-point level")
     parser.add_argument("--device", default="auto", choices=["auto", "cuda", "cpu"],
                         help="auto requires CUDA and fails without it. Explicit cpu "
                              "is permitted for development and records "
@@ -1035,6 +1050,18 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     args.training_evidence = list(args.training_evidence or [])
     _refuse_mixed_arguments(parser, args)
     return args
+
+
+def _positive_int(value: str) -> int:
+    """A positive integer: refused at the command line, before the GPU lock or
+    any read, rather than after Mode D's served pass has ranked every case."""
+    try:
+        number = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{value!r} is not an integer") from None
+    if number < 1:
+        raise argparse.ArgumentTypeError(f"{value!r} is not a positive integer")
+    return number
 
 
 def _sha256_argument(value: str) -> str:
@@ -1419,14 +1446,16 @@ def _write_outcome(
     report_sha256: str,
     deterministic: bool,
     registration: Mapping[str, Any],
+    mode: str,
 ) -> None:
     """The `--outcome` file: what this run did, once its report is published
     (``complete`` false) and again at the end (``complete`` true), each time
     staged and renamed into place, so a reader sees one whole version.
 
     It names the report the run published (path, run id, digest), the checkpoint
-    it read (resolved path and digest), the version, whether the run was
-    deterministic, and whether the report was registered and why. **What the
+    it read (resolved path and digest), the version, the measurement mode (an
+    added key: a reader that ignores unknown keys is unaffected), whether the run
+    was deterministic, and whether the report was registered and why. **What the
     run did, not the record:** whether the report is still kept and registered
     is read from the store and the ledger (`registration.report_state`), and
     ``complete`` false means the run stopped after publishing, so its later
@@ -1448,6 +1477,7 @@ def _write_outcome(
         "checkpoint_sha256": inputs.checkpoint.identity.sha256,
         "cohort": {"label": block["label"], "role": block["role"],
                    "manifest_sha256": block["manifest_sha256"]},
+        "mode": mode,
         "deterministic": deterministic,
         "registration": dict(registration),
     }))
@@ -1673,7 +1703,8 @@ def _run(args: argparse.Namespace, *, registry: Optional[Path]) -> int:
                                        run_id=run_id, report_path=report_path,
                                        report_sha256=report_sha256,
                                        deterministic=deterministic,
-                                       registration=_registration_outcome(args.record))
+                                       registration=_registration_outcome(args.record),
+                                       mode=result.manifest.mode)
                     except (ValueError, OSError) as exc:
                         raise ValueError(
                             f"the --outcome file {args.outcome} could not be written "
@@ -1718,7 +1749,8 @@ def _run(args: argparse.Namespace, *, registry: Optional[Path]) -> int:
             if args.outcome is not None:
                 _write_outcome(args.outcome, complete=True, inputs=inputs, run_id=run_id,
                                report_path=report_path, report_sha256=report_sha256,
-                               deterministic=deterministic, registration=registration)
+                               deterministic=deterministic, registration=registration,
+                               mode=result.manifest.mode)
             if status != 0:
                 # Decided, and said on stderr: a refusal writes nothing to
                 # stdout, and `_run_as_program` settles it, so this status

@@ -190,6 +190,10 @@ def _mode(record: Mapping[str, Any]) -> Optional[str]:
     return scoring.get("mode") if isinstance(scoring, Mapping) else None
 
 
+def _readable_mode(mode: Any) -> bool:
+    return isinstance(mode, str) and bool(mode.strip())
+
+
 def _value(record: Mapping[str, Any], metric: str) -> Optional[float]:
     metrics = record.get("metrics")
     value = metrics.get(metric) if isinstance(metrics, Mapping) else None
@@ -275,12 +279,15 @@ def order_by_test_score(
     # **Mode C records only** (PLAN_B05 §6): the metrics a list is ordered by
     # are Mode C's, and a record of another mode (Mode D, the served ranking) is
     # shown, never ordered. One scoring group is one mode (`mode` is among its
-    # fields), so a group holding any other is not ordered at all.
+    # fields), so a group whose records name another mode is not ordered at all.
+    # A record whose mode cannot be read never stops the whole group: it makes
+    # only its own checkpoint unreadable, below.
     modes = {_mode(r) for ledgers in by_digest.values() for records in ledgers.values()
              for r in records if r.get("cohort_digest") == cohort_digest
              and r.get("scoring_semantics_digest") == scoring_semantics_digest}
+    modes = {m for m in modes if _readable_mode(m)}
     if modes - {"C"}:
-        named = ", ".join(sorted(str(m) for m in modes - {"C"}))
+        named = ", ".join(sorted(modes - {"C"}))
         return Ordering(False, (
             f"ordering by test score is not offered for this scoring group: its records are "
             f"mode {named}, not Mode C; only Mode C records are ordered, and the others are "
@@ -308,6 +315,11 @@ def order_by_test_score(
             unordered.append(row(digest, state))
             continue
         group = in_group[holding[0]]
+        # A record whose mode cannot be read is not taken for Mode C's: the rule
+        # is not applied around it, as for an unreadable sequence (`chosen_record`).
+        if not all(_readable_mode(_mode(r)) for r in group):
+            unordered.append(row(digest, "unreadable"))
+            continue
         chosen = chosen_record(group)
         if chosen is None:
             unordered.append(row(digest, "unreadable"))

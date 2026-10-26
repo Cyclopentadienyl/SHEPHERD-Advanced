@@ -273,6 +273,35 @@ def test_the_projects_editable_install_and_its_source_tree_metadata_are_one(
     second = probe.installed_against_lock(lock)
     assert {"name": "shepherd-advanced", "versions": ["0.1.0", "0.1.0"]} in \
         second["installed_more_than_once"] and second["counted_once"] == []
+    shutil.rmtree(site / "shepherd_advanced-0.0.9.dist-info")
+
+    # The internal review's cli-3: only the copy where the editable install
+    # puts the project counts once. A copy anywhere else in the checkout (a
+    # nested worktree, a build directory) is a real duplicate, beside it or alone.
+    _metadata_dir(checkout / "src" / "shepherd_advanced.egg-info", "shepherd-advanced", "0.1.0")
+    nested = checkout / ".claude" / "worktrees" / "wf" / "src"
+    _metadata_dir(nested / "shepherd_advanced.egg-info", "shepherd-advanced", "0.1.0")
+    paths.append(str(nested))
+    three = probe.installed_against_lock(lock)
+    assert {"name": "shepherd-advanced", "versions": ["0.1.0"] * 3} in \
+        three["installed_more_than_once"] and three["counted_once"] == []
+    shutil.rmtree(checkout / "src" / "shepherd_advanced.egg-info")
+    elsewhere = probe.installed_against_lock(lock)
+    assert {"name": "shepherd-advanced", "versions": ["0.1.0"] * 2} in \
+        elsewhere["installed_more_than_once"] and elsewhere["counted_once"] == []
+    paths.pop()
+
+    # Where the install puts the project is what its .pth names (its RECORD).
+    alt = checkout / "lib"
+    _metadata_dir(alt / "shepherd_advanced.egg-info", "shepherd-advanced", "0.1.0")
+    paths.append(str(alt))
+    info = site / "shepherd_advanced-0.1.0.dist-info"
+    (site / "__editable__.shepherd_advanced-0.1.0.pth").write_text(f"{alt}\n", encoding="utf-8")
+    (info / "RECORD").write_text("__editable__.shepherd_advanced-0.1.0.pth,,\n",
+                                 encoding="utf-8")
+    by_pth = probe.installed_against_lock(lock)
+    assert by_pth["counted_once"] and not any(
+        entry["name"] == "shepherd-advanced" for entry in by_pth["installed_more_than_once"])
 
 
 def _git(cwd, *args):

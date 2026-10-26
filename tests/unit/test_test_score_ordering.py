@@ -96,6 +96,25 @@ def test_ordering_is_offered_only_for_a_listed_role():
     assert (ordering.offered, ordering.rows) == (False, ())
 
 
+def test_a_group_of_another_mode_is_not_ordered_and_an_unreadable_mode_stops_only_its_own():
+    """Mode C records only (PLAN_B05 §6): a scoring group whose records name
+    another mode is not ordered at all. A record whose mode cannot be read (no
+    `scoring`, a hand edit) never stops the group: only its own checkpoint is
+    left unordered (the internal review of Batch 3, cli-1)."""
+    other = _record(B)
+    other["scoring"] = {**other["scoring"], "mode": "D"}
+    refused = _order([_c(A, _record(A)), _c(B, other)])
+    assert not refused.offered and refused.rows == ()
+    assert "mode D, not Mode C" in refused.why
+
+    unreadable = _record(B, sequence=1, mrr=0.9)
+    del unreadable["scoring"]
+    ordering = _order([_c(A, _record(A)), _c(B, unreadable, _record(B, sequence=2))])
+    assert ordering.offered
+    states = {row.checkpoint_sha256: row.state for row in ordering.rows}
+    assert states == {A: "ordered", B: "unreadable"}       # never ordered on that record
+
+
 def test_institutional_acceptance_is_never_ordered_even_when_listed():
     assert NEVER_ORDERED_ROLES == ("institutional_acceptance",)
     ordering = _order([_c(A, _record(A))], role="institutional_acceptance",

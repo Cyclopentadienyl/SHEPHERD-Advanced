@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from dataclasses import asdict, dataclass
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
@@ -47,6 +48,8 @@ from src.evaluation.measurement import (
     run_mode_c,
 )
 
+logger = logging.getLogger(__name__)
+
 MODE = "D"
 #: The next value of the one integer sequence `MeasurementManifest`'s field
 #: holds: Mode C's family is 1 (`measurement.METRIC_SCHEMA_VERSION`), and Mode
@@ -56,6 +59,9 @@ CANDIDATE_CONSTRUCTION_VERSION = "served-path-discovery/v1"
 TIE_POLICY = "served-stable-discovery-order/v1"
 #: One case per `rank()` call: the served path ranks one input at a time.
 BATCH_SIZE = 1
+#: About how many progress lines the served pass logs (`rank_served_cases`):
+#: an institutional cohort ranks one case per call, for a long time.
+PROGRESS_LINES = 20
 K_VALUES: Tuple[int, ...] = (1, 5, 10, 20, 50, 100)
 
 RANKED = "ranked"
@@ -173,17 +179,28 @@ def rank_served_cases(pipeline: Any, samples: Sequence[Any]) -> List[ServedCase]
     ``ranked`` (the truth is among the served candidates), ``not_reached``
     (discovery did not reach it; `no_candidates` when it reached nothing) or
     ``refused`` (the served validation refused the input)."""
+    import time
+
     mappings = pipeline.kg.get_node_id_mapping()
     disease_index = mappings["disease"]
     phenotype_names = pipeline.kg.get_reverse_node_mapping()["phenotype"]
-    cases: List[ServedCase] = []
-    for sample in samples:
+    def served_case(sample: Any) -> ServedCase:
         truth = int(sample.disease_id)
-        ranking = pipeline.rank(served_input(sample, phenotype_names))
+        patient = served_input(sample, phenotype_names)
+        ranking = pipeline.rank(patient)
         if ranking.outcome == "refused":
-            cases.append(ServedCase(str(sample.patient_id), truth, REFUSED, False, None,
-                                    (), (), ()))
-            continue
+            return ServedCase(str(sample.patient_id), truth, REFUSED, False, None, (), (), ())
+        # **The served side scores exactly the terms the importer mapped** (§3).
+        # A served normalisation that dropped or merged one would rank another
+        # input than the C side pools, and the comparison's premise would fail.
+        used = tuple(ranking.phenotype_input.used) if ranking.phenotype_input else None
+        if used != tuple(patient.phenotypes):
+            raise ModeDRefused(
+                f"case {sample.patient_id!r}: the served pipeline used {used} of the terms the "
+                f"cohort version mapped, {tuple(patient.phenotypes)}; Mode D would rank another "
+                "input than Mode C pools, so nothing is compared. Import the cohort again "
+                "under this revision's normalisation."
+            )
         served_ids: List[int] = []
         for candidate in ranking.candidates:
             key = str(candidate.disease_id)
@@ -194,7 +211,7 @@ def rank_served_cases(pipeline: Any, samples: Sequence[Any]) -> List[ServedCase]
                 )
             served_ids.append(int(disease_index[key]))
         rank = served_ids.index(truth) + 1 if truth in served_ids else None
-        cases.append(ServedCase(
+        return ServedCase(
             sample_id=str(sample.patient_id),
             ground_truth=truth,
             outcome=RANKED if rank is not None else NOT_REACHED,
@@ -203,7 +220,18 @@ def rank_served_cases(pipeline: Any, samples: Sequence[Any]) -> List[ServedCase]
             served_ids=tuple(served_ids),
             discovery_ordinals=tuple(ranking.discovery_ordinals),
             served_scores=tuple(float(c.confidence_score) for c in ranking.candidates),
-        ))
+        )
+
+    cases: List[ServedCase] = []
+    started = time.monotonic()
+    every = max(1, len(samples) // PROGRESS_LINES)
+    for number, sample in enumerate(samples, start=1):
+        cases.append(served_case(sample))
+        # Logged after the case, so the last line's tally is the whole pass.
+        if number % every == 0 or number == len(samples):
+            tally = {name: sum(1 for c in cases if c.outcome == name) for name in OUTCOMES}
+            logger.info("Mode D: %d of %d cases through the served path, %.0f s: %s",
+                        number, len(samples), time.monotonic() - started, tally)
     return cases
 
 
@@ -258,29 +286,47 @@ def derived_ranks(case: ServedCase, cosines: Optional[Sequence[float]]) -> Tuple
     return _rank_of(g1, case.ground_truth), _rank_of(g2, case.ground_truth)
 
 
+#: What `paired`'s rank difference is, stated in the report beside it.
+RANK_DIFFERENCE = ("after minus before, case by case, over the cases ranked at both steps: "
+                   "negative means the truth moved up; quantiles by nearest rank")
+
+
 def _quantiles(values: Sequence[int]) -> Optional[Dict[str, int]]:
-    """Nearest-rank quantiles of a rank difference; None when there is none."""
+    """Nearest-rank quantiles of a rank difference (the smallest value with at
+    least the fraction q of the values at or below it); None when there is none."""
+    import math
+
     if not values:
         return None
     ordered = sorted(values)
 
     def at(q: float) -> int:
-        return ordered[min(len(ordered) - 1, max(0, int(round(q * (len(ordered) - 1)))))]
+        return ordered[max(0, math.ceil(q * len(ordered)) - 1)]
 
     return {"min": ordered[0], "q25": at(0.25), "median": at(0.5), "q75": at(0.75),
             "max": ordered[-1]}
 
 
-def paired(before: Sequence[Optional[int]], after: Sequence[Optional[int]]) -> Dict[str, Any]:
-    """How the truth's rank moved from one step to the next, case by case."""
+def paired(before: Sequence[Optional[int]], after: Sequence[Optional[int]],
+           refused: Optional[Sequence[bool]] = None) -> Dict[str, Any]:
+    """How the truth's rank moved from one step to the next, case by case.
+
+    `refused` marks the cases the served validation refused (§4): a refused case
+    has no served candidates, so it has no rank at G1, G2 or D, and it is counted
+    as `ranked_then_refused`, never as `ranked_then_not` (the candidate set did
+    not lose it; the input was refused)."""
+    refused = list(refused) if refused is not None else [False] * len(before)
     both = [(a, b) for a, b in zip(before, after) if a is not None and b is not None]
+    lost = [(a, b, r) for a, b, r in zip(before, after, refused) if a is not None and b is None]
     return {
         "n_both_ranked": len(both),
         "better": sum(1 for a, b in both if b < a),
         "equal": sum(1 for a, b in both if b == a),
         "worse": sum(1 for a, b in both if b > a),
-        "ranked_then_not": sum(1 for a, b in zip(before, after) if a is not None and b is None),
+        "ranked_then_not": sum(1 for _a, _b, r in lost if not r),
+        "ranked_then_refused": sum(1 for _a, _b, r in lost if r),
         "rank_difference": _quantiles([b - a for a, b in both]),
+        "rank_difference_is": RANK_DIFFERENCE,
     }
 
 
@@ -353,8 +399,13 @@ def run_mode_d(
     `manifest` is Mode D's (its semantic values from `served_semantics`, its
     regime the pipeline's embedding regime); `mode_c_manifest` is the C side's,
     built as any Mode C run's manifest is, for the device and `batch_size` it
-    runs with. Both are checked against the embeddings' regime before anything
-    is ranked. `kept_mode_c`, given the C side's ranks by sample id, returns
+    runs with. **The inputs the C side needs are checked before the served pass**,
+    which is the long part: both manifests against the embeddings' regime, the
+    C side's mode, `batch_size`, and the cohort version's phenotype normalisation
+    against the served one. During the pass, a case whose served input is not
+    the terms the version mapped refuses the run (`rank_served_cases`); after it,
+    `run_mode_c`'s own checks of the cohort stand as for any Mode C run.
+    `kept_mode_c`, given the C side's ranks by sample id, returns
     the cross-check with kept Mode C reports for the same checkpoint and version
     (`kept_mode_c_reports`), recorded as it returns it.
 
@@ -377,8 +428,24 @@ def run_mode_d(
     if embeddings is None or regime is None:
         raise ModeDRefused("the pipeline holds no embeddings, so there is nothing to measure")
     encoded = EncodedGraph(embeddings=embeddings, regime=regime)
-    # Mode D's own manifest describes the embeddings' regime, as Mode C's must.
+    # Both manifests describe the embeddings' regime, as Mode C's must.
     assert_manifest_describes_regime(manifest, device, encoded)
+    assert_manifest_describes_regime(mode_c_manifest, device, encoded)
+    if mode_c_manifest.mode != "C":
+        raise ModeDRefused(f"the C side's manifest says mode {mode_c_manifest.mode!r}, not C")
+    if type(batch_size) is not int or batch_size < 1:
+        raise ModeDRefused(f"the C side's batch size is {batch_size!r}, not a positive integer")
+    served_version = pipeline.served_identity().to_dict()["settings"].get(
+        "phenotype_normalisation_version")
+    mapping = cohort_version.get("mapping") if isinstance(cohort_version.get("mapping"),
+                                                          Mapping) else {}
+    if mapping.get("phenotype_normalisation_version") != served_version:
+        raise ModeDRefused(
+            f"the cohort version was mapped under phenotype normalisation version "
+            f"{mapping.get('phenotype_normalisation_version')!r} and the served pipeline "
+            f"normalises under {served_version!r}: the two sides would not score the same "
+            "terms. Import the cohort again under this revision."
+        )
 
     cases = rank_served_cases(pipeline, samples)
 
@@ -446,13 +513,24 @@ def run_mode_d(
                       "lower global id",
                 "G2": "the tie policy: the same scores, ties kept in discovery order",
                 "D": "the score: the served score, ties in discovery order",
+                "C->D": "the joint difference of the candidate set, the tie policy and the "
+                        "score: not attributable to any one of them",
             },
+            "ties_are": ("exact float equality in the C side's cosine scores, as computed at "
+                         "its batch size (mode_c.run_conditions)"),
             "post_import": {name: post_import_metrics(ranks) for name, ranks in steps.items()},
-            "paired": {f"{a}->{b}": paired(steps[a], steps[b])
+            "paired": {f"{a}->{b}": paired(steps[a], steps[b],
+                                           [case.outcome == REFUSED for case in cases])
                        for a, b in (("C", "G1"), ("G1", "G2"), ("G2", "D"), ("C", "D"))},
+            # Refused is its own outcome (§4): never counted as not reached.
             "d_not_reached_while_c_ranked": {
-                f"top_{k}": sum(1 for c, d in zip(steps["C"], steps["D"])
-                                if c is not None and c <= k and d is None)
+                f"top_{k}": sum(1 for c, case in zip(steps["C"], cases)
+                                if c is not None and c <= k and case.outcome == NOT_REACHED)
+                for k in (10, 100)
+            },
+            "d_refused_while_c_ranked": {
+                f"top_{k}": sum(1 for c, case in zip(steps["C"], cases)
+                                if c is not None and c <= k and case.outcome == REFUSED)
                 for k in (10, 100)
             },
         },
@@ -515,7 +593,9 @@ def kept_mode_c_reports(version: Any, checkpoint_sha256: str,
                 run_dir = report_run_directory(reports_dir, run_id)
                 report, _ = read_report(run_dir / REPORT_FILE,
                                         expected_sha256=record["source_artifact_digest"])
-                named = report.get("ranks") or {}
+                named = report.get("ranks") if isinstance(report, Mapping) else None
+                if not isinstance(named, Mapping):
+                    raise ValueError("its ranks block is not an object naming a file")
                 # The kept report's one reader, its digest compared before parsing.
                 rows, _ = read_report(run_dir / str(named.get("file")),
                                       expected_sha256=str(named.get("sha256")))

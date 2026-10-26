@@ -48,8 +48,8 @@ by the next one. The page shows:
 **The detail** of the selected checkpoint: its full model fingerprint (Copy), what
 it was trained on, the Trainer's validation figure in its own card (a selection
 metric on val, never beside a Mode C number), Model Facts' warnings, and two
-in-page segments: "Recorded test results (Mode C)" (every record its ledger
-holds, as the API's record view shows a record: D3's label, coverage with every
+in-page segments: "Recorded test results" (every record its ledger holds, one
+table per mode, as the API's record view shows a record: its mode's label, coverage with every
 exclusion, relations, R10 as states with counts only where the state has one,
 so *unverifiable* is a word and never 0, environment, registration; contested or
 "contested status cannot be checked" per record, never uncontested by default;
@@ -344,10 +344,11 @@ def metric_label(name: Any, mode: str = "C") -> str:
     return metric_text(mode, str(name))
 
 
-def record_mode(view: Mapping[str, Any]) -> str:
-    """A record view's measurement mode (`RecordView.mode`)."""
+def record_mode(view: Mapping[str, Any]) -> Optional[str]:
+    """A record view's measurement mode (`RecordView.mode`), or None when the
+    view carries none it can read (never taken for Mode C)."""
     mode = view.get("mode")
-    return mode if isinstance(mode, str) and mode else "not recorded"
+    return mode if isinstance(mode, str) and mode.strip() else None
 
 
 def _utc_text(raw: Any) -> str:
@@ -599,14 +600,23 @@ def coverage_html(view: Mapping[str, Any]) -> str:
     else:
         reasons = " · ".join(f"{str(name).replace('_', ' ')} {count}"
                              for name, count in excluded.items()) or "none"
-    if record_mode(view) == "D":
+    mode = record_mode(view)
+    if mode == "D":
         return (f'<div>{r.e(view.get("n_ranked"))} of {r.e(counts.get("ranked_eligible"))} '
                 'import-eligible cases reached</div>'
                 f'<div class="shep-sub">{r.e(counts.get("source_cases"))} source cases; '
                 f'{r.e(counts.get("n_excluded"))} excluded at import: {r.e(reasons)}</div>')
-    return (f'<div>{r.e(view.get("n_ranked"))} of {r.e(counts.get("source_cases"))} source cases '
-            f'ranked ({r.e(counts.get("ranked_eligible"))} eligible)</div>'
-            f'<div class="shep-sub">{r.e(counts.get("n_excluded"))} excluded: {r.e(reasons)}</div>')
+    if mode == "C":
+        return (f'<div>{r.e(view.get("n_ranked"))} of {r.e(counts.get("source_cases"))} source '
+                f'cases ranked ({r.e(counts.get("ranked_eligible"))} eligible)</div>'
+                f'<div class="shep-sub">{r.e(counts.get("n_excluded"))} excluded: '
+                f'{r.e(reasons)}</div>')
+    # A mode this version does not describe: its counts, and no claim of what
+    # its n_ranked counts.
+    return (f'<div>{r.e(counts.get("source_cases"))} source cases; '
+            f'{r.e(counts.get("n_excluded"))} excluded: {r.e(reasons)}</div>'
+            f'<div class="shep-sub">{r.e(view.get("n_ranked"))} cases counted by the record; what '
+            'they are is not described for this mode</div>')
 
 
 def relations_html(relations: Any) -> str:
@@ -739,20 +749,26 @@ def _record_cell(view: Mapping[str, Any], state: Optional[Mapping[str, Any]],
 def records_table_html(views: Sequence[Mapping[str, Any]], contest: Mapping[str, Any], *,
                        picks: Optional[Mapping[str, Mapping[str, Any]]] = None,
                        roles: Optional[Mapping[str, str]] = None) -> str:
-    """The records, one main row and one row of detail each: the cohort version
-    (label, version digest, synthetic, role), the record's mode's MRR and Hits@10
-    in their own columns (`RECORD_COLUMNS`), coverage, the record's state; then
-    relations, the other metrics, R10 per scope, environment, dataset and
-    registration. Each metric is named in its record's own mode; when the records
-    shown are of more than one mode, the columns say MRR and Hits@10 and each row
-    names its mode."""
-    picks = picks or {}
-    modes = _modes(views)
-    mixed = len(modes) > 1
+    """The records, **one table per mode, never mixed**, each row a main row and a
+    row of detail: the cohort version (label, version digest, synthetic, role),
+    the mode's MRR and Hits@10 in their own columns, named in full in the header
+    (`RECORD_COLUMNS`, `caveats.metric_text`: the mode and the case set), coverage,
+    the record's state; then relations, the other metrics, R10 per scope,
+    environment, dataset and registration. A Mode D record's served scoring is in
+    its mode's label when every Mode D record shown shares it
+    (`_uniform_semantics`), else on its own detail row."""
+    return "".join(_mode_table(mode, group, contest, picks or {}, roles)
+                   for mode, group in _by_mode(views))
+
+
+def _mode_table(mode: Optional[str], views: Sequence[Mapping[str, Any]],
+                contest: Mapping[str, Any], picks: Mapping[str, Mapping[str, Any]],
+                roles: Optional[Mapping[str, str]]) -> str:
+    """One mode's records as one table (`records_table_html`)."""
+    columns = RECORD_COLUMNS.get(mode) if mode else None
+    served_per_row = mode == "D" and _uniform_semantics(views) is None
     body = []
     for view in views:
-        mode = record_mode(view)
-        columns = RECORD_COLUMNS.get(mode)
         cohort = view.get("cohort") if isinstance(view.get("cohort"), Mapping) else {}
         metrics = view.get("metrics") if isinstance(view.get("metrics"), Mapping) else {}
         key = view.get("key")
@@ -766,11 +782,9 @@ def records_table_html(views: Sequence[Mapping[str, Any]], contest: Mapping[str,
                        f'{r.e(r.short_hex(cohort.get("version_manifest_sha256")))}</code>) '
                        f'{synthetic}</div><div class="shep-sub">role '
                        f'{r.ident_html(role)}'
-                       + (f" · {r.e(role_note)}" if role_note else "") + "</div>"
-                       + (f'<div class="shep-sub">{r.e(MODE_SHORT.get(mode, "Mode " + mode))}'
-                          '</div>' if mixed else ""))
+                       + (f" · {r.e(role_note)}" if role_note else "") + "</div>")
         mrr, hits = (fmt_metric(name, metrics.get(name)) for name in columns) if columns else (
-            "not reported", "not reported")
+            "not described", "not described")
         main = (f'<tr class="shep-mp-main"><td>{cohort_cell}</td>'
                 f'<td class="shep-num">{r.e(mrr)}</td>'
                 f'<td class="shep-num">{r.e(hits)}</td>'
@@ -779,7 +793,7 @@ def records_table_html(views: Sequence[Mapping[str, Any]], contest: Mapping[str,
         others = [f"{metric_label(name, mode)} {fmt_metric(name, value)}"
                   for name, value in sorted(metrics.items(), key=lambda kv: _metric_order(kv[0]))
                   if name not in (columns or ())]
-        served = served_scoring(view.get("score_semantics")) if mode == "D" else None
+        served = served_scoring(view.get("score_semantics")) if served_per_row else None
         if served:
             others.insert(0, f"served scoring {served}")
         # A Mode D record's case sets are its coverage cell and each metric's name.
@@ -804,40 +818,54 @@ def records_table_html(views: Sequence[Mapping[str, Any]], contest: Mapping[str,
                 f'<span class="shep-mp-ln">Environment: {r.e(environment)} · Dataset: '
                 f'<b>{r.e(origin)}</b> · {r.e(registration)}</span></td></tr>')
         body.append(main + more)
+    # Each table named for its mode, so a screen reader tells them apart.
     return ('<div class="shep-tbl-wrap shep-mp-recwrap"><table class="shep-tbl shep-mp-rec" '
-            'aria-label="Recorded test results"><colgroup><col class="shep-mp-c1"><col '
+            f'aria-label="{r.e(_TABLE_NAMES.get(mode, "Recorded test results, " + mode_label(mode)))}">'
+            '<colgroup><col class="shep-mp-c1"><col '
             'class="shep-mp-c2"><col class="shep-mp-c3"><col class="shep-mp-c4"><col></colgroup>'
             '<thead><tr><th scope="col">Cohort version</th>'
-            f'<th scope="col" class="shep-num">{_column_head(modes, 0)}</th>'
-            f'<th scope="col" class="shep-num">{_column_head(modes, 1)}</th>'
+            f'<th scope="col" class="shep-num">{_column_head(mode, 0)}</th>'
+            f'<th scope="col" class="shep-num">{_column_head(mode, 1)}</th>'
             '<th scope="col">Coverage</th>'
             f'<th scope="col">Record</th></tr></thead><tbody>{"".join(body)}</tbody></table>'
             '</div>')
 
 
-#: Each mode in a row of its own when records of several modes are shown
-#: together (the paragraphs above the table give each mode's full label).
-MODE_SHORT = {"C": "Mode C: the model's ranking", "D": "Mode D: the served ranking"}
+#: Each mode's records table as assistive technology names it.
+_TABLE_NAMES = {"C": "Recorded test results, model ranking (Mode C)",
+                "D": "Recorded test results, served ranking (Mode D)"}
 
 
-def _modes(views: Sequence[Mapping[str, Any]]) -> List[str]:
-    """The modes of the records shown, Mode C first, then as first seen."""
-    seen: List[str] = []
+def _by_mode(views: Sequence[Mapping[str, Any]]
+             ) -> List[Tuple[Optional[str], List[Mapping[str, Any]]]]:
+    """The records shown, grouped by mode: Mode C first, then Mode D, then any
+    other in the order first seen; each group in the order given."""
+    groups: Dict[Optional[str], List[Mapping[str, Any]]] = {}
     for view in views:
-        mode = record_mode(view)
-        if mode not in seen:
-            seen.append(mode)
-    return sorted(seen, key=lambda m: (m != "C", m != "D", seen.index(m)))
+        groups.setdefault(record_mode(view), []).append(view)
+    order = list(groups)
+    return sorted(groups.items(), key=lambda kv: (kv[0] != "C", kv[0] != "D",
+                                                 order.index(kv[0])))
 
 
-def _column_head(modes: Sequence[str], index: int) -> str:
-    """A metric column's header: the metric in full when every record shown is of
-    one mode ("Mode C MRR (untruncated)"), else the bare metric, each row naming
-    its mode."""
-    columns = RECORD_COLUMNS.get(modes[0]) if len(modes) == 1 else None
+def _uniform_semantics(views: Sequence[Mapping[str, Any]]) -> Optional[str]:
+    """The score semantics every Mode D record of `views` shares, when they share
+    one served scoring mode and mixing weight (`caveats.served_scoring`); else
+    None."""
+    served = {served_scoring(view.get("score_semantics")) for view in views}
+    if len(served) != 1 or None in served:
+        return None
+    return str(views[0].get("score_semantics"))
+
+
+def _column_head(mode: Optional[str], index: int) -> str:
+    """A metric column's header: the metric in full, its mode and case set
+    ("Mode C MRR (untruncated)", "Mode D MRR (import-eligible)"); the bare metric
+    for a mode this version does not describe, whose cells say so."""
+    columns = RECORD_COLUMNS.get(mode) if mode else None
     if columns is None:
         return ("MRR", "Hits@10")[index]
-    head, _sep, tail = metric_text(modes[0], columns[index]).partition(" (")
+    head, _sep, tail = metric_text(mode, columns[index]).partition(" (")
     return r.e(head) + (f' <span class="shep-nowrap">({r.e(tail)}</span>' if tail else "")
 
 
@@ -870,11 +898,8 @@ def records_block_html(views: Sequence[Mapping[str, Any]], contest: Mapping[str,
     and the R10 definitions behind a ⓘ."""
     parts = []
     if views:
-        modes = _modes(views)
-        for mode in modes:
-            note = mode_note(mode)
-            parts.append(f'<p class="shep-mp-p"><b>{r.e(mode_label(mode))}.</b>'
-                         + (f" {r.e(note)}" if note else "") + "</p>")
+        groups = _by_mode(views)
+        modes = [mode for mode, _group in groups]
         origins = {v.get("dataset_origin") for v in views}
         if len(origins) == 1 and next(iter(origins)) in ORIGIN_MEANING:
             origin = next(iter(origins))
@@ -882,15 +907,21 @@ def records_block_html(views: Sequence[Mapping[str, Any]], contest: Mapping[str,
                     else f"<b>{r.e(origin)}</b>")
             parts.append(f'<p class="shep-mp-p">Dataset of every record below: {word} — '
                          f'{r.e(ORIGIN_MEANING[origin])}.</p>')
-        parts.append(records_table_html(views, contest, picks=picks, roles=roles))
+        # Each mode's label and note directly above its own table.
+        for mode, group in groups:
+            note = mode_note(mode)
+            label = mode_label(mode, _uniform_semantics(group) if mode == "D" else None)
+            parts.append(f'<p class="shep-mp-p"><b>{r.e(label)}.</b>'
+                         + (f" {r.e(note)}" if note else "") + "</p>")
+            parts.append(records_table_html(group, contest, picks=picks, roles=roles))
         over = {"C": "Mode C metrics are over the ranked cases",
                 "D": "Mode D metrics over the import-eligible or the reached cases, as each "
                      "name says"}
         sets = "; ".join(over[m] for m in modes if m in over)
+        figure = ("; the Trainer validation figure is not among them." if sets else
+                  "The Trainer validation figure is not among these records' metrics.")
         parts.append(f'<p class="shep-note">R10 labels '
-                     f'{help_button("models-r10", "R10 labels")} · '
-                     f'{sets + "; " if sets else ""}the Trainer validation figure is not among '
-                     'them.</p>')
+                     f'{help_button("models-r10", "R10 labels")} · {sets}{figure}</p>')
     if not_shown:
         many = not_shown != 1
         parts.append(f'<p class="shep-mp-p shep-amber-t">{not_shown} record{"s" if many else ""} '
@@ -1295,7 +1326,7 @@ def detail_parts(listing: Mapping[str, Any], data: Mapping[str, Any], key: Any,
     ranked = rank(listing, data, ctl)
     records, count, contested = _records_for_item(item, ledger, data, ranked, ctl)
     usage, n_usage = usage_html(item, data)
-    seg_records = f"Recorded test results (Mode C) · {count}" + (
+    seg_records = f"Recorded test results · {count}" + (
         f" · {contested} contested" if contested else "")
     return {"header": header, "top": top, "records": records, "usage": usage,
             "seg": [(seg_records, RECORDS), (f"Usage history · {n_usage}", USAGE)]}
@@ -1519,7 +1550,7 @@ def create_models_page(ctx: Any) -> None:
             with gr.Column(elem_id="shep-mp-detail-bd", elem_classes=["shep-mp-detail-bd"]):
                 parts["detail_top"] = plain_html(detail_parts({}, {}, None, {})["top"],
                                                  elem_id="shep-mp-detail-top")
-                parts["seg"] = gr.Radio(choices=[("Recorded test results (Mode C)", RECORDS),
+                parts["seg"] = gr.Radio(choices=[("Recorded test results", RECORDS),
                                                  ("Usage history", USAGE)], value=RECORDS,
                                         show_label=False, label="Shown", visible=False,
                                         elem_id="shep-mp-seg", elem_classes=["shep-seg"],
@@ -1776,6 +1807,7 @@ PAGE_CSS = f"""
 {_PAGE} .shep-mp-val {{ padding: 10px 12px; }}
 {_PAGE} .shep-mp-valbd {{ display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; font-size: 15px; }}
 {_PAGE} .shep-mp-recwrap {{ margin: 0 !important; }}
+{_PAGE} .shep-mp-recwrap + .shep-mp-p {{ margin-top: 16px; }}
 {_PAGE} .shep-mp-rec td, {_PAGE} .shep-mp-usage td {{ overflow-wrap: anywhere; }}
 {_PAGE} .shep-mp-rec {{ table-layout: fixed; }}
 {_PAGE} .shep-mp-rec .shep-mp-c1 {{ width: 24%; }}

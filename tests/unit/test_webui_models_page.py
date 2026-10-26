@@ -52,7 +52,7 @@ import pytest
 
 gr = pytest.importorskip("gradio")
 
-from src.evaluation.caveats import MODE_C_RESULT_LABEL  # noqa: E402
+from src.evaluation.caveats import MODE_C_RESULT_LABEL, PRE_B1_NOTE  # noqa: E402
 from src.utils.fingerprint import file_sha256  # noqa: E402
 from src.webui.components import model_list as ml  # noqa: E402
 from src.webui.components import models_page as mp  # noqa: E402
@@ -544,6 +544,33 @@ def test_newest_first_gives_the_load_no_ordering(world, monkeypatch):
     assert ordering is None and view == {"architecture": None, "note": mp.LOAD_NOTE}
 
 
+
+def test_a_record_of_another_or_no_mode_is_never_shown_as_mode_c(world, monkeypatch):
+    """A record or usage entry whose mode this version does not describe, or
+    whose mode cannot be read, is named for what it is: never under Mode C's
+    label, note, metric names or coverage words (the internal review of Batch 3,
+    ui_api-4). An entry written before `mode` existed still reads as Mode C."""
+    listing, data, ctl, _view, _ordering = _ordered(world, monkeypatch)
+    record = next(r for entry in data["ledgers"].values() for r in entry.get("records") or [])
+    view = mp.record_view(record)
+    assert view["mode"] == "C"
+    for mode, label in (("E", "Mode E (a measurement mode this version does not describe)"),
+                        (None, "Measurement mode not recorded")):
+        text = _text(mp.records_block_html([{**view, "mode": mode}], {}))
+        assert label in text
+        assert MODE_C_RESULT_LABEL not in text and PRE_B1_NOTE not in text
+        assert "Mode C" not in text and "source cases ranked" not in text
+        assert "not described" in text and "what they are is not described" in text
+        assert "The Trainer validation figure is not among these records' metrics." in text
+    entry = {"kind": "test_run", "at": "2026-10-26T12:00:00Z", "version": "v", "run_id": "r",
+             "metrics": {"untruncated_mrr": 0.5}, "n_ranked": 3, "device": "cpu",
+             "deterministic": True, "record_requested": False}
+    assert "Mode C MRR (untruncated) 0.5000 over 3 ranked cases" in _text(
+        mp.usage_entry_html(entry))
+    for bad in (None, "", 7):
+        shown = _text(mp.usage_entry_html({**entry, "mode": bad}))
+        assert "Measurement mode not recorded" in shown and "Mode C" not in shown
+
 # --------------------------------------------------------------------------- the detail
 def test_the_detail_keeps_validation_and_mode_c_apart(world, monkeypatch):
     listing, data, ctl, _view, _ordering = _ordered(world, monkeypatch)
@@ -571,7 +598,8 @@ def test_the_detail_keeps_validation_and_mode_c_apart(world, monkeypatch):
     note = "ordering off: awaits the formal evaluation rules"
     assert records.count(note) == 1
     assert records.index(INST) < records.index(note) < records.index("contested #1")
-    assert detail["seg"][0] == ("Recorded test results (Mode C) · 3 · 1 contested", mp.RECORDS)
+    # The heading names no mode: each record's table carries its own (PLAN_B05 §6).
+    assert detail["seg"][0] == ("Recorded test results · 3 · 1 contested", mp.RECORDS)
     # a role code is never broken inside its name in its narrow column: not
     # "research_selectio" / "n" (1440x900), nor "research_" / "selection" (M5-3);
     # it stays whole, in a titled ellipsis where it does not fit

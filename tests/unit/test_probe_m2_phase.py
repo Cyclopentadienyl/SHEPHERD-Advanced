@@ -328,6 +328,32 @@ def test_the_demo_phase_passes_and_every_required_probe_runs(tmp_path, served_st
     assert (tmp_path / "m5" / "workspaces" / ".shepherd-gpu.lock").is_file()
 
 
+def test_a_mode_d_failure_is_t7s_alone(tmp_path, served_state, monkeypatch):
+    """The internal review of Batch 3 (cli-2): when Mode D refuses (exit 1,
+    nothing written), T7 fails and M5's W1-W11 still pass: W1 lists exactly the
+    runs M4's flow published, and keeps what the later probes need before its
+    own checks."""
+    probe = _probe()
+    real = probe._measure_cohort
+
+    def measure(checkpoint, data_dir, registry, label, device, *extra):
+        if "--mode" in extra:
+            return 1
+        return real(checkpoint, data_dir, registry, label, device, *extra)
+
+    monkeypatch.setattr(probe, "_measure_cohort", measure)
+    report = probe.Report()
+    sound = probe.phase_writer(report, tmp_path)
+    checkpoint = probe.phase_training(report, tmp_path, sound, device="cpu", epochs=1)
+    probe.phase_m2_demo(report, tmp_path, sound, checkpoint, device="cpu")
+
+    statuses = {p.probe_id: (p.status, p.detail) for p in report.probes}
+    assert statuses["T7"][0] == "failed" and "exited 1" in statuses["T7"][1]
+    m5 = {probe_id: statuses[probe_id] for probe_id in probe.M5_DEMO_PROBES}
+    assert {k: v[0] for k, v in m5.items()} == dict.fromkeys(m5, "passed"), (
+        {k: v[1] for k, v in m5.items() if v[0] != "passed"})
+
+
 def _operator_shell(monkeypatch, base):
     """The deployment's settings as the shell the guide prepares holds them
     (§4.11): its registry and its workspace root, which names the lock, each

@@ -557,6 +557,26 @@ def test_the_result_shows_aggregates_and_states_never_a_case_or_a_path(site):
     assert "R1 graph files match the workspace manifest" in html
 
 
+def test_a_result_of_another_or_no_mode_is_never_shown_as_mode_c(site):
+    """A record whose mode this version does not describe, or whose mode cannot
+    be read, is named for what it is: never Mode C's label, tiles or coverage
+    words (the internal review of Batch 3, ui_api-4). Each report row names its
+    mode first, and the Run panel says Start runs Mode C (ui_api-5)."""
+    import html as html_lib
+
+    reports = tp.read_reports(LABEL)
+    run = {r["run_id"]: r for r in reports["runs"]}[site.run_id]
+    record = run["record"]
+    for mode, label in (("E", "Mode E (a measurement mode this version does not describe)"),
+                        (None, "Measurement mode not recorded")):
+        changed = {**record, "scoring": {**record["scoring"], "mode": mode}}
+        text = html_lib.unescape(re.sub(r"<[^>]+>", "", tp._record_html(changed, run, {})))
+        assert label in text and "Mode C" not in text
+        assert "source cases ranked" not in text and "not described for this mode" in text
+    assert "model ranking (Mode C): report kept" in tp.reports_html(reports, None)
+    assert "model ranking (Mode C) · fixed by the server" in tp.fixed_html({})
+
+
 def test_a_run_without_a_report_says_none_was_kept(site):
     interrupted = site.reports / f"20261020T190000Z-{site.sha[:12]}-0000dead"
     interrupted.mkdir()

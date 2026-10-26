@@ -1360,7 +1360,12 @@ python scripts/measure_scorer.py --mode D \
 - **The same run, the same rules.** Every check above, the GPU lock, the report store and
   registration apply unchanged. `--split` with `--mode D` is refused (exit 2): its comparison is
   reported on a version's import-eligible cases. A pipeline that would serve path reasoning alone,
-  and a version bound to another workspace, are refused before any case is ranked.
+  a version bound to another workspace, and a version mapped under another phenotype normalisation
+  version than the one served (the two sides would score different terms) are refused before any
+  case is ranked; a `--batch-size` below 1 is refused at the command line (exit 2). During the
+  pass, a case whose served input is not the terms the version mapped refuses the run, with
+  nothing written. About 20 progress lines on the console say how many cases have gone through
+  the served path, how long it took and the outcomes so far.
 - **One case per call.** Mode D ranks each case through the served path (`batch_size` 1 in its
   manifest; `--batch-size` is the Mode C side's), so it is slower than Mode C: on a large cohort,
   time a pilot first.
@@ -1377,7 +1382,9 @@ python scripts/measure_scorer.py --mode D \
   scoring semantics differ from Mode C's, so the two are never compared for disagreement, and a
   Mode D record is shown on the Models page, never ordered. The console, the Test page's Result
   and the Models page label it "Served ranking today (Mode D) … not the approved scorer policy",
-  with the served scoring mode and η. No page starts a Mode D run.
+  with the served scoring mode and η (on the Models page in the label when every Mode D record
+  shown shares them, otherwise on each record's detail line); the Models page lists each mode's
+  records in a table of its own. No page starts a Mode D run: the Test page's Start runs Mode C.
 
 ### Record
 
@@ -1651,8 +1658,9 @@ python scripts/measure_scorer.py --checkpoint <file>.pt --data-dir data/workspac
   never read as this run's outcome, and a file named by mistake is never overwritten. Name a new
   file for each run (a job's own directory, say). The file is written once the report is published
   (`"complete": false`) and again at the end (`"complete": true`). It gives the report's path,
-  run id and digest, the checkpoint and version digests, whether the run was deterministic, and
-  under `registration` whether the report was registered and why. A run refused before its
+  run id and digest, the checkpoint and version digests, the measurement mode (`mode`: `C` or
+  `D`, since Batch 3), whether the run was deterministic, and under `registration` whether the
+  report was registered and why. A run refused before its
   report writes no outcome file. The file says what the run did. The report store and the ledger
   remain the record, and "kept" and "registered" are read from them. The job runner gives every
   test run it starts a new outcome file in a directory of its own (§4.11).
@@ -2678,7 +2686,8 @@ and register it. Three panels:
   read-only browser is not shown it, and the page lists them once per workspace (↻ reads the
   list again). Then the R10 evidence the run will look in (the measured workspace, and
   `SHEPHERD_TRAINING_EVIDENCE_DIRS`), **Register the result**, **Deterministic execution**, and
-  the batch size and device the server fixes (the measurement's default; `SHEPHERD_DEVICE`).
+  the batch size, device and mode the server fixes (the measurement's default;
+  `SHEPHERD_DEVICE`; Mode C, the model's own ranking: Mode D is an operator's command-line run).
   **🔒 Start test** starts the real `measure_scorer.py` through the job runner (§4.11), with the
   workspace, version and checkpoint the server finds again in its lists, and **the full model
   fingerprint and version digest the page showed as the expected ones**: the run refuses before
@@ -2804,12 +2813,15 @@ yet", until the page has read their ledgers.
 whether that is this workspace's current dataset), the Trainer's validation figure in its own
 card, any warning, and two segments:
 
-- **Recorded test results (Mode C)**: every record the ledger holds for these weights: the
-  cohort version and its role, Mode C MRR and Hits@10, coverage with every exclusion, and
+- **Recorded test results**: every record the ledger holds for these weights, one table per
+  measurement mode, each under its mode's label and note (since Batch 3: Mode C's records first,
+  then Mode D's). Each row gives the cohort version and its role, the mode's MRR and Hits@10 named
+  in full in the header (Mode C MRR (untruncated) and Hits@10; Mode D's over the import-eligible
+  cases), coverage with every exclusion (Mode D's as the import-eligible cases reached), and
   `registered #N` or amber `contested #N` with what the runs disagree on (or "contested status
   cannot be checked", never shown as uncontested), deterministic on or off; when the list is
   ordered, which record the fixed rule picks and how the others differ from it; then the
-  relations, the other Mode C metrics, R10 as states (*unverifiable* is a reason, never 0), the
+  relations, the record's other metrics, R10 as states (*unverifiable* is a reason, never 0), the
   environment, the dataset and the registration;
 - **Usage history**: the entries that name this checkpoint in every listed cohort version's
   usage history: test runs, registrations and loads from an ordered list, newest first.

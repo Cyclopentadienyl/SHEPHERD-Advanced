@@ -159,6 +159,23 @@ def test_paired_counts_say_how_each_rank_moved():
     assert (moved["better"], moved["equal"], moved["worse"]) == (1, 1, 1)
     assert moved["ranked_then_not"] == 1 and moved["n_both_ranked"] == 3
     assert moved["rank_difference"]["min"] == -2 and moved["rank_difference"]["max"] == 1
+    # A refused case lost after C is counted apart from one the candidates lost.
+    split = paired([1, 2, 3], [None, None, 3], refused=[True, False, False])
+    assert (split["ranked_then_refused"], split["ranked_then_not"]) == (1, 1)
+
+
+def test_rank_differences_are_nearest_rank_quantiles_and_say_their_sign():
+    """The internal review's mode_d-6: the quantiles are nearest rank, as named
+    (the even-count median never flips between lower and upper), and the block
+    says what the difference is."""
+    from src.evaluation.mode_d import RANK_DIFFERENCE, _quantiles
+
+    assert _quantiles([-1, 0])["median"] == -1
+    assert _quantiles([0, 0, 1, 1])["median"] == 0
+    assert _quantiles([1, 2, 3, 4]) == {"min": 1, "q25": 1, "median": 2, "q75": 3, "max": 4}
+    assert _quantiles([]) is None
+    assert paired([3], [1])["rank_difference_is"] == RANK_DIFFERENCE
+    assert "negative means the truth moved up" in RANK_DIFFERENCE
 
 
 def test_a_sample_becomes_the_served_input_through_the_graphs_own_mapping():
@@ -178,18 +195,22 @@ def test_each_kind_of_case_is_counted_as_designed():
     reached), an empty candidate list `not_reached` with `no_candidates`, a truth
     among the candidates `ranked` at its served position, one outside them
     `not_reached`."""
+    from src.core.types import PhenotypeInputAccount
     from src.evaluation.mode_d import rank_served_cases
     from src.inference.pipeline import ServedRanking
 
     diseases = {"mondo:MONDO:000000%d" % i: i for i in range(4)}
+    # What the served validation used: the one term served_input gives.
+    used = PhenotypeInputAccount(received=1, unknown=(), repeats_removed=0,
+                                 used=("HP:0001250",))
     served = {
         "refused": ServedRanking("refused", ["over the input limit"], None),
-        "empty": ServedRanking("no_candidates", ["no candidates"], None),
-        "reached": ServedRanking("ranked", [], None, candidates=[
+        "empty": ServedRanking("no_candidates", ["no candidates"], None, used),
+        "reached": ServedRanking("ranked", [], None, used, candidates=[
             SimpleNamespace(disease_id="mondo:MONDO:0000003", confidence_score=0.9),
             SimpleNamespace(disease_id="mondo:MONDO:0000001", confidence_score=0.8)],
             discovery_ordinals=[1, 0]),
-        "missed": ServedRanking("ranked", [], None, candidates=[
+        "missed": ServedRanking("ranked", [], None, used, candidates=[
             SimpleNamespace(disease_id="mondo:MONDO:0000002", confidence_score=0.5)],
             discovery_ordinals=[0]),
     }
@@ -255,7 +276,7 @@ def _reports(cohort):
     return found
 
 
-def test_a_mode_d_run_keeps_one_report_with_its_blocks_and_registers_apart(cohort):
+def test_a_mode_d_run_keeps_one_report_with_its_blocks_and_registers_apart(cohort, tmp_path):
     """The report has every measurement report's keys and Mode D's blocks; the
     manifest has exactly Mode C's field set with Mode D's values; outcomes add up
     over the import-eligible cases; the ranks file has a row per case; the record
@@ -264,8 +285,10 @@ def test_a_mode_d_run_keeps_one_report_with_its_blocks_and_registers_apart(cohor
     from src.evaluation.report_store import entry_mode, read_usage_history
     from src.evaluation.sidecar import build_record
 
+    outcome = tmp_path / "outcome.json"
     assert cli.main(_argv(cohort)) == 0
-    assert cli.main(["--mode", "D", *_argv(cohort, "--record")]) == 0
+    assert cli.main(["--mode", "D", *_argv(cohort, "--record", "--outcome", str(outcome))]) == 0
+    assert json.loads(outcome.read_text())["mode"] == "D"          # cli-6
     reports = _reports(cohort)
     (c_path, c_report), = reports["C"]
     (d_path, d_report), = reports["D"]
@@ -287,6 +310,11 @@ def test_a_mode_d_run_keeps_one_report_with_its_blocks_and_registers_apart(cohor
     assert d_report["comparison"]["statement"] == COMPARISON_STATEMENT
     assert d_report["comparison"]["mode_c"]["authoritative_metrics"] == \
         c_report["authoritative_metrics"]
+    steps = d_report["comparison"]["steps"]
+    assert "joint difference" in steps["what_changes"]["C->D"]        # mode_d-5
+    assert "batch size" in steps["ties_are"]                          # mode_d-7
+    assert set(steps["d_refused_while_c_ranked"]) == {"top_10", "top_100"}
+    assert all("rank_difference_is" in block for block in steps["paired"].values())
     rows = json.loads((d_path.parent / "ranks.json").read_text())
     assert len(rows) == counts["ranked_eligible"]
     assert {row["outcome"] for row in rows} <= {"ranked", "not_reached", "refused"}
@@ -403,6 +431,10 @@ def test_each_surface_labels_a_record_by_its_own_mode_and_mode_d_is_never_ordere
     assert f"{d_record['n_ranked']} {reached_of} by the served pipeline" in result
     assert "Mode C" not in result and PRE_B1_NOTE not in result
     assert tp.TOPIC_HELP["test-mode-d"] == ("Mode D result", MODE_D_NOTE)
+    assert "a Mode C record shown here is a separate run" in MODE_D_NOTE    # ui_api-6
+    rows = _text(tp.reports_html(reports, None))
+    assert "served ranking (Mode D): report kept" in rows         # ui_api-5
+    assert "model ranking (Mode C): report kept" in rows
     c_result = _text(tp.result_html(reports, runs["C"]["run_id"], []))
     assert MODE_C_RESULT_LABEL in c_result and "Mode D" not in c_result
 
@@ -412,9 +444,24 @@ def test_each_surface_labels_a_record_by_its_own_mode_and_mode_d_is_never_ordere
     assert [view["mode"] for view in views] == ["C", "D"]
     block = _text(mp.records_block_html(views, {}))
     assert block.count(PRE_B1_NOTE) == 1 and block.count(MODE_D_NOTE) == 1
-    assert MODE_C_RESULT_LABEL in block and mode_label("D") in block
-    assert "Mode C: the model's ranking" in block and "Mode D: the served ranking" in block
-    assert "served scoring gnn_only, η = 1.0" in block and reached_of in block
+    # One table per mode, each under its own label, its columns named in full
+    # with the mode and the case set (ui_api-1); one served setting shown, so it
+    # is in the label, as PLAN_B05 §5's fixed text has it (ui_api-3).
+    raw = mp.records_block_html(views, {})
+    assert 'aria-label="Recorded test results, model ranking (Mode C)"' in raw
+    assert 'aria-label="Recorded test results, served ranking (Mode D)"' in raw
+    d_label = mode_label("D", views[1]["score_semantics"])
+    order = [MODE_C_RESULT_LABEL, "Mode C MRR (untruncated)", "Mode C Hits@10", d_label,
+             "Mode D MRR (import-eligible)", "Mode D Hits@10 (import-eligible)"]
+    assert [block.index(text) for text in order] == sorted(block.index(text) for text in order)
+    assert "scores them (gnn_only, η = 1.0); not the approved scorer policy" in block
+    assert "served scoring" not in block and reached_of in block
+    # Two served settings: the label without them, each record's line its own.
+    other = {**views[1], "score_semantics": "served:gnn_plus_shortest_path:eta=0.7:sp=abc"}
+    two = _text(mp.records_block_html([views[1], other], {}))
+    assert f"{mode_label('D')}." in two
+    assert "served scoring gnn_only, η = 1.0" in two
+    assert "served scoring gnn_plus_shortest_path, η = 0.7" in two
     d_only = _text(mp.records_block_html(views[1:], {}))
     assert "Mode D MRR (import-eligible)" in d_only and "Mode D Hits@10 (import-eligible)" in d_only
     assert MODE_C_RESULT_LABEL not in d_only and PRE_B1_NOTE not in d_only
@@ -448,6 +495,158 @@ def test_each_surface_labels_a_record_by_its_own_mode_and_mode_d_is_never_ordere
     refused = order(d_record)
     assert not refused.offered and refused.rows == ()
     assert "mode D, not Mode C; only Mode C records are ordered" in refused.why
+
+
+def test_a_refused_case_is_counted_apart_from_not_reached_and_progress_is_logged(
+        cohort, monkeypatch, caplog):
+    """The internal review's mode_d-1: a case the served validation refuses is
+    `refused`, never counted in d_not_reached_while_c_ranked; and the long served
+    pass logs where it is (a progress line naming the case count)."""
+    import logging
+
+    import scripts.measure_scorer as cli
+    from src.inference.pipeline import DiagnosisPipeline, ServedRanking
+
+    samples = cli._read_version_samples(cohort.version).samples
+    first = str(samples[0].patient_id)
+    original = DiagnosisPipeline.rank
+
+    def rank(self, patient, *args, **kwargs):
+        if patient.patient_id == first:
+            return ServedRanking("refused", ["over the input limit"], patient)
+        return original(self, patient, *args, **kwargs)
+
+    monkeypatch.setattr(DiagnosisPipeline, "rank", rank)
+    with caplog.at_level(logging.INFO, logger="src.evaluation.mode_d"):
+        assert cli.main(["--mode", "D", *_argv(cohort)]) == 0
+    (d_path, d_report), = _reports(cohort)["D"]
+    rows = {row["sample_id"]: row for row in
+            json.loads((d_path.parent / "ranks.json").read_text())}
+    steps = d_report["comparison"]["steps"]
+    assert d_report["outcomes"]["refused"] == 1 and rows[first]["outcome"] == "refused"
+    for k in (10, 100):
+        c_ranked = [row for row in rows.values()
+                    if row["c_rank"] is not None and row["c_rank"] <= k]
+        assert steps["d_refused_while_c_ranked"][f"top_{k}"] == sum(
+            1 for row in c_ranked if row["outcome"] == "refused")
+        assert steps["d_not_reached_while_c_ranked"][f"top_{k}"] == sum(
+            1 for row in c_ranked if row["outcome"] == "not_reached")
+    assert steps["d_refused_while_c_ranked"]["top_100"] == 1
+    for pair in ("C->G1", "C->D"):          # never blamed on the candidate set
+        assert steps["paired"][pair]["ranked_then_refused"] == 1
+    # The last line comes after the last case: its tally is the whole pass.
+    last = [line for line in caplog.text.splitlines() if "through the served path" in line][-1]
+    assert f"Mode D: {len(samples)} of {len(samples)} cases through the served path" in last
+    assert "'refused': 1" in last
+    assert sum(d_report["outcomes"][name] for name in ("ranked", "not_reached", "refused")) == \
+        len(samples)
+
+
+def test_a_cohort_mapped_under_another_normalisation_is_refused_before_any_case_is_ranked(
+        cohort, monkeypatch):
+    """The internal review's gap finding: a version mapped under another
+    phenotype normalisation than the served one is refused before the served
+    pass, so the two sides never score different terms; nothing is written."""
+    import scripts.measure_scorer as cli
+    import src.evaluation.mode_d as mode_d
+    import src.inference.pipeline as pipeline_module
+
+    monkeypatch.setattr(pipeline_module, "PHENOTYPE_NORMALISATION_VERSION", 99)
+    ranked = []
+    monkeypatch.setattr(mode_d, "rank_served_cases", lambda *a, **k: ranked.append(1) or [])
+    with pytest.raises(ModeDRefused, match="phenotype normalisation version 1 .* under 99"):
+        cli.main(["--mode", "D", *_argv(cohort)])
+    assert not ranked
+    assert not list((cohort.version.directory / "reports").glob("*/report.json"))
+
+
+def test_a_served_input_that_drops_a_mapped_term_is_refused(cohort, monkeypatch):
+    """The same premise, case by case: the served pipeline must use exactly the
+    terms the version mapped, or the run is refused and nothing is written."""
+    from dataclasses import replace
+
+    import scripts.measure_scorer as cli
+    from src.inference.pipeline import DiagnosisPipeline
+
+    original = DiagnosisPipeline.rank
+
+    def rank(self, patient, *args, **kwargs):
+        ranking = original(self, patient, *args, **kwargs)
+        if ranking.phenotype_input is not None:
+            ranking.phenotype_input = replace(ranking.phenotype_input,
+                                              used=ranking.phenotype_input.used[:-1])
+        return ranking
+
+    monkeypatch.setattr(DiagnosisPipeline, "rank", rank)
+    with pytest.raises(ModeDRefused, match="the served pipeline used"):
+        cli.main(["--mode", "D", *_argv(cohort)])
+    assert not list((cohort.version.directory / "reports").glob("*/report.json"))
+
+
+def test_a_kept_report_whose_ranks_block_is_damaged_is_listed_unreadable(cohort):
+    """The internal review's mode_d-2: a kept Mode C report whose `ranks` block
+    is not an object is listed with the reason, never a traceback."""
+    import scripts.measure_scorer as cli
+    from src.evaluation.mode_d import kept_mode_c_reports
+
+    assert cli.main(_argv(cohort)) == 0
+    (c_path, c_report), = _reports(cohort)["C"]
+    c_report["ranks"] = ["not", "an", "object"]
+    c_path.write_text(json.dumps(c_report))
+    checkpoint = c_report["manifest"]["artifact_digests"]["checkpoint"]
+    (entry,) = kept_mode_c_reports(cohort.version, checkpoint, {})
+    assert "ranks block is not an object" in entry["unreadable"]
+
+
+def test_run_mode_d_checks_the_c_side_before_the_served_pass(cohort, monkeypatch):
+    """The internal review's mode_d-4, for a caller other than the CLI: the C
+    side's batch size, mode and regime are refused before any case is ranked."""
+    import dataclasses
+
+    import scripts.measure_scorer as cli
+    import src.evaluation.mode_d as mode_d
+    from src.evaluation.measurement import MeasurementManifest
+    from src.inference.pipeline import build_served_pipeline
+
+    assert cli.main(_argv(cohort)) == 0
+    assert cli.main(["--mode", "D", *_argv(cohort)]) == 0
+    reports = _reports(cohort)
+    c_manifest = MeasurementManifest(**reports["C"][0][1]["manifest"])
+    d_report = reports["D"][0][1]
+    d_manifest = MeasurementManifest(**d_report["manifest"])
+    pipeline = build_served_pipeline(cohort.data_dir / "kg.json",
+                                     checkpoint_path=str(cohort.checkpoint),
+                                     data_dir=str(cohort.data_dir), device="cpu")
+    samples = cli._read_version_samples(cohort.version).samples
+    ranked = []
+    monkeypatch.setattr(mode_d, "rank_served_cases", lambda *a, **k: ranked.append(1) or [])
+
+    def run(c_side=c_manifest, batch_size=4):
+        return mode_d.run_mode_d(pipeline, samples, d_manifest, c_side,
+                                 device=torch.device("cpu"), batch_size=batch_size,
+                                 cohort_version=d_report["manifest"]["cohort_version"])
+
+    for kwargs, match in (({"batch_size": 0}, "batch size"), ({"batch_size": True}, "batch size"),
+                          ({"c_side": dataclasses.replace(c_manifest, mode="D")}, "not C")):
+        with pytest.raises(ModeDRefused, match=match):
+            run(**kwargs)
+    # The C side's manifest claims autocast: Mode C's own regime check refuses it.
+    with pytest.raises(RuntimeError, match="describes a run that did not happen"):
+        run(c_side=dataclasses.replace(c_manifest, amp_enabled=True,
+                                       amp_dtype="torch.bfloat16"))
+    assert not ranked
+
+
+@pytest.mark.parametrize("value", ["0", "-3", "two"])
+def test_a_batch_size_that_is_not_a_positive_integer_is_refused_before_anything_runs(value):
+    """The internal review's cli-5: refused at the command line (exit 2), not
+    after Mode D's served pass has ranked every case."""
+    import scripts.measure_scorer as cli
+
+    with pytest.raises(SystemExit) as raised:
+        cli.parse_args(["--mode", "D", "--checkpoint", "x.pt", "--data-dir", "d",
+                        "--cohort", "label", "--registry", "/r", "--batch-size", value])
+    assert raised.value.code == 2
 
 
 def test_mode_d_is_refused_for_a_generated_split():

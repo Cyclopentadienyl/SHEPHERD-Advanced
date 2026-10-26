@@ -187,6 +187,9 @@ _TILES = {
 _MEAN_RANK = {"C": "mean_rank", "D": "reached_mean_rank"}
 #: The ⓘ beside each mode's label.
 _MODE_HELP = {"C": "test-mode-c", "D": "test-mode-d"}
+#: Each report row's mode, first in its state line: a plain label, the code
+#: beside it. A report of another mode, or one whose mode cannot be read, says so.
+_MODE_ROW_WORDS = {"C": "model ranking (Mode C)", "D": "served ranking (Mode D)"}
 #: The job's statuses, as its pill shows them: never green for failed,
 #: stopped or cancelled.
 _PILLS = {
@@ -287,8 +290,9 @@ TOPIC_HELP = {
         "Fixed by the server",
         "A test run has no reason to vary these, so the job runner fixes them (D5): the "
         "batch size is the measurement's default and the device the deployment's "
-        "(SHEPHERD_DEVICE), with no fallback. Only deterministic execution is chosen here, "
-        "and it is recorded.",
+        "(SHEPHERD_DEVICE), with no fallback. The mode is Mode C, the model's own ranking; "
+        "Mode D, the served ranking, is an operator's command-line run. Only deterministic "
+        "execution is chosen here, and it is recorded.",
     ),
     "test-evidence": (
         "R10 evidence",
@@ -1053,6 +1057,16 @@ def _row_state(run: Mapping[str, Any], roots: Sequence[Tuple[str, str]]) -> str:
         return f"whether a report was kept cannot be checked: {e(redact(state.get('why_kept'), roots))}"
     registered = state.get("registered")
     parts = ["report kept"]
+    record = run.get("record") if isinstance(run.get("record"), Mapping) else None
+    lead = ""
+    if record is not None:
+        scoring = record.get("scoring") if isinstance(record.get("scoring"), Mapping) else {}
+        mode = scoring.get("mode")
+        mode = mode if isinstance(mode, str) and mode.strip() else None
+        # The mode leads with a colon, so the row keeps one " · " (the skill's §5).
+        lead = e(_MODE_ROW_WORDS.get(mode) or (
+            f"mode {mode}, not described by this version" if mode else "mode not recorded"))
+        lead += ": "
     if registered == "registered":
         seq = state.get("sequence")
         parts.append(f"registered{' #' + str(seq) if isinstance(seq, int) else ''}")
@@ -1060,7 +1074,7 @@ def _row_state(run: Mapping[str, Any], roots: Sequence[Tuple[str, str]]) -> str:
         parts.append("not registered")
     else:
         parts.append("registration cannot be checked from the list")
-    line = " · ".join(parts)
+    line = lead + " · ".join(parts)
     if contest.get("state") == "contested":
         others = [x for x in contest.get("disagreeing_runs") or [] if x != run.get("run_id")]
         line += (f' · <span class="shep-amber-t">runs disagree — investigate: they differ on '
@@ -1264,7 +1278,9 @@ def fixed_html(page: Mapping[str, Any]) -> str:
     return (f'<div class="shep-test-kv"><span class="shep-k">Batch size'
             f'{help_button("test-fixed", "Fixed by the server")}</span>'
             f'<span>{BATCH_SIZE_SHOWN} · fixed by the server</span>'
-            f'<span class="shep-k">Device</span><span>{shown} · fixed by the server</span></div>')
+            f'<span class="shep-k">Device</span><span>{shown} · fixed by the server</span>'
+            f'<span class="shep-k">Mode</span><span>{e(_MODE_ROW_WORDS["C"])} · fixed by the '
+            'server</span></div>')
 
 
 def start_state(page: Mapping[str, Any], models: Mapping[str, Any], workspace: Optional[str],
@@ -1540,7 +1556,8 @@ def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
     counts = cohort.get("counts") if isinstance(cohort.get("counts"), Mapping) else {}
     # Labelled by the record's own mode, never by Mode C's for every record.
     scoring = record.get("scoring") if isinstance(record.get("scoring"), Mapping) else {}
-    mode = str(scoring.get("mode") or "not recorded")
+    mode = scoring.get("mode") if isinstance(scoring.get("mode"), str) and \
+        scoring.get("mode").strip() else None
     semantics = scoring.get("score_semantics")
     label = mode_label(mode, semantics if isinstance(semantics, str) else None)
     tile_names = _TILES.get(mode, ())
@@ -1568,9 +1585,14 @@ def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
         coverage = (f"<b>{e(_count(n_ranked))} of {e(eligible)}</b> import-eligible cases reached "
                     f"by the served pipeline · {e(_count(counts.get('source_cases')))} source "
                     f"cases; {excluded_text}")
-    else:
+    elif mode == "C":
         coverage = (f"<b>{e(_count(n_ranked))} of {e(_count(counts.get('source_cases')))}</b> source "
                     f"cases ranked ({e(eligible)} eligible) · {excluded_text}")
+    else:
+        # No claim of what this mode's n_ranked counts.
+        coverage = (f"{e(_count(counts.get('source_cases')))} source cases · {excluded_text}; "
+                    f"{e(_count(n_ranked))} cases counted by the record; what they are is not "
+                    "described for this mode")
     mean = metrics.get(mean_name) if mean_name else None
     if mean_name is None:
         mean_text = "—"
