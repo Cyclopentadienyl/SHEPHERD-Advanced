@@ -294,8 +294,10 @@ because the restriction is by kind of path, not only by length.
    once for each `p ∈ G_P[g]` with `p ≠ a`.
 
 **Why from the target's side.** The edges scanned are then the target's own, and the patient-side
-sets are built once per result and shared. The sets' cost is the in-degrees of at most 100 used
-phenotypes, read once per result; §7.7 bounds it and §7.9 gives its cancellation points.
+sets are built once per result and shared. Building them reads, for each of at most 100 used
+phenotypes, its `gene_has_phenotype` in-edges (for `G_P`) and its `is_a` out-edges (for `U_P`), once
+per result, after `P` itself is built from the result's phenotype account; §7.7 bounds it and §7.9
+gives its cancellation points.
 
 **Visited state: none is needed.** Every legal path has a fixed type sequence of at most three
 edges, so the enumeration is exhaustive within the budget. No path is dropped because another path
@@ -354,12 +356,13 @@ that this bounded all the work and made completeness knowable per disease in adv
 |---|---|---|
 | **Entries scanned** (the budget unit) | typed adjacency entries examined in steps 1–3: the in-edges of the one edge type a scan names, read from a per-type in-edge index built once per graph, in graph order | `entry_budget`, fixed per policy version, the same for every target |
 | **Paths emitted** | each membership hit becomes one path per patient phenotype it serves. The same target edge can give 1 path or 100 | at most `entry_budget` × the used phenotypes (≤ 100) per target. Each emission is a count and a bounded-heap insert (§7.6), so per-target work is bounded, though not fixed |
-| **Per-result sets** (`P`, `G_P`, `U_P`) | built once per result, from the used phenotypes' in-edges | the in-degrees of ≤ 100 phenotypes, read once. They are counted in the request's admission, not in any target's budget |
+| **Per-result sets** (`P`, `G_P`, `U_P`) | built once per result: `P` from the result's phenotype account, `G_P` from the used phenotypes' `gene_has_phenotype` in-edges, `U_P` from their `is_a` out-edges | ≤ 100 phenotypes' `gene_has_phenotype` in-degrees plus their `is_a` out-degrees, read once, plus `P`'s ≤ 100 entries. They are counted in the request's admission, not in any target's budget |
 
-**What depends on the patient.** Entries scanned do not: the scans read the target's edges whoever the
-patient is. Paths emitted do, and so does whether the analogy part runs (§7.8: only when the target's
-own outcome is `NO_PATH_IN_POLICY`). So a target's total work depends on the patient, and its
-completeness is known only from that traversal, which reports it.
+**What depends on the patient.** The entries scanned **by the target's own steps 1–3** do not: those
+scans read the target's edges whoever the patient is. Everything else does: the paths emitted;
+whether the analogy part runs (§7.8: only when the target's own outcome is `NO_PATH_IN_POLICY`); and
+so the target's total entries scanned, analogy part included. A target's total work therefore
+depends on the patient, and its completeness is known only from that traversal, which reports it.
 
 **Value of `entry_budget`.** It is set by measurement. One offline pass over every disease gives the
 distribution of scan cost per disease on the deployed graph. That distribution estimates the budget
@@ -379,7 +382,8 @@ Analogies and the per-result sets are outside it.
 **The request ceiling: the policy's "global-budget units and enforcement".**
 - A request names at most `max_targets_per_request` targets. This equals `page_size`'s maximum, 100.
 - Its upper bound on work is:
-  - the per-result sets (≤ 100 phenotypes' in-degrees, once);
+  - the per-result sets (≤ 100 phenotypes' `gene_has_phenotype` in-degrees and `is_a` out-degrees,
+    once, plus `P`);
   - plus, for each target, `entry_budget` scans and at most `entry_budget` × 100 emissions.
 
   That is an upper bound, not the expected cost.

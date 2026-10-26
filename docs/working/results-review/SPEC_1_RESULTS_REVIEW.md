@@ -165,7 +165,7 @@ not reopened.
 | Probes E7, R6, M4 (`scripts/probe_deployment.py`); `scripts/measure_served_pipeline.py` | read the kind's score and validate against the union |
 | `scripts/test_gnn_inference.py` | removed: it pins `confidence_score == gnn_score`, which is wrong in `gnn_plus_shortest_path`. Its build-and-rank checks move to `tests/integration/test_pipeline.py`, against the union |
 | `docs/SP_SCORE_GUIDE.md`'s status box | changes with the code (policy §7) |
-| Mode D (`run_mode_d`, `docs/working/scorer-measurement/PLAN_B05.md`) | nothing: it reads batch 3's `ServedRanking`, and only its order, disease and served score |
+| Mode D (`run_mode_d`, `docs/working/scorer-measurement/PLAN_B05.md`) | nothing: it reads batch 3's `ServedRanking`, and only its order, disease, served score and `discovery_ordinal` (internal metadata, not a response field) |
 
 **Not decided here:**
 - the B-1 switch's default (the owner's call, policy §7);

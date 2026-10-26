@@ -16,7 +16,10 @@ optional read-only observer and nothing else (§5, with its reason).
 (P2-1 the case sets and their names, §4; P2-2 a second Mode C inside Mode D and P2-3 the
 attribution of the intermediate step, §5), plus two clarifications (the golden comparison's fields,
 §8; `metric_schema_version`'s type, §6). This version answers them; the first version is in git
-history at `7b0162f`.
+history at `7b0162f`. The reviewer's second review (`7b0162f..a5652c1`) found that G2 took its
+ties from the served order, which the served score had already decided. `rank()` now keeps each
+candidate's `discovery_ordinal` (§2, §5, §8), and §10 records the owner's boundary for retiring
+Mode D later.
 
 ---
 
@@ -27,7 +30,7 @@ history at `7b0162f`.
 | Question | how well does the model rank the truth among **every** disease, by the approved scorer (raw cosine)? | how well does **what the Diagnosis page serves today** rank the truth? |
 | Candidates | every disease row | the diseases path discovery reaches (`_find_all_paths`, BFS and the direct finder, with their order-dependent caps) |
 | Score | raw cosine of the masked-mean pool | the served score of the deployment's scoring mode: `gnn_plus_shortest_path` (0.7·((cos+1)/2) + 0.3·SP) or `gnn_only` ((cos+1)/2) |
-| Ties | lower global disease id | the served order: a stable sort, so discovery order |
+| Ties | lower global disease id | the served order: a stable sort, so ties keep discovery order (`discovery_ordinal`, §2) |
 | Code | `run_mode_c` | the served `DiagnosisPipeline`, through one new method that serving itself uses (§2) |
 
 **Mode D does not measure** the path-reasoning fallback (it ranks without a model, so there is no
@@ -48,6 +51,12 @@ untruncated served rank could not be had without duplicating candidate construct
   its stable sort — **everything `run` does up to and including the sort, nothing after it**. It
   returns the full ordered candidate list with each candidate's served fields, the phenotype
   account (`PhenotypeInputAccount`), and whether the input was refused and why.
+- **Each entry also carries its `discovery_ordinal`**: its 0-based position in the candidate list
+  `_find_all_paths` built, before the served-score sort. It is recorded where the sort happens,
+  in the same candidate construction. It is internal metadata of `ServedRanking`, not a field of
+  the API or the result union. Nothing re-discovers candidates, and nothing infers the ordinal from
+  the served order: once the served score has sorted the list, the original order cannot be
+  recovered from it.
 - `run(patient_input, top_k, include_explanations)` becomes `rank()` followed by what it does today
   after the sort: the `top_k` slice and rank numbering, matching phenotypes, explanations, evidence
   and the summary. **Serving's output does not change**; a golden test over the demo graph in each
@@ -56,7 +65,8 @@ untruncated served rank could not be had without duplicating candidate construct
   rank `r` is what a clinician sees whenever the page's Top-K is at least `r`.
 
 Mode D calls `rank()` only. It runs no explanation, evidence or summary step. Of each
-`ServedRanking` entry it reads the order, the disease and the served score, nothing else, so the
+`ServedRanking` entry it reads the order, the disease, the served score and the
+`discovery_ordinal`, nothing else, so the
 result union that batch 4 builds (`../results-review/SPEC_1_RESULTS_REVIEW.md` §2.1), which
 renames and re-types the other fields, does not reach Mode D.
 
@@ -147,8 +157,9 @@ intermediate readings change one thing at a time.)*
 | Among reached | `n_ranked` (set R) | `reached_mrr`, `reached_mean_rank`, `reached_hits@K`; omitted, with the reason, when `n_ranked` is 0 |
 
 `post_import_hits@K` for K up to the page's Top-K is the fraction of import-eligible cases in which
-a clinician would see the truth on the page. Metric code sits beside `_authoritative` in
-`src/evaluation/measurement.py` and uses `RankingMetrics.compute_from_ranks` for the reached set.
+a clinician would see the truth on the page. Metric code sits in `src/evaluation/mode_d.py` (§7)
+and uses `RankingMetrics.compute_from_ranks` for the reached set; Mode C's `_authoritative` is not
+changed.
 
 **The C side is the formal Mode C, called once, on the same embeddings.** Mode D does not assemble a
 second Mode C from its primitives. It wraps the pipeline's cached embeddings, with the regime the
@@ -177,8 +188,8 @@ ledger record.
 |---|---|---|---|---|
 | C (formal) | every disease | raw cosine | lower global id | — |
 | G1 | the served candidates | raw cosine | lower global id | the candidate set only |
-| G2 | the served candidates | raw cosine | discovery order (a stable sort over the order `rank()` returned) | the tie policy only |
-| D (formal) | the served candidates | the served score | discovery order | the score only: the (cos+1)/2 rescale rounded in float32, and the SP mixture where a table is served |
+| G2 | the served candidates | raw cosine | discovery order: order by (raw cosine descending, `discovery_ordinal` ascending). Never a re-sort of the order `rank()` returned, which the served score already decided | the tie policy only |
+| D (formal) | the served candidates | the served score | discovery order (`discovery_ordinal`) | the score only: the (cos+1)/2 rescale rounded in float32, and the SP mixture where a table is served |
 
 C→D is the joint difference of the three, and is labelled so. The report gives each step's rank of
 the truth per case and the paired counts per step: truth ranked better, equal or worse; D not
@@ -187,6 +198,14 @@ reached while C ranked it in the top 10, or the top 100. **A worked tie case, al
 (lower id first), G2 [9, 2] (discovery order), and `gnn_only` serves [9, 2]: both score 0.75. The
 change from G1 to D is the tie policy, all of it at G1→G2; G2→D changes nothing. The score
 rescale and SP are not blamed for it.
+
+**A second case, where SP breaks a cosine tie** (also a pass condition; the reviewer's
+counterexample to the first version of this table). Discovery order [9, 2], cosine 0.5 for both,
+SP score 0.1 for disease 9 and 0.9 for disease 2, η = 0.7. The served scores are 0.555 for 9 and
+0.795 for 2. G1 orders them [2, 9], G2 [9, 2] (the cosine tie kept in discovery order), and D
+serves [2, 9]. With the truth 9, the ranks are 2 at G1, 1 at G2 and 2 at D: the tie step improves
+it by one, and the score step (the SP mixture) worsens it by one. Had G2 re-sorted the served
+order, it would read [2, 9], and the score's effect would be blamed on the tie step.
 
 **A kept Mode C report** for the same checkpoint digest and cohort-version manifest digest is read by
 the `ranks.json` digest the report names. The report states how many of its ranks equal the C
@@ -251,8 +270,8 @@ pre-B-1 note appears beside Mode C records only.
 | Change | Where |
 |---|---|
 | `rank()` split; `bound_inputs()`; `embedding_regime` | `src/inference/pipeline.py` |
-| `run_mode_d`, `ServedModeResult`, the §4 outcomes, the §5 metrics, steps and comparison | `src/evaluation/measurement.py`, beside `run_mode_c` (it imports the pipeline: evaluation sits above inference) |
-| The optional read-only score observer | `run_mode_c`, `src/evaluation/measurement.py` (§5) |
+| `run_mode_d`, `ServedModeResult`, the §4 outcomes, the §5 metrics, steps and comparison | one new module, `src/evaluation/mode_d.py`, which imports `measurement` and the pipeline (evaluation sits above inference). Everything specific to Mode D sits there, so retiring it is one module, one CLI option and one test file (§10) |
+| The optional read-only score observer | `run_mode_c`, `src/evaluation/measurement.py` (§5). It must not modify what it is given, and keeps only the served candidates' values, never whole score blocks |
 | `--mode {C,D}` (default C); Mode D's manifest values; its refusals | `scripts/measure_scorer.py`, sharing every existing check, the GPU lock, publication and registration |
 | Mode labels | `src/evaluation/caveats.py`; Test page, Models page, `routes/evaluations.py` descriptions |
 | `mode` in the usage history | `src/evaluation/report_store.py` |
@@ -294,8 +313,11 @@ run metadata are left out of the comparison, never forged to make whole files by
   - *One Mode C (P2-2).* The C side is `run_mode_c`'s own `ModeResult`: its ranks equal a direct
     `run_mode_c` call on the same `EncodedGraph`, samples, device and `batch_size`, and Mode D's code
     calls no scoring primitive itself (a test asserts `run_mode_c` is the one call that scores).
-  - *Ties (P2-3).* The [9, 2] case of §5: G1 [2, 9], G2 [9, 2], D [9, 2]; the report attributes
-    the change to the tie step and none to the score step.
+  - *Ties (P2-3).* The two [9, 2] cases of §5:
+    - in `gnn_only`, G1 [2, 9], G2 [9, 2], D [9, 2]: the change is the tie step's, none the score
+      step's;
+    - with SP breaking the cosine tie, G1 [2, 9], G2 [9, 2], D [2, 9], so the truth 9 ranks 2, 1
+      and 2: G2 is computed from `discovery_ordinal`, never from the served order.
 - **Labels:** each surface shows the record's own mode; the comparison block's fixed text present.
 - **GB10:** one short targeted run, Mode C then Mode D on a registered synthetic cohort (the M5
   close-out's `m5-closeout-demo-01` or a new one), minutes, no training. Earlier acceptances are not
@@ -317,3 +339,37 @@ value.
   rev 4), for a later cascade or tie-break analysis; Mode D persists none (its `ranks.json` holds
   the truth's ranks only).
 - **Owner:** whether a Gate 1 revision is ever proposed; without one the gate stands (policy §2.1).
+
+---
+
+## 10. Retiring Mode D, when its comparison is done (the owner, 2026-10-26)
+
+Mode D exists to compare the served ranking with the approved one (gate 1). It is built so it can
+be removed cleanly afterwards. This is a boundary, not a retirement plan.
+
+1. **It stays while it is needed.** Mode D is not removed before the comparison and the gate 1
+   work that rests on it are done.
+2. **Dependencies run one way.** Mode D calls `DiagnosisPipeline.rank()` and `run_mode_c`.
+   Serving, the trainer, Mode C and B-1 never depend on Mode D's orchestration or its reports.
+3. **What is Mode D's is kept together:**
+   - its orchestration, metrics and derived readings: `src/evaluation/mode_d.py`;
+   - its CLI option: `--mode D`;
+   - its tests: one file.
+
+   It reuses the existing loaders, registration, GPU lock and report store, and adds no copies of
+   them. `rank()` is a serving capability, not Mode D's, and stays when Mode D goes.
+4. **Removing it keeps the history.** When Mode D's execution is removed, its kept reports,
+   summaries and conclusions stay. So does the read-only identification its records need (the
+   label by `scoring.mode`, the manifest values of §6). No old executor, fallback or command alias
+   is kept for those files. The `run_mode_c` observer goes in the same change if nothing else calls
+   it.
+5. **Two retirements, counted apart:**
+   - **Mode D's measurement** goes when its comparison is done.
+   - **The legacy mixture score** (`served_mixture/v1` and its helpers) goes only when B-1 has
+     taken over and no live caller needs it.
+
+   Neither removes the SP capability that the paper's other tasks need: the candidate-gene task's
+   SP term, and SP as an analysis view.
+6. **The shared correctness tests stay.** The removal is one explicit change, made with three
+   things in hand: the finished comparison, the switch's state, and an inventory of callers. No
+   plugin or retirement framework is built for it.
