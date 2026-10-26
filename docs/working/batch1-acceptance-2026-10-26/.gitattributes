@@ -1,0 +1,7 @@
+# Evidence is kept byte for byte (SHA256SUMS): no line-ending normalisation here.
+* -text
+# The logs end some lines in spaces (torch's warning), and deploy.log keeps curl's
+# carriage returns and the terminal's colour codes: evidence, not style.
+deploy.log whitespace=-blank-at-eol,cr-at-eol
+environment-check.log whitespace=-blank-at-eol
+pyg-kernels.log whitespace=-blank-at-eol

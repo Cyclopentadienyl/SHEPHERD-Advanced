@@ -2961,8 +2961,12 @@ pyparsing 3.3.3、xxhash 4.0.2：與 M5 GB10 驗收時的版本相同）。`uv s
 預編譯 release 或本機編譯（`PYG_ARM_STRATEGY`）。它們的版本因平台而異（GB10 的預編譯 pyg-lib 為
 0.6.0，x86 索引為 0.8.0），由探針的 A1、A5 記錄，不固定。
 
-**已驗證的組合**：`torch_geometric` 2.8.1，搭配 torch 2.10.0+cu130 與預編譯 ARM release 的擴充，
-見 M5 於 `b14c4de` 的 GB10 驗收。M4 的驗收用的是 2.8.0.post1，其證據只屬於那個環境。拉取後，
+**已驗證的組合**：`torch_geometric` 2.8.1，搭配 torch 2.10.0+cu130 與預編譯 ARM release 的擴充
+（pyg-lib 0.6.0、torch-scatter 2.1.2、torch-sparse 0.6.18、torch-cluster 1.6.3），見 M5 於 `b14c4de`
+的 GB10 驗收。自 Batch 1 起，`deploy.sh` 從 lock 安裝這組版本，已於 GB10 以 `0bc5178` 檢查
+（2026-10-26：A1–A5 通過，A5 與提交的 lock 相符，PyG 原生檢查 5/5；
+`docs/working/batch1-acceptance-2026-10-26/`）。Windows 的 `deploy.cmd` 尚未實跑。M4 的驗收用的是
+2.8.0.post1，其證據只屬於那個環境。拉取後，
 `uv sync --inexact` 會把已安裝的 2.8.0.post1 換成 2.8.1：這是環境變更，之前做的驗收不會延續過來。
 
 **A5 的說法**：已安裝的 `torch_geometric` 版本不同時，會列出兩個版本；專案宣告了但沒有安裝時，

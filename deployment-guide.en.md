@@ -2806,8 +2806,11 @@ writing the version a second time), or on ARM from the prebuilt release or a loc
 x86 index's 0.8.0) and are recorded by the probe's A1 and A5, not pinned.
 
 **The verified set**: `torch_geometric` 2.8.1 with torch 2.10.0+cu130 and the prebuilt ARM
-release's extensions, in M5's GB10 acceptance at `b14c4de`. M4's acceptance ran 2.8.0.post1; its
-evidence stays with that environment. After pulling, `uv sync --inexact` moves an installed
+release's extensions (pyg-lib 0.6.0, torch-scatter 2.1.2, torch-sparse 0.6.18, torch-cluster
+1.6.3), in M5's GB10 acceptance at `b14c4de`. Since Batch 1, `deploy.sh` installs that set from the
+lock, as checked on the GB10 at `0bc5178` (2026-10-26: A1–A5 passed, A5 equal to the committed lock,
+the PyG native check 5 of 5; `docs/working/batch1-acceptance-2026-10-26/`). Windows' `deploy.cmd`
+has not been run. M4's acceptance ran 2.8.0.post1; its evidence stays with that environment. After pulling, `uv sync --inexact` moves an installed
 2.8.0.post1 to 2.8.1: that is a change of environment, and an acceptance made before it does not
 carry over.
 

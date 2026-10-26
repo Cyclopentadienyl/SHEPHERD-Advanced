@@ -1,0 +1,5 @@
+0bc5178743c6ae1243910702ce37d000b314413c
+uv 0.11.16 (aarch64-unknown-linux-gnu)
+Python 3.12.3
+f458369c3d3d666388865f58e5d3edb0470fb1eaba28958b3badcc79280ecd80  /home/user/batch1-acceptance-0bc5178-01/repo/pyproject.toml
+0f92a5ecff12170bb26127c9d7098ab4301ffac8c7c3bcbd4b7dc9723815c356  /home/user/batch1-acceptance-0bc5178-01/repo/uv.lock

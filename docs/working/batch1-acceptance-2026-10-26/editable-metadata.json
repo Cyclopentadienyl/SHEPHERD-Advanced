@@ -1,0 +1,14 @@
+[
+  {
+    "name": "shepherd-advanced",
+    "version": "0.2.0",
+    "metadata_path": "/home/user/batch1-acceptance-0bc5178-01/repo/.venv/lib/python3.12/site-packages/shepherd_advanced-0.2.0.dist-info",
+    "direct_url": "{\"url\":\"file:///home/user/batch1-acceptance-0bc5178-01/repo\",\"dir_info\":{\"editable\":true}}"
+  },
+  {
+    "name": "shepherd-advanced",
+    "version": "0.2.0",
+    "metadata_path": "/home/user/batch1-acceptance-0bc5178-01/repo/src/shepherd_advanced.egg-info",
+    "direct_url": null
+  }
+]

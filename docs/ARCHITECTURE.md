@@ -367,7 +367,9 @@ scripts take them from the data.pyg.org index for the installed torch (derived, 
 second time), or on ARM from the prebuilt release or a local build; A1 and A5 record their
 versions. The launcher's optional accelerators stay out of the lock, and every install of one is
 constrained to it (deployment guide §4.15). M5's GB10 acceptances (`b14c4de`, and the WebUI rounds of 2026-10-25) ran torch 2.10.0+cu130 with
-`torch_geometric` 2.8.1, the current baseline; M4's ran 2.8.0.post1. Upgrades (PyTorch, CUDA, PyG)
+`torch_geometric` 2.8.1, the current baseline, which `deploy.sh` installs from the lock since Batch 1
+(its GB10 deploy and environment check at `0bc5178` passed, 2026-10-26; Windows not run); M4's ran
+2.8.0.post1. Upgrades (PyTorch, CUDA, PyG)
 are allowed: they go through the same deployment, loading and training flow, are verified, and become
 the new baseline; an older environment's evidence stays with that environment (BACKLOG 50).
 
