@@ -94,6 +94,13 @@ The whole evidence package, byte for byte. The reviewer packed it as
 environment, model or patient data, only homelab paths. Check it with `sha256sum -c SHA256SUMS`.
 `SHA256SUMS` lists the package's 25 other files: not this README, nor `.gitattributes`.
 
+*Correction (2026-10-26, the reviewer's review of `7b0162f..a5652c1`):* the first commit of this
+record (`40053c0`) held 19 of the 25 files. The root `.gitignore` ignores `*.log`, so the six logs
+(`checkout.log`, `clone.log`, `deploy.log`, `environment-check.log`, `pyg-kernels.log`,
+`venv.log`) stayed untracked, and the check passed only in the author's working directory. They
+were added unchanged, by name, in the next commit. The check is now run on a clean `git archive` of
+the commit, which gives 25 of 25.
+
 | File | What it is |
 |---|---|
 | `CODEX_REVIEW.txt`, `review-verdict.json` | the reviewer's review (Chinese) and its machine-readable verdict |

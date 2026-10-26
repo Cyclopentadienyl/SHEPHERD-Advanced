@@ -1,0 +1,18 @@
+torch 2.10.0+cu130 | CUDA available: True | testing on: cuda
+
+Kernel / correctness checks:
+/home/user/batch1-acceptance-0bc5178-01/repo/.venv/lib/python3.12/site-packages/torch/cuda/__init__.py:435: UserWarning: 
+    Found GPU0 NVIDIA GB10 which is of cuda capability 12.1.
+    Minimum and Maximum cuda capability supported by this version of PyTorch is
+    (8.0) - (12.0)
+    
+  queued_call()
+  [OK]   torch_scatter  scatter-sum
+  [OK]   torch_sparse   spmm (A @ x)
+  [OK]   torch_cluster  knn_graph
+         (segment_matmul kernel OK)
+  [OK]   pyg_lib        import + libpyg.so load
+  [OK]   torch_geometric SAGEConv forward (uses the ext)
+
+5/5 checks passed.
+All PyG native extensions are functional.
