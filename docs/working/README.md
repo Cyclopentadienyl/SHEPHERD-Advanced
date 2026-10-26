@@ -26,7 +26,7 @@ document to find what it means.
 | Phase | Status |
 |---|---|
 | [`results-review/`](results-review/) | under review — snapshot repository, results-review UX, deployment security. Of SPEC_4, the loopback bind and its guard, the launcher's display, cross-origin refusal and the operator controls refused off loopback (D8) were implemented in M5-1 (merged as #129); authentication, the multi-user state and a real systemd run on a deployment host are not |
-| [`scorer-measurement/`](scorer-measurement/) | in progress — work item B-0: Mode C implemented (the formal Test's measurement), Mode D (B-0.5) not started, its design problem open (`PLAN_B03.md` §4); Modes A and B retired (R2). Policy Gate 1's decision is BACKLOG §0's batch 2 |
+| [`scorer-measurement/`](scorer-measurement/) | in progress — work item B-0: Mode C implemented (the formal Test's measurement), Mode D (B-0.5) not started, its design problem open (`PLAN_B03.md` §4); Modes A and B retired (R2). Policy Gate 1 stands as written; Mode D's minimal design is BACKLOG §0's batch 2 |
 | [`task-scope/`](task-scope/) | what the institution's supplied-short-list use case changes. Scope decisions settled; the reserved-interface item is **implemented**, the rest unscheduled |
 | [`scorer-retraining/`](scorer-retraining/) | scoping only — selecting a patient-encoder / score-family / objective bundle, and the checkpoint scorer schema. No gate cleared |
 

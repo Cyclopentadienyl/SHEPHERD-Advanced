@@ -6,7 +6,8 @@ status table in §2. Implementation is work item B-1, which remains gated (§6).
 **Revision: rev 5 (2026-10-25). Factual update, no normative change.** The status table (§2) was
 re-checked against `main` at `416a242`; code citations that had drifted are now anchored by function
 name; §2.1 lists what B-1 and B-2 still lack and, as already recorded elsewhere, who decides each
-open question (gate 1 is institutional); the gate 1 row says what exists of B-0 and what does not. The seven statements, the conditions, the schedule, the limits, the gates and the rollout are
+open question (gate 1 is institutional and stands as written); the gate 1 row says what exists of
+B-0 and what does not. The seven statements, the conditions, the schedule, the limits, the gates and the rollout are
 unchanged.
 
 **Revision: rev 4. Factual correction.** The implemented B-0 artifacts record aggregate metrics
@@ -146,7 +147,8 @@ Two further current behaviours, for completeness:
 
 ### 2.1 What B-1 and B-2 still lack (2026-10-25, at `main` `416a242`)
 
-A gap list, not a design: the design is B-1's own work once gate 1 is decided (§6). Each line names
+A gap list, not a design: the designs are batch 2's work under gate 1 as written, and only B-1's
+implementation waits for the gates (§6). Each line names
 what exists to build on, so B-1 extends it rather than writing a second copy.
 
 **What exists and is to be reused.**
@@ -205,17 +207,19 @@ or any comparison, reuses the formal implementations (Mode C's `run_mode_c` and 
 institutional run and no report exist (BACKLOG 7b, 8a, 8b).
 
 **Who decides what.**
-- The engineering team: a proposal on gate 1, kept as written or revised with a stated reason
-  (never skipped silently); the union's shape; how C9's unavailable state is represented; the
-  traversal design for gate 3.
+- The engineering team, under gate 1 as written (it limits B-1's implementation, not design): the
+  minimal Mode D design over the formal pipeline, the shared scoring boundary and gate 3's traversal
+  design; the union's shape; how C9's unavailable state is represented; and, only with a concrete
+  reason, a proposed revision of gate 1 (never skipped silently).
 - The institution: any revision of gate 1, since the gates are part of this record and an
   institutional gate is not engineering's to cancel (`working/scorer-measurement/ASSESSMENT_MODE_AB_RETIREMENT.md`
   §4, §8 item 4), so a revision amends this record normatively, not as a factual update;
   `selection_limit`'s default and bounds, the storage and export bounds and the latency target
   (§1.3); item 11's holdout protocol, which B-0.5's protocol design (BACKLOG 8a, the author's)
   consumes; and, with the author, the B-0.5 institutional run (BACKLOG 8b).
-- The owner: whether gate 1 is kept as written or a revision is put to the institution; the
-  configuration switch's default (§7); whether B-2's no-model serving needs an opt-in.
+- The owner: whether a proposed revision of gate 1 is put to the institution (without one, the gate
+  stands and needs no new approval); the configuration switch's default (§7); whether B-2's
+  no-model serving needs an opt-in.
 
 ---
 
@@ -372,7 +376,7 @@ B-1 implementation may not begin until all three clear:
 
 | Gate | Status |
 |---|---|
-| **1 — B-0 measurement report** | Not cleared. Of B-0, Mode C (the approved ranking, measured) is built and has run on synthetic and demo cohorts; Mode D (the served ranking, measured) is not built, and no institutional run or report exists (§2.1). Whether this gate stands as written or is revised with a stated reason is batch 2's first decision (BACKLOG §0): engineering proposes, the owner decides, and a revision goes to the institution (§2.1). |
+| **1 — B-0 measurement report** | Not cleared. Of B-0, Mode C (the approved ranking, measured) is built and has run on synthetic and demo cohorts; Mode D (the served ranking, measured) is not built, and no institutional run or report exists (§2.1). It stands as written and limits B-1's implementation: the minimal Mode D design, the shared scoring boundary and gate 3's traversal design go ahead under it (BACKLOG §0, batch 2). Only a concrete revision, with its reason, goes to the owner and then the institution (§2.1). |
 | **2 — Institutional scorer-policy decision** | **Cleared by this record.** |
 | **3 — Approved target-restricted evidence-traversal design** | Not cleared. Requires legal reachability × completeness combinations, visited-state and cycle semantics, multi-source provenance, deterministic ordering, global-budget units and enforcement, target fairness, and cancellation behaviour. |
 

@@ -1722,9 +1722,9 @@ only setting, every job is now refused as not configured until the root is set.
 
 **Upgrade only while no training or test run is running** (since round 3 of the review fixes,
 2026-10-22), from a shell or from the service: a job started by an earlier build is not seen by
-this build's lock. A build from before M5's merge (#129) takes no GPU lock at all, and an M5 build from before the
-root-cause round may hold the file `SHEPHERD_GPU_LOCK_FILE` named, which this build does not
-check. Stopping the service for the upgrade stops the jobs it started; for a CLI started from a
+this build's lock. A build without M5's GPU lock mechanism takes no lock at all, and an M5 build
+from before the root-cause round may hold the file `SHEPHERD_GPU_LOCK_FILE` named, the old lock
+name, which this build does not check. Stopping the service for the upgrade stops the jobs it started; for a CLI started from a
 shell, check first with `pgrep -af 'train_model.py|measure_scorer.py|setup_demo.py'` (or
 `nvidia-smi`). After the upgrade, remove `SHEPHERD_GPU_LOCK_FILE` from the service's environment
 and from your shells.

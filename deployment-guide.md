@@ -2042,8 +2042,8 @@ workspace 路徑）。請從服務的環境與你的 shell 中移除它；原本
 每個工作都會以「未設定鎖」被拒絕。
 
 **請只在沒有任何訓練或測試執行進行中時升級**（自審查修正第三輪起，2026-10-22），不論工作是從
-shell 或從服務啟動：這個版本的鎖看不到較早版本所啟動的工作。M5 合併（#129）之前的版本完全不取 GPU 鎖，
-而根因修正輪之前的 M5 版本可能持有 `SHEPHERD_GPU_LOCK_FILE` 所指名的檔案，這個版本不會檢查它。
+shell 或從服務啟動：這個版本的鎖看不到較早版本所啟動的工作。未包含 M5 GPU 鎖機制的舊版完全不取鎖，
+而根因修正輪之前的 M5 版本可能持有 `SHEPHERD_GPU_LOCK_FILE` 所指名的檔案（舊鎖名稱），這個版本不會檢查它。
 為升級而停止服務會停止它所啟動的工作；從 shell 啟動的 CLI，請先用
 `pgrep -af 'train_model.py|measure_scorer.py|setup_demo.py'`（或 `nvidia-smi`）確認。升級之後，
 請從服務的環境與你的 shell 中移除 `SHEPHERD_GPU_LOCK_FILE`。
