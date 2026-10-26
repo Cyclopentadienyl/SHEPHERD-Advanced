@@ -135,10 +135,11 @@ M5's acceptance, carried by the same run where it can run headless (M5-3;
 functional only: not the dashboard's layout or a browser session, and no long
 training). A5 records the installed packages against the uv.lock beside the
 checkout, by name and version, and whether that lock is the one committed at
-the tested commit: versions that differ, a package installed more than once,
-and the packages outside the lock, the deploy scripts' (PyG, cuVS and what they
-require) told from the ones nothing installed requires (an older lock's
-leftovers). A set that differs (a homelab's, say) is stated in the report and
+the tested commit: versions that differ, a dependency the project declares
+that is not installed (torch_geometric among them, locked since BACKLOG 50), a
+package installed more than once, and the packages outside the lock, the deploy
+scripts' (PyG's native extensions, cuVS and what they require) told from the
+ones nothing installed requires (an older lock's leftovers). A set that differs (a homelab's, say) is stated in the report and
 on the console, never hidden, and said again beside the acceptance's verdict.
     Phase M, after T6, on the probe's own deployment under <work>/m5: a copy of
     the demo workspace under its own workspace root, M2's resumed checkpoint in
@@ -664,8 +665,12 @@ def phase_environment(
                   "directory (its path is too long; see A5's facts): training with workers "
                   "fails here; use a short TMPDIR, such as TMPDIR=/tmp")
         differ, outside = collected["version_differs"], collected["installed_not_in_lock"]
-        said = ("the installed versions are the lock's" if not differ else
-                f"{len(differ)} installed version(s) differ from the lock")
+        missing = collected.get("declared_not_installed") or []
+        said = ("the installed versions are the lock's" if not differ and not missing else
+                "; ".join(text for text in (
+                    f"{len(differ)} installed version(s) differ from the lock" if differ else "",
+                    f"{len(missing)} declared dependency(ies) not installed" if missing else "",
+                ) if text))
         return f"{said}; {len(outside)} installed package(s) outside the lock", collected
 
     def _environment_record() -> None:
@@ -814,11 +819,12 @@ def _same_version(installed: str, locked: str) -> bool:
 
 
 #: What the deploy scripts install after ``uv sync``, outside the lock
-#: (deploy.sh, deploy.cmd): PyTorch Geometric and its native extensions, and
-#: cuVS. These and what they require are the expected part of "installed, not
-#: in the lock" (`installed_against_lock`).
+#: (deploy.sh, deploy.cmd): PyTorch Geometric's native extensions, which come
+#: per platform, and cuVS. These and what they require are the expected part of
+#: "installed, not in the lock" (`installed_against_lock`). torch_geometric
+#: itself is in the lock since BACKLOG 50, compared like any locked package.
 DEPLOY_INSTALLED_ROOTS: Tuple[str, ...] = (
-    "torch-geometric", "pyg-lib", "torch-scatter", "torch-sparse", "torch-cluster", "cuvs-cu13",
+    "pyg-lib", "torch-scatter", "torch-sparse", "torch-cluster", "cuvs-cu13",
 )
 #: Why a package installed outside the lock is there, as A5 can tell.
 OUTSIDE_LOCK_DEPLOY = "deploy_scripts"
@@ -871,6 +877,36 @@ def _lock_at_tested_commit(lock_path: Path, data: bytes) -> Optional[bool]:
     return None if read is None else read == committed
 
 
+def _is_this_project(package: Mapping[str, Any]) -> bool:
+    """Whether a uv.lock package entry is this project itself (the checkout,
+    installed editable or as a virtual root), whose ``dependencies`` are what
+    the project declares."""
+    source = package.get("source")
+    return isinstance(source, dict) and (source.get("editable") == "." or
+                                         source.get("virtual") == ".")
+
+
+def _declared_here(dependencies: Any) -> set:
+    """The normalised names of the project's declared dependencies whose
+    marker is true in this environment (a dependency without one always is)."""
+    try:
+        from packaging.markers import InvalidMarker, Marker
+    except ImportError:  # pragma: no cover - packaging is in the lock
+        return set()
+    names = set()
+    for entry in dependencies or ():
+        if not isinstance(entry, dict) or not entry.get("name"):
+            continue
+        marker = entry.get("marker")
+        try:
+            if marker and not Marker(str(marker)).evaluate({"extra": ""}):
+                continue
+        except (InvalidMarker, ValueError, TypeError):
+            continue
+        names.add(_normalised(str(entry["name"])))
+    return names
+
+
 def installed_against_lock(lock_path: Path) -> Dict[str, Any]:
     """This Python environment's installed distributions against the lock
     beside this checkout (M5-3): what the probe ran with, **stated, never
@@ -891,6 +927,10 @@ def installed_against_lock(lock_path: Path) -> Dict[str, Any]:
       lock does not pin (PEP 440 equality; a package the lock pins at several
       versions, one per platform, matches any of them), one entry per such
       installed version;
+    - ``declared_not_installed``: a dependency the project itself declares
+      (the lock's entry for this project, its marker true here) that is not
+      installed at all, with the version the lock pins: missing is not the
+      lock's set either (BACKLOG 50);
     - ``installed_more_than_once``: a name with more than one distribution on
       the path (a stale ``.dist-info`` beside the current one, say): each
       version is compared, and which one ``import`` finds is not told from
@@ -903,7 +943,8 @@ def installed_against_lock(lock_path: Path) -> Dict[str, Any]:
       package requires, and `OUTSIDE_LOCK_LEFTOVER` for one nothing installed
       requires: a leftover of an older lock, or a hand install;
     - ``locked_not_installed``: in the lock and not installed (an extra not
-      installed, a package for another platform). Names only.
+      installed, a package for another platform, and the declared ones above).
+      Names only.
 
     Names and versions only, no paths. Raises `SkipProbe` without a lock or a
     TOML reader to read it with, so an acceptance that requires the record is
@@ -923,9 +964,12 @@ def installed_against_lock(lock_path: Path) -> Dict[str, Any]:
         raise SkipProbe("there is no uv.lock beside this checkout to compare with") from None
     lock = tomllib.loads(read.data.decode("utf-8"))
     locked: Dict[str, set] = {}
+    declared: set = set()
     for package in lock.get("package", []):
         if isinstance(package, dict) and package.get("name") and package.get("version"):
             locked.setdefault(_normalised(str(package["name"])), set()).add(str(package["version"]))
+        if isinstance(package, dict) and _is_this_project(package):
+            declared |= _declared_here(package.get("dependencies"))
     installed: Dict[str, List[str]] = {}
     requires: Dict[str, set] = {}
     for distribution in metadata.distributions():
@@ -960,13 +1004,16 @@ def installed_against_lock(lock_path: Path) -> Dict[str, Any]:
             return OUTSIDE_LOCK_DEPLOY
         return OUTSIDE_LOCK_REQUIRED if name in required else OUTSIDE_LOCK_LEFTOVER
 
+    missing = [{"name": name, "locked": sorted(locked.get(name, ()))}
+               for name in sorted(declared) if name not in installed]
     return {
         "lock_sha256": read.identity.sha256,
         "lock_is_the_committed_one": _lock_at_tested_commit(lock_path, read.data),
         "lock_packages": len(locked),
         "installed_distributions": len(installed),
-        "versions_match_lock": not differs,
+        "versions_match_lock": not differs and not missing,
         "version_differs": differs,
+        "declared_not_installed": missing,
         "installed_more_than_once": [{"name": name, "versions": sorted(versions)}
                                      for name, versions in sorted(installed.items())
                                      if len(versions) > 1],
@@ -992,6 +1039,11 @@ def lock_sentence(facts: Mapping[str, Any]) -> str:
     parts = [f"{len(differ)} version(s) differ" + (
         " (" + ", ".join(f"{d['name']} {d['installed']}, lock {'/'.join(d['locked'])}"
                          for d in differ) + ")" if differ else "")]
+    missing = facts.get("declared_not_installed") or []
+    if missing:
+        parts.append(f"{len(missing)} declared dependenc{'y is' if len(missing) == 1 else 'ies are'}"
+                     " not installed (" + ", ".join(
+                         f"{m['name']}, lock {'/'.join(m['locked']) or '?'}" for m in missing) + ")")
     twice = facts.get("installed_more_than_once") or []
     if twice:
         parts.append("installed more than once: " + ", ".join(
@@ -1002,8 +1054,8 @@ def lock_sentence(facts: Mapping[str, Any]) -> str:
     said = f"{len(outside)} installed package(s) are not in the lock"
     if outside:
         said += ": " + "; ".join(text for text in (
-            f"{len(by_why[OUTSIDE_LOCK_DEPLOY])} from the deploy scripts (PyG, cuVS and what "
-            "they require)" if by_why[OUTSIDE_LOCK_DEPLOY] else "",
+            f"{len(by_why[OUTSIDE_LOCK_DEPLOY])} from the deploy scripts (PyG's native "
+            "extensions, cuVS and what they require)" if by_why[OUTSIDE_LOCK_DEPLOY] else "",
             "required by nothing installed: " + ", ".join(
                 f"{o['name']} {o['version']}" for o in by_why[OUTSIDE_LOCK_LEFTOVER])
             if by_why[OUTSIDE_LOCK_LEFTOVER] else "",
@@ -2061,6 +2113,8 @@ def environment_verdict(report: Report) -> Dict[str, Any]:
         "lock_is_the_committed_one": facts.get("lock_is_the_committed_one"),
         "versions_match_lock": facts.get("versions_match_lock"),
         "version_differs": [entry.get("name") for entry in facts.get("version_differs") or []],
+        "declared_not_installed": [entry.get("name") for entry
+                                   in facts.get("declared_not_installed") or []],
         "installed_more_than_once": [entry.get("name") for entry
                                      in facts.get("installed_more_than_once") or []],
         "not_in_lock": len(outside),

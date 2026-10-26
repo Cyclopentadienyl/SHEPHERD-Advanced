@@ -12,9 +12,11 @@ set -u
 # Phase C onwards: this script uses uv (https://docs.astral.sh/uv/) as the
 # primary deployment tool. PyTorch (torch/torchvision/torchaudio) is now
 # managed by uv via [tool.uv.sources] in pyproject.toml and recorded in
-# uv.lock for cross-platform reproducibility. PyG native extensions
-# (pyg-lib, torch-scatter/sparse/cluster) remain out of the lock and are
-# installed via 'uv pip install' with graceful fallback on missing wheels.
+# uv.lock for cross-platform reproducibility, and so is torch_geometric, PyG's
+# pure-Python core, at the verified version (BACKLOG 50). PyG's native
+# extensions (pyg-lib, torch-scatter/sparse/cluster) remain out of the lock and
+# come per platform via 'uv pip install', with graceful fallback on missing
+# wheels.
 #
 # Usage:
 #   ./deploy.sh
@@ -41,7 +43,8 @@ echo -e "${CYAN}================================================================
 
 # === Configuration ===
 PYTHON_EXE="${PYTHON_EXE:-python3}"
-PYG_WHEEL_URL="https://data.pyg.org/whl/torch-2.10.0+cu130.html"
+# The PyG wheel index is not configured here: Stage 3 derives it from the
+# installed torch, which uv.lock pins (BACKLOG 50).
 
 # Prebuilt PyG ARM wheels (Phase D). data.pyg.org publishes NO aarch64 wheels,
 # so for ARM+CUDA hosts we host self-compiled wheels on a GitHub Release built
@@ -174,12 +177,14 @@ echo -e "[INFO] PyG native ext are installed outside uv.lock because their wheel
 echo -e "[INFO] index is torch-version-coupled HTML and three of them lack Windows"
 echo -e "[INFO] wheels. Missing wheels fall back to torch.scatter_reduce (built-in)."
 
-# torch_geometric: pure Python high-level API; install via uv pip (post-sync)
-echo -e "\n[INFO] Installing torch_geometric (high-level PyG API)..."
-if ! uv pip install torch_geometric; then
-    echo -e "${RED}[ERROR] Failed to install torch_geometric${NC}"
+# torch_geometric, PyG's pure-Python core, is in uv.lock at the verified version
+# (pyproject.toml, BACKLOG 50), so the sync above installed it; only its native
+# extensions are installed here.
+if ! TG_VER="$("$PY" -c 'import torch_geometric;print(torch_geometric.__version__)' 2>/dev/null)"; then
+    echo -e "${RED}[ERROR] torch_geometric (from uv.lock) does not import; re-run 'uv sync --inexact'${NC}"
     exit 3
 fi
+echo -e "\n${GREEN}[OK] torch_geometric ${TG_VER} (from uv.lock)${NC}"
 
 # ---------------------------------------------------------------------------
 # Native extensions: pyg-lib, torch-scatter, torch-sparse, torch-cluster.
@@ -196,6 +201,9 @@ TVER="$("$PY" -c 'import torch;print(torch.__version__)' 2>/dev/null)"
 TBASE="${TVER%%+*}"
 TCU="$("$PY" -c 'import torch;print((torch.version.cuda or "").replace(".",""))' 2>/dev/null)"
 CUDA_AVAIL="$("$PY" -c 'import torch;print(1 if torch.cuda.is_available() else 0)' 2>/dev/null)"
+# The wheel index for the installed torch (e.g. torch-2.10.0+cu130), so a torch
+# upgrade in pyproject.toml carries the index with it.
+PYG_WHEEL_URL="https://data.pyg.org/whl/torch-${TVER}.html"
 
 install_pyg_from_index() {  # original non-ARM path: data.pyg.org find-links
     echo -e "\n[INFO] Installing pyg-lib (native GNN kernels)..."

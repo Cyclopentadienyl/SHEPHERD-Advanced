@@ -23,8 +23,8 @@ identity on every result, and the research tools around it (workspaces, training
 Mode C measurement, registration). Gene ranking and patients-like-me are not implemented (§3).
 
 **Hardware**: CUDA GPUs (the GB10 is the accepted target; BACKLOG 24 for others). Library versions:
-PyTorch and the locked set in `pyproject.toml` and `uv.lock`; PyG is installed by the deploy scripts
-and not yet pinned (§9, BACKLOG 50).
+PyTorch, `torch_geometric` (PyG's core) and the rest of the locked set in `pyproject.toml` and
+`uv.lock`; PyG's native extensions per platform (§9, BACKLOG 50).
 **Graph layers**: GAT, HGT and SAGE, chosen per run (`--conv-type`).
 **Extension (not implemented)**: fuzzy input, free text to HPO/MONDO (`src/nlp/`).
 
@@ -355,11 +355,13 @@ The evidence modes above and the scorer-measurement modes are unrelated. Evidenc
 | Linux aarch64 (DGX Spark) | cuDNN SDPA (no FlashAttn) | cuVS (GPU) → Voyager (CPU) | `deploy.sh` |
 | Windows x86_64 | FlashAttention-2 / torch SDPA | Voyager (CPU only) | `deploy.cmd` |
 
-**Versions** are not yet in one place: PyTorch and the locked dependencies are in `pyproject.toml`
-and `uv.lock`; the torch/CUDA tag that selects the PyG wheels is repeated in `deploy.sh` and
-`deploy.cmd`, both of which install `torch_geometric` unpinned, and the launcher's accelerator
-auto-install is a further source. Batch 1 (BACKLOG 50) pins the verified set in one central place.
-M5's GB10 acceptances (`b14c4de`, and the WebUI rounds of 2026-10-25) ran torch 2.10.0+cu130 with
+**Versions** live in `pyproject.toml` and `uv.lock` (since Batch 1, BACKLOG 50): PyTorch,
+`torch_geometric` (PyG's pure-Python core, one wheel for every platform) and everything they
+require. PyG's native extensions stay out of the lock because they come per platform: the deploy
+scripts take them from the data.pyg.org index for the installed torch (derived, not written a
+second time), or on ARM from the prebuilt release or a local build; A1 and A5 record their
+versions. The launcher's optional accelerators install with pip, which a deploy-created `.venv`
+does not have (deployment guide §4.15). M5's GB10 acceptances (`b14c4de`, and the WebUI rounds of 2026-10-25) ran torch 2.10.0+cu130 with
 `torch_geometric` 2.8.1, the current baseline; M4's ran 2.8.0.post1. Upgrades (PyTorch, CUDA, PyG)
 are allowed: they go through the same deployment, loading and training flow, are verified, and become
 the new baseline; an older environment's evidence stays with that environment (BACKLOG 50).
@@ -445,7 +447,7 @@ and integration tests sit beside each module.
 | **HPO search, disease details, keeping a diagnosis, `candidate_genes`** | mock routes (HPO search, disease details); `GET /api/v1/diagnose/{session_id}` answers 501; a reserved field | — | — | Not implemented | — | BACKLOG 56 |
 | **Operator access (D8) and the read-only view** | `OPERATOR_ONLY` (`src/api/operator_access.py`) on every gated route; the dashboard's helper `src/webui/operator_access.py` in each operator handler | `src/utils/operator_access.py` (`check_operator_access`, the one check) | chips; greyed controls with the reason | Connected | W2–W6 at `b14c4de`; a read-only tab by hand at `773dc4a` | open read routes name server paths (BACKLOG 53) |
 | **Server settings** | `SHEPHERD_*` environment, read where used | `src/config/server_settings.py` | shown, never edited | Connected | probes at `b14c4de` | none |
-| **Launcher, bind guard, service unit** | `launch_shepherd.sh`, `scripts/launch/shep_launch.py`, the systemd unit | the bind rule in `src/config/server_settings.py` (`network_bind`, `startup_bind`), applied by the launcher, `src.api.main` and startup | none | CLI only | W2 at `b14c4de` starts the service with the launcher's uvicorn entry and arguments (not the bind guard's refusal or the unit, which their unit tests cover); `launch_shepherd.sh` by hand at `773dc4a` | the launcher's accelerator auto-install is a second, unpinned dependency source (BACKLOG 50) |
+| **Launcher, bind guard, service unit** | `launch_shepherd.sh`, `scripts/launch/shep_launch.py`, the systemd unit | the bind rule in `src/config/server_settings.py` (`network_bind`, `startup_bind`), applied by the launcher, `src.api.main` and startup | none | CLI only | W2 at `b14c4de` starts the service with the launcher's uvicorn entry and arguments (not the bind guard's refusal or the unit, which their unit tests cover); `launch_shepherd.sh` by hand at `773dc4a` | the launcher's optional accelerators install with pip, which a deploy-created `.venv` does not have; where pip is added by hand, `--xformers`/`--sage-attn` can replace torch (BACKLOG 50; deployment guide §4.15) |
 | **Allocator preset, torch.compile, Restart Backend** | Settings | `src/config/runtime_presets.py` | Settings | Connected; compile Partial | its tests | compile reaches WebUI-started training only (BACKLOG 54) |
 | **Device resolution** (`auto` is CUDA and refuses without it; `cpu` only when asked) | the training, measurement and serving resolvers | `resolve_serving_device` (`src/inference/pipeline.py`; the requested value read by `src/config/serving_device.py`, `SHEPHERD_DEVICE`), `resolve_training_device` (`scripts/train_model.py`), `_resolve_device` (`scripts/measure_scorer.py`) | device choices | Connected | probes at `b14c4de` | the API and CLI hand `mps` to torch unchecked and check `cuda:N` only for CUDA, not its ordinal (BACKLOG 24) |
 | **WebUI usability** (density, layout, help texts) | — | the pages in `src/webui/components/` | every page | Partial: functionally accepted only | M5's manual rounds to `773dc4a` | BACKLOG 51, 52, in §0's UI batches; not a condition for reopening M5 |

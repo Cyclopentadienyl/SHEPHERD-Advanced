@@ -116,14 +116,16 @@ def _installed(monkeypatch, distributions):
 
 def test_a_set_that_differs_from_the_lock_is_stated_never_hidden(probe, tmp_path, monkeypatch):
     """The homelab's check set against the committed lock (M5-0): three
-    versions moved, two leftovers of Gradio 5.29.1, the deploy scripts' PyG
-    with what it requires, an extra not installed, and a stale second copy of
-    gradio. A package the lock pins at two versions (one per platform) matches
-    either; versions compare as PEP 440 does."""
+    versions moved, two leftovers of Gradio 5.29.1, torch_geometric at another
+    version than the lock's (BACKLOG 50) with what it requires, a native
+    extension the deploy scripts installed, an extra not installed, and a stale
+    second copy of gradio. A package the lock pins at two versions (one per
+    platform) matches either; versions compare as PEP 440 does."""
     lock = _lock(tmp_path / "uv.lock", [
         ("huggingface-hub", "1.16.1"), ("click", "8.3.3"), ("hf-xet", "1.5.0"),
         ("gradio", "6.30.0"), ("numpy", "2.3.4"), ("numpy", "2.2.6"),
-        ("torch", "2.10.0+cu130"), ("tqdm", "4.67.1"), ("spacy", "3.8.14")])
+        ("torch", "2.10.0+cu130"), ("tqdm", "4.67.1"), ("spacy", "3.8.14"),
+        ("torch-geometric", "2.8.1")])
     _installed(monkeypatch, [
         ("huggingface_hub", "1.33.0"), ("Click", "8.5.0"), ("hf_xet", "1.7.0"),
         ("gradio", "6.30.0"), ("numpy", "2.2.6", ["numpy-helper"]), ("numpy_helper", "1.0"),
@@ -133,6 +135,7 @@ def test_a_set_that_differs_from_the_lock_is_stated_never_hidden(probe, tmp_path
          ["aiohttp", "numpy", "xxhash; python_version >= '3'", "pytest; extra == 'test'"]),
         ("aiohttp", "3.13.0", ["Multidict>=4.5"]), ("multidict", "6.7.0"),
         ("xxhash", "3.6.0"), ("pytest", "9.0.0"), ("old_helper", "0.1"),
+        ("pyg_lib", "0.6.0"),
         ("gradio", "5.29.1")])            # a stale .dist-info beside the current one
 
     recorded = probe.installed_against_lock(lock)
@@ -145,6 +148,7 @@ def test_a_set_that_differs_from_the_lock_is_stated_never_hidden(probe, tmp_path
         {"name": "gradio", "installed": "5.29.1", "locked": ["6.30.0"]},
         {"name": "hf-xet", "installed": "1.7.0", "locked": ["1.5.0"]},
         {"name": "huggingface-hub", "installed": "1.33.0", "locked": ["1.16.1"]},
+        {"name": "torch-geometric", "installed": "2.8.0.post1", "locked": ["2.8.1"]},
     ]
     assert recorded["installed_more_than_once"] == [
         {"name": "gradio", "versions": ["5.29.1", "6.30.0"]}]
@@ -152,26 +156,29 @@ def test_a_set_that_differs_from_the_lock_is_stated_never_hidden(probe, tmp_path
                                   probe.OUTSIDE_LOCK_LEFTOVER)
     assert recorded["installed_not_in_lock"] == [
         {"name": "aiofiles", "version": "24.1.0", "why": leftover},
-        {"name": "aiohttp", "version": "3.13.0", "why": deploy},
-        {"name": "ffmpy", "version": "1.0.0", "why": leftover},
-        {"name": "multidict", "version": "6.7.0", "why": deploy},
-        # A lock package's requirement: the deploy scripts' closure does not
+        # A locked package's requirements: the deploy scripts' closure does not
         # pass through what the sync installed.
+        {"name": "aiohttp", "version": "3.13.0", "why": required},
+        {"name": "ffmpy", "version": "1.0.0", "why": leftover},
+        {"name": "multidict", "version": "6.7.0", "why": required},
         {"name": "numpy-helper", "version": "1.0", "why": required},
         {"name": "old-helper", "version": "0.1", "why": required},
+        {"name": "pyg-lib", "version": "0.6.0", "why": deploy},
         {"name": "pytest", "version": "9.0.0", "why": leftover},     # only an extra asks
-        {"name": "torch-geometric", "version": "2.8.0.post1", "why": deploy},
-        {"name": "xxhash", "version": "3.6.0", "why": deploy}]
+        {"name": "xxhash", "version": "3.6.0", "why": required}]
     assert recorded["locked_not_installed"] == ["spacy"]
-    assert (recorded["lock_packages"], recorded["installed_distributions"]) == (8, 16)
+    assert recorded["declared_not_installed"] == []      # this lock names no project
+    assert (recorded["lock_packages"], recorded["installed_distributions"]) == (9, 17)
     assert str(tmp_path) not in json.dumps(recorded)
 
     said = probe.lock_sentence(recorded)
-    assert "4 version(s) differ (click 8.5.0, lock 8.3.3, gradio 5.29.1, lock 6.30.0" in said
+    assert "5 version(s) differ (click 8.5.0, lock 8.3.3, gradio 5.29.1, lock 6.30.0" in said
+    assert "torch-geometric 2.8.0.post1, lock 2.8.1" in said
     assert "installed more than once: gradio (5.29.1, 6.30.0)" in said
-    assert "9 installed package(s) are not in the lock: 4 from the deploy scripts" in said
+    assert "9 installed package(s) are not in the lock: 1 from the deploy scripts" in said
     assert "required by nothing installed: aiofiles 24.1.0, ffmpy 1.0.0, pytest 9.0.0" in said
-    assert "required by another installed package: numpy-helper 1.0, old-helper 0.1" in said
+    assert ("required by another installed package: aiohttp 3.13.0, multidict 6.7.0, "
+            "numpy-helper 1.0, old-helper 0.1, xxhash 3.6.0") in said
     assert "whether it is the committed one could not be read" in said
 
 
@@ -247,6 +254,67 @@ def test_the_deploy_scripts_install_the_roots_a5_names(probe):
     assert set(probe.DEPLOY_INSTALLED_ROOTS) <= spelled
 
 
+def test_the_pyg_core_is_locked_and_no_deploy_script_installs_it_unpinned(probe):
+    """BACKLOG 50: torch_geometric is declared once, in pyproject.toml at the
+    verified version, and locked; deploy.sh and deploy.cmd install it through
+    the sync, never again with no version, and take the PyG wheel index from
+    the installed torch rather than writing the torch version a second time."""
+    import tomllib
+
+    declared = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))
+    pins = [d for d in declared["project"]["dependencies"]
+            if probe._normalised(re.split(r"[=<>!~ ;\[]", d, maxsplit=1)[0]) == "torch-geometric"]
+    assert pins == ["torch-geometric==2.8.1"]
+    lock = tomllib.loads((REPO / "uv.lock").read_text(encoding="utf-8"))
+    assert [p["version"] for p in lock["package"] if p["name"] == "torch-geometric"] == ["2.8.1"]
+    assert "torch-geometric" not in probe.DEPLOY_INSTALLED_ROOTS
+    for script in ("deploy.sh", "deploy.cmd"):
+        text = (REPO / script).read_text(encoding="utf-8")
+        installs = re.findall(r"uv pip install[^\n]*", text)
+        assert installs, script
+        assert not [line for line in installs
+                    if re.search(r"torch[_-]geometric", line, re.IGNORECASE)], script
+        assert "data.pyg.org/whl/torch-2" not in text, script     # derived, not written
+
+
+def test_a_declared_dependency_that_is_not_installed_is_not_the_locks_set(
+        probe, tmp_path, monkeypatch):
+    """Missing is not matching (BACKLOG 50): a dependency the project declares,
+    its marker true here, that is not installed is stated with the version the
+    lock pins; one whose marker is false here is not asked for."""
+    lock = tmp_path / "uv.lock"
+    lock.write_text("\n".join([
+        "version = 1", "",
+        "[[package]]", 'name = "shepherd-advanced"', 'version = "0.2.0"',
+        'source = { editable = "." }',
+        "dependencies = [",
+        '    { name = "torch" },',
+        '    { name = "torch-geometric" },',
+        '    { name = "pywin32", marker = "sys_platform == \'win32\' and sys_platform == \'linux\'" },',
+        "]", "",
+        "[[package]]", 'name = "torch"', 'version = "2.10.0+cu130"', "",
+        "[[package]]", 'name = "torch-geometric"', 'version = "2.8.1"', "",
+        "[[package]]", 'name = "pywin32"', 'version = "311"', ""]), encoding="utf-8")
+    _installed(monkeypatch, [("torch", "2.10.0+cu130")])
+
+    recorded = probe.installed_against_lock(lock)
+
+    assert recorded["version_differs"] == []
+    assert recorded["declared_not_installed"] == [{"name": "torch-geometric", "locked": ["2.8.1"]}]
+    assert recorded["versions_match_lock"] is False
+    said = probe.lock_sentence(recorded)
+    assert "1 declared dependency is not installed (torch-geometric, lock 2.8.1)" in said
+    report = probe.Report()
+    report.probes.append(probe.Probe("A5", "environment", "x", status="passed", facts=recorded))
+    verdict = probe.m2_acceptance(report, False)["environment"]
+    assert verdict["declared_not_installed"] == ["torch-geometric"]
+    assert verdict["versions_match_lock"] is False
+
+    _installed(monkeypatch, [("torch", "2.10.0+cu130"), ("torch_geometric", "2.8.1")])
+    matching = probe.installed_against_lock(lock)
+    assert matching["declared_not_installed"] == [] and matching["versions_match_lock"] is True
+
+
 def test_a_matching_set_says_so(probe, tmp_path, monkeypatch):
     lock = _lock(tmp_path / "uv.lock", [("gradio", "6.30.0"), ("torch-geometric", "2.8.0-post1")])
     _installed(monkeypatch, [("gradio", "6.30.0"), ("torch_geometric", "2.8.0.post1")])
@@ -267,7 +335,7 @@ def _differing():
             "installed_more_than_once": [],
             "installed_not_in_lock": [
                 {"name": "aiofiles", "version": "24.1.0", "why": "required_by_nothing_installed"},
-                {"name": "torch-geometric", "version": "2.8.0", "why": "deploy_scripts"}],
+                {"name": "pyg-lib", "version": "0.6.0", "why": "deploy_scripts"}],
             "locked_not_installed": []}
 
 
@@ -283,7 +351,7 @@ def test_a5_states_a_differing_set_on_the_console_and_in_the_environment(
     said = capsys.readouterr().out
     assert "click 8.5.0, lock 8.3.3" in said and "aiofiles 24.1.0" in said
     assert "NOT the one committed at the tested commit" in said
-    assert "1 from the deploy scripts" in said and "torch-geometric" not in said
+    assert "1 from the deploy scripts" in said and "pyg-lib" not in said
     assert environment["installed_against_lock"]["version_differs"] == _differing()[
         "version_differs"]
     assert "socket_fits" in environment["installed_against_lock"]["temporary_directory"]
@@ -304,7 +372,7 @@ def test_a5_is_said_again_beside_the_acceptance_verdict(probe, monkeypatch):
     assert verdict == {
         "A5": "passed", "lock_sha256": "0" * 64, "lock_is_the_committed_one": False,
         "versions_match_lock": False, "version_differs": ["click"],
-        "installed_more_than_once": [], "not_in_lock": 2, "not_in_lock_from_deploy_scripts": 1,
+        "declared_not_installed": [], "installed_more_than_once": [], "not_in_lock": 2, "not_in_lock_from_deploy_scripts": 1,
         "not_in_lock_required_by_nothing_installed": ["aiofiles"]}
     assert line.startswith("A5, installed packages against this checkout's uv.lock, which is "
                            "NOT the one committed")

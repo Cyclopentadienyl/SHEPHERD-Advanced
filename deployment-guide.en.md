@@ -126,6 +126,11 @@
 
 ### 🔴 **PyTorch Geometric on ARM**
 
+> **The formal deployment** installs `torch_geometric` from `uv.lock` at the verified version and
+> its native extensions per platform (§4.15). The strategies below are manual fallbacks from the
+> planning phase: keep `torch_geometric` at the version `pyproject.toml` pins (`uv sync --inexact`
+> restores it) and take the extensions from the index for the installed torch.
+
 **Where things stand**:
 - PyG 2.6+ supports ARM in principle, but prebuilt wheels may be missing
 - Its extension libraries (pyg-lib, torch-scatter, …) have uneven ARM support
@@ -402,12 +407,12 @@ undefined symbol: _ZN...
 ```
 
 ```bash
-pip uninstall torch torch-geometric pyg-lib torch-scatter torch-sparse -y
-pip cache purge
-
-pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu130
-pip install torch-geometric pyg-lib torch-scatter torch-sparse \
-    -f https://data.pyg.org/whl/torch-2.10.0+cu130.html
+# torch and torch_geometric back to the lock's versions (§4.15)
+uv sync --inexact --reinstall-package torch --reinstall-package torch-geometric
+# the native extensions from the index for the installed torch
+TVER="$(.venv/bin/python -c 'import torch;print(torch.__version__)')"
+uv pip install --reinstall pyg-lib torch-scatter torch-sparse \
+    -f "https://data.pyg.org/whl/torch-${TVER}.html"
 ```
 
 ---
@@ -2779,6 +2784,45 @@ that Load wrote; nothing on it runs on a timer.
 to its detail and moves the keyboard focus there; **↑ Back to the list** in the detail's header
 returns to the row.
 
+## 4.15 PyTorch Geometric's version (since Batch 1, 2026-10-26)
+
+**`torch_geometric`, PyG's pure-Python core, is in the lock** (BACKLOG 50). `pyproject.toml`
+declares `torch-geometric==2.8.1`, and `uv.lock` holds it with what it requires (aiohttp 3.14.5
+and its family, pyparsing 3.3.3, xxhash 4.0.2: the versions M5's GB10 acceptance ran). `uv sync
+--inexact`, and so `deploy.sh` and `deploy.cmd`, install it; the deploy scripts no longer install
+it separately, and only check that it imports. A plain `uv sync` no longer removes it (it still
+removes the native extensions and cuVS, so keep `--inexact`).
+
+**Its native extensions stay per platform, as before**: pyg-lib, torch-scatter, torch-sparse and
+torch-cluster come from the data.pyg.org index for the installed torch (the scripts now derive
+`https://data.pyg.org/whl/torch-<torch.__version__>.html` from the installed torch instead of
+writing the version a second time), or on ARM from the prebuilt release or a local build
+(`PYG_ARM_STRATEGY`). Their versions differ by platform (the GB10's prebuilt pyg-lib is 0.6.0, the
+x86 index's 0.8.0) and are recorded by the probe's A1 and A5, not pinned.
+
+**The verified set**: `torch_geometric` 2.8.1 with torch 2.10.0+cu130 and the prebuilt ARM
+release's extensions, in M5's GB10 acceptance at `b14c4de`. M4's acceptance ran 2.8.0.post1; its
+evidence stays with that environment. After pulling, `uv sync --inexact` moves an installed
+2.8.0.post1 to 2.8.1: that is a change of environment, and an acceptance made before it does not
+carry over.
+
+**What A5 says**: an installed `torch_geometric` at another version is named with both versions;
+one the project declares but that is not installed is named with the lock's version; in either
+case A5 no longer reads "the installed versions are the lock's".
+
+**Upgrading** PyTorch, CUDA or PyG goes through the same flow: change the versions in
+`pyproject.toml`, run `uv lock`, redeploy with the same scripts, run the deployment probe and keep
+its record; the new set becomes the baseline once verified. There is no second pipeline for old
+environments, and no rule refuses a model only because a package version differs: loading
+follows the model contract.
+
+**The launcher's optional accelerators** (`--flash-attn`, `--xformers`, `--sage-attn`, and on x86
+FlashAttention by default) install with `python -m pip`. The `.venv` the deploy scripts create
+has no pip, so in a formal deployment they install nothing and cannot change this set. Where pip
+has been added by hand, `--xformers` and `--sage-attn` install with their dependencies and may
+replace torch: `uv sync --inexact` restores the locked set, and A5 names what differs. No model
+path uses these packages (ARCHITECTURE §9).
+
 ---
 
 ## Summary: deployment checklist ✅
@@ -2788,7 +2832,7 @@ returns to the row.
 - [ ] ✅ Python 3.12 installed
 - [ ] ✅ CUDA 13.0 installed
 - [ ] ✅ PyTorch + CUDA working
-- [ ] ✅ PyTorch Geometric working
+- [ ] ✅ PyTorch Geometric working (`torch_geometric` from `uv.lock`, §4.15)
 - [ ] ✅ FlashAttention-2 installed
 - [ ] ✅ Voyager available (CPU vector search)
 - [ ] ✅ All unit tests pass
@@ -2800,7 +2844,7 @@ returns to the row.
 - [ ] ✅ Architecture confirmed as aarch64
 - [ ] ✅ CUDA 13.0 available
 - [ ] ✅ PyTorch ARM build working
-- [ ] ✅ PyTorch Geometric available (wheel or build)
+- [ ] ✅ PyTorch Geometric available (`torch_geometric` from `uv.lock`; extensions prebuilt or built, §4.15)
 - [ ] ⚠️ Attention backend downgraded (xformers or SDPA)
 - [ ] ✅ Vector index: cuVS (GPU) or Voyager (CPU fallback)
 - [ ] ✅ Unified memory correctly identified

@@ -4,11 +4,14 @@
 #
 #   - pyproject.toml          : source of truth for top-level deps + uv config
 #                               (including [tool.uv.sources] routing torch to
-#                               the CUDA 13.0 wheel index)
+#                               the CUDA 13.0 wheel index, and torch_geometric,
+#                               PyG's pure-Python core, at the verified version)
 #   - uv.lock                 : exact resolved versions for win_amd64,
 #                               manylinux_2_28_x86_64, manylinux_2_28_aarch64
 #                               (committed to repo for reproducibility)
-#   - deploy.sh / deploy.cmd  : drive `uv sync` + post-sync PyG ext install
+#   - deploy.sh / deploy.cmd  : drive `uv sync` + post-sync PyG native ext install
+#                               (per platform, from the index for the installed
+#                               torch, or on ARM prebuilt or built locally)
 #
 # Do NOT install via this file. Run instead:
 #   Linux:    ./deploy.sh

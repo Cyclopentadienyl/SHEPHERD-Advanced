@@ -21,12 +21,20 @@ readme = "README.md"
 #     CUDA 13.0 wheel index via [tool.uv.sources] + [[tool.uv.index]] below.
 #     uv resolves wheels per-platform (linux_x86_64, linux_aarch64, win_amd64)
 #     and records them in uv.lock for cross-platform reproducible installs.
+#   - torch_geometric, PyG's pure-Python core, is listed here at the verified
+#     version (BACKLOG 50): one wheel for every platform, locked like torch, so
+#     `uv sync` installs it and the deployment probe's A5 compares it. Verified:
+#     2.8.1 with torch 2.10.0+cu130 and the prebuilt ARM release's extensions in
+#     M5's GB10 acceptance at b14c4de. To upgrade PyTorch, CUDA or PyG, change
+#     the versions here, run `uv lock`, redeploy with the same scripts and run
+#     the probe; the new set is the baseline once verified.
 #   - PyG native extensions (pyg-lib, torch-scatter, torch-sparse, torch-cluster)
 #     are NOT listed here. They come from a flat HTML wheel index
-#     (https://data.pyg.org/whl/torch-2.10.0+cu130.html) whose URL is
-#     torch-version-coupled, and three of them have no Windows wheels.
-#     deploy.sh / deploy.cmd install them post-sync with graceful skip on
-#     missing wheels (fallback to torch.scatter_reduce is built into PyG).
+#     (https://data.pyg.org/whl/torch-<installed torch>.html) whose URL is
+#     torch-version-coupled, and three of them have no Windows wheels; on ARM
+#     they come from the prebuilt release or a local build. deploy.sh /
+#     deploy.cmd install them post-sync with graceful skip on missing wheels
+#     (fallback to torch.scatter_reduce is built into PyG).
 #   - Optional acceleration packages (flash-attn, xformers, sage-attn) remain
 #     opt-in via launch_shepherd.{sh,cmd} flags; not managed by uv.
 dependencies = [
@@ -34,6 +42,10 @@ dependencies = [
     "torch==2.10.0",
     "torchvision==0.25.0",
     "torchaudio==2.10.0",
+
+    # PyTorch Geometric's core at the verified version (see the policy above;
+    # its native extensions stay out of the lock)
+    "torch-geometric==2.8.1",
 
     # Ontology processing
     "pronto>=2.7",

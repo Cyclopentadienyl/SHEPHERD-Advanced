@@ -115,6 +115,10 @@
 
 ### 🔴 **PyTorch Geometric on ARM**
 
+> **正式部署**從 `uv.lock` 以已驗證的版本安裝 `torch_geometric`，原生擴充則依平台各自取得
+> （§4.15）。以下策略是規劃階段的手動備案：請讓 `torch_geometric` 維持 `pyproject.toml` 固定的版本
+> （`uv sync --inexact` 可恢復），擴充則取自與已安裝 torch 對應的索引。
+
 **現狀**:
 - PyG 2.6+ 理論上支持 ARM，但預編譯wheel可能缺失
 - 依賴的擴展庫（pyg-lib, torch-scatter等）在ARM上支持參差不齊
@@ -871,14 +875,12 @@ undefined symbol: _ZN...
 
 **解決方案**:
 ```bash
-# 完全卸載並重裝
-pip uninstall torch torch-geometric pyg-lib torch-scatter torch-sparse -y
-pip cache purge
-
-# 按順序重新安裝
-pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu130
-pip install torch-geometric pyg-lib torch-scatter torch-sparse \
-    -f https://data.pyg.org/whl/torch-2.10.0+cu130.html
+# torch 與 torch_geometric 恢復為 lock 中的版本（§4.15）
+uv sync --inexact --reinstall-package torch --reinstall-package torch-geometric
+# 原生擴充從已安裝 torch 對應的索引重新安裝
+TVER="$(.venv/bin/python -c 'import torch;print(torch.__version__)')"
+uv pip install --reinstall pyg-lib torch-scatter torch-sparse \
+    -f "https://data.pyg.org/whl/torch-${TVER}.html"
 ```
 
 ---
@@ -2940,6 +2942,37 @@ checkpoint）。清單依測試分數排序時，按鈕旁的說明會指出這�
 **窄版**（寬度低於 1400 或高度低於 760，各區域上下堆疊時），選取一列會捲動到它的細節區並把鍵盤焦點
 移到那裡；細節區標題列的 **↑ Back to the list** 會回到該列。
 
+## 4.15 PyTorch Geometric 的版本（自 Batch 1 起，2026-10-26）
+
+**PyG 的純 Python 本體 `torch_geometric` 已納入 lock**（BACKLOG 50）。`pyproject.toml` 宣告
+`torch-geometric==2.8.1`，`uv.lock` 記錄它以及它所需要的套件（aiohttp 3.14.5 及其相關套件、
+pyparsing 3.3.3、xxhash 4.0.2：與 M5 GB10 驗收時的版本相同）。`uv sync --inexact`，以及因此
+`deploy.sh` 與 `deploy.cmd`，會安裝它；部署腳本不再另外安裝，只確認它能匯入。一般的 `uv sync`
+不再移除它（但仍會移除原生擴充與 cuVS，所以請保留 `--inexact`）。
+
+**它的原生擴充維持依平台各自取得**：pyg-lib、torch-scatter、torch-sparse、torch-cluster 來自
+與已安裝 torch 對應的 data.pyg.org 索引（腳本現在由已安裝的 torch 推導
+`https://data.pyg.org/whl/torch-<torch.__version__>.html`，不再另外寫一次版本），在 ARM 上則來自
+預編譯 release 或本機編譯（`PYG_ARM_STRATEGY`）。它們的版本因平台而異（GB10 的預編譯 pyg-lib 為
+0.6.0，x86 索引為 0.8.0），由探針的 A1、A5 記錄，不固定。
+
+**已驗證的組合**：`torch_geometric` 2.8.1，搭配 torch 2.10.0+cu130 與預編譯 ARM release 的擴充，
+見 M5 於 `b14c4de` 的 GB10 驗收。M4 的驗收用的是 2.8.0.post1，其證據只屬於那個環境。拉取後，
+`uv sync --inexact` 會把已安裝的 2.8.0.post1 換成 2.8.1：這是環境變更，之前做的驗收不會延續過來。
+
+**A5 的說法**：已安裝的 `torch_geometric` 版本不同時，會列出兩個版本；專案宣告了但沒有安裝時，
+會列出 lock 的版本；這兩種情況下 A5 都不再顯示「已安裝版本與 lock 相同」。
+
+**升級** PyTorch、CUDA 或 PyG 走同一套流程：修改 `pyproject.toml` 中的版本，執行 `uv lock`，
+用同一套腳本重新部署，執行部署探針並保留其記錄；新的組合驗證後成為新的基準。不另設舊環境用的
+第二條管線，也不因套件版本不同就拒絕模型：載入依模型契約判定。
+
+**Launcher 的可選加速套件**（`--flash-attn`、`--xformers`、`--sage-attn`，以及在 x86 上預設的
+FlashAttention）用 `python -m pip` 安裝。部署腳本建立的 `.venv` 沒有 pip，所以在正式部署中它們
+什麼都不會安裝，也無法改變這組基準。若手動加裝了 pip，`--xformers` 與 `--sage-attn` 會連同依賴
+一起安裝，可能替換掉 torch：執行 `uv sync --inexact` 可恢復 lock 中的組合，A5 也會列出差異。
+沒有任何模型路徑使用這些套件（ARCHITECTURE §9）。
+
 ---
 
 ## 總結：部署檢查清單 ✅
@@ -2949,7 +2982,7 @@ checkpoint）。清單依測試分數排序時，按鈕旁的說明會指出這�
 - [ ] ✅ Python 3.12 安裝
 - [ ] ✅ CUDA 13.0 安裝
 - [ ] ✅ PyTorch 2.9.0 + CUDA 正常
-- [ ] ✅ PyTorch Geometric 正常
+- [ ] ✅ PyTorch Geometric 正常（`torch_geometric` 來自 `uv.lock`，§4.15）
 - [ ] ✅ FlashAttention-2 安裝成功
 - [ ] ✅ Voyager 可用 (CPU vector search)
 - [ ] ✅ 所有單元測試通過
@@ -2961,7 +2994,7 @@ checkpoint）。清單依測試分數排序時，按鈕旁的說明會指出這�
 - [ ] ✅ 架構確認為 aarch64
 - [ ] ✅ CUDA 13.0 可用
 - [ ] ✅ PyTorch 2.9.0 ARM build 正常
-- [ ] ✅ PyTorch Geometric 可用（wheel或編譯）
+- [ ] ✅ PyTorch Geometric 可用（`torch_geometric` 來自 `uv.lock`；擴充為預編譯或本機編譯，§4.15）
 - [ ] ⚠️ 注意力後端已降級（xformers或SDPA）
 - [ ] ✅ Vector Index: cuVS (GPU) 或 Voyager (CPU fallback)
 - [ ] ✅ 統一記憶體正確識別
