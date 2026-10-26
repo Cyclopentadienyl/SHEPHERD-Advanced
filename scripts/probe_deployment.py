@@ -6214,13 +6214,16 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     )
     args = parser.parse_args(argv)
     # **Absolute once, here** (BACKLOG 49): every check below, the phases and
-    # the server's directory check read the same path. Absolute and normalised,
-    # not resolved: a symbolic link keeps the name it was given, and the
-    # containment checks below resolve as they did.
+    # the server's directory check read the same path. The starting directory
+    # is put in front and nothing else changes: not resolved, so a symbolic
+    # link keeps the name it was given, and not normalised, since collapsing
+    # `link/..` by its spelling names another file than the one the file
+    # system opens (the review of b14a6e9). The containment checks below
+    # resolve as they did.
     for name in PATH_ARGUMENTS:
         value = getattr(args, name)
         if value is not None:
-            setattr(args, name, Path(os.path.abspath(value)))
+            setattr(args, name, value.absolute())
     if args.download_only and args.external_dir is not None:
         parser.error("--download-only runs only the environment and download "
                      "phases; drop --external-dir or --download-only")

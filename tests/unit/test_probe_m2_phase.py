@@ -557,6 +557,26 @@ def test_relative_paths_are_made_absolute_once_from_the_starting_directory(
         assert value is None or value.is_absolute(), name
 
 
+def test_a_link_followed_by_dotdot_keeps_the_file_the_file_system_opens(
+        tmp_path, monkeypatch):
+    """The review of b14a6e9: `link/../source.obo` is the file beside the
+    link's target, which the file system opens; collapsing `..` by its spelling
+    named `source.obo` in the starting directory instead, another file, with no
+    error. The starting directory is put in front and nothing else changes."""
+    probe = _probe()
+    (tmp_path / "real" / "sub").mkdir(parents=True)
+    (tmp_path / "real" / "source.obo").write_text("A, the one meant")
+    (tmp_path / "source.obo").write_text("B, a different file")
+    (tmp_path / "link").symlink_to(tmp_path / "real" / "sub", target_is_directory=True)
+    monkeypatch.chdir(tmp_path)
+
+    args = probe.parse_args(["--work-dir", "w", "--mondo-path", "link/../source.obo"])
+
+    assert args.mondo_path.is_absolute()
+    assert args.mondo_path.read_text() == "A, the one meant"
+    assert args.mondo_path.resolve() == (tmp_path / "real" / "source.obo").resolve()
+
+
 def test_a_relative_path_from_another_directory_is_refused_before_any_work(
         tmp_path, monkeypatch, capsys):
     """The base is the directory the probe is started in, not the repository:

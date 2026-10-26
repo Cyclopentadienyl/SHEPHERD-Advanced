@@ -2838,11 +2838,15 @@ maintained, goes through the same entry points:
 There is no second pipeline for old environments and no matrix of historical combinations.
 
 **The launcher's optional accelerators** (`--flash-attn`, `--xformers`, `--sage-attn`, and on x86
-FlashAttention by default) install with `python -m pip`. The `.venv` the deploy scripts create
-has no pip, so in a formal deployment they install nothing and cannot change this set. Where pip
-has been added by hand, `--xformers` and `--sage-attn` install with their dependencies and may
-replace torch: `uv sync --inexact` restores the locked set, and A5 names what differs. No model
-path uses these packages (ARCHITECTURE §9).
+FlashAttention by default) are optional third-party plugins, outside the project's native support,
+and stay out of `uv.lock`. They install with `python -m pip`, which a deploy-created `.venv` lacks
+until the ARM source build (`scripts/build_pyg_arm.sh`) puts it there. Every such install now goes
+through constraints that `uv export` makes from `uv.lock` (`pip_install` in
+`scripts/launch/shep_launch.py`): an accelerator that would need another torch, or another version
+of any locked package, is refused by pip and not installed, and the launcher goes on without it;
+when the constraints cannot be made (no `uv` on `PATH`, no `uv.lock`), nothing is installed. What
+an accelerator brings that the lock does not hold installs as before. No model path uses these
+packages (ARCHITECTURE §9).
 
 ---
 

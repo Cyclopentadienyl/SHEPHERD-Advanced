@@ -2986,10 +2986,13 @@ pyparsing 3.3.3、xxhash 4.0.2：與 M5 GB10 驗收時的版本相同）。`uv s
 不設舊環境專用的第二條管線，也不維護歷史版本相容矩陣。
 
 **Launcher 的可選加速套件**（`--flash-attn`、`--xformers`、`--sage-attn`，以及在 x86 上預設的
-FlashAttention）用 `python -m pip` 安裝。部署腳本建立的 `.venv` 沒有 pip，所以在正式部署中它們
-什麼都不會安裝，也無法改變這組基準。若手動加裝了 pip，`--xformers` 與 `--sage-attn` 會連同依賴
-一起安裝，可能替換掉 torch：執行 `uv sync --inexact` 可恢復 lock 中的組合，A5 也會列出差異。
-沒有任何模型路徑使用這些套件（ARCHITECTURE §9）。
+FlashAttention）是可選的第三方插件，不在本專案原生支援範圍內，也不列入 `uv.lock`。它們用
+`python -m pip` 安裝；部署腳本建立的 `.venv` 原本沒有 pip，但 ARM 原始碼編譯流程
+（`scripts/build_pyg_arm.sh`）會把 pip 裝進去。現在每次安裝都會帶上由 `uv export` 從 `uv.lock`
+匯出的 constraints（`scripts/launch/shep_launch.py` 的 `pip_install`）：需要另一個 torch、或任何
+lock 內套件其他版本的加速套件，會被 pip 拒絕而不安裝，launcher 會在沒有它的情況下繼續；無法產生
+constraints 時（`PATH` 上沒有 `uv`、沒有 `uv.lock`），一律不安裝。加速套件自身帶來、而 lock 沒有的
+套件，照常安裝。沒有任何模型路徑使用這些套件（ARCHITECTURE §9）。
 
 ---
 
