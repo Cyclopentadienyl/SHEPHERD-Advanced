@@ -229,8 +229,10 @@ Each row is one "X must match Y". *Today* is the state at `627ed08`.
 | R10 | Test cohort ↔ the data the model was trained and validated on | `cohort_kind=generated` claims disjointness by construction **relative to the workspace's cut** (`src/evaluation/measurement.py:527-530`), not relative to the model. `training_input_digests` names the model's `train_samples` and `val_samples` files by digest, and a digest cannot be intersected | — | **M4**, as defined in §5.4 (implemented 2026-10-16, code-reviewed, its functional acceptance passed at `2c94a4e`, merged as #126; §4, "M4 as implemented") |
 | R11 | Environment facts that bound reproduction | Measurement: `torch_version`, `cuda_version`, the device string and the determinism flags (`measure_scorer.py:376-389`). No GPU model, compute capability, driver or cuDNN version. Training and serving record none tied to their artifacts | — | M3a (training), M4 (measurement; implemented 2026-10-16, merged as #126; §4, "M4 as implemented") |
 
-**What the table showed at `627ed08`** (every gap it names is closed since: R3, R4, R7 by M2, R6 by
-M3a, R5 by M3b, R8 by M3c, R9–R11 by M4; the last column names each). The links inside a workspace refuse today (R1, R2), and so does a
+**What the table showed at `627ed08`** (its gaps are closed since, as the last column names each:
+R3, R4 and R7 by M2 (R7's overwrite guard by M3a), R6 by M3a, R5 by M3b, R8 by M3c, R9 and R10 by M4,
+R11 by M3a for training and M4 for measurement; serving still records no environment facts with a
+result). The links inside a workspace refuse today (R1, R2), and so does a
 broken SP pair. Every link with the model on one side is checked by structure only, or recorded
 and unread, or absent: R3, R6, R7, R8, R10. So is the dataset record (R5).
 

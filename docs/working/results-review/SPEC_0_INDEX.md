@@ -136,7 +136,7 @@ it sets what a green local run is allowed to claim:
 ## 6. Evidence base
 
 All specs cite `5c5c4b2` (main, after PR #99) plus branch commits on
-`claude/dev-context-review-3wuh05` — **committed and pushed, under review, not merged**:
+`claude/dev-context-review-3wuh05`, merged as #100 (`6265a81`):
 
 | Commit | Contribution |
 |---|---|

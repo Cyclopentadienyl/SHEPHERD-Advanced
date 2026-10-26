@@ -1136,7 +1136,7 @@ gates phase 2; question 4 is answered:
        keeps the source bytes verbatim, and records the rule's version
        (`mapping.phenotype_normalisation_version`) and its counts (`repeats_removed`,
        `cases_with_repeats`) in the version manifest;
-     - **N2 is implemented on the development branch without its manifest field** (2026-10-18,
+     - **N2 is implemented without its manifest field** (2026-10-18,
        BACKLOG item 16, batch B; reviewed by the reviewer with no P1 or P2 at `2e099b6` (2026-10-19); merged as #128, `150105f`, 2026-10-19): the
        generator applies the rule, and the shared reader refuses a stored samples file with a
        repeated phenotype, naming its producer. The workspace manifest's field is deferred to
@@ -2182,9 +2182,11 @@ contract and BACKLOG stay the record, and no new planning document is added.
     whole identity (`test_a_result_older_than_a_load_says_how_many_parts_differ`). Holds;
   - layout: **not yet recorded** (as written). The screenshot matrix (1920×1080, 1707×870, 1536×760,
     1440×900, 1280×720, 1080×1920, 200 % zoom; M1 and read-only) was M5-3's next step. *Since:* the
-    layout was accepted in the WebUI's manual rounds at the owner's window, narrow and read-only
-    included (`m5-webui-acceptance-2026-10-25/`); the full matrix was not run and is not an M5 gate
-    (the design skill picks its checks by risk; BACKLOG 52).
+    layout was checked, functionally, in the WebUI's manual rounds at the owner's window (F1 wide and
+    again after narrow at `f9202b6`, the narrow layout's lower charts by the owner's report only; the
+    read-only tab in the close-out at `773dc4a`; `m5-webui-acceptance-2026-10-25/`), not accepted as
+    usable: the collapsed Training run bar's blank area is BACKLOG 52 F. The full matrix was not run
+    and is not an M5 gate (the design skill picks its checks by risk; BACKLOG 52).
   The GPU acceptance uses the existing tools and a qualified model, centred on starting and
   stopping jobs, their exclusion, registration and UI operation; long training, S10 and the
   memory investigation are not rerun unless a related regression appears. *The probe's part,

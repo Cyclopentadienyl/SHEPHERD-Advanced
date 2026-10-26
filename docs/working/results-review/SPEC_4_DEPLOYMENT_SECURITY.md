@@ -2,7 +2,7 @@
 
 **Status:** draft, under review. **Normative.** Supersedes rev 6 §10 and §12.
 **Evidence:** `5c5c4b2` (main) plus branch commits `42e5d1e`, `337266f`, `dc9663b`, `7dab728`
-(committed and pushed on `claude/dev-context-review-3wuh05`, **under review, not merged**).
+(committed on `claude/dev-context-review-3wuh05`; merged as #100, `6265a81`).
 
 ---
 

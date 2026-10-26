@@ -5,8 +5,8 @@ status table in §2. Implementation is work item B-1, which remains gated (§6).
 
 **Revision: rev 5 (2026-10-25). Factual update, no normative change.** The status table (§2) was
 re-checked against `main` at `416a242`; code citations that had drifted are now anchored by function
-name; §2.1 lists what B-1 and B-2 still lack; the gate 1 row says what exists of B-0 and what does
-not. The seven statements, the conditions, the schedule, the limits, the gates and the rollout are
+name; §2.1 lists what B-1 and B-2 still lack and, as already recorded elsewhere, who decides each
+open question (gate 1 is institutional); the gate 1 row says what exists of B-0 and what does not. The seven statements, the conditions, the schedule, the limits, the gates and the rollout are
 unchanged.
 
 **Revision: rev 4. Factual correction.** The implemented B-0 artifacts record aggregate metrics
@@ -151,7 +151,9 @@ what exists to build on, so B-1 extends it rather than writing a second copy.
 
 **What exists and is to be reused.**
 - The cosine: `cosine_score_matrix` and `cosine_scores` (`src/inference/scoring.py`), already
-  shared by serving, Mode C and the trainer's validation values.
+  shared by serving and Mode C. The trainer computes its validation cosine itself, by design:
+  `tests/unit/test_trainer_validation_values.py` checks it against `cosine_score_matrix`, and the
+  `layers` and `scorer-independence` contracts in `.import-linter.ini` keep the two separate.
 - The canonical order: Mode C's `canonical_ranking` (`src/evaluation/measurement.py`), score
   descending, ties to the lower global disease id, non-finite scores refused. Serving cannot import
   it where it is (the layers contract in `.import-linter.ini` puts `src.evaluation` above
@@ -162,7 +164,8 @@ what exists to build on, so B-1 extends it rather than writing a second copy.
 
 **One scorer, not two (`PLAN_TEST_RESULTS.md` D3).** Only the cosine is shared today. The patient
 pool and the candidate universe are not: serving clamps disease indices and drops an unmapped
-phenotype silently, where Mode C refuses. B-1 settles both by Mode C's rule, the stricter one.
+phenotype silently, where Mode C refuses. B-1 settles both (D3); the recommendation is Mode C's
+rule, the stricter one.
 
 **B-1a — the canonical ranking.** Score every disease in the graph by raw cosine and order it by the
 shared canonical order; remove the BFS gate and its two caps from candidate selection (§2, first
@@ -170,7 +173,8 @@ row); separate `selection_limit` from the two display limits (§1.3).
 
 **B-1b — SP as an optional view.** Eager SP over the selected set (§1.2); the SP surface under
 C1–C10, none of which exists; C9 in particular: the served path still writes `0.0` for an
-unavailable SP and the exports carry that `0.0`. The three limits' values are [OPEN] (§1.3).
+unavailable SP and the exports carry that `0.0`. `selection_limit`'s default, minimum and maximum,
+the storage and export bounds and the latency target are [OPEN] (§1.3).
 
 **B-1c — evidence after ranking.** A target-restricted evidence traversal for the visible page;
 its design is gate 3, not drafted. Today every candidate comes from discovery paths, so the evidence
@@ -178,31 +182,40 @@ it shows is the discovery path itself, and the evidence states for a candidate w
 evidence panel's Mode B and INSUFFICIENT) are never reached on the served path; B-1c makes them
 reachable and needs a traversal budget for them.
 
-**The result union (§7).** Not drafted. It also decides what replaces `confidence_score`'s
-description in the API (today a value documented as bounded to [0, 1], which raw cosine is not) and
-the configuration switch's default.
+**The result union (§7).** Not drafted. It also decides what replaces `confidence_score` in the
+API. Today the response model declares it `Field(ge=0.0, le=1.0)`, so a raw cosine below 0 would
+fail the response, not just contradict its description. The configuration switch's default is a
+separate open decision (§7).
 
 **B-2.** Done: a requested model that cannot be built is refused (M1); every result names its
-scoring mode (M3c). Missing: discriminated score semantics for the path-reasoning fallback (the
-Diagnosis report writes the missing GNN score as `0.000` there); whether serving with no model needs an
-explicit opt-in (provenance contract §8, question 2).
+scoring mode (M3c). Missing: discriminated score semantics for the path-reasoning fallback (its
+result carries `gnn_score = 0.0`, which the API returns and the Diagnosis page, its CSV and its report
+show as a number); whether serving with no model needs an explicit opt-in (provenance contract §8,
+question 2).
 
 **Gate 1's evidence.** Mode C is built and has run on synthetic and demo cohorts (M4 acceptance,
 `2c94a4e`; M5 close-out, `773dc4a`). Mode D (the served ranking measured on the same cohort,
 B-0.5) is not built. Its design problem is recorded in `working/scorer-measurement/PLAN_B03.md` §4:
-the public entry point truncates to `top_k` and builds paths and explanations, so an untruncated
-served rank cannot be had without duplicating candidate construction; and a disease the BFS gate
-does not discover has no served rank at all, so the two measurements do not rank the same set. No
+the public entry point truncates to `top_k` and builds paths and explanations, so getting an
+untruncated served rank without duplicating candidate construction is an open design problem. A
+second problem, not in that plan, follows from the BFS gate (§2, first row): a disease the gate does
+not discover has no served rank at all, so the two measurements do not rank the same set. Mode D,
+or any comparison, reuses the formal implementations (Mode C's `run_mode_c` and the served
+`DiagnosisPipeline`): Modes A and B are not revived and no second evaluation engine is built. No
 institutional run and no report exist (BACKLOG 7b, 8a, 8b).
 
 **Who decides what.**
-- The engineering team: whether gate 1 stands as written or is revised with a stated reason (it is
-  not skipped silently); the union's shape; how C9's unavailable state is represented; the
+- The engineering team: a proposal on gate 1, kept as written or revised with a stated reason
+  (never skipped silently); the union's shape; how C9's unavailable state is represented; the
   traversal design for gate 3.
-- The institution: the values of the three limits; the B-0.5 institutional run and its protocol
-  (BACKLOG 8a, which consumes item 11).
-- The owner: the configuration switch's default (§7); whether B-2's no-model serving needs an
-  opt-in.
+- The institution: any revision of gate 1, since the gates are part of this record and an
+  institutional gate is not engineering's to cancel (`working/scorer-measurement/ASSESSMENT_MODE_AB_RETIREMENT.md`
+  §4, §8 item 4), so a revision amends this record normatively, not as a factual update;
+  `selection_limit`'s default and bounds, the storage and export bounds and the latency target
+  (§1.3); item 11's holdout protocol, which B-0.5's protocol design (BACKLOG 8a, the author's)
+  consumes; and, with the author, the B-0.5 institutional run (BACKLOG 8b).
+- The owner: whether gate 1 is kept as written or a revision is put to the institution; the
+  configuration switch's default (§7); whether B-2's no-model serving needs an opt-in.
 
 ---
 
@@ -359,7 +372,7 @@ B-1 implementation may not begin until all three clear:
 
 | Gate | Status |
 |---|---|
-| **1 — B-0 measurement report** | Not cleared. Of B-0, Mode C (the approved ranking, measured) is built and has run on synthetic and demo cohorts; Mode D (the served ranking, measured) is not built, and no institutional run or report exists (§2.1). Whether this gate stands as written or is revised with a stated reason is the next batch's decision (BACKLOG §0). |
+| **1 — B-0 measurement report** | Not cleared. Of B-0, Mode C (the approved ranking, measured) is built and has run on synthetic and demo cohorts; Mode D (the served ranking, measured) is not built, and no institutional run or report exists (§2.1). Whether this gate stands as written or is revised with a stated reason is batch 2's first decision (BACKLOG §0): engineering proposes, the owner decides, and a revision goes to the institution (§2.1). |
 | **2 — Institutional scorer-policy decision** | **Cleared by this record.** |
 | **3 — Approved target-restricted evidence-traversal design** | Not cleared. Requires legal reachability × completeness combinations, visited-state and cycle semantics, multi-source provenance, deterministic ordering, global-budget units and enforcement, target fairness, and cancellation behaviour. |
 
