@@ -1262,6 +1262,11 @@ python scripts/probe_deployment.py --work-dir /tmp/shepherd_probe \
     --report probe_report.json --download-only
 ```
 
+給探針的相對路徑（這裡的 `probe_report.json`，或驗收時的
+`--real-workspace data/workspaces/<workspace>`）以你啟動探針時所在的目錄為基準，在任何工作開始前
+一次轉成絕對路徑；從該目錄看不存在的路徑會立即被拒絕，而不是等到訓練結束後才失敗（自 Batch 1 起，
+BACKLOG 49）。
+
 它會從 `configs/deployment.yaml` 的來源**完整**下載 MONDO 與 HPO（數十 MB），走的是
 和建置相同的路徑，下載到工作目錄——絕不寫入你的快取或設定的 root，並在結束後檢查這
 一點。改用 `--download` 則是把這個階段加進完整的探測。不需要 GPU；`--download-only`

@@ -807,6 +807,11 @@ python scripts/probe_deployment.py --work-dir /tmp/shepherd_probe \
     --report probe_report.json --download-only
 ```
 
+A relative path given to the probe (`probe_report.json` here, or an acceptance's
+`--real-workspace data/workspaces/<workspace>`) is taken from the directory you start it in and
+made absolute once, before anything runs; one that does not exist from there is refused at once,
+not after the training (since Batch 1, BACKLOG 49).
+
 It downloads MONDO and HPO **in full** (tens of megabytes) from the sources in
 `configs/deployment.yaml`, through the same path a build uses, into the work
 directory — never into your cache or configured roots, and it checks that

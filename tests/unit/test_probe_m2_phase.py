@@ -509,6 +509,84 @@ def test_the_cli_cannot_make_the_acceptance_a_cpu_run_or_write_the_workspace(tmp
     assert args.workspaces_root == real.parent
 
 
+def _real_inputs(base):
+    """A real workspace, its reference checkpoint and a config under `base`,
+    laid out as the probe's usage text spells them from the repository root."""
+    real = base / "data" / "workspaces" / "ws"
+    (real / "checkpoints").mkdir(parents=True)
+    (real / "checkpoints" / "model.pt").write_bytes(b"reference")
+    (base / "config.yaml").write_text("{}")
+    return real
+
+
+RELATIVE_ACCEPTANCE = [
+    "--work-dir", "work", "--report", "work/m2.json", "--m2-acceptance", "--device", "cuda",
+    "--real-workspace", "data/workspaces/ws", "--real-config", "config.yaml",
+    "--real-reference-checkpoint", "data/workspaces/ws/checkpoints/model.pt",
+]
+
+
+def test_relative_paths_are_made_absolute_once_from_the_starting_directory(
+        tmp_path, monkeypatch):
+    """BACKLOG 49: the usage text's relative `--real-workspace` (and the default
+    root, its parent) reached RW1 as given, and the server's directory check
+    refused a relative root only after the real training. Every path argument
+    is now absolute from parse_args on, the same as its absolute spelling, and
+    RW1's check takes the root as parsed."""
+    from src.api.services import server_lists
+
+    probe = _probe()
+    base = tmp_path / "start"
+    real = _real_inputs(base)
+    monkeypatch.chdir(base)
+
+    relative = probe.parse_args(RELATIVE_ACCEPTANCE)
+    absolute = probe.parse_args([
+        "--work-dir", str(base / "work"), "--report", str(base / "work" / "m2.json"),
+        "--m2-acceptance", "--device", "cuda", "--real-workspace", str(real),
+        "--real-config", str(base / "config.yaml"),
+        "--real-reference-checkpoint", str(real / "checkpoints" / "model.pt")])
+
+    listed = server_lists.resolve_workspaces(          # refused "not an absolute path"
+        environ={"SHEPHERD_WORKSPACES_ROOT": str(relative.workspaces_root)})
+    assert listed == {"ws": real.resolve()}
+    assert relative.workspaces_root == real.parent
+    for name in probe.PATH_ARGUMENTS:
+        value = getattr(relative, name)
+        assert value == getattr(absolute, name), name
+        assert value is None or value.is_absolute(), name
+
+
+def test_a_relative_path_from_another_directory_is_refused_before_any_work(
+        tmp_path, monkeypatch, capsys):
+    """The base is the directory the probe is started in, not the repository:
+    the same relative arguments from elsewhere name paths that do not exist
+    there, and the run stops in parse_args, naming the absolute path it looked
+    for, before the work directory exists or any phase runs."""
+    probe = _probe()
+    _real_inputs(tmp_path / "start")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+
+    def never(*args, **kwargs):
+        raise AssertionError("a phase ran before the arguments were checked")
+
+    monkeypatch.setattr(probe, "phase_environment", never)
+    with pytest.raises(SystemExit) as stopped:
+        probe.main(RELATIVE_ACCEPTANCE)
+    assert stopped.value.code == 2
+    assert str(elsewhere / "data" / "workspaces" / "ws") in capsys.readouterr().err
+    assert not (elsewhere / "work").exists()
+
+    for argv in (["--external-dir", "missing"], ["--mondo-path", "missing.obo"],
+                 ["--hpo-path", "missing.obo"]):
+        with pytest.raises(SystemExit):
+            probe.main(["--work-dir", "work2", *argv])
+        assert str(elsewhere / argv[1]) in capsys.readouterr().err
+    assert not (elsewhere / "work2").exists()
+
+
 def test_a_snapshot_with_directories_sees_an_empty_one(tmp_path):
     probe = _probe()
     (tmp_path / "a.txt").write_text("a")

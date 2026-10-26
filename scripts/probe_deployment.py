@@ -60,6 +60,10 @@ Usage:
         --real-config <config.yaml with the established training settings> \
         --real-reference-checkpoint <path to the reference model's .pt file>
 
+    A relative path is taken from the directory the probe is started in: every
+    path argument is made absolute once, before any check or phase reads it
+    (BACKLOG 49), so the forms above work from the repository root.
+
 Contract M2's acceptance (`--m2-acceptance`), which also carries contract
 M3a's checks:
     Phase M, on the demo workspace, after B-E: a valid same-shaped workspace
@@ -6107,9 +6111,23 @@ def phase_download(report: Report, work: Path) -> None:
 # =============================================================================
 # Entry point
 # =============================================================================
+#: Every path argument the probe takes. `parse_args` makes each absolute once,
+#: against the directory the probe was started in, before any check or phase
+#: reads it (BACKLOG 49): the phases, the server's directory check (RW1 refuses
+#: a relative workspace root) and the subprocesses run from the repository all
+#: get the same absolute path, and a relative one given from elsewhere is
+#: refused by the checks below before anything is trained.
+PATH_ARGUMENTS: Tuple[str, ...] = (
+    "work_dir", "report", "external_dir", "mondo_path", "hpo_path",
+    "real_workspace", "real_config", "real_reference_checkpoint", "workspaces_root",
+)
+
+
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Attack this deployment and report what held",
+        description="Attack this deployment and report what held. A relative path "
+                    "is taken from the directory the probe is started in, made "
+                    "absolute once before anything runs.",
     )
     parser.add_argument(
         "--work-dir", type=Path, required=True,
@@ -6136,7 +6154,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--mondo-path", type=Path, default=None,
-        help="MONDO file for the real-data build, passed to it unchanged. "
+        help="MONDO file for the real-data build, passed to it as given (made "
+             "absolute, like every path here). "
              "Needed when the ontology roots hold more than one candidate, "
              "which the build refuses to choose between.",
     )
@@ -6194,6 +6213,14 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
              "(default: the real workspace's parent).",
     )
     args = parser.parse_args(argv)
+    # **Absolute once, here** (BACKLOG 49): every check below, the phases and
+    # the server's directory check read the same path. Absolute and normalised,
+    # not resolved: a symbolic link keeps the name it was given, and the
+    # containment checks below resolve as they did.
+    for name in PATH_ARGUMENTS:
+        value = getattr(args, name)
+        if value is not None:
+            setattr(args, name, Path(os.path.abspath(value)))
     if args.download_only and args.external_dir is not None:
         parser.error("--download-only runs only the environment and download "
                      "phases; drop --external-dir or --download-only")
@@ -6202,6 +6229,13 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     if args.m2_acceptance and args.device != "cuda":
         parser.error("--m2-acceptance is an acceptance on the deployment's device: "
                      "pass --device cuda, so it cannot become a CPU run")
+    # Inputs a later phase reads, refused now rather than after the training
+    # that runs first (the real build runs after the demo's).
+    if args.external_dir is not None and not args.external_dir.is_dir():
+        parser.error(f"--external-dir is not a directory: {args.external_dir}")
+    for name in ("mondo_path", "hpo_path"):
+        if getattr(args, name) is not None and not getattr(args, name).is_file():
+            parser.error(f"--{name.replace('_', '-')} is not a file: {getattr(args, name)}")
     real_args = (args.real_config, args.real_reference_checkpoint, args.workspaces_root)
     if args.real_workspace is None and any(value is not None for value in real_args):
         parser.error("--real-config, --real-reference-checkpoint and --workspaces-root "
@@ -6215,10 +6249,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
             args.workspaces_root = args.real_workspace.parent
         for name in ("real_workspace", "workspaces_root"):
             if not getattr(args, name).is_dir():
-                parser.error(f"--{name.replace('_', '-')} is not a directory")
+                parser.error(f"--{name.replace('_', '-')} is not a directory: "
+                             f"{getattr(args, name)}")
         for name in ("real_config", "real_reference_checkpoint"):
             if not getattr(args, name).is_file():
-                parser.error(f"--{name.replace('_', '-')} is not a file")
+                parser.error(f"--{name.replace('_', '-')} is not a file: {getattr(args, name)}")
         root = args.workspaces_root.resolve()
         if root not in args.real_reference_checkpoint.resolve().parents:
             parser.error("--real-reference-checkpoint must be inside --workspaces-root, "
@@ -6246,7 +6281,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = parse_args(argv)
-    # **Absolute from here on.** Every path the phases write is joined onto
+    # **Absolute from here on.** parse_args made every path argument absolute
+    # (`PATH_ARGUMENTS`, BACKLOG 49). Every path the phases write is joined onto
     # `work`, and some of them go where a relative path changes meaning or is
     # refused: M4's cohort registry (`<work>/m4/registry`, and the real part's
     # under `<work>/real`) must be absolute or the importer refuses it, after
