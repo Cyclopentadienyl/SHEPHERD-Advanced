@@ -282,8 +282,11 @@ shortest_path_similarity = 1.0 / (1.0 + avg_sp)
 - Loaded automatically by `pipeline._load_shortest_paths()` if present
 - Default `max_hops = 5`; pairs beyond this are treated as unreachable
 - Mixed into every candidate's score whenever the table is served; it is not a conditional fallback.
-  A pair that cannot be looked up collapses to `0.0`, below the value of a real "no path" (policy
-  §1.1, C9: a B-1 gap)
+  A pair with no path contributes `max_hops + 1`; a candidate whose SP cannot be computed at all (no
+  node mapping, an unmapped candidate, no mappable phenotype, the primitive's unavailable state)
+  collapses to `0.0`, below the value of a real "no path" (policy §1.1, C9). The result union
+  replaces that `0.0` with a status (`docs/working/results-review/SPEC_1_RESULTS_REVIEW.md` §2.1,
+  BACKLOG §0 batch 4)
 
 ### Mixing parameter η (`PipelineConfig.eta`)
 - `eta = 0.7` (nominally 70% GNN, 30% shortest path; by span about 87/13, policy §3.5), a project
@@ -304,7 +307,9 @@ evidence for each candidate, using PathReasoner as a building block. Today PathR
 which diseases are candidates (§2.3), so every served candidate already has discovery paths and the
 evidence is always Mode A. **Mode B and INSUFFICIENT are implemented but unreachable on the served
 path**; they become reachable when B-1 removes the discovery gate, and Mode B's per-neighbour search
-then needs the global budget that gate 3's design must define (policy §6).
+then needs a budget. Gate 3's design (policy §6) is written: a target-restricted traversal over four
+declared path kinds, with one fixed budget per target and a request ceiling at admission
+(`docs/working/results-review/SPEC_3_EVIDENCE_AND_AUDIT.md` §7, awaiting approval).
 
 #### Mode A — Direct Path Evidence
 When the KG contains explicit paths from patient phenotypes to the candidate (≤ `weak_path_max_hops`, default 4), surface those paths verbatim:
@@ -338,12 +343,12 @@ The evidence modes above and the scorer-measurement modes are unrelated. Evidenc
 | **Scorer measurement**: how a disease ranker is measured, work item B-0 (`src/evaluation/measurement.py`, `scripts/measure_scorer.py`) | A | Subgraph encoder; each batch's 2-hop subgraph seeded from the answers (the trainer's validation shape); the ladder's control | retired (R2, 2026-10-12) |
 | | B | Full-graph encoder; the same candidates as A, so A→B isolates the encoder's scope | retired (R2, 2026-10-12) |
 | | C | Full-graph encoder; every disease in the KG; raw cosine; ties go to the lower disease id. B→C isolates the candidate universe. The approved scorer, measured | implemented: the formal Test's measurement, labelled "approved scorer policy (Mode C)" on the Test page |
-| | D | Full-graph encoder; production's path-reachable candidates; the η/SP mixture. The ranking the Diagnosis tab serves today (the formula above), measured | not built (B-0.5); its design has an open problem |
+| | D | Full-graph encoder; production's path-reachable candidates; the served score (the η/SP mixture, or the model term alone without a table). The ranking the Diagnosis tab serves today (the formula above), measured | designed, not built (B-0.5; `docs/working/scorer-measurement/PLAN_B05.md`) |
 
 **How the measurement modes were decided.**
 - The deploying institution decided (2026-08), before any measurement, that disease ranking is GNN-primary (every disease scored, raw cosine as the interim score) and that SP leaves the ranking for an optional, separate analysis (`docs/DISEASE_SCORER_POLICY.md` §1, §3.4). In the reference paper the disease task uses embedding distance alone; the SP fusion belongs to the candidate-gene task, which has a short candidate list. Mode C measures that scorer. Work item B-1 makes the Diagnosis tab rank by it; until then a Mode C result says the tab's ranking differs (`src/evaluation/caveats.py`).
 - Modes A and B were retired on 2026-10-12: the formal Test's mode was settled as C (`docs/working/PLAN_TEST_RESULTS.md` D3), Mode A could not build a model from any checkpoint the current writer produces, and the institution had authorised retiring the old pipeline (`docs/working/scorer-measurement/ASSESSMENT_MODE_AB_RETIREMENT.md` §9).
-- B-1 may not start before Policy Gate 1, a B-0 report comparing the served ranking (Mode D) with the planned GNN ranking (Mode C) (`docs/DISEASE_SCORER_POLICY.md` §6). C→D changes the candidates and the scorer at once, so B-0.5 adds an intermediate step to tell the two apart (`docs/working/scorer-measurement/README.md`).
+- B-1 may not start before Policy Gate 1, a B-0 report comparing the served ranking (Mode D) with the planned GNN ranking (Mode C) (`docs/DISEASE_SCORER_POLICY.md` §6). C→D changes the candidates and the scorer at once, so Mode D also reports an intermediate reading, the served candidates ordered by raw cosine, to tell the two apart (`docs/working/scorer-measurement/PLAN_B05.md` §5).
 
 ---
 
@@ -439,11 +444,11 @@ and integration tests sit beside each module.
 | **Register a kept report** (with `--record`, or later by hand); report store and deployment registry only; D5's block | `registration.register_report`; `scripts/record_evaluation.py`; Test | `src/evaluation/registration.py`, the ledger (schema 3) | Test: Register this report | Connected | W9, RW2 at `b14c4de`; by hand at `773dc4a` | none |
 | **D5 investigation notes** | Test page only (in process) | `report_store.add_investigation_note` | Test | Partial | — | not shown on Models or the loaded-model route (BACKLOG 40) |
 | **Records read back, contested state, D4 ordering, usage history** | `GET /api/v1/evaluations/loaded-model` (records, contested state); D4 ordering and the usage history: the Models page only (in process) | `record_states.py`, `src/evaluation/ordering.py`, `report_store.py` | Models (records, ordering, usage, read-only view); Diagnosis card state | Connected (records, contested state); Partial (ordering, usage: no formal entry) | T5, RT3 at `b14c4de`; by hand at `773dc4a` (one tested model) | before a non-Gradio client: move the page-resident glue (ledger placement, ranking, usage entries) into `src/api/services` |
-| **Compare the served ranking with Mode C** (Mode D, B-0.5) | — | — | — | Not implemented | — | an open design problem (`docs/working/scorer-measurement/PLAN_B03.md` §4); policy Gate 1 |
+| **Compare the served ranking with Mode C** (Mode D, B-0.5) | — | — | — | Not implemented | — | designed (`docs/working/scorer-measurement/PLAN_B05.md`, §11.1), built in BACKLOG §0 batch 3; its report is policy Gate 1's evidence |
 | **Model quality, institutional acceptance** | — | — | — | Not implemented (external) | — | data, terms and a declared protocol |
-| **Diagnose** (served score of §8, `gnn_only`, path fallback), result identity, CSV and report | `POST /api/v1/diagnose` | `src/inference/pipeline.py`, `scoring.py`, `served_identity` | Diagnosis page and exports | Connected | HTTP and the tab at `52152e4` (M3c); by hand at `f9202b6`; probes E7, R6 at `b14c4de` call the pipeline without explanations | the path fallback's semantics (B-2); exports write SP 0.0 when no table is served (policy C9, B-1) |
-| **Evidence and explanations** | the pipeline's explanations step | `evidence_panel.py`, `explanation_generator.py` | Evidence, Explanation, Paths | Connected (Mode A only) | by hand at `f9202b6` | evidence Mode B and INSUFFICIENT unreachable until B-1; a computed summary the route drops; inert flags (BACKLOG 56) |
-| **B-1**: GNN-primary ranking over every disease; SP as an optional analysis surface; evidence for the visible page only | — | to reuse: `scoring.cosine_score_matrix`, Mode C's canonical ranking, `sp_index.sp_mean_distances` | — | Not implemented | — | gated (policy §2.1, §6) |
+| **Diagnose** (served score of §8, `gnn_only`, path fallback), result identity, CSV and report | `POST /api/v1/diagnose` | `src/inference/pipeline.py`, `scoring.py`, `served_identity` | Diagnosis page and exports | Connected | HTTP and the tab at `52152e4` (M3c); by hand at `f9202b6`; probes E7, R6 at `b14c4de` call the pipeline without explanations | the path fallback's semantics (B-2); exports write SP 0.0 when no table is served (policy C9). Both designed as the result union (§11.1 step 7), built in BACKLOG §0 batch 4 |
+| **Evidence and explanations** | the pipeline's explanations step | `evidence_panel.py`, `explanation_generator.py` | Evidence, Explanation, Paths | Connected (Mode A only) | by hand at `f9202b6` | evidence Mode B and INSUFFICIENT unreachable until B-1, whose target-restricted traversal is gate 3's design (§11.1 step 6); a computed summary the route drops; inert flags (BACKLOG 56) |
+| **B-1**: GNN-primary ranking over every disease; SP as an optional analysis surface; evidence for the visible page only | — | to reuse: `scoring.cosine_score_matrix` and `masked_mean_pool`, Mode C's canonical ranking (moved into `scoring.py`), `sp_index.sp_mean_distances` | — | Not implemented | — | designed (§11.1); built in BACKLOG §0 batch 5, gated by policy gates 1 and 3 (§6) |
 | **HPO search, disease details, keeping a diagnosis, `candidate_genes`** | mock routes (HPO search, disease details); `GET /api/v1/diagnose/{session_id}` answers 501; a reserved field | — | — | Not implemented | — | BACKLOG 56 |
 | **Operator access (D8) and the read-only view** | `OPERATOR_ONLY` (`src/api/operator_access.py`) on every gated route; the dashboard's helper `src/webui/operator_access.py` in each operator handler | `src/utils/operator_access.py` (`check_operator_access`, the one check) | chips; greyed controls with the reason | Connected | W2–W6 at `b14c4de`; a read-only tab by hand at `773dc4a` | open read routes name server paths (BACKLOG 53) |
 | **Server settings** | `SHEPHERD_*` environment, read where used | `src/config/server_settings.py` | shown, never edited | Connected | probes at `b14c4de` | none |
@@ -452,6 +457,50 @@ and integration tests sit beside each module.
 | **Device resolution** (`auto` is CUDA and refuses without it; `cpu` only when asked) | the training, measurement and serving resolvers | `resolve_serving_device` (`src/inference/pipeline.py`; the requested value read by `src/config/serving_device.py`, `SHEPHERD_DEVICE`), `resolve_training_device` (`scripts/train_model.py`), `_resolve_device` (`scripts/measure_scorer.py`) | device choices | Connected | probes at `b14c4de` | the API and CLI hand `mps` to torch unchecked and check `cuda:N` only for CUDA, not its ordinal (BACKLOG 24) |
 | **WebUI usability** (density, layout, help texts) | — | the pages in `src/webui/components/` | every page | Partial: functionally accepted only | M5's manual rounds to `773dc4a` | BACKLOG 51, 52, in §0's UI batches; not a condition for reopening M5 |
 | **Reserved, not features**: the attention backend selector and the launcher's accelerator flags (they install packages no model path uses); fuzzy input; the platform and config homes; several front ends on the LAN; non-CUDA hardware | — | — | — | Not implemented | — | BACKLOG 28, 24 |
+
+### 11.1 The diagnosis and measurement chain (Batch 2 design, at `60feb6d`)
+
+The same chain read end to end, from input to registration. For each step the table gives four
+things:
+- today's formal entry and its shared function;
+- the gap;
+- what changes, and in which batch of BACKLOG §0;
+- which old entry goes.
+
+The designs are:
+- `docs/working/scorer-measurement/PLAN_B05.md` (Mode D);
+- `docs/working/results-review/SPEC_1_RESULTS_REVIEW.md` §2.1 (the result union) and §2.2 (the
+  shared scoring boundary);
+- `docs/working/results-review/SPEC_3_EVIDENCE_AND_AUDIT.md` §7 (gate 3's traversal).
+
+**What each piece does:**
+- **Mode C** measures the approved policy: raw cosine over every disease.
+- **Mode D** measures what the Diagnosis page serves today, through serving's own method, and sets it
+  beside Mode C in the same run.
+- **B-1** makes the Diagnosis page serve the approved policy, behind a switch.
+
+Mode C and Mode D change no served value. B-1 does.
+
+| Step | Today: formal entry and shared function | Gap | Change (batch) | Old entry removed |
+|---|---|---|---|---|
+| 1. **Input** (phenotype terms) | `DiagnosisPipeline.validate_input` with `normalise_phenotypes` (`src/kg/phenotype_normalisation.py`); the API's `DiagnoseRequest`; for cohorts, the importer's `map_cases` | Serving maps a term three times, each handling a miss differently. A graph node with no tensor row is skipped silently. `validate_phenotypes=False` is a second behaviour | One mapping step that returns tensor rows. An unknown term is dropped and stated; a node without a row is refused (SPEC_1 §2.2). **Batch 4** | `_phenotypes_to_node_ids`; the per-score lookups; `PipelineConfig.validate_phenotypes` |
+| 2. **Model forward** | Serving: `_precompute_node_embeddings` (float32, cached). Mode C: `encode_full_graph`. Both build through `build_shepherd_model` | Serving does not expose its numerical regime | `embedding_regime` exposed and checked against Mode D's manifest (PLAN_B05 §3). **Batch 3** | none |
+| 3. **Candidate set** | Serving: `_find_all_paths` (BFS and the direct finder, both with caps that depend on order). Mode C: every disease row | Statement 3 (every disease is scored) is not served; a truth discovery does not reach has no served rank | Batch 3: Mode D measures today's gate and counts what it does not reach (`not_reached`). Batch 5: B-1 scores every disease row | Batch 5: discovery stops being the candidate gate; it stays only for the path-reasoning fallback |
+| 4. **Scoring** | Serving: `_calculate_combined_score`, `_calculate_gnn_score` and `_calculate_sp_score`, each called once per candidate, over the primitives in `src/inference/scoring.py`. Mode C: `masked_mean_pool`, `cosine_score_matrix` | The pool clamps indices. An unavailable model term or SP value becomes `0.0`. `(cos+1)/2` is rounded in float32 | Batch 4: the model term fails closed; SP gets statuses from one SP caller. Batch 5: `score_patients` (raw cosine) | Batch 5: `pool_patient_embeddings`. The mixture helpers go when `served_mixture/v1` retires |
+| 5. **Ranking** (order, ties, cut) | Serving: a stable sort, then the `top_k` slice, inside `_score_and_rank_candidates`. Mode C: `canonical_ranking` (`src/evaluation/measurement.py`) | No untruncated served rank exists. There are two tie rules, and serving cannot import Mode C's | Batch 3: `DiagnosisPipeline.rank()`, which `run()` calls before its cut. Batch 5: `canonical_ranking` moves into `scoring.py`; `selection_limit` cuts after scoring | Batch 5: serving's own sort, for the GNN kind |
+| 6. **Evidence** | `_add_explanations` calls `EvidencePanel.build_evidence`, always Mode A from discovery paths, eagerly, for the top K only | Not restricted to the target; no budget; Mode B and INSUFFICIENT unreachable; no record identity | `src/reasoning/target_evidence.py`: four declared path kinds, one fixed budget per target, computed lazily per page (SPEC_3 §7). **Batch 5, gate 3** | `EvidencePanel` and the eager step, together with the legacy result kinds |
+| 7. **Result and report** | `InferenceResult` and `DiagnosisCandidate` (`src/core/types.py`); `POST /api/v1/diagnose`; the Diagnosis page, its CSV and its report | One flat record. `confidence_score` holds two quantities. An unavailable value is written as `0.0`. The demo answer carries invented scores | The result union, discriminated by `result_kind` (SPEC_1 §2.1). Batch 4: `served_mixture/v1`, `path_reasoning/v1`, `demo/v1`. Batch 5: `gnn_ranking/v1` | `confidence_score`, `gnn_score` and the bare `sp_score`; `scripts/test_gnn_inference.py`; `generate_evidence_summary` |
+| 8. **Measurement** | Mode C: `scripts/measure_scorer.py --cohort` calls `run_mode_c`. Mode D: none | Gate 1's comparison does not exist | `run_mode_d` and `--mode D`: end-to-end and among-reached metrics, the path-gated intermediate reading, Mode C's rank in process (PLAN_B05). **Batch 3** | none |
+| 9. **Registration and comparison** | `registration.register_report`; the ledger (D4 groups and the D5 key, both including `mode`); `report_store`'s usage history; the Test and Models pages | Labels assume Mode C; the usage history has no mode | Mode D's values go in the existing manifest fields, with no new field; labels come from each record; the usage history records a mode (PLAN_B05 §6). **Batch 3** | none: no ledger rule changes |
+
+**Proving correctness without rerunning old acceptances:**
+- **Golden tests** pin what must not move: serving's output across batches 3 and 4, and Mode C's
+  reports when batch 5 moves its ranking.
+- **New tests** cover only what is new.
+- **One short GB10 run per batch** where hardware matters: batch 3 runs Mode C, then Mode D, on a
+  registered synthetic cohort.
+- **Kept evidence still counts**, unchanged: M4's and M5's acceptances, B-0.4's SP benchmarks and the
+  Mode C reports.
 
 ---
 
@@ -478,6 +527,18 @@ it replaces an old entry**.
   archived (contract decision 2); an old plan's compatibility passage is checked against it first.
 - **No framework ahead of a user**: no plugin system, general job framework or free drag-and-drop
   dashboard as a prerequisite.
+- **One disease scorer** (Batch 2 design, §11.1). Every ranking that claims the approved policy, B-1's
+  serving and Mode C alike, goes through `score_patients` and `canonical_ranking` in
+  `src/inference/scoring.py`. There is no copy and no test-only scorer. The trainer's validation
+  scorer stays separately written, on purpose (the `scorer-independence` contract).
+- **The served ranking is measured through serving's own method.** Mode D calls
+  `DiagnosisPipeline.rank()`, which `run()` itself calls. There is no second candidate construction,
+  and Modes A and B are not revived.
+- **Evidence never touches the ranking.** It takes an immutable result and returns records.
+  `src.inference.scoring` never imports `src.reasoning` (the `ranking-without-evidence` contract,
+  batch 5).
+- **A value that could not be computed is a status, never a number**, in every result kind, export
+  and measurement.
 - **Dependency versions**: the formal deployment installs the currently verified set, its versions kept
   in one central place, not scattered across entry points or tests; an upgrade of PyTorch, CUDA or PyG
   goes through the same deployment, loading and training flow and becomes the new baseline once verified, with no second pipeline for old environments; a new

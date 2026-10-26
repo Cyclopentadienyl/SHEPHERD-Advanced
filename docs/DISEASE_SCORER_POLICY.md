@@ -3,6 +3,12 @@
 **Status:** Accepted (2026-08) by the deploying institution. **Not yet implemented** — see the
 status table in §2. Implementation is work item B-1, which remains gated (§6).
 
+**Revision: rev 6 (2026-10-26). Factual update, no normative change.** §2.1 points to Batch 2's
+designs: Mode D, the result union, the shared scoring boundary and gate 3's traversal. It corrects
+two overstatements about the unmapped phenotype and Mode C's refusal, and §3.5 names the module
+`sp_mean_distances` lives in. The statements, the conditions, the schedule, the limits, the gates
+(gate 3's design is written, not approved) and the rollout are unchanged.
+
 **Revision: rev 5 (2026-10-25). Factual update, no normative change.** The status table (§2) was
 re-checked against `main` at `416a242`; code citations that had drifted are now anchored by function
 name; §2.1 lists what B-1 and B-2 still lack and, as already recorded elsewhere, who decides each
@@ -167,7 +173,12 @@ what exists to build on, so B-1 extends it rather than writing a second copy.
 **One scorer, not two (`PLAN_TEST_RESULTS.md` D3).** Only the cosine is shared today. The patient
 pool and the candidate universe are not: serving clamps disease indices and drops an unmapped
 phenotype silently, where Mode C refuses. B-1 settles both (D3); the recommendation is Mode C's
-rule, the stricter one.
+rule, the stricter one. *(Corrected 2026-10-26, rev 6: a phenotype the graph lacks is dropped with a
+warning and listed in the result's phenotype account; only a graph node with no tensor row is
+dropped silently. Mode C refuses an out-of-range index; an unmappable term is kept or excluded at
+import under a recorded policy, not refused. **Designed:** the boundary in
+`working/results-review/SPEC_1_RESULTS_REVIEW.md` §2.2: one composed scorer in
+`src/inference/scoring.py`, an unknown term dropped and stated, a node with no row refused.)*
 
 **B-1a — the canonical ranking.** Score every disease in the graph by raw cosine and order it by the
 shared canonical order; remove the BFS gate and its two caps from candidate selection (§2, first
@@ -179,25 +190,31 @@ unavailable SP and the exports carry that `0.0`. `selection_limit`'s default, mi
 the storage and export bounds and the latency target are [OPEN] (§1.3).
 
 **B-1c — evidence after ranking.** A target-restricted evidence traversal for the visible page;
-its design is gate 3, not drafted. Today every candidate comes from discovery paths, so the evidence
+its design is gate 3, written 2026-10-26 and awaiting approval
+(`working/results-review/SPEC_3_EVIDENCE_AND_AUDIT.md` §7). Today every candidate comes from discovery paths, so the evidence
 it shows is the discovery path itself, and the evidence states for a candidate without one (the
 evidence panel's Mode B and INSUFFICIENT) are never reached on the served path; B-1c makes them
 reachable and needs a traversal budget for them.
 
-**The result union (§7).** Not drafted. It also decides what replaces `confidence_score` in the
-API. Today the response model declares it `Field(ge=0.0, le=1.0)`, so a raw cosine below 0 would
-fail the response, not just contradict its description. The configuration switch's default is a
+**The result union (§7).** Designed 2026-10-26, not built
+(`working/results-review/SPEC_1_RESULTS_REVIEW.md` §2.1): one `result_kind` per result, with
+required and forbidden fields per kind. It replaces `confidence_score` in the API with one score
+field per kind (`ranking_score`, the raw cosine, under B-1). Today the response model declares
+`confidence_score` `Field(ge=0.0, le=1.0)`, so a raw cosine below 0 would fail the response, not just
+contradict its description. The configuration switch's default is a
 separate open decision (§7).
 
 **B-2.** Done: a requested model that cannot be built is refused (M1); every result names its
 scoring mode (M3c). Missing: discriminated score semantics for the path-reasoning fallback (its
 result carries `gnn_score = 0.0`, which the API returns and the Diagnosis page, its CSV and its report
 show as a number); whether serving with no model needs an explicit opt-in (provenance contract §8,
-question 2).
+question 2). The discriminated semantics are designed as the union's `path_reasoning/v1` kind
+(rev 6 pointer, Spec 1 §2.1); the opt-in stays the owner's decision.
 
 **Gate 1's evidence.** Mode C is built and has run on synthetic and demo cohorts (M4 acceptance,
 `2c94a4e`; M5 close-out, `773dc4a`). Mode D (the served ranking measured on the same cohort,
-B-0.5) is not built. Its design problem is recorded in `working/scorer-measurement/PLAN_B03.md` §4:
+B-0.5) is not built; its design is written (`working/scorer-measurement/PLAN_B05.md`, 2026-10-26).
+The design problem it resolves is recorded in `working/scorer-measurement/PLAN_B03.md` §4:
 the public entry point truncates to `top_k` and builds paths and explanations, so getting an
 untruncated served rank without duplicating candidate construction is an open design problem. A
 second problem, not in that plan, follows from the BFS gate (§2, first row): a disease the gate does
@@ -318,7 +335,7 @@ unexamined default.
   The deployed scorer does not take a union over a patient's phenotypes and does not use the nearest
   reachable one — for each candidate it iterates over **every** phenotype, gives each unreachable
   pair `unreachable_distance`, and averages
-  (`src/inference/scoring.py::sp_mean_distances`). Per-phenotype reachability therefore cannot be
+  (`src/inference/sp_index.py::sp_mean_distances`; rev 6 corrected the module). Per-phenotype reachability therefore cannot be
   carried across to patient-level coverage in either direction.
 
   **What does not follow, in either direction.** The conclusion no longer follows from the refuted

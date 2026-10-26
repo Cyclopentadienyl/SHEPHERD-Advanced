@@ -1,6 +1,7 @@
 # Spec 1 — Results review: authority, SP policy, decomposition, surfaces
 
-**Status:** draft, under review. **Normative.** Supersedes rev 6 §1–§8.
+**Status:** draft, under review. **Normative.** Supersedes rev 6 §1–§8. §2.1 (the result union) and
+§2.2 (the shared scoring boundary) were added as Batch 2's design on 2026-10-26, for review.
 **Authority above this document:** `docs/DISEASE_SCORER_POLICY.md` — statements 4a/4b, conditions
 C1–C10, the eager-SP / lazy-evidence schedule, and the three limits that replace `top_k`. Where a
 choice here is constrained by a condition, the condition is cited; this document does not restate or
@@ -47,6 +48,198 @@ binding a view to an immutable result ID — **unenforceable**, not merely untid
   The view state accompanying a *clinician action* is retained as audit metadata on that action (C5,
   Spec 3 §5).
 
+### 2.1 The result union (Batch 2 design, 2026-10-26)
+
+**Status:** design for review. Today's kinds are built in BACKLOG §0 batch 4, `gnn_ranking/v1` with
+B-1 in batch 5. **Authority:** policy §7: one versioned discriminated union with required and
+forbidden fields per variant, never a flat envelope; statement 7; C9.
+
+**The discriminator is `result_kind`, on the result, never on a candidate.** Every candidate of a
+result has the same score semantics. The kind is derived from what produced the result, never
+chosen by a caller, by one mapping function in `src/inference`:
+
+| `result_kind` | Produced when | Served identity's `scoring_mode` |
+|---|---|---|
+| `gnn_ranking/v1` | B-1's switch is on and a model is served | `gnn_raw_cosine`, added by B-1. The SP table may be `verified` or `absent`, since SP no longer ranks; `ServedIdentity`'s coupling "SP verified ⇔ `gnn_plus_shortest_path`" is relaxed for this mode only |
+| `served_mixture/v1` | a model is served and the switch is off: today | `gnn_plus_shortest_path` or `gnn_only` |
+| `path_reasoning/v1` | no model source is configured | `path_reasoning_fallback` |
+| `demo/v1` | no pipeline was ever configured (the API's demo answer) | none: the identity is null, as today |
+
+`scoring_mode` is not the discriminator itself: it describes the configuration, while the kind says
+what the numbers in the candidates mean. Under B-1, a deployment with a table serves a GNN ranking
+with SP beside it, not in it.
+
+**Every kind carries:**
+- **On the result:** `result_kind`, `result_schema_version = 2`, `served_identity`,
+  `phenotype_input` (the account), `warnings`, and `candidates` in rank order.
+- **On each candidate:** `rank` (exactly 1..N), `disease_id`, `disease_name` and `matching_phenotypes`.
+
+| Candidate field | `gnn_ranking/v1` | `served_mixture/v1` | `path_reasoning/v1` | `demo/v1` |
+|---|---|---|---|---|
+| `ranking_score`: raw cosine, finite, in [−1, 1] | required | forbidden | forbidden | forbidden |
+| `served_score`: the value ranked by, η·model term + (1−η)·SP, or the model term alone in `gnn_only` | forbidden | required | forbidden | forbidden |
+| `model_term`: (cos+1)/2 | forbidden | required | forbidden | forbidden |
+| `sp_term`: an SP status record (§3.3), with numbers only on a numeric status | forbidden: SP is in `candidate_analysis` | required | forbidden: SP is never loaded without a model | forbidden |
+| `path_score`: the weighted path aggregate, Σ sᵢ·0.8ⁱ capped at 1 | forbidden | forbidden | required | forbidden |
+| `evidence_package`, `evidence_label`, `explanation`, `reasoning_paths` (built eagerly from discovery paths) | forbidden: evidence is the lazy subresource (Spec 3 §7) | as today | as today | forbidden |
+
+**Result-level fields by kind:**
+- **`gnn_ranking/v1`:**
+  - `result_id` (C10);
+  - `universe_size`, the number of diseases scored;
+  - `selected_count`;
+  - `tie_policy = "lower-global-id/v1"`;
+  - `candidate_analysis`, which is either one `CandidateAnalysisRecord` per selected candidate (`sp-analysis/1`, §3) or `NO_TABLE`, stated once.
+- **`served_mixture/v1`:** `eta`, `candidates_reached` (how many diseases discovery reached before the
+  cut) and `tie_policy = "served-stable-discovery-order/v1"`.
+- **`path_reasoning/v1`:** `path_score_aggregation = "weighted_sum/v1"` and the same tie policy as the mixture.
+- **`demo/v1`:** no score of any kind. The demo answer keeps its purpose, a service tried with nothing
+  configured, and loses its invented numbers.
+
+**Removed from the response, with no compatibility alias** (an alias would keep the defect):
+
+| Removed field | Why |
+|---|---|
+| `confidence_score` | two quantities in one field |
+| `gnn_score` | replaced by `model_term`, present only where a model ranked |
+| a bare `sp_score` | replaced by `sp_term` or `candidate_analysis` |
+| `reasoning_score` outside `path_reasoning/v1` | today it is computed in every mode and ranks nothing there |
+| `confidence_label` | renamed `evidence_label`: it grades evidence, not confidence |
+
+**Unavailable is never zero.**
+- **SP.** `sp_term` and `candidate_analysis` carry §3.3's statuses.
+  - In `served_mixture/v1`, a non-numeric status is still mixed as 0, so the legacy ranking does not
+    change, and the candidate says so (`sp_term.mixed_as = 0.0`, shown as "mixed as 0 (legacy)").
+  - Of the non-numeric statuses, only `NO_TABLE` is reachable on a verified workspace, in `gnn_only`,
+    where nothing is mixed. Every graph node has a tensor row (M2.4), and validation refuses an empty
+    phenotype set. A test forces the other statuses.
+- **The model term fails closed.** Today's five paths that return GNN `0.0` become a refusal of the
+  result (`MODEL_TERM_UNAVAILABLE`, naming the node), never a number:
+  - no embeddings;
+  - no phenotype index;
+  - no phenotype table;
+  - a disease with no row;
+  - no disease table.
+
+  The two index clamps (disease row, phenotype row) also become refusals. Each of these signals a
+  model–graph mismatch that M2.4's binding already refuses, so on a verified workspace the change
+  alters nothing; the golden test pins that.
+- **Non-finite.** A non-finite score refuses the result. Today it goes unchecked, and at the API it
+  becomes a 500.
+
+**Invariants, checked when a result is built** (`InferenceResult.__post_init__`):
+- one kind for every candidate;
+- ranks exactly 1..N;
+- every score finite;
+- order non-increasing by the kind's score, ties by its tie policy;
+- required fields present and forbidden fields absent.
+
+Spec 2's snapshot stores `CanonicalDiagnosisResult`, which is this union, so its frozen sections are
+not reopened.
+
+**Labels, fixed text, one per kind.**
+
+| Kind | Label |
+|---|---|
+| `gnn_ranking/v1` | "Model ranking: raw cosine over every disease (approved scorer policy)" |
+| `served_mixture/v1` | "Served ranking today: diseases reached by path discovery, scored as 0.7 × model term + 0.3 × SP" (in `gnn_only`: "…scored by the model term alone") |
+| `path_reasoning/v1` | "No model loaded: ranked by path reasoning, not by a model" |
+| `demo/v1` | "Demo answer: no pipeline is configured; not a diagnosis" |
+
+**Who migrates.** Each batch moves all of these together, in one change:
+
+| Consumer | Change |
+|---|---|
+| `src/core/types.py` | `DiagnosisCandidate` is replaced by one frozen candidate type per kind; `InferenceResult` gains `result_kind` and the invariants |
+| `src/inference/pipeline.py` | `_score_and_rank_candidates` writes the kind's fields; the SP term comes from §2.2's one SP caller as a status record; `_calculate_gnn_score` refuses instead of returning 0.0; the kind mapping |
+| `src/api/routes/diagnose.py` | the response becomes a Pydantic discriminated union on `result_kind`; `confidence_score` and the field descriptions that are wrong in some modes are removed; `_generate_mock_candidates` answers `demo/v1`. The path stays `/api/v1/diagnose`: the prefix names the API, the body names its schema |
+| WebUI Diagnosis page | the table, details header, help texts and score segment follow the kind; a non-numeric SP status shows its words; the fallback no longer shows GNN "0.000" |
+| CSV and report | columns follow the kind, plus a `result_kind` column; a status column sits beside each value column, with an empty value cell where the status is non-numeric (the candidate-column convention, Spec 3 §5.1); the report's `or 0` coercion is removed; the deployment guides' column dictionary (§4.7) changes with the code |
+| `src/reasoning/explanation_generator.py` | the score line prints the kind's score and label; `generate_evidence_summary` and `_get_confidence_level` are removed (they have no production caller) |
+| Probes E7, R6, M4 (`scripts/probe_deployment.py`); `scripts/measure_served_pipeline.py` | read the kind's score and validate against the union |
+| `scripts/test_gnn_inference.py` | removed: it pins `confidence_score == gnn_score`, which is wrong in `gnn_plus_shortest_path`. Its build-and-rank checks move to `tests/integration/test_pipeline.py`, against the union |
+| `docs/SP_SCORE_GUIDE.md`'s status box | changes with the code (policy §7) |
+| Mode D (`run_mode_d`, `docs/working/scorer-measurement/PLAN_B05.md`) | nothing: it reads batch 3's `ServedRanking`, and only its order, disease and served score |
+
+**Not decided here:**
+- the B-1 switch's default (the owner's call, policy §7);
+- whether serving with no model needs an opt-in (the owner's call, B-2). Until that is decided,
+  `path_reasoning/v1` is served when no model source is configured, as today.
+
+**Assumed:** no client outside this repository reads `/api/v1/diagnose`. If one does, the owner names it
+before batch 4.
+
+### 2.2 The shared scoring boundary (Batch 2 design, 2026-10-26)
+
+**Status:** design for review. It is built with B-1 (batch 5), except the parts marked *batch 4*.
+It settles `PLAN_TEST_RESULTS.md` D3's two open served behaviours, the disease clamp and the
+unknown-phenotype handling, and policy §2.1's "one scorer, not two".
+
+**The home is `src/inference/scoring.py`.**
+- Serving and Mode C can both import it.
+- The trainer cannot, under the `layers` contract. That keeps the trainer's validation values written
+  independently, as the `scorer-independence` contract in `.import-linter.ini` intends.
+- `src.reasoning` is not a home: statements 4a and 6 keep ranking and evidence apart.
+- A layer lower down is not a home either: the trainer could adopt it there and undo that independence.
+
+| Step | Rule | The one implementation |
+|---|---|---|
+| Phenotype input | One mapping step: an exact HPO term, then its graph node, then its tensor row.<br>- Repeats are removed by node, keeping the first occurrence (`normalise_phenotypes`, version 1).<br>- An unknown term is dropped and always stated (`phenotype_input.unknown` and a warning), as the importer's `keep` policy does.<br>- More than `max_phenotypes` (100) distinct terms is refused, never truncated.<br>- A known node with no tensor row is refused as a model–graph mismatch, never skipped | `DiagnosisPipeline.validate_input` returns the rows.<br>`_phenotypes_to_node_ids` and the two per-score lookups are deleted.<br>`PipelineConfig.validate_phenotypes` is removed: turning it off only silences the warning and sends the empty case to a second behaviour (`_create_empty_result`).<br>*Batch 4* |
+| Patient representation | The unweighted masked mean of the phenotype rows. Out-of-range or non-integer rows are refused, and so is an empty row | `masked_mean_pool`. `pool_patient_embeddings`, which clamps, is deleted, and its clamp test is inverted into a refusal test |
+| Disease set | Every disease row of the bound tensors: global ids `0..D−1` in the node mapping's disease order. NodeIDs appear only at the edge, through `kg.get_reverse_node_mapping` | `score_patients` (below). There is no lookup to miss and no clamp |
+| Score | Raw cosine in the embedding dtype: float32 at serving, with no autocast. Confidence is never a weight (§4.5) | `cosine_score_matrix` |
+| Order and ties | Score descending, ties to the lower global id; non-finite refused | `canonical_ranking` and `_require_integer_ids`, moved unchanged from `src/evaluation/measurement.py` |
+| Selection | `selection_limit` cuts the ordered list after scoring, never before (§6.1) | the caller, B-1's pipeline method |
+
+**One composed function.** `score_patients(phenotype_table, disease_table, rows, mask, disease_ids)`
+lives in `scoring.py` and returns the scores and the order.
+- **Argument shapes:** `rows` is `(B, N)` int64, `mask` is `(B, N)` bool, and `disease_ids` is `(D,)`.
+- **Return shapes:** the scores and the order are both `(B, D)`.
+- **What it refuses:** out-of-range rows, an all-false mask row and non-finite scores.
+- **What it computes:** the pool, the cosine and the order, in that order.
+
+**Who calls it:**
+- Serving's B-1 path calls it with B = 1.
+- `run_mode_c` calls it in place of its own three calls to the same primitives.
+- Mode C keeps its cohort checks (`_assert_ids_in_range`, `_assert_cohort_is_intact`): they run first
+  and name the case.
+
+**Missing data and invalid values, in one place:**
+
+| Case | Result |
+|---|---|
+| An unknown phenotype | dropped and stated |
+| Every phenotype unknown | refused (today's "No valid phenotypes") |
+| A node or a disease with no tensor row | refused |
+| A non-finite score | refused |
+| No model | no `gnn_ranking/v1` result (fail-closed); the fallback is served only under B-2's rule |
+
+**Precision.** The ranking uses raw float32 cosine. The legacy `(cos+1)/2` is rounded in float32, which merges
+adjacent cosines into ties. It exists only in `served_mixture/v1` and goes with it.
+
+**The SP caller (one, batch 4).** `sp_mean_distances` reports availability per batch. `sp_analysis_records` takes
+§3.3's per-candidate statuses from the node mapping and the mapped phenotypes. It sits in
+`src/inference/sp_index.py`, beside the primitive. The primitive gains one output, the
+per-candidate count of unreachable pairs, which it already computes internally.
+- **Batch 4** calls `sp_analysis_records` for the legacy SP term, over every reached candidate in one
+  call. The distances are sums of small integers, so they are exact and equal to today's
+  one-at-a-time values.
+- **B-1** calls it for eager SP over the selected set.
+- **Two clean-ups:** `scripts/audit_sp_reachability.py` imports `PRODUCER_HOP_RANGE` instead of declaring its own copy, and
+  the unused `ASSUMED_HOP_BOUND` is deleted.
+
+**Callers to migrate:**
+
+| Caller | Moves to |
+|---|---|
+| `run_mode_c` | `score_patients`, importing the ranking from `scoring`. Its report, metrics and ranks stay byte-equal before and after. The README's "not edited" list binds Mode D's package; B-1 moves the code and changes no rule |
+| `ranks_of_truth` | imports `_require_integer_ids` from `scoring` |
+| `tests/unit/test_measurement_ranking.py` | imports from `scoring` |
+| `tests/unit/test_scoring_primitives.py` | the clamp test (`test_pooling_clamps_out_of_range_indices`) is inverted into a refusal; its other uses of `pool_patient_embeddings` move to `masked_mean_pool`. `test_exact_ties_break_by_candidate_order` stays while `served_mixture/v1` is served, and goes when it retires |
+| B-1's serving path | `score_patients`, then the selection |
+| `_calculate_gnn_score`, `cosine_scores`, `normalise_cosine_to_unit_interval`, `mix_embedding_and_sp_scores` | used by `served_mixture/v1` only; deleted when it retires. The owner's switch default decides when |
+| The trainer | unchanged: its own cosine and its own index clamp (`trainer.py`, `_compute_model_outputs`). The clamp is a known difference, outside B-1 |
+
 ---
 
 ## 3. SP analysis contract
@@ -67,10 +260,13 @@ the distinctions a filter would be built on.
 > hop distance equals descending SP score. The UI labels the active direction explicitly.**
 
 *Numerical footing:* the ordering equivalence holds under `max_hops = 5`, `N ≤ 100` (contractual —
-`src/api/routes/diagnose.py:56` caps the phenotype list) and float64 accumulation. **The derivation
-lives in `src/inference/scoring.py`'s `sp_mean_distances` docstring, next to the code it constrains,
-and is not restated here** — a product specification is the wrong home for a floating-point proof,
-and two copies would drift. Regression tests pin it (`tests/unit/test_scoring_primitives.py`).
+`DiagnoseRequest.phenotypes` in `src/api/routes/diagnose.py` caps the phenotype list) and float64
+accumulation. **The derivation belongs in `sp_mean_distances`' docstring, next to the code it
+constrains, and is not restated here** — a product specification is the wrong home for a
+floating-point proof, and two copies would drift. *(Factual note, 2026-10-26: the derivation stood in
+that docstring while the primitive lived in `src/inference/scoring.py`; the move to
+`src/inference/sp_index.py` (`87f8d13`) did not carry it. Batch 4 restores it there, BACKLOG §0.)*
+Regression tests pin it (`tests/unit/test_scoring_primitives.py`).
 
 ### 3.2 Reference set
 
@@ -102,9 +298,9 @@ sp_status = COMPUTED            # every submitted phenotype mapped;   numeric
 
 The schema is a discriminated union: numeric fields **required** on the first two variants,
 **forbidden** on the other three. An absent number and a zero must not be representable as the same
-thing. (The legacy `_calculate_sp_score` returns `0.0` on four distinct failure paths, and `0.0` is
-*below* the value a genuine "no path found" produces — so a numeric sort would place a mapping
-failure beneath a real negative.)
+thing. (The legacy `_calculate_sp_score` returns `0.0` on five distinct failure paths (policy C9),
+and `0.0` is *below* the value a genuine "no path found" produces — so a numeric sort would place a
+mapping failure beneath a real negative.)
 
 **`TARGET_UNMAPPED` is defined against the canonical node mapping, not against the SP artifact.** The
 artifact is sparse: absence of a `(phenotype, target, type)` row means *no path was found within the
@@ -315,26 +511,31 @@ nothing to pass or fail against.
 > **`selection_limit` is a presentation and enrichment bound, never a scoring bound.** Using it to
 > limit how many diseases are scored would be candidate gating under a new name.
 
-### 6.2 The eager-SP performance dependency is unmet
+### 6.2 The eager-SP performance dependency: delivered up to 500 candidates, unmeasured beyond
 
-`sp_mean_distances` has a batched-shaped interface but still loops candidate-by-phenotype, scanning a
-slice per pair — about 4,000 slice scans at 200 candidates and 20 phenotypes, over 550,000 at
-full-universe scale (`src/inference/scoring.py`).
+*(Rewritten 2026-10-26, Batch 2: the earlier text described a scanning lookup that no longer
+exists.)* `sp_mean_distances` (`src/inference/sp_index.py`) is the one served SP primitive: a sorted
+composite key queried with `torch.searchsorted`, vectorised over a (phenotypes × candidates) query
+(B-0.4, BACKLOG 5a: implemented, acceptance pending). Measured on GB10 against the real table with
+the shipped primitive (`docs/working/scorer-measurement/EVIDENCE_B04_served_primitive_spark.json`): a
+batched call takes at most 4.6 ms (median) up to 100 phenotypes × 200 candidates, and 13.2 ms
+(median) at 100 × 500.
 
-> **Eager SP over 200 candidates is contingent on a genuinely vectorised SP lookup being delivered
-> *and benchmarked*. It is not yet.**
+> **Eager SP over a selected set of up to 500 candidates is within those measurements. Above 500
+> it is unmeasured**, and so is the full-universe query (about 32,000 diseases), which eager SP does
+> not need: SP runs over the selected set only (§6.1).
 
-This is a **B-1 acceptance criterion measured on institutional hardware**, against the declared
-latency target, for a representative 20-phenotype, 200-candidate request. Sorted composite keys with `torch.searchsorted`, or a
-sparse index, are **benchmark candidates, not a chosen implementation**. Measure the simplest
-built-in PyTorch approach first; build a custom index only if it loses.
+**Still a B-1 acceptance criterion**, measured on institutional hardware against the declared
+latency target (§6, open), for a representative request at the deployment's `selection_limit`. No
+serving code calls the primitive batched yet; §2.2 names its one caller.
 
-**That work completes the B-1 eager-SP dependency. It does not by itself complete B-0**, whose
-remaining scope is: modes A–D, full-universe candidate construction, untruncated
-MRR and Hits@{1,5,10,20,50,100}, served-configuration manifests and fingerprints, negative-set count
-and composition instrumentation, the paired-cohort/strata/bootstrap protocol, the measurement-output
-schema, and the institutional measurement run. Evaluator migration is no longer part of it: the
-frozen evaluator was never migrated onto the shared primitives, and was deleted on 2026-10-10
+**This completes no part of B-0.** B-0's remaining scope: Mode D (designed in
+`docs/working/scorer-measurement/PLAN_B05.md`; Modes A and B are retired, not remaining), the
+paired-cohort, strata and bootstrap protocol (BACKLOG 8a), and the institutional measurement run
+(BACKLOG 8b). Full-universe candidates, untruncated MRR and Hits@{1,5,10,20,50,100}, the manifests
+and fingerprints and the output schema exist in Mode C; negative-set instrumentation went with
+Modes A and B. Evaluator migration is no longer part of it:
+the frozen evaluator was never migrated onto the shared primitives, and was deleted on 2026-10-10
 (`docs/working/PLAN_PROVENANCE_CONTRACT.md` M2.1, decision 6).
 
 ---

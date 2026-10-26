@@ -484,7 +484,14 @@ pool, the cosine, the candidate universe and the tie rule. Today only the cosine
     `1cab39f`). The clinician should be told about it, rather than having the ranking scored
     around it.
 
-This is recorded as a **constraint on B-1**. It is not built here.
+This is recorded as a **constraint on B-1**. It is not built here. **Designed (Batch 2,
+2026-10-26):** `results-review/SPEC_1_RESULTS_REVIEW.md` §2.2 puts the shared boundary in
+`src/inference/scoring.py` (one composed `score_patients`, `canonical_ranking` moved there, the
+clamp replaced by a refusal) and settles the second behaviour: an unknown phenotype is dropped and
+always stated, never scored around silently, and a graph node with no tensor row is refused. The
+statement above that the drop is "silent" was already only half true at `60feb6d`: a phenotype the
+graph lacks is dropped with a warning and listed in the result's phenotype account; a graph node
+with no tensor row is the silent case.
 
 **What it does not claim:**
 - **The paper's number.** Statement 2 is interim. The paper's disease scorer is a squared
@@ -493,8 +500,10 @@ This is recorded as a **constraint on B-1**. It is not built here.
 - **The paper's cohort.** A MyGene2 snapshot taken from the public pages need not be the cohort
   the paper evaluated (N = 146 in its deposit). The version label records which one was used.
 
-**Mode D** measures the legacy served behaviour for B-0.5's attribution work. It is a separate
-item and **not a prerequisite** for this one.
+**Mode D** measures the legacy served behaviour: it is policy gate 1's comparison with Mode C, and
+attributes the difference to the candidate gate and the served score only through its intermediate
+reading (`scorer-measurement/PLAN_B05.md` §5). It is a separate item and **not a prerequisite** for
+this one.
 
 ### D4 — Ordering by test score
 
