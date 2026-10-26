@@ -616,18 +616,29 @@ def record_test_run(
     device: str,
     record_requested: bool,
     at: Optional[datetime] = None,
+    mode: str = "C",
 ) -> Dict[str, Any]:
     """Append one measurement of the version to its usage history: when, which
-    weights, which report, and its result (D7: "when it ran, on which
-    checkpoint, and its result"), aggregates only. Written by the measurement
-    right after its report is published, so a run from the command line counts
-    as one from the Test tab. Returns the entry."""
+    weights, which report, its measurement mode and its result (D7: "when it
+    ran, on which checkpoint, and its result"), aggregates only. Written by the
+    measurement right after its report is published, so a run from the command
+    line counts as one from the Test tab. Returns the entry.
+
+    **`mode` is an added key** (Batch 3, Mode D): an entry written before it has
+    none and reads as Mode C, the only mode that wrote any (`entry_mode`)."""
     entry = _usage("test_run", at, run_id=run_id, report_sha256=report_sha256,
-                   checkpoint_sha256=checkpoint_sha256, metrics=dict(metrics),
+                   checkpoint_sha256=checkpoint_sha256, mode=str(mode), metrics=dict(metrics),
                    n_ranked=n_ranked, deterministic=bool(deterministic), device=str(device),
                    record_requested=bool(record_requested))
     _append_entry(version, USAGE_FILE, entry)
     return entry
+
+
+def entry_mode(entry: Mapping[str, Any]) -> str:
+    """A `test_run` entry's measurement mode: its `mode`, or "C" for an entry
+    written before the key existed, when Mode C was the only mode that wrote."""
+    mode = entry.get("mode")
+    return mode if isinstance(mode, str) and mode else "C"
 
 
 def record_registration(

@@ -19,6 +19,9 @@ comparable and visible, not to forbid it:
   version is "not tested on this cohort version"; one whose records there are
   all under other scoring semantics is "tested under different scoring
   semantics". Neither is interleaved by a number.
+- **Mode C records only:** the metrics a list is ordered by are Mode C's; a
+  scoring group of another mode (Mode D, the served ranking) is not ordered,
+  its records shown and never ranked against each other (PLAN_B05 §6).
 - **One number per checkpoint, by a fixed rule** (`chosen_record`): its first
   registered record from a deterministic regime, else its first registered
   record (lowest registration sequence in its ledger). A deterministic record
@@ -182,6 +185,11 @@ def chosen_record(records: Sequence[Mapping[str, Any]]) -> Optional[Mapping[str,
     return min(deterministic or records, key=_sequence)
 
 
+def _mode(record: Mapping[str, Any]) -> Optional[str]:
+    scoring = record.get("scoring")
+    return scoring.get("mode") if isinstance(scoring, Mapping) else None
+
+
 def _value(record: Mapping[str, Any], metric: str) -> Optional[float]:
     metrics = record.get("metrics")
     value = metrics.get(metric) if isinstance(metrics, Mapping) else None
@@ -262,6 +270,21 @@ def order_by_test_score(
             f"ordering by test score is not offered: records on cohort version "
             f"{cohort_digest[:12]}... name role {named}, not the role {role!r} it was asked "
             "for; a version has one role, and ordering follows the records' own"),
+            cohort_digest, scoring_semantics_digest, metric, ())
+
+    # **Mode C records only** (PLAN_B05 §6): the metrics a list is ordered by
+    # are Mode C's, and a record of another mode (Mode D, the served ranking) is
+    # shown, never ordered. One scoring group is one mode (`mode` is among its
+    # fields), so a group holding any other is not ordered at all.
+    modes = {_mode(r) for ledgers in by_digest.values() for records in ledgers.values()
+             for r in records if r.get("cohort_digest") == cohort_digest
+             and r.get("scoring_semantics_digest") == scoring_semantics_digest}
+    if modes - {"C"}:
+        named = ", ".join(sorted(str(m) for m in modes - {"C"}))
+        return Ordering(False, (
+            f"ordering by test score is not offered for this scoring group: its records are "
+            f"mode {named}, not Mode C; only Mode C records are ordered, and the others are "
+            "shown, never ordered"),
             cohort_digest, scoring_semantics_digest, metric, ())
 
     unordered: List[Row] = []

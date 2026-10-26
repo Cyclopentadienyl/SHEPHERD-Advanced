@@ -81,7 +81,7 @@ def _statuses(report, prefix):
             if p.probe_id.startswith(prefix)}
 
 
-M4_DEMO_PROBES = ["T1", "T2", "T3", "T4", "T5", "T6"]
+M4_DEMO_PROBES = ["T1", "T2", "T3", "T4", "T5", "T6", "T7"]
 M4_REAL_PROBES = ["RT1", "RT2", "RT3"]
 
 
@@ -191,7 +191,7 @@ def test_the_demo_phase_passes_and_every_required_probe_runs(tmp_path, served_st
         "cpu", "cpu")
     assert str(tmp_path) not in json.dumps(identity)
 
-    # ---- Contract M4's flow (T1-T6), after M11, every probe passed.
+    # ---- Contract M4's flow (T1-T6) and Mode D (T7), after M11, every probe passed.
     m4 = _statuses(report, "T")
     assert list(m4) == M4_DEMO_PROBES
     assert {k: v[0] for k, v in m4.items()} == dict.fromkeys(m4, "passed"), (
@@ -208,15 +208,19 @@ def test_the_demo_phase_passes_and_every_required_probe_runs(tmp_path, served_st
     assert facts["T1"]["counts"] == probe.M4_DEMO_COUNTS
     assert facts["T1"]["manifest_sha256"] == hashlib.sha256(
         (version / "cohort.json").read_bytes()).hexdigest()
-    # T2: the one report kept for D1's weights is what the one record names,
-    # beside the copy of D1's checkpoint (the bytes D1 trained), and R10's
-    # evidence was found. (W8's run keeps another, for M2's resumed weights;
-    # a run directory is named for the checkpoint it measured.)
+    # T2: the one Mode C report kept for D1's weights is what the first record
+    # names, beside the copy of D1's checkpoint (the bytes D1 trained), and
+    # R10's evidence was found. (T7 keeps D1's Mode D report beside it and W8's
+    # run another, for M2's resumed weights; a run directory is named for the
+    # checkpoint it measured.)
     d1_sha = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
-    (kept,) = [path for path in (version / "reports").glob("*/report.json")
-               if f"-{d1_sha[:12]}-" in path.parent.name]
+    d1_reports = {json.loads(path.read_text())["manifest"]["mode"]: path
+                  for path in (version / "reports").glob("*/report.json")
+                  if f"-{d1_sha[:12]}-" in path.parent.name}
+    assert sorted(d1_reports) == ["C", "D"]
+    kept = d1_reports["C"]
     checkpoints = tmp_path / "m4" / "checkpoints"
-    (record,) = _ledger_records(checkpoints)
+    record, d_record = _ledger_records(checkpoints)
     assert record["source_artifact_digest"] == facts["T2"]["report_sha256"] == hashlib.sha256(
         kept.read_bytes()).hexdigest()
     assert record["checkpoint_digest"] == hashlib.sha256(checkpoint.read_bytes()).hexdigest()
@@ -224,10 +228,11 @@ def test_the_demo_phase_passes_and_every_required_probe_runs(tmp_path, served_st
     for scope in ("training", "validation"):
         assert facts["T2"]["r10"][scope]["evidence"] == "found"
         assert facts["T2"]["r10"][scope]["disease_overlap"]["k"] is not None
-    # T3 and T4 wrote nothing: still the one record, and no report for the
-    # version mapped against M1's graph (its import itself is on disk).
+    # T3 and T4 wrote nothing: T2's record and T7's after it only, and no
+    # report for the version mapped against M1's graph (its import itself is on
+    # disk).
     assert facts["T3"]["same_report_again"] == "already_registered"
-    assert len(_ledger_records(checkpoints)) == 1
+    assert len(_ledger_records(checkpoints)) == 2
     assert (registry / "versions" / probe.M4_OTHER_GRAPH_LABEL / "cohort.json").is_file()
     assert not (registry / "versions" / probe.M4_OTHER_GRAPH_LABEL / "reports").exists()
     assert "kg" in facts["T4"]["differing_roles"]
@@ -245,6 +250,21 @@ def test_the_demo_phase_passes_and_every_required_probe_runs(tmp_path, served_st
     assert facts["T6"]["cohort_version"]["manifest_sha256"] == facts["T1"]["manifest_sha256"]
     training = facts["T2"]["r10"]["training"]["disease_overlap"]
     assert facts["T6"]["overlap"] == f"{training['k']} of {training['n']}"
+    # T7: Mode D's record, second, from its kept report's bytes, in its own
+    # scoring group; its outcomes add up over the import-eligible cases, and
+    # the cross-check read T2's report.
+    assert (record["scoring"]["mode"], d_record["scoring"]["mode"]) == ("C", "D")
+    assert d_record["source_artifact_digest"] == facts["T7"]["report_sha256"] == hashlib.sha256(
+        d1_reports["D"].read_bytes()).hexdigest()
+    assert d_record["registration"]["sequence"] == facts["T7"]["record_sequence"] == 2
+    outcomes = facts["T7"]["outcomes"]
+    assert outcomes["n_import_eligible"] == probe.M4_DEMO_COUNTS["ranked_eligible"] == sum(
+        outcomes[name] for name in ("ranked", "not_reached", "refused"))
+    # T1's workspace holds no shortest-path table (M4 computes one in a copy),
+    # so the service serves the model term alone there, and Mode D measures that.
+    assert facts["T7"]["score_semantics"] == "served:gnn_only:eta=1.0:sp=none"
+    assert [entry["run_id"] for entry in facts["T7"]["kept_mode_c_cross_check"]] == [
+        kept.parent.name]
 
     # ---- M5's acceptance (W1-W11), after T6, every probe passed, and its
     # evidence holds no path.
@@ -291,9 +311,10 @@ def test_the_demo_phase_passes_and_every_required_probe_runs(tmp_path, served_st
             tmp_path / "m5" / f"service-{mode}" / "server.log").read_text()
     # W8 and W9: the run's report is kept in T1's version, and the one record
     # beside the listed checkpoint is built from those bytes; the usage history
-    # holds the run and its registration. W10 left no third report.
+    # holds the run and its registration. W10 left no fourth report (T2's,
+    # T7's and W8's are the three).
     reports = sorted((version / "reports").glob("*/report.json"))
-    assert len(reports) == 2
+    assert len(reports) == 3
     (w8_report,) = [path for path in reports if f"-{child[:12]}-" in path.parent.name]
     assert hashlib.sha256(w8_report.read_bytes()).hexdigest() == facts["W8"]["report_sha256"]
     (w9_record,) = _ledger_records(listed.parent)

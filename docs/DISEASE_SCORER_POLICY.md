@@ -3,6 +3,10 @@
 **Status:** Accepted (2026-08) by the deploying institution. **Not yet implemented** — see the
 status table in §2. Implementation is work item B-1, which remains gated (§6).
 
+**Revision: rev 7 (2026-10-26). Factual update, no normative change.** Mode D is built (Batch 3,
+for review; `working/scorer-measurement/PLAN_B05.md` §11): §2.1's gate 1 evidence and §6's gate 1
+row say so. It has no institutional run or report, so gate 1 is not cleared. Nothing else changes.
+
 **Revision: rev 6 (2026-10-26). Factual update, no normative change.** §2.1 points to Batch 2's
 designs: Mode D, the result union, the shared scoring boundary and gate 3's traversal. It corrects
 two overstatements about the unmapped phenotype and Mode C's refusal, and §3.5 names the module
@@ -213,8 +217,9 @@ question 2). The discriminated semantics are designed as the union's `path_reaso
 
 **Gate 1's evidence.** Mode C is built and has run on synthetic and demo cohorts (M4 acceptance,
 `2c94a4e`; M5 close-out, `773dc4a`). Mode D (the served ranking measured on the same cohort,
-B-0.5) is not built; its design is written (`working/scorer-measurement/PLAN_B05.md`, 2026-10-26).
-The design problem it resolves is recorded in `working/scorer-measurement/PLAN_B03.md` §4:
+B-0.5) is built (Batch 3, 2026-10-26, for review: `scripts/measure_scorer.py --mode D`; design
+and as-built record in `working/scorer-measurement/PLAN_B05.md`). The design problem it resolves
+is recorded in `working/scorer-measurement/PLAN_B03.md` §4:
 the public entry point truncates to `top_k` and builds paths and explanations, so getting an
 untruncated served rank without duplicating candidate construction is an open design problem. A
 second problem, not in that plan, follows from the BFS gate (§2, first row): a disease the gate does
@@ -393,7 +398,7 @@ B-1 implementation may not begin until all three clear:
 
 | Gate | Status |
 |---|---|
-| **1 — B-0 measurement report** | Not cleared. Of B-0, Mode C (the approved ranking, measured) is built and has run on synthetic and demo cohorts; Mode D (the served ranking, measured) is not built, and no institutional run or report exists (§2.1). It stands as written and limits B-1's implementation: the minimal Mode D design, the shared scoring boundary and gate 3's traversal design go ahead under it (BACKLOG §0, batch 2). Only a concrete revision, with its reason, goes to the owner and then the institution (§2.1). |
+| **1 — B-0 measurement report** | Not cleared. Of B-0, Mode C (the approved ranking, measured) is built and has run on synthetic and demo cohorts; Mode D (the served ranking, measured) is built (Batch 3, for review), and no institutional run or report exists (§2.1). It stands as written and limits B-1's implementation: the minimal Mode D design, the shared scoring boundary and gate 3's traversal design go ahead under it (BACKLOG §0, batch 2). Only a concrete revision, with its reason, goes to the owner and then the institution (§2.1). |
 | **2 — Institutional scorer-policy decision** | **Cleared by this record.** |
 | **3 — Approved target-restricted evidence-traversal design** | Not cleared. Requires legal reachability × completeness combinations, visited-state and cycle semantics, multi-source provenance, deterministic ordering, global-budget units and enforcement, target fairness, and cancellation behaviour. |
 

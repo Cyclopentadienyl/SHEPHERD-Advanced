@@ -1715,6 +1715,39 @@ recorded`（checkpoint 記錄了訓練輸入，而且完全沒有驗證的條目
 以 `src/evaluation/caveats.py` 共用字句表示的四個 R10 標籤（`unverifiable` 附其原因）、一次標籤定義、報告路徑
 與 run id。報告本身只保存狀態，不含任何說明文字。
 
+### Mode D：今日服務的排名（自 Batch 3 起）
+
+`--mode D` 在同一個已登記版本上量測 **Diagnosis 頁今天實際提供的排名**：checkpoint 由服務自己的
+builder 在 `--data-dir` 上建成 pipeline（工作區有最短路徑表時一併載入，與服務相同），每個
+匯入後合格（import-eligible）的病例都經由服務 pipeline 自己的 `rank()` 排名，並在同一組
+embedding 上同時執行 Mode C。它是評分政策 gate 1 比較的輸入，不是核准的政策
+（`docs/working/scorer-measurement/PLAN_B05.md`）。
+
+```bash
+python scripts/measure_scorer.py --mode D \
+    --checkpoint data/workspaces/<ws>/runs/<arch>/<run>/checkpoints/<file>.pt \
+    --data-dir data/workspaces/<ws> \
+    --cohort mygene2-2026-10 --registry /srv/shepherd/cohorts \
+    [--training-evidence DIR ...] [--record] [--device auto|cuda|cpu] [--batch-size 32]
+```
+
+- **同一次執行、同一套規則。** 上面的每項檢查、GPU 鎖、報告庫與登錄都照常適用。`--mode D` 搭配
+  `--split` 會被拒絕（結束碼 2）：它的比較以版本的匯入後合格病例為準。會只以路徑推理提供服務的
+  pipeline，以及綁定到另一個工作區的版本，都在任何病例排名之前被拒絕。
+- **一次一個病例。** Mode D 經由服務路徑逐案排名（manifest 中 `batch_size` 為 1；`--batch-size`
+  是 Mode C 那一側的），所以比 Mode C 慢：大型 cohort 請先跑一次試量計時。
+- **報告多了什麼。** 每份報告都有的欄位，加上 `outcomes`（`ranked`、`not_reached`——其中
+  `no_candidates`——與 `refused`，加總等於匯入後合格病例數）、`import_counts`、`served`（服務
+  身分）與 `comparison`：同一組 embedding 上的 Mode C、逐步推導 C → G1 → G2 → D（先候選集、再
+  平手規則、再分數），以及對同一 checkpoint 與版本的每份已保存 Mode C 報告，有多少個排名一致
+  （只陳述，絕不視為錯誤）。`ranks.json` 每個匯入後合格病例一列。
+- **以病例集命名。** `post_import_*` 與 `coverage` 以匯入後合格病例為分母，未觸及的病例計 0；
+  `reached_*` 只計觸及的病例。沒有任何數字是端到端的：匯入時排除的病例另列在旁。
+- **分開登錄。** 加 `--record` 時它成為 checkpoint 旁自己的一筆紀錄。它的評分語意與 Mode C
+  不同，所以兩者永不互相比對是否不一致，Mode D 紀錄在 Models 頁只顯示、永不參與排序。主控台、
+  Test 頁的 Result 與 Models 頁都以「Served ranking today (Mode D) … not the approved scorer
+  policy」標示，並附上服務的評分模式與 η。沒有任何頁面能啟動 Mode D 執行。
+
 ### 登錄
 
 - **`--record`** 在執行結束後立即登錄報告。**沒有加它時**，以及 `--record` 被拒絕時（結束碼

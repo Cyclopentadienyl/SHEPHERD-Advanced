@@ -188,6 +188,10 @@ logger = logging.getLogger(__name__)
 
 #: What Mode C ranks each patient against, as its manifest records it. There is
 #: no expansion to describe: the candidates are every disease in the graph.
+#: The measurement modes this program runs: Mode C, and Mode D beside it
+#: (`docs/working/scorer-measurement/PLAN_B05.md`).
+MODES = ("C", "D")
+
 CANDIDATE_CONSTRUCTION = "every disease in the knowledge graph"
 
 #: How the scored model was built: through `build_shepherd_model`, the builder
@@ -277,6 +281,11 @@ class MeasurementInputs(NamedTuple):
     cohort version) is set. The other generated split, read for its binding and
     the disjointness check, is not kept: it is checked, not consumed, and no
     role records it; nor are R10's evidence files, which are reduced to counts.
+
+    **A Mode D run reads the workspace through the served pipeline** (Batch 3,
+    `_measure_mode_d`): `manifest` and `graph` are then `None`, `checkpoint`
+    holds the identity of the pipeline's one read and no payload, and `bound`,
+    `dataset_record` and R10 come from that build (`bound_inputs`).
     """
 
     #: The generated split, resolved; `None` for a registered version.
@@ -287,8 +296,8 @@ class MeasurementInputs(NamedTuple):
     #: The version as its report records it (`cohort_version_block`), built from
     #: that one read; `None` for a generated split.
     cohort_version: Optional[Dict[str, Any]]
-    manifest: ManifestRead
-    graph: GraphArtifactsRead
+    manifest: Optional[ManifestRead]
+    graph: Optional[GraphArtifactsRead]
     samples: SamplesRead
     checkpoint: CheckpointRead
     #: The digest the run's one manifest reading binds for each of the four
@@ -454,7 +463,9 @@ def read_measurement_inputs(
         recorded_by=f"checkpoint {checkpoint}",
         compared_with=f"the workspace {data_dir}",
     )
-    r10 = None if version is None else _r10(read, samples, candidates)
+    # R3 has passed, so the checkpoint is a mapping that records its inputs.
+    r10 = (None if version is None
+           else _r10(read.checkpoint.get("training_input_digests"), samples, candidates))
 
     logger.info(
         "Read %d samples of %s; checkpoint %s (sha256 %s)",
@@ -644,8 +655,10 @@ def _read_checkpoint(checkpoint: Path, device: torch.device, *,
         raise UnparseableCheckpoint(checkpoint, exc) from exc
 
 
-def _r10(read: CheckpointRead, samples: SamplesRead, candidates: Sequence[Path]) -> Dict[str, Any]:
-    """R10 from the checkpoint's own record (its one read) and the candidates.
+def _r10(recorded: Any, samples: SamplesRead, candidates: Sequence[Path]) -> Dict[str, Any]:
+    """R10 from the checkpoint's own record of its training inputs, taken from
+    its one read (`training_input_digests`: Mode C's read, or for Mode D the
+    served pipeline's, `bound_inputs`), and the candidates.
 
     Recorded, never enforced (contract §5.4). A candidate that cannot be read
     for a reason other than its absence refuses the run rather than reading as
@@ -653,8 +666,6 @@ def _r10(read: CheckpointRead, samples: SamplesRead, candidates: Sequence[Path])
     """
     from src.evaluation.r10 import compute_r10
 
-    # R3 has passed, so the checkpoint is a mapping that records its inputs.
-    recorded = read.checkpoint.get("training_input_digests")
     try:
         return compute_r10(recorded, samples.samples, candidates)
     except OSError as exc:
@@ -690,13 +701,22 @@ def measurement_input_digests(inputs: MeasurementInputs) -> Dict[str, str]:
 
     Nothing globs the directory, so an unrelated file beside these does not
     change the record of a run that never read it.
+
+    **A Mode D run's tensors were read by the served pipeline** (`inputs.graph`
+    is None): its workspace check compared each tensor read with the manifest's
+    digest and bound that digest, so the bound digest is the digest of the bytes
+    it parsed (`DiagnosisPipeline.bound_inputs`). Nothing is read again for it.
     """
     from src.kg.artifacts import GRAPH_TENSOR_ROLES
 
+    if inputs.graph is not None:
+        tensors = {role: inputs.graph.reads.get(role) for role in GRAPH_TENSOR_ROLES}
+    else:
+        tensors = {role: inputs.bound.get(role) for role in GRAPH_TENSOR_ROLES}
     reads: Dict[str, Any] = {
         "checkpoint": inputs.checkpoint.identity,
         "samples": inputs.samples.identity,
-        **{role: inputs.graph.reads.get(role) for role in GRAPH_TENSOR_ROLES},
+        **tensors,
     }
     if inputs.version is None:
         reads["split_manifest"] = inputs.manifest.identity
@@ -707,7 +727,8 @@ def measurement_input_digests(inputs: MeasurementInputs) -> Dict[str, str]:
             f"no read of {', '.join(missing)}, so there is no digest to record; a "
             "measurement record names only bytes a reader parsed"
         )
-    digests = {role: read.sha256 for role, read in reads.items()}
+    digests = {role: read if isinstance(read, str) else read.sha256
+               for role, read in reads.items()}
     digests["kg"] = inputs.bound["kg"]
     return digests
 
@@ -836,8 +857,9 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
                    cohort_version: Optional[Mapping[str, Any]] = None,
                    r10: Optional[Mapping[str, Any]] = None,
                    cuda_executed: Optional[bool] = None,
-                   model: Any = None) -> Any:
-    """Build the manifest of one Mode C run.
+                   model: Any = None,
+                   semantics: Optional[Mapping[str, Any]] = None) -> Any:
+    """Build the manifest of one Mode C run, or of a Mode D run (`semantics`).
 
     `digests` is the record of what the run read, from
     `measurement_input_digests` (contract M2.1, S7); nothing here hashes a file.
@@ -869,6 +891,13 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
     `supplied`, the relations are a registered cohort's and `r10` is required.
     Without one it is the generated split `args.split`, with no R10. The
     manifest refuses any other combination when it is built.
+
+    **Mode D gives the same fields its own values** (`semantics`, from
+    `mode_d.served_semantics`: mode, metric schema, candidate construction, batch
+    size, score semantics, tie policy) and adds no field
+    (`docs/working/scorer-measurement/PLAN_B05.md` §6). Everything else, the
+    regime, the digests, the relations, R10 and the environment, is built here
+    the same way for both.
     """
     from src.evaluation.measurement import (
         METRIC_SCHEMA_VERSION,
@@ -881,17 +910,30 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
 
     registered = cohort_version is not None
     code = code_revision(PROJECT_ROOT)
+    kind = {
+        "mode": "C",
+        "metric_schema_version": METRIC_SCHEMA_VERSION,
+        "candidate_construction": CANDIDATE_CONSTRUCTION,
+        "batch_size": args.batch_size,
+        "score_semantics": "raw cosine, no eta mixture and no shortest-path term",
+        "canonical_tie_policy_version": "score-desc-then-global-id-asc/v1",
+    }
+    if semantics is not None:
+        unknown = sorted(set(semantics) - set(kind))
+        if unknown:
+            raise ValueError(f"semantic values for fields a mode does not set: {unknown}")
+        kind.update(semantics)
     return MeasurementManifest(
-        mode="C",
+        mode=kind["mode"],
         split=cohort_version["role"] if registered else args.split,
-        metric_schema_version=METRIC_SCHEMA_VERSION,
+        metric_schema_version=kind["metric_schema_version"],
         cohort_kind="supplied" if registered else "generated",
         n_samples=n_samples,
-        candidate_construction=CANDIDATE_CONSTRUCTION,
-        batch_size=args.batch_size,
-        score_semantics="raw cosine, no eta mixture and no shortest-path term",
+        candidate_construction=kind["candidate_construction"],
+        batch_size=kind["batch_size"],
+        score_semantics=kind["score_semantics"],
         model_construction=MODEL_CONSTRUCTION,
-        canonical_tie_policy_version="score-desc-then-global-id-asc/v1",
+        canonical_tie_policy_version=kind["canonical_tie_policy_version"],
         checkpoint_path=str(args.checkpoint),
         data_dir=str(args.data_dir),
         graph_fingerprint=compute_fingerprint(graph_data),
@@ -923,8 +965,15 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Measure the disease scorer: every patient against every disease (Mode C)"
+        description="Measure the disease scorer: every patient against every disease (Mode C), "
+                    "or the ranking the Diagnosis page serves today beside it (Mode D)"
     )
+    parser.add_argument("--mode", choices=MODES, default="C",
+                        help="C (default): the approved scorer, raw cosine over every disease. "
+                             "D: the served ranking (path discovery and the served score), "
+                             "measured through the served pipeline's own rank(), with Mode C "
+                             "run on the same embeddings beside it. D needs --cohort; "
+                             "--batch-size is the C side's chunk")
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--data-dir", type=Path, required=True)
     cohort = parser.add_mutually_exclusive_group(required=True)
@@ -1000,6 +1049,12 @@ def _refuse_mixed_arguments(parser: argparse.ArgumentParser, args: argparse.Name
     """Refuse an argument that belongs to the other kind of cohort (M4 decision
     8), before the device is resolved or anything is read. `parser.error` exits
     with status 2 and one message."""
+    if args.mode == "D" and args.split is not None:
+        parser.error(
+            "--mode D measures a registered cohort version (--cohort LABEL --registry DIR) "
+            "only: its comparison with Mode C is reported on a version's import-eligible "
+            "cases, the form policy gate 1's report needs. Nothing was read or written."
+        )
     if args.split is not None:
         given = [flag for flag, value in (("--registry", args.registry),
                                           ("--training-evidence", args.training_evidence),
@@ -1412,7 +1467,7 @@ def _record_run(inputs: MeasurementInputs, result: ModeResult, run_id: str,
             checkpoint_sha256=inputs.checkpoint.identity.sha256,
             metrics=result.authoritative_metrics, n_ranked=result.n_ranked,
             deterministic=bool(manifest.deterministic_algorithms), device=manifest.device,
-            record_requested=record_requested,
+            record_requested=record_requested, mode=manifest.mode,
         )
     except (OSError, ValueError) as exc:
         raise ValueError(
@@ -1465,8 +1520,15 @@ def _print_registered_summary(inputs: MeasurementInputs, result: ModeResult, run
     excluded = ", ".join(f"{name} {n}" for name, n in counts["excluded"].items())
     print(f"\nCohort version {block['label']} (role {block['role']}), manifest sha256 "
           f"{block['manifest_sha256'][:12]}...")
-    print(f"  coverage: {result.n_ranked} ranked of {counts['source_cases']} source cases; "
-          f"{counts['n_excluded']} excluded ({excluded})")
+    if result.manifest.mode == "D":
+        # Mode D's three case sets, never merged under one name (PLAN_B05 §4).
+        print(f"  {result.n_ranked} reached by the served ranking of "
+              f"{counts['ranked_eligible']} import-eligible cases; {counts['source_cases']} "
+              f"source cases, {counts['n_excluded']} excluded at import ({excluded}), counted "
+              "beside the figures, not in them")
+    else:
+        print(f"  coverage: {result.n_ranked} ranked of {counts['source_cases']} source cases; "
+              f"{counts['n_excluded']} excluded ({excluded})")
     print("\nR10, against the inputs this checkpoint records:")
     for scope, _ in R10_SCOPES:
         entry = inputs.r10[scope]
@@ -1549,38 +1611,11 @@ def _run(args: argparse.Namespace, *, registry: Optional[Path]) -> int:
             "this is a development number, not one from the deployment hardware.", device
         )
 
-    from src.evaluation.measurement import encode_full_graph, run_mode_c
-    from src.models.gnn.shepherd_gnn import build_shepherd_model
-
-    # Each input read once, and verified and recorded from those reads, before
-    # any model is built or any output written (contract M2.1, S7; M4 §6).
-    inputs = read_measurement_inputs(
-        args.checkpoint, args.data_dir, device, split=args.split, cohort=args.cohort,
-        registry=registry, training_evidence=args.training_evidence,
-        expect_checkpoint_sha256=args.expect_checkpoint_sha256,
-        expect_version_sha256=args.expect_version_sha256,
-    )
-    graph_data, samples = inputs.graph.graph_data, inputs.samples.samples
-    digests = measurement_input_digests(inputs)
-
     try:
-        model = build_shepherd_model(inputs.checkpoint.checkpoint, graph_data, device)
-        # Kept **whole**: `run_mode_c` checks that its manifest describes the regime
-        # these embeddings were computed under, which a bare dict could not carry.
-        encoded = encode_full_graph(model, graph_data, device)
-
-        result = run_mode_c(
-            full_graph_embeddings=encoded,
-            samples=samples,
-            manifest=build_manifest(
-                args, graph_data, len(samples), device, digests=digests,
-                dataset_record=inputs.dataset_record.summary(),
-                cohort_version=inputs.cohort_version, r10=inputs.r10,
-                cuda_executed=cuda_executed, model=model, regime=encoded.regime,
-            ),
-            device=device,
-            batch_size=args.batch_size,
-        )
+        if args.mode == "D":
+            inputs, result = _measure_mode_d(args, registry, device, cuda_executed)
+        else:
+            inputs, result = _measure_mode_c(args, registry, device, cuda_executed)
     except RuntimeError as exc:
         # **No fallback** (D5): an operation without a deterministic
         # implementation ends the run, before anything is written, saying so.
@@ -1608,10 +1643,10 @@ def _run(args: argparse.Namespace, *, registry: Optional[Path]) -> int:
         try:
             if inputs.version is None:
                 report_path, ranks_path = _publish_generated(result, args.output)
-                logger.info("Mode C -> %s, %s", report_path, ranks_path)
+                logger.info("Mode %s -> %s, %s", result.manifest.mode, report_path, ranks_path)
             else:
                 run_id, report_path, report_sha256 = _publish_to_store(result, inputs)
-                logger.info("Mode C -> %s", report_path)
+                logger.info("Mode %s -> %s", result.manifest.mode, report_path)
         except (ValueError, OSError) as exc:
             raise _publication_failure(exc, inputs, args.output) from exc
 
@@ -1652,11 +1687,7 @@ def _run(args: argparse.Namespace, *, registry: Optional[Path]) -> int:
             raise _failure_after_publishing(exc, inputs, report_path) from exc
 
     try:
-        print(f"\nMode C — {result.n_ranked} ranked, {result.n_ground_truth_absent} absent")
-        for name, value in result.authoritative_metrics.items():
-            print(f"  {name:38s} {value:.6f}")
-        print(f"  {'candidate diseases per patient':38s} "
-              f"{result.sampler_evidence['candidate_columns']['max']}")
+        _print_result(result)
 
         # **The number says what its graph was built from** (contract M3b), here
         # as in the manifest: binding state and origin apart.
@@ -1700,6 +1731,146 @@ def _run(args: argparse.Namespace, *, registry: Optional[Path]) -> int:
         return status
     except (ValueError, OSError) as exc:
         raise _failure_after_publishing(exc, inputs, report_path) from exc
+
+
+def _measure_mode_c(args: argparse.Namespace, registry: Optional[Path], device: torch.device,
+                    cuda_executed: bool) -> Tuple[MeasurementInputs, Any]:
+    """Mode C's inputs and result: each input read once, and verified and
+    recorded from those reads, before any model is built or any output written
+    (contract M2.1, S7; M4 §6); then the model, the full-graph forward and
+    `run_mode_c`."""
+    from src.evaluation.measurement import encode_full_graph, run_mode_c
+    from src.models.gnn.shepherd_gnn import build_shepherd_model
+
+    inputs = read_measurement_inputs(
+        args.checkpoint, args.data_dir, device, split=args.split, cohort=args.cohort,
+        registry=registry, training_evidence=args.training_evidence,
+        expect_checkpoint_sha256=args.expect_checkpoint_sha256,
+        expect_version_sha256=args.expect_version_sha256,
+    )
+    graph_data, samples = inputs.graph.graph_data, inputs.samples.samples
+    digests = measurement_input_digests(inputs)
+
+    model = build_shepherd_model(inputs.checkpoint.checkpoint, graph_data, device)
+    # Kept **whole**: `run_mode_c` checks that its manifest describes the regime
+    # these embeddings were computed under, which a bare dict could not carry.
+    encoded = encode_full_graph(model, graph_data, device)
+
+    result = run_mode_c(
+        full_graph_embeddings=encoded,
+        samples=samples,
+        manifest=build_manifest(
+            args, graph_data, len(samples), device, digests=digests,
+            dataset_record=inputs.dataset_record.summary(),
+            cohort_version=inputs.cohort_version, r10=inputs.r10,
+            cuda_executed=cuda_executed, model=model, regime=encoded.regime,
+        ),
+        device=device,
+        batch_size=args.batch_size,
+    )
+    return inputs, result
+
+
+def _measure_mode_d(args: argparse.Namespace, registry: Optional[Path], device: torch.device,
+                    cuda_executed: bool) -> Tuple[MeasurementInputs, Any]:
+    """Mode D's inputs and result (`docs/working/scorer-measurement/PLAN_B05.md`).
+
+    **The pipeline is built as the service builds it** (`build_served_pipeline`),
+    and the workspace is read by it, once: the graph, the tensors, the manifest,
+    the dataset record, the checkpoint and the shortest-path table, each verified
+    as serving verifies them (R1, R5 and R3 among them). This run reads only
+    what serving does not: the cohort version, resolved first as for Mode C, and
+    its samples. Then the version's graph and dataset record must be the ones
+    the pipeline bound (`cohort_graph`), R10 is computed from the checkpoint's
+    record in the pipeline's one read, and both manifests are built from those
+    reads: Mode D's with its own semantic values, and the C side's as any Mode C
+    run's, for the device and `--batch-size` it runs with.
+    """
+    from src.evaluation.mode_d import (
+        ModeDRefused,
+        kept_mode_c_reports,
+        run_mode_d,
+        served_semantics,
+    )
+    from src.inference.pipeline import PipelineBuildError, build_served_pipeline
+    from src.utils.checkpoint_io import CheckpointChanged, CheckpointRead
+
+    version, cohort_version, candidates = _resolve_registered(
+        args.data_dir, args.cohort, registry, args.training_evidence,
+        expected_sha256=args.expect_version_sha256,
+    )
+    try:
+        pipeline = build_served_pipeline(
+            Path(args.data_dir) / "kg.json", checkpoint_path=str(args.checkpoint),
+            data_dir=str(args.data_dir), device=str(device),
+            expected_checkpoint_sha256=args.expect_checkpoint_sha256,
+        )
+    except CheckpointChanged as exc:
+        resolved = Path(args.checkpoint).resolve()
+        raise _changed_since_chosen(f"the checkpoint {args.checkpoint} (read at {resolved})",
+                                    exc.found, exc.expected) from None
+    except PipelineBuildError as exc:
+        raise ModeDRefused(
+            f"the served pipeline could not be built over {args.data_dir} with "
+            f"{args.checkpoint}: {exc}"
+        ) from exc
+    semantics = served_semantics(pipeline.served_identity())
+    samples = _read_version_samples(version)
+    bound = pipeline.bound_inputs()
+    _verify_version_binding(version, bound.graph, bound.dataset_record)
+    r10 = _r10(bound.checkpoint_training_inputs, samples, candidates)
+    inputs = MeasurementInputs(
+        cohort=None, version=version, cohort_version=cohort_version, manifest=None,
+        graph=None, samples=samples,
+        checkpoint=CheckpointRead(checkpoint=None, identity=bound.checkpoint),
+        bound=dict(bound.graph), dataset_record=bound.dataset_record, r10=r10,
+    )
+    logger.info(
+        "Mode D over cohort version %s: %d cases; served %s; checkpoint sha256 %s",
+        cohort_version["label"], len(samples.samples),
+        pipeline.served_identity().scoring_mode, bound.checkpoint.sha256[:12],
+    )
+    common = dict(
+        digests=measurement_input_digests(inputs),
+        dataset_record=bound.dataset_record.summary(),
+        cohort_version=cohort_version, r10=r10, cuda_executed=cuda_executed,
+        model=pipeline.model, regime=pipeline.embedding_regime,
+    )
+    n = len(samples.samples)
+    result, _mode_c = run_mode_d(
+        pipeline, samples.samples,
+        build_manifest(args, bound.graph_data, n, device, semantics=semantics, **common),
+        build_manifest(args, bound.graph_data, n, device, **common),
+        device=device, batch_size=args.batch_size, cohort_version=cohort_version,
+        kept_mode_c=lambda c_ranks: kept_mode_c_reports(version, bound.checkpoint.sha256,
+                                                        c_ranks),
+    )
+    return inputs, result
+
+
+def _print_result(result: Any) -> None:
+    """The run's figures on the console, by its mode, each under its label."""
+    from src.evaluation.caveats import mode_label
+
+    print(f"\n{mode_label(result.manifest.mode, result.manifest.score_semantics)}")
+    if result.manifest.mode == "D":
+        outcomes = result.outcomes
+        print(f"  {outcomes['ranked']} ranked, {outcomes['not_reached']} not reached "
+              f"({outcomes['no_candidates']} with no candidates), {outcomes['refused']} "
+              f"refused, of {outcomes['n_import_eligible']} import-eligible cases")
+        for name, value in result.authoritative_metrics.items():
+            print(f"  {name:38s} {value:.6f}")
+        c_side = result.comparison["mode_c"]
+        print(f"\n{result.comparison['statement']}")
+        print(f"{mode_label('C')}, on the same embeddings:")
+        for name, value in c_side["authoritative_metrics"].items():
+            print(f"  {name:38s} {value:.6f}")
+        return
+    print(f"  {result.n_ranked} ranked, {result.n_ground_truth_absent} absent")
+    for name, value in result.authoritative_metrics.items():
+        print(f"  {name:38s} {value:.6f}")
+    print(f"  {'candidate diseases per patient':38s} "
+          f"{result.sampler_evidence['candidate_columns']['max']}")
 
 
 def _flush_stdout() -> None:

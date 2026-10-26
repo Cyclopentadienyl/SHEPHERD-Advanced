@@ -114,7 +114,10 @@ entry point, and the registry, the kept reports and the ledgers are all under
     it), the measured checkpoint's record shown by the read-only view for the
     digest the status reports, uncontested in its version's report store (D5),
     and none for M2's checkpoint served beside the same ledger (T5); the overlap
-    audit in registered mode (T6).
+    audit in registered mode (T6); Mode D, the served ranking, measured on that
+    version with --record: one more report with Mode C's manifest fields and
+    Mode D's values, outcomes adding up over the import-eligible cases, a second
+    record keyed apart from T2's, the cross-check with T2's report recorded (T7).
     Phase R, after R7: N of the real workspace's val cases written back as a
     source through the real graph's ids, imported with no exclusions (RT1);
     the checkpoint R4 trained measured on it with --record, training disease
@@ -122,7 +125,7 @@ entry point, and the registry, the kept reports and the ledgers are all under
     constructed (RT2); that record shown for that checkpoint served,
     uncontested (RT3).
     The probe's registry is the deployment's (`SHEPHERD_REGISTRY`) for each
-    flow as a whole, set once around T1-T6 and RT1-RT3 whatever the operator's
+    flow as a whole, set once around T1-T7 and RT1-RT3 whatever the operator's
     shell names, and put back after (`_registry_setting`; root-cause round,
     INT-1).
 
@@ -911,6 +914,39 @@ def _declared_here(dependencies: Any) -> set:
     return names
 
 
+def _editable_install_of(distribution: Any, root: Path) -> bool:
+    """Whether a distribution is an editable install of the checkout at `root`,
+    by its ``direct_url.json`` (PEP 610: ``dir_info.editable`` and a file URL
+    naming that directory)."""
+    from urllib.parse import unquote, urlparse
+
+    try:
+        text = distribution.read_text("direct_url.json")
+        data = json.loads(text) if text else None
+    except (AttributeError, OSError, ValueError):
+        return False
+    if not isinstance(data, dict) or not isinstance(data.get("dir_info"), dict):
+        return False
+    url = data.get("url")
+    if data["dir_info"].get("editable") is not True or not isinstance(url, str) \
+            or not url.startswith("file://"):
+        return False
+    return Path(unquote(urlparse(url).path)).resolve() == root.resolve()
+
+
+def _in_source_tree(distribution: Any, root: Path) -> bool:
+    """Whether a distribution's metadata is the checkout's own build output: in
+    the checkout at `root`, outside this environment's prefix, and with no
+    ``direct_url.json`` (an editable build's ``src/<name>.egg-info``)."""
+    try:
+        where = Path(distribution.locate_file("")).resolve()
+        installed_record = distribution.read_text("direct_url.json")
+    except (AttributeError, OSError, TypeError):
+        return False
+    return (not installed_record and where.is_relative_to(root.resolve())
+            and not where.is_relative_to(Path(sys.prefix).resolve()))
+
+
 def installed_against_lock(lock_path: Path) -> Dict[str, Any]:
     """This Python environment's installed distributions against the lock
     beside this checkout (M5-3): what the probe ran with, **stated, never
@@ -938,7 +974,12 @@ def installed_against_lock(lock_path: Path) -> Dict[str, Any]:
     - ``installed_more_than_once``: a name with more than one distribution on
       the path (a stale ``.dist-info`` beside the current one, say): each
       version is compared, and which one ``import`` finds is not told from
-      the metadata, so both are stated;
+      the metadata, so both are stated. **One exception, itself stated in
+      ``counted_once``** (BACKLOG 59): this project's own metadata in the
+      checkout's source tree (the ``.egg-info`` an editable build leaves in
+      ``src/``, `_in_source_tree`) beside its editable install of the same
+      checkout (`_editable_install_of`), at the same version, is one
+      installation, not two;
     - ``installed_not_in_lock``: installed and not in the lock at all, each
       with why it is there as far as the installed metadata tells:
       `OUTSIDE_LOCK_DEPLOY` for what the deploy scripts install after the
@@ -974,16 +1015,33 @@ def installed_against_lock(lock_path: Path) -> Dict[str, Any]:
             locked.setdefault(_normalised(str(package["name"])), set()).add(str(package["version"]))
         if isinstance(package, dict) and _is_this_project(package):
             declared |= _declared_here(package.get("dependencies"))
+    this_project = {_normalised(str(package["name"])) for package in lock.get("package", [])
+                    if isinstance(package, dict) and package.get("name")
+                    and _is_this_project(package)}
     installed: Dict[str, List[str]] = {}
     requires: Dict[str, set] = {}
+    found: Dict[str, List[Any]] = {}
     for distribution in metadata.distributions():
         name = distribution.metadata["Name"]
         if not name:
             continue
         key = _normalised(name)
         installed.setdefault(key, []).append(str(distribution.version))
+        found.setdefault(key, []).append(distribution)
         requires.setdefault(key, set()).update(
             _required_names(getattr(distribution, "requires", None)))
+    # The project's own source-tree metadata beside its editable install of
+    # this checkout is one installation (BACKLOG 59); said, never hidden.
+    counted_once = []
+    for key in sorted(this_project & set(found)):
+        copies = found[key]
+        editable = [d for d in copies if _editable_install_of(d, lock_path.parent)]
+        if (len(copies) > 1 and len(editable) == 1 and len(set(installed[key])) == 1
+                and all(d in editable or _in_source_tree(d, lock_path.parent) for d in copies)):
+            installed[key] = [str(editable[0].version)]
+            counted_once.append({"name": key, "version": installed[key][0],
+                                 "why": "its editable install and the metadata its build "
+                                        "left in the checkout's source tree"})
     differs = [
         {"name": name, "installed": version, "locked": sorted(locked[name])}
         for name, versions in sorted(installed.items()) if name in locked
@@ -1021,6 +1079,7 @@ def installed_against_lock(lock_path: Path) -> Dict[str, Any]:
         "installed_more_than_once": [{"name": name, "versions": sorted(versions)}
                                      for name, versions in sorted(installed.items())
                                      if len(versions) > 1],
+        "counted_once": counted_once,
         "installed_not_in_lock": [{"name": name, "version": "/".join(sorted(set(versions))),
                                    "why": why(name)}
                                   for name, versions in sorted(installed.items())
@@ -2041,6 +2100,9 @@ M2_DEMO_REQUIRED: Tuple[str, ...] = (
     # graph (T4); the read-only view for the served checkpoint and another (T5);
     # the overlap audit on the registered version (T6).
     "T1", "T2", "T3", "T4", "T5", "T6",
+    # Mode D (Batch 3, PLAN_B05 §8): the served ranking measured on T1's version
+    # with --record, kept and registered apart from T2's Mode C record (T7).
+    "T7",
     # M5's acceptance (M5-3): the environment against the lock (A5);
     # the server's lists (W1); D8 on the running service, CORS, the route
     # guard, read-only without M1 (W2-W5) and off loopback (W6); the GPU lock
@@ -4066,12 +4128,18 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
             version.identity.sha256, M4_ROLE, False), (
             "the version is not listed by T1's digest and role, ordering off by default")
         # The store's run directories (its own files, the usage history and
-        # the notes, are not runs).
+        # the notes, are not runs): T2's and T7's (Mode D), each listed, kept
+        # and registered.
         runs_listed = [run for run in demo.reports if is_run_id(run.run_id)]
+        stored = sorted(path.parent.name for path in
+                        (registry / "versions" / M4_DEMO_LABEL / "reports").glob("*/report.json"))
         kept = [(run.state or {}).get("kept") for run in runs_listed]
         registered = [(run.state or {}).get("registered") for run in runs_listed]
-        assert kept == ["kept"] and registered == ["registered"], (
-            f"T2's run is listed as kept {kept} and registered {registered}")
+        assert len(stored) == 2 and sorted(run.run_id for run in runs_listed) == stored, (
+            f"the store keeps {len(stored)} reports and lists {len(runs_listed)} runs, not T2's "
+            "and T7's")
+        assert kept == ["kept"] * 2 and registered == ["registered"] * 2, (
+            f"T2's and T7's runs are listed as kept {kept} and registered {registered}")
         state.update(workspace=workspace, listed=listed, listed_sha=listed_sha,
                      fingerprint=fingerprint, link_made=link_made)
         return "listed by name and digest, resolved only from the lists, no server path", {
@@ -5360,6 +5428,84 @@ def phase_m2_demo(
             "counts": audited["counts"], "overlap": audited["overlap"]["as_written"],
         }
 
+    def _served_ranking_measured() -> Tuple[str, Dict[str, Any]]:
+        """Mode D on the deployment (PLAN_B05 §8): the measured checkpoint served
+        as the Diagnosis page serves it, over T1's version, with --record. One
+        new report with Mode C's manifest fields and Mode D's values, outcomes
+        adding up over the import-eligible cases, a ranks row per case, a second
+        record keyed and grouped apart from T2's, and the usage history's mode.
+        The cross-check with T2's kept report is recorded, never required to
+        agree (another batch size, possibly another regime)."""
+        from scripts.measure_scorer import RANKS_FILE, REPORT_FILE
+        from src.evaluation.mode_d import COMPARISON_STATEMENT, METRIC_SCHEMA_VERSION
+        from src.evaluation.report_store import entry_mode, read_usage_history
+        from src.evaluation.sidecar import LEDGER_FILENAME, read_ledger
+        from src.kg.storage.file_storage import SamplesDigestMismatch, _read_json
+
+        assert "record" in m4, "the measurement (T2) is not available"
+        version = m4["version"]
+        store = registry / "versions" / M4_DEMO_LABEL / "reports"
+        before = {path.parent.name for path in store.glob(f"*/{REPORT_FILE}")}
+        code = _measure_cohort(measured, sound, registry, M4_DEMO_LABEL, device,
+                               "--mode", "D", "--record")
+        assert code == 0, f"the Mode D measurement with --record exited {code}"
+        created = [path for path in store.glob(f"*/{REPORT_FILE}")
+                   if path.parent.name not in before]
+        assert len(created) == 1, f"the Mode D run left {len(created)} reports, not one"
+        report_d, identity = _read_json(created[0])
+        manifest, c_manifest = report_d["manifest"], _read_json(m4["report"])[0]["manifest"]
+        assert set(manifest) == set(c_manifest), "Mode D's manifest fields are not Mode C's"
+        assert (manifest["mode"], manifest["metric_schema_version"], manifest["batch_size"]) == (
+            "D", METRIC_SCHEMA_VERSION, 1), "the manifest does not carry Mode D's values"
+        assert manifest["score_semantics"].startswith("served:"), (
+            f"the score semantics are {manifest['score_semantics']!r}")
+        assert manifest["artifact_digests"]["checkpoint"] == m4["checkpoint_sha256"], (
+            "the report does not name the checkpoint it was given")
+        eligible = M4_DEMO_COUNTS["ranked_eligible"]
+        outcomes = report_d["outcomes"]
+        assert outcomes["n_import_eligible"] == eligible and sum(
+            outcomes[name] for name in ("ranked", "not_reached", "refused")) == eligible, (
+            f"the outcomes {outcomes} do not add up to the {eligible} import-eligible cases")
+        assert report_d["n_ranked"] == outcomes["ranked"]
+        assert report_d["import_counts"]["source_cases"] == M4_DEMO_COUNTS["source_cases"]
+        assert report_d["comparison"]["statement"] == COMPARISON_STATEMENT
+        try:
+            rows, _ = _read_json(created[0].parent / RANKS_FILE,
+                                 expected_sha256=frozenset({report_d["ranks"]["sha256"]}))
+        except SamplesDigestMismatch:
+            raise AssertionError("the ranks are not the bytes the report names") from None
+        assert len(rows) == eligible, f"the ranks hold {len(rows)} rows, not {eligible}"
+        ledger, ledger_sha256 = read_ledger(measured.parent / LEDGER_FILENAME)
+        c_record, d_record = ledger["records"]
+        assert (c_record["scoring"]["mode"], d_record["scoring"]["mode"]) == ("C", "D")
+        assert d_record["source_artifact_digest"] == identity.sha256, (
+            "the Mode D record was not built from the kept report's bytes")
+        assert d_record["registration"]["sequence"] == 2
+        assert d_record["scoring_semantics_digest"] != c_record["scoring_semantics_digest"], (
+            "the Mode D record is in Mode C's scoring group")
+        runs = [entry for entry in read_usage_history(version)[0]
+                if entry.get("kind") == "test_run"]
+        assert entry_mode(runs[-1]) == "D", "the usage history does not say Mode D"
+        kept = report_d["comparison"]["kept_mode_c_reports"]
+        assert m4["report"].parent.name in [entry.get("run_id") for entry in kept], (
+            "the cross-check does not read T2's kept Mode C report")
+        metrics = report_d["authoritative_metrics"]
+        return "the served ranking measured over the import-eligible cases, kept and " \
+               "registered apart from Mode C's", {
+            "exit_code": code, "report_sha256": identity.sha256,
+            "score_semantics": manifest["score_semantics"],
+            "candidate_construction": manifest["candidate_construction"],
+            "outcomes": outcomes, "post_import_mrr": metrics.get("post_import_mrr"),
+            "coverage": metrics.get("coverage"),
+            "mode_c_same_embeddings_mrr":
+                report_d["comparison"]["mode_c"]["authoritative_metrics"].get("untruncated_mrr"),
+            "kept_mode_c_cross_check": [
+                {key: entry.get(key) for key in ("run_id", "n_compared", "n_equal", "unreadable")}
+                for entry in kept],
+            "ledger_sha256": ledger_sha256, "record_sequence": 2,
+            "cuda_executed": manifest.get("cuda_executed"),
+        }
+
     # **The probe's registry is the deployment's for the whole flow** (root-cause
     # round, INT-1), set once here as phases M and R set their GPU lock, so every
     # step that reads SHEPHERD_REGISTRY inherits it: measure_scorer --cohort,
@@ -5384,6 +5530,9 @@ def phase_m2_demo(
         report.run("T6", "m2",
                    "M4: the overlap audit runs on the registered version and records it",
                    _overlap_audit)
+        report.run("T7", "m2",
+                   "Mode D: the served ranking measured on the registered version with "
+                   "--record, kept and registered apart from Mode C's", _served_ranking_measured)
 
     # ---- M5's acceptance on the same workspace: M2's resumed checkpoint, T1's
     # version and registry, the probe's own deployment under <work>/m5.

@@ -1166,7 +1166,9 @@ Points where the implementation had to decide something this section left open:
   measurements with different candidate universes, and a key without the mode would report them
   as a contradiction. *Since the Mode A/B retirement's R2
   (2026-10-12) Mode C is the only mode the CLI measures; `mode` stays in the key for Mode D (B-0.5),
-  which scores a different candidate universe over the same checkpoint and cohort.*
+  which scores a different candidate universe over the same checkpoint and cohort. Since Batch 3
+  (2026-10-26) the CLI measures Mode D too (`--mode D`), and its records are keyed apart by that
+  `mode`.*
 - **The key is a semantics digest, not a field list.** An earlier version keyed on
   (checkpoint, cohort, mode, tie policy) and refused two honest runs at different batch sizes as a
   contradiction — `batch_size` is documented on the manifest as *semantics*, since Mode A's

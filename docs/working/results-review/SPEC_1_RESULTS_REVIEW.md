@@ -546,7 +546,8 @@ latency target (§6, open), for a representative request at the deployment's `se
 serving code calls the primitive batched yet; §2.2 names its one caller.
 
 **This completes no part of B-0.** B-0's remaining scope: Mode D (designed in
-`docs/working/scorer-measurement/PLAN_B05.md`; Modes A and B are retired, not remaining), the
+`docs/working/scorer-measurement/PLAN_B05.md` and built in Batch 3, 2026-10-26, for review; Modes A
+and B are retired, not remaining), the
 paired-cohort, strata and bootstrap protocol (BACKLOG 8a), and the institutional measurement run
 (BACKLOG 8b). Full-universe candidates, untruncated MRR and Hits@{1,5,10,20,50,100}, the manifests
 and fingerprints and the output schema exist in Mode C; negative-set instrumentation went with

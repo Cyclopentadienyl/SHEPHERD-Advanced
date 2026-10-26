@@ -1,0 +1,1337 @@
+{
+ "results": {
+  "fallback|0": {
+   "candidates": [
+    [
+     "mondo:MONDO:0011073",
+     1,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0012091",
+     2,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0010582",
+     3,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0010730",
+     4,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "warnings": []
+  },
+  "fallback|1": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010582",
+     1,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0012091",
+     2,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0011073",
+     3,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0010730",
+     4,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0007037",
+     5,
+     0.666632,
+     0.0,
+     0.0,
+     0.666632
+    ]
+   ],
+   "warnings": []
+  },
+  "fallback|10": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010582",
+     1,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0011073",
+     2,
+     0.930937,
+     0.0,
+     0.0,
+     0.930937
+    ],
+    [
+     "mondo:MONDO:0012091",
+     3,
+     0.70676,
+     0.0,
+     0.0,
+     0.70676
+    ],
+    [
+     "mondo:MONDO:0010730",
+     4,
+     0.561236,
+     0.0,
+     0.0,
+     0.561236
+    ],
+    [
+     "mondo:MONDO:0007037",
+     5,
+     0.519413,
+     0.0,
+     0.0,
+     0.519413
+    ]
+   ],
+   "warnings": []
+  },
+  "fallback|11": {
+   "candidates": [],
+   "warnings": [
+    "No valid phenotypes after validation"
+   ]
+  },
+  "fallback|12": {
+   "candidates": [],
+   "warnings": [
+    "No valid phenotypes after validation"
+   ]
+  },
+  "fallback|13": {
+   "candidates": [],
+   "warnings": [
+    "No valid phenotypes after validation"
+   ]
+  },
+  "fallback|14": {
+   "candidates": [
+    [
+     "mondo:MONDO:0011073",
+     1,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0012091",
+     2,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0010582",
+     3,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0010730",
+     4,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "warnings": [
+    "Unknown phenotype: HP:9999999",
+    "Removed 1 repeated phenotype entry; each phenotype is scored once."
+   ]
+  },
+  "fallback|15": {
+   "candidates": [],
+   "warnings": [
+    "No valid phenotypes after validation"
+   ]
+  },
+  "fallback|2": {
+   "candidates": [],
+   "warnings": [
+    "No paths found from phenotypes to diseases"
+   ]
+  },
+  "fallback|3": {
+   "candidates": [
+    [
+     "mondo:MONDO:0011073",
+     1,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0010582",
+     2,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0012091",
+     3,
+     0.880293,
+     0.0,
+     0.0,
+     0.880293
+    ],
+    [
+     "mondo:MONDO:0010730",
+     4,
+     0.507499,
+     0.0,
+     0.0,
+     0.507499
+    ]
+   ],
+   "warnings": []
+  },
+  "fallback|4": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010582",
+     1,
+     0.949026,
+     0.0,
+     0.0,
+     0.949026
+    ],
+    [
+     "mondo:MONDO:0012091",
+     2,
+     0.704698,
+     0.0,
+     0.0,
+     0.704698
+    ],
+    [
+     "mondo:MONDO:0007037",
+     3,
+     0.519413,
+     0.0,
+     0.0,
+     0.519413
+    ],
+    [
+     "mondo:MONDO:0010730",
+     4,
+     0.438897,
+     0.0,
+     0.0,
+     0.438897
+    ],
+    [
+     "mondo:MONDO:0011073",
+     5,
+     0.386043,
+     0.0,
+     0.0,
+     0.386043
+    ]
+   ],
+   "warnings": []
+  },
+  "fallback|5": {
+   "candidates": [
+    [
+     "mondo:MONDO:0012091",
+     1,
+     0.584174,
+     0.0,
+     0.0,
+     0.584174
+    ],
+    [
+     "mondo:MONDO:0011073",
+     2,
+     0.44157,
+     0.0,
+     0.0,
+     0.44157
+    ],
+    [
+     "mondo:MONDO:0010582",
+     3,
+     0.377654,
+     0.0,
+     0.0,
+     0.377654
+    ],
+    [
+     "mondo:MONDO:0010730",
+     4,
+     0.197584,
+     0.0,
+     0.0,
+     0.197584
+    ]
+   ],
+   "warnings": []
+  },
+  "fallback|6": {
+   "candidates": [
+    [
+     "mondo:MONDO:0011073",
+     1,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0010582",
+     2,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0012091",
+     3,
+     0.85817,
+     0.0,
+     0.0,
+     0.85817
+    ],
+    [
+     "mondo:MONDO:0010730",
+     4,
+     0.366564,
+     0.0,
+     0.0,
+     0.366564
+    ]
+   ],
+   "warnings": []
+  },
+  "fallback|7": {
+   "candidates": [
+    [
+     "mondo:MONDO:0011073",
+     1,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0012091",
+     2,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0010730",
+     3,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0010582",
+     4,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "warnings": []
+  },
+  "fallback|8": {
+   "candidates": [
+    [
+     "mondo:MONDO:0011073",
+     1,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0012091",
+     2,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0010582",
+     3,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0010730",
+     4,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0007037",
+     5,
+     0.184025,
+     0.0,
+     0.0,
+     0.184025
+    ]
+   ],
+   "warnings": [
+    "Removed 1 repeated phenotype entry; each phenotype is scored once."
+   ]
+  },
+  "fallback|9": {
+   "candidates": [],
+   "warnings": [
+    "Unknown phenotype: HP:9999999",
+    "No paths found from phenotypes to diseases"
+   ]
+  },
+  "gnn_only|0": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010582",
+     1,
+     0.588794,
+     0.588794,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0010730",
+     2,
+     0.546135,
+     0.546135,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0011073",
+     3,
+     0.475164,
+     0.475164,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0012091",
+     4,
+     0.424793,
+     0.424793,
+     0.0,
+     1.0
+    ]
+   ],
+   "warnings": []
+  },
+  "gnn_only|1": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010582",
+     1,
+     0.610019,
+     0.610019,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0010730",
+     2,
+     0.586529,
+     0.586529,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0011073",
+     3,
+     0.507063,
+     0.507063,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0007037",
+     4,
+     0.457799,
+     0.457799,
+     0.0,
+     0.666632
+    ],
+    [
+     "mondo:MONDO:0012091",
+     5,
+     0.430336,
+     0.430336,
+     0.0,
+     1.0
+    ]
+   ],
+   "warnings": []
+  },
+  "gnn_only|10": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010730",
+     1,
+     0.793961,
+     0.793961,
+     0.0,
+     0.561236
+    ],
+    [
+     "mondo:MONDO:0010582",
+     2,
+     0.710179,
+     0.710179,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0012091",
+     3,
+     0.565704,
+     0.565704,
+     0.0,
+     0.70676
+    ],
+    [
+     "mondo:MONDO:0011073",
+     4,
+     0.535546,
+     0.535546,
+     0.0,
+     0.930937
+    ],
+    [
+     "mondo:MONDO:0007037",
+     5,
+     0.408371,
+     0.408371,
+     0.0,
+     0.519413
+    ]
+   ],
+   "warnings": []
+  },
+  "gnn_only|11": {
+   "candidates": [],
+   "warnings": [
+    "No valid phenotypes after validation"
+   ]
+  },
+  "gnn_only|12": {
+   "candidates": [],
+   "warnings": [
+    "No valid phenotypes after validation"
+   ]
+  },
+  "gnn_only|13": {
+   "candidates": [],
+   "warnings": [
+    "No valid phenotypes after validation"
+   ]
+  },
+  "gnn_only|14": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010582",
+     1,
+     0.588794,
+     0.588794,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0010730",
+     2,
+     0.546135,
+     0.546135,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0011073",
+     3,
+     0.475164,
+     0.475164,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0012091",
+     4,
+     0.424793,
+     0.424793,
+     0.0,
+     1.0
+    ]
+   ],
+   "warnings": [
+    "Unknown phenotype: HP:9999999",
+    "Removed 1 repeated phenotype entry; each phenotype is scored once."
+   ]
+  },
+  "gnn_only|15": {
+   "candidates": [],
+   "warnings": [
+    "No valid phenotypes after validation"
+   ]
+  },
+  "gnn_only|2": {
+   "candidates": [],
+   "warnings": [
+    "No paths found from phenotypes to diseases"
+   ]
+  },
+  "gnn_only|3": {
+   "candidates": [
+    [
+     "mondo:MONDO:0012091",
+     1,
+     0.627636,
+     0.627636,
+     0.0,
+     0.880293
+    ],
+    [
+     "mondo:MONDO:0010730",
+     2,
+     0.626079,
+     0.626079,
+     0.0,
+     0.507499
+    ],
+    [
+     "mondo:MONDO:0010582",
+     3,
+     0.624536,
+     0.624536,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0011073",
+     4,
+     0.492659,
+     0.492659,
+     0.0,
+     1.0
+    ]
+   ],
+   "warnings": []
+  },
+  "gnn_only|4": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010730",
+     1,
+     0.845564,
+     0.845564,
+     0.0,
+     0.438897
+    ],
+    [
+     "mondo:MONDO:0010582",
+     2,
+     0.703181,
+     0.703181,
+     0.0,
+     0.949026
+    ],
+    [
+     "mondo:MONDO:0011073",
+     3,
+     0.604422,
+     0.604422,
+     0.0,
+     0.386043
+    ],
+    [
+     "mondo:MONDO:0012091",
+     4,
+     0.58579,
+     0.58579,
+     0.0,
+     0.704698
+    ],
+    [
+     "mondo:MONDO:0007037",
+     5,
+     0.43891,
+     0.43891,
+     0.0,
+     0.519413
+    ]
+   ],
+   "warnings": []
+  },
+  "gnn_only|5": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010730",
+     1,
+     0.718888,
+     0.718888,
+     0.0,
+     0.197584
+    ],
+    [
+     "mondo:MONDO:0012091",
+     2,
+     0.640821,
+     0.640821,
+     0.0,
+     0.584174
+    ],
+    [
+     "mondo:MONDO:0010582",
+     3,
+     0.506596,
+     0.506596,
+     0.0,
+     0.377654
+    ],
+    [
+     "mondo:MONDO:0011073",
+     4,
+     0.377542,
+     0.377542,
+     0.0,
+     0.44157
+    ]
+   ],
+   "warnings": []
+  },
+  "gnn_only|6": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010730",
+     1,
+     0.790544,
+     0.790544,
+     0.0,
+     0.366564
+    ],
+    [
+     "mondo:MONDO:0010582",
+     2,
+     0.686566,
+     0.686566,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0012091",
+     3,
+     0.67224,
+     0.67224,
+     0.0,
+     0.85817
+    ],
+    [
+     "mondo:MONDO:0011073",
+     4,
+     0.549032,
+     0.549032,
+     0.0,
+     1.0
+    ]
+   ],
+   "warnings": []
+  },
+  "gnn_only|7": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010730",
+     1,
+     0.666941,
+     0.666941,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0010582",
+     2,
+     0.630627,
+     0.630627,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0011073",
+     3,
+     0.556034,
+     0.556034,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0012091",
+     4,
+     0.456379,
+     0.456379,
+     0.0,
+     1.0
+    ]
+   ],
+   "warnings": []
+  },
+  "gnn_only|8": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010582",
+     1,
+     0.498841,
+     0.498841,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0011073",
+     2,
+     0.451855,
+     0.451855,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0007037",
+     3,
+     0.436186,
+     0.436186,
+     0.0,
+     0.184025
+    ],
+    [
+     "mondo:MONDO:0010730",
+     4,
+     0.370853,
+     0.370853,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0012091",
+     5,
+     0.319978,
+     0.319978,
+     0.0,
+     1.0
+    ]
+   ],
+   "warnings": [
+    "Removed 1 repeated phenotype entry; each phenotype is scored once."
+   ]
+  },
+  "gnn_only|9": {
+   "candidates": [],
+   "warnings": [
+    "Unknown phenotype: HP:9999999",
+    "No paths found from phenotypes to diseases"
+   ]
+  },
+  "gnn_plus_sp|0": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010582",
+     1,
+     0.49787,
+     0.588794,
+     0.285714,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0010730",
+     2,
+     0.457294,
+     0.546135,
+     0.25,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0011073",
+     3,
+     0.452615,
+     0.475164,
+     0.4,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0012091",
+     4,
+     0.38307,
+     0.424793,
+     0.285714,
+     1.0
+    ]
+   ],
+   "warnings": []
+  },
+  "gnn_plus_sp|1": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010582",
+     1,
+     0.527013,
+     0.610019,
+     0.333333,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0010730",
+     2,
+     0.51057,
+     0.586529,
+     0.333333,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0011073",
+     3,
+     0.429944,
+     0.507063,
+     0.25,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0012091",
+     4,
+     0.401235,
+     0.430336,
+     0.333333,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0007037",
+     5,
+     0.395459,
+     0.457799,
+     0.25,
+     0.666632
+    ]
+   ],
+   "warnings": []
+  },
+  "gnn_plus_sp|10": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010730",
+     1,
+     0.630773,
+     0.793961,
+     0.25,
+     0.561236
+    ],
+    [
+     "mondo:MONDO:0010582",
+     2,
+     0.58284,
+     0.710179,
+     0.285714,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0012091",
+     3,
+     0.470993,
+     0.565704,
+     0.25,
+     0.70676
+    ],
+    [
+     "mondo:MONDO:0011073",
+     4,
+     0.449882,
+     0.535546,
+     0.25,
+     0.930937
+    ],
+    [
+     "mondo:MONDO:0007037",
+     5,
+     0.34586,
+     0.408371,
+     0.2,
+     0.519413
+    ]
+   ],
+   "warnings": []
+  },
+  "gnn_plus_sp|11": {
+   "candidates": [],
+   "warnings": [
+    "No valid phenotypes after validation"
+   ]
+  },
+  "gnn_plus_sp|12": {
+   "candidates": [],
+   "warnings": [
+    "No valid phenotypes after validation"
+   ]
+  },
+  "gnn_plus_sp|13": {
+   "candidates": [],
+   "warnings": [
+    "No valid phenotypes after validation"
+   ]
+  },
+  "gnn_plus_sp|14": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010582",
+     1,
+     0.49787,
+     0.588794,
+     0.285714,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0010730",
+     2,
+     0.457294,
+     0.546135,
+     0.25,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0011073",
+     3,
+     0.452615,
+     0.475164,
+     0.4,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0012091",
+     4,
+     0.38307,
+     0.424793,
+     0.285714,
+     1.0
+    ]
+   ],
+   "warnings": [
+    "Unknown phenotype: HP:9999999",
+    "Removed 1 repeated phenotype entry; each phenotype is scored once."
+   ]
+  },
+  "gnn_plus_sp|15": {
+   "candidates": [],
+   "warnings": [
+    "No valid phenotypes after validation"
+   ]
+  },
+  "gnn_plus_sp|2": {
+   "candidates": [],
+   "warnings": [
+    "No paths found from phenotypes to diseases"
+   ]
+  },
+  "gnn_plus_sp|3": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010582",
+     1,
+     0.522889,
+     0.624536,
+     0.285714,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0012091",
+     2,
+     0.514346,
+     0.627636,
+     0.25,
+     0.880293
+    ],
+    [
+     "mondo:MONDO:0010730",
+     3,
+     0.498255,
+     0.626079,
+     0.2,
+     0.507499
+    ],
+    [
+     "mondo:MONDO:0011073",
+     4,
+     0.444861,
+     0.492659,
+     0.333333,
+     1.0
+    ]
+   ],
+   "warnings": []
+  },
+  "gnn_plus_sp|4": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010730",
+     1,
+     0.666895,
+     0.845564,
+     0.25,
+     0.438897
+    ],
+    [
+     "mondo:MONDO:0010582",
+     2,
+     0.577941,
+     0.703181,
+     0.285714,
+     0.949026
+    ],
+    [
+     "mondo:MONDO:0012091",
+     3,
+     0.485053,
+     0.58579,
+     0.25,
+     0.704698
+    ],
+    [
+     "mondo:MONDO:0011073",
+     4,
+     0.483095,
+     0.604422,
+     0.2,
+     0.386043
+    ],
+    [
+     "mondo:MONDO:0007037",
+     5,
+     0.367237,
+     0.43891,
+     0.2,
+     0.519413
+    ]
+   ],
+   "warnings": []
+  },
+  "gnn_plus_sp|5": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010730",
+     1,
+     0.553221,
+     0.718888,
+     0.166667,
+     0.197584
+    ],
+    [
+     "mondo:MONDO:0012091",
+     2,
+     0.508574,
+     0.640821,
+     0.2,
+     0.584174
+    ],
+    [
+     "mondo:MONDO:0010582",
+     3,
+     0.409163,
+     0.506596,
+     0.181818,
+     0.377654
+    ],
+    [
+     "mondo:MONDO:0011073",
+     4,
+     0.318825,
+     0.377542,
+     0.181818,
+     0.44157
+    ]
+   ],
+   "warnings": []
+  },
+  "gnn_plus_sp|6": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010730",
+     1,
+     0.613381,
+     0.790544,
+     0.2,
+     0.366564
+    ],
+    [
+     "mondo:MONDO:0010582",
+     2,
+     0.56631,
+     0.686566,
+     0.285714,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0012091",
+     3,
+     0.545568,
+     0.67224,
+     0.25,
+     0.85817
+    ],
+    [
+     "mondo:MONDO:0011073",
+     4,
+     0.459322,
+     0.549032,
+     0.25,
+     1.0
+    ]
+   ],
+   "warnings": []
+  },
+  "gnn_plus_sp|7": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010730",
+     1,
+     0.541859,
+     0.666941,
+     0.25,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0010582",
+     2,
+     0.527153,
+     0.630627,
+     0.285714,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0011073",
+     3,
+     0.474938,
+     0.556034,
+     0.285714,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0012091",
+     4,
+     0.40518,
+     0.456379,
+     0.285714,
+     1.0
+    ]
+   ],
+   "warnings": []
+  },
+  "gnn_plus_sp|8": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010582",
+     1,
+     0.449189,
+     0.498841,
+     0.333333,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0011073",
+     2,
+     0.436299,
+     0.451855,
+     0.4,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0010730",
+     3,
+     0.359597,
+     0.370853,
+     0.333333,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0007037",
+     4,
+     0.35533,
+     0.436186,
+     0.166667,
+     0.184025
+    ],
+    [
+     "mondo:MONDO:0012091",
+     5,
+     0.343985,
+     0.319978,
+     0.4,
+     1.0
+    ]
+   ],
+   "warnings": [
+    "Removed 1 repeated phenotype entry; each phenotype is scored once."
+   ]
+  },
+  "gnn_plus_sp|9": {
+   "candidates": [],
+   "warnings": [
+    "Unknown phenotype: HP:9999999",
+    "No paths found from phenotypes to diseases"
+   ]
+  }
+ },
+ "what_this_is": "DiagnosisPipeline.run(top_k=1000, include_explanations=False) over the registered-cohort fixture's demo workspace, captured with the serving code at e61253e, before the rank() split (Batch 3), in three scoring modes. Each candidate: [disease, rank, confidence, gnn, sp, reasoning], scores rounded to 6 places. Cases 0..12 are the fixture's graph source cases; 13 an unknown term; 14 an unknown term, case 0 and a repeat; 15 150 unknown terms."
+}

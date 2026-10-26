@@ -52,6 +52,7 @@ import pytest
 
 gr = pytest.importorskip("gradio")
 
+from src.evaluation.caveats import MODE_C_RESULT_LABEL  # noqa: E402
 from src.utils.fingerprint import file_sha256  # noqa: E402
 from src.webui.components import model_list as ml  # noqa: E402
 from src.webui.components import models_page as mp  # noqa: E402
@@ -558,7 +559,7 @@ def test_the_detail_keeps_validation_and_mode_c_apart(world, monkeypatch):
     assert world["shas"]["model-05.pt"] in top                  # the full fingerprint, Copy
     assert "Validation MRR (Trainer, top-20) 0.2410" in top and "Mode C" not in top
     assert "Validation MRR" not in records and "top-20" not in records and "0.2410" not in records
-    assert mp.MODE_C_RESULT_LABEL in records and "Mode C MRR (untruncated)" in records
+    assert MODE_C_RESULT_LABEL in records and "Mode C MRR (untruncated)" in records
     # D4's pick first, the other record of its group with its difference
     assert records.index("registered #3") < records.index("registered #2")
     assert "D4 rule picks this record" in records

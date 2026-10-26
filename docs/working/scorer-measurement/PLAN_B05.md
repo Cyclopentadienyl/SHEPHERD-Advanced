@@ -1,6 +1,8 @@
 # B-0.5 — minimal Mode D: the served ranking, measured
 
-**Status:** design (Batch 2, 2026-10-26), for review; not implemented. It resolves the design
+**Status:** designed in Batch 2 (2026-10-26; the reviewer passed `a5652c1..e61253e`) and
+**implemented in Batch 3** (2026-10-26, for one review; §11 says what was built where). The short
+GB10 run of §8 is the owner's and the reviewer's, after that review. It resolves the design
 problem `PLAN_B03.md` §4 recorded. Mode D is the input to Policy Gate 1's comparison, not B-1:
 building it changes no ranking anyone is served. The statistical protocol for the institutional
 run stays BACKLOG 8a's, and the run 8b's.
@@ -373,3 +375,27 @@ be removed cleanly afterwards. This is a boundary, not a retirement plan.
 6. **The shared correctness tests stay.** The removal is one explicit change, made with three
    things in hand: the finished comparison, the switch's state, and an inventory of callers. No
    plugin or retirement framework is built for it.
+
+---
+
+## 11. As implemented (Batch 3, 2026-10-26)
+
+| Design | Code | Pinned by |
+|---|---|---|
+| `rank()` split from `run()`, `discovery_ordinal`, `bound_inputs()`, `embedding_regime` (§2, §3) | `src/inference/pipeline.py` (`ServedRanking`, `BoundInputs`); the regime's one home is `src/utils/run_environment.py` (`AutocastRegime`, `observe_autocast_regime`), which Mode C's encoder uses too | `tests/unit/test_served_rank.py`, with the golden output captured before the split (`tests/fixtures/served_rank_golden.json`: the three scoring modes, the fallback's exact ties) |
+| The service's builder importable by measurement (§3) | `build_served_pipeline` in `src/inference/pipeline.py`; the API's `build_pipeline` keeps its settings and state handling and calls it | the same file: the API's build and this builder give one served identity |
+| The observer (§5) | `run_mode_c(..., on_scores=None)`, `src/evaluation/measurement.py` | `tests/unit/test_mode_d.py`: a run with an observer reading every score equals one without |
+| Outcomes, case sets, metrics, the steps C → G1 → G2 → D, the comparison, the kept-report cross-check (§4, §5) | `src/evaluation/mode_d.py` | `tests/unit/test_mode_d.py` (the three counterexamples, each kind of case, the C side equal to a direct `run_mode_c`) |
+| `--mode {C,D}`, Mode D's manifest values, the refusals (§3, §6) | `scripts/measure_scorer.py`, through the existing publication, R10, registration and GPU lock | `tests/unit/test_mode_d.py` (through `main`: the report's blocks, the field set, the record keyed apart, the refusals before ranking) |
+| Labels by record, `mode` in the usage history (§5, §6) | `src/evaluation/caveats.py` (`mode_label`, `served_scoring`, `mode_note`, `metric_text`); the Test page's Result, the Models page's records and usage history; `RecordView` gains `mode` and `score_semantics`; `record_test_run(..., mode)` and `entry_mode` in `src/evaluation/report_store.py` | `tests/unit/test_mode_d.py` (each surface over a real C and D record); `tests/unit/test_loaded_model_evaluations_api.py` (the view's fields) |
+| The probe (§7) | `scripts/probe_deployment.py`, phase M's **T7**, after T6: Mode D with `--record` on T1's version | `tests/unit/test_probe_m2_phase.py` |
+
+**Two places where the code enforces §6's rule rather than leaving it to the caller.** §6 says
+Mode D records are shown, never ordered. The Models page offers only Mode C records' scoring groups
+for ordering (`scoring_groups`), and `order_by_test_score` itself does not order a scoring group
+whose records are not Mode C (it answers "not offered" with the reason), so no caller can order a
+Mode D group by asking for it. No ordering rule changed for Mode C.
+
+**Not built, as §7 says:** a job-runner or Test-page start for Mode D (the institutional run is an
+operator's CLI run). The Test and Models pages already show a Mode D record by its own label, so
+that start, if wanted, is the UI batch's.

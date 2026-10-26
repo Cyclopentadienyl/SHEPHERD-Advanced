@@ -9,7 +9,7 @@ the served behaviour beside it.
 | Mode | Encoder | Candidates | Scorer | Status |
 |---|---|---|---|---|
 | **C** | full graph | every disease in the KG | raw cosine | implemented: `scripts/measure_scorer.py`, `run_mode_c`. The formal Test's measurement (`../PLAN_TEST_RESULTS.md` D3) |
-| **D** | full graph | production's path-reachable construction | the served score: η mixture with the SP term, or the model term alone | B-0.5, **designed, not built** ([`PLAN_B05.md`](PLAN_B05.md), Batch 2, 2026-10-26, for review); it resolves `PLAN_B03.md` §4's problem |
+| **D** | full graph | production's path-reachable construction | the served score: η mixture with the SP term, or the model term alone | B-0.5, **implemented** (Batch 3, 2026-10-26, for review): `scripts/measure_scorer.py --mode D`, `src/evaluation/mode_d.py` ([`PLAN_B05.md`](PLAN_B05.md), §11 as built); it resolves `PLAN_B03.md` §4's problem. Not the approved policy: it measures what the Diagnosis page serves today |
 
 **Modes A and B are retired** (the retirement's R2, 2026-10-12;
 [`ASSESSMENT_MODE_AB_RETIREMENT.md`](ASSESSMENT_MODE_AB_RETIREMENT.md) §9). Mode A
@@ -40,12 +40,12 @@ interaction. B-0.5 therefore needs an intermediate comparison — full-graph
 embeddings, production's path-reachable candidates, **cosine** scoring — followed
 by those same candidates scored with the η/SP mixture. That splits C→D into one
 candidate-construction step and one scorer step. It is recorded here so the
-roadmap does not promise an attribution it cannot make. **Designed (2026-10-26,
-revised after the reviewer's review the same day):** Mode D calls `run_mode_c`
+roadmap does not promise an attribution it cannot make. **Implemented (Batch 3,
+2026-10-26; designed and reviewed in Batch 2):** Mode D calls `run_mode_c`
 itself on the same embeddings, then derives readings from its scores one change
 at a time: the candidate set, the tie policy, the score. These are derived
-readings, not a mode or a ledger record ([`PLAN_B05.md`](PLAN_B05.md) §5); not
-implemented.
+readings in Mode D's report, not a mode or a ledger record
+([`PLAN_B05.md`](PLAN_B05.md) §5).
 
 | Stage | Scope | Status |
 |---|---|---|
@@ -53,7 +53,7 @@ implemented.
 | B-0.2 | harness, Mode A, both metric families, manifest, calibration launcher | shipped. **What remains is Mode C's:** the manifest, the authoritative metric family, the canonical ranking and the CUDA gate. The acceptance was redefined from bit-parity with the frozen evaluator, which was unexecutable, to a same-batch differential test against the trainer's own validation pass (`../BACKLOG.md` §3.1). The launcher `scripts/calibrate_mode_a.py` was removed with the frozen evaluator in contract M2.1's S0 ([`../PLAN_PROVENANCE_CONTRACT.md`](../PLAN_PROVENANCE_CONTRACT.md) M2.1, decisions 3 and 6). Mode A, the legacy metric family, the predictions artifact and the differential calibration were retired in R2 (2026-10-12); its institutional CUDA run, item 7a, was cancelled |
 | B-0.3 | Modes B and C | shipped. Mode C is the formal Test's measurement; Mode B was retired with Mode A in R2. Its institutional run is 7b's Mode C side, under Policy Gate 1. Plan: [`PLAN_B03.md`](PLAN_B03.md), kept as the design record |
 | B-0.4 | vectorised SP lookup | **measurement complete and reviewed.** Approach A selected for the primary GB10 platform (`PLAN_B04.md` §12.5): 8-33x faster on the caller production ships, 0 of 60 measurements over the provisional budget, at a cost of 3.44 GB permanent residence. A is now wired into production code as the one served primitive (`src/inference/sp_index.py`; `../BACKLOG.md` 5a, implemented); **production adoption is not accepted** — §13's integrated memory and reload gate still waits on a designated loadable checkpoint (5a acceptance). **Independent of the calibration decision** — it consumes `shortest_paths.pt` and no checkpoint, split or model. Plan: [`PLAN_B04.md`](PLAN_B04.md) |
-| B-0.5 | Mode D, the intermediate candidate-construction step above, statistical protocol, institutional run | Mode D and the derived intermediate readings **designed** ([`PLAN_B05.md`](PLAN_B05.md); built in `../BACKLOG.md` §0 batch 3); the statistical protocol (8a) and the institutional run (8b) not started. Split: protocol and output-contract design come **before** any institutional run, so required evidence is not discovered after it |
+| B-0.5 | Mode D, the intermediate candidate-construction step above, statistical protocol, institutional run | Mode D and the derived intermediate readings **implemented** in `../BACKLOG.md` §0 batch 3 ([`PLAN_B05.md`](PLAN_B05.md) §11; its short GB10 run follows the batch's review); the statistical protocol (8a) and the institutional run (8b) not started. Split: protocol and output-contract design come **before** any institutional run, so required evidence is not discovered after it |
 
 [`PLAN_B02_shipped.md`](PLAN_B02_shipped.md) is the plan the shipped B-0.2 code
 was built from, kept as the reasoning behind it. History, not authority.
@@ -65,7 +65,10 @@ python scripts/measure_scorer.py --checkpoint <ckpt> --data-dir <data> \
     --split val --output reports/measurement.json
 ```
 
-The CLI measures Mode C; it has no mode option. It reads each input once,
+The CLI measures Mode C by default. `--mode D` measures the served ranking on a
+registered cohort version only (`--cohort LABEL --registry DIR`; refused with
+`--split`), sharing the checks, the GPU lock, publication and registration
+([`PLAN_B05.md`](PLAN_B05.md) §6). In either mode it reads each input once,
 verifies the workspace from those reads and records them (contract M2.1, S7),
 then writes two files: the report at `--output` (manifest, authoritative metrics,
 counts) and the per-sample ground-truth ranks beside it, `<output stem>_ranks.json`.

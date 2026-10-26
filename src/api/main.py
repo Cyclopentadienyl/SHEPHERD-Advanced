@@ -826,57 +826,31 @@ def build_pipeline(
     app_state.real_pipeline_requested = True
 
     try:
-        from src.kg.graph import KnowledgeGraph
-        from src.inference.pipeline import (
-            create_diagnosis_pipeline,
-            resolve_serving_device,
-        )
+        from src.inference.pipeline import build_served_pipeline, resolve_serving_device
 
-        # **The device is settled before the graph is read** (contract M3c):
-        # `auto` without CUDA refuses before a multi-gigabyte kg.json is parsed
-        # for a model that cannot be served here. The pipeline applies the same
-        # rule itself; the request is passed on as given, so the served identity
-        # records what was asked for beside what took effect.
+        # **The device is settled before the graph is read** (contract M3c),
+        # before the file check below too, as it always was here; the shared
+        # build repeats the rule for its other callers.
         if checkpoint_path:
             resolve_serving_device(device)
 
-        # Step 1: Load knowledge graph
         kg_file = Path(kg_path)
         if not kg_file.exists():
             logger.error(f"KG file not found: {kg_file}")
             return None
 
-        logger.info(f"Loading knowledge graph from {kg_file}...")
-        # **One read, kept whole** (contract M2.1, S6). The graph and the
-        # identity of the bytes it was parsed from travel together into the
-        # pipeline, which checks that identity against the workspace manifest
-        # when it builds a GNN over `data_dir`; a pipeline with no checkpoint
-        # checks nothing (BACKLOG 19.20). Nothing hashes the file again by path.
-        graph = KnowledgeGraph.read_json(kg_file)
-        kg = graph.kg
-        logger.info(f"KG loaded: {kg.total_nodes} nodes, {kg.total_edges} edges")
-
-        # Step 2: Create pipeline (with optional GNN)
-        #
-        # **The graph read is passed whole, and the composition is checked
-        # there.** These two settings are resolved independently from the
-        # environment, so a deployment can point them at two different
-        # workspaces — each internally consistent, and together producing
-        # embeddings from one graph's tensors read through the other graph's node
-        # identifiers. The pipeline refuses that composition, and because this
-        # function publishes nothing, a refused one cannot leave a graph visible
-        # as though it had been accepted.
-        # The hop bound comes from the shortest-path table's sidecar alone: the
-        # configured bound for a table without one (`SHEPHERD_SP_HOP_BOUND`) was
-        # retired with contract M2.5, which refuses such a table before any bound
-        # is read.
-        pipeline = create_diagnosis_pipeline(
-            graph=graph,
+        # **The build itself is the shared one** (`build_served_pipeline`, Batch
+        # 3): this function resolves the paths and records the request, and a
+        # measurement of the served ranking (Mode D) builds through the same
+        # code, so it measures what this service serves.
+        pipeline = build_served_pipeline(
+            kg_file,
             checkpoint_path=checkpoint_path,
             data_dir=data_dir,
             device=device,
             expected_checkpoint_sha256=expected_checkpoint_sha256,
         )
+        kg = pipeline.kg
         # Read the configuration back **before returning**, not after publishing.
         # It is the last thing that can fail, and a caller that published first
         # would have to undo the publication to report the failure honestly.

@@ -43,6 +43,7 @@
 """
 from __future__ import annotations
 
+import copy
 import logging
 import math
 import time
@@ -95,6 +96,7 @@ from src.reasoning import (
     find_matching_phenotypes,
 )
 from src.utils.checkpoint_paths import RANKING_SCORE_KEYS
+from src.utils.run_environment import observe_autocast_regime
 
 # Optional torch dependency for GNN inference
 try:
@@ -228,6 +230,62 @@ class ValidationResult:
     kept_positions: List[int] = field(default_factory=list)
     #: None when the request was refused before its phenotypes were mapped.
     phenotype_input: Optional[PhenotypeInputAccount] = None
+
+
+@dataclass
+class ServedRanking:
+    """The served ranking of one input, whole and untruncated (`DiagnosisPipeline.rank`).
+
+    **Everything `run` does up to and including its sort, nothing after it**
+    (`docs/working/scorer-measurement/PLAN_B05.md` §2). `run` cuts it at
+    `top_k` and builds matching phenotypes, explanations and the summary on what
+    it keeps; Mode D reads it whole. `top_k` never changes the order, only where
+    the list is cut, so a served rank `r` is what a clinician sees whenever the
+    page's Top-K is at least `r`.
+
+    `outcome` says which of `run`'s three returns this is: ``"refused"`` (the
+    input validation refused it), ``"no_candidates"`` (nothing mapped to a graph
+    node, or discovery reached no disease) or ``"ranked"``. `warnings` is the
+    list `run` returns with it, as `run` would return it.
+
+    **`discovery_ordinals[i]` is `candidates[i]`'s 0-based position in the list
+    `_find_all_paths` built, before the served-score sort.** It is recorded where
+    the sort happens, in the same candidate construction, because once the served
+    score has sorted the list the discovery order cannot be recovered from it.
+    Internal metadata: not a field of the API or of the result.
+    """
+
+    outcome: str
+    warnings: List[str]
+    patient_input: PatientPhenotypes
+    phenotype_input: Optional[PhenotypeInputAccount] = None
+    #: Every served candidate in the served order, ranked 1..N.
+    candidates: List[DiagnosisCandidate] = field(default_factory=list)
+    discovery_ordinals: List[int] = field(default_factory=list)
+    source_ids: List[NodeID] = field(default_factory=list)
+    all_paths: Dict[str, List[ReasoningPath]] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class BoundInputs:
+    """What a pipeline built over a verified workspace read and bound, for a caller
+    that measures the served pipeline without reading those files again
+    (Mode D, `docs/working/scorer-measurement/PLAN_B05.md` §3).
+
+    Each value is the pipeline's own: the four graph digests its workspace check
+    verified (`kg`, `node_features`, `edge_indices`, `num_nodes`), the dataset
+    record it verified with them, the identity of the checkpoint bytes its model
+    was built from and that checkpoint's recorded training inputs (for R10), the
+    workspace manifest's digest, and the graph data it encoded. Read-only: a copy
+    of the digests, and references the caller must not change.
+    """
+
+    graph: Dict[str, str]
+    dataset_record: Any
+    checkpoint: Optional["ReadIdentity"]
+    checkpoint_training_inputs: Any
+    manifest_sha256: Optional[str]
+    graph_data: Optional[Dict[str, Any]]
 
 
 class PipelineBuildError(RuntimeError):
@@ -494,6 +552,12 @@ class DiagnosisPipeline:
         self._dataset_record: Optional[Any] = None
         #: The identity of the checkpoint bytes the model was built from.
         self._checkpoint_identity: Optional["ReadIdentity"] = None
+        #: That checkpoint's recorded training inputs (`training_input_digests`),
+        #: from the same one read, for a measurement's R10 (`bound_inputs`).
+        self._checkpoint_training_inputs: Any = None
+        #: The autocast regime the embedding forward ran under, observed at that
+        #: computation (`observe_autocast_regime`); None until embeddings exist.
+        self._embedding_regime: Optional[Any] = None
         #: SHA-256 of the one `split_manifest.json` read the workspace was
         #: verified against (contract M3c); None when no workspace was verified.
         self._manifest_sha256: Optional[str] = None
@@ -1236,6 +1300,11 @@ class DiagnosisPipeline:
 
         # Kept for M2.4 and M3c; set only once the model it describes is built.
         self._checkpoint_identity = checkpoint_read.identity
+        # Kept from the same read for a measurement's R10 (Mode D): the model
+        # served and the inputs it records cannot come from two reads.
+        self._checkpoint_training_inputs = copy.deepcopy(
+            checkpoint.get("training_input_digests")
+        )
         num_params = self._checkpoint_meta["params"]
         logger.info(
             f"GNN model loaded: {num_params:,} parameters, device={device}"
@@ -1270,9 +1339,13 @@ class DiagnosisPipeline:
             for k, v in self._graph_data["edge_index_dict"].items()
         }
 
-        # Forward pass (no gradient needed for inference)
+        # Forward pass (no gradient needed for inference). The regime is observed
+        # here, at the computation, as Mode C observes its own: a caller's
+        # autocast context is what these embeddings were computed under.
+        regime = observe_autocast_regime(device)
         with torch.no_grad():
             embeddings = self.model(x_dict, edge_index_dict)
+        self._embedding_regime = regime
 
         # Move embeddings to CPU for memory efficiency
         self._node_embeddings = {
@@ -1281,6 +1354,88 @@ class DiagnosisPipeline:
 
         emb_info = {k: v.shape for k, v in self._node_embeddings.items()}
         logger.info(f"Node embeddings cached: {emb_info}")
+
+    def rank(
+        self,
+        patient_input: PatientPhenotypes,
+        include_ortholog_evidence: Optional[bool] = None,
+    ) -> ServedRanking:
+        """The served ranking of `patient_input`, whole: everything `run` does
+        up to and including its sort, and nothing after it.
+
+        Validation and normalisation, the node mapping, path discovery, scoring
+        and the stable sort by the served score, exactly as `run` does them; `run`
+        is this followed by its cut at `top_k` and what it builds on the rows it
+        keeps. **One implementation**: a caller that needs the untruncated served
+        order (Mode D, `docs/working/scorer-measurement/PLAN_B05.md` §2) calls
+        this, and nothing constructs candidates a second way.
+        """
+        if include_ortholog_evidence is None:
+            include_ortholog_evidence = self.config.include_ortholog_evidence
+
+        # Step 1: Validate input
+        validation = self.validate_input(patient_input)
+        if not validation.is_valid:
+            logger.error(f"Input validation failed: {validation.errors}")
+            return ServedRanking(
+                outcome="refused",
+                warnings=list(validation.errors),
+                patient_input=patient_input,
+                phenotype_input=validation.phenotype_input,
+            )
+        warnings: List[str] = list(validation.warnings)
+
+        # **From here on the list as used is the input, not the list as
+        # received.** Scoring, explanations and the summary all read
+        # `patient_input`, and each of them read the raw request before: the
+        # summary counted repeats and unknown ids as "input phenotypes", and the
+        # explanations listed them. Rebinding once, here, leaves nothing below
+        # able to reach the raw list.
+        patient_input = self._as_used(patient_input, validation)
+
+        # Step 2: Convert phenotypes to NodeIDs
+        source_ids = self._phenotypes_to_node_ids(validation.validated_phenotypes)
+        if not source_ids:
+            logger.warning("No valid phenotype NodeIDs found")
+            return ServedRanking(
+                outcome="no_candidates",
+                warnings=warnings + ["No valid phenotypes found in knowledge graph"],
+                patient_input=patient_input,
+                phenotype_input=validation.phenotype_input,
+            )
+
+        # Step 3: Find reasoning paths (BFS-based)
+        logger.debug("Finding reasoning paths...")
+        all_paths = self._find_all_paths(source_ids, include_ortholog_evidence)
+
+        if not all_paths:
+            logger.warning("No paths found from phenotypes to diseases")
+            return ServedRanking(
+                outcome="no_candidates",
+                warnings=warnings + ["No paths found from phenotypes to diseases"],
+                patient_input=patient_input,
+                phenotype_input=validation.phenotype_input,
+                source_ids=source_ids,
+            )
+
+        # Step 4: Score and rank every candidate
+        logger.debug("Scoring candidates...")
+        candidates, ordinals = self._score_and_rank_candidates(
+            all_paths=all_paths,
+            source_ids=source_ids,
+            patient_input=patient_input,
+            include_ortholog_evidence=include_ortholog_evidence,
+        )
+        return ServedRanking(
+            outcome="ranked",
+            warnings=warnings,
+            patient_input=patient_input,
+            phenotype_input=validation.phenotype_input,
+            candidates=candidates,
+            discovery_ordinals=ordinals,
+            source_ids=source_ids,
+            all_paths=all_paths,
+        )
 
     def run(
         self,
@@ -1291,7 +1446,8 @@ class DiagnosisPipeline:
         include_literature_evidence: Optional[bool] = None,
     ) -> InferenceResult:
         """
-        Execute the full diagnosis pipeline.
+        Execute the full diagnosis pipeline: `rank`, then the cut at `top_k`
+        and what is built on the rows kept.
 
         Args:
             patient_input: Patient phenotype data
@@ -1304,7 +1460,6 @@ class DiagnosisPipeline:
             InferenceResult with diagnosis candidates and explanations
         """
         start_time = time.time()
-        warnings: List[str] = []
 
         # Use config defaults if not overridden
         if include_explanations is None:
@@ -1319,62 +1474,28 @@ class DiagnosisPipeline:
             f"with {len(patient_input.phenotypes)} phenotypes"
         )
 
-        # Step 1: Validate input
-        validation = self.validate_input(patient_input)
-        if not validation.is_valid:
-            logger.error(f"Input validation failed: {validation.errors}")
+        ranking = self.rank(patient_input, include_ortholog_evidence)
+        if ranking.outcome == "refused":
             return InferenceResult(
                 patient_id=patient_input.patient_id,
                 timestamp=datetime.now(),
                 candidates=[],
                 served_identity=self.served_identity(),
-                warnings=validation.errors,
+                warnings=ranking.warnings,
                 inference_time_ms=(time.time() - start_time) * 1000,
-                phenotype_input=validation.phenotype_input,
+                phenotype_input=ranking.phenotype_input,
             )
-        warnings.extend(validation.warnings)
-
-        # **From here on the list as used is the input, not the list as
-        # received.** Scoring, explanations and the summary all read
-        # `patient_input`, and each of them read the raw request before: the
-        # summary counted repeats and unknown ids as "input phenotypes", and the
-        # explanations listed them. Rebinding once, here, leaves nothing below
-        # able to reach the raw list.
-        patient_input = self._as_used(patient_input, validation)
-
-        # Step 2: Convert phenotypes to NodeIDs
-        source_ids = self._phenotypes_to_node_ids(validation.validated_phenotypes)
-        if not source_ids:
-            logger.warning("No valid phenotype NodeIDs found")
+        patient_input = ranking.patient_input
+        if ranking.outcome == "no_candidates":
             return self._create_empty_result(
                 patient_input.patient_id,
                 start_time,
-                warnings + ["No valid phenotypes found in knowledge graph"],
-                validation.phenotype_input,
+                ranking.warnings,
+                ranking.phenotype_input,
             )
 
-        # Step 3: Find reasoning paths (BFS-based)
-        logger.debug("Finding reasoning paths...")
-        all_paths = self._find_all_paths(source_ids, include_ortholog_evidence)
-
-        if not all_paths:
-            logger.warning("No paths found from phenotypes to diseases")
-            return self._create_empty_result(
-                patient_input.patient_id,
-                start_time,
-                warnings + ["No paths found from phenotypes to diseases"],
-                validation.phenotype_input,
-            )
-
-        # Step 4: Score and rank candidates
-        logger.debug("Scoring candidates...")
-        candidates = self._score_and_rank_candidates(
-            all_paths=all_paths,
-            source_ids=source_ids,
-            patient_input=patient_input,
-            top_k=top_k,
-            include_ortholog_evidence=include_ortholog_evidence,
-        )
+        # **The cut is the only thing `top_k` does**: the order is `rank`'s.
+        candidates = ranking.candidates[:top_k]
 
         # Step 4b: The phenotypes the graph annotates directly to each candidate
         # returned, from the list as used. **Not gated on explanations**: a
@@ -1392,9 +1513,9 @@ class DiagnosisPipeline:
             logger.debug("Generating explanations and evidence packages...")
             candidates = self._add_explanations(
                 candidates=candidates,
-                all_paths=all_paths,
+                all_paths=ranking.all_paths,
                 patient_input=patient_input,
-                source_ids=source_ids,
+                source_ids=ranking.source_ids,
             )
 
         # Step 6: Create summary explanation
@@ -1419,8 +1540,8 @@ class DiagnosisPipeline:
             served_identity=self.served_identity(),
             summary_explanation=summary,
             inference_time_ms=inference_time,
-            warnings=warnings,
-            phenotype_input=validation.phenotype_input,
+            warnings=ranking.warnings,
+            phenotype_input=ranking.phenotype_input,
         )
 
     def validate_input(
@@ -1635,21 +1756,22 @@ class DiagnosisPipeline:
         all_paths: Dict[str, List[ReasoningPath]],
         source_ids: List[NodeID],
         patient_input: PatientPhenotypes,
-        top_k: int,
         include_ortholog_evidence: bool,
-    ) -> List[DiagnosisCandidate]:
+    ) -> Tuple[List[DiagnosisCandidate], List[int]]:
         """
-        Score and rank disease candidates.
+        Score every disease candidate and rank them all.
 
         Args:
             all_paths: Paths grouped by disease
             source_ids: Patient phenotype NodeIDs
             patient_input: Patient phenotype data
-            top_k: Number of top candidates to return
             include_ortholog_evidence: Include ortholog evidence
 
         Returns:
-            List of DiagnosisCandidate sorted by score
+            Every candidate sorted by score, ranked 1..N, and beside each its
+            discovery ordinal: its position in the list built in `all_paths`
+            order, before the sort (`ServedRanking`). Nothing is cut here; `run`
+            cuts at `top_k`.
         """
         candidates: List[DiagnosisCandidate] = []
 
@@ -1707,14 +1829,18 @@ class DiagnosisPipeline:
             )
             candidates.append(candidate)
 
-        # Sort by confidence score
-        candidates.sort(key=lambda c: c.confidence_score, reverse=True)
-
-        # Assign ranks and limit to top_k
-        for i, candidate in enumerate(candidates[:top_k]):
+        # Sort by confidence score. **Stable**, so equal scores keep discovery
+        # order; the order is sorted by position so each candidate's discovery
+        # ordinal travels with it, which the sorted list alone cannot give back.
+        order = sorted(
+            range(len(candidates)),
+            key=lambda i: candidates[i].confidence_score,
+            reverse=True,
+        )
+        ranked = [candidates[i] for i in order]
+        for i, candidate in enumerate(ranked):
             candidate.rank = i + 1
-
-        return candidates[:top_k]
+        return ranked, order
 
     def _calculate_reasoning_score(self, paths: List[ReasoningPath]) -> float:
         """Calculate aggregate reasoning score from paths."""
@@ -2056,6 +2182,51 @@ class DiagnosisPipeline:
             phenotype_input=phenotype_input,
         )
 
+    @property
+    def embedding_regime(self) -> Optional[Any]:
+        """The autocast regime (`AutocastRegime`) the cached embeddings were
+        computed under, observed at that forward; None before any embeddings.
+
+        A measurement that scores these embeddings records it, and Mode C's own
+        check (`assert_manifest_describes_regime`) compares it with the manifest
+        (Mode D, `docs/working/scorer-measurement/PLAN_B05.md` §3)."""
+        return self._embedding_regime
+
+    @property
+    def node_embeddings(self) -> Optional[Dict[str, Any]]:
+        """The cached embeddings by node type, as the forward produced them and
+        moved them to the CPU; None without a model. Read-only: scoring reads
+        the same tensors, so a caller must not change them."""
+        return self._node_embeddings
+
+    def bound_inputs(self) -> BoundInputs:
+        """What this pipeline read and bound from its verified workspace
+        (`BoundInputs`), for a measurement of the served pipeline that must not
+        read those files again (Mode D).
+
+        Raises `ValueError` for a pipeline whose graph was not verified from a
+        workspace or that serves no model: nothing binds what it would score.
+        """
+        if self._bound_digests is None or self._dataset_record is None:
+            raise ValueError(
+                "this pipeline was not built over a verified workspace, so nothing "
+                "binds its graph, dataset record or model to files a measurement "
+                "can name"
+            )
+        if self._checkpoint_identity is None:
+            raise ValueError(
+                "this pipeline serves no model (path_reasoning_fallback), so there "
+                "is no checkpoint to name and no embeddings to measure"
+            )
+        return BoundInputs(
+            graph=dict(self._bound_digests),
+            dataset_record=self._dataset_record,
+            checkpoint=self._checkpoint_identity,
+            checkpoint_training_inputs=copy.deepcopy(self._checkpoint_training_inputs),
+            manifest_sha256=self._manifest_sha256,
+            graph_data=self._graph_data,
+        )
+
     def _scoring_mode(self) -> Tuple[str, float]:
         """The scoring mode in effect and the mixing weight it reports."""
         if self._gnn_ready and self._sp_ready:
@@ -2200,6 +2371,59 @@ class DiagnosisPipeline:
 # ==============================================================================
 # Factory Function
 # ==============================================================================
+def build_served_pipeline(
+    kg_path: Union[str, Path],
+    checkpoint_path: Optional[str] = None,
+    data_dir: Optional[str] = None,
+    device: Optional[str] = None,
+    expected_checkpoint_sha256: Optional[str] = None,
+) -> DiagnosisPipeline:
+    """Build a pipeline as the service builds it: settle the device, read the
+    graph once, and create the pipeline over it with the default configuration.
+
+    **The service's own build, in one place** (Batch 3). `src/api/main.py`'s
+    `build_pipeline` resolves its paths from the request or the environment,
+    records what was requested and then calls this; a measurement of the served
+    ranking (Mode D) calls it too, so it measures a pipeline built from the same
+    files by the same code, never a second construction. It sits here because
+    `src.evaluation` may import `src.inference` and not `src.api`.
+
+    The device is settled before the graph is read when a checkpoint is named
+    (contract M3c): `auto` without CUDA refuses before a multi-gigabyte
+    `kg.json` is parsed for a model that cannot be served here. The pipeline
+    applies the same rule itself; the request is passed on as given, so the
+    served identity records what was asked for beside what took effect.
+    """
+    from src.kg.graph import KnowledgeGraph
+
+    if checkpoint_path:
+        resolve_serving_device(device)
+    kg_file = Path(kg_path)
+    logger.info(f"Loading knowledge graph from {kg_file}...")
+    # **One read, kept whole** (contract M2.1, S6). The graph and the identity of
+    # the bytes it was parsed from travel together into the pipeline, which
+    # checks that identity against the workspace manifest when it builds a GNN
+    # over `data_dir`; a pipeline with no checkpoint checks nothing (BACKLOG
+    # 19.20). Nothing hashes the file again by path.
+    graph = KnowledgeGraph.read_json(kg_file)
+    kg = graph.kg
+    logger.info(f"KG loaded: {kg.total_nodes} nodes, {kg.total_edges} edges")
+    # **The graph read is passed whole, and the composition is checked there.**
+    # The graph and the workspace can be named independently, so a deployment
+    # can point them at two different workspaces -- each internally consistent,
+    # and together producing embeddings from one graph's tensors read through
+    # the other graph's node identifiers. The pipeline refuses that composition.
+    # The hop bound comes from the shortest-path table's sidecar alone (contract
+    # M2.5).
+    return create_diagnosis_pipeline(
+        graph=graph,
+        checkpoint_path=checkpoint_path,
+        data_dir=data_dir,
+        device=device,
+        expected_checkpoint_sha256=expected_checkpoint_sha256,
+    )
+
+
 def create_diagnosis_pipeline(
     kg: Optional["KnowledgeGraph"] = None,
     config: Optional[PipelineConfig] = None,

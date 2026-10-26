@@ -9,13 +9,16 @@ before it moved to ``src/utils/provenance.py``: a claim spelled differently in
 two places cannot be compared, and a claim that has to be corrected in two
 places will eventually be corrected in one.
 
-**Constants only. No imports beyond the standard library, no I/O.** These strings
+**Constants, and pure lookups over them (`mode_label`, `served_scoring`, `mode_note`,
+`metric_text`). No imports beyond the standard library, no I/O.** These strings
 are rendered into ``--help`` text, where ``argparse`` performs ``%`` substitution,
 so every literal percent sign here is escaped as ``%%``.
 
 Module: src/evaluation/caveats.py
 """
 from __future__ import annotations
+
+from typing import Optional
 
 #: Why a metric measured on `val` is not an independent test result.
 #:
@@ -124,6 +127,90 @@ PRE_B1_NOTE = (
     "tab ranks by the legacy GNN+SP mixture behind the path gate, so this number "
     "does not describe the tab's current ranking."
 )
+
+#: Mode D's label for a recorded result (`docs/working/scorer-measurement/
+#: PLAN_B05.md` §5): what the Diagnosis page serves today, which is not the
+#: approved policy. `mode_label` adds the record's scoring mode and mixing
+#: weight from its `score_semantics`.
+_MODE_D_LABEL_HEAD = ("Served ranking today (Mode D): diseases reached by path discovery, "
+                      "scored as the Diagnosis page scores them")
+_MODE_D_LABEL_TAIL = "; not the approved scorer policy"
+MODE_D_RESULT_LABEL = _MODE_D_LABEL_HEAD + _MODE_D_LABEL_TAIL
+
+#: Shown beside a Mode D record, as `PRE_B1_NOTE` is beside a Mode C one.
+MODE_D_NOTE = (
+    "Mode D measures what the Diagnosis page serves today, over the cohort's import-eligible "
+    "cases, and sets Mode C beside it on the same embeddings. Mode C and Mode D are different "
+    "ranking policies: a Mode D number is not the model's approved ranking, and the cases "
+    "excluded at import are counted beside it, not in it."
+)
+
+#: Each recorded mode's label, by the record's `scoring.mode`.
+MODE_RESULT_LABELS = {"C": MODE_C_RESULT_LABEL, "D": MODE_D_RESULT_LABEL}
+
+#: The note each mode's record is shown with.
+MODE_RESULT_NOTES = {"C": PRE_B1_NOTE, "D": MODE_D_NOTE}
+
+
+def mode_label(mode: str, score_semantics: Optional[str] = None) -> str:
+    """The label a record of `mode` is shown under. A Mode D record's served
+    scoring mode and mixing weight are added from its `score_semantics`
+    (``served:<scoring mode>:eta=<eta>:sp=<build id>``) when given. A mode this
+    version does not know is named as such, never shown under another's label."""
+    label = MODE_RESULT_LABELS.get(mode)
+    if label is None:
+        return f"Mode {mode} (a measurement mode this version does not describe)"
+    served = served_scoring(score_semantics) if mode == "D" else None
+    return f"{_MODE_D_LABEL_HEAD} ({served}){_MODE_D_LABEL_TAIL}" if served else label
+
+
+def served_scoring(score_semantics: Optional[str]) -> Optional[str]:
+    """A Mode D record's served scoring mode and mixing weight, "hybrid, η = 0.5",
+    from its `score_semantics` (``served:<scoring mode>:eta=<eta>:sp=<build id>``);
+    None for any other value."""
+    if not isinstance(score_semantics, str) or not score_semantics.startswith("served:"):
+        return None
+    fields = score_semantics.split(":")
+    parts = dict(part.split("=", 1) for part in fields[2:] if "=" in part)
+    return f"{fields[1]}, \u03b7 = {parts.get('eta', '?')}"
+
+
+def mode_note(mode: str) -> Optional[str]:
+    """The note a record of `mode` is shown with, or None for a mode this
+    version does not know."""
+    return MODE_RESULT_NOTES.get(mode)
+
+
+#: Mode D's metric families by name prefix (PLAN_B05 §5), as a surface names
+#: their case set: every import-eligible case (0 for one not reached), or the
+#: reached cases only.
+MODE_D_CASE_SETS = {"post_import_": "import-eligible", "reached_": "reached only"}
+
+
+def _metric_words(name: str) -> str:
+    if name == "mrr":
+        return "MRR"
+    if name == "mean_rank":
+        return "mean rank"
+    if name.startswith("hits@"):
+        return f"Hits@{name[len('hits@'):]}"
+    return name
+
+
+def metric_text(mode: str, name: str) -> str:
+    """A recorded metric as a surface names it, never without its mode: "Mode C
+    MRR (untruncated)", "Mode C Hits@10", "Mode D MRR (import-eligible)", "Mode D
+    mean rank (reached only)", "Mode D coverage"."""
+    if mode == "C" and name == "untruncated_mrr":
+        return "Mode C MRR (untruncated)"
+    if mode == "D":
+        if name == "coverage":
+            return "Mode D coverage"
+        for prefix, case_set in MODE_D_CASE_SETS.items():
+            if name.startswith(prefix):
+                return f"Mode D {_metric_words(name[len(prefix):])} ({case_set})"
+    return f"Mode {mode} {_metric_words(name)}"
+
 
 #: R10's four labels (contract §5.4), keyed as a record's `r10` block is: scope,
 #: then label. Each has the name a surface shows and its one-line definition.

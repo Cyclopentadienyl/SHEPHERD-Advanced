@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import platform
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -219,6 +220,43 @@ def _pyg_facts() -> Dict[str, Any]:
     return facts
 
 
+@dataclass(frozen=True)
+class AutocastRegime:
+    """The autocast state at a **harness boundary**, and nothing wider.
+
+    Named for what it can see. This is read at the point the harness performs or
+    calls a computation; an autocast context opened *inside* a model is not
+    observable from here and is not claimed. The same discipline as
+    `torch_compile_wrapped`, and for the same reason: a field whose name promises
+    more than its probe can see gets read for the promise.
+
+    `dtype` is `None` exactly when `enabled` is false, so a reader never has to
+    decide whether a dtype beside a disabled regime means anything.
+
+    **One home for both readers** (Batch 3): Mode C's `encode_full_graph` and the
+    served pipeline's embedding forward each observe their own computation with
+    `observe_autocast_regime`, so Mode D can compare the two by value.
+    """
+
+    enabled: bool
+    dtype: Optional[str]
+
+
+def observe_autocast_regime(device: Any) -> AutocastRegime:
+    """Read the ambient autocast state for `device`'s type.
+
+    Device-independent: `torch.is_autocast_enabled("cuda")` answers on a CPU-only
+    host, and `torch.device("cuda:1").type` resolves to `"cuda"`, so an indexed
+    device is handled.
+    """
+    import torch as _torch
+
+    device_type = _torch.device(device).type if device is not None else "cpu"
+    if not _torch.is_autocast_enabled(device_type):
+        return AutocastRegime(enabled=False, dtype=None)
+    return AutocastRegime(enabled=True, dtype=str(_torch.get_autocast_dtype(device_type)))
+
+
 def assert_primitive(value: Any, where: str = "value") -> None:
     """Raise `TypeError` unless `value` is built only of the types a
     `weights_only=True` load accepts as plain data: str, int, float, bool,
@@ -241,8 +279,10 @@ def assert_primitive(value: Any, where: str = "value") -> None:
 
 
 __all__: List[str] = [
+    "AutocastRegime",
     "GENERATED_UNTRACKED_PREFIXES",
     "assert_primitive",
     "code_revision",
     "collect_environment",
+    "observe_autocast_regime",
 ]

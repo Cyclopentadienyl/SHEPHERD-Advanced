@@ -1340,6 +1340,45 @@ each category), the four R10 labels in the shared words of `src/evaluation/cavea
 `unverifiable` label with its reason), the label definitions once, the report's path and the run
 id. The report itself keeps the states and holds no prose.
 
+### Mode D: the served ranking (since Batch 3)
+
+`--mode D` measures **what the Diagnosis page serves today** on the same registered version: the
+checkpoint is served by the service's own builder over `--data-dir` (with its shortest-path table
+when the workspace holds one, as the service would), each import-eligible case is ranked through
+the served pipeline's own `rank()`, and Mode C is run beside it on the same embeddings. It is the
+input to the scorer policy's gate 1 comparison, not the approved policy
+(`docs/working/scorer-measurement/PLAN_B05.md`).
+
+```bash
+python scripts/measure_scorer.py --mode D \
+    --checkpoint data/workspaces/<ws>/runs/<arch>/<run>/checkpoints/<file>.pt \
+    --data-dir data/workspaces/<ws> \
+    --cohort mygene2-2026-10 --registry /srv/shepherd/cohorts \
+    [--training-evidence DIR ...] [--record] [--device auto|cuda|cpu] [--batch-size 32]
+```
+
+- **The same run, the same rules.** Every check above, the GPU lock, the report store and
+  registration apply unchanged. `--split` with `--mode D` is refused (exit 2): its comparison is
+  reported on a version's import-eligible cases. A pipeline that would serve path reasoning alone,
+  and a version bound to another workspace, are refused before any case is ranked.
+- **One case per call.** Mode D ranks each case through the served path (`batch_size` 1 in its
+  manifest; `--batch-size` is the Mode C side's), so it is slower than Mode C: on a large cohort,
+  time a pilot first.
+- **What the report adds.** The fields every report has, plus `outcomes` (`ranked`,
+  `not_reached` — of which `no_candidates` — and `refused`, adding up to the import-eligible
+  cases), `import_counts`, `served` (the served identity) and `comparison`: Mode C on the same
+  embeddings, the derived steps C → G1 → G2 → D (candidates, then ties, then the score), and for
+  each kept Mode C report of the same checkpoint and version, how many ranks agree (stated, never
+  an error). `ranks.json` has one row per import-eligible case.
+- **Named for their case set.** `post_import_*` and `coverage` are over the import-eligible cases,
+  a case not reached counting 0; `reached_*` over the reached cases only. No figure is end to end:
+  the cases excluded at import are counted beside them.
+- **Registered apart.** With `--record` it becomes its own record beside the checkpoint. Its
+  scoring semantics differ from Mode C's, so the two are never compared for disagreement, and a
+  Mode D record is shown on the Models page, never ordered. The console, the Test page's Result
+  and the Models page label it "Served ranking today (Mode D) … not the approved scorer policy",
+  with the served scoring mode and η. No page starts a Mode D run.
+
 ### Record
 
 - **`--record`** registers the report right after the run. **Without it**, and when `--record`

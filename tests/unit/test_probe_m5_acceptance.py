@@ -46,6 +46,7 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -207,6 +208,71 @@ def test_a_second_installed_copy_is_stated_whatever_the_directory_order(
     assert recorded["version_differs"] == [
         {"name": "gradio", "installed": "5.29.1", "locked": ["6.30.0"]}]
     assert recorded["installed_distributions"] == 1
+
+
+def _metadata_dir(path: Path, name: str, version: str, *, editable_of: Path = None) -> None:
+    """A real metadata directory: a ``.dist-info`` (METADATA, and with
+    `editable_of` the ``direct_url.json`` an editable install writes) or an
+    ``.egg-info`` (PKG-INFO, as an editable build leaves one in ``src/``)."""
+    path.mkdir(parents=True)
+    text = f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n"
+    (path / ("PKG-INFO" if path.suffix == ".egg-info" else "METADATA")).write_text(
+        text, encoding="utf-8")
+    if editable_of is not None:
+        (path / "direct_url.json").write_text(json.dumps(
+            {"url": editable_of.resolve().as_uri(), "dir_info": {"editable": True}}),
+            encoding="utf-8")
+
+
+def test_the_projects_editable_install_and_its_source_tree_metadata_are_one(
+        probe, tmp_path, monkeypatch):
+    """BACKLOG 59 (Batch 1's GB10 check): an editable install of this checkout
+    and the ``src/<name>.egg-info`` its build leaves are one installation,
+    stated in ``counted_once``; a stale second ``.dist-info`` of the project,
+    a source-tree copy at another version and any other package found twice
+    are still installed more than once."""
+    from importlib import metadata
+
+    checkout, site = tmp_path / "checkout", tmp_path / "env" / "site-packages"
+    lock = checkout / "uv.lock"
+    checkout.mkdir()
+    lock.write_text("\n".join([
+        "version = 1", 'requires-python = ">=3.12"', "",
+        "[[package]]", 'name = "shepherd-advanced"', 'version = "0.1.0"',
+        'source = { editable = "." }', "",
+        "[[package]]", 'name = "gradio"', 'version = "6.30.0"', ""]), encoding="utf-8")
+    _metadata_dir(site / "shepherd_advanced-0.1.0.dist-info", "shepherd-advanced", "0.1.0",
+                  editable_of=checkout)
+    _metadata_dir(checkout / "src" / "shepherd_advanced.egg-info", "shepherd-advanced", "0.1.0")
+    for version in ("6.30.0", "5.29.1"):
+        _metadata_dir(site / f"gradio-{version}.dist-info", "gradio", version)
+    found = metadata.distributions
+    paths = [str(site), str(checkout / "src")]
+    monkeypatch.setattr(metadata, "distributions", lambda: found(path=paths))
+
+    recorded = probe.installed_against_lock(lock)
+
+    assert recorded["installed_more_than_once"] == [
+        {"name": "gradio", "versions": ["5.29.1", "6.30.0"]}]
+    assert recorded["counted_once"] == [
+        {"name": "shepherd-advanced", "version": "0.1.0",
+         "why": "its editable install and the metadata its build left in the checkout's "
+                "source tree"}]
+    assert "installed more than once: gradio (5.29.1, 6.30.0)" in probe.lock_sentence(recorded)
+    assert str(tmp_path) not in json.dumps(recorded)
+
+    # A source-tree copy at another version is stale metadata, still stated.
+    shutil.rmtree(checkout / "src" / "shepherd_advanced.egg-info")
+    _metadata_dir(checkout / "src" / "shepherd_advanced.egg-info", "shepherd-advanced", "0.0.9")
+    stale = probe.installed_against_lock(lock)
+    assert {"name": "shepherd-advanced", "versions": ["0.0.9", "0.1.0"]} in \
+        stale["installed_more_than_once"] and stale["counted_once"] == []
+    # So is a second installed .dist-info of the project beside the editable one.
+    shutil.rmtree(checkout / "src" / "shepherd_advanced.egg-info")
+    _metadata_dir(site / "shepherd_advanced-0.0.9.dist-info", "shepherd-advanced", "0.1.0")
+    second = probe.installed_against_lock(lock)
+    assert {"name": "shepherd-advanced", "versions": ["0.1.0", "0.1.0"]} in \
+        second["installed_more_than_once"] and second["counted_once"] == []
 
 
 def _git(cwd, *args):

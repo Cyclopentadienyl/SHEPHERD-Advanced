@@ -706,7 +706,7 @@ def test_ranking_path_keeps_a_sub_float32_distinction(lookup):
 
     Two candidates are separated by less than a float32 step. They are scored by
     the real `_calculate_combined_score` and ordered by the real
-    `_score_and_rank_candidates`, whose `list.sort` is stable — so under the
+    `_score_and_rank_candidates`, whose sort is stable — so under the
     regression the tie resolves by insertion order and the weaker candidate keeps
     the slot. `top_k = 2` puts that tie exactly on the boundary a clinician sees.
     """
@@ -741,9 +741,10 @@ def test_ranking_path_keeps_a_sub_float32_distinction(lookup):
     stub._extract_supporting_genes = lambda paths: []
     stub._determine_evidence_sources = lambda paths: []
 
-    shown = DiagnosisPipeline._score_and_rank_candidates(
-        stub, all_paths, [phenotype], None, top_k=2, include_ortholog_evidence=False
+    ranked, _ = DiagnosisPipeline._score_and_rank_candidates(
+        stub, all_paths, [phenotype], None, include_ortholog_evidence=False
     )
+    shown = ranked[:2]  # `run`'s cut at top_k = 2
 
     assert [c.disease_id for c in shown] == [strong, higher], (
         "the higher candidate must hold the second slot; under the float32 "
