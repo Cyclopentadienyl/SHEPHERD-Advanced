@@ -51,15 +51,18 @@ that would revive it. What was removed, and why, is in the archive.
 |---|---|---|
 | **Access decision** | Snapshot list/load/delete and manual snapshot creation | **Any of three documented paths** — local single workspace, authenticated, or accepted protected segment (Spec 2 §9) |
 | **Eager SP performance** | R9 at 200 candidates | Vectorised SP lookup, benchmarked on institutional hardware (Spec 1 §6.2): the lookup and a GB10 benchmark exist; the acceptance against the latency target does not |
-| **Gate 3 — per-target evidence** | Evidence implementation | An approved design meeting policy §6's gate 3 list and Spec 3 §1–§4. **Design written** (Spec 3 §7, 2026-10-26), awaiting approval; the owner names the approval route (BACKLOG §0) |
+| **Gate 3 — per-target evidence** | Evidence implementation | An approved design meeting policy §6's gate 3 list and Spec 3 §1–§4. **Design written** (Spec 3 §7, 2026-10-26; revised after the reviewer's first review), awaiting approval: the reviewer's technical review, then the owner's confirmation |
 
-Admin and training route exposure is **not a gate on this design** — it is a defect in the running
-system, and it sits in the P0 list below.
+Admin and training route exposure is **not a gate on this design**. It was a defect in the running
+system when this index was written, and is fixed since M5: D8 checks every operator route, and the
+bind defaults to loopback (§4; Spec 4 §1's note).
 
-**One operational answer shapes the rest:** *does anyone reach the WebUI by the server's LAN address,
-rather than through SSH?* It decides whether the bind returns to loopback, and which of the three
-access paths applies. It does **not** block R7: path C exists precisely so the institution can decide
-its own posture rather than have one imposed.
+**The operational answer is recorded** (2026-10-19, `../PLAN_TEST_RESULTS.md` §4.9 question 3): the
+service runs under mode M1, operated by the owner or a designated technician, on the machine or
+through controlled SSH forwarding. It is not asked again unless the deployment changes, and
+multi-user remote operation is planned separately. *As it stood before:* "does anyone reach the
+WebUI by the server's LAN address, rather than through SSH?" The snapshot **access decision** (value
+10, Spec 2 §9) is still open: the bind answer does not settle snapshot history's access path.
 
 ---
 
@@ -80,7 +83,7 @@ its own posture rather than have one imposed.
 | 10a | **What C5 actually requires** — active sort and filters only, or page and scroll too. Decides CSV provenance | 3 §5.1 |
 | 11 | Whether multi-user is a real scenario | 4 §6 |
 | 12 | Whether triage state is wanted | 1 §7 |
-| 13 | **Whether anyone uses the server's LAN address** | 4 §4 |
+| 13 | **Whether anyone uses the server's LAN address.** *Answered 2026-10-19:* mode M1, on the machine or through controlled SSH; not asked again unless the deployment changes (`../PLAN_TEST_RESULTS.md` §4.9, question 3) | 4 §4 |
 
 ---
 
@@ -88,14 +91,14 @@ its own posture rather than have one imposed.
 
 | Priority | Item | Spec |
 |---|---|---|
-| **P0** | Audit and convert **every client-reachable `torch.load`**, including the final model load | 4 §2.1 |
-| **P0** | Fix the launcher's display: report bind and destinations separately | 4 §4 |
-| **P0** | Fix the unbounded eager export accumulation | 2 §9 |
-| **P0** | Document the actual deployment contract; withdraw the concurrency-safety claim | 4 §4, §5 |
-| **P0** | Bind defaults to loopback, with the risk-acceptance opt-in — *needs value 13* | 4 §3.1 |
+| **P0** | Audit and convert **every client-reachable `torch.load`**, including the final model load. *Done* (M3a-1e; Spec 4 A1) | 4 §2.1 |
+| **P0** | Fix the launcher's display: report bind and destinations separately. *Done* (M5-1; Spec 4 A2) | 4 §4 |
+| **P0** | Fix the unbounded eager export accumulation. *Still open* (BACKLOG 56) | 2 §9 |
+| **P0** | Document the actual deployment contract; withdraw the concurrency-safety claim. *The contract is the deployment guide's §4.13* (Spec 4 C2) | 4 §4, §5 |
+| **P0** | Bind defaults to loopback, with the risk-acceptance opt-in. *Done* (B1, M5-1) | 4 §3.1 |
 | **P0** | Fix the systemd unit's **invalid module path** — broken under every mode, does not wait for the bind decision. **Done** (4 §4, A4); the host value is the row below | 4 §4 |
-| **P0** | Correct the **host values** in launch instructions and the service unit — *needs value 13* | 4 §4 |
-| **P0 — M3 only** | **Unmount or protect** admin and training routes (hiding from OpenAPI is not protection) | 4 §2, §4 |
+| **P0** | Correct the **host values** in launch instructions and the service unit. *Done* (C1, M5-1) | 4 §4 |
+| **P0 — M3 only** | **Unmount or protect** admin and training routes (hiding from OpenAPI is not protection). *Protected under every mode:* D8 checks each operator route on every request, training start and stop included (M5-1; Spec 4 B2) | 4 §2, §4 |
 | **P1** | Payload schema (discriminated union), load sequence, protected directory, permissions, bounds | 2 §4, §5, §8 |
 | **P1** | Atomic publication under one repository lock; **no index**; failure surfacing | 2 §2, §7.3, §7.4 |
 | **P1** | Rotation (depth ≥ 2), the age bound, and the **separate manual quota** | 2 §7.1, §7.2 |
@@ -118,9 +121,11 @@ improvement on it. It is normative in Spec 2 §7.3 step 6.
 
 ## 5. Hardware and what a local test run does not prove
 
-**CUDA is a hard project requirement.** Every deployment environment has it; the container these
-specs were written in does not. That is an environment limitation, not a property of the design, and
-it sets what a green local run is allowed to claim:
+**CUDA is the current deployment and acceptance baseline, not a permanent hardware limit** (BACKLOG
+24, decided 2026-10-16). Every deployment environment today has it; the container these specs were
+written in does not. Other hardware is validated on its own when a target exists, and no older text
+closes that door. *As it stood before:* "CUDA is a hard project requirement." The baseline sets what
+a green local run is allowed to claim:
 
 | | Status |
 |---|---|

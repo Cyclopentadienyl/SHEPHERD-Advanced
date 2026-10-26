@@ -110,9 +110,10 @@ with SP beside it, not in it.
 - **SP.** `sp_term` and `candidate_analysis` carry §3.3's statuses.
   - In `served_mixture/v1`, a non-numeric status is still mixed as 0, so the legacy ranking does not
     change, and the candidate says so (`sp_term.mixed_as = 0.0`, shown as "mixed as 0 (legacy)").
-  - Of the non-numeric statuses, only `NO_TABLE` is reachable on a verified workspace, in `gnn_only`,
-    where nothing is mixed. Every graph node has a tensor row (M2.4), and validation refuses an empty
-    phenotype set. A test forces the other statuses.
+  - Of the non-numeric statuses, only `NO_TABLE` (in `gnn_only`, where nothing is mixed) is expected
+    on a verified workspace: validation refuses an empty phenotype set, and the graph and tensors
+    are bound by digest (M2.4). That binding identifies the files; it does not prove every runtime
+    lookup succeeds, so a test forces each other status and checks its record.
 - **The model term fails closed.** Today's five paths that return GNN `0.0` become a refusal of the
   result (`MODEL_TERM_UNAVAILABLE`, naming the node), never a number:
   - no embeddings;
@@ -121,9 +122,14 @@ with SP beside it, not in it.
   - a disease with no row;
   - no disease table.
 
-  The two index clamps (disease row, phenotype row) also become refusals. Each of these signals a
-  model–graph mismatch that M2.4's binding already refuses, so on a verified workspace the change
-  alters nothing; the golden test pins that.
+  The two index clamps (disease row, phenotype row) also become refusals. Two claims are kept
+  apart:
+  - **On valid input, nothing changes.** The golden fixtures, valid inputs on a verified workspace,
+    give the same values and order before and after (the golden test, which compares the fields
+    Mode D's plan names: `../scorer-measurement/PLAN_B05.md` §8).
+  - **Invalid states are now refused.** Each refusal is new behaviour for a state that today
+    yields a number. Each is tested by forcing that state. M2.4's binding makes these states
+    unexpected on a verified workspace; it is not offered as proof that they cannot occur.
 - **Non-finite.** A non-finite score refuses the result. Today it goes unchecked, and at the API it
   becomes a 500.
 
@@ -142,7 +148,7 @@ not reopened.
 | Kind | Label |
 |---|---|
 | `gnn_ranking/v1` | "Model ranking: raw cosine over every disease (approved scorer policy)" |
-| `served_mixture/v1` | "Served ranking today: diseases reached by path discovery, scored as 0.7 × model term + 0.3 × SP" (in `gnn_only`: "…scored by the model term alone") |
+| `served_mixture/v1` | "Served ranking today: diseases reached by path discovery, scored as η × model term + (1 − η) × SP, η = `<the result's η>`", with η read from the result's served identity, never written as a constant (in `gnn_only`: "…scored by the model term alone") |
 | `path_reasoning/v1` | "No model loaded: ranked by path reasoning, not by a model" |
 | `demo/v1` | "Demo answer: no pipeline is configured; not a diagnosis" |
 
@@ -232,13 +238,23 @@ per-candidate count of unreachable pairs, which it already computes internally.
 
 | Caller | Moves to |
 |---|---|
-| `run_mode_c` | `score_patients`, importing the ranking from `scoring`. Its report, metrics and ranks stay byte-equal before and after. The README's "not edited" list binds Mode D's package; B-1 moves the code and changes no rule |
+| `run_mode_c` | `score_patients`, importing the ranking from `scoring`. Its metrics, ranks, digests and the manifest's semantic fields stay equal before and after (timestamps, revision and run metadata excluded, as `../scorer-measurement/PLAN_B05.md` §8 defines). The README's "not edited" list binds Mode D's package; B-1 moves the code and changes no rule |
 | `ranks_of_truth` | imports `_require_integer_ids` from `scoring` |
 | `tests/unit/test_measurement_ranking.py` | imports from `scoring` |
 | `tests/unit/test_scoring_primitives.py` | the clamp test (`test_pooling_clamps_out_of_range_indices`) is inverted into a refusal; its other uses of `pool_patient_embeddings` move to `masked_mean_pool`. `test_exact_ties_break_by_candidate_order` stays while `served_mixture/v1` is served, and goes when it retires |
 | B-1's serving path | `score_patients`, then the selection |
 | `_calculate_gnn_score`, `cosine_scores`, `normalise_cosine_to_unit_interval`, `mix_embedding_and_sp_scores` | used by `served_mixture/v1` only; deleted when it retires. The owner's switch default decides when |
 | The trainer | unchanged: its own cosine and its own index clamp (`trainer.py`, `_compute_model_outputs`). The clamp is a known difference, outside B-1 |
+
+### 2.3 What the scorer is, against the reference paper (2026-10-26)
+
+The interim disease scorer here is the approved project policy (statement 2): raw cosine of an
+unweighted masked mean. It is not a reproduction of the paper's disease task, which uses
+`−‖z_d − z_P‖²` (Eq 18) on its own patient encoder. The paper mixes SP only into its candidate-gene
+task (Eq 12–14). For disease ranking, SP here is the optional, default-off analysis view of §3,
+whose sorting and filtering change the view only and never the canonical rank. The one table of the
+paper's three tasks, their inputs, formulas, status, this project's differences and where each
+would land is `docs/ARCHITECTURE.md` §3, kept in one place so two copies cannot drift.
 
 ---
 

@@ -500,9 +500,10 @@ with no tensor row is the silent case.
 - **The paper's cohort.** A MyGene2 snapshot taken from the public pages need not be the cohort
   the paper evaluated (N = 146 in its deposit). The version label records which one was used.
 
-**Mode D** measures the legacy served behaviour: it is policy gate 1's comparison with Mode C, and
-attributes the difference to the candidate gate and the served score only through its intermediate
-reading (`scorer-measurement/PLAN_B05.md` §5). It is a separate item and **not a prerequisite** for
+**Mode D** measures the legacy served behaviour: it is policy gate 1's comparison with Mode C. Its
+C→D difference is joint (candidates, score and tie policy at once); it separates them only through
+derived readings on the formal C side's scores, one change at a time
+(`scorer-measurement/PLAN_B05.md` §5). It is a separate item and **not a prerequisite** for
 this one.
 
 ### D4 — Ordering by test score

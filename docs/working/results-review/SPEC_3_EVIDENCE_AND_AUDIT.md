@@ -183,9 +183,12 @@ These point in opposite directions on purpose.
 
 ## 7. Gate 3: the target-restricted evidence traversal (Batch 2 design, for approval)
 
-**Status:** design, written 2026-10-26 for review and approval; not implemented. Once approved it
-clears policy gate 3. The owner names the approval route (BACKLOG §0). It is built with B-1, as B-1c,
-in batch 5.
+**Status:** design, written 2026-10-26 for review and approval; not implemented. **Revised the same
+day** after the reviewer's review of `7b0162f` (P2-4: what the budget bounds; and the metapaths
+stated as this project's policy, the view identity, the approval route); the first version is in git
+history. **Approval route:** the reviewer's technical review, then the owner's confirmation, as for
+the project's other designs; no new approval process. The design is not approved yet, so gate 3 is
+not cleared. It is built with B-1, as B-1c, in batch 5.
 
 **Authority:**
 - policy §6, gate 3's seven requirements;
@@ -225,6 +228,10 @@ this candidate?
 
 ### 7.2 Legal paths: the metapath set `target-evidence/v1`
 
+**This is the project's own evidence policy, not the reference paper's method.** The paper gives no
+evidence-path traversal for disease ranking; the four metapaths are what this design proposes for
+approval. `NO_PATH_IN_POLICY` therefore means only that no path of these kinds was found.
+
 Paths are typed and directed as the graph builder stores edges:
 - phenotype → disease (`phenotype_of_disease`);
 - gene → disease (`gene_associated_with_disease`);
@@ -244,8 +251,8 @@ Here `p` is a patient phenotype and `t` is the target disease.
 
 | Excluded | Why |
 |---|---|
-| `is_a` over more than one step | a grandparent's annotation reads as support it is not |
-| The descendant direction (the disease is annotated with a term more specific than the patient's) | a v2 candidate if clinicians ask for it |
+| `is_a` over more than one step | a v1 scope and budget choice: one step keeps the expansion bounded and the reading simple. Whether a grandparent's annotation counts as support is not decided here, and no scientific claim is made either way |
+| The descendant direction (the disease is annotated with a term more specific than the patient's) | a v1 scope choice; a v2 candidate if clinicians ask for it |
 | Ortholog and publication edges | the real graph has none. The demo graph's ortholog edges give no v1 evidence, and the record says so |
 | Disease–disease `is_a`, and any path through another disease | Mode B (§7.8) covers a related disease explicitly, under its own label |
 | Edge types the builder never emits (`gene_causes_disease`, the pathway types) | there are no such edges to traverse |
@@ -286,8 +293,9 @@ because the restriction is by kind of path, not only by length.
 3. **Scan the `gene_has_phenotype` in-edges of each `a` from step 1.** Each gene `g ∈ G_P` gives M4,
    once for each `p ∈ G_P[g]` with `p ≠ a`.
 
-**Why from the target's side.** The work is then bounded by the target's own edges, and the
-patient-side sets are built once per result and shared.
+**Why from the target's side.** The edges scanned are then the target's own, and the patient-side
+sets are built once per result and shared. The sets' cost is the in-degrees of at most 100 used
+phenotypes, read once per result; §7.7 bounds it and §7.9 gives its cancellation points.
 
 **Visited state: none is needed.** Every legal path has a fixed type sequence of at most three
 edges, so the enumeration is exhaustive within the budget. No path is dropped because another path
@@ -328,46 +336,66 @@ the order of `kg.json`, which the record's graph digest fixes.
 5. the edge index.
 
 **What is shown.** The first five paths per metapath (`paths_shown_per_metapath = 5`, a policy
-constant) follow that order. Counts cover every path found.
+constant) follow that order. Counts cover every path found. Paths are counted as they are emitted,
+and only the five smallest keys per metapath are kept (a bounded heap), so memory is bounded by the
+shown paths, never by every path found, and no final sort over all paths is needed.
 
 **Reproducibility.** The same graph, result, target and policy give the same record, byte for byte,
 apart from `computed_at`.
 
 ### 7.7 Budget, fairness and the request ceiling
 
-**Unit.** The unit is typed adjacency entries examined in steps 1–3:
-- the in-edges of the one edge type a scan names;
-- read from a per-type in-edge index, built once per graph, in graph order.
+*(Revised 2026-10-26, the reviewer's P2-4: the first version counted scanned edges only, and claimed
+that this bounded all the work and made completeness knowable per disease in advance. Neither holds.)*
 
-Membership tests against `P`, `G_P` and `U_P` are not counted.
+**Three costs, kept apart:**
 
-**One fixed budget per target, set by the policy version.** Enumeration does not stop at the first
-path, because the counts are wanted. Two consequences:
-- A target's cost depends on the target and the graph only, never on the patient.
-- Whether a target completes is therefore known for every disease in advance: an offline pass over
-  every disease lists those whose cost exceeds the budget.
+| Cost | What it is | How it is bounded |
+|---|---|---|
+| **Entries scanned** (the budget unit) | typed adjacency entries examined in steps 1–3: the in-edges of the one edge type a scan names, read from a per-type in-edge index built once per graph, in graph order | `entry_budget`, fixed per policy version, the same for every target |
+| **Paths emitted** | each membership hit becomes one path per patient phenotype it serves. The same target edge can give 1 path or 100 | at most `entry_budget` × the used phenotypes (≤ 100) per target. Each emission is a count and a bounded-heap insert (§7.6), so per-target work is bounded, though not fixed |
+| **Per-result sets** (`P`, `G_P`, `U_P`) | built once per result, from the used phenotypes' in-edges | the in-degrees of ≤ 100 phenotypes, read once. They are counted in the request's admission, not in any target's budget |
 
-**Value.** `entry_budget` is set by measurement: the per-disease cost distribution on the deployed
-graph, from that same offline pass.
-- The provisional value is the 99th percentile, rounded up.
+**What depends on the patient.** Entries scanned do not: the scans read the target's edges whoever the
+patient is. Paths emitted do, and so does whether the analogy part runs (§7.8: only when the target's
+own outcome is `NO_PATH_IN_POLICY`). So a target's total work depends on the patient, and its
+completeness is known only from that traversal, which reports it.
+
+**Value of `entry_budget`.** It is set by measurement. One offline pass over every disease gives the
+distribution of scan cost per disease on the deployed graph. That distribution estimates the budget
+and bounds the scan part: it says which diseases' own scans fit, not whether a traversal completes.
+Analogies and the per-result sets are outside it.
+- The provisional value is the 99th percentile of scan cost, rounded up.
 - It stands until the latency target, an open institutional value (Spec 1 §6), gives it a time bound.
 - Every record names the value it ran under.
 - The measurement is batch 5's first step.
 
 **Fairness:**
-- Every target gets the same budget, and no target's budget is shared.
+- Every target gets the same `entry_budget`, and no target's budget is shared.
 - A target's unused budget never passes to another target (§2 rejected a shared surplus).
+- The analogy part draws on the same target's remaining entries, never on another target's.
 - Page size, sort order and page peers change no outcome.
 
 **The request ceiling: the policy's "global-budget units and enforcement".**
 - A request names at most `max_targets_per_request` targets. This equals `page_size`'s maximum, 100.
-- Its worst-case work is the number of targets × `entry_budget`, plus the per-result sets, which
-  are bounded by 100 phenotypes' degrees.
+- Its upper bound on work is:
+  - the per-result sets (≤ 100 phenotypes' in-degrees, once);
+  - plus, for each target, `entry_budget` scans and at most `entry_budget` × 100 emissions.
+
+  That is an upper bound, not the expected cost.
 - The ceiling is enforced at admission. A request over it is refused whole (422) before any
   traversal starts. It is never partly served from a shared pool.
 
 That is how "global" in the policy and §2 agree: the global bound limits what is admitted, never
 any target's outcome.
+
+**Pass conditions** (small fixtures, no harness):
+- *The same target with 1 used phenotype and with 100.* `entries_scanned` is equal. The paths emitted
+  and the counts differ. Memory holds at most five paths per metapath in both. Each record reports
+  its own completeness.
+- *A target with a direct hit, and one whose analogy part runs.* The analogy part runs only in the
+  second. Its entries count against that target's own budget. Each record's completeness is the one
+  its traversal reports.
 
 ### 7.8 Mode B and INSUFFICIENT, made reachable
 
@@ -391,15 +419,18 @@ any target's outcome.
 part's is also `NO_PATH_IN_POLICY`. Wherever `UNKNOWN` appears, the label is "not determined within
 the budget", never INSUFFICIENT.
 
-**Cost.** The analogy list depends on the target alone, so its cost does not depend on the patient
-either.
+**Cost.** The analogy list depends on the target alone, but whether it is traversed depends on the
+patient (on the target's own outcome), and so do the paths it emits (§7.7).
 
 ### 7.9 Cancellation
 
-**Cooperative.** The traversal checks a cancel flag every 4,096 entries and between targets.
+**Cooperative, in every phase.** The cancel flag is checked every 4,096 work units, where a unit is
+an entry read or a path emitted. That holds while the per-result sets are built, during each
+target's scans and emissions, and during the analogy part. It is also checked between targets.
+Nothing after the last check grows with the graph: the shown paths are already in their heaps.
 
 **A request is cancelled when:**
-- the same view sends a newer request;
+- the same view sends a newer request for the same result;
 - its result is replaced;
 - the server shuts down.
 
@@ -416,13 +447,20 @@ blocks other requests. Today's diagnose route runs synchronously inside `async d
 - `result_id`;
 - the target ids, in page order, at most the ceiling;
 - `policy_version`;
-- `view_request_seq`, which increases with every request from the view.
+- `view_id`, the existing view identity. In the WebUI this is the Gradio session
+  (`request.session_hash`) together with the result's panel. An API client sends an opaque `view_id`
+  of its own. This is a partition key, not an identity of a person, and no multi-user system is
+  added;
+- `view_request_seq`, which increases with every request within one `(view_id, result_id)`.
 
-**The response.** `EvidenceResponse` echoes `result_id` and `view_request_seq`. For each target it
-holds a record, a `NOT_COMPUTED` entry with its reason, or an error.
+**The response.** `EvidenceResponse` echoes `result_id`, `view_id` and `view_request_seq`. For each
+target it holds a record, a `NOT_COMPUTED` entry with its reason, or an error.
 
-**Stale responses.** The client discards a response whose `result_id` is not the current result's or
-whose `view_request_seq` is not the latest it sent.
+**Stale responses.** The client discards a response whose
+`result_id` is not the current result's or whose `view_request_seq` is not the latest it sent for
+that `(view_id, result_id)`. The server keeps the latest sequence number per `(view_id, result_id)`,
+and a newer request cancels the older one's running traversal (§7.9). Sequence numbers from
+different views never meet, because they are compared only within one pair.
 
 **Server refusals:**
 
@@ -456,7 +494,7 @@ evidence (§3).
 |---|---|
 | Identity | `record_schema`; `result_id`; the target's global id, NodeID and name |
 | Policy | `policy_version` (`target-evidence/v1`); `metapath_set`; `entry_budget` |
-| Outcome | `entries_used`; `outcome`; the analogy part's outcome (when it ran) |
+| Outcome | `entries_scanned` and `paths_emitted` (the target's own and the analogy part's); `outcome`; the analogy part's outcome (when it ran) |
 | Paths | path counts per metapath; the shown paths (each with metapath, source position and term, node ids, edge types and edge indices); per-phenotype coverage (§7.5); the analogies (each with similarity, outcome, counts and shown paths) |
 | Provenance | `fingerprints` (the graph digest; the checkpoint digest when analogies ran); `software_revision`; `computed_at` (§4) |
 
@@ -501,7 +539,8 @@ A failed or stale fetch degrades only the panel (Spec 1 §2).
 | Page independence | a target's record is the same across page sizes, sort orders and peers |
 | Exhaustiveness | on a fixture graph, the records equal a brute-force enumeration of M1–M4 |
 | Budget boundary | a fixture target costing exactly `entry_budget` completes; one costing one entry more is `FOUND_PARTIAL` or `UNKNOWN` |
-| Cancellation | a cancel mid-target gives `NOT_COMPUTED`, and the earlier targets are kept |
+| Cancellation | a cancel mid-target, and one while the per-result sets are being built, give `NOT_COMPUTED`; the earlier targets are kept; two views with the same sequence number do not cancel each other |
+| Cost (P2-4) | the two pairs of §7.7's pass conditions |
 | Ranking untouched | the result's digest is the same before and after evidence for every target |
 | Refusals | a stale response is discarded; a fingerprint mismatch gives 409; a request over the ceiling gives 422 |
 | Analogies | ties go to the lower id; INSUFFICIENT is not shown under `UNKNOWN` |
@@ -512,4 +551,4 @@ A failed or stale fetch degrades only the panel (Spec 1 §2).
 |---|---|
 | The value of `entry_budget` | engineering, measured as batch 5's first step; provisional until the latency target exists |
 | The latency target and `page_size`'s bounds | the institution (Spec 0 §3) |
-| The approval route for this design | the owner |
+| Approval of this design | the reviewer's technical review, then the owner's confirmation (no new process) |

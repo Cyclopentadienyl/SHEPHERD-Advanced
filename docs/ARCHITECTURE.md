@@ -107,6 +107,23 @@ order), and with no model configured the path-reasoning score becomes the rankin
 All three tasks share the same GNN-generated embedding space. **Only 3.3's disease ranking runs**,
 as the Diagnosis page, by the interim score of §8, not the target formulation below.
 
+**The reference paper's three tasks and this project** (checked against the paper's Methods,
+npj Digital Medicine 8:380, 2025, and `docs/working/FINDINGS_PAPER_PROTOCOL_AND_AMP.md` §3.4 and
+§3.6; added 2026-10-26). The paper's auxiliary scores belong to their tasks. They are not a set of
+scores to add to any ranking.
+
+| Task | Inputs it needs | The paper's formula and model head | Here today | This project's difference | Where it would land |
+|---|---|---|---|---|---|
+| Causal gene discovery | patient phenotypes and a candidate gene list from variant filtering or curation (13.3 genes on average in one setting, 244.3 in the other; policy §3.1) | Eq 12–14: `η·EMBSIM + (1−η)·SPLSIM`, its own task head, and SP also in the training loss | not implemented: `candidate_genes` is a reserved field, ignored with a warning | — | its own work item (`docs/working/task-scope/README.md`); the only task in which the paper mixes SP into a ranking |
+| Patients-like-me | patient phenotypes and a reference cohort of patients with embeddings | Eq 16: `−‖z_Pi − z_Pj‖²` | not implemented | — | its own work item; it needs a reference cohort |
+| Novel disease characterisation (disease ranking) | patient phenotypes | Eq 18: `−‖z_d − z_P‖²` over every KG disease, on the patient encoder's output (a transformer encoder and an attention-weighted average) | served as Diagnosis by the legacy mixture of §8 until B-1; Mode C measures the approved interim policy | the approved interim policy (statement 2) is raw cosine of an **unweighted** masked mean: not the paper's encoder, projection or objective. Cosine and negative squared L2 order alike only on the same unit vectors; that does not make the encoders equal, and Mode C is not a reproduction of the paper | B-1 serves the interim policy; paper parity is the scorer-retraining track (`docs/working/scorer-retraining/README.md`) |
+
+**SP for disease ranking** is this project's policy, not the paper's formula. It is an optional
+analysis view, off by default, whose sorting and filtering change the view only and never the
+canonical rank (policy statement 4b, C1–C10). **The evidence metapaths** of gate 3's design are
+likewise this project's evidence policy, not a method the paper specifies
+(`docs/working/results-review/SPEC_3_EVIDENCE_AND_AUDIT.md` §7.2).
+
 ### 3.1 Causal Gene Discovery (not implemented)
 
 `candidate_genes` is a reserved request field: accepted, ignored, and answered with a warning
@@ -348,7 +365,7 @@ The evidence modes above and the scorer-measurement modes are unrelated. Evidenc
 **How the measurement modes were decided.**
 - The deploying institution decided (2026-08), before any measurement, that disease ranking is GNN-primary (every disease scored, raw cosine as the interim score) and that SP leaves the ranking for an optional, separate analysis (`docs/DISEASE_SCORER_POLICY.md` §1, §3.4). In the reference paper the disease task uses embedding distance alone; the SP fusion belongs to the candidate-gene task, which has a short candidate list. Mode C measures that scorer. Work item B-1 makes the Diagnosis tab rank by it; until then a Mode C result says the tab's ranking differs (`src/evaluation/caveats.py`).
 - Modes A and B were retired on 2026-10-12: the formal Test's mode was settled as C (`docs/working/PLAN_TEST_RESULTS.md` D3), Mode A could not build a model from any checkpoint the current writer produces, and the institution had authorised retiring the old pipeline (`docs/working/scorer-measurement/ASSESSMENT_MODE_AB_RETIREMENT.md` §9).
-- B-1 may not start before Policy Gate 1, a B-0 report comparing the served ranking (Mode D) with the planned GNN ranking (Mode C) (`docs/DISEASE_SCORER_POLICY.md` §6). C→D changes the candidates and the scorer at once, so Mode D also reports an intermediate reading, the served candidates ordered by raw cosine, to tell the two apart (`docs/working/scorer-measurement/PLAN_B05.md` §5).
+- B-1 may not start before Policy Gate 1, a B-0 report comparing the served ranking (Mode D) with the planned GNN ranking (Mode C) (`docs/DISEASE_SCORER_POLICY.md` §6). C→D changes the candidates, the score and the tie rule at once, so Mode D also reports derived readings on the formal Mode C scores that change one of them at a time (`docs/working/scorer-measurement/PLAN_B05.md` §5).
 
 ---
 
@@ -492,12 +509,14 @@ Mode C and Mode D change no served value. B-1 does.
 | 5. **Ranking** (order, ties, cut) | Serving: a stable sort, then the `top_k` slice, inside `_score_and_rank_candidates`. Mode C: `canonical_ranking` (`src/evaluation/measurement.py`) | No untruncated served rank exists. There are two tie rules, and serving cannot import Mode C's | Batch 3: `DiagnosisPipeline.rank()`, which `run()` calls before its cut. Batch 5: `canonical_ranking` moves into `scoring.py`; `selection_limit` cuts after scoring | Batch 5: serving's own sort, for the GNN kind |
 | 6. **Evidence** | `_add_explanations` calls `EvidencePanel.build_evidence`, always Mode A from discovery paths, eagerly, for the top K only | Not restricted to the target; no budget; Mode B and INSUFFICIENT unreachable; no record identity | `src/reasoning/target_evidence.py`: four declared path kinds, one fixed budget per target, computed lazily per page (SPEC_3 §7). **Batch 5, gate 3** | `EvidencePanel` and the eager step, together with the legacy result kinds |
 | 7. **Result and report** | `InferenceResult` and `DiagnosisCandidate` (`src/core/types.py`); `POST /api/v1/diagnose`; the Diagnosis page, its CSV and its report | One flat record. `confidence_score` holds two quantities. An unavailable value is written as `0.0`. The demo answer carries invented scores | The result union, discriminated by `result_kind` (SPEC_1 §2.1). Batch 4: `served_mixture/v1`, `path_reasoning/v1`, `demo/v1`. Batch 5: `gnn_ranking/v1` | `confidence_score`, `gnn_score` and the bare `sp_score`; `scripts/test_gnn_inference.py`; `generate_evidence_summary` |
-| 8. **Measurement** | Mode C: `scripts/measure_scorer.py --cohort` calls `run_mode_c`. Mode D: none | Gate 1's comparison does not exist | `run_mode_d` and `--mode D`: end-to-end and among-reached metrics, the path-gated intermediate reading, Mode C's rank in process (PLAN_B05). **Batch 3** | none |
+| 8. **Measurement** | Mode C: `scripts/measure_scorer.py --cohort` calls `run_mode_c`. Mode D: none | Gate 1's comparison does not exist | `run_mode_d` and `--mode D`: post-import and among-reached metrics over named case sets; the C side is `run_mode_c` itself on the same embeddings; derived readings one change at a time (PLAN_B05). **Batch 3** | none |
 | 9. **Registration and comparison** | `registration.register_report`; the ledger (D4 groups and the D5 key, both including `mode`); `report_store`'s usage history; the Test and Models pages | Labels assume Mode C; the usage history has no mode | Mode D's values go in the existing manifest fields, with no new field; labels come from each record; the usage history records a mode (PLAN_B05 §6). **Batch 3** | none: no ledger rule changes |
 
 **Proving correctness without rerunning old acceptances:**
 - **Golden tests** pin what must not move: serving's output across batches 3 and 4, and Mode C's
-  reports when batch 5 moves its ranking.
+  reports when batch 5 moves its ranking. They compare the promised fields (scores, order, ranks,
+  cases, digests, semantic fields), never timestamps, revisions or run metadata
+  (`docs/working/scorer-measurement/PLAN_B05.md` §8).
 - **New tests** cover only what is new.
 - **One short GB10 run per batch** where hardware matters: batch 3 runs Mode C, then Mode D, on a
   registered synthetic cohort.
