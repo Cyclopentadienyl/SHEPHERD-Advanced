@@ -303,8 +303,21 @@ def _refusal_line(entry: Dict[str, Any]) -> Optional[str]:
 # =============================================================================
 # The result's kind (Spec 1 §2.1), as every surface below reads it
 # =============================================================================
+def _label_of(kind: str, result: Mapping[str, Any]) -> Optional[str]:
+    """The kind's fixed label (`src.core.types.result_label`), η read from the
+    result's own served identity; None where the identity cannot give it."""
+    identity = result.get("served_identity")
+    identity = identity if isinstance(identity, Mapping) else {}
+    settings = identity.get("settings") if isinstance(identity.get("settings"), Mapping) else {}
+    try:
+        return result_label(kind, identity.get("scoring_mode"), settings.get("eta"))
+    except (TypeError, ValueError):
+        return None
+
+
 def _result_kind(result: Any) -> Optional[str]:
-    """The result's `result_kind`, or None for a response that does not say."""
+    """The result's `result_kind` when it is one this page knows; else None, and
+    every surface draws nothing from the result."""
     kind = result.get("result_kind") if isinstance(result, Mapping) else None
     return kind if kind in RESULT_KINDS else None
 
@@ -317,24 +330,23 @@ def _shows_sp(result: Any) -> bool:
             and identity.get("scoring_mode") == "gnn_plus_shortest_path")
 
 
-#: Said where a response does not name its kind: nothing is drawn from it.
-KIND_NOT_REPORTED = ("The response does not say what kind of result it is (result_kind), "
-                     "so its candidates are not shown.")
+#: Said where a response names no kind this page knows (absent, or a newer
+#: kind): nothing is drawn from it.
+KIND_NOT_REPORTED = ("The response does not name a result kind this page can read "
+                     "(result_kind), so its candidates are not shown.")
+#: A mixture whose identity does not give its η (only a malformed response):
+#: its candidates are shown, and the label says what is missing, never a constant.
+MIXTURE_ETA_NOT_REPORTED = ("Served ranking today: diseases reached by path discovery, "
+                            "scored by the mixture; the response does not report its η")
 
 
 def kind_label(result: Any) -> str:
-    """The kind's fixed label (`src.core.types.result_label`), η read from the
-    result's own served identity, never a constant."""
+    """The kind's fixed label, η read from the result's own served identity,
+    never a constant; KIND_NOT_REPORTED where the kind is not one this page knows."""
     kind = _result_kind(result)
     if kind is None:
         return KIND_NOT_REPORTED
-    identity = result.get("served_identity")
-    identity = identity if isinstance(identity, Mapping) else {}
-    settings = identity.get("settings") if isinstance(identity.get("settings"), Mapping) else {}
-    try:
-        return result_label(kind, identity.get("scoring_mode"), settings.get("eta"))
-    except ValueError:
-        return KIND_NOT_REPORTED
+    return _label_of(kind, result) or MIXTURE_ETA_NOT_REPORTED
 
 
 def _score(candidate: Mapping[str, Any], kind: Optional[str]) -> Any:
@@ -1094,7 +1106,9 @@ def _build_results_report_md(result: Dict[str, Any]) -> str:
         # A missing time is left out, never printed as 0.0.
         ("Inference time (ms)", f"{elapsed:.1f}" if isinstance(elapsed, (int, float))
          and not isinstance(elapsed, bool) else None),
-        ("Result kind", f"`{result_kind}`" if result_kind else "not reported"),
+        ("Result kind", f"`{result_kind}`" if result_kind else (
+            f"`{result.get('result_kind')}` (not readable here)"
+            if isinstance(result.get("result_kind"), str) else "not reported")),
         ("Candidates", len(candidates)),
     ):
         if value not in (None, ""):
@@ -1250,12 +1264,10 @@ TOPIC_HELP = {
     "dx-score": (
         "Score",
         SCORE_NOTE + " A score of 0.72 does not mean a 72% chance of the disease.\n\n"
-        "What it is follows the result's kind, named above the table. With a model, "
-        "it mixes the model term and SP by the result's η, or is the model term alone "
-        "without an SP table (served_score in the CSV). With no model, it is the "
-        "path score (path_score).\n\n"
-        "SP 0.273 (3/4): computed on 3 of the 4 phenotypes submitted. An SP in words "
-        "has no number.",
+        "The kind above the table says what it is. With a model: η × model term + "
+        "(1 − η) × SP, or the model term alone without an SP table. With no model: "
+        "the path score.\n\n"
+        "SP 0.273 (3/4): from 3 of the 4 phenotypes submitted. SP in words: no number.",
     ),
     "dx-exports": (
         "Exports",

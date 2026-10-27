@@ -917,9 +917,11 @@ the API's version, not the identity of what is served.
   `COMPUTED_PARTIAL` (some submitted phenotypes were not mapped;
   `phenotypes_mapped` / `phenotypes_submitted` say how many), `NO_TABLE`,
   `TARGET_UNMAPPED` or `NO_PHENOTYPE_MAPPED`. `mean_hop_distance` and `score`
-  (1 / (1 + d)) are there on the first two only. Where a table is served and a
-  status has no number, the mixture still takes it as 0, as before, so the
-  ranking does not change, and the record says so: `mixed_as: 0.0`.
+  (1 / (1 + d)) are there on the first two only. On a served result only
+  `NO_TABLE` (in `gnn_only`, where nothing is mixed) has no number: a disease or
+  phenotype the graph's node mapping lacks is refused first, as a model term
+  that cannot be computed (below). Were a status with no number mixed, the
+  mixture takes it as 0 and the record says so (`mixed_as: 0.0`).
 - **The ranking is unchanged for valid input**: the same values, order and ties
   (`served_score` is the former `confidence_score`).
 - **New refusals.** A model term the service cannot compute (no embeddings, no
@@ -928,8 +930,10 @@ the API's version, not the identity of what is served.
   its `error` starting with the code (`MODEL_TERM_UNAVAILABLE: …`,
   `NON_FINITE_SCORE: …`). On a verified workspace these states are not
   expected. An input with no phenotype in the graph is refused as before
-  (`No valid phenotypes after validation`), and an unknown id is always stated
-  (`Unknown phenotype: …`).
+  (`No valid phenotypes after validation`). An unknown id is always listed in
+  `phenotype_input.unknown`, and stated as a warning (`Unknown phenotype: …`)
+  when the request is answered; when no id is known, the warning is the
+  refusal.
 - **`phenotype_input`** (received, unknown, repeats removed, used) is in the
   response; null in the demo answer, and when a request was refused before its
   phenotypes were mapped.

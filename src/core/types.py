@@ -573,7 +573,9 @@ class ServedMixtureCandidate(_ServedEvidence, _CandidateBase):
     #: The value it is ranked by: η·model_term + (1−η)·SP in
     #: `gnn_plus_shortest_path`, `model_term` alone in `gnn_only`.
     served_score: float
-    #: (cos+1)/2 of the pooled patient phenotypes and the disease, in [0, 1].
+    #: (cos+1)/2 of the pooled patient phenotypes and the disease, in float32:
+    #: in [0, 1] up to an ulp either side (a patient parallel or anti-parallel
+    #: to a disease rounds the cosine past +-1).
     model_term: float
     sp_term: SPAnalysisRecord
 

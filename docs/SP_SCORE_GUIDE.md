@@ -35,8 +35,9 @@ exists so that anyone who sees an SP number knows precisely what it does and doe
 > **An SP value that cannot be computed is never written as a number.** Each candidate's `sp_term`
 > has a status: `COMPUTED`, `COMPUTED_PARTIAL` (some submitted phenotypes were not in the graph),
 > `NO_TABLE`, `TARGET_UNMAPPED` or `NO_PHENOTYPE_MAPPED`; only the first two carry a mean distance
-> and a score. Where a table is served, the mixture still takes a status with no number as 0, as it
-> did before Batch 4, and the record says so (`mixed_as: 0.0`).
+> and a score. On a served result only `NO_TABLE` (no table, nothing mixed) has no number: a
+> disease or phenotype missing from the graph's node mapping is refused first (§3). Were a status
+> with no number mixed, it would count as 0 and the record would say so (`mixed_as: 0.0`).
 >
 > **Also today: candidates are discovered by path search before any scoring happens.** A disease
 > with no qualifying path from the patient's phenotypes is never scored at all, whatever the model
@@ -425,10 +426,11 @@ the mean is over the mapped ones). When it cannot compute at all, the record say
 giving a number: `NO_TABLE` (no shortest-path table served), `TARGET_UNMAPPED` (the disease has no
 node in the table's mapping) or `NO_PHENOTYPE_MAPPED` (none of the patient's phenotypes resolves).
 Before Batch 4 these cases returned `0.0`, which is lower than a genuine "no path found" (`1/7`).
-With a table served, the mixture still takes `TARGET_UNMAPPED` and `NO_PHENOTYPE_MAPPED` as 0, so
-the ranking is unchanged, and the record marks it (`mixed_as: 0.0`); with `NO_TABLE` nothing is
-mixed (the model term alone ranks) and `mixed_as` is absent. No surface displays that 0 as a
-distance.
+On a served result only `NO_TABLE` occurs (in `gnn_only`, where nothing is mixed and `mixed_as` is
+absent): the model shares the table's node mapping, so a disease or phenotype missing from it is
+refused first, as a model term that cannot be computed (`MODEL_TERM_UNAVAILABLE`), or as an input
+with no phenotype in the graph. Were a status with no number mixed, the mixture would take it as 0
+and the record would say so (`mixed_as: 0.0`); no surface displays that 0 as a distance.
 
 ## Three ways this differs from the paper — all of them material
 

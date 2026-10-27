@@ -5,6 +5,7 @@ results badge, Run Diagnosis' states, Change model…'s D8 check, the identity
 drawer, and the page as built in the shell.
 """
 import os
+import re
 
 import pytest
 
@@ -1588,6 +1589,41 @@ def test_a_response_that_does_not_name_its_kind_shows_no_candidates(monkeypatch,
     assert out["selected"] is None
     assert out["export_csv"] is dp._DOWNLOAD_DISABLED
     assert out["export_report"] is dp._DOWNLOAD_DISABLED
+
+
+def test_a_kind_the_page_does_not_know_shows_no_candidates():
+    """A kind this page does not know (a newer API) is treated like an absent
+    kind on every surface: the notice, no table, no CSV row; the report keeps
+    the raw value it was given."""
+    result = _sample_result()
+    result["result_kind"] = "gnn_ranking/v1"
+    body = dp.results_body_html(result, 1)
+    assert dp.KIND_NOT_REPORTED in body and "<table" not in body
+    assert dp.kind_label(result) == dp.KIND_NOT_REPORTED
+    _, records, _ = _csv_records(dp._build_results_csv(result))
+    assert records == []
+    report = dp._build_results_report_md(result)
+    assert report.count(dp.KIND_NOT_REPORTED) == 1 and "### #1" not in report
+    assert f"`{result['result_kind']}` (not readable here)" in report
+
+
+def test_a_mixture_whose_identity_gives_no_eta_says_so_above_its_candidates():
+    """Only a malformed response: the candidates are shown, and the label says
+    the η is not reported, never "not shown" above a table and never 0.7."""
+    result = _sample_result()
+    result["served_identity"]["settings"]["eta"] = None
+    body = dp.results_body_html(result, 1)
+    assert dp.MIXTURE_ETA_NOT_REPORTED in body and "<table" in body
+    assert dp.KIND_NOT_REPORTED not in body and "0.7" not in dp.kind_label(result)
+    assert f"*{dp.MIXTURE_ETA_NOT_REPORTED}.*" in dp._build_results_report_md(result)
+
+
+def test_the_score_help_stays_within_its_budget():
+    """The skill's §7 budget (about 60-80 words) and §5's sentence limit."""
+    text = dp.TOPIC_HELP["dx-score"][1]
+    assert len(text.split()) <= 80
+    assert max(len(s.split()) for s in re.split(r"(?<=[.!?])\s+", text)) <= 25
+    assert "(3/4)" in text
 
 
 def test_a_missing_count_or_time_is_never_written_as_zero():

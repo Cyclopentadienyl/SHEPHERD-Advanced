@@ -115,9 +115,10 @@ the value a genuine "no path found" produces (`1/7`). Under a numeric sort, a ma
 therefore rank below a real negative and be indistinguishable from a very poor score.
 *(Rev 9: since Batch 4 the one SP caller, `sp_analysis_records` in `src/inference/sp_index.py`,
 gives each of these a status with no number (`NO_TABLE`, `TARGET_UNMAPPED`, `NO_PHENOTYPE_MAPPED`).
-The served mixture still takes such a status as 0 where a table is served, so today's ranking is
-unchanged, and the record says so (`mixed_as: 0.0`). That keeps today's order; it is not C9's
-view, which B-1b builds.)*
+On the served path only `NO_TABLE` occurs (nothing is mixed): an unmapped candidate or phenotype
+now refuses the result first, since the model shares the node mapping (`MODEL_TERM_UNAVAILABLE`,
+or no phenotype in the graph). Were a status with no number mixed, the record would mark its 0
+(`mixed_as: 0.0`). This is C9's representation in the result, not C9's view, which B-1b builds.)*
 
 ### 1.2 Computation schedule — decided
 
@@ -229,7 +230,7 @@ row); separate `selection_limit` from the two display limits (§1.3).
 
 **B-1b — SP as an optional view.** Eager SP over the selected set (§1.2); the SP surface under
 C1–C10, none of which exists. C9's representation is in place since Batch 4: an unavailable SP is
-a status with no number in the result and its exports; the mixture's own 0 is marked `mixed_as`. `selection_limit`'s default, minimum and maximum,
+a status with no number in the result and its exports (a mixed 0 would be marked `mixed_as`). `selection_limit`'s default, minimum and maximum,
 the storage and export bounds and the latency target are [OPEN] (§1.3).
 
 **B-1c — evidence after ranking.** A target-restricted evidence traversal for the visible page;

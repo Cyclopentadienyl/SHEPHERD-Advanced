@@ -1353,15 +1353,18 @@ checkpoint、圖、workspace manifest、最短路徑表與 dataset record，以 
 - **`sp_term` 不會把缺少的值寫成 0。** 它的 `status` 為 `COMPUTED`、`COMPUTED_PARTIAL`
   （部分送出的表型未能對應；`phenotypes_mapped` / `phenotypes_submitted` 寫明數量）、
   `NO_TABLE`、`TARGET_UNMAPPED` 或 `NO_PHENOTYPE_MAPPED`。`mean_hop_distance` 與 `score`
-  （1 / (1 + d)）只在前兩種狀態出現。有服務最短路徑表、但某個狀態沒有數值時，混合分數仍照舊
-  以 0 計入，所以排名不變，紀錄上也會寫明：`mixed_as: 0.0`。
+  （1 / (1 + d)）只在前兩種狀態出現。實際服務的結果中，只有 `NO_TABLE`（在 `gnn_only`
+  下，不做混合）沒有數值：圖的節點對應中缺少的疾病或表型，會先以「無法計算的模型分數」
+  被拒絕（見下）。若真有沒有數值的狀態被混合，混合分數會以 0 計入，紀錄上也會寫明
+  （`mixed_as: 0.0`）。
 - **合法輸入的排名不變**：數值、順序與平手都相同（`served_score` 就是原本的
   `confidence_score`）。
 - **新增的拒絕條件。** 服務無法計算的模型分數（沒有 embedding、沒有表、某個節點沒有對應列，
   或對應列超出表的範圍——過去會被截到最後一列）或不是有限值的分數，會拒絕整個結果：HTTP 500，
   `error` 以代碼開頭（`MODEL_TERM_UNAVAILABLE: …`、`NON_FINITE_SCORE: …`）。在已驗證的
   workspace 上不應出現這些狀態。圖中沒有任何表型的輸入照舊被拒絕（`No valid phenotypes after
-  validation`），未知的 id 一律會寫明（`Unknown phenotype: …`）。
+  validation`）。未知的 id 一律列在 `phenotype_input.unknown`；請求有回答時也會以警告
+  寫明（`Unknown phenotype: …`），沒有任何已知 id 時，警告就是那則拒絕。
 - **`phenotype_input`**（收到的、未知的、移除的重複項、實際使用的）會出現在回應中；demo 回答，
   以及在表型對應之前就被拒絕的請求，該欄為 null。
 

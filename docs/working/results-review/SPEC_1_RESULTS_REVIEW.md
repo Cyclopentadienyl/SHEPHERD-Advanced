@@ -171,15 +171,23 @@ not reopened.
 | Mode D (`run_mode_d`, `docs/working/scorer-measurement/PLAN_B05.md`) | nothing: it reads batch 3's `ServedRanking`, and only its order, disease, served score and `discovery_ordinal` (internal metadata, not a response field). As built, the served score's attribute name follows the kind (`served_score`) |
 
 **As built in Batch 4 (2026-10-27, for review).** Where the design left a detail open:
-- `result_kind_for`, the one mapping function, lives in `src/core/types.py` beside the candidate
-  types rather than in `src/inference`, so that the API's demo answer and the WebUI read the same
-  mapping without importing the pipeline.
-- A refusal (`MODEL_TERM_UNAVAILABLE`, `NON_FINITE_SCORE`) is HTTP 500 whose `detail` starts with
-  the code; the Diagnosis page shows it as one sentence; Mode D stops on it rather than counting it.
+- `result_kind_for`, the one mapping function, lives in `src/core/types.py` with the kinds, the
+  labels and the candidate types rather than in `src/inference`: `src.reasoning`, which cannot
+  import `src.inference`, names the kinds and labels too. The pipeline and the API's demo answer
+  call the mapping; the WebUI reads the kind constants and `result_label` from there.
+- A refusal (`MODEL_TERM_UNAVAILABLE`, `NON_FINITE_SCORE`) is HTTP 500 whose body's `error` (the
+  exception's detail) starts with the code; the Diagnosis page shows it as one sentence; Mode D
+  stops on it rather than counting it.
+- On the served path only `NO_TABLE` reaches a candidate: the model shares the SP table's node
+  mapping, so an unmapped disease or phenotype refuses first (`MODEL_TERM_UNAVAILABLE`, or no
+  phenotype in the graph). `mixed_as` is enforced for a forced status, which only tests reach.
+- An unknown term is always listed in `phenotype_input.unknown`; its warning is in the response
+  when the request is answered, and when no term is known the warning is the refusal.
 - `phenotype_input` is null in the demo answer and when a request is refused before its phenotypes
   are mapped. `phenotypes_submitted` counts the mapped phenotypes plus the distinct unknown ones.
 - In `gnn_only` the SP column is omitted from the page and `mixed_as` is absent, since nothing is
-  mixed; the CSV keeps its `sp_term_` columns with the status `NO_TABLE` and empty values.
+  mixed; the CSV keeps its `sp_term_` columns: the status `NO_TABLE`, the value cells empty, the
+  phenotype counts filled.
 - The demo answer lists diseases with no score, gene, path or explanation.
 - `path_score_aggregation` reads the configured aggregation (`weighted_sum/v1` by default).
 - The tie rule is the stable sort in discovery order; the result's invariant checks only that the

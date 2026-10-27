@@ -394,7 +394,8 @@ class ServedMixtureCandidate(_ServedCandidate):
         ..., description="The value ranked by: eta * model_term + (1 - eta) * SP, or "
         "model_term alone with no shortest-path table")
     # No [0, 1] bound: the cosine is float32 and can round an ulp past +-1 for
-    # a patient parallel to a disease, so a valid term can sit just outside.
+    # a patient parallel or anti-parallel to a disease, so a valid term can sit
+    # just outside.
     model_term: _Finite = Field(..., description="(cos + 1) / 2, computed in float32; "
                                 "it can lie an ulp outside [0, 1]")
     sp_term: SPTerm
