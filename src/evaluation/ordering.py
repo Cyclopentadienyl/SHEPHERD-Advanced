@@ -265,11 +265,13 @@ def order_by_test_score(
 
     # **The records' role, not only the caller's**: a version has one role, and
     # a record on it naming another means the role passed is not the version's.
-    roles = {r.get("cohort_role") for ledgers in by_digest.values()
-             for records in ledgers.values() for r in records
-             if r.get("cohort_digest") == cohort_digest}
-    if roles - {role}:
-        named = ", ".join(sorted(repr(r) for r in roles - {role}))
+    # Gathered by their text, so a damaged value ([] or {}, which cannot be
+    # hashed) is named as another role too, never raised.
+    other_roles = {repr(r.get("cohort_role")) for ledgers in by_digest.values()
+                   for records in ledgers.values() for r in records
+                   if r.get("cohort_digest") == cohort_digest and r.get("cohort_role") != role}
+    if other_roles:
+        named = ", ".join(sorted(other_roles))
         return Ordering(False, (
             f"ordering by test score is not offered: records on cohort version "
             f"{cohort_digest[:12]}... name role {named}, not the role {role!r} it was asked "
@@ -281,11 +283,12 @@ def order_by_test_score(
     # shown, never ordered. One scoring group is one mode (`mode` is among its
     # fields), so a group whose records name another mode is not ordered at all.
     # A record whose mode cannot be read never stops the whole group: it makes
-    # only its own checkpoint unreadable, below.
+    # only its own checkpoint unreadable, below. It is left out before the set
+    # is built, since a damaged value ([] or {}) cannot be hashed.
     modes = {_mode(r) for ledgers in by_digest.values() for records in ledgers.values()
              for r in records if r.get("cohort_digest") == cohort_digest
-             and r.get("scoring_semantics_digest") == scoring_semantics_digest}
-    modes = {m for m in modes if _readable_mode(m)}
+             and r.get("scoring_semantics_digest") == scoring_semantics_digest
+             and _readable_mode(_mode(r))}
     if modes - {"C"}:
         named = ", ".join(sorted(modes - {"C"}))
         return Ordering(False, (

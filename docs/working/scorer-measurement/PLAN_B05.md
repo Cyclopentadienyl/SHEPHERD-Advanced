@@ -481,3 +481,17 @@ and thirteen P3 in the fixes themselves, each addressed here:
   checkpoint is unreadable;
 - W1 no longer checked T7's run as registered: it does, when T7 passed;
 - a blank mode string read as a mode: read as not recorded.
+
+### 12.2 The reviewer's review of `1f51fb2` (2026-10-27)
+
+The reviewer read `e61253e..1f51fb2` read-only: no P1 or P2, one P3. **The ordering built its set of
+modes before leaving out the unreadable ones**, so a damaged `scoring.mode` of `[]` or `{}` (which
+cannot be hashed) raised `TypeError` out of `order_by_test_score`, and the Models page, which catches
+only `ValueError`, ordered no checkpoint of the group. A normally written ledger never holds such a
+value. **Fixed at its root**: the mode is checked before it enters the set, so the damaged record
+makes only its own checkpoint unreadable, as cli-1 decided. The set of the records' roles two steps
+earlier had the same defect (from M5, before Batch 3): a damaged `cohort_role` raised the same
+error. It is gathered by each role's text now, so a damaged role is named as another role and the
+version is not ordered, as for any role but the one asked for. Nothing else changes: no new reader,
+and no error caught more broadly. Pinned by `test_test_score_ordering.py` (`[]` and `{}` for the
+mode and the role); without the fix exactly those four cases fail.
