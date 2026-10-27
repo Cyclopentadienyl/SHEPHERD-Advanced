@@ -1,7 +1,8 @@
 # Spec 1 — Results review: authority, SP policy, decomposition, surfaces
 
 **Status:** draft, under review. **Normative.** Supersedes rev 6 §1–§8. §2.1 (the result union) and
-§2.2 (the shared scoring boundary) were added as Batch 2's design on 2026-10-26, for review.
+§2.2 (the shared scoring boundary) were added as Batch 2's design on 2026-10-26 and passed the
+reviewer's review (`a5652c1..e61253e`).
 **Authority above this document:** `docs/DISEASE_SCORER_POLICY.md` — statements 4a/4b, conditions
 C1–C10, the eager-SP / lazy-evidence schedule, and the three limits that replace `top_k`. Where a
 choice here is constrained by a condition, the condition is cited; this document does not restate or
@@ -50,8 +51,10 @@ binding a view to an immutable result ID — **unenforceable**, not merely untid
 
 ### 2.1 The result union (Batch 2 design, 2026-10-26)
 
-**Status:** design for review. Today's kinds are built in BACKLOG §0 batch 4, `gnn_ranking/v1` with
-B-1 in batch 5. **Authority:** policy §7: one versioned discriminated union with required and
+**Status:** reviewed design (Batch 2, passed with `a5652c1..e61253e`), not built yet (2026-10-27).
+**Batch 4 builds** `served_mixture/v1`, `path_reasoning/v1` and `demo/v1` with everything below
+that applies to them: the removed fields, unavailable never zero, the invariants, the labels and
+the consumers. **Batch 5 builds** `gnn_ranking/v1` with B-1 (BACKLOG §0). **Authority:** policy §7: one versioned discriminated union with required and
 forbidden fields per variant, never a flat envelope; statement 7; C9.
 
 **The discriminator is `result_kind`, on the result, never on a candidate.** Every candidate of a
@@ -177,7 +180,10 @@ before batch 4.
 
 ### 2.2 The shared scoring boundary (Batch 2 design, 2026-10-26)
 
-**Status:** design for review. It is built with B-1 (batch 5), except the parts marked *batch 4*.
+**Status:** reviewed design (Batch 2), not built yet (2026-10-27). **Batch 4 builds** the parts
+marked *batch 4*: the one phenotype mapping step, and the one SP caller with its two clean-ups.
+**Batch 5 builds** the rest with B-1: `score_patients`, `masked_mean_pool` in place of
+`pool_patient_embeddings`, the ranking's move into `scoring.py`, and the callers' migration.
 It settles `PLAN_TEST_RESULTS.md` D3's two open served behaviours, the disease clamp and the
 unknown-phenotype handling, and policy §2.1's "one scorer, not two".
 
@@ -369,6 +375,21 @@ or quantile summary — so the affordance is discoverable without being applied.
 Per C8: facet counts are computed over the **whole selected set**, never the current page;
 pagination never changes them; facets show the count a filter *would* leave before it is applied
 (C6). The unavailable group is a facet in its own right.
+
+### 3.7 Further analysis views: registered, not designed (2026-10-27)
+
+Policy §1.4 records an analysis view that mixes the model's score and SP with an adjustable η, apart
+from §3's SP-alone sort; its policy and defaults are decided before it is built. Nothing here
+designs it. What a design would start from:
+- **The weight is view state.** It belongs to `AnalysisViewState` (§2), like a sort key: per view,
+  never written to the canonical result or to the shared pipeline.
+- **The components are on the result.** Each kind of §2.1 already carries its own component scores
+  with their statuses (`served_mixture/v1`: `model_term`, `sp_term`; `gnn_ranking/v1`:
+  `ranking_score` and `candidate_analysis`). A view recombines those values; the formula's version
+  and any normalisation's reference set are fixed when the result is produced (C7), and a missing
+  component makes the mixed value not computable, never zero (C9).
+- **No extra machinery in advance.** Batch 4's union keeps what such a view needs; no plug-in
+  interface and no second loading path are added for it.
 
 ---
 

@@ -503,7 +503,8 @@ only its own checkpoint), no new finding.
 ### 12.3 The short GB10 run, Mode C then Mode D (2026-10-27)
 
 §8's one short run passed at `be0ee1a`, within the scope agreed, as the reviewer's review of the
-evidence found. The record and the whole evidence package are in
+evidence found. **With it, Batch 3's technical and synthetic functional acceptance, within the
+agreed scope, is complete.** The record and the whole evidence package are in
 [`../batch3-acceptance-2026-10-27/README.md`](../batch3-acceptance-2026-10-27/README.md). On the
 synthetic cohort `m5-closeout-demo-01` (12 source cases, 2 excluded at import, 10 eligible) and one
 checkpoint: both runs exited 0 on CUDA; Mode D's outcomes 7 ranked, 3 not reached, 0 refused, the

@@ -351,9 +351,11 @@ The paper's stated rationale, quoted:
 
 That observation is cited to a survey of gene-prioritisation tools (Zolotareva & Kleine,
 *J. Integr. Bioinform.* 16, 20180069, 2019) rather than to an experiment within the paper. **No
-ablation of SPLSIM appears in the main article as reviewed**; supplementary materials were not
-examined. The selected value of η is published in the authors' repository rather than in the
-article.
+ablation of SPLSIM appears in the article or its Supplementary materials**, which hold only the
+rank-against-distance panels, Supp. Fig. 3b and 4d. How η is chosen is in the article, a
+hyperparameter search over `[0.1, 0.9]` per task; the value is not: the authors' run script for the
+gene task sets 0.5, from released code that does not run as committed
+(`working/FINDINGS_PAPER_PROTOCOL_AND_AMP.md`).
 
 ### Where the paper uses it — and where it does not
 
@@ -425,7 +427,7 @@ and nothing currently distinguishes the two. Any surface that displays SP should
 |---|---|---|---|
 | **Task** | candidate **gene** ranking, with a short list | **disease** ranking, over whatever the path search admits | The condition the paper's rationale depends on — a short candidate list — does not hold |
 | **Transform** | `NORM(mean(−d))`, min–max rescaled **across the candidate set**, giving `[−1, 1]` | `1/(1 + mean(d))`, an **absolute** transform giving `[1/7, 1/2]` | See below |
-| **η value** | hyperparameter-searched over `[0.1, 0.9]`, per task; chosen value not published in the article | fixed at `0.7` (`PipelineConfig.eta`) | The project default is a reasonable choice, not a value inherited from the paper. The in-code comment states this correctly. |
+| **η value** | hyperparameter-searched over `[0.1, 0.9]`, per task (the article's method); the chosen value is not in the article, and the authors' run script for the gene task sets 0.5 | fixed at `0.7` (`PipelineConfig.eta`) | The project default is a reasonable choice, not a value inherited from the paper. The in-code comment states this correctly. |
 
 The transform difference has two consequences:
 

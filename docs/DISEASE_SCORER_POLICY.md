@@ -3,10 +3,13 @@
 **Status:** Accepted (2026-08) by the deploying institution. **Not yet implemented** — see the
 status table in §2. Implementation is work item B-1, which remains gated (§6).
 
-**Revision: rev 8 (2026-10-27). Factual update, no normative change.** Mode D's review passed,
-and its short run on a synthetic cohort on the GB10 passed (`working/batch3-acceptance-2026-10-27/`):
-§2.1's gate 1 evidence and §6's gate 1 row say so. That run is functional, not an institutional
-run or report, so gate 1 is not cleared. Nothing else changes.
+**Revision: rev 8 (2026-10-27). Factual update and one registered direction, no normative
+change.** Mode D's review passed, and its short run on a synthetic cohort on the GB10 passed
+(`working/batch3-acceptance-2026-10-27/`): §2.1's gate 1 evidence and §6's gate 1 row say so.
+That run is functional, not an institutional run or report, so gate 1 is not cleared. §3.1
+states what the paper gives for η (the method) and what it does not (the value). §1.4 records
+an adjustable-weight analysis view as a direction, decided by no one and permitted by nothing
+here. Nothing else changes.
 
 **Revision: rev 7 (2026-10-26). Factual update, no normative change.** Mode D is built (Batch 3,
 for review; `working/scorer-measurement/PLAN_B05.md` §11): §2.1's gate 1 evidence and §6's gate 1
@@ -136,6 +139,24 @@ storage and export bounds, and the interaction latency target are **[OPEN]** and
 institutional values.
 
 ---
+
+### 1.4 A registered direction, not a decision: adjustable weights in an analysis view (2026-10-27)
+
+Recorded at the owner's request so later work starts from it. **It changes no statement and no
+condition above, and permits nothing.**
+- The disease ranking stays the approved GNN policy (statements 1–4a). SP's display, sorting and
+  filtering stay statement 4b's optional analysis view under C1–C10: the canonical rank shown, a
+  reset to it, the hidden count, the export's provenance.
+- **An analysis view that mixes the model's score and SP with an adjustable η is a new direction**,
+  recorded apart from 4b's SP-alone sort. Whether it is permitted, under which conditions, and its
+  defaults are decided before it is built.
+- If it is built: the component scores, the formula's version and any normalisation's reference set
+  are fixed on the result when it is produced (C7, C10); the weight is that view's own state, never
+  the shared pipeline's; changing it recombines values already on the result, and a missing
+  component makes the mixed value not computable, never zero (C9).
+- The paper's other tasks are not this mixture. Gene ranking, patients-like-me and disease ranking
+  each keep their own inputs, model head, formula and validation (`ARCHITECTURE.md` §3); they may
+  share loading, identity, records and presentation.
 
 ## 2. Status — current behaviour vs approved target
 
@@ -285,9 +306,13 @@ and the decision does not rest on them:
   Kleine, *J. Integr. Bioinform.* 16, 20180069, 2019) rather than to an experiment in the paper.
   The gene task supplies such a list — **13.3 genes** on average (EXPERT-CURATED, SD 8.0) or
   **244.3** (VARIANT-FILTERED, SD 244.0). The disease task does not.
-- No ablation of SPLSIM appears in the main article as reviewed. Supplementary materials were not
-  examined.
-- The selected value of η is published in the authors' repository rather than in the article.
+- No ablation of SPLSIM appears in the article or its Supplementary materials, which hold only the
+  rank-against-distance panels, Supp. Fig. 3b and 4d (`working/FINDINGS_PAPER_PROTOCOL_AND_AMP.md`
+  §3.7).
+- **How η is chosen is in the article:** a hyperparameter search over `[0.1, 0.9]`, per task
+  (`SP_SCORE_GUIDE.md`'s comparison table). **The value is not:** the authors' run script for the
+  gene task sets 0.5 (`upstream:shepherd/run_causal_gene_discovery.sh:18`), from released code that
+  does not run as committed (`working/FINDINGS_PAPER_PROTOCOL_AND_AMP.md`, its caveat and §3.4).
 
 ### 3.2 Repository evidence
 

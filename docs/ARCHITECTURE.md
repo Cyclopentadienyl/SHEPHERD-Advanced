@@ -124,6 +124,18 @@ canonical rank (policy statement 4b, C1–C10). **The evidence metapaths** of ga
 likewise this project's evidence policy, not a method the paper specifies
 (`docs/working/results-review/SPEC_3_EVIDENCE_AND_AUDIT.md` §7.2).
 
+**Each task keeps its own validation, and only the machinery is shared** (registered 2026-10-27).
+- **Causal gene discovery** needs gene-level ground truth and an evaluation cohort, neither of which
+  exists here (`docs/working/task-scope/README.md`). Its SP mixture (Eq 14) is that task's formula.
+- **Patients-like-me** needs a labelled reference cohort, against which the patients it returns can
+  be checked.
+- **Disease ranking** is measured by Mode C on registered cohorts, then by the institutional run
+  (BACKLOG 8a, 8b).
+
+They may share loading, identity, records and presentation. None of them is the disease ranking's
+GNN/SP mixture. An adjustable-η analysis view (policy §1.4, a registered direction, not decided) is a
+view over the disease result, not a model head for these tasks.
+
 ### 3.1 Causal Gene Discovery (not implemented)
 
 `candidate_genes` is a reserved request field: accepted, ignored, and answered with a warning

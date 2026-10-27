@@ -299,7 +299,7 @@ The work item's opening gates are where the real content is:
 | Gene candidate and negative-set semantics | Undefined today |
 | Variant→gene annotation and mapping | Required before any variant input can be scored |
 | Gene-level ground truth and evaluation cohort | None exists in this repository |
-| Paper Eq 13/14, η and normalisation verification | The paper's η is in the authors' repository, not the article |
+| Paper Eq 13/14, η and normalisation verification | η: the article gives the method (a search over `[0.1, 0.9]`, per task) and the authors' run script sets 0.5, from released code that does not run as committed (`../FINDINGS_PAPER_PROTOCOL_AND_AMP.md`). The normalisation is checked there too (§3.7 item 1); whether the paper's numbers came from that configuration is not shown |
 | Task-specific score semantics and result type | Neither exists (F3) |
 | Checkpoint compatibility | The deployed checkpoint has no task head |
 

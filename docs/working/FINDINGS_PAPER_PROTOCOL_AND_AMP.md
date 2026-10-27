@@ -233,6 +233,9 @@ document found here records it as one.
 
 ### 3.7 Repository texts that describe the paper imprecisely (for a later documentation fix)
 
+*(2026-10-27: items 5 and 6 corrected in the texts they name, and in the policy's and the guide's η
+sentences; items 1–4 stay open.)*
+
 1. **`docs/SP_SCORE_GUIDE.md:420`** says SPLSIM is "min–max rescaled across the candidate set".
    - Upstream uses fixed constants on each gene's mean distance over the patient's phenotypes:
      `x_min = 1`, and `x_max = 6.84` for the mean (`upstream:data_prep/shortest_paths/add_spl_to_patients.py:18-19`, `:45`,

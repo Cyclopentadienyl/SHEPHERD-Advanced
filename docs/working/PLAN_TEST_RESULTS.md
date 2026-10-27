@@ -269,8 +269,10 @@ last one says what M4 changed.
   `0.7 × ((cos+1)/2) + 0.3 × SP` behind a BFS discovery gate. The policy replaces it in work
   item B-1, which is gated and not implemented (`DISEASE_SCORER_POLICY.md` §2, §6).
 - **Mode D**, the production path-reachable candidates with the η/SP mixture, measures that
-  legacy behaviour. It is for B-0.5's attribution work. It is not built, and its design has an
-  unresolved problem (`docs/working/scorer-measurement/PLAN_B03.md`).
+  legacy behaviour. It is for B-0.5's attribution work. *(History: when this was written it was not
+  built and its design had an unresolved problem, `PLAN_B03.md` §4. It was designed in batch 2 and
+  built in batch 3, 2026-10-26, and run on a synthetic cohort on the GB10, 2026-10-27:
+  `docs/working/scorer-measurement/PLAN_B05.md` §11–§12.3.)*
 - **Patient-level output.** The rank side file carries patient `sample_id`s and is written
   without staging (the prediction side file went with Mode A in R2). **Since M4** both files are
   staged and renamed into place (`publish_bytes`); a registered version's ranks stay in the
