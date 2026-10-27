@@ -1,6 +1,18 @@
 # PLAN — backlog item 14: test results recorded by the pipeline, shown where a model is chosen
 
-**Status: revision 4, corrected 2026-10-16.** **Phase 1 (the contract's M4) is implemented on
+**Current status (2026-10-25, at `main` `416a242`).** Both phases are complete, accepted and
+merged. **Phase 1** (the contract's M4): test cohorts imported as immutable versions, Mode C
+measured on them, every report kept, one registration function, ledger schema 3; accepted on the
+GB10 at `2c94a4e` (84 of 84) and merged as #126. **Phase 2** (the contract's M5): the research WebUI
+(Datasets, Training, Test, Models), the job runner and GPU lock, D4, D5 and D8; accepted on the GB10
+at `b14c4de` (99 of 99) and in the WebUI's manual rounds to `773dc4a`, and merged as #129. **What is
+complete is the engineering tool; the institution's evaluation conditions are not** (§4.9: the
+acceptance rule and metric, the institutional cohort's data, terms and protocol, MyGene2's terms;
+EVALUATION_COHORTS §5). The WebUI's usability is not accepted (BACKLOG 52). Where each capability is
+entered: `docs/ARCHITECTURE.md` §11. The status record below is dated history: "on this branch",
+"not merged" and "not yet reviewed" there describe the date written.
+
+**Status history: revision 4, corrected 2026-10-16.** **Phase 1 (the contract's M4) is implemented on
 this branch (2026-10-16)** (§6, "Phase 1 as implemented"; the contract's §4, "M4 as implemented").
 Its internal review's 29 findings (none P1, two P2) are fixed in `f3108c4`; the reviewer's code
 review of `59f519d..f3108c4` (2026-10-17) found one P2, fixed in `29c3d1f`, and its incremental
@@ -8,7 +20,7 @@ review closed it and found one P3, fixed in `2c94a4e`. **Its GB10 functional acc
 the scope agreed, passed at `2c94a4e`** (2026-10-17; 84 of 84 probes, demo and real data; the
 contract's §4, "M4's acceptance on the GB10"). Functional only: not model quality and not an
 institutional test. Merged into `main` by the owner (#126, `d2d31dd`, 2026-10-17). Phase 2 (M5)
-is implemented on this branch, reviewed once and not merged: M5-0 (`14176c3`, `84371dd`), M5-1 (`85af1fa..bfc0b7c`), M5-2 (`badf546..da2a8b1`) and M5-3 (`4c7d12f..b2db17d`: the shared follow-ups, the probe's M5 acceptance, the internal review of all of M5 — 42 findings, none P1, every P2 fixed — and two UI polishes from the acceptance screenshots) are pushed; full suite 5116 passed, 14 skipped. Delivered for the reviewer's review on 2026-10-22 (`150105f..8242b47`), which found no P1, seven P2 and the probe's W11/RW3 timing. M5 is implemented, reviewed once with seven P2 now fixed, incremental review next, GB10 acceptance after: the fixes are implemented and not yet reviewed (P2-1, P2-6 and P2-7, the evaluation boundaries, under D5; P2-2 under §6, the Training Console; P2-3 and P2-4 under §6, the GPU lock; P2-5 under §6, the charts; W11/RW3 under §6, Acceptance), and neither "review passed" nor "GB10 acceptance passed" (the probe's M5 phase) is claimed. The owner decided on 2026-10-22 that stopping the backend stops its jobs. Before the incremental review our own root-cause review of those fixes (five lenses, each finding checked by a skeptic; the owner said the incremental review checks that problems are solved at their root, not patched on the surface) found four P2 and seventeen P3 of the same classes at entry points the fixes had not reached; they are fixed too, implemented and not reviewed: the dashboard's Load is bound to the model it showed (EB-1), a continued run to the parent it showed (P22-S1), the workspaces root is the GPU lock's one name and `SHEPHERD_GPU_LOCK_FILE` is no longer read (P24-S1), and the probe's M4 flow reads its own registry and checks P2-6's state end to end (INT-1); what was left is BACKLOG 42, 45 and 46. Our integration review of that round found, after each finding's verification, no P1 or P2 and sixteen P3 where one concern still had two mechanisms or a guard sat at a consumer; round 3 of the review fixes closes them, implemented and not reviewed: a shown checkpoint, cohort version or report is compared on the one read that parses it, before parsing (the Load, the test job's version, the Test page's Register, the Diagnosis card); on the Test page what the session saw of the job has one writer, the poll, and the selection with Start and its reason is written in one queued order, as is the Training run bar's workspace (the display pieces, Training's cache and its chosen parent keep the writers BACKLOG 46 lists); the backend stops its job once per shutdown and says when it cannot attach to the server's signals, Restart Backend's last check and its exec are one step, and on POSIX the process a supervisor starts is the server. What is left is BACKLOG 42, 45 (the README and the playbook), 46 (narrowed) and 47 (a limit of the self-exec restart). **The reviewer's incremental review of `8242b47..2887506` (2026-10-23)** checked the seven P2 as fixed (P2-1's original hook now registers the bytes shown, which it judged correct), found one new P2 and two P3 classes, and asked for a narrow close-out, implemented and not yet reviewed: on the Training page every piece drawn from the selection is written only by the queued render in the run bar's group, and the fast poll writes only the job runner's status pill and hands a change to that render, so a late poll can no longer show one dataset while Start trains another (P2-NEW-1); the tests that read process states share one reader that treats a process reaped mid-read as gone, the real trainer's stop test holds its workers by construction, and the job runner reaps an adopted worker that ends while its group is checked (found by that close-out's verification); README and the training playbook work as written and point to the guide's settings (BACKLOG 45). The reviewer's incremental review of that close-out (`2887506..87d189c`, 2026-10-23) found no P1 or P2 and closed the three, keeping `99616a9`; **the GB10 functional acceptance of a clean deployment passed at `b14c4de` (2026-10-24)**: a fresh clone and environment from `deploy.sh`, the identified real workspace and an explicit preset; 99 of 99 probes and the run's closing check 102 of 102 (checks of the run, not product tests), reviewed by the reviewer (evidence [`m5-acceptance-2026-10-24/`](m5-acceptance-2026-10-24/README.md)); the code tested is `b14c4de`, later documentation commits not tested again. As it stood on 2026-10-24, the actual service configuration and the WebUI's manual acceptance were next, so M5 was not closed (both done since, below). **The WebUI's manual acceptance (2026-10-24/25):** its Training findings were fixed in two rounds (`4764faa`, `1f4eb05`), and the reviewer's review of `4764faa..e6ab1c3` found no new P1 or P2. A design review ([`WEBUI_UX_REVIEW_2026-10-25.md`](WEBUI_UX_REVIEW_2026-10-25.md)) found no redesign needed, and the owner and the reviewer chose a narrow close-out (its §4–§5). *Must-fix, done and reviewed (the reviewer's incremental review of `e6ab1c3..f9202b6`, 2026-10-25: no P1 or P2):* the score named "Score" and said not to be a calibrated disease probability (API field, scoring and CSV unchanged); `info=` lines and placeholders readable through the existing tokens; the Hits@K legend's own dash patterns; report rows that read alike told apart. *Passed:* the functional acceptance above (its evidence stays tied to `b14c4de`; the UI increments since carry their own tests). *The owner's local UI recheck at `f9202b6`* (2026-10-25, read by the reviewer) accepted F1 and F5 at the real window and evidenced a normal start and stop, the existing model's load, a diagnosis and its exports, whose identity matches the files on disk; it found the written explanation still saying "Confidence: HIGH", fixed after it at the explanation's generators (`ff664f6`; the reviewer's incremental review of `d486839..773dc4a`, 2026-10-25: no P1, P2 or P3). *The close-out round at `773dc4a`* (2026-10-25, read by the reviewer; [`m5-webui-acceptance-2026-10-25/`](m5-webui-acceptance-2026-10-25/README.md)) supplied the rest of the planned manual acceptance: Test's import, measurement, registration by hand and read-back, Models' record and ordering warning, the operator controls refused to a read-only tab, and a normal stop; the Test run card's "Not registered" from the run's end, beside Result's "Registered", now says it is the run's end (`9a4273d`; the reviewer's review of `b326ee3..a9e375c`, 2026-10-25: no P1 or P2). **M5's agreed functional scope is complete, reviewed and accepted, awaiting its pull request's merge (2026-10-25)**: the GB10 functional acceptance of a clean deployment at `b14c4de` (99 of 99 probes), the WebUI's manual acceptance in rounds (the training rounds at `b14c4de`, the local recheck at `f9202b6`, the close-out at `773dc4a`; [`m5-webui-acceptance-2026-10-25/`](m5-webui-acceptance-2026-10-25/README.md)), and the reviewer's reviews of every increment, the last (`b326ee3..a9e375c`) with no P1 or P2. This is not an acceptance of the WebUI's usability (BACKLOG 52 stays open, with the owner's report that the pages are overloaded), not a release (BACKLOG 50, the PyG pin, is required before one) and not an institutional or clinical test. The owner authorised the pull request; its merge follows the repository's CI and review. *Later, not M5 gates:* BACKLOG 52. *Not M5's (cross-reference, 2026-10-25):* the GNN's own disease ranking (every disease scored, raw cosine), SP taken out of the ranking and offered only as an optional post-ranking analysis surface (sort or filter the view, the canonical rank kept, conditions C1–C10), and SP computed once for the whole selected set when the result is produced (path evidence lazily, per page) are work item B-1 ([`DISEASE_SCORER_POLICY.md`](../DISEASE_SCORER_POLICY.md) §1, §1.1, §1.2, §2; gated, §6): decided, not implemented, not part of M5's close and not asked again; M5 keeps to its small fixes, the remaining manual acceptance and recording its evidence, with no UI redo and no new scorer. Each step's "as implemented" note is in D4, D5, D7, D8 and
+is implemented on this branch, reviewed once and not merged: M5-0 (`14176c3`, `84371dd`), M5-1 (`85af1fa..bfc0b7c`), M5-2 (`badf546..da2a8b1`) and M5-3 (`4c7d12f..b2db17d`: the shared follow-ups, the probe's M5 acceptance, the internal review of all of M5 — 42 findings, none P1, every P2 fixed — and two UI polishes from the acceptance screenshots) are pushed; full suite 5116 passed, 14 skipped. Delivered for the reviewer's review on 2026-10-22 (`150105f..8242b47`), which found no P1, seven P2 and the probe's W11/RW3 timing. M5 is implemented, reviewed once with seven P2 now fixed, incremental review next, GB10 acceptance after: the fixes are implemented and not yet reviewed (P2-1, P2-6 and P2-7, the evaluation boundaries, under D5; P2-2 under §6, the Training Console; P2-3 and P2-4 under §6, the GPU lock; P2-5 under §6, the charts; W11/RW3 under §6, Acceptance), and neither "review passed" nor "GB10 acceptance passed" (the probe's M5 phase) is claimed. The owner decided on 2026-10-22 that stopping the backend stops its jobs. Before the incremental review our own root-cause review of those fixes (five lenses, each finding checked by a skeptic; the owner said the incremental review checks that problems are solved at their root, not patched on the surface) found four P2 and seventeen P3 of the same classes at entry points the fixes had not reached; they are fixed too, implemented and not reviewed: the dashboard's Load is bound to the model it showed (EB-1), a continued run to the parent it showed (P22-S1), the workspaces root is the GPU lock's one name and `SHEPHERD_GPU_LOCK_FILE` is no longer read (P24-S1), and the probe's M4 flow reads its own registry and checks P2-6's state end to end (INT-1); what was left is BACKLOG 42, 45 and 46. Our integration review of that round found, after each finding's verification, no P1 or P2 and sixteen P3 where one concern still had two mechanisms or a guard sat at a consumer; round 3 of the review fixes closes them, implemented and not reviewed: a shown checkpoint, cohort version or report is compared on the one read that parses it, before parsing (the Load, the test job's version, the Test page's Register, the Diagnosis card); on the Test page what the session saw of the job has one writer, the poll, and the selection with Start and its reason is written in one queued order, as is the Training run bar's workspace (the display pieces, Training's cache and its chosen parent keep the writers BACKLOG 46 lists); the backend stops its job once per shutdown and says when it cannot attach to the server's signals, Restart Backend's last check and its exec are one step, and on POSIX the process a supervisor starts is the server. What is left is BACKLOG 42, 45 (the README and the playbook), 46 (narrowed) and 47 (a limit of the self-exec restart). **The reviewer's incremental review of `8242b47..2887506` (2026-10-23)** checked the seven P2 as fixed (P2-1's original hook now registers the bytes shown, which it judged correct), found one new P2 and two P3 classes, and asked for a narrow close-out, implemented and not yet reviewed: on the Training page every piece drawn from the selection is written only by the queued render in the run bar's group, and the fast poll writes only the job runner's status pill and hands a change to that render, so a late poll can no longer show one dataset while Start trains another (P2-NEW-1); the tests that read process states share one reader that treats a process reaped mid-read as gone, the real trainer's stop test holds its workers by construction, and the job runner reaps an adopted worker that ends while its group is checked (found by that close-out's verification); README and the training playbook work as written and point to the guide's settings (BACKLOG 45). The reviewer's incremental review of that close-out (`2887506..87d189c`, 2026-10-23) found no P1 or P2 and closed the three, keeping `99616a9`; **the GB10 functional acceptance of a clean deployment passed at `b14c4de` (2026-10-24)**: a fresh clone and environment from `deploy.sh`, the identified real workspace and an explicit preset; 99 of 99 probes and the run's closing check 102 of 102 (checks of the run, not product tests), reviewed by the reviewer (evidence [`m5-acceptance-2026-10-24/`](m5-acceptance-2026-10-24/README.md)); the code tested is `b14c4de`, later documentation commits not tested again. As it stood on 2026-10-24, the actual service configuration and the WebUI's manual acceptance were next, so M5 was not closed (both done since, below). **The WebUI's manual acceptance (2026-10-24/25):** its Training findings were fixed in two rounds (`4764faa`, `1f4eb05`), and the reviewer's review of `4764faa..e6ab1c3` found no new P1 or P2. A design review ([`WEBUI_UX_REVIEW_2026-10-25.md`](WEBUI_UX_REVIEW_2026-10-25.md)) found no redesign needed, and the owner and the reviewer chose a narrow close-out (its §4–§5). *Must-fix, done and reviewed (the reviewer's incremental review of `e6ab1c3..f9202b6`, 2026-10-25: no P1 or P2):* the score named "Score" and said not to be a calibrated disease probability (API field, scoring and CSV unchanged); `info=` lines and placeholders readable through the existing tokens; the Hits@K legend's own dash patterns; report rows that read alike told apart. *Passed:* the functional acceptance above (its evidence stays tied to `b14c4de`; the UI increments since carry their own tests). *The owner's local UI recheck at `f9202b6`* (2026-10-25, read by the reviewer) accepted F1 and F5 at the real window and evidenced a normal start and stop, the existing model's load, a diagnosis and its exports, whose identity matches the files on disk; it found the written explanation still saying "Confidence: HIGH", fixed after it at the explanation's generators (`ff664f6`; the reviewer's incremental review of `d486839..773dc4a`, 2026-10-25: no P1, P2 or P3). *The close-out round at `773dc4a`* (2026-10-25, read by the reviewer; [`m5-webui-acceptance-2026-10-25/`](m5-webui-acceptance-2026-10-25/README.md)) supplied the rest of the planned manual acceptance: Test's import, measurement, registration by hand and read-back, Models' record and ordering warning, the operator controls refused to a read-only tab, and a normal stop; the Test run card's "Not registered" from the run's end, beside Result's "Registered", now says it is the run's end (`9a4273d`; the reviewer's review of `b326ee3..a9e375c`, 2026-10-25: no P1 or P2). **M5's agreed functional scope is complete, reviewed and accepted (2026-10-25), and merged into `main` by the owner (#129, `416a242`, 2026-10-25)**: the GB10 functional acceptance of a clean deployment at `b14c4de` (99 of 99 probes), the WebUI's manual acceptance in rounds (the training rounds at `b14c4de`, the local recheck at `f9202b6`, the close-out at `773dc4a`; [`m5-webui-acceptance-2026-10-25/`](m5-webui-acceptance-2026-10-25/README.md)), and the reviewer's reviews of every increment, the last (`b326ee3..a9e375c`) with no P1 or P2. This is not an acceptance of the WebUI's usability (BACKLOG 52 stays open, with the owner's report that the pages are overloaded), not a release (BACKLOG 50, the PyG pin, is required before one) and not an institutional or clinical test. The owner authorised the pull request, the reviewer accepted it, and the owner merged it (#129, `416a242`, 2026-10-25). *Later, not M5 gates:* BACKLOG 52. *Not M5's (cross-reference, 2026-10-25):* the GNN's own disease ranking (every disease scored, raw cosine), SP taken out of the ranking and offered only as an optional post-ranking analysis surface (sort or filter the view, the canonical rank kept, conditions C1–C10), and SP computed once for the whole selected set when the result is produced (path evidence lazily, per page) are work item B-1 ([`DISEASE_SCORER_POLICY.md`](../DISEASE_SCORER_POLICY.md) §1, §1.1, §1.2, §2; gated, §6): decided, not implemented, not part of M5's close and not asked again; M5 keeps to its small fixes, the remaining manual acceptance and recording its evidence, with no UI redo and no new scorer. Each step's "as implemented" note is in D4, D5, D7, D8 and
 §6, "M5's boundaries" (2026-10-19). It runs under deployment mode M1 (§4.9 question 3). §4 lists the decisions; phase 1
 runs on the engineering defaults §4.9 records, each asked of the owner once, and an answer
 changes a default without adding a second path.
@@ -19,7 +31,8 @@ changes a default without adding a second path.
   node, keeping the first occurrence. Three states are kept apart: the principle is decided; N1
   is delivered (serving, and since M4 the importer); N2 (the generator, the reader's check and
   the workspace manifest) is not delivered: it is its own change, not yet scheduled. M4 has no N2
-  dependency.
+  dependency. *(Dated: N2 was delivered since without its manifest field, merged as #128,
+  `150105f`, 2026-10-19.)*
 - **"Ledger v2" was a feature name.** The ledger file's `schema_version` was already 2 (R2), so
   the format this plan designs is **ledger schema 3** (§5); no two formats are labelled 2.
 - **What M2 and M3 already completed is stated as done**: single reads (M2.1), the checkpoint
@@ -40,7 +53,7 @@ boundaries ("M5's boundaries"), both from the reviewer's M5 boundaries as the ow
 them; N2's bullet in §4.9 records the reviewer's review of batch B (no P1 or P2).
 
 **Amended 2026-10-18, with N2:** §4.9, question 2, records N2 as implemented on the development
-branch without its manifest field (batch B; awaiting review, not merged): the shared reader
+branch without its manifest field (batch B; awaiting review, not merged; merged since as #128): the shared reader
 refuses a stored case that lists a phenotype twice, the generator applies the rule, and the
 split manifest's field is deferred (`PLAN_PHENOTYPE_NORMALISATION.md` §6). The 2026-10-16
 bullet above is the record as it stood.
@@ -103,7 +116,7 @@ parallel one:
   2026-10-05, `cf23970`). The job runner is made by reshaping `training_manager`, with the
   Training Console moved onto it. The existing checkpoint listing route is upgraded instead of
   adding a second one.
-- **F1–F3 are fixed** on this branch (`d95965e`, `88569e4`, `fe44b8f`, `20f43d1`, `a57ed2d`).
+- **F1–F3 are fixed** (`d95965e`, `88569e4`, `fe44b8f`, `20f43d1`, `a57ed2d`; merged as #119, `4298aac`).
 - **Corrected after an independent verification (2026-10-05).** Five reviewers checked every
   claim in revision 3. The corrections:
   - **the pool is not shared** (§2.2, D3, §4.0). Only the cosine is, so unifying the pool is
@@ -256,8 +269,10 @@ last one says what M4 changed.
   `0.7 × ((cos+1)/2) + 0.3 × SP` behind a BFS discovery gate. The policy replaces it in work
   item B-1, which is gated and not implemented (`DISEASE_SCORER_POLICY.md` §2, §6).
 - **Mode D**, the production path-reachable candidates with the η/SP mixture, measures that
-  legacy behaviour. It is for B-0.5's attribution work. It is not built, and its design has an
-  unresolved problem (`docs/working/scorer-measurement/PLAN_B03.md`).
+  legacy behaviour. It is for B-0.5's attribution work. *(History: when this was written it was not
+  built and its design had an unresolved problem, `PLAN_B03.md` §4. It was designed in batch 2 and
+  built in batch 3, 2026-10-26, and run on a synthetic cohort on the GB10, 2026-10-27:
+  `docs/working/scorer-measurement/PLAN_B05.md` §11–§12.3.)*
 - **Patient-level output.** The rank side file carries patient `sample_id`s and is written
   without staging (the prediction side file went with Mode A in R2). **Since M4** both files are
   staged and renamed into place (`publish_bytes`); a registered version's ranks stay in the
@@ -284,13 +299,20 @@ last one says what M4 changed.
 
 ### 2.4 WebUI and API
 
+*As it stood at `1cab39f`, before M4 and M5.* Since M5 (#129) the WebUI has the two-level navigation
+with Datasets, Training, Test and Models; the job runner has training and test jobs under one GPU
+lock (`src/api/services/training_manager.py`, `src/utils/gpu_lock.py`); workspaces, checkpoints and
+cohort versions come from the server's lists (`src/api/services/server_lists.py`); recorded results are
+shown on Models, while the Diagnosis card shows a recorded-tests state. `docs/ARCHITECTURE.md` §11 is
+the current map.
+
 - **Tabs.** The WebUI has four: Training Console, Diagnosis, Runtime Settings, and **Model
   Management, a placeholder** that reads "Coming soon — will provide checkpoint listing and
   metrics comparison" (`src/webui/app.py:191-206`).
 - **How the tabs reach the backend.** It is mixed:
   - the Training Console imports `training_manager` directly;
   - the Diagnosis tab calls the API over HTTP, at a hard-coded `http://127.0.0.1:8000` on
-    `main` (`diagnosis_panel.py:44`; F1, fixed on this branch).
+    `main` (`diagnosis_panel.py:44`; F1, fixed and merged as #119).
 - **One job runner.** `training_manager` tracks one subprocess, with `train_model.py` hard-coded.
   It is not a general job runner.
 - **Checkpoint listing.** The only listing route is `GET /api/v1/training/checkpoints`. No route
@@ -464,7 +486,14 @@ pool, the cosine, the candidate universe and the tie rule. Today only the cosine
     `1cab39f`). The clinician should be told about it, rather than having the ranking scored
     around it.
 
-This is recorded as a **constraint on B-1**. It is not built here.
+This is recorded as a **constraint on B-1**. It is not built here. **Designed (Batch 2,
+2026-10-26):** `results-review/SPEC_1_RESULTS_REVIEW.md` §2.2 puts the shared boundary in
+`src/inference/scoring.py` (one composed `score_patients`, `canonical_ranking` moved there, the
+clamp replaced by a refusal) and settles the second behaviour: an unknown phenotype is dropped and
+always stated, never scored around silently, and a graph node with no tensor row is refused. The
+statement above that the drop is "silent" was already only half true at `60feb6d`: a phenotype the
+graph lacks is dropped with a warning and listed in the result's phenotype account; a graph node
+with no tensor row is the silent case.
 
 **What it does not claim:**
 - **The paper's number.** Statement 2 is interim. The paper's disease scorer is a squared
@@ -473,8 +502,11 @@ This is recorded as a **constraint on B-1**. It is not built here.
 - **The paper's cohort.** A MyGene2 snapshot taken from the public pages need not be the cohort
   the paper evaluated (N = 146 in its deposit). The version label records which one was used.
 
-**Mode D** measures the legacy served behaviour for B-0.5's attribution work. It is a separate
-item and **not a prerequisite** for this one.
+**Mode D** measures the legacy served behaviour: it is policy gate 1's comparison with Mode C. Its
+C→D difference is joint (candidates, score and tie policy at once); it separates them only through
+derived readings on the formal C side's scores, one change at a time
+(`scorer-measurement/PLAN_B05.md` §5). It is a separate item and **not a prerequisite** for
+this one.
 
 ### D4 — Ordering by test score
 
@@ -1116,8 +1148,8 @@ gates phase 2; question 4 is answered:
        keeps the source bytes verbatim, and records the rule's version
        (`mapping.phenotype_normalisation_version`) and its counts (`repeats_removed`,
        `cases_with_repeats`) in the version manifest;
-     - **N2 is implemented on the development branch without its manifest field** (2026-10-18,
-       BACKLOG item 16, batch B; reviewed by the reviewer with no P1 or P2 at `2e099b6` (2026-10-19), not merged): the
+     - **N2 is implemented without its manifest field** (2026-10-18,
+       BACKLOG item 16, batch B; reviewed by the reviewer with no P1 or P2 at `2e099b6` (2026-10-19); merged as #128, `150105f`, 2026-10-19): the
        generator applies the rule, and the shared reader refuses a stored samples file with a
        repeated phenotype, naming its producer. The workspace manifest's field is deferred to
        the next split-manifest schema change or the first change of the rule's version
@@ -1574,6 +1606,11 @@ D3's shared-scorer constraint goes to B-1's plan. Mode D and B-1 are separate it
 neither is a prerequisite here.
 
 ### M5's boundaries (2026-10-19)
+
+*Read with the current status at the top: every "implemented, not reviewed" or "its incremental
+review next" mark below was closed by the reviewer's incremental reviews of `8242b47..2887506` and
+`2887506..87d189c` (2026-10-23), the code was accepted on the GB10 at `b14c4de`, and M5 was merged as
+#129. The marks are kept as the record of each step.*
 
 The reviewer's boundaries for M5, relayed by the owner. They narrow phase 2 above; this plan, the
 contract and BACKLOG stay the record, and no new planning document is added.
@@ -2155,8 +2192,13 @@ contract and BACKLOG stay the record, and no new planning document is added.
     uses (D5);
   - A's source kept: exports carry the result's own `served_identity`, and the badge compares the
     whole identity (`test_a_result_older_than_a_load_says_how_many_parts_differ`). Holds;
-  - layout: **not yet recorded**. The screenshot matrix (1920×1080, 1707×870, 1536×760,
-    1440×900, 1280×720, 1080×1920, 200 % zoom; M1 and read-only) is M5-3's next step.
+  - layout: **not yet recorded** (as written). The screenshot matrix (1920×1080, 1707×870, 1536×760,
+    1440×900, 1280×720, 1080×1920, 200 % zoom; M1 and read-only) was M5-3's next step. *Since:* the
+    layout was checked, functionally, in the WebUI's manual rounds at the owner's window (F1 wide and
+    again after narrow at `f9202b6`, the narrow layout's lower charts by the owner's report only; the
+    read-only tab in the close-out at `773dc4a`; `m5-webui-acceptance-2026-10-25/`), not accepted as
+    usable: the collapsed Training run bar's blank area is BACKLOG 52 F. The full matrix was not run
+    and is not an M5 gate (the design skill picks its checks by risk; BACKLOG 52).
   The GPU acceptance uses the existing tools and a qualified model, centred on starting and
   stopping jobs, their exclusion, registration and UI operation; long training, S10 and the
   memory investigation are not rerun unless a related regression appears. *The probe's part,

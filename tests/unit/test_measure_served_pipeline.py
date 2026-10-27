@@ -63,6 +63,28 @@ def _identity() -> dict:
 IDENTITY = _identity()
 
 
+def _answer(identity=IDENTITY, candidates=()):
+    """A diagnose response as the service answers (Spec 1 §2.1): the served
+    kind for an identity, the demo answer (`demo/v1`) for none."""
+    body = {"result_schema_version": 2, "session_id": "s", "patient_id": "p",
+            "timestamp": "t", "candidates": list(candidates), "inference_time_ms": 1.0,
+            "served_identity": identity, "phenotype_input": None}
+    if identity is None:
+        return {**body, "result_kind": "demo/v1"}
+    return {**body, "result_kind": "served_mixture/v1", "eta": identity["settings"]["eta"],
+            "candidates_reached": len(candidates),
+            "tie_policy": "served-stable-discovery-order/v1"}
+
+
+#: One candidate of the mixture, as a table-backed service writes it.
+CANDIDATE = {"rank": 1, "disease_id": "d", "disease_name": "n", "served_score": 0.5,
+             "model_term": 0.6, "sp_term": {
+                 "status": "COMPUTED", "phenotypes_submitted": 1, "phenotypes_mapped": 1,
+                 "unmapped_ids": [], "max_hops": 5, "mean_hop_distance": 2.0,
+                 "score": 1 / 3, "unreachable_pair_count": 0,
+                 "denominator_policy": "MAPPED_ONLY_DENOMINATOR", "mixed_as": None}}
+
+
 def _with(identity, part, **values):
     """A copy of `identity` with `values` set in `part` (top level for None)."""
     copy = json.loads(json.dumps(identity))
@@ -321,17 +343,22 @@ def test_the_schema_is_the_services_own_and_loads_without_the_application():
 
 def test_the_loaded_schema_accepts_a_response_and_refuses_a_malformed_one():
     schema = msp.load_diagnose_schema()
-    body = {"session_id": "s", "patient_id": "p", "timestamp": "t", "candidates": [
-        {"rank": 1, "disease_id": "d", "disease_name": "n", "confidence_score": 0.5}],
-        "inference_time_ms": 1.0, "served_identity": IDENTITY}
+    body = _answer(candidates=[CANDIDATE])
     schema.DiagnoseResponse.model_validate(body)
     # The demo answer's null passes the schema; the workload still does not
     # count it (`test_a_response_counts_only_if_the_subject_answered_it`).
-    schema.DiagnoseResponse.model_validate({**body, "served_identity": None})
+    schema.DiagnoseResponse.model_validate(_answer(identity=None))
     from pydantic import ValidationError
 
     with pytest.raises(ValidationError):
         schema.DiagnoseResponse.model_validate({**body, "candidates": [{"rank": 1}]})
+    # A removed field is refused, never carried beside its replacement (no alias).
+    with pytest.raises(ValidationError):
+        schema.DiagnoseResponse.model_validate(
+            {**body, "candidates": [{**CANDIDATE, "confidence_score": 0.5}]})
+    # A served kind is never answered with a null identity.
+    with pytest.raises(ValidationError):
+        schema.DiagnoseResponse.model_validate({**body, "served_identity": None})
     # Contract M3c: the identity is required, and its shape is the contract.
     for malformed in ({k: v for k, v in body.items() if k != "served_identity"},
                       {**body, "served_identity": _with(IDENTITY, "graph", path="/x")},
@@ -528,12 +555,11 @@ def test_the_evidence_subject_says_whether_every_repeat_served_one_identity():
 
 def test_a_response_counts_only_if_the_subject_answered_it(monkeypatch):
     schema = msp.load_diagnose_schema()
-    body = {"session_id": "s", "patient_id": "p", "timestamp": "t", "candidates": [],
-            "inference_time_ms": 1.0, "served_identity": IDENTITY}
+    body = _answer()
     answers = iter([
         (200, body, ""),
         (200, {**body, "served_identity": _with(IDENTITY, "graph", kg_sha256="f" * 64)}, ""),
-        (200, {**body, "served_identity": None}, ""),       # the demo answer
+        (200, _answer(identity=None), ""),       # the demo answer
         (200, {**body, "served_identity": _with(IDENTITY, None, extra="x")}, ""),
     ])
     monkeypatch.setattr(msp, "http_json", lambda *a, **k: next(answers))
@@ -680,9 +706,15 @@ FAKE_SERVER = textwrap.dedent('''\
                     answered_by["graph"]["kg_sha256"] = "f" * 64
                 if MODE == "null_identity":
                     answered_by = None
-                self.send(200, {"session_id": "s", "patient_id": "p", "timestamp": "t",
-                                "candidates": [], "inference_time_ms": 1.0,
-                                "served_identity": answered_by})
+                body = {"result_schema_version": 2, "session_id": "s", "patient_id": "p",
+                        "timestamp": "t", "candidates": [], "inference_time_ms": 1.0,
+                        "served_identity": answered_by, "phenotype_input": None,
+                        "result_kind": "demo/v1"}
+                if answered_by is not None:
+                    body.update(result_kind="served_mixture/v1",
+                                eta=answered_by["settings"]["eta"], candidates_reached=0,
+                                tie_policy="served-stable-discovery-order/v1")
+                self.send(200, body)
             else:
                 ok = body["checkpoint_path"] == os.environ["SHEPHERD_CHECKPOINT_PATH"]
                 STATE["reloaded"] = True

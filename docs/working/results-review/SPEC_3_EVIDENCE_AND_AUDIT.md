@@ -1,12 +1,14 @@
 # Spec 3 — Evidence and action provenance
 
-**Status:** draft, under review. **Normative for the constraints below; the evidence design itself is
-Gate 3 and is open.**
+**Status:** draft, under review. **Normative for the constraints below.** The evidence design itself
+is Gate 3: §7 holds it, written 2026-10-26 (Batch 2) for review and approval; until approved the gate
+is open.
 
-**Scope discipline.** Evidence traversal is not implemented and its contract is undesigned. An
+**Scope discipline.** Evidence traversal is not implemented; its design is §7, awaiting approval. An
 earlier draft specified a version-lineage schema, `supersedes` semantics and a durable audit state
-machine for it — designing a subsystem before its requirements exist. This document now states the
-**constraints any Gate 3 design must satisfy**, and nothing more.
+machine for it — designing a subsystem before its requirements exist. §1–§6 state the
+**constraints any Gate 3 design must satisfy**; §7 is the design that meets them, and still adds no
+lineage schema or audit store.
 
 ---
 
@@ -176,3 +178,381 @@ service of a requirement nobody stated.
 | **A manual snapshot or export fails** | The action fails and says so. The clinician asked for an artifact and must not be told they have one |
 
 These point in opposite directions on purpose.
+
+---
+
+## 7. Gate 3: the target-restricted evidence traversal (Batch 2 design, for approval)
+
+**Status:** design, written 2026-10-26 for review and approval; not implemented. **Revised the same
+day** after the reviewer's review of `7b0162f` (P2-4: what the budget bounds; and the metapaths
+stated as this project's policy, the view identity, the approval route); the first version is in git
+history. **Approval route:** the reviewer's technical review, then the owner's confirmation, as for
+the project's other designs; no new approval process. The design is not approved yet, so gate 3 is
+not cleared. It is built with B-1, as B-1c, in batch 5.
+
+**Authority:**
+- policy §6, gate 3's seven requirements;
+- statements 4a, 5 and 6;
+- the schedule in §1.2: SP is computed eagerly, evidence lazily;
+- §1–§4 of this spec.
+
+| Requirement | Answered in |
+|---|---|
+| Legal reachability × completeness combinations | §7.2, §7.3 |
+| Visited-state and cycle semantics | §7.4 |
+| Multi-source provenance | §7.5 |
+| Deterministic ordering | §7.6 |
+| Global-budget units and enforcement; target fairness | §7.7 |
+| Cancellation | §7.9 |
+| Request identity, stale responses, cache keys, target ordering, loading/partial/error states (§1); page independence (§2); no overwrite (§3); `computed_at` (§4) | §7.6, §7.7, §7.10–§7.12 |
+
+### 7.1 What it answers, and what it never does
+
+**The question.** Which approved kinds of knowledge-graph path connect this patient's phenotypes to
+this candidate?
+- **Inputs:** an immutable result (`result_id`), a target in that result's selected set, and a
+  declared policy.
+- **Output:** one evidence record per target.
+
+**What it never does:**
+- admit, remove, reorder or rescore a candidate (statement 4a);
+- feed SP, or take input from SP (statement 6);
+- run when the result is produced.
+
+**How that is enforced:**
+- **By the interface.** The traversal receives the result read-only and returns records.
+- **By a contract.** A new import-linter contract, `ranking-without-evidence`, forbids
+  `src.inference.scoring` from importing `src.reasoning`.
+- **By a test.** Evidence is computed for every target of a result, and the result's digest is the
+  same afterwards.
+
+### 7.2 Legal paths: the metapath set `target-evidence/v1`
+
+**This is the project's own evidence policy, not the reference paper's method.** The paper gives no
+evidence-path traversal for disease ranking; the four metapaths are what this design proposes for
+approval. `NO_PATH_IN_POLICY` therefore means only that no path of these kinds was found.
+
+Paths are typed and directed as the graph builder stores edges:
+- phenotype → disease (`phenotype_of_disease`);
+- gene → disease (`gene_associated_with_disease`);
+- gene → phenotype (`gene_has_phenotype`);
+- child → parent (`is_a`).
+
+Here `p` is a patient phenotype and `t` is the target disease.
+
+| Id | Path | Hops | Reads as |
+|---|---|---|---|
+| M1 | `p →phenotype_of_disease→ t` | 1 | The disease is annotated with this phenotype |
+| M2 | `p ←gene_has_phenotype← g →gene_associated_with_disease→ t` | 2 | A gene with this phenotype is associated with the disease |
+| M3 | `p →is_a→ a →phenotype_of_disease→ t` | 2 | The disease is annotated with a parent term of this phenotype |
+| M4 | `p ←gene_has_phenotype← g →gene_has_phenotype→ a →phenotype_of_disease→ t`, with `a ≠ p` | 3 | A gene with this phenotype also has a phenotype the disease is annotated with |
+
+**Not in v1, and why:**
+
+| Excluded | Why |
+|---|---|
+| `is_a` over more than one step | a v1 scope and budget choice: one step keeps the expansion bounded and the reading simple. Whether a grandparent's annotation counts as support is not decided here, and no scientific claim is made either way |
+| The descendant direction (the disease is annotated with a term more specific than the patient's) | a v1 scope choice; a v2 candidate if clinicians ask for it |
+| Ortholog and publication edges | the real graph has none. The demo graph's ortholog edges give no v1 evidence, and the record says so |
+| Disease–disease `is_a`, and any path through another disease | Mode B (§7.8) covers a related disease explicitly, under its own label |
+| Edge types the builder never emits (`gene_causes_disease`, the pathway types) | there are no such edges to traverse |
+
+A new metapath is a new policy version.
+
+### 7.3 Reachability and completeness
+
+| A path found? | Every scan finished within the budget? | Outcome |
+|---|---|---|
+| yes | yes | `FOUND_COMPLETE`: the counts are exact |
+| yes | no | `FOUND_PARTIAL`: the counts are lower bounds |
+| no | yes | `NO_PATH_IN_POLICY` |
+| no | no | `UNKNOWN` |
+
+**What "in policy" means.** It is reachability through the v1 metapaths, not reachability in the
+graph. SP measures any-path distance within 5 hops, so a candidate can have an SP distance of 3 and
+still have no evidence path. The two surfaces say which is which (statement 6).
+
+**A renamed outcome.** `NO_PATH_IN_POLICY` replaces §2's provisional name `NO_PATH_WITHIN_HOPS`,
+because the restriction is by kind of path, not only by length.
+
+### 7.4 The traversal, visited state and cycles
+
+**Once per result.** This work is a function of the result alone:
+- **`P`:** the used phenotypes, with their request positions.
+- **`G_P`:** a map from each gene to the patient phenotypes it has (the `gene_has_phenotype` in-edges
+  of each `p`).
+- **`U_P`:** a map from each parent term to the patient phenotypes under it (the `is_a` out-edges of
+  each `p`).
+
+**Per target `t`, expanded from the target's side:**
+1. **Scan the `phenotype_of_disease` in-edges of `t`.** For each source term `a`:
+   - `a ∈ P` gives M1;
+   - `a ∈ U_P` gives M3, once for each child `p`.
+2. **Scan the `gene_associated_with_disease` in-edges of `t`.** Each gene `g ∈ G_P` gives M2, once
+   for each of its patient phenotypes.
+3. **Scan the `gene_has_phenotype` in-edges of each `a` from step 1.** Each gene `g ∈ G_P` gives M4,
+   once for each `p ∈ G_P[g]` with `p ≠ a`.
+
+**Why from the target's side.** The edges scanned are then the target's own, and the patient-side
+sets are built once per result and shared. Building them reads, for each of at most 100 used
+phenotypes, its `gene_has_phenotype` in-edges (for `G_P`) and its `is_a` out-edges (for `U_P`), once
+per result, after `P` itself is built from the result's phenotype account; §7.7 bounds it and §7.9
+gives its cancellation points.
+
+**Visited state: none is needed.** Every legal path has a fixed type sequence of at most three
+edges, so the enumeration is exhaustive within the budget. No path is dropped because another path
+reached a node first. Today's BFS keeps one `(node, depth)` set per phenotype, which drops
+same-length alternatives.
+
+**Cycles and duplicates:**
+- A path with a repeated node is not emitted: an `is_a` self-loop gives no M3, and `a = p` gives no
+  M4.
+- Parallel edges of one type between the same pair give one path, which carries the first such edge
+  in graph order.
+
+### 7.5 Multi-source provenance
+
+**Every path names:**
+- its source phenotype, by request position and HPO term;
+- its intermediate nodes.
+
+A path's identity is `(metapath, source, intermediates)`.
+
+**Per-phenotype coverage.** The record lists every used phenotype with one of:
+- its path count for each metapath;
+- "none in policy";
+- under `FOUND_PARTIAL` or `UNKNOWN`, "lower bound".
+
+Phenotypes the result did not use (unknown terms) are listed as such, from the result's account.
+
+### 7.6 Deterministic order
+
+**Scan order.** The steps run in the order 1, 2, 3. Within a scan, in-edges are read in graph order:
+the order of `kg.json`, which the record's graph digest fixes.
+
+**Path order.** Emitted paths are sorted by:
+1. metapath (M1 < M2 < M3 < M4);
+2. the source's request position;
+3. the first intermediate's global index;
+4. the second intermediate's global index;
+5. the edge index.
+
+**What is shown.** The first five paths per metapath (`paths_shown_per_metapath = 5`, a policy
+constant) follow that order. Counts cover every path found. Paths are counted as they are emitted,
+and only the five smallest keys per metapath are kept (a bounded heap), so memory is bounded by the
+shown paths, never by every path found, and no final sort over all paths is needed.
+
+**Reproducibility.** The same graph, result, target and policy give the same record, byte for byte,
+apart from `computed_at`.
+
+### 7.7 Budget, fairness and the request ceiling
+
+*(Revised 2026-10-26, the reviewer's P2-4: the first version counted scanned edges only, and claimed
+that this bounded all the work and made completeness knowable per disease in advance. Neither holds.)*
+
+**Three costs, kept apart:**
+
+| Cost | What it is | How it is bounded |
+|---|---|---|
+| **Entries scanned** (the budget unit) | typed adjacency entries examined in steps 1–3: the in-edges of the one edge type a scan names, read from a per-type in-edge index built once per graph, in graph order | `entry_budget`, fixed per policy version, the same for every target |
+| **Paths emitted** | each membership hit becomes one path per patient phenotype it serves. The same target edge can give 1 path or 100 | at most `entry_budget` × the used phenotypes (≤ 100) per target. Each emission is a count and a bounded-heap insert (§7.6), so per-target work is bounded, though not fixed |
+| **Per-result sets** (`P`, `G_P`, `U_P`) | built once per result: `P` from the result's phenotype account, `G_P` from the used phenotypes' `gene_has_phenotype` in-edges, `U_P` from their `is_a` out-edges | ≤ 100 phenotypes' `gene_has_phenotype` in-degrees plus their `is_a` out-degrees, read once, plus `P`'s ≤ 100 entries. They are counted in the request's admission, not in any target's budget |
+
+**What depends on the patient.** The entries scanned **by the target's own steps 1–3** do not: those
+scans read the target's edges whoever the patient is. Everything else does: the paths emitted;
+whether the analogy part runs (§7.8: only when the target's own outcome is `NO_PATH_IN_POLICY`); and
+so the target's total entries scanned, analogy part included. A target's total work therefore
+depends on the patient, and its completeness is known only from that traversal, which reports it.
+
+**Value of `entry_budget`.** It is set by measurement. One offline pass over every disease gives the
+distribution of scan cost per disease on the deployed graph. That distribution estimates the budget
+and bounds the scan part: it says which diseases' own scans fit, not whether a traversal completes.
+Analogies and the per-result sets are outside it.
+- The provisional value is the 99th percentile of scan cost, rounded up.
+- It stands until the latency target, an open institutional value (Spec 1 §6), gives it a time bound.
+- Every record names the value it ran under.
+- The measurement is batch 5's first step.
+
+**Fairness:**
+- Every target gets the same `entry_budget`, and no target's budget is shared.
+- A target's unused budget never passes to another target (§2 rejected a shared surplus).
+- The analogy part draws on the same target's remaining entries, never on another target's.
+- Page size, sort order and page peers change no outcome.
+
+**The request ceiling: the policy's "global-budget units and enforcement".**
+- A request names at most `max_targets_per_request` targets. This equals `page_size`'s maximum, 100.
+- Its upper bound on work is:
+  - the per-result sets (≤ 100 phenotypes' `gene_has_phenotype` in-degrees and `is_a` out-degrees,
+    once, plus `P`);
+  - plus, for each target, `entry_budget` scans and at most `entry_budget` × 100 emissions.
+
+  That is an upper bound, not the expected cost.
+- The ceiling is enforced at admission. A request over it is refused whole (422) before any
+  traversal starts. It is never partly served from a shared pool.
+
+That is how "global" in the policy and §2 agree: the global bound limits what is admitted, never
+any target's outcome.
+
+**Pass conditions** (small fixtures, no harness):
+- *The same target with 1 used phenotype and with 100.* `entries_scanned` is equal. The paths emitted
+  and the counts differ. Memory holds at most five paths per metapath in both. Each record reports
+  its own completeness.
+- *A target with a direct hit, and one whose analogy part runs.* The analogy part runs only in the
+  second. Its entries count against that target's own budget. Each record's completeness is the one
+  its traversal reports.
+
+### 7.8 Mode B and INSUFFICIENT, made reachable
+
+**When analogies run.** Only for a target whose own outcome is `NO_PATH_IN_POLICY`.
+
+**How:**
+- **Which diseases.** The `K = 3` diseases nearest the target by raw cosine of the checkpoint's
+  disease embeddings. The target itself is excluded, ties go to the lower global id, and only a
+  cosine of at least 0 qualifies.
+- **Same rule as today, stated on the raw scale.** Today the panel requires (s+1)/2 ≥ 0.5, which is
+  the same as a raw cosine ≥ 0.
+- **Who computes the list.** B-1's pipeline computes it with `src.inference.scoring` and passes it
+  in. `src.reasoning` sits below `src.inference`, so it never needs embeddings.
+- **The traversal.** Each analogy runs steps 1–3 against the same patient. The cost counts against
+  the same target's budget, the part its own traversal left.
+- **Outcomes.** The analogy part has the same four outcomes as §7.3.
+- **Naming.** These are named "similar diseases". Today's fields say `similar_gene_*` while holding
+  diseases.
+
+**INSUFFICIENT.** The label applies when the target's outcome is `NO_PATH_IN_POLICY` and the analogy
+part's is also `NO_PATH_IN_POLICY`. Wherever `UNKNOWN` appears, the label is "not determined within
+the budget", never INSUFFICIENT.
+
+**Cost.** The analogy list depends on the target alone, but whether it is traversed depends on the
+patient (on the target's own outcome), and so do the paths it emits (§7.7).
+
+### 7.9 Cancellation
+
+**Cooperative, in every phase.** The cancel flag is checked every 4,096 work units, where a unit is
+an entry read or a path emitted. That holds while the per-result sets are built, during each
+target's scans and emissions, and during the analogy part. It is also checked between targets.
+Nothing after the last check grows with the graph: the shown paths are already in their heaps.
+
+**A request is cancelled when:**
+- the same view sends a newer request for the same result;
+- its result is replaced;
+- the server shuts down.
+
+**What a cancel leaves:**
+- a cancelled target is `NOT_COMPUTED`: no record is written and nothing is cached;
+- targets finished before the cancel keep their records.
+
+**Off the event loop.** The route runs the traversal in a worker thread, so a long traversal never
+blocks other requests. Today's diagnose route runs synchronously inside `async def` (BACKLOG 56).
+
+### 7.10 Request identity, stale responses and the cache
+
+**The request.** `EvidenceRequest` carries:
+- `result_id`;
+- the target ids, in page order, at most the ceiling;
+- `policy_version`;
+- `view_id`, the existing view identity. In the WebUI this is the Gradio session
+  (`request.session_hash`) together with the result's panel. An API client sends an opaque `view_id`
+  of its own. This is a partition key, not an identity of a person, and no multi-user system is
+  added;
+- `view_request_seq`, which increases with every request within one `(view_id, result_id)`.
+
+**The response.** `EvidenceResponse` echoes `result_id`, `view_id` and `view_request_seq`. For each
+target it holds a record, a `NOT_COMPUTED` entry with its reason, or an error.
+
+**Stale responses.** The client discards a response whose
+`result_id` is not the current result's or whose `view_request_seq` is not the latest it sent for
+that `(view_id, result_id)`. The server keeps the latest sequence number per `(view_id, result_id)`,
+and a newer request cancels the older one's running traversal (§7.9). Sequence numbers from
+different views never meet, because they are compared only within one pair.
+
+**Server refusals:**
+
+| Situation | Answer |
+|---|---|
+| An unknown or no longer held `result_id` | 410, "run the diagnosis again" |
+| A target outside the result's selected set | 422 |
+| The result's fingerprints differ from the loaded artifacts | 409. There is no silent re-fetch against a changed graph (§3) |
+
+**The cache key:**
+- `result_id`;
+- `target_id`;
+- `policy_version`;
+- `entry_budget`;
+- the graph digest;
+- the checkpoint digest, when analogies ran.
+
+**Eviction.** The cache is in-process and bounded by count, least recently used out first. A record
+is a deterministic function of its key, so a record recomputed after eviction has the same content
+and its own `computed_at`: a new record, not a rewrite.
+
+**A higher budget** is a different key, so its record sits beside the old one (§3).
+
+**Where results live.** B-1 keeps produced results in memory by `result_id`, with a bound, for
+evidence requests. Spec 2's repository adds persistence when it is built, and snapshot v1 stores no
+evidence (§3).
+
+### 7.11 The evidence record, `evidence-record/1`
+
+| Group | Fields |
+|---|---|
+| Identity | `record_schema`; `result_id`; the target's global id, NodeID and name |
+| Policy | `policy_version` (`target-evidence/v1`); `metapath_set`; `entry_budget` |
+| Outcome | `entries_scanned` and `paths_emitted` (the target's own and the analogy part's); `outcome`; the analogy part's outcome (when it ran) |
+| Paths | path counts per metapath; the shown paths (each with metapath, source position and term, node ids, edge types and edge indices); per-phenotype coverage (§7.5); the analogies (each with similarity, outcome, counts and shown paths) |
+| Provenance | `fingerprints` (the graph digest; the checkpoint digest when analogies ran); `software_revision`; `computed_at` (§4) |
+
+Nothing records when a response was received, rendered or seen (§4).
+
+### 7.12 Loading, partial and error states
+
+| State | The panel says |
+|---|---|
+| Computing | "Computing evidence…" |
+| `FOUND_COMPLETE` | the paths, grouped by metapath, with the counts |
+| `FOUND_PARTIAL` | the paths and "The search stopped at its budget, so more may exist" |
+| `NO_PATH_IN_POLICY` | "No supporting path of the approved kinds", then the analogy part |
+| `UNKNOWN` | "Not determined within the search budget" |
+| INSUFFICIENT | "No supporting path, and no similar disease with one; validate independently" |
+| `NOT_COMPUTED` | "Not computed (the page changed)"; computed again when the target is visible |
+| An error | "Evidence unavailable: \<reason\>. The ranking is unaffected" |
+
+A failed or stale fetch degrades only the panel (Spec 1 §2).
+
+### 7.13 Where the code goes, and what goes away
+
+| Piece | Where |
+|---|---|
+| The traversal, the record and the per-type in-edge index | `src/reasoning/target_evidence.py`. It reuses `KnowledgeGraph`'s adjacency for the index and `ReasoningPath` for nodes and edges; that type's unused `evidence` field stays unused |
+| The analogy list, the result store and the admission check | B-1's pipeline methods in `src/inference/pipeline.py` |
+| The route | `POST /api/v1/results/{result_id}/evidence`, a new `src/api/routes/evidence.py` |
+| The contract | `ranking-without-evidence` in `.import-linter.ini` |
+
+**What goes away, and when:**
+- **With `served_mixture/v1` and `path_reasoning/v1`:** `EvidencePanel` and the explanation step's
+  evidence (`_add_explanations`) retire. `EvidencePanel` includes `_find_direct_paths`, which
+  searches to a node type and filters afterwards, and `_find_analogies`, which has no budget.
+- **Discovery** (`_find_all_paths`, the BFS and `DirectPathFinder`) stays as long as the fallback
+  ranks with it. B-2's decision on no-model serving decides how long that is.
+
+### 7.14 Tests that make it acceptable
+
+| Test | Checks |
+|---|---|
+| Determinism | the same inputs, twice, give identical records |
+| Page independence | a target's record is the same across page sizes, sort orders and peers |
+| Exhaustiveness | on a fixture graph, the records equal a brute-force enumeration of M1–M4 |
+| Budget boundary | a fixture target costing exactly `entry_budget` completes; one costing one entry more is `FOUND_PARTIAL` or `UNKNOWN` |
+| Cancellation | a cancel mid-target, and one while the per-result sets are being built, give `NOT_COMPUTED`; the earlier targets are kept; two views with the same sequence number do not cancel each other |
+| Cost (P2-4) | the two pairs of §7.7's pass conditions |
+| Ranking untouched | the result's digest is the same before and after evidence for every target |
+| Refusals | a stale response is discarded; a fingerprint mismatch gives 409; a request over the ceiling gives 422 |
+| Analogies | ties go to the lower id; INSUFFICIENT is not shown under `UNKNOWN` |
+
+### 7.15 Open, and whose
+
+| Open item | Whose |
+|---|---|
+| The value of `entry_budget` | engineering, measured as batch 5's first step; provisional until the latency target exists |
+| The latency target and `page_size`'s bounds | the institution (Spec 0 §3) |
+| Approval of this design | the reviewer's technical review, then the owner's confirmation (no new process) |

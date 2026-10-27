@@ -162,10 +162,15 @@ harness free of the pipeline's initialisation surface while making the "same
 three lines" claim a checked one.
 
 **Mode D is the exception and must use option 1**, because Mode D's whole content
-is what production actually does. That is B-0.5's problem, and it is a real one:
-the public entry point truncates to `top_k` (`pipeline.py:1268`) and runs path
+is what production actually does. That is B-0.5's problem, and it is a real one *(resolved since:
+batch 3 split `DiagnosisPipeline.rank()` from `run()` at the cut, [`PLAN_B05.md`](PLAN_B05.md) §2,
+§11)*:
+the public entry point truncates to `top_k` (`pipeline.py:1268` when written; at `60feb6d` the
+slice is in `_score_and_rank_candidates`, `pipeline.py:1714-1717`) and runs path
 construction and explanation, so obtaining an untruncated pre-`top_k` rank without
-duplicating candidate construction is not a detail.
+duplicating candidate construction is not a detail. **Resolved in design (Batch 2, 2026-10-26):**
+[`PLAN_B05.md`](PLAN_B05.md) §2 splits `DiagnosisPipeline.run` at its truncation point into
+`rank()`, which serving itself then calls, and the steps after it; Mode D calls `rank()` only.
 
 ---
 
@@ -173,7 +178,7 @@ duplicating candidate construction is not a detail.
 
 | Excluded | Why |
 |---|---|
-| Mode D | B-0.5. Unresolved design problem above |
+| Mode D | B-0.5. Designed and built in [`PLAN_B05.md`](PLAN_B05.md) (batches 2 and 3; §11–§12.3) |
 | Statistical protocol, institutional run | B-0.5 |
 | Fixing candidate construction or negative sampling | The measurement exists to decide whether that is needed. Changing it first destroys the baseline |
 | Any scorer change | Work item B proper |

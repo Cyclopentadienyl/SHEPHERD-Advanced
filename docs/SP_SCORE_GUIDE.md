@@ -17,20 +17,27 @@ exists so that anyone who sees an SP number knows precisely what it does and doe
 > ## Status — read this before anything else
 >
 > **Today, the SP score is part of the ranking.** How a candidate is scored depends on which
-> artifacts are loaded:
+> artifacts are loaded, and each answer names its kind (`result_kind`, Batch 4):
 >
-> | Loaded | Score used for ranking |
-> |---|---|
-> | Trained model **and** shortest-path table | `0.7 × model score + 0.3 × SP` (`src/inference/pipeline.py:1707`) |
-> | Trained model only | Model score alone |
-> | No trained model | Path-reasoning score — **a different quantity written into the same field** |
+> | Loaded | Kind | Score used for ranking |
+> |---|---|---|
+> | Trained model **and** shortest-path table | `served_mixture/v1` | `served_score` = η × `model_term` + (1 − η) × SP, with the result's own η (0.7 by default) |
+> | Trained model only | `served_mixture/v1` | `served_score` = `model_term` alone; `sp_term.status` is `NO_TABLE` |
+> | No trained model | `path_reasoning/v1` | `path_score`, a different quantity in its own field |
 >
 > **Which row applies is stated with each result.** Every result says which artifacts produced it
-> (its *served identity*): the Diagnosis tab's "Produced by" line and its full-identity block, the
-> downloadable report's "What produced this result" section and the CSV's `served_` columns name
-> the trained model's checkpoint, the shortest-path table and the scoring mode —
-> `gnn_plus_shortest_path` (first row), `gnn_only` (second) or `path_reasoning_fallback` (third,
-> with a "NO TRAINED MODEL" banner).
+> (its *served identity*) and its kind: the Diagnosis tab's kind label and "Produced by" line, the
+> downloadable report's "What produced this result" section and the CSV's `result_kind` and
+> `served_` columns name the trained model's checkpoint, the shortest-path table and the scoring
+> mode — `gnn_plus_shortest_path` (first row), `gnn_only` (second) or `path_reasoning_fallback`
+> (third, with a "NO TRAINED MODEL" banner).
+>
+> **An SP value that cannot be computed is never written as a number.** Each candidate's `sp_term`
+> has a status: `COMPUTED`, `COMPUTED_PARTIAL` (some submitted phenotypes were not in the graph),
+> `NO_TABLE`, `TARGET_UNMAPPED` or `NO_PHENOTYPE_MAPPED`; only the first two carry a mean distance
+> and a score. On a served result only `NO_TABLE` (no table, nothing mixed) has no number: a
+> disease or phenotype missing from the graph's node mapping is refused first (§3). Were a status
+> with no number mixed, it would count as 0 and the record would say so (`mixed_as: 0.0`).
 >
 > **Also today: candidates are discovered by path search before any scoring happens.** A disease
 > with no qualifying path from the patient's phenotypes is never scored at all, whatever the model
@@ -351,9 +358,11 @@ The paper's stated rationale, quoted:
 
 That observation is cited to a survey of gene-prioritisation tools (Zolotareva & Kleine,
 *J. Integr. Bioinform.* 16, 20180069, 2019) rather than to an experiment within the paper. **No
-ablation of SPLSIM appears in the main article as reviewed**; supplementary materials were not
-examined. The selected value of η is published in the authors' repository rather than in the
-article.
+ablation of SPLSIM appears in the article or its Supplementary materials**, which hold only the
+rank-against-distance panels, Supp. Fig. 3b and 4d. How η is chosen is in the article, a
+hyperparameter search over `[0.1, 0.9]` per task; the value is not: the authors' run script for the
+gene task sets 0.5, from released code that does not run as committed
+(`working/FINDINGS_PAPER_PROTOCOL_AND_AMP.md`).
 
 ### Where the paper uses it — and where it does not
 
@@ -396,7 +405,8 @@ while queue:
 
 Pairs absent from the table mean "no path found within `max_hops`".
 
-Online (`src/inference/pipeline.py:_calculate_sp_score`), per candidate:
+Online (`src/inference/sp_index.py:sp_analysis_records`, which calls `sp_mean_distances` once for
+all candidates), per candidate:
 
 ```python
 UNREACHABLE = max_hops + 1                      # 6 with the default max_hops = 5
@@ -410,14 +420,17 @@ avg_distance = total / len(patient_phenotype_indices)
 return 1.0 / (1.0 + avg_distance)                # → [1/7, 1/2]
 ```
 
-**Two distinct return regimes, currently indistinguishable to a caller.** The computation above
-yields a value in `[1/7, 1/2]`. Separately, the function returns **`0.0`** when it cannot compute at
-all — no shortest-path table loaded, no node mapping, the target absent from the mapping, or none of
-the patient's phenotypes resolvable (`src/inference/pipeline.py:1338, 1342, 1352, 1363`), and a fifth
-the earlier text did not name: the primitive reporting `available[0]` false (`:1374`). Because
-`0.0 < 1/7`, **a lookup or mapping failure produces a lower value than a genuine "no path found"**,
-and nothing currently distinguishes the two. Any surface that displays SP should treat `0.0` as
-*unavailable*, not as a distance.
+**A value, or a status with no value.** The computation above yields a value in `[1/7, 1/2]`
+(status `COMPUTED`, or `COMPUTED_PARTIAL` when some submitted phenotypes were not in the graph and
+the mean is over the mapped ones). When it cannot compute at all, the record says why instead of
+giving a number: `NO_TABLE` (no shortest-path table served), `TARGET_UNMAPPED` (the disease has no
+node in the table's mapping) or `NO_PHENOTYPE_MAPPED` (none of the patient's phenotypes resolves).
+Before Batch 4 these cases returned `0.0`, which is lower than a genuine "no path found" (`1/7`).
+On a served result only `NO_TABLE` occurs (in `gnn_only`, where nothing is mixed and `mixed_as` is
+absent): the model shares the table's node mapping, so a disease or phenotype missing from it is
+refused first, as a model term that cannot be computed (`MODEL_TERM_UNAVAILABLE`), or as an input
+with no phenotype in the graph. Were a status with no number mixed, the mixture would take it as 0
+and the record would say so (`mixed_as: 0.0`); no surface displays that 0 as a distance.
 
 ## Three ways this differs from the paper — all of them material
 
@@ -425,7 +438,7 @@ and nothing currently distinguishes the two. Any surface that displays SP should
 |---|---|---|---|
 | **Task** | candidate **gene** ranking, with a short list | **disease** ranking, over whatever the path search admits | The condition the paper's rationale depends on — a short candidate list — does not hold |
 | **Transform** | `NORM(mean(−d))`, min–max rescaled **across the candidate set**, giving `[−1, 1]` | `1/(1 + mean(d))`, an **absolute** transform giving `[1/7, 1/2]` | See below |
-| **η value** | hyperparameter-searched over `[0.1, 0.9]`, per task; chosen value not published in the article | fixed at `0.7` (`PipelineConfig.eta`) | The project default is a reasonable choice, not a value inherited from the paper. The in-code comment states this correctly. |
+| **η value** | hyperparameter-searched over `[0.1, 0.9]`, per task (the article's method); the chosen value is not in the article, and the authors' run script for the gene task sets 0.5 | fixed at `0.7` (`PipelineConfig.eta`) | The project default is a reasonable choice, not a value inherited from the paper. The in-code comment states this correctly. |
 
 The transform difference has two consequences:
 

@@ -126,6 +126,11 @@
 
 ### 🔴 **PyTorch Geometric on ARM**
 
+> **The formal deployment** installs `torch_geometric` from `uv.lock` at the verified version and
+> its native extensions per platform (§4.15). The strategies below are manual fallbacks from the
+> planning phase: keep `torch_geometric` at the version `pyproject.toml` pins (`uv sync --inexact`
+> restores it) and take the extensions from the index for the installed torch.
+
 **Where things stand**:
 - PyG 2.6+ supports ARM in principle, but prebuilt wheels may be missing
 - Its extension libraries (pyg-lib, torch-scatter, …) have uneven ARM support
@@ -402,12 +407,12 @@ undefined symbol: _ZN...
 ```
 
 ```bash
-pip uninstall torch torch-geometric pyg-lib torch-scatter torch-sparse -y
-pip cache purge
-
-pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu130
-pip install torch-geometric pyg-lib torch-scatter torch-sparse \
-    -f https://data.pyg.org/whl/torch-2.10.0+cu130.html
+# torch and torch_geometric back to the lock's versions (§4.15)
+uv sync --inexact --reinstall-package torch --reinstall-package torch-geometric
+# the native extensions from the index for the installed torch
+TVER="$(.venv/bin/python -c 'import torch;print(torch.__version__)')"
+uv pip install --reinstall pyg-lib torch-scatter torch-sparse \
+    -f "https://data.pyg.org/whl/torch-${TVER}.html"
 ```
 
 ---
@@ -802,6 +807,11 @@ python scripts/probe_deployment.py --work-dir /tmp/shepherd_probe \
     --report probe_report.json --download-only
 ```
 
+A relative path given to the probe (`probe_report.json` here, or an acceptance's
+`--real-workspace data/workspaces/<workspace>`) is taken from the directory you start it in and
+made absolute once, before anything runs; one that does not exist from there is refused at once,
+not after the training (since Batch 1, BACKLOG 49).
+
 It downloads MONDO and HPO **in full** (tens of megabytes) from the sources in
 `configs/deployment.yaml`, through the same path a build uses, into the work
 directory — never into your cache or configured roots, and it checks that
@@ -886,6 +896,47 @@ hashed again when a result is produced, and nothing is filled in with
 
 The service's own version (`1.0.0` in `/health`, `/` and the Swagger title) is
 the API's version, not the identity of what is served.
+
+### The diagnose response is one of three kinds (Batch 4)
+
+`POST /api/v1/diagnose` answers one kind of result, named by `result_kind`, with
+`result_schema_version` 2 (`docs/working/results-review/SPEC_1_RESULTS_REVIEW.md`
+§2.1). Each kind carries its own values and refuses another kind's:
+
+| `result_kind` | Answered when | Each candidate's values | On the result |
+|---|---|---|---|
+| `served_mixture/v1` | a model is served | `served_score`, the value ranked by: η × `model_term` + (1 − η) × SP with a shortest-path table, `model_term` alone without one; `model_term`, (cos + 1) / 2; `sp_term`, the SP record | `eta`, `candidates_reached` (how many diseases discovery reached before the cut), `tie_policy` |
+| `path_reasoning/v1` | no model source is configured | `path_score`, the path aggregate | `path_score_aggregation`, `tie_policy` |
+| `demo/v1` | no pipeline was ever configured | none: no score, explanation, path or gene | — |
+
+- **Removed, with no alias:** `confidence_score`, `gnn_score`, `sp_score`,
+  `reasoning_score` (now `path_score`, path reasoning only) and
+  `confidence_label` (now `evidence_label`, inside `evidence_package` too). A
+  client that read them reads the kind's own fields instead.
+- **`sp_term` never writes 0 for a missing value.** Its `status` is `COMPUTED`,
+  `COMPUTED_PARTIAL` (some submitted phenotypes were not mapped;
+  `phenotypes_mapped` / `phenotypes_submitted` say how many), `NO_TABLE`,
+  `TARGET_UNMAPPED` or `NO_PHENOTYPE_MAPPED`. `mean_hop_distance` and `score`
+  (1 / (1 + d)) are there on the first two only. On a served result only
+  `NO_TABLE` (in `gnn_only`, where nothing is mixed) has no number: a disease or
+  phenotype the graph's node mapping lacks is refused first, as a model term
+  that cannot be computed (below). Were a status with no number mixed, the
+  mixture takes it as 0 and the record says so (`mixed_as: 0.0`).
+- **The ranking is unchanged for valid input**: the same values, order and ties
+  (`served_score` is the former `confidence_score`).
+- **New refusals.** A model term the service cannot compute (no embeddings, no
+  table, a node with no row, or a row outside its table, which used to be clamped
+  onto the last one) or a score that is not finite refuses the result: HTTP 500,
+  its `error` starting with the code (`MODEL_TERM_UNAVAILABLE: …`,
+  `NON_FINITE_SCORE: …`). On a verified workspace these states are not
+  expected. An input with no phenotype in the graph is refused as before
+  (`No valid phenotypes after validation`). An unknown id is always listed in
+  `phenotype_input.unknown`, and stated as a warning (`Unknown phenotype: …`)
+  when the request is answered; when no id is known, the warning is the
+  refusal.
+- **`phenotype_input`** (received, unknown, repeats removed, used) is in the
+  response; null in the demo answer, and when a request was refused before its
+  phenotypes were mapped.
 
 ### Its parts and states
 
@@ -1009,15 +1060,43 @@ The WebUI shows **the result's own identity**, never the status's:
   candidates: the same banners, a Part | State | Value table with digests in
   full (`sha256:<64 hex>`), the claim boundary and the fixed statement. An
   absent part is written as its state and the reason, never left blank.
+- **The kind's label above the table** says what the Score column holds, with
+  the result's own η: "Served ranking today: diseases reached by path discovery,
+  scored as η × model term + (1 − η) × SP, η = 0.7" (or "…scored by the model
+  term alone" without a table), "No model loaded: ranked by path reasoning, not
+  by a model", or "Demo answer: no pipeline is configured; not a diagnosis".
+  The columns follow the kind: Score and Model term for the mixture, with SP
+  beside them when a table is served (a status with no number in words, never
+  0.000); Score for path reasoning; no score at all for the demo answer.
+- **A refused result** (`MODEL_TERM_UNAVAILABLE`, `NON_FINITE_SCORE`) is shown as
+  one sentence naming the code and the node; nothing is ranked.
 - **The CSV** carries the identity in columns (below).
 - **File names** carry the two states a copied file must not lose:
   `diagnosis_SYNTHETIC_<patient>_<session>.csv` / `_report.md` for a synthetic
   workspace, `diagnosis_DEMO_…` for the demo answer; otherwise unchanged.
 
+### The CSV's candidate columns (Batch 4)
+
+The candidate columns are the result kind's, and every row names the kind:
+
+| Kind | Candidate columns, in order |
+|---|---|
+| `served_mixture/v1` | `result_kind`, `rank`, `disease_id`, `disease_name`, `served_score`, `model_term`, `sp_term_status`, `sp_term_score`, `sp_term_mean_hop_distance`, `sp_term_phenotypes_mapped`, `sp_term_phenotypes_submitted`, `sp_term_mixed_as`, then the evidence columns |
+| `path_reasoning/v1` | `result_kind`, `rank`, `disease_id`, `disease_name`, `path_score`, then the evidence columns |
+| `demo/v1` | `result_kind`, `rank`, `disease_id`, `disease_name`, `matching_phenotypes` |
+
+The evidence columns are `evidence_label`, `evidence_mode`, `evidence_summary`,
+`min_path_length`, `num_direct_paths`, `num_analogies`, `supporting_genes` and
+`matching_phenotypes`. `sp_term_status` sits beside the SP values: where the
+status has no number, the value cells are empty, never 0, and `sp_term_mixed_as`
+is `0.0000` where the mixture still took it as 0. A path count is empty when no
+evidence package was built (explanations off). `served_score` is a candidate
+column, not part of the identity block below.
+
 ### The CSV's identity columns
 
-The CSV keeps **one header row** and no preamble. The 15 candidate columns come
-first, unchanged in order; 21 columns follow, each holding one part of the
+The CSV keeps **one header row** and no preamble. The result kind's candidate
+columns come first (above); 21 columns follow, each holding one part of the
 identity, **the same on every row**:
 
 | Column | Holds | When the identity holds null |
@@ -1330,6 +1409,52 @@ each category), the four R10 labels in the shared words of `src/evaluation/cavea
 `unverifiable` label with its reason), the label definitions once, the report's path and the run
 id. The report itself keeps the states and holds no prose.
 
+### Mode D: the served ranking (since Batch 3)
+
+`--mode D` measures **what the Diagnosis page serves today** on the same registered version: the
+checkpoint is served by the service's own builder over `--data-dir` (with its shortest-path table
+when the workspace holds one, as the service would), each import-eligible case is ranked through
+the served pipeline's own `rank()`, and Mode C is run beside it on the same embeddings. It is the
+input to the scorer policy's gate 1 comparison, not the approved policy
+(`docs/working/scorer-measurement/PLAN_B05.md`).
+
+```bash
+python scripts/measure_scorer.py --mode D \
+    --checkpoint data/workspaces/<ws>/runs/<arch>/<run>/checkpoints/<file>.pt \
+    --data-dir data/workspaces/<ws> \
+    --cohort mygene2-2026-10 --registry /srv/shepherd/cohorts \
+    [--training-evidence DIR ...] [--record] [--device auto|cuda|cpu] [--batch-size 32]
+```
+
+- **The same run, the same rules.** Every check above, the GPU lock, the report store and
+  registration apply unchanged. `--split` with `--mode D` is refused (exit 2): its comparison is
+  reported on a version's import-eligible cases. A pipeline that would serve path reasoning alone,
+  a version bound to another workspace, and a version mapped under another phenotype normalisation
+  version than the one served (the two sides would score different terms) are refused before any
+  case is ranked; a `--batch-size` below 1 is refused at the command line (exit 2). During the
+  pass, a case whose served input is not the terms the version mapped refuses the run, with
+  nothing written. About 20 progress lines on the console say how many cases have gone through
+  the served path, how long it took and the outcomes so far.
+- **One case per call.** Mode D ranks each case through the served path (`batch_size` 1 in its
+  manifest; `--batch-size` is the Mode C side's), so it is slower than Mode C: on a large cohort,
+  time a pilot first.
+- **What the report adds.** The fields every report has, plus `outcomes` (`ranked`,
+  `not_reached` — of which `no_candidates` — and `refused`, adding up to the import-eligible
+  cases), `import_counts`, `served` (the served identity) and `comparison`: Mode C on the same
+  embeddings, the derived steps C → G1 → G2 → D (candidates, then ties, then the score), and for
+  each kept Mode C report of the same checkpoint and version, how many ranks agree (stated, never
+  an error). `ranks.json` has one row per import-eligible case.
+- **Named for their case set.** `post_import_*` and `coverage` are over the import-eligible cases,
+  a case not reached counting 0; `reached_*` over the reached cases only. No figure is end to end:
+  the cases excluded at import are counted beside them.
+- **Registered apart.** With `--record` it becomes its own record beside the checkpoint. Its
+  scoring semantics differ from Mode C's, so the two are never compared for disagreement, and a
+  Mode D record is shown on the Models page, never ordered. The console, the Test page's Result
+  and the Models page label it "Served ranking today (Mode D) … not the approved scorer policy",
+  with the served scoring mode and η (on the Models page in the label when every Mode D record
+  shown shares them, otherwise on each record's detail line); the Models page lists each mode's
+  records in a table of its own. No page starts a Mode D run: the Test page's Start runs Mode C.
+
 ### Record
 
 - **`--record`** registers the report right after the run. **Without it**, and when `--record`
@@ -1602,8 +1727,9 @@ python scripts/measure_scorer.py --checkpoint <file>.pt --data-dir data/workspac
   never read as this run's outcome, and a file named by mistake is never overwritten. Name a new
   file for each run (a job's own directory, say). The file is written once the report is published
   (`"complete": false`) and again at the end (`"complete": true`). It gives the report's path,
-  run id and digest, the checkpoint and version digests, whether the run was deterministic, and
-  under `registration` whether the report was registered and why. A run refused before its
+  run id and digest, the checkpoint and version digests, the measurement mode (`mode`: `C` or
+  `D`, since Batch 3), whether the run was deterministic, and under `registration` whether the
+  report was registered and why. A run refused before its
   report writes no outcome file. The file says what the run did. The report store and the ledger
   remain the record, and "kept" and "registered" are read from them. The job runner gives every
   test run it starts a new outcome file in a directory of its own (§4.11).
@@ -1722,9 +1848,9 @@ only setting, every job is now refused as not configured until the root is set.
 
 **Upgrade only while no training or test run is running** (since round 3 of the review fixes,
 2026-10-22), from a shell or from the service: a job started by an earlier build is not seen by
-this build's lock. A build from `main` takes no GPU lock at all, and an M5 build from before the
-root-cause round may hold the file `SHEPHERD_GPU_LOCK_FILE` named, which this build does not
-check. Stopping the service for the upgrade stops the jobs it started; for a CLI started from a
+this build's lock. A build without M5's GPU lock mechanism takes no lock at all, and an M5 build
+from before the root-cause round may hold the file `SHEPHERD_GPU_LOCK_FILE` named, the old lock
+name, which this build does not check. Stopping the service for the upgrade stops the jobs it started; for a CLI started from a
 shell, check first with `pgrep -af 'train_model.py|measure_scorer.py|setup_demo.py'` (or
 `nvidia-smi`). After the upgrade, remove `SHEPHERD_GPU_LOCK_FILE` from the service's environment
 and from your shells.
@@ -2629,7 +2755,8 @@ and register it. Three panels:
   read-only browser is not shown it, and the page lists them once per workspace (↻ reads the
   list again). Then the R10 evidence the run will look in (the measured workspace, and
   `SHEPHERD_TRAINING_EVIDENCE_DIRS`), **Register the result**, **Deterministic execution**, and
-  the batch size and device the server fixes (the measurement's default; `SHEPHERD_DEVICE`).
+  the batch size, device and mode the server fixes (the measurement's default;
+  `SHEPHERD_DEVICE`; Mode C, the model's own ranking: Mode D is an operator's command-line run).
   **🔒 Start test** starts the real `measure_scorer.py` through the job runner (§4.11), with the
   workspace, version and checkpoint the server finds again in its lists, and **the full model
   fingerprint and version digest the page showed as the expected ones**: the run refuses before
@@ -2755,12 +2882,15 @@ yet", until the page has read their ledgers.
 whether that is this workspace's current dataset), the Trainer's validation figure in its own
 card, any warning, and two segments:
 
-- **Recorded test results (Mode C)**: every record the ledger holds for these weights: the
-  cohort version and its role, Mode C MRR and Hits@10, coverage with every exclusion, and
+- **Recorded test results**: every record the ledger holds for these weights, one table per
+  measurement mode, each under its mode's label and note (since Batch 3: Mode C's records first,
+  then Mode D's). Each row gives the cohort version and its role, the mode's MRR and Hits@10 named
+  in full in the header (Mode C MRR (untruncated) and Hits@10; Mode D's over the import-eligible
+  cases), coverage with every exclusion (Mode D's as the import-eligible cases reached), and
   `registered #N` or amber `contested #N` with what the runs disagree on (or "contested status
   cannot be checked", never shown as uncontested), deterministic on or off; when the list is
   ordered, which record the fixed rule picks and how the others differ from it; then the
-  relations, the other Mode C metrics, R10 as states (*unverifiable* is a reason, never 0), the
+  relations, the record's other metrics, R10 as states (*unverifiable* is a reason, never 0), the
   environment, the dataset and the registration;
 - **Usage history**: the entries that name this checkpoint in every listed cohort version's
   usage history: test runs, registrations and loads from an ordered list, newest first.
@@ -2779,6 +2909,68 @@ that Load wrote; nothing on it runs on a timer.
 to its detail and moves the keyboard focus there; **↑ Back to the list** in the detail's header
 returns to the row.
 
+## 4.15 PyTorch Geometric's version (since Batch 1, 2026-10-26)
+
+**`torch_geometric`, PyG's pure-Python core, is in the lock** (BACKLOG 50). `pyproject.toml`
+declares `torch-geometric==2.8.1`, and `uv.lock` holds it with what it requires (aiohttp 3.14.5
+and its family, pyparsing 3.3.3, xxhash 4.0.2: the versions M5's GB10 acceptance ran). `uv sync
+--inexact`, and so `deploy.sh` and `deploy.cmd`, install it; the deploy scripts no longer install
+it separately, and only check that it imports. A plain `uv sync` no longer removes it (it still
+removes the native extensions and cuVS, so keep `--inexact`).
+
+**Its native extensions stay per platform, as before**: pyg-lib, torch-scatter, torch-sparse and
+torch-cluster come from the data.pyg.org index for the installed torch (the scripts now derive
+`https://data.pyg.org/whl/torch-<torch.__version__>.html` from the installed torch instead of
+writing the version a second time), or on ARM from the prebuilt release or a local build
+(`PYG_ARM_STRATEGY`). Their versions differ by platform (the GB10's prebuilt pyg-lib is 0.6.0, the
+x86 index's 0.8.0) and are recorded by the probe's A1 and A5, not pinned.
+
+**The verified set**: `torch_geometric` 2.8.1 with torch 2.10.0+cu130 and the prebuilt ARM
+release's extensions (pyg-lib 0.6.0, torch-scatter 2.1.2, torch-sparse 0.6.18, torch-cluster
+1.6.3), in M5's GB10 acceptance at `b14c4de`. Since Batch 1, `deploy.sh` installs that set from the
+lock, as checked on the GB10 at `0bc5178` (2026-10-26: A1–A5 passed, A5 equal to the committed lock,
+the PyG native check 5 of 5; `docs/working/batch1-acceptance-2026-10-26/`). Windows' `deploy.cmd`
+has not been run. M4's acceptance ran 2.8.0.post1; its evidence stays with that environment. After pulling, `uv sync --inexact` moves an installed
+2.8.0.post1 to 2.8.1: that is a change of environment, and an acceptance made before it does not
+carry over.
+
+**What A5 says**: an installed `torch_geometric` at another version is named with both versions;
+one the project declares but that is not installed is named with the lock's version; in either
+case A5 no longer reads "the installed versions are the lock's".
+
+**This pins today's formal deployment set, not a permanent limit** on PyG, torch or CUDA. The
+versions live in the dependency and deployment layer only: no training, inference or UI code
+checks a package version (the runtime check asks only whether torch and PyG import), and no
+model is refused because a version differs: loading and resume follow the model contract.
+
+**Upgrading** PyTorch, CUDA or PyG, for instance when today's combination is no longer
+maintained, goes through the same entry points:
+
+1. In `pyproject.toml`: the versions of torch, torchvision, torchaudio and torch-geometric, and,
+   for another CUDA, the PyTorch wheel index (`pytorch-cu130`, its name and URL).
+2. `uv lock`; then redeploy with `deploy.sh` / `deploy.cmd`. The PyG extension index follows the
+   installed torch by itself.
+3. On ARM, the prebuilt extension release (`PYG_PREBUILT_*` in `deploy.sh`) matches one torch and
+   CUDA only. Another torch takes the source build (`scripts/build_pyg_arm.sh`, which builds
+   against whatever torch is installed) or the fallback, so the release never blocks an upgrade;
+   publishing a new release and updating those four values is optional.
+4. Run the deployment probe and keep its record; checks follow what the upgrade changed, not a
+   rerun of every past acceptance. The new set becomes the baseline once verified, and an older
+   acceptance stays with the environment it ran in.
+
+There is no second pipeline for old environments and no matrix of historical combinations.
+
+**The launcher's optional accelerators** (`--flash-attn`, `--xformers`, `--sage-attn`, and on x86
+FlashAttention by default) are optional third-party plugins, outside the project's native support,
+and stay out of `uv.lock`. They install with `python -m pip`, which a deploy-created `.venv` lacks
+until the ARM source build (`scripts/build_pyg_arm.sh`) puts it there. Every such install now goes
+through constraints that `uv export` makes from `uv.lock` (`pip_install` in
+`scripts/launch/shep_launch.py`): an accelerator that would need another torch, or another version
+of any locked package, is refused by pip and not installed, and the launcher goes on without it;
+when the constraints cannot be made (no `uv` on `PATH`, no `uv.lock`), nothing is installed. What
+an accelerator brings that the lock does not hold installs as before. No model path uses these
+packages (ARCHITECTURE §9).
+
 ---
 
 ## Summary: deployment checklist ✅
@@ -2788,7 +2980,7 @@ returns to the row.
 - [ ] ✅ Python 3.12 installed
 - [ ] ✅ CUDA 13.0 installed
 - [ ] ✅ PyTorch + CUDA working
-- [ ] ✅ PyTorch Geometric working
+- [ ] ✅ PyTorch Geometric working (`torch_geometric` from `uv.lock`, §4.15)
 - [ ] ✅ FlashAttention-2 installed
 - [ ] ✅ Voyager available (CPU vector search)
 - [ ] ✅ All unit tests pass
@@ -2800,7 +2992,7 @@ returns to the row.
 - [ ] ✅ Architecture confirmed as aarch64
 - [ ] ✅ CUDA 13.0 available
 - [ ] ✅ PyTorch ARM build working
-- [ ] ✅ PyTorch Geometric available (wheel or build)
+- [ ] ✅ PyTorch Geometric available (`torch_geometric` from `uv.lock`; extensions prebuilt or built, §4.15)
 - [ ] ⚠️ Attention backend downgraded (xformers or SDPA)
 - [ ] ✅ Vector index: cuVS (GPU) or Voyager (CPU fallback)
 - [ ] ✅ Unified memory correctly identified

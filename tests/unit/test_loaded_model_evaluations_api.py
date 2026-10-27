@@ -74,7 +74,8 @@ WHEN = "2026-10-16T12:00:00Z"
 OTHER_CHECKPOINT = "c" * 64
 RESPONSE_KEYS = {"state", "checkpoint_sha256", "ledger", "records", "records_not_shown"}
 RECORD_VIEW_KEYS = {
-    "cohort", "counts", "metrics", "n_ranked", "relations", "r10", "environment_class",
+    "cohort", "counts", "mode", "score_semantics", "metrics", "n_ranked", "relations", "r10",
+    "environment_class",
     "deterministic_algorithms", "gpu", "dataset_origin", "scoring_semantics_digest", "measurement_semantics_digest",
     "registration", "n_corroborating", "source_artifact_digest", "contest",
 }
@@ -292,6 +293,10 @@ def test_the_loaded_checkpoints_records_are_shown(app, served, tmp_path, monkeyp
     assert body["records_not_shown"] == 0
     (view,) = body["records"]
     assert set(view) == RECORD_VIEW_KEYS
+    # Each record carries its own mode, so a surface labels it by that mode.
+    assert (view["mode"], view["score_semantics"]) == (
+        record["scoring"]["mode"], record["scoring"]["score_semantics"])
+    assert view["mode"] == "C"
     assert view["cohort"] == {
         "label": "mygene2-2026-10", "role": "mygene2", "kind": "supplied",
         "samples_sha256": "5" * 64, "source_sha256": "b" * 64,

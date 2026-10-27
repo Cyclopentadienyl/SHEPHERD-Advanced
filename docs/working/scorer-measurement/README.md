@@ -9,7 +9,7 @@ the served behaviour beside it.
 | Mode | Encoder | Candidates | Scorer | Status |
 |---|---|---|---|---|
 | **C** | full graph | every disease in the KG | raw cosine | implemented: `scripts/measure_scorer.py`, `run_mode_c`. The formal Test's measurement (`../PLAN_TEST_RESULTS.md` D3) |
-| **D** | full graph | production's path-reachable construction | η mixture with the SP term | B-0.5, not built; an unresolved design problem ([`PLAN_B03.md`](PLAN_B03.md)) |
+| **D** | full graph | production's path-reachable construction | the served score: η mixture with the SP term, or the model term alone | B-0.5, **implemented** (Batch 3, 2026-10-26; reviewed, its short GB10 run passed 2026-10-27): `scripts/measure_scorer.py --mode D`, `src/evaluation/mode_d.py` ([`PLAN_B05.md`](PLAN_B05.md), §11 as built); it resolves `PLAN_B03.md` §4's problem. Not the approved policy: it measures what the Diagnosis page serves today |
 
 **Modes A and B are retired** (the retirement's R2, 2026-10-12;
 [`ASSESSMENT_MODE_AB_RETIREMENT.md`](ASSESSMENT_MODE_AB_RETIREMENT.md) §9). Mode A
@@ -40,16 +40,20 @@ interaction. B-0.5 therefore needs an intermediate comparison — full-graph
 embeddings, production's path-reachable candidates, **cosine** scoring — followed
 by those same candidates scored with the η/SP mixture. That splits C→D into one
 candidate-construction step and one scorer step. It is recorded here so the
-roadmap does not promise an attribution it cannot make; it is not named, designed
-or implemented.
+roadmap does not promise an attribution it cannot make. **Implemented (Batch 3,
+2026-10-26; designed and reviewed in Batch 2):** Mode D calls `run_mode_c`
+itself on the same embeddings, then derives readings from its scores one change
+at a time: the candidate set, the tie policy, the score. These are derived
+readings in Mode D's report, not a mode or a ledger record
+([`PLAN_B05.md`](PLAN_B05.md) §5).
 
 | Stage | Scope | Status |
 |---|---|---|
 | B-0.1 | scoring primitives extracted from the pipeline | shipped |
 | B-0.2 | harness, Mode A, both metric families, manifest, calibration launcher | shipped. **What remains is Mode C's:** the manifest, the authoritative metric family, the canonical ranking and the CUDA gate. The acceptance was redefined from bit-parity with the frozen evaluator, which was unexecutable, to a same-batch differential test against the trainer's own validation pass (`../BACKLOG.md` §3.1). The launcher `scripts/calibrate_mode_a.py` was removed with the frozen evaluator in contract M2.1's S0 ([`../PLAN_PROVENANCE_CONTRACT.md`](../PLAN_PROVENANCE_CONTRACT.md) M2.1, decisions 3 and 6). Mode A, the legacy metric family, the predictions artifact and the differential calibration were retired in R2 (2026-10-12); its institutional CUDA run, item 7a, was cancelled |
 | B-0.3 | Modes B and C | shipped. Mode C is the formal Test's measurement; Mode B was retired with Mode A in R2. Its institutional run is 7b's Mode C side, under Policy Gate 1. Plan: [`PLAN_B03.md`](PLAN_B03.md), kept as the design record |
-| B-0.4 | vectorised SP lookup | **measurement complete and reviewed.** Approach A selected for the primary GB10 platform (`PLAN_B04.md` §12.5): 8-33x faster on the caller production ships, 0 of 60 measurements over the provisional budget, at a cost of 3.44 GB permanent residence. **Production adoption is not cleared** — it waits on §13's integrated memory and reload gate, which needs A wired into production code and therefore its own plan and review. **Independent of the calibration decision** — it consumes `shortest_paths.pt` and no checkpoint, split or model. Plan: [`PLAN_B04.md`](PLAN_B04.md) |
-| B-0.5 | Mode D, the intermediate candidate-construction step above, statistical protocol, institutional run | not started; Mode D has an unresolved design problem. Split: protocol and output-contract design come **before** any institutional run, so required evidence is not discovered after it |
+| B-0.4 | vectorised SP lookup | **measurement complete and reviewed.** Approach A selected for the primary GB10 platform (`PLAN_B04.md` §12.5): 8-33x faster on the caller production ships, 0 of 60 measurements over the provisional budget, at a cost of 3.44 GB permanent residence. A is now wired into production code as the one served primitive (`src/inference/sp_index.py`; `../BACKLOG.md` 5a, implemented); **production adoption is not accepted** — §13's integrated memory and reload gate still waits on a designated loadable checkpoint (5a acceptance). **Independent of the calibration decision** — it consumes `shortest_paths.pt` and no checkpoint, split or model. Plan: [`PLAN_B04.md`](PLAN_B04.md) |
+| B-0.5 | Mode D, the intermediate candidate-construction step above, statistical protocol, institutional run | Mode D and the derived intermediate readings **implemented** in `../BACKLOG.md` §0 batch 3 ([`PLAN_B05.md`](PLAN_B05.md) §11; reviewed, and its short GB10 run passed at `be0ee1a`, 2026-10-27, §12.3); the statistical protocol (8a) and the institutional run (8b) not started. Split: protocol and output-contract design come **before** any institutional run, so required evidence is not discovered after it |
 
 [`PLAN_B02_shipped.md`](PLAN_B02_shipped.md) is the plan the shipped B-0.2 code
 was built from, kept as the reasoning behind it. History, not authority.
@@ -61,7 +65,10 @@ python scripts/measure_scorer.py --checkpoint <ckpt> --data-dir <data> \
     --split val --output reports/measurement.json
 ```
 
-The CLI measures Mode C; it has no mode option. It reads each input once,
+The CLI measures Mode C by default. `--mode D` measures the served ranking on a
+registered cohort version only (`--cohort LABEL --registry DIR`; refused with
+`--split`), sharing the checks, the GPU lock, publication and registration
+([`PLAN_B05.md`](PLAN_B05.md) §6). In either mode it reads each input once,
 verifies the workspace from those reads and records them (contract M2.1, S7),
 then writes two files: the report at `--output` (manifest, authoritative metrics,
 counts) and the per-sample ground-truth ranks beside it, `<output stem>_ranks.json`.
@@ -138,11 +145,18 @@ before R2 (`LEDGER_SCHEMA_VERSION` is 2 since R2).
 manifest's authoritative fields, the digests, the CUDA gate, and
 `src.kg.storage.file_storage`. If a change finds itself editing those, the boundary
 has drifted and that is the finding. The list guarded the retirement and now guards
-what follows it (Mode D). R2 itself changed two of them by decision: `run_mode_c`'s
+what follows it (Mode D), which adds one optional read-only score observer to
+`run_mode_c` by decision ([`PLAN_B05.md`](PLAN_B05.md) §5). R2 itself changed two of them by decision: `run_mode_c`'s
 `sampler_evidence` lost its `max_subgraph_nodes` and `negative_sampling` entries
 (assessment §8 item 5), and their docstrings no longer cite Modes A and B; scores,
 ranks, metrics and digests did not change. (`to_global_ids` was on this list while
-Mode A used it; it went with Mode A.)
+Mode A used it; it went with Mode A.) Mode D's design touches none of the others
+([`PLAN_B05.md`](PLAN_B05.md) §7). **B-1 will change two by decision** (batch 5,
+`../results-review/SPEC_1_RESULTS_REVIEW.md` §2.2): `canonical_ranking` moves
+unchanged into `src/inference/scoring.py`, and `run_mode_c` calls the one composed
+scorer there instead of its three primitives; Mode C's reports, ranks, metrics and
+digests stay equal, which a test pins (timestamps, revision and run metadata excluded:
+[`PLAN_B05.md`](PLAN_B05.md) §8).
 
 **The scorer stacks stay independent.** The Trainer's validation ranking is checked
 against the served primitives `masked_mean_pool` and `cosine_score_matrix`
@@ -153,7 +167,11 @@ only while the two are separately written, so `.import-linter.ini` keeps
 
 **Do not pre-empt any of this with machinery** — no manifest subclass hierarchy,
 no schema framework, no discriminated union over mode, no artifact registry or
-compatibility database. When Mode D lands it adds its own fields and its own
-values; it does not need a structure built in advance to receive them.
+compatibility database. Mode D adds its own values to the existing manifest fields
+and its own top-level report blocks, and no manifest field: `build_record` refuses
+a manifest whose field set differs, so a new field would make every kept Mode C
+report uncheckable ([`PLAN_B05.md`](PLAN_B05.md) §6). It needs no structure built
+in advance. (The diagnosis *result* union of `../../DISEASE_SCORER_POLICY.md` §7 is a
+different object: the served response, not a measurement manifest.)
 
 **Authority above everything here:** `docs/DISEASE_SCORER_POLICY.md`.

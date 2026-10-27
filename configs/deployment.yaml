@@ -36,9 +36,9 @@ defaults:
     recommended: "13.0"
     cudnn: "9"
 
-  torch:
-    version: "2.10.0"
-    index_url: "https://download.pytorch.org/whl/cu130"
+  # PyTorch's version and CUDA wheel index are not set here: pyproject.toml and
+  # uv.lock hold them, with torch_geometric, as the one place they are written
+  # (BACKLOG 50). Nothing read the copy that stood here.
 
   attention_backend:
     # Order of preference (first available wins)

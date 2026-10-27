@@ -1,0 +1,249 @@
+
+[0;36m============================================================================[0m
+[0;36m   SHEPHERD-Advanced Deployment Script (Linux)[0m
+[0;36m============================================================================[0m
+
+[0;36m[INFO] Detected Architecture: aarch64[0m
+[1;33m[INFO] Running on ARM64 (Likely DGX Spark / Grace Hopper)[0m
+
+[0;36m[STAGE 1/4] Hardware Detection & uv Setup[0m
+----------------------------------------------------------------------------
+[INFO] Bootstrap Python: /usr/bin/python3.12
+[0;32m[INFO] NVIDIA GPU detected[0m
+[INFO] GPU: NVIDIA GB10
+[0;32m[OK] uv: uv 0.11.16 (aarch64-unknown-linux-gnu)[0m
+
+[0;36m[STAGE 2/4] Environment + Dependency Sync[0m
+----------------------------------------------------------------------------
+[INFO] Running 'uv sync --inexact' (creates .venv, installs lock contents)...
+Resolved 172 packages in 1ms
+   Building shepherd-advanced @ file:///home/user/batch1-acceptance-0bc5178-01/repo
+Downloading aiohttp (1.8MiB)
+Downloading torch-geometric (1.3MiB)
+      Built shepherd-advanced @ file:///home/user/batch1-acceptance-0bc5178-01/repo
+ Downloaded torch-geometric
+ Downloaded aiohttp
+Prepared 11 packages in 1.42s
+Installed 106 packages in 399ms
+ + aiohappyeyeballs==2.7.1
+ + aiohttp==3.14.5
+ + aiosignal==1.4.0
+ + annotated-doc==0.0.4
+ + annotated-types==0.7.0
+ + anyio==4.13.0
+ + attrs==26.1.0
+ + brotli==1.2.0
+ + certifi==2026.4.22
+ + chardet==5.2.0
+ + charset-normalizer==3.4.7
+ + click==8.3.3
+ + cuda-bindings==13.0.3
+ + cuda-pathfinder==1.5.4
+ + fastapi==0.136.1
+ + fastobo==0.14.1
+ + filelock==3.29.0
+ + frozenlist==1.8.0
+ + fsspec==2026.4.0
+ + gradio==6.30.0
+ + gradio-client==2.7.2
+ + groovy==0.1.2
+ + h11==0.16.0
+ + hf-gradio==0.4.1
+ + hf-xet==1.5.0
+ + httpcore==1.0.9
+ + httptools==0.7.1
+ + httpx==0.28.1
+ + huggingface-hub==1.16.1
+ + idna==3.15
+ + jinja2==3.1.6
+ + jsonschema==4.26.0
+ + jsonschema-specifications==2025.9.1
+ + markdown-it-py==4.2.0
+ + markupsafe==3.0.3
+ + mdurl==0.1.2
+ + mpmath==1.3.0
+ + multidict==7.1.0
+ + networkx==3.6.1
+ + numpy==2.4.5
+ + nvidia-cublas==13.1.0.3
+ + nvidia-cuda-cupti==13.0.85
+ + nvidia-cuda-nvrtc==13.0.88
+ + nvidia-cuda-runtime==13.0.96
+ + nvidia-cudnn-cu13==9.15.1.9
+ + nvidia-cufft==12.0.0.61
+ + nvidia-cufile==1.15.1.6
+ + nvidia-curand==10.4.0.35
+ + nvidia-cusolver==12.0.4.66
+ + nvidia-cusparse==12.6.3.3
+ + nvidia-cusparselt-cu13==0.8.0
+ + nvidia-nccl-cu13==2.28.9
+ + nvidia-nvjitlink==13.0.88
+ + nvidia-nvshmem-cu13==3.4.5
+ + nvidia-nvtx==13.0.85
+ + orjson==3.11.9
+ + packaging==26.2
+ + pandas==2.3.3
+ + pillow==11.3.0
+ + pronto==2.7.3
+ + propcache==0.5.4
+ + psutil==7.2.2
+ + pydantic==2.11.10
+ + pydantic-core==2.33.2
+ + pydantic-settings==2.14.1
+ + pydub==0.25.1
+ + pygments==2.20.0
+ + pyparsing==3.3.3
+ + python-dateutil==2.9.0.post0
+ + python-dotenv==1.2.2
+ + python-multipart==0.0.28
+ + pytz==2026.2
+ + pyyaml==6.0.3
+ + referencing==0.37.0
+ + requests==2.34.2
+ + rich==15.0.0
+ + rpds-py==0.30.0
+ + safehttpx==0.1.7
+ + scipy==1.17.1
+ + semantic-version==2.10.0
+ + setuptools==82.0.1
+ + shellingham==1.5.4
+ + shepherd-advanced==0.2.0 (from file:///home/user/batch1-acceptance-0bc5178-01/repo)
+ + six==1.17.0
+ + starlette==1.9.0
+ + sympy==1.14.0
+ + toml==0.10.2
+ + tomlkit==0.13.3
+ + torch==2.10.0+cu130
+ + torch-geometric==2.8.1
+ + torchaudio==2.10.0+cu130
+ + torchvision==0.25.0+cu130
+ + tqdm==4.67.3
+ + triton==3.6.0
+ + typer==0.25.1
+ + typing-extensions==4.15.0
+ + typing-inspection==0.4.2
+ + tzdata==2026.2
+ + urllib3==2.7.0
+ + uvicorn==0.47.0
+ + uvloop==0.22.1
+ + voyager==2.1.0
+ + watchfiles==1.1.1
+ + websockets==15.0.1
+ + xxhash==4.0.2
+ + yarl==1.25.1
+[0;32m[OK] uv.lock contents synced into .venv[0m
+/home/user/batch1-acceptance-0bc5178-01/repo/.venv/lib/python3.12/site-packages/torch/cuda/__init__.py:435: UserWarning: 
+    Found GPU0 NVIDIA GB10 which is of cuda capability 12.1.
+    Minimum and Maximum cuda capability supported by this version of PyTorch is
+    (8.0) - (12.0)
+    
+  queued_call()
+PyTorch 2.10.0+cu130 | CUDA build: 13.0 | available: True
+[OK] CUDA smoke test passed | device: cuda:0 | GPU: NVIDIA GB10
+
+[0;36m[STAGE 3/4] PyG Native Extensions[0m
+----------------------------------------------------------------------------
+[INFO] PyG native ext are installed outside uv.lock because their wheel
+[INFO] index is torch-version-coupled HTML and three of them lack Windows
+[INFO] wheels. Missing wheels fall back to torch.scatter_reduce (built-in).
+
+[0;32m[OK] torch_geometric 2.8.1 (from uv.lock)[0m
+[INFO] ARM + CUDA detected; data.pyg.org has no aarch64 wheels.
+[INFO] Host torch: 2.10.0+cu130  |  prebuilt target: torch 2.10.0+cu130
+[0;32m[INFO] Host matches prebuilt target -> prebuilt wheels are usable.[0m
+[INFO] PYG_ARM_STRATEGY=pull (non-interactive override)
+[INFO] Downloading prebuilt wheels: https://github.com/cyclopentadienyl/shepherd-advanced/releases/download/pyg-arm-cu130-torch2.10.0/pyg-ext-torch2.10.0-cu130-cp312-linux_aarch64.tar.gz
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0
+  0 13.1M    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0 43 13.1M   43 5820k    0     0  3194k      0  0:00:04  0:00:01  0:00:03 6888k100 13.1M  100 13.1M    0     0  5082k      0  0:00:02  0:00:02 --:--:-- 8064k
+[0;32m[OK] SHA-256 verified: pyg-ext-torch2.10.0-cu130-cp312-linux_aarch64.tar.gz[0m
+Resolved 4 packages in 488ms
+Prepared 4 packages in 26ms
+Installed 4 packages in 2ms
+ + pyg-lib==0.6.0
+ + torch-cluster==1.6.3
+ + torch-scatter==2.1.2
+ + torch-sparse==0.6.18
+[0;32m[OK] Prebuilt PyG wheels installed.[0m
+
+[INFO] Attempting cuVS (NVIDIA RAPIDS GPU vector backend)...
+[1;33m[WARN] cuVS installed but its prerequisites are not importable[0m
+[1;33m       (cupy missing?) — the GPU backend cannot be constructed.[0m
+[1;33m       Voyager (CPU) remains the primary backend.[0m
+
+[0;36m[STAGE 4/4] Validation & Finalization[0m
+----------------------------------------------------------------------------
+[INFO] Running installation validation...
+{
+  "errors": [],
+  "warnings": [
+    "cuVS installed but cupy is missing \u2014 the GPU backend cannot be constructed. Install cupy, or use Voyager (CPU)."
+  ],
+  "info": [
+    "Python: 3.12.3",
+    "OS: linux  Arch: aarch64",
+    "Torch version: 2.10.0+cu130",
+    "CUDA available: 13.0",
+    "SDPA (Scaled Dot Product Attention): Available",
+    "voyager: OK"
+  ]
+}
+
+[0;32m============================================================================[0m
+[0;32m   Deployment Complete![0m
+[0;32m============================================================================[0m
+[INFO] Virtual environment: .venv
+[INFO] Python interpreter:  .venv/bin/python
+[INFO] Lock file:           uv.lock (commit'd to repo)
+
+Next steps:
+   1. Verify the installation:
+      [1;33m.venv/bin/python -c "import torch; print(torch.cuda.is_available())"[0m
+
+   2. Quick demo (small built-in graph, ~1 min). Training takes the GPU lock and
+      is refused without one (deployment guide §4.11): in this shell, name the
+      workspaces root the service will be given, so both take the same lock:
+      [1;33mexport SHEPHERD_WORKSPACES_ROOT="/home/user/batch1-acceptance-0bc5178-01/repo/data/workspaces"[0m
+      [1;33m.venv/bin/python scripts/setup_demo.py --train-model[0m
+
+   3. Real data pipeline (manual HPO download required first;
+      see data/external/README.md for the required annotation files).
+      --generate-samples is not optional: without it the workspace has
+      no split manifest, and training and serving both refuse it. Train in a
+      shell where SHEPHERD_WORKSPACES_ROOT is set as in step 2.
+      [1;33m.venv/bin/python scripts/build_knowledge_graph.py --workspace data/workspaces/main \033[0m
+      [1;33m    --external-dir data/external --generate-samples \033[0m
+      [1;33m    --num-train 200000 --num-val 40000[0m
+      [1;33m.venv/bin/python scripts/compute_shortest_paths.py --kg-path data/workspaces/main/kg.json \033[0m
+      [1;33m    --output-dir data/workspaces/main[0m
+      [1;33m.venv/bin/python scripts/train_model.py --data-dir data/workspaces/main --epochs 50[0m
+
+   4. Launch the system:
+      [1;33m./launch_shepherd.sh[0m
+
+   5. Run tests (optional):
+      [1;33m.venv/bin/python -m pytest tests/unit/[0m
+
+[TIP] Optional accelerators (FlashAttention, xFormers, SageAttention):
+      These are auto-installed at launch time via arguments:
+        [1;33m./launch_shepherd.sh --flash-attn[0m    (FlashAttention-2)
+        [1;33m./launch_shepherd.sh --xformers[0m      (xFormers)
+        [1;33m./launch_shepherd.sh --sage-attn[0m     (SageAttention)
+      Compatibility not guaranteed; fallback to PyTorch SDPA is always available.
+
+[TIP] If you compiled PyG natively (ARM host, or a GPU newer than the
+      prebuilt wheels support), confirm the compiled kernels actually run
+      correctly on your GPU (not just that they import):
+        [1;33m.venv/bin/python scripts/validate_pyg_ext.py[0m
+
+[TIP] For development (pytest, linting, etc.):
+      [1;33muv sync --inexact --extra dev[0m
+      (--inexact stops uv removing the PyG native ext and cuVS installed
+       above simply for being outside uv.lock.)
+
+[TIP] To regenerate uv.lock after editing pyproject.toml:
+      [1;33muv lock[0m
+
+[TIP] If using DGX Spark, ensure 'nvcc --version' matches torch CUDA (13.0).
+

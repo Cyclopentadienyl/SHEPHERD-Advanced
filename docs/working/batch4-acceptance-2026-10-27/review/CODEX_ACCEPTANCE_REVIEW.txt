@@ -1,0 +1,22 @@
+Batch 4 最小 GB10 功能驗收複核 — 2026-10-27
+
+結論：通過約定範圍的最小功能驗收；未發現新的阻擋問題。不需要重訓、重跑探針或追加 GPU 測試。
+受測版本：7fc417c00602023a4bdce24afe5292f5c8ba5625
+原始證據：/home/user/batch4-acceptance-7fc417c-01
+
+複核依據與結果
+1. 正常 launch 啟動，Linux aarch64 / torch 2.10.0+cu130 / CUDA 13.0；allocator 讀取既有 cuda_async preset。GNN 在 cuda:0 載入並完成 forward 預計算，SP 表正常載入與綁定。這不宣稱每個 request 的後續步驟全在 GPU 執行。
+2. API session sess_7c26f2a10f43，WebUI session sess_6469db6034c4。兩次獨立請求使用相同的兩個 HPO、同一模型與設定，均 HTTP 200；不是同一 session。
+3. API result_schema_version=2、result_kind=served_mixture/v1；eta=0.7 與 identity 相符，scoring_mode=gnn_plus_shortest_path。共到達 475 個候選，返回 10 筆。每筆 SP 均 COMPUTED、2/2 mapped、mean_hop_distance=1、score=0.5、mixed_as=null。所有數值有限，混合公式、遞減排序和 rank 1..10 正確；舊 confidence_score/gnn_score/sp_score/reasoning_score 欄位不存在。
+4. CSV：10 筆、41 欄；逐筆比對疾病 ID（去掉 API 的內部 mondo: 前綴）、名稱、順序、四位小數分數、SP 狀態及身分。與 API 記錄一致。CSV 與 Markdown 屬 WebUI 的 sess_6469db6034c4。
+5. 截圖實際檢視：顯示本次 HPO、模型摘要、10 筆候選、混合排名語意及 eta=0.7；第一名的 Score/Model term/SP 與 API 與匯出格式化後一致。Explanation 顯示排名說明、表型及證據，無新錯誤提示。checkpoint 不在 workspace 的 runs 下，因此 trained on / recorded tests 不讀取的說明符合本輪使用外部驗收模型的位置，不是綁定失敗。
+6. Markdown 原檔核對：包含正確 session、HPO、result kind、完整身分、10 筆候選與逐筆 explanation；與 API 及 CSV 相符。原始 exports/ 只有 CSV，Downloads 也未找到本次 Markdown；從本次同一 session 的 Gradio 快取找到自動產生的 Markdown，逐位元補存於本複核目錄，未重新產生報告。服務 log 記錄 CSV 下載 HTTP 200，未記錄 Markdown 下載 GET；Markdown 的下載／開啟成功依使用者回報，這次獨立核對的是其產生結果及內容。沒有將快取檔誤標為下載檔。
+7. API curl exit=0，stderr 空；server exit=0、tee exit=0；正常 shutdown。log 無 traceback、ERROR 或 HTTP 500。瀏覽器 favicon.ico 的 404 不影響本輪功能。
+8. checkout-before 與 checkout-restored 逐位元相同；實際 repo 已還原 detached 773dc4afb5629bad9ec463980ea49b878121492c，工作目錄乾淨。獨立重新執行 sha256sum -c：11/11 相符，包含 checkpoint、圖譜/張量、manifest、來源紀錄、完整 SP 表及 sidecar、服務與 runtime 設定。
+
+既有提示與界線
+- log 仍有 PyTorch 對 GB10 capability 12.1 高於列示 12.0 的警告；BACKLOG 17 已記錄，本次實際模型載入及 forward 成功，不能把本次通過擴張為所有核心／所有計算的相容性證明。
+- 截圖仍顯示 cuVS 缺 cupy 的既有提示；這不證明 cuVS 可用，也不是本次結果契約的新增故障。
+- 本輪沒有改程式、安裝套件、重訓、重啟服務或重跑產品測試。原始證據與輸入未改；僅在 Codex outputs 新增複核報告與快取報告的位元相同副本。
+- 驗收範圍為既有模型加 SP 的 CUDA 載入、診斷新契約、UI 詳情、匯出與停止還原；不代表模型品質、醫學效能、容量、多使用者或新論文架構通過。
+- 本次結果可用於 Batch 4 收尾登記。BACKLOG 60 的兩個既有 Training 測試問題仍獨立保留，未宣稱全套測試通過；新 base/finetune、家族樹、加速插槽和 UI 重構未開始或未在此驗收。

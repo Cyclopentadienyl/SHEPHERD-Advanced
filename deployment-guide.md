@@ -115,6 +115,10 @@
 
 ### 🔴 **PyTorch Geometric on ARM**
 
+> **正式部署**從 `uv.lock` 以已驗證的版本安裝 `torch_geometric`，原生擴充則依平台各自取得
+> （§4.15）。以下策略是規劃階段的手動備案：請讓 `torch_geometric` 維持 `pyproject.toml` 固定的版本
+> （`uv sync --inexact` 可恢復），擴充則取自與已安裝 torch 對應的索引。
+
 **現狀**:
 - PyG 2.6+ 理論上支持 ARM，但預編譯wheel可能缺失
 - 依賴的擴展庫（pyg-lib, torch-scatter等）在ARM上支持參差不齊
@@ -871,14 +875,12 @@ undefined symbol: _ZN...
 
 **解決方案**:
 ```bash
-# 完全卸載並重裝
-pip uninstall torch torch-geometric pyg-lib torch-scatter torch-sparse -y
-pip cache purge
-
-# 按順序重新安裝
-pip install torch==2.10.0 --index-url https://download.pytorch.org/whl/cu130
-pip install torch-geometric pyg-lib torch-scatter torch-sparse \
-    -f https://data.pyg.org/whl/torch-2.10.0+cu130.html
+# torch 與 torch_geometric 恢復為 lock 中的版本（§4.15）
+uv sync --inexact --reinstall-package torch --reinstall-package torch-geometric
+# 原生擴充從已安裝 torch 對應的索引重新安裝
+TVER="$(.venv/bin/python -c 'import torch;print(torch.__version__)')"
+uv pip install --reinstall pyg-lib torch-scatter torch-sparse \
+    -f "https://data.pyg.org/whl/torch-${TVER}.html"
 ```
 
 ---
@@ -1260,6 +1262,11 @@ python scripts/probe_deployment.py --work-dir /tmp/shepherd_probe \
     --report probe_report.json --download-only
 ```
 
+給探針的相對路徑（這裡的 `probe_report.json`，或驗收時的
+`--real-workspace data/workspaces/<workspace>`）以你啟動探針時所在的目錄為基準，在任何工作開始前
+一次轉成絕對路徑；從該目錄看不存在的路徑會立即被拒絕，而不是等到訓練結束後才失敗（自 Batch 1 起，
+BACKLOG 49）。
+
 它會從 `configs/deployment.yaml` 的來源**完整**下載 MONDO 與 HPO（數十 MB），走的是
 和建置相同的路徑，下載到工作目錄——絕不寫入你的快取或設定的 root，並在結束後檢查這
 一點。改用 `--download` 則是把這個階段加進完整的探測。不需要 GPU；`--download-only`
@@ -1327,6 +1334,39 @@ checkpoint、圖、workspace manifest、最短路徑表與 dataset record，以 
 
 服務本身的版本（`/health`、`/` 與 Swagger 標題中的 `1.0.0`）是 API 的版本，不是所服務
 內容的身分。
+
+### 診斷回應分為三種類型（Batch 4）
+
+`POST /api/v1/diagnose` 回傳一種結果，由 `result_kind` 標明，`result_schema_version` 為 2
+（`docs/working/results-review/SPEC_1_RESULTS_REVIEW.md` §2.1）。每種類型只帶自己的值，
+並拒絕其他類型的欄位：
+
+| `result_kind` | 何時回傳 | 每個候選的值 | 結果層級欄位 |
+|---|---|---|---|
+| `served_mixture/v1` | 有服務模型時 | `served_score`，排名所依的值：有最短路徑表時為 η × `model_term` + (1 − η) × SP，沒有時就是 `model_term`；`model_term`，即 (cos + 1) / 2；`sp_term`，SP 紀錄 | `eta`、`candidates_reached`（截斷前 discovery 到達的疾病數）、`tie_policy` |
+| `path_reasoning/v1` | 沒有設定任何模型來源時 | `path_score`，路徑彙總分數 | `path_score_aggregation`、`tie_policy` |
+| `demo/v1` | 從未設定任何 pipeline 時 | 無：沒有分數、說明、路徑或基因 | — |
+
+- **已移除，沒有別名：** `confidence_score`、`gnn_score`、`sp_score`、`reasoning_score`
+  （改為 `path_score`，只在路徑推理中出現）與 `confidence_label`（改為 `evidence_label`，
+  `evidence_package` 內也一樣）。原本讀取這些欄位的用戶端，改讀該類型自己的欄位。
+- **`sp_term` 不會把缺少的值寫成 0。** 它的 `status` 為 `COMPUTED`、`COMPUTED_PARTIAL`
+  （部分送出的表型未能對應；`phenotypes_mapped` / `phenotypes_submitted` 寫明數量）、
+  `NO_TABLE`、`TARGET_UNMAPPED` 或 `NO_PHENOTYPE_MAPPED`。`mean_hop_distance` 與 `score`
+  （1 / (1 + d)）只在前兩種狀態出現。實際服務的結果中，只有 `NO_TABLE`（在 `gnn_only`
+  下，不做混合）沒有數值：圖的節點對應中缺少的疾病或表型，會先以「無法計算的模型分數」
+  被拒絕（見下）。若真有沒有數值的狀態被混合，混合分數會以 0 計入，紀錄上也會寫明
+  （`mixed_as: 0.0`）。
+- **合法輸入的排名不變**：數值、順序與平手都相同（`served_score` 就是原本的
+  `confidence_score`）。
+- **新增的拒絕條件。** 服務無法計算的模型分數（沒有 embedding、沒有表、某個節點沒有對應列，
+  或對應列超出表的範圍——過去會被截到最後一列）或不是有限值的分數，會拒絕整個結果：HTTP 500，
+  `error` 以代碼開頭（`MODEL_TERM_UNAVAILABLE: …`、`NON_FINITE_SCORE: …`）。在已驗證的
+  workspace 上不應出現這些狀態。圖中沒有任何表型的輸入照舊被拒絕（`No valid phenotypes after
+  validation`）。未知的 id 一律列在 `phenotype_input.unknown`；請求有回答時也會以警告
+  寫明（`Unknown phenotype: …`），沒有任何已知 id 時，警告就是那則拒絕。
+- **`phenotype_input`**（收到的、未知的、移除的重複項、實際使用的）會出現在回應中；demo 回答，
+  以及在表型對應之前就被拒絕的請求，該欄為 null。
 
 ### 組成部分與狀態
 
@@ -1432,14 +1472,38 @@ WebUI 顯示的是**結果自己的身分**，絕不是狀態的：
 - **Markdown 報告**在候選之前有「What produced this result」段落：同樣的橫幅、一個
   Part | State | Value 表格（digest 完整寫出，`sha256:<64 hex>`）、宣稱界線與固定聲明。
   缺少的部分寫成它的狀態與原因，絕不留白。
+- **表格上方的類型標籤**說明 Score 欄是什麼，η 取自結果本身："Served ranking today:
+  diseases reached by path discovery, scored as η × model term + (1 − η) × SP, η = 0.7"
+  （沒有表時為 "…scored by the model term alone"）、"No model loaded: ranked by path
+  reasoning, not by a model"，或 "Demo answer: no pipeline is configured; not a
+  diagnosis"。欄位依類型而定：混合排名有 Score 與 Model term，有服務最短路徑表時旁邊再加 SP
+  （沒有數值的狀態以文字顯示，絕不寫 0.000）；路徑推理只有 Score；demo 回答沒有任何分數。
+- **被拒絕的結果**（`MODEL_TERM_UNAVAILABLE`、`NON_FINITE_SCORE`）以一句話顯示代碼與節點，
+  不會排出任何結果。
 - **CSV** 以欄位帶出身分（見下）。
 - **檔名**帶有複製出去後也不能遺失的兩種狀態：合成 workspace 為
   `diagnosis_SYNTHETIC_<patient>_<session>.csv` / `_report.md`，demo 回答為
   `diagnosis_DEMO_…`；其他情況不變。
 
+### CSV 的候選欄位（Batch 4）
+
+候選欄位依結果類型而定，每一列都寫明類型：
+
+| 類型 | 候選欄位，依序 |
+|---|---|
+| `served_mixture/v1` | `result_kind`、`rank`、`disease_id`、`disease_name`、`served_score`、`model_term`、`sp_term_status`、`sp_term_score`、`sp_term_mean_hop_distance`、`sp_term_phenotypes_mapped`、`sp_term_phenotypes_submitted`、`sp_term_mixed_as`，接著是證據欄位 |
+| `path_reasoning/v1` | `result_kind`、`rank`、`disease_id`、`disease_name`、`path_score`，接著是證據欄位 |
+| `demo/v1` | `result_kind`、`rank`、`disease_id`、`disease_name`、`matching_phenotypes` |
+
+證據欄位為 `evidence_label`、`evidence_mode`、`evidence_summary`、`min_path_length`、
+`num_direct_paths`、`num_analogies`、`supporting_genes` 與 `matching_phenotypes`。
+`sp_term_status` 放在 SP 數值旁：狀態沒有數值時，數值欄留空，絕不寫 0；混合分數仍以 0 計入時，
+`sp_term_mixed_as` 為 `0.0000`。沒有建立證據包時（說明關閉），路徑數留空。`served_score`
+是候選欄位，不屬於下方的身分欄位。
+
 ### CSV 的身分欄位
 
-CSV 仍然**只有一列標題**、沒有前言。原本的 15 個候選欄位在前，順序不變；其後接 21 個
+CSV 仍然**只有一列標題**、沒有前言。結果類型的候選欄位在前（見上）；其後接 21 個
 欄位，每欄存放身分的一個部分，**每一列都相同**：
 
 | 欄位 | 內容 | 身分中為 null 時 |
@@ -1708,6 +1772,44 @@ recorded`（checkpoint 記錄了訓練輸入，而且完全沒有驗證的條目
 以 `src/evaluation/caveats.py` 共用字句表示的四個 R10 標籤（`unverifiable` 附其原因）、一次標籤定義、報告路徑
 與 run id。報告本身只保存狀態，不含任何說明文字。
 
+### Mode D：今日服務的排名（自 Batch 3 起）
+
+`--mode D` 在同一個已登記版本上量測 **Diagnosis 頁今天實際提供的排名**：checkpoint 由服務自己的
+builder 在 `--data-dir` 上建成 pipeline（工作區有最短路徑表時一併載入，與服務相同），每個
+匯入後合格（import-eligible）的病例都經由服務 pipeline 自己的 `rank()` 排名，並在同一組
+embedding 上同時執行 Mode C。它是評分政策 gate 1 比較的輸入，不是核准的政策
+（`docs/working/scorer-measurement/PLAN_B05.md`）。
+
+```bash
+python scripts/measure_scorer.py --mode D \
+    --checkpoint data/workspaces/<ws>/runs/<arch>/<run>/checkpoints/<file>.pt \
+    --data-dir data/workspaces/<ws> \
+    --cohort mygene2-2026-10 --registry /srv/shepherd/cohorts \
+    [--training-evidence DIR ...] [--record] [--device auto|cuda|cpu] [--batch-size 32]
+```
+
+- **同一次執行、同一套規則。** 上面的每項檢查、GPU 鎖、報告庫與登錄都照常適用。`--mode D` 搭配
+  `--split` 會被拒絕（結束碼 2）：它的比較以版本的匯入後合格病例為準。會只以路徑推理提供服務的
+  pipeline、綁定到另一個工作區的版本，以及以不同於服務端的 phenotype 正規化版本匯入的版本（兩側
+  會為不同的 term 評分），都在任何病例排名之前被拒絕；`--batch-size` 小於 1 會在命令列就被拒絕
+  （結束碼 2）。排名過程中，若某個病例送進服務的輸入不是版本所對應的 term，整次執行被拒絕，不寫出
+  任何東西。主控台會輸出約 20 行進度，說明已有多少病例經過服務路徑、花了多少時間與目前的結果。
+- **一次一個病例。** Mode D 經由服務路徑逐案排名（manifest 中 `batch_size` 為 1；`--batch-size`
+  是 Mode C 那一側的），所以比 Mode C 慢：大型 cohort 請先跑一次試量計時。
+- **報告多了什麼。** 每份報告都有的欄位，加上 `outcomes`（`ranked`、`not_reached`——其中
+  `no_candidates`——與 `refused`，加總等於匯入後合格病例數）、`import_counts`、`served`（服務
+  身分）與 `comparison`：同一組 embedding 上的 Mode C、逐步推導 C → G1 → G2 → D（先候選集、再
+  平手規則、再分數），以及對同一 checkpoint 與版本的每份已保存 Mode C 報告，有多少個排名一致
+  （只陳述，絕不視為錯誤）。`ranks.json` 每個匯入後合格病例一列。
+- **以病例集命名。** `post_import_*` 與 `coverage` 以匯入後合格病例為分母，未觸及的病例計 0；
+  `reached_*` 只計觸及的病例。沒有任何數字是端到端的：匯入時排除的病例另列在旁。
+- **分開登錄。** 加 `--record` 時它成為 checkpoint 旁自己的一筆紀錄。它的評分語意與 Mode C
+  不同，所以兩者永不互相比對是否不一致，Mode D 紀錄在 Models 頁只顯示、永不參與排序。主控台、
+  Test 頁的 Result 與 Models 頁都以「Served ranking today (Mode D) … not the approved scorer
+  policy」標示，並附上服務的評分模式與 η（Models 頁上，若所列 Mode D 紀錄的評分模式與 η 都相同，
+  就寫在標籤裡，否則寫在各紀錄的明細列）；Models 頁每種模式的紀錄各列一張表。沒有任何頁面能
+  啟動 Mode D 執行：Test 頁的 Start 執行的是 Mode C。
+
 ### 登錄
 
 - **`--record`** 在執行結束後立即登錄報告。**沒有加它時**，以及 `--record` 被拒絕時（結束碼
@@ -1935,8 +2037,8 @@ python scripts/measure_scorer.py --checkpoint <file>.pt --data-dir data/workspac
   之前就會被拒絕；因此先前執行留在該路徑的檔案絕不會被當成這次執行的 outcome，誤指的檔案也絕不會被
   覆寫。每次執行請指定一個新檔案（例如該工作自己的目錄中）。
   它在報告發佈後寫一次（`"complete": false`），結束時再寫一次（`"complete": true`）。內容包括報告的
-  路徑、run id 與 digest、checkpoint 與版本的 digest、是否為確定性執行，以及在 `registration` 之下
-  報告是否已登錄與原因。在報告之前就被拒絕的執行不會寫出 outcome 檔。這個檔說明的是這次執行做了什麼；
+  路徑、run id 與 digest、checkpoint 與版本的 digest、量測模式（`mode`：`C` 或 `D`，自 Batch 3
+  起）、是否為確定性執行，以及在 `registration` 之下報告是否已登錄與原因。在報告之前就被拒絕的執行不會寫出 outcome 檔。這個檔說明的是這次執行做了什麼；
   紀錄仍是報告存放處與 ledger，「已保留」與「已登錄」從它們讀取。job runner 為它啟動的每次測試執行，
   在一個只屬於該執行的目錄中指定一個新的 outcome 檔（§4.11）。
 
@@ -2042,8 +2144,8 @@ workspace 路徑）。請從服務的環境與你的 shell 中移除它；原本
 每個工作都會以「未設定鎖」被拒絕。
 
 **請只在沒有任何訓練或測試執行進行中時升級**（自審查修正第三輪起，2026-10-22），不論工作是從
-shell 或從服務啟動：這個版本的鎖看不到較早版本所啟動的工作。來自 `main` 的版本完全不取 GPU 鎖，
-而根因修正輪之前的 M5 版本可能持有 `SHEPHERD_GPU_LOCK_FILE` 所指名的檔案，這個版本不會檢查它。
+shell 或從服務啟動：這個版本的鎖看不到較早版本所啟動的工作。未包含 M5 GPU 鎖機制的舊版完全不取鎖，
+而根因修正輪之前的 M5 版本可能持有 `SHEPHERD_GPU_LOCK_FILE` 所指名的檔案（舊鎖名稱），這個版本不會檢查它。
 為升級而停止服務會停止它所啟動的工作；從 shell 啟動的 CLI，請先用
 `pgrep -af 'train_model.py|measure_scorer.py|setup_demo.py'`（或 `nvidia-smi`）確認。升級之後，
 請從服務的環境與你的 shell 中移除 `SHEPHERD_GPU_LOCK_FILE`。
@@ -2816,8 +2918,8 @@ checkpoint：run 標題的標籤顯示「dataset not shown · operator control�
   列出它們會開啟每一個 checkpoint，因此這是操作者控制項：唯讀的瀏覽器不會看到它，而且頁面對
   每個 workspace 只列出一次（↻ 會重新讀取清單）。接著是執行時會尋找的 R10 證據（被量測的
   workspace，以及 `SHEPHERD_TRAINING_EVIDENCE_DIRS`）、**Register the result**、
-  **Deterministic execution**，以及由伺服器固定的 batch size 與裝置（量測程式的預設值；
-  `SHEPHERD_DEVICE`）。**🔒 Start test** 透過 job runner（§4.11）啟動真正的
+  **Deterministic execution**，以及由伺服器固定的 batch size、裝置與模式（量測程式的預設值；
+  `SHEPHERD_DEVICE`；Mode C，模型自己的排名：Mode D 是操作者以命令列執行的）。**🔒 Start test** 透過 job runner（§4.11）啟動真正的
   `measure_scorer.py`，使用伺服器在自己的清單中重新找到的 workspace、版本與 checkpoint，並以
   **頁面顯示過的完整模型指紋與版本 digest 作為預期值**：執行時讀到的檔案或版本若是其他位元組，
   會在量測之前拒絕。Start 會說明它為何不可用：先說 GPU 工作（「Disabled: GPU job: … One
@@ -2920,11 +3022,13 @@ ledger。
 **選取一列**會顯示完整的模型指紋與 Copy、它在什麼資料上訓練（以及那是否為此 workspace 目前的資料
 集）、自成一張卡片的 Trainer 驗證數值、任何警告，以及兩個分段：
 
-- **Recorded test results (Mode C)**：ledger 為這組權重記錄的每一筆紀錄：cohort version 與其角色、
-  Mode C MRR 與 Hits@10、列出每一項排除的涵蓋率，以及 `registered #N` 或琥珀色的 `contested #N` 並
+- **Recorded test results**：ledger 為這組權重記錄的每一筆紀錄，每種量測模式各一張表，各自在該模式的
+  標籤與說明之下（自 Batch 3 起：先 Mode C 的紀錄，再 Mode D 的）。每一列有 cohort version 與其角色、
+  該模式的 MRR 與 Hits@10（表頭寫出全名：Mode C MRR (untruncated) 與 Hits@10；Mode D 的以匯入後合格
+  病例為分母）、列出每一項排除的涵蓋率（Mode D 的寫成匯入後合格病例中觸及的數目），以及 `registered #N` 或琥珀色的 `contested #N` 並
   說明各次執行在哪裡不一致（或「contested status cannot be checked」，從不顯示為無爭議）、
   deterministic 開或關；清單已排序時，標出固定規則選中哪一筆，以及其他紀錄與它的差異；接著是各項
-  關係、其他 Mode C 指標、以狀態顯示的 R10（*unverifiable* 是一個原因，從不是 0）、執行環境、資料集
+  關係、該紀錄的其他指標、以狀態顯示的 R10（*unverifiable* 是一個原因，從不是 0）、執行環境、資料集
   與登錄資訊；
 - **Usage history**：每一個已列出的 cohort version 的使用紀錄中提及此 checkpoint 的項目：測試執行、
   登錄，以及從已排序清單進行的載入，最新的在前。
@@ -2940,6 +3044,57 @@ checkpoint）。清單依測試分數排序時，按鈕旁的說明會指出這�
 **窄版**（寬度低於 1400 或高度低於 760，各區域上下堆疊時），選取一列會捲動到它的細節區並把鍵盤焦點
 移到那裡；細節區標題列的 **↑ Back to the list** 會回到該列。
 
+## 4.15 PyTorch Geometric 的版本（自 Batch 1 起，2026-10-26）
+
+**PyG 的純 Python 本體 `torch_geometric` 已納入 lock**（BACKLOG 50）。`pyproject.toml` 宣告
+`torch-geometric==2.8.1`，`uv.lock` 記錄它以及它所需要的套件（aiohttp 3.14.5 及其相關套件、
+pyparsing 3.3.3、xxhash 4.0.2：與 M5 GB10 驗收時的版本相同）。`uv sync --inexact`，以及因此
+`deploy.sh` 與 `deploy.cmd`，會安裝它；部署腳本不再另外安裝，只確認它能匯入。一般的 `uv sync`
+不再移除它（但仍會移除原生擴充與 cuVS，所以請保留 `--inexact`）。
+
+**它的原生擴充維持依平台各自取得**：pyg-lib、torch-scatter、torch-sparse、torch-cluster 來自
+與已安裝 torch 對應的 data.pyg.org 索引（腳本現在由已安裝的 torch 推導
+`https://data.pyg.org/whl/torch-<torch.__version__>.html`，不再另外寫一次版本），在 ARM 上則來自
+預編譯 release 或本機編譯（`PYG_ARM_STRATEGY`）。它們的版本因平台而異（GB10 的預編譯 pyg-lib 為
+0.6.0，x86 索引為 0.8.0），由探針的 A1、A5 記錄，不固定。
+
+**已驗證的組合**：`torch_geometric` 2.8.1，搭配 torch 2.10.0+cu130 與預編譯 ARM release 的擴充
+（pyg-lib 0.6.0、torch-scatter 2.1.2、torch-sparse 0.6.18、torch-cluster 1.6.3），見 M5 於 `b14c4de`
+的 GB10 驗收。自 Batch 1 起，`deploy.sh` 從 lock 安裝這組版本，已於 GB10 以 `0bc5178` 檢查
+（2026-10-26：A1–A5 通過，A5 與提交的 lock 相符，PyG 原生檢查 5/5；
+`docs/working/batch1-acceptance-2026-10-26/`）。Windows 的 `deploy.cmd` 尚未實跑。M4 的驗收用的是
+2.8.0.post1，其證據只屬於那個環境。拉取後，
+`uv sync --inexact` 會把已安裝的 2.8.0.post1 換成 2.8.1：這是環境變更，之前做的驗收不會延續過來。
+
+**A5 的說法**：已安裝的 `torch_geometric` 版本不同時，會列出兩個版本；專案宣告了但沒有安裝時，
+會列出 lock 的版本；這兩種情況下 A5 都不再顯示「已安裝版本與 lock 相同」。
+
+**這裡固定的是目前正式部署的組合，不是對 PyG、torch 或 CUDA 版本的永久限制。** 版本只存在於
+依賴與部署層：訓練、推理與 UI 的程式都不檢查套件版本（執行時的檢查只問 torch 與 PyG 能否匯入），
+也不會因版本不同而拒絕模型：載入與續訓依模型契約判定。
+
+**升級** PyTorch、CUDA 或 PyG（例如目前的組合不再維護時）走同一套入口：
+
+1. 在 `pyproject.toml` 中修改 torch、torchvision、torchaudio 與 torch-geometric 的版本；換 CUDA
+   時，一併修改 PyTorch 的 wheel 索引（`pytorch-cu130` 的名稱與網址）。
+2. 執行 `uv lock`，再用 `deploy.sh`／`deploy.cmd` 重新部署。PyG 擴充的索引會自動跟隨已安裝的 torch。
+3. 在 ARM 上，預編譯擴充 release（`deploy.sh` 中的 `PYG_PREBUILT_*`）只對應一組 torch 與 CUDA。
+   其他 torch 會改走原始碼編譯（`scripts/build_pyg_arm.sh`，依已安裝的 torch 編譯）或替代實作，
+   因此這個 release 不會擋住升級；發布新的 release 並更新那四個值是可選的。
+4. 執行部署探針並保留其記錄；驗證依升級實際改動的範圍進行，不重跑所有歷史驗收。新的組合驗證後
+   成為新的基準，較舊的驗收只屬於它當時的環境。
+
+不設舊環境專用的第二條管線，也不維護歷史版本相容矩陣。
+
+**Launcher 的可選加速套件**（`--flash-attn`、`--xformers`、`--sage-attn`，以及在 x86 上預設的
+FlashAttention）是可選的第三方插件，不在本專案原生支援範圍內，也不列入 `uv.lock`。它們用
+`python -m pip` 安裝；部署腳本建立的 `.venv` 原本沒有 pip，但 ARM 原始碼編譯流程
+（`scripts/build_pyg_arm.sh`）會把 pip 裝進去。現在每次安裝都會帶上由 `uv export` 從 `uv.lock`
+匯出的 constraints（`scripts/launch/shep_launch.py` 的 `pip_install`）：需要另一個 torch、或任何
+lock 內套件其他版本的加速套件，會被 pip 拒絕而不安裝，launcher 會在沒有它的情況下繼續；無法產生
+constraints 時（`PATH` 上沒有 `uv`、沒有 `uv.lock`），一律不安裝。加速套件自身帶來、而 lock 沒有的
+套件，照常安裝。沒有任何模型路徑使用這些套件（ARCHITECTURE §9）。
+
 ---
 
 ## 總結：部署檢查清單 ✅
@@ -2949,7 +3104,7 @@ checkpoint）。清單依測試分數排序時，按鈕旁的說明會指出這�
 - [ ] ✅ Python 3.12 安裝
 - [ ] ✅ CUDA 13.0 安裝
 - [ ] ✅ PyTorch 2.9.0 + CUDA 正常
-- [ ] ✅ PyTorch Geometric 正常
+- [ ] ✅ PyTorch Geometric 正常（`torch_geometric` 來自 `uv.lock`，§4.15）
 - [ ] ✅ FlashAttention-2 安裝成功
 - [ ] ✅ Voyager 可用 (CPU vector search)
 - [ ] ✅ 所有單元測試通過
@@ -2961,7 +3116,7 @@ checkpoint）。清單依測試分數排序時，按鈕旁的說明會指出這�
 - [ ] ✅ 架構確認為 aarch64
 - [ ] ✅ CUDA 13.0 可用
 - [ ] ✅ PyTorch 2.9.0 ARM build 正常
-- [ ] ✅ PyTorch Geometric 可用（wheel或編譯）
+- [ ] ✅ PyTorch Geometric 可用（`torch_geometric` 來自 `uv.lock`；擴充為預編譯或本機編譯，§4.15）
 - [ ] ⚠️ 注意力後端已降級（xformers或SDPA）
 - [ ] ✅ Vector Index: cuVS (GPU) 或 Voyager (CPU fallback)
 - [ ] ✅ 統一記憶體正確識別

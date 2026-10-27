@@ -29,7 +29,6 @@ import pytest
 
 from src.core.types import (
     DataSource,
-    DiagnosisCandidate,
     Edge,
     EdgeType,
     Node,
@@ -37,7 +36,7 @@ from src.core.types import (
     NodeType,
     PatientPhenotypes,
 )
-from src.reasoning import ExplanationGenerator, find_matching_phenotypes
+from src.reasoning import find_matching_phenotypes
 
 SEIZURE = "HP:0001250"
 ATAXIA = "HP:0001251"
@@ -233,25 +232,6 @@ def test_the_explanation_lists_the_first_ten_of_the_field_and_how_many_more(coun
     assert _matching_section(candidate.explanation) == (requested[:10], more)
 
 
-def test_the_evidence_summary_holds_the_first_ten_with_no_marker():
-    """The structured summary keeps its documented cap and adds no "…and N
-    more" entry, since a program reads each entry as a phenotype; the field
-    holds them all."""
-    kg = _kg_annotating(_TWELVE)
-    candidate = DiagnosisCandidate(
-        rank=1, disease_id=D_MANY, disease_name="many", confidence_score=0.5,
-        gnn_score=0.0, reasoning_score=0.5,
-    )
-
-    summary = ExplanationGenerator().generate_evidence_summary(
-        candidate, kg, phenotypes=PatientPhenotypes(patient_id="f6", phenotypes=_TWELVE)
-    )
-
-    assert summary.matching_phenotypes == [
-        f"Term {hpo_id} ({hpo_id})" for hpo_id in _TWELVE[:10]
-    ]
-
-
 # ------------------------------------------------------------------ the API
 @pytest.fixture
 def client(monkeypatch, pipeline):
@@ -286,9 +266,16 @@ def test_the_api_carries_the_matches(client, include_explanations):
 
 def test_the_field_states_its_definition():
     pytest.importorskip("fastapi")
-    from src.api.routes.diagnose import DiagnosisCandidate
+    from src.api.routes.diagnose import (
+        DemoCandidate,
+        PathReasoningCandidate,
+        ServedMixtureCandidate,
+    )
 
-    description = DiagnosisCandidate.model_fields["matching_phenotypes"].description
+    descriptions = {kind.model_fields["matching_phenotypes"].description
+                    for kind in (ServedMixtureCandidate, PathReasoningCandidate, DemoCandidate)}
+    assert len(descriptions) == 1, "every kind's candidate states one definition"
+    (description,) = descriptions
     assert "directly" in description and "exact term" in description
     assert "not ontology ancestors or descendants, not gene-mediated" in description
     assert "An empty list does not mean no clinical overlap." in description
@@ -343,7 +330,8 @@ def test_the_written_explanation_names_a_ranking_score_not_a_confidence_band(cli
     assert body["candidates"]
     for candidate in body["candidates"]:
         explanation = candidate["explanation"]
-        assert f"Score: {candidate['confidence_score']:.3f} ({SCORE_MEANING})" in explanation
+        assert f"Score: {candidate['path_score']:.3f} ({SCORE_MEANING})" in explanation
+        assert f"Ranking: {dp.kind_label(body)}" in explanation
         shown = dp.select_candidate(body, "explanation", str(candidate["rank"]))
         assert shown["details_md"]["value"] == explanation
     report = dp._build_results_report_md(body)

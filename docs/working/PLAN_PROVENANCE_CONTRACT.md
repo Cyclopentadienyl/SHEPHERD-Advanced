@@ -1,6 +1,24 @@
 # PLAN — the provenance contract: every link in the pipeline checked where it is used
 
-**Status: revision 2, amended twice after review. M1 is implemented, code-reviewed with no P1 or P2
+**Current status (2026-10-25, at `main` `416a242`): M1–M5 are complete contract features, merged
+and accepted.** The paragraph after this table is the dated record of how each got there; where it
+says "on the branch", "not merged", "not yet implemented" or "next", it describes that date.
+
+| Milestone | What it delivers | Merged | Acceptance (commit tested) |
+|---|---|---|---|
+| M1 | A requested model is served, or no pipeline is built | #120, `90a668f` | homelab GB10 at `7714459` (evidence by SHA-256 below) |
+| M2 (with M2.1, the Mode A/B retirement R2, M3a's seed ordering) | One read per input; model ↔ graph enforced; the inventory | #121, `9fe5113` | [`m2-acceptance-2026-10-14/`](m2-acceptance-2026-10-14/README.md) at `82d7573` |
+| M3a | Run directories, resume with inherited settings, extend at a fixed rate | #122, `2049b64` | two GB10 rounds at `4b1571e` and `c4a21b5` (§4) |
+| M3b | The dataset record is required | #123, `cbba015` | [`m3b-acceptance-2026-10-16/`](m3b-acceptance-2026-10-16/README.md) at `c80c1e4` |
+| M3c | Every result names what served it; serving's `auto` refuses without CUDA | #124, `ed8f51d` | [`m3c-acceptance-2026-10-16/`](m3c-acceptance-2026-10-16/README.md) at `52152e4` |
+| M4 (item 14, phase 1) | Test cohorts imported, Mode C measured, reports kept, one registration, ledger schema 3 | #126, `d2d31dd` | [`m4-acceptance-2026-10-17/`](m4-acceptance-2026-10-17/README.md) at `2c94a4e` |
+| M5 (item 14, phase 2) | The research WebUI, job runner and GPU lock, D4, D5, D8 | #129, `416a242` | [`m5-acceptance-2026-10-24/`](m5-acceptance-2026-10-24/README.md) at `b14c4de`; [`m5-webui-acceptance-2026-10-25/`](m5-webui-acceptance-2026-10-25/README.md) at `b14c4de`, `f9202b6`, `773dc4a` |
+
+What each capability is today, and where it is entered, is `docs/ARCHITECTURE.md` §11. Not part of
+any milestone's acceptance: the WebUI's usability (BACKLOG 52), model quality and institutional
+testing.
+
+**Status history (dated). Revision 2, amended twice after review. M1 is implemented, code-reviewed with no P1 or P2
 at `ed4872a`, and accepted on the homelab GB10 at `7714459` (evidence recorded by SHA-256 below; the
 files are archived on the homelab, not in the repository); the reviewer re-checked that evidence
 with no P1 or P2 (2026-10-08; §4, "What M1 did" and "M1's acceptance on the homelab"). M2.1's work
@@ -79,7 +97,7 @@ it (`2c94a4e`). **Its GB10 functional acceptance, within the scope agreed, passe
 [`m4-acceptance-2026-10-17/`](m4-acceptance-2026-10-17/README.md)): 84 of 84 probes, demo and
 real data. The owner merged M4 into `main` afterwards (#126, `d2d31dd`, 2026-10-17). M5 was implemented on the branch and reviewed by the reviewer (`150105f..8242b47`, 2026-10-22: no P1, seven P2,
 fixed and closed in the incremental reviews) (`PLAN_TEST_RESULTS.md` §6, "M5's boundaries", with each step's "as
-implemented" note). **M5's agreed functional scope is complete, reviewed and accepted, awaiting its pull request's merge (2026-10-25)**: the GB10 functional acceptance of a clean deployment at `b14c4de` (99 of 99 probes), the WebUI's manual acceptance in rounds (the training rounds at `b14c4de`, the local recheck at `f9202b6`, the close-out at `773dc4a`; [`m5-webui-acceptance-2026-10-25/`](m5-webui-acceptance-2026-10-25/README.md)), and the reviewer's reviews of every increment, the last (`b326ee3..a9e375c`) with no P1 or P2. This is not an acceptance of the WebUI's usability (BACKLOG 52 stays open, with the owner's report that the pages are overloaded), not a release (BACKLOG 50, the PyG pin, is required before one) and not an institutional or clinical test. Facts about the
+implemented" note). **M5's agreed functional scope is complete, reviewed and accepted (2026-10-25), and merged into `main` by the owner (#129, `416a242`, 2026-10-25)**: the GB10 functional acceptance of a clean deployment at `b14c4de` (99 of 99 probes), the WebUI's manual acceptance in rounds (the training rounds at `b14c4de`, the local recheck at `f9202b6`, the close-out at `773dc4a`; [`m5-webui-acceptance-2026-10-25/`](m5-webui-acceptance-2026-10-25/README.md)), and the reviewer's reviews of every increment, the last (`b326ee3..a9e375c`) with no P1 or P2. This is not an acceptance of the WebUI's usability (BACKLOG 52 stays open, with the owner's report that the pages are overloaded), not a release (BACKLOG 50, the PyG pin, is required before one) and not an institutional or clinical test. Facts about the
 code are cited at `627ed08`, before M1;
 the code was unchanged at `463a0df`. §1 records decisions already made; §4 is the order of work.
 
@@ -118,12 +136,14 @@ the code was unchanged at `463a0df`. §1 records decisions already made; §4 is 
     `PLAN_PHENOTYPE_NORMALISATION.md` (§5.4).
 - **Amended 2026-10-16, with M4:**
   - §5.4 no longer calls the repeat rule undecided: the owner adopted its principle on
-    2026-10-07; N1 is delivered (serving, and since M4 the importer); N2 is not;
+    2026-10-07; N1 is delivered (serving, and since M4 the importer); N2 is not (it was
+    delivered since, merged as #128, `150105f`, 2026-10-19);
   - the ledger format M4 introduces is **ledger schema 3**, not "v2": the file's
     `schema_version` was already 2 (§5.1);
   - §4, "M4 as implemented", records what was built.
 - **Amended 2026-10-18, with N2:** §5.4 records the reader's check and the generator's call as
-  implemented on the development branch (batch B; awaiting review, not merged), and the
+  implemented on the development branch (batch B; awaiting review, not merged; merged since as
+  #128, `150105f`), and the
   workspace manifest's field as deferred; an evidence file with a repeat is
   *unverifiable*. Decision 2 is unchanged: no compatibility path was added, and split-manifest
   schema 3 is kept.
@@ -209,7 +229,10 @@ Each row is one "X must match Y". *Today* is the state at `627ed08`.
 | R10 | Test cohort ↔ the data the model was trained and validated on | `cohort_kind=generated` claims disjointness by construction **relative to the workspace's cut** (`src/evaluation/measurement.py:527-530`), not relative to the model. `training_input_digests` names the model's `train_samples` and `val_samples` files by digest, and a digest cannot be intersected | — | **M4**, as defined in §5.4 (implemented 2026-10-16, code-reviewed, its functional acceptance passed at `2c94a4e`, merged as #126; §4, "M4 as implemented") |
 | R11 | Environment facts that bound reproduction | Measurement: `torch_version`, `cuda_version`, the device string and the determinism flags (`measure_scorer.py:376-389`). No GPU model, compute capability, driver or cuDNN version. Training and serving record none tied to their artifacts | — | M3a (training), M4 (measurement; implemented 2026-10-16, merged as #126; §4, "M4 as implemented") |
 
-**What the table shows.** The links inside a workspace refuse today (R1, R2), and so does a
+**What the table showed at `627ed08`** (its gaps are closed since, as the last column names each:
+R3, R4 and R7 by M2 (R7's overwrite guard by M3a), R6 by M3a, R5 by M3b, R8 by M3c, R9 and R10 by M4,
+R11 by M3a for training and M4 for measurement; serving still records no environment facts with a
+result). The links inside a workspace refuse today (R1, R2), and so does a
 broken SP pair. Every link with the model on one side is checked by structure only, or recorded
 and unread, or absent: R3, R6, R7, R8, R10. So is the dataset record (R5).
 
@@ -2219,7 +2242,8 @@ Three changes, each complete. M3a can proceed in parallel with M3b and M3c.
 **Revised on 2026-10-15** after the reviewer's design review of that day (five P2 against the first
 proposal, each answered below) and its incremental review of `0142436..76ca541` (two P2: an
 extension's own stage, and the migration's labels, answered below), with decisions 8–10 (§1). The seed ordering is implemented (below); nothing else
-in M3a is. Line numbers are at `0142436`, whose code is `main`'s `9fe5113`.
+in M3a is (as written on 2026-10-15; M3a was implemented since and merged as #122, "M3a as
+implemented" below). Line numbers are at `0142436`, whose code is `main`'s `9fe5113`.
 
 **What the code does today.**
 - **Every run of a workspace and architecture writes the same directories:**
@@ -2623,7 +2647,8 @@ building, is stated here.
   own record or that none was saved, never as `completed`; a stop no longer runs the final
   validation, so a stopped run writes no `final_metrics.json`. The console asks before stopping and
   says what is lost.
-- **Console.** One "Continue Training" block: a listed or a typed checkpoint through one check;
+- **Console.** *(M3a's console, replaced in M5-2 by the Continue… drawer: Run → Checkpoint, Check
+  checkpoint, Continue Training; `PLAN_TEST_RESULTS.md` §6.)* One "Continue Training" block: a listed or a typed checkpoint through one check;
   the action, the check result and the inherited settings shown read-only before start (Markdown,
   not disabled inputs); extra epochs offered only for a finished parent; only operational fields
   sent. "Pause after epoch N" stays CLI and probe only. UX sources consulted: Gradio's docs, W3C
@@ -3683,7 +3708,9 @@ deployment mode M1 under SPEC_4/D8, §4.9 question 3):
 
 *In progress (2026-10-21):* M5-0 to M5-2 are on the branch and M5-3 is under way (the internal
 review of all of M5 and its fixes included). Each step is recorded where `PLAN_TEST_RESULTS.md`
-decides it (D4, D5, D7, D8, §6). Not yet reviewed.
+decides it (D4, D5, D7, D8, §6). Not yet reviewed. *(Dated. M5 was reviewed since, accepted on the
+GB10 at `b14c4de` and in the WebUI rounds to `773dc4a`, and merged as #129, `416a242`, 2026-10-25;
+the current-status table at the top.)*
 
 **Training start's explicit `checkpoint_dir`** is honoured verbatim today. **Superseded by M3a-2
 (2026-10-15):** every run writes into its own run directory, the listing moves with it, and an
@@ -3721,8 +3748,8 @@ own.
 | `split_manifest.json` | Binding to `kg.provenance.json` required | M3b |
 | `kg.provenance.json` | Unchanged until the KG record v2 | — |
 | SP sidecar | Unchanged; it already records `kg_digest`, `build_id` and `max_hops` | — |
-| Measurement manifest and report | Input digests from the bytes read, except `kg`, the manifest-bound source graph (M2; M2.1's stated exceptions); environment facts; the workspace's graph digests for both cohort kinds; the dataset record's binding state and origin, apart (`dataset_record`, M3b, outside the semantics digest); R10's evidence and labels (§5.4). M4's part is implemented on the branch (2026-10-16): `cohort_version`, `relations`, `r10` and `environment`, all outside the semantics digest, and for a registered version a report kept in the report store with its ranks named by digest (§4, "M4 as implemented") | M2, M3b, M4 |
-| Ledger | item 14's **ledger schema 3** (`PLAN_TEST_RESULTS.md` §5), the schema number after the `schema_version` 2 that the retirement's R2 set (`src/evaluation/sidecar.py`). Implemented in M4 on the branch (2026-10-16): a schema 1 or 2 file is refused and archived by hand, never read or migrated (§4, "M4 as implemented") | M4 |
+| Measurement manifest and report | Input digests from the bytes read, except `kg`, the manifest-bound source graph (M2; M2.1's stated exceptions); environment facts; the workspace's graph digests for both cohort kinds; the dataset record's binding state and origin, apart (`dataset_record`, M3b, outside the semantics digest); R10's evidence and labels (§5.4). M4's part is implemented on the branch (2026-10-16; merged since as #126, `d2d31dd`): `cohort_version`, `relations`, `r10` and `environment`, all outside the semantics digest, and for a registered version a report kept in the report store with its ranks named by digest (§4, "M4 as implemented") | M2, M3b, M4 |
+| Ledger | item 14's **ledger schema 3** (`PLAN_TEST_RESULTS.md` §5), the schema number after the `schema_version` 2 that the retirement's R2 set (`src/evaluation/sidecar.py`). Implemented in M4 on the branch (2026-10-16; merged since as #126): a schema 1 or 2 file is refused and archived by hand, never read or migrated (§4, "M4 as implemented") | M4 |
 | `InferenceResult`, `DiagnoseResponse`, serving state | `get_pipeline_config()` and the API's pipeline status carry the served workspace's dataset record, binding state and origin apart (M3b); one structured served-identity field replaces `model_version` and `kg_version`; `get_pipeline_config()` carries the settings in effect. M3c's part is implemented (2026-10-16, code-reviewed with no P1 or P2 at `1246f0c`): every result and the diagnose response carry the served identity, with the settings in effect, and `get_pipeline_config()` and the pipeline status report it for the loaded pipeline (§4, "M3c as implemented") | M3b, M3c |
 
 ### 5.2 Required versus displayed
@@ -3832,8 +3859,8 @@ evidence.
     (`map_cases` calls `normalise_phenotypes`, `src/kg/phenotype_normalisation.py`), which keeps
     the source bytes verbatim and records the rule's version and its counts in the version
     manifest;
-  - **N2 is implemented on the development branch without its manifest field** (2026-10-18,
-    batch B; reviewed by the reviewer with no P1 or P2 at `2e099b6` (2026-10-19), not merged): the generator applies the rule,
+  - **N2 is implemented without its manifest field** (2026-10-18, batch B; reviewed by the
+    reviewer with no P1 or P2 at `2e099b6` (2026-10-19); merged as #128, `150105f`, 2026-10-19): the generator applies the rule,
     and the shared reader refuses a stored case that is not in normal form, as a file that does
     not parse. The workspace manifest's field is deferred to the next split-manifest schema
     change or the first change of the rule's version (`PLAN_PHENOTYPE_NORMALISATION.md` §6).

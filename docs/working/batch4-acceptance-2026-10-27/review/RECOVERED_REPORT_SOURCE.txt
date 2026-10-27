@@ -1,0 +1,4 @@
+Origin: /tmp/gradio/ac5e1dbb99041b670000a8d7d939aa89742e4a5e9c488b51d688e3047450df17/diagnosis_batch4_smoke_01_sess_6469db6034c4_report.md
+Destination: /home/user/Documents/Codex/2026-09-20/github-plugin-github-openai-curated-remote/outputs/batch4-acceptance-review-7fc417c-20261027/diagnosis_batch4_smoke_01_sess_6469db6034c4_report.md
+Method: byte-for-byte copy of the existing generated Gradio artifact; not regenerated, not a browser-download assertion.
+SHA-256: 019fad3dd1619967d727e4b090c32fdc015539ea1ec3d107d7ef64d524fe1760

@@ -1,0 +1,44 @@
+Batch 1 GB10 最小部署與環境驗證 — Codex 複核
+日期：2026-10-26 16:43:59 CST
+受測 commit：0bc5178743c6ae1243910702ce37d000b314413c
+位置：/home/user/batch1-acceptance-0bc5178-01/repo
+
+結論：Batch 1 約定的 GB10 最小部署與環境補驗證通過。這不是 M5 全套功能、模型品質、容量或所有平台驗收。
+
+執行範圍
+1. 用 /usr/bin/python3.12 建立全新的獨立 .venv。
+2. 正式入口：PYTHON_EXE=/usr/bin/python3.12 PYG_ARM_STRATEGY=pull UV_NO_PROGRESS=1 bash ./deploy.sh。
+3. 直接呼叫既有 scripts.probe_deployment.phase_environment(Report(), 'cuda')，僅執行 A1–A5，未呼叫完整 main，也未新增評估／訓練流程。
+4. 呼叫同一模組的 parse_args，比對相對／絕對參數的目標相同、相對參數已成絕對路徑，未建立 work 目錄。symlink 接 .. 的完整回歸沿用已審過的測試，這次未重跑。
+5. 執行既有 scripts/validate_pyg_ext.py；未訓練、未開服務、未安裝 xFormers／FlashAttention／SageAttention。
+
+已通過
+- deploy=0，tee=0；Python 3.12.3，NVIDIA GB10，驅動 580.178.04。
+- torch 2.10.0+cu130，torch-geometric 2.8.1。
+- 四個 ARM 原生擴充從 SHA-256 已驗證的 Release 預編包安裝；沒有轉入原始碼編譯。
+- pyg-lib 0.6.0、torch-scatter 2.1.2、torch-sparse 0.6.18、torch-cluster 1.6.3。
+- A1–A5 各自 passed；A5 為資訊紀錄，所以另核對 lock_is_the_committed_one=true、versions_match_lock=true、version_differs=[]、declared_not_installed=[]。
+- PyG 原生驗證 5/5；CUDA scatter、sparse matmul、knn、SAGEConv 均通過；pyg_lib 的 segment_matmul 額外測項也實際執行成功。
+- pyproject.toml 與 uv.lock 的 SHA 未變，受測副本 tracked files 乾淨。
+- 原 /home/user/Desktop/SHEPHERD-Advanced 保持 773dc4a；其 git 狀態和已安裝套件名稱／版本清單前後一致。未更動舊備份與資料。
+- 執行結束後 GPU compute PID 清單為空。
+
+原始退出碼的必要說明
+environment-check-exit.txt 是 environment_check=1 tee=0；environment-check.json 的 passed=false 原樣保留。
+這是 Codex 額外加入的 no_duplicate_distributions 斷言過嚴，並非 A1–A5 或 lock 比對失敗。
+唯一重複項目是本專案 shepherd-advanced 0.2.0：同一次 editable 安裝的 .venv/...dist-info 和來源目錄 src/...egg-info。
+已核對 direct_url 指向本次同一 repo、editable=true，兩份版本相同，沒有外部依賴重複或版本歧異。
+因此在人工複核中把這項 metadata 現象列為已解釋，不把它當成本批部署失敗；未刪 metadata、未改程式、未改原始結果、未重跑已通過的 GPU 檢查。
+機器可讀的補充判讀在 review-verdict.json，原始證據保留供追溯。
+
+警告與限制
+- torch 仍印出 GB10 capability 12.1 超出其宣告 12.0 上界的警告；本次以已實際通過的小型 CUDA 運算為證據，不據此保證所有 kernel。
+- 正式 deploy.sh 裝了 cuVS 26.6.0，但 cupy 缺少，故不能宣稱 cuVS GPU 搜尋可用；Voyager 匯入通過。此已存在的可選後端問題不在 Batch 1 修復範圍，這次沒有擴大修復。
+- lock 外 13 個套件由部署入口安裝（原生擴充、cuVS 及其依賴），版本完整保留於 installed-packages.json／A5；不宣稱與 M5 的整套 lock 外環境完全相同。
+- Windows deploy.cmd 未實跑；GB10 未實測 --xformers 衝突安裝，沿用已完成的隔離 pip 證據；沒有重做全部 M5、硬體容量或模型品質驗收。
+
+交接建議
+Claude 可把本次證據登記為 Batch 1 的 GB10 最小部署補驗證通過，保留上述限制；不要寫成所有平台／全部加速算法驗證完成。
+繼續已轉交的 Batch 2 完整設計包。未來加速插件方向已包含於轉交指示第三節，這次不實作。
+
+包內只放證據與複核文字，不含 repo、.venv、模型或病人資料。

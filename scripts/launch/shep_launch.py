@@ -253,20 +253,56 @@ def is_arm() -> bool:
 def is_windows() -> bool:
     return sys.platform.startswith("win")
 
-def pip_install(spec: str, name: str, reinstall: bool = False, no_deps: bool = False) -> bool:
-    args = [sys.executable, "-m", "pip", "install", "-U"]
-    if reinstall:
-        args.extend(["--force-reinstall", "-I"])
-    if no_deps:
-        args.append("--no-deps")
-    args.append(spec)
-    log(f"Installing {name}: {spec}")
+def export_lock_constraints(destination: Path) -> Optional[str]:
+    """Write the project's locked set to `destination` as pip constraints,
+    exported from uv.lock by uv itself (BACKLOG 50); None when written, else
+    why it could not be."""
+    import shutil
+
+    uv = shutil.which("uv")
+    if uv is None:
+        return "uv is not on PATH to export uv.lock"
+    if not (REPO_ROOT / "uv.lock").is_file():
+        return f"there is no uv.lock in {REPO_ROOT}"
     try:
-        run(args, check=True)
-        return True
-    except subprocess.CalledProcessError:
-        log(f"WARNING: pip install failed for {name}")
-        return False
+        run([uv, "export", "--project", str(REPO_ROOT), "--frozen", "--no-hashes",
+             "--no-emit-project", "--no-header", "--quiet", "--format", "requirements-txt",
+             "--output-file", str(destination)], check=True)
+    except (OSError, subprocess.CalledProcessError):
+        return "uv could not export uv.lock"
+    return None
+
+
+def pip_install(spec: str, name: str, reinstall: bool = False, no_deps: bool = False) -> bool:
+    """Install an optional accelerator with pip, **never replacing a locked
+    package** (BACKLOG 50). pip is not in a deploy-created .venv, but the ARM
+    source build puts it there, and an accelerator installed with its
+    dependencies can ask for another torch. The locked set goes in as
+    constraints, so pip refuses such an install instead of making it; when the
+    constraints cannot be had, nothing is installed."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory(prefix="shepherd-lock-") as scratch:
+        constraints = Path(scratch) / "constraints.txt"
+        why = export_lock_constraints(constraints)
+        if why is not None:
+            log(f"Not installing {name}: {why}, so the install could replace a locked "
+                "package such as torch")
+            return False
+        args = [sys.executable, "-m", "pip", "install", "-U", "-c", str(constraints)]
+        if reinstall:
+            args.extend(["--force-reinstall", "-I"])
+        if no_deps:
+            args.append("--no-deps")
+        args.append(spec)
+        log(f"Installing {name}: {spec} (constrained to uv.lock)")
+        try:
+            run(args, check=True)
+            return True
+        except subprocess.CalledProcessError:
+            log(f"WARNING: pip install failed for {name}; if it needs a version uv.lock "
+                "does not hold, the locked set was kept and it is not installed")
+            return False
 
 def have_module(mod: str) -> bool:
     try:

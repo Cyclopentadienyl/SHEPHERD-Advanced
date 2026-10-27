@@ -1,0 +1,2 @@
+PYTORCH_ALLOC_CONF=backend:cudaMallocAsync
+來源：本次 CLI 明確設定；不是 CLI 自動讀取 saved preset。

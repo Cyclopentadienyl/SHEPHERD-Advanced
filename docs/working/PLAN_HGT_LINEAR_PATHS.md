@@ -20,7 +20,7 @@
 | Serving | `src/inference/pipeline.py` `_load_model_from_checkpoint` → `build_shepherd_model` |
 | Measurement (Mode C) | `scripts/measure_scorer.py` → `build_shepherd_model` |
 | Index build | `scripts/build_index.py` |
-| Smoke test, fixtures | `scripts/test_gnn_inference.py`, `tests/fixtures/synthetic_workspace.py` |
+| Smoke test, fixtures | `scripts/test_gnn_inference.py` (removed in Batch 4, 2026-10-27), `tests/fixtures/synthetic_workspace.py` |
 
 `build_shepherd_model` is not shared by training or `build_index`, so it is not the shared location; `HeteroGNNLayer` is. Measurement's legacy Mode A, which built GAT only, was retired in the Mode A/B retirement's R2.
 

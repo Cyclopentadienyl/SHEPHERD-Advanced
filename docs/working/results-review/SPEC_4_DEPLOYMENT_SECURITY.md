@@ -2,13 +2,33 @@
 
 **Status:** draft, under review. **Normative.** Supersedes rev 6 §10 and §12.
 **Evidence:** `5c5c4b2` (main) plus branch commits `42e5d1e`, `337266f`, `dc9663b`, `7dab728`
-(committed and pushed on `claude/dev-context-review-3wuh05`, **under review, not merged**).
+(committed on `claude/dev-context-review-3wuh05`; merged as #100, `6265a81`).
 
 ---
 
-## 1. Current state, verified
+## 1. State as verified at `5c5c4b2` (historical)
 
-Every claim here was read from the source, not inferred.
+> **Superseded as a description of the running system (noted 2026-10-26).** This table is the state
+> read from the source at `5c5c4b2`, kept as the record that motivated §2–§5. Since then:
+> - **checkpoints** load with `weights_only=True` (M3a-1e); no `weights_only=False` remains in
+>   `src` or `scripts` (checked at `7b0162f`);
+> - **the bind** defaults to `127.0.0.1`, with the risk-acceptance guard for any other address (B1,
+>   M5-1, §3.1 "as implemented");
+> - **CORS** has an empty allow list;
+> - **every operator route** (reload, configuration, training start and stop, the server lists) is
+>   checked by D8 on every request (`OPERATOR_ONLY`; M5-1);
+> - **the systemd unit** names the right module and binds `127.0.0.1` (A4, C1).
+>
+> The service runs under deployment mode M1: the owner or a designated technician, on the machine
+> or through controlled SSH forwarding. This is settled and not asked again unless the deployment
+> changes (`../PLAN_TEST_RESULTS.md` §4.9, question 3). M5's GB10 acceptance checked D8, CORS and the
+> route guard on the running service (`../m5-acceptance-2026-10-24/README.md`, W2–W6).
+>
+> **Still open:** the export files' accumulation (A3; BACKLOG 56), and everything about snapshot
+> storage and access (Spec 2 §9). Multi-user remote operation is separate work (§6). For what is
+> implemented now, read §2–§4's "as implemented" notes and `../../ARCHITECTURE.md` §11.
+
+Every claim in the table was read from the source at `5c5c4b2`, not inferred.
 
 | Fact | Location |
 |---|---|
@@ -190,9 +210,9 @@ asks. The launcher's check also ran after its accelerator installs, and it read 
 
 | # | Item |
 |---|---|
-| A1 | Audit and convert every client-reachable `torch.load` (§2.1) |
+| A1 | Audit and convert every client-reachable `torch.load` (§2.1). *Done:* serving loads checkpoints with `weights_only=True` (M3a-1e), and no `weights_only=False` remains in `src` or `scripts` (checked 2026-10-26) |
 | A2 | Fix the launcher's misleading display (`shep_launch.py:323-333`) — see below. *Done in M5-1 (2026-10-20):* the launcher prints `Listening on : <host>:<port> (<reach>)` before the URLs, which name the loopback address a browser on the machine can open. No "Network UI" line is printed: a network bind needs `SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND=1`, and the operator controls stay refused off loopback (§3.1) |
-| A3 | Fix the unbounded eager export accumulation (`diagnosis_panel.py:487-496`) |
+| A3 | Fix the unbounded eager export accumulation (`diagnosis_panel.py:487-496` when written). *Still open* in its current form: export files are not cleaned up while the service runs (BACKLOG 56) |
 | A4 | **Fix the systemd unit's invalid module path** (`app.main:app` → `src.api.main:app`) and any shipped command that cannot start as written. **Done for the unit:** module path, the project's interpreter in place of `/usr/bin/python`, `default.target` for a user unit, and a start through the launcher (`shep_launch.py --no-auto-install --no-browser -- --port 8264`), the path `launch_shepherd.sh` takes, so the service gets the saved allocator preset and the attention settings a manual start gets, after which the launcher execs into uvicorn (POSIX, `--no-browser`). A bare uvicorn start gets neither; `tests/unit/test_service_unit.py`. The bind address is the launcher's default and stays with C1. *Since M5-1 (2026-10-20):* the unit starts with `-- --host 127.0.0.1 --port 8264`, the bind stated where an operator would change it, and C1 is done (B1 below). **Still owed, on a deployment host:** a real systemd start, stop and crash restart, and a UI Restart Backend in the running service. Function-level tests and the container smoke do not stand in for them |
 
 **A2 in detail** (the record before M5-1, when the launcher bound `0.0.0.0` by default). The launcher then printed `127.0.0.1` while binding `0.0.0.0`. The fix is not

@@ -2,9 +2,9 @@
 
 **Status: revision 2. N1 is implemented, code-reviewed with no P1 or P2, and passed a GPU smoke
 test on the homelab at `af49bd3`** (2026-10-07; §8, "What N1 did" and "N1's acceptance on the
-homelab"). **N2 is implemented on the development branch without its manifest field
-(2026-10-18, batch B; reviewed by the reviewer with no P1 or P2 at `2e099b6` (2026-10-19),
-not merged):** the shared reader refuses a stored case
+homelab"). **N2 is implemented without its manifest field
+(2026-10-18, batch B; reviewed by the reviewer with no P1 or P2 at `2e099b6` (2026-10-19);
+merged as #128, `150105f`, 2026-10-19):** the shared reader refuses a stored case
 that is not in normal form, and the generator applies the rule; the split
 manifest's `phenotype_normalisation` is deferred to the next split-manifest schema change or the
 first change of the rule's version (§6; §8, N2, "As implemented"). It was not implemented by the
@@ -38,7 +38,8 @@ and rebuilt no workspace.
 - N1's scope is settled (§8).
 
 **Amended 2026-10-18, with N2** (the check and the call now, the manifest field later):
-- **implemented on the development branch** (batch B; awaiting review, not merged): the shared
+- **implemented on the development branch** (batch B; awaiting review, not merged; merged since as
+  #128, `150105f`): the shared
   reader's check and the generator's call (§5, §8, "As implemented");
 - **deferred:** the split manifest's field, to the next split-manifest schema change or the first
   change of the rule's version. The generator's counts are zero by construction, and a schema
@@ -627,7 +628,8 @@ compares the two.
       files as evidence through the shared reader. Once the reader's check lands, an evidence
       file with repeats would fail to parse, and R10 would report that scope *unverifiable*
       rather than count it (contract §5.4).
-  - **As implemented (2026-10-18, on the development branch; awaiting review, not merged):** the
+  - **As implemented (2026-10-18, on the development branch; awaiting review, not merged; merged
+    since as #128, `150105f`):** the
     reader's check and the generator's call landed; the
     manifest's `phenotype_normalisation` did not. So they did not land together, as "Since M3b"
     expected.

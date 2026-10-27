@@ -26,9 +26,11 @@ rem
 rem Phase C onwards: this script uses uv (https://docs.astral.sh/uv/) as the
 rem primary deployment tool. PyTorch (torch/torchvision/torchaudio) is now
 rem managed by uv via [tool.uv.sources] in pyproject.toml and recorded in
-rem uv.lock for cross-platform reproducibility. PyG native extensions
-rem (pyg-lib, torch-scatter/sparse/cluster) remain out of the lock and are
-rem installed via 'uv pip install' with graceful fallback on missing wheels.
+rem uv.lock for cross-platform reproducibility, and so is torch_geometric, PyG's
+rem pure-Python core, at the verified version (BACKLOG 50). PyG's native
+rem extensions (pyg-lib, torch-scatter/sparse/cluster) remain out of the lock and
+rem come per platform via 'uv pip install', with graceful fallback on missing
+rem wheels.
 rem
 rem Stages:
 rem   1. Hardware detection + uv setup (auto-install with y/N confirmation)
@@ -57,9 +59,8 @@ echo.
 
 rem === Configuration ===
 if "%PYTHON_EXE%"=="" set "PYTHON_EXE=py -3.12"
-set "TORCH_VER=2.10.0"
-set "CUDA_TAG=cu130"
-set "PYG_WHEEL_URL=https://data.pyg.org/whl/torch-%TORCH_VER%+%CUDA_TAG%.html"
+rem The PyG wheel index is not configured here: Stage 3 derives it from the
+rem installed torch, which uv.lock pins (BACKLOG 50).
 
 rem ============================================================================
 rem STAGE 1/4: HARDWARE DETECTION & uv SETUP
@@ -166,14 +167,21 @@ echo [INFO] index is torch-version-coupled HTML and three of them lack Windows
 echo [INFO] wheels. Missing wheels fall back to torch.scatter_reduce (built-in).
 echo.
 
-rem torch_geometric: pure Python high-level API; install via uv pip post-sync
-echo [INFO] Installing torch_geometric (high-level PyG API)
-uv pip install torch_geometric
+rem torch_geometric, PyG's pure-Python core, is in uv.lock at the verified version
+rem (pyproject.toml, BACKLOG 50), so the sync above installed it; only its native
+rem extensions are installed here.
+"%PY%" -c "import torch_geometric; print('[OK] torch_geometric', torch_geometric.__version__, '(from uv.lock)')"
 if errorlevel 1 (
-  echo [ERROR] Failed to install torch_geometric
+  echo [ERROR] torch_geometric ^(from uv.lock^) does not import; re-run 'uv sync --inexact'
   exit /b 3
 )
-echo [OK] torch_geometric installed
+
+rem The wheel index for the installed torch (e.g. torch-2.10.0+cu130), so a torch
+rem upgrade in pyproject.toml carries the index with it.
+set "TVER="
+for /f "usebackq delims=" %%v in (`"%PY%" -c "import torch;print(torch.__version__)"`) do set "TVER=%%v"
+set "PYG_WHEEL_URL=https://data.pyg.org/whl/torch-%TVER%.html"
+echo [INFO] PyG wheel index for the installed torch: %PYG_WHEEL_URL%
 
 rem pyg-lib: native kernels, has wheels for Linux x86 + ARM + Windows
 echo.

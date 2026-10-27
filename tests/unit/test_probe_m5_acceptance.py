@@ -46,6 +46,7 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -116,14 +117,16 @@ def _installed(monkeypatch, distributions):
 
 def test_a_set_that_differs_from_the_lock_is_stated_never_hidden(probe, tmp_path, monkeypatch):
     """The homelab's check set against the committed lock (M5-0): three
-    versions moved, two leftovers of Gradio 5.29.1, the deploy scripts' PyG
-    with what it requires, an extra not installed, and a stale second copy of
-    gradio. A package the lock pins at two versions (one per platform) matches
-    either; versions compare as PEP 440 does."""
+    versions moved, two leftovers of Gradio 5.29.1, torch_geometric at another
+    version than the lock's (BACKLOG 50) with what it requires, a native
+    extension the deploy scripts installed, an extra not installed, and a stale
+    second copy of gradio. A package the lock pins at two versions (one per
+    platform) matches either; versions compare as PEP 440 does."""
     lock = _lock(tmp_path / "uv.lock", [
         ("huggingface-hub", "1.16.1"), ("click", "8.3.3"), ("hf-xet", "1.5.0"),
         ("gradio", "6.30.0"), ("numpy", "2.3.4"), ("numpy", "2.2.6"),
-        ("torch", "2.10.0+cu130"), ("tqdm", "4.67.1"), ("spacy", "3.8.14")])
+        ("torch", "2.10.0+cu130"), ("tqdm", "4.67.1"), ("spacy", "3.8.14"),
+        ("torch-geometric", "2.8.1")])
     _installed(monkeypatch, [
         ("huggingface_hub", "1.33.0"), ("Click", "8.5.0"), ("hf_xet", "1.7.0"),
         ("gradio", "6.30.0"), ("numpy", "2.2.6", ["numpy-helper"]), ("numpy_helper", "1.0"),
@@ -133,6 +136,7 @@ def test_a_set_that_differs_from_the_lock_is_stated_never_hidden(probe, tmp_path
          ["aiohttp", "numpy", "xxhash; python_version >= '3'", "pytest; extra == 'test'"]),
         ("aiohttp", "3.13.0", ["Multidict>=4.5"]), ("multidict", "6.7.0"),
         ("xxhash", "3.6.0"), ("pytest", "9.0.0"), ("old_helper", "0.1"),
+        ("pyg_lib", "0.6.0"),
         ("gradio", "5.29.1")])            # a stale .dist-info beside the current one
 
     recorded = probe.installed_against_lock(lock)
@@ -145,6 +149,7 @@ def test_a_set_that_differs_from_the_lock_is_stated_never_hidden(probe, tmp_path
         {"name": "gradio", "installed": "5.29.1", "locked": ["6.30.0"]},
         {"name": "hf-xet", "installed": "1.7.0", "locked": ["1.5.0"]},
         {"name": "huggingface-hub", "installed": "1.33.0", "locked": ["1.16.1"]},
+        {"name": "torch-geometric", "installed": "2.8.0.post1", "locked": ["2.8.1"]},
     ]
     assert recorded["installed_more_than_once"] == [
         {"name": "gradio", "versions": ["5.29.1", "6.30.0"]}]
@@ -152,26 +157,29 @@ def test_a_set_that_differs_from_the_lock_is_stated_never_hidden(probe, tmp_path
                                   probe.OUTSIDE_LOCK_LEFTOVER)
     assert recorded["installed_not_in_lock"] == [
         {"name": "aiofiles", "version": "24.1.0", "why": leftover},
-        {"name": "aiohttp", "version": "3.13.0", "why": deploy},
-        {"name": "ffmpy", "version": "1.0.0", "why": leftover},
-        {"name": "multidict", "version": "6.7.0", "why": deploy},
-        # A lock package's requirement: the deploy scripts' closure does not
+        # A locked package's requirements: the deploy scripts' closure does not
         # pass through what the sync installed.
+        {"name": "aiohttp", "version": "3.13.0", "why": required},
+        {"name": "ffmpy", "version": "1.0.0", "why": leftover},
+        {"name": "multidict", "version": "6.7.0", "why": required},
         {"name": "numpy-helper", "version": "1.0", "why": required},
         {"name": "old-helper", "version": "0.1", "why": required},
+        {"name": "pyg-lib", "version": "0.6.0", "why": deploy},
         {"name": "pytest", "version": "9.0.0", "why": leftover},     # only an extra asks
-        {"name": "torch-geometric", "version": "2.8.0.post1", "why": deploy},
-        {"name": "xxhash", "version": "3.6.0", "why": deploy}]
+        {"name": "xxhash", "version": "3.6.0", "why": required}]
     assert recorded["locked_not_installed"] == ["spacy"]
-    assert (recorded["lock_packages"], recorded["installed_distributions"]) == (8, 16)
+    assert recorded["declared_not_installed"] == []      # this lock names no project
+    assert (recorded["lock_packages"], recorded["installed_distributions"]) == (9, 17)
     assert str(tmp_path) not in json.dumps(recorded)
 
     said = probe.lock_sentence(recorded)
-    assert "4 version(s) differ (click 8.5.0, lock 8.3.3, gradio 5.29.1, lock 6.30.0" in said
+    assert "5 version(s) differ (click 8.5.0, lock 8.3.3, gradio 5.29.1, lock 6.30.0" in said
+    assert "torch-geometric 2.8.0.post1, lock 2.8.1" in said
     assert "installed more than once: gradio (5.29.1, 6.30.0)" in said
-    assert "9 installed package(s) are not in the lock: 4 from the deploy scripts" in said
+    assert "9 installed package(s) are not in the lock: 1 from the deploy scripts" in said
     assert "required by nothing installed: aiofiles 24.1.0, ffmpy 1.0.0, pytest 9.0.0" in said
-    assert "required by another installed package: numpy-helper 1.0, old-helper 0.1" in said
+    assert ("required by another installed package: aiohttp 3.13.0, multidict 6.7.0, "
+            "numpy-helper 1.0, old-helper 0.1, xxhash 3.6.0") in said
     assert "whether it is the committed one could not be read" in said
 
 
@@ -200,6 +208,100 @@ def test_a_second_installed_copy_is_stated_whatever_the_directory_order(
     assert recorded["version_differs"] == [
         {"name": "gradio", "installed": "5.29.1", "locked": ["6.30.0"]}]
     assert recorded["installed_distributions"] == 1
+
+
+def _metadata_dir(path: Path, name: str, version: str, *, editable_of: Path = None) -> None:
+    """A real metadata directory: a ``.dist-info`` (METADATA, and with
+    `editable_of` the ``direct_url.json`` an editable install writes) or an
+    ``.egg-info`` (PKG-INFO, as an editable build leaves one in ``src/``)."""
+    path.mkdir(parents=True)
+    text = f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n"
+    (path / ("PKG-INFO" if path.suffix == ".egg-info" else "METADATA")).write_text(
+        text, encoding="utf-8")
+    if editable_of is not None:
+        (path / "direct_url.json").write_text(json.dumps(
+            {"url": editable_of.resolve().as_uri(), "dir_info": {"editable": True}}),
+            encoding="utf-8")
+
+
+def test_the_projects_editable_install_and_its_source_tree_metadata_are_one(
+        probe, tmp_path, monkeypatch):
+    """BACKLOG 59 (Batch 1's GB10 check): an editable install of this checkout
+    and the ``src/<name>.egg-info`` its build leaves are one installation,
+    stated in ``counted_once``; a stale second ``.dist-info`` of the project,
+    a source-tree copy at another version and any other package found twice
+    are still installed more than once."""
+    from importlib import metadata
+
+    checkout, site = tmp_path / "checkout", tmp_path / "env" / "site-packages"
+    lock = checkout / "uv.lock"
+    checkout.mkdir()
+    lock.write_text("\n".join([
+        "version = 1", 'requires-python = ">=3.12"', "",
+        "[[package]]", 'name = "shepherd-advanced"', 'version = "0.1.0"',
+        'source = { editable = "." }', "",
+        "[[package]]", 'name = "gradio"', 'version = "6.30.0"', ""]), encoding="utf-8")
+    _metadata_dir(site / "shepherd_advanced-0.1.0.dist-info", "shepherd-advanced", "0.1.0",
+                  editable_of=checkout)
+    _metadata_dir(checkout / "src" / "shepherd_advanced.egg-info", "shepherd-advanced", "0.1.0")
+    for version in ("6.30.0", "5.29.1"):
+        _metadata_dir(site / f"gradio-{version}.dist-info", "gradio", version)
+    found = metadata.distributions
+    paths = [str(site), str(checkout / "src")]
+    monkeypatch.setattr(metadata, "distributions", lambda: found(path=paths))
+
+    recorded = probe.installed_against_lock(lock)
+
+    assert recorded["installed_more_than_once"] == [
+        {"name": "gradio", "versions": ["5.29.1", "6.30.0"]}]
+    assert recorded["counted_once"] == [
+        {"name": "shepherd-advanced", "version": "0.1.0",
+         "why": "its editable install and the metadata its build left in the checkout's "
+                "source tree"}]
+    assert "installed more than once: gradio (5.29.1, 6.30.0)" in probe.lock_sentence(recorded)
+    assert str(tmp_path) not in json.dumps(recorded)
+
+    # A source-tree copy at another version is stale metadata, still stated.
+    shutil.rmtree(checkout / "src" / "shepherd_advanced.egg-info")
+    _metadata_dir(checkout / "src" / "shepherd_advanced.egg-info", "shepherd-advanced", "0.0.9")
+    stale = probe.installed_against_lock(lock)
+    assert {"name": "shepherd-advanced", "versions": ["0.0.9", "0.1.0"]} in \
+        stale["installed_more_than_once"] and stale["counted_once"] == []
+    # So is a second installed .dist-info of the project beside the editable one.
+    shutil.rmtree(checkout / "src" / "shepherd_advanced.egg-info")
+    _metadata_dir(site / "shepherd_advanced-0.0.9.dist-info", "shepherd-advanced", "0.1.0")
+    second = probe.installed_against_lock(lock)
+    assert {"name": "shepherd-advanced", "versions": ["0.1.0", "0.1.0"]} in \
+        second["installed_more_than_once"] and second["counted_once"] == []
+    shutil.rmtree(site / "shepherd_advanced-0.0.9.dist-info")
+
+    # The internal review's cli-3: only the copy where the editable install
+    # puts the project counts once. A copy anywhere else in the checkout (a
+    # nested worktree, a build directory) is a real duplicate, beside it or alone.
+    _metadata_dir(checkout / "src" / "shepherd_advanced.egg-info", "shepherd-advanced", "0.1.0")
+    nested = checkout / ".claude" / "worktrees" / "wf" / "src"
+    _metadata_dir(nested / "shepherd_advanced.egg-info", "shepherd-advanced", "0.1.0")
+    paths.append(str(nested))
+    three = probe.installed_against_lock(lock)
+    assert {"name": "shepherd-advanced", "versions": ["0.1.0"] * 3} in \
+        three["installed_more_than_once"] and three["counted_once"] == []
+    shutil.rmtree(checkout / "src" / "shepherd_advanced.egg-info")
+    elsewhere = probe.installed_against_lock(lock)
+    assert {"name": "shepherd-advanced", "versions": ["0.1.0"] * 2} in \
+        elsewhere["installed_more_than_once"] and elsewhere["counted_once"] == []
+    paths.pop()
+
+    # Where the install puts the project is what its .pth names (its RECORD).
+    alt = checkout / "lib"
+    _metadata_dir(alt / "shepherd_advanced.egg-info", "shepherd-advanced", "0.1.0")
+    paths.append(str(alt))
+    info = site / "shepherd_advanced-0.1.0.dist-info"
+    (site / "__editable__.shepherd_advanced-0.1.0.pth").write_text(f"{alt}\n", encoding="utf-8")
+    (info / "RECORD").write_text("__editable__.shepherd_advanced-0.1.0.pth,,\n",
+                                 encoding="utf-8")
+    by_pth = probe.installed_against_lock(lock)
+    assert by_pth["counted_once"] and not any(
+        entry["name"] == "shepherd-advanced" for entry in by_pth["installed_more_than_once"])
 
 
 def _git(cwd, *args):
@@ -247,6 +349,70 @@ def test_the_deploy_scripts_install_the_roots_a5_names(probe):
     assert set(probe.DEPLOY_INSTALLED_ROOTS) <= spelled
 
 
+def test_the_pyg_core_is_locked_and_no_deploy_script_installs_it_unpinned(probe):
+    """BACKLOG 50: torch_geometric is declared once, in pyproject.toml as an
+    exact pin, and the lock holds that version; deploy.sh and deploy.cmd install
+    it through the sync, never again with no version, and take the PyG wheel
+    index from the installed torch rather than writing the torch version a
+    second time. No version number is written here either: an upgrade changes
+    pyproject.toml and the lock, not this test."""
+    import tomllib
+
+    declared = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))
+    pins = [d for d in declared["project"]["dependencies"]
+            if probe._normalised(re.split(r"[=<>!~ ;\[]", d, maxsplit=1)[0]) == "torch-geometric"]
+    assert len(pins) == 1 and re.fullmatch(r"torch-geometric==[0-9][^,;\s]*", pins[0]), pins
+    lock = tomllib.loads((REPO / "uv.lock").read_text(encoding="utf-8"))
+    assert [p["version"] for p in lock["package"] if p["name"] == "torch-geometric"] == [
+        pins[0].split("==", 1)[1]]
+    assert "torch-geometric" not in probe.DEPLOY_INSTALLED_ROOTS
+    for script in ("deploy.sh", "deploy.cmd"):
+        text = (REPO / script).read_text(encoding="utf-8")
+        installs = re.findall(r"uv pip install[^\n]*", text)
+        assert installs, script
+        assert not [line for line in installs
+                    if re.search(r"torch[_-]geometric", line, re.IGNORECASE)], script
+        assert "data.pyg.org/whl/torch-2" not in text, script     # derived, not written
+
+
+def test_a_declared_dependency_that_is_not_installed_is_not_the_locks_set(
+        probe, tmp_path, monkeypatch):
+    """Missing is not matching (BACKLOG 50): a dependency the project declares,
+    its marker true here, that is not installed is stated with the version the
+    lock pins; one whose marker is false here is not asked for."""
+    lock = tmp_path / "uv.lock"
+    lock.write_text("\n".join([
+        "version = 1", "",
+        "[[package]]", 'name = "shepherd-advanced"', 'version = "0.2.0"',
+        'source = { editable = "." }',
+        "dependencies = [",
+        '    { name = "torch" },',
+        '    { name = "torch-geometric" },',
+        '    { name = "pywin32", marker = "sys_platform == \'win32\' and sys_platform == \'linux\'" },',
+        "]", "",
+        "[[package]]", 'name = "torch"', 'version = "2.10.0+cu130"', "",
+        "[[package]]", 'name = "torch-geometric"', 'version = "2.8.1"', "",
+        "[[package]]", 'name = "pywin32"', 'version = "311"', ""]), encoding="utf-8")
+    _installed(monkeypatch, [("torch", "2.10.0+cu130")])
+
+    recorded = probe.installed_against_lock(lock)
+
+    assert recorded["version_differs"] == []
+    assert recorded["declared_not_installed"] == [{"name": "torch-geometric", "locked": ["2.8.1"]}]
+    assert recorded["versions_match_lock"] is False
+    said = probe.lock_sentence(recorded)
+    assert "1 declared dependency is not installed (torch-geometric, lock 2.8.1)" in said
+    report = probe.Report()
+    report.probes.append(probe.Probe("A5", "environment", "x", status="passed", facts=recorded))
+    verdict = probe.m2_acceptance(report, False)["environment"]
+    assert verdict["declared_not_installed"] == ["torch-geometric"]
+    assert verdict["versions_match_lock"] is False
+
+    _installed(monkeypatch, [("torch", "2.10.0+cu130"), ("torch_geometric", "2.8.1")])
+    matching = probe.installed_against_lock(lock)
+    assert matching["declared_not_installed"] == [] and matching["versions_match_lock"] is True
+
+
 def test_a_matching_set_says_so(probe, tmp_path, monkeypatch):
     lock = _lock(tmp_path / "uv.lock", [("gradio", "6.30.0"), ("torch-geometric", "2.8.0-post1")])
     _installed(monkeypatch, [("gradio", "6.30.0"), ("torch_geometric", "2.8.0.post1")])
@@ -267,7 +433,7 @@ def _differing():
             "installed_more_than_once": [],
             "installed_not_in_lock": [
                 {"name": "aiofiles", "version": "24.1.0", "why": "required_by_nothing_installed"},
-                {"name": "torch-geometric", "version": "2.8.0", "why": "deploy_scripts"}],
+                {"name": "pyg-lib", "version": "0.6.0", "why": "deploy_scripts"}],
             "locked_not_installed": []}
 
 
@@ -283,7 +449,7 @@ def test_a5_states_a_differing_set_on_the_console_and_in_the_environment(
     said = capsys.readouterr().out
     assert "click 8.5.0, lock 8.3.3" in said and "aiofiles 24.1.0" in said
     assert "NOT the one committed at the tested commit" in said
-    assert "1 from the deploy scripts" in said and "torch-geometric" not in said
+    assert "1 from the deploy scripts" in said and "pyg-lib" not in said
     assert environment["installed_against_lock"]["version_differs"] == _differing()[
         "version_differs"]
     assert "socket_fits" in environment["installed_against_lock"]["temporary_directory"]
@@ -304,7 +470,7 @@ def test_a5_is_said_again_beside_the_acceptance_verdict(probe, monkeypatch):
     assert verdict == {
         "A5": "passed", "lock_sha256": "0" * 64, "lock_is_the_committed_one": False,
         "versions_match_lock": False, "version_differs": ["click"],
-        "installed_more_than_once": [], "not_in_lock": 2, "not_in_lock_from_deploy_scripts": 1,
+        "declared_not_installed": [], "installed_more_than_once": [], "not_in_lock": 2, "not_in_lock_from_deploy_scripts": 1,
         "not_in_lock_required_by_nothing_installed": ["aiofiles"]}
     assert line.startswith("A5, installed packages against this checkout's uv.lock, which is "
                            "NOT the one committed")

@@ -1,0 +1,267 @@
+{
+  "scope": "Batch 1 deployment and environment checks only; no training or full M5 acceptance",
+  "tested_commit": "0bc5178743c6ae1243910702ce37d000b314413c",
+  "summary": {
+    "passed": 5,
+    "failed": 0,
+    "skipped": 0,
+    "error": 0
+  },
+  "probes": [
+    {
+      "probe_id": "A1",
+      "phase": "environment",
+      "claim": "the runtime describes itself",
+      "status": "passed",
+      "detail": "runtime described",
+      "facts": {
+        "python": "3.12.3",
+        "platform": "Linux aarch64",
+        "torch_version": "2.10.0+cu130",
+        "torch_cuda_build": "13.0",
+        "cuda_available": true,
+        "device_name": "NVIDIA GB10",
+        "torch_geometric": "2.8.1",
+        "pyg_native_present": [
+          "pyg_lib",
+          "torch_cluster",
+          "torch_scatter",
+          "torch_sparse"
+        ],
+        "runtime_status": "notice"
+      },
+      "seconds": 1.735
+    },
+    {
+      "probe_id": "A2",
+      "phase": "environment",
+      "claim": "the serving device resolves",
+      "status": "passed",
+      "detail": "serving device is cuda",
+      "facts": {
+        "resolved_device": "cuda",
+        "device_count": 1,
+        "capability": "12.1",
+        "total_memory_gb": 130.7,
+        "allocator_backend": "native"
+      },
+      "seconds": 0.0
+    },
+    {
+      "probe_id": "A3",
+      "phase": "environment",
+      "claim": "the build's architectures are recorded (informational)",
+      "status": "passed",
+      "detail": "no native kernels for this device \u2014 the expected, permanent state for a capability the vendor ships none for; A4 is what decides whether that matters here",
+      "facts": {
+        "arch_list": [
+          "sm_80",
+          "sm_90",
+          "sm_100",
+          "sm_110",
+          "sm_120",
+          "compute_120"
+        ],
+        "device_capability": "12.1",
+        "natively_compiled_for_this_device": false,
+        "native_kernels_expected": false,
+        "ptx_available": [
+          "compute_120"
+        ]
+      },
+      "seconds": 0.0
+    },
+    {
+      "probe_id": "A4",
+      "phase": "environment",
+      "claim": "kernels actually execute on this device and give the right answer",
+      "status": "passed",
+      "detail": "kernels execute on the device and agree with the host",
+      "facts": {
+        "matmul_max_abs_error": 4.6e-05
+      },
+      "seconds": 0.464
+    },
+    {
+      "probe_id": "A5",
+      "phase": "environment",
+      "claim": "the installed packages are recorded against the lock (informational)",
+      "status": "passed",
+      "detail": "the installed versions are the lock's; 13 installed package(s) outside the lock",
+      "facts": {
+        "lock_sha256": "0f92a5ecff12170bb26127c9d7098ab4301ffac8c7c3bcbd4b7dc9723815c356",
+        "lock_is_the_committed_one": true,
+        "lock_packages": 172,
+        "installed_distributions": 119,
+        "versions_match_lock": true,
+        "version_differs": [],
+        "declared_not_installed": [],
+        "installed_more_than_once": [
+          {
+            "name": "shepherd-advanced",
+            "versions": [
+              "0.2.0",
+              "0.2.0"
+            ]
+          }
+        ],
+        "installed_not_in_lock": [
+          {
+            "name": "cuda-python",
+            "version": "13.0.3",
+            "why": "deploy_scripts"
+          },
+          {
+            "name": "cuda-toolkit",
+            "version": "13.0.2",
+            "why": "deploy_scripts"
+          },
+          {
+            "name": "cuvs-cu13",
+            "version": "26.6.0",
+            "why": "deploy_scripts"
+          },
+          {
+            "name": "libcuvs-cu13",
+            "version": "26.6.0",
+            "why": "deploy_scripts"
+          },
+          {
+            "name": "libraft-cu13",
+            "version": "26.6.0",
+            "why": "deploy_scripts"
+          },
+          {
+            "name": "librmm-cu13",
+            "version": "26.6.0",
+            "why": "deploy_scripts"
+          },
+          {
+            "name": "pyg-lib",
+            "version": "0.6.0",
+            "why": "deploy_scripts"
+          },
+          {
+            "name": "pylibraft-cu13",
+            "version": "26.6.0",
+            "why": "deploy_scripts"
+          },
+          {
+            "name": "rapids-logger",
+            "version": "0.2.3",
+            "why": "deploy_scripts"
+          },
+          {
+            "name": "rmm-cu13",
+            "version": "26.6.0",
+            "why": "deploy_scripts"
+          },
+          {
+            "name": "torch-cluster",
+            "version": "1.6.3",
+            "why": "deploy_scripts"
+          },
+          {
+            "name": "torch-scatter",
+            "version": "2.1.2",
+            "why": "deploy_scripts"
+          },
+          {
+            "name": "torch-sparse",
+            "version": "0.6.18",
+            "why": "deploy_scripts"
+          }
+        ],
+        "locked_not_installed": [
+          "absl-py",
+          "ast-serialize",
+          "audioop-lts",
+          "black",
+          "blis",
+          "catalogue",
+          "cfgv",
+          "cloudpathlib",
+          "colorama",
+          "confection",
+          "coverage",
+          "cymem",
+          "distlib",
+          "execnet",
+          "fhir-core",
+          "fhir-resources",
+          "grimp",
+          "grpcio",
+          "hl7",
+          "identify",
+          "import-linter",
+          "iniconfig",
+          "joblib",
+          "librt",
+          "markdown",
+          "memory-profiler",
+          "murmurhash",
+          "mypy",
+          "mypy-extensions",
+          "nodeenv",
+          "pathspec",
+          "pipdeptree",
+          "platformdirs",
+          "pluggy",
+          "pre-commit",
+          "preshed",
+          "protobuf",
+          "py-spy",
+          "pytest",
+          "pytest-asyncio",
+          "pytest-cov",
+          "pytest-xdist",
+          "python-discovery",
+          "pytokens",
+          "regex",
+          "ruff",
+          "safetensors",
+          "scikit-learn",
+          "sentence-transformers",
+          "smart-open",
+          "spacy",
+          "spacy-legacy",
+          "spacy-loggers",
+          "srsly",
+          "tensorboard",
+          "tensorboard-data-server",
+          "thinc",
+          "threadpoolctl",
+          "tokenizers",
+          "torch-tb-profiler",
+          "transformers",
+          "virtualenv",
+          "wasabi",
+          "weasel",
+          "werkzeug",
+          "wrapt"
+        ],
+        "temporary_directory": {
+          "path_bytes": 4,
+          "socket_fits": true,
+          "refusal": null,
+          "checked": "an AF_UNIX listener opened and closed under it, as multiprocessing opens one for DataLoader workers"
+        }
+      },
+      "seconds": 0.155
+    }
+  ],
+  "checks": {
+    "tested_commit": true,
+    "python_3_12": true,
+    "A1_A5_passed": true,
+    "cuda": true,
+    "GB10": true,
+    "committed_lock": true,
+    "versions_match_lock": true,
+    "no_duplicate_distributions": false,
+    "relative_absolute_same_target": true,
+    "relative_paths_made_absolute": true,
+    "path_check_created_no_work_directory": true
+  },
+  "passed": false
+}

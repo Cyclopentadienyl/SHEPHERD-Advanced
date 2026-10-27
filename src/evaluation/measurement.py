@@ -21,10 +21,15 @@ Dependencies: torch.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional
 
 import torch
 from torch import Tensor
+
+# Since Batch 3 these live in `src.utils.run_environment`, so the served pipeline
+# observes its own embedding forward with the same code (Mode D, PLAN_B05 §3);
+# imported here, where Mode C's callers have always found them.
+from src.utils.run_environment import AutocastRegime, observe_autocast_regime
 
 __all__ = [
     "AutocastRegime",
@@ -224,39 +229,6 @@ def observe_torch_compile_wrapper(model: Any) -> Optional[bool]:
         # custom `__instancecheck__` or `__class__` is the only way here, and an
         # ordinary object does not reach it.
         return None
-
-
-@dataclass(frozen=True)
-class AutocastRegime:
-    """The autocast state at a **harness boundary**, and nothing wider.
-
-    Named for what it can see. This is read at the point the harness performs or
-    calls a computation; an autocast context opened *inside* a model is not
-    observable from here and is not claimed. The same discipline as
-    `torch_compile_wrapped`, and for the same reason: a field whose name promises
-    more than its probe can see gets read for the promise.
-
-    `dtype` is `None` exactly when `enabled` is false, so a reader never has to
-    decide whether a dtype beside a disabled regime means anything.
-    """
-
-    enabled: bool
-    dtype: Optional[str]
-
-
-def observe_autocast_regime(device: Any) -> AutocastRegime:
-    """Read the ambient autocast state for `device`'s type.
-
-    Device-independent: `torch.is_autocast_enabled("cuda")` answers on a CPU-only
-    host, and `torch.device("cuda:1").type` resolves to `"cuda"`, so an indexed
-    device is handled.
-    """
-    import torch as _torch
-
-    device_type = _torch.device(device).type if device is not None else "cpu"
-    if not _torch.is_autocast_enabled(device_type):
-        return AutocastRegime(enabled=False, dtype=None)
-    return AutocastRegime(enabled=True, dtype=str(_torch.get_autocast_dtype(device_type)))
 
 
 @dataclass(frozen=True)
@@ -719,6 +691,7 @@ def run_mode_c(
     manifest: MeasurementManifest,
     device: Optional[Any] = None,
     batch_size: int = 32,
+    on_scores: Optional[Callable[[int, List[str], Tensor], None]] = None,
 ) -> ModeResult:
     """Score every patient against **every disease in the graph**.
 
@@ -748,6 +721,15 @@ def run_mode_c(
     node in the graph — a plausible patient, a plausible rank, and a wrong one.
     Padding uses a safe value under a `False` mask; **real values are never
     clamped, dropped or substituted.**
+
+    **`on_scores`, optional and read-only** (Batch 3, Mode D): called once per
+    chunk with the chunk's first position in `samples`, its sample ids and its
+    `(chunk, diseases)` score matrix, after the scores are computed and before
+    they are ranked. Mode D reads the scores this formal run computed for its
+    derived readings instead of computing them a second way
+    (`docs/working/scorer-measurement/PLAN_B05.md` §5). An observer must not
+    change the tensor, and keeps only what it needs; `None`, as every Mode C
+    run passes, changes nothing.
     """
     import torch as _torch
     import torch.nn.functional as _F
@@ -797,6 +779,8 @@ def run_mode_c(
             patients = masked_mean_pool(patient_phenotypes, mask)
             scores = cosine_score_matrix(patients, disease_emb)
             candidate_counts.append(int(scores.size(1)))
+            if on_scores is not None:
+                on_scores(start, [s.patient_id for s in chunk], scores)
 
             truth = _torch.tensor([s.disease_id for s in chunk], dtype=_torch.long, device=device)
             ranked = canonical_ranking(scores, all_disease_ids)

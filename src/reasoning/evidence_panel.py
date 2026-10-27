@@ -5,8 +5,8 @@
 # Purpose: Generate clinician-facing evidence for diagnosis candidates.
 #
 # Evidence is computed AFTER scoring and never influences the ranking. The
-# scoring is done by the GNN + shortest path mixture in pipeline.py
-# (see _calculate_combined_score). This module's job is to answer the
+# scoring is done in pipeline.py, by the result kind's own score
+# (`_score_and_rank_candidates`). This module's job is to answer the
 # question "WHY is this candidate ranked here?" in a form a doctor can
 # read and trust.
 #
@@ -25,8 +25,9 @@
 #     evidence: "this candidate has no direct evidence, but is highly
 #     similar to gene X, which does — and they share these properties."
 #
-# Confidence labels are attached to every evidence package so clinicians
-# can quickly triage which results to trust at a glance.
+# An evidence label is attached to every evidence package so clinicians can
+# see at a glance how strong the evidence for a candidate is. It grades the
+# evidence, never a confidence in the diagnosis (`evidence_label`, Spec 1 §2.1).
 #
 # Dependencies:
 #   - Internal: src.core.types, src.kg, src.reasoning.path_reasoning
@@ -41,7 +42,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 from src.core.types import (
-    DiagnosisCandidate,
+    Candidate,
     EdgeType,
     NodeID,
     NodeType,
@@ -67,7 +68,8 @@ class EvidenceMode(str, Enum):
 
 class ConfidenceLabel(str, Enum):
     """
-    Plain-language label for clinicians, derived from evidence quality.
+    Plain-language label for clinicians, derived from evidence quality: the
+    candidate's `evidence_label` (the class keeps its older name).
 
     Triage hierarchy:
         STRONG_PATH    → direct path of length ≤2 hops
@@ -113,14 +115,14 @@ class AnalogyMatch:
 @dataclass
 class EvidencePackage:
     """
-    Full evidence bundle attached to a single DiagnosisCandidate.
+    Full evidence bundle attached to a single candidate.
 
     Either direct_paths (Mode A) or analogies (Mode B) is populated,
-    never both. The mode field encodes which one was used. The confidence
-    label summarises the quality at a glance for clinicians.
+    never both. The mode field encodes which one was used. The evidence
+    label summarises the evidence's strength at a glance for clinicians.
     """
     mode: EvidenceMode
-    confidence_label: ConfidenceLabel
+    evidence_label: ConfidenceLabel
     summary: str  # one-line plain-language description for the UI
 
     # Mode A payload
@@ -133,7 +135,7 @@ class EvidencePackage:
     def to_dict(self) -> Dict[str, Any]:
         return {
             "mode": self.mode.value,
-            "confidence_label": self.confidence_label.value,
+            "evidence_label": self.evidence_label.value,
             "summary": self.summary,
             "min_path_length": self.min_path_length,
             "direct_paths": [
@@ -187,7 +189,7 @@ class EvidencePanel:
     # ------------------------------------------------------------------
     def build_evidence(
         self,
-        candidate: DiagnosisCandidate,
+        candidate: Candidate,
         patient_input: PatientPhenotypes,
         source_ids: List[NodeID],
         existing_paths: Optional[List[ReasoningPath]] = None,
@@ -242,7 +244,7 @@ class EvidencePanel:
         # No path, no analogy
         return EvidencePackage(
             mode=EvidenceMode.INSUFFICIENT,
-            confidence_label=ConfidenceLabel.INSUFFICIENT,
+            evidence_label=ConfidenceLabel.INSUFFICIENT,
             summary=(
                 "No knowledge-graph evidence could be assembled for this "
                 "candidate. Consider this result with caution and validate "
@@ -315,7 +317,7 @@ class EvidencePanel:
 
         return EvidencePackage(
             mode=EvidenceMode.DIRECT_PATH,
-            confidence_label=label,
+            evidence_label=label,
             summary=summary,
             direct_paths=sorted_paths[: self.config.max_direct_paths_displayed],
             min_path_length=min_len,
@@ -326,7 +328,7 @@ class EvidencePanel:
     # ------------------------------------------------------------------
     def _find_analogies(
         self,
-        candidate: DiagnosisCandidate,
+        candidate: Candidate,
         source_ids: List[NodeID],
         node_embeddings: Dict[str, Any],
         node_id_to_idx: Dict[str, Dict[str, int]],
@@ -415,7 +417,7 @@ class EvidencePanel:
 
     def _build_mode_b(
         self,
-        candidate: DiagnosisCandidate,
+        candidate: Candidate,
         analogies: List[AnalogyMatch],
     ) -> EvidencePackage:
         """Construct a Mode B evidence package from analogy matches."""
@@ -431,7 +433,7 @@ class EvidencePanel:
 
         return EvidencePackage(
             mode=EvidenceMode.ANALOGY_BASED,
-            confidence_label=ConfidenceLabel.ANALOGY_BASED,
+            evidence_label=ConfidenceLabel.ANALOGY_BASED,
             summary=summary,
             analogies=analogies,
         )

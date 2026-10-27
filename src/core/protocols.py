@@ -54,7 +54,7 @@ from src.core.types import (
     EdgeType,
     EmbeddingType,
     PatientPhenotypes,
-    DiagnosisCandidate,
+    Candidate,
     InferenceResult,
     Publication,
     LiteratureEvidence,
@@ -657,7 +657,7 @@ class DiagnosisModelProtocol(Protocol):
         patient_phenotypes: PatientPhenotypes,
         kg: KnowledgeGraphProtocol,
         top_k: int = 10,
-    ) -> List[DiagnosisCandidate]:
+    ) -> List[Candidate]:
         """
         預測疾病候選
 
@@ -820,11 +820,11 @@ class ConstraintCheckerProtocol(Protocol):
 
     def apply_constraints(
         self,
-        candidates: List[DiagnosisCandidate],
+        candidates: List[Candidate],
         patient_phenotypes: List[str],
         kg: KnowledgeGraphProtocol,
         ontology: OntologyProtocol,
-    ) -> List[DiagnosisCandidate]:
+    ) -> List[Candidate]:
         """應用約束調整候選分數"""
         ...
 
@@ -839,7 +839,7 @@ class ExplanationGeneratorProtocol(Protocol):
 
     def generate_explanation(
         self,
-        candidate: DiagnosisCandidate,
+        candidate: Candidate,
         patient_phenotypes: PatientPhenotypes,
         kg: KnowledgeGraphProtocol,
         include_ortholog_evidence: bool = True,
@@ -850,24 +850,6 @@ class ExplanationGeneratorProtocol(Protocol):
 
         Returns:
             Human-readable explanation
-        """
-        ...
-
-    def generate_evidence_summary(
-        self,
-        candidate: DiagnosisCandidate,
-        kg: KnowledgeGraphProtocol,
-    ) -> Dict[str, Any]:
-        """
-        生成證據摘要
-
-        Returns:
-            {
-                "direct_evidence": [...],
-                "pathway_evidence": [...],
-                "ortholog_evidence": [...],
-                "literature_evidence": [...],
-            }
         """
         ...
 
@@ -996,7 +978,7 @@ class MedicalLLMProtocol(LLMProtocol, Protocol):
 
     def generate_clinical_explanation(
         self,
-        candidate: DiagnosisCandidate,
+        candidate: Candidate,
         patient_context: str,
     ) -> str:
         """生成臨床解釋"""

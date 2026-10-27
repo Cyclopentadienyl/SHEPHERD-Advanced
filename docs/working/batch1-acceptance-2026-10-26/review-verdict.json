@@ -1,0 +1,20 @@
+{
+  "scope": "Batch 1 GB10 minimal deployment/environment verification",
+  "review_passed": true,
+  "tested_commit": "0bc5178743c6ae1243910702ce37d000b314413c",
+  "raw_environment_wrapper_exit": 1,
+  "raw_environment_probes": {
+    "passed": 5,
+    "failed": 0,
+    "skipped": 0,
+    "error": 0
+  },
+  "raw_failed_extra_assertion": "no_duplicate_distributions",
+  "explained_exception": "only this editable project has matching dist-info and source egg-info; see editable-metadata.json",
+  "deployment_exit": 0,
+  "pyg_kernel_exit": 0,
+  "pyg_checks_passed": 5,
+  "pyglib_segment_matmul_ran": true,
+  "windows_tested": false,
+  "gb10_xformers_install_tested": false
+}

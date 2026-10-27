@@ -1,0 +1,5 @@
+PASS：結果格式、模型身分、CUDA 裝置及 SP 數值狀態符合預期。
+session: sess_7c26f2a10f43
+kind: served_mixture/v1 eta: 0.7
+candidates: 10
+warnings: []

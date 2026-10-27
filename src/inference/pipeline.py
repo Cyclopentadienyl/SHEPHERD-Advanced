@@ -43,13 +43,14 @@
 """
 from __future__ import annotations
 
+import copy
 import logging
 import math
 import time
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union, TYPE_CHECKING
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union, TYPE_CHECKING
 
 from src.kg.artifacts import (
     GRAPH_ARTIFACTS,
@@ -64,20 +65,28 @@ from src.kg.phenotype_normalisation import (
     normalise_phenotypes,
 )
 from src.core.types import (
+    SERVED_MIXTURE,
+    Candidate,
     DataSource,
-    DiagnosisCandidate,
     EvidenceSource,
     InferenceResult,
     NodeID,
     NodeType,
+    PathReasoningCandidate,
     PatientPhenotypes,
     PhenotypeInputAccount,
+    ResultRefused,
+    SPAnalysisRecord,
+    ServedMixtureCandidate,
     ServedCheckpoint,
     ServedDatasetRecord,
     ServedGraph,
     ServedIdentity,
     ServedSettings,
     ServedShortestPaths,
+    candidate_score,
+    result_kind_for,
+    result_label,
 )
 from src.reasoning import (
     PathReasoner,
@@ -95,6 +104,7 @@ from src.reasoning import (
     find_matching_phenotypes,
 )
 from src.utils.checkpoint_paths import RANKING_SCORE_KEYS
+from src.utils.run_environment import observe_autocast_regime
 
 # Optional torch dependency for GNN inference
 try:
@@ -141,13 +151,13 @@ CHECKPOINT_LOG_METRICS: Tuple[str, ...] = ("val_loss", "train_loss", *RANKING_SC
 # ==============================================================================
 # Callback for custom scoring: (candidate, paths, kg) -> modified_score
 ScoringCallback = Callable[
-    ["DiagnosisCandidate", List[ReasoningPath], "KnowledgeGraph"],
+    ["Candidate", List[ReasoningPath], "KnowledgeGraph"],
     float
 ]
 # Callback for post-processing candidates
 PostProcessCallback = Callable[
-    [List["DiagnosisCandidate"], PatientPhenotypes],
-    List["DiagnosisCandidate"]
+    [List["Candidate"], PatientPhenotypes],
+    List["Candidate"]
 ]
 
 
@@ -171,9 +181,10 @@ class PipelineConfig:
     #                         (loaded from shortest_paths.pt; computed offline
     #                         by scripts/compute_shortest_paths.py)
     # - eta:                  mixing weight (1.0 = pure GNN, 0.0 = pure SP).
-    #                         The paper does not fix a value; 0.7 is a
-    #                         reasonable default that favors GNN's learned
-    #                         signal but lets SP catch sparse-input cases.
+    #                         The paper chooses η by a search per task and does
+    #                         not print the value; 0.7 is this project's default,
+    #                         favouring the GNN's learned signal while letting SP
+    #                         catch sparse-input cases.
     #
     # PathReasoner is explanation-only and does NOT contribute to scoring.
     eta: float = 0.7
@@ -191,8 +202,8 @@ class PipelineConfig:
     include_literature_evidence: bool = True
     max_paths_per_candidate: int = 10
 
-    # Validation
-    validate_phenotypes: bool = True
+    # Validation. Unknown ids are always dropped and stated, and an input left
+    # with none is refused: there is no switch that only silences the warning.
     min_phenotypes: int = 1
     max_phenotypes: int = 100
 
@@ -228,6 +239,68 @@ class ValidationResult:
     kept_positions: List[int] = field(default_factory=list)
     #: None when the request was refused before its phenotypes were mapped.
     phenotype_input: Optional[PhenotypeInputAccount] = None
+    #: **The one mapping step's output** (Spec 1 §2.2): each validated phenotype's
+    #: graph node, and with a model served its row in the phenotype embedding
+    #: table, in the same order. `rows` is None when no model is served.
+    node_ids: List[NodeID] = field(default_factory=list)
+    rows: Optional[List[int]] = None
+
+
+@dataclass
+class ServedRanking:
+    """The served ranking of one input, whole and untruncated (`DiagnosisPipeline.rank`).
+
+    **Everything `run` does up to and including its sort, nothing after it**
+    (`docs/working/scorer-measurement/PLAN_B05.md` §2). `run` cuts it at
+    `top_k` and builds matching phenotypes, explanations and the summary on what
+    it keeps; Mode D reads it whole. `top_k` never changes the order, only where
+    the list is cut, so a served rank `r` is what a clinician sees whenever the
+    page's Top-K is at least `r`.
+
+    `outcome` says which of `run`'s three returns this is: ``"refused"`` (the
+    input validation refused it), ``"no_candidates"`` (nothing mapped to a graph
+    node, or discovery reached no disease) or ``"ranked"``. `warnings` is the
+    list `run` returns with it, as `run` would return it.
+
+    **`discovery_ordinals[i]` is `candidates[i]`'s 0-based position in the list
+    `_find_all_paths` built, before the served-score sort.** It is recorded where
+    the sort happens, in the same candidate construction, because once the served
+    score has sorted the list the discovery order cannot be recovered from it.
+    Internal metadata: not a field of the API or of the result.
+    """
+
+    outcome: str
+    warnings: List[str]
+    patient_input: PatientPhenotypes
+    phenotype_input: Optional[PhenotypeInputAccount] = None
+    #: Every served candidate in the served order, ranked 1..N, of the kind the
+    #: pipeline serves (`served_mixture/v1` or `path_reasoning/v1`).
+    candidates: List[Candidate] = field(default_factory=list)
+    discovery_ordinals: List[int] = field(default_factory=list)
+    source_ids: List[NodeID] = field(default_factory=list)
+    all_paths: Dict[str, List[ReasoningPath]] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class BoundInputs:
+    """What a pipeline built over a verified workspace read and bound, for a caller
+    that measures the served pipeline without reading those files again
+    (Mode D, `docs/working/scorer-measurement/PLAN_B05.md` §3).
+
+    Each value is the pipeline's own: the four graph digests its workspace check
+    verified (`kg`, `node_features`, `edge_indices`, `num_nodes`), the dataset
+    record it verified with them, the identity of the checkpoint bytes its model
+    was built from and that checkpoint's recorded training inputs (for R10), the
+    workspace manifest's digest, and the graph data it encoded. Read-only: a copy
+    of the digests, and references the caller must not change.
+    """
+
+    graph: Dict[str, str]
+    dataset_record: Any
+    checkpoint: Optional["ReadIdentity"]
+    checkpoint_training_inputs: Any
+    manifest_sha256: Optional[str]
+    graph_data: Optional[Dict[str, Any]]
 
 
 class PipelineBuildError(RuntimeError):
@@ -368,18 +441,20 @@ class DiagnosisPipeline:
     """
     End-to-end diagnosis inference pipeline.
 
-    Scoring architecture:
-    - GNN-primary: When a trained GNN model is available, the confidence
-      score equals the GNN cosine similarity score (normalized to [0,1]).
-    - Path-reasoning fallback: When no model source is given at all, path
-      reasoning scores are used as the confidence score. A model that was
-      requested and cannot be built raises `PipelineBuildError` instead; it is
-      never replaced by this fallback.
+    Scoring architecture, one result kind per configuration (Spec 1 §2.1):
+    - `served_mixture/v1`, when a trained model is served: each disease path
+      discovery reaches is ranked by `served_score`, η × model term + (1 − η) ×
+      SP with a shortest-path table, the model term alone without one.
+    - `path_reasoning/v1`, when no model source is given at all: diseases are
+      ranked by their paths' `path_score`. A model that was requested and cannot
+      be built raises `PipelineBuildError` instead; it is never replaced by this
+      fallback.
 
-    PathReasoner role (explanation-only):
-    - Always runs to find evidence paths (Phenotype → Gene → Disease)
+    PathReasoner role:
+    - Always runs to find the diseases ranked and their evidence paths
+      (Phenotype → Gene → Disease)
     - Provides human-readable reasoning chains for clinician review
-    - Does NOT contribute to the confidence score when GNN is active
+    - Ranks nothing when a model is served
 
     Combines:
     - Knowledge graph path reasoning for explainability (P0 core)
@@ -494,6 +569,12 @@ class DiagnosisPipeline:
         self._dataset_record: Optional[Any] = None
         #: The identity of the checkpoint bytes the model was built from.
         self._checkpoint_identity: Optional["ReadIdentity"] = None
+        #: That checkpoint's recorded training inputs (`training_input_digests`),
+        #: from the same one read, for a measurement's R10 (`bound_inputs`).
+        self._checkpoint_training_inputs: Any = None
+        #: The autocast regime the embedding forward ran under, observed at that
+        #: computation (`observe_autocast_regime`); None until embeddings exist.
+        self._embedding_regime: Optional[Any] = None
         #: SHA-256 of the one `split_manifest.json` read the workspace was
         #: verified against (contract M3c); None when no workspace was verified.
         self._manifest_sha256: Optional[str] = None
@@ -758,9 +839,9 @@ class DiagnosisPipeline:
         # **`_gnn_ready` means built, not requested.** Every loader above raises
         # rather than returning empty, so this is unreachable today; it is here so
         # a loader that one day returns None again cannot leave a pipeline that
-        # reports a GNN and scores every candidate's GNN term as zero. The two
-        # node types are the two `_calculate_gnn_score` reads; without either,
-        # that is what it returns.
+        # reports a GNN it cannot score with. The two node types are the two
+        # `_calculate_gnn_score` and `_patient_embedding` read; without either, a
+        # request would be refused at scoring time (`MODEL_TERM_UNAVAILABLE`).
         embeddings = self._node_embeddings or {}
         missing = [
             node_type.value
@@ -946,7 +1027,7 @@ class DiagnosisPipeline:
         #
         # Publishing it instead is not merely a different object shape. A query
         # against an empty index returns `unreachable` with `available` True, so
-        # `_calculate_combined_score` mixes SP in at `1 / (1 + max_hops + 1)`
+        # the mixture would take SP in at `1 / (1 + max_hops + 1)`
         # for every candidate — measured at 1/7 with the default bound, against
         # the pure-GNN score an absent file produces. Zero rows would change
         # both what the service reports and the numbers it returns.
@@ -1236,6 +1317,11 @@ class DiagnosisPipeline:
 
         # Kept for M2.4 and M3c; set only once the model it describes is built.
         self._checkpoint_identity = checkpoint_read.identity
+        # Kept from the same read for a measurement's R10 (Mode D): the model
+        # served and the inputs it records cannot come from two reads.
+        self._checkpoint_training_inputs = copy.deepcopy(
+            checkpoint.get("training_input_digests")
+        )
         num_params = self._checkpoint_meta["params"]
         logger.info(
             f"GNN model loaded: {num_params:,} parameters, device={device}"
@@ -1270,9 +1356,13 @@ class DiagnosisPipeline:
             for k, v in self._graph_data["edge_index_dict"].items()
         }
 
-        # Forward pass (no gradient needed for inference)
+        # Forward pass (no gradient needed for inference). The regime is observed
+        # here, at the computation, as Mode C observes its own: a caller's
+        # autocast context is what these embeddings were computed under.
+        regime = observe_autocast_regime(device)
         with torch.no_grad():
             embeddings = self.model(x_dict, edge_index_dict)
+        self._embedding_regime = regime
 
         # Move embeddings to CPU for memory efficiency
         self._node_embeddings = {
@@ -1281,6 +1371,84 @@ class DiagnosisPipeline:
 
         emb_info = {k: v.shape for k, v in self._node_embeddings.items()}
         logger.info(f"Node embeddings cached: {emb_info}")
+
+    def rank(
+        self,
+        patient_input: PatientPhenotypes,
+        include_ortholog_evidence: Optional[bool] = None,
+    ) -> ServedRanking:
+        """The served ranking of `patient_input`, whole: everything `run` does
+        up to and including its sort, and nothing after it.
+
+        Validation and normalisation, the node mapping, path discovery, scoring
+        and the stable sort by the served score, exactly as `run` does them; `run`
+        is this followed by its cut at `top_k` and what it builds on the rows it
+        keeps. **One implementation**: a caller that needs the untruncated served
+        order (Mode D, `docs/working/scorer-measurement/PLAN_B05.md` §2) calls
+        this, and nothing constructs candidates a second way.
+        """
+        if include_ortholog_evidence is None:
+            include_ortholog_evidence = self.config.include_ortholog_evidence
+
+        # Step 1: Validate input
+        validation = self.validate_input(patient_input)
+        if not validation.is_valid:
+            logger.error(f"Input validation failed: {validation.errors}")
+            return ServedRanking(
+                outcome="refused",
+                warnings=list(validation.errors),
+                patient_input=patient_input,
+                phenotype_input=validation.phenotype_input,
+            )
+        warnings: List[str] = list(validation.warnings)
+
+        # **From here on the list as used is the input, not the list as
+        # received.** Scoring, explanations and the summary all read
+        # `patient_input`, and each of them read the raw request before: the
+        # summary counted repeats and unknown ids as "input phenotypes", and the
+        # explanations listed them. Rebinding once, here, leaves nothing below
+        # able to reach the raw list.
+        patient_input = self._as_used(patient_input, validation)
+
+        # Step 2: the graph nodes, from the one mapping step. Validation refused
+        # an input with none, so the list is never empty here.
+        source_ids = list(validation.node_ids)
+
+        # Step 3: Find reasoning paths (BFS-based)
+        logger.debug("Finding reasoning paths...")
+        all_paths = self._find_all_paths(source_ids, include_ortholog_evidence)
+
+        if not all_paths:
+            logger.warning("No paths found from phenotypes to diseases")
+            return ServedRanking(
+                outcome="no_candidates",
+                warnings=warnings + ["No paths found from phenotypes to diseases"],
+                patient_input=patient_input,
+                phenotype_input=validation.phenotype_input,
+                source_ids=source_ids,
+            )
+
+        # Step 4: Score and rank every candidate
+        logger.debug("Scoring candidates...")
+        candidates, ordinals = self._score_and_rank_candidates(
+            all_paths=all_paths,
+            source_ids=source_ids,
+            patient_input=patient_input,
+            include_ortholog_evidence=include_ortholog_evidence,
+            rows=validation.rows,
+            unmapped_ids=(validation.phenotype_input.unknown
+                          if validation.phenotype_input else ()),
+        )
+        return ServedRanking(
+            outcome="ranked",
+            warnings=warnings,
+            patient_input=patient_input,
+            phenotype_input=validation.phenotype_input,
+            candidates=candidates,
+            discovery_ordinals=ordinals,
+            source_ids=source_ids,
+            all_paths=all_paths,
+        )
 
     def run(
         self,
@@ -1291,7 +1459,8 @@ class DiagnosisPipeline:
         include_literature_evidence: Optional[bool] = None,
     ) -> InferenceResult:
         """
-        Execute the full diagnosis pipeline.
+        Execute the full diagnosis pipeline: `rank`, then the cut at `top_k`
+        and what is built on the rows kept.
 
         Args:
             patient_input: Patient phenotype data
@@ -1304,7 +1473,6 @@ class DiagnosisPipeline:
             InferenceResult with diagnosis candidates and explanations
         """
         start_time = time.time()
-        warnings: List[str] = []
 
         # Use config defaults if not overridden
         if include_explanations is None:
@@ -1319,82 +1487,50 @@ class DiagnosisPipeline:
             f"with {len(patient_input.phenotypes)} phenotypes"
         )
 
-        # Step 1: Validate input
-        validation = self.validate_input(patient_input)
-        if not validation.is_valid:
-            logger.error(f"Input validation failed: {validation.errors}")
+        ranking = self.rank(patient_input, include_ortholog_evidence)
+        if ranking.outcome == "refused":
             return InferenceResult(
                 patient_id=patient_input.patient_id,
                 timestamp=datetime.now(),
                 candidates=[],
                 served_identity=self.served_identity(),
-                warnings=validation.errors,
+                warnings=ranking.warnings,
                 inference_time_ms=(time.time() - start_time) * 1000,
-                phenotype_input=validation.phenotype_input,
+                phenotype_input=ranking.phenotype_input,
+                candidates_reached=self._candidates_reached(0),
             )
-        warnings.extend(validation.warnings)
-
-        # **From here on the list as used is the input, not the list as
-        # received.** Scoring, explanations and the summary all read
-        # `patient_input`, and each of them read the raw request before: the
-        # summary counted repeats and unknown ids as "input phenotypes", and the
-        # explanations listed them. Rebinding once, here, leaves nothing below
-        # able to reach the raw list.
-        patient_input = self._as_used(patient_input, validation)
-
-        # Step 2: Convert phenotypes to NodeIDs
-        source_ids = self._phenotypes_to_node_ids(validation.validated_phenotypes)
-        if not source_ids:
-            logger.warning("No valid phenotype NodeIDs found")
+        patient_input = ranking.patient_input
+        if ranking.outcome == "no_candidates":
             return self._create_empty_result(
                 patient_input.patient_id,
                 start_time,
-                warnings + ["No valid phenotypes found in knowledge graph"],
-                validation.phenotype_input,
+                ranking.warnings,
+                ranking.phenotype_input,
             )
 
-        # Step 3: Find reasoning paths (BFS-based)
-        logger.debug("Finding reasoning paths...")
-        all_paths = self._find_all_paths(source_ids, include_ortholog_evidence)
-
-        if not all_paths:
-            logger.warning("No paths found from phenotypes to diseases")
-            return self._create_empty_result(
-                patient_input.patient_id,
-                start_time,
-                warnings + ["No paths found from phenotypes to diseases"],
-                validation.phenotype_input,
-            )
-
-        # Step 4: Score and rank candidates
-        logger.debug("Scoring candidates...")
-        candidates = self._score_and_rank_candidates(
-            all_paths=all_paths,
-            source_ids=source_ids,
-            patient_input=patient_input,
-            top_k=top_k,
-            include_ortholog_evidence=include_ortholog_evidence,
-        )
-
+        # **The cut is the only thing `top_k` does**: the order is `rank`'s.
         # Step 4b: The phenotypes the graph annotates directly to each candidate
         # returned, from the list as used. **Not gated on explanations**: a
         # caller that turns them off still reads the field, and it costs one scan
         # of each returned disease's incoming edges. The explanation's "Matching
         # Phenotypes" section comes from the same helper and the same list: it
         # lists the first ten of this field, and says how many more there are.
-        for candidate in candidates:
-            candidate.matching_phenotypes = find_matching_phenotypes(
-                candidate.disease_id, patient_input.phenotypes, self.kg
-            )
+        # Candidates are frozen, so each kept one is a copy with the field set,
+        # and the `ServedRanking` keeps what `rank` built.
+        candidates = [
+            replace(candidate, matching_phenotypes=find_matching_phenotypes(
+                candidate.disease_id, patient_input.phenotypes, self.kg))
+            for candidate in ranking.candidates[:top_k]
+        ]
 
         # Step 5: Generate explanations + Step C evidence packages
         if include_explanations:
             logger.debug("Generating explanations and evidence packages...")
             candidates = self._add_explanations(
                 candidates=candidates,
-                all_paths=all_paths,
+                all_paths=ranking.all_paths,
                 patient_input=patient_input,
-                source_ids=source_ids,
+                source_ids=ranking.source_ids,
             )
 
         # Step 6: Create summary explanation
@@ -1419,8 +1555,9 @@ class DiagnosisPipeline:
             served_identity=self.served_identity(),
             summary_explanation=summary,
             inference_time_ms=inference_time,
-            warnings=warnings,
-            phenotype_input=validation.phenotype_input,
+            warnings=ranking.warnings,
+            phenotype_input=ranking.phenotype_input,
+            candidates_reached=self._candidates_reached(len(ranking.candidates)),
         )
 
     def validate_input(
@@ -1436,14 +1573,19 @@ class DiagnosisPipeline:
            `phenotype_confidences` has one entry per phenotype. This comes first
            because step 3 reduces it by position, and a mismatch is refused, never
            padded or truncated.
-        2. **Ids are mapped to graph nodes.** An id with no node is dropped, with a
-           warning when `validate_phenotypes` is on — the policy unchanged.
+        2. **Ids are mapped to graph nodes.** An id with no node is dropped and
+           always stated (a warning, and `phenotype_input.unknown`).
         3. **Repeats are removed by node**, keeping the first occurrence
            (`src/kg/phenotype_normalisation.py`).
         4. **The count is checked on what remains.** More than `max_phenotypes`
            is refused. Nothing is truncated: the previous version kept the first
            100 entries, repeats and unknown ids included, so "100 × A, then B"
-           silently scored A alone.
+           silently scored A alone. An input left with no phenotype is refused.
+        5. **With a model served, each node is mapped to its row** in the
+           phenotype embedding table (Spec 1 §2.2: one mapping step, exact term,
+           graph node, tensor row). A known node with no row, or a row outside
+           the table, is a model–graph mismatch: the result is refused
+           (`ResultRefused`, `MODEL_TERM_UNAVAILABLE`), never scored without it.
 
         Args:
             patient_input: Patient phenotype data
@@ -1490,8 +1632,7 @@ class DiagnosisPipeline:
                 known_positions.append(position)
             else:
                 unknown.append(pheno_id)
-                if self.config.validate_phenotypes:
-                    warnings.append(f"Unknown phenotype: {pheno_id}")
+                warnings.append(f"Unknown phenotype: {pheno_id}")
 
         normalised = normalise_phenotypes(known_nodes, positions=known_positions)
         used = [phenotypes[position] for position in normalised.kept_positions]
@@ -1509,10 +1650,11 @@ class DiagnosisPipeline:
                 "and the list was not shortened."
             )
 
-        # With validation off, unknown ids are still dropped, and an input that
-        # loses all of them reaches `run`'s empty result as it always did.
-        if not used and not errors and self.config.validate_phenotypes:
+        if not used and not errors:
             errors.append("No valid phenotypes after validation")
+
+        node_ids = [NodeID(source=DataSource.HPO, local_id=pheno_id) for pheno_id in used]
+        rows = None if errors else self._phenotype_rows(node_ids)
 
         return ValidationResult(
             is_valid=len(errors) == 0,
@@ -1528,7 +1670,41 @@ class DiagnosisPipeline:
                 # when its phenotypes mapped, as with too many of them.
                 used=() if errors else tuple(used),
             ),
+            node_ids=[] if errors else node_ids,
+            rows=rows,
         )
+
+    def _phenotype_rows(self, node_ids: List[NodeID]) -> Optional[List[int]]:
+        """Each node's row in the phenotype embedding table, in order; None when
+        no model is served (the path-reasoning kind reads no tensor).
+
+        Raises `ResultRefused` (`MODEL_TERM_UNAVAILABLE`, naming the node) for a
+        node with no row or a row outside the table: a model–graph mismatch is
+        refused, never skipped and never clamped onto a neighbouring row."""
+        if not self._gnn_ready:
+            return None
+        table = (self._node_embeddings or {}).get(NodeType.PHENOTYPE.value)
+        if table is None:
+            raise ResultRefused(
+                "MODEL_TERM_UNAVAILABLE",
+                "the served model has no phenotype embedding table, so no patient "
+                "representation can be computed")
+        index = (self._node_id_to_idx or {}).get(NodeType.PHENOTYPE.value, {})
+        rows: List[int] = []
+        for node in node_ids:
+            row = index.get(str(node))
+            if row is None:
+                raise ResultRefused(
+                    "MODEL_TERM_UNAVAILABLE",
+                    f"phenotype {node} is in the graph but has no row in the model's "
+                    "node mapping; the model and the graph disagree")
+            if isinstance(row, bool) or not isinstance(row, int) or not 0 <= row < table.size(0):
+                raise ResultRefused(
+                    "MODEL_TERM_UNAVAILABLE",
+                    f"phenotype {node} maps to row {row!r}, outside the phenotype "
+                    f"embedding table's {table.size(0)} rows")
+            rows.append(row)
+        return rows
 
     @staticmethod
     def _as_used(
@@ -1545,15 +1721,6 @@ class DiagnosisPipeline:
                 else [confidences[position] for position in validation.kept_positions]
             ),
         )
-
-    def _phenotypes_to_node_ids(self, phenotypes: List[str]) -> List[NodeID]:
-        """Convert HPO ID strings to NodeID objects."""
-        node_ids = []
-        for pheno_id in phenotypes:
-            node_id = NodeID(source=DataSource.HPO, local_id=pheno_id)
-            if self.kg.has_node(node_id):
-                node_ids.append(node_id)
-        return node_ids
 
     def _find_all_paths(
         self,
@@ -1635,86 +1802,107 @@ class DiagnosisPipeline:
         all_paths: Dict[str, List[ReasoningPath]],
         source_ids: List[NodeID],
         patient_input: PatientPhenotypes,
-        top_k: int,
         include_ortholog_evidence: bool,
-    ) -> List[DiagnosisCandidate]:
+        rows: Optional[List[int]] = None,
+        unmapped_ids: Sequence[str] = (),
+    ) -> Tuple[List[Candidate], List[int]]:
         """
-        Score and rank disease candidates.
+        Score every disease candidate and rank them all, as the served kind does.
+
+        - `served_mixture/v1` (a model served): `model_term` per candidate from
+          the pooled patient (`rows`, validation's), one `sp_analysis_records`
+          call over every reached candidate for `sp_term`, and `served_score`
+          mixed from the two (in `gnn_only` the model term alone). A non-numeric
+          SP status is still mixed as 0, and says so (`mixed_as`), so the legacy
+          ranking does not change.
+        - `path_reasoning/v1` (no model): `path_score`, the paths' aggregate.
+
+        A score that is not finite refuses the result (`ResultRefused`,
+        `NON_FINITE_SCORE`), as does a model term that cannot be computed.
 
         Args:
             all_paths: Paths grouped by disease
-            source_ids: Patient phenotype NodeIDs
-            patient_input: Patient phenotype data
-            top_k: Number of top candidates to return
+            source_ids: Patient phenotype NodeIDs, as used
+            patient_input: Patient phenotype data, as used
             include_ortholog_evidence: Include ortholog evidence
+            rows: The phenotypes' embedding rows (None without a model)
+            unmapped_ids: The request's ids no node was found for
 
         Returns:
-            List of DiagnosisCandidate sorted by score
+            Every candidate sorted by its kind's score, ranked 1..N, and beside
+            each its discovery ordinal: its position in the list built in
+            `all_paths` order, before the sort (`ServedRanking`). Nothing is cut
+            here; `run` cuts at `top_k`.
         """
-        candidates: List[DiagnosisCandidate] = []
+        from src.inference.sp_index import sp_analysis_records
 
-        # --- Score path-based candidates ---
-        for disease_key, paths in all_paths.items():
+        mixture = result_kind_for(self._scoring_mode()[0]) == SERVED_MIXTURE
+        entries: List[Tuple[NodeID, str, List[ReasoningPath]]] = []
+        for paths in all_paths.values():
             if not paths:
                 continue
-
-            # Get disease info
             disease_id = paths[0].target
             disease_node = self.kg.get_node(disease_id)
-            disease_name = disease_node.name if disease_node else str(disease_id)
+            entries.append(
+                (disease_id, disease_node.name if disease_node else str(disease_id), paths))
 
-            # Calculate reasoning score from paths (used for explanation
-            # quality ranking and as fallback when GNN is unavailable)
-            reasoning_score = self._calculate_reasoning_score(paths)
-
-            # Combined score per original SHEPHERD paper:
-            #   confidence = eta * embedding_sim + (1-eta) * SP_sim
-            # PathReasoner's `reasoning_score` is NOT part of confidence;
-            # it's only used as a fallback when GNN is unavailable.
-            gnn_score = 0.0
-            sp_score = 0.0
-            if self._gnn_ready:
-                confidence_score, gnn_score, sp_score = (
-                    self._calculate_combined_score(
-                        source_ids, disease_id, patient_input,
-                        target_type_idx=1,  # disease
-                    )
-                )
+        model_terms: List[float] = []
+        records: List[SPAnalysisRecord] = []
+        if mixture:
+            # The patient is pooled once: the same operation on the same rows
+            # for every candidate. Each candidate's cosine stays a batch of one,
+            # since a taller float32 matrix product can move a value's last bit.
+            patient = self._patient_embedding(rows)
+            model_terms = [self._calculate_gnn_score(patient, disease_id)
+                           for disease_id, _name, _paths in entries]
+            records = sp_analysis_records(
+                self._sp_lookup if self._sp_ready else None,
+                self._node_id_to_idx,
+                [str(node) for node in source_ids],
+                [str(disease_id) for disease_id, _name, _paths in entries],
+                1,  # disease
+                unmapped_ids=unmapped_ids,
+            )
+            if self._sp_ready:
+                records = [record if record.numeric else replace(record, mixed_as=0.0)
+                           for record in records]
+                scores = [self._served_score(term, record)
+                          for term, record in zip(model_terms, records)]
             else:
-                confidence_score = reasoning_score
+                # Nothing is mixed without a table: the model term ranks alone.
+                scores = list(model_terms)
+        else:
+            scores = [self._calculate_reasoning_score(paths)
+                      for _id, _name, paths in entries]
+        for (disease_id, _name, _paths), score in zip(entries, scores):
+            if not math.isfinite(score):
+                raise ResultRefused(
+                    "NON_FINITE_SCORE",
+                    f"disease {disease_id} scored {score!r}; the result was refused, "
+                    "not ranked")
 
-            # Extract supporting genes
-            supporting_genes = self._extract_supporting_genes(paths)
-
-            # Extract reasoning path nodes
-            reasoning_paths = [list(p.nodes) for p in paths[:5]]
-
-            # Determine evidence sources
-            evidence_sources = self._determine_evidence_sources(paths)
-
-            # Create candidate
-            candidate = DiagnosisCandidate(
-                rank=0,  # Will be set after sorting
+        # Sorted by the kind's score. **Stable**, so equal scores keep discovery
+        # order; the order is sorted by position so each candidate's discovery
+        # ordinal travels with it, which the sorted list alone cannot give back.
+        order = sorted(range(len(entries)), key=lambda i: scores[i], reverse=True)
+        ranked: List[Candidate] = []
+        for rank, i in enumerate(order, start=1):
+            disease_id, disease_name, paths = entries[i]
+            common = dict(
+                rank=rank,
                 disease_id=disease_id,
                 disease_name=disease_name,
-                confidence_score=confidence_score,
-                gnn_score=gnn_score,
-                reasoning_score=reasoning_score,
-                sp_score=sp_score,
-                supporting_genes=supporting_genes,
-                reasoning_paths=reasoning_paths,
-                evidence_sources=evidence_sources,
+                supporting_genes=self._extract_supporting_genes(paths),
+                reasoning_paths=[list(p.nodes) for p in paths[:5]],
+                evidence_sources=self._determine_evidence_sources(paths),
             )
-            candidates.append(candidate)
-
-        # Sort by confidence score
-        candidates.sort(key=lambda c: c.confidence_score, reverse=True)
-
-        # Assign ranks and limit to top_k
-        for i, candidate in enumerate(candidates[:top_k]):
-            candidate.rank = i + 1
-
-        return candidates[:top_k]
+            if mixture:
+                ranked.append(ServedMixtureCandidate(
+                    served_score=scores[i], model_term=model_terms[i],
+                    sp_term=records[i], **common))
+            else:
+                ranked.append(PathReasoningCandidate(path_score=scores[i], **common))
+        return ranked, order
 
     def _calculate_reasoning_score(self, paths: List[ReasoningPath]) -> float:
         """Calculate aggregate reasoning score from paths."""
@@ -1738,186 +1926,105 @@ class DiagnosisPipeline:
         else:
             return max(scores)
 
-    def _calculate_combined_score(
-        self,
-        source_ids: List[NodeID],
-        target_id: NodeID,
-        patient_input: PatientPhenotypes,
-        target_type_idx: int = 1,  # 1 = disease, 0 = gene
-    ) -> Tuple[float, float, float]:
+    def _served_score(self, model_term: float, record: SPAnalysisRecord) -> float:
+        """`served_mixture/v1`'s value with a table: η × model term + (1 − η) × SP,
+        where a non-numeric SP status enters as its `mixed_as`, 0.0 (legacy).
+
+        float64 is required, not incidental. The scores arriving here are Python
+        doubles; constructing float32 tensors would round them to ~7 significant
+        digits, and two candidates whose true scores differ below that threshold
+        would collapse to an exact tie. A tie is then resolved by sort stability
+        — that is, by input order — which can move a candidate across the top-k
+        boundary a clinician sees. The extraction is only behaviour-preserving in
+        double precision.
         """
-        Compute the final score using the original SHEPHERD formula:
-
-            final = eta * embedding_similarity + (1 - eta) * SP_similarity
-
-        Returns (combined_score, embedding_score, sp_score). When the
-        shortest path lookup table is not loaded, the formula degrades
-        gracefully to pure GNN scoring (effectively eta=1.0).
-        """
-        emb_score = self._calculate_gnn_score(
-            source_ids, target_id, patient_input
-        )
-
-        if not self._sp_ready:
-            # No SP table → pure GNN
-            return emb_score, emb_score, 0.0
-
-        sp_score = self._calculate_sp_score(
-            source_ids, target_id, target_type_idx
-        )
-
         from src.inference.scoring import mix_embedding_and_sp_scores
 
-        # float64 is required, not incidental. The scores arriving here are Python
-        # doubles; constructing float32 tensors would round them to ~7 significant
-        # digits, and two candidates whose true scores differ below that threshold
-        # would collapse to an exact tie. A tie is then resolved by sort stability
-        # — that is, by input order — which can move a candidate across the top-k
-        # boundary a clinician sees. The extraction is only behaviour-preserving in
-        # double precision.
-        combined = float(
+        sp_value = record.score if record.numeric else record.mixed_as
+        return float(
             mix_embedding_and_sp_scores(
-                torch.tensor([emb_score], dtype=torch.float64),
-                torch.tensor([sp_score], dtype=torch.float64),
+                torch.tensor([model_term], dtype=torch.float64),
+                torch.tensor([sp_value], dtype=torch.float64),
                 self.config.eta,
             )[0]
         )
-        return combined, emb_score, sp_score
 
-    def _calculate_sp_score(
-        self,
-        source_ids: List[NodeID],
-        target_id: NodeID,
-        target_type_idx: int,
-    ) -> float:
+    def _patient_embedding(self, rows: Optional[List[int]]) -> "Tensor":
+        """The unweighted mean of the patient's phenotype rows, in the order used.
+
+        Raises `ResultRefused` (`MODEL_TERM_UNAVAILABLE`) when there are no
+        embeddings, no phenotype table or no rows; validation has refused a
+        row outside the table, so the pool's clamp cannot move one."""
+        from src.inference.scoring import pool_patient_embeddings
+
+        if not self._gnn_ready or self._node_embeddings is None:
+            raise ResultRefused(
+                "MODEL_TERM_UNAVAILABLE",
+                "the pipeline holds no node embeddings, so no model term can be computed")
+        table = self._node_embeddings.get(NodeType.PHENOTYPE.value)
+        if table is None:
+            raise ResultRefused(
+                "MODEL_TERM_UNAVAILABLE",
+                "the served model has no phenotype embedding table, so no patient "
+                "representation can be computed")
+        if not rows:
+            raise ResultRefused(
+                "MODEL_TERM_UNAVAILABLE",
+                "no phenotype row to pool: the phenotypes as used have no rows in "
+                "the model's node mapping")
+        return pool_patient_embeddings(table, rows)
+
+    def _calculate_gnn_score(self, patient_embedding: "Tensor", disease_id: NodeID) -> float:
         """
-        Compute shortest path similarity between patient phenotypes and a
-        target node (gene or disease).
+        The model term of one candidate: (cos + 1) / 2 of the pooled patient and
+        the disease's embedding, from the node embeddings the GNN forward pass
+        cached. This matches the scoring approach used during training (see
+        Trainer._compute_model_outputs).
 
-        For each phenotype, looks up the pre-computed shortest path length
-        to the target. Averages those distances and converts to a similarity
-        score in [0, 1] via 1 / (1 + avg_distance). Phenotypes with no
-        connection within max_hops contribute the maximum possible distance
-        (max_hops + 1) to penalize but not zero out the average.
-
-        Returns 0.0 if the SP table is not loaded or no phenotypes can be
-        looked up.
-        """
-        from src.inference.scoring import sp_scores_from_distances
-        from src.inference.sp_index import sp_mean_distances
-
-        if not self._sp_ready or self._sp_lookup is None:
-            return 0.0
-
-        node_mapping = self._node_id_to_idx
-        if node_mapping is None:
-            return 0.0
-
-        phenotype_type = NodeType.PHENOTYPE.value
-        target_type_str = (
-            NodeType.GENE.value if target_type_idx == 0 else NodeType.DISEASE.value
-        )
-
-        # Resolve target index
-        target_idx = node_mapping.get(target_type_str, {}).get(str(target_id))
-        if target_idx is None:
-            return 0.0
-
-        # Resolve phenotype indices
-        phenotype_mapping = node_mapping.get(phenotype_type, {})
-        phenotype_indices = []
-        for nid in source_ids:
-            idx = phenotype_mapping.get(str(nid))
-            if idx is not None:
-                phenotype_indices.append(idx)
-
-        if not phenotype_indices:
-            return 0.0
-
-        # One candidate is a batch of one. The primitive returns the measured
-        # quantity (mean hop distance) plus an availability mask; this wrapper
-        # keeps the historical contract of a bare float, collapsing unavailable
-        # to 0.0. That collapse is lossy — 0.0 is below the value a genuine
-        # "no path found" produces — which is why the mask exists upstream.
-        distances, available = sp_mean_distances(
-            self._sp_lookup, phenotype_indices, [target_idx], target_type_idx
-        )
-        if not bool(available[0]):
-            return 0.0
-        return float(sp_scores_from_distances(distances)[0])
-
-    def _calculate_gnn_score(
-        self,
-        source_ids: List[NodeID],
-        disease_id: NodeID,
-        patient_input: PatientPhenotypes,
-    ) -> float:
-        """
-        Calculate GNN-based embedding similarity score for a candidate.
-
-        Uses precomputed node embeddings from the GNN forward pass to compute
-        cosine similarity between the aggregated patient phenotype profile
-        and the candidate disease embedding. This matches the scoring approach
-        used during training (see Trainer._compute_model_outputs).
-
-        The cosine similarity [-1, 1] is normalized to [0, 1] via
-        (sim + 1) / 2 to match the reasoning_score scale.
-
-        This is the embedding-only signal — the final score is a mixture
-        of this and the shortest path similarity, computed in
-        _calculate_combined_score().
-
-        Returns 0.0 if GNN inference is not available.
+        **It fails closed** (Spec 1 §2.1). Each state that used to return 0.0
+        refuses the result instead (`ResultRefused`, `MODEL_TERM_UNAVAILABLE`,
+        naming the node): no embeddings, no disease table, a disease with no
+        row, and a row outside the table, which used to be clamped onto the
+        last one. A value that is not finite refuses it too (`NON_FINITE_SCORE`).
         """
         from src.inference.scoring import (
             cosine_scores,
             normalise_cosine_to_unit_interval,
-            pool_patient_embeddings,
         )
 
         if not self._gnn_ready or self._node_embeddings is None:
-            return 0.0
-
-        node_mapping = self._node_id_to_idx
-        phenotype_type = NodeType.PHENOTYPE.value  # "phenotype"
-
-        # 1. Map phenotype NodeIDs to integer indices
-        phenotype_indices = []
-        phenotype_mapping = node_mapping.get(phenotype_type, {})
-        for nid in source_ids:
-            nid_str = str(nid)
-            idx = phenotype_mapping.get(nid_str)
-            if idx is not None:
-                phenotype_indices.append(idx)
-
-        if not phenotype_indices:
-            return 0.0
-
-        # 2. Get phenotype embeddings and aggregate (mean pooling)
-        phenotype_emb = self._node_embeddings.get(phenotype_type)
-        if phenotype_emb is None:
-            return 0.0
-
-        patient_embedding = pool_patient_embeddings(phenotype_emb, phenotype_indices)
-
-        # 3. Map disease NodeID to integer index
-        disease_type = NodeType.DISEASE.value  # "disease"
-        disease_str = str(disease_id)
-        disease_idx = node_mapping.get(disease_type, {}).get(disease_str)
-        if disease_idx is None:
-            return 0.0
-
-        disease_emb = self._node_embeddings.get(disease_type)
+            raise ResultRefused(
+                "MODEL_TERM_UNAVAILABLE",
+                "the pipeline holds no node embeddings, so no model term can be computed")
+        disease_emb = self._node_embeddings.get(NodeType.DISEASE.value)
         if disease_emb is None:
-            return 0.0
+            raise ResultRefused(
+                "MODEL_TERM_UNAVAILABLE",
+                "the served model has no disease embedding table, so no disease can "
+                "be scored")
+        disease_idx = (self._node_id_to_idx or {}).get(
+            NodeType.DISEASE.value, {}).get(str(disease_id))
+        if disease_idx is None:
+            raise ResultRefused(
+                "MODEL_TERM_UNAVAILABLE",
+                f"disease {disease_id} was reached in the graph but has no row in the "
+                "model's node mapping; the model and the graph disagree")
+        if isinstance(disease_idx, bool) or not isinstance(disease_idx, int) or \
+                not 0 <= disease_idx < disease_emb.size(0):
+            raise ResultRefused(
+                "MODEL_TERM_UNAVAILABLE",
+                f"disease {disease_id} maps to row {disease_idx!r}, outside the disease "
+                f"embedding table's {disease_emb.size(0)} rows")
 
-        disease_idx = min(disease_idx, disease_emb.size(0) - 1)
-
-        # 4. Cosine similarity, then [-1,1] -> [0,1]. One candidate is a batch of
-        #    one; scoring the whole disease universe is the same call with a
-        #    taller candidate matrix.
+        # Cosine similarity, then [-1,1] -> [0,1]. One candidate is a batch of one.
         cosine = cosine_scores(patient_embedding, disease_emb[disease_idx].unsqueeze(0))
-        return float(normalise_cosine_to_unit_interval(cosine)[0])
+        value = float(normalise_cosine_to_unit_interval(cosine)[0])
+        if not math.isfinite(value):
+            raise ResultRefused(
+                "NON_FINITE_SCORE",
+                f"disease {disease_id}'s model term is {value!r}; the result was "
+                "refused, not ranked")
+        return value
 
     def _extract_supporting_genes(
         self, paths: List[ReasoningPath]
@@ -1955,13 +2062,13 @@ class DiagnosisPipeline:
 
     def _add_explanations(
         self,
-        candidates: List[DiagnosisCandidate],
+        candidates: List[Candidate],
         all_paths: Dict[str, List[ReasoningPath]],
         patient_input: PatientPhenotypes,
         source_ids: Optional[List[NodeID]] = None,
-    ) -> List[DiagnosisCandidate]:
+    ) -> List[Candidate]:
         """
-        Add explanations and Step C evidence packages to each candidate.
+        Copies of the candidates with explanations and Step C evidence packages.
 
         For each candidate, the EvidencePanel decides between:
           - Mode A (direct path): use existing paths from BFS, label as
@@ -1970,21 +2077,27 @@ class DiagnosisPipeline:
             the K nearest known candidates in GNN embedding space whose
             paths to the patient phenotypes DO exist, and surface them
           - INSUFFICIENT: if neither mode succeeds
+
+        The explanation names the candidate's score with the kind's label, so
+        the text says what the number is (Spec 1 §2.1).
         """
+        label = self._result_label()
+        explained: List[Candidate] = []
         for candidate in candidates:
-            disease_key = str(candidate.disease_id)
-            paths = all_paths.get(disease_key, [])
+            paths = all_paths.get(str(candidate.disease_id), [])
 
             # Legacy narrative explanation (kept for backwards compat)
-            explanation = self.explanation_generator.generate_explanation(
-                candidate=candidate,
-                phenotypes=patient_input,
-                kg=self.kg,
-                paths=paths,
-            )
-            candidate.explanation = explanation
+            changes: Dict[str, Any] = {
+                "explanation": self.explanation_generator.generate_explanation(
+                    candidate=candidate,
+                    phenotypes=patient_input,
+                    kg=self.kg,
+                    paths=paths,
+                    score_label=label,
+                ),
+            }
 
-            # Step C: structured evidence package with confidence label.
+            # Step C: structured evidence package with its evidence label.
             # Mode B requires GNN embeddings and the index map; both are
             # passed when available so the panel can attempt analogy search.
             if source_ids is not None:
@@ -1996,14 +2109,15 @@ class DiagnosisPipeline:
                     node_embeddings=self._node_embeddings,
                     node_id_to_idx=self._node_id_to_idx,
                 )
-                candidate.evidence_package = package.to_dict()
-                candidate.confidence_label = package.confidence_label.value
+                changes["evidence_package"] = package.to_dict()
+                changes["evidence_label"] = package.evidence_label.value
+            explained.append(replace(candidate, **changes))
 
-        return candidates
+        return explained
 
     def _generate_summary_explanation(
         self,
-        top_candidates: List[DiagnosisCandidate],
+        top_candidates: List[Candidate],
         patient_input: PatientPhenotypes,
     ) -> str:
         """Generate overall summary explanation."""
@@ -2021,7 +2135,7 @@ class DiagnosisPipeline:
         for candidate in top_candidates:
             lines.append(
                 f"**{candidate.rank}. {candidate.disease_name}** "
-                f"(Score: {candidate.confidence_score:.3f})"
+                f"(Score: {candidate_score(candidate):.3f})"
             )
             if candidate.supporting_genes:
                 lines.append(
@@ -2031,6 +2145,7 @@ class DiagnosisPipeline:
 
         lines.extend([
             "---",
+            f"*{self._result_label()}.*",
             f"*Score: {SCORE_MEANING}.*",
             "*Note: These results are computational predictions for clinical review. "
             "Final diagnosis should be made by qualified healthcare professionals.*",
@@ -2045,7 +2160,8 @@ class DiagnosisPipeline:
         warnings: List[str],
         phenotype_input: Optional[PhenotypeInputAccount] = None,
     ) -> InferenceResult:
-        """Create an empty result with warnings."""
+        """A result with no candidates (discovery reached no disease), with
+        its warnings."""
         return InferenceResult(
             patient_id=patient_id,
             timestamp=datetime.now(),
@@ -2054,6 +2170,69 @@ class DiagnosisPipeline:
             warnings=warnings,
             inference_time_ms=(time.time() - start_time) * 1000,
             phenotype_input=phenotype_input,
+            candidates_reached=self._candidates_reached(0),
+        )
+
+    def _candidates_reached(self, reached: int) -> Optional[int]:
+        """`candidates_reached` as the served kind carries it: the count for
+        `served_mixture/v1`, None for the kinds that do not carry it."""
+        return reached if result_kind_for(self._scoring_mode()[0]) == SERVED_MIXTURE else None
+
+    def _result_label(self) -> str:
+        """The served kind's label with this pipeline's own η (`result_label`)."""
+        scoring_mode, eta = self._scoring_mode()
+        return result_label(result_kind_for(scoring_mode), scoring_mode, eta)
+
+    @property
+    def embedding_regime(self) -> Optional[Any]:
+        """The autocast regime (`AutocastRegime`) the cached embeddings were
+        computed under, observed at that forward; None before any embeddings.
+
+        A measurement that scores these embeddings records it, and Mode C's own
+        check (`assert_manifest_describes_regime`) compares it with the manifest
+        (Mode D, `docs/working/scorer-measurement/PLAN_B05.md` §3)."""
+        return self._embedding_regime
+
+    @property
+    def node_embeddings(self) -> Optional[Dict[str, Any]]:
+        """The cached embeddings by node type, as the forward produced them and
+        moved them to the CPU; None without a model. Read-only: scoring reads
+        the same tensors, so a caller must not change them."""
+        return self._node_embeddings
+
+    def bound_inputs(self) -> BoundInputs:
+        """What this pipeline read and bound from its verified workspace
+        (`BoundInputs`), for a measurement of the served pipeline that must not
+        read those files again (Mode D).
+
+        Raises `ValueError` for a pipeline whose graph was not verified from a
+        workspace or that serves no model: nothing binds what it would score.
+        """
+        if self._bound_digests is None or self._dataset_record is None:
+            raise ValueError(
+                "this pipeline was not built over a verified workspace, so nothing "
+                "binds its graph, dataset record or model to files a measurement "
+                "can name"
+            )
+        if self._checkpoint_identity is None:
+            if self.model is None or not self._gnn_ready:
+                raise ValueError(
+                    "this pipeline serves no model (path_reasoning_fallback), so there "
+                    "is no checkpoint to name and no embeddings to measure"
+                )
+            # A model supplied in memory over a verified workspace serves a GNN,
+            # but no checkpoint read names the weights a measurement would score.
+            raise ValueError(
+                "this pipeline's model was supplied in memory, not read from a "
+                "checkpoint, so nothing binds the weights a measurement would score"
+            )
+        return BoundInputs(
+            graph=dict(self._bound_digests),
+            dataset_record=self._dataset_record,
+            checkpoint=self._checkpoint_identity,
+            checkpoint_training_inputs=copy.deepcopy(self._checkpoint_training_inputs),
+            manifest_sha256=self._manifest_sha256,
+            graph_data=self._graph_data,
         )
 
     def _scoring_mode(self) -> Tuple[str, float]:
@@ -2200,6 +2379,59 @@ class DiagnosisPipeline:
 # ==============================================================================
 # Factory Function
 # ==============================================================================
+def build_served_pipeline(
+    kg_path: Union[str, Path],
+    checkpoint_path: Optional[str] = None,
+    data_dir: Optional[str] = None,
+    device: Optional[str] = None,
+    expected_checkpoint_sha256: Optional[str] = None,
+) -> DiagnosisPipeline:
+    """Build a pipeline as the service builds it: settle the device, read the
+    graph once, and create the pipeline over it with the default configuration.
+
+    **The service's own build, in one place** (Batch 3). `src/api/main.py`'s
+    `build_pipeline` resolves its paths from the request or the environment,
+    records what was requested and then calls this; a measurement of the served
+    ranking (Mode D) calls it too, so it measures a pipeline built from the same
+    files by the same code, never a second construction. It sits here because
+    `src.evaluation` may import `src.inference` and not `src.api`.
+
+    The device is settled before the graph is read when a checkpoint is named
+    (contract M3c): `auto` without CUDA refuses before a multi-gigabyte
+    `kg.json` is parsed for a model that cannot be served here. The pipeline
+    applies the same rule itself; the request is passed on as given, so the
+    served identity records what was asked for beside what took effect.
+    """
+    from src.kg.graph import KnowledgeGraph
+
+    if checkpoint_path:
+        resolve_serving_device(device)
+    kg_file = Path(kg_path)
+    logger.info(f"Loading knowledge graph from {kg_file}...")
+    # **One read, kept whole** (contract M2.1, S6). The graph and the identity of
+    # the bytes it was parsed from travel together into the pipeline, which
+    # checks that identity against the workspace manifest when it builds a GNN
+    # over `data_dir`; a pipeline with no checkpoint checks nothing (BACKLOG
+    # 19.20). Nothing hashes the file again by path.
+    graph = KnowledgeGraph.read_json(kg_file)
+    kg = graph.kg
+    logger.info(f"KG loaded: {kg.total_nodes} nodes, {kg.total_edges} edges")
+    # **The graph read is passed whole, and the composition is checked there.**
+    # The graph and the workspace can be named independently, so a deployment
+    # can point them at two different workspaces -- each internally consistent,
+    # and together producing embeddings from one graph's tensors read through
+    # the other graph's node identifiers. The pipeline refuses that composition.
+    # The hop bound comes from the shortest-path table's sidecar alone (contract
+    # M2.5).
+    return create_diagnosis_pipeline(
+        graph=graph,
+        checkpoint_path=checkpoint_path,
+        data_dir=data_dir,
+        device=device,
+        expected_checkpoint_sha256=expected_checkpoint_sha256,
+    )
+
+
 def create_diagnosis_pipeline(
     kg: Optional["KnowledgeGraph"] = None,
     config: Optional[PipelineConfig] = None,

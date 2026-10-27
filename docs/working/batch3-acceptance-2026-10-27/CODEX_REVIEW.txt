@@ -1,0 +1,58 @@
+Codex GB10 C/D 短測證據複核
+日期：2026-10-27（Asia/Taipei）
+判定：PASS — be0ee1a 本次約定的合成資料 CUDA C/D 功能短測通過。
+
+複核來源
+證據目錄：/home/user/batch3-acceptance-be0ee1a-01
+受測提交：be0ee1a662db8d16a85533c0394244ffcb64ae29
+Workspace：/home/user/shepherd-data/workspaces/m5_webui_demo_01
+Checkpoint：/home/user/shepherd-data/workspaces/m5_webui_demo_01/runs/gat/20261024-173909_ui-live-stop-02_c1d9cf/checkpoints/last.pt
+Checkpoint SHA-256：568b109848430c92de8d13bd5e24d7836bc16fe32f17a088952be4b322a856bf
+Registry：/home/user/shepherd-data/registry
+Cohort：m5-closeout-demo-01（role：webui-synthetic）
+Cohort SHA-256：1c2c6050951155df6ccad39e07579c0df83536a35779f7ce916bda9561bb96c3
+
+核對方式與結果
+1. 直接讀取 C.log、D.log、兩份 outcome、report.json、ranks.json、前後帳本與使用紀錄；沒有重新量測或訓練。
+2. C、D 的量測及 tee 退出碼皆為 0；第三步核對及 tee 退出碼也皆為 0。
+3. 兩份 manifest 的 software_revision 都是受測 SHA，environment.code.dirty=false；device=cuda、cuda_executed=true，裝置為 NVIDIA GB10。
+   C：mode=C、metric_schema_version=1、batch_size=32。
+   D：mode=D、metric_schema_version=2、batch_size=1。
+4. 兩份報告的 checkpoint、cohort 和 artifact_digests 一致。dataset_record 為 verified / synthetic。
+5. 證據副本中的 report.json、ranks.json 與 registry 原檔逐位元組相同，摘要與 outcome／report 所記一致。
+6. 來源 12 例，匯入排除 2 例，合格 10 例。
+   C：10 ranked、0 absent。
+   D：7 ranked、3 not_reached、0 refused，合計 10；其中 no_candidates=2 是 not_reached 的子集合，不再相加。
+7. D.log 有 10 行病例進度，最後為 10 of 10，累計 7/3/0 與報告一致。主控台顯示 gnn_only、η=1.0，符合此 workspace 沒有 SP 表的條件。
+8. D.comparison.kept_mode_c_reports 包含這次 C run：
+   20261027T062536Z-568b10984843-f1ef4038
+   n_compared=10，n_equal=10，無 unreadable。
+   此一致性指「D 內部的 C 重算」與「獨立 C 執行」逐例相同，不是 C 與 D 的服務排名相同。
+9. 帳本原有 1 筆，現在 3 筆；原紀錄完整保留。
+   新增 sequence 2 為 C，sequence 3 為 D；各自指向本次報告摘要，scoring_semantics_digest 不同。
+   ledger-new-C-D.json 等於實際新增兩筆，ledger-after.json 等於 checkpoint 旁的目前帳本。
+   usage-after.jsonl 等於 registry 目前紀錄，完整保留舊內容作為前綴。
+10. 重新執行 inputs.sha256 的核對，全部通過，涵蓋既有模型、訓練紀錄、workspace、cohort 及舊報告。
+11. checkout-before.txt 與 checkout-restored.txt 完全相同。實際 repo 已還原為 detached：
+    773dc4afb5629bad9ec463980ea49b878121492c
+    git status --short 為空。第四步已完成，不需再次執行。
+
+本次數字的含義
+C untruncated MRR：0.4733333333333333（10 例）。
+D post-import MRR：0.38333333333333336（10 例）；coverage=0.7。
+D reached MRR：0.5476190476190476（只含 7 例可排名者），不可當作與 C 相同分母的指標。
+逐例記錄中，3 例真值不在 D 的服務候選集合內，包含 2 例完全沒有候選。
+本次 G1、G2、D 的逐例名次相同；觀察到的 C→D 差異出現在候選集合那一步。這僅描述這 10 例，不外推為整體排名政策的品質結論。
+
+原始 log 的警告與驗收界線
+兩份 log 均有 PyTorch 的 capability 警告：GB10 為 12.1，該 wheel 顯示的能力範圍到 12.0。警告原樣保留；本輪兩次 CUDA 執行均完成，報告與帳本一致。本次通過不等於證明全部 CUDA 運算或依賴組合全面相容。
+D 的兩行 No paths found 警告與 no_candidates=2 一致，不是遺失病例或程序失敗。
+本次沒有重新訓練，沒有驗證 SP 混合路徑、Models 頁、容量或性能、模型品質、真實病例或院方 gate。Models 截圖屬可選，本次不因此阻擋短測驗收。
+
+報告識別
+C run：20261027T062536Z-568b10984843-f1ef4038
+C report SHA-256：0330d72552d514c22ad635d66506410c7b046f41635c2eb0d662cb980e319a66
+D run：20261027T062539Z-568b10984843-61bfa57f
+D report SHA-256：effb476f7b5a07dd21e127c24c52a80694aa6e930a3439e0ea488889e7e83bbc
+
+後續：可將此次限定功能短測記為通過，保留完整原始證據。沒有需補跑的必驗項目；沒有修改產品程式、既有證據或帳本。此複核不自行授權 PR 合併或宣告其他 gate 通過。

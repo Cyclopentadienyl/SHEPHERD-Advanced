@@ -14,7 +14,6 @@
 #   - ReasoningPath: Path data structure
 #   - DirectPathFinder: Optimized direct path finding
 #   - ExplanationGenerator: Human-readable explanation generation
-#   - EvidenceSummary: Structured evidence summary
 #   - create_path_reasoner: Factory function
 #   - create_explanation_generator: Factory function
 #
@@ -50,8 +49,6 @@ from src.reasoning.path_reasoning import (
 )
 from src.reasoning.explanation_generator import (
     ExplanationGenerator,
-    EvidenceSummary,
-    EvidenceItem,
     SCORE_MEANING,
     create_explanation_generator,
     find_matching_phenotypes,
@@ -75,8 +72,6 @@ __all__ = [
     "create_path_reasoner",
     # Explanation generation
     "ExplanationGenerator",
-    "EvidenceSummary",
-    "EvidenceItem",
     "SCORE_MEANING",
     "create_explanation_generator",
     "find_matching_phenotypes",

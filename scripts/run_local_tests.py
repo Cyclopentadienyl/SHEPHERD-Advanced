@@ -117,7 +117,7 @@ def test_core_imports() -> bool:
     from src.core import types, protocols, schema
     from src.core.types import (
         Node, Edge, NodeID, PatientPhenotypes,
-        DiagnosisCandidate, InferenceResult
+        ServedMixtureCandidate, PathReasoningCandidate, InferenceResult
     )
     print(f"  - types: {len(dir(types))} exports")
     print(f"  - protocols: {len(dir(protocols))} exports")
@@ -252,15 +252,13 @@ def test_diagnosis_mock() -> bool:
         top_k=5,
     )
 
-    candidates = _generate_mock_candidates(
-        request.phenotypes,
-        request.top_k,
-        include_explanations=True,
-    )
+    candidates = _generate_mock_candidates(request.phenotypes, request.top_k)
 
-    assert len(candidates) == 5
-    assert candidates[0].rank == 1
-    assert candidates[0].confidence_score > candidates[-1].confidence_score
+    # The demo answer (demo/v1) ranks illustrative diseases and carries no
+    # score, explanation, path or gene of any kind.
+    assert [c.rank for c in candidates] == [1, 2, 3, 4, 5]
+    fields = set(type(candidates[0]).model_fields)
+    assert fields == {"rank", "disease_id", "disease_name", "matching_phenotypes"}, fields
 
     print(f"  - Generated {len(candidates)} mock candidates")
     print(f"  - Top candidate: {candidates[0].disease_name}")

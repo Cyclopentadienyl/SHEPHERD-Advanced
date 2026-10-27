@@ -9,13 +9,12 @@
 #   - Internal: src.core.types, src.kg, src.reasoning.path_reasoning
 #
 # Input:
-#   - DiagnosisCandidate with paths and evidence
+#   - A candidate of the result union (its score and the kind's label)
 #   - Patient phenotypes
 #   - Knowledge Graph for context lookup
 #
 # Output:
 #   - Human-readable explanation string
-#   - Structured evidence summary
 #
 # Design Notes:
 #   - Focuses on interpretability for clinical use
@@ -26,25 +25,25 @@
 # Key Principles:
 #   1. Transparency: Show WHY a diagnosis is suggested
 #   2. Evidence-based: Cite specific paths and data sources
-#   3. Uncertainty quantification: Express confidence levels
+#   3. Honest scores: name a score for what it is, never a confidence
 #   4. Actionable: Highlight key phenotype-gene-disease connections
 # ==============================================================================
 """
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence, Tuple, TYPE_CHECKING
+from typing import Dict, List, Optional, Sequence, Tuple, TYPE_CHECKING
 
 from src.core.types import (
+    Candidate,
     DataSource,
-    DiagnosisCandidate,
     EdgeType,
     EvidenceSource,
     Node,
     NodeID,
     NodeType,
     PatientPhenotypes,
+    candidate_score,
 )
 from src.reasoning.path_reasoning import ReasoningPath
 
@@ -54,69 +53,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 #: What a candidate's score is, wherever the pipeline writes it for a reader
-#: (each candidate's explanation, the run's summary): the combined ranking
-#: score, the API's ``confidence_score``. It is not a calibrated probability,
-#: so the text names no confidence band; `EvidenceSummary.confidence_level`
-#: keeps its bands for programs.
+#: (each candidate's explanation, the run's summary): the value its result
+#: kind ranks by (`served_score` or `path_score`, Spec 1 §2.1). It is not a
+#: calibrated probability, so the text names no confidence band.
 SCORE_MEANING = "a ranking score, not a calibrated disease probability"
-
-
-# ==============================================================================
-# Evidence Data Structures
-# ==============================================================================
-@dataclass
-class EvidenceItem:
-    """A single piece of evidence supporting a diagnosis."""
-
-    evidence_type: str  # "direct", "pathway", "ortholog", "literature"
-    description: str
-    confidence: float
-    source_nodes: List[NodeID] = field(default_factory=list)
-    supporting_path: Optional[ReasoningPath] = None
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for JSON serialization."""
-        return {
-            "type": self.evidence_type,
-            "description": self.description,
-            "confidence": self.confidence,
-            "sources": [str(n) for n in self.source_nodes],
-        }
-
-
-@dataclass
-class EvidenceSummary:
-    """Structured evidence summary for a diagnosis candidate."""
-
-    disease_id: NodeID
-    disease_name: str
-    total_score: float
-    confidence_level: str  # "high", "medium", "low"
-
-    direct_evidence: List[EvidenceItem] = field(default_factory=list)
-    pathway_evidence: List[EvidenceItem] = field(default_factory=list)
-    ortholog_evidence: List[EvidenceItem] = field(default_factory=list)
-    literature_evidence: List[EvidenceItem] = field(default_factory=list)
-
-    matching_phenotypes: List[str] = field(default_factory=list)  # the first ten
-    key_genes: List[str] = field(default_factory=list)
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for JSON serialization."""
-        return {
-            "disease_id": str(self.disease_id),
-            "disease_name": self.disease_name,
-            "total_score": self.total_score,
-            "confidence_level": self.confidence_level,
-            "matching_phenotypes": self.matching_phenotypes,
-            "key_genes": self.key_genes,
-            "evidence": {
-                "direct": [e.to_dict() for e in self.direct_evidence],
-                "pathway": [e.to_dict() for e in self.pathway_evidence],
-                "ortholog": [e.to_dict() for e in self.ortholog_evidence],
-                "literature": [e.to_dict() for e in self.literature_evidence],
-            },
-        }
 
 
 # ==============================================================================
@@ -130,7 +70,7 @@ def find_matching_phenotypes(
     """The phenotypes the knowledge graph annotates directly to this disease.
 
     **One definition for the candidate field and the explanation.** The pipeline
-    fills `DiagnosisCandidate.matching_phenotypes` with this, and the
+    fills each candidate's `matching_phenotypes` with this, and the
     explanation's "Matching Phenotypes" section lists the first ten of the same
     ids, in the same order, then how many more the field holds: the section is
     cut for reading, never silently.
@@ -171,27 +111,21 @@ class ExplanationGenerator:
     """
     Generate human-readable explanations for diagnosis results.
 
-    Provides:
-    - Narrative explanation for clinical review
-    - Structured evidence summary for programmatic use
-    - Confidence assessment based on evidence strength
+    Provides a narrative explanation for clinical review, which names the
+    candidate's score with its result kind's label.
 
     Usage:
         generator = ExplanationGenerator()
         explanation = generator.generate_explanation(
-            candidate=diagnosis_candidate,
+            candidate=candidate,
             phenotypes=patient_phenotypes,
             kg=knowledge_graph,
+            score_label=result.label,
         )
-        summary = generator.generate_evidence_summary(candidate, kg)
     """
 
-    # Confidence thresholds
-    HIGH_CONFIDENCE_THRESHOLD = 0.7
-    MEDIUM_CONFIDENCE_THRESHOLD = 0.4
-
-    # Matching phenotypes listed by name in the explanation and the evidence
-    # summary; `DiagnosisCandidate.matching_phenotypes` carries all of them.
+    # Matching phenotypes listed by name in the explanation; the candidate's
+    # `matching_phenotypes` carries all of them.
     MATCHING_PHENOTYPES_LISTED = 10
 
     def __init__(
@@ -212,19 +146,22 @@ class ExplanationGenerator:
 
     def generate_explanation(
         self,
-        candidate: DiagnosisCandidate,
+        candidate: Candidate,
         phenotypes: PatientPhenotypes,
         kg: "KnowledgeGraph",
         paths: Optional[List[ReasoningPath]] = None,
+        score_label: Optional[str] = None,
     ) -> str:
         """
         Generate a human-readable explanation for a diagnosis candidate.
 
         Args:
-            candidate: Diagnosis candidate with score
+            candidate: A candidate of the result union, with its kind's score
             phenotypes: Patient's phenotypes
             kg: Knowledge graph for context
             paths: Supporting paths (optional)
+            score_label: The result kind's label (`InferenceResult.label`), so
+                the score line says what the number is
 
         Returns:
             Human-readable explanation string
@@ -239,7 +176,9 @@ class ExplanationGenerator:
         # Header
         sections.append(
             f"## Diagnosis Candidate: {disease_name}\n"
-            f"Score: {candidate.confidence_score:.3f} ({SCORE_MEANING})\n"
+            f"Score: {candidate_score(candidate):.3f} ({SCORE_MEANING})\n"
+            # A paragraph of its own: one newline joins the lines in Markdown.
+            + (f"\nRanking: {score_label}\n" if score_label else "")
         )
 
         # Matching phenotypes
@@ -305,86 +244,6 @@ class ExplanationGenerator:
         )
 
         return "\n".join(sections)
-
-    def generate_evidence_summary(
-        self,
-        candidate: DiagnosisCandidate,
-        kg: "KnowledgeGraph",
-        paths: Optional[List[ReasoningPath]] = None,
-        phenotypes: Optional[PatientPhenotypes] = None,
-    ) -> EvidenceSummary:
-        """
-        Generate a structured evidence summary.
-
-        Its lists are capped. `matching_phenotypes` holds the first ten
-        matches, as "name (id)" in the field's order, with no "…and N more"
-        entry as the explanation has: a program reads every entry as a
-        phenotype. `DiagnosisCandidate.matching_phenotypes` holds them all.
-
-        Args:
-            candidate: Diagnosis candidate
-            kg: Knowledge graph
-            paths: Supporting paths
-            phenotypes: Patient phenotypes
-
-        Returns:
-            EvidenceSummary with categorized evidence
-        """
-        disease_node = kg.get_node(candidate.disease_id)
-        disease_name = disease_node.name if disease_node else str(candidate.disease_id)
-
-        summary = EvidenceSummary(
-            disease_id=candidate.disease_id,
-            disease_name=disease_name,
-            total_score=candidate.confidence_score,
-            confidence_level=self._get_confidence_level(candidate.confidence_score),
-        )
-
-        # Extract evidence from paths
-        if paths:
-            for path in paths:
-                evidence = self._create_evidence_item(path, kg)
-
-                if self._is_direct_path(path):
-                    if len(summary.direct_evidence) < self.max_paths_per_type:
-                        summary.direct_evidence.append(evidence)
-                elif self._is_pathway_path(path):
-                    if len(summary.pathway_evidence) < self.max_paths_per_type:
-                        summary.pathway_evidence.append(evidence)
-                elif self._is_ortholog_path(path) and self.include_ortholog_evidence:
-                    if len(summary.ortholog_evidence) < self.max_paths_per_type:
-                        summary.ortholog_evidence.append(evidence)
-
-        # Find matching phenotypes
-        if phenotypes:
-            matching = self._find_matching_phenotypes(
-                candidate.disease_id, phenotypes, kg
-            )
-            summary.matching_phenotypes = [
-                f"{name} ({pid})"
-                for pid, name in matching[: self.MATCHING_PHENOTYPES_LISTED]
-            ]
-
-        # Find key genes
-        if paths:
-            genes = self._find_connecting_genes(
-                phenotypes or PatientPhenotypes(phenotype_ids=[]),
-                candidate.disease_id,
-                kg,
-                paths,
-            )
-            summary.key_genes = [name for name, _ in genes[:5]]
-
-        return summary
-
-    def _get_confidence_level(self, score: float) -> str:
-        """Determine confidence level from score."""
-        if score >= self.HIGH_CONFIDENCE_THRESHOLD:
-            return "high"
-        elif score >= self.MEDIUM_CONFIDENCE_THRESHOLD:
-            return "medium"
-        else:
-            return "low"
 
     def _find_matching_phenotypes(
         self,
@@ -498,32 +357,6 @@ class ExplanationGenerator:
 
         path_str = "".join(parts)
         return f"{path_str} (score: {path.score:.3f})"
-
-    def _create_evidence_item(
-        self,
-        path: ReasoningPath,
-        kg: "KnowledgeGraph",
-    ) -> EvidenceItem:
-        """Create an EvidenceItem from a path."""
-        # Determine evidence type
-        if self._is_ortholog_path(path):
-            evidence_type = "ortholog"
-        elif self._is_pathway_path(path):
-            evidence_type = "pathway"
-        else:
-            evidence_type = "direct"
-
-        # Build description
-        description = self._format_path(path, kg)
-
-        return EvidenceItem(
-            evidence_type=evidence_type,
-            description=description,
-            confidence=path.score,
-            source_nodes=list(path.nodes),
-            supporting_path=path,
-        )
-
 
 # ==============================================================================
 # Factory Function

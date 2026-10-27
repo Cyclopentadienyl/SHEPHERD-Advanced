@@ -928,8 +928,13 @@ class TestTheBuildEntryPoint:
         finally:
             sys.modules.pop(spec.name, None)
 
+        # Given relative, taken from the directory the probe starts in, made
+        # absolute once and refused if absent (BACKLOG 49).
+        for name in ("m.obo", "h.obo"):
+            (tmp_path / name).write_text("")
+        monkeypatch.chdir(tmp_path)
         args = probe.parse_args(["--work-dir", "w", "--mondo-path", "m.obo", "--hpo-path", "h.obo"])
-        assert args.mondo_path == Path("m.obo") and args.hpo_path == Path("h.obo")
+        assert args.mondo_path == tmp_path / "m.obo" and args.hpo_path == tmp_path / "h.obo"
 
         calls = []
 

@@ -1,0 +1,52 @@
+INFO __main__: GPU lock /home/user/shepherd-data/workspaces/.shepherd-gpu.lock held until this run ends.
+INFO __main__: Device: cuda (Linux-7.0.0-1019-nvidia-aarch64-with-glibc2.39)
+/home/user/Desktop/SHEPHERD-Advanced/.venv/lib/python3.12/site-packages/torch/cuda/__init__.py:435: UserWarning: 
+    Found GPU0 NVIDIA GB10 which is of cuda capability 12.1.
+    Minimum and Maximum cuda capability supported by this version of PyTorch is
+    (8.0) - (12.0)
+    
+  queued_call()
+INFO __main__: Read 10 samples of cohort version m5-closeout-demo-01; checkpoint /home/user/shepherd-data/workspaces/m5_webui_demo_01/runs/gat/20261024-173909_ui-live-stop-02_c1d9cf/checkpoints/last.pt (sha256 568b10984843)
+INFO __main__: Dataset record kg.provenance.json: binding verified, origin synthetic (sha256 9170959de0d5)
+INFO __main__: Mode C -> /home/user/shepherd-data/registry/versions/m5-closeout-demo-01/reports/20261027T062536Z-568b10984843-f1ef4038/report.json
+
+Disease ranking by the model, approved scorer policy (Mode C)
+  10 ranked, 0 absent
+  mean_rank                              2.900000
+  untruncated_mrr                        0.473333
+  hits@1                                 0.200000
+  hits@5                                 1.000000
+  hits@10                                1.000000
+  hits@20                                1.000000
+  hits@50                                1.000000
+  hits@100                               1.000000
+  candidate diseases per patient         5
+
+Dataset record: binding verified, origin synthetic
+SYNTHETIC WORKSPACE — this number is not over a graph built from real files.
+
+Whether this is the institution's number depends on the checkpoint and
+cohort it consumed, which a person checks against the recorded digests.
+
+Cohort version m5-closeout-demo-01 (role webui-synthetic), manifest sha256 1c2c60509511...
+  coverage: 10 ranked of 12 source cases; 2 excluded (ground_truth_absent 1, phenotype_unmappable 1)
+
+R10, against the inputs this checkpoint records:
+  training evidence: found at /home/user/shepherd-data/workspaces/m5_webui_demo_01/train_samples.json
+    Training disease overlap           overlap — 3 of 5 distinct test diseases; 7 test cases with one of them
+    Training phenotype-set overlap     overlap — 2 of 10 test cases
+  validation evidence: found at /home/user/shepherd-data/workspaces/m5_webui_demo_01/val_samples.json
+    Validation disease overlap         overlap — 1 of 5 distinct test diseases; 2 test cases with one of them
+    Validation phenotype-set overlap   none in the inputs this checkpoint records (not evidence about data outside them) — 0 of 10 test cases
+
+R10 labels:
+  Training disease overlap: distinct test diseases that are also the disease of a case in the training inputs this checkpoint records, of all distinct test diseases, and the test cases whose disease is among them.
+  Training phenotype-set overlap: test cases with the same disease and the same set of phenotypes as a case in the training inputs this checkpoint records, of all test cases; phenotype-set overlap ignores order and repetition, so the scoring inputs may differ.
+  Validation disease overlap: distinct test diseases that are also the disease of a case in the validation inputs this checkpoint records, of all distinct test diseases, and the test cases whose disease is among them.
+  Validation phenotype-set overlap: test cases with the same disease and the same set of phenotypes as a case in the validation inputs this checkpoint records, of all test cases; phenotype-set overlap ignores order and repetition, so the scoring inputs may differ.
+  A "none" label: none in the inputs this checkpoint records (not evidence about data outside them).
+
+Report: /home/user/shepherd-data/registry/versions/m5-closeout-demo-01/reports/20261027T062536Z-568b10984843-f1ef4038/report.json
+Run id: 20261027T062536Z-568b10984843-f1ef4038
+
+Registered as record 2 in /home/user/shepherd-data/workspaces/m5_webui_demo_01/runs/gat/20261024-173909_ui-live-stop-02_c1d9cf/checkpoints/evaluations.json

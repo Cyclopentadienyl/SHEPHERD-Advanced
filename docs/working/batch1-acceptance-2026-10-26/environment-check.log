@@ -1,0 +1,27 @@
+
+A. Environment
+/home/user/batch1-acceptance-0bc5178-01/repo/.venv/lib/python3.12/site-packages/torch/cuda/__init__.py:435: UserWarning: 
+    Found GPU0 NVIDIA GB10 which is of cuda capability 12.1.
+    Minimum and Maximum cuda capability supported by this version of PyTorch is
+    (8.0) - (12.0)
+    
+  queued_call()
+  [PASS] A1     the runtime describes itself
+  [PASS] A2     the serving device resolves
+  [PASS] A3     the build's architectures are recorded (informational)
+  [PASS] A4     kernels actually execute on this device and give the right answer
+         installed packages against this checkout's uv.lock (the one committed at the tested commit): 0 version(s) differ; installed more than once: shepherd-advanced (0.2.0, 0.2.0); 13 installed package(s) are not in the lock: 13 from the deploy scripts (PyG's native extensions, cuVS and what they require)
+  [PASS] A5     the installed packages are recorded against the lock (informational)
+{
+  "tested_commit": true,
+  "python_3_12": true,
+  "A1_A5_passed": true,
+  "cuda": true,
+  "GB10": true,
+  "committed_lock": true,
+  "versions_match_lock": true,
+  "no_duplicate_distributions": false,
+  "relative_absolute_same_target": true,
+  "relative_paths_made_absolute": true,
+  "path_check_created_no_work_directory": true
+}

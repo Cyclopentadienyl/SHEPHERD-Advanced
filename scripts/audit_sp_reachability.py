@@ -87,10 +87,6 @@ VALID_TARGET_TYPES = (GENE_TARGET_TYPE, DISEASE_TARGET_TYPE)
 
 REQUIRED_COLUMNS = ("phenotype_idx", "target_idx", "target_type", "distance")
 
-#: `scripts/compute_shortest_paths.py` validates `max_hops` into this range before
-#: it writes anything. A sidecar outside it did not come from that producer.
-PRODUCER_HOP_RANGE = (1, 127)
-
 #: Integer fields the sidecar must carry. Checked against history rather than
 #: assumed: every version of `save_shortest_paths` since the artifact format was
 #: introduced (`eadb839`) has written all four, so requiring them cannot refuse an
@@ -165,6 +161,7 @@ def _read_sidecar(artifact: Path, document: Any = None) -> Dict[str, int]:
     to what the artifact and the workspace actually contain. A sidecar that
     survives all of that is describing this table.
     """
+    from src.inference.scoring import PRODUCER_HOP_RANGE
     from src.inference.sp_artifact import read_sidecar, sidecar_path
     from src.inference.sp_index import SPArtifactError
 
@@ -205,6 +202,8 @@ def _read_sidecar(artifact: Path, document: Any = None) -> Dict[str, int]:
             )
         validated[key] = value
 
+    # `scripts/compute_shortest_paths.py` validates `max_hops` into this range
+    # before it writes anything; a sidecar outside it did not come from it.
     low, high = PRODUCER_HOP_RANGE
     if not low <= validated["max_hops"] <= high:
         raise SystemExit(

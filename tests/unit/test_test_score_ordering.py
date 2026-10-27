@@ -96,6 +96,30 @@ def test_ordering_is_offered_only_for_a_listed_role():
     assert (ordering.offered, ordering.rows) == (False, ())
 
 
+@pytest.mark.parametrize("damage", ["no scoring", None, "", " ", [], {}])
+def test_a_group_of_another_mode_is_not_ordered_and_an_unreadable_mode_stops_only_its_own(damage):
+    """Mode C records only (PLAN_B05 §6): a scoring group whose records name
+    another mode is not ordered at all. A record whose mode cannot be read (no
+    `scoring`, a hand edit) never stops the group: only its own checkpoint is
+    left unordered (the internal review of Batch 3, cli-1). A value that cannot
+    be hashed ([] or {}) included (the reviewer's P3 on 1f51fb2)."""
+    other = _record(B)
+    other["scoring"] = {**other["scoring"], "mode": "D"}
+    refused = _order([_c(A, _record(A)), _c(B, other)])
+    assert not refused.offered and refused.rows == ()
+    assert "mode D, not Mode C" in refused.why
+
+    unreadable = _record(B, sequence=1, mrr=0.9)
+    if damage == "no scoring":
+        del unreadable["scoring"]
+    else:
+        unreadable["scoring"] = {**unreadable["scoring"], "mode": damage}
+    ordering = _order([_c(A, _record(A)), _c(B, unreadable, _record(B, sequence=2))])
+    assert ordering.offered
+    states = {row.checkpoint_sha256: row.state for row in ordering.rows}
+    assert states == {A: "ordered", B: "unreadable"}       # never ordered on that record
+
+
 def test_institutional_acceptance_is_never_ordered_even_when_listed():
     assert NEVER_ORDERED_ROLES == ("institutional_acceptance",)
     ordering = _order([_c(A, _record(A))], role="institutional_acceptance",
@@ -104,11 +128,14 @@ def test_institutional_acceptance_is_never_ordered_even_when_listed():
     assert "never offered" in ordering.why
 
 
-@pytest.mark.parametrize("records_role", ["institutional_acceptance", "another_listed_role"])
+@pytest.mark.parametrize("records_role",
+                         ["institutional_acceptance", "another_listed_role", None, [], {}])
 def test_the_records_own_role_decides_not_only_the_callers(records_role):
     """The reviewer's P3 (2026-10-20): a caller passing a listed role (stale UI
     state, say) for a version whose records carry another role orders nothing,
-    so ``institutional_acceptance`` is never ordered on a caller's word."""
+    so ``institutional_acceptance`` is never ordered on a caller's word. A
+    damaged role ([] or {}, which cannot be hashed) is another role too, never
+    raised (the same defect as the mode's, the reviewer's P3 on 1f51fb2)."""
     acceptance = {**_record(A), "cohort_role": records_role}
 
     ordering = _order([_c(A, acceptance), _c(B, _record(B))],

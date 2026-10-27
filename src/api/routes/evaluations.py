@@ -270,10 +270,21 @@ class RecordView(_Strict):
 
     cohort: RecordCohort
     counts: RecordCounts
+    mode: _Text = Field(
+        ..., description="the record's measurement mode (`scoring.mode`): C, the model's own "
+        "ranking over every disease; D, what the Diagnosis page serves today. A surface labels "
+        "each record by its own mode")
+    score_semantics: _Text = Field(
+        ..., description="the record's `scoring.score_semantics`; for Mode D, "
+        "`served:<scoring mode>:eta=<eta>:sp=<build id or none>`")
     metrics: Dict[str, _Metric] = Field(
-        ..., description="Mode C metrics over n_ranked cases; `untruncated_mrr` is not "
-        "the trainer's top-20 `val_mrr`")
-    n_ranked: _Count
+        ..., description="the metrics of the record's mode. Mode C: over n_ranked ranked "
+        "cases; `untruncated_mrr` is not the trainer's top-20 `val_mrr`. Mode D: `post_import_*` "
+        "and `coverage` over the version's import-eligible cases (`counts.ranked_eligible`, 0 "
+        "for a case not reached), `reached_*` over the n_ranked reached cases")
+    n_ranked: _Count = Field(
+        ..., description="Mode C: the cases ranked; Mode D: the import-eligible cases the "
+        "served pipeline reached")
     relations: Dict[str, Literal["verified", "not_applicable"]]
     r10: R10View
     environment_class: str
@@ -430,6 +441,8 @@ def _record_view(record: Dict[str, Any]) -> RecordView:
     return RecordView(
         cohort=cohort,
         counts=_pick(_at(record, "cohort", "counts"), RecordCounts.model_fields),
+        mode=_at(record, "scoring", "mode"),
+        score_semantics=_at(record, "scoring", "score_semantics"),
         metrics=_at(record, "metrics"),
         n_ranked=_at(record, "n_ranked"),
         relations=_at(record, "relations"),

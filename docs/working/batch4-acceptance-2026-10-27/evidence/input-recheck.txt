@@ -1,0 +1,11 @@
+/home/user/m5-acceptance-b14c4de-01/work/real/resumed/checkpoints/last.pt: OK
+/home/user/shepherd-data/workspaces/hpo_2026_0929_5a/kg.json: OK
+/home/user/shepherd-data/workspaces/hpo_2026_0929_5a/kg.provenance.json: OK
+/home/user/shepherd-data/workspaces/hpo_2026_0929_5a/split_manifest.json: OK
+/home/user/shepherd-data/workspaces/hpo_2026_0929_5a/node_features.pt: OK
+/home/user/shepherd-data/workspaces/hpo_2026_0929_5a/edge_indices.pt: OK
+/home/user/shepherd-data/workspaces/hpo_2026_0929_5a/num_nodes.json: OK
+/home/user/shepherd-data/workspaces/hpo_2026_0929_5a/shortest_paths.pt: OK
+/home/user/shepherd-data/workspaces/hpo_2026_0929_5a/shortest_paths.meta.json: OK
+/home/user/shepherd-data/service.env: OK
+/home/user/Desktop/SHEPHERD-Advanced/.shepherd_runtime_settings.json: OK

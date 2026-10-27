@@ -1,0 +1,3450 @@
+{
+ "results": {
+  "fallback|0": {
+   "candidates": [
+    [
+     "mondo:MONDO:0011073",
+     1,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0012091",
+     2,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0010582",
+     3,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0010730",
+     4,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0001250",
+     "HP:0001252"
+    ]
+   },
+   "warnings": []
+  },
+  "fallback|1": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010582",
+     1,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0012091",
+     2,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0011073",
+     3,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0010730",
+     4,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0007037",
+     5,
+     0.666632,
+     0.0,
+     0.0,
+     0.666632
+    ]
+   ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0001263",
+     "HP:0000256"
+    ]
+   },
+   "warnings": []
+  },
+  "fallback|10": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010582",
+     1,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0011073",
+     2,
+     0.930937,
+     0.0,
+     0.0,
+     0.930937
+    ],
+    [
+     "mondo:MONDO:0012091",
+     3,
+     0.70676,
+     0.0,
+     0.0,
+     0.70676
+    ],
+    [
+     "mondo:MONDO:0010730",
+     4,
+     0.561236,
+     0.0,
+     0.0,
+     0.561236
+    ],
+    [
+     "mondo:MONDO:0007037",
+     5,
+     0.519413,
+     0.0,
+     0.0,
+     0.519413
+    ]
+   ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0001252",
+     "HP:0000256"
+    ]
+   },
+   "warnings": []
+  },
+  "fallback|11": {
+   "candidates": [],
+   "phenotype_input": {
+    "received": 1,
+    "repeats_removed": 0,
+    "unknown": [
+     "HP:9999998"
+    ],
+    "used": []
+   },
+   "warnings": [
+    "No valid phenotypes after validation"
+   ]
+  },
+  "fallback|12": {
+   "candidates": [],
+   "phenotype_input": {
+    "received": 1,
+    "repeats_removed": 0,
+    "unknown": [
+     "HP:9999999"
+    ],
+    "used": []
+   },
+   "warnings": [
+    "No valid phenotypes after validation"
+   ]
+  },
+  "fallback|13": {
+   "candidates": [],
+   "phenotype_input": {
+    "received": 1,
+    "repeats_removed": 0,
+    "unknown": [
+     "HP:9999999"
+    ],
+    "used": []
+   },
+   "warnings": [
+    "No valid phenotypes after validation"
+   ]
+  },
+  "fallback|14": {
+   "candidates": [
+    [
+     "mondo:MONDO:0011073",
+     1,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0012091",
+     2,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0010582",
+     3,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0010730",
+     4,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "phenotype_input": {
+    "received": 4,
+    "repeats_removed": 1,
+    "unknown": [
+     "HP:9999999"
+    ],
+    "used": [
+     "HP:0001250",
+     "HP:0001252"
+    ]
+   },
+   "warnings": [
+    "Unknown phenotype: HP:9999999",
+    "Removed 1 repeated phenotype entry; each phenotype is scored once."
+   ]
+  },
+  "fallback|15": {
+   "candidates": [],
+   "phenotype_input": {
+    "received": 150,
+    "repeats_removed": 0,
+    "unknown": [
+     "HP:0000000",
+     "HP:0000001",
+     "HP:0000002",
+     "HP:0000003",
+     "HP:0000004",
+     "HP:0000005",
+     "HP:0000006",
+     "HP:0000007",
+     "HP:0000008",
+     "HP:0000009",
+     "HP:0000010",
+     "HP:0000011",
+     "HP:0000012",
+     "HP:0000013",
+     "HP:0000014",
+     "HP:0000015",
+     "HP:0000016",
+     "HP:0000017",
+     "HP:0000018",
+     "HP:0000019",
+     "HP:0000020",
+     "HP:0000021",
+     "HP:0000022",
+     "HP:0000023",
+     "HP:0000024",
+     "HP:0000025",
+     "HP:0000026",
+     "HP:0000027",
+     "HP:0000028",
+     "HP:0000029",
+     "HP:0000030",
+     "HP:0000031",
+     "HP:0000032",
+     "HP:0000033",
+     "HP:0000034",
+     "HP:0000035",
+     "HP:0000036",
+     "HP:0000037",
+     "HP:0000038",
+     "HP:0000039",
+     "HP:0000040",
+     "HP:0000041",
+     "HP:0000042",
+     "HP:0000043",
+     "HP:0000044",
+     "HP:0000045",
+     "HP:0000046",
+     "HP:0000047",
+     "HP:0000048",
+     "HP:0000049",
+     "HP:0000050",
+     "HP:0000051",
+     "HP:0000052",
+     "HP:0000053",
+     "HP:0000054",
+     "HP:0000055",
+     "HP:0000056",
+     "HP:0000057",
+     "HP:0000058",
+     "HP:0000059",
+     "HP:0000060",
+     "HP:0000061",
+     "HP:0000062",
+     "HP:0000063",
+     "HP:0000064",
+     "HP:0000065",
+     "HP:0000066",
+     "HP:0000067",
+     "HP:0000068",
+     "HP:0000069",
+     "HP:0000070",
+     "HP:0000071",
+     "HP:0000072",
+     "HP:0000073",
+     "HP:0000074",
+     "HP:0000075",
+     "HP:0000076",
+     "HP:0000077",
+     "HP:0000078",
+     "HP:0000079",
+     "HP:0000080",
+     "HP:0000081",
+     "HP:0000082",
+     "HP:0000083",
+     "HP:0000084",
+     "HP:0000085",
+     "HP:0000086",
+     "HP:0000087",
+     "HP:0000088",
+     "HP:0000089",
+     "HP:0000090",
+     "HP:0000091",
+     "HP:0000092",
+     "HP:0000093",
+     "HP:0000094",
+     "HP:0000095",
+     "HP:0000096",
+     "HP:0000097",
+     "HP:0000098",
+     "HP:0000099",
+     "HP:0000100",
+     "HP:0000101",
+     "HP:0000102",
+     "HP:0000103",
+     "HP:0000104",
+     "HP:0000105",
+     "HP:0000106",
+     "HP:0000107",
+     "HP:0000108",
+     "HP:0000109",
+     "HP:0000110",
+     "HP:0000111",
+     "HP:0000112",
+     "HP:0000113",
+     "HP:0000114",
+     "HP:0000115",
+     "HP:0000116",
+     "HP:0000117",
+     "HP:0000118",
+     "HP:0000119",
+     "HP:0000120",
+     "HP:0000121",
+     "HP:0000122",
+     "HP:0000123",
+     "HP:0000124",
+     "HP:0000125",
+     "HP:0000126",
+     "HP:0000127",
+     "HP:0000128",
+     "HP:0000129",
+     "HP:0000130",
+     "HP:0000131",
+     "HP:0000132",
+     "HP:0000133",
+     "HP:0000134",
+     "HP:0000135",
+     "HP:0000136",
+     "HP:0000137",
+     "HP:0000138",
+     "HP:0000139",
+     "HP:0000140",
+     "HP:0000141",
+     "HP:0000142",
+     "HP:0000143",
+     "HP:0000144",
+     "HP:0000145",
+     "HP:0000146",
+     "HP:0000147",
+     "HP:0000148",
+     "HP:0000149"
+    ],
+    "used": []
+   },
+   "warnings": [
+    "No valid phenotypes after validation"
+   ]
+  },
+  "fallback|2": {
+   "candidates": [],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0002311",
+     "HP:0001290"
+    ]
+   },
+   "warnings": [
+    "No paths found from phenotypes to diseases"
+   ]
+  },
+  "fallback|3": {
+   "candidates": [
+    [
+     "mondo:MONDO:0011073",
+     1,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0010582",
+     2,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0012091",
+     3,
+     0.880293,
+     0.0,
+     0.0,
+     0.880293
+    ],
+    [
+     "mondo:MONDO:0010730",
+     4,
+     0.507499,
+     0.0,
+     0.0,
+     0.507499
+    ]
+   ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0001252",
+     "HP:0002069"
+    ]
+   },
+   "warnings": []
+  },
+  "fallback|4": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010582",
+     1,
+     0.949026,
+     0.0,
+     0.0,
+     0.949026
+    ],
+    [
+     "mondo:MONDO:0012091",
+     2,
+     0.704698,
+     0.0,
+     0.0,
+     0.704698
+    ],
+    [
+     "mondo:MONDO:0007037",
+     3,
+     0.519413,
+     0.0,
+     0.0,
+     0.519413
+    ],
+    [
+     "mondo:MONDO:0010730",
+     4,
+     0.438897,
+     0.0,
+     0.0,
+     0.438897
+    ],
+    [
+     "mondo:MONDO:0011073",
+     5,
+     0.386043,
+     0.0,
+     0.0,
+     0.386043
+    ]
+   ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0000256",
+     "HP:0000729"
+    ]
+   },
+   "warnings": []
+  },
+  "fallback|5": {
+   "candidates": [
+    [
+     "mondo:MONDO:0012091",
+     1,
+     0.584174,
+     0.0,
+     0.0,
+     0.584174
+    ],
+    [
+     "mondo:MONDO:0011073",
+     2,
+     0.44157,
+     0.0,
+     0.0,
+     0.44157
+    ],
+    [
+     "mondo:MONDO:0010582",
+     3,
+     0.377654,
+     0.0,
+     0.0,
+     0.377654
+    ],
+    [
+     "mondo:MONDO:0010730",
+     4,
+     0.197584,
+     0.0,
+     0.0,
+     0.197584
+    ]
+   ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0001290",
+     "HP:0000486"
+    ]
+   },
+   "warnings": []
+  },
+  "fallback|6": {
+   "candidates": [
+    [
+     "mondo:MONDO:0011073",
+     1,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0010582",
+     2,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0012091",
+     3,
+     0.85817,
+     0.0,
+     0.0,
+     0.85817
+    ],
+    [
+     "mondo:MONDO:0010730",
+     4,
+     0.366564,
+     0.0,
+     0.0,
+     0.366564
+    ]
+   ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0002069",
+     "HP:0002360"
+    ]
+   },
+   "warnings": []
+  },
+  "fallback|7": {
+   "candidates": [
+    [
+     "mondo:MONDO:0011073",
+     1,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0012091",
+     2,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0010730",
+     3,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0010582",
+     4,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0000729",
+     "HP:0001250"
+    ]
+   },
+   "warnings": []
+  },
+  "fallback|8": {
+   "candidates": [
+    [
+     "mondo:MONDO:0011073",
+     1,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0012091",
+     2,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0010582",
+     3,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0010730",
+     4,
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0007037",
+     5,
+     0.184025,
+     0.0,
+     0.0,
+     0.184025
+    ]
+   ],
+   "phenotype_input": {
+    "received": 3,
+    "repeats_removed": 1,
+    "unknown": [],
+    "used": [
+     "HP:0001250",
+     "HP:0001263"
+    ]
+   },
+   "warnings": [
+    "Removed 1 repeated phenotype entry; each phenotype is scored once."
+   ]
+  },
+  "fallback|9": {
+   "candidates": [],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [
+     "HP:9999999"
+    ],
+    "used": [
+     "HP:0002311"
+    ]
+   },
+   "warnings": [
+    "Unknown phenotype: HP:9999999",
+    "No paths found from phenotypes to diseases"
+   ]
+  },
+  "gnn_only|0": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010582",
+     1,
+     0.588794,
+     0.588794,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0010730",
+     2,
+     0.546135,
+     0.546135,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0011073",
+     3,
+     0.475164,
+     0.475164,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0012091",
+     4,
+     0.424793,
+     0.424793,
+     0.0,
+     1.0
+    ]
+   ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0001250",
+     "HP:0001252"
+    ]
+   },
+   "warnings": []
+  },
+  "gnn_only|1": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010582",
+     1,
+     0.610019,
+     0.610019,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0010730",
+     2,
+     0.586529,
+     0.586529,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0011073",
+     3,
+     0.507063,
+     0.507063,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0007037",
+     4,
+     0.457799,
+     0.457799,
+     0.0,
+     0.666632
+    ],
+    [
+     "mondo:MONDO:0012091",
+     5,
+     0.430336,
+     0.430336,
+     0.0,
+     1.0
+    ]
+   ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0001263",
+     "HP:0000256"
+    ]
+   },
+   "warnings": []
+  },
+  "gnn_only|10": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010730",
+     1,
+     0.793961,
+     0.793961,
+     0.0,
+     0.561236
+    ],
+    [
+     "mondo:MONDO:0010582",
+     2,
+     0.710179,
+     0.710179,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0012091",
+     3,
+     0.565704,
+     0.565704,
+     0.0,
+     0.70676
+    ],
+    [
+     "mondo:MONDO:0011073",
+     4,
+     0.535546,
+     0.535546,
+     0.0,
+     0.930937
+    ],
+    [
+     "mondo:MONDO:0007037",
+     5,
+     0.408371,
+     0.408371,
+     0.0,
+     0.519413
+    ]
+   ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0001252",
+     "HP:0000256"
+    ]
+   },
+   "warnings": []
+  },
+  "gnn_only|11": {
+   "candidates": [],
+   "phenotype_input": {
+    "received": 1,
+    "repeats_removed": 0,
+    "unknown": [
+     "HP:9999998"
+    ],
+    "used": []
+   },
+   "warnings": [
+    "No valid phenotypes after validation"
+   ]
+  },
+  "gnn_only|12": {
+   "candidates": [],
+   "phenotype_input": {
+    "received": 1,
+    "repeats_removed": 0,
+    "unknown": [
+     "HP:9999999"
+    ],
+    "used": []
+   },
+   "warnings": [
+    "No valid phenotypes after validation"
+   ]
+  },
+  "gnn_only|13": {
+   "candidates": [],
+   "phenotype_input": {
+    "received": 1,
+    "repeats_removed": 0,
+    "unknown": [
+     "HP:9999999"
+    ],
+    "used": []
+   },
+   "warnings": [
+    "No valid phenotypes after validation"
+   ]
+  },
+  "gnn_only|14": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010582",
+     1,
+     0.588794,
+     0.588794,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0010730",
+     2,
+     0.546135,
+     0.546135,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0011073",
+     3,
+     0.475164,
+     0.475164,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0012091",
+     4,
+     0.424793,
+     0.424793,
+     0.0,
+     1.0
+    ]
+   ],
+   "phenotype_input": {
+    "received": 4,
+    "repeats_removed": 1,
+    "unknown": [
+     "HP:9999999"
+    ],
+    "used": [
+     "HP:0001250",
+     "HP:0001252"
+    ]
+   },
+   "warnings": [
+    "Unknown phenotype: HP:9999999",
+    "Removed 1 repeated phenotype entry; each phenotype is scored once."
+   ]
+  },
+  "gnn_only|15": {
+   "candidates": [],
+   "phenotype_input": {
+    "received": 150,
+    "repeats_removed": 0,
+    "unknown": [
+     "HP:0000000",
+     "HP:0000001",
+     "HP:0000002",
+     "HP:0000003",
+     "HP:0000004",
+     "HP:0000005",
+     "HP:0000006",
+     "HP:0000007",
+     "HP:0000008",
+     "HP:0000009",
+     "HP:0000010",
+     "HP:0000011",
+     "HP:0000012",
+     "HP:0000013",
+     "HP:0000014",
+     "HP:0000015",
+     "HP:0000016",
+     "HP:0000017",
+     "HP:0000018",
+     "HP:0000019",
+     "HP:0000020",
+     "HP:0000021",
+     "HP:0000022",
+     "HP:0000023",
+     "HP:0000024",
+     "HP:0000025",
+     "HP:0000026",
+     "HP:0000027",
+     "HP:0000028",
+     "HP:0000029",
+     "HP:0000030",
+     "HP:0000031",
+     "HP:0000032",
+     "HP:0000033",
+     "HP:0000034",
+     "HP:0000035",
+     "HP:0000036",
+     "HP:0000037",
+     "HP:0000038",
+     "HP:0000039",
+     "HP:0000040",
+     "HP:0000041",
+     "HP:0000042",
+     "HP:0000043",
+     "HP:0000044",
+     "HP:0000045",
+     "HP:0000046",
+     "HP:0000047",
+     "HP:0000048",
+     "HP:0000049",
+     "HP:0000050",
+     "HP:0000051",
+     "HP:0000052",
+     "HP:0000053",
+     "HP:0000054",
+     "HP:0000055",
+     "HP:0000056",
+     "HP:0000057",
+     "HP:0000058",
+     "HP:0000059",
+     "HP:0000060",
+     "HP:0000061",
+     "HP:0000062",
+     "HP:0000063",
+     "HP:0000064",
+     "HP:0000065",
+     "HP:0000066",
+     "HP:0000067",
+     "HP:0000068",
+     "HP:0000069",
+     "HP:0000070",
+     "HP:0000071",
+     "HP:0000072",
+     "HP:0000073",
+     "HP:0000074",
+     "HP:0000075",
+     "HP:0000076",
+     "HP:0000077",
+     "HP:0000078",
+     "HP:0000079",
+     "HP:0000080",
+     "HP:0000081",
+     "HP:0000082",
+     "HP:0000083",
+     "HP:0000084",
+     "HP:0000085",
+     "HP:0000086",
+     "HP:0000087",
+     "HP:0000088",
+     "HP:0000089",
+     "HP:0000090",
+     "HP:0000091",
+     "HP:0000092",
+     "HP:0000093",
+     "HP:0000094",
+     "HP:0000095",
+     "HP:0000096",
+     "HP:0000097",
+     "HP:0000098",
+     "HP:0000099",
+     "HP:0000100",
+     "HP:0000101",
+     "HP:0000102",
+     "HP:0000103",
+     "HP:0000104",
+     "HP:0000105",
+     "HP:0000106",
+     "HP:0000107",
+     "HP:0000108",
+     "HP:0000109",
+     "HP:0000110",
+     "HP:0000111",
+     "HP:0000112",
+     "HP:0000113",
+     "HP:0000114",
+     "HP:0000115",
+     "HP:0000116",
+     "HP:0000117",
+     "HP:0000118",
+     "HP:0000119",
+     "HP:0000120",
+     "HP:0000121",
+     "HP:0000122",
+     "HP:0000123",
+     "HP:0000124",
+     "HP:0000125",
+     "HP:0000126",
+     "HP:0000127",
+     "HP:0000128",
+     "HP:0000129",
+     "HP:0000130",
+     "HP:0000131",
+     "HP:0000132",
+     "HP:0000133",
+     "HP:0000134",
+     "HP:0000135",
+     "HP:0000136",
+     "HP:0000137",
+     "HP:0000138",
+     "HP:0000139",
+     "HP:0000140",
+     "HP:0000141",
+     "HP:0000142",
+     "HP:0000143",
+     "HP:0000144",
+     "HP:0000145",
+     "HP:0000146",
+     "HP:0000147",
+     "HP:0000148",
+     "HP:0000149"
+    ],
+    "used": []
+   },
+   "warnings": [
+    "No valid phenotypes after validation"
+   ]
+  },
+  "gnn_only|2": {
+   "candidates": [],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0002311",
+     "HP:0001290"
+    ]
+   },
+   "warnings": [
+    "No paths found from phenotypes to diseases"
+   ]
+  },
+  "gnn_only|3": {
+   "candidates": [
+    [
+     "mondo:MONDO:0012091",
+     1,
+     0.627636,
+     0.627636,
+     0.0,
+     0.880293
+    ],
+    [
+     "mondo:MONDO:0010730",
+     2,
+     0.626079,
+     0.626079,
+     0.0,
+     0.507499
+    ],
+    [
+     "mondo:MONDO:0010582",
+     3,
+     0.624536,
+     0.624536,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0011073",
+     4,
+     0.492659,
+     0.492659,
+     0.0,
+     1.0
+    ]
+   ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0001252",
+     "HP:0002069"
+    ]
+   },
+   "warnings": []
+  },
+  "gnn_only|4": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010730",
+     1,
+     0.845564,
+     0.845564,
+     0.0,
+     0.438897
+    ],
+    [
+     "mondo:MONDO:0010582",
+     2,
+     0.703181,
+     0.703181,
+     0.0,
+     0.949026
+    ],
+    [
+     "mondo:MONDO:0011073",
+     3,
+     0.604422,
+     0.604422,
+     0.0,
+     0.386043
+    ],
+    [
+     "mondo:MONDO:0012091",
+     4,
+     0.58579,
+     0.58579,
+     0.0,
+     0.704698
+    ],
+    [
+     "mondo:MONDO:0007037",
+     5,
+     0.43891,
+     0.43891,
+     0.0,
+     0.519413
+    ]
+   ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0000256",
+     "HP:0000729"
+    ]
+   },
+   "warnings": []
+  },
+  "gnn_only|5": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010730",
+     1,
+     0.718888,
+     0.718888,
+     0.0,
+     0.197584
+    ],
+    [
+     "mondo:MONDO:0012091",
+     2,
+     0.640821,
+     0.640821,
+     0.0,
+     0.584174
+    ],
+    [
+     "mondo:MONDO:0010582",
+     3,
+     0.506596,
+     0.506596,
+     0.0,
+     0.377654
+    ],
+    [
+     "mondo:MONDO:0011073",
+     4,
+     0.377542,
+     0.377542,
+     0.0,
+     0.44157
+    ]
+   ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0001290",
+     "HP:0000486"
+    ]
+   },
+   "warnings": []
+  },
+  "gnn_only|6": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010730",
+     1,
+     0.790544,
+     0.790544,
+     0.0,
+     0.366564
+    ],
+    [
+     "mondo:MONDO:0010582",
+     2,
+     0.686566,
+     0.686566,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0012091",
+     3,
+     0.67224,
+     0.67224,
+     0.0,
+     0.85817
+    ],
+    [
+     "mondo:MONDO:0011073",
+     4,
+     0.549032,
+     0.549032,
+     0.0,
+     1.0
+    ]
+   ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0002069",
+     "HP:0002360"
+    ]
+   },
+   "warnings": []
+  },
+  "gnn_only|7": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010730",
+     1,
+     0.666941,
+     0.666941,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0010582",
+     2,
+     0.630627,
+     0.630627,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0011073",
+     3,
+     0.556034,
+     0.556034,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0012091",
+     4,
+     0.456379,
+     0.456379,
+     0.0,
+     1.0
+    ]
+   ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0000729",
+     "HP:0001250"
+    ]
+   },
+   "warnings": []
+  },
+  "gnn_only|8": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010582",
+     1,
+     0.498841,
+     0.498841,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0011073",
+     2,
+     0.451855,
+     0.451855,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0007037",
+     3,
+     0.436186,
+     0.436186,
+     0.0,
+     0.184025
+    ],
+    [
+     "mondo:MONDO:0010730",
+     4,
+     0.370853,
+     0.370853,
+     0.0,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0012091",
+     5,
+     0.319978,
+     0.319978,
+     0.0,
+     1.0
+    ]
+   ],
+   "phenotype_input": {
+    "received": 3,
+    "repeats_removed": 1,
+    "unknown": [],
+    "used": [
+     "HP:0001250",
+     "HP:0001263"
+    ]
+   },
+   "warnings": [
+    "Removed 1 repeated phenotype entry; each phenotype is scored once."
+   ]
+  },
+  "gnn_only|9": {
+   "candidates": [],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [
+     "HP:9999999"
+    ],
+    "used": [
+     "HP:0002311"
+    ]
+   },
+   "warnings": [
+    "Unknown phenotype: HP:9999999",
+    "No paths found from phenotypes to diseases"
+   ]
+  },
+  "gnn_plus_sp|0": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010582",
+     1,
+     0.49787,
+     0.588794,
+     0.285714,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0010730",
+     2,
+     0.457294,
+     0.546135,
+     0.25,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0011073",
+     3,
+     0.452615,
+     0.475164,
+     0.4,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0012091",
+     4,
+     0.38307,
+     0.424793,
+     0.285714,
+     1.0
+    ]
+   ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0001250",
+     "HP:0001252"
+    ]
+   },
+   "warnings": []
+  },
+  "gnn_plus_sp|1": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010582",
+     1,
+     0.527013,
+     0.610019,
+     0.333333,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0010730",
+     2,
+     0.51057,
+     0.586529,
+     0.333333,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0011073",
+     3,
+     0.429944,
+     0.507063,
+     0.25,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0012091",
+     4,
+     0.401235,
+     0.430336,
+     0.333333,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0007037",
+     5,
+     0.395459,
+     0.457799,
+     0.25,
+     0.666632
+    ]
+   ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0001263",
+     "HP:0000256"
+    ]
+   },
+   "warnings": []
+  },
+  "gnn_plus_sp|10": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010730",
+     1,
+     0.630773,
+     0.793961,
+     0.25,
+     0.561236
+    ],
+    [
+     "mondo:MONDO:0010582",
+     2,
+     0.58284,
+     0.710179,
+     0.285714,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0012091",
+     3,
+     0.470993,
+     0.565704,
+     0.25,
+     0.70676
+    ],
+    [
+     "mondo:MONDO:0011073",
+     4,
+     0.449882,
+     0.535546,
+     0.25,
+     0.930937
+    ],
+    [
+     "mondo:MONDO:0007037",
+     5,
+     0.34586,
+     0.408371,
+     0.2,
+     0.519413
+    ]
+   ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0001252",
+     "HP:0000256"
+    ]
+   },
+   "warnings": []
+  },
+  "gnn_plus_sp|11": {
+   "candidates": [],
+   "phenotype_input": {
+    "received": 1,
+    "repeats_removed": 0,
+    "unknown": [
+     "HP:9999998"
+    ],
+    "used": []
+   },
+   "warnings": [
+    "No valid phenotypes after validation"
+   ]
+  },
+  "gnn_plus_sp|12": {
+   "candidates": [],
+   "phenotype_input": {
+    "received": 1,
+    "repeats_removed": 0,
+    "unknown": [
+     "HP:9999999"
+    ],
+    "used": []
+   },
+   "warnings": [
+    "No valid phenotypes after validation"
+   ]
+  },
+  "gnn_plus_sp|13": {
+   "candidates": [],
+   "phenotype_input": {
+    "received": 1,
+    "repeats_removed": 0,
+    "unknown": [
+     "HP:9999999"
+    ],
+    "used": []
+   },
+   "warnings": [
+    "No valid phenotypes after validation"
+   ]
+  },
+  "gnn_plus_sp|14": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010582",
+     1,
+     0.49787,
+     0.588794,
+     0.285714,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0010730",
+     2,
+     0.457294,
+     0.546135,
+     0.25,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0011073",
+     3,
+     0.452615,
+     0.475164,
+     0.4,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0012091",
+     4,
+     0.38307,
+     0.424793,
+     0.285714,
+     1.0
+    ]
+   ],
+   "phenotype_input": {
+    "received": 4,
+    "repeats_removed": 1,
+    "unknown": [
+     "HP:9999999"
+    ],
+    "used": [
+     "HP:0001250",
+     "HP:0001252"
+    ]
+   },
+   "warnings": [
+    "Unknown phenotype: HP:9999999",
+    "Removed 1 repeated phenotype entry; each phenotype is scored once."
+   ]
+  },
+  "gnn_plus_sp|15": {
+   "candidates": [],
+   "phenotype_input": {
+    "received": 150,
+    "repeats_removed": 0,
+    "unknown": [
+     "HP:0000000",
+     "HP:0000001",
+     "HP:0000002",
+     "HP:0000003",
+     "HP:0000004",
+     "HP:0000005",
+     "HP:0000006",
+     "HP:0000007",
+     "HP:0000008",
+     "HP:0000009",
+     "HP:0000010",
+     "HP:0000011",
+     "HP:0000012",
+     "HP:0000013",
+     "HP:0000014",
+     "HP:0000015",
+     "HP:0000016",
+     "HP:0000017",
+     "HP:0000018",
+     "HP:0000019",
+     "HP:0000020",
+     "HP:0000021",
+     "HP:0000022",
+     "HP:0000023",
+     "HP:0000024",
+     "HP:0000025",
+     "HP:0000026",
+     "HP:0000027",
+     "HP:0000028",
+     "HP:0000029",
+     "HP:0000030",
+     "HP:0000031",
+     "HP:0000032",
+     "HP:0000033",
+     "HP:0000034",
+     "HP:0000035",
+     "HP:0000036",
+     "HP:0000037",
+     "HP:0000038",
+     "HP:0000039",
+     "HP:0000040",
+     "HP:0000041",
+     "HP:0000042",
+     "HP:0000043",
+     "HP:0000044",
+     "HP:0000045",
+     "HP:0000046",
+     "HP:0000047",
+     "HP:0000048",
+     "HP:0000049",
+     "HP:0000050",
+     "HP:0000051",
+     "HP:0000052",
+     "HP:0000053",
+     "HP:0000054",
+     "HP:0000055",
+     "HP:0000056",
+     "HP:0000057",
+     "HP:0000058",
+     "HP:0000059",
+     "HP:0000060",
+     "HP:0000061",
+     "HP:0000062",
+     "HP:0000063",
+     "HP:0000064",
+     "HP:0000065",
+     "HP:0000066",
+     "HP:0000067",
+     "HP:0000068",
+     "HP:0000069",
+     "HP:0000070",
+     "HP:0000071",
+     "HP:0000072",
+     "HP:0000073",
+     "HP:0000074",
+     "HP:0000075",
+     "HP:0000076",
+     "HP:0000077",
+     "HP:0000078",
+     "HP:0000079",
+     "HP:0000080",
+     "HP:0000081",
+     "HP:0000082",
+     "HP:0000083",
+     "HP:0000084",
+     "HP:0000085",
+     "HP:0000086",
+     "HP:0000087",
+     "HP:0000088",
+     "HP:0000089",
+     "HP:0000090",
+     "HP:0000091",
+     "HP:0000092",
+     "HP:0000093",
+     "HP:0000094",
+     "HP:0000095",
+     "HP:0000096",
+     "HP:0000097",
+     "HP:0000098",
+     "HP:0000099",
+     "HP:0000100",
+     "HP:0000101",
+     "HP:0000102",
+     "HP:0000103",
+     "HP:0000104",
+     "HP:0000105",
+     "HP:0000106",
+     "HP:0000107",
+     "HP:0000108",
+     "HP:0000109",
+     "HP:0000110",
+     "HP:0000111",
+     "HP:0000112",
+     "HP:0000113",
+     "HP:0000114",
+     "HP:0000115",
+     "HP:0000116",
+     "HP:0000117",
+     "HP:0000118",
+     "HP:0000119",
+     "HP:0000120",
+     "HP:0000121",
+     "HP:0000122",
+     "HP:0000123",
+     "HP:0000124",
+     "HP:0000125",
+     "HP:0000126",
+     "HP:0000127",
+     "HP:0000128",
+     "HP:0000129",
+     "HP:0000130",
+     "HP:0000131",
+     "HP:0000132",
+     "HP:0000133",
+     "HP:0000134",
+     "HP:0000135",
+     "HP:0000136",
+     "HP:0000137",
+     "HP:0000138",
+     "HP:0000139",
+     "HP:0000140",
+     "HP:0000141",
+     "HP:0000142",
+     "HP:0000143",
+     "HP:0000144",
+     "HP:0000145",
+     "HP:0000146",
+     "HP:0000147",
+     "HP:0000148",
+     "HP:0000149"
+    ],
+    "used": []
+   },
+   "warnings": [
+    "No valid phenotypes after validation"
+   ]
+  },
+  "gnn_plus_sp|2": {
+   "candidates": [],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0002311",
+     "HP:0001290"
+    ]
+   },
+   "warnings": [
+    "No paths found from phenotypes to diseases"
+   ]
+  },
+  "gnn_plus_sp|3": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010582",
+     1,
+     0.522889,
+     0.624536,
+     0.285714,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0012091",
+     2,
+     0.514346,
+     0.627636,
+     0.25,
+     0.880293
+    ],
+    [
+     "mondo:MONDO:0010730",
+     3,
+     0.498255,
+     0.626079,
+     0.2,
+     0.507499
+    ],
+    [
+     "mondo:MONDO:0011073",
+     4,
+     0.444861,
+     0.492659,
+     0.333333,
+     1.0
+    ]
+   ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0001252",
+     "HP:0002069"
+    ]
+   },
+   "warnings": []
+  },
+  "gnn_plus_sp|4": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010730",
+     1,
+     0.666895,
+     0.845564,
+     0.25,
+     0.438897
+    ],
+    [
+     "mondo:MONDO:0010582",
+     2,
+     0.577941,
+     0.703181,
+     0.285714,
+     0.949026
+    ],
+    [
+     "mondo:MONDO:0012091",
+     3,
+     0.485053,
+     0.58579,
+     0.25,
+     0.704698
+    ],
+    [
+     "mondo:MONDO:0011073",
+     4,
+     0.483095,
+     0.604422,
+     0.2,
+     0.386043
+    ],
+    [
+     "mondo:MONDO:0007037",
+     5,
+     0.367237,
+     0.43891,
+     0.2,
+     0.519413
+    ]
+   ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0000256",
+     "HP:0000729"
+    ]
+   },
+   "warnings": []
+  },
+  "gnn_plus_sp|5": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010730",
+     1,
+     0.553221,
+     0.718888,
+     0.166667,
+     0.197584
+    ],
+    [
+     "mondo:MONDO:0012091",
+     2,
+     0.508574,
+     0.640821,
+     0.2,
+     0.584174
+    ],
+    [
+     "mondo:MONDO:0010582",
+     3,
+     0.409163,
+     0.506596,
+     0.181818,
+     0.377654
+    ],
+    [
+     "mondo:MONDO:0011073",
+     4,
+     0.318825,
+     0.377542,
+     0.181818,
+     0.44157
+    ]
+   ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0001290",
+     "HP:0000486"
+    ]
+   },
+   "warnings": []
+  },
+  "gnn_plus_sp|6": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010730",
+     1,
+     0.613381,
+     0.790544,
+     0.2,
+     0.366564
+    ],
+    [
+     "mondo:MONDO:0010582",
+     2,
+     0.56631,
+     0.686566,
+     0.285714,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0012091",
+     3,
+     0.545568,
+     0.67224,
+     0.25,
+     0.85817
+    ],
+    [
+     "mondo:MONDO:0011073",
+     4,
+     0.459322,
+     0.549032,
+     0.25,
+     1.0
+    ]
+   ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0002069",
+     "HP:0002360"
+    ]
+   },
+   "warnings": []
+  },
+  "gnn_plus_sp|7": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010730",
+     1,
+     0.541859,
+     0.666941,
+     0.25,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0010582",
+     2,
+     0.527153,
+     0.630627,
+     0.285714,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0011073",
+     3,
+     0.474938,
+     0.556034,
+     0.285714,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0012091",
+     4,
+     0.40518,
+     0.456379,
+     0.285714,
+     1.0
+    ]
+   ],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [],
+    "used": [
+     "HP:0000729",
+     "HP:0001250"
+    ]
+   },
+   "warnings": []
+  },
+  "gnn_plus_sp|8": {
+   "candidates": [
+    [
+     "mondo:MONDO:0010582",
+     1,
+     0.449189,
+     0.498841,
+     0.333333,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0011073",
+     2,
+     0.436299,
+     0.451855,
+     0.4,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0010730",
+     3,
+     0.359597,
+     0.370853,
+     0.333333,
+     1.0
+    ],
+    [
+     "mondo:MONDO:0007037",
+     4,
+     0.35533,
+     0.436186,
+     0.166667,
+     0.184025
+    ],
+    [
+     "mondo:MONDO:0012091",
+     5,
+     0.343985,
+     0.319978,
+     0.4,
+     1.0
+    ]
+   ],
+   "phenotype_input": {
+    "received": 3,
+    "repeats_removed": 1,
+    "unknown": [],
+    "used": [
+     "HP:0001250",
+     "HP:0001263"
+    ]
+   },
+   "warnings": [
+    "Removed 1 repeated phenotype entry; each phenotype is scored once."
+   ]
+  },
+  "gnn_plus_sp|9": {
+   "candidates": [],
+   "phenotype_input": {
+    "received": 2,
+    "repeats_removed": 0,
+    "unknown": [
+     "HP:9999999"
+    ],
+    "used": [
+     "HP:0002311"
+    ]
+   },
+   "warnings": [
+    "Unknown phenotype: HP:9999999",
+    "No paths found from phenotypes to diseases"
+   ]
+  }
+ },
+ "served_identity": {
+  "fallback": {
+   "checkpoint": {
+    "sha256": null,
+    "state": "absent"
+   },
+   "dataset_record": {
+    "origin": null,
+    "sha256": null,
+    "state": "absent"
+   },
+   "graph": {
+    "kg_sha256": "<present>",
+    "split_manifest_sha256": null,
+    "state": "unverified"
+   },
+   "scoring_mode": "path_reasoning_fallback",
+   "settings": {
+    "aggregation_method": "weighted_sum",
+    "device": null,
+    "device_requested": null,
+    "eta": null,
+    "max_path_length": 4,
+    "max_paths_per_candidate": 10,
+    "path_length_penalty": 0.9,
+    "phenotype_normalisation_version": 1,
+    "use_direct_path_optimization": true
+   },
+   "shortest_paths": {
+    "build_id": null,
+    "max_hops": null,
+    "state": "absent"
+   }
+  },
+  "gnn_only": {
+   "checkpoint": {
+    "sha256": "<present>",
+    "state": "verified"
+   },
+   "dataset_record": {
+    "origin": "synthetic",
+    "sha256": "<present>",
+    "state": "verified"
+   },
+   "graph": {
+    "kg_sha256": "<present>",
+    "split_manifest_sha256": "<present>",
+    "state": "verified"
+   },
+   "scoring_mode": "gnn_only",
+   "settings": {
+    "aggregation_method": "weighted_sum",
+    "device": "cpu",
+    "device_requested": "cpu",
+    "eta": 1.0,
+    "max_path_length": 4,
+    "max_paths_per_candidate": 10,
+    "path_length_penalty": 0.9,
+    "phenotype_normalisation_version": 1,
+    "use_direct_path_optimization": true
+   },
+   "shortest_paths": {
+    "build_id": null,
+    "max_hops": null,
+    "state": "absent"
+   }
+  },
+  "gnn_plus_sp": {
+   "checkpoint": {
+    "sha256": "<present>",
+    "state": "verified"
+   },
+   "dataset_record": {
+    "origin": "synthetic",
+    "sha256": "<present>",
+    "state": "verified"
+   },
+   "graph": {
+    "kg_sha256": "<present>",
+    "split_manifest_sha256": "<present>",
+    "state": "verified"
+   },
+   "scoring_mode": "gnn_plus_shortest_path",
+   "settings": {
+    "aggregation_method": "weighted_sum",
+    "device": "cpu",
+    "device_requested": "cpu",
+    "eta": 0.7,
+    "max_path_length": 4,
+    "max_paths_per_candidate": 10,
+    "path_length_penalty": 0.9,
+    "phenotype_normalisation_version": 1,
+    "use_direct_path_optimization": true
+   },
+   "shortest_paths": {
+    "build_id": "<present>",
+    "max_hops": 5,
+    "state": "verified"
+   }
+  }
+ },
+ "what_this_is": "DiagnosisPipeline.run(top_k=1000, include_explanations=False) over the registered-cohort fixture's demo workspace, captured with the serving code at e61253e, before the rank() split (Batch 3), in three scoring modes. Each candidate: [disease, rank, confidence, gnn, sp, reasoning], scores rounded to 6 places. Cases 0..12 are the fixture's graph source cases; 13 an unknown term; 14 an unknown term, case 0 and a repeat; 15 150 unknown terms. Each result also holds its phenotype account (phenotype_input), and served_identity each mode's served identity, both captured at e61253e; in the identity each digest and build id is reduced to whether it is there: the test checks each digest against the fixture's own files, and the shortest-path table's build id is random per build. exact_scores_755643a holds every case's same four values at full precision (Python repr), captured by the same run() at 755643a, the last commit before the result union (Batch 4), whose served values the golden already pinned equal to these rows; Batch 4's test compares each kind's fields with them: what each field means exactly, and served_score and model_term with confidence and gnn, the SP record's score with sp where a table is served (NO_TABLE where it read 0.0), and path_score with reasoning in the fallback, within 1e-5, with the ties exactly; the fixture reruns the model, whose float32 differs by an ulp between supported CPUs, so bit-for-bit equality is shown between versions in one environment, not against this capture.",
+ "exact_scores_755643a": {
+  "fallback|0": [
+   [
+    "mondo:MONDO:0011073",
+    1,
+    "1.0",
+    "0.0",
+    "0.0",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0012091",
+    2,
+    "1.0",
+    "0.0",
+    "0.0",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0010582",
+    3,
+    "1.0",
+    "0.0",
+    "0.0",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0010730",
+    4,
+    "1.0",
+    "0.0",
+    "0.0",
+    "1.0"
+   ]
+  ],
+  "fallback|1": [
+   [
+    "mondo:MONDO:0010582",
+    1,
+    "1.0",
+    "0.0",
+    "0.0",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0012091",
+    2,
+    "1.0",
+    "0.0",
+    "0.0",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0011073",
+    3,
+    "1.0",
+    "0.0",
+    "0.0",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0010730",
+    4,
+    "1.0",
+    "0.0",
+    "0.0",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0007037",
+    5,
+    "0.6666322858200001",
+    "0.0",
+    "0.0",
+    "0.6666322858200001"
+   ]
+  ],
+  "fallback|10": [
+   [
+    "mondo:MONDO:0010582",
+    1,
+    "1.0",
+    "0.0",
+    "0.0",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0011073",
+    2,
+    "0.9309365691840001",
+    "0.0",
+    "0.0",
+    "0.9309365691840001"
+   ],
+   [
+    "mondo:MONDO:0012091",
+    3,
+    "0.7067600826989401",
+    "0.0",
+    "0.0",
+    "0.7067600826989401"
+   ],
+   [
+    "mondo:MONDO:0010730",
+    4,
+    "0.5612358998052002",
+    "0.0",
+    "0.0",
+    "0.5612358998052002"
+   ],
+   [
+    "mondo:MONDO:0007037",
+    5,
+    "0.5194125",
+    "0.0",
+    "0.0",
+    "0.5194125"
+   ]
+  ],
+  "fallback|11": [],
+  "fallback|12": [],
+  "fallback|13": [],
+  "fallback|14": [
+   [
+    "mondo:MONDO:0011073",
+    1,
+    "1.0",
+    "0.0",
+    "0.0",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0012091",
+    2,
+    "1.0",
+    "0.0",
+    "0.0",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0010582",
+    3,
+    "1.0",
+    "0.0",
+    "0.0",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0010730",
+    4,
+    "1.0",
+    "0.0",
+    "0.0",
+    "1.0"
+   ]
+  ],
+  "fallback|15": [],
+  "fallback|2": [],
+  "fallback|3": [
+   [
+    "mondo:MONDO:0011073",
+    1,
+    "1.0",
+    "0.0",
+    "0.0",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0010582",
+    2,
+    "1.0",
+    "0.0",
+    "0.0",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0012091",
+    3,
+    "0.8802927666297",
+    "0.0",
+    "0.0",
+    "0.8802927666297"
+   ],
+   [
+    "mondo:MONDO:0010730",
+    4,
+    "0.5074993172295",
+    "0.0",
+    "0.0",
+    "0.5074993172295"
+   ]
+  ],
+  "fallback|4": [
+   [
+    "mondo:MONDO:0010582",
+    1,
+    "0.9490260083097601",
+    "0.0",
+    "0.0",
+    "0.9490260083097601"
+   ],
+   [
+    "mondo:MONDO:0012091",
+    2,
+    "0.7046981211434402",
+    "0.0",
+    "0.0",
+    "0.7046981211434402"
+   ],
+   [
+    "mondo:MONDO:0007037",
+    3,
+    "0.5194125",
+    "0.0",
+    "0.0",
+    "0.5194125"
+   ],
+   [
+    "mondo:MONDO:0010730",
+    4,
+    "0.4388971187232001",
+    "0.0",
+    "0.0",
+    "0.4388971187232001"
+   ],
+   [
+    "mondo:MONDO:0011073",
+    5,
+    "0.3860429939280001",
+    "0.0",
+    "0.0",
+    "0.3860429939280001"
+   ]
+  ],
+  "fallback|5": [
+   [
+    "mondo:MONDO:0012091",
+    1,
+    "0.584173944",
+    "0.0",
+    "0.0",
+    "0.584173944"
+   ],
+   [
+    "mondo:MONDO:0011073",
+    2,
+    "0.4415700753720001",
+    "0.0",
+    "0.0",
+    "0.4415700753720001"
+   ],
+   [
+    "mondo:MONDO:0010582",
+    3,
+    "0.37765402059600006",
+    "0.0",
+    "0.0",
+    "0.37765402059600006"
+   ],
+   [
+    "mondo:MONDO:0010730",
+    4,
+    "0.19758444939000003",
+    "0.0",
+    "0.0",
+    "0.19758444939000003"
+   ]
+  ],
+  "fallback|6": [
+   [
+    "mondo:MONDO:0011073",
+    1,
+    "1.0",
+    "0.0",
+    "0.0",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0010582",
+    2,
+    "1.0",
+    "0.0",
+    "0.0",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0012091",
+    3,
+    "0.8581702146690602",
+    "0.0",
+    "0.0",
+    "0.8581702146690602"
+   ],
+   [
+    "mondo:MONDO:0010730",
+    4,
+    "0.3665643526755",
+    "0.0",
+    "0.0",
+    "0.3665643526755"
+   ]
+  ],
+  "fallback|7": [
+   [
+    "mondo:MONDO:0011073",
+    1,
+    "1.0",
+    "0.0",
+    "0.0",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0012091",
+    2,
+    "1.0",
+    "0.0",
+    "0.0",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0010730",
+    3,
+    "1.0",
+    "0.0",
+    "0.0",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0010582",
+    4,
+    "1.0",
+    "0.0",
+    "0.0",
+    "1.0"
+   ]
+  ],
+  "fallback|8": [
+   [
+    "mondo:MONDO:0011073",
+    1,
+    "1.0",
+    "0.0",
+    "0.0",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0012091",
+    2,
+    "1.0",
+    "0.0",
+    "0.0",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0010582",
+    3,
+    "1.0",
+    "0.0",
+    "0.0",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0010730",
+    4,
+    "1.0",
+    "0.0",
+    "0.0",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0007037",
+    5,
+    "0.18402473227500005",
+    "0.0",
+    "0.0",
+    "0.18402473227500005"
+   ]
+  ],
+  "fallback|9": [],
+  "gnn_only|0": [
+   [
+    "mondo:MONDO:0010582",
+    1,
+    "0.5887939929962158",
+    "0.5887939929962158",
+    "0.0",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0010730",
+    2,
+    "0.5461347103118896",
+    "0.5461347103118896",
+    "0.0",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0011073",
+    3,
+    "0.4751644730567932",
+    "0.4751644730567932",
+    "0.0",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0012091",
+    4,
+    "0.4247933328151703",
+    "0.4247933328151703",
+    "0.0",
+    "1.0"
+   ]
+  ],
+  "gnn_only|1": [
+   [
+    "mondo:MONDO:0010582",
+    1,
+    "0.6100186109542847",
+    "0.6100186109542847",
+    "0.0",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0010730",
+    2,
+    "0.5865287780761719",
+    "0.5865287780761719",
+    "0.0",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0011073",
+    3,
+    "0.5070633292198181",
+    "0.5070633292198181",
+    "0.0",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0007037",
+    4,
+    "0.4577990174293518",
+    "0.4577990174293518",
+    "0.0",
+    "0.6666322858200001"
+   ],
+   [
+    "mondo:MONDO:0012091",
+    5,
+    "0.4303364157676697",
+    "0.4303364157676697",
+    "0.0",
+    "1.0"
+   ]
+  ],
+  "gnn_only|10": [
+   [
+    "mondo:MONDO:0010730",
+    1,
+    "0.7939609885215759",
+    "0.7939609885215759",
+    "0.0",
+    "0.5612358998052002"
+   ],
+   [
+    "mondo:MONDO:0010582",
+    2,
+    "0.710179328918457",
+    "0.710179328918457",
+    "0.0",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0012091",
+    3,
+    "0.5657036304473877",
+    "0.5657036304473877",
+    "0.0",
+    "0.7067600826989401"
+   ],
+   [
+    "mondo:MONDO:0011073",
+    4,
+    "0.5355463027954102",
+    "0.5355463027954102",
+    "0.0",
+    "0.9309365691840001"
+   ],
+   [
+    "mondo:MONDO:0007037",
+    5,
+    "0.4083707332611084",
+    "0.4083707332611084",
+    "0.0",
+    "0.5194125"
+   ]
+  ],
+  "gnn_only|11": [],
+  "gnn_only|12": [],
+  "gnn_only|13": [],
+  "gnn_only|14": [
+   [
+    "mondo:MONDO:0010582",
+    1,
+    "0.5887939929962158",
+    "0.5887939929962158",
+    "0.0",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0010730",
+    2,
+    "0.5461347103118896",
+    "0.5461347103118896",
+    "0.0",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0011073",
+    3,
+    "0.4751644730567932",
+    "0.4751644730567932",
+    "0.0",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0012091",
+    4,
+    "0.4247933328151703",
+    "0.4247933328151703",
+    "0.0",
+    "1.0"
+   ]
+  ],
+  "gnn_only|15": [],
+  "gnn_only|2": [],
+  "gnn_only|3": [
+   [
+    "mondo:MONDO:0012091",
+    1,
+    "0.6276364922523499",
+    "0.6276364922523499",
+    "0.0",
+    "0.8802927666297"
+   ],
+   [
+    "mondo:MONDO:0010730",
+    2,
+    "0.6260792016983032",
+    "0.6260792016983032",
+    "0.0",
+    "0.5074993172295"
+   ],
+   [
+    "mondo:MONDO:0010582",
+    3,
+    "0.6245356798171997",
+    "0.6245356798171997",
+    "0.0",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0011073",
+    4,
+    "0.4926586151123047",
+    "0.4926586151123047",
+    "0.0",
+    "1.0"
+   ]
+  ],
+  "gnn_only|4": [
+   [
+    "mondo:MONDO:0010730",
+    1,
+    "0.8455637693405151",
+    "0.8455637693405151",
+    "0.0",
+    "0.4388971187232001"
+   ],
+   [
+    "mondo:MONDO:0010582",
+    2,
+    "0.7031809091567993",
+    "0.7031809091567993",
+    "0.0",
+    "0.9490260083097601"
+   ],
+   [
+    "mondo:MONDO:0011073",
+    3,
+    "0.6044220924377441",
+    "0.6044220924377441",
+    "0.0",
+    "0.3860429939280001"
+   ],
+   [
+    "mondo:MONDO:0012091",
+    4,
+    "0.5857895016670227",
+    "0.5857895016670227",
+    "0.0",
+    "0.7046981211434402"
+   ],
+   [
+    "mondo:MONDO:0007037",
+    5,
+    "0.4389095902442932",
+    "0.4389095902442932",
+    "0.0",
+    "0.5194125"
+   ]
+  ],
+  "gnn_only|5": [
+   [
+    "mondo:MONDO:0010730",
+    1,
+    "0.7188876867294312",
+    "0.7188876867294312",
+    "0.0",
+    "0.19758444939000003"
+   ],
+   [
+    "mondo:MONDO:0012091",
+    2,
+    "0.6408206224441528",
+    "0.6408206224441528",
+    "0.0",
+    "0.584173944"
+   ],
+   [
+    "mondo:MONDO:0010582",
+    3,
+    "0.5065960884094238",
+    "0.5065960884094238",
+    "0.0",
+    "0.37765402059600006"
+   ],
+   [
+    "mondo:MONDO:0011073",
+    4,
+    "0.3775416612625122",
+    "0.3775416612625122",
+    "0.0",
+    "0.4415700753720001"
+   ]
+  ],
+  "gnn_only|6": [
+   [
+    "mondo:MONDO:0010730",
+    1,
+    "0.790543794631958",
+    "0.790543794631958",
+    "0.0",
+    "0.3665643526755"
+   ],
+   [
+    "mondo:MONDO:0010582",
+    2,
+    "0.6865655183792114",
+    "0.6865655183792114",
+    "0.0",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0012091",
+    3,
+    "0.6722404956817627",
+    "0.6722404956817627",
+    "0.0",
+    "0.8581702146690602"
+   ],
+   [
+    "mondo:MONDO:0011073",
+    4,
+    "0.5490315556526184",
+    "0.5490315556526184",
+    "0.0",
+    "1.0"
+   ]
+  ],
+  "gnn_only|7": [
+   [
+    "mondo:MONDO:0010730",
+    1,
+    "0.6669409871101379",
+    "0.6669409871101379",
+    "0.0",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0010582",
+    2,
+    "0.6306269764900208",
+    "0.6306269764900208",
+    "0.0",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0011073",
+    3,
+    "0.5560336709022522",
+    "0.5560336709022522",
+    "0.0",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0012091",
+    4,
+    "0.4563792645931244",
+    "0.4563792645931244",
+    "0.0",
+    "1.0"
+   ]
+  ],
+  "gnn_only|8": [
+   [
+    "mondo:MONDO:0010582",
+    1,
+    "0.4988407790660858",
+    "0.4988407790660858",
+    "0.0",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0011073",
+    2,
+    "0.45185521245002747",
+    "0.45185521245002747",
+    "0.0",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0007037",
+    3,
+    "0.4361858665943146",
+    "0.4361858665943146",
+    "0.0",
+    "0.18402473227500005"
+   ],
+   [
+    "mondo:MONDO:0010730",
+    4,
+    "0.3708527088165283",
+    "0.3708527088165283",
+    "0.0",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0012091",
+    5,
+    "0.3199784457683563",
+    "0.3199784457683563",
+    "0.0",
+    "1.0"
+   ]
+  ],
+  "gnn_only|9": [],
+  "gnn_plus_sp|0": [
+   [
+    "mondo:MONDO:0010582",
+    1,
+    "0.4978700808116368",
+    "0.5887939929962158",
+    "0.2857142857142857",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0010730",
+    2,
+    "0.45729429721832277",
+    "0.5461347103118896",
+    "0.25",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0011073",
+    3,
+    "0.45261513113975527",
+    "0.4751644730567932",
+    "0.4",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0012091",
+    4,
+    "0.3830696186849049",
+    "0.4247933328151703",
+    "0.2857142857142857",
+    "1.0"
+   ]
+  ],
+  "gnn_plus_sp|1": [
+   [
+    "mondo:MONDO:0010582",
+    1,
+    "0.5270130276679993",
+    "0.6100186109542847",
+    "0.3333333333333333",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0010730",
+    2,
+    "0.5105701446533203",
+    "0.5865287780761719",
+    "0.3333333333333333",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0011073",
+    3,
+    "0.42994433045387265",
+    "0.5070633292198181",
+    "0.25",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0012091",
+    4,
+    "0.4012354910373688",
+    "0.4303364157676697",
+    "0.3333333333333333",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0007037",
+    5,
+    "0.39545931220054625",
+    "0.4577990174293518",
+    "0.25",
+    "0.6666322858200001"
+   ]
+  ],
+  "gnn_plus_sp|10": [
+   [
+    "mondo:MONDO:0010730",
+    1,
+    "0.6307726919651031",
+    "0.7939609885215759",
+    "0.25",
+    "0.5612358998052002"
+   ],
+   [
+    "mondo:MONDO:0010582",
+    2,
+    "0.5828398159572056",
+    "0.710179328918457",
+    "0.2857142857142857",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0012091",
+    3,
+    "0.47099254131317136",
+    "0.5657036304473877",
+    "0.25",
+    "0.7067600826989401"
+   ],
+   [
+    "mondo:MONDO:0011073",
+    4,
+    "0.4498824119567871",
+    "0.5355463027954102",
+    "0.25",
+    "0.9309365691840001"
+   ],
+   [
+    "mondo:MONDO:0007037",
+    5,
+    "0.34585951328277587",
+    "0.4083707332611084",
+    "0.2",
+    "0.5194125"
+   ]
+  ],
+  "gnn_plus_sp|11": [],
+  "gnn_plus_sp|12": [],
+  "gnn_plus_sp|13": [],
+  "gnn_plus_sp|14": [
+   [
+    "mondo:MONDO:0010582",
+    1,
+    "0.4978700808116368",
+    "0.5887939929962158",
+    "0.2857142857142857",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0010730",
+    2,
+    "0.45729429721832277",
+    "0.5461347103118896",
+    "0.25",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0011073",
+    3,
+    "0.45261513113975527",
+    "0.4751644730567932",
+    "0.4",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0012091",
+    4,
+    "0.3830696186849049",
+    "0.4247933328151703",
+    "0.2857142857142857",
+    "1.0"
+   ]
+  ],
+  "gnn_plus_sp|15": [],
+  "gnn_plus_sp|2": [],
+  "gnn_plus_sp|3": [
+   [
+    "mondo:MONDO:0010582",
+    1,
+    "0.5228892615863255",
+    "0.6245356798171997",
+    "0.2857142857142857",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0012091",
+    2,
+    "0.5143455445766449",
+    "0.6276364922523499",
+    "0.25",
+    "0.8802927666297"
+   ],
+   [
+    "mondo:MONDO:0010730",
+    3,
+    "0.4982554411888122",
+    "0.6260792016983032",
+    "0.2",
+    "0.5074993172295"
+   ],
+   [
+    "mondo:MONDO:0011073",
+    4,
+    "0.44486103057861326",
+    "0.4926586151123047",
+    "0.3333333333333333",
+    "1.0"
+   ]
+  ],
+  "gnn_plus_sp|4": [
+   [
+    "mondo:MONDO:0010730",
+    1,
+    "0.6668946385383605",
+    "0.8455637693405151",
+    "0.25",
+    "0.4388971187232001"
+   ],
+   [
+    "mondo:MONDO:0010582",
+    2,
+    "0.5779409221240452",
+    "0.7031809091567993",
+    "0.2857142857142857",
+    "0.9490260083097601"
+   ],
+   [
+    "mondo:MONDO:0012091",
+    3,
+    "0.48505265116691587",
+    "0.5857895016670227",
+    "0.25",
+    "0.7046981211434402"
+   ],
+   [
+    "mondo:MONDO:0011073",
+    4,
+    "0.4830954647064209",
+    "0.6044220924377441",
+    "0.2",
+    "0.3860429939280001"
+   ],
+   [
+    "mondo:MONDO:0007037",
+    5,
+    "0.3672367131710052",
+    "0.4389095902442932",
+    "0.2",
+    "0.5194125"
+   ]
+  ],
+  "gnn_plus_sp|5": [
+   [
+    "mondo:MONDO:0010730",
+    1,
+    "0.5532213807106018",
+    "0.7188876867294312",
+    "0.16666666666666666",
+    "0.19758444939000003"
+   ],
+   [
+    "mondo:MONDO:0012091",
+    2,
+    "0.508574435710907",
+    "0.6408206224441528",
+    "0.2",
+    "0.584173944"
+   ],
+   [
+    "mondo:MONDO:0010582",
+    3,
+    "0.4091627164320512",
+    "0.5065960884094238",
+    "0.18181818181818182",
+    "0.37765402059600006"
+   ],
+   [
+    "mondo:MONDO:0011073",
+    4,
+    "0.3188246174292131",
+    "0.3775416612625122",
+    "0.18181818181818182",
+    "0.4415700753720001"
+   ]
+  ],
+  "gnn_plus_sp|6": [
+   [
+    "mondo:MONDO:0010730",
+    1,
+    "0.6133806562423706",
+    "0.790543794631958",
+    "0.2",
+    "0.3665643526755"
+   ],
+   [
+    "mondo:MONDO:0010582",
+    2,
+    "0.5663101485797337",
+    "0.6865655183792114",
+    "0.2857142857142857",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0012091",
+    3,
+    "0.5455683469772339",
+    "0.6722404956817627",
+    "0.25",
+    "0.8581702146690602"
+   ],
+   [
+    "mondo:MONDO:0011073",
+    4,
+    "0.45932208895683285",
+    "0.5490315556526184",
+    "0.25",
+    "1.0"
+   ]
+  ],
+  "gnn_plus_sp|7": [
+   [
+    "mondo:MONDO:0010730",
+    1,
+    "0.5418586909770966",
+    "0.6669409871101379",
+    "0.25",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0010582",
+    2,
+    "0.5271531692573002",
+    "0.6306269764900208",
+    "0.2857142857142857",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0011073",
+    3,
+    "0.47493785534586225",
+    "0.5560336709022522",
+    "0.2857142857142857",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0012091",
+    4,
+    "0.40517977092947277",
+    "0.4563792645931244",
+    "0.2857142857142857",
+    "1.0"
+   ]
+  ],
+  "gnn_plus_sp|8": [
+   [
+    "mondo:MONDO:0010582",
+    1,
+    "0.44918854534626007",
+    "0.4988407790660858",
+    "0.3333333333333333",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0011073",
+    2,
+    "0.4362986487150192",
+    "0.45185521245002747",
+    "0.4",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0010730",
+    3,
+    "0.35959689617156987",
+    "0.3708527088165283",
+    "0.3333333333333333",
+    "1.0"
+   ],
+   [
+    "mondo:MONDO:0007037",
+    4,
+    "0.35533010661602016",
+    "0.4361858665943146",
+    "0.16666666666666666",
+    "0.18402473227500005"
+   ],
+   [
+    "mondo:MONDO:0012091",
+    5,
+    "0.3439849120378494",
+    "0.3199784457683563",
+    "0.4",
+    "1.0"
+   ]
+  ],
+  "gnn_plus_sp|9": []
+ }
+}

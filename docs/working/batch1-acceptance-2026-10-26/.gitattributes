@@ -1,0 +1,8 @@
+# Evidence is kept byte for byte (SHA256SUMS): no line-ending normalisation here.
+* -text
+# The logs end some lines in spaces (torch's warning), and deploy.log keeps curl's
+# carriage returns, the terminal's colour codes and a blank last line: evidence, not style.
+# The root .gitignore ignores *.log, so the six logs here were added with `git add -f`.
+deploy.log whitespace=-blank-at-eol,-blank-at-eof,cr-at-eol
+environment-check.log whitespace=-blank-at-eol
+pyg-kernels.log whitespace=-blank-at-eol

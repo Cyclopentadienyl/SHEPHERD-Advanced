@@ -1,0 +1,184 @@
+[0;36mSHEPHERD-Advanced Launcher[0m
+
+[0;36m[SHEPHERD][0m Activating virtual environment...
+[0;32m  ✓[0m Virtual environment activated
+
+[0;36m[SHEPHERD][0m Launching SHEPHERD via shep_launch.py...
+
+[SHEPHERD] OS=linux arch=aarch64 py=3.12 torch=2.10.0+cu130 cuda=13.0
+[SHEPHERD] Platform config: linux_aarch64
+[SHEPHERD] Runtime: PYTORCH_ALLOC_CONF=backend:cudaMallocAsync (allocator preset=cuda_async)
+
+=== PLAN ===
+Platform              : linux_aarch64
+Final attention order : ['cudnn_sdpa', 'torch_sdpa', 'naive']
+Retrieval backend     : cuvs
+Plugin                : 
+FLASHATTN_FORCE_DISAB : 
+Entry module          : uvicorn
+App                   : src.api.main:app
+Passthrough args      : ['--host', '127.0.0.1', '--port', '8264']
+
+[SHEPHERD] Listening on          : 127.0.0.1:8264 (loopback: this machine only)
+[SHEPHERD] Access points (bookmark these):
+[SHEPHERD]   Swagger UI (API docs) : http://127.0.0.1:8264/docs
+[SHEPHERD]   Gradio Dashboard      : http://127.0.0.1:8264/ui
+===  Web Interfaces  ===
+  Swagger UI (API docs) : http://127.0.0.1:8264/docs
+  Gradio Dashboard      : http://127.0.0.1:8264/ui
+========================
+
+[SHEPHERD] $ /home/user/Desktop/SHEPHERD-Advanced/.venv/bin/python -m uvicorn src.api.main:app --host 127.0.0.1 --port 8000 --no-access-log --host 127.0.0.1 --port 8264 --no-proxy-headers
+2026-10-27 18:59:50,048 - src.api.main - INFO - Static files mounted at /static from /home/user/Desktop/SHEPHERD-Advanced/src/webui/static
+/home/user/Desktop/SHEPHERD-Advanced/.venv/lib/python3.12/site-packages/torch/cuda/__init__.py:435: UserWarning: 
+    Found GPU0 NVIDIA GB10 which is of cuda capability 12.1.
+    Minimum and Maximum cuda capability supported by this version of PyTorch is
+    (8.0) - (12.0)
+    
+  queued_call()
+2026-10-27 18:59:52,431 - src.api.main - INFO - Gradio dashboard mounted at /ui
+INFO:     Started server process [531312]
+INFO:     Waiting for application startup.
+2026-10-27 18:59:52,440 - src.api.main - INFO - Starting SHEPHERD-Advanced API...
+2026-10-27 18:59:52,440 - src.api.main - INFO - Building diagnosis pipeline...
+2026-10-27 18:59:52,600 - src.inference.pipeline - INFO - Loading knowledge graph from /home/user/shepherd-data/workspaces/hpo_2026_0929_5a/kg.json...
+2026-10-27 18:59:53,448 - src.kg.graph - INFO - KnowledgeGraph initialized
+2026-10-27 18:59:56,952 - src.kg.graph - INFO - KG loaded from /home/user/shepherd-data/workspaces/hpo_2026_0929_5a/kg.json: 57239 nodes, 617773 edges
+2026-10-27 18:59:56,993 - src.inference.pipeline - INFO - KG loaded: 57239 nodes, 617773 edges
+2026-10-27 18:59:57,031 - src.inference.pipeline - INFO - Loading GNN model from checkpoint: /home/user/m5-acceptance-b14c4de-01/work/real/resumed/checkpoints/last.pt
+2026-10-27 18:59:57,327 - src.inference.pipeline - INFO - GNN model loaded: 4,228,429 parameters, device=cuda
+2026-10-27 18:59:57,328 - src.inference.pipeline - INFO - Precomputing node embeddings via GNN forward pass...
+2026-10-27 18:59:58,794 - src.inference.pipeline - INFO - Node embeddings cached: {'disease': torch.Size([32109, 256]), 'phenotype': torch.Size([19894, 256]), 'gene': torch.Size([5236, 256])}
+2026-10-27 19:00:24,876 - src.inference.pipeline - INFO - Loaded shortest paths: 431,902,937 pairs, max_hops=5 (sidecar), index 3.89 GB resident
+2026-10-27 19:00:24,876 - src.inference.pipeline - INFO - GNN inference initialized successfully (sp_ready=True, eta=0.7, device=cuda:0)
+2026-10-27 19:00:24,876 - src.inference.pipeline - INFO - DiagnosisPipeline initialized: kg_nodes=57239, has_model=True, gnn_ready=True, device=cuda:0
+2026-10-27 19:00:24,876 - src.api.main - INFO - Pipeline published: scoring_mode=gnn_plus_shortest_path, gnn_ready=True, sp_ready=True
+2026-10-27 19:00:24,876 - src.api.main - INFO - API service ready
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8264 (Press CTRL+C to quit)
+2026-10-27 19:00:47,872 - src.api.main - INFO - GET /ready - 200 - 0.001s
+2026-10-27 19:00:47,888 - src.api.main - INFO - GET /api/v1/pipeline/status - 200 - 0.012s
+2026-10-27 19:00:47,896 - src.api.routes.diagnose - INFO - Diagnosis request: session=sess_7c26f2a10f43, phenotypes=2
+2026-10-27 19:00:47,896 - src.inference.pipeline - INFO - Starting diagnosis for patient batch4_smoke_01 with 2 phenotypes
+2026-10-27 19:00:48,174 - src.reasoning.path_reasoning - INFO - Found 200 paths from 2 sources
+2026-10-27 19:00:48,176 - src.inference.pipeline - INFO - [PathScoring] 1-hop paths: 200 found, score range [0.0000, 0.9000]
+2026-10-27 19:00:48,197 - src.reasoning.evidence_panel - INFO - [EvidencePanel] Using 1 existing_paths for hyperprolinemia type 1, scores: ['0.6158 (len=1)']
+2026-10-27 19:00:48,197 - src.reasoning.evidence_panel - INFO - [EvidencePanel] Using 2 existing_paths for branched-chain keto acid dehydrogenase kinase deficiency, scores: ['0.9000 (len=1)', '0.3960 (len=1)']
+2026-10-27 19:00:48,197 - src.reasoning.evidence_panel - INFO - [EvidencePanel] Using 2 existing_paths for N-acetylaspartate deficiency, scores: ['0.9000 (len=1)', '0.9000 (len=1)']
+2026-10-27 19:00:48,197 - src.reasoning.evidence_panel - INFO - [EvidencePanel] Using 2 existing_paths for cerebral palsy, spastic quadriplegic, 3, scores: ['0.7290 (len=2)', '0.7290 (len=2)']
+2026-10-27 19:00:48,197 - src.reasoning.evidence_panel - INFO - [EvidencePanel] Using 2 existing_paths for developmental and epileptic encephalopathy, 45, scores: ['0.9000 (len=1)', '0.9000 (len=1)']
+2026-10-27 19:00:48,197 - src.reasoning.evidence_panel - INFO - [EvidencePanel] Using 2 existing_paths for intellectual disability, autosomal recessive 64, scores: ['0.9000 (len=1)', '0.1800 (len=1)']
+2026-10-27 19:00:48,197 - src.reasoning.evidence_panel - INFO - [EvidencePanel] Using 1 existing_paths for neurodevelopmental disorder with or without early-onset generalized epilepsy, scores: ['0.5625 (len=1)']
+2026-10-27 19:00:48,197 - src.reasoning.evidence_panel - INFO - [EvidencePanel] Using 2 existing_paths for LSM7-related leukodystrophy and cerebellar atrophy, scores: ['0.9000 (len=1)', '0.0000 (len=1)']
+2026-10-27 19:00:48,197 - src.reasoning.evidence_panel - INFO - [EvidencePanel] Using 2 existing_paths for intellectual disability-hypotonia-spasticity-sleep disorder syndrome, scores: ['0.7290 (len=2)', '0.7290 (len=2)']
+2026-10-27 19:00:48,197 - src.reasoning.evidence_panel - INFO - [EvidencePanel] Using 1 existing_paths for intellectual developmental disorder, autosomal recessive 80, with variant lissencephaly, scores: ['0.7290 (len=2)']
+2026-10-27 19:00:48,197 - src.inference.pipeline - INFO - Diagnosis complete: 10 candidates in 301.3ms
+2026-10-27 19:00:48,198 - src.api.main - INFO - POST /api/v1/diagnose - 200 - 0.304s
+2026-10-27 19:01:33,270 - src.api.main - INFO - GET /ui/ - 200 - 0.451s
+2026-10-27 19:01:33,318 - src.api.main - INFO - GET /ui/assets/index-D88pgWqG.js - 200 - 0.012s
+2026-10-27 19:01:33,318 - src.api.main - INFO - GET /ui/static/js/iframeResizer.contentWindow.min.js - 200 - 0.009s
+2026-10-27 19:01:33,318 - src.api.main - INFO - GET /ui/assets/index-DuOipanW.css - 200 - 0.010s
+2026-10-27 19:01:33,347 - src.api.main - INFO - GET /ui/assets/src-36BzIQt3.js - 200 - 0.008s
+2026-10-27 19:01:33,347 - src.api.main - INFO - GET /ui/assets/core-DZ_8y5W8.js - 200 - 0.010s
+2026-10-27 19:01:33,347 - src.api.main - INFO - GET /ui/assets/dist-Kll2twSG.js - 200 - 0.007s
+2026-10-27 19:01:33,347 - src.api.main - INFO - GET /ui/assets/Index-BNEsVTPO2.js - 200 - 0.010s
+2026-10-27 19:01:33,347 - src.api.main - INFO - GET /ui/assets/core-DcJb0oGd.css - 200 - 0.008s
+2026-10-27 19:01:33,347 - src.api.main - INFO - GET /ui/assets/runtime-CdhHgN5_.js - 200 - 0.008s
+2026-10-27 19:01:33,356 - src.api.main - INFO - GET /ui/assets/browser-BZcrnZlS.js - 200 - 0.007s
+2026-10-27 19:01:33,357 - src.api.main - INFO - GET /ui/assets/statustracker-XFksEMum.js - 200 - 0.007s
+2026-10-27 19:01:33,357 - src.api.main - INFO - GET /ui/assets/logo-D4NPp-_W.js - 200 - 0.008s
+2026-10-27 19:01:33,357 - src.api.main - INFO - GET /ui/assets/HistoryStorageControl-B2s_hDWW.js - 200 - 0.009s
+2026-10-27 19:01:33,357 - src.api.main - INFO - GET /ui/assets/src-CC39XcQU.js - 200 - 0.008s
+2026-10-27 19:01:33,357 - src.api.main - INFO - GET /ui/assets/legacy-B8FggjVV.js - 200 - 0.008s
+2026-10-27 19:01:33,365 - src.api.main - INFO - GET /ui/assets/statustracker-CouyIdTk.css - 200 - 0.006s
+2026-10-27 19:01:33,366 - src.api.main - INFO - GET /ui/assets/src-B8NTxzPO.css - 200 - 0.007s
+2026-10-27 19:01:33,366 - src.api.main - INFO - GET /ui/assets/Index-EfSyqQsq.css - 200 - 0.007s
+2026-10-27 19:01:33,366 - src.api.main - INFO - GET /ui/assets/HistoryStorageControl-WpXJfujP.css - 200 - 0.009s
+2026-10-27 19:01:33,368 - src.api.main - INFO - GET /favicon.ico - 404 - 0.000s
+2026-10-27 19:01:33,394 - src.api.main - INFO - GET /ui/theme.css - 200 - 0.001s
+2026-10-27 19:01:33,398 - src.api.main - INFO - GET /ui/assets/settings-logo-AL7zGNml.js - 200 - 0.002s
+2026-10-27 19:01:33,399 - src.api.main - INFO - GET /ui/assets/api-logo-CCEtYehn.js - 200 - 0.003s
+2026-10-27 19:01:33,399 - src.api.main - INFO - GET /ui/assets/Blocks-DmKAmlrw.js - 200 - 0.005s
+2026-10-27 19:01:33,401 - src.api.main - INFO - GET /ui/assets/Blocks-0aNuD791.css - 200 - 0.003s
+2026-10-27 19:01:33,440 - src.api.main - INFO - GET /ui/assets/Index-Bhs_KVDQ.js - 200 - 0.002s
+2026-10-27 19:01:33,442 - src.api.main - INFO - GET /ui/assets/Index-DrCM5gzc.css - 200 - 0.002s
+2026-10-27 19:01:33,442 - src.api.main - INFO - GET /ui/assets/Index-BiBThEq_.js - 200 - 0.001s
+2026-10-27 19:01:33,443 - src.api.main - INFO - GET /ui/assets/Index-DiRhyWFA.js - 200 - 0.001s
+2026-10-27 19:01:33,445 - src.api.main - INFO - GET /ui/assets/Index-CDJ7bs8I.js - 200 - 0.002s
+2026-10-27 19:01:33,446 - src.api.main - INFO - GET /ui/assets/Example-bDO7g5TM.js - 200 - 0.003s
+2026-10-27 19:01:33,447 - src.api.main - INFO - GET /ui/assets/Example-BG5zdIqX.css - 200 - 0.003s
+2026-10-27 19:01:33,448 - src.api.main - INFO - GET /ui/assets/Index-VzTVYr-q.css - 200 - 0.002s
+2026-10-27 19:01:33,448 - src.api.main - INFO - GET /ui/assets/HTML-BuYIBbeV.css - 200 - 0.003s
+2026-10-27 19:01:33,448 - src.api.main - INFO - GET /ui/assets/HTML-nXzWgPg4.js - 200 - 0.004s
+2026-10-27 19:01:33,449 - src.api.main - INFO - GET /ui/assets/Index-Bl9A3fpy2.js - 200 - 0.003s
+2026-10-27 19:01:33,451 - src.api.main - INFO - GET /ui/assets/Index-Dx8MxtAM.css - 200 - 0.002s
+2026-10-27 19:01:33,451 - src.api.main - INFO - GET /ui/assets/Index-CDyOSUJJ.css - 200 - 0.003s
+2026-10-27 19:01:33,451 - src.api.main - INFO - GET /ui/assets/Index-C3tGjNLZ.js - 200 - 0.003s
+2026-10-27 19:01:33,454 - src.api.main - INFO - GET /ui/assets/Index-LKTY8Jbn.css - 200 - 0.003s
+2026-10-27 19:01:33,454 - src.api.main - INFO - GET /ui/assets/Index-Bvh1mu-b2.js - 200 - 0.003s
+2026-10-27 19:01:33,455 - src.api.main - INFO - GET /ui/assets/Index-C1GyojFs.css - 200 - 0.002s
+2026-10-27 19:01:33,456 - src.api.main - INFO - GET /ui/assets/Index-2bqFdrPw.js - 200 - 0.004s
+2026-10-27 19:01:33,456 - src.api.main - INFO - GET /ui/assets/Index-rQ7sGSx5.js - 200 - 0.003s
+2026-10-27 19:01:33,457 - src.api.main - INFO - GET /ui/assets/Example-B1swpn2y.css - 200 - 0.002s
+2026-10-27 19:01:33,458 - src.api.main - INFO - GET /ui/assets/Example-CQdfd5zG.js - 200 - 0.003s
+2026-10-27 19:01:33,458 - src.api.main - INFO - GET /ui/assets/Index-Ba0kRe4M.css - 200 - 0.003s
+2026-10-27 19:01:33,459 - src.api.main - INFO - GET /ui/assets/Index-BHng8pvl.css - 200 - 0.002s
+2026-10-27 19:01:33,459 - src.api.main - INFO - GET /ui/assets/Index-aHUUuV8d.js - 200 - 0.002s
+2026-10-27 19:01:33,459 - src.api.main - INFO - GET /ui/assets/Index-DuUB0zr0.js - 200 - 0.002s
+2026-10-27 19:01:33,460 - src.api.main - INFO - GET /ui/assets/Index-nz772N1q.css - 200 - 0.002s
+2026-10-27 19:01:33,460 - src.api.main - INFO - GET /ui/assets/Index-C0eJ9aPa.js - 200 - 0.001s
+2026-10-27 19:01:33,461 - src.api.main - INFO - GET /ui/assets/Image-D80gk2B9.js - 200 - 0.001s
+2026-10-27 19:01:33,462 - src.api.main - INFO - GET /ui/assets/shared-BhQ0vYrF.js - 200 - 0.000s
+2026-10-27 19:01:33,462 - src.api.main - INFO - GET /ui/assets/Image-Da_XA0w6.css - 200 - 0.001s
+2026-10-27 19:01:33,463 - src.api.main - INFO - GET /ui/assets/ImagePreview-B2sIO-1d.css - 200 - 0.001s
+2026-10-27 19:01:33,463 - src.api.main - INFO - GET /ui/assets/ImagePreview-mao1r4F1.js - 200 - 0.001s
+2026-10-27 19:01:33,464 - src.api.main - INFO - GET /ui/assets/Index-CcsdfK63.css - 200 - 0.001s
+2026-10-27 19:01:33,468 - src.api.main - INFO - GET /ui/assets/Example-BQeMFJfl.js - 200 - 0.001s
+2026-10-27 19:01:33,468 - src.api.main - INFO - GET /ui/assets/Index-cPrwRDCc.js - 200 - 0.002s
+2026-10-27 19:01:33,470 - src.api.main - INFO - GET /ui/assets/Index-DpkqE-K6.js - 200 - 0.001s
+2026-10-27 19:01:33,471 - src.api.main - INFO - GET /ui/assets/Example-DWDv4qx4.css - 200 - 0.002s
+2026-10-27 19:01:33,471 - src.api.main - INFO - GET /ui/assets/Index-CvOXDAXN.css - 200 - 0.002s
+2026-10-27 19:01:33,471 - src.api.main - INFO - GET /ui/assets/markdown-code-pNU2apjG.js - 200 - 0.002s
+2026-10-27 19:01:33,473 - src.api.main - INFO - GET /ui/assets/markdown-code-CcdvG8OS.css - 200 - 0.001s
+2026-10-27 19:01:33,473 - src.api.main - INFO - GET /ui/assets/prism-BCG1-F_o.js - 200 - 0.001s
+2026-10-27 19:01:33,474 - src.api.main - INFO - GET /ui/assets/Example-DvcNP0pl.js - 200 - 0.001s
+2026-10-27 19:01:33,474 - src.api.main - INFO - GET /ui/assets/Example-CgIc4GLa.css - 200 - 0.001s
+2026-10-27 19:01:33,476 - src.api.main - INFO - GET /ui/assets/Index-BGK55NKF.css - 200 - 0.001s
+2026-10-27 19:01:33,478 - src.api.main - INFO - GET /ui/assets/Index-CZooJg7N.js - 200 - 0.001s
+2026-10-27 19:01:33,479 - src.api.main - INFO - GET /ui/assets/Example-BLKfr5DZ.js - 200 - 0.001s
+2026-10-27 19:01:33,480 - src.api.main - INFO - GET /ui/assets/Example-BeU1J4ps.css - 200 - 0.001s
+2026-10-27 19:01:33,480 - src.api.main - INFO - GET /ui/assets/Index-CUQnb8lN.css - 200 - 0.001s
+2026-10-27 19:01:33,483 - src.api.main - INFO - GET /ui/assets/Index-3FqI08xq.css - 200 - 0.001s
+2026-10-27 19:01:33,483 - src.api.main - INFO - GET /ui/assets/Index-Cy46r5i1.js - 200 - 0.001s
+2026-10-27 19:01:33,484 - src.api.main - INFO - GET /ui/assets/Index-BSx4efE_.js - 200 - 0.001s
+2026-10-27 19:01:33,484 - src.api.main - INFO - GET /ui/assets/Index-CSQTwOT5.css - 200 - 0.001s
+2026-10-27 19:01:33,485 - src.api.main - INFO - GET /ui/assets/Index-BxdrSKgm.js - 200 - 0.001s
+2026-10-27 19:01:33,485 - src.api.main - INFO - GET /ui/assets/Index-CA1QTtuq.css - 200 - 0.001s
+2026-10-27 19:01:33,487 - src.api.main - INFO - GET /ui/assets/Index-xeBx2-Z3.js - 200 - 0.001s
+2026-10-27 19:01:33,487 - src.api.main - INFO - GET /ui/assets/Index-Cr_YPqE0.css - 200 - 0.001s
+2026-10-27 19:01:33,611 - src.api.main - INFO - GET /static/fonts/ibm-plex-sans-400.woff2 - 200 - 0.000s
+2026-10-27 19:01:33,658 - src.api.main - INFO - GET /static/fonts/ibm-plex-sans-700.woff2 - 200 - 0.001s
+2026-10-27 19:01:33,659 - src.api.main - INFO - GET /static/fonts/ibm-plex-sans-500.woff2 - 200 - 0.002s
+2026-10-27 19:01:33,659 - src.api.main - INFO - GET /static/fonts/ibm-plex-sans-600.woff2 - 200 - 0.002s
+2026-10-27 19:02:08,197 - src.api.routes.diagnose - INFO - Diagnosis request: session=sess_6469db6034c4, phenotypes=2
+2026-10-27 19:02:08,197 - src.inference.pipeline - INFO - Starting diagnosis for patient batch4_smoke_01 with 2 phenotypes
+2026-10-27 19:02:08,479 - src.reasoning.path_reasoning - INFO - Found 200 paths from 2 sources
+2026-10-27 19:02:08,481 - src.inference.pipeline - INFO - [PathScoring] 1-hop paths: 200 found, score range [0.0000, 0.9000]
+2026-10-27 19:02:08,502 - src.reasoning.evidence_panel - INFO - [EvidencePanel] Using 1 existing_paths for hyperprolinemia type 1, scores: ['0.6158 (len=1)']
+2026-10-27 19:02:08,502 - src.reasoning.evidence_panel - INFO - [EvidencePanel] Using 2 existing_paths for branched-chain keto acid dehydrogenase kinase deficiency, scores: ['0.9000 (len=1)', '0.3960 (len=1)']
+2026-10-27 19:02:08,502 - src.reasoning.evidence_panel - INFO - [EvidencePanel] Using 2 existing_paths for N-acetylaspartate deficiency, scores: ['0.9000 (len=1)', '0.9000 (len=1)']
+2026-10-27 19:02:08,502 - src.reasoning.evidence_panel - INFO - [EvidencePanel] Using 2 existing_paths for cerebral palsy, spastic quadriplegic, 3, scores: ['0.7290 (len=2)', '0.7290 (len=2)']
+2026-10-27 19:02:08,502 - src.reasoning.evidence_panel - INFO - [EvidencePanel] Using 2 existing_paths for developmental and epileptic encephalopathy, 45, scores: ['0.9000 (len=1)', '0.9000 (len=1)']
+2026-10-27 19:02:08,502 - src.reasoning.evidence_panel - INFO - [EvidencePanel] Using 2 existing_paths for intellectual disability, autosomal recessive 64, scores: ['0.9000 (len=1)', '0.1800 (len=1)']
+2026-10-27 19:02:08,502 - src.reasoning.evidence_panel - INFO - [EvidencePanel] Using 1 existing_paths for neurodevelopmental disorder with or without early-onset generalized epilepsy, scores: ['0.5625 (len=1)']
+2026-10-27 19:02:08,502 - src.reasoning.evidence_panel - INFO - [EvidencePanel] Using 2 existing_paths for LSM7-related leukodystrophy and cerebellar atrophy, scores: ['0.9000 (len=1)', '0.0000 (len=1)']
+2026-10-27 19:02:08,502 - src.reasoning.evidence_panel - INFO - [EvidencePanel] Using 2 existing_paths for intellectual disability-hypotonia-spasticity-sleep disorder syndrome, scores: ['0.7290 (len=2)', '0.7290 (len=2)']
+2026-10-27 19:02:08,502 - src.reasoning.evidence_panel - INFO - [EvidencePanel] Using 1 existing_paths for intellectual developmental disorder, autosomal recessive 80, with variant lissencephaly, scores: ['0.7290 (len=2)']
+2026-10-27 19:02:08,502 - src.inference.pipeline - INFO - Diagnosis complete: 10 candidates in 305.1ms
+2026-10-27 19:02:08,504 - src.api.main - INFO - POST /api/v1/diagnose - 200 - 0.307s
+2026-10-27 19:03:14,557 - src.api.main - INFO - GET /ui/gradio_api/file=/tmp/gradio/6a478ded158e259fd27b359db0f9488d93f3e3a01a55115aad9c93f9cdd9aa48/diagnosis_batch4_smoke_01_sess_6469db6034c4.csv - 200 - 0.003s
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+2026-10-27 19:04:12,435 - src.api.main - INFO - Shutting down SHEPHERD-Advanced API...
+INFO:     Application shutdown complete.
+INFO:     Finished server process [531312]

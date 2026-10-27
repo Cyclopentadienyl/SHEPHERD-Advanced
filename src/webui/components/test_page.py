@@ -111,12 +111,14 @@ from typing import Any, Dict, List, Mapping, NamedTuple, Optional, Sequence, Tup
 import gradio as gr
 
 from src.evaluation.caveats import (
-    MODE_C_RESULT_LABEL,
+    MODE_D_NOTE,
     PRE_B1_NOTE,
     R10_LABEL_TEXT,
     R10_STATE_TEXT,
     R10_UNVERIFIABLE_REASON,
     RELATION_DISPLAY_NAMES,
+    metric_text,
+    mode_label,
 )
 from src.webui.components import renderers as r
 from src.webui.components.chips import D8_SHORT, chips_on_change
@@ -174,9 +176,20 @@ _R10_EVIDENCE_WORDS = {
     "unreadable": "evidence found, not readable",
     "not_recorded": "evidence not recorded by the checkpoint",
 }
-#: The Mode C metrics shown as tiles, in order.
-_TILES = (("untruncated_mrr", "Mode C MRR (untruncated)"), ("hits@1", "Mode C Hits@1"),
-          ("hits@5", "Mode C Hits@5"), ("hits@10", "Mode C Hits@10"))
+#: The metrics shown as tiles, in order, by the record's mode (`scoring.mode`);
+#: each is named by `caveats.metric_text`. Mode D's are over the import-eligible
+#: cases, a case not reached counting 0 (PLAN_B05 §5).
+_TILES = {
+    "C": ("untruncated_mrr", "hits@1", "hits@5", "hits@10"),
+    "D": ("post_import_mrr", "post_import_hits@1", "post_import_hits@10", "coverage"),
+}
+#: The mean rank each mode reports, over the cases it ranked or reached.
+_MEAN_RANK = {"C": "mean_rank", "D": "reached_mean_rank"}
+#: The ⓘ beside each mode's label.
+_MODE_HELP = {"C": "test-mode-c", "D": "test-mode-d"}
+#: Each report row's mode, first in its state line: a plain label, the code
+#: beside it. A report of another mode, or one whose mode cannot be read, says so.
+_MODE_ROW_WORDS = {"C": "model ranking (Mode C)", "D": "served ranking (Mode D)"}
 #: The job's statuses, as its pill shows them: never green for failed,
 #: stopped or cancelled.
 _PILLS = {
@@ -267,6 +280,7 @@ TOPIC_HELP = {
         "unless it gives the same id, so what is committed is what was previewed.",
     ),
     "test-mode-c": ("Mode C result", PRE_B1_NOTE),
+    "test-mode-d": ("Mode D result", MODE_D_NOTE),
     "test-r10": (
         "R10 labels",
         " · ".join(f"{text['name']}: {text['definition']}"
@@ -276,8 +290,9 @@ TOPIC_HELP = {
         "Fixed by the server",
         "A test run has no reason to vary these, so the job runner fixes them (D5): the "
         "batch size is the measurement's default and the device the deployment's "
-        "(SHEPHERD_DEVICE), with no fallback. Only deterministic execution is chosen here, "
-        "and it is recorded.",
+        "(SHEPHERD_DEVICE), with no fallback. The mode is Mode C, the model's own ranking; "
+        "Mode D, the served ranking, is an operator's command-line run. Only deterministic "
+        "execution is chosen here, and it is recorded.",
     ),
     "test-evidence": (
         "R10 evidence",
@@ -1042,6 +1057,16 @@ def _row_state(run: Mapping[str, Any], roots: Sequence[Tuple[str, str]]) -> str:
         return f"whether a report was kept cannot be checked: {e(redact(state.get('why_kept'), roots))}"
     registered = state.get("registered")
     parts = ["report kept"]
+    record = run.get("record") if isinstance(run.get("record"), Mapping) else None
+    lead = ""
+    if record is not None:
+        scoring = record.get("scoring") if isinstance(record.get("scoring"), Mapping) else {}
+        mode = scoring.get("mode")
+        mode = mode if isinstance(mode, str) and mode.strip() else None
+        # The mode leads with a colon, so the row keeps one " · " (the skill's §5).
+        lead = e(_MODE_ROW_WORDS.get(mode) or (
+            f"mode {mode}, not described by this version" if mode else "mode not recorded"))
+        lead += ": "
     if registered == "registered":
         seq = state.get("sequence")
         parts.append(f"registered{' #' + str(seq) if isinstance(seq, int) else ''}")
@@ -1049,7 +1074,7 @@ def _row_state(run: Mapping[str, Any], roots: Sequence[Tuple[str, str]]) -> str:
         parts.append("not registered")
     else:
         parts.append("registration cannot be checked from the list")
-    line = " · ".join(parts)
+    line = lead + " · ".join(parts)
     if contest.get("state") == "contested":
         others = [x for x in contest.get("disagreeing_runs") or [] if x != run.get("run_id")]
         line += (f' · <span class="shep-amber-t">runs disagree — investigate: they differ on '
@@ -1253,7 +1278,9 @@ def fixed_html(page: Mapping[str, Any]) -> str:
     return (f'<div class="shep-test-kv"><span class="shep-k">Batch size'
             f'{help_button("test-fixed", "Fixed by the server")}</span>'
             f'<span>{BATCH_SIZE_SHOWN} · fixed by the server</span>'
-            f'<span class="shep-k">Device</span><span>{shown} · fixed by the server</span></div>')
+            f'<span class="shep-k">Device</span><span>{shown} · fixed by the server</span>'
+            f'<span class="shep-k">Mode</span><span>{e(_MODE_ROW_WORDS["C"])} · fixed by the '
+            'server</span></div>')
 
 
 def start_state(page: Mapping[str, Any], models: Mapping[str, Any], workspace: Optional[str],
@@ -1399,16 +1426,6 @@ def outcome_html(outcome: Mapping[str, Any], roots: Sequence[Tuple[str, str]]) -
 # ---------------------------------------------------------------------------
 # Rendering: Result
 # ---------------------------------------------------------------------------
-def _metric_text(name: str) -> str:
-    if name == "untruncated_mrr":
-        return "Mode C MRR (untruncated)"
-    if name == "mean_rank":
-        return "Mode C mean rank"
-    if name.startswith("hits@"):
-        return f"Mode C Hits@{name[5:]}"
-    return f"Mode C {name}"
-
-
 def _r10_label(label: str, name: str, part: Any, evidence: Any) -> str:
     """One R10 label in the caveats' words: a count with its denominator only
     where the state has one; *unverifiable* is a reason, never a 0."""
@@ -1537,6 +1554,17 @@ def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
     metrics = record.get("metrics") if isinstance(record.get("metrics"), Mapping) else {}
     n_ranked = record.get("n_ranked")
     counts = cohort.get("counts") if isinstance(cohort.get("counts"), Mapping) else {}
+    # Labelled by the record's own mode, never by Mode C's for every record.
+    scoring = record.get("scoring") if isinstance(record.get("scoring"), Mapping) else {}
+    mode = scoring.get("mode") if isinstance(scoring.get("mode"), str) and \
+        scoring.get("mode").strip() else None
+    semantics = scoring.get("score_semantics")
+    label = mode_label(mode, semantics if isinstance(semantics, str) else None)
+    tile_names = _TILES.get(mode, ())
+    mean_name = _MEAN_RANK.get(mode)
+    eligible = _count(counts.get("ranked_eligible"))
+    over = (f"over {eligible} import-eligible" if mode == "D"
+            else f"over {_count(n_ranked)} ranked")
     deterministic = regime.get("deterministic_algorithms")
     line = (f'{e(cohort.get("label"))} (version <code>{e(str(record.get("cohort_digest") or "")[:12])}</code>, '
             f'role {r.ident_html(record.get("cohort_role"))}) · model '
@@ -1544,23 +1572,43 @@ def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
             f'deterministic {"on" if deterministic is True else "off" if deterministic is False else "not recorded"}'
             f' · device <code>{e(regime.get("device"))}</code>')
     tiles = "".join(
-        f'<div class="shep-test-tile"><div class="shep-test-tile-l">{e(label)}</div>'
+        f'<div class="shep-test-tile"><div class="shep-test-tile-l">{e(metric_text(mode, name))}</div>'
         f'<div class="shep-test-tile-v">{e(_number(metrics.get(name)))}</div>'
-        f'<div class="shep-test-tile-n">over {e(_count(n_ranked))} ranked</div></div>'
-        for name, label in _TILES)
+        f'<div class="shep-test-tile-n">{e(over)}</div></div>'
+        for name in tile_names)
     excluded = counts.get("excluded") if isinstance(counts.get("excluded"), Mapping) else {}
     reasons = " · ".join(f"{str(k).replace('_', ' ')} {_count(v)}" for k, v in excluded.items())
+    excluded_text = (f"{e(_count(counts.get('n_excluded')))} excluded"
+                     f"{' at import' if mode == 'D' else ''}"
+                     f"{': ' + e(reasons) if reasons else ''}")
+    if mode == "D":
+        coverage = (f"<b>{e(_count(n_ranked))} of {e(eligible)}</b> import-eligible cases reached "
+                    f"by the served pipeline · {e(_count(counts.get('source_cases')))} source "
+                    f"cases; {excluded_text}")
+    elif mode == "C":
+        coverage = (f"<b>{e(_count(n_ranked))} of {e(_count(counts.get('source_cases')))}</b> source "
+                    f"cases ranked ({e(eligible)} eligible) · {excluded_text}")
+    else:
+        # No claim of what this mode's n_ranked counts.
+        coverage = (f"{e(_count(counts.get('source_cases')))} source cases · {excluded_text}; "
+                    f"{e(_count(n_ranked))} cases counted by the record; what they are is not "
+                    "described for this mode")
+    mean = metrics.get(mean_name) if mean_name else None
+    if mean_name is None:
+        mean_text = "—"
+    elif isinstance(mean, (int, float)) and not isinstance(mean, bool):
+        mean_text = (f"{e(metric_text(mode, mean_name))} "
+                     f"{e(_number(mean).rstrip('0').rstrip('.'))}, over {e(_count(n_ranked))} "
+                     f"{'reached' if mode == 'D' else 'ranked'} cases")
+    else:
+        mean_text = (f"{e(metric_text(mode, mean_name))} not reported"
+                     + (": no case was reached" if mode == "D" and n_ranked == 0 else ""))
     lines = [
-        ("Coverage", f"<b>{e(_count(n_ranked))} of {e(_count(counts.get('source_cases')))}</b> source "
-                     f"cases ranked ({e(_count(counts.get('ranked_eligible')))} eligible) · "
-                     f"{e(_count(counts.get('n_excluded')))} excluded"
-                     f"{': ' + e(reasons) if reasons else ''}"),
-        ("Mean rank", f"{e(_metric_text('mean_rank'))} "
-                      f"{e(_number(metrics.get('mean_rank')).rstrip('0').rstrip('.') if isinstance(metrics.get('mean_rank'), (int, float)) else '—')}"
-                      f", over {e(_count(n_ranked))} ranked cases"),
-        ("Other metrics", " · ".join(f"{e(_metric_text(k))} {e(_number(v))}"
+        ("Coverage", coverage),
+        ("Mean rank", mean_text),
+        ("Other metrics", " · ".join(f"{e(metric_text(mode, k))} {e(_number(v))}"
                                      for k, v in sorted(metrics.items())
-                                     if k not in {n for n, _ in _TILES} | {"mean_rank"}) or "—"),
+                                     if k not in set(tile_names) | {mean_name}) or "—"),
         ("Relations", _relations(record.get("relations"))),
         *_r10_lines(record.get("r10")),
         ("Environment", _environment(record)),
@@ -1585,9 +1633,10 @@ def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
     kv = "".join(f'<span class="shep-k">{e(k)}'
                  f'{help_button("test-r10", "R10 labels") if k == "R10, training" else ""}</span>'
                  f'<span class="shep-v">{v}</span>' for k, v in lines)
+    topic = _MODE_HELP.get(mode)
+    mode_help = help_button(topic, TOPIC_HELP[topic][0]) if topic else ""
     return (f'<div class="shep-sub">{line}</div>'
-            f'<div class="shep-test-label">{e(MODE_C_RESULT_LABEL)}'
-            f'{help_button("test-mode-c", "Mode C result")}</div>'
+            f'<div class="shep-test-label">{e(label)}{mode_help}</div>'
             f'<div class="shep-test-tiles">{tiles}</div><div class="shep-kv shep-test-lines">{kv}</div>')
 
 
