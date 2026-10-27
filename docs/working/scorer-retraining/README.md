@@ -667,8 +667,9 @@ round touches them: 53, 40, 56, 52.
 
 [`ENTRY_MAP.md`](ENTRY_MAP.md) is the K0 inventory of the code at `0e64666`: 464 entries in six
 areas, each with its verdict (148 keep, 212 modify, 42 replace, 47 retire, 15 uncertain), its role
-after the switch, its callers and its tests, and the 118 hazards the passes found. It guides the
-nodes; this blueprint decides, and a row found wrong is corrected at the node that touches it.
+after the switch, its callers and its tests, and the 118 hazards the passes found; a completeness
+pass adds 39 rows and 15 hazards. It guides the nodes; this blueprint decides, and a row found
+wrong is corrected at the node that touches it.
 
 **Hazards that change how the nodes are built** (decided in K0):
 
