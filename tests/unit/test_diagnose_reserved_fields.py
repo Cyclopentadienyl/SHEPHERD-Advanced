@@ -142,8 +142,9 @@ def test_results_are_invariant_to_the_field(client):
     assert with_genes["candidates"] == without["candidates"]
 
 
-def test_the_field_description_says_it_is_ignored():
-    """A description reading like a working feature is the original defect."""
+def test_the_field_description_says_who_uses_it_and_who_ignores_it():
+    """Only a gene task model ranks the field; every other model ignores it, and
+    the description says both (it once read like a working feature everywhere)."""
     description = DiagnoseRequest.model_fields["candidate_genes"].description
-    assert "RESERVED" in description
-    assert "ignored" in description
+    assert "gene task model" in description
+    assert "ignores it" in description

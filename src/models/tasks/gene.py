@@ -152,12 +152,13 @@ def augment(genes: Tensor, neighbours: Tensor, weights: Tensor, degree: Tensor,
     return (1.0 - theta) * genes + theta * aggregate, has
 
 
-def gene_list_scores(bundle: Any, z: Tensor, phenotype_index: Tensor, phenotype_mask: Tensor,
-                     gene_index: Tensor, neighbour_index: Tensor, neighbour_weight: Tensor,
-                     degree: Tensor, sp_similarity: Tensor) -> Tensor:
-    """`[B, M]` gene scores of each patient's own list. Indices are rows of
-    `z` (seed positions in training, view ids on the full view);
-    `neighbour_index` is `[B, M, K]` (any row where its weight is 0)."""
+def gene_embsim(bundle: Any, z: Tensor, phenotype_index: Tensor, phenotype_mask: Tensor,
+                gene_index: Tensor, neighbour_index: Tensor, neighbour_weight: Tensor,
+                degree: Tensor) -> Tensor:
+    """`[B, M]` EMBSIM of each patient's own list, the genes augmented by Eq 10
+    when the spec says so. Indices are rows of `z` (seed positions in training,
+    view ids on the full view); `neighbour_index` is `[B, M, K]` (any row where
+    its weight is 0)."""
     head = bundle.task_head
     spec = head.spec.gene
     patients = patient_vectors(bundle, z, phenotype_index, phenotype_mask)
@@ -165,8 +166,17 @@ def gene_list_scores(bundle: Any, z: Tensor, phenotype_index: Tensor, phenotype_
     if spec.augmentation:
         near = head.project_candidates(z[neighbour_index.clamp(min=0)])
         genes, _ = augment(genes, near, neighbour_weight, degree, spec.augmentation_omega)
-    embsim = head.list_scores(patients, genes)
-    return spec.eta * embsim + (1.0 - spec.eta) * sp_similarity
+    return head.list_scores(patients, genes)
+
+
+def gene_list_scores(bundle: Any, z: Tensor, phenotype_index: Tensor, phenotype_mask: Tensor,
+                     gene_index: Tensor, neighbour_index: Tensor, neighbour_weight: Tensor,
+                     degree: Tensor, sp_similarity: Tensor) -> Tensor:
+    """`[B, M]` gene scores `η·EMBSIM + (1 − η)·SPLSIM` (A8, U12)."""
+    eta = bundle.task_head.spec.gene.eta
+    embsim = gene_embsim(bundle, z, phenotype_index, phenotype_mask, gene_index,
+                         neighbour_index, neighbour_weight, degree)
+    return eta * embsim + (1.0 - eta) * sp_similarity
 
 
 @dataclass
@@ -332,6 +342,7 @@ __all__ = [
     "bind_gene_cases",
     "case_sp",
     "distance_table",
+    "gene_embsim",
     "gene_list_scores",
     "mean_distances",
     "neighbour_inputs",

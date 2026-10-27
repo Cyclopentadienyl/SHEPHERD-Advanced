@@ -46,7 +46,7 @@ router = APIRouter()
 # Request/Response Models
 # =============================================================================
 #: Route-local request-safety bound on `candidate_genes`, **not** a semantic
-#: selection limit for the future gene scorer.
+#: selection limit for the gene task.
 #:
 #: Deliberately not `phenotypes`' 100: the reference paper's variant-filtered
 #: candidate-gene lists average **244.3 genes with SD 244.0**
@@ -55,11 +55,11 @@ router = APIRouter()
 #: with that interface's design.
 CANDIDATE_GENES_MAX = 1000
 
-#: Emitted whenever `candidate_genes` is supplied. A test proving the field is
-#: inert tells nobody but us; the caller who sent it learns nothing unless the
-#: response says so.
+#: Emitted whenever `candidate_genes` is supplied and the served model does not
+#: rank genes: the caller who sent it learns nothing unless the response says so.
 CANDIDATE_GENES_IGNORED_WARNING = (
-    "candidate_genes was supplied but is not used by the current disease scorer."
+    "candidate_genes was supplied but is not used: only a gene task model ranks "
+    "candidate genes."
 )
 
 
@@ -84,11 +84,19 @@ class DiagnoseRequest(BaseModel):
         default=None,
         max_length=CANDIDATE_GENES_MAX,
         description=(
-            "RESERVED — accepted and validated, but currently ignored by the "
-            "disease scorer. It does not affect the disease candidates, their "
-            "scores or their ranks. Supplying it adds a warning to the response. "
-            "Reserved at the deploying institution's request for future "
-            "causal-gene prioritisation."
+            "The patient's candidate genes, ranked by a gene task model (gene_task/v1): "
+            "a gene node id or a symbol only one gene carries; one that maps to no gene "
+            "is left out and counted. Any other model ignores it and says so in a "
+            "warning."
+        ),
+    )
+    reference_cohort: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        description=(
+            "A patients-like-me model only: the label of the registered reference cohort "
+            "version (SHEPHERD_REGISTRY) whose patients are ranked. Required by such a "
+            "model, refused by any other."
         ),
     )
     top_k: int = Field(
@@ -267,7 +275,7 @@ class ServedIdentity(_Strict):
     """What produced a result, part by part (contract M3c)."""
 
     scoring_mode: Literal["gnn_plus_shortest_path", "gnn_only", "path_reasoning_fallback",
-                          "disease_task"]
+                          "disease_task", "gene_task", "patients_like_me"]
     checkpoint: ServedCheckpoint
     graph: ServedGraph
     shortest_paths: ServedShortestPaths
@@ -284,11 +292,14 @@ class ServedIdentity(_Strict):
 # type (field names, the kinds, the SP statuses). **Every kind refuses another
 # kind's fields** (`_Strict`), so a removed field cannot come back unnoticed, and
 # a number is never written where its kind has none.
-RESULT_KINDS = ("served_mixture/v1", "path_reasoning/v1", "demo/v1", "disease_task/v1")
+RESULT_KINDS = ("served_mixture/v1", "path_reasoning/v1", "demo/v1", "disease_task/v1",
+                "gene_task/v1", "patients_like_me/v1")
 SP_NUMERIC_STATUSES = ("COMPUTED", "COMPUTED_PARTIAL")
 SP_NON_NUMERIC_STATUSES = ("NO_TABLE", "TARGET_UNMAPPED", "NO_PHENOTYPE_MAPPED")
 SERVED_TIE_POLICY = "served-stable-discovery-order/v1"
 DISEASE_TASK_TIE_POLICY = "score-desc-then-view-id-asc/v1"
+GENE_TASK_TIE_POLICY = DISEASE_TASK_TIE_POLICY
+PATIENTS_LIKE_ME_TIE_POLICY = "similarity-desc-then-case-id-asc/v1"
 
 #: A number that is a number: NaN and infinity are refused at the schema, so a
 #: non-finite value can never reach a caller as a score.
@@ -422,6 +433,45 @@ class DemoCandidate(_Candidate):
     """The demo answer's candidate: no score, explanation, path or gene of any kind."""
 
 
+class GeneTaskCandidate(_Strict):
+    """One of the request's candidate genes, ranked by the finetuned gene head."""
+
+    rank: int = Field(..., ge=1)
+    gene_id: str = Field(..., description="The gene's node id")
+    gene_name: str
+    score: _Finite = Field(..., description="eta * embsim + (1 - eta) * sp_similarity; "
+                           "uncalibrated, never a probability")
+    embsim: _Finite = Field(..., ge=-1.0, le=1.0, description="The gene head's similarity")
+    sp_similarity: _Finite = Field(..., description="1 - 2(mean_distance - lower)/(upper - "
+                                   "lower), fixed bounds, not clipped")
+    mean_distance: _Finite = Field(..., ge=0.0, description="Mean exact hop distance from "
+                                   "the gene to the patient's phenotypes on the model's graph")
+
+
+class PatientCandidate(_Strict):
+    """A patient of the reference cohort version, by research id; no name or
+    contact field exists."""
+
+    rank: int = Field(..., ge=1)
+    case_id: str = Field(..., description="The patient's research id in the cohort")
+    similarity: _Finite = Field(..., le=0.0, description="-||z_q - z_r||^2 of the patient "
+                                "tower's normalised vectors, in [-4, 0]; uncalibrated")
+    phenotypes: List[str] = Field(..., description="The HPO terms the cohort recorded")
+    disease_id: Optional[str] = None
+    disease_name: Optional[str] = None
+    causal_genes: List[str] = Field(default_factory=list, description="Recorded causal "
+                                    "genes: reference context, never an input of the query")
+
+
+class ReferenceCohortBlock(_Strict):
+    """The reference cohort version a patients-like-me result ranked."""
+
+    label: str
+    version_sha256: str
+    samples_sha256: str
+    patients: int = Field(..., ge=0)
+
+
 class _Response(_Strict):
     """What a response of every kind carries."""
 
@@ -523,6 +573,41 @@ class DiseaseTaskResponse(_Response):
         return self
 
 
+class GeneTaskResponse(_Response):
+    """`gene_task/v1`: the request's candidate genes ranked by a gene task model."""
+
+    result_kind: Literal["gene_task/v1"]
+    served_identity: ServedIdentity = Field(..., description=_IDENTITY_DESCRIPTION)
+    candidates: List[GeneTaskCandidate]
+    tie_policy: Literal["score-desc-then-view-id-asc/v1"]
+
+    @model_validator(mode="after")
+    def _a_gene_task(self) -> "GeneTaskResponse":
+        _ranked(self.candidates, "score")
+        if self.served_identity.scoring_mode != "gene_task":
+            raise ValueError("a gene_task result is served only by a gene task model")
+        return self
+
+
+class PatientsLikeMeResponse(_Response):
+    """`patients_like_me/v1`: a reference cohort version's patients ranked by
+    a patients-like-me model."""
+
+    result_kind: Literal["patients_like_me/v1"]
+    served_identity: ServedIdentity = Field(..., description=_IDENTITY_DESCRIPTION)
+    candidates: List[PatientCandidate]
+    tie_policy: Literal["similarity-desc-then-case-id-asc/v1"]
+    reference_cohort: ReferenceCohortBlock
+
+    @model_validator(mode="after")
+    def _patients_like_me(self) -> "PatientsLikeMeResponse":
+        _ranked(self.candidates, "similarity")
+        if self.served_identity.scoring_mode != "patients_like_me":
+            raise ValueError("a patients_like_me result is served only by a patients-like-me "
+                             "model")
+        return self
+
+
 class DemoResponse(_Response):
     """`demo/v1`: no pipeline was ever configured. Not a diagnosis, and it
     carries no score, explanation, path or gene."""
@@ -539,7 +624,8 @@ class DemoResponse(_Response):
 
 
 class DiagnoseResponse(RootModel[Annotated[
-        Union[ServedMixtureResponse, PathReasoningResponse, DiseaseTaskResponse, DemoResponse],
+        Union[ServedMixtureResponse, PathReasoningResponse, DiseaseTaskResponse,
+              GeneTaskResponse, PatientsLikeMeResponse, DemoResponse],
         Field(discriminator="result_kind")]]):
     """Diagnosis response: one kind of the result union, chosen by `result_kind`."""
 
@@ -601,8 +687,21 @@ def _candidate_body(candidate: Any, include_explanations: bool,
     fields copied, nothing coerced (an SP record keeps its nulls)."""
     from dataclasses import asdict
 
+    from src.core.types import GeneTaskCandidate as CoreGeneCandidate
+    from src.core.types import PatientCandidate as CorePatientCandidate
     from src.core.types import ServedMixtureCandidate as CoreMixtureCandidate
 
+    if isinstance(candidate, CoreGeneCandidate):
+        return {"rank": candidate.rank, "gene_id": str(candidate.gene_id),
+                "gene_name": candidate.gene_name, "score": candidate.score,
+                "embsim": candidate.embsim, "sp_similarity": candidate.sp_similarity,
+                "mean_distance": candidate.mean_distance}
+    if isinstance(candidate, CorePatientCandidate):
+        return {"rank": candidate.rank, "case_id": candidate.case_id,
+                "similarity": candidate.similarity, "phenotypes": list(candidate.phenotypes),
+                "disease_id": str(candidate.disease_id) if candidate.disease_id else None,
+                "disease_name": candidate.disease_name,
+                "causal_genes": list(candidate.causal_genes)}
     body: Dict[str, Any] = {
         "rank": candidate.rank,
         "disease_id": str(candidate.disease_id),
@@ -627,6 +726,50 @@ def _candidate_body(candidate: Any, include_explanations: bool,
     else:
         body["path_score"] = candidate.path_score
     return body
+
+
+def _reference_cohort(label: Optional[str], served_mode: str, pipeline: Any) -> Any:
+    """The registered reference cohort version a patients-like-me request names,
+    resolved in `SHEPHERD_REGISTRY`, its samples read against the digest the
+    version binds, and its graph checked against the served one (M4 decision
+    7). A request to another model naming one, or to such a model naming none,
+    is refused as a request error."""
+    from src.config.server_settings import cohort_registry
+    from src.evaluation.cohort_registry import (
+        CohortVersionRefused,
+        RegistryRefused,
+        resolve_version,
+        verify_cohort_binding,
+    )
+    from src.inference.pipeline import ReferenceCohort
+    from src.kg.storage.file_storage import SamplesDigestMismatch, read_samples_file
+
+    def refuse(detail: str) -> HTTPException:
+        return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=detail)
+
+    if served_mode != "patients_like_me":
+        raise refuse("reference_cohort applies to a patients-like-me model; the served model "
+                     "is not one")
+    if label is None:
+        raise refuse("a patients-like-me model ranks a registered reference cohort version; "
+                     "name one (reference_cohort)")
+    registry = cohort_registry()
+    if registry.value is None:
+        raise refuse(f"no reference cohort version can be read: {registry.problem}")
+    registry = registry.value
+    try:
+        version = resolve_version(registry, label)
+        bound = version.manifest["samples"]["sha256"]
+        samples = read_samples_file(version.samples_path, gene_fields=True,
+                                    expected_sha256=bound)
+        inputs = pipeline.bound_inputs()
+        verify_cohort_binding(version.manifest, inputs.graph,
+                              inputs.dataset_record.identity.sha256)
+    except (CohortVersionRefused, RegistryRefused, SamplesDigestMismatch, ValueError) as exc:
+        raise refuse(f"reference cohort {label!r}: {exc}") from None
+    identity = {"label": label, "version_sha256": version.identity.sha256,
+                "samples_sha256": samples.identity.sha256, "patients": len(samples.samples)}
+    return ReferenceCohort(identity, samples.samples)
 
 
 def _summary(n_candidates: int, n_received: int, phenotype_input: Any) -> str:
@@ -681,16 +824,10 @@ async def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
     # has no account of what was scored.
     account = None
 
-    # Reserved, accepted, ignored — and the caller is told so on every path
-    # below, because the field is equally inert in the mock fallback.
-    #
-    # `is not None`, not truthiness. An explicitly supplied `[]` **was** supplied,
-    # and the settled contract and the field's own description both say supplying
-    # the field warns. A truthiness test would silently encode a "non-empty"
-    # contract that nobody agreed to, and would leave a caller who sent `[]`
-    # believing it had an effect.
-    if request.candidate_genes is not None:
-        warnings.append(CANDIDATE_GENES_IGNORED_WARNING)
+    # `candidate_genes` is used by a gene task model only; every other answer,
+    # the mock fallback included, says it was not. `is not None`, not
+    # truthiness: an explicitly supplied `[]` was supplied.
+    genes_ignored = request.candidate_genes is not None
 
     try:
         # Get application state
@@ -766,11 +903,18 @@ async def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
                 candidate_genes=request.candidate_genes,
             )
 
+            served_mode = app_state.pipeline.served_identity().scoring_mode
+            reference = None
+            if served_mode == "patients_like_me" or request.reference_cohort is not None:
+                reference = _reference_cohort(request.reference_cohort, served_mode,
+                                              app_state.pipeline)
             result = app_state.pipeline.run(
                 patient_input=patient_input,
                 top_k=request.top_k,
                 include_explanations=request.include_explanations,
+                reference_cohort=reference,
             )
+            genes_ignored = genes_ignored and result.result_kind != "gene_task/v1"
 
             if result.warnings:
                 warnings.extend(result.warnings)
@@ -791,8 +935,14 @@ async def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
             elif result.result_kind == "path_reasoning/v1":
                 body.update(path_score_aggregation=result.path_score_aggregation,
                             tie_policy=result.tie_policy)
-            elif result.result_kind == "disease_task/v1":
+            elif result.result_kind in ("disease_task/v1", "gene_task/v1"):
                 body.update(tie_policy=result.tie_policy)
+            elif result.result_kind == "patients_like_me/v1":
+                body.update(tie_policy=result.tie_policy,
+                            reference_cohort=result.reference_cohort)
+
+        if genes_ignored:
+            warnings.insert(0, CANDIDATE_GENES_IGNORED_WARNING)
 
         body.update(
             result_schema_version=2,

@@ -68,6 +68,8 @@ from src.core.types import (
     SERVED_MIXTURE,
     Candidate,
     DiseaseTaskCandidate,
+    GeneTaskCandidate,
+    PatientCandidate,
     DataSource,
     EvidenceSource,
     InferenceResult,
@@ -283,6 +285,21 @@ class ServedRanking:
 
 
 @dataclass(frozen=True)
+class ReferenceCohort:
+    """A registered reference cohort version for patients-like-me (README §8,
+    PLAN_TEST_RESULTS §8.4), resolved, read against its digest and checked
+    against the served graph by the caller (the API, which may read the
+    registry; this layer may not).
+
+    `identity` names it on every result (`label`, `version_sha256`,
+    `samples_sha256`); `samples` are its rows with their causal genes. The
+    pipeline embeds them with the served model once per samples digest."""
+
+    identity: Dict[str, Any]
+    samples: Sequence[Any]
+
+
+@dataclass(frozen=True)
 class BoundInputs:
     """What a pipeline built over a verified workspace read and bound, for a caller
     that measures the served pipeline without reading those files again
@@ -467,13 +484,15 @@ class DiagnosisPipeline:
         result = pipeline.run(patient_phenotypes, top_k=10)
     """
 
-    # A finetuned model bundle's state (README §3, K3): none until a checkpoint
-    # with a model spec is loaded (`_load_disease_bundle`).
+    # A finetuned model bundle's state (README §3, K3, K4): none until a
+    # checkpoint with a model spec is loaded (`_load_task_bundle`).
     _bundle_view: Optional[Any] = None
     _bundle_record: Optional[Any] = None
     _bundle_z: Optional[Any] = None
     _bundle_diseases: Optional[Any] = None
     _bundle_candidates: Optional[Any] = None
+    _bundle_neighbours: Optional[Any] = None
+    _bundle_reference: Optional[Tuple[str, Any, Any]] = None
 
     def __init__(
         self,
@@ -1284,7 +1303,7 @@ class DiagnosisPipeline:
         from src.models.bundle.record import has_model_spec
 
         if has_model_spec(checkpoint):
-            model = self._load_disease_bundle(checkpoint, ckpt_path)
+            model = self._load_task_bundle(checkpoint, ckpt_path)
         else:
             model = None
         try:
@@ -1345,7 +1364,7 @@ class DiagnosisPipeline:
         )
         return model
 
-    def _load_disease_bundle(self, checkpoint: Dict[str, Any], ckpt_path: Path) -> Any:
+    def _load_task_bundle(self, checkpoint: Dict[str, Any], ckpt_path: Path) -> Any:
         """A checkpoint with a model spec: the model record read and checked,
         stage and task first (provenance §9.3 hazard 3: a base serves no
         diagnosis), the graph view rebuilt from the verified graph by the spec's
@@ -1363,16 +1382,17 @@ class DiagnosisPipeline:
 
         try:
             record = read_model_record(checkpoint)
-            check_model_record(record, learning_stage="finetune", task="disease")
+            check_model_record(record, learning_stage="finetune")
+            check_model_record(record, learning_stage="finetune", task=record.task)
             rule = _asdict(record.model_spec.graph_view)
             rule["exclude_relations"] = list(rule["exclude_relations"])
             view = build_graph_view(self._graph_data, rule=rule)
-            bundle, record = load_bundle(checkpoint, learning_stage="finetune", task="disease",
-                                         view_digest=view.digest)
+            bundle, record = load_bundle(checkpoint, learning_stage="finetune",
+                                         task=record.task, view_digest=view.digest)
         except (ModelRecordError, ValueError) as exc:
             raise PipelineBuildError(
                 f"Checkpoint {ckpt_path}: {exc}. The Diagnosis page serves a model "
-                "finetuned for the disease task.") from exc
+                "finetuned for a task (disease, gene or patients-like-me).") from exc
         self._bundle_view = view
         self._bundle_record = record
         return bundle
@@ -1404,12 +1424,19 @@ class DiagnosisPipeline:
             view = self._bundle_view
             self._bundle_z = full_view_vectors(self.model, view.edge_index(), view.rel, device)
             self._embedding_regime = regime
-            self._bundle_diseases = view.type_nodes("disease")
-            with torch.no_grad():
-                self._bundle_candidates = self.model.task_head.project_candidates(
-                    self._bundle_z[self._bundle_diseases.to(self._bundle_z.device)])
-            logger.info(f"Model bundle vectors computed: {tuple(self._bundle_z.shape)} over "
-                        f"view {view.digest[:12]}, {int(self._bundle_diseases.numel())} diseases")
+            task = self.model.task
+            if task == "disease":
+                self._bundle_diseases = view.type_nodes("disease")
+                with torch.no_grad():
+                    self._bundle_candidates = self.model.task_head.project_candidates(
+                        self._bundle_z[self._bundle_diseases.to(self._bundle_z.device)])
+            elif task == "gene" and self.model.task_head.spec.gene.augmentation:
+                from src.models.tasks.gene import neighbour_table
+
+                self._bundle_neighbours = neighbour_table(
+                    view, self.model.task_head.spec.gene.augmentation_k)
+            logger.info(f"Model bundle vectors computed for the {task} task: "
+                        f"{tuple(self._bundle_z.shape)} over view {view.digest[:12]}")
             return
 
         logger.info("Precomputing node embeddings via GNN forward pass...")
@@ -1443,6 +1470,7 @@ class DiagnosisPipeline:
         self,
         patient_input: PatientPhenotypes,
         include_ortholog_evidence: Optional[bool] = None,
+        reference_cohort: Optional[ReferenceCohort] = None,
     ) -> ServedRanking:
         """The served ranking of `patient_input`, whole: everything `run` does
         up to and including its sort, and nothing after it.
@@ -1482,7 +1510,20 @@ class DiagnosisPipeline:
         source_ids = list(validation.node_ids)
 
         if self._bundle_view is not None:
+            task = self.model.task
+            if (task == "patients_like_me") != (reference_cohort is not None):
+                raise ValueError(
+                    "a patients-like-me model ranks a registered reference cohort version, "
+                    "which must be chosen" if task == "patients_like_me" else
+                    "a reference cohort is ranked by a patients-like-me model only")
+            if task == "gene":
+                return self._rank_by_gene_task(patient_input, validation, warnings, source_ids)
+            if task == "patients_like_me":
+                return self._rank_patients_like_me(patient_input, validation, warnings,
+                                                   source_ids, reference_cohort)
             return self._rank_by_disease_task(patient_input, validation, warnings, source_ids)
+        if reference_cohort is not None:
+            raise ValueError("a reference cohort is ranked by a patients-like-me model only")
 
         # Step 3: Find reasoning paths (BFS-based)
         logger.debug("Finding reasoning paths...")
@@ -1571,6 +1612,201 @@ class DiagnosisPipeline:
             phenotype_input=validation.phenotype_input, candidates=candidates,
             discovery_ordinals=order, source_ids=source_ids, all_paths={})
 
+    def _bundle_phenotypes(self, validation: "ValidationResult", warnings: List[str]
+                           ) -> Tuple[Any, List[str]]:
+        """The request's phenotypes as view ids of the model's graph, each
+        outside it dropped and said so."""
+        view = self._bundle_view
+        rows = torch.tensor(list(validation.rows or []), dtype=torch.long)
+        view_ids = view.view_ids("phenotype", rows) if rows.numel() else rows
+        dropped = int((view_ids < 0).sum())
+        if dropped:
+            warnings = warnings + [
+                f"{dropped} phenotype(s) are outside the model's graph view and were not "
+                "scored"]
+        return torch.unique(view_ids[view_ids >= 0]), warnings
+
+    def _rank_by_gene_task(self, patient_input: PatientPhenotypes,
+                           validation: "ValidationResult", warnings: List[str],
+                           source_ids: List[NodeID]) -> ServedRanking:
+        """`gene_task/v1`: the request's candidate genes (PLAN_TEST_RESULTS
+        §8.3), ranked by `η·EMBSIM + (1 − η)·SPLSIM` with exact hops on the
+        whole view (README §6), ties by view id. A gene that maps to no gene of
+        the view is left out and counted ("N mapped of M submitted"); one with
+        an undefined distance is not scorable and said so."""
+        from src.models.tasks.gene import (
+            distance_table,
+            gene_embsim,
+            mean_distances,
+            neighbour_inputs,
+            splsim,
+        )
+
+        submitted = list(patient_input.candidate_genes or [])
+        if not submitted:
+            return ServedRanking(
+                outcome="no_candidates",
+                warnings=warnings + ["A gene task model ranks the patient's candidate genes; "
+                                     "none were given (candidate_genes)"],
+                patient_input=patient_input, phenotype_input=validation.phenotype_input,
+                source_ids=source_ids)
+        view = self._bundle_view
+        lookup = self._gene_lookup()
+        local = [lookup.get(g, lookup.get(g.strip().upper())) for g in submitted]
+        known = sorted({i for i in local if i is not None})
+        view_ids = view.view_ids("gene", torch.tensor(known, dtype=torch.long)) if known \
+            else torch.empty(0, dtype=torch.long)
+        genes = torch.unique(view_ids[view_ids >= 0])
+        if genes.numel() < len(submitted):
+            warnings = warnings + [f"{genes.numel()} of {len(submitted)} candidate genes "
+                                   "submitted map to a gene of the model's graph view"]
+        phenotypes, warnings = self._bundle_phenotypes(validation, warnings)
+        if phenotypes.numel() == 0 or genes.numel() == 0:
+            return ServedRanking(
+                outcome="no_candidates",
+                warnings=warnings + ["Nothing to rank: no phenotype or no candidate gene is in "
+                                     "the model's graph view"],
+                patient_input=patient_input, phenotype_input=validation.phenotype_input,
+                source_ids=source_ids)
+        spec = self.model.task_head.spec.gene
+        table = distance_table(view, phenotypes, genes)
+        rows = table.row_of[phenotypes].unsqueeze(0)
+        cols = table.col_of[genes].unsqueeze(0)
+        mask = torch.ones_like(rows, dtype=torch.bool)
+        mean, defined = mean_distances(table.table, rows, mask, cols)
+        z = self._bundle_z
+        if self._bundle_neighbours is not None:
+            near, weight, degree = neighbour_inputs(self._bundle_neighbours, genes.unsqueeze(0))
+        else:
+            near = torch.zeros(1, genes.numel(), spec.augmentation_k, dtype=torch.long)
+            weight = torch.zeros(1, genes.numel(), spec.augmentation_k)
+            degree = torch.zeros(1, genes.numel())
+        with torch.no_grad():
+            embsim = gene_embsim(self.model, z, phenotypes.unsqueeze(0).to(z.device),
+                                 mask.to(z.device), genes.unsqueeze(0).to(z.device),
+                                 near.to(z.device), weight.to(z.device),
+                                 degree.to(z.device))[0].cpu()
+        sp = splsim(mean[0], spec.sp_lower, spec.sp_upper)
+        scores = spec.eta * embsim + (1.0 - spec.eta) * sp
+        scorable = defined[0]
+        if not bool(scorable.all()):
+            warnings = warnings + [f"{int((~scorable).sum())} candidate gene(s) have an "
+                                   "unreachable phenotype and are not scorable"]
+        if not bool(torch.isfinite(scores[scorable]).all()):
+            raise ResultRefused("NON_FINITE_SCORE",
+                                "the gene head produced a non-finite score; the result was "
+                                "refused, not ranked")
+        order = sorted((i for i in range(genes.numel()) if bool(scorable[i])),
+                       key=lambda i: (-float(scores[i]), int(genes[i])))
+        reverse = {index: key for key, index in
+                   (self._node_id_to_idx or {}).get(NodeType.GENE.value, {}).items()}
+        locals_ = view.local_index(genes).tolist()
+        candidates: List[Candidate] = []
+        for rank, i in enumerate(order, start=1):
+            node_id = NodeID.from_string(reverse[locals_[i]])
+            node = self.kg.get_node(node_id)
+            candidates.append(GeneTaskCandidate(
+                rank=rank, gene_id=node_id, gene_name=node.name if node else str(node_id),
+                score=float(scores[i]), embsim=float(embsim[i]), sp_similarity=float(sp[i]),
+                mean_distance=float(mean[0, i])))
+        if not candidates:
+            return ServedRanking(
+                outcome="no_candidates", warnings=warnings + ["No candidate gene is scorable"],
+                patient_input=patient_input, phenotype_input=validation.phenotype_input,
+                source_ids=source_ids)
+        return ServedRanking(
+            outcome="ranked", warnings=warnings, patient_input=patient_input,
+            phenotype_input=validation.phenotype_input, candidates=candidates,
+            discovery_ordinals=order, source_ids=source_ids, all_paths={})
+
+    def _rank_patients_like_me(self, patient_input: PatientPhenotypes,
+                               validation: "ValidationResult", warnings: List[str],
+                               source_ids: List[NodeID],
+                               reference: Optional[ReferenceCohort]) -> ServedRanking:
+        """`patients_like_me/v1`: the reference cohort version's patients
+        (PLAN_TEST_RESULTS §8.4), ranked by the patient tower's similarity,
+        ties by case id. A reference patient whose case id is the query's is
+        left out (self-exclusion by stable identity, E5). Known causal genes
+        are reference context only; the query's genes are never an input."""
+        from src.models.tasks.patients_like_me import bind_patients, patient_tower_vectors
+
+        phenotypes, warnings = self._bundle_phenotypes(validation, warnings)
+        if phenotypes.numel() == 0:
+            return ServedRanking(
+                outcome="no_candidates",
+                warnings=warnings + ["None of the phenotypes is in the model's graph view"],
+                patient_input=patient_input, phenotype_input=validation.phenotype_input,
+                source_ids=source_ids)
+        view, z = self._bundle_view, self._bundle_z
+        key = str(reference.identity.get("samples_sha256"))
+        if self._bundle_reference is None or self._bundle_reference[0] != key:
+            binding = bind_patients(view, reference.samples)
+            vectors = patient_tower_vectors(self.model, z, binding.cases)
+            self._bundle_reference = (key, binding, vectors)
+        _, binding, vectors = self._bundle_reference
+        if binding.excluded:
+            warnings = warnings + [f"{len(binding.excluded)} reference patient(s) have no "
+                                   "phenotype in the model's graph view and are not ranked"]
+        keep = [i for i, c in enumerate(binding.cases) if c.case_id != patient_input.patient_id]
+        if not keep:
+            return ServedRanking(
+                outcome="no_candidates",
+                warnings=warnings + ["The reference cohort has no other patient to rank"],
+                patient_input=patient_input, phenotype_input=validation.phenotype_input,
+                source_ids=source_ids)
+        with torch.no_grad():
+            query = patient_tower_vectors(
+                self.model, z, [type(binding.cases[0])(patient_input.patient_id, phenotypes,
+                                                       frozenset())])
+            sims = self.model.task_head.scores(query, vectors[keep])[0]
+        if not bool(torch.isfinite(sims).all()):
+            raise ResultRefused("NON_FINITE_SCORE",
+                                "the patient tower produced a non-finite similarity; the "
+                                "result was refused, not ranked")
+        order = sorted(range(len(keep)),
+                       key=lambda j: (-float(sims[j]), binding.cases[keep[j]].case_id))
+        rows = {s.patient_id: s for s in reference.samples}
+        candidates: List[Candidate] = []
+        for rank, j in enumerate(order, start=1):
+            case = binding.cases[keep[j]]
+            candidates.append(self._patient_candidate(rank, case.case_id, float(sims[j]),
+                                                      rows[case.case_id]))
+        return ServedRanking(
+            outcome="ranked", warnings=warnings, patient_input=patient_input,
+            phenotype_input=validation.phenotype_input, candidates=candidates,
+            discovery_ordinals=order, source_ids=source_ids, all_paths={})
+
+    def _patient_candidate(self, rank: int, case_id: str, similarity: float,
+                           row: Any) -> PatientCandidate:
+        """A reference patient with what its cohort recorded: HPO terms, the
+        diagnosis and the causal genes, in the graph's ids and names."""
+        mapping = self._node_id_to_idx or {}
+
+        def ids(node_type: str, locals_: Any) -> List[str]:
+            reverse = {i: key for key, i in mapping.get(node_type, {}).items()}
+            return [reverse[i] for i in (locals_ or []) if i in reverse]
+
+        phenotypes = tuple(NodeID.from_string(k).local_id for k in ids("phenotype",
+                                                                       row.phenotype_ids))
+        disease = ids("disease", [row.disease_id])
+        disease_id = NodeID.from_string(disease[0]) if disease else None
+        node = self.kg.get_node(disease_id) if disease_id else None
+        genes = []
+        for key in ids("gene", getattr(row, "causal_gene_ids", None)):
+            gene = self.kg.get_node(NodeID.from_string(key))
+            genes.append(gene.name if gene else key)
+        return PatientCandidate(rank=rank, case_id=case_id, similarity=similarity,
+                                phenotypes=phenotypes, disease_id=disease_id,
+                                disease_name=node.name if node else None,
+                                causal_genes=tuple(genes))
+
+    def _gene_lookup(self) -> Dict[str, int]:
+        """Gene identifiers -> gene index, the importer's rule
+        (`KnowledgeGraph.gene_lookup`), cached."""
+        if getattr(self, "_gene_lookup_cache", None) is None:
+            self._gene_lookup_cache = self.kg.gene_lookup()
+        return self._gene_lookup_cache
+
     def _disease_node_ids(self) -> Dict[int, NodeID]:
         """Each disease's NodeID by its row in the graph's disease table."""
         if getattr(self, "_disease_node_id_cache", None) is None:
@@ -1586,6 +1822,7 @@ class DiagnosisPipeline:
         include_explanations: Optional[bool] = None,
         include_ortholog_evidence: Optional[bool] = None,
         include_literature_evidence: Optional[bool] = None,
+        reference_cohort: Optional[ReferenceCohort] = None,
     ) -> InferenceResult:
         """
         Execute the full diagnosis pipeline: `rank`, then the cut at `top_k`
@@ -1616,7 +1853,10 @@ class DiagnosisPipeline:
             f"with {len(patient_input.phenotypes)} phenotypes"
         )
 
-        ranking = self.rank(patient_input, include_ortholog_evidence)
+        ranking = self.rank(patient_input, include_ortholog_evidence, reference_cohort)
+        # A patients-like-me result names its reference cohort version, a
+        # refused or empty one included (rank refuses one without it).
+        reference = dict(reference_cohort.identity) if reference_cohort is not None else None
         if ranking.outcome == "refused":
             return InferenceResult(
                 patient_id=patient_input.patient_id,
@@ -1627,6 +1867,7 @@ class DiagnosisPipeline:
                 inference_time_ms=(time.time() - start_time) * 1000,
                 phenotype_input=ranking.phenotype_input,
                 candidates_reached=self._candidates_reached(0),
+                reference_cohort=reference,
             )
         patient_input = ranking.patient_input
         if ranking.outcome == "no_candidates":
@@ -1635,7 +1876,18 @@ class DiagnosisPipeline:
                 start_time,
                 ranking.warnings,
                 ranking.phenotype_input,
+                reference_cohort=reference,
             )
+        if self._bundle_view is not None and self.model.task != "disease":
+            # Gene and reference-patient rows carry their own values; path
+            # evidence explains disease rows (README §1) and is not built here.
+            return InferenceResult(
+                patient_id=patient_input.patient_id, timestamp=datetime.now(),
+                candidates=list(ranking.candidates[:top_k]),
+                served_identity=self.served_identity(),
+                inference_time_ms=(time.time() - start_time) * 1000,
+                warnings=ranking.warnings, phenotype_input=ranking.phenotype_input,
+                reference_cohort=reference)
 
         # **The cut is the only thing `top_k` does**: the order is `rank`'s.
         # Step 4b: The phenotypes the graph annotates directly to each candidate
@@ -2311,6 +2563,7 @@ class DiagnosisPipeline:
         start_time: float,
         warnings: List[str],
         phenotype_input: Optional[PhenotypeInputAccount] = None,
+        reference_cohort: Optional[Dict[str, Any]] = None,
     ) -> InferenceResult:
         """A result with no candidates (discovery reached no disease), with
         its warnings."""
@@ -2323,6 +2576,7 @@ class DiagnosisPipeline:
             inference_time_ms=(time.time() - start_time) * 1000,
             phenotype_input=phenotype_input,
             candidates_reached=self._candidates_reached(0),
+            reference_cohort=reference_cohort,
         )
 
     def _candidates_reached(self, reached: int) -> Optional[int]:
@@ -2391,7 +2645,8 @@ class DiagnosisPipeline:
         """The scoring mode in effect and the mixing weight it reports (None
         for the disease task, which mixes nothing)."""
         if self._gnn_ready and self._bundle_view is not None:
-            return "disease_task", None
+            return {"disease": "disease_task", "gene": "gene_task",
+                    "patients_like_me": "patients_like_me"}[self.model.task], None
         if self._gnn_ready and self._sp_ready:
             return "gnn_plus_shortest_path", self.config.eta
         if self._gnn_ready:

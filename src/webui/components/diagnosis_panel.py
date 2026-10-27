@@ -74,8 +74,10 @@ import requests
 from src.core.types import (
     DEMO,
     DISEASE_TASK,
+    GENE_TASK,
     MIXED_AS_WORDS,
     PATH_REASONING,
+    PATIENTS_LIKE_ME,
     RESULT_KINDS,
     SERVED_MIXTURE,
     SP_NUMERIC_STATUSES,
@@ -316,11 +318,18 @@ def _label_of(kind: str, result: Mapping[str, Any]) -> Optional[str]:
         return None
 
 
+#: The kinds this page draws: disease rows. The gene and patients-like-me kinds
+#: (`gene_task/v1`, `patients_like_me/v1`) get their own views with the
+#: Diagnosis inputs of their tasks (K6); until then the page says it cannot read
+#: them rather than drawing gene or patient rows as diseases.
+PAGE_KINDS = tuple(k for k in RESULT_KINDS if k not in (GENE_TASK, PATIENTS_LIKE_ME))
+
+
 def _result_kind(result: Any) -> Optional[str]:
-    """The result's `result_kind` when it is one this page knows; else None, and
+    """The result's `result_kind` when it is one this page draws; else None, and
     every surface draws nothing from the result."""
     kind = result.get("result_kind") if isinstance(result, Mapping) else None
-    return kind if kind in RESULT_KINDS else None
+    return kind if kind in PAGE_KINDS else None
 
 
 def _shows_sp(result: Any) -> bool:

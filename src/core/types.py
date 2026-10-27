@@ -410,7 +410,14 @@ DEMO = "demo/v1"
 #: README §3, K3): every disease of the model's graph view, ranked by the
 #: disease head's score; path discovery only explains the rows shown.
 DISEASE_TASK = "disease_task/v1"
-RESULT_KINDS = (SERVED_MIXTURE, PATH_REASONING, DEMO, DISEASE_TASK)
+#: A finetuned gene task model (README A8, §6; PLAN_TEST_RESULTS §8.3): the
+#: request's own candidate genes, ranked by η·EMBSIM + (1 − η)·SPLSIM.
+GENE_TASK = "gene_task/v1"
+#: A finetuned patients-like-me model (README A9; PLAN_TEST_RESULTS §8.4): the
+#: patients of a registered reference cohort version, ranked by similarity.
+PATIENTS_LIKE_ME = "patients_like_me/v1"
+RESULT_KINDS = (SERVED_MIXTURE, PATH_REASONING, DEMO, DISEASE_TASK, GENE_TASK,
+                PATIENTS_LIKE_ME)
 #: Today's two served kinds rank by a stable sort, so equal scores keep the
 #: order path discovery reached the diseases in.
 SERVED_TIE_POLICY = "served-stable-discovery-order/v1"
@@ -418,6 +425,10 @@ SERVED_TIE_POLICY = "served-stable-discovery-order/v1"
 #: tie is shown in a fixed order (README E3: the screen may order ties by a
 #: stable id; a metric uses average ranks).
 DISEASE_TASK_TIE_POLICY = "score-desc-then-view-id-asc/v1"
+#: The gene task orders equal scores by the gene's graph-view id.
+GENE_TASK_TIE_POLICY = DISEASE_TASK_TIE_POLICY
+#: Patients-like-me orders equal similarities by the reference case id.
+PATIENTS_LIKE_ME_TIE_POLICY = "similarity-desc-then-case-id-asc/v1"
 #: The path aggregations `DiagnosisPipeline` applies, by `aggregation_method`;
 #: any other value is aggregated as `max`, and named so.
 PATH_SCORE_AGGREGATIONS = ("weighted_sum", "max", "mean", "sum")
@@ -620,22 +631,69 @@ class DiseaseTaskCandidate(_ServedEvidence, _CandidateBase):
         _require_finite(self.score, "score")
 
 
+@dataclass(frozen=True, kw_only=True)
+class GeneTaskCandidate:
+    """A candidate of `gene_task/v1`: one of the request's candidate genes,
+    ranked by the finetuned gene head's score."""
+
+    rank: int
+    gene_id: NodeID
+    gene_name: str
+    #: η·EMBSIM + (1 − η)·SPLSIM, uncalibrated (README A8, U12).
+    score: float
+    #: Its two parts: the head's tanh similarity, and the fixed-bound SP
+    #: similarity of the exact mean hop distance (README §6), unclipped.
+    embsim: float
+    sp_similarity: float
+    mean_distance: float
+
+    def __post_init__(self) -> None:
+        for name in ("score", "embsim", "sp_similarity", "mean_distance"):
+            _require_finite(getattr(self, name), name)
+
+
+@dataclass(frozen=True, kw_only=True)
+class PatientCandidate:
+    """A candidate of `patients_like_me/v1`: a patient of the reference cohort
+    version, by research id, with what the cohort recorded for it. No name or
+    contact field exists (README §8)."""
+
+    rank: int
+    case_id: str
+    #: −‖ẑ_q − ẑ_r‖² of the patient tower's normalised vectors, in [−4, 0];
+    #: uncalibrated.
+    similarity: float
+    #: The recorded HPO terms, the recorded diagnosis and causal genes.
+    phenotypes: Tuple[str, ...] = ()
+    disease_id: Optional[NodeID] = None
+    disease_name: Optional[str] = None
+    causal_genes: Tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        _require_finite(self.similarity, "similarity")
+
+
 #: A candidate of any kind the pipeline produces. `demo/v1` is the API's own
 #: answer when no pipeline was ever configured, and never reaches here.
-Candidate = Union[ServedMixtureCandidate, PathReasoningCandidate, DiseaseTaskCandidate]
+Candidate = Union[ServedMixtureCandidate, PathReasoningCandidate, DiseaseTaskCandidate,
+                  GeneTaskCandidate, PatientCandidate]
 
 #: Each kind's candidate type.
 CANDIDATE_TYPES = {SERVED_MIXTURE: ServedMixtureCandidate,
                    PATH_REASONING: PathReasoningCandidate,
-                   DISEASE_TASK: DiseaseTaskCandidate}
+                   DISEASE_TASK: DiseaseTaskCandidate,
+                   GENE_TASK: GeneTaskCandidate,
+                   PATIENTS_LIKE_ME: PatientCandidate}
 
 
 def candidate_score(candidate: Candidate) -> float:
     """The value `candidate`'s kind ranks by."""
     if isinstance(candidate, ServedMixtureCandidate):
         return candidate.served_score
-    if isinstance(candidate, DiseaseTaskCandidate):
+    if isinstance(candidate, (DiseaseTaskCandidate, GeneTaskCandidate)):
         return candidate.score
+    if isinstance(candidate, PatientCandidate):
+        return candidate.similarity
     return candidate.path_score
 
 
@@ -673,7 +731,7 @@ SERVED_DATASET_RECORD_STATES = ("verified", "absent")
 #: cannot import; `tests/unit/test_served_identity.py` pins the two equal).
 SERVED_DATASET_ORIGINS = ("files", "synthetic")
 SERVED_SCORING_MODES = ("gnn_plus_shortest_path", "gnn_only", "path_reasoning_fallback",
-                        "disease_task")
+                        "disease_task", "gene_task", "patients_like_me")
 
 _HEX = frozenset("0123456789abcdef")
 
@@ -880,6 +938,10 @@ def result_kind_for(scoring_mode: Optional[str]) -> str:
         return PATH_REASONING
     if scoring_mode == "disease_task":
         return DISEASE_TASK
+    if scoring_mode == "gene_task":
+        return GENE_TASK
+    if scoring_mode == "patients_like_me":
+        return PATIENTS_LIKE_ME
     raise ValueError(f"no result kind for scoring mode {scoring_mode!r}")
 
 
@@ -904,6 +966,12 @@ def result_label(result_kind: str, scoring_mode: Optional[str] = None,
     if result_kind == DISEASE_TASK:
         return ("Disease task model: every disease of the model's graph ranked by its "
                 "Score (uncalibrated); paths only explain the rows shown")
+    if result_kind == GENE_TASK:
+        return ("Gene task model: your candidate genes ranked by their Score "
+                "(uncalibrated), the model's similarity mixed with shortest-path proximity")
+    if result_kind == PATIENTS_LIKE_ME:
+        return ("Patients-like-me model: the reference cohort's patients ranked by "
+                "Similarity (uncalibrated); a shared causal gene is not implied")
     raise ValueError(f"unknown result kind {result_kind!r}")
 
 
@@ -953,6 +1021,10 @@ class InferenceResult:
     #: cut at `top_k` (0 for a refused or empty result). None for other kinds.
     candidates_reached: Optional[int] = None
 
+    #: `patients_like_me/v1` only: the reference cohort version ranked against
+    #: (`label`, `version_sha256`, `samples_sha256`, `patients`). None otherwise.
+    reference_cohort: Optional[Dict[str, Any]] = None
+
     def __post_init__(self) -> None:
         kind = self.result_kind
         expected = CANDIDATE_TYPES[kind]
@@ -986,6 +1058,9 @@ class InferenceResult:
                         "mixed, and absent otherwise")
         elif self.candidates_reached is not None:
             raise ValueError(f"candidates_reached belongs to {SERVED_MIXTURE} alone")
+        if (kind == PATIENTS_LIKE_ME) != (self.reference_cohort is not None):
+            raise ValueError(f"a {PATIENTS_LIKE_ME} result names its reference cohort version, "
+                             "and only such a result does")
 
     @property
     def result_kind(self) -> str:
@@ -1005,7 +1080,9 @@ class InferenceResult:
 
     @property
     def tie_policy(self) -> str:
-        return DISEASE_TASK_TIE_POLICY if self.result_kind == DISEASE_TASK else SERVED_TIE_POLICY
+        return {DISEASE_TASK: DISEASE_TASK_TIE_POLICY, GENE_TASK: GENE_TASK_TIE_POLICY,
+                PATIENTS_LIKE_ME: PATIENTS_LIKE_ME_TIE_POLICY}.get(self.result_kind,
+                                                                   SERVED_TIE_POLICY)
 
     @property
     def path_score_aggregation(self) -> Optional[str]:

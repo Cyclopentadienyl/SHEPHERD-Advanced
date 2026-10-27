@@ -448,6 +448,8 @@ def test_the_result_unions_mirrors_have_the_core_types_fields():
         (types.ServedMixtureCandidate, diagnose.ServedMixtureCandidate, {"evidence_sources"}),
         (types.PathReasoningCandidate, diagnose.PathReasoningCandidate, {"evidence_sources"}),
         (types.DiseaseTaskCandidate, diagnose.DiseaseTaskCandidate, {"evidence_sources"}),
+        (types.GeneTaskCandidate, diagnose.GeneTaskCandidate, set()),
+        (types.PatientCandidate, diagnose.PatientCandidate, set()),
     ]
     for core, model, kept_back in pairs:
         assert {f.name for f in dataclasses.fields(core)} - kept_back == set(model.model_fields), (
@@ -465,7 +467,8 @@ def test_the_result_unions_vocabularies_are_the_core_ones():
     assert set(diagnose.RESULT_KINDS) == set(types.RESULT_KINDS)
     kinds = {model.model_fields["result_kind"].annotation for model in (
         diagnose.ServedMixtureResponse, diagnose.PathReasoningResponse, diagnose.DemoResponse,
-        diagnose.DiseaseTaskResponse)}
+        diagnose.DiseaseTaskResponse, diagnose.GeneTaskResponse,
+        diagnose.PatientsLikeMeResponse)}
     assert {value for kind in kinds for value in _literal_values(kind)} == set(types.RESULT_KINDS)
     assert _literal_values(diagnose.SPTerm.model_fields["status"].annotation) == set(
         types.SP_STATUSES)
@@ -473,6 +476,8 @@ def test_the_result_unions_vocabularies_are_the_core_ones():
     assert diagnose.SP_NON_NUMERIC_STATUSES == types.SP_NON_NUMERIC_STATUSES
     assert diagnose.SERVED_TIE_POLICY == types.SERVED_TIE_POLICY
     assert diagnose.DISEASE_TASK_TIE_POLICY == types.DISEASE_TASK_TIE_POLICY
+    assert diagnose.GENE_TASK_TIE_POLICY == types.GENE_TASK_TIE_POLICY
+    assert diagnose.PATIENTS_LIKE_ME_TIE_POLICY == types.PATIENTS_LIKE_ME_TIE_POLICY
     assert _literal_values(
         diagnose.PathReasoningResponse.model_fields["path_score_aggregation"].annotation
     ) == {f"{method}/v1" for method in types.PATH_SCORE_AGGREGATIONS}
