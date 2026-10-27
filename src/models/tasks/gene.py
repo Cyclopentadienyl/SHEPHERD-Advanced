@@ -204,12 +204,17 @@ def bind_gene_cases(view: Any, samples: Sequence[Any]) -> Binding:
               "causal_genes_outside_view": 0, "candidates_outside_view": 0,
               "candidates_submitted": 0, "cases_with_several_causal_genes": 0}
     positives: Dict[str, int] = {}
+    no_truth = set()
     has_disease = "disease" in view.node_types
     for sample in samples:
         listed = len(set(sample.causal_gene_ids or ()))
-        positives[sample.patient_id] = max(listed, 1)
-        if not sample.causal_gene_ids or not sample.gene_ids:
-            excluded.append((sample.patient_id, "no_causal_gene_or_candidate_list"))
+        positives[sample.patient_id] = listed
+        if not listed:
+            excluded.append((sample.patient_id, "no_causal_gene"))
+            no_truth.add(sample.patient_id)
+            continue
+        if not sample.gene_ids:
+            excluded.append((sample.patient_id, "no_candidate_list"))
             continue
         counts["candidates_submitted"] += len(set(sample.gene_ids))
         counts["cases_with_several_causal_genes"] += int(listed > 1)
@@ -236,7 +241,7 @@ def bind_gene_cases(view: Any, samples: Sequence[Any]) -> Binding:
     for _, reason in excluded:
         counts[f"excluded_{reason}"] = counts.get(f"excluded_{reason}", 0) + 1
     return Binding(cases, excluded, counts,
-                   {case_id: positives[case_id] for case_id, _ in excluded})
+                   {case_id: positives[case_id] for case_id, _ in excluded}, no_truth)
 
 
 @dataclass

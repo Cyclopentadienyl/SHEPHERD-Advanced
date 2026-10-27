@@ -722,15 +722,27 @@ def read_training_inputs(
         f"{dataset_record.binding}, origin {dataset_record.origin} "
         f"(sha256 {dataset_record.identity.sha256[:12]})"
     )
-    task_data = None
-    if task in FIXTURE_TASKS:
-        from src.kg.task_fixture import read_gene_fixture
+    return with_task_data(
+        TrainingInputs(manifest, graph, samples, with_validation, bound, dataset_record),
+        data_dir, task)
 
-        task_data = read_gene_fixture(data_dir, manifest_sha256=manifest.identity.sha256)
-        logger.info(f"Gene task fixture ({task_data.record.get('label')}): "
-                    f"{task_data.record.get('counts')}")
-    return TrainingInputs(manifest, graph, samples, with_validation, bound, dataset_record,
-                          task_data)
+
+def with_task_data(inputs: TrainingInputs, data_dir: Path, task: Optional[str]
+                   ) -> TrainingInputs:
+    """`inputs` with the gene task's functional fixture, for a task that trains
+    on it (`FIXTURE_TASKS`): its record read against `inputs`' manifest reading
+    and each file against its recorded digest (`read_gene_fixture`). A model
+    bundle run calls it after its parent's stage and task are checked, so a
+    parent of another task is refused for that, not for a missing fixture
+    (README §8 regression 7: the task filter runs first)."""
+    if task not in FIXTURE_TASKS:
+        return inputs
+    from src.kg.task_fixture import read_gene_fixture
+
+    task_data = read_gene_fixture(data_dir, manifest_sha256=inputs.manifest.identity.sha256)
+    logger.info(f"Gene task fixture ({task_data.record.get('label')}): "
+                f"{task_data.record.get('counts')}")
+    return inputs._replace(task_data=task_data)
 
 
 def read_resume_parent(
@@ -775,6 +787,17 @@ def read_resume_parent(
     and is not compared: every link in a resume chain read the same files, so a
     checkpoint's record covers its history.
     """
+    parent = read_resume_checkpoint(requested, device, expected_sha256=expected_sha256)
+    if parent is not None:
+        accept_resume_parent(parent, inputs)
+    return parent
+
+
+def read_resume_checkpoint(requested: Optional[str], device: str, *,
+                           expected_sha256: Optional[str] = None
+                           ) -> Optional["CheckpointRead"]:
+    """The one read of a requested resume parent (`read_resume_parent`), not
+    yet compared with this run's inputs; `None` when nothing was requested."""
     from src.utils.checkpoint_io import read_checkpoint
 
     if not requested:
@@ -796,13 +819,19 @@ def read_resume_parent(
             "the run does not train from scratch instead; name an existing "
             "checkpoint, or start a new run without --resume."
         ) from None
+    return parent
+
+
+def accept_resume_parent(parent: "CheckpointRead", inputs: TrainingInputs) -> None:
+    """Refuse a resume parent unless it was trained on this run's inputs
+    (`read_resume_parent`, contract M2.3)."""
+    resume_path = Path(parent.identity.path)
     check_resume_parent(
         parent.checkpoint, inputs, recorded_by=f"The resume parent {resume_path}"
     )
     logger.info(
         f"Resume parent accepted: {resume_path} (sha256 {parent.identity.sha256[:12]})"
     )
-    return parent
 
 
 def plan_from_parent(
@@ -1239,6 +1268,7 @@ def train_bundle(config: TrainConfig, explicit: Optional[Collection[str]] = None
         MODEL_RECORD_VERSION, ModelRecord, ModelRecordError, read_model_record,
     )
     from src.training.lp_task import BASE_SELECTION_METRIC, BaseLPSampler, BaseLPTask
+    from src.training.recipe import unread_settings
     from src.utils.checkpoint_paths import (
         check_run_dir_free, claim_run_dir, propose_run_dir, run_checkpoint_dir, run_log_dir,
     )
@@ -1263,6 +1293,12 @@ def train_bundle(config: TrainConfig, explicit: Optional[Collection[str]] = None
         if bool(config.finetune_from) == bool(config.resume_from):
             raise ValueError("a finetune run starts from a base (finetune_from) or resumes a "
                              "finetune run (resume_from): exactly one of them")
+    unread = sorted(explicit_set & unread_settings(stage, config.task))
+    if unread:
+        raise ValueError(
+            f"{', '.join(unread)} configure another task, which a {stage} run"
+            + (f" for {config.task}" if config.task else "")
+            + " does not read. Remove them.")
     if expected_parent_sha256 is not None and not config.finetune_from:
         raise ValueError("--expect-parent-sha256 names a finetune parent; give finetune_from.")
     config, recipe = apply_stage_recipe(config, explicit_set)
@@ -1276,13 +1312,14 @@ def train_bundle(config: TrainConfig, explicit: Optional[Collection[str]] = None
         check_run_dir_free(config.run_dir)
 
     inputs = read_training_inputs(data_dir, expected_manifest_sha256=expected_dataset_sha256,
-                                  with_samples=(stage == "finetune"),
-                                  task=config.task if stage == "finetune" else None)
+                                  with_samples=(stage == "finetune"))
 
     # The parent: a run of the same stage to resume or extend, or a base to
-    # finetune from. Both are read once and checked before any output.
-    parent = read_resume_parent(config.resume_from, inputs, device,
-                                expected_sha256=expected_resume_sha256)
+    # finetune from. Both are read once and checked before any output: the
+    # stage and task first, then the task's data is read, then a resume parent
+    # is compared with every input (README §8 regression 7).
+    parent = read_resume_checkpoint(config.resume_from, device,
+                                    expected_sha256=expected_resume_sha256)
     parent_record = None
     plan = None
     best_weights = None
@@ -1296,15 +1333,19 @@ def train_bundle(config: TrainConfig, explicit: Optional[Collection[str]] = None
                 f"The parent is a {parent_record.learning_stage} checkpoint"
                 + (f" for {parent_record.task}" if parent_record.task else "")
                 + "; a run continues only its own stage and task.")
-        plan, best_weights = plan_from_parent(parent, config, explicit_set, device,
-                                              record_version=MODEL_RECORD_VERSION)
-        config = TrainConfig(**plan.settings)
     elif config.extend_epochs or config.extend_lr is not None:
         raise ValueError("extend_epochs and extend_lr continue a parent; give resume_from.")
     base_parent = base_record = None
     if config.finetune_from:
         base_parent, base_record = read_finetune_parent(
             config.finetune_from, inputs, device, expected_sha256=expected_parent_sha256)
+    if stage == "finetune":
+        inputs = with_task_data(inputs, data_dir, config.task)
+    if parent is not None:
+        accept_resume_parent(parent, inputs)
+        plan, best_weights = plan_from_parent(parent, config, explicit_set, device,
+                                              record_version=MODEL_RECORD_VERSION)
+        config = TrainConfig(**plan.settings)
 
     # The spec: the operator's (read strictly), the parent's (inherited with
     # the settings), the base's graph side with the task's reference head, or

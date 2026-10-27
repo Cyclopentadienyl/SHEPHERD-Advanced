@@ -4125,8 +4125,10 @@ widened.
 
 **Reference cohorts and derived artifacts.** A patients-like-me model is bound to its reference
 cohort version as well as its checkpoint: results, exports, caches and reuse checks name both. Task
-data artifacts and derived tables are bound by digest to the workspace they come from, through the
-same sidecar pattern as the SP table, and are produced by explicit CLIs.
+data artifacts are bound by digest to the workspace they come from and are produced by explicit CLIs
+(the gene fixture: a record naming the split manifest and each file's digest, written last).
+Derived tables (SP distances, the augmentation neighbours) are computed in process from the
+digest-bound view and recorded by digest in the model record (as built at K4).
 
 **Mode D is archived.** Its runner, observer, CLI branch and probes retire once task measurement is
 wired; its reports stay readable as history.

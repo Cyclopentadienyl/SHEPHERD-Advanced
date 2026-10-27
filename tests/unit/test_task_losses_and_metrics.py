@@ -215,8 +215,11 @@ def test_gene_embsim_hand_value():
     with torch.no_grad():
         head.decoder_weight.copy_(torch.eye(2))
         head.decoder_bias.fill_(0.1)
-    s = head.scores(torch.tensor([[3.0, 4.0]]), torch.tensor([[2.0, 0.0]]))
+    s = head.list_scores(torch.tensor([[3.0, 4.0]]), torch.tensor([[[2.0, 0.0]]]))
     assert s.item() == pytest.approx(math.tanh(0.6 + 0.1))
+    # One EMBSIM: the shared-candidate entry refuses a gene head.
+    with pytest.raises(NotImplementedError, match="gene_list_scores"):
+        head.scores(torch.tensor([[3.0, 4.0]]), torch.tensor([[2.0, 0.0]]))
 
 
 # --------------------------------------------------------------------------- ranking metrics (E7)

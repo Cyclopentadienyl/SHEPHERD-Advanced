@@ -13,7 +13,7 @@ Module: src/training/recipe.py
 """
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, FrozenSet, Optional, Tuple
 
 UPSTREAM = "mims-harvard/SHEPHERD@e95433a"
 
@@ -144,5 +144,15 @@ def reference_settings(learning_stage: str, task: Optional[str] = None
     raise ValueError(f"no reference training settings for learning stage {learning_stage!r}")
 
 
+def unread_settings(learning_stage: str, task: Optional[str] = None) -> FrozenSet[str]:
+    """The recipe's settings that this stage and task do not read: another
+    task's (`candidate_sample_size` on a gene run), or any task setting on a
+    base. Set by the operator, they are refused, never ignored (README §7)."""
+    every = set(BASE).union(FINETUNE, *FINETUNE_TASKS.values())
+    values, _ = reference_settings(learning_stage, task)
+    return frozenset(every - set(values))
+
+
 __all__ = ["BASE", "BASE_FIXED", "BASE_SOURCES", "FINETUNE", "FINETUNE_FIXED",
-           "FINETUNE_SOURCES", "FINETUNE_TASKS", "FINETUNE_TASK_SOURCES", "reference_settings"]
+           "FINETUNE_SOURCES", "FINETUNE_TASKS", "FINETUNE_TASK_SOURCES", "reference_settings",
+           "unread_settings"]

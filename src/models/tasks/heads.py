@@ -137,13 +137,15 @@ class GeneHead(TaskHead):
         return self.gene_tower(x)
 
     def scores(self, patients: Tensor, candidates: Tensor) -> Tensor:
-        """EMBSIM; the gene task mixes it with SPLSIM (README §6)."""
-        p = F.normalize(patients, p=2, dim=-1)
-        g = F.normalize(candidates, p=2, dim=-1)
-        return torch.tanh(p @ self.decoder_weight @ g.T + self.decoder_bias)
+        """Refused: a gene score is not EMBSIM alone over shared candidates. The
+        gene task ranks each case's own list, EMBSIM mixed with SPLSIM
+        (`src.models.tasks.gene.gene_list_scores`, README §6)."""
+        raise NotImplementedError("the gene task scores each case's own list with "
+                                  "gene.gene_list_scores (EMBSIM mixed with SPLSIM)")
 
     def list_scores(self, patients: Tensor, candidates: Tensor) -> Tensor:
-        """EMBSIM of each patient's own list: `[B, W]` × `[B, M, W]` → `[B, M]`."""
+        """EMBSIM of each patient's own list: `[B, W]` × `[B, M, W]` → `[B, M]`;
+        the gene task mixes it with SPLSIM (README §6)."""
         p = F.normalize(patients, p=2, dim=-1)
         g = F.normalize(candidates, p=2, dim=-1)
         return torch.tanh(torch.einsum("bw,wv,bmv->bm", p, self.decoder_weight, g)

@@ -524,16 +524,21 @@ policy):
 
 **Today's SP is neither.** Today's producer runs an undirected BFS from phenotypes up to 5 hops,
 and reads `max_hops+1` both beyond the cap and unreachable. Today's disease SP term `1/(1+mean hops)`
-is neither the gene SPLSIM nor a per-list min-max (`../../SP_SCORE_GUIDE.md` §3). The producer and
-reader are extended for exact distances, not replaced by a second distance file.
+is neither the gene SPLSIM nor a per-list min-max (`../../SP_SCORE_GUIDE.md` §3). *Superseded at
+K4:* the plan to extend the producer and reader for exact distances gave way to the in-process
+computation below; there is no distance file of either kind.
 
 **As built (K4, 2026-10-27).**
 - **Distances:** one function, `src.kg.graph_view.exact_distances`, computes the exact hops from the
   digest-bound view in process; training, measurement and serving share it, and the table's digest
   goes into the record. There is no distance file. The view is one connected component, so the
   distances are a pure function of the view. The file reader lives in `src.inference`, which the
-  training layer cannot import. The hop-capped producer and its reader now serve only the retiring
-  disease mixture; K7 checks them.
+  training layer cannot import. The hop-capped producer, its sidecar and its reader now serve only
+  the retiring disease mixture, and retire with it (§7).
+- **Distance cost:** one unweighted search per phenotype source, at every training start and every
+  measurement. About 0.11 s a source on a synthetic 100k-node, 8M-edge graph (review of K4), so a
+  few thousand case phenotypes take minutes. The GB10 acceptance times it on the real view. If it is
+  too slow, the computed table becomes a derived artifact bound by digest, like the fixture.
 - **Augmentation:** the paper's Eq 10–11 (`src.models.tasks.gene`): neighbours by the raw count of
   shared phenotypes, and the degree gate `θ = ω·exp(−ω·|N_g|) + 0.2`, with `|N_g|` the gene's degree in
   the view. The source's form `+ (1 − ω − 0.1)` equals it only at ω = 0.7.
@@ -571,8 +576,10 @@ fallback.
 | `DiagnosisHead`, `LinkPredictionHead` | `src/models/decoders/heads.py:34,273` | Unwired, not paper parts |
 | `PhenotypeDiseaseMatcher` | `shepherd_gnn.py:314` | Unwired; the paper's patient encoder answers its open question |
 | Separate pooling and scoring copies (Trainer, measurement, pipeline) | `trainer.py:744-751`; `src/evaluation/measurement.py`; the pipeline | The bundle's shared math |
+| The hop-capped SP file: producer, sidecar binding, index and reader (`compute_shortest_paths`, `sp_artifact`, `sp_index`, `_load_shortest_paths`, `sp_analysis_records`), with their benchmark, oracle and tests | `scripts/compute_shortest_paths.py`; `src/inference/sp_artifact.py`; `src/inference/sp_index.py`; `src/inference/pipeline.py`; `scripts/benchmark_sp_lookup.py`; `scripts/sp_scan_reference.py` | Exact distances computed in process from the view (§6, as built at K4); they serve only the mixture and leave with it |
+| `read_samples`' `training_fields` and the generator's disease genes in `gene_ids` | `src/kg/storage/file_storage.py`; `src/kg/sample_generator.py` | Their one reader is ShepherdGNN's `DiagnosisDataset`. `gene_ids` now means a gene-task candidate list, read with `gene_fields` |
 
-**Kept:** PathReasoner evidence; the SP producer and reader; the KG builder's cross-species option;
+**Kept:** PathReasoner evidence; the KG builder's cross-species option;
 build_index (retrieval stays for planned natural-language work) on the one builder; the
 heterogeneous GAT/HGT/SAGE encoders behind the contract; every historical artifact.
 

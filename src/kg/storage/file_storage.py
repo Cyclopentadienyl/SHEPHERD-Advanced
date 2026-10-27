@@ -236,8 +236,8 @@ def read_samples(data_dir: Path, split: str, *, training_fields: bool = False,
     the caller has to answer, since `val` is the checkpoint-selection split
     rather than held-out data.
 
-    **Three fields by default; `training_fields=True` adds the ones only
-    training reads,** `candidate_disease_ids`, `gene_ids` and `causal_gene_ids`.
+    **Three fields by default; `training_fields=True` adds the two only
+    ShepherdGNN training reads,** `candidate_disease_ids` and `gene_ids`.
     `gene_fields=True` adds the gene task's two (`gene_ids`, the candidate list,
     and `causal_gene_ids`), which the gene and patients-like-me tasks read
     (README §8). Measurement and the verifiers read the three default fields.
@@ -299,7 +299,7 @@ def read_samples_file(
     # A file that is JSON but not a list of sample rows is refused under its
     # name too: without `expected_sha256`, the entry point compares digests only
     # after this parse.
-    optional = (("candidate_disease_ids", "gene_ids", "causal_gene_ids") if training_fields
+    optional = (("candidate_disease_ids", "gene_ids") if training_fields
                 else ("gene_ids", "causal_gene_ids") if gene_fields else ())
     try:
         samples = [

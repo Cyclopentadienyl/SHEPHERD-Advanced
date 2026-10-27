@@ -95,12 +95,20 @@ def test_binding_keeps_every_causal_gene_and_names_exclusions(trained):
             SimpleNamespace(patient_id="off", phenotype_ids=[0], disease_id=0,
                             causal_gene_ids=[3], gene_ids=[0, 1]),
             SimpleNamespace(patient_id="none", phenotype_ids=[0], disease_id=0,
-                            causal_gene_ids=None, gene_ids=[0])]
+                            causal_gene_ids=None, gene_ids=[0]),
+            SimpleNamespace(patient_id="unlisted", phenotype_ids=[0], disease_id=0,
+                            causal_gene_ids=[0, 1], gene_ids=None)]
     binding = bind_gene_cases(view, rows)
     assert [c.case_id for c in binding.cases] == ["two"]
     assert binding.cases[0].truths.numel() == 2
     assert dict(binding.excluded) == {"off": "truth_not_in_candidates",
-                                      "none": "no_causal_gene_or_candidate_list"}
+                                      "none": "no_causal_gene",
+                                      "unlisted": "no_candidate_list"}
+    # E4: a case that records no truth is no reliable truth, never a 0; one
+    # without a list is assessable, with each causal gene it names (E5, F9).
+    states = {o.query_id: (o.status, o.n_positives) for o in binding.excluded_outcomes()}
+    assert states == {"off": ("input_excluded", 1), "none": ("no_reliable_truth", 0),
+                      "unlisted": ("input_excluded", 2)}
 
 
 def test_upsampling_adds_rare_genes_and_an_epoch_does_not_depend_on_the_last(trained):
@@ -201,6 +209,46 @@ def test_a_gene_finetune_without_its_fixture_is_refused_before_output(trained, t
     with pytest.raises(TaskFixtureError, match="derive_task_fixture"):
         train_model.train(config, explicit)
     assert not (tmp_path / "child").exists()
+
+
+def test_another_tasks_setting_is_refused_never_ignored(trained, tmp_path):
+    """README §7: the disease task's candidate_sample_size on a gene run, or a
+    task setting on a base, is refused before output, never recorded as
+    requested and ignored."""
+    import train_model
+
+    config, explicit = _gene_config(trained, tmp_path / "child", candidate_sample_size=777)
+    with pytest.raises(ValueError, match="candidate_sample_size configure another task"):
+        train_model.train(config, explicit)
+    assert not (tmp_path / "child").exists()
+    base = train_model.TrainConfig(data_dir=str(trained["data_dir"]), run_dir=str(tmp_path / "b"),
+                                   learning_stage="base", task_loss_weight=0.5, device="cpu")
+    with pytest.raises(ValueError, match="task_loss_weight configure another task"):
+        train_model.train(base, {"learning_stage", "task_loss_weight", "device"})
+
+
+def test_the_stage_and_task_are_checked_before_the_fixture_is_read(trained, tmp_path):
+    """README §8 regression 7 (the task filter runs first): on a workspace
+    without a fixture, a finetune child given as a gene run's parent, and a
+    base measured as a gene model, are refused for what they are, not sent to
+    derive a fixture."""
+    import measure_scorer
+    import train_model
+    from src.models.bundle.record import ModelRecordError
+    from src.utils.run_plan import RunPlanRefused
+
+    config, explicit = _gene_config(trained, tmp_path / "child")
+    train_model.train(config, explicit)
+    child = tmp_path / "child" / "checkpoints" / "last.pt"
+    bare = tmp_path / "bare"
+    shutil.copytree(trained["data_dir"], bare, ignore=shutil.ignore_patterns("derived"))
+    config, explicit = _gene_config(dict(trained, data_dir=bare, base=child), tmp_path / "again")
+    with pytest.raises(RunPlanRefused, match="children never chain"):
+        train_model.train(config, explicit)
+    with pytest.raises(ModelRecordError, match="a base checkpoint, not a finetune one"):
+        measure_scorer.main(["--mode", "gene", "--checkpoint", str(trained["base"]),
+                             "--data-dir", str(bare), "--split", "val",
+                             "--output", str(tmp_path / "r.json"), "--device", "cpu"])
 
 
 def test_gene_measurement_over_the_fixture_split(trained, tmp_path):

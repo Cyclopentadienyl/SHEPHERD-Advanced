@@ -349,16 +349,20 @@ def read_measurement_inputs(
     training_evidence: Sequence[Path] = (),
     expect_checkpoint_sha256: Optional[str] = None,
     expect_version_sha256: Optional[str] = None,
-    gene_fields: bool = False,
+    task: Optional[str] = None,
 ) -> MeasurementInputs:
     """Read the manifest, the graph tensors, the cohort and the checkpoint once
     each, and verify from those reads (contract M2.1, S7; M4 §6).
 
-    `gene_fields` (a gene measurement): a registered version's samples are read
-    with their gene fields; a generated split, once verified as always, is
-    measured through the workspace's functional fixture of that split, its
-    record read against this manifest reading and its file against the digest
-    the record names (`read_gene_fixture`).
+    `task` (a finetuned bundle's task measurement): the checkpoint's model
+    record is checked as a finetune of that task right after the checkpoint is
+    read, before anything task-specific (README §8 regression 7: the task
+    filter runs first). For a task in `GENE_FIELD_MODES`, a registered
+    version's samples are read with their gene fields, and a generated split,
+    once verified as always, is measured through the workspace's functional
+    fixture of that split, read after that check: its record against this
+    manifest reading and its file against the digest the record names
+    (`read_gene_fixture`).
 
     Exactly one of `split` (a generated split) and `cohort` (a registered
     version's label, with `registry`) is given; `training_evidence` applies to a
@@ -458,6 +462,7 @@ def read_measurement_inputs(
 
     manifest = read_split_manifest(data_dir)
     graph = read_graph_artifacts(data_dir, map_location="cpu")
+    gene_fields = task in GENE_FIELD_MODES
     if version is None:
         samples, checked = _read_generated(data_dir, split, siblings)
     else:
@@ -473,14 +478,6 @@ def read_measurement_inputs(
     # The sibling is checked, not consumed: nothing holds it past this point, so
     # it is not resident while the checkpoint is read.
     del checked
-    task_data = None
-    if gene_fields and version is None:
-        from src.kg.task_fixture import read_gene_fixture
-
-        task_data = read_gene_fixture(data_dir, manifest_sha256=manifest.identity.sha256)
-        if split not in task_data.samples:
-            raise ValueError(f"the functional fixture has no {split!r} split")
-        samples = task_data.samples[split]
 
     # **Read at its resolved path**, so the read's identity names the file whose
     # bytes were measured, and `--record`'s ledger directory is fixed now: a link
@@ -500,6 +497,19 @@ def read_measurement_inputs(
         recorded_by=f"checkpoint {checkpoint}",
         compared_with=f"the workspace {data_dir}",
     )
+    if task is not None:
+        from src.models.bundle.record import check_model_record, read_model_record
+
+        check_model_record(read_model_record(read.checkpoint), learning_stage="finetune",
+                           task=task)
+    task_data = None
+    if gene_fields and version is None:
+        from src.kg.task_fixture import read_gene_fixture
+
+        task_data = read_gene_fixture(data_dir, manifest_sha256=manifest.identity.sha256)
+        if split not in task_data.samples:
+            raise ValueError(f"the functional fixture has no {split!r} split")
+        samples = task_data.samples[split]
     # R3 has passed, so the checkpoint is a mapping that records its inputs.
     r10 = (None if version is None
            else _r10(read.checkpoint.get("training_input_digests"), samples, candidates))
@@ -1840,17 +1850,17 @@ def _measure_task(args: argparse.Namespace, registry: Optional[Path], device: to
     """A finetuned bundle's task measurement (`src.evaluation.task_measurement`).
 
     The same reads and refusals as Mode C, before anything is built or
-    written; then the model record is read and checked, the stage and task
-    first (provenance §9.3 hazard 3), the graph view rebuilt from the graph
-    read by the spec's rule and compared with the record, and the bundle built
-    and strictly loaded. A checkpoint without a model spec is refused: it was
+    written, the model record's stage and task checked right after the
+    checkpoint read (provenance §9.3 hazard 3; `read_measurement_inputs(task=)`);
+    then the graph view rebuilt from the graph read by the spec's rule and
+    compared with the record, and the bundle built and strictly loaded. A checkpoint without a model spec is refused: it was
     written before the switch and is history.
     """
     from dataclasses import asdict as _asdict
 
     from src.evaluation.task_measurement import TASK_RUNS, task_semantics
     from src.kg.graph_view import build_graph_view
-    from src.models.bundle.record import check_model_record, load_bundle, read_model_record
+    from src.models.bundle.record import load_bundle, read_model_record
     from src.utils.run_environment import observe_autocast_regime
 
     inputs = read_measurement_inputs(
@@ -1858,11 +1868,10 @@ def _measure_task(args: argparse.Namespace, registry: Optional[Path], device: to
         registry=registry, training_evidence=args.training_evidence,
         expect_checkpoint_sha256=args.expect_checkpoint_sha256,
         expect_version_sha256=args.expect_version_sha256,
-        gene_fields=args.mode in GENE_FIELD_MODES,
+        task=args.mode,
     )
     graph_data, samples = inputs.graph.graph_data, inputs.samples.samples
     record = read_model_record(inputs.checkpoint.checkpoint)
-    check_model_record(record, learning_stage="finetune", task=args.mode)
     rule = _asdict(record.model_spec.graph_view)
     rule["exclude_relations"] = list(rule["exclude_relations"])
     view = build_graph_view(graph_data, rule=rule)
@@ -1989,8 +1998,9 @@ def _print_result(result: Any) -> None:
     print(f"  {result.n_ranked} ranked, {result.n_ground_truth_absent} absent")
     for name, value in result.authoritative_metrics.items():
         print(f"  {name:38s} {value:.6f}")
-    print(f"  {'candidate diseases per patient':38s} "
-          f"{result.sampler_evidence['candidate_columns']['max']}")
+    label = ("candidate diseases per patient" if result.manifest.mode in ("C", "disease")
+             else "candidates per case (most)")
+    print(f"  {label:38s} {result.sampler_evidence['candidate_columns']['max']}")
 
 
 def _flush_stdout() -> None:
