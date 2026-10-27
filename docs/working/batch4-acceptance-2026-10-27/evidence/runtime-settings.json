@@ -1,0 +1,4 @@
+{
+  "allocator_preset": "cuda_async",
+  "torch_compile": false
+}

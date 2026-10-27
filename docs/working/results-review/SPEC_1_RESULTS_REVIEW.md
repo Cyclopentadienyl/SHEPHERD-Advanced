@@ -52,7 +52,7 @@ binding a view to an immutable result ID — **unenforceable**, not merely untid
 ### 2.1 The result union (Batch 2 design, 2026-10-26)
 
 **Status:** reviewed design (Batch 2, passed with `a5652c1..e61253e`). **Batch 4's part is
-implemented, for review (2026-10-27):** `served_mixture/v1`, `path_reasoning/v1` and `demo/v1` with
+implemented and accepted (2026-10-27; its GB10 check at `7fc417c`, BACKLOG §0):** `served_mixture/v1`, `path_reasoning/v1` and `demo/v1` with
 everything below that applies to them: the removed fields, unavailable never zero, the invariants,
 the labels and the consumers. The as-built choices are in the note after the consumer table. **Batch 5 builds** `gnn_ranking/v1` with B-1 (BACKLOG §0). **Authority:** policy §7: one versioned discriminated union with required and
 forbidden fields per variant, never a flat envelope; statement 7; C9.
@@ -170,7 +170,7 @@ not reopened.
 | `docs/SP_SCORE_GUIDE.md`'s status box | changes with the code (policy §7) |
 | Mode D (`run_mode_d`, `docs/working/scorer-measurement/PLAN_B05.md`) | nothing: it reads batch 3's `ServedRanking`, and only its order, disease, served score and `discovery_ordinal` (internal metadata, not a response field). As built, the served score's attribute name follows the kind (`served_score`) |
 
-**As built in Batch 4 (2026-10-27, for review).** Where the design left a detail open:
+**As built in Batch 4 (2026-10-27).** Where the design left a detail open:
 - `result_kind_for`, the one mapping function, lives in `src/core/types.py` with the kinds, the
   labels and the candidate types rather than in `src/inference`: `src.reasoning`, which cannot
   import `src.inference`, names the kinds and labels too. The pipeline and the API's demo answer
@@ -207,7 +207,7 @@ before batch 4.
 
 ### 2.2 The shared scoring boundary (Batch 2 design, 2026-10-26)
 
-**Status:** reviewed design (Batch 2). **The parts marked *batch 4* are implemented, for review
+**Status:** reviewed design (Batch 2). **The parts marked *batch 4* are implemented and accepted
 (2026-10-27):** the one phenotype mapping step, and the one SP caller with its two clean-ups.
 **Batch 5 builds** the rest with B-1: `score_patients`, `masked_mean_pool` in place of
 `pool_patient_embeddings`, the ranking's move into `scoring.py`, and the callers' migration.

@@ -1,0 +1,9 @@
+# Evidence is kept byte for byte (SHA256SUMS): no line-ending normalisation here
+# (the exported CSV ends its lines in CRLF, as the WebUI wrote it).
+* -text
+# The service log has lines ending in spaces (the launcher's banner, torch's
+# capability warning): evidence, not style. The root .gitignore ignores *.log,
+# so the two logs here were added with `git add -f`.
+evidence/service.log whitespace=-blank-at-eol
+# The CSV's CRLF line ends are what the WebUI wrote, not trailing space.
+evidence/exports/*.csv whitespace=cr-at-eol

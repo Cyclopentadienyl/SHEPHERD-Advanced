@@ -3,6 +3,12 @@
 **Status:** Accepted (2026-08) by the deploying institution. **Not yet implemented** — see the
 status table in §2. Implementation is work item B-1, which remains gated (§6).
 
+**Revision: rev 10 (2026-10-27). Factual update, no normative change.** Batch 4's reviews passed
+and its minimal GB10 check passed at `7fc417c` (`working/batch4-acceptance-2026-10-27/`): the
+result union's three kinds for today's behaviour, which rev 9 marked for review, are accepted.
+That check is functional (the served mixture with its table, its API, page and exports), not an
+institutional run; no gate moves. Nothing else changes.
+
 **Revision: rev 9 (2026-10-27). Factual update, no normative change.** Batch 4 (for review) built
 the result union's three kinds for today's behaviour (`served_mixture/v1`, `path_reasoning/v1`,
 `demo/v1`; `working/results-review/SPEC_1_RESULTS_REVIEW.md` §2.1): §2's rows, §2.1's union, B-1b
@@ -182,7 +188,7 @@ column is implemented.
 | **Disease score** | `0.7 × ((cos+1)/2) + 0.3 × SP` when a checkpoint and `shortest_paths.pt` are both loaded (`_served_score` in `src/inference/pipeline.py`, mixing through `mix_embedding_and_sp_scores` in `src/inference/scoring.py`); since Batch 4 the result is `served_mixture/v1` and the value `served_score`, with η read from the result's identity | Raw cosine (interim, statement 2) | **Not implemented** — B-1 |
 | **SP role** | A ranking term with nominal coefficient 0.3, and therefore able to reorder candidates. The coefficient is not the term's effective contribution — see §3.5 | Optional post-ranking contextual analysis only; separate field or panel; no effect on identity, order, rank or ranking score | **Not implemented** — B-1 |
 | **Evidence-path role** | Path reasoning performs candidate discovery, supplies evidence, **and** becomes the ranking score when no GNN is loaded | Evidence only, via a target-restricted traversal that cannot alter the candidate set | **Not implemented** — design not yet approved (gate 3, §6) |
-| **GNN-unavailable fallback** | The path-reasoning aggregate ranks the candidates (`_score_and_rank_candidates` in `src/inference/pipeline.py`). Until Batch 4 it was written into `confidence_score`, the model's field; since Batch 4 the result is `path_reasoning/v1` and the value its own `path_score`, with no model term. Since provenance contract M3c each result also states its scoring mode (`path_reasoning_fallback`) in its served identity, with the checkpoint `absent` | Discriminated score semantics; fail-closed by default; fallback only by explicit request or approved deployment policy | **Fail-closed core implemented** (provenance contract M1, 2026-10-07): a requested model that cannot be built is refused, never replaced by this fallback. **Described per result** (provenance contract M3c, implemented 2026-10-16, merged as #124): the served identity names the scoring mode and what produced the result; it is a description, not discriminated score semantics. **Discriminated semantics implemented** (Batch 4, for review): the `path_reasoning/v1` kind. **Not implemented** — the rest of B-2: whether serving with no model configured needs an opt-in |
+| **GNN-unavailable fallback** | The path-reasoning aggregate ranks the candidates (`_score_and_rank_candidates` in `src/inference/pipeline.py`). Until Batch 4 it was written into `confidence_score`, the model's field; since Batch 4 the result is `path_reasoning/v1` and the value its own `path_score`, with no model term. Since provenance contract M3c each result also states its scoring mode (`path_reasoning_fallback`) in its served identity, with the checkpoint `absent` | Discriminated score semantics; fail-closed by default; fallback only by explicit request or approved deployment policy | **Fail-closed core implemented** (provenance contract M1, 2026-10-07): a requested model that cannot be built is refused, never replaced by this fallback. **Described per result** (provenance contract M3c, implemented 2026-10-16, merged as #124): the served identity names the scoring mode and what produced the result; it is a description, not discriminated score semantics. **Discriminated semantics implemented** (Batch 4, accepted 2026-10-27): the `path_reasoning/v1` kind. **Not implemented** — the rest of B-2: whether serving with no model configured needs an opt-in |
 
 Two further current behaviours, for completeness:
 
@@ -242,15 +248,15 @@ reachable and needs a traversal budget for them.
 
 **The result union (§7).** Designed 2026-10-26
 (`working/results-review/SPEC_1_RESULTS_REVIEW.md` §2.1): one `result_kind` per result, with
-required and forbidden fields per kind. Batch 4 built its three kinds for today's behaviour (for
-review), which replace `confidence_score` in the API with one score field per kind, with no alias.
+required and forbidden fields per kind. Batch 4 built its three kinds for today's behaviour (accepted
+2026-10-27), which replace `confidence_score` in the API with one score field per kind, with no alias.
 B-1's kind, `gnn_ranking/v1` (`ranking_score`, the raw cosine), is batch 5's; the former
 `confidence_score` `Field(ge=0.0, le=1.0)` that would have refused a cosine below 0 is gone. The configuration switch's default is a
 separate open decision (§7).
 
 **B-2.** Done: a requested model that cannot be built is refused (M1); every result names its
 scoring mode (M3c); the path-reasoning fallback is its own kind, `path_reasoning/v1`, whose
-candidates carry `path_score` and no model term (Batch 4, for review; before it the result carried
+candidates carry `path_score` and no model term (Batch 4, accepted 2026-10-27; before it the result carried
 `gnn_score = 0.0`, shown as a number). Missing: whether serving with no model needs an explicit
 opt-in (provenance contract §8, question 2), which stays the owner's decision.
 
@@ -468,7 +474,7 @@ B-1 implementation may not begin until all three clear:
     where its state says there is nothing to identify. It selects no required or forbidden score
     fields and leaves `confidence_score` as it was. Its `scoring_mode` describes the result; whether
     the union's discriminator builds on it is B-1's or B-2's decision, not M3c's.
-  - **Batch 4 built the union's first kinds** (for review): `served_mixture/v1`,
+  - **Batch 4 built the union's first kinds** (accepted 2026-10-27): `served_mixture/v1`,
     `path_reasoning/v1` and `demo/v1`, each with its own required and forbidden fields, the kind
     derived from the served identity's `scoring_mode` (Spec 1 §2.1). B-1 adds `gnn_ranking/v1`.
 - The clinician-facing guide's status box and the SP presentation change together with the code, not

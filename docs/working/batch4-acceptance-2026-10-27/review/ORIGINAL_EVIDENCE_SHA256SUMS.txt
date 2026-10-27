@@ -1,0 +1,19 @@
+28a9ce1f67346340d02c128abf03b394db71606c1a1ad649858782f82a43612a  /home/user/batch4-acceptance-7fc417c-01/api-check.txt
+3f67d9d365236a1bbff0a2ac0c1c17fa8b632541eb81f05c2e311f80df618be8  /home/user/batch4-acceptance-7fc417c-01/checkout-before.txt
+3f67d9d365236a1bbff0a2ac0c1c17fa8b632541eb81f05c2e311f80df618be8  /home/user/batch4-acceptance-7fc417c-01/checkout-restored.txt
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  /home/user/batch4-acceptance-7fc417c-01/diagnose-curl.log
+9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa  /home/user/batch4-acceptance-7fc417c-01/diagnose-exit.txt
+84a9c6ff89fcae81efccefdd67352513fc4a75852c981c12ab0e10a66abfe0aa  /home/user/batch4-acceptance-7fc417c-01/diagnose.json
+61adbafc80db820252398b8b5e7790f36b1980208719f2fa77eedcb9ea750b61  /home/user/batch4-acceptance-7fc417c-01/exports/diagnosis_batch4_smoke_01_sess_6469db6034c4.csv
+c64f9bfa86fbfb2ac680ccb73dec180f89cb8464c44fd133f01f7693b0a5abfe  /home/user/batch4-acceptance-7fc417c-01/gpu-before.txt
+63312f1e0fe13936a39c7dcc0141a41d95edac6573e8d7fa639f10cded2a8596  /home/user/batch4-acceptance-7fc417c-01/input-recheck.txt
+d0b926b613303e8f88315292f3c02c31f0c8839ebd2795eba84bfa18f9314af3  /home/user/batch4-acceptance-7fc417c-01/inputs-before.sha256
+54253152199fff0648dc6fe1950780a2c78c05e1ff54edd1348225e636b40900  /home/user/batch4-acceptance-7fc417c-01/pipeline-status.json
+98b42511cd2541ffd6a4788eb131acaa2929c11746e2999a1699493395dcf2c6  /home/user/batch4-acceptance-7fc417c-01/ready.json
+da98989b2c8b1a066c51184b1207ec04e0dbdeea58ff432800eff0edf78c5fff  /home/user/batch4-acceptance-7fc417c-01/request.json
+de9856be7fdfb0c49a0bd129a1b3c4140250fcc68604d060b5a71bfb68ae15d0  /home/user/batch4-acceptance-7fc417c-01/runtime-settings.json
+c7f8e40214475ae13c235716eb3d77856214d593b3bb5b9d1085ea228174571a  /home/user/batch4-acceptance-7fc417c-01/screenshots/Pasted image.png
+44e1b47d6d1dace68324f10cebfff81bc0759324aee861a6fb7a7f573e5ba8d9  /home/user/batch4-acceptance-7fc417c-01/service-exit.txt
+f977e0747f2ff87cfcc132967c49883db680eb06020542c01529e7124a73cc23  /home/user/batch4-acceptance-7fc417c-01/service.env
+033da4e2b6b86cdb446354fb0735c30c753b187fbf87ff1295701c620aab4bb3  /home/user/batch4-acceptance-7fc417c-01/service.log
+892a903dd7bc9c594bf8810c699becfc6a2887e996b867e7b1e420df49a7aae6  /home/user/batch4-acceptance-7fc417c-01/tested-commit.txt
