@@ -67,6 +67,7 @@ from src.kg.phenotype_normalisation import (
 from src.core.types import (
     SERVED_MIXTURE,
     Candidate,
+    DiseaseTaskCandidate,
     DataSource,
     EvidenceSource,
     InferenceResult,
@@ -586,6 +587,14 @@ class DiagnosisPipeline:
         )
         self._device_in_effect: Optional[str] = None
         self._gnn_ready = False
+        # A finetuned model bundle (README §3, K3): its graph view, its record,
+        # every view node's vector and the projected diseases, set when the
+        # checkpoint carries a model spec. None for the ShepherdGNN path.
+        self._bundle_view: Optional[Any] = None
+        self._bundle_record: Optional[Any] = None
+        self._bundle_z: Optional[Any] = None
+        self._bundle_diseases: Optional[Any] = None
+        self._bundle_candidates: Optional[Any] = None
 
         # Shortest path lookup state (populated by _load_shortest_paths).
         # `_sp_lookup` is the whole of it: a sorted composite key over
@@ -811,11 +820,12 @@ class DiagnosisPipeline:
         # Step 4: Build NodeID -> index mapping from KG
         self._node_id_to_idx = self.kg.get_node_id_mapping()
 
-        # Step 5: Load shortest path lookup table (optional)
-        if data_dir is not None:
+        # Step 5: Load shortest path lookup table (optional). A disease task
+        # model ranks without it (README §6: SP is the gene task's feature).
+        if data_dir is not None and self._bundle_view is None:
             self._load_shortest_paths(Path(data_dir))
 
-        if not self._sp_ready and not self.config.sp_optional:
+        if not self._sp_ready and not self.config.sp_optional and self._bundle_view is None:
             # **Names the state, not a guess at its cause.** This used to say
             # "no shortest_paths.pt found", which is false whenever the table is
             # present and something else about it is unusable — an unknown hop
@@ -847,7 +857,7 @@ class DiagnosisPipeline:
             node_type.value
             for node_type in (NodeType.PHENOTYPE, NodeType.DISEASE)
             if embeddings.get(node_type.value) is None
-        ]
+        ] if self._bundle_view is None else ([] if self._bundle_z is not None else ["the view"])
         if self.model is None or missing:
             raise PipelineBuildError(
                 "The GNN was requested and produced no node embeddings for "
@@ -1271,8 +1281,15 @@ class DiagnosisPipeline:
         # Metadata derivation from graph_data keys, architecture recovery and
         # weight loading all live there; what stays here is what only a running
         # pipeline needs.
+        from src.models.bundle.record import has_model_spec
+
+        if has_model_spec(checkpoint):
+            model = self._load_disease_bundle(checkpoint, ckpt_path)
+        else:
+            model = None
         try:
-            model = build_shepherd_model(checkpoint, self._graph_data)
+            if model is None:
+                model = build_shepherd_model(checkpoint, self._graph_data)
         except KeyError as exc:
             # A format question, not a graph one: no weights to build from.
             raise PipelineBuildError(
@@ -1328,6 +1345,38 @@ class DiagnosisPipeline:
         )
         return model
 
+    def _load_disease_bundle(self, checkpoint: Dict[str, Any], ckpt_path: Path) -> Any:
+        """A checkpoint with a model spec: the model record read and checked,
+        stage and task first (provenance §9.3 hazard 3: a base serves no
+        diagnosis), the graph view rebuilt from the verified graph by the spec's
+        rule and compared with the record, and the bundle built and strictly
+        loaded by the one builder. Nothing is inferred from weight names."""
+        from dataclasses import asdict as _asdict
+
+        from src.kg.graph_view import build_graph_view
+        from src.models.bundle.record import (
+            ModelRecordError,
+            check_model_record,
+            load_bundle,
+            read_model_record,
+        )
+
+        try:
+            record = read_model_record(checkpoint)
+            check_model_record(record, learning_stage="finetune", task="disease")
+            rule = _asdict(record.model_spec.graph_view)
+            rule["exclude_relations"] = list(rule["exclude_relations"])
+            view = build_graph_view(self._graph_data, rule=rule)
+            bundle, record = load_bundle(checkpoint, learning_stage="finetune", task="disease",
+                                         view_digest=view.digest)
+        except (ModelRecordError, ValueError) as exc:
+            raise PipelineBuildError(
+                f"Checkpoint {ckpt_path}: {exc}. The Diagnosis page serves a model "
+                "finetuned for the disease task.") from exc
+        self._bundle_view = view
+        self._bundle_record = record
+        return bundle
+
     def _precompute_node_embeddings(
         self,
         device: Optional[str] = None,
@@ -1344,6 +1393,24 @@ class DiagnosisPipeline:
             device = next(self.model.parameters()).device
         else:
             device = torch.device(device)
+
+        if self._bundle_view is not None:
+            # The full-view rule over the whole view (README §2.8, G4), once;
+            # the diseases' projections are fixed, so each request projects
+            # only its patient.
+            from src.models.tasks.scoring import full_view_vectors
+
+            regime = observe_autocast_regime(device)
+            view = self._bundle_view
+            self._bundle_z = full_view_vectors(self.model, view.edge_index(), view.rel, device)
+            self._embedding_regime = regime
+            self._bundle_diseases = view.type_nodes("disease")
+            with torch.no_grad():
+                self._bundle_candidates = self.model.task_head.project_candidates(
+                    self._bundle_z[self._bundle_diseases.to(self._bundle_z.device)])
+            logger.info(f"Model bundle vectors computed: {tuple(self._bundle_z.shape)} over "
+                        f"view {view.digest[:12]}, {int(self._bundle_diseases.numel())} diseases")
+            return
 
         logger.info("Precomputing node embeddings via GNN forward pass...")
 
@@ -1414,6 +1481,9 @@ class DiagnosisPipeline:
         # an input with none, so the list is never empty here.
         source_ids = list(validation.node_ids)
 
+        if self._bundle_view is not None:
+            return self._rank_by_disease_task(patient_input, validation, warnings, source_ids)
+
         # Step 3: Find reasoning paths (BFS-based)
         logger.debug("Finding reasoning paths...")
         all_paths = self._find_all_paths(source_ids, include_ortholog_evidence)
@@ -1449,6 +1519,65 @@ class DiagnosisPipeline:
             source_ids=source_ids,
             all_paths=all_paths,
         )
+
+    def _rank_by_disease_task(self, patient_input: PatientPhenotypes,
+                              validation: "ValidationResult", warnings: List[str],
+                              source_ids: List[NodeID]) -> ServedRanking:
+        """`disease_task/v1`: every disease of the model's graph view, ranked by
+        the disease head (README A7, U6), ties by view id. A phenotype outside
+        the view is dropped and said so; with none left, nothing is ranked."""
+        from src.models.tasks.scoring import patient_vectors
+
+        view = self._bundle_view
+        rows = torch.tensor(list(validation.rows or []), dtype=torch.long)
+        view_ids = view.view_ids("phenotype", rows) if rows.numel() else rows
+        kept = view_ids[view_ids >= 0]
+        dropped = int((view_ids < 0).sum())
+        if dropped:
+            warnings = warnings + [
+                f"{dropped} phenotype(s) are outside the model's graph view and were not "
+                "scored"]
+        if kept.numel() == 0:
+            return ServedRanking(
+                outcome="no_candidates",
+                warnings=warnings + ["None of the phenotypes is in the model's graph view"],
+                patient_input=patient_input, phenotype_input=validation.phenotype_input,
+                source_ids=source_ids)
+        z = self._bundle_z
+        kept = torch.unique(kept).to(z.device)
+        with torch.no_grad():
+            patient = patient_vectors(self.model, z, kept.unsqueeze(0),
+                                      torch.ones(1, kept.numel(), dtype=torch.bool,
+                                                 device=z.device))
+            scores = self.model.task_head.scores(patient, self._bundle_candidates)[0].cpu()
+        if not bool(torch.isfinite(scores).all()):
+            raise ResultRefused("NON_FINITE_SCORE",
+                                "the disease head produced a non-finite score; the result "
+                                "was refused, not ranked")
+        diseases = self._bundle_diseases
+        order = sorted(range(diseases.numel()),
+                       key=lambda i: (-float(scores[i]), int(diseases[i])))
+        locals_ = view.local_index(diseases).tolist()
+        reverse = self._disease_node_ids()
+        candidates: List[Candidate] = []
+        for rank, i in enumerate(order, start=1):
+            node_id = reverse[locals_[i]]
+            node = self.kg.get_node(node_id)
+            candidates.append(DiseaseTaskCandidate(
+                rank=rank, disease_id=node_id,
+                disease_name=node.name if node else str(node_id), score=float(scores[i])))
+        return ServedRanking(
+            outcome="ranked", warnings=warnings, patient_input=patient_input,
+            phenotype_input=validation.phenotype_input, candidates=candidates,
+            discovery_ordinals=order, source_ids=source_ids, all_paths={})
+
+    def _disease_node_ids(self) -> Dict[int, NodeID]:
+        """Each disease's NodeID by its row in the graph's disease table."""
+        if getattr(self, "_disease_node_id_cache", None) is None:
+            mapping = (self._node_id_to_idx or {}).get(NodeType.DISEASE.value, {})
+            self._disease_node_id_cache = {row: NodeID.from_string(node)
+                                           for node, row in mapping.items()}
+        return self._disease_node_id_cache
 
     def run(
         self,
@@ -1522,13 +1651,26 @@ class DiagnosisPipeline:
                 candidate.disease_id, patient_input.phenotypes, self.kg))
             for candidate in ranking.candidates[:top_k]
         ]
+        all_paths = ranking.all_paths
+        if self._bundle_view is not None and candidates:
+            # **Paths explain, they never rank** (README §1, the PathReasoner
+            # extension): discovered for the rows shown, after the model's order.
+            all_paths = self._find_all_paths(ranking.source_ids, include_ortholog_evidence)
+            candidates = [
+                replace(candidate,
+                        supporting_genes=self._extract_supporting_genes(paths),
+                        reasoning_paths=[list(p.nodes) for p in paths[:5]],
+                        evidence_sources=self._determine_evidence_sources(paths))
+                for candidate in candidates
+                for paths in [all_paths.get(str(candidate.disease_id), [])]
+            ]
 
         # Step 5: Generate explanations + Step C evidence packages
         if include_explanations:
             logger.debug("Generating explanations and evidence packages...")
             candidates = self._add_explanations(
                 candidates=candidates,
-                all_paths=ranking.all_paths,
+                all_paths=all_paths,
                 patient_input=patient_input,
                 source_ids=ranking.source_ids,
             )
@@ -1683,6 +1825,16 @@ class DiagnosisPipeline:
         refused, never skipped and never clamped onto a neighbouring row."""
         if not self._gnn_ready:
             return None
+        if self._bundle_view is not None:
+            # The graph's phenotype rows; the view maps them (`_rank_by_disease_task`).
+            index = (self._node_id_to_idx or {}).get(NodeType.PHENOTYPE.value, {})
+            missing = [str(node) for node in node_ids if index.get(str(node)) is None]
+            if missing:
+                raise ResultRefused(
+                    "MODEL_TERM_UNAVAILABLE",
+                    f"phenotype {missing[0]} is in the graph but has no row in its node "
+                    "mapping")
+            return [int(index[str(node)]) for node in node_ids]
         table = (self._node_embeddings or {}).get(NodeType.PHENOTYPE.value)
         if table is None:
             raise ResultRefused(
@@ -2235,8 +2387,11 @@ class DiagnosisPipeline:
             graph_data=self._graph_data,
         )
 
-    def _scoring_mode(self) -> Tuple[str, float]:
-        """The scoring mode in effect and the mixing weight it reports."""
+    def _scoring_mode(self) -> Tuple[str, Optional[float]]:
+        """The scoring mode in effect and the mixing weight it reports (None
+        for the disease task, which mixes nothing)."""
+        if self._gnn_ready and self._bundle_view is not None:
+            return "disease_task", None
         if self._gnn_ready and self._sp_ready:
             return "gnn_plus_shortest_path", self.config.eta
         if self._gnn_ready:
@@ -2297,7 +2452,7 @@ class DiagnosisPipeline:
         settings = ServedSettings(
             device=self._device_in_effect if served_model else None,
             device_requested=self._device_requested if served_model else None,
-            eta=float(eta) if served_model else None,
+            eta=float(eta) if served_model and eta is not None else None,
             max_path_length=self.config.max_path_length,
             path_length_penalty=self.config.path_length_penalty,
             aggregation_method=self.config.aggregation_method,

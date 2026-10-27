@@ -266,7 +266,8 @@ class ServedSettings(_Strict):
 class ServedIdentity(_Strict):
     """What produced a result, part by part (contract M3c)."""
 
-    scoring_mode: Literal["gnn_plus_shortest_path", "gnn_only", "path_reasoning_fallback"]
+    scoring_mode: Literal["gnn_plus_shortest_path", "gnn_only", "path_reasoning_fallback",
+                          "disease_task"]
     checkpoint: ServedCheckpoint
     graph: ServedGraph
     shortest_paths: ServedShortestPaths
@@ -283,10 +284,11 @@ class ServedIdentity(_Strict):
 # type (field names, the kinds, the SP statuses). **Every kind refuses another
 # kind's fields** (`_Strict`), so a removed field cannot come back unnoticed, and
 # a number is never written where its kind has none.
-RESULT_KINDS = ("served_mixture/v1", "path_reasoning/v1", "demo/v1")
+RESULT_KINDS = ("served_mixture/v1", "path_reasoning/v1", "demo/v1", "disease_task/v1")
 SP_NUMERIC_STATUSES = ("COMPUTED", "COMPUTED_PARTIAL")
 SP_NON_NUMERIC_STATUSES = ("NO_TABLE", "TARGET_UNMAPPED", "NO_PHENOTYPE_MAPPED")
 SERVED_TIE_POLICY = "served-stable-discovery-order/v1"
+DISEASE_TASK_TIE_POLICY = "score-desc-then-view-id-asc/v1"
 
 #: A number that is a number: NaN and infinity are refused at the schema, so a
 #: non-finite value can never reach a caller as a score.
@@ -407,6 +409,15 @@ class PathReasoningCandidate(_ServedCandidate):
     path_score: _Finite = Field(..., ge=0.0, description="The path aggregate ranked by")
 
 
+class DiseaseTaskCandidate(_ServedCandidate):
+    """A disease of the model's graph view, ranked by the finetuned disease
+    head; the evidence fields explain the row and change nothing."""
+
+    score: _Finite = Field(..., le=0.0, description="The disease head's score, "
+                           "-||z_d - z_P||^2 on normalised vectors, in [-4, 0]; a ranking "
+                           "value, uncalibrated, never a probability")
+
+
 class DemoCandidate(_Candidate):
     """The demo answer's candidate: no score, explanation, path or gene of any kind."""
 
@@ -495,6 +506,23 @@ class PathReasoningResponse(_Response):
         return self
 
 
+class DiseaseTaskResponse(_Response):
+    """`disease_task/v1`: a finetuned model bundle's disease task, every
+    disease of its graph view ranked by the disease head."""
+
+    result_kind: Literal["disease_task/v1"]
+    served_identity: ServedIdentity = Field(..., description=_IDENTITY_DESCRIPTION)
+    candidates: List[DiseaseTaskCandidate]
+    tie_policy: Literal["score-desc-then-view-id-asc/v1"]
+
+    @model_validator(mode="after")
+    def _a_disease_task(self) -> "DiseaseTaskResponse":
+        _ranked(self.candidates, "score")
+        if self.served_identity.scoring_mode != "disease_task":
+            raise ValueError("a disease_task result is served only by a disease task model")
+        return self
+
+
 class DemoResponse(_Response):
     """`demo/v1`: no pipeline was ever configured. Not a diagnosis, and it
     carries no score, explanation, path or gene."""
@@ -511,7 +539,7 @@ class DemoResponse(_Response):
 
 
 class DiagnoseResponse(RootModel[Annotated[
-        Union[ServedMixtureResponse, PathReasoningResponse, DemoResponse],
+        Union[ServedMixtureResponse, PathReasoningResponse, DiseaseTaskResponse, DemoResponse],
         Field(discriminator="result_kind")]]):
     """Diagnosis response: one kind of the result union, chosen by `result_kind`."""
 
@@ -589,9 +617,13 @@ def _candidate_body(candidate: Any, include_explanations: bool,
         "evidence_package": candidate.evidence_package if include_explanations else None,
         "evidence_label": candidate.evidence_label if include_explanations else None,
     }
+    from src.core.types import DiseaseTaskCandidate as CoreDiseaseTaskCandidate
+
     if isinstance(candidate, CoreMixtureCandidate):
         body.update(served_score=candidate.served_score, model_term=candidate.model_term,
                     sp_term=asdict(candidate.sp_term))
+    elif isinstance(candidate, CoreDiseaseTaskCandidate):
+        body["score"] = candidate.score
     else:
         body["path_score"] = candidate.path_score
     return body
@@ -759,6 +791,8 @@ async def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
             elif result.result_kind == "path_reasoning/v1":
                 body.update(path_score_aggregation=result.path_score_aggregation,
                             tie_policy=result.tie_policy)
+            elif result.result_kind == "disease_task/v1":
+                body.update(tie_policy=result.tie_policy)
 
         body.update(
             result_schema_version=2,

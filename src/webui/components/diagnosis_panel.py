@@ -73,6 +73,7 @@ import requests
 
 from src.core.types import (
     DEMO,
+    DISEASE_TASK,
     MIXED_AS_WORDS,
     PATH_REASONING,
     RESULT_KINDS,
@@ -150,8 +151,8 @@ def _parse_hpo_ids(text: str) -> List[str]:
     return [f"HP:{match.group(1)}" for match in _HPO_ID_RE.finditer(text or "")]
 
 #: What a candidate's score is, said under the report's table and in the
-#: Score column's help: the value its result kind ranks by (`served_score` or
-#: `path_score`, Spec 1 §2.1); the words shown say what the number is. The demo
+#: Score column's help: the value its result kind ranks by (`served_score`,
+#: `path_score` or `score`, Spec 1 §2.1); the words shown say what the number is. The demo
 #: answer has no score, and no note.
 SCORE_NOTE = ("Score ranks the candidates of this result. It is not a calibrated "
               "disease probability.")
@@ -357,6 +358,8 @@ def _score(candidate: Mapping[str, Any], kind: Optional[str]) -> Any:
         return candidate.get("served_score")
     if kind == PATH_REASONING:
         return candidate.get("path_score")
+    if kind == DISEASE_TASK:
+        return candidate.get("score")
     return None
 
 
@@ -389,7 +392,8 @@ def _format_results_table(candidates: List[Dict], kind: Optional[str] = None,
                           shows_sp: bool = False) -> str:
     """Format candidates as a Markdown table (the exported report), its columns
     the kind's: the score and model term of a mixture (SP beside them when a
-    table is served), the path score with no model, no score in the demo."""
+    table is served), the path score with no model, the task head's score for a
+    disease task model, no score in the demo."""
     if kind is None:
         return f"*{KIND_NOT_REPORTED}*"
     if not candidates:
@@ -398,7 +402,7 @@ def _format_results_table(candidates: List[Dict], kind: Optional[str] = None,
     columns = ["Rank", "Disease"]
     if kind == SERVED_MIXTURE:
         columns += ["Score", "Model term"] + (["SP"] if shows_sp else [])
-    elif kind == PATH_REASONING:
+    elif kind in (PATH_REASONING, DISEASE_TASK):
         columns += ["Score"]
     if kind != DEMO:
         columns += ["Evidence"]
@@ -576,6 +580,7 @@ _SCORING_MODE_WORDS = {
     "gnn_plus_shortest_path": "the GNN score combined with the shortest-path table",
     "gnn_only": "the GNN score alone",
     "path_reasoning_fallback": "path reasoning over the knowledge graph alone",
+    "disease_task": "a model finetuned for the disease task, over its graph view",
 }
 _PATH_SETTING_KEYS = (
     "max_path_length", "path_length_penalty", "aggregation_method",
@@ -728,6 +733,8 @@ def _shortest_path_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
     if state == "absent":
         if _field(identity, "scoring_mode") == "gnn_only":
             reason = "the GNN score is used alone (gnn\\_only, eta 1.0)"
+        elif _field(identity, "scoring_mode") == "disease_task":
+            reason = "a disease task model scores without one"
         elif not _has_model(identity):
             reason = "no model is served to combine it with (path-reasoning fallback)"
         else:
@@ -785,6 +792,8 @@ def _eta_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
     eta = _field(_field(identity, "settings"), "eta")
     if eta is _MISSING:
         return _NOT_REPORTED_CELLS
+    if eta is None and _field(identity, "scoring_mode") == "disease_task":
+        return "none", "none — a disease task model has no terms to mix"
     if eta is None:
         return ("none", "none — no model is served, so there are no GNN and "
                 "shortest-path terms to mix")
@@ -869,7 +878,7 @@ def _identity_banners(kind: str, identity: Optional[Dict[str, Any]]) -> List[Tup
         banners.append(_IDENTITY_BANNERS["synthetic"])
     if _field(_field(identity, "checkpoint"), "state") == "absent":
         banners.append(_IDENTITY_BANNERS["no_model"])
-    elif _has_model(identity) and _field(_field(identity, "shortest_paths"), "state") == "absent":
+    elif _field(identity, "scoring_mode") == "gnn_only":
         banners.append(_IDENTITY_BANNERS["no_sp"])
     return banners
 
@@ -889,6 +898,7 @@ _CSV_SCORE_COLUMNS = {
                      "sp_term_mean_hop_distance", "sp_term_phenotypes_mapped",
                      "sp_term_phenotypes_submitted", "sp_term_mixed_as"],
     PATH_REASONING: ["path_score"],
+    DISEASE_TASK: ["score"],
     DEMO: [],
 }
 _CSV_EVIDENCE_COLUMNS = ["evidence_label", "evidence_mode", "evidence_summary",
@@ -897,9 +907,9 @@ _CSV_EVIDENCE_COLUMNS = ["evidence_label", "evidence_mode", "evidence_summary",
 
 
 def _candidate_csv_columns(kind: Optional[str]) -> List[str]:
-    """The kind's candidate columns, in order: the evidence columns for the two
+    """The kind's candidate columns, in order: the evidence columns for the
     served kinds only (the demo answer has none), the matches for every kind."""
-    evidence = _CSV_EVIDENCE_COLUMNS if kind in (SERVED_MIXTURE, PATH_REASONING) else []
+    evidence = [] if kind == DEMO else _CSV_EVIDENCE_COLUMNS
     return (_CSV_BASE_COLUMNS + _CSV_SCORE_COLUMNS.get(kind, []) + evidence
             + ["matching_phenotypes"])
 
@@ -1079,6 +1089,7 @@ def _build_results_csv(result: Dict[str, Any]) -> str:
             "sp_term_phenotypes_submitted": sp.get("phenotypes_submitted", ""),
             "sp_term_mixed_as": _fmt_num(sp.get("mixed_as")),
             "path_score": _fmt_num(c.get("path_score")),
+            "score": _fmt_num(c.get("score")),
             "evidence_label": _csv_text(c.get("evidence_label") or ""),
             "evidence_mode": _csv_text((pkg or {}).get("mode") or ""),
             "evidence_summary": _csv_text(((pkg or {}).get("summary") or "")
@@ -1265,10 +1276,10 @@ TOPIC_HELP = {
     ),
     "dx-score": (
         "Score",
-        SCORE_NOTE + " A score of 0.72 does not mean a 72% chance of the disease.\n\n"
-        "The kind above the table says what it is. With a model: η × model term + "
-        "(1 − η) × SP, or the model term alone without an SP table. With no model: "
-        "the path score.\n\n"
+        SCORE_NOTE + " 0.72 does not mean a 72% chance of the disease.\n\n"
+        "The kind above the table names it. Mixture: η × model term + "
+        "(1 − η) × SP, or the model term alone without an SP table. No model: the "
+        "path score. Disease task model: its head's score, 0 or below.\n\n"
         "SP 0.273 (3/4): from 3 of the 4 phenotypes submitted. SP in words: no number.",
     ),
     "dx-exports": (
@@ -1474,7 +1485,8 @@ def candidates_table_html(candidates: List[Mapping[str, Any]], selected: Any,
     or by Enter or Space when focused. Every value is escaped; a long name is
     clamped to two lines with the full name in its title. A mixture shows its
     score and model term, and its SP record in words when a table is served
-    (`shows_sp`); a path-reasoning result its path score; the demo no score."""
+    (`shows_sp`); a path-reasoning result its path score; a disease task model
+    its head's score; the demo no score."""
     if kind is None:
         return f'<div class="shep-reason">{_e(KIND_NOT_REPORTED)}</div>'
     if not candidates:
@@ -1561,11 +1573,12 @@ def details_header_html(candidate: Optional[Mapping[str, Any]], kind: Optional[s
                         shows_sp: bool = False) -> str:
     """The selected candidate's name, id and its kind's values: the score and
     model term of a mixture (its SP record on a line of its own when a table is
-    served), the score alone with no model, none in the demo answer."""
+    served), the score alone with no model or a disease task model, none in the
+    demo answer."""
     if candidate is None:
         return '<div class="shep-panel-hd"><h2>Candidate details</h2></div>'
     values = ""
-    if kind in (SERVED_MIXTURE, PATH_REASONING):
+    if kind not in (None, DEMO):
         values = f" Score <b>{_num(_score(candidate, kind))}</b>"
     if kind == SERVED_MIXTURE:
         values += f" · Model term {_num(candidate.get('model_term'))}"

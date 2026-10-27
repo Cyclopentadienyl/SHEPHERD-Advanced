@@ -197,6 +197,8 @@ def _model_stub(**overrides):
         _gnn_ready=True,
         _node_embeddings={"phenotype": torch.randn(3, 4), "disease": torch.randn(2, 4)},
         _node_id_to_idx={"phenotype": {"hpo:HP:1": 0}, "disease": {str(DISEASE): 1}},
+        # The ShepherdGNN path: no model bundle served.
+        _bundle_view=None,
     )
     for key, value in overrides.items():
         setattr(stub, key, value)

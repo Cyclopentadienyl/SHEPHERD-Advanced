@@ -406,10 +406,18 @@ RESULT_SCHEMA_VERSION = 2
 SERVED_MIXTURE = "served_mixture/v1"
 PATH_REASONING = "path_reasoning/v1"
 DEMO = "demo/v1"
-RESULT_KINDS = (SERVED_MIXTURE, PATH_REASONING, DEMO)
+#: A finetuned model bundle's disease task (docs/working/scorer-retraining
+#: README §3, K3): every disease of the model's graph view, ranked by the
+#: disease head's score; path discovery only explains the rows shown.
+DISEASE_TASK = "disease_task/v1"
+RESULT_KINDS = (SERVED_MIXTURE, PATH_REASONING, DEMO, DISEASE_TASK)
 #: Today's two served kinds rank by a stable sort, so equal scores keep the
 #: order path discovery reached the diseases in.
 SERVED_TIE_POLICY = "served-stable-discovery-order/v1"
+#: The disease task orders equal scores by the disease's graph-view id, so a
+#: tie is shown in a fixed order (README E3: the screen may order ties by a
+#: stable id; a metric uses average ranks).
+DISEASE_TASK_TIE_POLICY = "score-desc-then-view-id-asc/v1"
 #: The path aggregations `DiagnosisPipeline` applies, by `aggregation_method`;
 #: any other value is aggregated as `max`, and named so.
 PATH_SCORE_AGGREGATIONS = ("weighted_sum", "max", "mean", "sum")
@@ -598,15 +606,36 @@ class PathReasoningCandidate(_ServedEvidence, _CandidateBase):
         _require_finite(self.path_score, "path_score")
 
 
-#: A candidate of either kind the pipeline produces. `demo/v1` is the API's
-#: own answer when no pipeline was ever configured, and never reaches here.
-Candidate = Union[ServedMixtureCandidate, PathReasoningCandidate]
+@dataclass(frozen=True, kw_only=True)
+class DiseaseTaskCandidate(_ServedEvidence, _CandidateBase):
+    """A candidate of `disease_task/v1`: a disease of the model's graph view,
+    ranked by the finetuned disease head. The evidence fields explain the row
+    from path discovery and change neither the score nor the order."""
+
+    #: The disease head's score, −‖ẑ_d − ẑ_P‖² on normalised vectors, in
+    #: [−4, 0]; uncalibrated, a ranking value and never a probability.
+    score: float
+
+    def __post_init__(self) -> None:
+        _require_finite(self.score, "score")
+
+
+#: A candidate of any kind the pipeline produces. `demo/v1` is the API's own
+#: answer when no pipeline was ever configured, and never reaches here.
+Candidate = Union[ServedMixtureCandidate, PathReasoningCandidate, DiseaseTaskCandidate]
+
+#: Each kind's candidate type.
+CANDIDATE_TYPES = {SERVED_MIXTURE: ServedMixtureCandidate,
+                   PATH_REASONING: PathReasoningCandidate,
+                   DISEASE_TASK: DiseaseTaskCandidate}
 
 
 def candidate_score(candidate: Candidate) -> float:
     """The value `candidate`'s kind ranks by."""
     if isinstance(candidate, ServedMixtureCandidate):
         return candidate.served_score
+    if isinstance(candidate, DiseaseTaskCandidate):
+        return candidate.score
     return candidate.path_score
 
 
@@ -643,7 +672,8 @@ SERVED_DATASET_RECORD_STATES = ("verified", "absent")
 #: The dataset record's origins (`src.kg.provenance.ORIGINS`, which this layer
 #: cannot import; `tests/unit/test_served_identity.py` pins the two equal).
 SERVED_DATASET_ORIGINS = ("files", "synthetic")
-SERVED_SCORING_MODES = ("gnn_plus_shortest_path", "gnn_only", "path_reasoning_fallback")
+SERVED_SCORING_MODES = ("gnn_plus_shortest_path", "gnn_only", "path_reasoning_fallback",
+                        "disease_task")
 
 _HEX = frozenset("0123456789abcdef")
 
@@ -848,6 +878,8 @@ def result_kind_for(scoring_mode: Optional[str]) -> str:
         return SERVED_MIXTURE
     if scoring_mode == "path_reasoning_fallback":
         return PATH_REASONING
+    if scoring_mode == "disease_task":
+        return DISEASE_TASK
     raise ValueError(f"no result kind for scoring mode {scoring_mode!r}")
 
 
@@ -869,6 +901,9 @@ def result_label(result_kind: str, scoring_mode: Optional[str] = None,
         return "No model loaded: ranked by path reasoning, not by a model"
     if result_kind == DEMO:
         return "Demo answer: no pipeline is configured; not a diagnosis"
+    if result_kind == DISEASE_TASK:
+        return ("Disease task model: every disease of the model's graph ranked by its "
+                "Score (uncalibrated); paths only explain the rows shown")
     raise ValueError(f"unknown result kind {result_kind!r}")
 
 
@@ -920,7 +955,7 @@ class InferenceResult:
 
     def __post_init__(self) -> None:
         kind = self.result_kind
-        expected = ServedMixtureCandidate if kind == SERVED_MIXTURE else PathReasoningCandidate
+        expected = CANDIDATE_TYPES[kind]
         for candidate in self.candidates:
             if type(candidate) is not expected:
                 raise ValueError(
@@ -970,7 +1005,7 @@ class InferenceResult:
 
     @property
     def tie_policy(self) -> str:
-        return SERVED_TIE_POLICY
+        return DISEASE_TASK_TIE_POLICY if self.result_kind == DISEASE_TASK else SERVED_TIE_POLICY
 
     @property
     def path_score_aggregation(self) -> Optional[str]:

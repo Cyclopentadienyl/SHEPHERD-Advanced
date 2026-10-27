@@ -709,7 +709,7 @@ def served_warnings(status: Mapping[str, Any]) -> List[Tuple[str, str]]:
     kind = served_kind(status)
     if kind == "no_trained":
         found.append(r.IDENTITY_BANNERS["no_model"])
-    elif kind in ("model", "in_memory") and _part(identity, "shortest_paths", "state") == "absent":
+    elif kind in ("model", "in_memory") and _part(identity, "scoring_mode") == "gnn_only":
         found.append(r.IDENTITY_BANNERS["no_sp"])
     return found
 

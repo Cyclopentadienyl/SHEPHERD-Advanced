@@ -197,6 +197,18 @@ not reopened.
   `tests/integration/test_pipeline.py`'s, against the union, and the workspace-producer smoke test
   that ran it is removed with it.
 
+**As built in K3 (2026-10-27): `disease_task/v1`**, the kind of a served disease finetune (the
+retraining README §1, §3; policy rev 11). It replaces the `gnn_ranking/v1` row above.
+- Produced when the served checkpoint is a disease finetune with a model spec; `scoring_mode` is
+  `disease_task`; η is null and the SP table `absent` (SP does not rank diseases).
+- Every disease of the model's graph view is ranked by the disease head's score (0 or below,
+  uncalibrated); the tie policy is `score-desc-then-view-id-asc/v1`. Each candidate carries
+  `score`, the evidence and the explanation, and no model term or SP record.
+- Path discovery only explains the rows returned (PathReasoner as post-ranking evidence); it
+  never gates or orders candidates.
+- The page shows the head's score as the Score; the CSV writes it as `score`, with the evidence
+  columns and the `served_` columns.
+
 **Not decided here:**
 - the B-1 switch's default (the owner's call, policy §7);
 - whether serving with no model needs an opt-in (the owner's call, B-2). Until that is decided,
