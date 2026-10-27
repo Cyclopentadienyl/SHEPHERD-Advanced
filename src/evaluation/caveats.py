@@ -161,12 +161,19 @@ GENE_TASK_NOTE = ("A score mixing the finetuned model's gene head with shortest-
                   "similarity, uncalibrated. Every causal gene is a positive; a rank depends on "
                   "the list's length, which the report gives.")
 
+PATIENTS_LIKE_ME_RESULT_LABEL = ("Patients-like-me (model bundle): each patient against every "
+                                 "other patient of the cohort, average ranks")
+PATIENTS_LIKE_ME_NOTE = ("A similarity from the finetuned model's patient tower, uncalibrated. A "
+                         "pair is relevant when the two patients share a causal gene; a patient "
+                         "with no other relevant patient has no recall, not a recall of 0.")
+
 MODE_RESULT_LABELS = {"C": MODE_C_RESULT_LABEL, "D": MODE_D_RESULT_LABEL,
-                      "disease": DISEASE_TASK_RESULT_LABEL, "gene": GENE_TASK_RESULT_LABEL}
+                      "disease": DISEASE_TASK_RESULT_LABEL, "gene": GENE_TASK_RESULT_LABEL,
+                      "patients_like_me": PATIENTS_LIKE_ME_RESULT_LABEL}
 
 #: The note each mode's record is shown with.
 MODE_RESULT_NOTES = {"C": PRE_B1_NOTE, "D": MODE_D_NOTE, "disease": DISEASE_TASK_NOTE,
-                     "gene": GENE_TASK_NOTE}
+                     "gene": GENE_TASK_NOTE, "patients_like_me": PATIENTS_LIKE_ME_NOTE}
 
 
 #: The label of a record whose mode cannot be read: never taken for Mode C.

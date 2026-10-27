@@ -349,7 +349,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--task",
         type=str,
-        choices=["disease", "gene"],
+        choices=["disease", "gene", "patients_like_me"],
         default=None,
         help="With --stage finetune: the task",
     )
@@ -1119,7 +1119,7 @@ SHEPHERD_ONLY_FIELDS = frozenset({
     "margin", "label_smoothing", "temperature", "max_subgraph_nodes", "num_negative_samples",
 })
 LEARNING_STAGES_HERE = ("base", "finetune")
-FINETUNE_TASKS_HERE = ("disease", "gene")
+FINETUNE_TASKS_HERE = ("disease", "gene", "patients_like_me")
 #: Tasks that train on the gene task's functional fixture (README §8).
 FIXTURE_TASKS = ("gene", "patients_like_me")
 
@@ -1133,6 +1133,11 @@ def bind_task_data(task: str, spec: Any, view: Any, inputs: TrainingInputs
         from src.models.tasks.scoring import bind_disease_cases
 
         binding = {split: bind_disease_cases(view, inputs.samples[split].samples)
+                   for split in ("train", "val")}
+    elif task == "patients_like_me":
+        from src.models.tasks.patients_like_me import bind_patients
+
+        binding = {split: bind_patients(view, inputs.task_data.samples[split].samples)
                    for split in ("train", "val")}
     else:
         from src.models.tasks.gene import bind_gene_cases, distance_table, neighbour_table
@@ -1396,6 +1401,19 @@ def train_bundle(config: TrainConfig, explicit: Optional[Collection[str]] = None
             full_edges=view.edge_index(), full_relations=view.rel,
             task_loss_weight=config.task_loss_weight, lp_loss_weight=config.lp_loss_weight)
         monitor = FINETUNE_SELECTION_METRIC
+    elif config.task == "patients_like_me":
+        from src.training.finetune_task import (
+            FINETUNE_SELECTION_METRIC, PatientsSampler, PatientsTask,
+        )
+
+        sampler = PatientsSampler(
+            view, binding["train"].cases, lp_sampler, batch_size=config.batch_size,
+            sparse_sample_size=config.sparse_sample_size, seed=seed)
+        task = PatientsTask(
+            view=view, val_cases=binding["val"].cases, val_excluded=len(binding["val"].excluded),
+            full_edges=view.edge_index(), full_relations=view.rel,
+            task_loss_weight=config.task_loss_weight, lp_loss_weight=config.lp_loss_weight)
+        monitor = FINETUNE_SELECTION_METRIC
     else:
         from src.training.finetune_task import FINETUNE_SELECTION_METRIC, GeneSampler, GeneTask
 
@@ -1508,6 +1526,13 @@ def train_bundle(config: TrainConfig, explicit: Optional[Collection[str]] = None
             data_roles["task_fixture"] = {"record": inputs.task_data.identity.sha256,
                                           "label": record.get("label"),
                                           "rule": record.get("rule"), "seed": record.get("seed")}
+        if config.task == "patients_like_me":
+            scoring = {"task": "patients_like_me",
+                       "score": "-||z_a - z_b||^2 of the patient tower's L2-normalised vectors",
+                       "positives": "the two patients' causal-gene sets intersect (F9)",
+                       "candidates": "every other patient of the reference set; self excluded "
+                                     "by case id",
+                       "ties": "average rank", "version": 1}
         if config.task == "gene":
             from src.models.tasks.gene import SP_RULE
 

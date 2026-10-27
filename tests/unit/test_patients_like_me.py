@@ -1,0 +1,200 @@
+"""Patients-like-me: binding, F11 batches, self-exclusion by case identity, the
+joint step, validation states and `scripts/train_model.py --task
+patients_like_me` with its measurement (README A9, F9, F11, E1, E4, E5;
+regression 10).
+
+Module: tests/unit/test_patients_like_me.py
+"""
+from __future__ import annotations
+
+import dataclasses
+import json
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+torch = pytest.importorskip("torch")
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+
+from src.kg.graph_view import build_graph_view, split_facts  # noqa: E402
+from src.models.bundle import build_bundle, finetune_spec_from_parent, reference_spec  # noqa: E402
+from src.models.bundle.metrics import NO_OTHER_POSITIVE, NO_RELIABLE_TRUTH, RANKED  # noqa: E402
+from src.models.bundle.record import load_bundle  # noqa: E402
+from src.models.bundle.spec import InputSpec, PatientEncoderSpec  # noqa: E402
+from src.models.tasks.patients_like_me import (  # noqa: E402
+    BoundPatient,
+    anchor_groups,
+    bind_patients,
+    positive_matrix,
+    rank_patients,
+)
+from src.models.tasks.scoring import full_view_vectors  # noqa: E402
+from src.training.finetune_task import PatientsSampler, PatientsTask  # noqa: E402
+from src.training.lp_task import BaseLPSampler  # noqa: E402
+from tests.fixtures.registered_cohort import write_demo_workspace  # noqa: E402
+
+
+def _base_spec():
+    spec = reference_spec("base")
+    return dataclasses.replace(
+        spec, input=InputSpec(dim=8),
+        encoder=dataclasses.replace(spec.encoder, layers=2, hidden=4, output=4, heads=2)
+    ).validate()
+
+
+def _plm_spec():
+    spec = finetune_spec_from_parent(_base_spec(), "patients_like_me")
+    return dataclasses.replace(spec, patient_encoder=PatientEncoderSpec(
+        transformer_layers=1, transformer_heads=2, feedforward=16)).validate()
+
+
+def _p(case_id, genes, phenotypes=(0,)):
+    return BoundPatient(case_id, torch.tensor(list(phenotypes)), frozenset(genes))
+
+
+def test_f11_anchors_need_two_others_sharing_a_gene():
+    """Three patients share gene 7; a singleton (gene 9) and a pair (gene 8)
+    do not anchor, and are counted as non-anchoring."""
+    cases = [_p("a", {7}), _p("b", {7}), _p("c", {7, 8}), _p("d", {8}), _p("e", {9})]
+    anchors, partners = anchor_groups(cases)
+    assert anchors == [0, 1, 2]
+    assert partners[2] == [0, 1, 3] and partners[3] == [2] and partners[4] == []
+
+
+def test_positives_intersect_causal_genes_and_never_pair_a_case_with_itself():
+    queries = [_p("a", {7}), _p("b", {7, 8})]
+    reference = [_p("b", {7, 8}), _p("c", {8}), _p("a", {7})]
+    assert positive_matrix(queries, reference).tolist() == [[True, False, False],
+                                                            [False, True, True]]
+
+
+def test_binding_keeps_genes_outside_the_view_and_refuses_repeated_ids():
+    view = SimpleNamespace(view_ids=lambda t, local: torch.where(local < 3, local, -1))
+    rows = [SimpleNamespace(patient_id="a", phenotype_ids=[0, 5], causal_gene_ids=[999]),
+            SimpleNamespace(patient_id="b", phenotype_ids=[5], causal_gene_ids=[1]),
+            SimpleNamespace(patient_id="c", phenotype_ids=[1], causal_gene_ids=None)]
+    binding = bind_patients(view, rows)
+    assert [c.case_id for c in binding.cases] == ["a", "c"]
+    assert binding.cases[0].genes == frozenset({999}) and not binding.cases[1].genes
+    assert binding.excluded == [("b", "no_phenotype_in_view")]
+    assert binding.counts["no_causal_gene"] == 1
+    with pytest.raises(ValueError, match="appears twice"):
+        bind_patients(view, rows[:1] * 2)
+
+
+@pytest.fixture(scope="module")
+def trained(tmp_path_factory):
+    import train_model
+    from derive_task_fixture import derive
+
+    root = tmp_path_factory.mktemp("plm")
+    data_dir = write_demo_workspace(root / "ws")
+    derive(data_dir, distractors=4)
+    train_model.train(train_model.TrainConfig(
+        data_dir=str(data_dir), run_dir=str(root / "base"), learning_stage="base",
+        model_spec=_base_spec().to_dict(), num_epochs=1, batch_size=32, num_neighbors=[4, 4],
+        device="cpu", save_top_k=1),
+        {"learning_stage", "model_spec", "num_epochs", "batch_size", "num_neighbors", "device",
+         "save_top_k"})
+    return {"data_dir": data_dir, "base": root / "base" / "checkpoints" / "last.pt"}
+
+
+def _setup(trained):
+    from src.kg.artifacts import read_split_manifest
+    from src.kg.storage.file_storage import read_graph_artifacts
+    from src.kg.task_fixture import read_gene_fixture
+
+    data_dir = trained["data_dir"]
+    view = build_graph_view(read_graph_artifacts(data_dir, map_location="cpu").graph_data)
+    train = split_facts(view, 0).mask("train")
+    fixture = read_gene_fixture(data_dir,
+                                manifest_sha256=read_split_manifest(data_dir).identity.sha256)
+    cases = bind_patients(view, fixture.samples["train"].samples).cases
+    val = bind_patients(view, fixture.samples["val"].samples).cases
+    lp = BaseLPSampler(view.num_nodes, view.edge_index(train), view.rel[train],
+                       view.edge_index(train), view.rel[train], sizes=[3, 3], batch_size=8, seed=0)
+    sampler = PatientsSampler(view, cases, lp, batch_size=4, sparse_sample_size=4, seed=0)
+    task = PatientsTask(view=view, val_cases=val, val_excluded=0, full_edges=view.edge_index(),
+                        full_relations=view.rel, task_loss_weight=0.3, lp_loss_weight=0.7)
+    return view, sampler, task
+
+
+def test_every_anchor_has_two_positives_in_its_batch_and_the_step_reaches_every_part(trained):
+    view, sampler, task = _setup(trained)
+    batch = next(iter(sampler))
+    anchors = batch.counts["anchors"]
+    assert bool((batch.positive[:anchors].sum(dim=1) >= 2).all())
+    assert not bool(batch.positive.diagonal().any())
+    torch.manual_seed(0)
+    bundle = build_bundle(_plm_spec(), view).train()
+    step = task.training_step(bundle, batch, torch.device("cpu"))
+    expected = 0.3 * step.terms["task"] + 0.7 * step.terms.get("lp", 0.0)
+    assert step.loss.item() == pytest.approx(expected, rel=1e-5)
+    step.loss.backward()
+    for part in (bundle.input, bundle.encoder, bundle.patient_encoder, bundle.task_head):
+        assert any(p.grad is not None and p.grad.abs().sum() > 0 for p in part.parameters())
+
+
+def test_ranking_excludes_the_self_by_case_id_whatever_the_order(trained):
+    view, _, task = _setup(trained)
+    bundle = build_bundle(_plm_spec(), view)
+    z = full_view_vectors(bundle, view.edge_index(), view.rel, torch.device("cpu"))
+    val = task.val_cases
+    forward = {o.query_id: o for o in rank_patients(bundle, z, val, val)}
+    backward = {o.query_id: o for o in rank_patients(bundle, z, val, list(reversed(val)))}
+    assert forward.keys() == backward.keys()
+    for case_id, outcome in forward.items():
+        assert outcome.status == backward[case_id].status
+        assert sorted(outcome.ranks) == sorted(backward[case_id].ranks)
+        if outcome.status == RANKED:
+            assert outcome.candidates == len(val) - 1
+
+
+def test_states_are_kept_apart(trained):
+    view, _, _ = _setup(trained)
+    lonely, no_truth = _p("x", {1}), _p("y", set())
+    bundle = build_bundle(_plm_spec(), view)
+    z = full_view_vectors(bundle, view.edge_index(), view.rel, torch.device("cpu"))
+    outcomes = rank_patients(bundle, z, [lonely, no_truth], [lonely, no_truth])
+    assert [o.status for o in outcomes] == [NO_OTHER_POSITIVE, NO_RELIABLE_TRUTH]
+
+
+def _plm_config(trained, run_dir, **kw):
+    import train_model
+
+    fields = dict(data_dir=str(trained["data_dir"]), run_dir=str(run_dir),
+                  learning_stage="finetune", task="patients_like_me",
+                  finetune_from=str(trained["base"]), num_epochs=1, batch_size=4,
+                  num_neighbors=[3, 3], sparse_sample_size=4, device="cpu", save_top_k=1)
+    fields.update(kw)
+    return train_model.TrainConfig(**fields), set(fields) - {"data_dir", "run_dir"}
+
+
+def test_patients_like_me_finetune_and_measurement(trained, tmp_path):
+    import measure_scorer
+    import train_model
+
+    config, explicit = _plm_config(trained, tmp_path / "child")
+    metrics = train_model.train(config, explicit)
+    assert "val_pooled_mrr" in metrics
+    last_path = tmp_path / "child" / "checkpoints" / "last.pt"
+    last = torch.load(last_path, map_location="cpu", weights_only=True)
+    _, record = load_bundle(last, task="patients_like_me")
+    assert record.loss_identity["task_loss"] == "nca"
+    assert record.loss_identity["task_loss_weight"] == 0.3
+    assert record.scoring_identity["task"] == "patients_like_me"
+    assert record.data_roles["task_fixture"]["label"] == "functional fixture"
+    assert last["config"]["requested"]["learning_rate"] == 5e-5
+
+    out = tmp_path / "report.json"
+    code = measure_scorer.main(["--mode", "patients_like_me", "--checkpoint", str(last_path),
+                                "--data-dir", str(trained["data_dir"]), "--split", "val",
+                                "--output", str(out), "--device", "cpu"])
+    assert code == 0
+    report = json.loads(out.read_text())
+    assert report["manifest"]["mode"] == "patients_like_me"
+    assert "self excluded" in report["manifest"]["candidate_construction"]
+    assert "task_fixture" in report["manifest"]["artifact_digests"]

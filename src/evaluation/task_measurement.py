@@ -172,8 +172,48 @@ def run_gene_measurement(*, bundle: Any, view: Any, samples: Sequence[Any],
         truth={c.case_id: int(c.truths.min()) for c in cases}, evidence=evidence)
 
 
+#: The patients-like-me manifest values (PLAN_TEST_RESULTS §8.4).
+PATIENTS_LIKE_ME_SEMANTICS: Dict[str, Any] = {
+    "mode": "patients_like_me",
+    "metric_schema_version": TASK_METRIC_SCHEMA_VERSION,
+    "candidate_construction": "every other patient of the measured cohort; self excluded by case id",
+    "score_semantics": ("patient tower: -||z_a - z_b||^2 on L2-normalised projected vectors; a "
+                        "pair is positive when the causal-gene sets intersect"),
+    "model_construction": DISEASE_SEMANTICS["model_construction"],
+    "canonical_tie_policy_version": "average-rank/v1",
+}
+
+
+def run_patients_like_me_measurement(*, bundle: Any, view: Any, samples: Sequence[Any],
+                                     manifest: Any, device: torch.device, batch_size: int) -> Any:
+    """Rank every patient of the cohort against all the others (PLAN_TEST_RESULTS
+    §8.4); a `ModeResult`. A patient with no other positive, or without a
+    causal gene, keeps its own state and is never a recall of 0 (E4)."""
+    from src.models.tasks.patients_like_me import bind_patients, rank_patients
+    from src.models.tasks.scoring import full_view_vectors
+
+    if bundle.task != "patients_like_me":
+        raise ValueError(f"a {bundle.task!r} model does not rank patients")
+    _check_regime(device, manifest)
+    binding = bind_patients(view, samples)
+    cases = binding.cases
+    ranked: List[QueryOutcome] = []
+    if cases:
+        z = full_view_vectors(bundle, view.edge_index(), view.rel, device)
+        ranked = rank_patients(bundle, z, cases, cases, chunk=batch_size)
+    excluded = [QueryOutcome(case_id, INPUT_EXCLUDED, n_positives=1, reason=reason)
+                for case_id, reason in binding.excluded]
+    report = ranking_report(ranked + excluded, TASK_KS)
+    return _mode_result(
+        manifest=manifest, report=report, ranked=ranked, binding=binding, samples=samples,
+        truth={}, evidence={"graph_view": view.digest,
+                            "candidate_columns": {"min": max(len(cases) - 1, 0),
+                                                  "max": max(len(cases) - 1, 0)}})
+
+
 #: The task measurements this entry runs: semantics and the run, by task.
-TASK_RUNS = {"disease": run_disease_measurement, "gene": run_gene_measurement}
+TASK_RUNS = {"disease": run_disease_measurement, "gene": run_gene_measurement,
+             "patients_like_me": run_patients_like_me_measurement}
 
 
 def task_semantics(task: str, batch_size: int, bundle: Any) -> Dict[str, Any]:
@@ -181,9 +221,12 @@ def task_semantics(task: str, batch_size: int, bundle: Any) -> Dict[str, Any]:
         return disease_semantics(batch_size)
     if task == "gene":
         return gene_semantics(batch_size, bundle)
+    if task == "patients_like_me":
+        return {**PATIENTS_LIKE_ME_SEMANTICS, "batch_size": int(batch_size)}
     raise ValueError(f"no task measurement for {task!r}")
 
 
-__all__ = ["DISEASE_SEMANTICS", "TASK_KS", "TASK_METRIC_SCHEMA_VERSION", "TASK_RUNS",
-           "disease_semantics", "gene_semantics", "run_disease_measurement",
-           "run_gene_measurement", "task_semantics"]
+__all__ = ["DISEASE_SEMANTICS", "PATIENTS_LIKE_ME_SEMANTICS", "TASK_KS",
+           "TASK_METRIC_SCHEMA_VERSION", "TASK_RUNS", "disease_semantics", "gene_semantics",
+           "run_disease_measurement", "run_gene_measurement",
+           "run_patients_like_me_measurement", "task_semantics"]

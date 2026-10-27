@@ -84,6 +84,9 @@ FINETUNE_TASKS: Dict[str, Dict[str, Any]] = {
     "gene": {"learning_rate": 1e-5, "num_neighbors": [-1, 10, 5],
              "sparse_sample_size": 100, "task_loss_weight": 0.6, "lp_loss_weight": 0.4,
              "candidate_upsample_size": 2},
+    "patients_like_me": {"learning_rate": 5e-5, "num_neighbors": [15, 10, 5],
+                         "sparse_sample_size": 300, "task_loss_weight": 0.3,
+                         "lp_loss_weight": 0.7},
 }
 
 FINETUNE_TASK_SOURCES: Dict[str, Dict[str, str]] = {
@@ -107,6 +110,16 @@ FINETUNE_TASK_SOURCES: Dict[str, Dict[str, str]] = {
         "lp_loss_weight": f"{UPSTREAM} gene run_*.sh script lmbda 0.4 (README C3)",
         "candidate_upsample_size": f"{UPSTREAM} gene run_*.sh script (upsample_cand 2; "
                                    "README U3, U14)",
+    },
+    "patients_like_me": {
+        "learning_rate": f"{UPSTREAM} patients-like-me run_*.sh script (lr 5e-5; README U3, U8)",
+        "num_neighbors": f"{UPSTREAM} hparams.py:74 and the patients-like-me run_*.sh script "
+                         "(first hop 15, then 10, 5; README U3)",
+        "sparse_sample_size": f"{UPSTREAM} patients-like-me run_*.sh script (sparse_sample 300; "
+                              "README U3)",
+        "task_loss_weight": f"{UPSTREAM} patients-like-me run_*.sh script lmbda 0.7 on LP, so "
+                            "0.3 on the task (README C3)",
+        "lp_loss_weight": f"{UPSTREAM} patients-like-me run_*.sh script lmbda 0.7 (README C3)",
     },
 }
 

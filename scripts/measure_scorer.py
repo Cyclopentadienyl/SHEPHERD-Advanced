@@ -202,12 +202,12 @@ logger = logging.getLogger(__name__)
 
 #: The measurement modes this program runs: Mode C, and Mode D beside it
 #: (`docs/working/scorer-measurement/PLAN_B05.md`).
-MODES = ("C", "D", "disease", "gene")
+MODES = ("C", "D", "disease", "gene", "patients_like_me")
 #: The finetuned-bundle task measurements among them (README K3, K4).
-TASK_MODES = ("disease", "gene")
+TASK_MODES = ("disease", "gene", "patients_like_me")
 #: Task modes whose cases carry genes; a generated split is then the
 #: workspace's functional fixture (`src.kg.task_fixture`).
-GENE_FIELD_MODES = ("gene",)
+GENE_FIELD_MODES = ("gene", "patients_like_me")
 
 #: What Mode C ranks each patient against, as its manifest records it. There is
 #: no expansion to describe: the candidates are every disease in the graph.

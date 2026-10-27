@@ -23,6 +23,14 @@ list, a patient whose causal gene's distance is undefined leaves the step's
 task term, both counted (§6 rule 7). Validation ranks each validation case's
 own list, without upsampling.
 
+**Patients-like-me (README A9, F9, F11, E1, E5).** Only a patient with at least
+two other patients sharing a causal gene anchors (F11); each anchor brings two
+of them, drawn seeded, never itself; a group too small to anchor is counted.
+The task term is the NCA over the batch's patient vectors, the self excluded,
+a pair positive when the causal-gene sets intersect. Validation ranks each
+validation patient against every other validation patient (E1's recorded
+deviation from the source's in-batch ranking), self excluded by case id.
+
 **Batches (U9).** Each epoch takes the bound training cases in a seeded order,
 `batch_size` a batch. Seeds are the batch's phenotypes and truths, the task's
 candidates (disease: `candidate_sample_size` random diseases of the view plus
@@ -63,6 +71,12 @@ from src.models.tasks.gene import (
     rank_gene_cases,
 )
 from src.models.tasks.losses import multi_similarity_loss, nca_loss
+from src.models.tasks.patients_like_me import (
+    BoundPatient,
+    anchor_groups,
+    positive_matrix,
+    rank_patients,
+)
 from src.models.tasks.scoring import (
     Binding,
     BoundCase,
@@ -419,6 +433,117 @@ class GeneTask:
         return _report(self.rank_cases(model, self.val_cases, device), self.val_excluded, self.ks)
 
 
+@dataclass
+class PatientBatch:
+    """One patients-like-me step: the LP subgraph and the batch's patients."""
+
+    lp: LPBatch
+    #: `[N, P]` seed indices of each patient's phenotypes and the mask.
+    phenotype_index: Tensor
+    phenotype_mask: Tensor
+    #: `[N, N]` pairs sharing a causal gene (the diagonal False), and the
+    #: patients that are queries of the loss (with a positive in the batch).
+    positive: Tensor
+    query: Tensor
+    counts: Dict[str, int] = field(default_factory=dict)
+
+
+class PatientsSampler(_PatientBatches):
+    """Patients-like-me batches (U9, F11): anchors with two same-gene partners."""
+
+    def __init__(self, view: Any, cases: Sequence[BoundPatient], lp: BaseLPSampler, *,
+                 batch_size: int, sparse_sample_size: int, seed: int):
+        self.patients = list(cases)
+        anchors, self.partners = anchor_groups(self.patients)
+        self.index = {c.case_id: i for i, c in enumerate(self.patients)}
+        self.non_anchors = len(self.patients) - len(anchors)
+        if not anchors:
+            raise ValueError("no training patient has two others sharing a causal gene (F11); "
+                             "patients-like-me has nothing to anchor on")
+        super().__init__(view, [self.patients[i] for i in anchors], lp, batch_size=batch_size,
+                         sparse_sample_size=sparse_sample_size, seed=seed)
+
+    def batch(self, anchors: Sequence[BoundPatient], generator: torch.Generator) -> PatientBatch:
+        members: List[int] = []
+        seen = set()
+        for anchor in anchors:
+            i = self.index[anchor.case_id]
+            if i not in seen:
+                members.append(i)
+                seen.add(i)
+            pool = self.partners[i]
+            for pick in torch.randperm(len(pool), generator=generator)[:2].tolist():
+                j = pool[pick]
+                if j not in seen:
+                    members.append(j)
+                    seen.add(j)
+        patients = [self.patients[i] for i in members]
+        positive = positive_matrix(patients, patients)
+        phenotype_view, phenotype_mask = padded(patients)
+        lp = self._lp(torch.unique(phenotype_view[phenotype_mask]), generator)
+        phenotype_index = torch.zeros_like(phenotype_view)
+        phenotype_index[phenotype_mask] = lp.seed_index(phenotype_view[phenotype_mask])
+        query = positive.any(dim=1)
+        counts = dict(lp.counts)
+        counts.update({"anchors": len(anchors), "patients": len(patients),
+                       "queries": int(query.sum()), "non_anchoring_patients": self.non_anchors})
+        return PatientBatch(lp, phenotype_index, phenotype_mask, positive, query, counts)
+
+
+class PatientsTask:
+    """The patients-like-me finetune's step and validation."""
+
+    selection_metric = FINETUNE_SELECTION_METRIC
+
+    def __init__(self, *, view: Any, val_cases: Sequence[BoundPatient], val_excluded: int,
+                 full_edges: Tensor, full_relations: Tensor, task_loss_weight: float,
+                 lp_loss_weight: float, ks: Sequence[int] = (1, 3, 5, 10),
+                 chunk_size: int = 65536):
+        self.view = view
+        self.val_cases = list(val_cases)
+        self.val_excluded = int(val_excluded)
+        if not bool(positive_matrix(self.val_cases, self.val_cases).any()):
+            raise ValueError("no validation patient shares a causal gene with another; "
+                             "patients-like-me cannot be validated and selected")
+        self.full_edges = full_edges
+        self.full_relations = full_relations
+        self.task_loss_weight = float(task_loss_weight)
+        self.lp_loss_weight = float(lp_loss_weight)
+        self.ks = tuple(ks)
+        self.chunk_size = int(chunk_size)
+
+    def training_step(self, model: Any, batch: PatientBatch, device: torch.device) -> StepResult:
+        lp = batch.lp.to(device)
+        z = model.node_vectors_sampled(lp.node_ids, lp.edge_index, lp.nodes_per_hop,
+                                       lp.edges_per_hop, edge_type=lp.edge_type)
+        spec = model.task_head.spec
+        patients = patient_vectors(model, z, batch.phenotype_index.to(device),
+                                   batch.phenotype_mask.to(device))
+        query = batch.query.to(device)
+        n = patients.size(0)
+        task = nca_loss(patients[query], patients, batch.positive.to(device)[query],
+                        scale=spec.softmax_scale, eps=spec.distance_normalisation_eps,
+                        exclude=torch.eye(n, dtype=torch.bool, device=device)[query])
+        loss = self.task_loss_weight * task.value
+        terms = {"task": float(task.value.detach())}
+        counts = dict(batch.counts)
+        lp_value = _lp_term(model, z, lp, counts)
+        if lp_value is not None:
+            loss = loss + self.lp_loss_weight * lp_value
+            terms["lp"] = float(lp_value.detach())
+        return StepResult(loss, terms, counts)
+
+    def rank_cases(self, model: Any, cases: Sequence[BoundPatient], device: torch.device
+                   ) -> List[QueryOutcome]:
+        """Each patient against every other one of `cases` (E1), full view (G4)."""
+        z = full_view_vectors(model, self.full_edges, self.full_relations, device,
+                              self.chunk_size)
+        return rank_patients(model, z, cases, cases)
+
+    def validate(self, model: Any, device: torch.device) -> Dict[str, Any]:
+        return _report(self.rank_cases(model, self.val_cases, device), self.val_excluded, self.ks)
+
+
 __all__ = [
     "Binding",
     "BoundCase",
@@ -429,6 +554,9 @@ __all__ = [
     "GeneSampler",
     "GeneTask",
     "LP_SOURCE_TYPES",
+    "PatientBatch",
+    "PatientsSampler",
+    "PatientsTask",
     "TaskBatch",
     "bind_disease_cases",
 ]
