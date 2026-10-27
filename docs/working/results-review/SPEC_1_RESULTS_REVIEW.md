@@ -209,6 +209,19 @@ retraining README §1, §3; policy rev 11). It replaces the `gnn_ranking/v1` row
 - The page shows the head's score as the Score; the CSV writes it as `score`, with the evidence
   columns and the `served_` columns.
 
+**As built in K4 (2026-10-27): `gene_task/v1` and `patients_like_me/v1`.**
+- `gene_task/v1`, scoring mode `gene_task`: the request's `candidate_genes` ranked by
+  `η·EMBSIM + (1 − η)·SPLSIM`, each candidate with its two parts and the mean exact hop distance;
+  ties by view id; an identifier that maps to no gene of the view is counted ("N of M submitted").
+  Without `candidate_genes` nothing is ranked, and the response says so.
+- `patients_like_me/v1`, scoring mode `patients_like_me`: the patients of the registered reference
+  cohort version the request names (`reference_cohort`), ranked by the patient tower's similarity;
+  ties by case id; the query's own case id is left out. Each candidate carries the research id,
+  the similarity, and the recorded HPO terms, diagnosis and causal genes, and no name or contact
+  field. The result names the version (`label`, digests, patient count).
+- Both kinds have their own candidate types: no disease field and no path evidence.
+- The Diagnosis page draws disease kinds only until K6 adds these two views with their inputs.
+
 **Not decided here:**
 - the B-1 switch's default (the owner's call, policy §7);
 - whether serving with no model needs an opt-in (the owner's call, B-2). Until that is decided,

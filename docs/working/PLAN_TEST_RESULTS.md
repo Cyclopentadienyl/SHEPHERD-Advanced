@@ -2386,6 +2386,18 @@ evaluation, report, ledger or registration system, and no evaluator per task.
   contact field. A known causal gene is truth or reference context, never an input for an unknown
   query.
 
+### 8.3–8.4 as built (K4, 2026-10-27)
+
+- **Measurement:** `measure_scorer.py --mode gene` ranks each case's own list;
+  `--mode patients_like_me` ranks each patient of the measured cohort against all the others. A
+  generated split is measured through the workspace's functional fixture of that split (recorded as
+  `task_fixture`). A registered version's cases carry genes when its source listed
+  `causal_genes`/`candidate_genes` (the optional import fields). The manifests name η, the SP
+  bounds and the augmentation (gene task), and the self-exclusion rule (patients-like-me).
+- **Serving:** the reference cohort version is resolved by the API in `SHEPHERD_REGISTRY` and
+  read against its bound digest. Its graph binding must be the served graph's. The pipeline
+  embeds the version once per samples digest.
+
 ### 8.5 Manifests, ordering and registration
 
 - **New manifests** name the task, the metric schema, the scoring identity, the candidate universe,
