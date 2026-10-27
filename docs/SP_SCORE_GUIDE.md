@@ -349,6 +349,20 @@ where `d(p, g)` is "the minimum number of hops between p and g in the KG", `AGG`
 aggregation function (e.g., mean)", `NORM` rescales to `[−1, 1]`, and `η ∈ [0, 1]` weights the two
 terms. `EMBSIM(P, g) = tanh(z_Pᵀ W z_g)`, also in `[−1, 1]`.
 
+**What the released code does** (corrected 2026-10-27; the authors' code at `e95433a`, read for the
+paper-aligned design, [`working/scorer-retraining/README.md`](working/scorer-retraining/README.md)
+§6):
+- **The printed formula is a typo.** `NORM(x) = 2(x−max)/(max−min) − 1` has the range `[−3, −1]`.
+  The intended `2(x−min)/(max−min) − 1` is meant, and the paper does not say where max and min come
+  from.
+- **The code uses fixed bounds,** constants fitted on its simulated patients, not a min–max over each
+  candidate list. For the mean, `SPLSIM = 1 − 2(d̄ − 1)/(6.84 − 1)`: closer is higher, with no
+  clipping, so a mean beyond the bounds leaves `[−1, 1]`.
+- **Unreachable pairs are stored as 0,** which pulls a gene closer. The released code's comment ties
+  the constant to its data ("6 for mygene2, 6.5 for DDD, 6.833.. for corrupted phen simulated
+  patients"), so it does not carry over to another graph.
+- **`EMBSIM`** is computed on L2-normalised vectors, with a bias.
+
 The paper's stated rationale, quoted:
 
 > "This approach is grounded in the observation that, while methods that learn global network
@@ -437,7 +451,7 @@ and the record would say so (`mixed_as: 0.0`); no surface displays that 0 as a d
 | | Paper | This implementation | Consequence |
 |---|---|---|---|
 | **Task** | candidate **gene** ranking, with a short list | **disease** ranking, over whatever the path search admits | The condition the paper's rationale depends on — a short candidate list — does not hold |
-| **Transform** | `NORM(mean(−d))`, min–max rescaled **across the candidate set**, giving `[−1, 1]` | `1/(1 + mean(d))`, an **absolute** transform giving `[1/7, 1/2]` | See below |
+| **Transform** | `NORM(mean(−d))`. In the released code an **affine map with fixed bounds** fitted on simulated patients (`1 − 2(d̄ − 1)/5.84` for the mean), not a min–max over the candidate set; unclipped, nominally `[−1, 1]` *(corrected 2026-10-27)* | `1/(1 + mean(d))`, a **non-linear** absolute transform giving `[1/7, 1/2]` | See below |
 | **η value** | hyperparameter-searched over `[0.1, 0.9]`, per task (the article's method); the chosen value is not in the article, and the authors' run script for the gene task sets 0.5 | fixed at `0.7` (`PipelineConfig.eta`) | The project default is a reasonable choice, not a value inherited from the paper. The in-code comment states this correctly. |
 
 The transform difference has two consequences:
@@ -446,22 +460,38 @@ The transform difference has two consequences:
   term spans 0.7 while the SP term spans 0.107 — nominally 70/30, but 87/13 by span. This is a
   statement about the ranges the two terms can occupy, **not** a measurement of their actual
   contribution, which depends on how widely each varies in practice and has not been measured here.
-- **Candidate-relative normalisation removes a patient-level additive offset only when that offset
-  is constant across all candidates.** A phenotype contributes little or no discrimination when it
-  is *equally* distant from every candidate — for example when it is unreachable from all of them,
-  so every candidate receives the same `UNREACHABLE` value. It is **not** generally cancelled merely
-  because all its distances are large: distances of 5 to one candidate and 6 to another still
-  contribute to the spread. **The transform used here performs no explicit candidate-relative
-  cancellation at all**, so §1's "least-connected symptom" effect is not attenuated as it can be in
-  the paper's formulation.
+- **A phenotype equally distant from every candidate shifts every candidate's mean by the same
+  amount.** An example is a phenotype unreachable from all of them, which gives every candidate the
+  same `UNREACHABLE` value.
+  - **The released code's affine map** turns that shift into the same constant on every candidate's
+    SPLSIM. Its spread stays as it was, so the order is unchanged, mixed with EMBSIM or not.
+  - **The transform here, `1/(1 + d)`, is not affine.** The shift changes no SP-only order either,
+    but it compresses the SP term's spread. In the η mixture that lowers SP's effective weight. So
+    §1's "least-connected symptom" effect moves the mixture's balance here, where the released
+    code's form would not.
+  - **Large distances alone cancel nothing.** Distances of 5 to one candidate and 6 to another still
+    contribute to the spread in both forms.
+  - *(Corrected 2026-10-27: an earlier text described the paper's form as a candidate-relative
+    min–max that "can attenuate" this effect.)*
 
-**Unverified equivalence.** This implementation traverses an undirected, type-erased graph
-(`build_undirected_adjacency`, above). The paper states only that `d(p, g)` is "the minimum number
-of hops between p and g in the KG" and does not specify directionality or type handling. Whether the
-paper's traversal is equivalent is **not established here**; §1's caveat about hop types is
-demonstrated for this implementation and assumed, not verified, for the paper.
+**The traversal: same direction and type handling, different reach** (corrected 2026-10-27). The
+paper's text says only "the minimum number of hops between p and g in the KG". Its released code
+settles the rest (`data_prep/shortest_paths/shortest_paths.py`, which reads only an edge's two
+endpoints).
+- **The same as this implementation:**
+  - the graph is undirected and relation-blind, like `build_undirected_adjacency` above;
+  - so §1's caveat about hop types holds for both.
+- **Different from this implementation:**
+  - the search has no hop limit, where this implementation stops at 5;
+  - it runs on the KG's largest connected component;
+  - it includes the edges the link-prediction split holds out.
 
 ## Cost, and why it does not constrain the design
+
+*(Superseded, 2026-10-27: this described the lookup before B-0.4. Today `sp_mean_distances` folds
+the table into one sorted composite key and looks every candidate up at once with
+`torch.searchsorted`. B-0.4's GB10 benchmark covers up to 500 candidates; Spec 1 §6.2 records
+what is unmeasured beyond. The paragraphs below are kept as the record of the reasoning.)*
 
 The lookup is a linear scan of one phenotype's slice per candidate per phenotype. With a few hundred
 candidates this is unnoticeable. Over all ~27,990 diseases and ~10 phenotypes it becomes roughly

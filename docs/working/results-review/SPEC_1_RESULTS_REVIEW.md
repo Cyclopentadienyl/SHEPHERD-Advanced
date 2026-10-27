@@ -54,7 +54,7 @@ binding a view to an immutable result ID — **unenforceable**, not merely untid
 **Status:** reviewed design (Batch 2, passed with `a5652c1..e61253e`). **Batch 4's part is
 implemented and accepted (2026-10-27; its GB10 check at `7fc417c`, BACKLOG §0):** `served_mixture/v1`, `path_reasoning/v1` and `demo/v1` with
 everything below that applies to them: the removed fields, unavailable never zero, the invariants,
-the labels and the consumers. The as-built choices are in the note after the consumer table. **Batch 5 builds** `gnn_ranking/v1` with B-1 (BACKLOG §0). **Authority:** policy §7: one versioned discriminated union with required and
+the labels and the consumers. The as-built choices are in the note after the consumer table. **Batch 5 builds** `gnn_ranking/v1` with B-1 (BACKLOG §0). *(2026-10-27: superseded. `gnn_ranking/v1` as raw cosine is not built. The kind for the paper-aligned disease model is defined with work package A's model spec ([`../scorer-retraining/README.md`](../scorer-retraining/README.md) §8; policy rev 11). The union's rules below apply to it unchanged.)* **Authority:** policy §7: one versioned discriminated union with required and
 forbidden fields per variant, never a flat envelope; statement 7; C9.
 
 **The discriminator is `result_kind`, on the result, never on a candidate.** Every candidate of a
@@ -211,6 +211,12 @@ before batch 4.
 (2026-10-27):** the one phenotype mapping step, and the one SP caller with its two clean-ups.
 **Batch 5 builds** the rest with B-1: `score_patients`, `masked_mean_pool` in place of
 `pool_patient_embeddings`, the ranking's move into `scoring.py`, and the callers' migration.
+*(2026-10-27: partly superseded.)*
+- **Replaced:** `score_patients` and `masked_mean_pool` as the served scorer, by the model bundle's
+  patient encoder and disease head, whose math is shared from `src.models`
+  ([`../scorer-retraining/README.md`](../scorer-retraining/README.md) §3).
+- **Still apply:** `canonical_ranking`'s move, `selection_limit`, the one mapping step and the one SP
+  caller.
 It settles `PLAN_TEST_RESULTS.md` D3's two open served behaviours, the disease clamp and the
 unknown-phenotype handling, and policy §2.1's "one scorer, not two".
 
@@ -288,6 +294,8 @@ task (Eq 12–14). For disease ranking, SP here is the optional, default-off ana
 whose sorting and filtering change the view only and never the canonical rank. The one table of the
 paper's three tasks, their inputs, formulas, status, this project's differences and where each
 would land is `docs/ARCHITECTURE.md` §3, kept in one place so two copies cannot drift.
+*(2026-10-27: the paper-aligned disease model is scheduled as work package A; the recipe, its
+sources and deviations are [`../scorer-retraining/README.md`](../scorer-retraining/README.md) §2.)*
 
 ---
 
@@ -328,9 +336,12 @@ Values are stable **within** a result. Comparing them **across** results is mean
 KG and SP fingerprints, `max_hops`, traversal semantics and mapping coverage all match; any surface
 placing two results side by side checks compatibility and says so when it fails.
 
-Candidate-relative normalisation — the form the reference paper uses — is deferred by institutional
-decision. If adopted, C7 requires its reference set fixed to the canonical selected set at result
-production, never to a page or a filtered subset.
+Candidate-relative normalisation is deferred by institutional decision. If adopted, C7 requires its
+reference set fixed to the canonical selected set at result production, never to a page or a
+filtered subset. *(Corrected 2026-10-27: this text called candidate-relative normalisation "the form
+the reference paper uses". It is not. The paper's released code normalises the gene task's SP with
+fixed bounds fitted on simulated patients, not over a candidate list
+([`../scorer-retraining/README.md`](../scorer-retraining/README.md) §6; `SP_SCORE_GUIDE.md` §3).)*
 
 ### 3.3 Status
 

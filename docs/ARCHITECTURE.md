@@ -6,6 +6,10 @@
 > [`DISEASE_SCORER_POLICY.md`](DISEASE_SCORER_POLICY.md). §11 maps each backend capability to its formal
 > entry point and WebUI page; §12 holds the rules that keep one implementation per function.
 > **Anchor**: SHEPHERD (npj Digital Medicine 2025) by Harvard MIMS Lab.
+> **2026-10-27: the target formulation changed.** The paper-aligned two-stage design
+> ([`working/scorer-retraining/README.md`](working/scorer-retraining/README.md)) replaces the cosine
+> flow of §2.2 and the methods of §3.1–§3.3. What runs (§8, §11) is unchanged. B-1 as a raw-cosine
+> ranking is not built first (policy rev 11).
 
 ---
 
@@ -13,9 +17,12 @@
 
 SHEPHERD-Advanced is a rare disease diagnosis system that:
 - Uses a heterogeneous knowledge graph (PrimeKG-based) and GNN to generate node embeddings
-- Ranks candidate diseases/genes by embedding distance in a unified vector space
+- Target (designed 2026-10-27, not implemented): a KG link-prediction base model, then one model
+  finetuned from it per task, each ranking with its own task head
+  ([`working/scorer-retraining/README.md`](working/scorer-retraining/README.md))
 - Provides explainable evidence paths via PathReasoner (auxiliary)
-- Supports three diagnostic tasks in a single unified framework
+- Supports three diagnostic tasks in one framework: they share the base, the infrastructure and the
+  records, not a final vector space
 
 **Running at `416a242`:** disease ranking from a patient's HPO terms (the Diagnosis page and
 `POST /api/v1/diagnose`), by the interim served score of §8, with evidence paths, the served
@@ -25,7 +32,8 @@ Mode C measurement, registration). Gene ranking and patients-like-me are not imp
 **Hardware**: CUDA GPUs (the GB10 is the accepted target; BACKLOG 24 for others). Library versions:
 PyTorch, `torch_geometric` (PyG's core) and the rest of the locked set in `pyproject.toml` and
 `uv.lock`; PyG's native extensions per platform (§9, BACKLOG 50).
-**Graph layers**: GAT, HGT and SAGE, chosen per run (`--conv-type`).
+**Graph layers**: GAT, HGT and SAGE, chosen per run (`--conv-type`). None is the paper's encoder, a
+homogeneous GATv2 over a learned node table (`working/scorer-retraining/README.md` §2–§3).
 **Extension (not implemented)**: fuzzy input, free text to HPO/MONDO (`src/nlp/`).
 
 ---
@@ -39,6 +47,10 @@ PyTorch, `torch_geometric` (PyG's core) and the rest of the locked set in `pypro
 > gated by path search and the ranking score currently includes a shortest-path term; §2.1 below
 > describes the approved target, not present behaviour; §8 describes what runs. This section will be
 > reconciled with the implementation when work item B-1 lands.
+> **2026-10-27:** the approved target's ranking model becomes the paper-aligned disease head (work
+> package A, [`working/scorer-retraining/README.md`](working/scorer-retraining/README.md)). §2.1's rule
+> stands: the GNN ranks, paths explain. §2.2 is redrawn for it. Serving switches only through the
+> policy's gates.
 
 ### 2.1 The Non-Negotiable Rule
 
@@ -54,37 +66,40 @@ This is the fundamental design principle derived from the original SHEPHERD pape
 
 If PathReasoner becomes the gatekeeper for candidate discovery, GNN's generalization ability is blocked.
 
-### 2.2 Correct Flow
+### 2.2 Correct Flow (target: the paper-aligned disease task)
 
 ```
 Patient Phenotypes (HPO terms)
     │
     ▼
-┌─────────────────────────────────────────────┐
-│  GNN Forward Pass (precomputed at init)      │
-│  All node embeddings cached                  │
-└──────────────────┬──────────────────────────┘
+┌──────────────────────────────────────────────────┐
+│  Disease model (finetuned from a selected base)   │
+│  GraphEncoder forward: full graph, layer-wise,    │
+│  once at load; node vectors cached                │
+└──────────────────┬───────────────────────────────┘
                    │
-    ┌──────────────▼──────────────────┐
-    │  Patient Embedding Generation    │
-    │  Aggregate phenotype embeddings  │
-    │  via attention/mean pooling      │
-    └──────────────┬──────────────────┘
+    ┌──────────────▼───────────────────────┐
+    │  Patient encoder                      │
+    │  Transformer over phenotype vectors   │
+    │  → attention pooling → projection     │
+    └──────────────┬───────────────────────┘
                    │
-    ┌──────────────▼──────────────────┐
-    │  Distance Computation            │
-    │  Patient embedding vs ALL        │
-    │  disease/gene embeddings         │
-    │  → Cosine similarity ranking     │
-    └──────────────┬──────────────────┘
+    ┌──────────────▼───────────────────────┐
+    │  Disease head                         │
+    │  −‖z_d − z_P‖² (normalised vectors)   │
+    │  over EVERY KG disease, exact         │
+    └──────────────┬───────────────────────┘
                    │
-    ┌──────────────▼──────────────────┐
-    │  Top-K Results                   │
-    │  + PathReasoner evidence paths   │
-    │  + Attention weight explanation  │
-    │  + Patients-Like-Me retrieval    │
-    └─────────────────────────────────┘
+    ┌──────────────▼───────────────────────┐
+    │  Top-K results                        │
+    │  + PathReasoner evidence paths        │
+    │  + attention weights                  │
+    └──────────────────────────────────────┘
 ```
+
+The gene task and patients-like-me are separate finetuned models with their own heads (§3). They do
+not share this model's final vectors. The recipe, its sources and its deviations are
+`working/scorer-retraining/README.md` §2.
 
 ### 2.3 What PathReasoner Does and Does NOT Do (approved target)
 
@@ -104,8 +119,10 @@ order), and with no model configured the path-reasoning score becomes the rankin
 
 ## 3. Three Diagnostic Tasks (one implemented)
 
-All three tasks share the same GNN-generated embedding space. **Only 3.3's disease ranking runs**,
-as the Diagnosis page, by the interim score of §8, not the target formulation below.
+**The three tasks share a base and a framework, not a final embedding space** (2026-10-27). Each
+task is finetuned from a selected base into its own checkpoint, so vectors from two task models are
+not comparable (`working/scorer-retraining/README.md` §1). **Only 3.3's disease ranking runs**, as the
+Diagnosis page, by the interim score of §8, not the target formulation below.
 
 **The reference paper's three tasks and this project** (checked against the paper's Methods,
 npj Digital Medicine 8:380, 2025, and `docs/working/FINDINGS_PAPER_PROTOCOL_AND_AMP.md` §3.4 and
@@ -114,9 +131,9 @@ scores to add to any ranking.
 
 | Task | Inputs it needs | The paper's formula and model head | Here today | This project's difference | Where it would land |
 |---|---|---|---|---|---|
-| Causal gene discovery | patient phenotypes and a candidate gene list from variant filtering or curation (13.3 genes on average in one setting, 244.3 in the other; policy §3.1) | Eq 12–14: `η·EMBSIM + (1−η)·SPLSIM`, its own task head, and SP also in the training loss | not implemented: `candidate_genes` is a reserved field, ignored with a warning | — | its own work item (`docs/working/task-scope/README.md`); the only task in which the paper mixes SP into a ranking |
-| Patients-like-me | patient phenotypes and a reference cohort of patients with embeddings | Eq 16: `−‖z_Pi − z_Pj‖²` | not implemented | — | its own work item; it needs a reference cohort |
-| Novel disease characterisation (disease ranking) | patient phenotypes | Eq 18: `−‖z_d − z_P‖²` over every KG disease, on the patient encoder's output (a transformer encoder and an attention-weighted average) | served as Diagnosis by the legacy mixture of §8 until B-1; Mode C measures the approved interim policy | the approved interim policy (statement 2) is raw cosine of an **unweighted** masked mean: not the paper's encoder, projection or objective. Cosine and negative squared L2 order alike only on the same unit vectors; that does not make the encoders equal, and Mode C is not a reproduction of the paper | B-1 serves the interim policy; paper parity is the scorer-retraining track (`docs/working/scorer-retraining/README.md`) |
+| Causal gene discovery | patient phenotypes and a candidate gene list from variant filtering or curation (13.3 genes on average in one setting, 244.3 in the other; policy §3.1) | Eq 12–14: `η·EMBSIM + (1−η)·SPLSIM`, its own task head, and SP also in the training loss | not implemented: `candidate_genes` is a reserved field, ignored with a warning | — | work package B (`docs/working/scorer-retraining/README.md` §8; its SP specification §6 comes first); the only task in which the paper mixes SP into a ranking |
+| Patients-like-me | patient phenotypes and a reference cohort of patients with embeddings | Eq 16: `−‖z_Pi − z_Pj‖²` | not implemented | — | work package B; it needs a registered reference cohort |
+| Novel disease characterisation (disease ranking) | patient phenotypes | Eq 18: `−‖z_d − z_P‖²` over every KG disease, on the patient encoder's output (a transformer encoder and an attention-weighted average) | served as Diagnosis by the legacy mixture of §8 until B-1; Mode C measures the approved interim policy | the approved interim policy (statement 2) is raw cosine of an **unweighted** masked mean: not the paper's encoder, projection or objective. Cosine and negative squared L2 order alike only on the same unit vectors; that does not make the encoders equal, and Mode C is not a reproduction of the paper | work package A builds the paper-aligned disease model (`docs/working/scorer-retraining/README.md`); serving switches only through the policy's gates (package C). The raw-cosine B-1 is not built first (policy rev 11) |
 
 **SP for disease ranking** is this project's policy, not the paper's formula. It is an optional
 analysis view, off by default, whose sorting and filtering change the view only and never the
@@ -141,19 +158,19 @@ view over the disease result, not a model head for these tasks.
 `candidate_genes` is a reserved request field: accepted, ignored, and answered with a warning
 (`src/api/routes/diagnose.py`).
 - **Input**: Patient phenotypes (Channel 1) + Candidate gene list (Channel 2)
-- **Method**: Cosine similarity between patient embedding and each candidate gene embedding
+- **Method (target, work package B)**: `η·EMBSIM + (1−η)·SPLSIM` over the candidate list, from the gene task's finetuned model (`working/scorer-retraining/README.md` §2, §6)
 - **Output**: Ranked gene list with scores
 - **Channel 2 source**: Upstream variant filtering pipeline (e.g., Exomiser) — SHEPHERD is the consumer, not producer
 
 ### 3.2 Similar Patient Retrieval (Patients-Like-Me) (not implemented)
 - **Input**: Patient phenotypes only (Channel 1)
-- **Method**: Cosine similarity between patient embedding and all known patient embeddings
+- **Method (target, work package B)**: `−‖z_Pi − z_Pj‖²` on normalised vectors against a registered reference cohort embedded by the same model; the query itself excluded
 - **Output**: K most similar confirmed patients with shared phenotypes
 - **Clinical value**: Diagnosis validation, especially before ordering genetic testing
 
 ### 3.3 Novel Disease Characterization (running as Diagnosis' disease ranking)
 - **Input**: Patient phenotypes only (Channel 1)
-- **Method**: Cosine similarity between patient embedding and all disease embeddings
+- **Method (target, work package A)**: `−‖z_d − z_P‖²` on normalised vectors between the patient encoder's output and every KG disease, from the disease task's finetuned model. What runs today is §8's interim score
 - **Output**: "Most similar known diseases" ranking
 - **Clinical value**: When the patient may have an undescribed condition
 
@@ -196,6 +213,11 @@ record itself (M2, M3a, M3b).
   (BACKLOG item 11). External cohorts are measured as registered versions (Mode C, §11).
 - **Not implemented**: a separate KG pretraining stage, and *branch* training that starts from a
   parent with changed learning settings (BACKLOG 23).
+- **Designed 2026-10-27, not implemented:**
+  - the KG pretraining stage and the `finetune` operation, built in work package A
+    (`working/scorer-retraining/README.md`; `working/PLAN_PROVENANCE_CONTRACT.md` §9);
+  - for new specs, the loss terms above are replaced, with their retirement listed in that README's
+    §7.
 
 ### Training → Inference Bridge
 1. Training writes checkpoints into its run directory.
@@ -480,7 +502,8 @@ and integration tests sit beside each module.
 | **Model quality, institutional acceptance** | — | — | — | Not implemented (external) | — | data, terms and a declared protocol |
 | **Diagnose** (served score of §8, `gnn_only`, path fallback), result identity, CSV and report | `POST /api/v1/diagnose` | `src/inference/pipeline.py`, `scoring.py`, `served_identity` | Diagnosis page and exports | Connected | HTTP and the tab at `52152e4` (M3c); by hand at `f9202b6`; probes E7, R6 at `b14c4de` call the pipeline without explanations | whether serving with no model configured needs an opt-in (B-2). Batch 4 (implemented and accepted, 2026-10-27) answers each kind with its own fields: path reasoning is `path_reasoning/v1`, an SP value with no number is a status, never 0.0 (policy C9; §11.1 step 7) |
 | **Evidence and explanations** | the pipeline's explanations step | `evidence_panel.py`, `explanation_generator.py` | Evidence, Explanation, Paths | Connected (Mode A only) | by hand at `f9202b6` | evidence Mode B and INSUFFICIENT unreachable until B-1, whose target-restricted traversal is gate 3's design (§11.1 step 6); a computed summary the route drops; inert flags (BACKLOG 56) |
-| **B-1**: GNN-primary ranking over every disease; SP as an optional analysis surface; evidence for the visible page only | — | to reuse: `scoring.cosine_score_matrix` and `masked_mean_pool`, Mode C's canonical ranking (moved into `scoring.py`), `sp_index.sp_mean_distances` | — | Not implemented | — | designed (§11.1); built in BACKLOG §0 batch 5, gated by policy gates 1 and 3 (§6) |
+| **B-1**: GNN-primary ranking over every disease; SP as an optional analysis surface; evidence for the visible page only | — | to reuse: Mode C's canonical ranking, `sp_index` for the SP surface. The disease scorer becomes the model bundle's head (`working/scorer-retraining/README.md` §3) | — | Not implemented | — | **Superseded 2026-10-27:** the raw-cosine B-1 is not built first. The paper-aligned disease model (work package A) is what a future switch would serve, through policy gates 1 and 3 (§6; package C; policy rev 11). The GNN-primary rule, SP as an optional surface and lazy evidence stay the target |
+| **Paper-aligned two-stage training**: KG base, `finetune`, the disease, gene and patients-like-me tasks, one model builder | — | — | — | Not implemented | — | designed 2026-10-27 (`working/scorer-retraining/README.md`, `working/PLAN_PROVENANCE_CONTRACT.md` §9, `working/PLAN_TEST_RESULTS.md` §8): work packages A–C |
 | **HPO search, disease details, keeping a diagnosis, `candidate_genes`** | mock routes (HPO search, disease details); `GET /api/v1/diagnose/{session_id}` answers 501; a reserved field | — | — | Not implemented | — | BACKLOG 56 |
 | **Operator access (D8) and the read-only view** | `OPERATOR_ONLY` (`src/api/operator_access.py`) on every gated route; the dashboard's helper `src/webui/operator_access.py` in each operator handler | `src/utils/operator_access.py` (`check_operator_access`, the one check) | chips; greyed controls with the reason | Connected | W2–W6 at `b14c4de`; a read-only tab by hand at `773dc4a` | open read routes name server paths (BACKLOG 53) |
 | **Server settings** | `SHEPHERD_*` environment, read where used | `src/config/server_settings.py` | shown, never edited | Connected | probes at `b14c4de` | none |
@@ -512,6 +535,17 @@ The designs are:
 - **B-1** makes the Diagnosis page serve the approved policy, behind a switch.
 
 Mode C and Mode D change no served value. B-1 does.
+
+**Superseded in part, 2026-10-27.** Batch 5's changes below (B-1 with raw cosine) are not built.
+- **Steps 2–5 and 7** become the paper-aligned disease model's steps in work package A:
+  - one model builder;
+  - the disease head over every disease;
+  - `canonical_ranking` and `selection_limit` still apply;
+  - a new result kind for that model, not `gnn_ranking/v1` as raw cosine.
+- **The served switch** waits for package C and the policy's gates.
+- **Step 6** (gate 3's evidence) keeps its design.
+- **The rows** stay as the record of the Batch 2 design
+  ([`working/scorer-retraining/README.md`](working/scorer-retraining/README.md) §8).
 
 | Step | Today: formal entry and shared function | Gap | Change (batch) | Old entry removed |
 |---|---|---|---|---|

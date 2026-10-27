@@ -386,6 +386,17 @@ be removed cleanly afterwards. This is a boundary, not a retirement plan.
    things in hand: the finished comparison, the switch's state, and an inventory of callers. No
    plugin or retirement framework is built for it.
 
+**2026-10-27: the paper-aligned direction keeps this boundary.** The plan is
+[`../scorer-retraining/README.md`](../scorer-retraining/README.md), work packages A–C.
+- **Mode D stays temporary and removable.** The new models, their training, measurement and serving
+  import nothing from `mode_d`, use no `run_mode_c` observer and change no `run_mode_c` semantics
+  (`.import-linter.ini`). Mode D is not extended for the three tasks.
+- **Its comparison partner may change.** If policy rev 11's proposed gate 1 revision is approved,
+  gate 1 compares the served ranking with the paper-aligned disease model, measured as its own mode.
+  Mode D's reports stay valid evidence about today's served behaviour.
+- **Both retirements of point 5 move to package C,** each still counted apart. The legacy mixture
+  goes when the paper-aligned disease model has taken over serving, rather than B-1's raw cosine.
+
 ---
 
 ## 11. As implemented (Batch 3, 2026-10-26)

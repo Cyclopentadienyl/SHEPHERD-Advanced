@@ -3,6 +3,11 @@
 > **Purpose**: Technical reference for the engineering team. Evaluates GNN architecture options for SHEPHERD-Advanced, including compatibility with PyTorch 2.9+ and PyG 2.7+.
 >
 > **Last updated**: 2026-05-14
+>
+> **Note (2026-10-27).** None of the encoders here is the reference paper's, a homogeneous three-layer
+> GATv2 over a learned node table. The paper-aligned design, its GraphEncoder contract and its five
+> module boundaries are [`working/scorer-retraining/README.md`](working/scorer-retraining/README.md)
+> §2–§3. This file stays a survey of options.
 
 ---
 
@@ -378,6 +383,18 @@ Layer 3 — Decoder（百搭，可替換）：
   HOPE（plug-and-play 升級）
   Transformer Gene Encoder（PhenoKG 風格）
 ```
+
+**Correction (2026-10-27): "FlashAttention (needs an encoder with attention)" is too loose.**
+- **What it accelerates:** FlashAttention, xFormers and SageAttention speed up *dense* attention
+  (`QKᵀ` over a sequence).
+- **Where it does not apply:** GAT, GATv2 and HGT attend sparsely, along edges, so these kernels
+  cannot replace that attention.
+- **Its first legitimate use here:** the paper-aligned design's patient encoder, a Transformer over a
+  patient's phenotype sequence.
+- **A graph encoder** would use them only if it were a global-attention graph Transformer.
+
+The boundaries and their candidate routes are `working/scorer-retraining/README.md` §3.4. The plug-in
+system stays BACKLOG 58.
 
 ---
 

@@ -188,7 +188,11 @@ day** after the reviewer's review of `7b0162f` (P2-4: what the budget bounds; an
 stated as this project's policy, the view identity, the approval route); the first version is in git
 history. **Approval route:** the reviewer's technical review, then the owner's confirmation, as for
 the project's other designs; no new approval process. The design is not approved yet, so gate 3 is
-not cleared. It is built with B-1, as B-1c, in batch 5.
+not cleared. It is built with B-1, as B-1c, in batch 5. *(2026-10-27: batch 5 is replaced by work
+packages A–C ([`../scorer-retraining/README.md`](../scorer-retraining/README.md) §8; policy rev 11).
+This design and its approval route are unchanged, and it is built when package C prepares the
+served switch. "Batch 5" below reads as that package. The analogy list's similarity (§7, "Who
+computes the list") is fixed with the served model's spec.)*
 
 **Authority:**
 - policy §6, gate 3's seven requirements;

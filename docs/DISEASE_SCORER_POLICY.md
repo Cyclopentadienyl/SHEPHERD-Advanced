@@ -3,6 +3,41 @@
 **Status:** Accepted (2026-08) by the deploying institution. **Not yet implemented** — see the
 status table in §2. Implementation is work item B-1, which remains gated (§6).
 
+**Revision: rev 11 (2026-10-27). A factual update and a factual correction, with proposed
+revisions that are not approved.** No normative statement changes in this revision.
+- **Factual update: the track is scheduled.** The paper-parity retraining track, which statement 2
+  and §8 condition 2 anticipate, is scheduled as work packages A–C of the paper-aligned two-stage
+  design ([`working/scorer-retraining/README.md`](working/scorer-retraining/README.md)).
+  - **Package A** builds its disease model as a research implementation. Nothing served changes
+    until package C passes this record's gates.
+  - **The raw-cosine B-1 is not built first.** The owner's direction is not to build a scorer that is
+    about to be replaced.
+  - **What still applies, unchanged, to whatever model a switch would serve:**
+    - statements 1 and 3–7;
+    - the conditions C1–C10, the schedule and the limits;
+    - gate 3's scope;
+    - the rollout's switch and union rules.
+- **Factual correction: SP's normalisation.** §5's last two bullets measured the absence of
+  candidate-relative normalisation against the paper.
+  - **The paper's released code normalises with fixed bounds,** not over a candidate list
+    (`upstream:data_prep/shortest_paths/add_spl_to_patients.py:18-19,104-109` at `e95433a`;
+    [`SP_SCORE_GUIDE.md`](SP_SCORE_GUIDE.md) §3, corrected the same day). It does so for the gene
+    task only.
+  - **What stays:** the range mismatch is still a defect of this project's mixture. C7 still binds
+    any normalisation used here; it makes no claim about the paper.
+  - **Notice:** as with rev 4, the institution should be informed that its authority document was
+    corrected; a factual amendment needs no reapproval.
+- **Proposed, not approved** (the owner, then the institution). Until approved, statement 2 and
+  gate 1 stand as written; they bind the clinical switch, not research implementation.
+  - **Statement 2:** at the switch, the interim raw cosine is replaced by the paper-aligned disease
+    head. That is `−‖z_d − z_P‖²` on normalised vectors of the disease task's finetuned model, once
+    package C's evidence exists.
+  - **Gate 1:** its report compares the served ranking with the scorer to be switched to, measured
+    as its own mode, not with raw cosine. Mode D's comparison of today's served ranking with Mode C
+    stays valid evidence about today's behaviour.
+  - **B-1's scope:** B-1a's scorer becomes the model bundle's disease head, and `gnn_ranking/v1` is
+    redefined with package A's spec. B-1b and B-1c are unchanged.
+
 **Revision: rev 10 (2026-10-27). Factual update, no normative change.** Batch 4's reviews passed
 and its minimal GB10 check passed at `7fc417c` (`working/batch4-acceptance-2026-10-27/`): the
 result union's three kinds for today's behaviour, which rev 9 marked for review, are accepted.
@@ -92,7 +127,8 @@ Seven normative statements. Each is binding on the target design; none describes
 
 Statement 2 is explicitly **interim**. It reflects what the deployed checkpoint's training objective
 optimised, not the reference paper's disease scorer (§3.1). It is expected to change if and when the
-paper-parity retraining track is undertaken, which is outside work item B.
+paper-parity retraining track is undertaken, which is outside work item B. *(Rev 11: that track is
+scheduled as work packages A–C; the proposed revision of this statement is in rev 11, not approved.)*
 
 ### 1.1 Conditions on clinician-controlled view operations
 
@@ -202,6 +238,11 @@ Two further current behaviours, for completeness:
   the result's kind (`result_kind`) follows from it, and each kind has its own score field.
 
 ### 2.1 What B-1 and B-2 still lack (2026-10-25, at `main` `416a242`)
+
+*(Rev 11: B-1a's raw-cosine scorer is not built first. This list stays the record of batch 2's
+starting point. "One scorer, not two" applies to the paper-aligned disease head too: its math is
+shared from `src.models`, and its oracle tests are hand-computed rather than a second product copy
+(`working/scorer-retraining/README.md` §3.2).)*
 
 A gap list, not a design: the designs are batch 2's work under gate 1 as written, and only B-1's
 implementation waits for the gates (§6). Each line names
@@ -437,10 +478,12 @@ unexamined default.
   curation; this list contains model-ranked diseases. What the bounded set does provide is a
   well-defined reference set for candidate-relative normalisation, which the current absolute
   transform does not perform. How to implement that normalisation is deferred to the implementation
-  stage.
+  stage. *(Rev 11: whether any normalisation is used here is this project's choice under C7; it is
+  not the paper's form, which uses fixed bounds.)*
 - **Two implementation defects are recorded and deferred**, not fixed by this decision: the range
   mismatch between the two score terms, and the absence of candidate-relative normalisation
-  (§3.5, and `SP_SCORE_GUIDE.md` §3).
+  (§3.5, and `SP_SCORE_GUIDE.md` §3). *(Rev 11, corrected: the second is not a defect measured
+  against the paper, whose released code uses fixed bounds; the first stands.)*
 
 ---
 
@@ -476,7 +519,8 @@ B-1 implementation may not begin until all three clear:
     the union's discriminator builds on it is B-1's or B-2's decision, not M3c's.
   - **Batch 4 built the union's first kinds** (accepted 2026-10-27): `served_mixture/v1`,
     `path_reasoning/v1` and `demo/v1`, each with its own required and forbidden fields, the kind
-    derived from the served identity's `scoring_mode` (Spec 1 §2.1). B-1 adds `gnn_ranking/v1`.
+    derived from the served identity's `scoring_mode` (Spec 1 §2.1). B-1 adds `gnn_ranking/v1`
+    *(rev 11: for the paper-aligned disease model, its definition fixed with package A's spec)*.
 - The clinician-facing guide's status box and the SP presentation change together with the code, not
   before it.
 
@@ -493,7 +537,8 @@ This record should be reopened if any of the following occurs:
    Eq 13 — so a result in either direction is a statement about this implementation, not about the
    paper's formula.
 2. **The paper-parity retraining track is undertaken**, changing the trained scorer. Statement 2 is
-   interim precisely because of this.
+   interim precisely because of this. *(Rev 11: undertaken, scheduled as work packages A–C. Rev 11's
+   proposed revisions are the reopening; package C brings the evidence for them.)*
 3. **The knowledge graph changes materially** in coverage or connectivity, altering what SP measures.
 4. **A cascade or tie-break design is evaluated and shown to help** (§4). Evaluating it without a
    further measurement run is conditional on B-0.5 either recording an approved bounded

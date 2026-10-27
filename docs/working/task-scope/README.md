@@ -1,7 +1,9 @@
 # Task scope — what the supplied-short-list scenario changes
 
-**Status:** rev 6. Scope decisions reviewed and settled. **Q1 is implemented**;
-Q2-Q5 remain settled but unscheduled, which is why this document is not archived.
+**Status:** rev 7. Scope decisions reviewed and settled. **Q1 is implemented**;
+**Q5 is scheduled** (2026-10-27) as part of work package B of the paper-aligned
+design. Q2-Q4 remain settled but unscheduled, which is why this document is not
+archived.
 
 - **rev 2** — revised Q1, Q3 and Q4 after the reasoning or facts were found wrong.
 - **rev 3** — narrowed F2's validation claim, replaced the proposed per-candidate
@@ -13,6 +15,10 @@ Q2-Q5 remain settled but unscheduled, which is why this document is not archived
 - **rev 5** — moved that material to
   [`../scorer-retraining/README.md`](../scorer-retraining/README.md), where it
   belongs, leaving §6 as a cross-reference.
+- **rev 7** (2026-10-27) — Q5 scheduled. The owner's paper-aligned two-stage
+  direction builds the gene task in work package B
+  ([`../scorer-retraining/README.md`](../scorer-retraining/README.md) §8), with
+  `candidate_genes` as its input. F8 and §4 are updated.
 
 The deploying institution described a second use case: clinicians who have
 already narrowed a patient to **a list of suspected diseases or gene variants**
@@ -57,7 +63,7 @@ written. Nothing here is recalled.
 | F5 | `DiagnosisSample.gene_ids` is collated into batches and read at `data_loader.py:929-930`, but **no loss consumes it** | `kg/data_loader.py:614,675,741-765,929` |
 | F6 | A **dormant supplied-candidate mechanism already exists** in the training dataloader: `DiagnosisSample.candidate_disease_ids` plus `include_all_candidates`. `file_storage.read_samples` reads the field only with `training_fields=True`, which measurement does not pass, so it is dead on the measurement path | `kg/data_loader.py:613,656-669`; `kg/storage/file_storage.py:152-171` |
 | F7 | `cosine_score_matrix(patient_matrix, candidate_matrix)` is **candidate-agnostic**, and `sp_mean_distances` already takes a sequence of targets | `inference/scoring.py:193,240` |
-| F8 | The approved disease score is **raw cosine, explicitly interim**, because it reflects what the deployed checkpoint's training objective optimised — not the paper's Eq 18. Changing it requires the paper-parity retraining track, which is outside work item B | `DISEASE_SCORER_POLICY.md:1` statement 2 |
+| F8 | The approved disease score is **raw cosine, explicitly interim**, because it reflects what the deployed checkpoint's training objective optimised — not the paper's Eq 18. Changing it requires the paper-parity retraining track, which is outside work item B. *(2026-10-27: that track is scheduled as work packages A–C; policy rev 11.)* | `DISEASE_SCORER_POLICY.md:1` statement 2 |
 
 **F4 is the load-bearing one**, and an earlier revision overstated it as "gene
 embeddings are unsupervised". That claim was not established: `ShepherdGNN` does
@@ -307,13 +313,38 @@ The work item's opening gates are where the real content is:
 scorer**, and it must not enter B-0 — B-0 measures the disease scorer. Whether to
 schedule it at all is an institutional roadmap decision, not this document's.
 
+**Scheduled 2026-10-27, as part of work package B** of the paper-aligned design
+([`../scorer-retraining/README.md`](../scorer-retraining/README.md)). The rule
+above still holds: the gene task is a new finetuned model with its own head, not
+today's embeddings wired into a scorer. **`candidate_genes` becomes the gene
+task's input:** the patient's candidate list, supplied with each request. Where
+each gate of the table is answered:
+- **F4 and the gradient-path audit:** moot for the new model. Its base is
+  pretrained on KG link prediction, and its gene head is trained with the gene
+  task's loss. The audit described a model that will not serve genes.
+- **Candidate and negative-set semantics:** the recipe (README §2, A8 and
+  C7–C9) and `../PLAN_TEST_RESULTS.md` §8.3.
+- **Variant→gene mapping:** stays outside. A request supplies genes; variant
+  filtering stays upstream (`../../ARCHITECTURE.md` §3.1).
+- **Ground truth and evaluation cohort:** functional fixtures with real
+  gene-truth roles first. Real data and its permission gate effect claims, not
+  the work (README §8).
+- **Eq 13/14, η and normalisation:** README §6 (a gate inside package B), and
+  §2 U12 for η.
+- **Score semantics and result type:** package B's own result kind.
+- **Checkpoint compatibility:** the model spec and the record contract
+  (`../PLAN_PROVENANCE_CONTRACT.md` §9).
+
 ---
 
 ## 4. Not asked here
 
 - Whether to build the gene task **now** — roadmap and institutional priority.
+  *(Decided 2026-10-27 by the owner's direction: work package B.)*
 - Whether to adopt the paper's Eq 18 for disease scoring — blocked on the
-  retraining track (F8), not a scorer-selection question.
+  retraining track (F8), not a scorer-selection question. *(2026-10-27: the
+  track is scheduled. Eq 18 is package A's disease head; serving it is
+  `DISEASE_SCORER_POLICY.md` rev 11's proposal, not approved.)*
 - Whether SP may return to disease ranking in a bounded setting — that is
   `DISEASE_SCORER_POLICY.md` §4's deferred cascade option, and it needs Q4's
   analysis first.

@@ -12,6 +12,12 @@ EVALUATION_COHORTS §5). The WebUI's usability is not accepted (BACKLOG 52). Whe
 entered: `docs/ARCHITECTURE.md` §11. The status record below is dated history: "on this branch",
 "not merged" and "not yet reviewed" there describe the date written.
 
+**2026-10-27: task-aware evaluation for the paper-aligned stages is designed in §8, not
+implemented.** It covers the base's link-prediction validation and the disease, gene and
+patients-like-me tasks, with their candidates, denominators and reference cohort. It also defines
+the clinical evaluation status as three kinds of evidence. Work packages A and B build it on this
+plan's infrastructure ([`scorer-retraining/README.md`](scorer-retraining/README.md) §8).
+
 **Status history: revision 4, corrected 2026-10-16.** **Phase 1 (the contract's M4) is implemented on
 this branch (2026-10-16)** (§6, "Phase 1 as implemented"; the contract's §4, "M4 as implemented").
 Its internal review's 29 findings (none P1, two P2) are fixed in `f3108c4`; the reviewer's code
@@ -2282,3 +2288,108 @@ contract and BACKLOG stay the record, and no new planning document is added.
 - Patient-level display.
 - Evaluating Patients-like-me and causal gene discovery.
 - Mode D, B-1, and the Training Console's exposure.
+
+*2026-10-27:* evaluating patients-like-me and the gene task is no longer out of scope: §8 designs
+it for work package B. B-1 as a raw-cosine ranking is not built (`DISEASE_SCORER_POLICY.md` rev 11).
+
+## 8. Task-aware evaluation for the paper-aligned stages (design, 2026-10-27)
+
+**Status: designed, not implemented.** The recipe it measures is
+[`scorer-retraining/README.md`](scorer-retraining/README.md) §2; the records are
+`PLAN_PROVENANCE_CONTRACT.md` §9. It reuses this plan's infrastructure:
+- the cohort registry, `measure_scorer.py` and the measurement engine;
+- the report store, the one registration function and the sidecar;
+- D4's ordering and R10.
+
+It adds a task, a metric schema and a scoring identity. There is no second evaluation, report,
+ledger or registration system.
+
+### 8.1 The base: link-prediction validation
+
+- **The split.** The edge split artifact, by digest, with reverse edges in the same part. Validation
+  and test message passing use training edges only.
+- **What is evaluated.** Every validation edge once, against fixed and traceable negatives: a fixed
+  rule and order with a recorded seed, or a saved negatives artifact with its digest. A negative
+  never equals its positive.
+- **Metrics.**
+  - **LP accuracy at raw score > 0.** For binary single-label predictions this is the micro-F1 the
+    paper selects on, so it is reported once, not twice.
+  - **ROC-AUC and AP** beside it.
+  - **Aggregation over the whole set** (correct over total; AUC and AP on the pooled scores). The
+    source averages per batch; that difference is recorded.
+- **Embeddings** come from the forward rule of the model spec (README §2.6).
+- **Selection.**
+  - The existing early-stopping callback monitors validation LP accuracy.
+  - A finetune child records the selection rule and the validation report's digest.
+  - Test edges never take part in selection.
+- **Not a patient-task claim.** A base has no task head, so no patient-task MRR is a property of a
+  base.
+- **The held-out boundary.** The gene task's SP uses the full specified KG (README §6). After a
+  finetune with that exposure, the model's LP figures on the held-out edges are not "never seen".
+
+### 8.2 The disease task (work package A)
+
+- **Candidates:** every disease of the bound KG, computed exactly in chunks. Truths stay among the
+  candidates, and no ANN is used.
+- **Ranking rules:** ties by the canonical tie policy, with its version in the manifest. A case whose
+  truth is not a KG disease is refused at import and counted.
+- **The denominator** is every case of the cohort version.
+- **Selection:** validation MRR over all diseases, with top-k beside it, monitored by the existing
+  early-stopping callback.
+- **Two splits, two contracts.** The KG edge split and the patient split differ. The paper's patient
+  split is disease-disjoint, which does not remove validation diseases from the KG. Held-out links
+  are never put back into the base's training input. What each stage saw is recorded
+  (`graph_exposure`).
+
+### 8.3 The gene task (work package B)
+
+- **Input and truths.** The patient's candidate gene list is an input at each request (today's
+  reserved `candidate_genes`), and the truths are causal genes. A new list never needs a retrained
+  model.
+- **Candidates and denominators.**
+  - The candidates are the patient's own list. Its length is reported, since a rank depends on it.
+  - The denominator is every case.
+  - A case that cannot be fully scored (README §6: an incomplete or unreachable distance) is listed
+    as non-scorable with its reason, and stays in the denominator.
+- **Data roles.** The paper put part of MyGene2 and DDD into the gene task's training ("disease-split
+  training"), so a source's name never proves independence. Roles, versions and overlaps are
+  recorded through the registry and R10.
+
+### 8.4 Patients-like-me (work package B)
+
+- **The reference cohort.** A registered cohort version, embedded with the same checkpoint and
+  representation version as the query. Its identity is in every report.
+- **Positives and exclusions.**
+  - Positives share the causal gene, and the query itself is excluded.
+  - A query with no positive in the reference cohort is non-scorable and stays in the denominator.
+  - Vectors from different finetuned models never share an index.
+- **Search.** Exact search, chunked, keeps the scoring contract. ANN would need its own declared
+  approximation policy.
+
+### 8.5 Manifests, ordering and registration
+
+- **Manifests get a schema version** (`PLAN_PROVENANCE_CONTRACT.md` §9.3, hazard 2). A new manifest
+  names:
+  - the task and the metric schema;
+  - the scoring identity and the candidate universe;
+  - the reference cohort, for patients-like-me;
+  - the forward rule.
+- **Ordering (D4)** groups records by one task, one cohort version, one protocol and one scoring
+  semantics. The new task and scoring identity join the scoring-semantics fields, and old Mode C
+  records group apart.
+- **Mode C keeps its meaning for its history.** A new-spec model is never measured as Mode C and
+  called comparable with historical numbers.
+- **Registration** stays one function, with the task in the record.
+
+### 8.6 Clinical evaluation status: three kinds of evidence
+
+These are axis 3 of README §5. They are not one promotion line.
+
+1. **Validation selection:** a selection step, not clinical validity.
+2. **Registered test reports:** each names its cohort version and protocol. Registration is not a
+   pass, and one model may hold several reports with different conclusions.
+3. **Institutional approval:** carries its scope, and is never generated from a score or a
+   registration state.
+
+Each is derived from its own record. The doctors' model selector also shows the task, the required
+inputs, the applicable data and the model's identity.

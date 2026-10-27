@@ -18,6 +18,12 @@ What each capability is today, and where it is entered, is `docs/ARCHITECTURE.md
 any milestone's acceptance: the WebUI's usability (BACKLOG 52), model quality and institutional
 testing.
 
+**2026-10-27: the paper-aligned two-stage extension is designed in §9, not implemented.** It adds
+the learning stage, the task, the operation, the exact parent, the weight transfer and the effective
+loss and scoring identity to the records M3a writes. Work package A builds it
+([`scorer-retraining/README.md`](scorer-retraining/README.md) §8). It extends decision 7 and
+question 3 (§8): fine-tuning on other data becomes its own operation. Resume keeps decision 7.
+
 **Status history (dated). Revision 2, amended twice after review. M1 is implemented, code-reviewed with no P1 or P2
 at `ed4872a`, and accepted on the homelab GB10 at `7714459` (evidence recorded by SHA-256 below; the
 files are archived on the homelab, not in the repository); the reviewer re-checked that evidence
@@ -172,7 +178,7 @@ platforms and claims no conformance to them.
 | 4 | **B-2's fail-closed core lands first, as its own change, and takes effect together with the first enforced check.** Otherwise a check that finds a mismatch makes the model fail to load, the pipeline falls back to another scorer, and the user still gets a result that looks successful | Reviewer, 2026-10-06 |
 | 5 | **Backlog item 14 is split into two phases.** Phase 1 is a complete CLI flow: run a test, verify the inputs, keep the report, record it automatically or by hand, and show the result on the existing model status. Phase 2 is the Test tab, job management and advanced ordering | Owner and reviewer, 2026-10-06 |
 | 6 | **Milestones follow real dependencies.** A full environment refactor, a full provenance platform and every historical defect are not prerequisites of item 14. Each milestone delivers a complete flow that can be run and accepted | Reviewer, 2026-10-06 |
-| 7 | **In the first version, resume continues the same data.** A resumed run's graph and data roles must equal its parent's (M2.3). Fine-tuning on other data is not supported yet. This is a product restriction, not a validity verdict, and it gates data, not settings | Owner, 2026-10-06 |
+| 7 | **In the first version, resume continues the same data.** A resumed run's graph and data roles must equal its parent's (M2.3). Fine-tuning on other data is not supported yet. This is a product restriction, not a validity verdict, and it gates data, not settings. **Extended 2026-10-27 (§9):** the owner's paper-aligned direction schedules fine-tuning as its own operation, `finetune`, with its own parent check; resume keeps this rule | Owner, 2026-10-06 |
 | 8 | **Resume continues an unfinished schedule, with every learning setting inherited** (M3a-3). The schedule is rebuilt from the parent's record and only the remaining epochs run; a finished schedule is continued only by `extend`, at a fixed rate (M3a-4). A mode that starts from a parent and changes learning settings is not built in M3; it is a prerequisite of the GNN experiment phase (BACKLOG item 23). This adds to decision 7, which gated data and said nothing about settings | Reviewer's recommendation (2026-10-15), confirmed by the owner (2026-10-15) |
 | 9 | **One directory per training run** (M3a-2). No run overwrites another's files. Outputs in the old layout are moved once, explicitly, by the owner, with no runtime fallback. An explicitly entered model path stays available as a locator; whether a file is accepted is decided by its bytes | Owner, 2026-10-15 |
 | 10 | **Serving loads checkpoints with `weights_only=True`** once M3a's shared checkpoint payload is in place | Owner, 2026-10-15 |
@@ -4012,3 +4018,98 @@ labelled differently.
      and R10 takes the union of every set it can verify. If any one of them cannot be
      verified, R10 says the scope is incomplete. This is neither a separate project nor a
      second training pipeline, and nothing is built for it now.
+   - **Scheduled 2026-10-27:** §9 designs it as the `finetune` operation, built in work package A,
+     on the same entry point and checkpoint record, with the parent's roles carried for R10.
+
+## 9. The paper-aligned two-stage extension (design, 2026-10-27)
+
+**Status: designed, not implemented.** Work package A builds it. The recipe, the model bundle and
+the work packages are [`scorer-retraining/README.md`](scorer-retraining/README.md); this section is
+the record contract. It extends the record M3a writes (`build_checkpoint_payload`,
+`CHECKPOINT_RECORD_VERSION`). It adds no second provenance system, ledger or model database. The
+fields it names are design names; package A fixes the code names.
+
+### 9.1 What every new checkpoint records
+
+These come in addition to `record_version`, `producer`, `environment`, `training_input_digests`,
+`data_fingerprint` and the requested and effective config.
+
+| Field | Meaning | Written by |
+|---|---|---|
+| `model_spec` | Versioned. The one builder rebuilds the whole bundle from it: input module, encoder, LP head and, for a finetune, the patient encoder and task head. Required. Nothing is inferred from weight names | every operation |
+| `learning_stage` | `base` or `finetune` | `new` (base) and `finetune`; inherited by `resume`, `extend` and `branch` |
+| `task` | None for a base; `disease`, `gene` or `patients_like_me` | `finetune`; inherited |
+| `operation` | `new`, `resume`, `extend`, `branch` or `finetune` | the operation that produced the run |
+| `parent` | The SHA-256 of the exact parent checkpoint file, and the parent run. It generalises today's `training_input_digests.resume_checkpoint` | every operation but `new` |
+| `family_id` | The id of the root run (the one whose operation is `new`), inherited unchanged. Not the seed, and not a dataset digest plus seed | every operation |
+| `weight_transfer` | Per parameter group: loaded from the parent or initialised new, trainable or frozen | `finetune`, and any operation that loads weights |
+| Data roles | The digests of the KG and the edge split artifact; the base's train, validation and test edge roles; a finetune's train and validation roles. R10 takes the union of the roles it can verify (§8, question 3) | every operation |
+| `graph_exposure` | For each stage: the message-passing graph, the supervision edges and the SP graph it saw | every operation |
+| Loss identity | Term names, `task_loss_weight` and `lp_loss_weight`, versions | every operation |
+| Scoring identity | The task scorer's name and version: distance, normalisation, candidate universe | `finetune` |
+| `selection` | The digest of the validation report that selected the parent, and the selection rule | `finetune` |
+
+**`progress.stage` keeps its meaning,** the M3a schedule stage (`original` / `extension`). The new
+learning stage never reuses that name.
+
+### 9.2 The operations and their parent checks
+
+| Operation | Parent | Learning settings | Data | Architecture | Optimizer state |
+|---|---|---|---|---|---|
+| `new` | none | given | given | given | new |
+| `resume` | An unfinished run of the same stage, with a full `training_state` | inherited (decision 8) | equal (decision 7, M2.3) | equal | restored |
+| `extend` | A finished stage | fixed rate (M3a-4) | equal | equal | restored |
+| `branch` | A qualified checkpoint of the same learning stage and task | changed, and the change recorded | equal (BACKLOG 23) | equal | new |
+| `finetune` | A **base** checkpoint with a `model_spec`: a `training_state`, early stopping's best weights or a weights-only file | the finetune recipe | the task's roles; other patient data is allowed. The KG equals the parent's (decision 1: the learned node table is transductive) | the parent's encoder spec plus a new task head | new |
+
+- **Accepted as a finetune parent:** an early-stopped or weights-only base. It is still refused as a
+  resume parent, and `run_plan`'s refusals for resume are unchanged.
+- **Refused as a finetune parent:**
+  - a weights-only file **without** a `model_spec`, since nothing is guessed from weight names;
+  - a finetune checkpoint, since children never chain.
+- **The checks run where the job starts,** before anything is written, as §2 requires.
+
+### 9.3 Migration: only what is needed
+
+The six hazards found in the verification, each with its rule:
+
+1. **A new record version means old checkpoints do not resume.** The extension raises the record
+   version.
+   - Checkpoints written before it stay readable as history and keep their records.
+   - Resume across the boundary is refused with the reason ("written before the model spec; start a
+     new run"). No missing field is filled in by guessing.
+2. **A new manifest field must not orphan old reports.** Measurement manifests get a schema version.
+   - `build_record` keeps registering a known older schema as that schema.
+   - A field set that matches no known schema is refused.
+   - Old reports stay readable. Re-registering an old report under the new schema is not promised.
+   - `build_manifest` is shared by Modes C and D, so Mode D's reports follow the same rule.
+3. **Checkpoint selection filters by task first.** Automatic selection reads `learning_stage` and
+   `task` from the record before it chooses.
+   - A base or gene checkpoint is never selected for disease serving.
+   - A checkpoint without a `model_spec` is served only by today's path, and a spec checkpoint only
+     by the new one. Neither loads the other's.
+4. **Task parameters are submodules of the bundle,** so the optimizer updates them and the
+   checkpoint saves them. The one builder guarantees it, and regressions 2 and 6 pin it.
+5. **Finetune gets its own check; resume keeps its blocks.** Decision 7, `check_resume_parent`'s data
+   comparison and `run_plan`'s weights-only and early-stopping refusals stay for resume. A finetune
+   passes §9.2's check instead.
+6. **Several children run in sequence, through the existing manager.** Their ordered list sits in
+   the existing `TrainingManager`, with no second queue, GPU lock or workflow engine.
+   - Each child has its own record, status, failure and cancellation, and the parent is unchanged.
+   - Between children the existing GPU-lock lifecycle decides. If another legitimate holder takes
+     the lock, the next child waits or is refused explicitly.
+   - The manager never releases a lock it does not hold.
+
+**Parents in another workspace.** The parent digest is always recorded. The one inventory reader
+resolves the parent when a configured, allowed root contains it, and otherwise the tree shows
+"parent unavailable". No second model database is built, and no patient-data access boundary is
+widened.
+
+**Mode D stays one-way** (`.import-linter.ini`). New code imports nothing from `mode_d`, uses no
+`run_mode_c` observer and changes no `run_mode_c` semantics.
+
+### 9.4 What these records claim
+
+§6 applies unchanged. The records show which bytes were loaded, from which parent, with which
+transfer and which settings. They do not show that a model is good, nor that two runs differ by one
+variable.

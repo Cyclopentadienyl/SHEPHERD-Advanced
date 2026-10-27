@@ -511,6 +511,10 @@ treat cross-species reasoning as immediate Phase-1 work. It is not.
    PathReasoner move to a post-ranking evidence role (§1.4)?
 2. **Authoritative patient encoder/scorer** — mean-pooled cosine, or `PhenotypeDiseaseMatcher`'s
    learned aggregation (§4)?
+   *(Answered 2026-10-27 for the reference recipe, by the owner's paper-aligned direction: neither.
+   It is the paper's patient encoder, a Transformer with attention pooling and a projection.
+   `PhenotypeDiseaseMatcher` retires with package A; see
+   [`working/scorer-retraining/README.md`](working/scorer-retraining/README.md) §2 and §7.)*
 3. **Analogy semantics** — disease↔disease, disease↔gene, or gene↔gene; and align field names,
    clinician-facing text, and tests to whichever is chosen (§3.2).
 4. **BFS-unreached candidates in clinician-facing output** — should a candidate with no direct
