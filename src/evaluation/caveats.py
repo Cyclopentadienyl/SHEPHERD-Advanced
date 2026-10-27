@@ -155,11 +155,18 @@ DISEASE_TASK_NOTE = ("A score from the finetuned model's disease head, uncalibra
                      "MRR is over every case's truth; coverage and the conservative reading "
                      "count the cases the model could not rank.")
 
+GENE_TASK_RESULT_LABEL = ("Gene task (model bundle): each case's own candidate list, average "
+                          "ranks")
+GENE_TASK_NOTE = ("A score mixing the finetuned model's gene head with shortest-path "
+                  "similarity, uncalibrated. Every causal gene is a positive; a rank depends on "
+                  "the list's length, which the report gives.")
+
 MODE_RESULT_LABELS = {"C": MODE_C_RESULT_LABEL, "D": MODE_D_RESULT_LABEL,
-                      "disease": DISEASE_TASK_RESULT_LABEL}
+                      "disease": DISEASE_TASK_RESULT_LABEL, "gene": GENE_TASK_RESULT_LABEL}
 
 #: The note each mode's record is shown with.
-MODE_RESULT_NOTES = {"C": PRE_B1_NOTE, "D": MODE_D_NOTE, "disease": DISEASE_TASK_NOTE}
+MODE_RESULT_NOTES = {"C": PRE_B1_NOTE, "D": MODE_D_NOTE, "disease": DISEASE_TASK_NOTE,
+                     "gene": GENE_TASK_NOTE}
 
 
 #: The label of a record whose mode cannot be read: never taken for Mode C.

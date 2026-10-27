@@ -190,6 +190,7 @@ class TrainConfig:
     lp_loss_weight: Optional[float] = None
     candidate_sample_size: Optional[int] = None
     sparse_sample_size: Optional[int] = None
+    candidate_upsample_size: Optional[int] = None
 
     # Model configuration
     hidden_dim: int = 256
@@ -348,7 +349,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--task",
         type=str,
-        choices=["disease"],
+        choices=["disease", "gene"],
         default=None,
         help="With --stage finetune: the task",
     )
@@ -624,11 +625,14 @@ class TrainingInputs(NamedTuple):
     #: manifest reading and `bound["kg"]` (contract M3b). Not a recorded role:
     #: the manifest this run records binds its digest.
     dataset_record: DatasetRecord
+    #: The gene task's functional fixture (`src.kg.task_fixture`), read once
+    #: against this manifest reading, for the tasks that train on it.
+    task_data: Optional[Any] = None
 
 
 def read_training_inputs(
     data_dir: Path, *, expected_manifest_sha256: Optional[str] = None,
-    with_samples: bool = True,
+    with_samples: bool = True, task: Optional[str] = None,
 ) -> TrainingInputs:
     """Read the manifest, the graph tensors and both sample files once each, and
     verify from those reads (contract M2.1, S8).
@@ -665,6 +669,10 @@ def read_training_inputs(
     `with_samples=False` is the base stage's read (README §3): KG link
     prediction trains on the graph alone, so no sample file is read, verified
     or recorded, and an empty training cohort is not a refusal.
+
+    `task`: a task that trains on the gene fixture (`FIXTURE_TASKS`) reads it
+    here too, its record against this manifest reading and each file against
+    its recorded digest (`src.kg.task_fixture.read_gene_fixture`).
     """
     from src.kg.artifacts import (
         check_unparsed_kg_json,
@@ -714,7 +722,15 @@ def read_training_inputs(
         f"{dataset_record.binding}, origin {dataset_record.origin} "
         f"(sha256 {dataset_record.identity.sha256[:12]})"
     )
-    return TrainingInputs(manifest, graph, samples, with_validation, bound, dataset_record)
+    task_data = None
+    if task in FIXTURE_TASKS:
+        from src.kg.task_fixture import read_gene_fixture
+
+        task_data = read_gene_fixture(data_dir, manifest_sha256=manifest.identity.sha256)
+        logger.info(f"Gene task fixture ({task_data.record.get('label')}): "
+                    f"{task_data.record.get('counts')}")
+    return TrainingInputs(manifest, graph, samples, with_validation, bound, dataset_record,
+                          task_data)
 
 
 def read_resume_parent(
@@ -908,6 +924,10 @@ def training_input_digests(
         reads["train_samples"] = inputs.samples["train"].identity
     if inputs.with_validation:
         reads["val_samples"] = inputs.samples["val"].identity
+    if inputs.task_data is not None:
+        reads["task_fixture"] = inputs.task_data.identity
+        reads["task_train_samples"] = inputs.task_data.samples["train"].identity
+        reads["task_val_samples"] = inputs.task_data.samples["val"].identity
     if parent is not None:
         reads["resume_checkpoint"] = parent
     reads["split_manifest"] = inputs.manifest.identity
@@ -1099,7 +1119,36 @@ SHEPHERD_ONLY_FIELDS = frozenset({
     "margin", "label_smoothing", "temperature", "max_subgraph_nodes", "num_negative_samples",
 })
 LEARNING_STAGES_HERE = ("base", "finetune")
-FINETUNE_TASKS_HERE = ("disease",)
+FINETUNE_TASKS_HERE = ("disease", "gene")
+#: Tasks that train on the gene task's functional fixture (README §8).
+FIXTURE_TASKS = ("gene", "patients_like_me")
+
+
+def bind_task_data(task: str, spec: Any, view: Any, inputs: TrainingInputs
+                   ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """The task's cases bound to the view (F7), per split, and the derived
+    tables the gene task scores with (README §6, F10), before any output."""
+    derived: Dict[str, Any] = {}
+    if task == "disease":
+        from src.models.tasks.scoring import bind_disease_cases
+
+        binding = {split: bind_disease_cases(view, inputs.samples[split].samples)
+                   for split in ("train", "val")}
+    else:
+        from src.models.tasks.gene import bind_gene_cases, distance_table, neighbour_table
+
+        binding = {split: bind_gene_cases(view, inputs.task_data.samples[split].samples)
+                   for split in ("train", "val")}
+        phenotypes = [c.phenotypes for split in ("train", "val") for c in binding[split].cases]
+        if phenotypes:
+            derived["distances"] = distance_table(view, torch.cat(phenotypes),
+                                                  view.type_nodes("gene"))
+        gene_spec = spec.task_head.gene
+        derived["neighbours"] = (neighbour_table(view, gene_spec.augmentation_k)
+                                 if gene_spec.augmentation else None)
+    if not binding["train"].cases:
+        raise ValueError(f"no training case binds to the graph view: {binding['train'].counts}")
+    return binding, derived
 
 
 def _explicit_or_changed(config: TrainConfig, explicit: Optional[Collection[str]]) -> Set[str]:
@@ -1222,7 +1271,8 @@ def train_bundle(config: TrainConfig, explicit: Optional[Collection[str]] = None
         check_run_dir_free(config.run_dir)
 
     inputs = read_training_inputs(data_dir, expected_manifest_sha256=expected_dataset_sha256,
-                                  with_samples=(stage == "finetune"))
+                                  with_samples=(stage == "finetune"),
+                                  task=config.task if stage == "finetune" else None)
 
     # The parent: a run of the same stage to resume or extend, or a base to
     # finetune from. Both are read once and checked before any output.
@@ -1298,16 +1348,12 @@ def train_bundle(config: TrainConfig, explicit: Optional[Collection[str]] = None
                              "a child trains on its parent's view and split")
     train_mask, val_mask = split.mask("train"), split.mask("val")
 
-    # The task data, bound to the view (F7), before any output.
-    binding = {}
+    # The task data, bound to the view (F7), and its derived tables, before
+    # any output.
+    binding: Dict[str, Any] = {}
+    derived: Dict[str, Any] = {}
     if stage == "finetune":
-        from src.training.finetune_task import bind_disease_cases
-
-        binding = {split_name: bind_disease_cases(view, inputs.samples[split_name].samples)
-                   for split_name in ("train", "val")}
-        if not binding["train"].cases:
-            raise ValueError(f"no training case binds to the graph view: "
-                             f"{binding['train'].counts}")
+        binding, derived = bind_task_data(config.task, spec, view, inputs)
 
     from src.utils.run_environment import code_revision, collect_environment
 
@@ -1336,7 +1382,7 @@ def train_bundle(config: TrainConfig, explicit: Optional[Collection[str]] = None
             train_relations=view.rel[train_mask], val_edges=view.edge_index(val_mask),
             val_relations=view.rel[val_mask], seed=seed, val_batch_size=config.batch_size)
         monitor = BASE_SELECTION_METRIC
-    else:
+    elif config.task == "disease":
         from src.training.finetune_task import (
             FINETUNE_SELECTION_METRIC, DiseaseTask, FinetuneSampler,
         )
@@ -1348,6 +1394,20 @@ def train_bundle(config: TrainConfig, explicit: Optional[Collection[str]] = None
         task = DiseaseTask(
             view=view, val_cases=binding["val"].cases, val_excluded=len(binding["val"].excluded),
             full_edges=view.edge_index(), full_relations=view.rel,
+            task_loss_weight=config.task_loss_weight, lp_loss_weight=config.lp_loss_weight)
+        monitor = FINETUNE_SELECTION_METRIC
+    else:
+        from src.training.finetune_task import FINETUNE_SELECTION_METRIC, GeneSampler, GeneTask
+
+        sampler = GeneSampler(
+            view, binding["train"].cases, lp_sampler, derived["neighbours"],
+            batch_size=config.batch_size, upsample_size=config.candidate_upsample_size,
+            sparse_sample_size=config.sparse_sample_size, seed=seed,
+            augmentation_k=spec.task_head.gene.augmentation_k)
+        task = GeneTask(
+            view=view, val_cases=binding["val"].cases, val_excluded=len(binding["val"].excluded),
+            full_edges=view.edge_index(), full_relations=view.rel,
+            distances=derived["distances"], neighbours=derived["neighbours"],
             task_loss_weight=config.task_loss_weight, lp_loss_weight=config.lp_loss_weight)
         monitor = FINETUNE_SELECTION_METRIC
 
@@ -1427,8 +1487,9 @@ def train_bundle(config: TrainConfig, explicit: Optional[Collection[str]] = None
         scoring = None
         selection = None
     else:
+        task_rows = inputs.task_data.samples if inputs.task_data is not None else inputs.samples
         data_roles["task_data"] = {
-            split_name: {"samples": inputs.samples[split_name].identity.sha256,
+            split_name: {"samples": task_rows[split_name].identity.sha256,
                          "binding": dict(binding[split_name].counts)}
             for split_name in ("train", "val")}
         exposure = {"finetune": {
@@ -1442,6 +1503,37 @@ def train_bundle(config: TrainConfig, explicit: Optional[Collection[str]] = None
         scoring = {"task": config.task, "score": "-||z_d - z_P||^2 on L2-normalised vectors",
                    "candidates": "every disease of the graph view", "ties": "average rank",
                    "version": 1}
+        if inputs.task_data is not None:
+            record = inputs.task_data.record
+            data_roles["task_fixture"] = {"record": inputs.task_data.identity.sha256,
+                                          "label": record.get("label"),
+                                          "rule": record.get("rule"), "seed": record.get("seed")}
+        if config.task == "gene":
+            from src.models.tasks.gene import SP_RULE
+
+            gene_spec = spec.task_head.gene
+            distances = derived["distances"]
+            data_roles["derived_tables"] = {
+                "sp_distances": {"digest": distances.digest, "rule": SP_RULE,
+                                 "phenotypes": int(distances.table.shape[0]),
+                                 "genes": int(distances.table.shape[1])},
+                "augmentation_neighbours": (derived["neighbours"].record
+                                            if derived["neighbours"] is not None else None)}
+            exposure["finetune"]["sp"] = "the full view (README G4, §6)"
+            alpha, beta, base, ms_margin = spec.task_head.multi_similarity
+            loss_identity.update({"task_loss": "multi_similarity", "multi_similarity": {
+                "alpha": alpha, "beta": beta, "base": base, "mining_margin": ms_margin}})
+            scoring = {
+                "task": "gene", "score": "eta*EMBSIM + (1 - eta)*SPLSIM",
+                "embsim": "tanh(p^T W g + b) on L2-normalised projected vectors",
+                "sp": SP_RULE, "sp_lower": gene_spec.sp_lower, "sp_upper": gene_spec.sp_upper,
+                "sp_bounds_source": "upstream fixed reference, not calibrated on this data",
+                "eta": gene_spec.eta,
+                "augmentation": ({"k": gene_spec.augmentation_k,
+                                  "omega": gene_spec.augmentation_omega}
+                                 if gene_spec.augmentation else "off"),
+                "candidates": "each case's own list; upsampled in training only (U14)",
+                "ties": "average rank", "version": 1}
         selection = ({"rule": "the operator's choice of base checkpoint",
                       "parent_logs": base_logs}
                      if base_record is not None else None)

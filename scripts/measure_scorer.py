@@ -202,7 +202,12 @@ logger = logging.getLogger(__name__)
 
 #: The measurement modes this program runs: Mode C, and Mode D beside it
 #: (`docs/working/scorer-measurement/PLAN_B05.md`).
-MODES = ("C", "D", "disease")
+MODES = ("C", "D", "disease", "gene")
+#: The finetuned-bundle task measurements among them (README K3, K4).
+TASK_MODES = ("disease", "gene")
+#: Task modes whose cases carry genes; a generated split is then the
+#: workspace's functional fixture (`src.kg.task_fixture`).
+GENE_FIELD_MODES = ("gene",)
 
 #: What Mode C ranks each patient against, as its manifest records it. There is
 #: no expansion to describe: the candidates are every disease in the graph.
@@ -328,6 +333,9 @@ class MeasurementInputs(NamedTuple):
     #: The R10 block (contract §5.4) for a registered version; `None` for a
     #: generated split, whose relation to training is the allocation's.
     r10: Optional[Dict[str, Any]]
+    #: A gene measurement over a generated split: the workspace's functional
+    #: fixture read against this manifest reading; `samples` is its split.
+    task_data: Optional[Any] = None
 
 
 def read_measurement_inputs(
@@ -341,9 +349,16 @@ def read_measurement_inputs(
     training_evidence: Sequence[Path] = (),
     expect_checkpoint_sha256: Optional[str] = None,
     expect_version_sha256: Optional[str] = None,
+    gene_fields: bool = False,
 ) -> MeasurementInputs:
     """Read the manifest, the graph tensors, the cohort and the checkpoint once
     each, and verify from those reads (contract M2.1, S7; M4 §6).
+
+    `gene_fields` (a gene measurement): a registered version's samples are read
+    with their gene fields; a generated split, once verified as always, is
+    measured through the workspace's functional fixture of that split, its
+    record read against this manifest reading and its file against the digest
+    the record names (`read_gene_fixture`).
 
     Exactly one of `split` (a generated split) and `cohort` (a registered
     version's label, with `registry`) is given; `training_evidence` applies to a
@@ -446,7 +461,7 @@ def read_measurement_inputs(
     if version is None:
         samples, checked = _read_generated(data_dir, split, siblings)
     else:
-        samples, checked = _read_version_samples(version), {}
+        samples, checked = _read_version_samples(version, gene_fields=gene_fields), {}
 
     bound = verify_graph_reads(manifest, graph.reads)
     check_unparsed_kg_json(data_dir, manifest)
@@ -458,6 +473,14 @@ def read_measurement_inputs(
     # The sibling is checked, not consumed: nothing holds it past this point, so
     # it is not resident while the checkpoint is read.
     del checked
+    task_data = None
+    if gene_fields and version is None:
+        from src.kg.task_fixture import read_gene_fixture
+
+        task_data = read_gene_fixture(data_dir, manifest_sha256=manifest.identity.sha256)
+        if split not in task_data.samples:
+            raise ValueError(f"the functional fixture has no {split!r} split")
+        samples = task_data.samples[split]
 
     # **Read at its resolved path**, so the read's identity names the file whose
     # bytes were measured, and `--record`'s ledger directory is fixed now: a link
@@ -493,7 +516,7 @@ def read_measurement_inputs(
         dataset_record.identity.sha256[:12],
     )
     return MeasurementInputs(resolved, version, cohort_version, manifest, graph, samples, read,
-                             bound, dataset_record, r10)
+                             bound, dataset_record, r10, task_data)
 
 
 def _changed_since_chosen(what: str, found: Optional[str],
@@ -556,7 +579,8 @@ def _read_generated(
     return read_samples(data_dir, split), {name: read_samples(data_dir, name) for name in siblings}
 
 
-def _read_version_samples(version: CohortVersionRead) -> SamplesRead:
+def _read_version_samples(version: CohortVersionRead, *,
+                          gene_fields: bool = False) -> SamplesRead:
     """The version's `samples.json`, one read, refused before it is parsed
     unless its digest is the one the version's `cohort.json` binds.
 
@@ -575,7 +599,8 @@ def _read_version_samples(version: CohortVersionRead) -> SamplesRead:
 
     bound = version.manifest["samples"]["sha256"]
     try:
-        samples = read_samples_file(version.samples_path, expected_sha256=bound)
+        samples = read_samples_file(version.samples_path, expected_sha256=bound,
+                                    gene_fields=gene_fields)
     except SamplesDigestMismatch as exc:
         raise CohortVersionRefused(
             f"{version.samples_path} is not the samples {version.identity.path} binds "
@@ -734,6 +759,8 @@ def measurement_input_digests(inputs: MeasurementInputs) -> Dict[str, str]:
     }
     if inputs.version is None:
         reads["split_manifest"] = inputs.manifest.identity
+    if inputs.task_data is not None:
+        reads["task_fixture"] = inputs.task_data.identity
 
     missing = sorted(role for role, read in reads.items() if read is None)
     if missing:
@@ -1647,7 +1674,7 @@ def _run(args: argparse.Namespace, *, registry: Optional[Path]) -> int:
     try:
         if args.mode == "D":
             inputs, result = _measure_mode_d(args, registry, device, cuda_executed)
-        elif args.mode == "disease":
+        elif args.mode in TASK_MODES:
             inputs, result = _measure_task(args, registry, device, cuda_executed)
         else:
             inputs, result = _measure_mode_c(args, registry, device, cuda_executed)
@@ -1821,7 +1848,7 @@ def _measure_task(args: argparse.Namespace, registry: Optional[Path], device: to
     """
     from dataclasses import asdict as _asdict
 
-    from src.evaluation.task_measurement import disease_semantics, run_disease_measurement
+    from src.evaluation.task_measurement import TASK_RUNS, task_semantics
     from src.kg.graph_view import build_graph_view
     from src.models.bundle.record import check_model_record, load_bundle, read_model_record
     from src.utils.run_environment import observe_autocast_regime
@@ -1831,6 +1858,7 @@ def _measure_task(args: argparse.Namespace, registry: Optional[Path], device: to
         registry=registry, training_evidence=args.training_evidence,
         expect_checkpoint_sha256=args.expect_checkpoint_sha256,
         expect_version_sha256=args.expect_version_sha256,
+        gene_fields=args.mode in GENE_FIELD_MODES,
     )
     graph_data, samples = inputs.graph.graph_data, inputs.samples.samples
     record = read_model_record(inputs.checkpoint.checkpoint)
@@ -1845,11 +1873,11 @@ def _measure_task(args: argparse.Namespace, registry: Optional[Path], device: to
         args, graph_data, len(samples), device, digests=measurement_input_digests(inputs),
         dataset_record=inputs.dataset_record.summary(), cohort_version=inputs.cohort_version,
         r10=inputs.r10, cuda_executed=cuda_executed, model=bundle,
-        regime=observe_autocast_regime(device), semantics=disease_semantics(args.batch_size),
+        regime=observe_autocast_regime(device),
+        semantics=task_semantics(args.mode, args.batch_size, bundle),
     )
-    result = run_disease_measurement(bundle=bundle, view=view, samples=samples,
-                                     manifest=manifest, device=device,
-                                     batch_size=args.batch_size)
+    result = TASK_RUNS[args.mode](bundle=bundle, view=view, samples=samples, manifest=manifest,
+                                  device=device, batch_size=args.batch_size)
     return inputs, result
 
 

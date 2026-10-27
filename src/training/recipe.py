@@ -61,7 +61,6 @@ FINETUNE: Dict[str, Any] = {
     "scheduler_type": "none",
     "warmup_steps": 0,
     "use_amp": False,
-    "candidate_sample_size": 1000,
 }
 
 FINETUNE_SOURCES: Dict[str, str] = {
@@ -73,7 +72,6 @@ FINETUNE_SOURCES: Dict[str, str] = {
     "scheduler_type": f"{UPSTREAM} train.py:283-292,311 (no scheduler; README C6, U8)",
     "warmup_steps": "no warmup in the source (README C6)",
     "use_amp": f"{UPSTREAM} train.py:308-317 (precision 16 never passed: fp32; README U15)",
-    "candidate_sample_size": f"{UPSTREAM} hparams.py:101 (n_cand_diseases 1000 per batch)",
 }
 
 #: Per task: learning rate, first-hop size, sparse sample and the two named
@@ -81,7 +79,11 @@ FINETUNE_SOURCES: Dict[str, str] = {
 #: task/LP weights).
 FINETUNE_TASKS: Dict[str, Dict[str, Any]] = {
     "disease": {"learning_rate": 1e-5, "num_neighbors": [15, 10, 5],
-                "sparse_sample_size": 300, "task_loss_weight": 0.1, "lp_loss_weight": 0.9},
+                "sparse_sample_size": 300, "task_loss_weight": 0.1, "lp_loss_weight": 0.9,
+                "candidate_sample_size": 1000},
+    "gene": {"learning_rate": 1e-5, "num_neighbors": [-1, 10, 5],
+             "sparse_sample_size": 100, "task_loss_weight": 0.6, "lp_loss_weight": 0.4,
+             "candidate_upsample_size": 2},
 }
 
 FINETUNE_TASK_SOURCES: Dict[str, Dict[str, str]] = {
@@ -93,6 +95,18 @@ FINETUNE_TASK_SOURCES: Dict[str, Dict[str, str]] = {
         "task_loss_weight": f"{UPSTREAM} disease run_*.sh script lmbda 0.9 on LP, so 0.1 on "
                             "the task (README C3)",
         "lp_loss_weight": f"{UPSTREAM} disease run_*.sh script lmbda 0.9 (README C3)",
+        "candidate_sample_size": f"{UPSTREAM} hparams.py:101 (n_cand_diseases 1000 per batch)",
+    },
+    "gene": {
+        "learning_rate": f"{UPSTREAM} gene run_*.sh script (lr 1e-5; README U3, U8)",
+        "num_neighbors": f"{UPSTREAM} hparams.py:74 and the gene run_*.sh script (first hop "
+                         "-1, all neighbours, then 10, 5; README U3)",
+        "sparse_sample_size": f"{UPSTREAM} gene run_*.sh script (sparse_sample 100; README U3)",
+        "task_loss_weight": f"{UPSTREAM} gene run_*.sh script lmbda 0.4 on LP, so 0.6 on the "
+                            "task (README C3)",
+        "lp_loss_weight": f"{UPSTREAM} gene run_*.sh script lmbda 0.4 (README C3)",
+        "candidate_upsample_size": f"{UPSTREAM} gene run_*.sh script (upsample_cand 2; "
+                                   "README U3, U14)",
     },
 }
 

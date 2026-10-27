@@ -467,6 +467,14 @@ class DiagnosisPipeline:
         result = pipeline.run(patient_phenotypes, top_k=10)
     """
 
+    # A finetuned model bundle's state (README §3, K3): none until a checkpoint
+    # with a model spec is loaded (`_load_disease_bundle`).
+    _bundle_view: Optional[Any] = None
+    _bundle_record: Optional[Any] = None
+    _bundle_z: Optional[Any] = None
+    _bundle_diseases: Optional[Any] = None
+    _bundle_candidates: Optional[Any] = None
+
     def __init__(
         self,
         kg: Optional["KnowledgeGraph"] = None,
@@ -587,14 +595,6 @@ class DiagnosisPipeline:
         )
         self._device_in_effect: Optional[str] = None
         self._gnn_ready = False
-        # A finetuned model bundle (README §3, K3): its graph view, its record,
-        # every view node's vector and the projected diseases, set when the
-        # checkpoint carries a model spec. None for the ShepherdGNN path.
-        self._bundle_view: Optional[Any] = None
-        self._bundle_record: Optional[Any] = None
-        self._bundle_z: Optional[Any] = None
-        self._bundle_diseases: Optional[Any] = None
-        self._bundle_candidates: Optional[Any] = None
 
         # Shortest path lookup state (populated by _load_shortest_paths).
         # `_sp_lookup` is the whole of it: a sorted composite key over

@@ -176,6 +176,8 @@ ALLOWED = {
         (1, _IN_MEMORY.format(what="the edge split's rule, seed, view and parts (README F2)")),
     ("src/models/tasks/gene.py", "neighbour_table", "hashlib.sha256"):
         (1, _IN_MEMORY.format(what="the gene augmentation neighbour table (README F10)")),
+    ("src/models/tasks/gene.py", "distance_table", "hashlib.sha256"):
+        (1, _IN_MEMORY.format(what="the gene task's exact distance table (README §6)")),
     ("src/kg/sample_generator.py", "_sha256_text", "hashlib.sha256"):
         (1, "the generator's digest of the text it writes, equal to the file's by "
             "construction (the writer's digest of what it wrote, as contract M3b "

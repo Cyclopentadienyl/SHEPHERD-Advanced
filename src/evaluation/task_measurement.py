@@ -49,19 +49,71 @@ def disease_semantics(batch_size: int) -> Dict[str, Any]:
     return {**DISEASE_SEMANTICS, "batch_size": int(batch_size)}
 
 
-def run_disease_measurement(*, bundle: Any, view: Any, samples: Sequence[Any],
-                            manifest: Any, device: torch.device, batch_size: int) -> Any:
-    """Rank `samples` with a finetuned disease bundle; a `ModeResult`."""
+def gene_semantics(batch_size: int, bundle: Any) -> Dict[str, Any]:
+    """The gene task's manifest values, η, the SP bounds and the augmentation
+    named from the model's spec (PLAN_TEST_RESULTS §8.3: they are part of the
+    scoring identity)."""
+    gene = bundle.task_head.spec.gene
+    augmentation = (f"Eq 10 augmentation K={gene.augmentation_k}, omega={gene.augmentation_omega}"
+                    if gene.augmentation else "no augmentation")
+    return {
+        "mode": "gene",
+        "metric_schema_version": TASK_METRIC_SCHEMA_VERSION,
+        "candidate_construction": "each case's own candidate list, no upsampling",
+        "score_semantics": (f"gene head: eta*EMBSIM + (1-eta)*SPLSIM, eta={gene.eta}; SPLSIM on "
+                            f"exact view hops, bounds [{gene.sp_lower}, {gene.sp_upper}], no "
+                            f"clipping; {augmentation}"),
+        "model_construction": DISEASE_SEMANTICS["model_construction"],
+        "canonical_tie_policy_version": "average-rank/v1",
+        "batch_size": int(batch_size),
+    }
+
+
+def _mode_result(*, manifest: Any, report: Dict[str, Any], ranked: Sequence[Any], binding: Any,
+                 samples: Sequence[Any], truth: Dict[str, int], evidence: Dict[str, Any]) -> Any:
+    """The one `ModeResult` of a task measurement, from its report."""
     from src.evaluation.measurement import ModeResult
-    from src.models.tasks.scoring import bind_disease_cases, full_view_vectors, rank_cases
+
+    metrics = {k: float(v) for k, v in report.items()
+               if isinstance(v, (int, float)) and not isinstance(v, bool)
+               and k not in ("units", "ranked_units", "positive_pairs",
+                             "conservative_denominator_pairs")}
+    by_case = {o.query_id: o for o in ranked if o.ranks}
+    sample_ids = [s.patient_id for s in samples]
+    ranks: List[Optional[float]] = [
+        (min(by_case[i].ranks) if i in by_case else None) for i in sample_ids]
+    evidence = {
+        **evidence,
+        "binding": dict(binding.counts),
+        "units_by_status": dict(report["units_by_status"]),
+        "units": report["units"],
+        "positive_pairs": report["positive_pairs"],
+        "conservative_denominator_pairs": report["conservative_denominator_pairs"],
+    }
+    return ModeResult(
+        manifest=manifest, authoritative_metrics=metrics, n_ranked=int(report["ranked_units"]),
+        n_ground_truth_absent=int(binding.counts.get("excluded_truth_outside_view", 0)),
+        sampler_evidence=evidence, sample_ids=sample_ids,
+        truth_global_ids=[truth.get(i) for i in sample_ids], canonical_ranks=ranks)
+
+
+def _check_regime(device: torch.device, manifest: Any) -> None:
     from src.utils.run_environment import AutocastRegime, observe_autocast_regime
 
-    if bundle.task != "disease":
-        raise ValueError(f"a {bundle.task!r} model does not rank diseases")
     recorded = AutocastRegime(enabled=manifest.amp_enabled, dtype=manifest.amp_dtype)
     if observe_autocast_regime(device) != recorded:
         raise RuntimeError("this measurement runs under another autocast regime than its "
                            "manifest records")
+
+
+def run_disease_measurement(*, bundle: Any, view: Any, samples: Sequence[Any],
+                            manifest: Any, device: torch.device, batch_size: int) -> Any:
+    """Rank `samples` with a finetuned disease bundle; a `ModeResult`."""
+    from src.models.tasks.scoring import bind_disease_cases, full_view_vectors, rank_cases
+
+    if bundle.task != "disease":
+        raise ValueError(f"a {bundle.task!r} model does not rank diseases")
+    _check_regime(device, manifest)
     binding = bind_disease_cases(view, samples)
     z = full_view_vectors(bundle, view.edge_index(), view.rel, device)
     diseases = view.type_nodes("disease")
@@ -70,32 +122,68 @@ def run_disease_measurement(*, bundle: Any, view: Any, samples: Sequence[Any],
         QueryOutcome(case_id, INPUT_EXCLUDED, n_positives=1, reason=reason)
         for case_id, reason in binding.excluded]
     report = ranking_report(ranked + excluded, TASK_KS)
-
-    metrics = {k: float(v) for k, v in report.items()
-               if isinstance(v, (int, float)) and not isinstance(v, bool)
-               and k not in ("units", "ranked_units", "positive_pairs",
-                             "conservative_denominator_pairs")}
-    by_case = {o.query_id: o for o in ranked}
-    truth = {c.case_id: int(c.truths[0]) for c in binding.cases}
-    sample_ids = [s.patient_id for s in samples]
-    ranks: List[Optional[float]] = [
-        (min(by_case[i].ranks) if i in by_case else None) for i in sample_ids]
-    truths = [truth.get(i) for i in sample_ids]
-    evidence = {
-        "candidate_columns": {"min": int(diseases.numel()), "max": int(diseases.numel())},
-        "binding": dict(binding.counts),
-        "units_by_status": dict(report["units_by_status"]),
-        "units": report["units"],
-        "positive_pairs": report["positive_pairs"],
-        "conservative_denominator_pairs": report["conservative_denominator_pairs"],
-        "graph_view": view.digest,
-    }
-    return ModeResult(
-        manifest=manifest, authoritative_metrics=metrics, n_ranked=int(report["ranked_units"]),
-        n_ground_truth_absent=int(binding.counts.get("excluded_truth_outside_view", 0)),
-        sampler_evidence=evidence, sample_ids=sample_ids, truth_global_ids=truths,
-        canonical_ranks=ranks)
+    return _mode_result(
+        manifest=manifest, report=report, ranked=ranked, binding=binding, samples=samples,
+        truth={c.case_id: int(c.truths[0]) for c in binding.cases},
+        evidence={"candidate_columns": {"min": int(diseases.numel()),
+                                        "max": int(diseases.numel())},
+                  "graph_view": view.digest})
 
 
-__all__ = ["DISEASE_SEMANTICS", "TASK_KS", "TASK_METRIC_SCHEMA_VERSION", "disease_semantics",
-           "run_disease_measurement"]
+def run_gene_measurement(*, bundle: Any, view: Any, samples: Sequence[Any],
+                         manifest: Any, device: torch.device, batch_size: int) -> Any:
+    """Rank each case's own candidate list with a finetuned gene bundle
+    (PLAN_TEST_RESULTS §8.3); a `ModeResult`. Every causal gene is a positive
+    (F9); a case with an undefined distance is not scorable and stays in the
+    denominator (§6 rule 7)."""
+    from src.models.tasks.gene import (
+        bind_gene_cases,
+        distance_table,
+        neighbour_table,
+        rank_gene_cases,
+    )
+    from src.models.tasks.scoring import full_view_vectors
+
+    if bundle.task != "gene":
+        raise ValueError(f"a {bundle.task!r} model does not rank candidate genes")
+    _check_regime(device, manifest)
+    binding = bind_gene_cases(view, samples)
+    gene = bundle.task_head.spec.gene
+    cases = binding.cases
+    evidence: Dict[str, Any] = {"graph_view": view.digest}
+    ranked: List[QueryOutcome] = []
+    if cases:
+        distances = distance_table(view, torch.cat([c.phenotypes for c in cases]),
+                                   torch.cat([c.candidates for c in cases]))
+        neighbours = neighbour_table(view, gene.augmentation_k) if gene.augmentation else None
+        z = full_view_vectors(bundle, view.edge_index(), view.rel, device)
+        ranked = rank_gene_cases(bundle, z, cases, distances, neighbours, case_chunk=batch_size)
+        lengths = [int(c.candidates.numel()) for c in cases]
+        evidence.update({
+            "candidate_columns": {"min": min(lengths), "max": max(lengths)},
+            "derived_tables": {"sp_distances": distances.digest,
+                               "augmentation_neighbours": (neighbours.record["digest"]
+                                                           if neighbours is not None else None)}})
+    excluded = [QueryOutcome(case_id, INPUT_EXCLUDED, n_positives=1, reason=reason)
+                for case_id, reason in binding.excluded]
+    report = ranking_report(ranked + excluded, TASK_KS)
+    return _mode_result(
+        manifest=manifest, report=report, ranked=ranked, binding=binding, samples=samples,
+        truth={c.case_id: int(c.truths.min()) for c in cases}, evidence=evidence)
+
+
+#: The task measurements this entry runs: semantics and the run, by task.
+TASK_RUNS = {"disease": run_disease_measurement, "gene": run_gene_measurement}
+
+
+def task_semantics(task: str, batch_size: int, bundle: Any) -> Dict[str, Any]:
+    if task == "disease":
+        return disease_semantics(batch_size)
+    if task == "gene":
+        return gene_semantics(batch_size, bundle)
+    raise ValueError(f"no task measurement for {task!r}")
+
+
+__all__ = ["DISEASE_SEMANTICS", "TASK_KS", "TASK_METRIC_SCHEMA_VERSION", "TASK_RUNS",
+           "disease_semantics", "gene_semantics", "run_disease_measurement",
+           "run_gene_measurement", "task_semantics"]

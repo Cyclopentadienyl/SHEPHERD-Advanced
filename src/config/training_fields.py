@@ -273,6 +273,11 @@ FIELDS: Tuple[FieldSpec, ...] = (
               current_api=None, current_webui="not-exposed", webui_exposed=False,
               known_divergence=True, divergence_note="Unset is the task's reference (U9).",
               description="Random gene, phenotype and disease seeds per finetune batch."),
+    FieldSpec("candidate_upsample_size", "int", None, "dataloader",
+              projects_to="TrainConfig.candidate_upsample_size", valid={"ge": 0},
+              current_api=None, current_webui="not-exposed", webui_exposed=False,
+              known_divergence=True, divergence_note="Unset is the task's reference (U14).",
+              description="Rarely seen genes added to each gene-task patient's list in training."),
 
     # ---- model (ShepherdGNNConfig) ----------------------------------------------------------
     FieldSpec("conv_type", "str", "gat", "model", projects_to="ShepherdGNNConfig.conv_type",
