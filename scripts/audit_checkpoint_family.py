@@ -327,6 +327,9 @@ def build_report(checkpoint_dir: Path, relationship: str) -> Dict[str, Any]:
 #: Files at a workspace's root that are graph or shortest-path artifacts, not
 #: checkpoints.
 _NOT_CHECKPOINTS = ("node_features.pt", "edge_indices.pt", "shortest_paths.pt")
+#: The split artifact `scripts/train_model.py` writes in each run directory
+#: (F2), beside the run's checkpoints: not a checkpoint.
+_RUN_SPLIT = "graph_split.pt"
 
 
 def _scrub(text: str, root: Path) -> str:
@@ -489,13 +492,20 @@ def _checkpoint_verdicts(
             checkpoint, bound, tuple(GRAPH_ARTIFACTS),
             recorded_by=f"checkpoint {name}", compared_with="this workspace's graph",
         ), root)
-    if inputs is None:
+    # A model bundle checkpoint is judged against the read its own stage and
+    # task make (`inputs` is then a function of the checkpoint), as training
+    # judges it; anything else against the workspace's one read.
+    own = inputs(checkpoint) if callable(inputs) else inputs
+    if own is None:
         resume = _not_judged("training refuses this workspace")
+    elif isinstance(own, Exception):
+        resume = _not_judged(f"training refuses this workspace for this checkpoint's stage "
+                             f"and task ({type(own).__name__}: {own})")
     else:
         from scripts.train_model import check_resume_parent
 
         resume = _judge(lambda: check_resume_parent(
-            checkpoint, inputs, recorded_by=f"checkpoint {name}",
+            checkpoint, own, recorded_by=f"checkpoint {name}",
             compared_with="a run over this workspace",
         ), root)
     return {"sha256": read.identity.sha256,
@@ -535,10 +545,36 @@ def inventory_workspace(workspace: Path, root: Path) -> Dict[str, Any]:
     checkpoints = sorted(
         path for path in workspace.rglob("*.pt")
         if not (path.parent == workspace and path.name in _NOT_CHECKPOINTS)
+        and path.name != _RUN_SPLIT
     )
+    reads: Dict[Any, Any] = {}
+
+    def inputs_for(checkpoint: Any) -> Any:
+        """The training inputs a run continuing `checkpoint` reads: by its
+        model record's stage and task for a model bundle (a base reads the
+        graph only, a gene or patients-like-me child the fixture too), else the
+        workspace's one read. One read per (stage, task)."""
+        from src.models.bundle.record import ModelRecordError, has_model_spec, read_model_record
+
+        if not isinstance(checkpoint, dict) or not has_model_spec(checkpoint):
+            return inputs
+        try:
+            record = read_model_record(checkpoint)
+        except ModelRecordError as exc:
+            return exc
+        key = (record.learning_stage, record.task)
+        if key not in reads:
+            try:
+                reads[key] = read_training_inputs(
+                    workspace, with_samples=key[0] == "finetune",
+                    task=key[1] if key[0] == "finetune" else None)
+            except Exception as exc:  # noqa: BLE001 - a refusal is the verdict
+                reads[key] = exc
+        return reads[key]
+
     entry["checkpoints"] = {
         path.relative_to(root).as_posix(): _checkpoint_verdicts(
-            path, root, served_bound, inputs, refused)
+            path, root, served_bound, inputs_for, refused)
         for path in checkpoints
     }
     return entry

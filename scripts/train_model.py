@@ -1534,6 +1534,7 @@ def train_bundle(config: TrainConfig, explicit: Optional[Collection[str]] = None
                                      "by case id",
                        "ties": "average rank", "version": 1}
         if config.task == "gene":
+            from src.models.bundle.spec import GeneScoringSpec
             from src.models.tasks.gene import SP_RULE
 
             gene_spec = spec.task_head.gene
@@ -1552,7 +1553,11 @@ def train_bundle(config: TrainConfig, explicit: Optional[Collection[str]] = None
                 "task": "gene", "score": "eta*EMBSIM + (1 - eta)*SPLSIM",
                 "embsim": "tanh(p^T W g + b) on L2-normalised projected vectors",
                 "sp": SP_RULE, "sp_lower": gene_spec.sp_lower, "sp_upper": gene_spec.sp_upper,
-                "sp_bounds_source": "upstream fixed reference, not calibrated on this data",
+                "sp_bounds_source": (
+                    "upstream fixed reference, not calibrated on this data"
+                    if (gene_spec.sp_lower, gene_spec.sp_upper) == (
+                        GeneScoringSpec().sp_lower, GeneScoringSpec().sp_upper)
+                    else "operator-set (model_spec), not the upstream reference"),
                 "eta": gene_spec.eta,
                 "augmentation": ({"k": gene_spec.augmentation_k,
                                   "omega": gene_spec.augmentation_omega}

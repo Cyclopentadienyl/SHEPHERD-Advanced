@@ -1878,6 +1878,16 @@ def _measure_task(args: argparse.Namespace, registry: Optional[Path], device: to
     )
     result = TASK_RUNS[args.mode](bundle=bundle, view=view, samples=samples, manifest=manifest,
                                   device=device, batch_size=args.batch_size)
+    if inputs.task_data is not None:
+        # The split's samples are the fixture's, bound by its record (not by the
+        # workspace manifest, which binds the disease split R2 checked): say
+        # so, with the cases the derivation left out.
+        record = inputs.task_data.record
+        result.sampler_evidence["task_fixture"] = {
+            "record_sha256": inputs.task_data.identity.sha256,
+            "label": record.get("label"), "rule": record.get("rule"),
+            "seed": record.get("seed"), "split": args.split,
+            "derivation": (record.get("counts") or {}).get(args.split)}
     return inputs, result
 
 

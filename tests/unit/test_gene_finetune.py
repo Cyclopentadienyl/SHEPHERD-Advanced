@@ -227,6 +227,9 @@ def test_gene_measurement_over_the_fixture_split(trained, tmp_path):
     assert 0 < metrics["pooled_mrr"] <= 1 and metrics["coverage"] == 1.0
     ranks = json.loads((tmp_path / "report_ranks.json").read_text())
     assert ranks and all(r is not None for r in ranks)
+    fixture = report["sampler_evidence"]["task_fixture"]
+    assert fixture["label"] == "functional fixture" and fixture["split"] == "val"
+    assert fixture["derivation"]["derived"] == manifest["n_samples"]
 
 
 def test_every_listed_causal_gene_stays_in_the_denominators(trained):
@@ -254,3 +257,27 @@ def test_a_gene_measurement_with_no_bindable_case_is_refused(trained):
     with pytest.raises(ValueError, match="no case of the cohort can be ranked"):
         run_gene_measurement(bundle=bundle, view=view, samples=rows, manifest=None,
                              device=torch.device("cpu"), batch_size=8)
+
+
+def test_the_inventory_judges_each_bundle_checkpoint_by_its_own_stage_and_task(trained, tmp_path):
+    """M2.6: a base and a gene child are resumable over their workspace, each
+    against the read its own stage and task make (a base reads the graph only,
+    a gene child the fixture too)."""
+    import train_model
+    from scripts.audit_checkpoint_family import inventory_workspace
+
+    workspace = tmp_path / "ws"
+    shutil.copytree(trained["data_dir"], workspace)
+    base_copy = workspace / "runs" / "base" / "checkpoints" / "last.pt"
+    base_copy.parent.mkdir(parents=True)
+    shutil.copy2(trained["base"], base_copy)
+    config, explicit = _gene_config(dict(trained, data_dir=workspace),
+                                    workspace / "runs" / "gene")
+    train_model.train(config, explicit)
+    entry = inventory_workspace(workspace, tmp_path)
+    verdicts = {name: v["m2_contract"]["resume"]["verdict"]
+                for name, v in entry["checkpoints"].items()}
+    assert verdicts["ws/runs/base/checkpoints/last.pt"] == "accepted"
+    assert "ws/runs/gene/graph_split.pt" not in verdicts
+    gene = [v for name, v in verdicts.items() if name.startswith("ws/runs/gene/")]
+    assert gene and all(v == "accepted" for v in gene)
