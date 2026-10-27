@@ -130,6 +130,7 @@ def plan_continuation(
     *,
     device: str,
     parent_sha256: Optional[str] = None,
+    record_version: int = CHECKPOINT_RECORD_VERSION,
 ) -> ContinuationPlan:
     """Decide how a run over `request` continues from `parent`.
 
@@ -145,12 +146,24 @@ def plan_continuation(
         parent_sha256: the digest of the read `parent` came from. The parent
             is named by it when it is itself the file of early stopping's best
             epoch, so the child's checkpoints can name it in turn.
+        record_version: the record version the continuing run writes: M3a's
+            for the ShepherdGNN path, the model bundle's (2) for that path. A
+            parent of another version is refused.
 
     Raises:
         RunPlanRefused: with the reason and the remedy.
     """
     where = f"The parent {parent_path.name}"
-    if not isinstance(parent, Mapping) or parent.get("record_version") != CHECKPOINT_RECORD_VERSION:
+    if (isinstance(parent, Mapping) and record_version != CHECKPOINT_RECORD_VERSION
+            and parent.get("record_version") != record_version):
+        # The model bundle path (record version 2, contract §9.3 hazard 1): a
+        # parent written before the model spec, or by another path, is not
+        # continued across the boundary.
+        raise RunPlanRefused(
+            f"{where} was written before the model spec (record version "
+            f"{parent.get('record_version')!r}, not {record_version}); its spec cannot be "
+            "known without guessing. Start a new run.")
+    if not isinstance(parent, Mapping) or parent.get("record_version") != record_version:
         raise RunPlanRefused(
             f"{where} holds no training state this version can continue: it was written "
             "before contract M3a's checkpoint record, so its schedule, progress and "

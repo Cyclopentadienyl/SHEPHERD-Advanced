@@ -73,7 +73,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
 
 SCOPES = ("model", "dataloader", "trainer", "loss", "path", "runtime_setting")
-KINDS = ("int", "float", "bool", "str", "list[int]")
+KINDS = ("int", "float", "bool", "str", "list[int]", "dict")
 BOUND_KEYS = ("ge", "gt", "le", "lt")
 # scopes whose effective fields are NOT required to project into TrainConfig:
 _PROJECTION_EXEMPT_SCOPES = ("runtime_setting",)
@@ -223,6 +223,26 @@ FIELDS: Tuple[FieldSpec, ...] = (
               webui_exposed=False, known_divergence=True,
               divergence_note="WebUI resume uses a checkpoint dropdown, not this field.",
               description="Checkpoint path to resume from."),
+
+    # ---- the model bundle path (docs/working/scorer-retraining/README.md §3-§4) -------------
+    # CLI only in this phase: the API and the WebUI gain them with the functional UI (K6),
+    # through this spec.
+    FieldSpec("learning_stage", "str", None, "trainer", projects_to="TrainConfig.learning_stage",
+              choices=("base", "finetune"), current_api=None, current_webui="not-exposed",
+              webui_exposed=False, known_divergence=True,
+              divergence_note="CLI only (--stage) until the functional UI (K6).",
+              description="Model bundle stage: base (KG link prediction) or finetune. Unset is "
+                          "the ShepherdGNN path, which retires with the switch."),
+    FieldSpec("model_spec", "dict", None, "model", projects_to="TrainConfig.model_spec",
+              current_api=None, current_webui="not-exposed", webui_exposed=False,
+              known_divergence=True,
+              divergence_note="Configuration file only; unset is the stage's reference spec.",
+              description="The model spec as plain data, read strictly."),
+    FieldSpec("split_seed", "int", 0, "dataloader", projects_to="TrainConfig.split_seed",
+              valid={"ge": 0}, current_api=None, current_webui="not-exposed",
+              webui_exposed=False, known_divergence=True,
+              divergence_note="CLI only (--split-seed); a finetune takes its base's.",
+              description="Seed of the graph view's edge split (README F2)."),
 
     # ---- model (ShepherdGNNConfig) ----------------------------------------------------------
     FieldSpec("conv_type", "str", "gat", "model", projects_to="ShepherdGNNConfig.conv_type",

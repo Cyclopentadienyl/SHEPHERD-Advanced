@@ -119,7 +119,9 @@ class TrainerConfig:
     save_top_k: int = 3
     save_last: bool = True
 
-    # Early stopping
+    # Early stopping. Off for the bundle path's reference recipe (README C6):
+    # the full schedule runs and ModelCheckpoint keeps the best file.
+    early_stopping: bool = True
     early_stopping_patience: int = 10
     early_stopping_monitor: str = "val_mrr"
     early_stopping_mode: str = "max"
@@ -218,6 +220,7 @@ class Trainer:
         optimizer: Optional[Optimizer] = None,
         scheduler: Optional[LRScheduler] = None,
         callbacks: Optional[List[Callback]] = None,
+        task: Optional[Any] = None,
     ):
         """
         Args:
@@ -229,6 +232,12 @@ class Trainer:
             optimizer: 優化器 (預設使用 AdamW)
             scheduler: 學習率調度器 (預設根據 config 創建)
             callbacks: 回調列表
+            task: A bundle-path task module (README §3.1 lifecycle hooks):
+                `training_step(model, batch, device)` returns a `StepResult`
+                (a loss, or None for a step with nothing to learn from), and
+                `validate(model, device)` returns the validation metrics. The
+                Trainer keeps the optimizer, AMP, accumulation, callbacks and
+                saving; `loss_fn` is not used.
         """
         self.config = config or TrainerConfig()
         self.device = torch.device(self.config.device)
@@ -240,10 +249,13 @@ class Trainer:
         self.train_dataloader = train_dataloader
         self.val_dataloader = val_dataloader
 
+        # The bundle path's task module, or None for the ShepherdGNN path.
+        self.task = task
+
         # Loss
-        self.loss_fn = loss_fn or MultiTaskLoss(
+        self.loss_fn = loss_fn or (None if task is not None else MultiTaskLoss(
             config=self.config.loss_config or LossConfig()
-        )
+        ))
 
         # Optimizer
         self.optimizer = optimizer or self._create_optimizer()
@@ -484,20 +496,21 @@ class Trainer:
         callbacks = []
 
         # Early stopping
-        callbacks.append(EarlyStopping(
-            config=EarlyStoppingConfig(
-                monitor=self.config.early_stopping_monitor,
-                mode=self.config.early_stopping_mode,
-                patience=self.config.early_stopping_patience,
-                restore_best_weights=True,
-            )
-        ))
+        if self.config.early_stopping:
+            callbacks.append(EarlyStopping(
+                config=EarlyStoppingConfig(
+                    monitor=self.config.early_stopping_monitor,
+                    mode=self.config.early_stopping_mode,
+                    patience=self.config.early_stopping_patience,
+                    restore_best_weights=True,
+                )
+            ))
 
-        # Model checkpoint
+        # Model checkpoint, named by the monitored metric
         callbacks.append(ModelCheckpoint(
             config=ModelCheckpointConfig(
                 dirpath=self.config.checkpoint_dir,
-                filename="model-{epoch:02d}-{val_mrr:.4f}",
+                filename="model-{epoch:02d}-{" + self.config.early_stopping_monitor + ":.4f}",
                 monitor=self.config.early_stopping_monitor,
                 mode=self.config.early_stopping_mode,
                 save_top_k=self.config.save_top_k,
@@ -573,7 +586,7 @@ class Trainer:
                 # Validation
                 val_metrics = {}
                 if (
-                    self.val_dataloader is not None
+                    self._has_validation()
                     and (epoch + 1) % self.config.eval_every_n_epochs == 0
                 ):
                     val_metrics = self._validate(epoch)
@@ -611,7 +624,7 @@ class Trainer:
 
         # Final evaluation, of a run that ended, not of one stopped: a stop
         # should end promptly, and its run has no final metrics.
-        if self.val_dataloader is not None and not self.interrupted:
+        if self._has_validation() and not self.interrupted:
             final_metrics = self._validate(self.state.epoch)
         else:
             final_metrics = {}
@@ -651,8 +664,40 @@ class Trainer:
 
         epoch_start_time = time.time()
 
+        set_epoch = getattr(self.train_dataloader, "set_epoch", None)
+        if callable(set_epoch):
+            set_epoch(epoch)
+        skipped_steps = 0
+
         for batch_idx, batch_data in enumerate(self.train_dataloader):
             self.callbacks.on_batch_begin(self, batch_idx)
+
+            if self.task is not None:
+                with autocast(self.device.type, dtype=self.amp_dtype, enabled=self.use_amp):
+                    step = self.task.training_step(self.model, batch_data, self.device)
+                if step.loss is None:
+                    # Nothing to learn from: no backward, no update, counted
+                    # (README §3.1, no empty mean and no invented loss).
+                    skipped_steps += 1
+                    self.callbacks.on_batch_end(self, batch_idx, {
+                        "batch_skipped": 1, **{f"count_{k}": v for k, v in step.counts.items()}})
+                    continue
+                loss = step.loss / accumulation
+                if self.scaler is not None:
+                    self.scaler.scale(loss).backward()
+                else:
+                    loss.backward()
+                loss_sum += loss.item() * accumulation
+                batch_count += 1
+                pending += 1
+                if pending == accumulation:
+                    self._optimizer_update()
+                    pending = 0
+                self.callbacks.on_batch_end(self, batch_idx, {
+                    "batch_loss": loss.item() * accumulation,
+                    **{f"loss_{k}": v for k, v in step.terms.items()},
+                    **{f"count_{k}": v for k, v in step.counts.items()}})
+                continue
 
             # Move data to device
             batch = self._move_to_device(batch_data["batch"])
@@ -702,7 +747,7 @@ class Trainer:
             if (
                 self.config.eval_every_n_steps is not None
                 and self.state.global_step % self.config.eval_every_n_steps == 0
-                and self.val_dataloader is not None
+                and self._has_validation()
             ):
                 self._validate(epoch)
                 self.model.train()
@@ -721,11 +766,14 @@ class Trainer:
 
         self.state.train_loss_history.append(avg_loss)
 
-        return {
+        metrics = {
             "train_loss": avg_loss,
             "epoch_time": epoch_time,
             "learning_rate": self.optimizer.param_groups[0]["lr"],
         }
+        if self.task is not None:
+            metrics["train_steps_skipped"] = skipped_steps
+        return metrics
 
     def _optimizer_update(self) -> None:
         """Clip, step the optimizer (through the scaler where AMP uses one),
@@ -875,11 +923,17 @@ class Trainer:
         self.model.eval()
         self.callbacks.on_validation_begin(self)
 
-        result = self._run_evaluation_pass(self.val_dataloader)
+        if self.task is not None:
+            # Numbers, and None for a metric the task found undefined (an AUC
+            # without one class, README F4): stated in the logs, not dropped.
+            val_metrics = {f"val_{k}": v for k, v in self.task.validate(self.model, self.device).items()
+                           if v is None or (isinstance(v, (int, float)) and not isinstance(v, bool))}
+        else:
+            result = self._run_evaluation_pass(self.val_dataloader)
 
-        # Compute metrics
-        val_metrics = {f"val_{k}": v for k, v in result.ranking_metrics.items()}
-        val_metrics["val_loss"] = result.mean_loss
+            # Compute metrics
+            val_metrics = {f"val_{k}": v for k, v in result.ranking_metrics.items()}
+            val_metrics["val_loss"] = result.mean_loss
 
         # Track best metric
         monitor_value = val_metrics.get(self.config.early_stopping_monitor)
@@ -893,6 +947,10 @@ class Trainer:
         self.callbacks.on_validation_end(self, val_metrics)
 
         return val_metrics
+
+    def _has_validation(self) -> bool:
+        """A validation set, or a task module that validates itself."""
+        return self.val_dataloader is not None or self.task is not None
 
     def _is_best_metric(self, current: float) -> bool:
         """檢查是否為最佳指標"""

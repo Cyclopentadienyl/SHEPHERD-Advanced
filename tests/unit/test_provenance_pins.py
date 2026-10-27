@@ -166,6 +166,12 @@ ALLOWED = {
         (1, _IN_MEMORY.format(what="a disease set")),
     ("src/kg/disease_allocation.py", "universe_digest", "hashlib.sha256"):
         (1, _IN_MEMORY.format(what="a disease universe")),
+    # The model bundle path (README G1, F2): the graph view and its split are
+    # identified by the digest of their in-memory content, never of a path.
+    ("src/kg/graph_view.py", "view_digest", "hashlib.sha256"):
+        (1, _IN_MEMORY.format(what="the graph view's rule, mapping and edges (README G1)")),
+    ("src/kg/graph_view.py", "split_facts", "hashlib.sha256"):
+        (1, _IN_MEMORY.format(what="the edge split's rule, seed, view and parts (README F2)")),
     ("src/kg/sample_generator.py", "_sha256_text", "hashlib.sha256"):
         (1, "the generator's digest of the text it writes, equal to the file's by "
             "construction (the writer's digest of what it wrote, as contract M3b "

@@ -166,6 +166,19 @@ class TrainConfig:
     run_name: str = ""
     run_dir: str = ""
 
+    # The model bundle path (docs/working/scorer-retraining/README.md §3–§4):
+    # "base" trains KG link prediction into a bundle checkpoint with a model
+    # spec. None is the ShepherdGNN path below, which retires once the
+    # bundle path serves (README §7). Settings the operator leaves unset take
+    # the stage's reference values (src/training/recipe.py), recorded as such.
+    learning_stage: Optional[str] = None
+    # The model spec as plain data (ModelSpec.to_dict), read strictly; None is
+    # the reference spec of the stage.
+    model_spec: Optional[Dict[str, Any]] = None
+    # The seed of the edge split (README F2), apart from the training seed so
+    # runs over one graph view share one split unless asked otherwise.
+    split_seed: int = 0
+
     # Model configuration
     hidden_dim: int = 256
     num_layers: int = 4
@@ -310,6 +323,22 @@ def parse_args() -> argparse.Namespace:
              "be absent or empty",
     )
 
+    # The model bundle path
+    parser.add_argument(
+        "--stage",
+        type=str,
+        choices=["base"],
+        default=None,
+        help="Train a model bundle: 'base' is KG link prediction (the paper's "
+             "pretraining). Without it the ShepherdGNN path runs",
+    )
+    parser.add_argument(
+        "--split-seed",
+        type=int,
+        default=None,
+        help="With --stage: the edge split's seed",
+    )
+
     # Model
     parser.add_argument(
         "--hidden-dim",
@@ -449,7 +478,7 @@ def load_config(args: argparse.Namespace) -> TrainConfig:
 #: CLI flags whose value lands in a `TrainConfig` field of another name.
 _FLAG_FIELDS = {"epochs": "num_epochs", "lr": "learning_rate",
                 "grad_accum": "gradient_accumulation_steps", "resume": "resume_from",
-                "no_amp": "use_amp"}
+                "no_amp": "use_amp", "stage": "learning_stage"}
 
 
 def load_config_with_explicit(args: argparse.Namespace) -> Tuple[TrainConfig, Set[str]]:
@@ -509,6 +538,10 @@ def load_config_with_explicit(args: argparse.Namespace) -> Tuple[TrainConfig, Se
         config.pause_after_epoch = args.pause_after_epoch
     if args.seed is not None:
         config.seed = args.seed
+    if getattr(args, "stage", None) is not None:
+        config.learning_stage = args.stage
+    if getattr(args, "split_seed", None) is not None:
+        config.split_seed = args.split_seed
 
     for name, value in vars(args).items():
         if name in ("config", "debug", "expect_dataset_sha256", "expect_resume_sha256") \
@@ -556,6 +589,7 @@ class TrainingInputs(NamedTuple):
 
 def read_training_inputs(
     data_dir: Path, *, expected_manifest_sha256: Optional[str] = None,
+    with_samples: bool = True,
 ) -> TrainingInputs:
     """Read the manifest, the graph tensors and both sample files once each, and
     verify from those reads (contract M2.1, S8).
@@ -588,6 +622,10 @@ def read_training_inputs(
 
     `training_fields=True`: training carries the two optional sample fields
     measurement does not (`candidate_disease_ids`, `gene_ids`).
+
+    `with_samples=False` is the base stage's read (README §3): KG link
+    prediction trains on the graph alone, so no sample file is read, verified
+    or recorded, and an empty training cohort is not a refusal.
     """
     from src.kg.artifacts import (
         check_unparsed_kg_json,
@@ -608,13 +646,16 @@ def read_training_inputs(
     # before the graph tensors are loaded.
     samples = {
         split: read_samples(data_dir, split, training_fields=True)
-        for split in TRAINING_SPLITS
+        for split in (TRAINING_SPLITS if with_samples else ())
     }
     graph = read_graph_artifacts(data_dir, map_location="cpu")
 
     bound = verify_graph_reads(manifest, graph.reads)
     check_unparsed_kg_json(data_dir, manifest)
     dataset_record = verify_dataset_record(manifest, bound["kg"])
+    if not with_samples:
+        logger.info(f"Graph-only read; node counts: {graph.graph_data['num_nodes_dict']}")
+        return TrainingInputs(manifest, graph, samples, False, bound, dataset_record)
     verify_cohort_reads(manifest, samples)
 
     # After verification: an emptied cohort file is refused as not the file the
@@ -711,7 +752,7 @@ def read_resume_parent(
 
 def plan_from_parent(
     parent: "CheckpointRead", config: TrainConfig, explicit: Optional[Collection[str]],
-    device: str,
+    device: str, *, record_version: Optional[int] = None,
 ) -> Tuple[Any, Optional[Dict[str, Any]]]:
     """How this run continues from `parent` (`src.utils.run_plan`), and
     early stopping's best weights when the parent names a file for them.
@@ -728,9 +769,10 @@ def plan_from_parent(
     if explicit is None:
         defaults = asdict(TrainConfig())
         explicit = {name for name, value in request.items() if value != defaults[name]}
+    extra = {} if record_version is None else {"record_version": record_version}
     plan = plan_continuation(parent.checkpoint, Path(parent.identity.path), request,
                              set(explicit), device=device,
-                             parent_sha256=parent.identity.sha256)
+                             parent_sha256=parent.identity.sha256, **extra)
     logger.info(f"{plan.action}.")
     if plan.inherited:
         logger.info("Inherited from the parent: " + ", ".join(
@@ -818,11 +860,13 @@ def training_input_digests(
     files does not change the record of a run that never read it.
     """
     reads: Dict[str, Optional[ReadIdentity]] = {
-        "train_samples": inputs.samples["train"].identity,
         "node_features": inputs.graph.reads.get("node_features"),
         "edge_indices": inputs.graph.reads.get("edge_indices"),
         "num_nodes": inputs.graph.reads.get("num_nodes"),
     }
+    # A graph-only read (the base stage) records no sample role.
+    if "train" in inputs.samples:
+        reads["train_samples"] = inputs.samples["train"].identity
     if inputs.with_validation:
         reads["val_samples"] = inputs.samples["val"].identity
     if parent is not None:
@@ -1006,6 +1050,258 @@ def resolve_training_device(requested: str) -> str:
 # =============================================================================
 # Main Training Function
 # =============================================================================
+#: ShepherdGNN settings the model bundle path does not read: its architecture is
+#: the model spec's, its loss the stage's. Set with --stage, they are refused,
+#: never ignored.
+SHEPHERD_ONLY_FIELDS = frozenset({
+    "hidden_dim", "num_layers", "num_heads", "conv_type", "dropout", "use_ortholog_gate",
+    "diagnosis_weight", "link_prediction_weight", "contrastive_weight", "ortholog_weight",
+    "margin", "label_smoothing", "temperature", "max_subgraph_nodes", "num_negative_samples",
+})
+LEARNING_STAGES_HERE = ("base",)
+
+
+def _explicit_or_changed(config: TrainConfig, explicit: Optional[Collection[str]]) -> Set[str]:
+    if explicit is not None:
+        return set(explicit)
+    defaults = asdict(TrainConfig())
+    return {name for name, value in asdict(config).items() if value != defaults[name]}
+
+
+def apply_stage_recipe(config: TrainConfig, explicit: Set[str]
+                       ) -> Tuple[TrainConfig, Dict[str, Any]]:
+    """Fill every reference setting the operator left unset from the stage's
+    recipe (`src.training.recipe`), and say which were filled and from where."""
+    from dataclasses import replace
+
+    from src.training.recipe import reference_settings
+
+    values, sources = reference_settings(config.learning_stage)
+    filled = {name: value for name, value in values.items() if name not in explicit}
+    record = {
+        "learning_stage": config.learning_stage,
+        "reference_filled": {name: sources[name] for name in sorted(filled)},
+        "operator_set": sorted(name for name in values if name in explicit),
+    }
+    return replace(config, **filled), record
+
+
+def train_bundle(config: TrainConfig, explicit: Optional[Collection[str]] = None, *,
+                 expected_dataset_sha256: Optional[str] = None,
+                 expected_resume_sha256: Optional[str] = None) -> Dict[str, float]:
+    """The model bundle path: `learning_stage` "base" (README §3, §4; contract §9).
+
+    Same shape as the ShepherdGNN path below: every refusal before the run
+    directory is claimed, one read per workspace input, the Trainer owning the
+    optimizer, AMP, accumulation, callbacks and saving. What differs: the graph
+    view and its fact split are formed from the graph read (G1, F2), the model
+    is the one builder's bundle from a model spec, the stage's task module
+    drives the steps, and every checkpoint carries the model record.
+    """
+    from src.kg.graph_view import build_graph_view, split_facts
+    from src.models.bundle import ModelSpec, build_bundle, reference_spec
+    from src.models.bundle.record import MODEL_RECORD_VERSION, ModelRecord, read_model_record
+    from src.training.lp_task import BASE_SELECTION_METRIC, BaseLPSampler, BaseLPTask
+    from src.utils.checkpoint_paths import (
+        check_run_dir_free, claim_run_dir, propose_run_dir, run_checkpoint_dir, run_log_dir,
+    )
+
+    if config.learning_stage not in LEARNING_STAGES_HERE:
+        raise ValueError(f"learning_stage {config.learning_stage!r} is not one of "
+                         f"{list(LEARNING_STAGES_HERE)} in this build")
+    explicit_set = _explicit_or_changed(config, explicit)
+    stray = sorted(explicit_set & SHEPHERD_ONLY_FIELDS)
+    if stray:
+        raise ValueError(
+            f"{', '.join(stray)} configure the ShepherdGNN path, which a model bundle run "
+            "does not read: its architecture is the model spec (model_spec) and its loss "
+            "the stage's. Remove them.")
+    config, recipe = apply_stage_recipe(config, explicit_set)
+
+    device = resolve_training_device(config.device)
+    logger.info(f"Model bundle run, learning stage {config.learning_stage}; device {device} "
+                f"(requested: {config.device})")
+    data_dir = Path(config.data_dir)
+    if config.run_dir:
+        check_run_dir_free(config.run_dir)
+
+    inputs = read_training_inputs(data_dir, expected_manifest_sha256=expected_dataset_sha256,
+                                  with_samples=False)
+    parent = read_resume_parent(config.resume_from, inputs, device,
+                                expected_sha256=expected_resume_sha256)
+    parent_record = None
+    plan = None
+    best_weights = None
+    if parent is not None:
+        from src.models.bundle.record import ModelRecordError
+        from src.utils.run_plan import RunPlanRefused
+
+        try:
+            parent_record = read_model_record(parent.checkpoint)
+        except ModelRecordError as exc:
+            raise RunPlanRefused(f"The parent {Path(parent.identity.path).name}: {exc}") from None
+        if parent_record.learning_stage != config.learning_stage:
+            raise RunPlanRefused(
+                f"The parent is a {parent_record.learning_stage} checkpoint; a "
+                f"{config.learning_stage} run continues only its own stage.")
+        plan, best_weights = plan_from_parent(parent, config, explicit_set, device,
+                                              record_version=MODEL_RECORD_VERSION)
+        config = TrainConfig(**plan.settings)
+    elif config.extend_epochs or config.extend_lr is not None:
+        raise ValueError("extend_epochs and extend_lr continue a parent; give resume_from.")
+
+    # The spec: the operator's (read strictly), the parent's (inherited with
+    # the settings), or the stage's reference.
+    if config.model_spec is not None:
+        spec = ModelSpec.from_dict(config.model_spec)
+        if spec.learning_stage != config.learning_stage:
+            raise ValueError(f"model_spec is a {spec.learning_stage} spec, not "
+                             f"{config.learning_stage}")
+    else:
+        spec = reference_spec(config.learning_stage)
+    if parent_record is not None and spec != parent_record.model_spec:
+        raise ValueError("model_spec differs from the parent's; a continued run keeps its "
+                         "parent's architecture")
+    if len(config.num_neighbors) != spec.encoder.layers:
+        raise ValueError(
+            f"num_neighbors has {len(config.num_neighbors)} hops and the encoder "
+            f"{spec.encoder.layers} layers; the reference GATv2 needs one hop per layer")
+    config.model_spec = spec.to_dict()
+
+    # The view and its split, from the graph read (G1, F2), before any output.
+    from dataclasses import asdict as _asdict
+
+    view_rule = _asdict(spec.graph_view)
+    view_rule["exclude_relations"] = list(view_rule["exclude_relations"])
+    view = build_graph_view(inputs.graph.graph_data, rule=view_rule)
+    split = split_facts(view, config.split_seed)
+    if parent_record is not None:
+        recorded = parent_record.data_roles
+        if (recorded.get("graph_view") or {}).get("digest") != view.digest \
+                or (recorded.get("split") or {}).get("digest") != split.digest:
+            raise ValueError("the graph view or edge split differs from the parent's record; "
+                             "a continued run trains on its parent's view and split")
+    train_mask, val_mask = split.mask("train"), split.mask("val")
+
+    from src.utils.run_environment import code_revision, collect_environment
+
+    producer = code_revision(PROJECT_ROOT)
+    environment = collect_environment(device)
+    run_dir = Path(config.run_dir) if config.run_dir else propose_run_dir(
+        config.data_dir, spec.encoder.kind, config.run_name)
+    checkpoint_dir = run_checkpoint_dir(run_dir)
+    log_dir = run_log_dir(run_dir)
+
+    if config.seed is not None:
+        apply_seed(config.seed)
+    bundle = build_bundle(spec, view)
+    sampler = BaseLPSampler(
+        view.num_nodes, view.edge_index(train_mask), view.rel[train_mask],
+        view.edge_index(train_mask), view.rel[train_mask], sizes=config.num_neighbors,
+        batch_size=config.batch_size, seed=int(config.seed or 0))
+    task = BaseLPTask(
+        num_nodes=view.num_nodes, train_edges=view.edge_index(train_mask),
+        train_relations=view.rel[train_mask], val_edges=view.edge_index(val_mask),
+        val_relations=view.rel[val_mask], seed=int(config.seed or 0),
+        val_batch_size=config.batch_size)
+
+    compile_installed = False
+    if config.compile:
+        try:
+            import torch._dynamo as _dynamo
+            _dynamo.config.suppress_errors = True
+            bundle.compile()
+            compile_installed = True
+        except Exception as exc:  # never let compile break training
+            logger.warning(f"torch.compile failed to enable; using eager: {exc}")
+
+    # Early stopping is disabled in the reference (C6); an operator who sets
+    # its patience asks for it, a non-reference configuration.
+    early_stopping = "early_stopping_patience" in explicit_set
+    trainer_config = TrainerConfig(
+        num_epochs=config.num_epochs, learning_rate=config.learning_rate,
+        weight_decay=config.weight_decay,
+        gradient_accumulation_steps=config.gradient_accumulation_steps,
+        max_grad_norm=config.max_grad_norm, scheduler_type=config.scheduler_type,
+        warmup_steps=config.warmup_steps, min_lr_ratio=config.min_lr_ratio,
+        use_amp=config.use_amp, amp_dtype=config.amp_dtype,
+        eval_every_n_epochs=config.eval_every_n_epochs, early_stopping=early_stopping,
+        early_stopping_patience=config.early_stopping_patience,
+        early_stopping_monitor=BASE_SELECTION_METRIC, early_stopping_mode="max",
+        checkpoint_dir=str(checkpoint_dir), save_top_k=config.save_top_k,
+        log_dir=str(log_dir), device=device, seed=config.seed,
+        pause_after_epoch=config.pause_after_epoch,
+    )
+    trainer = Trainer(model=bundle, train_dataloader=sampler, config=trainer_config, task=task)
+    if parent is not None:
+        trainer.continue_from(parent.checkpoint, plan, best_weights)
+        logger.info(f"Continuing from checkpoint: {parent.identity.path} "
+                    f"(sha256 {parent.identity.sha256[:12]})")
+    del best_weights
+
+    claim_run_dir(run_dir)
+    logger.info(f"Run directory: {run_dir}")
+    with open(run_dir / "config.yaml", "w") as f:
+        yaml.dump({**asdict(config), "run_dir": str(run_dir)}, f)
+    with open(run_dir / "runtime.json", "w") as f:
+        json.dump(_allocator_record(), f, indent=2)
+    # The view's record and the split artifact (F2), beside the run's outputs.
+    with open(run_dir / "graph_view.json", "w") as f:
+        json.dump({"source": {"kg": inputs.bound["kg"]}, **view.record()}, f, indent=2,
+                  sort_keys=True)
+    torch.save({"record": split.record(), "part": split.part}, run_dir / "graph_split.pt")
+
+    parent_identity = parent.identity if parent is not None else None
+    del parent
+    if parent_record is not None:
+        operation = plan.mode
+        family_id = parent_record.family_id
+        parent_ref = {"sha256": parent_identity.sha256,
+                      "run": Path(parent_identity.path).parent.parent.name}
+    else:
+        operation, family_id, parent_ref = "new", run_dir.name, None
+    trainer.model_record = ModelRecord(
+        model_spec=spec, graph_view=bundle.view, operation=operation, family_id=family_id,
+        parent=parent_ref,
+        data_roles={"kg": inputs.bound["kg"],
+                    "graph_view": {"digest": view.digest, "rule": dict(view.rule)},
+                    "split": split.record()},
+        graph_exposure={"base": {
+            "training": {"message_passing": "train edges, the step's drawn pairs removed (F5)",
+                         "supervision": "train edges"},
+            "validation": {"message_passing": "train edges", "supervision": "val edges"}}},
+        loss_identity={"terms": ["lp"], "lp_loss_weight": 1.0, "lp_head": spec.lp_head.kind,
+                       "margin": spec.lp_head.margin})
+    from src.utils.fingerprint import compute_fingerprint
+
+    trainer.data_fingerprint = compute_fingerprint(inputs.graph.graph_data)
+    trainer.run_record = {
+        "producer": producer,
+        "environment": environment,
+        "requested": {k: v for k, v in asdict(config).items() if k not in LOCATION_FIELDS},
+        "device_requested": config.device,
+        "compile": {"requested": bool(config.compile), "installed": compile_installed},
+        "loaders": {
+            "train": {"kind": "base_lp_sampler", "batch_size": int(config.batch_size),
+                      "sizes": list(config.num_neighbors), "batches": len(sampler),
+                      "recipe": recipe},
+            "val": dict(task.val_counts),
+        },
+    }
+    trainer.training_input_digests = training_input_digests(inputs, parent=parent_identity)
+
+    logger.info("Starting training...")
+    final_metrics = trainer.train()
+    if trainer.interrupted:
+        logger.info("Training stopped; the latest resumable checkpoint is "
+                    f"{checkpoint_dir / 'last.pt'}")
+        return {}
+    with open(run_dir / "final_metrics.json", "w") as f:
+        json.dump(final_metrics, f, indent=2)
+    logger.info(f"Training complete: {final_metrics}")
+    return final_metrics
+
+
 def train(config: TrainConfig, explicit: Optional[Collection[str]] = None, *,
           expected_dataset_sha256: Optional[str] = None,
           expected_resume_sha256: Optional[str] = None) -> Dict[str, float]:
@@ -1029,6 +1325,9 @@ def train(config: TrainConfig, explicit: Optional[Collection[str]] = None, *,
     Returns:
         Final evaluation metrics
     """
+    if config.learning_stage is not None:
+        return train_bundle(config, explicit, expected_dataset_sha256=expected_dataset_sha256,
+                            expected_resume_sha256=expected_resume_sha256)
     logger.info("=" * 60)
     logger.info("SHEPHERD-Advanced Training")
     logger.info("=" * 60)

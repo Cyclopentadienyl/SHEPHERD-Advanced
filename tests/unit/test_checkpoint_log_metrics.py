@@ -42,6 +42,7 @@ def _current_trainer_logs():
             on_validation_end=lambda trainer, metrics: None,
         ),
         val_dataloader=None,
+        task=None,
         _run_evaluation_pass=lambda loader: SimpleNamespace(
             ranking_metrics=ranking, mean_loss=0.25
         ),
@@ -55,6 +56,7 @@ def _current_trainer_logs():
         model=SimpleNamespace(train=lambda: None),
         callbacks=SimpleNamespace(on_epoch_begin=lambda trainer, epoch: None),
         train_dataloader=[],
+        task=None,
         state=SimpleNamespace(train_loss_history=[]),
         optimizer=SimpleNamespace(param_groups=[{"lr": 1e-3}]),
         config=SimpleNamespace(gradient_accumulation_steps=1),

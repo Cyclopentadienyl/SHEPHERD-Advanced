@@ -44,7 +44,7 @@ from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple, Union
 
 ScoreFn = Callable[[Path], Optional[float]]
 
-from src.config.model_types import DEFAULT_CONV_TYPE, SUPPORTED_CONV_TYPES
+from src.config.model_types import DEFAULT_CONV_TYPE, ENCODER_KINDS, SUPPORTED_CONV_TYPES
 
 PathLike = Union[str, Path]
 
@@ -162,9 +162,26 @@ def slugify_run_name(name: Optional[str]) -> str:
     return slug[:_RUN_NAME_LIMIT].strip("-")
 
 
+#: The keys runs are filed under: the ShepherdGNN conv types and the model
+#: bundle's encoder kinds (README §3.3), each its own directory.
+RUN_LAYOUT_KEYS = tuple(dict.fromkeys(SUPPORTED_CONV_TYPES + ENCODER_KINDS))
+
+
+def normalize_run_layout_key(key: Optional[str]) -> str:
+    """A run-layout key, lower case: a conv type or an encoder kind. Unlike
+    `normalize_conv_type`, which gates the ShepherdGNN factory, this accepts
+    the bundle's kinds (``gatv2`` among them); anything else raises."""
+    k = str(key or "").strip().lower()
+    if not k:
+        return DEFAULT_CONV_TYPE
+    if k not in RUN_LAYOUT_KEYS:
+        raise ValueError(f"Unsupported run layout key {key!r}; supported: {RUN_LAYOUT_KEYS}")
+    return k
+
+
 def runs_root(data_dir: PathLike, conv_type: Optional[str]) -> Path:
     """``{data_dir}/runs/{conv_type}``: where an architecture's runs live."""
-    return Path(data_dir) / RUNS_DIRNAME / normalize_conv_type(conv_type)
+    return Path(data_dir) / RUNS_DIRNAME / normalize_run_layout_key(conv_type)
 
 
 #: Output locations retired by the run layout. A configuration that still sets
@@ -313,8 +330,8 @@ def list_runs(data_dir: PathLike, conv_type: Optional[str] = None) -> List[Path]
     the order never depends on the filesystem's listing order.
     """
     base = Path(data_dir) / RUNS_DIRNAME
-    architectures = ([normalize_conv_type(conv_type)] if conv_type
-                     else list(SUPPORTED_CONV_TYPES))
+    architectures = ([normalize_run_layout_key(conv_type)] if conv_type
+                     else list(RUN_LAYOUT_KEYS))
     runs: List[Path] = []
     for architecture in architectures:
         directory = base / architecture
@@ -587,8 +604,14 @@ def select_auto_run_checkpoint(
     """Auto selection over runs: the most recently trained run of any
     architecture, then the existing in-run ordering. Returns
     ``(checkpoint_path, conv_type, reason)``. Only the run layout is searched;
-    checkpoints elsewhere are reached by an explicit path."""
-    runs = [r for r in list_runs(data_dir) if run_checkpoints(r)]
+    checkpoints elsewhere are reached by an explicit path.
+
+    Only ShepherdGNN runs are served today: a model bundle run (filed under an
+    encoder kind) is listed but never auto-selected for serving until serving
+    reads a checkpoint's learning stage and task first (provenance §9.3,
+    hazard 3)."""
+    runs = [r for r in list_runs(data_dir)
+            if run_architecture(r) in SUPPORTED_CONV_TYPES and run_checkpoints(r)]
     if not runs:
         return None, None, "no run has a checkpoint"
     run = runs[0]
@@ -600,6 +623,7 @@ def select_auto_run_checkpoint(
 __all__ = [
     "RANKING_SCORE_KEYS",
     "RETIRED_LOCATION_FIELDS",
+    "RUN_LAYOUT_KEYS",
     "RUNS_DIRNAME",
     "RUN_CHECKPOINTS_DIRNAME",
     "RUN_LOGS_DIRNAME",
@@ -624,5 +648,6 @@ __all__ = [
     "ranking_score_detail",
     "ranking_score_from_logs",
     "normalize_conv_type",
+    "normalize_run_layout_key",
     "select_checkpoint_in_dir",
 ]
