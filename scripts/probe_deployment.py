@@ -2042,11 +2042,18 @@ def phase_serving(
         assert candidates, "the pipeline ranked nothing"
         import math as _math
 
-        scores = [float(c.confidence_score) for c in candidates]
+        # The demo workspace has no shortest-path table: a served_mixture result
+        # whose candidates are ranked by the model term alone (Spec 1 §2.1).
+        assert result.result_kind == "served_mixture/v1", (
+            f"a model served, and the result is {result.result_kind!r}")
+        scores = [float(c.served_score) for c in candidates]
         assert all(_math.isfinite(score) for score in scores), (
-            "a candidate came back with a non-finite confidence score"
+            "a candidate came back with a non-finite served score"
         )
         assert scores == sorted(scores, reverse=True), "candidates came back unordered"
+        assert all(c.sp_term.status == "NO_TABLE" and c.served_score == c.model_term
+                   for c in candidates), (
+            "with no table, every SP record is NO_TABLE and the model term ranks alone")
         # **The result says what produced it** (contract M3c): the identity it
         # carries, built when it was produced, is the one E1 verified.
         assert result.served_identity.to_dict() == state["bundle"].config["served_identity"], (
@@ -2054,6 +2061,7 @@ def phase_serving(
         )
         return "a diagnosis ran end to end", {
             "candidates": len(candidates),
+            "result_kind": result.result_kind,
             "score_range": [round(min(scores), 4), round(max(scores), 4)],
             "served_identity_is_the_built_pipelines": True,
         }
@@ -2579,9 +2587,17 @@ def _serve_and_diagnose(
         ),
         top_k=5, include_explanations=False,
     )
-    scores = [float(c.confidence_score) for c in getattr(result, "candidates", [])]
+    assert result.result_kind == "served_mixture/v1", (
+        f"a model served, and the result is {result.result_kind!r}")
+    scores = [float(c.served_score) for c in getattr(result, "candidates", [])]
     assert scores, "the pipeline ranked nothing"
     assert all(_math.isfinite(score) for score in scores), "a non-finite score came back"
+    # The table is verified and both terms are in the graph, so every SP record
+    # is numeric; a status with no number would be a defect on this workspace.
+    assert all(c.sp_term.status in ("COMPUTED", "COMPUTED_PARTIAL")
+               for c in result.candidates), (
+        "an SP record has no number over a verified table: "
+        f"{sorted({c.sp_term.status for c in result.candidates})}")
     # **The diagnosis names what produced it** (contract M3c): the checkpoint
     # this probe trained, by the digest of its own read; the graph and manifest
     # the workspace check verified; the table whose sidecar the probe read,

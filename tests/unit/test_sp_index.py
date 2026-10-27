@@ -97,7 +97,7 @@ def both(columns, max_hops=MAX_HOPS):
 
 
 def agree(lookup, reference, phenotypes, candidates, target_type_idx):
-    got_d, got_a = sp_mean_distances(lookup, phenotypes, candidates, target_type_idx)
+    got_d, got_a, got_u = sp_mean_distances(lookup, phenotypes, candidates, target_type_idx)
     want_d, want_a = sp_mean_distances_reference(
         reference, phenotypes, candidates, target_type_idx
     )
@@ -106,6 +106,16 @@ def agree(lookup, reference, phenotypes, candidates, target_type_idx):
         f"index {got_d.tolist()} vs reference {want_d.tolist()}"
     )
     assert torch.equal(got_a, want_a)
+    # The unreachable pairs (Spec 1 §3.4), checked against the reference one
+    # phenotype at a time: a lone phenotype's mean is the unreachable distance
+    # exactly when it has no path, since a reachable one is at most max_hops.
+    want_u = torch.zeros(len(candidates), dtype=torch.int64)
+    if len(phenotypes) and len(candidates):
+        for phenotype in phenotypes:
+            alone, _ = sp_mean_distances_reference(
+                reference, [phenotype], candidates, target_type_idx)
+            want_u += (alone == lookup.unreachable_distance).to(torch.int64)
+    assert torch.equal(got_u, want_u), (got_u.tolist(), want_u.tolist())
     return got_d
 
 
@@ -220,12 +230,12 @@ class TestAvailableStaysNarrow:
     def test_it_is_false_only_when_there_was_nothing_to_measure_from(self):
         lookup, reference = both(build_columns())
         for phenotypes, candidates in (([], [0, 1]), ([0, 1], [])):
-            _, available = sp_mean_distances(lookup, phenotypes, candidates, 0)
+            _, available, _count = sp_mean_distances(lookup, phenotypes, candidates, 0)
             assert not available.any()
 
     def test_a_candidate_nothing_reaches_is_still_available(self):
         lookup, _ = both(build_columns(n_phenotypes=2, n_targets=4))
-        distances, available = sp_mean_distances(lookup, [0, 1], [900], 0)
+        distances, available, _count = sp_mean_distances(lookup, [0, 1], [900], 0)
         assert bool(available[0]) is True
         assert distances.tolist() == [MAX_HOPS + 1]
 

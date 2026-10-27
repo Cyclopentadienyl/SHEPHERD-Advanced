@@ -195,7 +195,7 @@ def _legacy_sp_score(phenotype_indices, target_idx, target_type_idx):
 @pytest.mark.parametrize("phenotypes", [[0], [0, 1], [0, 1, 2], [2]])
 @pytest.mark.parametrize("target_idx", [5, 7, 8, 99])
 def test_sp_score_matches_the_legacy_formula(lookup, phenotypes, target_idx):
-    distances, available = sp_mean_distances(lookup, phenotypes, [target_idx], 1)
+    distances, available, _unreachable = sp_mean_distances(lookup, phenotypes, [target_idx], 1)
 
     assert bool(available[0])
     assert float(sp_scores_from_distances(distances)[0]) == pytest.approx(
@@ -206,8 +206,8 @@ def test_sp_score_matches_the_legacy_formula(lookup, phenotypes, target_idx):
 def test_target_type_is_part_of_the_match(lookup):
     """Target 9 exists for phenotype 0 but as a gene, not a disease. Asking for
     the disease must not find it."""
-    as_disease, _ = sp_mean_distances(lookup, [0], [9], 1)
-    as_gene, _ = sp_mean_distances(lookup, [0], [9], 0)
+    as_disease, _, _unreachable = sp_mean_distances(lookup, [0], [9], 1)
+    as_gene, _, _unreachable = sp_mean_distances(lookup, [0], [9], 0)
 
     assert float(as_disease[0]) == 6.0   # unreachable: max_hops + 1
     assert float(as_gene[0]) == 1.0
@@ -217,7 +217,7 @@ def test_a_phenotype_with_no_slice_counts_as_unreachable(lookup):
     """Phenotype 2 has no entry in the table at all. It contributes the
     unreachable distance rather than being silently dropped, which would let a
     candidate look closer than it is."""
-    with_missing, _ = sp_mean_distances(lookup, [0, 2], [5], 1)
+    with_missing, _, _unreachable = sp_mean_distances(lookup, [0, 2], [5], 1)
 
     assert float(with_missing[0]) == pytest.approx((2.0 + 6.0) / 2.0)
 
@@ -226,7 +226,7 @@ def test_all_unreachable_is_still_a_computed_value(lookup):
     """The distinction C9 turns on: a candidate every one of whose phenotypes is
     unreachable has a real value — the largest one — and is NOT the same as a
     candidate that could not be evaluated."""
-    distances, available = sp_mean_distances(lookup, [0, 1], [12345], 1)
+    distances, available, _unreachable = sp_mean_distances(lookup, [0, 1], [12345], 1)
 
     assert bool(available[0]), "unreachable is a distance, not an absence"
     assert float(distances[0]) == 6.0
@@ -236,7 +236,7 @@ def test_all_unreachable_is_still_a_computed_value(lookup):
 def test_no_phenotypes_is_unavailable_not_zero_distance(lookup):
     """With nothing to measure from, there is no distance. The mask says so
     rather than the value pretending to."""
-    _, available = sp_mean_distances(lookup, [], [5], 1)
+    _, available, _unreachable = sp_mean_distances(lookup, [], [5], 1)
 
     assert not bool(available[0])
 
@@ -244,17 +244,17 @@ def test_no_phenotypes_is_unavailable_not_zero_distance(lookup):
 def test_sp_batch_matches_one_at_a_time(lookup):
     targets = [5, 7, 8, 99]
 
-    batched, _ = sp_mean_distances(lookup, [0, 1], targets, 1)
+    batched, _, _unreachable = sp_mean_distances(lookup, [0, 1], targets, 1)
 
     for position, target in enumerate(targets):
-        single, _ = sp_mean_distances(lookup, [0, 1], [target], 1)
+        single, _, _unreachable = sp_mean_distances(lookup, [0, 1], [target], 1)
         assert float(single[0]) == pytest.approx(float(batched[position]), abs=ATOL)
 
 
 def test_computed_scores_stay_inside_the_documented_range(lookup):
     """[1/7, 1/2] at max_hops = 5 — never 0, which is why 0.0 as an
     unavailable sentinel is indistinguishable from nothing real."""
-    distances, _ = sp_mean_distances(lookup, [0, 1], [5, 7, 8, 99], 1)
+    distances, _, _unreachable = sp_mean_distances(lookup, [0, 1], [5, 7, 8, 99], 1)
     scores = sp_scores_from_distances(distances)
 
     assert float(scores.min()) >= 1.0 / 7.0 - ATOL
@@ -292,8 +292,8 @@ def test_scores_are_deterministic(embeddings, lookup):
 
     first = cosine_scores(patient, embeddings)
     second = cosine_scores(patient, embeddings)
-    d1, _ = sp_mean_distances(lookup, [0, 1], [5, 7], 1)
-    d2, _ = sp_mean_distances(lookup, [0, 1], [5, 7], 1)
+    d1, _, _unreachable = sp_mean_distances(lookup, [0, 1], [5, 7], 1)
+    d2, _, _unreachable = sp_mean_distances(lookup, [0, 1], [5, 7], 1)
 
     assert torch.equal(first, second)
     assert torch.equal(d1, d2)
@@ -316,7 +316,7 @@ def test_exact_ties_break_by_candidate_order():
 def test_pipeline_gnn_score_routes_through_the_primitive(monkeypatch):
     """A correct primitive that nobody calls prevents no drift.
 
-    Replace `cosine_scores` and assert the pipeline's score follows it. The
+    Replace `cosine_scores` and assert the pipeline's model term follows it. The
     pipeline imports the primitives lazily inside the method, so patching the
     module attribute is what the call actually resolves.
     """
@@ -335,10 +335,9 @@ def test_pipeline_gnn_score_routes_through_the_primitive(monkeypatch):
         _node_embeddings={"phenotype": torch.randn(5, 4), "disease": torch.randn(5, 4)},
         _node_id_to_idx={"phenotype": {"hpo:HP:0000001": 0}, "disease": {"mondo:D1": 1}},
     )
-    source = NodeID(source=DataSource.HPO, local_id="HP:0000001")
     target = NodeID(source=DataSource.MONDO, local_id="D1")
 
-    score = DiagnosisPipeline._calculate_gnn_score(fake, [source], target, None)
+    score = DiagnosisPipeline._calculate_gnn_score(fake, torch.randn(4), target)
 
     # (0.5 + 1) / 2 — the patched cosine, carried through the normalisation.
     assert score == pytest.approx(0.75, abs=ATOL)
@@ -466,53 +465,97 @@ def _ids():
     )
 
 
-def test_pipeline_sp_score_routes_through_both_sp_primitives(monkeypatch, lookup):
+def _record(score, status="COMPUTED"):
+    """A numeric SP record carrying `score`, as the mixture reads it."""
+    from src.core.types import MAPPED_ONLY_DENOMINATOR, SPAnalysisRecord
+
+    return SPAnalysisRecord(
+        status=status, phenotypes_submitted=1, phenotypes_mapped=1, max_hops=5,
+        mean_hop_distance=1.0 / score - 1.0 if score else 5.0, score=score,
+        unreachable_pair_count=0, denominator_policy=MAPPED_ONLY_DENOMINATOR)
+
+
+def test_the_one_sp_caller_routes_through_both_sp_primitives(monkeypatch, lookup):
+    """`sp_analysis_records` is the one SP caller (Spec 1 §2.2): it passes the
+    resolved indices to the lookup and the lookup's distances to the transform."""
     import src.inference.scoring as scoring
     import src.inference.sp_index as sp_index
-    from src.inference.pipeline import DiagnosisPipeline
 
     seen = {}
 
     def fake_distances(lk, phenotypes, targets, target_type):
         seen["called"] = (list(phenotypes), list(targets), target_type)
-        return torch.tensor([3.0]), torch.tensor([True])
+        return (torch.tensor([3.0], dtype=torch.float64), torch.tensor([True]),
+                torch.tensor([0]))
 
     monkeypatch.setattr(sp_index, "sp_mean_distances", fake_distances)
     monkeypatch.setattr(scoring, "sp_scores_from_distances", lambda d: d * 100.0)
 
     source, target = _ids()
-    got = DiagnosisPipeline._calculate_sp_score(
-        _sp_ready_pipeline_stub(lookup), [source], target, 1
-    )
+    stub = _sp_ready_pipeline_stub(lookup)
+    [record] = sp_index.sp_analysis_records(
+        lookup, stub._node_id_to_idx, [str(source)], [str(target)], 1)
 
-    assert seen["called"] == ([0], [5], 1), "the pipeline must pass resolved indices"
-    assert got == pytest.approx(300.0), "and must return what the transform gave it"
+    assert seen["called"] == ([0], [5], 1), "the caller must pass resolved indices"
+    assert record.status == "COMPUTED"
+    assert (record.mean_hop_distance, record.score) == (3.0, 300.0), (
+        "and must carry what the lookup and the transform gave it")
 
 
-def test_pipeline_sp_score_honours_the_availability_mask(monkeypatch, lookup):
-    """Unavailable collapses to 0.0 in this legacy wrapper. That is the behaviour
-    being preserved, not the behaviour being endorsed — see the module docstring."""
+def test_each_unavailable_sp_state_is_a_status_with_no_number(monkeypatch, lookup):
+    """The legacy wrapper returned 0.0 for each of these (policy C9). Each is now
+    its own status, the numbers absent, and the lookup is never asked: nothing
+    was measured, so nothing can stand in for a measurement."""
     import src.inference.sp_index as sp_index
-    from src.inference.pipeline import DiagnosisPipeline
 
-    monkeypatch.setattr(
-        sp_index, "sp_mean_distances",
-        lambda *a, **k: (torch.tensor([3.0]), torch.tensor([False])),
-    )
+    def never(*args, **kwargs):
+        raise AssertionError("the lookup was called for a candidate it cannot measure")
+
+    monkeypatch.setattr(sp_index, "sp_mean_distances", never)
+    source, target = _ids()
+    mapping = _sp_ready_pipeline_stub(lookup)._node_id_to_idx
+    cases = {
+        "NO_TABLE": sp_index.sp_analysis_records(None, mapping, [str(source)], [str(target)], 1),
+        "TARGET_UNMAPPED": sp_index.sp_analysis_records(
+            lookup, mapping, [str(source)], ["mondo:ELSEWHERE"], 1),
+        "NO_PHENOTYPE_MAPPED": sp_index.sp_analysis_records(
+            lookup, mapping, ["hpo:HP:9999999"], [str(target)], 1),
+    }
+    for status, [record] in cases.items():
+        assert record.status == status
+        assert not record.numeric
+        assert (record.mean_hop_distance, record.score, record.unreachable_pair_count,
+                record.denominator_policy, record.mixed_as) == (None,) * 5
+    assert cases["NO_TABLE"][0].max_hops is None
+    assert cases["TARGET_UNMAPPED"][0].max_hops == lookup.max_hops
+    # The phenotype no node was found for is named, never counted as mapped.
+    assert cases["NO_PHENOTYPE_MAPPED"][0].unmapped_ids == ("hpo:HP:9999999",)
+    assert cases["NO_PHENOTYPE_MAPPED"][0].phenotypes_mapped == 0
+
+
+def test_a_partial_record_names_its_coverage(lookup):
+    """COMPUTED_PARTIAL is numeric, over the mapped phenotypes only, and says how
+    many of the submitted ones those are (Spec 1 §3.4). `status != COMPUTED` is
+    not a test for unavailability."""
+    from src.inference.sp_index import sp_analysis_records
 
     source, target = _ids()
-    got = DiagnosisPipeline._calculate_sp_score(
-        _sp_ready_pipeline_stub(lookup), [source], target, 1
-    )
+    mapping = _sp_ready_pipeline_stub(lookup)._node_id_to_idx
+    [full] = sp_analysis_records(lookup, mapping, [str(source)], [str(target)], 1)
+    [partial] = sp_analysis_records(lookup, mapping, [str(source)], [str(target)], 1,
+                                    unmapped_ids=["HP:9999999", "HP:9999999"])
 
-    assert got == 0.0
+    assert partial.status == "COMPUTED_PARTIAL" and partial.numeric
+    assert (partial.phenotypes_mapped, partial.phenotypes_submitted) == (1, 2)
+    assert partial.unmapped_ids == ("HP:9999999",)
+    assert partial.score == full.score and partial.mean_hop_distance == full.mean_hop_distance
 
 
-def test_pipeline_combined_score_routes_through_the_mixture(monkeypatch, lookup):
-    """Routing, and the dtype the wrapper hands over.
+def test_the_served_score_routes_through_the_mixture(monkeypatch, lookup):
+    """Routing, and the dtype the mixture is handed.
 
-    The dtype assertion pins the *mechanism* of the float32 fix: the wrapper is
-    the only place that chooses how the two Python doubles are widened into
+    The dtype assertion pins the *mechanism* of the float32 fix: `_served_score`
+    is the only place that chooses how the two Python doubles are widened into
     tensors, and a `torch.tensor([x])` without a dtype gives float32. On its own
     it is a white-box check and would not notice a value rounded before the
     tensor was built — the two tests after this one cover that.
@@ -522,28 +565,38 @@ def test_pipeline_combined_score_routes_through_the_mixture(monkeypatch, lookup)
 
     stub = _sp_ready_pipeline_stub(lookup)
     stub.config = type("C", (), {"eta": 0.7})()
-    stub._calculate_gnn_score = lambda *a, **k: 0.8
-    stub._calculate_sp_score = lambda *a, **k: 0.2
-
     seen = {}
 
     def fake_mixture(embedding_scores, sp_scores, eta):
-        seen["dtypes"] = (embedding_scores.dtype, sp_scores.dtype)
+        seen["inputs"] = (embedding_scores.dtype, sp_scores.dtype,
+                          float(embedding_scores[0]), float(sp_scores[0]))
         return torch.tensor([42.0])
 
     monkeypatch.setattr(scoring, "mix_embedding_and_sp_scores", fake_mixture)
 
-    source, target = _ids()
-    combined, emb, sp = DiagnosisPipeline._calculate_combined_score(
-        stub, [source], target, None
+    served = DiagnosisPipeline._served_score(stub, 0.8, _record(0.2))
+
+    assert served == pytest.approx(42.0), "the served score must use the primitive"
+    assert seen["inputs"] == (torch.float64, torch.float64, 0.8, 0.2), (
+        "the components go in unchanged and widened to float64; float32 would round "
+        "the incoming doubles to ~7 significant digits"
     )
 
-    assert combined == pytest.approx(42.0), "the wrapper must use the primitive"
-    assert (emb, sp) == (0.8, 0.2), "and must report the components unchanged"
-    assert seen["dtypes"] == (torch.float64, torch.float64), (
-        "the wrapper must widen to float64; float32 would round the incoming "
-        "doubles to ~7 significant digits"
-    )
+
+def test_a_non_numeric_status_is_mixed_as_its_stated_zero(lookup):
+    """The legacy ranking is kept (Spec 1 §2.1): a non-numeric status enters the
+    mixture as its `mixed_as`, 0.0, exactly as the 0.0 the wrapper returned did."""
+    from dataclasses import replace
+
+    from src.core.types import SPAnalysisRecord
+    from src.inference.pipeline import DiagnosisPipeline
+
+    stub = _sp_ready_pipeline_stub(lookup)
+    stub.config = type("C", (), {"eta": 0.7})()
+    unmapped = replace(SPAnalysisRecord(status="TARGET_UNMAPPED", phenotypes_submitted=1,
+                                        phenotypes_mapped=1, max_hops=5), mixed_as=0.0)
+
+    assert DiagnosisPipeline._served_score(stub, 0.8, unmapped) == _legacy_mixture(0.7, 0.8, 0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -554,54 +607,46 @@ def test_pipeline_combined_score_routes_through_the_mixture(monkeypatch, lookup)
 # the production wrapper, which is where the float32 regression lived: reverting
 # `pipeline.py` to `torch.tensor([emb_score])` left every one of them passing.
 # The three tests below drive the wrapper itself.
-def _combined_score_stub(lookup, eta, emb, sp):
+def _served_score_stub(lookup, eta):
     stub = _sp_ready_pipeline_stub(lookup)
     stub.config = type("C", (), {"eta": eta})()
-    stub._calculate_gnn_score = lambda *a, **k: emb
-    stub._calculate_sp_score = lambda *a, **k: sp
     return stub
 
 
 @pytest.mark.parametrize("eta", [0.0, 0.3, 0.7, 1.0, 0.123456789])
-def test_combined_score_wrapper_is_exactly_the_legacy_arithmetic(lookup, eta):
-    """`_calculate_combined_score` must return the Python-double result, bit for
-    bit — not a value within tolerance of it.
+def test_served_score_is_exactly_the_legacy_arithmetic(lookup, eta):
+    """`_served_score` must return the Python-double result, bit for bit — not a
+    value within tolerance of it.
 
     This is the black-box form of the dtype check above: it fails for any loss of
-    precision inside the wrapper, whether from the tensor dtype or from anything
+    precision inside the mixture, whether from the tensor dtype or from anything
     else introduced later.
     """
     import random
 
     from src.inference.pipeline import DiagnosisPipeline
 
-    source, target = _ids()
+    stub = _served_score_stub(lookup, eta)
     random.seed(20260818)
     for _ in range(2000):
         emb, sp = random.random(), random.random()
 
-        combined, _, _ = DiagnosisPipeline._calculate_combined_score(
-            _combined_score_stub(lookup, eta, emb, sp), [source], target, None
-        )
+        served = DiagnosisPipeline._served_score(stub, emb, _record(sp))
 
-        assert combined == _legacy_mixture(eta, emb, sp)
+        assert served == _legacy_mixture(eta, emb, sp)
 
 
-def test_combined_score_wrapper_keeps_a_sub_float32_distinction(lookup):
+def test_served_score_keeps_a_sub_float32_distinction(lookup):
     """Two candidates closer together than a float32 step stay distinct through
-    the wrapper. Under the regression they became an exact tie."""
+    the mixture. Under the regression they became an exact tie."""
     from src.inference.pipeline import DiagnosisPipeline
 
-    source, target = _ids()
-    scores = [
-        DiagnosisPipeline._calculate_combined_score(
-            _combined_score_stub(lookup, 0.7, emb, 0.3), [source], target, None
-        )[0]
-        for emb in (NEAR_TIE_A, NEAR_TIE_B)
-    ]
+    stub = _served_score_stub(lookup, 0.7)
+    scores = [DiagnosisPipeline._served_score(stub, emb, _record(0.3))
+              for emb in (NEAR_TIE_A, NEAR_TIE_B)]
 
     assert scores[0] != scores[1], (
-        "the wrapper collapsed a real difference — this is the regression"
+        "the mixture collapsed a real difference — this is the regression"
     )
     assert scores[1] > scores[0]
 
@@ -621,7 +666,7 @@ def _multi_phenotype_ids():
     ]
 
 
-def test_sp_score_wrapper_is_exactly_the_legacy_arithmetic(lookup):
+def test_the_sp_record_is_exactly_the_legacy_arithmetic(lookup):
     """The same contract, one function away — and it was broken by the extraction.
 
     Before `337266f` the pipeline accumulated the total and computed
@@ -636,40 +681,55 @@ def test_sp_score_wrapper_is_exactly_the_legacy_arithmetic(lookup):
     would still fail against a float32 implementation, but only because the
     reciprocal transform rounds, which is a different and weaker property.
     """
-    from src.inference.pipeline import DiagnosisPipeline
+    from src.inference.sp_index import sp_analysis_records
 
     phenotypes = _multi_phenotype_ids()
     _, target = _ids()
-    stub = _sp_ready_pipeline_stub(lookup)
-    stub._node_id_to_idx = {
-        "phenotype": {str(nid): i for i, nid in enumerate(phenotypes)},
-        "disease": {str(target): 5},
-    }
+    mapping = {"phenotype": {str(nid): i for i, nid in enumerate(phenotypes)},
+               "disease": {str(target): 5}}
 
-    got = DiagnosisPipeline._calculate_sp_score(stub, phenotypes, target, 1)
+    [record] = sp_analysis_records(lookup, mapping, [str(p) for p in phenotypes],
+                                   [str(target)], 1)
 
-    assert got == _legacy_sp_score([0, 1, 2], 5, 1)
+    assert record.status == "COMPUTED"
+    assert record.score == _legacy_sp_score([0, 1, 2], 5, 1)
+    assert record.mean_hop_distance == 11.0 / 3.0
+    # Phenotype 2 has no slice, so one pair of the three is unreachable.
+    assert record.unreachable_pair_count == 1
     # Named so a change to the fixture that made the mean integral would be
     # visible rather than silently weakening the test.
     assert _legacy_sp_score([0, 1, 2], 5, 1) == 1.0 / (1.0 + 11.0 / 3.0)
 
 
 @pytest.mark.parametrize("target_idx", [5, 7, 99])
-def test_sp_score_wrapper_matches_legacy_for_a_single_phenotype(lookup, target_idx):
+def test_the_sp_record_matches_legacy_for_a_single_phenotype(lookup, target_idx):
     """The integral-mean case, kept as its own test rather than folded into the
     fractional one — the two catch different failures."""
-    from src.inference.pipeline import DiagnosisPipeline
+    from src.inference.sp_index import sp_analysis_records
 
     source, target = _ids()
-    stub = _sp_ready_pipeline_stub(lookup)
-    stub._node_id_to_idx = {
-        "phenotype": {str(source): 0},
-        "disease": {str(target): target_idx},
-    }
+    mapping = {"phenotype": {str(source): 0}, "disease": {str(target): target_idx}}
 
-    got = DiagnosisPipeline._calculate_sp_score(stub, [source], target, 1)
+    [record] = sp_analysis_records(lookup, mapping, [str(source)], [str(target)], 1)
 
-    assert got == _legacy_sp_score([0], target_idx, 1)
+    assert record.score == _legacy_sp_score([0], target_idx, 1)
+
+
+def test_one_call_for_every_candidate_equals_one_call_each(lookup):
+    """Batch 4 asks for every reached candidate in one call; the distances are
+    sums of small integers, so each record is what a call for it alone gives."""
+    from src.inference.sp_index import sp_analysis_records
+
+    phenotypes = _multi_phenotype_ids()
+    targets = ["mondo:A", "mondo:B", "mondo:C"]
+    mapping = {"phenotype": {str(nid): i for i, nid in enumerate(phenotypes)},
+               "disease": dict(zip(targets, [5, 7, 99]))}
+    ids = [str(p) for p in phenotypes]
+
+    together = sp_analysis_records(lookup, mapping, ids, targets, 1)
+    alone = [sp_analysis_records(lookup, mapping, ids, [t], 1)[0] for t in targets]
+
+    assert together == alone
 
 
 def test_reducing_in_float32_then_widening_loses_the_mean(lookup):
@@ -696,23 +756,54 @@ def test_reducing_in_float32_then_widening_loses_the_mean(lookup):
 def test_sp_mean_distances_are_float64(lookup):
     """The dtype is the mechanism behind the test above; pin it directly so a
     vectorised reimplementation cannot quietly narrow it for memory."""
-    distances, _ = sp_mean_distances(lookup, [0, 1], [5, 7, 99], 1)
+    distances, _, _unreachable = sp_mean_distances(lookup, [0, 1], [5, 7, 99], 1)
 
     assert distances.dtype == torch.float64
 
 
-def test_ranking_path_keeps_a_sub_float32_distinction(lookup):
+def _ranking_stub(lookup, monkeypatch, embeddings, records, scoring_mode):
+    """`_score_and_rank_candidates` over stubbed scores: the model terms given,
+    the SP records given (by disease id), everything else inert."""
+    import src.inference.sp_index as sp_index
+    from src.inference.pipeline import DiagnosisPipeline
+
+    monkeypatch.setattr(
+        sp_index, "sp_analysis_records",
+        lambda lookup_, mapping, phenotypes, targets, target_type, unmapped_ids=():
+            [records[t] for t in targets])
+    stub = _sp_ready_pipeline_stub(lookup)
+    stub._sp_ready = scoring_mode == "gnn_plus_shortest_path"
+    stub.config = type("C", (), {"eta": 0.7})()
+    stub.kg = type("KG", (), {"get_node": staticmethod(lambda _id: None)})()
+    stub._gnn_ready = True
+    stub._scoring_mode = lambda: (scoring_mode, 0.7 if stub._sp_ready else 1.0)
+    stub._patient_embedding = lambda rows: None
+    stub._calculate_gnn_score = lambda patient, disease_id: embeddings[disease_id]
+    stub._served_score = lambda term, record: DiagnosisPipeline._served_score(
+        stub, term, record)
+    stub._calculate_reasoning_score = lambda paths: 0.0
+    stub._extract_supporting_genes = lambda paths: []
+    stub._determine_evidence_sources = lambda paths: []
+    return stub
+
+
+def _paths_to(phenotype, diseases):
+    from src.reasoning.path_reasoning import ReasoningPath
+
+    return {str(d): [ReasoningPath(nodes=[phenotype, d], edges=[])] for d in diseases}
+
+
+def test_ranking_path_keeps_a_sub_float32_distinction(lookup, monkeypatch):
     """The clinical consequence, through the real ranking code.
 
     Two candidates are separated by less than a float32 step. They are scored by
-    the real `_calculate_combined_score` and ordered by the real
-    `_score_and_rank_candidates`, whose sort is stable — so under the
-    regression the tie resolves by insertion order and the weaker candidate keeps
-    the slot. `top_k = 2` puts that tie exactly on the boundary a clinician sees.
+    the real `_served_score` and ordered by the real `_score_and_rank_candidates`,
+    whose sort is stable — so under the regression the tie resolves by insertion
+    order and the weaker candidate keeps the slot. `top_k = 2` puts that tie
+    exactly on the boundary a clinician sees.
     """
     from src.core.types import DataSource, NodeID
     from src.inference.pipeline import DiagnosisPipeline
-    from src.reasoning.path_reasoning import ReasoningPath
 
     phenotype, _ = _ids()
     strong = NodeID(source=DataSource.MONDO, local_id="STRONG")
@@ -723,26 +814,12 @@ def test_ranking_path_keeps_a_sub_float32_distinction(lookup):
     # ahead of the higher one. Python's sort is stable and `reverse=True` does
     # not reverse equal elements.
     embeddings = {strong: 0.9, lower: NEAR_TIE_A, higher: NEAR_TIE_B}
-    all_paths = {
-        str(disease): [ReasoningPath(nodes=[phenotype, disease], edges=[])]
-        for disease in (strong, lower, higher)
-    }
-
-    stub = _sp_ready_pipeline_stub(lookup)
-    stub.config = type("C", (), {"eta": 0.7})()
-    stub.kg = type("KG", (), {"get_node": staticmethod(lambda _id: None)})()
-    stub._gnn_ready = True
-    stub._calculate_gnn_score = lambda sources, disease_id, patient: embeddings[disease_id]
-    stub._calculate_sp_score = lambda *a, **k: 0.3
-    stub._calculate_combined_score = lambda *a, **k: (
-        DiagnosisPipeline._calculate_combined_score(stub, *a, **k)
-    )
-    stub._calculate_reasoning_score = lambda paths: 0.0
-    stub._extract_supporting_genes = lambda paths: []
-    stub._determine_evidence_sources = lambda paths: []
+    records = {str(d): _record(0.3) for d in embeddings}
+    stub = _ranking_stub(lookup, monkeypatch, embeddings, records, "gnn_plus_shortest_path")
 
     ranked, _ = DiagnosisPipeline._score_and_rank_candidates(
-        stub, all_paths, [phenotype], None, include_ortholog_evidence=False
+        stub, _paths_to(phenotype, embeddings), [phenotype], None,
+        include_ortholog_evidence=False, rows=[0],
     )
     shown = ranked[:2]  # `run`'s cut at top_k = 2
 
@@ -751,6 +828,33 @@ def test_ranking_path_keeps_a_sub_float32_distinction(lookup):
         "regression the tie hands it to the lower one"
     )
     assert [c.rank for c in shown] == [1, 2]
+
+
+def test_a_mixed_status_ranks_as_the_legacy_zero_did_and_says_so(lookup, monkeypatch):
+    """Forced through the ranking: a candidate whose SP status has no number is
+    still mixed as 0, so its served score and its place are the legacy ones, and
+    its record says `mixed_as` 0.0 (Spec 1 §2.1). A numeric record carries none."""
+    from src.core.types import DataSource, NodeID, SPAnalysisRecord
+    from src.inference.pipeline import DiagnosisPipeline
+
+    phenotype, _ = _ids()
+    a = NodeID(source=DataSource.MONDO, local_id="A")
+    b = NodeID(source=DataSource.MONDO, local_id="B")
+    records = {str(a): _record(0.3),
+               str(b): SPAnalysisRecord(status="TARGET_UNMAPPED", phenotypes_submitted=1,
+                                        phenotypes_mapped=1, max_hops=5)}
+    stub = _ranking_stub(lookup, monkeypatch, {a: 0.6, b: 0.8}, records,
+                         "gnn_plus_shortest_path")
+
+    ranked, _ = DiagnosisPipeline._score_and_rank_candidates(
+        stub, _paths_to(phenotype, [a, b]), [phenotype], None,
+        include_ortholog_evidence=False, rows=[0])
+    by_id = {c.disease_id: c for c in ranked}
+
+    assert by_id[b].served_score == _legacy_mixture(0.7, 0.8, 0.0)
+    assert by_id[b].sp_term.mixed_as == 0.0 and by_id[b].sp_term.score is None
+    assert by_id[a].served_score == _legacy_mixture(0.7, 0.6, 0.3)
+    assert by_id[a].sp_term.mixed_as is None
 
 
 def test_the_ranking_fixture_would_actually_catch_the_regression():
@@ -776,21 +880,27 @@ def test_the_ranking_fixture_would_actually_catch_the_regression():
     assert as_f32[0] == as_f32[1], "the fixture no longer exercises the regression"
 
 
-def test_combined_score_without_sp_is_pure_gnn(lookup):
-    """The documented degradation: no shortest-path table means effective eta=1,
-    and the SP component is reported as 0.0 rather than invented."""
+def test_without_a_table_the_model_term_ranks_alone(lookup, monkeypatch):
+    """The documented degradation, `gnn_only`: no table, so the served score is
+    the model term itself, never mixed, and every SP record is NO_TABLE with no
+    number — not the 0.0 the wrapper used to report."""
+    from src.core.types import DataSource, NodeID
     from src.inference.pipeline import DiagnosisPipeline
+    from src.inference.sp_index import sp_analysis_records
 
-    stub = _sp_ready_pipeline_stub(lookup)
-    stub._sp_ready = False
-    stub.config = type("C", (), {"eta": 0.7})()
-    stub._calculate_gnn_score = lambda *a, **k: 0.8
+    phenotype, _ = _ids()
+    disease = NodeID(source=DataSource.MONDO, local_id="D1")
+    [no_table] = sp_analysis_records(None, {}, [str(phenotype)], [str(disease)], 1)
+    stub = _ranking_stub(lookup, monkeypatch, {disease: 0.8}, {str(disease): no_table},
+                         "gnn_only")
 
-    source, target = _ids()
+    [candidate], _ = DiagnosisPipeline._score_and_rank_candidates(
+        stub, _paths_to(phenotype, [disease]), [phenotype], None,
+        include_ortholog_evidence=False, rows=[0])
 
-    assert DiagnosisPipeline._calculate_combined_score(
-        stub, [source], target, None
-    ) == (0.8, 0.8, 0.0)
+    assert candidate.served_score == candidate.model_term == 0.8
+    assert candidate.sp_term.status == "NO_TABLE"
+    assert candidate.sp_term.score is None and candidate.sp_term.mixed_as is None
 
 
 # ---------------------------------------------------------------------------

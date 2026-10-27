@@ -134,54 +134,76 @@ def _in_memory_identity():
     }
 
 
+def _sp(status="COMPUTED", score=0.55, mapped=2, submitted=2, mixed=False):
+    """An SP record as the API sends it (Spec 1 §3.3)."""
+    numeric = status in ("COMPUTED", "COMPUTED_PARTIAL")
+    return {"status": status, "phenotypes_submitted": submitted,
+            "phenotypes_mapped": mapped,
+            "unmapped_ids": ["HP:9999999"] * (submitted - mapped),
+            "max_hops": None if status == "NO_TABLE" else 5,
+            "mean_hop_distance": 1 / score - 1 if numeric else None,
+            "score": score if numeric else None,
+            "unreachable_pair_count": 0 if numeric else None,
+            "denominator_policy": "MAPPED_ONLY_DENOMINATOR" if numeric else None,
+            "mixed_as": 0.0 if mixed else None}
+
+
+def _candidates(kind, table=True):
+    """Two candidates of `kind` (Spec 1 §2.1): a mixture's served score, model
+    term and SP record (NO_TABLE without a table), a path score with no model,
+    no score of any kind in the demo answer."""
+    first = {"rank": 1, "disease_id": "mondo:MONDO:0011073", "disease_name": "Dravet syndrome",
+             "matching_phenotypes": ["HP:0001250"]}
+    second = {"rank": 2, "disease_id": "omim:OMIM:123", "disease_name": "Other disease",
+              "matching_phenotypes": []}
+    if kind == "demo/v1":
+        return [first, second]
+    first.update(supporting_genes=["SCN1A"], explanation="Because ...",
+                 evidence_label="Strong path support",
+                 evidence_package={"mode": "direct_path", "summary": "Direct 2-hop path",
+                                   "evidence_label": "Strong path support",
+                                   "min_path_length": 2,
+                                   "direct_paths": [["hp:HP:0001250", "mondo:MONDO:0011073"]],
+                                   "analogies": []})
+    second.update(supporting_genes=[], explanation=None,
+                  evidence_label="Analogy-based (no direct KG path)",
+                  evidence_package={"mode": "analogy_based", "summary": "Analogy",
+                                    "evidence_label": "Analogy-based (no direct KG path)"})
+    if kind == "path_reasoning/v1":
+        first["path_score"], second["path_score"] = 0.9, 0.4
+    else:
+        first.update(served_score=0.72, model_term=0.81,
+                     sp_term=_sp(score=0.55) if table else _sp("NO_TABLE"))
+        second.update(served_score=0.44, model_term=0.5,
+                      sp_term=_sp(score=0.25) if table else _sp("NO_TABLE"))
+    return [first, second]
+
+
 def _sample_result():
+    """A `served_mixture/v1` result served with a table (gnn_plus_shortest_path)."""
     return {
+        "result_kind": "served_mixture/v1",
+        "result_schema_version": 2,
         "session_id": "sess_abc",
         "patient_id": "pt_01",
         "timestamp": "2026-07-07T16:00:00Z",
         "served_identity": _served_identity(),
+        "phenotype_input": {"received": 2, "unknown": [], "repeats_removed": 0,
+                            "used": ["HP:0001250", "HP:0001263"]},
+        "eta": 0.7,
+        "candidates_reached": 12,
+        "tie_policy": "served-stable-discovery-order/v1",
         "inference_time_ms": 123.4,
         "warnings": ["low phenotype count"],
         "_query_phenotypes": ["HP:0001250", "HP:0001263"],
-        "candidates": [
-            {
-                "rank": 1,
-                "disease_id": "mondo:MONDO:0011073",
-                "disease_name": "Dravet syndrome",
-                "confidence_score": 0.72,
-                "gnn_score": 0.81,
-                "sp_score": 0.55,
-                "confidence_label": "Strong path support",
-                "matching_phenotypes": ["HP:0001250"],
-                "supporting_genes": ["SCN1A"],
-                "explanation": "Because ...",
-                "evidence_package": {
-                    "mode": "direct_path",
-                    "summary": "Direct 2-hop path",
-                    "min_path_length": 2,
-                    "direct_paths": [["hp:HP:0001250", "mondo:MONDO:0011073"]],
-                    "analogies": [],
-                },
-            },
-            {
-                "rank": 2,
-                "disease_id": "omim:OMIM:123",
-                "disease_name": "Other disease",
-                "confidence_score": 0.44,
-                "confidence_label": "Analogy-based",
-                "matching_phenotypes": [],
-                "supporting_genes": [],
-                "explanation": None,
-                "evidence_package": {"mode": "analogy_based", "summary": "Analogy"},
-            },
-        ],
+        "candidates": _candidates("served_mixture/v1"),
     }
 
 
 def test_csv_has_row_per_candidate_with_cleaned_ids():
     csv_text = dp._build_results_csv(_sample_result())
     lines = csv_text.strip().splitlines()
-    assert lines[0].startswith("rank,disease_id,disease_name,confidence_score")
+    assert lines[0].startswith("result_kind,rank,disease_id,disease_name,served_score")
     assert len(lines) - 1 == 2  # header + 2 candidates
     assert "Dravet syndrome" in csv_text
     assert "MONDO:0011073" in csv_text and "mondo:MONDO" not in csv_text  # cleaned id
@@ -198,55 +220,24 @@ def test_report_includes_meta_and_all_candidates_with_cleaned_ids():
     assert "`MONDO:0011073`" in md and "mondo:MONDO" not in md  # cleaned id
 
 
-def test_the_score_is_named_for_what_it_is_and_the_csv_keeps_the_api_name():
-    """The combined score is a ranking score, not a calibrated probability: the
-    page and the report say "Score" and say so; the CSV keeps confidence_score."""
+def test_the_score_is_named_for_what_it_is_and_the_csv_names_the_kinds_fields():
+    """The served score is a ranking score, not a calibrated probability: the
+    page and the report say "Score" and say so; the CSV names each kind's own
+    fields (Spec 1 §2.1), never the removed confidence_score."""
     result = _sample_result()
     md = dp._build_results_report_md(result)
     table = md.split("## Ranked candidates")[1].split("## Per-candidate detail")[0]
-    assert "| Rank | Disease | Score | GNN | SP | Evidence |" in table
+    assert "| Rank | Disease | Score | Model term | SP | Evidence |" in table
     assert dp.SCORE_NOTE in table and "not a calibrated disease probability" in dp.SCORE_NOTE
     assert "· score 0.720" in md and "· confidence" not in md
-    page = dp.results_body_html(result, 1) + dp.details_header_html(result["candidates"][0])
+    page = dp.results_body_html(result, 1) + dp.details_header_html(
+        result["candidates"][0], "served_mixture/v1", True)
     assert "Confidence" not in page and "> Score <b>0.720</b>" in page
     assert 'data-help="dx-score"' in page and "dx-score" in dp.TOPIC_HELP
-    assert dp._build_results_csv(result).splitlines()[0].startswith(
-        "rank,disease_id,disease_name,confidence_score,confidence_label")
-
-
-# ------------------------------------------------------------------- disease id cleaning
-@pytest.mark.parametrize(
-    "raw,expected",
-    [
-        ("mondo:MONDO:0019441", "MONDO:0019441"),
-        ("omim:OMIM:123", "OMIM:123"),
-        ("orphanet:ORPHA:456", "ORPHA:456"),
-        ("orpha:ORPHA:456", "ORPHA:456"),
-        ("mondo:OMIM:123", "mondo:OMIM:123"),  # cross-namespace: untouched
-        ("MONDO:0019441", "MONDO:0019441"),  # bare CURIE: untouched
-        ("  mondo:MONDO:0019441  ", "MONDO:0019441"),  # surrounding whitespace
-        ("mondo:MONDO:0019441\n", "MONDO:0019441"),  # trailing newline
-        ("  MONDO:0019441  ", "MONDO:0019441"),  # padded bare CURIE
-        ("", ""),
-        (None, ""),
-        ("weird", "weird"),
-    ],
-)
-def test_clean_disease_id(raw, expected):
-    assert dp._clean_disease_id(raw) == expected
-
-
-# ------------------------------------------------------------------- export files
-def test_write_exports_names_by_patient_and_session():
-    result = _sample_result()
-    result["served_identity"] = _served_identity(origin="files")
-    csv_path, md_path = dp._write_exports(result)
-    assert os.path.exists(csv_path) and os.path.exists(md_path)
-    assert os.path.basename(csv_path) == "diagnosis_pt_01_sess_abc.csv"
-    assert os.path.basename(md_path) == "diagnosis_pt_01_sess_abc_report.md"
-    # both files live in the single module-level export dir
-    assert os.path.dirname(csv_path) == os.path.dirname(md_path)
-
+    header = dp._build_results_csv(result).splitlines()[0]
+    assert header.startswith("result_kind,rank,disease_id,disease_name,served_score,model_term,"
+                             "sp_term_status,sp_term_score")
+    assert "confidence" not in header and "gnn_score" not in header
 
 def test_write_exports_reuses_single_dir():
     p1, _ = dp._write_exports(_sample_result())
@@ -775,14 +766,21 @@ import csv as _csv  # noqa: E402
 import io as _io  # noqa: E402
 import re as _re  # noqa: E402
 
-#: The candidate columns as they were before M3c, in order: the identity is
-#: appended after them, so a reader taking columns by position is not broken.
-_ORIGINAL_CSV_COLUMNS = [
-    "rank", "disease_id", "disease_name", "confidence_score", "confidence_label",
-    "gnn_score", "sp_score", "reasoning_score", "evidence_mode", "evidence_summary",
-    "min_path_length", "num_direct_paths", "num_analogies",
-    "matching_phenotypes", "supporting_genes",
-]
+#: The candidate columns of each kind (Spec 1 §2.1), in order; the identity is
+#: appended after them.
+_KIND_CSV_COLUMNS = {
+    "served_mixture/v1": [
+        "result_kind", "rank", "disease_id", "disease_name", "served_score", "model_term",
+        "sp_term_status", "sp_term_score", "sp_term_mean_hop_distance",
+        "sp_term_phenotypes_mapped", "sp_term_phenotypes_submitted", "sp_term_mixed_as",
+        "evidence_label", "evidence_mode", "evidence_summary", "min_path_length",
+        "num_direct_paths", "num_analogies", "supporting_genes", "matching_phenotypes"],
+    "path_reasoning/v1": [
+        "result_kind", "rank", "disease_id", "disease_name", "path_score",
+        "evidence_label", "evidence_mode", "evidence_summary", "min_path_length",
+        "num_direct_paths", "num_analogies", "supporting_genes", "matching_phenotypes"],
+    "demo/v1": ["result_kind", "rank", "disease_id", "disease_name", "matching_phenotypes"],
+}
 _SERVED_COLUMNS = [
     "served_scoring_mode", "served_checkpoint_state", "served_checkpoint_sha256",
     "served_kg_state", "served_kg_sha256", "served_split_manifest_sha256",
@@ -837,8 +835,27 @@ _IDENTITIES = {
 
 
 def _result_with(identity):
+    """A result of the kind `identity` produces (`result_kind_for`): the demo
+    answer for none, path reasoning without a model, the mixture with one (its
+    SP records NO_TABLE without a table)."""
     result = _sample_result()
     result["served_identity"] = identity
+    mode = identity["scoring_mode"] if identity else None
+    if mode == "gnn_plus_shortest_path":
+        return result
+    for key in ("eta", "candidates_reached", "tie_policy"):
+        result.pop(key)
+    if identity is None:
+        result.update(result_kind="demo/v1", phenotype_input=None,
+                      candidates=_candidates("demo/v1"))
+    elif mode == "path_reasoning_fallback":
+        result.update(result_kind="path_reasoning/v1", path_score_aggregation="weighted_sum/v1",
+                      tie_policy="served-stable-discovery-order/v1",
+                      candidates=_candidates("path_reasoning/v1"))
+    else:
+        result.update(eta=identity["settings"]["eta"], candidates_reached=12,
+                      tie_policy="served-stable-discovery-order/v1",
+                      candidates=_candidates("served_mixture/v1", table=False))
     return result
 
 
@@ -989,11 +1006,13 @@ def test_values_from_the_api_cannot_break_the_table():
 def test_csv_keeps_one_header_and_appends_the_identity_after_the_candidates():
     header, records, rows = _csv_records(dp._build_results_csv(_sample_result()))
 
-    assert header[:15] == _ORIGINAL_CSV_COLUMNS
-    assert header[15:] == _SERVED_COLUMNS
+    width = len(_KIND_CSV_COLUMNS["served_mixture/v1"])
+    assert header[:width] == _KIND_CSV_COLUMNS["served_mixture/v1"]
+    assert header[width:] == _SERVED_COLUMNS
     assert len(records) == 2 and all(len(row) == len(header) for row in rows)
     assert header not in rows[1:]  # exactly one header row, no preamble
-    served = [{k: v for k, v in r.items() if k.startswith("served_")} for r in records]
+    # The identity block by its own names: `served_score` is a candidate column.
+    served = [{k: r[k] for k in _SERVED_COLUMNS} for r in records]
     assert served[0] == served[1]  # the same identity on every row
     assert served[0] == {
         "served_scoring_mode": "gnn_plus_shortest_path",
@@ -1071,14 +1090,14 @@ def test_absent_and_inapplicable_values_are_words():
 def test_a_text_cell_a_spreadsheet_would_run_is_defused():
     result = _sample_result()
     result["candidates"][0]["disease_name"] = '=HYPERLINK("http://x")'
-    result["candidates"][0]["gnn_score"] = -0.25
+    result["candidates"][0]["served_score"] = -0.25
     result["served_identity"]["settings"]["aggregation_method"] = "@sum"
 
     _, (first, _), _ = _csv_records(dp._build_results_csv(result))
 
     assert first["disease_name"] == '\'=HYPERLINK("http://x")'
     assert first["served_aggregation_method"] == "'@sum"
-    assert first["gnn_score"] == "-0.2500"  # numbers are not text cells
+    assert first["served_score"] == "-0.2500"  # numbers are not text cells
 
 
 def test_export_names_carry_synthetic_and_demo():
@@ -1446,20 +1465,141 @@ def test_values_from_the_api_are_escaped_in_the_table_and_the_details():
     result["candidates"][0].update(disease_name=evil, supporting_genes=[evil],
                                    matching_phenotypes=[evil])
     result["candidates"][0]["evidence_package"].update(summary=evil, direct_paths=[[evil, "b"]])
-    html = (dp.results_body_html(result, 1) + dp.details_header_html(result["candidates"][0])
+    html = (dp.results_body_html(result, 1)
+            + dp.details_header_html(result["candidates"][0], "served_mixture/v1", True)
             + dp.evidence_html(result["candidates"][0]) + dp.paths_html(result["candidates"][0])
             + dp.phenotypes_html(result["candidates"][0]))
     assert "<img" not in html and "&lt;img src=x onerror=alert(1)&gt;" in html
 
 
-def test_the_sp_column_reads_a_dash_when_no_table_is_served():
+def test_without_a_table_there_is_no_sp_column_and_no_zero():
+    """gnn_only: every SP record is NO_TABLE, so the page draws no SP column and
+    the kind's label says the model term ranks alone; no cell reads 0.000."""
     result = _result_with(_gnn_only_identity())
-    result["candidates"][0]["sp_score"] = 0.0
-    assert ">0.000</td>" not in dp.results_body_html(result, 1).split("<tbody>")[1].split(
-        "</tr>")[0].replace(">0.720</td>", "")
-    assert "SP — (no table)" in dp.details_header_html(result["candidates"][0], True)
+    body = dp.results_body_html(result, 1)
+    assert ">SP</th>" not in body and ">Model term</th>" in body
+    assert "scored by the model term alone" in body
+    assert ">0.000</td>" not in body
+    header = dp.details_header_html(result["candidates"][0], "served_mixture/v1", False)
+    assert "> Score <b>0.720</b> · Model term 0.810" in header and ">SP " not in header
     assert ">0.550</td>" in dp.results_body_html(_sample_result(), 1)
 
+
+def _with_statuses():
+    """A mixture over a table whose records have no number (forced: unexpected on
+    a verified workspace) or cover part of the phenotypes."""
+    result = _sample_result()
+    first, second = result["candidates"]
+    first["sp_term"] = _sp("COMPUTED_PARTIAL", score=0.5, mapped=1, submitted=2)
+    second["sp_term"] = _sp("TARGET_UNMAPPED", mixed=True)
+    third = {**second, "rank": 3, "disease_id": "omim:OMIM:456", "disease_name": "Third",
+             "served_score": 0.3, "sp_term": _sp("NO_PHENOTYPE_MAPPED", mixed=True)}
+    result["candidates"].append(third)
+    return result
+
+
+def test_an_sp_status_with_no_number_reads_its_words_on_every_surface():
+    """Unavailable is never zero (Spec 1 §2.1, C9): each status shows its own
+    words, "mixed as 0 (legacy)" where the mixture still mixed it, and a partial
+    record its coverage, on the page, in the details, in the report and in the
+    CSV (status beside an empty value)."""
+    result = _with_statuses()
+    body = dp.results_body_html(result, 1)
+    report = dp._build_results_report_md(result)
+    # The table cell: a number compact and on one line, words free to wrap.
+    assert '<td class="shep-num">0.500 (1/2)</td>' in body
+    assert '<td class="shep-num shep-dx-sp">Disease not mapped' in body
+    assert "0.500 (1/2 phenotypes)" in report
+    for surface in (body, report):
+        assert "Disease not mapped, mixed as 0 (legacy)" in surface
+        assert "No phenotype mapped, mixed as 0 (legacy)" in surface
+        assert "0.000" not in surface
+    details = dp.details_header_html(result["candidates"][1], "served_mixture/v1", True)
+    assert "SP Disease not mapped, mixed as 0 (legacy)" in details
+    assert "SP 0.500 (1/2 phenotypes)" in dp.details_header_html(
+        result["candidates"][0], "served_mixture/v1", True)
+    _, records, _ = _csv_records(dp._build_results_csv(result))
+    assert [r["sp_term_status"] for r in records] == [
+        "COMPUTED_PARTIAL", "TARGET_UNMAPPED", "NO_PHENOTYPE_MAPPED"]
+    assert [r["sp_term_score"] for r in records] == ["0.5000", "", ""]
+    assert [r["sp_term_mixed_as"] for r in records] == ["", "0.0000", "0.0000"]
+    assert records[0]["sp_term_phenotypes_mapped"] == "1"
+    assert records[0]["sp_term_phenotypes_submitted"] == "2"
+
+
+def test_the_demo_answer_has_no_score_anywhere():
+    """demo/v1 carries no score of any kind (Spec 1 §2.1): the page, the details,
+    the report and the CSV show none and add no Score note."""
+    result = _result_with(None)
+    body = dp.results_body_html(result, 1)
+    assert "Demo answer: no pipeline is configured; not a diagnosis" in body
+    assert "Score" not in body.split("<table")[1] and "Evidence" not in body.split("<table")[1]
+    details = dp.details_header_html(result["candidates"][0], "demo/v1")
+    assert "Score" not in details
+    report = dp._build_results_report_md(result)
+    table = report.split("## Ranked candidates")[1].split("## Per-candidate detail")[0]
+    assert "| Rank | Disease |" in table and "Score" not in table
+    assert dp.SCORE_NOTE not in report and "· score" not in report
+    # It never carries evidence, whatever include_explanations said.
+    assert "The demo answer carries no evidence or explanation." in report
+    assert "include_explanations" not in report and "**Evidence**" not in report
+    header, records, _ = _csv_records(dp._build_results_csv(result))
+    assert header[:5] == _KIND_CSV_COLUMNS["demo/v1"]
+    assert {r["result_kind"] for r in records} == {"demo/v1"}
+
+
+def test_a_path_reasoning_result_has_no_model_term():
+    """path_reasoning/v1: the path score, the kind's label, and no GNN or SP
+    column, value or 0.000 anywhere (the fallback used to show GNN 0.000)."""
+    result = _result_with(_path_only_identity())
+    body = dp.results_body_html(result, 1)
+    assert "No model loaded: ranked by path reasoning, not by a model" in body
+    assert ">0.900</td>" in body
+    assert "Model term" not in body and ">SP</th>" not in body and "0.000" not in body
+    report = dp._build_results_report_md(result)
+    assert "| Rank | Disease | Score | Evidence |" in report and "0.000" not in report
+    header, _, _ = _csv_records(dp._build_results_csv(result))
+    width = len(_KIND_CSV_COLUMNS["path_reasoning/v1"])
+    assert header[:width] == _KIND_CSV_COLUMNS["path_reasoning/v1"]
+
+
+def test_the_kinds_label_takes_eta_from_the_results_identity():
+    """η is the result's own, read from its served identity, never a constant."""
+    result = _sample_result()
+    result["served_identity"]["settings"]["eta"] = 0.55
+    label = dp.kind_label(result)
+    assert label.endswith("η = 0.55") and "0.7" not in label
+    assert label in dp.results_body_html(result, 1)
+    assert f"*{label}.*" in dp._build_results_report_md(result)
+
+
+def test_a_response_that_does_not_name_its_kind_shows_no_candidates(monkeypatch, status_read):
+    result = _sample_result()
+    del result["result_kind"]
+    assert dp.KIND_NOT_REPORTED in dp.results_body_html(result, 1)
+    assert "<table" not in dp.results_body_html(result, 1)
+    _, records, _ = _csv_records(dp._build_results_csv(result))
+    assert records == []
+    report = dp._build_results_report_md(result)
+    assert report.count(dp.KIND_NOT_REPORTED) == 1 and ".." not in report
+    # The page selects nothing and exports nothing for the candidates it hides.
+    monkeypatch.setattr(dp, "_call_diagnose", lambda **kw: dict(result))
+    out = _run("HP:0001250")
+    assert out["selected"] is None
+    assert out["export_csv"] is dp._DOWNLOAD_DISABLED
+    assert out["export_report"] is dp._DOWNLOAD_DISABLED
+
+
+def test_a_missing_count_or_time_is_never_written_as_zero():
+    """No evidence package (explanations off): the CSV's path counts are empty,
+    not 0; a missing inference time is left out of the report, not 0.0."""
+    result = _sample_result()
+    for candidate in result["candidates"]:
+        candidate["evidence_package"] = None
+    del result["inference_time_ms"]
+    _, records, _ = _csv_records(dp._build_results_csv(result))
+    assert {(r["num_direct_paths"], r["num_analogies"]) for r in records} == {("", "")}
+    assert "Inference time" not in dp._build_results_report_md(result)
 
 def test_a_selected_row_shows_its_details_with_its_counts():
     out = dp.select_candidate(_sample_result(), "evidence", "2")

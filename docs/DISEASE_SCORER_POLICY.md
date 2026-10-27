@@ -3,6 +3,13 @@
 **Status:** Accepted (2026-08) by the deploying institution. **Not yet implemented** — see the
 status table in §2. Implementation is work item B-1, which remains gated (§6).
 
+**Revision: rev 9 (2026-10-27). Factual update, no normative change.** Batch 4 (for review) built
+the result union's three kinds for today's behaviour (`served_mixture/v1`, `path_reasoning/v1`,
+`demo/v1`; `working/results-review/SPEC_1_RESULTS_REVIEW.md` §2.1): §2's rows, §2.1's union, B-1b
+and B-2 lines, C9's rationale, §5 and §7 say what changed in the code. The ranking is unchanged;
+an unavailable SP value is now a status, not `0.0`; the path-reasoning score has its own field. No
+gate moves, and the SP view under C1–C10 is still not built.
+
 **Revision: rev 8 (2026-10-27). Factual update and one registered direction, no normative
 change.** Mode D's review passed, and its short run on a synthetic cohort on the GB10 passed
 (`working/batch3-acceptance-2026-10-27/`): §2.1's gate 1 evidence and §6's gate 1 row say so.
@@ -100,12 +107,17 @@ filtering; C6 applies to filtering alone; C7–C10 govern the data the view is b
 | **C10** | **Every view is bound to provenance.** A view is addressed by an immutable result ID and carries the scorer, KG and SP artifact fingerprints of the result it projects | all |
 
 **Why C9 is a condition and not a detail.** `_calculate_sp_score` (`src/inference/pipeline.py`)
-currently returns `0.0` on five paths that are failures, not results: no table loaded, no node
+returned `0.0` on five paths that are failures, not results: no table loaded, no node
 mapping, an unmapped candidate, no mappable phenotype, and the unavailable state of
 `sp_mean_distances` (`src/inference/sp_index.py`), whose availability mask it collapses (checked at
 `416a242`). `0.0` is **below**
 the value a genuine "no path found" produces (`1/7`). Under a numeric sort, a mapping failure would
 therefore rank below a real negative and be indistinguishable from a very poor score.
+*(Rev 9: since Batch 4 the one SP caller, `sp_analysis_records` in `src/inference/sp_index.py`,
+gives each of these a status with no number (`NO_TABLE`, `TARGET_UNMAPPED`, `NO_PHENOTYPE_MAPPED`).
+The served mixture still takes such a status as 0 where a table is served, so today's ranking is
+unchanged, and the record says so (`mixed_as: 0.0`). That keeps today's order; it is not C9's
+view, which B-1b builds.)*
 
 ### 1.2 Computation schedule — decided
 
@@ -166,20 +178,21 @@ column is implemented.
 | Concern | Current behaviour | Approved target | Implementation status |
 |---|---|---|---|
 | **Candidate universe** | BFS path discovery gates scoring. Two order-dependent caps truncate it: `PathReasoningConfig.max_paths_per_source = 100` and `max_genes = 100` per phenotype in `find_phenotype_gene_disease_paths` (`src/reasoning/path_reasoning.py`), both applied to unordered neighbour lists | Every disease in the configured KG universe is scored; no discovery gate | **Not implemented** — work item B-1, gated |
-| **Disease score** | `0.7 × ((cos+1)/2) + 0.3 × SP` when a checkpoint and `shortest_paths.pt` are both loaded (`_calculate_combined_score` in `src/inference/pipeline.py`, mixing through `mix_embedding_and_sp_scores` in `src/inference/scoring.py`) | Raw cosine (interim, statement 2) | **Not implemented** — B-1 |
+| **Disease score** | `0.7 × ((cos+1)/2) + 0.3 × SP` when a checkpoint and `shortest_paths.pt` are both loaded (`_served_score` in `src/inference/pipeline.py`, mixing through `mix_embedding_and_sp_scores` in `src/inference/scoring.py`); since Batch 4 the result is `served_mixture/v1` and the value `served_score`, with η read from the result's identity | Raw cosine (interim, statement 2) | **Not implemented** — B-1 |
 | **SP role** | A ranking term with nominal coefficient 0.3, and therefore able to reorder candidates. The coefficient is not the term's effective contribution — see §3.5 | Optional post-ranking contextual analysis only; separate field or panel; no effect on identity, order, rank or ranking score | **Not implemented** — B-1 |
 | **Evidence-path role** | Path reasoning performs candidate discovery, supplies evidence, **and** becomes the ranking score when no GNN is loaded | Evidence only, via a target-restricted traversal that cannot alter the candidate set | **Not implemented** — design not yet approved (gate 3, §6) |
-| **GNN-unavailable fallback** | `confidence_score = reasoning_score` (`_score_and_rank_candidates` in `src/inference/pipeline.py`) — a different quantity written into the same field. The field itself carries no discriminator; since provenance contract M3c each result states its scoring mode (`path_reasoning_fallback`) in its served identity, with the checkpoint `absent` | Discriminated score semantics; fail-closed by default; fallback only by explicit request or approved deployment policy | **Fail-closed core implemented** (provenance contract M1, 2026-10-07): a requested model that cannot be built is refused, never replaced by this fallback. **Described per result** (provenance contract M3c, implemented 2026-10-16, merged as #124): the served identity names the scoring mode and what produced the result; it is a description, not discriminated score semantics. **Not implemented** — the rest of B-2: discriminated semantics, and whether serving with no model configured needs an opt-in |
+| **GNN-unavailable fallback** | The path-reasoning aggregate ranks the candidates (`_score_and_rank_candidates` in `src/inference/pipeline.py`). Until Batch 4 it was written into `confidence_score`, the model's field; since Batch 4 the result is `path_reasoning/v1` and the value its own `path_score`, with no model term. Since provenance contract M3c each result also states its scoring mode (`path_reasoning_fallback`) in its served identity, with the checkpoint `absent` | Discriminated score semantics; fail-closed by default; fallback only by explicit request or approved deployment policy | **Fail-closed core implemented** (provenance contract M1, 2026-10-07): a requested model that cannot be built is refused, never replaced by this fallback. **Described per result** (provenance contract M3c, implemented 2026-10-16, merged as #124): the served identity names the scoring mode and what produced the result; it is a description, not discriminated score semantics. **Discriminated semantics implemented** (Batch 4, for review): the `path_reasoning/v1` kind. **Not implemented** — the rest of B-2: whether serving with no model configured needs an opt-in |
 
 Two further current behaviours, for completeness:
 
 - When a checkpoint is loaded but `shortest_paths.pt` is absent, scoring degrades to pure GNN
-  (`_calculate_combined_score` returns the embedding score, effective η = 1.0).
+  (`served_score` is the model term alone, effective η = 1.0; since Batch 4 each candidate's SP
+  record says `NO_TABLE`).
 - `get_pipeline_config()` reports a `scoring_mode` of `gnn_plus_shortest_path`, `gnn_only` or
   `path_reasoning_fallback`. Since provenance contract M3c (implemented 2026-10-16, merged as #124)
   every result carries it too, in its served identity, beside the checkpoint, graph and
-  shortest-path table that produced it. It is not attached to individual candidates, and it does
-  not change what `confidence_score` holds.
+  shortest-path table that produced it. It is not attached to individual candidates. Since Batch 4
+  the result's kind (`result_kind`) follows from it, and each kind has its own score field.
 
 ### 2.1 What B-1 and B-2 still lack (2026-10-25, at `main` `416a242`)
 
@@ -215,8 +228,8 @@ shared canonical order; remove the BFS gate and its two caps from candidate sele
 row); separate `selection_limit` from the two display limits (§1.3).
 
 **B-1b — SP as an optional view.** Eager SP over the selected set (§1.2); the SP surface under
-C1–C10, none of which exists; C9 in particular: the served path still writes `0.0` for an
-unavailable SP and the exports carry that `0.0`. `selection_limit`'s default, minimum and maximum,
+C1–C10, none of which exists. C9's representation is in place since Batch 4: an unavailable SP is
+a status with no number in the result and its exports; the mixture's own 0 is marked `mixed_as`. `selection_limit`'s default, minimum and maximum,
 the storage and export bounds and the latency target are [OPEN] (§1.3).
 
 **B-1c — evidence after ranking.** A target-restricted evidence traversal for the visible page;
@@ -226,20 +239,19 @@ it shows is the discovery path itself, and the evidence states for a candidate w
 evidence panel's Mode B and INSUFFICIENT) are never reached on the served path; B-1c makes them
 reachable and needs a traversal budget for them.
 
-**The result union (§7).** Designed 2026-10-26, not built
+**The result union (§7).** Designed 2026-10-26
 (`working/results-review/SPEC_1_RESULTS_REVIEW.md` §2.1): one `result_kind` per result, with
-required and forbidden fields per kind. It replaces `confidence_score` in the API with one score
-field per kind (`ranking_score`, the raw cosine, under B-1). Today the response model declares
-`confidence_score` `Field(ge=0.0, le=1.0)`, so a raw cosine below 0 would fail the response, not just
-contradict its description. The configuration switch's default is a
+required and forbidden fields per kind. Batch 4 built its three kinds for today's behaviour (for
+review), which replace `confidence_score` in the API with one score field per kind, with no alias.
+B-1's kind, `gnn_ranking/v1` (`ranking_score`, the raw cosine), is batch 5's; the former
+`confidence_score` `Field(ge=0.0, le=1.0)` that would have refused a cosine below 0 is gone. The configuration switch's default is a
 separate open decision (§7).
 
 **B-2.** Done: a requested model that cannot be built is refused (M1); every result names its
-scoring mode (M3c). Missing: discriminated score semantics for the path-reasoning fallback (its
-result carries `gnn_score = 0.0`, which the API returns and the Diagnosis page, its CSV and its report
-show as a number); whether serving with no model needs an explicit opt-in (provenance contract §8,
-question 2). The discriminated semantics are designed as the union's `path_reasoning/v1` kind
-(rev 6 pointer, Spec 1 §2.1); the opt-in stays the owner's decision.
+scoring mode (M3c); the path-reasoning fallback is its own kind, `path_reasoning/v1`, whose
+candidates carry `path_score` and no model term (Batch 4, for review; before it the result carried
+`gnn_score = 0.0`, shown as a number). Missing: whether serving with no model needs an explicit
+opt-in (provenance contract §8, question 2), which stays the owner's decision.
 
 **Gate 1's evidence.** Mode C is built and has run on synthetic and demo cohorts (M4 acceptance,
 `2c94a4e`; M5 close-out, `773dc4a`). Mode D (the served ranking measured on the same cohort,
@@ -404,7 +416,9 @@ unexamined default.
 
 - **`eta`, `_calculate_combined_score`, `_calculate_sp_score`, `shortest_paths.pt` and
   `scripts/compute_shortest_paths.py` are demoted, not removed.** They remain required for B-0's
-  comparison modes and for the optional contextual analysis.
+  comparison modes and for the optional contextual analysis. *(Rev 9: since Batch 4 the mixture
+  is `_served_score` and SP's one caller is `sp_analysis_records`; the two per-candidate helpers
+  named here are gone, the capability is not.)*
 - **This is a behaviour change on a live clinical system.** η = 0.7 is what runs today. The change
   must be visible to the institution, not silent, and is gated accordingly (§6).
 - **The candidate list a clinician sees will change**: composition, ordering, and which candidates
@@ -453,6 +467,9 @@ B-1 implementation may not begin until all three clear:
     where its state says there is nothing to identify. It selects no required or forbidden score
     fields and leaves `confidence_score` as it was. Its `scoring_mode` describes the result; whether
     the union's discriminator builds on it is B-1's or B-2's decision, not M3c's.
+  - **Batch 4 built the union's first kinds** (for review): `served_mixture/v1`,
+    `path_reasoning/v1` and `demo/v1`, each with its own required and forbidden fields, the kind
+    derived from the served identity's `scoring_mode` (Spec 1 §2.1). B-1 adds `gnn_ranking/v1`.
 - The clinician-facing guide's status box and the SP presentation change together with the code, not
   before it.
 

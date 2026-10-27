@@ -91,8 +91,33 @@ def _patient(phenotypes, patient_id="p"):
 
 
 def _row(candidate):
-    return [str(candidate.disease_id), candidate.rank, candidate.confidence_score,
-            candidate.gnn_score, candidate.sp_score, candidate.reasoning_score]
+    """A candidate as the golden records it, each of its kind's fields in the
+    slot of the value it replaced (Spec 1 §2.1): [disease, rank, the ranked
+    score, the model term, the SP record, the path score]. A field the kind does
+    not carry is None, so a slot can never hold another kind's number."""
+    from src.core.types import ServedMixtureCandidate
+
+    if isinstance(candidate, ServedMixtureCandidate):
+        return [str(candidate.disease_id), candidate.rank, candidate.served_score,
+                candidate.model_term, candidate.sp_term, None]
+    return [str(candidate.disease_id), candidate.rank, candidate.path_score, None, None,
+            candidate.path_score]
+
+
+def _matches_exactly(name, row, want):
+    """Each kind's fields against the full-precision capture of 755643a, the code
+    before the union: the served score and model term equal confidence and gnn,
+    the SP record's score equals sp where a table is served and is NO_TABLE where
+    sp read 0.0, and the fallback's path score equals confidence (= reasoning)."""
+    conf, gnn, sp, reasoning = (float(v) for v in want[2:])
+    score, model_term, record, path_score = row[2:]
+    if name == "fallback":
+        return score == conf == reasoning and path_score == conf and model_term is None
+    if record is None or score != conf or model_term != gnn:
+        return False
+    if name == "gnn_plus_sp":
+        return record.numeric and record.score == sp and record.mixed_as is None
+    return record.status == "NO_TABLE" and record.score is None and sp == 0.0
 
 
 def _stable(value, key=None):
@@ -109,18 +134,22 @@ def _stable(value, key=None):
 
 def test_run_reproduces_the_output_captured_before_the_split(served):
     """The order, ranks, warnings and phenotype account exactly, the four scores
-    within 1e-5, in each mode and for every case, the fallback's exact ties at
-    1.0 included; and each mode's served identity, its digests reduced to
-    whether they are there (PLAN_B05 §8's fields; the phenotype account and the
-    identity added after the internal review, serving-2). Catches a split that
-    moved a value, reordered a tie or changed what an empty or refused input
-    returns."""
+    within 1e-5 of the capture before the split (e61253e) and each kind's fields
+    exactly equal to the capture before the union (755643a, Batch 4), in each
+    mode and for every case, the fallback's exact ties at 1.0 included; and each
+    mode's served identity, its digests reduced to whether they are there
+    (PLAN_B05 §8's fields; the phenotype account and the identity added after
+    the internal review, serving-2). Catches a split or a union that moved a
+    value, reordered a tie or changed what an empty or refused input returns."""
     from dataclasses import asdict
 
     from src.kg.provenance import PROVENANCE_FILENAME
 
     fixture = json.loads(GOLDEN.read_text())
     golden = fixture["results"]
+    exact = fixture["exact_scores_755643a"]
+    kinds = {"fallback": "path_reasoning/v1", "gnn_only": "served_mixture/v1",
+             "gnn_plus_sp": "served_mixture/v1"}
     cohort = served["cohort"]
     for name, pipeline in served["pipelines"].items():
         identity = pipeline.served_identity().to_dict()
@@ -141,10 +170,14 @@ def test_run_reproduces_the_output_captured_before_the_split(served):
             assert result.warnings == expected["warnings"], (name, index)
             account = json.loads(json.dumps(asdict(result.phenotype_input)))
             assert account == expected["phenotype_input"], (name, index)
+            assert result.result_kind == kinds[name], (name, index)
             rows = [_row(c) for c in result.candidates]
             assert [r[:2] for r in rows] == [e[:2] for e in expected["candidates"]], (name, index)
             for row, want in zip(rows, expected["candidates"]):
-                assert row[2:] == pytest.approx(want[2:], abs=SCORE_TOLERANCE), (name, index)
+                assert row[2] == pytest.approx(want[2], abs=SCORE_TOLERANCE), (name, index)
+            for row, want in zip(rows, exact[f"{name}|{index}"]):
+                assert want[:2] == row[:2] and _matches_exactly(name, row, want), (
+                    name, index, row, want)
 
 
 @pytest.mark.parametrize("top_k", [1, 2, 5, 1000])
@@ -173,7 +206,7 @@ def test_the_three_outcomes_are_the_three_returns_of_run(served):
     ranked = pipeline.rank(_patient(served["patients"][0]))
     assert ranked.outcome == "ranked"
     assert [c.rank for c in ranked.candidates] == list(range(1, len(ranked.candidates) + 1))
-    scores = [c.confidence_score for c in ranked.candidates]
+    scores = [c.served_score for c in ranked.candidates]
     assert scores == sorted(scores, reverse=True)
 
 
@@ -196,7 +229,7 @@ def test_each_candidate_carries_its_discovery_ordinal(served):
             assert [str(c.disease_id) for c in by_ordinal] == discovered, name
             for (first, a), (second, b) in zip(zip(ordinals, ranking.candidates),
                                                zip(ordinals[1:], ranking.candidates[1:])):
-                if a.confidence_score == b.confidence_score:
+                if _row(a)[2] == _row(b)[2]:
                     assert first < second, name
             reordered += ordinals != sorted(ordinals)
     assert reordered, "no case reordered its candidates, so nothing above was tested"

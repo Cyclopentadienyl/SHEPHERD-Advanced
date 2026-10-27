@@ -897,6 +897,43 @@ hashed again when a result is produced, and nothing is filled in with
 The service's own version (`1.0.0` in `/health`, `/` and the Swagger title) is
 the API's version, not the identity of what is served.
 
+### The diagnose response is one of three kinds (Batch 4)
+
+`POST /api/v1/diagnose` answers one kind of result, named by `result_kind`, with
+`result_schema_version` 2 (`docs/working/results-review/SPEC_1_RESULTS_REVIEW.md`
+§2.1). Each kind carries its own values and refuses another kind's:
+
+| `result_kind` | Answered when | Each candidate's values | On the result |
+|---|---|---|---|
+| `served_mixture/v1` | a model is served | `served_score`, the value ranked by: η × `model_term` + (1 − η) × SP with a shortest-path table, `model_term` alone without one; `model_term`, (cos + 1) / 2; `sp_term`, the SP record | `eta`, `candidates_reached` (how many diseases discovery reached before the cut), `tie_policy` |
+| `path_reasoning/v1` | no model source is configured | `path_score`, the path aggregate | `path_score_aggregation`, `tie_policy` |
+| `demo/v1` | no pipeline was ever configured | none: no score, explanation, path or gene | — |
+
+- **Removed, with no alias:** `confidence_score`, `gnn_score`, `sp_score`,
+  `reasoning_score` (now `path_score`, path reasoning only) and
+  `confidence_label` (now `evidence_label`, inside `evidence_package` too). A
+  client that read them reads the kind's own fields instead.
+- **`sp_term` never writes 0 for a missing value.** Its `status` is `COMPUTED`,
+  `COMPUTED_PARTIAL` (some submitted phenotypes were not mapped;
+  `phenotypes_mapped` / `phenotypes_submitted` say how many), `NO_TABLE`,
+  `TARGET_UNMAPPED` or `NO_PHENOTYPE_MAPPED`. `mean_hop_distance` and `score`
+  (1 / (1 + d)) are there on the first two only. Where a table is served and a
+  status has no number, the mixture still takes it as 0, as before, so the
+  ranking does not change, and the record says so: `mixed_as: 0.0`.
+- **The ranking is unchanged for valid input**: the same values, order and ties
+  (`served_score` is the former `confidence_score`).
+- **New refusals.** A model term the service cannot compute (no embeddings, no
+  table, a node with no row, or a row outside its table, which used to be clamped
+  onto the last one) or a score that is not finite refuses the result: HTTP 500,
+  its `error` starting with the code (`MODEL_TERM_UNAVAILABLE: …`,
+  `NON_FINITE_SCORE: …`). On a verified workspace these states are not
+  expected. An input with no phenotype in the graph is refused as before
+  (`No valid phenotypes after validation`), and an unknown id is always stated
+  (`Unknown phenotype: …`).
+- **`phenotype_input`** (received, unknown, repeats removed, used) is in the
+  response; null in the demo answer, and when a request was refused before its
+  phenotypes were mapped.
+
 ### Its parts and states
 
 ```json
@@ -1019,15 +1056,43 @@ The WebUI shows **the result's own identity**, never the status's:
   candidates: the same banners, a Part | State | Value table with digests in
   full (`sha256:<64 hex>`), the claim boundary and the fixed statement. An
   absent part is written as its state and the reason, never left blank.
+- **The kind's label above the table** says what the Score column holds, with
+  the result's own η: "Served ranking today: diseases reached by path discovery,
+  scored as η × model term + (1 − η) × SP, η = 0.7" (or "…scored by the model
+  term alone" without a table), "No model loaded: ranked by path reasoning, not
+  by a model", or "Demo answer: no pipeline is configured; not a diagnosis".
+  The columns follow the kind: Score and Model term for the mixture, with SP
+  beside them when a table is served (a status with no number in words, never
+  0.000); Score for path reasoning; no score at all for the demo answer.
+- **A refused result** (`MODEL_TERM_UNAVAILABLE`, `NON_FINITE_SCORE`) is shown as
+  one sentence naming the code and the node; nothing is ranked.
 - **The CSV** carries the identity in columns (below).
 - **File names** carry the two states a copied file must not lose:
   `diagnosis_SYNTHETIC_<patient>_<session>.csv` / `_report.md` for a synthetic
   workspace, `diagnosis_DEMO_…` for the demo answer; otherwise unchanged.
 
+### The CSV's candidate columns (Batch 4)
+
+The candidate columns are the result kind's, and every row names the kind:
+
+| Kind | Candidate columns, in order |
+|---|---|
+| `served_mixture/v1` | `result_kind`, `rank`, `disease_id`, `disease_name`, `served_score`, `model_term`, `sp_term_status`, `sp_term_score`, `sp_term_mean_hop_distance`, `sp_term_phenotypes_mapped`, `sp_term_phenotypes_submitted`, `sp_term_mixed_as`, then the evidence columns |
+| `path_reasoning/v1` | `result_kind`, `rank`, `disease_id`, `disease_name`, `path_score`, then the evidence columns |
+| `demo/v1` | `result_kind`, `rank`, `disease_id`, `disease_name`, `matching_phenotypes` |
+
+The evidence columns are `evidence_label`, `evidence_mode`, `evidence_summary`,
+`min_path_length`, `num_direct_paths`, `num_analogies`, `supporting_genes` and
+`matching_phenotypes`. `sp_term_status` sits beside the SP values: where the
+status has no number, the value cells are empty, never 0, and `sp_term_mixed_as`
+is `0.0000` where the mixture still took it as 0. A path count is empty when no
+evidence package was built (explanations off). `served_score` is a candidate
+column, not part of the identity block below.
+
 ### The CSV's identity columns
 
-The CSV keeps **one header row** and no preamble. The 15 candidate columns come
-first, unchanged in order; 21 columns follow, each holding one part of the
+The CSV keeps **one header row** and no preamble. The result kind's candidate
+columns come first (above); 21 columns follow, each holding one part of the
 identity, **the same on every row**:
 
 | Column | Holds | When the identity holds null |

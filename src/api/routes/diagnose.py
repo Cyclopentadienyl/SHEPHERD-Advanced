@@ -21,7 +21,9 @@ Input:
     - DiagnoseRequest: patient_id, phenotypes (HPO IDs), options
 
 Output:
-    - DiagnoseResponse: candidates with scores, explanations, metadata
+    - DiagnoseResponse: one kind of the result union (Spec 1 §2.1), discriminated
+      by `result_kind`: `served_mixture/v1`, `path_reasoning/v1` or `demo/v1`,
+      each with its own candidate fields and no other kind's
 
 Version: 1.0.0
 """
@@ -30,10 +32,10 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime
-from typing import Any, Dict, List, Literal, Optional
+from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
 from fastapi import APIRouter, HTTPException, status, Depends
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, RootModel, field_validator, model_validator
 
 logger = logging.getLogger(__name__)
 
@@ -170,35 +172,6 @@ class DiagnoseRequest(BaseModel):
     }}
 
 
-class DiagnosisCandidate(BaseModel):
-    """Single diagnosis candidate"""
-
-    rank: int = Field(..., description="Ranking position (1-based)")
-    disease_id: str = Field(..., description="Disease identifier (MONDO/OMIM)")
-    disease_name: str = Field(..., description="Disease name")
-    confidence_score: float = Field(..., ge=0.0, le=1.0, description="Overall confidence (eta * gnn + (1-eta) * sp)")
-    gnn_score: Optional[float] = Field(None, description="GNN embedding similarity score")
-    reasoning_score: Optional[float] = Field(None, description="Path reasoning score (fallback only)")
-    sp_score: Optional[float] = Field(None, description="Shortest-path similarity score")
-    matching_phenotypes: List[str] = Field(
-        default_factory=list,
-        description=(
-            "The request's phenotypes as used (known to the graph, repeats "
-            "removed, in the request's spelling) that the knowledge graph "
-            "annotates directly to this disease by a phenotype_of_disease edge "
-            "on the exact term; not ontology ancestors or descendants, not "
-            "gene-mediated. An empty list does not mean no clinical overlap. "
-            "Filled whether or not explanations are requested; empty in the "
-            "demo answer given when no pipeline is configured."
-        ),
-    )
-    supporting_genes: List[str] = Field(default_factory=list, description="Supporting gene evidence")
-    explanation: Optional[str] = Field(None, description="Human-readable explanation")
-    reasoning_paths: Optional[List[List[str]]] = Field(None, description="Reasoning paths through KG")
-    evidence_package: Optional[Dict[str, Any]] = Field(None, description="Step C evidence: mode (direct_path/analogy_based/insufficient), confidence_label, paths or analogies")
-    confidence_label: Optional[str] = Field(None, description="Clinician-facing label: Strong path support / Weak path support / Analogy-based / Insufficient evidence")
-
-
 # -----------------------------------------------------------------------------
 # The served identity (contract M3c, R8)
 # -----------------------------------------------------------------------------
@@ -301,40 +274,272 @@ class ServedIdentity(_Strict):
     settings: ServedSettings
 
 
-class DiagnoseResponse(BaseModel):
-    """Diagnosis response model"""
+# -----------------------------------------------------------------------------
+# The result union (Spec 1 §2.1, Batch 4)
+# -----------------------------------------------------------------------------
+# The response's form of `src.core.types`' result union, defined here for the
+# same reason as the identity above: this module is loaded by file, without the
+# application. `tests/unit/test_served_identity.py` pins each mirror to its core
+# type (field names, the kinds, the SP statuses). **Every kind refuses another
+# kind's fields** (`_Strict`), so a removed field cannot come back unnoticed, and
+# a number is never written where its kind has none.
+RESULT_KINDS = ("served_mixture/v1", "path_reasoning/v1", "demo/v1")
+SP_NUMERIC_STATUSES = ("COMPUTED", "COMPUTED_PARTIAL")
+SP_NON_NUMERIC_STATUSES = ("NO_TABLE", "TARGET_UNMAPPED", "NO_PHENOTYPE_MAPPED")
+SERVED_TIE_POLICY = "served-stable-discovery-order/v1"
+
+#: A number that is a number: NaN and infinity are refused at the schema, so a
+#: non-finite value can never reach a caller as a score.
+_Finite = Annotated[float, Field(allow_inf_nan=False)]
+
+_MATCHING_PHENOTYPES_DESCRIPTION = (
+    "The request's phenotypes as used (known to the graph, repeats "
+    "removed, in the request's spelling) that the knowledge graph "
+    "annotates directly to this disease by a phenotype_of_disease edge "
+    "on the exact term; not ontology ancestors or descendants, not "
+    "gene-mediated. An empty list does not mean no clinical overlap. "
+    "Filled whether or not explanations are requested; empty in the "
+    "demo answer given when no pipeline is configured."
+)
+
+
+class SPTerm(_Strict):
+    """A candidate's shortest-path record (Spec 1 §3.3–§3.4): its status, and
+    numbers only on a numeric status. Every key is required; a value is null
+    where the status says there is no number."""
+
+    status: Literal["COMPUTED", "COMPUTED_PARTIAL", "NO_TABLE", "TARGET_UNMAPPED",
+                    "NO_PHENOTYPE_MAPPED"]
+    phenotypes_submitted: int = Field(..., ge=0)
+    phenotypes_mapped: int = Field(..., ge=0)
+    unmapped_ids: List[str]
+    max_hops: Optional[int] = Field(
+        ..., description="The loaded table's hop bound; null when no table is loaded")
+    mean_hop_distance: Optional[_Finite] = Field(
+        ..., description="Mean over the mapped phenotypes of the hop distance to the "
+        "candidate, an unreachable pair counting max_hops + 1; numeric statuses only")
+    score: Optional[_Finite] = Field(
+        ..., description="1 / (1 + mean_hop_distance); numeric statuses only")
+    unreachable_pair_count: Optional[int] = Field(..., ge=0)
+    denominator_policy: Optional[Literal["MAPPED_ONLY_DENOMINATOR"]]
+    mixed_as: Optional[float] = Field(
+        ..., description="0.0 where a non-numeric status still entered the legacy "
+        "mixture as 0, so its ranking did not change; null otherwise")
+
+    @model_validator(mode="after")
+    def _numbers_follow_the_status(self) -> "SPTerm":
+        numbers = (self.mean_hop_distance, self.score, self.unreachable_pair_count,
+                   self.denominator_policy)
+        if self.status in SP_NUMERIC_STATUSES:
+            if any(value is None for value in numbers) or self.max_hops is None:
+                raise ValueError(f"a {self.status} record carries its numbers")
+            if self.mixed_as is not None:
+                raise ValueError("a numeric record is mixed as its own value")
+            if (self.status == "COMPUTED_PARTIAL") != bool(self.unmapped_ids):
+                raise ValueError("COMPUTED_PARTIAL means some submitted phenotypes "
+                                 "were not mapped")
+        else:
+            if any(value is not None for value in numbers):
+                raise ValueError(f"a {self.status} record has no number")
+            if (self.status == "NO_TABLE") != (self.max_hops is None):
+                raise ValueError("max_hops is null exactly when no table is loaded")
+            if self.mixed_as is not None and self.mixed_as != 0.0:
+                raise ValueError("a non-numeric status is mixed as 0.0")
+        if self.phenotypes_submitted != self.phenotypes_mapped + len(self.unmapped_ids):
+            raise ValueError("the submitted phenotypes are the mapped ones and the unmapped ids")
+        return self
+
+
+class PhenotypeInput(_Strict):
+    """What happened to the request's phenotype list before it was scored
+    (`src.core.types.PhenotypeInputAccount`)."""
+
+    received: int = Field(..., ge=0, description="Entries the request carried")
+    unknown: List[str] = Field(..., description="Ids with no node in the graph, dropped")
+    repeats_removed: int = Field(..., ge=0)
+    used: List[str] = Field(..., description="The phenotypes scored, in first-occurrence "
+                            "order; empty when the request was refused")
+
+
+class _Candidate(_Strict):
+    """What a candidate of every kind carries."""
+
+    rank: int = Field(..., ge=1, description="Ranking position (1-based)")
+    disease_id: str = Field(..., description="Disease identifier (MONDO/OMIM)")
+    disease_name: str = Field(..., description="Disease name")
+    matching_phenotypes: List[str] = Field(
+        default_factory=list, description=_MATCHING_PHENOTYPES_DESCRIPTION)
+
+
+class _ServedCandidate(_Candidate):
+    """The evidence today's two served kinds build from the discovery paths."""
+
+    supporting_genes: List[str] = Field(
+        default_factory=list, description="Genes on this disease's discovery paths")
+    explanation: Optional[str] = Field(None, description="Human-readable explanation")
+    reasoning_paths: Optional[List[List[str]]] = Field(
+        None, description="Reasoning paths through KG")
+    evidence_package: Optional[Dict[str, Any]] = Field(
+        None, description="Step C evidence: mode (direct_path/analogy_based/"
+        "insufficient), evidence_label, paths or analogies")
+    evidence_label: Optional[str] = Field(
+        None, description="Grades the evidence, not a confidence in the diagnosis: "
+        "Strong path support / Weak path support / Analogy-based / Insufficient evidence")
+
+
+class ServedMixtureCandidate(_ServedCandidate):
+    """A disease reached by path discovery, ranked by the legacy mixture."""
+
+    served_score: _Finite = Field(
+        ..., description="The value ranked by: eta * model_term + (1 - eta) * SP, or "
+        "model_term alone with no shortest-path table")
+    # No [0, 1] bound: the cosine is float32 and can round an ulp past +-1 for
+    # a patient parallel to a disease, so a valid term can sit just outside.
+    model_term: _Finite = Field(..., description="(cos + 1) / 2, computed in float32; "
+                                "it can lie an ulp outside [0, 1]")
+    sp_term: SPTerm
+
+
+class PathReasoningCandidate(_ServedCandidate):
+    """No model is loaded: ranked by its paths, with no model or SP value."""
+
+    path_score: _Finite = Field(..., ge=0.0, description="The path aggregate ranked by")
+
+
+class DemoCandidate(_Candidate):
+    """The demo answer's candidate: no score, explanation, path or gene of any kind."""
+
+
+class _Response(_Strict):
+    """What a response of every kind carries."""
 
     session_id: str = Field(..., description="Unique session identifier")
     patient_id: str = Field(..., description="Patient identifier")
     timestamp: str = Field(..., description="ISO timestamp")
-    candidates: List[DiagnosisCandidate] = Field(..., description="Ranked diagnosis candidates")
     summary: Optional[str] = Field(None, description="Summary explanation")
     inference_time_ms: float = Field(..., description="Processing time in milliseconds")
-    served_identity: Optional[ServedIdentity] = Field(
-        ...,
-        description="What produced this result: the checkpoint, graph, workspace "
-        "manifest, shortest-path table and dataset record by digest or identifier, "
-        "the scoring mode and the settings in effect, each part stating its state "
-        "(contract M3c). Taken from the result this response answers with. Null "
-        "only for the demo answer given when no pipeline is configured: no model, "
-        "graph or table produced those candidates.",
-    )
     warnings: List[str] = Field(default_factory=list, description="Any warnings")
+    result_schema_version: Literal[2]
+    phenotype_input: Optional[PhenotypeInput] = Field(
+        ..., description="The phenotype list as received and as used; null in the demo "
+        "answer and when the request was refused before its phenotypes were mapped")
+
+
+def _ranked(candidates: List[Any], score: str) -> None:
+    ranks = [c.rank for c in candidates]
+    if ranks != list(range(1, len(ranks) + 1)):
+        raise ValueError(f"ranks must be exactly 1..{len(ranks)}")
+    if score:
+        values = [getattr(c, score) for c in candidates]
+        if any(later > earlier for earlier, later in zip(values, values[1:])):
+            raise ValueError(f"candidates are not in non-increasing order of {score}")
+
+
+_IDENTITY_DESCRIPTION = (
+    "What produced this result: the checkpoint, graph, workspace manifest, "
+    "shortest-path table and dataset record by digest or identifier, the scoring "
+    "mode and the settings in effect, each part stating its state (contract M3c). "
+    "Taken from the result this response answers with."
+)
+
+
+class ServedMixtureResponse(_Response):
+    """`served_mixture/v1`: today's served ranking with a model."""
+
+    result_kind: Literal["served_mixture/v1"]
+    served_identity: ServedIdentity = Field(..., description=_IDENTITY_DESCRIPTION)
+    candidates: List[ServedMixtureCandidate]
+    eta: _Finite = Field(..., description="The mixing weight in effect, the served "
+                         "identity's (1.0 with no table, where nothing is mixed)")
+    candidates_reached: int = Field(
+        ..., ge=0, description="How many diseases discovery reached before the cut")
+    tie_policy: Literal["served-stable-discovery-order/v1"]
+
+    @model_validator(mode="after")
+    def _a_mixture(self) -> "ServedMixtureResponse":
+        _ranked(self.candidates, "served_score")
+        mode = self.served_identity.scoring_mode
+        if mode not in ("gnn_plus_shortest_path", "gnn_only"):
+            raise ValueError(f"a served_mixture result is not produced in {mode!r}")
+        if self.eta != self.served_identity.settings.eta:
+            raise ValueError("eta is the served identity's")
+        if self.candidates_reached < len(self.candidates):
+            raise ValueError("candidates_reached counts at least the candidates shown")
+        mixes = mode == "gnn_plus_shortest_path"
+        for candidate in self.candidates:
+            record = candidate.sp_term
+            if (record.status == "NO_TABLE") == mixes:
+                raise ValueError("an SP record is NO_TABLE exactly when no table is served")
+            numeric = record.status in SP_NUMERIC_STATUSES
+            if (mixes and not numeric) != (record.mixed_as is not None):
+                raise ValueError("mixed_as is 0.0 exactly on a non-numeric status the "
+                                 "mixture mixed")
+        return self
+
+
+class PathReasoningResponse(_Response):
+    """`path_reasoning/v1`: no model loaded, ranked by path reasoning."""
+
+    result_kind: Literal["path_reasoning/v1"]
+    served_identity: ServedIdentity = Field(..., description=_IDENTITY_DESCRIPTION)
+    candidates: List[PathReasoningCandidate]
+    path_score_aggregation: Literal["weighted_sum/v1", "max/v1", "mean/v1", "sum/v1"]
+    tie_policy: Literal["served-stable-discovery-order/v1"]
+
+    @model_validator(mode="after")
+    def _path_reasoning(self) -> "PathReasoningResponse":
+        _ranked(self.candidates, "path_score")
+        if self.served_identity.scoring_mode != "path_reasoning_fallback":
+            raise ValueError("a path_reasoning result is served only with no model")
+        return self
+
+
+class DemoResponse(_Response):
+    """`demo/v1`: no pipeline was ever configured. Not a diagnosis, and it
+    carries no score, explanation, path or gene."""
+
+    result_kind: Literal["demo/v1"]
+    served_identity: None = Field(
+        ..., description="Null: no model, graph or table produced the demo answer")
+    candidates: List[DemoCandidate]
+
+    @model_validator(mode="after")
+    def _a_demo(self) -> "DemoResponse":
+        _ranked(self.candidates, "")
+        return self
+
+
+class DiagnoseResponse(RootModel[Annotated[
+        Union[ServedMixtureResponse, PathReasoningResponse, DemoResponse],
+        Field(discriminator="result_kind")]]):
+    """Diagnosis response: one kind of the result union, chosen by `result_kind`."""
 
     model_config = {"json_schema_extra": {
         "example": {
+            "result_kind": "served_mixture/v1",
+            "result_schema_version": 2,
             "session_id": "sess_a1b2c3d4e5f6",
             "patient_id": "demo_001",
             "timestamp": "2026-04-28T10:30:00Z",
+            "eta": 0.7,
+            "candidates_reached": 42,
+            "tie_policy": "served-stable-discovery-order/v1",
+            "phenotype_input": {"received": 2, "unknown": [], "repeats_removed": 0,
+                                "used": ["HP:0001250", "HP:0001263"]},
             "candidates": [
                 {
                     "rank": 1,
                     "disease_id": "mondo:MONDO:0011073",
                     "disease_name": "Dravet syndrome",
-                    "confidence_score": 0.72,
-                    "gnn_score": 0.65,
-                    "sp_score": 0.88,
-                    "confidence_label": "Strong path support",
+                    "served_score": 0.605,
+                    "model_term": 0.65,
+                    "sp_term": {"status": "COMPUTED", "phenotypes_submitted": 2,
+                                "phenotypes_mapped": 2, "unmapped_ids": [],
+                                "max_hops": 5, "mean_hop_distance": 1.0,
+                                "score": 0.5, "unreachable_pair_count": 0,
+                                "denominator_policy": "MAPPED_ONLY_DENOMINATOR",
+                                "mixed_as": None},
+                    "evidence_label": "Strong path support",
                     "explanation": "Direct KG path: Seizure → SCN1A → Dravet syndrome",
                 }
             ],
@@ -359,6 +564,36 @@ class DiagnoseResponse(BaseModel):
             },
         }
     }}
+
+
+def _candidate_body(candidate: Any, include_explanations: bool,
+                    include_paths: bool) -> Dict[str, Any]:
+    """A pipeline candidate as its kind's response candidate: the kind's own
+    fields copied, nothing coerced (an SP record keeps its nulls)."""
+    from dataclasses import asdict
+
+    from src.core.types import ServedMixtureCandidate as CoreMixtureCandidate
+
+    body: Dict[str, Any] = {
+        "rank": candidate.rank,
+        "disease_id": str(candidate.disease_id),
+        "disease_name": candidate.disease_name,
+        "matching_phenotypes": list(candidate.matching_phenotypes),
+        "supporting_genes": list(candidate.supporting_genes),
+        "explanation": candidate.explanation if include_explanations else None,
+        "reasoning_paths": (
+            [[str(n) for n in path] for path in candidate.reasoning_paths]
+            if include_paths and candidate.reasoning_paths else None
+        ),
+        "evidence_package": candidate.evidence_package if include_explanations else None,
+        "evidence_label": candidate.evidence_label if include_explanations else None,
+    }
+    if isinstance(candidate, CoreMixtureCandidate):
+        body.update(served_score=candidate.served_score, model_term=candidate.model_term,
+                    sp_term=asdict(candidate.sp_term))
+    else:
+        body["path_score"] = candidate.path_score
+    return body
 
 
 def _summary(n_candidates: int, n_received: int, phenotype_input: Any) -> str:
@@ -402,14 +637,16 @@ async def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
 
     logger.info(f"Diagnosis request: session={session_id}, phenotypes={len(request.phenotypes)}")
 
+    from dataclasses import asdict
+
+    from src.core.types import ResultRefused, result_kind_for
+
     warnings = []
-    # What the pipeline actually scored. Stays None on the mock path, which has
-    # no pipeline to say so.
-    phenotype_input = None
-    # What produced the answer (contract M3c), copied from the result below and
-    # never read from shared state a reload could swap. Stays None on the mock
-    # path, where nothing was served.
-    served_identity = None
+    # **Everything kind-specific comes from the result** (`result_kind`, η,
+    # `candidates_reached`, the identity), never from shared state a reload
+    # could swap. The mock path has no result: its kind is the demo's, and it
+    # has no account of what was scored.
+    account = None
 
     # Reserved, accepted, ignored — and the caller is told so on every path
     # below, because the field is equally inert in the mock fallback.
@@ -446,9 +683,9 @@ async def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
         if app_state.pipeline is None:
             # **A configured pipeline that failed is not a demo.**
             #
-            # `_generate_mock_candidates` returns real MONDO identifiers, real
-            # disease names, real gene symbols and confidence scores from 0.95
-            # down, over HTTP 200. That is the intended answer when no pipeline
+            # `_generate_mock_candidates` returns real MONDO identifiers and
+            # real disease names, over HTTP 200, with no score of any kind
+            # (`demo/v1`). That is the intended answer when no pipeline
             # was ever configured — someone trying the service out. It is the
             # wrong answer when a deployment *was* configured and its pipeline
             # could not be built: the caller asked a clinical question of a
@@ -478,11 +715,13 @@ async def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
             logger.warning("Pipeline not initialized - returning mock response")
             warnings.append("Pipeline not fully initialized - using mock data")
 
-            candidates = _generate_mock_candidates(
-                request.phenotypes,
-                request.top_k,
-                request.include_explanations,
-            )
+            candidates = _generate_mock_candidates(request.phenotypes, request.top_k)
+            body: Dict[str, Any] = {
+                "result_kind": result_kind_for(None),
+                "served_identity": None,
+                "phenotype_input": None,
+                "candidates": [c.model_dump() for c in candidates],
+            }
         else:
             # Run actual diagnosis through the pipeline
             from src.core.types import PatientPhenotypes
@@ -500,32 +739,38 @@ async def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
                 include_explanations=request.include_explanations,
             )
 
-            candidates = [
-                DiagnosisCandidate(
-                    rank=c.rank,
-                    disease_id=str(c.disease_id),
-                    disease_name=c.disease_name,
-                    confidence_score=c.confidence_score,
-                    gnn_score=c.gnn_score,
-                    reasoning_score=c.reasoning_score,
-                    sp_score=c.sp_score,
-                    matching_phenotypes=c.matching_phenotypes,
-                    supporting_genes=c.supporting_genes,
-                    explanation=c.explanation if request.include_explanations else None,
-                    reasoning_paths=(
-                        [[str(n) for n in path] for path in c.reasoning_paths]
-                        if request.include_paths and c.reasoning_paths else None
-                    ),
-                    evidence_package=c.evidence_package if request.include_explanations else None,
-                    confidence_label=c.confidence_label if request.include_explanations else None,
-                )
-                for c in result.candidates
-            ]
-
             if result.warnings:
                 warnings.extend(result.warnings)
-            phenotype_input = result.phenotype_input
-            served_identity = result.served_identity.to_dict()
+            account = result.phenotype_input
+            body = {
+                "result_kind": result.result_kind,
+                "served_identity": result.served_identity.to_dict(),
+                "phenotype_input": (asdict(result.phenotype_input)
+                                    if result.phenotype_input is not None else None),
+                "candidates": [
+                    _candidate_body(c, request.include_explanations, request.include_paths)
+                    for c in result.candidates
+                ],
+            }
+            if result.result_kind == "served_mixture/v1":
+                body.update(eta=result.eta, candidates_reached=result.candidates_reached,
+                            tie_policy=result.tie_policy)
+            elif result.result_kind == "path_reasoning/v1":
+                body.update(path_score_aggregation=result.path_score_aggregation,
+                            tie_policy=result.tie_policy)
+
+        body.update(
+            result_schema_version=2,
+            session_id=session_id,
+            patient_id=patient_id,
+            timestamp=datetime.now().isoformat(),
+            summary=_summary(len(body["candidates"]), len(request.phenotypes), account),
+            inference_time_ms=(time.time() - start_time) * 1000,
+            warnings=warnings,
+        )
+        # Validated here, inside the handler, so a response that breaks the
+        # union's rules is refused with its reason, never sent.
+        response = DiagnoseResponse.model_validate(body)
 
     except HTTPException:
         # **Deliberate statuses pass through.** `HTTPException` is an
@@ -533,6 +778,16 @@ async def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
         # unexpected 500 — which reads to a caller as a bug in the service rather
         # than as the service declining to answer.
         raise
+    except ResultRefused as e:
+        # **The pipeline refused to write a number it does not have** (Spec 1
+        # §2.1): a model term it cannot compute, a row outside its table, a
+        # score that is not finite. A state of the served model and graph, not
+        # of the request, so a server status; the detail starts with the code.
+        logger.error(f"Diagnosis refused: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e),
+        )
     except Exception as e:
         logger.exception(f"Diagnosis failed: {e}")
         raise HTTPException(
@@ -540,18 +795,7 @@ async def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
             detail=f"Diagnosis failed: {str(e)}",
         )
 
-    inference_time_ms = (time.time() - start_time) * 1000
-
-    return DiagnoseResponse(
-        session_id=session_id,
-        patient_id=patient_id,
-        timestamp=datetime.now().isoformat(),
-        candidates=candidates,
-        summary=_summary(len(candidates), len(request.phenotypes), phenotype_input),
-        inference_time_ms=inference_time_ms,
-        served_identity=served_identity,
-        warnings=warnings,
-    )
+    return response
 
 
 @router.get("/diagnose/{session_id}")
@@ -572,49 +816,26 @@ async def get_diagnosis_result(session_id: str) -> Dict[str, Any]:
 # =============================================================================
 # Mock Data (for testing without full pipeline)
 # =============================================================================
-def _generate_mock_candidates(
-    phenotypes: List[str],
-    top_k: int,
-    include_explanations: bool,
-) -> List[DiagnosisCandidate]:
-    """Generate mock diagnosis candidates for testing"""
+def _generate_mock_candidates(phenotypes: List[str], top_k: int) -> List[DemoCandidate]:
+    """The demo answer's candidates (`demo/v1`): illustrative diseases with no
+    score, explanation, path or gene of any kind, for a service tried with
+    nothing configured. Nothing here was computed, so nothing pretends it was."""
     mock_diseases = [
-        ("MONDO:0007947", "Marfan syndrome", ["FBN1"]),
-        ("MONDO:0008029", "Neurofibromatosis type 1", ["NF1"]),
-        ("MONDO:0007915", "Loeys-Dietz syndrome", ["TGFBR1", "TGFBR2"]),
-        ("MONDO:0008066", "Noonan syndrome", ["PTPN11", "SOS1"]),
-        ("MONDO:0007669", "Ehlers-Danlos syndrome", ["COL5A1", "COL3A1"]),
-        ("MONDO:0010785", "Tuberous sclerosis", ["TSC1", "TSC2"]),
-        ("MONDO:0008426", "Stickler syndrome", ["COL2A1"]),
-        ("MONDO:0007037", "Achondroplasia", ["FGFR3"]),
-        ("MONDO:0019391", "Fanconi anemia", ["FANCA", "FANCC"]),
-        ("MONDO:0009131", "Cystic fibrosis", ["CFTR"]),
+        ("MONDO:0007947", "Marfan syndrome"),
+        ("MONDO:0008029", "Neurofibromatosis type 1"),
+        ("MONDO:0007915", "Loeys-Dietz syndrome"),
+        ("MONDO:0008066", "Noonan syndrome"),
+        ("MONDO:0007669", "Ehlers-Danlos syndrome"),
+        ("MONDO:0010785", "Tuberous sclerosis"),
+        ("MONDO:0008426", "Stickler syndrome"),
+        ("MONDO:0007037", "Achondroplasia"),
+        ("MONDO:0019391", "Fanconi anemia"),
+        ("MONDO:0009131", "Cystic fibrosis"),
     ]
-
-    candidates = []
-    for i, (disease_id, disease_name, genes) in enumerate(mock_diseases[:top_k]):
-        score = 0.95 - (i * 0.08)  # Decreasing scores
-        # Build mock reasoning paths: phenotype → gene → disease
-        mock_paths = [
-            [p, genes[0], disease_id]
-            for p in phenotypes[:min(2, len(phenotypes))]
-        ] if genes else []
-        candidates.append(DiagnosisCandidate(
-            rank=i + 1,
-            disease_id=disease_id,
-            disease_name=disease_name,
-            confidence_score=max(0.1, score),
-            gnn_score=max(0.1, score + 0.02),
-            reasoning_score=max(0.1, score - 0.02),
-            # No graph was consulted, so nothing is annotated to these invented
-            # diseases. This used to echo the first three request phenotypes,
-            # which read as matches and meant nothing.
-            matching_phenotypes=[],
-            supporting_genes=genes,
-            explanation=f"Candidate diagnosis based on {len(phenotypes)} phenotypes. "
-                        f"Key supporting genes: {', '.join(genes)}."
-                        if include_explanations else None,
-            reasoning_paths=mock_paths if mock_paths else None,
-        ))
-
-    return candidates
+    # No graph was consulted, so nothing is annotated to these diseases: the
+    # matching phenotypes are empty, never an echo of the request.
+    return [
+        DemoCandidate(rank=i + 1, disease_id=disease_id, disease_name=disease_name,
+                      matching_phenotypes=[])
+        for i, (disease_id, disease_name) in enumerate(mock_diseases[:top_k])
+    ]

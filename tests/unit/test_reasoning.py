@@ -22,11 +22,9 @@ from src.reasoning import (
     DirectPathFinder,
     create_path_reasoner,
     ExplanationGenerator,
-    EvidenceSummary,
-    EvidenceItem,
     create_explanation_generator,
 )
-from src.core.types import DiagnosisCandidate, PatientPhenotypes
+from src.core.types import PathReasoningCandidate, PatientPhenotypes
 
 
 # =============================================================================
@@ -377,14 +375,12 @@ class TestExplanationGenerator:
 
     @pytest.fixture
     def diagnosis_candidate(self):
-        """Create a DiagnosisCandidate for testing"""
-        return DiagnosisCandidate(
+        """Create a candidate (path_reasoning/v1) for testing"""
+        return PathReasoningCandidate(
             rank=1,
             disease_id=make_node_id(DataSource.MONDO, "MONDO:001"),
             disease_name="Disease A",
-            confidence_score=0.85,
-            gnn_score=0.8,
-            reasoning_score=0.9,
+            path_score=0.85,
         )
 
     def test_create_generator(self):
@@ -436,76 +432,16 @@ class TestExplanationGenerator:
         assert isinstance(explanation, str)
         assert len(explanation) > 0
         assert "Disease A" in explanation or "MONDO:001" in explanation
-
-    def test_generate_evidence_summary(
-        self, simple_kg, diagnosis_candidate, patient_phenos
-    ):
-        """Test generating evidence summary"""
-        generator = ExplanationGenerator()
-
-        # Convert string HPO IDs to NodeIDs for path finding
-        source_ids = [
-            make_node_id(DataSource.HPO, hpo_id)
-            for hpo_id in patient_phenos.phenotypes
-        ]
-
-        # Get paths
-        reasoner = PathReasoner()
-        paths = reasoner.find_paths(
-            source_ids=source_ids,
-            target_type=NodeType.DISEASE,
-            kg=simple_kg,
+        # The score line prints the candidate's own score, and the kind's label
+        # when the pipeline passes it.
+        assert "Score: 0.850 (" in explanation
+        labelled = generator.generate_explanation(
+            candidate=diagnosis_candidate, phenotypes=patient_phenos, kg=simple_kg,
+            paths=disease_paths, score_label="No model loaded: ranked by path reasoning",
         )
-        scored_paths = reasoner.score_paths(paths, simple_kg)
-
-        disease_paths = [
-            p for p in scored_paths
-            if str(p.target) == str(diagnosis_candidate.disease_id)
-        ]
-
-        summary = generator.generate_evidence_summary(
-            candidate=diagnosis_candidate,
-            kg=simple_kg,
-            paths=disease_paths,
-            phenotypes=patient_phenos,
-        )
-
-        # Check summary structure
-        assert isinstance(summary, EvidenceSummary)
-        assert summary.disease_name is not None
-        assert summary.total_score == diagnosis_candidate.confidence_score
-        assert summary.confidence_level in ["high", "medium", "low"]
-
-    def test_evidence_summary_to_dict(
-        self, simple_kg, diagnosis_candidate, patient_phenos
-    ):
-        """Test evidence summary serialization"""
-        generator = ExplanationGenerator()
-
-        summary = generator.generate_evidence_summary(
-            candidate=diagnosis_candidate,
-            kg=simple_kg,
-            phenotypes=patient_phenos,
-        )
-
-        summary_dict = summary.to_dict()
-
-        assert "disease_id" in summary_dict
-        assert "disease_name" in summary_dict
-        assert "total_score" in summary_dict
-        assert "evidence" in summary_dict
-
-    def test_confidence_levels(self):
-        """Test confidence level determination"""
-        generator = ExplanationGenerator()
-
-        # High confidence
-        assert generator._get_confidence_level(0.8) == "high"
-        # Medium confidence
-        assert generator._get_confidence_level(0.5) == "medium"
-        # Low confidence
-        assert generator._get_confidence_level(0.2) == "low"
-
+        assert "Ranking: No model loaded: ranked by path reasoning" in labelled
+        # A paragraph of its own: Markdown joins lines one newline apart.
+        assert ")\n\nRanking: No model loaded" in labelled
 
 # =============================================================================
 # Test Explanation Factory Function

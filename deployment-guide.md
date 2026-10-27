@@ -1335,6 +1335,36 @@ checkpoint、圖、workspace manifest、最短路徑表與 dataset record，以 
 服務本身的版本（`/health`、`/` 與 Swagger 標題中的 `1.0.0`）是 API 的版本，不是所服務
 內容的身分。
 
+### 診斷回應分為三種類型（Batch 4）
+
+`POST /api/v1/diagnose` 回傳一種結果，由 `result_kind` 標明，`result_schema_version` 為 2
+（`docs/working/results-review/SPEC_1_RESULTS_REVIEW.md` §2.1）。每種類型只帶自己的值，
+並拒絕其他類型的欄位：
+
+| `result_kind` | 何時回傳 | 每個候選的值 | 結果層級欄位 |
+|---|---|---|---|
+| `served_mixture/v1` | 有服務模型時 | `served_score`，排名所依的值：有最短路徑表時為 η × `model_term` + (1 − η) × SP，沒有時就是 `model_term`；`model_term`，即 (cos + 1) / 2；`sp_term`，SP 紀錄 | `eta`、`candidates_reached`（截斷前 discovery 到達的疾病數）、`tie_policy` |
+| `path_reasoning/v1` | 沒有設定任何模型來源時 | `path_score`，路徑彙總分數 | `path_score_aggregation`、`tie_policy` |
+| `demo/v1` | 從未設定任何 pipeline 時 | 無：沒有分數、說明、路徑或基因 | — |
+
+- **已移除，沒有別名：** `confidence_score`、`gnn_score`、`sp_score`、`reasoning_score`
+  （改為 `path_score`，只在路徑推理中出現）與 `confidence_label`（改為 `evidence_label`，
+  `evidence_package` 內也一樣）。原本讀取這些欄位的用戶端，改讀該類型自己的欄位。
+- **`sp_term` 不會把缺少的值寫成 0。** 它的 `status` 為 `COMPUTED`、`COMPUTED_PARTIAL`
+  （部分送出的表型未能對應；`phenotypes_mapped` / `phenotypes_submitted` 寫明數量）、
+  `NO_TABLE`、`TARGET_UNMAPPED` 或 `NO_PHENOTYPE_MAPPED`。`mean_hop_distance` 與 `score`
+  （1 / (1 + d)）只在前兩種狀態出現。有服務最短路徑表、但某個狀態沒有數值時，混合分數仍照舊
+  以 0 計入，所以排名不變，紀錄上也會寫明：`mixed_as: 0.0`。
+- **合法輸入的排名不變**：數值、順序與平手都相同（`served_score` 就是原本的
+  `confidence_score`）。
+- **新增的拒絕條件。** 服務無法計算的模型分數（沒有 embedding、沒有表、某個節點沒有對應列，
+  或對應列超出表的範圍——過去會被截到最後一列）或不是有限值的分數，會拒絕整個結果：HTTP 500，
+  `error` 以代碼開頭（`MODEL_TERM_UNAVAILABLE: …`、`NON_FINITE_SCORE: …`）。在已驗證的
+  workspace 上不應出現這些狀態。圖中沒有任何表型的輸入照舊被拒絕（`No valid phenotypes after
+  validation`），未知的 id 一律會寫明（`Unknown phenotype: …`）。
+- **`phenotype_input`**（收到的、未知的、移除的重複項、實際使用的）會出現在回應中；demo 回答，
+  以及在表型對應之前就被拒絕的請求，該欄為 null。
+
 ### 組成部分與狀態
 
 ```json
@@ -1439,14 +1469,38 @@ WebUI 顯示的是**結果自己的身分**，絕不是狀態的：
 - **Markdown 報告**在候選之前有「What produced this result」段落：同樣的橫幅、一個
   Part | State | Value 表格（digest 完整寫出，`sha256:<64 hex>`）、宣稱界線與固定聲明。
   缺少的部分寫成它的狀態與原因，絕不留白。
+- **表格上方的類型標籤**說明 Score 欄是什麼，η 取自結果本身："Served ranking today:
+  diseases reached by path discovery, scored as η × model term + (1 − η) × SP, η = 0.7"
+  （沒有表時為 "…scored by the model term alone"）、"No model loaded: ranked by path
+  reasoning, not by a model"，或 "Demo answer: no pipeline is configured; not a
+  diagnosis"。欄位依類型而定：混合排名有 Score 與 Model term，有服務最短路徑表時旁邊再加 SP
+  （沒有數值的狀態以文字顯示，絕不寫 0.000）；路徑推理只有 Score；demo 回答沒有任何分數。
+- **被拒絕的結果**（`MODEL_TERM_UNAVAILABLE`、`NON_FINITE_SCORE`）以一句話顯示代碼與節點，
+  不會排出任何結果。
 - **CSV** 以欄位帶出身分（見下）。
 - **檔名**帶有複製出去後也不能遺失的兩種狀態：合成 workspace 為
   `diagnosis_SYNTHETIC_<patient>_<session>.csv` / `_report.md`，demo 回答為
   `diagnosis_DEMO_…`；其他情況不變。
 
+### CSV 的候選欄位（Batch 4）
+
+候選欄位依結果類型而定，每一列都寫明類型：
+
+| 類型 | 候選欄位，依序 |
+|---|---|
+| `served_mixture/v1` | `result_kind`、`rank`、`disease_id`、`disease_name`、`served_score`、`model_term`、`sp_term_status`、`sp_term_score`、`sp_term_mean_hop_distance`、`sp_term_phenotypes_mapped`、`sp_term_phenotypes_submitted`、`sp_term_mixed_as`，接著是證據欄位 |
+| `path_reasoning/v1` | `result_kind`、`rank`、`disease_id`、`disease_name`、`path_score`，接著是證據欄位 |
+| `demo/v1` | `result_kind`、`rank`、`disease_id`、`disease_name`、`matching_phenotypes` |
+
+證據欄位為 `evidence_label`、`evidence_mode`、`evidence_summary`、`min_path_length`、
+`num_direct_paths`、`num_analogies`、`supporting_genes` 與 `matching_phenotypes`。
+`sp_term_status` 放在 SP 數值旁：狀態沒有數值時，數值欄留空，絕不寫 0；混合分數仍以 0 計入時，
+`sp_term_mixed_as` 為 `0.0000`。沒有建立證據包時（說明關閉），路徑數留空。`served_score`
+是候選欄位，不屬於下方的身分欄位。
+
 ### CSV 的身分欄位
 
-CSV 仍然**只有一列標題**、沒有前言。原本的 15 個候選欄位在前，順序不變；其後接 21 個
+CSV 仍然**只有一列標題**、沒有前言。結果類型的候選欄位在前（見上）；其後接 21 個
 欄位，每欄存放身分的一個部分，**每一列都相同**：
 
 | 欄位 | 內容 | 身分中為 null 時 |

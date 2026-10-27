@@ -71,7 +71,9 @@ Mode D calls `rank()` only. It runs no explanation, evidence or summary step. Of
 `ServedRanking` entry it reads the order, the disease, the served score and the
 `discovery_ordinal`, nothing else, so the
 result union that batch 4 builds (`../results-review/SPEC_1_RESULTS_REVIEW.md` §2.1), which
-renames and re-types the other fields, does not reach Mode D.
+renames and re-types the other fields, does not reach Mode D. *(As built in Batch 4, 2026-10-27:
+the served score's attribute is `served_score`, Mode D's one change; a result the served path
+refuses (`MODEL_TERM_UNAVAILABLE`, `NON_FINITE_SCORE`) stops the run, with no report kept.)*
 
 ---
 
@@ -294,7 +296,7 @@ where it is; its move into `src/inference` is B-1's (`../results-review/SPEC_1_R
 
 **Old entries:** none removed by Mode D. `scripts/test_gnn_inference.py`, which pins
 `confidence_score == gnn_score` and is wrong in `gnn_plus_shortest_path`, goes with the result
-union (BACKLOG §0, Batch 4).
+union (BACKLOG §0, Batch 4; removed 2026-10-27).
 
 ---
 

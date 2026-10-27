@@ -21,8 +21,9 @@ Output format (parallel tensors, saved as shortest_paths.pt):
         "distance":       Tensor(N,) int8     # hop count (1-5; >5 dropped)
     }
 
-Pairs not in the table are implicitly "no connection within max_hops" and
-should be assigned SP_similarity = 0.0 by the inference pipeline.
+Pairs not in the table mean "no path within max_hops"; the inference
+pipeline counts such a pair as max_hops + 1 hops (`sp_mean_distances` in
+src/inference/sp_index.py), never as a score of 0.
 
 Usage:
     python scripts/compute_shortest_paths.py \\

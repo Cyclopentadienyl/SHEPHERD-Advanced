@@ -219,7 +219,7 @@ def rank_served_cases(pipeline: Any, samples: Sequence[Any]) -> List[ServedCase]
             served_rank=rank,
             served_ids=tuple(served_ids),
             discovery_ordinals=tuple(ranking.discovery_ordinals),
-            served_scores=tuple(float(c.confidence_score) for c in ranking.candidates),
+            served_scores=tuple(float(c.served_score) for c in ranking.candidates),
         )
 
     cases: List[ServedCase] = []

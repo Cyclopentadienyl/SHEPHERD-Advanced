@@ -200,11 +200,15 @@ class TestGNNPipelineE2E:
         assert len(result.candidates) > 0
         assert result.inference_time_ms > 0
 
-        # All candidates should have GNN scores
+        # A model with no SP table: served_mixture/v1, ranked by the model term
+        # alone, every SP record NO_TABLE (no number, nothing mixed).
+        assert result.result_kind == "served_mixture/v1"
+        assert result.eta == 1.0 and result.candidates_reached >= len(result.candidates)
         for c in result.candidates:
-            assert c.gnn_score != 0.0
-            assert c.confidence_score == c.gnn_score
-            assert 0.0 <= c.gnn_score <= 1.0
+            assert c.model_term != 0.0
+            assert c.served_score == c.model_term
+            assert 0.0 <= c.model_term <= 1.0
+            assert c.sp_term.status == "NO_TABLE" and c.sp_term.score is None
 
         # Top candidate should have reasoning paths
         top = result.candidates[0]
@@ -237,6 +241,30 @@ class TestGNNPipelineE2E:
             "Different phenotype sets should produce different patient embeddings"
         )
 
+    def test_a_pipeline_with_no_model_serves_path_reasoning(self, medium_kg):
+        """Moved from the removed `scripts/test_gnn_inference.py` (its step 4,
+        which pinned a fake GNN 0.0): with no model source the result is
+        `path_reasoning/v1`, ranked by the path score, and no candidate carries
+        a model term, a served score or an SP record (Spec 1 §2.1)."""
+        from src.core.types import PathReasoningCandidate
+
+        pipeline = DiagnosisPipeline(kg=medium_kg)
+        assert pipeline._gnn_ready is False
+        patient = PatientPhenotypes(
+            patient_id="path_only", phenotypes=["HP:0000001", "HP:0000002"])
+
+        result = pipeline.run(patient, top_k=5, include_explanations=False)
+
+        assert result.result_kind == "path_reasoning/v1"
+        assert result.path_score_aggregation == "weighted_sum/v1"
+        assert result.candidates_reached is None and result.eta is None
+        assert result.label == "No model loaded: ranked by path reasoning, not by a model"
+        assert result.candidates
+        for c in result.candidates:
+            assert type(c) is PathReasoningCandidate
+            assert 0.0 <= c.path_score <= 1.0
+            assert not any(hasattr(c, name) for name in ("model_term", "served_score", "sp_term"))
+
     def test_gnn_scores_reproducible(self, medium_kg, gnn_model_and_data):
         """Same input should produce identical GNN scores (deterministic)."""
         model, graph_data = gnn_model_and_data
@@ -251,8 +279,8 @@ class TestGNNPipelineE2E:
         result1 = pipeline.run(patient, top_k=5, include_explanations=False)
         result2 = pipeline.run(patient, top_k=5, include_explanations=False)
 
-        scores1 = [c.gnn_score for c in result1.candidates]
-        scores2 = [c.gnn_score for c in result2.candidates]
+        scores1 = [c.model_term for c in result1.candidates]
+        scores2 = [c.model_term for c in result2.candidates]
         assert scores1 == scores2
 # =============================================================================
 # Test: Checkpoint Save → Load → Inference (full bridge)
@@ -374,23 +402,23 @@ class TestCheckpointBridge:
         assert len(result.candidates) > 0, "Pipeline should produce candidates"
 
         for c in result.candidates:
-            # GNN-primary: confidence == gnn_score (not weighted combo)
-            assert abs(c.confidence_score - c.gnn_score) < 1e-5, (
-                f"GNN-primary: confidence ({c.confidence_score}) "
-                f"should equal gnn_score ({c.gnn_score})"
+            # No SP table: the served score is the model term itself
+            assert c.served_score == c.model_term, (
+                f"served_score ({c.served_score}) should equal the model term "
+                f"({c.model_term}) with no SP table"
             )
             # Scores should be in valid range
-            assert 0.0 <= c.gnn_score <= 1.0
+            assert 0.0 <= c.model_term <= 1.0
 
         # At least one candidate should have non-zero GNN score (model is trained)
-        assert any(c.gnn_score > 0.0 for c in result.candidates), (
+        assert any(c.model_term > 0.0 for c in result.candidates), (
             "Trained model should produce non-zero GNN scores"
         )
 
         # --- Reproducibility: same input → same scores ---
         result2 = pipeline.run(patient, top_k=5, include_explanations=False)
-        scores1 = [(c.disease_id, c.gnn_score) for c in result.candidates]
-        scores2 = [(c.disease_id, c.gnn_score) for c in result2.candidates]
+        scores1 = [(c.disease_id, c.model_term) for c in result.candidates]
+        scores2 = [(c.disease_id, c.model_term) for c in result2.candidates]
         assert scores1 == scores2, "Same input should produce identical scores"
 
     def test_offline_full_graph_encode_matches_what_the_pipeline_caches(
@@ -590,7 +618,7 @@ class TestShortestPathIntegration:
 
         from src.inference.sp_index import sp_mean_distances
 
-        distances, available = sp_mean_distances(lookup, [0], [0, 1], 1)
+        distances, available, _unreachable = sp_mean_distances(lookup, [0], [0, 1], 1)
         assert distances.dtype == torch.float64
         assert available.tolist() == [True, True]
 
@@ -629,7 +657,7 @@ class TestShortestPathIntegration:
     def test_combined_score_matches_formula(
         self, medium_kg, gnn_model_and_data, tmp_path
     ):
-        """Verify confidence = eta * gnn_score + (1-eta) * sp_score
+        """Verify served_score = eta * model_term + (1-eta) * the SP record's score
         when both signals are available."""
         model, graph_data = gnn_model_and_data
 
@@ -664,17 +692,18 @@ class TestShortestPathIntegration:
         assert len(result.candidates) > 0
 
         for c in result.candidates:
-            expected = eta_value * c.gnn_score + (1.0 - eta_value) * c.sp_score
-            assert abs(c.confidence_score - expected) < 1e-5, (
-                f"confidence {c.confidence_score:.6f} != "
+            assert c.sp_term.numeric and c.sp_term.mixed_as is None
+            expected = eta_value * c.model_term + (1.0 - eta_value) * c.sp_term.score
+            assert abs(c.served_score - expected) < 1e-5, (
+                f"served {c.served_score:.6f} != "
                 f"eta*gnn + (1-eta)*sp = {expected:.6f} "
-                f"(gnn={c.gnn_score}, sp={c.sp_score}, eta={eta_value})"
+                f"(model={c.model_term}, sp={c.sp_term.score}, eta={eta_value})"
             )
 
     def test_eta_one_equals_pure_gnn(
         self, medium_kg, gnn_model_and_data, tmp_path
     ):
-        """eta=1.0 with SP loaded should produce same confidence as gnn_score."""
+        """eta=1.0 with SP loaded should give a served score equal to the model term."""
         model, graph_data = gnn_model_and_data
 
         data_dir = tmp_path / "data"
@@ -704,12 +733,12 @@ class TestShortestPathIntegration:
         result = pipeline.run(patient, top_k=5, include_explanations=False)
 
         for c in result.candidates:
-            assert abs(c.confidence_score - c.gnn_score) < 1e-5
+            assert abs(c.served_score - c.model_term) < 1e-5
 
     def test_eta_zero_equals_pure_sp(
         self, medium_kg, gnn_model_and_data, tmp_path
     ):
-        """eta=0.0 with SP loaded should produce confidence == sp_score."""
+        """eta=0.0 with SP loaded should give a served score equal to the SP score."""
         model, graph_data = gnn_model_and_data
 
         data_dir = tmp_path / "data"
@@ -739,13 +768,14 @@ class TestShortestPathIntegration:
         result = pipeline.run(patient, top_k=5, include_explanations=False)
 
         for c in result.candidates:
-            assert abs(c.confidence_score - c.sp_score) < 1e-5
+            assert c.sp_term.numeric
+            assert abs(c.served_score - c.sp_term.score) < 1e-5
             # SP score should be in [0, 1]
-            assert 0.0 <= c.sp_score <= 1.0
+            assert 0.0 <= c.sp_term.score <= 1.0
 
     def test_sp_score_higher_for_closer_phenotypes(self, medium_kg, tmp_path):
-        """Direct test of _calculate_sp_score: closer phenotypes should
-        produce higher SP similarity than farther ones."""
+        """Direct test of the one SP caller, `sp_analysis_records`: a closer
+        disease has the smaller mean hop distance and the higher SP score."""
         # Pipeline with no model (just enough state for SP lookup)
         pipeline = DiagnosisPipeline(kg=medium_kg)
         pipeline._node_id_to_idx = medium_kg.get_node_id_mapping()
@@ -791,12 +821,14 @@ class TestShortestPathIntegration:
         disease1 = NodeID(source=DataSource.MONDO, local_id="MONDO:0000001")
         disease5 = NodeID(source=DataSource.MONDO, local_id="MONDO:0000005")
 
-        sp_close = pipeline._calculate_sp_score(
-            [ph_a1, ph_a2], disease1, target_type_idx=1
-        )
-        sp_far = pipeline._calculate_sp_score(
-            [ph_a1, ph_a2], disease5, target_type_idx=1
-        )
+        from src.inference.sp_index import sp_analysis_records
+
+        close, far = sp_analysis_records(
+            pipeline._sp_lookup, pipeline._node_id_to_idx, [str(ph_a1), str(ph_a2)],
+            [str(disease1), str(disease5)], 1)
+        assert close.status == far.status == "COMPUTED"
+        assert close.mean_hop_distance < far.mean_hop_distance
+        sp_close, sp_far = close.score, far.score
 
         # disease1 is the canonical target for HP:0000001/2 (via GeneA)
         # disease5 is on the other side of the graph (via GeneE)
@@ -850,12 +882,12 @@ class TestEvidencePanel:
         strong_found = any(
             c.evidence_package
             and c.evidence_package["mode"] == EvidenceMode.DIRECT_PATH.value
-            and c.confidence_label == ConfidenceLabel.STRONG_PATH.value
+            and c.evidence_label == ConfidenceLabel.STRONG_PATH.value
             for c in result.candidates
         )
         assert strong_found, (
             f"Expected at least one STRONG_PATH candidate. Got labels: "
-            f"{[c.confidence_label for c in result.candidates]}"
+            f"{[c.evidence_label for c in result.candidates]}"
         )
 
     def test_evidence_has_min_path_length(self, medium_kg, gnn_model_and_data):
@@ -901,9 +933,9 @@ class TestEvidencePanel:
             assert c.evidence_package is not None, (
                 "evidence_package missing when include_explanations=True"
             )
-            assert c.confidence_label is not None
+            assert c.evidence_label is not None
             # Confidence label should be one of the known values
-            assert c.confidence_label in (
+            assert c.evidence_label in (
                 "Strong path support",
                 "Weak path support",
                 "Analogy-based (no direct KG path)",
@@ -927,7 +959,7 @@ class TestEvidencePanel:
 
         for c in result.candidates:
             assert c.evidence_package is None
-            assert c.confidence_label is None
+            assert c.evidence_label is None
 
     def test_evidence_panel_does_not_affect_ranking(
         self, medium_kg, gnn_model_and_data
@@ -965,7 +997,7 @@ class TestEvidencePanel:
             assert c_no.disease_id == c_yes.disease_id, (
                 "Evidence panel changed ranking order"
             )
-            assert abs(c_no.confidence_score - c_yes.confidence_score) < 1e-9, (
+            assert abs(c_no.served_score - c_yes.served_score) < 1e-9, (
                 "Evidence panel changed confidence scores"
             )
 
@@ -975,7 +1007,7 @@ class TestEvidencePanel:
             EvidencePanel, EvidencePanelConfig, EvidenceMode, ConfidenceLabel,
         )
         from src.core.types import (
-            NodeID, DataSource, DiagnosisCandidate,
+            NodeID, DataSource, PathReasoningCandidate,
         )
 
         panel = EvidencePanel(
@@ -987,13 +1019,11 @@ class TestEvidencePanel:
         )
 
         # Disease1 is reachable from HP:0000001 via GeneA (2 hops)
-        candidate = DiagnosisCandidate(
+        candidate = PathReasoningCandidate(
             rank=1,
             disease_id=NodeID(source=DataSource.MONDO, local_id="MONDO:0000001"),
             disease_name="Disease 1",
-            confidence_score=0.9,
-            gnn_score=0.9,
-            reasoning_score=0.5,
+            path_score=0.5,
         )
         patient = PatientPhenotypes(
             patient_id="unit",
@@ -1014,7 +1044,7 @@ class TestEvidencePanel:
             EvidenceMode.DIRECT_PATH, EvidenceMode.INSUFFICIENT,
         )
         if package.mode == EvidenceMode.DIRECT_PATH:
-            assert package.confidence_label in (
+            assert package.evidence_label in (
                 ConfidenceLabel.STRONG_PATH, ConfidenceLabel.WEAK_PATH,
             )
             assert package.min_path_length is not None
@@ -1026,7 +1056,7 @@ class TestEvidencePanel:
         """When neither paths nor embeddings are available → INSUFFICIENT."""
         from src.reasoning import EvidencePanel, EvidenceMode, ConfidenceLabel
         from src.core.types import (
-            NodeID, DataSource, DiagnosisCandidate, NodeType, Node,
+            NodeID, DataSource, PathReasoningCandidate, NodeType, Node,
         )
 
         # Build a candidate for a disease the patient phenotype CANNOT
@@ -1042,13 +1072,11 @@ class TestEvidencePanel:
 
         panel = EvidencePanel(kg=kg)
 
-        candidate = DiagnosisCandidate(
+        candidate = PathReasoningCandidate(
             rank=1,
             disease_id=isolated_id,
             disease_name="Isolated Disease",
-            confidence_score=0.5,
-            gnn_score=0.5,
-            reasoning_score=0.0,
+            path_score=0.0,
         )
         patient = PatientPhenotypes(
             patient_id="iso",
@@ -1066,4 +1094,4 @@ class TestEvidencePanel:
         )
 
         assert package.mode == EvidenceMode.INSUFFICIENT
-        assert package.confidence_label == ConfidenceLabel.INSUFFICIENT
+        assert package.evidence_label == ConfidenceLabel.INSUFFICIENT

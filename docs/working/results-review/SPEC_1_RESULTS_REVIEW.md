@@ -51,10 +51,10 @@ binding a view to an immutable result ID — **unenforceable**, not merely untid
 
 ### 2.1 The result union (Batch 2 design, 2026-10-26)
 
-**Status:** reviewed design (Batch 2, passed with `a5652c1..e61253e`), not built yet (2026-10-27).
-**Batch 4 builds** `served_mixture/v1`, `path_reasoning/v1` and `demo/v1` with everything below
-that applies to them: the removed fields, unavailable never zero, the invariants, the labels and
-the consumers. **Batch 5 builds** `gnn_ranking/v1` with B-1 (BACKLOG §0). **Authority:** policy §7: one versioned discriminated union with required and
+**Status:** reviewed design (Batch 2, passed with `a5652c1..e61253e`). **Batch 4's part is
+implemented, for review (2026-10-27):** `served_mixture/v1`, `path_reasoning/v1` and `demo/v1` with
+everything below that applies to them: the removed fields, unavailable never zero, the invariants,
+the labels and the consumers. The as-built choices are in the note after the consumer table. **Batch 5 builds** `gnn_ranking/v1` with B-1 (BACKLOG §0). **Authority:** policy §7: one versioned discriminated union with required and
 forbidden fields per variant, never a flat envelope; statement 7; C9.
 
 **The discriminator is `result_kind`, on the result, never on a candidate.** Every candidate of a
@@ -168,7 +168,26 @@ not reopened.
 | Probes E7, R6, M4 (`scripts/probe_deployment.py`); `scripts/measure_served_pipeline.py` | read the kind's score and validate against the union |
 | `scripts/test_gnn_inference.py` | removed: it pins `confidence_score == gnn_score`, which is wrong in `gnn_plus_shortest_path`. Its build-and-rank checks move to `tests/integration/test_pipeline.py`, against the union |
 | `docs/SP_SCORE_GUIDE.md`'s status box | changes with the code (policy §7) |
-| Mode D (`run_mode_d`, `docs/working/scorer-measurement/PLAN_B05.md`) | nothing: it reads batch 3's `ServedRanking`, and only its order, disease, served score and `discovery_ordinal` (internal metadata, not a response field) |
+| Mode D (`run_mode_d`, `docs/working/scorer-measurement/PLAN_B05.md`) | nothing: it reads batch 3's `ServedRanking`, and only its order, disease, served score and `discovery_ordinal` (internal metadata, not a response field). As built, the served score's attribute name follows the kind (`served_score`) |
+
+**As built in Batch 4 (2026-10-27, for review).** Where the design left a detail open:
+- `result_kind_for`, the one mapping function, lives in `src/core/types.py` beside the candidate
+  types rather than in `src/inference`, so that the API's demo answer and the WebUI read the same
+  mapping without importing the pipeline.
+- A refusal (`MODEL_TERM_UNAVAILABLE`, `NON_FINITE_SCORE`) is HTTP 500 whose `detail` starts with
+  the code; the Diagnosis page shows it as one sentence; Mode D stops on it rather than counting it.
+- `phenotype_input` is null in the demo answer and when a request is refused before its phenotypes
+  are mapped. `phenotypes_submitted` counts the mapped phenotypes plus the distinct unknown ones.
+- In `gnn_only` the SP column is omitted from the page and `mixed_as` is absent, since nothing is
+  mixed; the CSV keeps its `sp_term_` columns with the status `NO_TABLE` and empty values.
+- The demo answer lists diseases with no score, gene, path or explanation.
+- `path_score_aggregation` reads the configured aggregation (`weighted_sum/v1` by default).
+- The tie rule is the stable sort in discovery order; the result's invariant checks only that the
+  order does not increase.
+- Mode D's one change is the attribute it reads (`served_score`, formerly `confidence_score`).
+- `scripts/test_gnn_inference.py` is removed; its build-and-rank checks are
+  `tests/integration/test_pipeline.py`'s, against the union, and the workspace-producer smoke test
+  that ran it is removed with it.
 
 **Not decided here:**
 - the B-1 switch's default (the owner's call, policy §7);
@@ -180,8 +199,8 @@ before batch 4.
 
 ### 2.2 The shared scoring boundary (Batch 2 design, 2026-10-26)
 
-**Status:** reviewed design (Batch 2), not built yet (2026-10-27). **Batch 4 builds** the parts
-marked *batch 4*: the one phenotype mapping step, and the one SP caller with its two clean-ups.
+**Status:** reviewed design (Batch 2). **The parts marked *batch 4* are implemented, for review
+(2026-10-27):** the one phenotype mapping step, and the one SP caller with its two clean-ups.
 **Batch 5 builds** the rest with B-1: `score_patients`, `masked_mean_pool` in place of
 `pool_patient_embeddings`, the ranking's move into `scoring.py`, and the callers' migration.
 It settles `PLAN_TEST_RESULTS.md` D3's two open served behaviours, the disease clamp and the
@@ -287,7 +306,8 @@ accumulation. **The derivation belongs in `sp_mean_distances`' docstring, next t
 constrains, and is not restated here** — a product specification is the wrong home for a
 floating-point proof, and two copies would drift. *(Factual note, 2026-10-26: the derivation stood in
 that docstring while the primitive lived in `src/inference/scoring.py`; the move to
-`src/inference/sp_index.py` (`87f8d13`) did not carry it. Batch 4 restores it there, BACKLOG §0.)*
+`src/inference/sp_index.py` (`87f8d13`) did not carry it. Batch 4 restores it there, BACKLOG §0;
+restored 2026-10-27.)*
 Regression tests pin it (`tests/unit/test_scoring_primitives.py`).
 
 ### 3.2 Reference set

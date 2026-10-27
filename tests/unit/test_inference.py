@@ -16,7 +16,8 @@ from src.core.types import (
     NodeType,
     PatientPhenotypes,
     InferenceResult,
-    DiagnosisCandidate,
+    PathReasoningCandidate,
+    ServedMixtureCandidate,
 )
 from src.kg import KnowledgeGraph
 from src.inference import (
@@ -192,10 +193,11 @@ class TestDiagnosisPipeline:
         assert len(result.candidates) > 0
 
         # Check candidate structure
+        assert result.result_kind == "path_reasoning/v1"
         for candidate in result.candidates:
-            assert isinstance(candidate, DiagnosisCandidate)
+            assert isinstance(candidate, PathReasoningCandidate)
             assert candidate.rank > 0
-            assert candidate.confidence_score >= 0
+            assert candidate.path_score >= 0
             assert candidate.disease_name is not None
 
     def test_run_with_explanations(self, simple_kg, patient_phenotypes):
@@ -229,13 +231,12 @@ class TestDiagnosisPipeline:
             assert candidate.rank == i + 1
 
         # Scores should be descending
-        scores = [c.confidence_score for c in result.candidates]
+        scores = [c.path_score for c in result.candidates]
         assert scores == sorted(scores, reverse=True)
 
     def test_run_with_invalid_phenotypes(self, simple_kg, patient_phenotypes_with_invalid):
         """Test pipeline with some invalid phenotypes"""
-        config = PipelineConfig(validate_phenotypes=False)
-        pipeline = DiagnosisPipeline(kg=simple_kg, config=config)
+        pipeline = DiagnosisPipeline(kg=simple_kg)
         result = pipeline.run(
             patient_input=patient_phenotypes_with_invalid,
             top_k=5,
@@ -481,7 +482,7 @@ class TestGNNInference:
         assert emb["disease"].device.type == "cpu"
 
     def test_gnn_score_not_zero(self, gnn_pipeline, patient_phenotypes):
-        """GNN score should NOT be 0.0 (the old stub behavior)."""
+        """The model term should NOT be 0.0 (the old stub behavior)."""
         result = gnn_pipeline.run(
             patient_input=patient_phenotypes,
             top_k=5,
@@ -489,34 +490,37 @@ class TestGNNInference:
         )
         assert len(result.candidates) > 0
         for c in result.candidates:
-            # With a real model, gnn_score should be non-zero
-            assert c.gnn_score != 0.0, (
-                f"{c.disease_name}: gnn_score is 0.0 — GNN not wired correctly"
+            # With a real model, the model term should be non-zero
+            assert c.model_term != 0.0, (
+                f"{c.disease_name}: model_term is 0.0 — GNN not wired correctly"
             )
 
     def test_confidence_uses_gnn_score(self, gnn_pipeline, patient_phenotypes):
-        """When GNN is active, confidence_score should equal gnn_score."""
+        """With a model and no SP table (gnn_only), the served score is the
+        model term itself, and no SP value is mixed in."""
         result = gnn_pipeline.run(
             patient_input=patient_phenotypes,
             top_k=5,
             include_explanations=False,
         )
+        assert result.result_kind == "served_mixture/v1"
         for c in result.candidates:
-            assert c.confidence_score == c.gnn_score, (
-                f"{c.disease_name}: confidence={c.confidence_score} != "
-                f"gnn={c.gnn_score}"
+            assert isinstance(c, ServedMixtureCandidate)
+            assert c.served_score == c.model_term, (
+                f"{c.disease_name}: served={c.served_score} != model={c.model_term}"
             )
+            assert c.sp_term.status == "NO_TABLE" and c.sp_term.score is None
 
     def test_gnn_score_in_valid_range(self, gnn_pipeline, patient_phenotypes):
-        """GNN score should be normalized to [0, 1]."""
+        """The model term should be normalized to [0, 1]."""
         result = gnn_pipeline.run(
             patient_input=patient_phenotypes,
             top_k=5,
             include_explanations=False,
         )
         for c in result.candidates:
-            assert 0.0 <= c.gnn_score <= 1.0, (
-                f"{c.disease_name}: gnn_score={c.gnn_score} out of [0,1]"
+            assert 0.0 <= c.model_term <= 1.0, (
+                f"{c.disease_name}: model_term={c.model_term} out of [0,1]"
             )
 
     def test_pipeline_config_reports_gnn(self, gnn_pipeline):
@@ -549,7 +553,8 @@ class TestGNNInference:
         assert len(candidates_with_paths) > 0
 
     def test_without_gnn_uses_reasoning_fallback(self, simple_kg, patient_phenotypes):
-        """Without GNN, confidence should fall back to reasoning score."""
+        """Without a model the result is path_reasoning/v1: ranked by the path
+        score, with no model term or SP value at all (no fake 0.0)."""
         pipeline = DiagnosisPipeline(kg=simple_kg)
         assert pipeline._gnn_ready is False
 
@@ -558,9 +563,11 @@ class TestGNNInference:
             top_k=5,
             include_explanations=False,
         )
+        assert result.result_kind == "path_reasoning/v1"
+        assert result.candidates
         for c in result.candidates:
-            assert c.gnn_score == 0.0
-            assert c.confidence_score == c.reasoning_score
+            assert isinstance(c, PathReasoningCandidate)
+            assert not hasattr(c, "model_term") and not hasattr(c, "sp_term")
 
 
 # =============================================================================
@@ -585,7 +592,8 @@ def _patient(phenotypes, confidences=None):
 
 def _ranking(result):
     return [
-        (c.disease_id, c.rank, c.confidence_score, c.gnn_score, c.reasoning_score)
+        (c.disease_id, c.rank, c.served_score, c.model_term)
+        if isinstance(c, ServedMixtureCandidate) else (c.disease_id, c.rank, c.path_score)
         for c in result.candidates
     ]
 
@@ -621,7 +629,7 @@ class TestPhenotypeListRule:
         without = pipeline.run(_patient([SEIZURE, ATAXIA]), top_k=5)
 
         assert _ranking(with_repeat) == _ranking(without)
-        assert any(c.gnn_score != 0.0 for c in with_repeat.candidates)
+        assert any(c.model_term != 0.0 for c in with_repeat.candidates)
 
     def test_one_hundred_repeats_then_another_phenotype_keeps_both(self, simple_kg):
         """The previous version truncated to the first 100 entries before

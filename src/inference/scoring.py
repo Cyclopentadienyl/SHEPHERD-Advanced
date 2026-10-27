@@ -44,16 +44,13 @@ the distance: it is the quantity a clinician can reason about ("within three
 steps"), whereas the score compresses the far end so heavily that most of its
 range is spent on the first two steps.
 
-Availability is a mask, not a sentinel — but a narrow one at this stage. It
-currently separates only "there was nothing to measure from" (no phenotypes, or
-no candidates) from "a distance was produced". The other unavailable states —
-no table loaded, target unmapped, no phenotype mapped — are still detected by the
-caller before this module is reached, and the legacy wrapper collapses them to
-`0.0`. That collapse is lossy in a way that matters, since `0.0` is *below* the
-value a genuine "no path found" produces. **The full typed status
-(`COMPUTED` / `COMPUTED_PARTIAL` / `NO_TABLE` / `TARGET_UNMAPPED` /
-`NO_PHENOTYPE_MAPPED`) belongs to the B-1 analysis record; no caller should read
-this Boolean as though it already carried those semantics.**
+Availability is a mask, not a sentinel — and a narrow one. It separates only
+"there was nothing to measure from" (no phenotypes, or no candidates) from "a
+distance was produced". **The typed status** (`COMPUTED` / `COMPUTED_PARTIAL` /
+`NO_TABLE` / `TARGET_UNMAPPED` / `NO_PHENOTYPE_MAPPED`, Spec 1 §3.3) is the
+analysis record's, built by `sp_index.sp_analysis_records`, the one SP caller;
+no caller should read this Boolean as though it carried those semantics, and
+nothing collapses an unavailable value to `0.0` any more.
 
 Dependencies: torch. Import this module lazily from anywhere that must remain
 importable without torch.
@@ -81,18 +78,11 @@ __all__ = [
 # Shortest-path lookup table
 # =============================================================================
 #: The hop bound the producer validates before it writes anything
-#: (`scripts/compute_shortest_paths.py` refuses outside this range), and the same
-#: range `scripts/audit_sp_reachability.py` holds a sidecar to. Declared here so
-#: the serving path cannot come to accept an artifact the evidence path refuses —
-#: the split-authority failure is the one this constant exists to prevent.
+#: (`scripts/compute_shortest_paths.py` refuses outside this range), and the range
+#: `scripts/audit_sp_reachability.py` imports from here to check a sidecar. One
+#: declaration, so the serving path cannot come to accept an artifact the evidence
+#: path refuses — the split-authority failure this constant exists to prevent.
 PRODUCER_HOP_RANGE = (1, 127)
-
-#: What the loader assumes when no sidecar records the ceiling. It is the
-#: producer's own CLI default and the value every operator-facing build path in
-#: this repository uses, so it is the right number for a real artifact whose
-#: sidecar went missing — but it is an *assumption*, and `validate_hop_bound`
-#: plus the floor check are what keep it from being a silent one.
-ASSUMED_HOP_BOUND = 5
 
 
 def validate_hop_bound(value: Any, source: str) -> int:

@@ -435,6 +435,46 @@ def test_each_part_has_the_same_fields_in_both_definitions():
         ), part.__name__
 
 
+def test_the_result_unions_mirrors_have_the_core_types_fields():
+    """The same for the result union (Spec 1 §2.1): the SP record, the phenotype
+    account and each kind's candidate. A candidate's `evidence_sources` stays in
+    the pipeline (the response never carried it); nothing else differs."""
+    from src.api.routes import diagnose
+    from src.core import types
+
+    pairs = [
+        (types.SPAnalysisRecord, diagnose.SPTerm, set()),
+        (types.PhenotypeInputAccount, diagnose.PhenotypeInput, set()),
+        (types.ServedMixtureCandidate, diagnose.ServedMixtureCandidate, {"evidence_sources"}),
+        (types.PathReasoningCandidate, diagnose.PathReasoningCandidate, {"evidence_sources"}),
+    ]
+    for core, model, kept_back in pairs:
+        assert {f.name for f in dataclasses.fields(core)} - kept_back == set(model.model_fields), (
+            core.__name__)
+    assert set(diagnose.DemoCandidate.model_fields) == {
+        "rank", "disease_id", "disease_name", "matching_phenotypes"}
+
+
+def test_the_result_unions_vocabularies_are_the_core_ones():
+    """The kinds, the SP statuses and their numeric set, the tie policy, the
+    aggregations: one vocabulary each, in the dataclasses and the API."""
+    from src.api.routes import diagnose
+    from src.core import types
+
+    assert set(diagnose.RESULT_KINDS) == set(types.RESULT_KINDS)
+    kinds = {model.model_fields["result_kind"].annotation for model in (
+        diagnose.ServedMixtureResponse, diagnose.PathReasoningResponse, diagnose.DemoResponse)}
+    assert {value for kind in kinds for value in _literal_values(kind)} == set(types.RESULT_KINDS)
+    assert _literal_values(diagnose.SPTerm.model_fields["status"].annotation) == set(
+        types.SP_STATUSES)
+    assert diagnose.SP_NUMERIC_STATUSES == types.SP_NUMERIC_STATUSES
+    assert diagnose.SP_NON_NUMERIC_STATUSES == types.SP_NON_NUMERIC_STATUSES
+    assert diagnose.SERVED_TIE_POLICY == types.SERVED_TIE_POLICY
+    assert _literal_values(
+        diagnose.PathReasoningResponse.model_fields["path_score_aggregation"].annotation
+    ) == {f"{method}/v1" for method in types.PATH_SCORE_AGGREGATIONS}
+
+
 def test_each_state_vocabulary_is_the_same_in_both_definitions():
     """Catches a state added to the dataclass that every response carrying it
     would fail on, or one the API accepts and no pipeline can produce."""
@@ -728,16 +768,16 @@ def _kg_with_an_isolated_phenotype():
     return kg
 
 
-#: (validate_phenotypes, phenotypes, confidences, kind, warning fragment)
+#: (phenotypes, confidences, kind, warning fragment). An input with no phenotype
+#: in the graph is refused by validation (Batch 4 removed the switch that sent it
+#: to the empty result instead).
 RESULT_PATHS = {
-    "scored": (True, [SEIZURE, DELAY], None, "scored", None),
-    "empty, no phenotype in the graph": (
-        False, [UNKNOWN], None, "empty", "No valid phenotypes found in knowledge graph"),
-    "empty, no path": (True, [ISOLATED], None, "empty", "No paths found"),
+    "scored": ([SEIZURE, DELAY], None, "scored", None),
+    "empty, no path": ([ISOLATED], None, "empty", "No paths found"),
     "refused, no valid phenotype": (
-        True, [UNKNOWN], None, "empty", "No valid phenotypes after validation"),
+        [UNKNOWN], None, "empty", "No valid phenotypes after validation"),
     "refused, a confidence list of another length": (
-        True, [SEIZURE, DELAY], [0.9], "empty", "phenotype_confidences has 1 entries"),
+        [SEIZURE, DELAY], [0.9], "empty", "phenotype_confidences has 1 entries"),
 }
 
 
@@ -750,10 +790,10 @@ def test_every_result_path_carries_the_pipelines_identity(case):
     configuration differs."""
     from src.inference.pipeline import DiagnosisPipeline, PipelineConfig
 
-    validate, phenotypes, confidences, kind, warning = RESULT_PATHS[case]
+    phenotypes, confidences, kind, warning = RESULT_PATHS[case]
     pipeline = DiagnosisPipeline(
         kg=_kg_with_an_isolated_phenotype(),
-        config=PipelineConfig(validate_phenotypes=validate, **NON_DEFAULT_PATHS),
+        config=PipelineConfig(**NON_DEFAULT_PATHS),
     )
 
     result = pipeline.run(_patient(phenotypes, confidences), top_k=5)
@@ -769,15 +809,11 @@ def test_every_result_path_carries_the_pipelines_identity(case):
     ), "the path settings in effect are the defaults; this case cannot tell them apart"
 
 
-#: The same three places over the full pipeline: (validate_phenotypes,
-#: phenotypes, kind, warning fragment). Validation off lets an id the graph
-#: lacks reach the empty-result builder.
+#: The same places over the full pipeline: (phenotypes, kind, warning fragment).
 FULL_RESULT_PATHS = {
-    "scored": (True, [PHENOTYPE], "scored", None),
-    "empty, no phenotype in the graph": (
-        False, ["HP:9999999"], "empty", "No valid phenotypes found in knowledge graph"),
+    "scored": ([PHENOTYPE], "scored", None),
     "refused, no valid phenotype": (
-        True, ["HP:9999999"], "empty", "No valid phenotypes after validation"),
+        ["HP:9999999"], "empty", "No valid phenotypes after validation"),
 }
 
 
@@ -790,11 +826,10 @@ def test_a_full_pipelines_results_carry_its_full_identity(served_workspace, case
     workspace, so no invariant refuses it."""
     from src.inference.pipeline import PipelineConfig
 
-    validate, phenotypes, kind, warning = FULL_RESULT_PATHS[case]
+    phenotypes, kind, warning = FULL_RESULT_PATHS[case]
     data_dir, checkpoint = served_workspace
     _with_table(data_dir)
-    pipeline = _full_pipeline(data_dir, checkpoint,
-                              PipelineConfig(validate_phenotypes=validate))
+    pipeline = _full_pipeline(data_dir, checkpoint, PipelineConfig())
 
     result = pipeline.run(_patient(phenotypes), top_k=5)
 
@@ -917,17 +952,26 @@ def test_the_status_with_nothing_loaded_identifies_nothing(app):
 
 def test_a_diagnose_response_without_the_identity_key_is_refused():
     """Required-but-nullable: catches a default that would let a response path
-    leave the key out instead of answering it."""
+    leave the key out instead of answering it. Null only in the demo answer
+    (`demo/v1`): a served kind with a null identity is refused (Spec 1 §2.1)."""
     from pydantic import ValidationError
 
     from src.api.routes.diagnose import DiagnoseResponse
 
-    response = {"session_id": "s", "patient_id": "p", "timestamp": "t",
-                "candidates": [], "inference_time_ms": 0.0}
+    response = {"result_kind": "demo/v1", "result_schema_version": 2, "session_id": "s",
+                "patient_id": "p", "timestamp": "t", "candidates": [],
+                "inference_time_ms": 0.0, "phenotype_input": None}
 
     with pytest.raises(ValidationError, match="served_identity"):
         DiagnoseResponse.model_validate(response)
     assert DiagnoseResponse.model_validate({**response, "served_identity": None})
+    for kind, extra in (("served_mixture/v1", {"eta": 1.0, "candidates_reached": 0,
+                                               "tie_policy": "served-stable-discovery-order/v1"}),
+                        ("path_reasoning/v1", {"path_score_aggregation": "weighted_sum/v1",
+                                               "tie_policy": "served-stable-discovery-order/v1"})):
+        with pytest.raises(ValidationError, match="served_identity"):
+            DiagnoseResponse.model_validate(
+                {**response, **extra, "result_kind": kind, "served_identity": None})
 
 
 # ---------------------------------------------------------------------------

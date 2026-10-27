@@ -58,7 +58,7 @@ without it.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Sequence, Tuple
+from typing import Any, List, Mapping, Optional, Sequence, Tuple
 
 import torch
 from torch import Tensor
@@ -69,6 +69,7 @@ __all__ = [
     "SPLookup",
     "SP_TARGET_TYPES",
     "build_sp_index",
+    "sp_analysis_records",
     "sp_mean_distances",
     "validate_sp_artifact",
     "validate_sp_columns",
@@ -411,16 +412,20 @@ def build_sp_index(
     )
 
 
-def _all_unreachable(n_candidates: int, unreachable: float) -> Tuple[Tensor, Tensor]:
+def _all_unreachable(
+    n_candidates: int, unreachable: float, n_phenotypes: int
+) -> Tuple[Tensor, Tensor, Tensor]:
     """Every candidate missed, and every candidate still *computed*.
 
     `available` is True: there were phenotypes and there were candidates, so
     something was measured. That Boolean stays narrow on purpose — a candidate
-    that is simply far away is available, with a large distance.
+    that is simply far away is available, with a large distance. Every pair is
+    unreachable, so each candidate's count is the number of phenotypes.
     """
     return (
         torch.full((n_candidates,), unreachable, dtype=torch.float64),
         torch.ones(n_candidates, dtype=torch.bool),
+        torch.full((n_candidates,), n_phenotypes, dtype=torch.int64),
     )
 
 
@@ -429,12 +434,14 @@ def sp_mean_distances(
     phenotype_indices: Sequence[int],
     target_indices: Sequence[int],
     target_type_idx: int,
-) -> Tuple[Tensor, Tensor]:
+) -> Tuple[Tensor, Tensor, Tensor]:
     """Mean hop distance from the patient's phenotypes to each candidate.
 
-    Returns ``(mean_distance, available)``, both ``(C,)``. ``available`` is False
-    only when there was nothing to measure from — no phenotype indices, or no
-    candidates.
+    Returns ``(mean_distance, available, unreachable_pairs)``, each ``(C,)``.
+    ``available`` is False only when there was nothing to measure from — no
+    phenotype indices, or no candidates — and then the count is 0.
+    ``unreachable_pairs`` counts, per candidate, the phenotypes with no path to
+    it within the hop bound (Spec 1 §3.4's ``unreachable_pair_count``).
 
     A phenotype with no path to a candidate contributes
     `lookup.unreachable_distance` rather than being dropped, so a candidate all
@@ -453,6 +460,33 @@ def sp_mean_distances(
     look at, and then excluded by a mask built from the *unclamped* values. The
     clamp without the mask returns a real row's distance for an id that is not in
     the table, which is a wrong answer rather than a missing one.
+
+    **Why the result orders candidates exactly, in either direction** (Spec 1
+    §3.1: ascending mean hop distance equals descending SP score; restored here
+    from the version this primitive had in `scoring.py` before `87f8d13`). Each
+    pair contributes an integer in ``1..max_hops + 1``, so the float64 sum is
+    exact whatever the order of summation, and one float64 division follows.
+    Within a single result every candidate is scored against the same phenotype
+    set, so ``N`` is fixed and the achievable means are ``k / N``:
+
+    - **Raw distance.** Distinct means differ by at least ``1 / N``, so at the
+      contractual maximum of 100 phenotypes (`DiagnoseRequest.phenotypes`,
+      `max_length=100`, in `src/api/routes/diagnose.py`; `PipelineConfig.
+      max_phenotypes`, 100 distinct, for a caller of `rank()` that bypasses the
+      API) the smallest gap is 1e-2, against a float32 spacing near ``d = 6`` of
+      ``2**-21 = 4.8e-7`` — four orders of magnitude.
+    - **Transformed score.** The gap becomes about ``0.0204 / N``, so 2.0e-4 at
+      ``N = 100``, against a float32 spacing near ``1/7`` of ``2**-26 = 1.5e-8``
+      — again four orders of magnitude.
+
+    (Means with *different* denominators can come far closer — adjacent fractions
+    with denominators up to 64 differ by as little as ``1 / (63 * 64) = 2.5e-4``
+    — but that is a comparison across results with different phenotype counts,
+    which `docs/DISEASE_SCORER_POLICY.md` does not treat as commensurable anyway.)
+    Across the whole producer range (`max_hops` up to 127) the margin is still
+    about three orders of magnitude. The result is kept in float64 regardless of
+    that margin: B-0 exists to make the offline measurement describe the deployed
+    system exactly, and "too small to matter" is the argument that lets drift in.
     """
     n_candidates = len(target_indices)
     n_phenotypes = len(phenotype_indices)
@@ -462,6 +496,7 @@ def sp_mean_distances(
         return (
             torch.zeros(n_candidates, dtype=torch.float64),
             torch.zeros(n_candidates, dtype=torch.bool),
+            torch.zeros(n_candidates, dtype=torch.int64),
         )
 
     n_rows = lookup.n_rows
@@ -469,14 +504,14 @@ def sp_mean_distances(
     # Answered before the gather because indexing element 0 of an empty tensor
     # raises where the answer is simply "no".
     if n_rows == 0:
-        return _all_unreachable(n_candidates, unreachable)
+        return _all_unreachable(n_candidates, unreachable, n_phenotypes)
 
     domain = lookup.domain
     # A target_type outside the table's range cannot match any row. Answered
     # here rather than folded into the key, where an out-of-domain component
     # could alias onto a stored triple.
     if not 0 <= target_type_idx <= domain.max_type:
-        return _all_unreachable(n_candidates, unreachable)
+        return _all_unreachable(n_candidates, unreachable, n_phenotypes)
 
     # A phenotype simply absent from the table needs no special case: it has no
     # rows, so every lookup against it misses and contributes `unreachable`.
@@ -512,4 +547,87 @@ def sp_mean_distances(
     return (
         contribution.sum(dim=0) / n_phenotypes,
         torch.ones(n_candidates, dtype=torch.bool),
+        (~hit).sum(dim=0).to(torch.int64),
     )
+
+
+def sp_analysis_records(
+    lookup: Optional[SPLookup],
+    node_mapping: Optional[Mapping[str, Mapping[str, int]]],
+    phenotype_ids: Sequence[str],
+    target_ids: Sequence[str],
+    target_type_idx: int,
+    unmapped_ids: Sequence[str] = (),
+) -> List[Any]:
+    """**The one SP caller** (Spec 1 §2.2): one `SPAnalysisRecord` per target, in
+    target order, from one call of the primitive over every mapped target.
+
+    `phenotype_ids` are the phenotypes as used, as graph node ids
+    (``str(NodeID)``), distinct and in the order used; `unmapped_ids` are the
+    distinct request ids that never reached a node (the request's unknown
+    ids). `target_ids` are graph node ids of type `target_type_idx` (0 gene,
+    1 disease). `node_mapping` is the model's node index by type, the mapping
+    the tensors were built with.
+
+    The status, per target (§3.3), never a number standing in for a reason:
+    - ``NO_TABLE``: no table is loaded (`lookup` is None);
+    - ``TARGET_UNMAPPED``: the target is not in the node mapping;
+    - ``NO_PHENOTYPE_MAPPED``: no phenotype is in it;
+    - otherwise ``COMPUTED``, or ``COMPUTED_PARTIAL`` when some submitted
+      phenotype is unmapped. Then the mean hop distance, its SP score
+      ``1 / (1 + d)``, the unreachable pairs and the coverage are carried, over
+      the mapped phenotypes only (``MAPPED_ONLY_DENOMINATOR``, §3.4).
+
+    A phenotype that is used but missing from the node mapping counts as
+    unmapped, by its node id. The distances are sums of small integers, so a
+    target's values are exactly what a call for that target alone would give.
+    """
+    from src.core.types import (
+        MAPPED_ONLY_DENOMINATOR,
+        NodeType,
+        SPAnalysisRecord,
+    )
+    from src.inference.scoring import sp_scores_from_distances
+
+    mapping = node_mapping or {}
+    phenotype_index = mapping.get(NodeType.PHENOTYPE.value, {})
+    mapped: List[int] = []
+    unmapped: List[str] = list(dict.fromkeys(str(i) for i in unmapped_ids))
+    for node in phenotype_ids:
+        row = phenotype_index.get(str(node))
+        if row is None:
+            unmapped.append(str(node))
+        else:
+            mapped.append(int(row))
+    coverage = dict(
+        phenotypes_submitted=len(mapped) + len(unmapped),
+        phenotypes_mapped=len(mapped),
+        unmapped_ids=tuple(unmapped),
+    )
+    if lookup is None:
+        return [SPAnalysisRecord(status="NO_TABLE", **coverage) for _ in target_ids]
+
+    target_type = (NodeType.GENE if target_type_idx == 0 else NodeType.DISEASE).value
+    target_index = mapping.get(target_type, {})
+    rows = [target_index.get(str(target)) for target in target_ids]
+    present = [i for i, row in enumerate(rows) if row is not None]
+    records: List[Any] = [None] * len(rows)
+    for i, row in enumerate(rows):
+        if row is None:
+            records[i] = SPAnalysisRecord(status="TARGET_UNMAPPED",
+                                          max_hops=lookup.max_hops, **coverage)
+        elif not mapped:
+            records[i] = SPAnalysisRecord(status="NO_PHENOTYPE_MAPPED",
+                                          max_hops=lookup.max_hops, **coverage)
+    if mapped and present:
+        distances, _available, unreachable = sp_mean_distances(
+            lookup, mapped, [rows[i] for i in present], target_type_idx)
+        scores = sp_scores_from_distances(distances)
+        status = "COMPUTED_PARTIAL" if unmapped else "COMPUTED"
+        for j, i in enumerate(present):
+            records[i] = SPAnalysisRecord(
+                status=status, max_hops=lookup.max_hops,
+                mean_hop_distance=float(distances[j]), score=float(scores[j]),
+                unreachable_pair_count=int(unreachable[j]),
+                denominator_policy=MAPPED_ONLY_DENOMINATOR, **coverage)
+    return records

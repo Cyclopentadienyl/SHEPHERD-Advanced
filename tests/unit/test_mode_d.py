@@ -207,11 +207,11 @@ def test_each_kind_of_case_is_counted_as_designed():
         "refused": ServedRanking("refused", ["over the input limit"], None),
         "empty": ServedRanking("no_candidates", ["no candidates"], None, used),
         "reached": ServedRanking("ranked", [], None, used, candidates=[
-            SimpleNamespace(disease_id="mondo:MONDO:0000003", confidence_score=0.9),
-            SimpleNamespace(disease_id="mondo:MONDO:0000001", confidence_score=0.8)],
+            SimpleNamespace(disease_id="mondo:MONDO:0000003", served_score=0.9),
+            SimpleNamespace(disease_id="mondo:MONDO:0000001", served_score=0.8)],
             discovery_ordinals=[1, 0]),
         "missed": ServedRanking("ranked", [], None, used, candidates=[
-            SimpleNamespace(disease_id="mondo:MONDO:0000002", confidence_score=0.5)],
+            SimpleNamespace(disease_id="mondo:MONDO:0000002", served_score=0.5)],
             discovery_ordinals=[0]),
     }
     kg = SimpleNamespace(get_node_id_mapping=lambda: {"disease": diseases},
@@ -540,6 +540,23 @@ def test_a_refused_case_is_counted_apart_from_not_reached_and_progress_is_logged
     assert "'refused': 1" in last
     assert sum(d_report["outcomes"][name] for name in ("ranked", "not_reached", "refused")) == \
         len(samples)
+
+
+def test_a_result_the_served_path_refuses_stops_the_run_and_writes_nothing(cohort, monkeypatch):
+    """Batch 4: a model term the service cannot compute refuses the result
+    (`MODEL_TERM_UNAVAILABLE`). Mode D does not count that as a refused input:
+    the run stops on it and keeps no report."""
+    import scripts.measure_scorer as cli
+    from src.core.types import ResultRefused
+    from src.inference.pipeline import DiagnosisPipeline
+
+    def unavailable(self, patient_embedding, disease_id):
+        raise ResultRefused("MODEL_TERM_UNAVAILABLE", f"disease {disease_id} (forced)")
+
+    monkeypatch.setattr(DiagnosisPipeline, "_calculate_gnn_score", unavailable)
+    with pytest.raises(ResultRefused, match="^MODEL_TERM_UNAVAILABLE"):
+        cli.main(["--mode", "D", *_argv(cohort)])
+    assert not list((cohort.version.directory / "reports").glob("*/report.json"))
 
 
 def test_a_cohort_mapped_under_another_normalisation_is_refused_before_any_case_is_ranked(

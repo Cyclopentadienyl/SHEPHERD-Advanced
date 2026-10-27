@@ -134,9 +134,6 @@ def test_the_probe_is_the_only_thing_exempt_from_that_guard():
 def test_the_module_level_importers_hold_the_same_writer():
     """Same object, not merely the same name. Two functions that agree today
     diverge the first time one is extended.
-
-    `test_gnn_inference` imports inside its function and so has no attribute to
-    compare; the routing test below is what covers it.
     """
     import scripts.build_knowledge_graph as build
     import scripts.setup_demo as demo
@@ -161,9 +158,9 @@ class TestEveryProducerReachesTheWriter:
     def _sentinel(cls, monkeypatch, module):
         """Patched at the source *and* at the entry point.
 
-        The three producers bind the writer differently -- two import it at
-        module load, one inside the function -- so a sentinel that patched only
-        one of those bindings would pass vacuously against the other style.
+        A producer may bind the writer at module load or inside a function, so
+        a sentinel that patched only one of those bindings would pass vacuously
+        against the other style.
         """
         import src.kg.workspace as workspace
 
@@ -183,13 +180,6 @@ class TestEveryProducerReachesTheWriter:
         )
         with pytest.raises(self._Reached):
             demo.main()
-
-    def test_the_gnn_smoke_test_reaches_it(self, monkeypatch, tmp_path):
-        import scripts.test_gnn_inference as gnn_smoke
-
-        self._sentinel(monkeypatch, gnn_smoke)
-        with pytest.raises(self._Reached):
-            gnn_smoke.build_workspace(gnn_smoke.build_test_kg(), tmp_path / "w")
 
     def test_the_production_build_reaches_it(self, monkeypatch, tmp_path):
         from tests.unit.test_data_pipeline import TestBuildPathOrdering, _wide_kg_object
