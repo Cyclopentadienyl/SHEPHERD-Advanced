@@ -1549,6 +1549,24 @@ def test_the_demo_answer_has_no_score_anywhere():
     assert {r["result_kind"] for r in records} == {"demo/v1"}
 
 
+def test_the_demo_answers_details_never_read_an_empty_list_as_a_finding():
+    """The reviewer's case on ce1ce1d: no query ran for a demo candidate, so its
+    empty matching list is not "none annotated". Its details say so and offer
+    no segment; a served candidate with an empty list still says it plainly."""
+    demo = _result_with(None)
+    demo["candidates"][0]["matching_phenotypes"] = []
+    for segment in ("evidence", "phenotypes", "paths", "explanation"):
+        out = dp.details_outputs(demo, 1, segment)
+        assert dp.DEMO_DETAILS in out["details_html"]["value"]
+        assert "annotated directly" not in out["details_html"]["value"]
+        assert dp.VIEW_OFF in out["details_seg"]["elem_classes"]
+    served = _sample_result()
+    served["candidates"][0]["matching_phenotypes"] = []
+    out = dp.details_outputs(served, 1, "phenotypes")
+    assert "None of the query's phenotypes is annotated directly" in out["details_html"]["value"]
+    assert dp.DEMO_DETAILS not in out["details_html"]["value"]
+
+
 def test_a_path_reasoning_result_has_no_model_term():
     """path_reasoning/v1: the path score, the kind's label, and no GNN or SP
     column, value or 0.000 anywhere (the fallback used to show GNN 0.000)."""

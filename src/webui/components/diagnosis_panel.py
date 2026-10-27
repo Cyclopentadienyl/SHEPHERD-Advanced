@@ -334,6 +334,8 @@ def _shows_sp(result: Any) -> bool:
 #: kind): nothing is drawn from it.
 KIND_NOT_REPORTED = ("The response does not name a result kind this page can read "
                      "(result_kind), so its candidates are not shown.")
+#: The demo answer's candidate details: nothing was looked up for it.
+DEMO_DETAILS = "Demo answer: no phenotype, evidence or path query was run for this candidate."
 #: A mixture whose identity does not give its η (only a malformed response):
 #: its candidates are shown, and the label says what is missing, never a constant.
 MIXTURE_ETA_NOT_REPORTED = ("Served ranking today: diseases reached by path discovery, "
@@ -1690,6 +1692,15 @@ def details_outputs(result: Optional[Mapping[str, Any]], rank: Any,
                 "details_seg": view_update(False, "shep-seg"),
                 "details_html": view_update(True, *_HTML_VIEW, value=details_empty_html()),
                 "details_md": view_update(False, *_MD_VIEW), "details_ft": ""}
+    if _result_kind(result) == DEMO:
+        # No query ran: an empty matching list or path list is not a finding,
+        # so no segment is offered (the report says the same).
+        return {"details_hd": details_header_html(candidate, DEMO),
+                "details_seg": view_update(False, "shep-seg"),
+                "details_html": view_update(True, *_HTML_VIEW,
+                                            value=f'<p class="shep-muted">{DEMO_DETAILS}</p>'),
+                "details_md": view_update(False, *_MD_VIEW),
+                "details_ft": details_footer_html(result, rank)}
     segment = segment if segment in _SEGMENT_VALUES else "evidence"
     explanations = bool(result.get("_explanations", True))
     html_: Optional[str] = None

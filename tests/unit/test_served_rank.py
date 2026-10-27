@@ -104,20 +104,59 @@ def _row(candidate):
             candidate.path_score]
 
 
-def _matches_exactly(name, row, want):
+def _matches_capture(name, row, want):
     """Each kind's fields against the full-precision capture of 755643a, the code
-    before the union: the served score and model term equal confidence and gnn,
-    the SP record's score equals sp where a table is served and is NO_TABLE where
-    sp read 0.0, and the fallback's path score equals confidence (= reasoning)."""
+    before the union. Strictly, what each field means: the fields the kind
+    carries, the SP status (numeric where a table is served, NO_TABLE where sp
+    read 0.0), no mixed_as. Within SCORE_TOLERANCE, the numbers: the served
+    score and model term against confidence and gnn, the SP score against sp,
+    the path score against reasoning. The fixture runs the model forward again,
+    and its float32 differs by an ulp between supported CPUs (aarch64 against
+    this x86 capture, the reviewer's run of ce1ce1d). Bit-for-bit equality
+    holds between the versions in one environment, which is how it was shown."""
     conf, gnn, sp, reasoning = (float(v) for v in want[2:])
     score, model_term, record, path_score = row[2:]
+
+    def close(value, captured):
+        return value == pytest.approx(captured, abs=SCORE_TOLERANCE)
+
     if name == "fallback":
-        return score == conf == reasoning and path_score == conf and model_term is None
-    if record is None or score != conf or model_term != gnn:
+        return (close(path_score, reasoning) and score == path_score
+                and model_term is None and record is None)
+    if record is None or not close(score, conf) or not close(model_term, gnn):
         return False
     if name == "gnn_plus_sp":
-        return record.numeric and record.score == sp and record.mixed_as is None
-    return record.status == "NO_TABLE" and record.score is None and sp == 0.0
+        return record.numeric and close(record.score, sp) and record.mixed_as is None
+    return (record.status == "NO_TABLE" and record.score is None and sp == 0.0
+            and score == model_term)
+
+
+def _ties(scores):
+    """Which neighbours tie: exact equality, which a tolerance would blur."""
+    return [a == b for a, b in zip(scores, scores[1:])]
+
+
+def test_the_capture_comparison_allows_an_ulp_and_nothing_else():
+    """The reviewer's run of ce1ce1d on aarch64 (gnn_only, case 0): the model's
+    float32 came out an ulp from the x86 capture. That is the same ranking; a
+    real change of value, a wrong status or a field of another kind is not."""
+    from src.core.types import SPAnalysisRecord
+
+    no_table = SPAnalysisRecord(status="NO_TABLE", phenotypes_submitted=1, phenotypes_mapped=1)
+    want = ["mondo:MONDO:0010730", 2, "0.5461347103118896", "0.5461347103118896", "0.0", "1.0"]
+
+    def row(score, record=no_table):
+        return ["mondo:MONDO:0010730", 2, score, score, record, None]
+
+    assert _matches_capture("gnn_only", row(0.5461346507072449), want)
+    assert not _matches_capture("gnn_only", row(0.5461347103118896 + 1e-3), want)
+    computed = SPAnalysisRecord(status="COMPUTED", phenotypes_submitted=1, phenotypes_mapped=1,
+                                max_hops=5, mean_hop_distance=1.0, score=0.5,
+                                unreachable_pair_count=0,
+                                denominator_policy="MAPPED_ONLY_DENOMINATOR")
+    assert not _matches_capture("gnn_only", row(0.5461346507072449, computed), want)
+    assert not _matches_capture("fallback", row(0.5461346507072449), want)
+    assert _ties([1.0, 1.0, 0.5]) == [True, False]
 
 
 def _stable(value, key=None):
@@ -133,10 +172,11 @@ def _stable(value, key=None):
 
 
 def test_run_reproduces_the_output_captured_before_the_split(served):
-    """The order, ranks, warnings and phenotype account exactly, the four scores
-    within 1e-5 of the capture before the split (e61253e) and each kind's fields
-    exactly equal to the capture before the union (755643a, Batch 4), in each
-    mode and for every case, the fallback's exact ties at 1.0 included; and each
+    """The order, ranks, ties, warnings and phenotype account exactly, the four
+    scores within 1e-5 of the capture before the split (e61253e), and each kind's
+    fields against the capture before the union (755643a, Batch 4): what they
+    mean exactly, their numbers within 1e-5 (`_matches_capture`), in each mode
+    and for every case, the fallback's exact ties at 1.0 included; and each
     mode's served identity, its digests reduced to whether they are there
     (PLAN_B05 §8's fields; the phenotype account and the identity added after
     the internal review, serving-2). Catches a split or a union that moved a
@@ -175,9 +215,12 @@ def test_run_reproduces_the_output_captured_before_the_split(served):
             assert [r[:2] for r in rows] == [e[:2] for e in expected["candidates"]], (name, index)
             for row, want in zip(rows, expected["candidates"]):
                 assert row[2] == pytest.approx(want[2], abs=SCORE_TOLERANCE), (name, index)
-            for row, want in zip(rows, exact[f"{name}|{index}"]):
-                assert want[:2] == row[:2] and _matches_exactly(name, row, want), (
+            captured = exact[f"{name}|{index}"]
+            for row, want in zip(rows, captured):
+                assert want[:2] == row[:2] and _matches_capture(name, row, want), (
                     name, index, row, want)
+            assert _ties([r[2] for r in rows]) == _ties([float(w[2]) for w in captured]), (
+                name, index)
 
 
 @pytest.mark.parametrize("top_k", [1, 2, 5, 1000])
