@@ -1,0 +1,102 @@
+[
+  {
+    "c_rank": 1,
+    "g1_rank": 1,
+    "g2_rank": 1,
+    "ground_truth": 0,
+    "n_served_candidates": 4,
+    "outcome": "ranked",
+    "sample_id": "probe-case-01",
+    "served_rank": 1
+  },
+  {
+    "c_rank": 3,
+    "g1_rank": 3,
+    "g2_rank": 3,
+    "ground_truth": 1,
+    "n_served_candidates": 5,
+    "outcome": "ranked",
+    "sample_id": "probe-case-02",
+    "served_rank": 3
+  },
+  {
+    "c_rank": 2,
+    "g1_rank": null,
+    "g2_rank": null,
+    "ground_truth": 2,
+    "n_served_candidates": 0,
+    "outcome": "not_reached",
+    "sample_id": "probe-case-03",
+    "served_rank": null
+  },
+  {
+    "c_rank": 4,
+    "g1_rank": null,
+    "g2_rank": null,
+    "ground_truth": 3,
+    "n_served_candidates": 4,
+    "outcome": "not_reached",
+    "sample_id": "probe-case-04",
+    "served_rank": null
+  },
+  {
+    "c_rank": 2,
+    "g1_rank": 2,
+    "g2_rank": 2,
+    "ground_truth": 4,
+    "n_served_candidates": 5,
+    "outcome": "ranked",
+    "sample_id": "probe-case-05",
+    "served_rank": 2
+  },
+  {
+    "c_rank": 5,
+    "g1_rank": 4,
+    "g2_rank": 4,
+    "ground_truth": 0,
+    "n_served_candidates": 4,
+    "outcome": "ranked",
+    "sample_id": "probe-case-06",
+    "served_rank": 4
+  },
+  {
+    "c_rank": 1,
+    "g1_rank": 1,
+    "g2_rank": 1,
+    "ground_truth": 1,
+    "n_served_candidates": 4,
+    "outcome": "ranked",
+    "sample_id": "probe-case-07",
+    "served_rank": 1
+  },
+  {
+    "c_rank": 5,
+    "g1_rank": 4,
+    "g2_rank": 4,
+    "ground_truth": 2,
+    "n_served_candidates": 4,
+    "outcome": "ranked",
+    "sample_id": "probe-case-08",
+    "served_rank": 4
+  },
+  {
+    "c_rank": 2,
+    "g1_rank": 2,
+    "g2_rank": 2,
+    "ground_truth": 0,
+    "n_served_candidates": 5,
+    "outcome": "ranked",
+    "sample_id": "probe-case-09",
+    "served_rank": 2
+  },
+  {
+    "c_rank": 4,
+    "g1_rank": null,
+    "g2_rank": null,
+    "ground_truth": 1,
+    "n_served_candidates": 0,
+    "outcome": "not_reached",
+    "sample_id": "probe-case-10",
+    "served_rank": null
+  }
+]

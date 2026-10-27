@@ -1,0 +1,386 @@
+[
+  {
+    "checkpoint_digest": "568b109848430c92de8d13bd5e24d7836bc16fe32f17a088952be4b322a856bf",
+    "cohort": {
+      "counts": {
+        "cases_with_lost_terms": 1,
+        "cases_with_repeats": 1,
+        "excluded": {
+          "ground_truth_absent": 1,
+          "phenotype_unmappable": 1
+        },
+        "n_excluded": 2,
+        "ranked_eligible": 10,
+        "repeats_removed": 1,
+        "source_cases": 12,
+        "terms_unmappable": 2
+      },
+      "graph": {
+        "edge_indices": "7624169d26decbe534873d25e385817c01485df08e5c6fe3df82222f2c854bec",
+        "kg": "7980bf7d7492f139e92d71cf7cfe971030567a1a3fc79d715b6ef34d8631fae1",
+        "node_features": "d52da31dff4f4b67e0af78e6205565e46a0aee9fa38a68e75b94b25c0709fbdb",
+        "num_nodes": "2e747928e24494e04ddb4dd8b2135afbeef63cb5a64172ad4bc24b8b9c509bee"
+      },
+      "kind": "supplied",
+      "label": "m5-closeout-demo-01",
+      "mapping": {
+        "disease_namespace": "MONDO",
+        "partial_phenotypes": "keep",
+        "phenotype_namespace": "HP",
+        "phenotype_normalisation_version": 1
+      },
+      "role": "webui-synthetic",
+      "samples_sha256": "91b77e24e5fc7023894b5791df156f3c9c5f552e6e2e82168117fae77c45ca6e",
+      "source_format": "shepherd-cases/1",
+      "source_sha256": "cd305fa92e20e0755c76b53758993d23880c833132b1e9d6f2f0a59796a169b0"
+    },
+    "cohort_digest": "1c2c6050951155df6ccad39e07579c0df83536a35779f7ce916bda9561bb96c3",
+    "cohort_role": "webui-synthetic",
+    "corroborating_reports": [],
+    "dataset_record": {
+      "origin": "synthetic",
+      "sha256": "9170959de0d57ea33dce4a05393e8f67232bb6332ac1cc879352a3c9a0af4396"
+    },
+    "environment": {
+      "code": {
+        "dirty": false,
+        "modified_tracked": 0,
+        "revision": "be0ee1a662db8d16a85533c0394244ffcb64ae29",
+        "state": "recorded",
+        "untracked": 0
+      },
+      "facts": {
+        "cuda_build": "13.0",
+        "cudnn": 91501,
+        "cudnn_benchmark": false,
+        "cudnn_deterministic": false,
+        "deterministic_algorithms": false,
+        "deterministic_warn_only": false,
+        "gpu": {
+          "capability": [
+            12,
+            1
+          ],
+          "driver": "580.178.04",
+          "name": "NVIDIA GB10"
+        },
+        "pyg": {
+          "native": {
+            "pyg_lib": {
+              "available": true,
+              "version": "0.6.0"
+            },
+            "torch_cluster": {
+              "available": true,
+              "version": "1.6.3"
+            },
+            "torch_scatter": {
+              "available": true,
+              "version": "2.1.2"
+            },
+            "torch_sparse": {
+              "available": true,
+              "version": "0.6.18"
+            }
+          },
+          "version": "2.8.1"
+        },
+        "python": "3.12.3",
+        "tf32": {
+          "cudnn_allow_tf32": true,
+          "cudnn_fp32_precision": "none",
+          "matmul_allow_tf32": false,
+          "matmul_fp32_precision": "none"
+        },
+        "torch": "2.10.0+cu130",
+        "torch_git_version": "449b1768410104d3ed79d3bcfe4ba1d65c7f22c0"
+      }
+    },
+    "measurement_semantics_digest": "438c492389e6c2eb50977e9ce1ec95d853d82d84898951394a5d912230024e93",
+    "metrics": {
+      "hits@1": 0.2,
+      "hits@10": 1.0,
+      "hits@100": 1.0,
+      "hits@20": 1.0,
+      "hits@5": 1.0,
+      "hits@50": 1.0,
+      "mean_rank": 2.9,
+      "untruncated_mrr": 0.4733333333333333
+    },
+    "n_ranked": 10,
+    "r10": {
+      "candidates_examined": 2,
+      "definition_version": 1,
+      "training": {
+        "disease_overlap": {
+          "cases": 7,
+          "k": 3,
+          "n": 5,
+          "state": "overlap"
+        },
+        "evidence": {
+          "path": "/home/user/shepherd-data/workspaces/m5_webui_demo_01/train_samples.json",
+          "problem": null,
+          "state": "found"
+        },
+        "phenotype_set_overlap": {
+          "k": 2,
+          "n": 10,
+          "state": "overlap"
+        },
+        "recorded_sha256": "cba70e5284fcc9ae395fae10bee81c2de317d575b94bce99f10112c9d9cd3cb2"
+      },
+      "validation": {
+        "disease_overlap": {
+          "cases": 2,
+          "k": 1,
+          "n": 5,
+          "state": "overlap"
+        },
+        "evidence": {
+          "path": "/home/user/shepherd-data/workspaces/m5_webui_demo_01/val_samples.json",
+          "problem": null,
+          "state": "found"
+        },
+        "phenotype_set_overlap": {
+          "k": 0,
+          "n": 10,
+          "state": "none"
+        },
+        "recorded_sha256": "f653fa0535506e832d02e805a037c86c9392c29cc63d9bab27d2ecd00c3527f6"
+      }
+    },
+    "regime": {
+      "amp_dtype": null,
+      "amp_enabled": false,
+      "batch_size": 32,
+      "cuda_version": "13.0",
+      "cudnn_benchmark": false,
+      "cudnn_deterministic": false,
+      "deterministic_algorithms": false,
+      "device": "cuda",
+      "dtype": "torch.float32",
+      "software_revision": "be0ee1a662db8d16a85533c0394244ffcb64ae29",
+      "torch_compile_wrapped": false,
+      "torch_version": "2.10.0+cu130"
+    },
+    "registration": {
+      "registered_at": "2026-10-27T06:25:36Z",
+      "sequence": 2
+    },
+    "relations": {
+      "R1": "verified",
+      "R2": "not_applicable",
+      "R3": "verified",
+      "R5": "verified",
+      "cohort_graph": "verified"
+    },
+    "scoring": {
+      "candidate_construction": "every disease in the knowledge graph",
+      "canonical_tie_policy_version": "score-desc-then-global-id-asc/v1",
+      "cohort_kind": "supplied",
+      "metric_schema_version": 1,
+      "mode": "C",
+      "model_construction": "production (build_shepherd_model)",
+      "score_semantics": "raw cosine, no eta mixture and no shortest-path term"
+    },
+    "scoring_semantics_digest": "f55a3a368b819b99b2bdb2e58a6e786857c5323a0b5a74fd2ab0396c9c40cac9",
+    "source_artifact_digest": "0330d72552d514c22ad635d66506410c7b046f41635c2eb0d662cb980e319a66"
+  },
+  {
+    "checkpoint_digest": "568b109848430c92de8d13bd5e24d7836bc16fe32f17a088952be4b322a856bf",
+    "cohort": {
+      "counts": {
+        "cases_with_lost_terms": 1,
+        "cases_with_repeats": 1,
+        "excluded": {
+          "ground_truth_absent": 1,
+          "phenotype_unmappable": 1
+        },
+        "n_excluded": 2,
+        "ranked_eligible": 10,
+        "repeats_removed": 1,
+        "source_cases": 12,
+        "terms_unmappable": 2
+      },
+      "graph": {
+        "edge_indices": "7624169d26decbe534873d25e385817c01485df08e5c6fe3df82222f2c854bec",
+        "kg": "7980bf7d7492f139e92d71cf7cfe971030567a1a3fc79d715b6ef34d8631fae1",
+        "node_features": "d52da31dff4f4b67e0af78e6205565e46a0aee9fa38a68e75b94b25c0709fbdb",
+        "num_nodes": "2e747928e24494e04ddb4dd8b2135afbeef63cb5a64172ad4bc24b8b9c509bee"
+      },
+      "kind": "supplied",
+      "label": "m5-closeout-demo-01",
+      "mapping": {
+        "disease_namespace": "MONDO",
+        "partial_phenotypes": "keep",
+        "phenotype_namespace": "HP",
+        "phenotype_normalisation_version": 1
+      },
+      "role": "webui-synthetic",
+      "samples_sha256": "91b77e24e5fc7023894b5791df156f3c9c5f552e6e2e82168117fae77c45ca6e",
+      "source_format": "shepherd-cases/1",
+      "source_sha256": "cd305fa92e20e0755c76b53758993d23880c833132b1e9d6f2f0a59796a169b0"
+    },
+    "cohort_digest": "1c2c6050951155df6ccad39e07579c0df83536a35779f7ce916bda9561bb96c3",
+    "cohort_role": "webui-synthetic",
+    "corroborating_reports": [],
+    "dataset_record": {
+      "origin": "synthetic",
+      "sha256": "9170959de0d57ea33dce4a05393e8f67232bb6332ac1cc879352a3c9a0af4396"
+    },
+    "environment": {
+      "code": {
+        "dirty": false,
+        "modified_tracked": 0,
+        "revision": "be0ee1a662db8d16a85533c0394244ffcb64ae29",
+        "state": "recorded",
+        "untracked": 0
+      },
+      "facts": {
+        "cuda_build": "13.0",
+        "cudnn": 91501,
+        "cudnn_benchmark": false,
+        "cudnn_deterministic": false,
+        "deterministic_algorithms": false,
+        "deterministic_warn_only": false,
+        "gpu": {
+          "capability": [
+            12,
+            1
+          ],
+          "driver": "580.178.04",
+          "name": "NVIDIA GB10"
+        },
+        "pyg": {
+          "native": {
+            "pyg_lib": {
+              "available": true,
+              "version": "0.6.0"
+            },
+            "torch_cluster": {
+              "available": true,
+              "version": "1.6.3"
+            },
+            "torch_scatter": {
+              "available": true,
+              "version": "2.1.2"
+            },
+            "torch_sparse": {
+              "available": true,
+              "version": "0.6.18"
+            }
+          },
+          "version": "2.8.1"
+        },
+        "python": "3.12.3",
+        "tf32": {
+          "cudnn_allow_tf32": true,
+          "cudnn_fp32_precision": "none",
+          "matmul_allow_tf32": false,
+          "matmul_fp32_precision": "none"
+        },
+        "torch": "2.10.0+cu130",
+        "torch_git_version": "449b1768410104d3ed79d3bcfe4ba1d65c7f22c0"
+      }
+    },
+    "measurement_semantics_digest": "aa02acae0146714d94566adde96d456ffb4dab5814118f9e8938de475e1ac491",
+    "metrics": {
+      "coverage": 0.7,
+      "post_import_hits@1": 0.2,
+      "post_import_hits@10": 0.7,
+      "post_import_hits@100": 0.7,
+      "post_import_hits@20": 0.7,
+      "post_import_hits@5": 0.7,
+      "post_import_hits@50": 0.7,
+      "post_import_mrr": 0.38333333333333336,
+      "reached_hits@1": 0.2857142857142857,
+      "reached_hits@10": 1.0,
+      "reached_hits@100": 1.0,
+      "reached_hits@20": 1.0,
+      "reached_hits@5": 1.0,
+      "reached_hits@50": 1.0,
+      "reached_mean_rank": 2.4285714285714284,
+      "reached_mrr": 0.5476190476190476
+    },
+    "n_ranked": 7,
+    "r10": {
+      "candidates_examined": 2,
+      "definition_version": 1,
+      "training": {
+        "disease_overlap": {
+          "cases": 7,
+          "k": 3,
+          "n": 5,
+          "state": "overlap"
+        },
+        "evidence": {
+          "path": "/home/user/shepherd-data/workspaces/m5_webui_demo_01/train_samples.json",
+          "problem": null,
+          "state": "found"
+        },
+        "phenotype_set_overlap": {
+          "k": 2,
+          "n": 10,
+          "state": "overlap"
+        },
+        "recorded_sha256": "cba70e5284fcc9ae395fae10bee81c2de317d575b94bce99f10112c9d9cd3cb2"
+      },
+      "validation": {
+        "disease_overlap": {
+          "cases": 2,
+          "k": 1,
+          "n": 5,
+          "state": "overlap"
+        },
+        "evidence": {
+          "path": "/home/user/shepherd-data/workspaces/m5_webui_demo_01/val_samples.json",
+          "problem": null,
+          "state": "found"
+        },
+        "phenotype_set_overlap": {
+          "k": 0,
+          "n": 10,
+          "state": "none"
+        },
+        "recorded_sha256": "f653fa0535506e832d02e805a037c86c9392c29cc63d9bab27d2ecd00c3527f6"
+      }
+    },
+    "regime": {
+      "amp_dtype": null,
+      "amp_enabled": false,
+      "batch_size": 1,
+      "cuda_version": "13.0",
+      "cudnn_benchmark": false,
+      "cudnn_deterministic": false,
+      "deterministic_algorithms": false,
+      "device": "cuda",
+      "dtype": "torch.float32",
+      "software_revision": "be0ee1a662db8d16a85533c0394244ffcb64ae29",
+      "torch_compile_wrapped": false,
+      "torch_version": "2.10.0+cu130"
+    },
+    "registration": {
+      "registered_at": "2026-10-27T06:25:39Z",
+      "sequence": 3
+    },
+    "relations": {
+      "R1": "verified",
+      "R2": "not_applicable",
+      "R3": "verified",
+      "R5": "verified",
+      "cohort_graph": "verified"
+    },
+    "scoring": {
+      "candidate_construction": "served-path-discovery/v1:settings=5451e2f8486b",
+      "canonical_tie_policy_version": "served-stable-discovery-order/v1",
+      "cohort_kind": "supplied",
+      "metric_schema_version": 2,
+      "mode": "D",
+      "model_construction": "production (build_shepherd_model)",
+      "score_semantics": "served:gnn_only:eta=1.0:sp=none"
+    },
+    "scoring_semantics_digest": "fb95ea0290d471bb48f30a4f85eb3a9bc3c02edf409903bfcf582b77b8617426",
+    "source_artifact_digest": "effb476f7b5a07dd21e127c24c52a80694aa6e930a3439e0ea488889e7e83bbc"
+  }
+]

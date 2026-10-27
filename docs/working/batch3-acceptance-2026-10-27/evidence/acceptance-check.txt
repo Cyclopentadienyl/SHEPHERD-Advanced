@@ -1,0 +1,39 @@
+PASS：checkout 是受測版本
+PASS：C：量測和 tee 退出碼都是 0
+PASS：C：完成並登記
+PASS：C：輸入身分吻合
+PASS：C：報告在原 registry
+PASS：C：報告摘要吻合
+PASS：C：manifest 模式、schema、batch size
+PASS：C：CUDA、受測版本及未修改程式
+PASS：C：GPU 是 GB10
+PASS：C：同一 checkpoint、cohort 與 10 例
+PASS：C：排名檔名
+PASS：C：排名檔摘要
+PASS：D：量測和 tee 退出碼都是 0
+PASS：D：完成並登記
+PASS：D：輸入身分吻合
+PASS：D：報告在原 registry
+PASS：D：報告摘要吻合
+PASS：D：manifest 模式、schema、batch size
+PASS：D：CUDA、受測版本及未修改程式
+PASS：D：GPU 是 GB10
+PASS：D：同一 checkpoint、cohort 與 10 例
+PASS：D：排名檔名
+PASS：D：排名檔摘要
+PASS：D 三種結果合計為匯入合格的 10 例
+PASS：來源 12 例、匯入排除 2 例
+PASS：本次 D 為 gnn_only、η=1.0（沒有 SP 表）
+PASS：D 指向這次 C 報告並完成 10 例對照
+C 報告與 D 內部 C 側的逐例核對： {'n_compared': 10, 'n_equal': 10, 'regime': {'amp_dtype': None, 'amp_enabled': False, 'batch_size': 32, 'cuda_version': '13.0', 'cudnn_benchmark': False, 'cudnn_deterministic': False, 'deterministic_algorithms': False, 'device': 'cuda', 'dtype': 'torch.float32', 'software_revision': 'be0ee1a662db8d16a85533c0394244ffcb64ae29', 'torch_compile_wrapped': False, 'torch_version': '2.10.0+cu130'}, 'run_id': '20261027T062536Z-568b10984843-f1ef4038'}
+PASS：D 主控台標籤包含模式和 η
+PASS：D 最後進度為 10 / 10
+PASS：最後進度累計與報告吻合
+PASS：保留所有舊帳本紀錄，只新增兩筆
+PASS：新增 C 紀錄正確指向本次報告及輸入
+PASS：新增 D 紀錄正確指向本次報告及輸入
+PASS：C、D 的 scoring_semantics_digest 不同
+PASS：既有使用紀錄完整保留
+
+PASS：GB10 C/D 功能短測通過；不代表模型品質、院方驗收或 SP 混合路徑的實機驗證。
+接著還原 checkout；不要把舊帳本備份覆蓋回去，新登記應保留。

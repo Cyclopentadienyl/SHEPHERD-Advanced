@@ -1,0 +1,130 @@
+INFO __main__: GPU lock /home/user/shepherd-data/workspaces/.shepherd-gpu.lock held until this run ends.
+INFO __main__: Device: cuda (Linux-7.0.0-1019-nvidia-aarch64-with-glibc2.39)
+INFO src.inference.pipeline: Loading knowledge graph from /home/user/shepherd-data/workspaces/m5_webui_demo_01/kg.json...
+INFO src.kg.graph: KnowledgeGraph initialized
+INFO src.kg.graph: KG loaded from /home/user/shepherd-data/workspaces/m5_webui_demo_01/kg.json: 24 nodes, 32 edges
+INFO src.inference.pipeline: KG loaded: 24 nodes, 32 edges
+INFO src.inference.pipeline: Loading GNN model from checkpoint: /home/user/shepherd-data/workspaces/m5_webui_demo_01/runs/gat/20261024-173909_ui-live-stop-02_c1d9cf/checkpoints/last.pt
+/home/user/Desktop/SHEPHERD-Advanced/.venv/lib/python3.12/site-packages/torch/cuda/__init__.py:435: UserWarning: 
+    Found GPU0 NVIDIA GB10 which is of cuda capability 12.1.
+    Minimum and Maximum cuda capability supported by this version of PyTorch is
+    (8.0) - (12.0)
+    
+  queued_call()
+INFO src.inference.pipeline: GNN model loaded: 2,507,009 parameters, device=cuda
+INFO src.inference.pipeline: Precomputing node embeddings via GNN forward pass...
+INFO src.inference.pipeline: Node embeddings cached: {'phenotype': torch.Size([10, 256]), 'disease': torch.Size([5, 256]), 'gene': torch.Size([8, 256]), 'mouse_gene': torch.Size([1, 256])}
+INFO src.inference.pipeline: No shortest_paths.pt found in /home/user/shepherd-data/workspaces/m5_webui_demo_01; scoring will use pure GNN (eta=1.0 effective)
+INFO src.inference.pipeline: GNN inference initialized successfully (sp_ready=False, eta=0.7, device=cuda:0)
+INFO src.inference.pipeline: DiagnosisPipeline initialized: kg_nodes=24, has_model=True, gnn_ready=True, device=cuda:0
+INFO __main__: Mode D over cohort version m5-closeout-demo-01: 10 cases; served gnn_only; checkpoint sha256 568b10984843
+INFO src.reasoning.path_reasoning: Found 19 paths from 2 sources
+INFO src.inference.pipeline: [PathScoring] 1-hop paths: 1 found, score range [0.7200, 0.7200]
+INFO src.inference.pipeline: [PathScoring] 2-hop paths: 5 found, score range [0.4848, 0.6579]
+INFO src.inference.pipeline: [PathScoring] 3-hop paths: 5 found, score range [0.2315, 0.3141]
+INFO src.inference.pipeline: [PathScoring] 4-hop paths: 8 found, score range [0.0872, 0.2719]
+INFO src.evaluation.mode_d: Mode D: 1 of 10 cases through the served path, 0 s: {'ranked': 1, 'not_reached': 0, 'refused': 0}
+INFO src.reasoning.path_reasoning: Found 20 paths from 2 sources
+INFO src.inference.pipeline: [PathScoring] 1-hop paths: 2 found, score range [0.6300, 0.6300]
+INFO src.inference.pipeline: [PathScoring] 2-hop paths: 6 found, score range [0.1750, 0.6233]
+INFO src.inference.pipeline: [PathScoring] 3-hop paths: 3 found, score range [0.2232, 0.3590]
+INFO src.inference.pipeline: [PathScoring] 4-hop paths: 9 found, score range [0.1627, 0.3108]
+INFO src.evaluation.mode_d: Mode D: 2 of 10 cases through the served path, 0 s: {'ranked': 2, 'not_reached': 0, 'refused': 0}
+INFO src.reasoning.path_reasoning: Found 0 paths from 2 sources
+WARNING src.inference.pipeline: No paths found from phenotypes to diseases
+INFO src.evaluation.mode_d: Mode D: 3 of 10 cases through the served path, 0 s: {'ranked': 2, 'not_reached': 1, 'refused': 0}
+INFO src.reasoning.path_reasoning: Found 17 paths from 2 sources
+INFO src.inference.pipeline: [PathScoring] 2-hop paths: 3 found, score range [0.4848, 0.6233]
+INFO src.inference.pipeline: [PathScoring] 3-hop paths: 6 found, score range [0.2315, 0.4039]
+INFO src.inference.pipeline: [PathScoring] 4-hop paths: 8 found, score range [0.1352, 0.3496]
+INFO src.evaluation.mode_d: Mode D: 4 of 10 cases through the served path, 0 s: {'ranked': 2, 'not_reached': 2, 'refused': 0}
+INFO src.reasoning.path_reasoning: Found 14 paths from 2 sources
+INFO src.inference.pipeline: [PathScoring] 2-hop paths: 3 found, score range [0.2624, 0.5194]
+INFO src.inference.pipeline: [PathScoring] 3-hop paths: 4 found, score range [0.2232, 0.2604]
+INFO src.inference.pipeline: [PathScoring] 4-hop paths: 7 found, score range [0.0723, 0.2433]
+INFO src.evaluation.mode_d: Mode D: 5 of 10 cases through the served path, 0 s: {'ranked': 3, 'not_reached': 2, 'refused': 0}
+INFO src.reasoning.path_reasoning: Found 7 paths from 2 sources
+INFO src.inference.pipeline: [PathScoring] 2-hop paths: 1 found, score range [0.4155, 0.4155]
+INFO src.inference.pipeline: [PathScoring] 3-hop paths: 3 found, score range [0.2108, 0.2551]
+INFO src.inference.pipeline: [PathScoring] 4-hop paths: 3 found, score range [0.1976, 0.2331]
+INFO src.evaluation.mode_d: Mode D: 6 of 10 cases through the served path, 0 s: {'ranked': 4, 'not_reached': 2, 'refused': 0}
+INFO src.reasoning.path_reasoning: Found 14 paths from 2 sources
+INFO src.inference.pipeline: [PathScoring] 2-hop paths: 2 found, score range [0.4502, 0.6233]
+INFO src.inference.pipeline: [PathScoring] 3-hop paths: 5 found, score range [0.2418, 0.4039]
+INFO src.inference.pipeline: [PathScoring] 4-hop paths: 7 found, score range [0.0672, 0.3496]
+INFO src.evaluation.mode_d: Mode D: 7 of 10 cases through the served path, 0 s: {'ranked': 5, 'not_reached': 2, 'refused': 0}
+INFO src.reasoning.path_reasoning: Found 16 paths from 2 sources
+INFO src.inference.pipeline: [PathScoring] 1-hop paths: 1 found, score range [0.7200, 0.7200]
+INFO src.inference.pipeline: [PathScoring] 2-hop paths: 4 found, score range [0.4848, 0.6579]
+INFO src.inference.pipeline: [PathScoring] 3-hop paths: 4 found, score range [0.2604, 0.3141]
+INFO src.inference.pipeline: [PathScoring] 4-hop paths: 7 found, score range [0.0723, 0.2513]
+INFO src.evaluation.mode_d: Mode D: 8 of 10 cases through the served path, 0 s: {'ranked': 6, 'not_reached': 2, 'refused': 0}
+INFO src.reasoning.path_reasoning: Found 22 paths from 2 sources
+INFO src.inference.pipeline: [PathScoring] 1-hop paths: 3 found, score range [0.6300, 0.7200]
+INFO src.inference.pipeline: [PathScoring] 2-hop paths: 7 found, score range [0.1750, 0.6579]
+INFO src.inference.pipeline: [PathScoring] 3-hop paths: 3 found, score range [0.3141, 0.3590]
+INFO src.inference.pipeline: [PathScoring] 4-hop paths: 9 found, score range [0.0872, 0.3108]
+INFO src.evaluation.mode_d: Mode D: 9 of 10 cases through the served path, 0 s: {'ranked': 7, 'not_reached': 2, 'refused': 0}
+INFO src.reasoning.path_reasoning: Found 0 paths from 1 sources
+WARNING src.inference.pipeline: No paths found from phenotypes to diseases
+INFO src.evaluation.mode_d: Mode D: 10 of 10 cases through the served path, 0 s: {'ranked': 7, 'not_reached': 3, 'refused': 0}
+INFO __main__: Mode D -> /home/user/shepherd-data/registry/versions/m5-closeout-demo-01/reports/20261027T062539Z-568b10984843-61bfa57f/report.json
+
+Served ranking today (Mode D): diseases reached by path discovery, scored as the Diagnosis page scores them (gnn_only, η = 1.0); not the approved scorer policy
+  7 ranked, 3 not reached (2 with no candidates), 0 refused, of 10 import-eligible cases
+  post_import_mrr                        0.383333
+  post_import_hits@1                     0.200000
+  post_import_hits@5                     0.700000
+  post_import_hits@10                    0.700000
+  post_import_hits@20                    0.700000
+  post_import_hits@50                    0.700000
+  post_import_hits@100                   0.700000
+  coverage                               0.700000
+  reached_mean_rank                      2.428571
+  reached_mrr                            0.547619
+  reached_hits@1                         0.285714
+  reached_hits@5                         1.000000
+  reached_hits@10                        1.000000
+  reached_hits@20                        1.000000
+  reached_hits@50                        1.000000
+  reached_hits@100                       1.000000
+
+Mode C and Mode D are different ranking policies: Mode C ranks every disease by raw cosine; Mode D measures what the Diagnosis page serves today. Both are measured on the same import-eligible cases; the cases excluded at import are counted beside them.
+Disease ranking by the model, approved scorer policy (Mode C), on the same embeddings:
+  mean_rank                              2.900000
+  untruncated_mrr                        0.473333
+  hits@1                                 0.200000
+  hits@5                                 1.000000
+  hits@10                                1.000000
+  hits@20                                1.000000
+  hits@50                                1.000000
+  hits@100                               1.000000
+
+Dataset record: binding verified, origin synthetic
+SYNTHETIC WORKSPACE — this number is not over a graph built from real files.
+
+Whether this is the institution's number depends on the checkpoint and
+cohort it consumed, which a person checks against the recorded digests.
+
+Cohort version m5-closeout-demo-01 (role webui-synthetic), manifest sha256 1c2c60509511...
+  7 reached by the served ranking of 10 import-eligible cases; 12 source cases, 2 excluded at import (ground_truth_absent 1, phenotype_unmappable 1), counted beside the figures, not in them
+
+R10, against the inputs this checkpoint records:
+  training evidence: found at /home/user/shepherd-data/workspaces/m5_webui_demo_01/train_samples.json
+    Training disease overlap           overlap — 3 of 5 distinct test diseases; 7 test cases with one of them
+    Training phenotype-set overlap     overlap — 2 of 10 test cases
+  validation evidence: found at /home/user/shepherd-data/workspaces/m5_webui_demo_01/val_samples.json
+    Validation disease overlap         overlap — 1 of 5 distinct test diseases; 2 test cases with one of them
+    Validation phenotype-set overlap   none in the inputs this checkpoint records (not evidence about data outside them) — 0 of 10 test cases
+
+R10 labels:
+  Training disease overlap: distinct test diseases that are also the disease of a case in the training inputs this checkpoint records, of all distinct test diseases, and the test cases whose disease is among them.
+  Training phenotype-set overlap: test cases with the same disease and the same set of phenotypes as a case in the training inputs this checkpoint records, of all test cases; phenotype-set overlap ignores order and repetition, so the scoring inputs may differ.
+  Validation disease overlap: distinct test diseases that are also the disease of a case in the validation inputs this checkpoint records, of all distinct test diseases, and the test cases whose disease is among them.
+  Validation phenotype-set overlap: test cases with the same disease and the same set of phenotypes as a case in the validation inputs this checkpoint records, of all test cases; phenotype-set overlap ignores order and repetition, so the scoring inputs may differ.
+  A "none" label: none in the inputs this checkpoint records (not evidence about data outside them).
+
+Report: /home/user/shepherd-data/registry/versions/m5-closeout-demo-01/reports/20261027T062539Z-568b10984843-61bfa57f/report.json
+Run id: 20261027T062539Z-568b10984843-61bfa57f
+
+Registered as record 3 in /home/user/shepherd-data/workspaces/m5_webui_demo_01/runs/gat/20261024-173909_ui-live-stop-02_c1d9cf/checkpoints/evaluations.json

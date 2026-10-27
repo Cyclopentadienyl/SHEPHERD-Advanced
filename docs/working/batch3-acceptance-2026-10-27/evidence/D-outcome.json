@@ -1,0 +1,25 @@
+{
+  "checkpoint": "/home/user/shepherd-data/workspaces/m5_webui_demo_01/runs/gat/20261024-173909_ui-live-stop-02_c1d9cf/checkpoints/last.pt",
+  "checkpoint_sha256": "568b109848430c92de8d13bd5e24d7836bc16fe32f17a088952be4b322a856bf",
+  "cohort": {
+    "label": "m5-closeout-demo-01",
+    "manifest_sha256": "1c2c6050951155df6ccad39e07579c0df83536a35779f7ce916bda9561bb96c3",
+    "role": "webui-synthetic"
+  },
+  "complete": true,
+  "deterministic": false,
+  "mode": "D",
+  "registration": {
+    "ledger": "/home/user/shepherd-data/workspaces/m5_webui_demo_01/runs/gat/20261024-173909_ui-live-stop-02_c1d9cf/checkpoints/evaluations.json",
+    "outcome": "registered",
+    "registered": true,
+    "requested": true,
+    "sequence": 3,
+    "why": "Registered as record 3"
+  },
+  "report": "/home/user/shepherd-data/registry/versions/m5-closeout-demo-01/reports/20261027T062539Z-568b10984843-61bfa57f/report.json",
+  "report_sha256": "effb476f7b5a07dd21e127c24c52a80694aa6e930a3439e0ea488889e7e83bbc",
+  "run_id": "20261027T062539Z-568b10984843-61bfa57f",
+  "schema_version": 1,
+  "what_this_is": "the outcome of one measure_scorer run, written by the run; the report store and the ledger beside the checkpoint are the record"
+}

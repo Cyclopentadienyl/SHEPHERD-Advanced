@@ -3,7 +3,7 @@
 **Status:** designed in Batch 2 (2026-10-26; the reviewer passed `a5652c1..e61253e`) and
 **implemented in Batch 3** (2026-10-26, for one review; §11 says what was built where), and
 **revised after an internal review** of that implementation (§12: one P2 and nineteen P3, each
-fixed; every code fix pinned by a test, and the fixes themselves verified once more, §12.1). The short GB10 run of §8 is the owner's and the reviewer's, after the review. It resolves the design
+fixed; every code fix pinned by a test, and the fixes themselves verified once more, §12.1). The reviewer passed it (`e61253e..1f51fb2`, one P3 fixed at `be0ee1a`, §12.2), and the short GB10 run of §8 passed at `be0ee1a` (2026-10-27, §12.3). It resolves the design
 problem `PLAN_B03.md` §4 recorded. Mode D is the input to Policy Gate 1's comparison, not B-1:
 building it changes no ranking anyone is served. The statistical protocol for the institutional
 run stays BACKLOG 8a's, and the run 8b's.
@@ -495,3 +495,22 @@ error. It is gathered by each role's text now, so a damaged role is named as ano
 version is not ordered, as for any role but the one asked for. Nothing else changes: no new reader,
 and no error caught more broadly. Pinned by `test_test_score_ordering.py` (`[]` and `{}` for the
 mode and the role); without the fix exactly those four cases fail.
+
+The reviewer then read `1f51fb2..be0ee1a` and passed it: the P3 closed, the role fix accepted as the
+same defect's local guard (a damaged or other role still refuses the whole version, a damaged mode
+only its own checkpoint), no new finding.
+
+### 12.3 The short GB10 run, Mode C then Mode D (2026-10-27)
+
+§8's one short run passed at `be0ee1a`, within the scope agreed, as the reviewer's review of the
+evidence found. The record and the whole evidence package are in
+[`../batch3-acceptance-2026-10-27/README.md`](../batch3-acceptance-2026-10-27/README.md). On the
+synthetic cohort `m5-closeout-demo-01` (12 source cases, 2 excluded at import, 10 eligible) and one
+checkpoint: both runs exited 0 on CUDA; Mode D's outcomes 7 ranked, 3 not reached, 0 refused, the
+console's last progress line equal to them; its C side equal case by case to this run's Mode C report
+and to the kept one of an earlier revision (10 of 10 each); the ledger keeps its record and adds the
+C and the D record, under different scoring semantics. The workspace has no shortest-path table, so
+Mode D ran in `gnn_only`, as the service serves it there; on these cases the difference from Mode C
+comes from the candidate set alone (C→G1), the tie and score steps changing no rank. It is a
+functional run: it shows nothing about ranking quality, the SP mixture on the GB10 or the Models
+page, and gate 1 is not cleared.
