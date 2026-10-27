@@ -71,7 +71,9 @@ import re
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Collection, Dict, List, NamedTuple, Optional, Set, Tuple
+from typing import (
+    TYPE_CHECKING, Any, Collection, Dict, List, Mapping, NamedTuple, Optional, Set, Tuple,
+)
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -178,6 +180,16 @@ class TrainConfig:
     # The seed of the edge split (README F2), apart from the training seed so
     # runs over one graph view share one split unless asked otherwise.
     split_seed: int = 0
+    # A finetune: its task, and the base checkpoint it starts from (a new
+    # optimizer, the graph side loaded, a new task head; contract §9.2).
+    task: Optional[str] = None
+    finetune_from: Optional[str] = None
+    # Finetune settings; unset, the task's reference values
+    # (src/training/recipe.py, README C3, U3, U9).
+    task_loss_weight: Optional[float] = None
+    lp_loss_weight: Optional[float] = None
+    candidate_sample_size: Optional[int] = None
+    sparse_sample_size: Optional[int] = None
 
     # Model configuration
     hidden_dim: int = 256
@@ -327,10 +339,32 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--stage",
         type=str,
-        choices=["base"],
+        choices=["base", "finetune"],
         default=None,
         help="Train a model bundle: 'base' is KG link prediction (the paper's "
-             "pretraining). Without it the ShepherdGNN path runs",
+             "pretraining), 'finetune' a task head on a base. Without it the ShepherdGNN "
+             "path runs",
+    )
+    parser.add_argument(
+        "--task",
+        type=str,
+        choices=["disease"],
+        default=None,
+        help="With --stage finetune: the task",
+    )
+    parser.add_argument(
+        "--finetune-from",
+        type=str,
+        default=None,
+        help="With --stage finetune: the base checkpoint to start from",
+    )
+    parser.add_argument(
+        "--expect-parent-sha256",
+        type=_sha256_arg,
+        default=None,
+        metavar="HEX",
+        help="With --finetune-from: refuse unless the base checkpoint, as this run reads it, "
+             "has this SHA-256",
     )
     parser.add_argument(
         "--split-seed",
@@ -542,9 +576,14 @@ def load_config_with_explicit(args: argparse.Namespace) -> Tuple[TrainConfig, Se
         config.learning_stage = args.stage
     if getattr(args, "split_seed", None) is not None:
         config.split_seed = args.split_seed
+    if getattr(args, "task", None) is not None:
+        config.task = args.task
+    if getattr(args, "finetune_from", None) is not None:
+        config.finetune_from = args.finetune_from
 
     for name, value in vars(args).items():
-        if name in ("config", "debug", "expect_dataset_sha256", "expect_resume_sha256") \
+        if name in ("config", "debug", "expect_dataset_sha256", "expect_resume_sha256",
+                    "expect_parent_sha256") \
                 or value is None or value is False:
             continue
         explicit.add(_FLAG_FIELDS.get(name, name))
@@ -1015,7 +1054,8 @@ def create_model_from_config(
 #: Left out of the checkpoint's record of the configuration requested: the inputs
 #: are identified by digest (`training_input_digests`), the parent by its digest,
 #: and a checkpoint travels without the layout of the machine that wrote it.
-LOCATION_FIELDS = frozenset({"data_dir", "run_dir", "config_file", "resume_from"})
+LOCATION_FIELDS = frozenset({"data_dir", "run_dir", "config_file", "resume_from",
+                             "finetune_from"})
 
 
 class TrainingDeviceUnavailable(RuntimeError):
@@ -1058,7 +1098,8 @@ SHEPHERD_ONLY_FIELDS = frozenset({
     "diagnosis_weight", "link_prediction_weight", "contrastive_weight", "ortholog_weight",
     "margin", "label_smoothing", "temperature", "max_subgraph_nodes", "num_negative_samples",
 })
-LEARNING_STAGES_HERE = ("base",)
+LEARNING_STAGES_HERE = ("base", "finetune")
+FINETUNE_TASKS_HERE = ("disease",)
 
 
 def _explicit_or_changed(config: TrainConfig, explicit: Optional[Collection[str]]) -> Set[str]:
@@ -1076,7 +1117,7 @@ def apply_stage_recipe(config: TrainConfig, explicit: Set[str]
 
     from src.training.recipe import reference_settings
 
-    values, sources = reference_settings(config.learning_stage)
+    values, sources = reference_settings(config.learning_stage, config.task)
     filled = {name: value for name, value in values.items() if name not in explicit}
     record = {
         "learning_stage": config.learning_stage,
@@ -1086,10 +1127,48 @@ def apply_stage_recipe(config: TrainConfig, explicit: Set[str]
     return replace(config, **filled), record
 
 
+def read_finetune_parent(requested: str, inputs: TrainingInputs, device: str, *,
+                         expected_sha256: Optional[str] = None):
+    """Read a finetune's parent once and check it (provenance contract §9.2):
+    a base checkpoint with a model spec, trained on this workspace's graph. A
+    training state, early stopping's best weights and a weights-only file are
+    all accepted; a finetune checkpoint is refused (children never chain), and
+    so is a checkpoint without a model spec (nothing is guessed). Patient data
+    may differ from the parent's: only the graph is compared."""
+    from src.models.bundle.record import ModelRecordError, read_model_record
+    from src.utils.checkpoint_io import read_checkpoint
+    from src.utils.run_plan import RunPlanRefused
+
+    path = Path(requested)
+    logger.info(f"Reading the finetune parent: {path}")
+    try:
+        parent = read_checkpoint(path, map_location=device, weights_only=True,
+                                 expected_sha256=expected_sha256)
+    except FileNotFoundError:
+        raise FileNotFoundError(f"The finetune parent {path} does not exist.") from None
+    try:
+        record = read_model_record(parent.checkpoint)
+    except ModelRecordError as exc:
+        raise RunPlanRefused(f"The finetune parent {path.name}: {exc}") from None
+    if record.learning_stage != "base":
+        raise RunPlanRefused(
+            f"The finetune parent {path.name} is a {record.learning_stage} checkpoint; a "
+            "finetune's parent is a base, and children never chain.")
+    if record.data_roles.get("kg") != inputs.bound.get("kg"):
+        raise RunPlanRefused(
+            f"The finetune parent {path.name} was trained on another knowledge graph; its "
+            "learned node table belongs to that graph (decision 1).")
+    if parent.checkpoint.get("state_dict") is None:
+        raise RunPlanRefused(f"The finetune parent {path.name} holds no model weights.")
+    return parent, record
+
+
 def train_bundle(config: TrainConfig, explicit: Optional[Collection[str]] = None, *,
                  expected_dataset_sha256: Optional[str] = None,
-                 expected_resume_sha256: Optional[str] = None) -> Dict[str, float]:
-    """The model bundle path: `learning_stage` "base" (README §3, §4; contract §9).
+                 expected_resume_sha256: Optional[str] = None,
+                 expected_parent_sha256: Optional[str] = None) -> Dict[str, float]:
+    """The model bundle path: `learning_stage` "base" or "finetune" (README
+    §3, §4; provenance contract §9).
 
     Same shape as the ShepherdGNN path below: every refusal before the run
     directory is claimed, one read per workspace input, the Trainer owning the
@@ -1098,17 +1177,22 @@ def train_bundle(config: TrainConfig, explicit: Optional[Collection[str]] = None
     is the one builder's bundle from a model spec, the stage's task module
     drives the steps, and every checkpoint carries the model record.
     """
+    from dataclasses import asdict as _asdict
+
     from src.kg.graph_view import build_graph_view, split_facts
-    from src.models.bundle import ModelSpec, build_bundle, reference_spec
-    from src.models.bundle.record import MODEL_RECORD_VERSION, ModelRecord, read_model_record
+    from src.models.bundle import ModelSpec, build_bundle, finetune_spec_from_parent, reference_spec
+    from src.models.bundle.record import (
+        MODEL_RECORD_VERSION, ModelRecord, ModelRecordError, read_model_record,
+    )
     from src.training.lp_task import BASE_SELECTION_METRIC, BaseLPSampler, BaseLPTask
     from src.utils.checkpoint_paths import (
         check_run_dir_free, claim_run_dir, propose_run_dir, run_checkpoint_dir, run_log_dir,
     )
+    from src.utils.run_plan import RunPlanRefused
 
-    if config.learning_stage not in LEARNING_STAGES_HERE:
-        raise ValueError(f"learning_stage {config.learning_stage!r} is not one of "
-                         f"{list(LEARNING_STAGES_HERE)} in this build")
+    stage = config.learning_stage
+    if stage not in LEARNING_STAGES_HERE:
+        raise ValueError(f"learning_stage {stage!r} is not one of {list(LEARNING_STAGES_HERE)}")
     explicit_set = _explicit_or_changed(config, explicit)
     stray = sorted(explicit_set & SHEPHERD_ONLY_FIELDS)
     if stray:
@@ -1116,52 +1200,77 @@ def train_bundle(config: TrainConfig, explicit: Optional[Collection[str]] = None
             f"{', '.join(stray)} configure the ShepherdGNN path, which a model bundle run "
             "does not read: its architecture is the model spec (model_spec) and its loss "
             "the stage's. Remove them.")
+    if stage == "base" and (config.task is not None or config.finetune_from):
+        raise ValueError("a base run has no task and no finetune parent")
+    if stage == "finetune":
+        if config.task not in FINETUNE_TASKS_HERE:
+            raise ValueError(f"a finetune names its task, one of {list(FINETUNE_TASKS_HERE)} "
+                             f"in this build (got {config.task!r})")
+        if bool(config.finetune_from) == bool(config.resume_from):
+            raise ValueError("a finetune run starts from a base (finetune_from) or resumes a "
+                             "finetune run (resume_from): exactly one of them")
+    if expected_parent_sha256 is not None and not config.finetune_from:
+        raise ValueError("--expect-parent-sha256 names a finetune parent; give finetune_from.")
     config, recipe = apply_stage_recipe(config, explicit_set)
 
     device = resolve_training_device(config.device)
-    logger.info(f"Model bundle run, learning stage {config.learning_stage}; device {device} "
-                f"(requested: {config.device})")
+    logger.info(f"Model bundle run, learning stage {stage}"
+                + (f", task {config.task}" if config.task else "")
+                + f"; device {device} (requested: {config.device})")
     data_dir = Path(config.data_dir)
     if config.run_dir:
         check_run_dir_free(config.run_dir)
 
     inputs = read_training_inputs(data_dir, expected_manifest_sha256=expected_dataset_sha256,
-                                  with_samples=False)
+                                  with_samples=(stage == "finetune"))
+
+    # The parent: a run of the same stage to resume or extend, or a base to
+    # finetune from. Both are read once and checked before any output.
     parent = read_resume_parent(config.resume_from, inputs, device,
                                 expected_sha256=expected_resume_sha256)
     parent_record = None
     plan = None
     best_weights = None
     if parent is not None:
-        from src.models.bundle.record import ModelRecordError
-        from src.utils.run_plan import RunPlanRefused
-
         try:
             parent_record = read_model_record(parent.checkpoint)
         except ModelRecordError as exc:
             raise RunPlanRefused(f"The parent {Path(parent.identity.path).name}: {exc}") from None
-        if parent_record.learning_stage != config.learning_stage:
+        if parent_record.learning_stage != stage or parent_record.task != config.task:
             raise RunPlanRefused(
-                f"The parent is a {parent_record.learning_stage} checkpoint; a "
-                f"{config.learning_stage} run continues only its own stage.")
+                f"The parent is a {parent_record.learning_stage} checkpoint"
+                + (f" for {parent_record.task}" if parent_record.task else "")
+                + "; a run continues only its own stage and task.")
         plan, best_weights = plan_from_parent(parent, config, explicit_set, device,
                                               record_version=MODEL_RECORD_VERSION)
         config = TrainConfig(**plan.settings)
     elif config.extend_epochs or config.extend_lr is not None:
         raise ValueError("extend_epochs and extend_lr continue a parent; give resume_from.")
+    base_parent = base_record = None
+    if config.finetune_from:
+        base_parent, base_record = read_finetune_parent(
+            config.finetune_from, inputs, device, expected_sha256=expected_parent_sha256)
 
     # The spec: the operator's (read strictly), the parent's (inherited with
-    # the settings), or the stage's reference.
+    # the settings), the base's graph side with the task's reference head, or
+    # the stage's reference.
     if config.model_spec is not None:
         spec = ModelSpec.from_dict(config.model_spec)
-        if spec.learning_stage != config.learning_stage:
-            raise ValueError(f"model_spec is a {spec.learning_stage} spec, not "
-                             f"{config.learning_stage}")
+    elif base_record is not None:
+        spec = finetune_spec_from_parent(base_record.model_spec, config.task)
     else:
-        spec = reference_spec(config.learning_stage)
+        spec = reference_spec(stage, config.task)
+    if spec.learning_stage != stage or spec.task != config.task:
+        raise ValueError(f"model_spec is a {spec.learning_stage} spec for {spec.task!r}, not "
+                         f"{stage} for {config.task!r}")
     if parent_record is not None and spec != parent_record.model_spec:
         raise ValueError("model_spec differs from the parent's; a continued run keeps its "
                          "parent's architecture")
+    if base_record is not None:
+        graph_side = ("graph_view", "input", "encoder", "lp_head")
+        if any(getattr(spec, f) != getattr(base_record.model_spec, f) for f in graph_side):
+            raise ValueError("a finetune keeps its base's graph view, input, encoder and LP head "
+                             "(README §3.3, Inheritance)")
     if len(config.num_neighbors) != spec.encoder.layers:
         raise ValueError(
             f"num_neighbors has {len(config.num_neighbors)} hops and the encoder "
@@ -1169,19 +1278,36 @@ def train_bundle(config: TrainConfig, explicit: Optional[Collection[str]] = None
     config.model_spec = spec.to_dict()
 
     # The view and its split, from the graph read (G1, F2), before any output.
-    from dataclasses import asdict as _asdict
-
+    # A finetune trains on its base's split (G4): the seed is the base's.
+    lineage = parent_record or base_record
+    if base_record is not None:
+        recorded_seed = (base_record.data_roles.get("split") or {}).get("seed")
+        if "split_seed" in explicit_set and config.split_seed != recorded_seed:
+            raise ValueError(f"split_seed {config.split_seed} differs from the base's "
+                             f"{recorded_seed}; a finetune trains on its base's split")
+        config.split_seed = int(recorded_seed)
     view_rule = _asdict(spec.graph_view)
     view_rule["exclude_relations"] = list(view_rule["exclude_relations"])
     view = build_graph_view(inputs.graph.graph_data, rule=view_rule)
     split = split_facts(view, config.split_seed)
-    if parent_record is not None:
-        recorded = parent_record.data_roles
+    if lineage is not None:
+        recorded = lineage.data_roles
         if (recorded.get("graph_view") or {}).get("digest") != view.digest \
                 or (recorded.get("split") or {}).get("digest") != split.digest:
             raise ValueError("the graph view or edge split differs from the parent's record; "
-                             "a continued run trains on its parent's view and split")
+                             "a child trains on its parent's view and split")
     train_mask, val_mask = split.mask("train"), split.mask("val")
+
+    # The task data, bound to the view (F7), before any output.
+    binding = {}
+    if stage == "finetune":
+        from src.training.finetune_task import bind_disease_cases
+
+        binding = {split_name: bind_disease_cases(view, inputs.samples[split_name].samples)
+                   for split_name in ("train", "val")}
+        if not binding["train"].cases:
+            raise ValueError(f"no training case binds to the graph view: "
+                             f"{binding['train'].counts}")
 
     from src.utils.run_environment import code_revision, collect_environment
 
@@ -1195,15 +1321,35 @@ def train_bundle(config: TrainConfig, explicit: Optional[Collection[str]] = None
     if config.seed is not None:
         apply_seed(config.seed)
     bundle = build_bundle(spec, view)
-    sampler = BaseLPSampler(
+    weight_transfer = None
+    if base_parent is not None:
+        weight_transfer = _transfer_base_weights(bundle, base_parent.checkpoint["state_dict"])
+    seed = int(config.seed or 0)
+    lp_sampler = BaseLPSampler(
         view.num_nodes, view.edge_index(train_mask), view.rel[train_mask],
         view.edge_index(train_mask), view.rel[train_mask], sizes=config.num_neighbors,
-        batch_size=config.batch_size, seed=int(config.seed or 0))
-    task = BaseLPTask(
-        num_nodes=view.num_nodes, train_edges=view.edge_index(train_mask),
-        train_relations=view.rel[train_mask], val_edges=view.edge_index(val_mask),
-        val_relations=view.rel[val_mask], seed=int(config.seed or 0),
-        val_batch_size=config.batch_size)
+        batch_size=config.batch_size, seed=seed)
+    if stage == "base":
+        sampler = lp_sampler
+        task = BaseLPTask(
+            num_nodes=view.num_nodes, train_edges=view.edge_index(train_mask),
+            train_relations=view.rel[train_mask], val_edges=view.edge_index(val_mask),
+            val_relations=view.rel[val_mask], seed=seed, val_batch_size=config.batch_size)
+        monitor = BASE_SELECTION_METRIC
+    else:
+        from src.training.finetune_task import (
+            FINETUNE_SELECTION_METRIC, DiseaseTask, FinetuneSampler,
+        )
+
+        sampler = FinetuneSampler(
+            view, binding["train"].cases, lp_sampler, batch_size=config.batch_size,
+            candidate_sample_size=config.candidate_sample_size,
+            sparse_sample_size=config.sparse_sample_size, seed=seed)
+        task = DiseaseTask(
+            view=view, val_cases=binding["val"].cases, val_excluded=len(binding["val"].excluded),
+            full_edges=view.edge_index(), full_relations=view.rel,
+            task_loss_weight=config.task_loss_weight, lp_loss_weight=config.lp_loss_weight)
+        monitor = FINETUNE_SELECTION_METRIC
 
     compile_installed = False
     if config.compile:
@@ -1227,7 +1373,7 @@ def train_bundle(config: TrainConfig, explicit: Optional[Collection[str]] = None
         use_amp=config.use_amp, amp_dtype=config.amp_dtype,
         eval_every_n_epochs=config.eval_every_n_epochs, early_stopping=early_stopping,
         early_stopping_patience=config.early_stopping_patience,
-        early_stopping_monitor=BASE_SELECTION_METRIC, early_stopping_mode="max",
+        early_stopping_monitor=monitor, early_stopping_mode="max",
         checkpoint_dir=str(checkpoint_dir), save_top_k=config.save_top_k,
         log_dir=str(log_dir), device=device, seed=config.seed,
         pause_after_epoch=config.pause_after_epoch,
@@ -1252,26 +1398,58 @@ def train_bundle(config: TrainConfig, explicit: Optional[Collection[str]] = None
     torch.save({"record": split.record(), "part": split.part}, run_dir / "graph_split.pt")
 
     parent_identity = parent.identity if parent is not None else None
-    del parent
+    base_identity = base_parent.identity if base_parent is not None else None
+    base_logs = ({k: v for k, v in (base_parent.checkpoint.get("logs") or {}).items()}
+                 if base_parent is not None else {})
+    del parent, base_parent
+
+    def _ref(identity):
+        return {"sha256": identity.sha256, "run": Path(identity.path).parent.parent.name}
+
     if parent_record is not None:
-        operation = plan.mode
-        family_id = parent_record.family_id
-        parent_ref = {"sha256": parent_identity.sha256,
-                      "run": Path(parent_identity.path).parent.parent.name}
+        operation, family_id, parent_ref = plan.mode, parent_record.family_id, _ref(parent_identity)
+    elif base_record is not None:
+        operation, family_id, parent_ref = "finetune", base_record.family_id, _ref(base_identity)
     else:
         operation, family_id, parent_ref = "new", run_dir.name, None
-    trainer.model_record = ModelRecord(
-        model_spec=spec, graph_view=bundle.view, operation=operation, family_id=family_id,
-        parent=parent_ref,
-        data_roles={"kg": inputs.bound["kg"],
-                    "graph_view": {"digest": view.digest, "rule": dict(view.rule)},
-                    "split": split.record()},
-        graph_exposure={"base": {
+    data_roles: Dict[str, Any] = {
+        "kg": inputs.bound["kg"],
+        "graph_view": {"digest": view.digest, "rule": dict(view.rule)},
+        "split": split.record(),
+    }
+    if stage == "base":
+        exposure = {"base": {
             "training": {"message_passing": "train edges, the step's drawn pairs removed (F5)",
                          "supervision": "train edges"},
-            "validation": {"message_passing": "train edges", "supervision": "val edges"}}},
-        loss_identity={"terms": ["lp"], "lp_loss_weight": 1.0, "lp_head": spec.lp_head.kind,
-                       "margin": spec.lp_head.margin})
+            "validation": {"message_passing": "train edges", "supervision": "val edges"}}}
+        loss_identity = {"terms": ["lp"], "lp_loss_weight": 1.0, "lp_head": spec.lp_head.kind,
+                         "margin": spec.lp_head.margin}
+        scoring = None
+        selection = None
+    else:
+        data_roles["task_data"] = {
+            split_name: {"samples": inputs.samples[split_name].identity.sha256,
+                         "binding": dict(binding[split_name].counts)}
+            for split_name in ("train", "val")}
+        exposure = {"finetune": {
+            "training": {"message_passing": "train edges, the step's drawn pairs removed (F5)",
+                         "lp_supervision": "train edges", "task": "train cases"},
+            "validation": {"message_passing": "the full view", "task": "val cases"}}}
+        loss_identity = {"terms": ["task", "lp"], "task_loss": "nca",
+                         "task_loss_weight": float(config.task_loss_weight),
+                         "lp_loss_weight": float(config.lp_loss_weight),
+                         "lp_head": spec.lp_head.kind, "margin": spec.lp_head.margin}
+        scoring = {"task": config.task, "score": "-||z_d - z_P||^2 on L2-normalised vectors",
+                   "candidates": "every disease of the graph view", "ties": "average rank",
+                   "version": 1}
+        selection = ({"rule": "the operator's choice of base checkpoint",
+                      "parent_logs": base_logs}
+                     if base_record is not None else None)
+    trainer.model_record = ModelRecord(
+        model_spec=spec, graph_view=bundle.view, operation=operation, family_id=family_id,
+        parent=parent_ref, weight_transfer=weight_transfer, data_roles=data_roles,
+        graph_exposure=exposure, loss_identity=loss_identity, scoring_identity=scoring,
+        selection=selection)
     from src.utils.fingerprint import compute_fingerprint
 
     trainer.data_fingerprint = compute_fingerprint(inputs.graph.graph_data)
@@ -1282,12 +1460,15 @@ def train_bundle(config: TrainConfig, explicit: Optional[Collection[str]] = None
         "device_requested": config.device,
         "compile": {"requested": bool(config.compile), "installed": compile_installed},
         "loaders": {
-            "train": {"kind": "base_lp_sampler", "batch_size": int(config.batch_size),
+            "train": {"kind": type(sampler).__name__, "batch_size": int(config.batch_size),
                       "sizes": list(config.num_neighbors), "batches": len(sampler),
                       "recipe": recipe},
-            "val": dict(task.val_counts),
+            "val": (dict(task.val_counts) if stage == "base"
+                    else dict(binding["val"].counts)),
         },
     }
+    # The workspace roles; a finetune's base is named in the model record's
+    # parent, once, not as a workspace role a resume would compare.
     trainer.training_input_digests = training_input_digests(inputs, parent=parent_identity)
 
     logger.info("Starting training...")
@@ -1302,9 +1483,31 @@ def train_bundle(config: TrainConfig, explicit: Optional[Collection[str]] = None
     return final_metrics
 
 
+def _transfer_base_weights(bundle: Any, parent_state: Mapping[str, Any]) -> Dict[str, Any]:
+    """Load a base's graph side into a finetune bundle (README A10): every
+    parent parameter must exist with the same shape, and only the patient
+    encoder and task head are new. Returns the weight-transfer record."""
+    own = bundle.state_dict()
+    foreign = sorted(k for k in parent_state if k not in own)
+    mismatched = sorted(k for k in parent_state
+                        if k in own and tuple(own[k].shape) != tuple(parent_state[k].shape))
+    if foreign or mismatched:
+        raise ValueError(f"the base's weights do not fit this finetune's graph side "
+                         f"(unknown {foreign[:5]}, shape {mismatched[:5]})")
+    missing = [k for k in own if k not in parent_state]
+    new_parts = sorted({k.split(".")[0] for k in missing})
+    if any(part not in ("patient_encoder", "task_head") for part in new_parts):
+        raise ValueError(f"the base lacks graph-side weights: {new_parts}")
+    bundle.load_state_dict(dict(parent_state), strict=False)
+    loaded = sorted({k.split(".")[0] for k in parent_state})
+    return {"loaded_from_parent": loaded, "initialised_new": new_parts, "trainable": "all",
+            "optimizer": "new"}
+
+
 def train(config: TrainConfig, explicit: Optional[Collection[str]] = None, *,
           expected_dataset_sha256: Optional[str] = None,
-          expected_resume_sha256: Optional[str] = None) -> Dict[str, float]:
+          expected_resume_sha256: Optional[str] = None,
+          expected_parent_sha256: Optional[str] = None) -> Dict[str, float]:
     """
     Main training function
 
@@ -1321,13 +1524,19 @@ def train(config: TrainConfig, explicit: Optional[Collection[str]] = None, *,
             started for (`--expect-resume-sha256`), compared on the parent's
             one read before it is loaded (`read_resume_parent`);
             `CheckpointChanged` otherwise. A precondition too.
+        expected_parent_sha256: the finetune parent's SHA-256
+            (`--expect-parent-sha256`), compared on its one read likewise.
 
     Returns:
         Final evaluation metrics
     """
     if config.learning_stage is not None:
         return train_bundle(config, explicit, expected_dataset_sha256=expected_dataset_sha256,
-                            expected_resume_sha256=expected_resume_sha256)
+                            expected_resume_sha256=expected_resume_sha256,
+                            expected_parent_sha256=expected_parent_sha256)
+    if config.task is not None or config.finetune_from:
+        raise ValueError("task and finetune_from belong to the model bundle path; give "
+                         "learning_stage 'finetune'")
     logger.info("=" * 60)
     logger.info("SHEPHERD-Advanced Training")
     logger.info("=" * 60)
@@ -1661,7 +1870,8 @@ def _train_main(args: argparse.Namespace) -> int:
     # first (`read_training_inputs`), each refusal naming the missing file.
     try:
         metrics = train(config, explicit, expected_dataset_sha256=args.expect_dataset_sha256,
-                        expected_resume_sha256=args.expect_resume_sha256)
+                        expected_resume_sha256=args.expect_resume_sha256,
+                        expected_parent_sha256=getattr(args, "expect_parent_sha256", None))
         return 0 if metrics else 1
     except DatasetChanged as exc:  # a refusal, said once, not a failure with a traceback
         logger.error(f"train_model: refused: {exc} Nothing was written.")

@@ -60,6 +60,9 @@ OPERATIONAL_FIELDS = frozenset({
     "data_dir", "config_file", "run_name", "run_dir", "resume_from",
     "device", "num_workers", "compile",
     "pause_after_epoch", "extend_epochs", "extend_lr",
+    # The model bundle path: a finetune's parent is in its model record, not
+    # a setting a continued run inherits.
+    "finetune_from",
 })
 
 

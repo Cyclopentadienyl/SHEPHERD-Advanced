@@ -14,7 +14,7 @@ Module: src/models/bundle/lp_head.py
 """
 from __future__ import annotations
 
-from typing import Dict, Optional, Tuple
+from typing import Tuple
 
 import torch
 import torch.nn as nn

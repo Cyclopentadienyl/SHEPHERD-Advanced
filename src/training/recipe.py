@@ -51,6 +51,56 @@ BASE_FIXED: Dict[str, Any] = {"early_stopping": False, "monitor": "val_lp_accura
                               "monitor_mode": "max"}
 
 
+#: Finetune settings shared by the tasks, README U3, U8, U15, C6.
+FINETUNE: Dict[str, Any] = {
+    "num_epochs": 100,
+    "weight_decay": 0.0,
+    "batch_size": 64,
+    "max_grad_norm": 1.0,
+    "seed": 33,
+    "scheduler_type": "none",
+    "warmup_steps": 0,
+    "use_amp": False,
+    "candidate_sample_size": 1000,
+}
+
+FINETUNE_SOURCES: Dict[str, str] = {
+    "num_epochs": f"{UPSTREAM} hparams.py:95-110 (max_epochs 100)",
+    "weight_decay": f"{UPSTREAM} gene_prioritization_model.py:541-543 (Adam, no weight decay; U8)",
+    "batch_size": f"{UPSTREAM} hparams.py:95-110 (64 patients)",
+    "max_grad_norm": f"{UPSTREAM} hparams.py:95-110 (gradclip 1.0)",
+    "seed": f"{UPSTREAM} train.py:78 (seed 33)",
+    "scheduler_type": f"{UPSTREAM} train.py:283-292,311 (no scheduler; README C6, U8)",
+    "warmup_steps": "no warmup in the source (README C6)",
+    "use_amp": f"{UPSTREAM} train.py:308-317 (precision 16 never passed: fp32; README U15)",
+    "candidate_sample_size": f"{UPSTREAM} hparams.py:101 (n_cand_diseases 1000 per batch)",
+}
+
+#: Per task: learning rate, first-hop size, sparse sample and the two named
+#: loss weights (README U3, U8, C3: the scripts' lambda flipped into
+#: task/LP weights).
+FINETUNE_TASKS: Dict[str, Dict[str, Any]] = {
+    "disease": {"learning_rate": 1e-5, "num_neighbors": [15, 10, 5],
+                "sparse_sample_size": 300, "task_loss_weight": 0.1, "lp_loss_weight": 0.9},
+}
+
+FINETUNE_TASK_SOURCES: Dict[str, Dict[str, str]] = {
+    "disease": {
+        "learning_rate": f"{UPSTREAM} disease run_*.sh script (lr 1e-5; README U3, U8)",
+        "num_neighbors": f"{UPSTREAM} hparams.py:74 and the disease run_*.sh script (first hop "
+                         "15, then 10, 5; README U3)",
+        "sparse_sample_size": f"{UPSTREAM} disease run_*.sh script (sparse_sample 300; README U3)",
+        "task_loss_weight": f"{UPSTREAM} disease run_*.sh script lmbda 0.9 on LP, so 0.1 on "
+                            "the task (README C3)",
+        "lp_loss_weight": f"{UPSTREAM} disease run_*.sh script lmbda 0.9 (README C3)",
+    },
+}
+
+#: The finetune selects on pooled MRR (E1); early stopping is disabled (C6).
+FINETUNE_FIXED: Dict[str, Any] = {"early_stopping": False, "monitor": "val_pooled_mrr",
+                                  "monitor_mode": "max"}
+
+
 def reference_settings(learning_stage: str, task: Optional[str] = None
                        ) -> Tuple[Dict[str, Any], Dict[str, str]]:
     """The reference settings and their sources for a stage (and task)."""
@@ -58,8 +108,14 @@ def reference_settings(learning_stage: str, task: Optional[str] = None
         if task is not None:
             raise ValueError("a base stage has no task")
         return dict(BASE), dict(BASE_SOURCES)
-    raise ValueError(f"no reference training settings for learning stage {learning_stage!r} "
-                     "in this build")
+    if learning_stage == "finetune":
+        if task not in FINETUNE_TASKS:
+            raise ValueError(f"no reference finetune settings for task {task!r} in this build")
+        values = {**FINETUNE, **FINETUNE_TASKS[task]}
+        sources = {**FINETUNE_SOURCES, **FINETUNE_TASK_SOURCES[task]}
+        return values, sources
+    raise ValueError(f"no reference training settings for learning stage {learning_stage!r}")
 
 
-__all__ = ["BASE", "BASE_FIXED", "BASE_SOURCES", "reference_settings"]
+__all__ = ["BASE", "BASE_FIXED", "BASE_SOURCES", "FINETUNE", "FINETUNE_FIXED",
+           "FINETUNE_SOURCES", "FINETUNE_TASKS", "FINETUNE_TASK_SOURCES", "reference_settings"]
