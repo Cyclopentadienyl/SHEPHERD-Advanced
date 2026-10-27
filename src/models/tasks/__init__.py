@@ -1,17 +1,14 @@
 """
-Task heads — RESERVED package (no implementation yet).
-======================================================
-Reserved home for end-to-end task models that compose the encoder, GNN and
-decoder into a single unit.
+Task heads of a finetuned model bundle.
+======================================
+The patient encoder, the disease, gene and patients-like-me heads
+(`heads.py`) and the one task-loss module (`losses.py`) of
+`docs/working/scorer-retraining/README.md` §3.1. The bundle that composes them
+with the graph side is `src.models.bundle`.
 
-Named by ``DiagnosisModelProtocol`` in ``src.core.protocols``, which declares
-its implementation module as ``src/models/tasks/diagnosis.py`` — a file that
-does not exist. Today that composition lives in
-``src/models/gnn/shepherd_gnn.py``, which is the live diagnostic model.
-
-The package is intentionally empty rather than absent: a Protocol names it, and
-removing the package would leave that Protocol pointing into a directory that
-is not there.
+`DiagnosisModelProtocol` in `src.core.protocols` still names a planned
+`src/models/tasks/diagnosis.py`; that Protocol is reviewed with the retirement
+check (README §7, K7).
 
 Module: src/models/tasks/__init__.py
 """

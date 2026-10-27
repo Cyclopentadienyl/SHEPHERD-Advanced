@@ -293,6 +293,17 @@ def build_checkpoint_payload(
         if trainer.scaler is not None:
             payload["scaler_state_dict"] = trainer.scaler.state_dict()
 
+    # The bundle path's model record (contract §9.1), weights-only included:
+    # the spec the one builder rebuilds from, the lineage, data roles and
+    # graph exposure. Its presence marks record version 2; a trainer without
+    # one is the M3a path, which keeps version 1 until it is retired (§9.3).
+    model_record = getattr(trainer, "model_record", None)
+    if model_record is not None:
+        from src.models.bundle.record import MODEL_RECORD_VERSION
+
+        payload["record_version"] = MODEL_RECORD_VERSION
+        payload.update(model_record.to_payload())
+
     # Provenance, in every checkpoint, weights-only included: which inputs
     # produced it and under which code and environment. Set by the training
     # script; absent for a library caller.

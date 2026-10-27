@@ -29,6 +29,12 @@ SUPPORTED_CONV_TYPES = ("hgt", "gat", "sage")
 # Default when a conv type is missing or unrecognised.
 DEFAULT_CONV_TYPE = "gat"
 
+# Encoder kinds a model bundle's spec can name (src/models/bundle/spec.py,
+# README §3.3): the reference homogeneous GATv2 and the non-reference
+# heterogeneous encoders behind the same contract. Here, torch-free, so the run
+# layout (src/utils/checkpoint_paths.py) can key bundle runs by them.
+ENCODER_KINDS = ("gatv2", "hetero_gat", "hgt", "sage")
+
 
 # ==============================================================================
 # Checkpoint architecture inference
@@ -207,4 +213,4 @@ def resolve_arch_params(
     return params
 
 
-__all__ = ["SUPPORTED_CONV_TYPES", "DEFAULT_CONV_TYPE", "resolve_arch_params"]
+__all__ = ["SUPPORTED_CONV_TYPES", "DEFAULT_CONV_TYPE", "ENCODER_KINDS", "resolve_arch_params"]
