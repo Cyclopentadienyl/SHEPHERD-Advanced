@@ -23,6 +23,12 @@ homogeneous graph with typed edges, in a fixed order:
 5. **Only then the split** (`split_facts`): an edge and its reverse twin are one
    fact and always land in the same part.
 
+**Exact distances** (`exact_distances`, README §6 rule 5): the gene task's one
+distance interface, hop counts over the whole view, undirected and
+relation-blind, with no cap; an unreachable pair is -1, never 0 or a cap. A
+pure function of the digest-bound view, so training, measurement and serving
+compute the same table without a file between them.
+
 **Nothing on disk is changed.** The view is computed from the workspace's
 graph read and the spec's rule, deterministically, and identified by digest:
 the same graph and rule give the same view on any machine.
@@ -282,6 +288,33 @@ def _largest_component(src: torch.Tensor, dst: torch.Tensor, n: int) -> torch.Te
     return torch.from_numpy(labels == chosen)
 
 
+def exact_distances(view: Any, sources: torch.Tensor, targets: torch.Tensor, *,
+                    chunk_size: int = 256) -> torch.Tensor:
+    """Hop distances from each source to each target view node, over every
+    edge of `view` (undirected, relation-blind, uncapped; README §6). `[S, T]`
+    int32; -1 where a target is unreachable. Sources are taken `chunk_size` at
+    a time, so memory is `chunk_size` rows of the whole view."""
+    from scipy.sparse import csr_matrix
+    from scipy.sparse.csgraph import shortest_path
+
+    sources = torch.as_tensor(sources, dtype=torch.long)
+    targets = torch.as_tensor(targets, dtype=torch.long)
+    out = torch.full((sources.numel(), targets.numel()), -1, dtype=torch.int32)
+    if sources.numel() == 0 or targets.numel() == 0:
+        return out
+    n = int(view.num_nodes)
+    src, dst = view.src.numpy(), view.dst.numpy()
+    adj = csr_matrix((np.ones(src.size, dtype=np.float32), (src, dst)), shape=(n, n))
+    cols = targets.numpy()
+    for start in range(0, sources.numel(), chunk_size):
+        rows = sources[start:start + chunk_size].numpy()
+        hops = shortest_path(adj, method="D", directed=False, unweighted=True, indices=rows)
+        block = hops[:, cols]
+        out[start:start + rows.size] = torch.from_numpy(
+            np.where(np.isfinite(block), block, -1).astype(np.int32))
+    return out
+
+
 def _facts(src: torch.Tensor, dst: torch.Tensor, rel: torch.Tensor, reverse: torch.Tensor,
            relations: Sequence[str], n: int) -> torch.Tensor:
     """One fact id per edge, shared by an edge and its reverse twin.
@@ -390,6 +423,7 @@ __all__ = [
     "SPLIT_RULE",
     "VIEW_RULE",
     "build_graph_view",
+    "exact_distances",
     "relation_key",
     "split_facts",
     "view_digest",

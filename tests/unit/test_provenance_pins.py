@@ -89,6 +89,8 @@ ALLOWED = {
     ("src/utils/fingerprint.py", "DigestingFile.__init__", "hashlib.sha256"):
         (1, _IN_MEMORY.format(what="every byte a writer writes, as it is written (contract "
                                    "M3b)")),
+    ("src/kg/task_fixture.py", "read_gene_fixture", "json.loads"): (1, _READER),
+    ("src/kg/task_fixture.py", "read_gene_fixture", "read_once"): (1, _READER),
     ("src/kg/graph.py", "KnowledgeGraph.read_json", "json.loads"): (1, _READER),
     ("src/kg/graph.py", "KnowledgeGraph.read_json", "read_once"): (1, _READER),
     ("src/utils/checkpoint_io.py", "read_checkpoint", "torch.load"): (1, _READER),
@@ -172,6 +174,8 @@ ALLOWED = {
         (1, _IN_MEMORY.format(what="the graph view's rule, mapping and edges (README G1)")),
     ("src/kg/graph_view.py", "split_facts", "hashlib.sha256"):
         (1, _IN_MEMORY.format(what="the edge split's rule, seed, view and parts (README F2)")),
+    ("src/models/tasks/gene.py", "neighbour_table", "hashlib.sha256"):
+        (1, _IN_MEMORY.format(what="the gene augmentation neighbour table (README F10)")),
     ("src/kg/sample_generator.py", "_sha256_text", "hashlib.sha256"):
         (1, "the generator's digest of the text it writes, equal to the file's by "
             "construction (the writer's digest of what it wrote, as contract M3b "

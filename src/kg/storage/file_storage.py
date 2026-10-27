@@ -220,7 +220,8 @@ def read_graph_artifacts(data_dir: Path, *, map_location: Any = "cpu") -> GraphA
     return GraphArtifactsRead(graph_data, reads)
 
 
-def read_samples(data_dir: Path, split: str, *, training_fields: bool = False) -> SamplesRead:
+def read_samples(data_dir: Path, split: str, *, training_fields: bool = False,
+                 gene_fields: bool = False) -> SamplesRead:
     """Load `<split>_samples.json` as `DiagnosisSample` objects.
 
     Missing is an error, not an empty cohort: an empty list would flow into a
@@ -235,10 +236,11 @@ def read_samples(data_dir: Path, split: str, *, training_fields: bool = False) -
     the caller has to answer, since `val` is the checkpoint-selection split
     rather than held-out data.
 
-    **Three fields by default; `training_fields=True` adds the two only
-    training reads,** `candidate_disease_ids` and `gene_ids`. Measurement and
-    the verifiers read the three default fields; training passes its two extra
-    fields explicitly.
+    **Three fields by default; `training_fields=True` adds the ones only
+    training reads,** `candidate_disease_ids`, `gene_ids` and `causal_gene_ids`.
+    `gene_fields=True` adds the gene task's two (`gene_ids`, the candidate list,
+    and `causal_gene_ids`), which the gene and patients-like-me tasks read
+    (README §8). Measurement and the verifiers read the three default fields.
 
     The file is parsed by `read_samples_file`, the one samples parser; this
     function only names a workspace split's file and explains its absence.
@@ -259,13 +261,14 @@ def read_samples(data_dir: Path, split: str, *, training_fields: bool = False) -
             else "this workspace has no *_samples.json files at all"
         )
         raise FileNotFoundError(f"Samples file not found: {path} — {detail}")
-    return read_samples_file(path, training_fields=training_fields)
+    return read_samples_file(path, training_fields=training_fields, gene_fields=gene_fields)
 
 
 def read_samples_file(
     path: Path,
     *,
     training_fields: bool = False,
+    gene_fields: bool = False,
     expected_sha256: Union[str, AbstractSet[str], None] = None,
 ) -> SamplesRead:
     """Load one samples file, a JSON list of sample rows, as `DiagnosisSample` objects.
@@ -283,7 +286,8 @@ def read_samples_file(
     match it, so the read could only be thrown away.
 
     Missing is `FileNotFoundError` naming the path, never an empty list.
-    `training_fields` is as `read_samples` describes.
+    `training_fields` and `gene_fields` are as `read_samples` describes; an
+    older row without the optional fields reads them as None.
     """
     from src.kg.data_loader import DiagnosisSample
 
@@ -295,27 +299,18 @@ def read_samples_file(
     # A file that is JSON but not a list of sample rows is refused under its
     # name too: without `expected_sha256`, the entry point compares digests only
     # after this parse.
+    optional = (("candidate_disease_ids", "gene_ids", "causal_gene_ids") if training_fields
+                else ("gene_ids", "causal_gene_ids") if gene_fields else ())
     try:
-        if training_fields:
-            samples = [
-                DiagnosisSample(
-                    patient_id=entry["patient_id"],
-                    phenotype_ids=entry["phenotype_ids"],
-                    disease_id=entry["disease_id"],
-                    candidate_disease_ids=entry.get("candidate_disease_ids"),
-                    gene_ids=entry.get("gene_ids"),
-                )
-                for entry in entries
-            ]
-        else:
-            samples = [
-                DiagnosisSample(
-                    patient_id=entry["patient_id"],
-                    phenotype_ids=entry["phenotype_ids"],
-                    disease_id=entry["disease_id"],
-                )
-                for entry in entries
-            ]
+        samples = [
+            DiagnosisSample(
+                patient_id=entry["patient_id"],
+                phenotype_ids=entry["phenotype_ids"],
+                disease_id=entry["disease_id"],
+                **{field: entry.get(field) for field in optional},
+            )
+            for entry in entries
+        ]
     except (KeyError, TypeError, AttributeError) as exc:
         raise _unparseable(path, "a samples file (a list of sample rows)", exc, identity) from exc
     _refuse_non_integer_ids(path, samples, identity)
@@ -382,7 +377,7 @@ def _refuse_non_integer_ids(path: Path, samples: List[Any], identity: ReadIdenti
         if not is_id(sample.disease_id):
             refuse(index, sample, "disease_id", sample.disease_id, "an integer id")
         lists = {"phenotype_ids": sample.phenotype_ids}
-        for field in ("candidate_disease_ids", "gene_ids"):
+        for field in ("candidate_disease_ids", "gene_ids", "causal_gene_ids"):
             if getattr(sample, field) is not None:
                 lists[field] = getattr(sample, field)
         for field, values in lists.items():
@@ -405,7 +400,7 @@ def _refuse_phenotype_repeats(path: Path, samples: List[Any], identity: ReadIden
     would score a list other than the one recorded. The rule is
     `normalise_phenotypes`, called rather than restated, so this check and the
     producers cannot disagree about what a repeat is. Only `phenotype_ids` is a
-    phenotype list (§4.1): `gene_ids` and `candidate_disease_ids` are not checked.
+    phenotype list (§4.1): the gene lists and `candidate_disease_ids` are not checked.
 
     **After the integer check, never before it.** The rule compares identities in
     a set, where `True` and `1` are one entry, so a boolean id would be reported

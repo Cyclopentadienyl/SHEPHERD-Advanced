@@ -142,6 +142,13 @@ class GeneHead(TaskHead):
         g = F.normalize(candidates, p=2, dim=-1)
         return torch.tanh(p @ self.decoder_weight @ g.T + self.decoder_bias)
 
+    def list_scores(self, patients: Tensor, candidates: Tensor) -> Tensor:
+        """EMBSIM of each patient's own list: `[B, W]` × `[B, M, W]` → `[B, M]`."""
+        p = F.normalize(patients, p=2, dim=-1)
+        g = F.normalize(candidates, p=2, dim=-1)
+        return torch.tanh(torch.einsum("bw,wv,bmv->bm", p, self.decoder_weight, g)
+                          + self.decoder_bias)
+
 
 _HEADS = {"disease": DiseaseHead, "gene": GeneHead, "patients_like_me": PatientsLikeMeHead}
 

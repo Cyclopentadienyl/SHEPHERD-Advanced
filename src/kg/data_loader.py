@@ -611,7 +611,13 @@ class DiagnosisSample:
     phenotype_ids: List[int]  # 在圖中的索引
     disease_id: int  # 正確疾病在圖中的索引
     candidate_disease_ids: Optional[List[int]] = None  # 候選疾病
-    gene_ids: Optional[List[int]] = None  # 候選基因
+    #: A gene-task row's candidate genes (README §8, PLAN_TEST_RESULTS §8.3). A
+    #: generated disease cohort writes the disease's genes here; the disease
+    #: task reads none of them.
+    gene_ids: Optional[List[int]] = None
+    #: The causal genes, all of them positives of the gene task (README F9); a
+    #: patients-like-me pair is positive when two patients' sets intersect.
+    causal_gene_ids: Optional[List[int]] = None
 
 
 class DiagnosisDataset(Dataset):

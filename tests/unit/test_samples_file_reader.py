@@ -440,7 +440,7 @@ def test_read_samples_delegates_to_the_one_parser(monkeypatch, tmp_path):
 
     result = read_samples(tmp_path, "val", training_fields=True)
 
-    assert calls == [(path, {"training_fields": True})]
+    assert calls == [(path, {"training_fields": True, "gene_fields": False})]
     assert result.identity.path == path
 
 

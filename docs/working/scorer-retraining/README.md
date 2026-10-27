@@ -527,6 +527,20 @@ and reads `max_hops+1` both beyond the cap and unreachable. Today's disease SP t
 is neither the gene SPLSIM nor a per-list min-max (`../../SP_SCORE_GUIDE.md` §3). The producer and
 reader are extended for exact distances, not replaced by a second distance file.
 
+**As built (K4, 2026-10-27).**
+- **Distances:** one function, `src.kg.graph_view.exact_distances`, computes the exact hops from the
+  digest-bound view in process; training, measurement and serving share it, and the table's digest
+  goes into the record. There is no distance file. The view is one connected component, so the
+  distances are a pure function of the view. The file reader lives in `src.inference`, which the
+  training layer cannot import. The hop-capped producer and its reader now serve only the retiring
+  disease mixture; K7 checks them.
+- **Augmentation:** the paper's Eq 10–11 (`src.models.tasks.gene`): neighbours by the raw count of
+  shared phenotypes, and the degree gate `θ = ω·exp(−ω·|N_g|) + 0.2`, with `|N_g|` the gene's degree in
+  the view. The source's form `+ (1 − ω − 0.1)` equals it only at ω = 0.7.
+- **Task data:** `scripts/derive_task_fixture.py` writes the functional fixture to
+  `derived/gene_fixture/`, bound to the workspace's split manifest by digest
+  (`src.kg.task_fixture`).
+
 ---
 
 ## 7. Retirement list
