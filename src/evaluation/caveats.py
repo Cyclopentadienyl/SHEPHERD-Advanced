@@ -146,10 +146,20 @@ MODE_D_NOTE = (
 )
 
 #: Each recorded mode's label, by the record's `scoring.mode`.
-MODE_RESULT_LABELS = {"C": MODE_C_RESULT_LABEL, "D": MODE_D_RESULT_LABEL}
+#: A finetuned model bundle's disease task measurement
+#: (`src.evaluation.task_measurement`): its own scoring semantics, never grouped
+#: with a Mode C or D record.
+DISEASE_TASK_RESULT_LABEL = ("Disease task (model bundle): every disease of the model's "
+                             "graph view, average ranks")
+DISEASE_TASK_NOTE = ("A score from the finetuned model's disease head, uncalibrated. Pooled "
+                     "MRR is over every case's truth; coverage and the conservative reading "
+                     "count the cases the model could not rank.")
+
+MODE_RESULT_LABELS = {"C": MODE_C_RESULT_LABEL, "D": MODE_D_RESULT_LABEL,
+                      "disease": DISEASE_TASK_RESULT_LABEL}
 
 #: The note each mode's record is shown with.
-MODE_RESULT_NOTES = {"C": PRE_B1_NOTE, "D": MODE_D_NOTE}
+MODE_RESULT_NOTES = {"C": PRE_B1_NOTE, "D": MODE_D_NOTE, "disease": DISEASE_TASK_NOTE}
 
 
 #: The label of a record whose mode cannot be read: never taken for Mode C.

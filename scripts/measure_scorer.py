@@ -202,7 +202,7 @@ logger = logging.getLogger(__name__)
 
 #: The measurement modes this program runs: Mode C, and Mode D beside it
 #: (`docs/working/scorer-measurement/PLAN_B05.md`).
-MODES = ("C", "D")
+MODES = ("C", "D", "disease")
 
 #: What Mode C ranks each patient against, as its manifest records it. There is
 #: no expansion to describe: the candidates are every disease in the graph.
@@ -931,6 +931,7 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
         "batch_size": args.batch_size,
         "score_semantics": "raw cosine, no eta mixture and no shortest-path term",
         "canonical_tie_policy_version": "score-desc-then-global-id-asc/v1",
+        "model_construction": MODEL_CONSTRUCTION,
     }
     if semantics is not None:
         unknown = sorted(set(semantics) - set(kind))
@@ -946,7 +947,7 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
         candidate_construction=kind["candidate_construction"],
         batch_size=kind["batch_size"],
         score_semantics=kind["score_semantics"],
-        model_construction=MODEL_CONSTRUCTION,
+        model_construction=kind["model_construction"],
         canonical_tie_policy_version=kind["canonical_tie_policy_version"],
         checkpoint_path=str(args.checkpoint),
         data_dir=str(args.data_dir),
@@ -987,7 +988,9 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
                              "D: the served ranking (path discovery and the served score), "
                              "measured through the served pipeline's own rank(), with Mode C "
                              "run on the same embeddings beside it. D needs --cohort; "
-                             "--batch-size is the C side's chunk")
+                             "--batch-size is the C side's chunk. disease: a finetuned "
+                             "model bundle's disease task, every disease of its graph view, "
+                             "average ranks (docs/working/PLAN_TEST_RESULTS.md §8)")
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--data-dir", type=Path, required=True)
     cohort = parser.add_mutually_exclusive_group(required=True)
@@ -1644,6 +1647,8 @@ def _run(args: argparse.Namespace, *, registry: Optional[Path]) -> int:
     try:
         if args.mode == "D":
             inputs, result = _measure_mode_d(args, registry, device, cuda_executed)
+        elif args.mode == "disease":
+            inputs, result = _measure_task(args, registry, device, cuda_executed)
         else:
             inputs, result = _measure_mode_c(args, registry, device, cuda_executed)
     except RuntimeError as exc:
@@ -1800,6 +1805,51 @@ def _measure_mode_c(args: argparse.Namespace, registry: Optional[Path], device: 
         device=device,
         batch_size=args.batch_size,
     )
+    return inputs, result
+
+
+def _measure_task(args: argparse.Namespace, registry: Optional[Path], device: torch.device,
+                  cuda_executed: bool) -> Tuple[MeasurementInputs, Any]:
+    """A finetuned bundle's task measurement (`src.evaluation.task_measurement`).
+
+    The same reads and refusals as Mode C, before anything is built or
+    written; then the model record is read and checked, the stage and task
+    first (provenance §9.3 hazard 3), the graph view rebuilt from the graph
+    read by the spec's rule and compared with the record, and the bundle built
+    and strictly loaded. A checkpoint without a model spec is refused: it was
+    written before the switch and is history.
+    """
+    from dataclasses import asdict as _asdict
+
+    from src.evaluation.task_measurement import disease_semantics, run_disease_measurement
+    from src.kg.graph_view import build_graph_view
+    from src.models.bundle.record import check_model_record, load_bundle, read_model_record
+    from src.utils.run_environment import observe_autocast_regime
+
+    inputs = read_measurement_inputs(
+        args.checkpoint, args.data_dir, device, split=args.split, cohort=args.cohort,
+        registry=registry, training_evidence=args.training_evidence,
+        expect_checkpoint_sha256=args.expect_checkpoint_sha256,
+        expect_version_sha256=args.expect_version_sha256,
+    )
+    graph_data, samples = inputs.graph.graph_data, inputs.samples.samples
+    record = read_model_record(inputs.checkpoint.checkpoint)
+    check_model_record(record, learning_stage="finetune", task=args.mode)
+    rule = _asdict(record.model_spec.graph_view)
+    rule["exclude_relations"] = list(rule["exclude_relations"])
+    view = build_graph_view(graph_data, rule=rule)
+    bundle, record = load_bundle(inputs.checkpoint.checkpoint, learning_stage="finetune",
+                                 task=args.mode, view_digest=view.digest)
+    bundle.to(device)
+    manifest = build_manifest(
+        args, graph_data, len(samples), device, digests=measurement_input_digests(inputs),
+        dataset_record=inputs.dataset_record.summary(), cohort_version=inputs.cohort_version,
+        r10=inputs.r10, cuda_executed=cuda_executed, model=bundle,
+        regime=observe_autocast_regime(device), semantics=disease_semantics(args.batch_size),
+    )
+    result = run_disease_measurement(bundle=bundle, view=view, samples=samples,
+                                     manifest=manifest, device=device,
+                                     batch_size=args.batch_size)
     return inputs, result
 
 
