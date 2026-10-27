@@ -765,6 +765,29 @@ class KnowledgeGraph:
             for nt, mapping in self._node_id_to_idx.items()
         }
 
+    def gene_lookup(self) -> Dict[str, int]:
+        """Gene identifiers -> the gene's type-local index, the one mapping the
+        cohort importer and serving use for causal and candidate genes.
+
+        Each gene node's id string (``disgenet:SCN1A``) maps; so does its symbol
+        (the node's ``symbol`` attribute, else its name), upper-cased, when no
+        other gene node has the same symbol. An ambiguous symbol maps nothing,
+        so it is reported as unmapped, never resolved by a guess."""
+        mapping = self.get_node_id_mapping().get(NodeType.GENE.value, {})
+        lookup: Dict[str, int] = dict(mapping)
+        by_symbol: Dict[str, Set[int]] = {}
+        for key, index in mapping.items():
+            node = self._nodes.get(key)
+            if node is None:
+                continue
+            symbol = (node.attributes or {}).get("symbol") or node.name
+            if isinstance(symbol, str) and symbol.strip():
+                by_symbol.setdefault(symbol.strip().upper(), set()).add(index)
+        for symbol, indices in by_symbol.items():
+            if len(indices) == 1 and symbol not in lookup:
+                lookup[symbol] = next(iter(indices))
+        return lookup
+
     def get_reverse_node_mapping(self) -> Dict[str, Dict[int, str]]:
         """
         Get index to node ID mapping for each node type.
