@@ -212,11 +212,14 @@ retraining README §1, §3; policy rev 11). It replaces the `gnn_ranking/v1` row
 **As built in K4 (2026-10-27): `gene_task/v1` and `patients_like_me/v1`.**
 - `gene_task/v1`, scoring mode `gene_task`: the request's `candidate_genes` ranked by
   `η·EMBSIM + (1 − η)·SPLSIM`, each candidate with its two parts and the mean exact hop distance;
-  ties by view id; an identifier that maps to no gene of the view is counted ("N of M submitted").
-  Without `candidate_genes` nothing is ranked, and the response says so.
+  ties by view id; identifiers that map to no gene, repeat an earlier entry or fall outside the
+  view are counted ("N of M submitted are scored: ..."). Without `candidate_genes` nothing is
+  ranked, and the response says so. The served identity names the model's η
+  (`settings.eta`) and shortest paths in state `computed` (exact hops from the view, no table);
+  the result names the SP bounds (`sp_bounds`), so `sp_similarity` can be recomputed.
 - `patients_like_me/v1`, scoring mode `patients_like_me`: the patients of the registered reference
   cohort version the request names (`reference_cohort`), ranked by the patient tower's similarity;
-  ties by case id; the query's own case id is left out. Each candidate carries the research id,
+  ties by case id; the query's own case id is left out, with a warning. Each candidate carries the research id,
   the similarity, and the recorded HPO terms, diagnosis and causal genes, and no name or contact
   field. The result names the version (`label`, digests, patient count).
 - Both kinds have their own candidate types: no disease field and no path evidence.

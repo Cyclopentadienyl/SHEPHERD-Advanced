@@ -36,8 +36,9 @@ validation patient against every other validation patient (E1's recorded
 deviation from the source's in-batch ranking), self excluded by case id.
 
 **Batches (U9).** Each epoch takes the bound training cases in a seeded order,
-`batch_size` a batch. Seeds are the batch's phenotypes and truths, the task's
-candidates (disease: `candidate_sample_size` random diseases of the view plus
+`batch_size` a batch. Seeds are every node of the batch's patients
+(phenotypes, causal genes, candidate genes with the upsampled ones, diseases),
+the task's candidates (disease: `candidate_sample_size` random diseases of the view plus
 the truths, shared by the batch; `up:hparams.py:101`) and `sparse_sample_size`
 random gene, phenotype and disease nodes. LP sources are the seeds of those
 three types (U7); their draws, positives, negatives and the F5 filter are the
@@ -293,27 +294,26 @@ class GeneBatch:
     counts: Dict[str, int] = field(default_factory=dict)
 
 
-class GeneSampler(_PatientBatches):
-    """Patient batches for the gene task (U9, U14, F10)."""
+class _RareGenes:
+    """U14: one counter over the view's genes, each starting at 1, in the main
+    process and reset at each epoch start; `upsample_size` least-seen genes
+    per patient join its candidate list (the gene and patients-like-me
+    tasks)."""
 
-    def __init__(self, view: Any, cases: Sequence[BoundGeneCase], lp: BaseLPSampler,
-                 neighbours: Optional[NeighbourTable], *, batch_size: int, upsample_size: int,
-                 sparse_sample_size: int, seed: int, augmentation_k: int):
-        super().__init__(view, cases, lp, batch_size=batch_size,
-                         sparse_sample_size=sparse_sample_size, seed=seed)
-        self.neighbours = neighbours
+    def __init__(self, view: Any, upsample_size: int):
         self.upsample_size = int(upsample_size)
-        self.k = int(augmentation_k)
         self.genes = view.type_nodes("gene")
         self.gene_pos = torch.full((view.num_nodes,), -1, dtype=torch.long)
         self.gene_pos[self.genes] = torch.arange(self.genes.numel())
+        self.reset()
+
+    def reset(self) -> None:
         self.counter = torch.ones(self.genes.numel())
 
-    def start_epoch(self) -> None:
-        self.counter = torch.ones(self.genes.numel())
-
-    def _upsample(self, cases: Sequence[BoundGeneCase]) -> Tuple[List[Tensor], int]:
-        """U14: each patient's list with its share of the least-seen genes."""
+    def upsample(self, cases: Sequence[Any]) -> Tuple[List[Tensor], int]:
+        """Each patient's list (`candidates`) with its share of the least-seen
+        genes, ties by view id, minus its causal (`truths`) and listed genes;
+        the batch's candidates are counted first, the added genes after."""
         lists = [c.candidates for c in cases]
         u = self.upsample_size
         if u <= 0 or self.genes.numel() == 0:
@@ -332,8 +332,24 @@ class GeneSampler(_PatientBatches):
         self.counter.index_add_(0, added_pos, ones.expand(added_pos.numel()))
         return out, int(added_pos.numel())
 
+
+class GeneSampler(_PatientBatches):
+    """Patient batches for the gene task (U9, U14, F10)."""
+
+    def __init__(self, view: Any, cases: Sequence[BoundGeneCase], lp: BaseLPSampler,
+                 neighbours: Optional[NeighbourTable], *, batch_size: int, upsample_size: int,
+                 sparse_sample_size: int, seed: int, augmentation_k: int):
+        super().__init__(view, cases, lp, batch_size=batch_size,
+                         sparse_sample_size=sparse_sample_size, seed=seed)
+        self.neighbours = neighbours
+        self.k = int(augmentation_k)
+        self.rare = _RareGenes(view, upsample_size)
+
+    def start_epoch(self) -> None:
+        self.rare.reset()
+
     def batch(self, cases: Sequence[BoundGeneCase], generator: torch.Generator) -> GeneBatch:
-        lists, upsampled = self._upsample(cases)
+        lists, upsampled = self.rare.upsample(cases)
         # Every patient against the union of the batch's lists (the source's
         # training candidates), each row the same union.
         union = torch.unique(torch.cat(lists))
@@ -456,10 +472,14 @@ class PatientBatch:
 
 
 class PatientsSampler(_PatientBatches):
-    """Patients-like-me batches (U9, F11): anchors with two same-gene partners."""
+    """Patients-like-me batches (U9, F11): anchors with two same-gene partners.
+    The anchors' lists are upsampled (U14) before the partners join, as the
+    source does (`up:samplers.py` collate); every member's phenotypes, causal
+    genes, candidate genes and disease are seeds (U9)."""
 
     def __init__(self, view: Any, cases: Sequence[BoundPatient], lp: BaseLPSampler, *,
-                 batch_size: int, sparse_sample_size: int, seed: int):
+                 batch_size: int, upsample_size: int, sparse_sample_size: int, seed: int):
+        self.rare = _RareGenes(view, upsample_size)
         self.patients = list(cases)
         anchors, self.partners = anchor_groups(self.patients)
         self.index = {c.case_id: i for i, c in enumerate(self.patients)}
@@ -470,7 +490,11 @@ class PatientsSampler(_PatientBatches):
         super().__init__(view, [self.patients[i] for i in anchors], lp, batch_size=batch_size,
                          sparse_sample_size=sparse_sample_size, seed=seed)
 
+    def start_epoch(self) -> None:
+        self.rare.reset()
+
     def batch(self, anchors: Sequence[BoundPatient], generator: torch.Generator) -> PatientBatch:
+        lists, upsampled = self.rare.upsample(anchors)
         members: List[int] = []
         seen = set()
         for anchor in anchors:
@@ -487,13 +511,18 @@ class PatientsSampler(_PatientBatches):
         patients = [self.patients[i] for i in members]
         positive = positive_matrix(patients, patients)
         phenotype_view, phenotype_mask = padded(patients)
-        lp = self._lp(torch.unique(phenotype_view[phenotype_mask]), generator)
+        diseases = torch.tensor([p.disease for p in patients if p.disease >= 0], dtype=torch.long)
+        task_nodes = torch.unique(torch.cat([
+            phenotype_view[phenotype_mask], *lists, *(p.truths for p in patients),
+            *(p.candidates for p in patients), diseases]))
+        lp = self._lp(task_nodes, generator)
         phenotype_index = torch.zeros_like(phenotype_view)
         phenotype_index[phenotype_mask] = lp.seed_index(phenotype_view[phenotype_mask])
         query = positive.any(dim=1)
         counts = dict(lp.counts)
         counts.update({"anchors": len(anchors), "patients": len(patients),
-                       "queries": int(query.sum()), "non_anchoring_patients": self.non_anchors})
+                       "queries": int(query.sum()), "non_anchoring_patients": self.non_anchors,
+                       "upsampled": upsampled})
         return PatientBatch(lp, phenotype_index, phenotype_mask, positive, query, counts)
 
 
@@ -504,11 +533,13 @@ class PatientsTask:
 
     def __init__(self, *, view: Any, val_cases: Sequence[BoundPatient], val_excluded: Sequence[QueryOutcome],
                  full_edges: Tensor, full_relations: Tensor, task_loss_weight: float,
-                 lp_loss_weight: float, ks: Sequence[int] = (1, 3, 5, 10),
-                 chunk_size: int = 65536):
+                 lp_loss_weight: float, val_unranked: Optional[Dict[str, int]] = None,
+                 ks: Sequence[int] = (1, 3, 5, 10), chunk_size: int = 65536):
         self.view = view
         self.val_cases = list(val_cases)
         self.val_excluded = list(val_excluded)
+        #: Validation patients' same-gene partners excluded at binding (E5).
+        self.val_unranked = dict(val_unranked or {})
         if not bool(positive_matrix(self.val_cases, self.val_cases).any()):
             raise ValueError("no validation patient shares a causal gene with another; "
                              "patients-like-me cannot be validated and selected")
@@ -545,7 +576,7 @@ class PatientsTask:
         """Each patient against every other one of `cases` (E1), full view (G4)."""
         z = full_view_vectors(model, self.full_edges, self.full_relations, device,
                               self.chunk_size)
-        return rank_patients(model, z, cases, cases)
+        return rank_patients(model, z, cases, cases, unranked=self.val_unranked)
 
     def validate(self, model: Any, device: torch.device) -> Dict[str, Any]:
         return _report(self.rank_cases(model, self.val_cases, device), self.val_excluded, self.ks)

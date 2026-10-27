@@ -618,6 +618,10 @@ class DiagnosisSample:
     #: The causal genes, all of them positives of the gene task (README F9); a
     #: patients-like-me pair is positive when two patients' sets intersect.
     causal_gene_ids: Optional[List[int]] = None
+    #: How many causal genes the case listed, written by the importer only
+    #: when some name no gene of the graph; otherwise `causal_gene_ids`'
+    #: length. They stay positives the case could not rank (E5).
+    causal_genes_listed: Optional[int] = None
 
 
 class DiagnosisDataset(Dataset):

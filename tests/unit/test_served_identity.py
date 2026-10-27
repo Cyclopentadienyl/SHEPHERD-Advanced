@@ -285,6 +285,8 @@ PART_REFUSALS = {
         lambda: ServedShortestPaths(state="absent", build_id=BUILD_ID), "carries no build_id"),
     "absent table carrying a hop bound": (
         lambda: ServedShortestPaths(state="absent", max_hops=5), "carries no build_id"),
+    "computed distances carrying a build_id": (
+        lambda: ServedShortestPaths(state="computed", build_id=BUILD_ID), "carries no build_id"),
     "record state outside its vocabulary": (
         lambda: ServedDatasetRecord(state="mismatch"), "is not one of"),
     "verified record with an origin outside its vocabulary": (

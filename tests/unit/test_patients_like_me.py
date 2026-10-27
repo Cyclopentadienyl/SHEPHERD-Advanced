@@ -72,7 +72,8 @@ def test_positives_intersect_causal_genes_and_never_pair_a_case_with_itself():
 
 
 def test_binding_keeps_genes_outside_the_view_and_refuses_repeated_ids():
-    view = SimpleNamespace(view_ids=lambda t, local: torch.where(local < 3, local, -1))
+    view = SimpleNamespace(view_ids=lambda t, local: torch.where(local < 3, local, -1),
+                           node_types=["phenotype", "gene"])
     rows = [SimpleNamespace(patient_id="a", phenotype_ids=[0, 5], causal_gene_ids=[999]),
             SimpleNamespace(patient_id="b", phenotype_ids=[5], causal_gene_ids=[1]),
             SimpleNamespace(patient_id="c", phenotype_ids=[1], causal_gene_ids=None)]
@@ -83,6 +84,24 @@ def test_binding_keeps_genes_outside_the_view_and_refuses_repeated_ids():
     assert binding.counts["no_causal_gene"] == 1
     with pytest.raises(ValueError, match="appears twice"):
         bind_patients(view, rows[:1] * 2)
+
+
+def test_excluded_patients_keep_their_e4_state_and_their_partners_stay_relevant():
+    """E4/E5: a patient left out of the reference keeps the state its truth
+    gives it (no reliable truth, no other positive, or input excluded with
+    every same-gene patient as a positive), and a bound patient's excluded
+    partners are relevant items it could not rank."""
+    view = SimpleNamespace(view_ids=lambda t, local: torch.where(local < 3, local, -1),
+                           node_types=["phenotype", "gene"])
+    row = lambda pid, phen, genes: SimpleNamespace(  # noqa: E731
+        patient_id=pid, phenotype_ids=phen, causal_gene_ids=genes)
+    rows = [row("a", [0], [7]), row("b", [1], [7]), row("z", [5], [7]),
+            row("x", [5], None), row("y", [5], [99])]
+    binding = bind_patients(view, rows)
+    states = {o.query_id: (o.status, o.n_positives) for o in binding.excluded_outcomes()}
+    assert states == {"z": ("input_excluded", 2), "x": (NO_RELIABLE_TRUTH, 0),
+                      "y": (NO_OTHER_POSITIVE, 0)}
+    assert binding.unranked_positives == {"a": 1, "b": 1}
 
 
 @pytest.fixture(scope="module")
@@ -116,7 +135,8 @@ def _setup(trained):
     val = bind_patients(view, fixture.samples["val"].samples).cases
     lp = BaseLPSampler(view.num_nodes, view.edge_index(train), view.rel[train],
                        view.edge_index(train), view.rel[train], sizes=[3, 3], batch_size=8, seed=0)
-    sampler = PatientsSampler(view, cases, lp, batch_size=4, sparse_sample_size=4, seed=0)
+    sampler = PatientsSampler(view, cases, lp, batch_size=4, upsample_size=1,
+                              sparse_sample_size=4, seed=0)
     task = PatientsTask(view=view, val_cases=val, val_excluded=[], full_edges=view.edge_index(),
                         full_relations=view.rel, task_loss_weight=0.3, lp_loss_weight=0.7)
     return view, sampler, task
@@ -136,6 +156,35 @@ def test_every_anchor_has_two_positives_in_its_batch_and_the_step_reaches_every_
     step.loss.backward()
     for part in (bundle.input, bundle.encoder, bundle.patient_encoder, bundle.task_head):
         assert any(p.grad is not None and p.grad.abs().sum() > 0 for p in part.parameters())
+
+
+def test_every_member_node_is_a_seed_and_the_anchors_lists_are_upsampled(trained):
+    """U9, U14: the batch's patients seed their phenotypes, causal genes,
+    candidate genes and diseases, and each anchor gets its rare genes."""
+    view, sampler, _ = _setup(trained)
+    sampler.sparse_sample_size = 0
+    sampler.start_epoch()
+    anchors = sampler.cases[:4]
+    batch = sampler.batch(anchors, torch.Generator().manual_seed(0))
+    seeds = set(batch.lp.node_ids[:batch.lp.num_seeds].tolist())
+    members = [p for p in sampler.patients
+               if any(p.case_id == a.case_id for a in anchors)]
+    for p in members:
+        assert set(p.truths.tolist()) <= seeds and set(p.candidates.tolist()) <= seeds
+        assert p.disease < 0 or p.disease in seeds
+    assert batch.counts["upsampled"] > 0
+
+
+def test_a_cohort_without_causal_genes_is_refused_before_anything_is_written(trained):
+    from src.evaluation.task_measurement import run_patients_like_me_measurement
+
+    view, _, _ = _setup(trained)
+    rows = [SimpleNamespace(patient_id=f"p{i}", phenotype_ids=[0], causal_gene_ids=None)
+            for i in range(3)]
+    with pytest.raises(ValueError, match="no patient of the cohort records a causal gene"):
+        run_patients_like_me_measurement(bundle=build_bundle(_plm_spec(), view), view=view,
+                                         samples=rows, manifest=None,
+                                         device=torch.device("cpu"), batch_size=8)
 
 
 def test_ranking_excludes_the_self_by_case_id_whatever_the_order(trained):

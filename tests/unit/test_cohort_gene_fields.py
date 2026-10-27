@@ -48,7 +48,36 @@ def test_mapping_by_node_id_or_unique_symbol_and_counting_the_rest():
     assert "causal_gene_ids" not in second and "gene_ids" not in second
     assert mapped.counts["genes"] == {"cases_with_causal_genes": 1,
                                       "cases_with_candidate_genes": 1,
-                                      "identifiers_listed": 4, "identifiers_unmappable": 1}
+                                      "identifiers_listed": 4, "identifiers_unmappable": 1,
+                                      "identifiers_repeated": 0,
+                                      "cases_with_unmapped_causal_genes": 0}
+    assert "causal_genes_listed" not in first
+
+
+def test_a_causal_gene_the_graph_lacks_stays_listed_and_aliases_count_once():
+    """E5/F9: a case's truth is the causal genes it listed; one the graph
+    lacks is recorded, so the case is not read as having no causal gene. Two
+    identifiers of one gene are one gene, counted as a repeat."""
+    node_mapping = {"phenotype": {"hpo:HP:0001250": 0}, "disease": {"mondo:MONDO:0011073": 4}}
+    lookup = {"disgenet:SCN1A": 0, "SCN1A": 0}
+    cases = parse_source(_source(
+        _case("a", causal_genes=["SCN1A", "disgenet:SCN1A", "NOPE"]),
+        _case("b", causal_genes=["NOPE"])))
+    first, second = map_cases(cases, node_mapping, "keep", lookup).samples
+    assert first["causal_gene_ids"] == [0] and first["causal_genes_listed"] == 2
+    assert second["causal_gene_ids"] == [] and second["causal_genes_listed"] == 1
+
+
+def test_the_reader_refuses_a_listed_count_not_above_the_mapped_genes(tmp_path):
+    from src.kg.storage.file_storage import read_samples_file
+
+    path = tmp_path / "samples.json"
+    row = {"patient_id": "a", "phenotype_ids": [0], "disease_id": 4, "causal_gene_ids": [0, 1]}
+    path.write_text(json.dumps([{**row, "causal_genes_listed": 3}]))
+    assert read_samples_file(path, gene_fields=True).samples[0].causal_genes_listed == 3
+    path.write_text(json.dumps([{**row, "causal_genes_listed": 2}]))
+    with pytest.raises(ValueError, match="causal_genes_listed"):
+        read_samples_file(path, gene_fields=True)
 
 
 def test_a_source_without_genes_has_no_gene_counts():

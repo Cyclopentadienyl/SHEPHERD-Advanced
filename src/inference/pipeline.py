@@ -1615,13 +1615,7 @@ class DiagnosisPipeline:
         whole view (README §6), ties by view id. A gene that maps to no gene of
         the view is left out and counted ("N mapped of M submitted"); one with
         an undefined distance is not scorable and said so."""
-        from src.models.tasks.gene import (
-            distance_table,
-            gene_embsim,
-            mean_distances,
-            neighbour_inputs,
-            splsim,
-        )
+        from src.models.tasks.gene import distance_table, score_gene_lists
 
         submitted = list(patient_input.candidate_genes or [])
         if not submitted:
@@ -1639,8 +1633,15 @@ class DiagnosisPipeline:
             else torch.empty(0, dtype=torch.long)
         genes = torch.unique(view_ids[view_ids >= 0])
         if genes.numel() < len(submitted):
+            unmapped = sum(i is None for i in local)
+            repeats = len(submitted) - unmapped - len(known)
+            outside = len(known) - int(genes.numel())
+            parts = [f"{n} {what}" for n, what in (
+                (unmapped, "map to no gene of the graph"),
+                (repeats, "repeat an earlier entry"),
+                (outside, "are outside the model's graph view")) if n]
             warnings = warnings + [f"{genes.numel()} of {len(submitted)} candidate genes "
-                                   "submitted map to a gene of the model's graph view"]
+                                   f"submitted are scored: {', '.join(parts)}"]
         phenotypes, warnings = self._bundle_phenotypes(validation, warnings)
         if phenotypes.numel() == 0 or genes.numel() == 0:
             return ServedRanking(
@@ -1649,27 +1650,15 @@ class DiagnosisPipeline:
                                      "the model's graph view"],
                 patient_input=patient_input, phenotype_input=validation.phenotype_input,
                 source_ids=source_ids)
-        spec = self.model.task_head.spec.gene
-        table = distance_table(view, phenotypes, genes)
-        rows = table.row_of[phenotypes].unsqueeze(0)
-        cols = table.col_of[genes].unsqueeze(0)
-        mask = torch.ones_like(rows, dtype=torch.bool)
-        mean, defined = mean_distances(table.table, rows, mask, cols)
-        z = self._bundle_z
-        if self._bundle_neighbours is not None:
-            near, weight, degree = neighbour_inputs(self._bundle_neighbours, genes.unsqueeze(0))
-        else:
-            near = torch.zeros(1, genes.numel(), spec.augmentation_k, dtype=torch.long)
-            weight = torch.zeros(1, genes.numel(), spec.augmentation_k)
-            degree = torch.zeros(1, genes.numel())
-        with torch.no_grad():
-            embsim = gene_embsim(self.model, z, phenotypes.unsqueeze(0).to(z.device),
-                                 mask.to(z.device), genes.unsqueeze(0).to(z.device),
-                                 near.to(z.device), weight.to(z.device),
-                                 degree.to(z.device))[0].cpu()
-        sp = splsim(mean[0], spec.sp_lower, spec.sp_upper)
-        scores = spec.eta * embsim + (1.0 - spec.eta) * sp
-        scorable = defined[0]
+        # The one gene scorer validation and measurement use (`score_gene_lists`).
+        scored = score_gene_lists(
+            self.model, self._bundle_z, phenotypes.unsqueeze(0),
+            torch.ones(1, phenotypes.numel(), dtype=torch.bool), genes.unsqueeze(0),
+            torch.ones(1, genes.numel(), dtype=torch.bool),
+            distance_table(view, phenotypes, genes), self._bundle_neighbours)
+        scores, embsim, sp = scored.scores[0], scored.embsim[0], scored.sp_similarity[0]
+        mean = scored.mean_distance
+        scorable = scored.defined[0]
         if not bool(scorable.all()):
             warnings = warnings + [f"{int((~scorable).sum())} candidate gene(s) have an "
                                    "unreachable phenotype and are not scorable"]
@@ -1679,8 +1668,7 @@ class DiagnosisPipeline:
                                 "refused, not ranked")
         order = sorted((i for i in range(genes.numel()) if bool(scorable[i])),
                        key=lambda i: (-float(scores[i]), int(genes[i])))
-        reverse = {index: key for key, index in
-                   (self._node_id_to_idx or {}).get(NodeType.GENE.value, {}).items()}
+        reverse = self._reverse_node_ids(NodeType.GENE.value)
         locals_ = view.local_index(genes).tolist()
         candidates: List[Candidate] = []
         for rank, i in enumerate(order, start=1):
@@ -1729,6 +1717,9 @@ class DiagnosisPipeline:
             warnings = warnings + [f"{len(binding.excluded)} reference patient(s) have no "
                                    "phenotype in the model's graph view and are not ranked"]
         keep = [i for i, c in enumerate(binding.cases) if c.case_id != patient_input.patient_id]
+        if len(keep) < len(binding.cases):
+            warnings = warnings + [f"Reference patient {patient_input.patient_id} is left out: "
+                                   "its case id is the query's (self-exclusion)"]
         if not keep:
             return ServedRanking(
                 outcome="no_candidates",
@@ -1761,10 +1752,8 @@ class DiagnosisPipeline:
                            row: Any) -> PatientCandidate:
         """A reference patient with what its cohort recorded: HPO terms, the
         diagnosis and the causal genes, in the graph's ids and names."""
-        mapping = self._node_id_to_idx or {}
-
         def ids(node_type: str, locals_: Any) -> List[str]:
-            reverse = {i: key for key, i in mapping.get(node_type, {}).items()}
+            reverse = self._reverse_node_ids(node_type)
             return [reverse[i] for i in (locals_ or []) if i in reverse]
 
         phenotypes = tuple(NodeID.from_string(k).local_id for k in ids("phenotype",
@@ -1780,6 +1769,20 @@ class DiagnosisPipeline:
                                 phenotypes=phenotypes, disease_id=disease_id,
                                 disease_name=node.name if node else None,
                                 causal_genes=tuple(genes))
+
+    def _reverse_node_ids(self, node_type: str) -> Dict[int, str]:
+        """Index -> node id string for one node type of the served graph,
+        built once per graph (the mapping is fixed while it is served)."""
+        cache = getattr(self, "_reverse_node_id_cache", None)
+        if cache is None or cache[0] is not self._node_id_to_idx:
+            cache = (self._node_id_to_idx, {})
+            self._reverse_node_id_cache = cache
+        reverse = cache[1].get(node_type)
+        if reverse is None:
+            reverse = {i: key for key, i in (self._node_id_to_idx or {}).get(node_type,
+                                                                             {}).items()}
+            cache[1][node_type] = reverse
+        return reverse
 
     def _gene_lookup(self) -> Dict[str, int]:
         """Gene identifiers -> gene index, the importer's rule
@@ -1838,6 +1841,7 @@ class DiagnosisPipeline:
         # A patients-like-me result names its reference cohort version, a
         # refused or empty one included (rank refuses one without it).
         reference = dict(reference_cohort.identity) if reference_cohort is not None else None
+        sp_bounds = self._sp_bounds()
         if ranking.outcome == "refused":
             return InferenceResult(
                 patient_id=patient_input.patient_id,
@@ -1848,7 +1852,7 @@ class DiagnosisPipeline:
                 inference_time_ms=(time.time() - start_time) * 1000,
                 phenotype_input=ranking.phenotype_input,
                 candidates_reached=self._candidates_reached(0),
-                reference_cohort=reference,
+                reference_cohort=reference, sp_bounds=sp_bounds,
             )
         patient_input = ranking.patient_input
         if ranking.outcome == "no_candidates":
@@ -1857,7 +1861,7 @@ class DiagnosisPipeline:
                 start_time,
                 ranking.warnings,
                 ranking.phenotype_input,
-                reference_cohort=reference,
+                reference_cohort=reference, sp_bounds=sp_bounds,
             )
         if self._bundle_view is not None and self.model.task != "disease":
             # Gene and reference-patient rows carry their own values; path
@@ -1868,7 +1872,7 @@ class DiagnosisPipeline:
                 served_identity=self.served_identity(),
                 inference_time_ms=(time.time() - start_time) * 1000,
                 warnings=ranking.warnings, phenotype_input=ranking.phenotype_input,
-                reference_cohort=reference)
+                reference_cohort=reference, sp_bounds=sp_bounds)
 
         # **The cut is the only thing `top_k` does**: the order is `rank`'s.
         # Step 4b: The phenotypes the graph annotates directly to each candidate
@@ -2560,6 +2564,7 @@ class DiagnosisPipeline:
         warnings: List[str],
         phenotype_input: Optional[PhenotypeInputAccount] = None,
         reference_cohort: Optional[Dict[str, Any]] = None,
+        sp_bounds: Optional[Tuple[float, float]] = None,
     ) -> InferenceResult:
         """A result with no candidates (discovery reached no disease), with
         its warnings."""
@@ -2572,8 +2577,16 @@ class DiagnosisPipeline:
             inference_time_ms=(time.time() - start_time) * 1000,
             phenotype_input=phenotype_input,
             candidates_reached=self._candidates_reached(0),
-            reference_cohort=reference_cohort,
+            reference_cohort=reference_cohort, sp_bounds=sp_bounds,
         )
+
+    def _sp_bounds(self) -> Optional[Tuple[float, float]]:
+        """A gene task model's SP bounds (its spec's), which its results name;
+        None for every other model."""
+        if self._bundle_view is None or self.model.task != "gene":
+            return None
+        gene = self.model.task_head.spec.gene
+        return (float(gene.sp_lower), float(gene.sp_upper))
 
     def _candidates_reached(self, reached: int) -> Optional[int]:
         """`candidates_reached` as the served kind carries it: the count for
@@ -2638,11 +2651,14 @@ class DiagnosisPipeline:
         )
 
     def _scoring_mode(self) -> Tuple[str, Optional[float]]:
-        """The scoring mode in effect and the mixing weight it reports (None
-        for the disease task, which mixes nothing)."""
+        """The scoring mode in effect and the mixing weight it reports (the
+        gene task's η; None for the disease and patients-like-me tasks, which
+        mix nothing)."""
         if self._gnn_ready and self._bundle_view is not None:
+            task = self.model.task
+            eta = self.model.task_head.spec.gene.eta if task == "gene" else None
             return {"disease": "disease_task", "gene": "gene_task",
-                    "patients_like_me": "patients_like_me"}[self.model.task], None
+                    "patients_like_me": "patients_like_me"}[task], eta
         if self._gnn_ready and self._sp_ready:
             return "gnn_plus_shortest_path", self.config.eta
         if self._gnn_ready:
@@ -2687,6 +2703,8 @@ class DiagnosisPipeline:
             shortest_paths = ServedShortestPaths(
                 state="verified", build_id=self._sp_build_id, max_hops=self._sp_max_hops
             )
+        elif scoring_mode == "gene_task":
+            shortest_paths = ServedShortestPaths(state="computed")
         else:
             shortest_paths = ServedShortestPaths(state="absent")
 

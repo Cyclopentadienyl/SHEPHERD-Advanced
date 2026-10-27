@@ -1805,6 +1805,24 @@ def _source_entry(entry: Any) -> str:
             f"{e(entry.get('declared_version') or 'none')}")
 
 
+def _gene_rows(genes: Any) -> List[Tuple[str, str]]:
+    """The preview's gene counts, when the source lists genes (README §8): the
+    operator's check, before commit, that the identifiers map."""
+    if not isinstance(genes, Mapping):
+        return []
+    return [
+        ("Gene identifiers", f"<b>{e(_count(genes.get('identifiers_listed')))}</b> listed: "
+                             f"{e(_count(genes.get('identifiers_unmappable')))} name no gene "
+                             f"of the graph, {e(_count(genes.get('identifiers_repeated')))} "
+                             "repeat an earlier one"),
+        ("Cases with genes", f"{e(_count(genes.get('cases_with_causal_genes')))} with causal "
+                             f"genes ({e(_count(genes.get('cases_with_unmapped_causal_genes')))} "
+                             f"with some unmapped), "
+                             f"{e(_count(genes.get('cases_with_candidate_genes')))} with "
+                             "candidate genes"),
+    ]
+
+
 def preview_html(preview: Optional[Mapping[str, Any]]) -> str:
     """The preview card: counts with their denominators, exclusion reasons and
     their counts, the unmappable terms with how many cases list each, what the
@@ -1844,6 +1862,7 @@ def preview_html(preview: Optional[Mapping[str, Any]]) -> str:
                             f"{e(_count(counts.get('cases_with_repeats')))} case(s) (phenotype "
                             f"normalisation v{e(mapping.get('phenotype_normalisation_version'))})"),
         ("Partial phenotypes", e(mapping.get("partial_phenotypes"))),
+        *_gene_rows(counts.get("genes")),
         ("Graph", "the workspace manifest’s digests: " + " · ".join(
             f"{e(role)} <code>{e(str(d or '')[:12])}</code>" for role, d in graph.items())),
         ("Dataset record", ('origin <b class="shep-amber-t">synthetic</b>' if record.get("origin") == "synthetic"

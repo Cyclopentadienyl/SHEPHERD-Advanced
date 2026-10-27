@@ -97,18 +97,22 @@ def test_binding_keeps_every_causal_gene_and_names_exclusions(trained):
             SimpleNamespace(patient_id="none", phenotype_ids=[0], disease_id=0,
                             causal_gene_ids=None, gene_ids=[0]),
             SimpleNamespace(patient_id="unlisted", phenotype_ids=[0], disease_id=0,
-                            causal_gene_ids=[0, 1], gene_ids=None)]
+                            causal_gene_ids=[0, 1], gene_ids=None),
+            SimpleNamespace(patient_id="unmapped", phenotype_ids=[0], disease_id=0,
+                            causal_gene_ids=[], causal_genes_listed=2, gene_ids=[0])]
     binding = bind_gene_cases(view, rows)
     assert [c.case_id for c in binding.cases] == ["two"]
     assert binding.cases[0].truths.numel() == 2
     assert dict(binding.excluded) == {"off": "truth_not_in_candidates",
                                       "none": "no_causal_gene",
-                                      "unlisted": "no_candidate_list"}
+                                      "unlisted": "no_candidate_list",
+                                      "unmapped": "truth_outside_graph"}
     # E4: a case that records no truth is no reliable truth, never a 0; one
-    # without a list is assessable, with each causal gene it names (E5, F9).
+    # without a list, or whose causal genes the graph lacks, is assessable,
+    # with each causal gene it named (E5, F9).
     states = {o.query_id: (o.status, o.n_positives) for o in binding.excluded_outcomes()}
     assert states == {"off": ("input_excluded", 1), "none": ("no_reliable_truth", 0),
-                      "unlisted": ("input_excluded", 2)}
+                      "unlisted": ("input_excluded", 2), "unmapped": ("input_excluded", 2)}
 
 
 def test_upsampling_adds_rare_genes_and_an_epoch_does_not_depend_on_the_last(trained):

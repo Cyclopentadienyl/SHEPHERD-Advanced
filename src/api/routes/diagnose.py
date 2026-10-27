@@ -32,7 +32,7 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime
-from typing import Annotated, Any, Dict, List, Literal, Optional, Union
+from typing import Annotated, Any, Dict, List, Literal, Optional, Tuple, Union
 
 from fastapi import APIRouter, HTTPException, status, Depends
 from pydantic import BaseModel, ConfigDict, Field, RootModel, field_validator, model_validator
@@ -229,13 +229,14 @@ class ServedGraph(_Strict):
 class ServedShortestPaths(_Strict):
     """The shortest-path table, or the stated absence of one."""
 
-    state: Literal["verified", "absent"] = Field(
-        ..., description="verified: the table names the served graph; absent: no "
-        "table contributes to the score")
+    state: Literal["verified", "computed", "absent"] = Field(
+        ..., description="verified: the table names the served graph; computed: a gene "
+        "task model's exact hop distances, computed from its graph view, no table; "
+        "absent: no shortest-path term contributes to the score")
     build_id: Optional[str] = Field(
-        ..., description="The build_id the table and its sidecar share; null when absent")
+        ..., description="The build_id the table and its sidecar share; null unless verified")
     max_hops: Optional[int] = Field(
-        ..., description="The sidecar's hop bound; null when absent")
+        ..., description="The sidecar's hop bound; null unless verified")
 
 
 class ServedDatasetRecord(_Strict):
@@ -261,8 +262,9 @@ class ServedSettings(_Strict):
         ..., description="What was asked for: auto (CUDA, refused without it), cuda, "
         "cuda:N or cpu; null when no model is served")
     eta: Optional[float] = Field(
-        ..., description="Mixing weight in effect between the GNN and shortest-path "
-        "terms (1.0 with no table); null when no model is served")
+        ..., description="Mixing weight in effect between the model and shortest-path "
+        "terms (1.0 with no table; a gene task model's own eta); null for the disease and "
+        "patients-like-me tasks, which mix nothing, and when no model is served")
     max_path_length: int
     path_length_penalty: float
     aggregation_method: str
@@ -581,6 +583,9 @@ class GeneTaskResponse(_Response):
     served_identity: ServedIdentity = Field(..., description=_IDENTITY_DESCRIPTION)
     candidates: List[GeneTaskCandidate]
     tie_policy: Literal["score-desc-then-view-id-asc/v1"]
+    sp_bounds: Tuple[_Finite, _Finite] = Field(
+        ..., description="The SP similarity's fixed bounds [lower, upper], the model's own; "
+        "eta is the served identity's settings.eta")
 
     @model_validator(mode="after")
     def _a_gene_task(self) -> "GeneTaskResponse":
@@ -729,6 +734,13 @@ def _candidate_body(candidate: Any, include_explanations: bool,
     return body
 
 
+#: Reference cohort samples read, by (file, the digest the version binds): a
+#: read is verified against that digest, so the bytes kept are the version's
+#: and an unchanged version is not read again per request. A few kept.
+_REFERENCE_SAMPLES: Dict[Any, Any] = {}
+_REFERENCE_SAMPLES_KEPT = 4
+
+
 def _reference_cohort(label: Optional[str], served_mode: str, pipeline: Any) -> Any:
     """The registered reference cohort version a patients-like-me request names,
     resolved in `SHEPHERD_REGISTRY`, its samples read against the digest the
@@ -756,13 +768,22 @@ def _reference_cohort(label: Optional[str], served_mode: str, pipeline: Any) -> 
                      "name one (reference_cohort)")
     registry = cohort_registry()
     if registry.value is None:
-        raise refuse(f"no reference cohort version can be read: {registry.problem}")
+        # The server's configuration, not the request: a service condition.
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail=f"no reference cohort version can be read: "
+                                   f"{registry.problem}")
     registry = registry.value
     try:
         version = resolve_version(registry, label)
         bound = version.manifest["samples"]["sha256"]
-        samples = read_samples_file(version.samples_path, gene_fields=True,
-                                    expected_sha256=bound)
+        key = (str(version.samples_path), bound)
+        samples = _REFERENCE_SAMPLES.get(key)
+        if samples is None:
+            samples = read_samples_file(version.samples_path, gene_fields=True,
+                                        expected_sha256=bound)
+            _REFERENCE_SAMPLES[key] = samples
+            while len(_REFERENCE_SAMPLES) > _REFERENCE_SAMPLES_KEPT:
+                _REFERENCE_SAMPLES.pop(next(iter(_REFERENCE_SAMPLES)))
         inputs = pipeline.bound_inputs()
         verify_cohort_binding(version.manifest, inputs.graph,
                               inputs.dataset_record.identity.sha256)
@@ -773,7 +794,12 @@ def _reference_cohort(label: Optional[str], served_mode: str, pipeline: Any) -> 
     return ReferenceCohort(identity, samples.samples)
 
 
-def _summary(n_candidates: int, n_received: int, phenotype_input: Any) -> str:
+#: What a result's rows are, by kind, for the summary.
+_ROW_NOUNS = {"gene_task/v1": "candidate genes", "patients_like_me/v1": "similar patients"}
+
+
+def _summary(n_candidates: int, n_received: int, phenotype_input: Any,
+             result_kind: Optional[str] = None) -> str:
     """The response's one-line summary, counting what was scored.
 
     **The count comes from the result, not the request.** The pipeline drops
@@ -782,13 +808,14 @@ def _summary(n_candidates: int, n_received: int, phenotype_input: Any) -> str:
     scored two. The received count is shown only when it differs, and labelled as
     received. The mock path has no result, so its count is labelled as received.
     """
+    noun = _ROW_NOUNS.get(result_kind, "candidate diagnoses")
     if phenotype_input is None:
         return (
-            f"Found {n_candidates} candidate diagnoses for {n_received} "
+            f"Found {n_candidates} {noun} for {n_received} "
             "phenotypes received"
         )
     used = len(phenotype_input.used)
-    summary = f"Found {n_candidates} candidate diagnoses for {used} phenotypes"
+    summary = f"Found {n_candidates} {noun} for {used} phenotypes"
     if phenotype_input.received != used:
         summary += f" ({phenotype_input.received} received)"
     return summary
@@ -885,6 +912,9 @@ async def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
             # Fallback to mock response when no pipeline is configured at all
             logger.warning("Pipeline not initialized - returning mock response")
             warnings.append("Pipeline not fully initialized - using mock data")
+            if request.reference_cohort is not None:
+                warnings.append("reference_cohort was ignored: no pipeline is configured, so "
+                                "nothing was ranked against it")
 
             candidates = _generate_mock_candidates(request.phenotypes, request.top_k)
             body: Dict[str, Any] = {
@@ -936,8 +966,10 @@ async def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
             elif result.result_kind == "path_reasoning/v1":
                 body.update(path_score_aggregation=result.path_score_aggregation,
                             tie_policy=result.tie_policy)
-            elif result.result_kind in ("disease_task/v1", "gene_task/v1"):
+            elif result.result_kind == "disease_task/v1":
                 body.update(tie_policy=result.tie_policy)
+            elif result.result_kind == "gene_task/v1":
+                body.update(tie_policy=result.tie_policy, sp_bounds=list(result.sp_bounds))
             elif result.result_kind == "patients_like_me/v1":
                 body.update(tie_policy=result.tie_policy,
                             reference_cohort=result.reference_cohort)
@@ -950,7 +982,8 @@ async def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
             session_id=session_id,
             patient_id=patient_id,
             timestamp=datetime.now().isoformat(),
-            summary=_summary(len(body["candidates"]), len(request.phenotypes), account),
+            summary=_summary(len(body["candidates"]), len(request.phenotypes), account,
+                             body["result_kind"]),
             inference_time_ms=(time.time() - start_time) * 1000,
             warnings=warnings,
         )

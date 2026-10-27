@@ -590,6 +590,10 @@ _SCORING_MODE_WORDS = {
     "gnn_only": "the GNN score alone",
     "path_reasoning_fallback": "path reasoning over the knowledge graph alone",
     "disease_task": "a model finetuned for the disease task, over its graph view",
+    "gene_task": "a model finetuned for the gene task: its similarity mixed with "
+                 "shortest-path proximity",
+    "patients_like_me": "a model finetuned for patients-like-me: reference patients by "
+                        "similarity",
 }
 _PATH_SETTING_KEYS = (
     "max_path_length", "path_length_penalty", "aggregation_method",
@@ -739,11 +743,16 @@ def _shortest_path_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
         build_id, max_hops = _field(part, "build_id"), _field(part, "max_hops")
         return (f"{_VERIFIED_MARK} verified",
                 f"build\\_id {_md_setting(build_id)} · max\\_hops {_md_setting(max_hops)}")
+    if state == "computed":
+        return ("computed", "computed — exact hop distances from the model's graph view; "
+                "no table is read")
     if state == "absent":
         if _field(identity, "scoring_mode") == "gnn_only":
             reason = "the GNN score is used alone (gnn\\_only, eta 1.0)"
         elif _field(identity, "scoring_mode") == "disease_task":
             reason = "a disease task model scores without one"
+        elif _field(identity, "scoring_mode") == "patients_like_me":
+            reason = "a patients-like-me model scores without one"
         elif not _has_model(identity):
             reason = "no model is served to combine it with (path-reasoning fallback)"
         else:
@@ -803,11 +812,16 @@ def _eta_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
         return _NOT_REPORTED_CELLS
     if eta is None and _field(identity, "scoring_mode") == "disease_task":
         return "none", "none — a disease task model has no terms to mix"
+    if eta is None and _field(identity, "scoring_mode") == "patients_like_me":
+        return "none", "none — a patients-like-me model has no terms to mix"
     if eta is None:
         return ("none", "none — no model is served, so there are no GNN and "
                 "shortest-path terms to mix")
+    mode = _field(identity, "scoring_mode")
     note = (" — no shortest-path table, so the GNN score is used alone"
-            if _field(identity, "scoring_mode") == "gnn_only" else "")
+            if mode == "gnn_only" else
+            " — the gene model's own: its similarity against shortest-path proximity"
+            if mode == "gene_task" else "")
     return "in effect", f"{_md_text(eta)}{note}"
 
 

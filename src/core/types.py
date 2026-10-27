@@ -727,7 +727,7 @@ class PhenotypeInputAccount:
 #: "unknown" for a reader to interpret.
 SERVED_CHECKPOINT_STATES = ("verified", "supplied_in_memory", "absent")
 SERVED_GRAPH_STATES = ("verified", "unverified", "in_memory")
-SERVED_SHORTEST_PATHS_STATES = ("verified", "absent")
+SERVED_SHORTEST_PATHS_STATES = ("verified", "computed", "absent")
 SERVED_DATASET_RECORD_STATES = ("verified", "absent")
 #: The dataset record's origins (`src.kg.provenance.ORIGINS`, which this layer
 #: cannot import; `tests/unit/test_served_identity.py` pins the two equal).
@@ -805,7 +805,9 @@ class ServedShortestPaths:
 
     #: "verified": the table and its sidecar carry one `build_id` and name the
     #: served graph (contract M2.5); `max_hops` is the sidecar's hop bound.
-    #: "absent": no table contributes to the score.
+    #: "computed": the gene task's exact hop distances, computed in process
+    #: from the served graph view (README §6); no table, so no `build_id` or
+    #: `max_hops`. "absent": no shortest-path term contributes to the score.
     state: str
     build_id: Optional[str] = None
     max_hops: Optional[int] = None
@@ -818,7 +820,8 @@ class ServedShortestPaths:
             if not (isinstance(self.max_hops, int) and not isinstance(self.max_hops, bool)):
                 raise ValueError("a verified shortest-path table carries its max_hops")
         elif self.build_id is not None or self.max_hops is not None:
-            raise ValueError("an absent shortest-path table carries no build_id or max_hops")
+            raise ValueError(f"a shortest-path term in state {self.state!r} carries no "
+                             "build_id or max_hops")
 
 
 @dataclass(frozen=True)
@@ -854,8 +857,10 @@ class ServedSettings:
     #: or "cpu"; "auto" when a checkpoint was loaded with none named. None when
     #: no model is served, or when a model supplied in memory was given none.
     device_requested: Optional[str]
-    #: The mixing weight in effect between the GNN and shortest-path terms:
-    #: 1.0 with no table, None when no model is served (neither term exists).
+    #: The mixing weight in effect between the model and shortest-path terms:
+    #: 1.0 with no table; the gene task's η (EMBSIM against SPLSIM, from its
+    #: spec); None for the disease and patients-like-me tasks, which mix
+    #: nothing, and when no model is served (neither term exists).
     eta: Optional[float]
     #: Candidate discovery and path scoring, in effect in every mode: the
     #: diseases ranked are those reached by these paths.
@@ -899,7 +904,9 @@ class ServedIdentity:
                 f"in state {self.checkpoint.state!r}"
             )
         with_sp = self.scoring_mode == "gnn_plus_shortest_path"
-        if with_sp != (self.shortest_paths.state == "verified"):
+        computed = self.scoring_mode == "gene_task"
+        if (with_sp != (self.shortest_paths.state == "verified")
+                or computed != (self.shortest_paths.state == "computed")):
             raise ValueError(
                 f"scoring_mode {self.scoring_mode!r} contradicts a shortest-path "
                 f"table in state {self.shortest_paths.state!r}"
@@ -1027,6 +1034,11 @@ class InferenceResult:
     #: (`label`, `version_sha256`, `samples_sha256`, `patients`). None otherwise.
     reference_cohort: Optional[Dict[str, Any]] = None
 
+    #: `gene_task/v1` only: the SP similarity's fixed bounds (lower, upper),
+    #: the model spec's (README §6), so `sp_similarity` can be recomputed from
+    #: `mean_distance`. None otherwise.
+    sp_bounds: Optional[Tuple[float, float]] = None
+
     def __post_init__(self) -> None:
         kind = self.result_kind
         expected = CANDIDATE_TYPES[kind]
@@ -1063,6 +1075,9 @@ class InferenceResult:
         if (kind == PATIENTS_LIKE_ME) != (self.reference_cohort is not None):
             raise ValueError(f"a {PATIENTS_LIKE_ME} result names its reference cohort version, "
                              "and only such a result does")
+        if (kind == GENE_TASK) != (self.sp_bounds is not None):
+            raise ValueError(f"a {GENE_TASK} result names its SP bounds, and only such a "
+                             "result does")
 
     @property
     def result_kind(self) -> str:

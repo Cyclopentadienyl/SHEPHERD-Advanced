@@ -39,12 +39,18 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 import torch
 from torch import Tensor
 
-from src.models.bundle.metrics import NOT_SCORABLE, RANKED, QueryOutcome, average_ranks
+from src.models.bundle.metrics import (
+    NO_RELIABLE_TRUTH,
+    NOT_SCORABLE,
+    RANKED,
+    QueryOutcome,
+    average_ranks,
+)
 from src.models.tasks.scoring import Binding, padded, patient_vectors
 
 #: The degree gate's constant term (the paper's Eq 11).
@@ -173,9 +179,13 @@ def gene_list_scores(bundle: Any, z: Tensor, phenotype_index: Tensor, phenotype_
                      gene_index: Tensor, neighbour_index: Tensor, neighbour_weight: Tensor,
                      degree: Tensor, sp_similarity: Tensor) -> Tensor:
     """`[B, M]` gene scores `η·EMBSIM + (1 − η)·SPLSIM` (A8, U12)."""
-    eta = bundle.task_head.spec.gene.eta
     embsim = gene_embsim(bundle, z, phenotype_index, phenotype_mask, gene_index,
                          neighbour_index, neighbour_weight, degree)
+    return gene_score(bundle.task_head.spec.gene.eta, embsim, sp_similarity)
+
+
+def gene_score(eta: float, embsim: Tensor, sp_similarity: Tensor) -> Tensor:
+    """The one mix, `η·EMBSIM + (1 − η)·SPLSIM` (A8, U12)."""
     return eta * embsim + (1.0 - eta) * sp_similarity
 
 
@@ -204,14 +214,18 @@ def bind_gene_cases(view: Any, samples: Sequence[Any]) -> Binding:
               "causal_genes_outside_view": 0, "candidates_outside_view": 0,
               "candidates_submitted": 0, "cases_with_several_causal_genes": 0}
     positives: Dict[str, int] = {}
-    no_truth = set()
+    states: Dict[str, str] = {}
     has_disease = "disease" in view.node_types
     for sample in samples:
-        listed = len(set(sample.causal_gene_ids or ()))
+        listed = (getattr(sample, "causal_genes_listed", None)
+                  or len(set(sample.causal_gene_ids or ())))
         positives[sample.patient_id] = listed
         if not listed:
             excluded.append((sample.patient_id, "no_causal_gene"))
-            no_truth.add(sample.patient_id)
+            states[sample.patient_id] = NO_RELIABLE_TRUTH
+            continue
+        if not sample.causal_gene_ids:
+            excluded.append((sample.patient_id, "truth_outside_graph"))
             continue
         if not sample.gene_ids:
             excluded.append((sample.patient_id, "no_candidate_list"))
@@ -241,7 +255,7 @@ def bind_gene_cases(view: Any, samples: Sequence[Any]) -> Binding:
     for _, reason in excluded:
         counts[f"excluded_{reason}"] = counts.get(f"excluded_{reason}", 0) + 1
     return Binding(cases, excluded, counts,
-                   {case_id: positives[case_id] for case_id, _ in excluded}, no_truth)
+                   {case_id: positives[case_id] for case_id, _ in excluded}, states)
 
 
 @dataclass
@@ -271,15 +285,24 @@ def distance_table(view: Any, phenotypes: Tensor, genes: Tensor, *,
     return DistanceTable(table, row_of, col_of, digest.hexdigest())
 
 
-def case_sp(distances: DistanceTable, phenotype_view: Tensor, phenotype_mask: Tensor,
-            gene_view: Tensor, gene_mask: Tensor, spec: Any) -> Tuple[Tensor, Tensor]:
-    """SPLSIM `[B, M]` of each patient's candidates and whether it is defined."""
+def case_mean_distances(distances: DistanceTable, phenotype_view: Tensor,
+                        phenotype_mask: Tensor, gene_view: Tensor, gene_mask: Tensor
+                        ) -> Tuple[Tensor, Tensor]:
+    """`d̄` `[B, M]` of each patient's candidates (view ids) and whether it is
+    defined."""
     rows = distances.row_of[phenotype_view]
     cols = distances.col_of[gene_view]
     if bool((rows[phenotype_mask] < 0).any()) or bool((cols[gene_mask] < 0).any()):
         raise ValueError("a phenotype or gene of the batch is not in the distance table")
-    mean, defined = mean_distances(distances.table, rows.clamp(min=0), phenotype_mask,
-                                   cols.clamp(min=0))
+    return mean_distances(distances.table, rows.clamp(min=0), phenotype_mask,
+                          cols.clamp(min=0))
+
+
+def case_sp(distances: DistanceTable, phenotype_view: Tensor, phenotype_mask: Tensor,
+            gene_view: Tensor, gene_mask: Tensor, spec: Any) -> Tuple[Tensor, Tensor]:
+    """SPLSIM `[B, M]` of each patient's candidates and whether it is defined."""
+    mean, defined = case_mean_distances(distances, phenotype_view, phenotype_mask, gene_view,
+                                        gene_mask)
     return splsim(mean, spec.sp_lower, spec.sp_upper), defined
 
 
@@ -299,31 +322,52 @@ def padded_lists(lists: Sequence[Tensor]) -> Tuple[Tensor, Tensor]:
     return out, mask
 
 
+class GeneListScores(NamedTuple):
+    """`[B, M]` scores of each patient's own list and their parts (CPU)."""
+
+    scores: Tensor
+    embsim: Tensor
+    sp_similarity: Tensor
+    mean_distance: Tensor
+    defined: Tensor
+
+
 @torch.no_grad()
+def score_gene_lists(bundle: Any, z: Tensor, phenotype_view: Tensor, phenotype_mask: Tensor,
+                     gene_view: Tensor, gene_mask: Tensor, distances: DistanceTable,
+                     neighbours: Optional[NeighbourTable]) -> GeneListScores:
+    """Each patient's candidates scored on full-view vectors `z` indexed by
+    view id: the one gene scorer of validation, measurement and serving."""
+    spec = bundle.task_head.spec.gene
+    device = z.device
+    mean, defined = case_mean_distances(distances, phenotype_view, phenotype_mask, gene_view,
+                                        gene_mask)
+    sp = splsim(mean, spec.sp_lower, spec.sp_upper)
+    if spec.augmentation and neighbours is not None:
+        nb, w, deg = neighbour_inputs(neighbours, gene_view)
+    else:
+        k = spec.augmentation_k
+        nb = torch.zeros(*gene_view.shape, k, dtype=torch.long)
+        w, deg = torch.zeros(*gene_view.shape, k), torch.zeros(gene_view.shape)
+    embsim = gene_embsim(bundle, z, phenotype_view.to(device), phenotype_mask.to(device),
+                         gene_view.to(device), nb.to(device), w.to(device),
+                         deg.to(device)).cpu()
+    return GeneListScores(gene_score(spec.eta, embsim, sp), embsim, sp, mean, defined)
+
+
 def score_gene_cases(bundle: Any, z: Tensor, cases: Sequence[BoundGeneCase],
                      distances: DistanceTable, neighbours: Optional[NeighbourTable], *,
                      case_chunk: int = 256) -> List[Tuple[Tensor, Tensor]]:
-    """Each case's `(scores, defined)` over its own list, on full-view vectors
-    `z` indexed by view id."""
-    spec = bundle.task_head.spec.gene
+    """Each case's `(scores, defined)` over its own list (`score_gene_lists`)."""
     out: List[Tuple[Tensor, Tensor]] = []
-    device = z.device
     for start in range(0, len(cases), case_chunk):
         chunk = cases[start:start + case_chunk]
         phen, pmask = padded(chunk)
         genes, gmask = padded_lists([c.candidates for c in chunk])
-        sp, defined = case_sp(distances, phen, pmask, genes, gmask, spec)
-        if spec.augmentation and neighbours is not None:
-            nb, w, deg = neighbour_inputs(neighbours, genes)
-        else:
-            k = spec.augmentation_k
-            nb = torch.zeros(*genes.shape, k, dtype=torch.long)
-            w, deg = torch.zeros(*genes.shape, k), torch.zeros(genes.shape)
-        scores = gene_list_scores(bundle, z, phen.to(device), pmask.to(device), genes.to(device),
-                                  nb.to(device), w.to(device), deg.to(device), sp.to(device))
+        scored = score_gene_lists(bundle, z, phen, pmask, genes, gmask, distances, neighbours)
         for i, case in enumerate(chunk):
             m = int(case.candidates.numel())
-            out.append((scores[i, :m].cpu(), defined[i, :m]))
+            out.append((scored.scores[i, :m], scored.defined[i, :m]))
     return out
 
 
@@ -359,10 +403,14 @@ __all__ = [
     "SP_RULE",
     "augment",
     "bind_gene_cases",
+    "GeneListScores",
+    "case_mean_distances",
     "case_sp",
     "distance_table",
     "gene_embsim",
     "gene_list_scores",
+    "gene_score",
+    "score_gene_lists",
     "mean_distances",
     "neighbour_inputs",
     "neighbour_table",

@@ -1449,9 +1449,11 @@ def train_bundle(config: TrainConfig, explicit: Optional[Collection[str]] = None
 
         sampler = PatientsSampler(
             view, binding["train"].cases, lp_sampler, batch_size=config.batch_size,
+            upsample_size=config.candidate_upsample_size,
             sparse_sample_size=config.sparse_sample_size, seed=seed)
         task = PatientsTask(
             view=view, val_cases=binding["val"].cases, val_excluded=binding["val"].excluded_outcomes(),
+            val_unranked=binding["val"].unranked_positives,
             full_edges=view.edge_index(), full_relations=view.rel,
             task_loss_weight=config.task_loss_weight, lp_loss_weight=config.lp_loss_weight)
         monitor = FINETUNE_SELECTION_METRIC

@@ -712,18 +712,25 @@ def map_cases(
     if genes_listed and gene_lookup is None:
         raise ValueError("the source lists genes and no gene lookup was given to map them")
     gene_counts = {"cases_with_causal_genes": 0, "cases_with_candidate_genes": 0,
-                   "identifiers_listed": 0, "identifiers_unmappable": 0}
+                   "identifiers_listed": 0, "identifiers_unmappable": 0,
+                   "identifiers_repeated": 0, "cases_with_unmapped_causal_genes": 0}
 
-    def map_genes(identifiers: Sequence[str]) -> List[int]:
-        mapped_genes = []
+    def map_genes(identifiers: Sequence[str]) -> Tuple[List[int], int]:
+        """The genes the identifiers name, each once, and how many distinct
+        identifiers name no gene."""
+        mapped_genes: List[int] = []
+        unmapped = set()
         for identifier in identifiers:
             index = gene_lookup.get(identifier, gene_lookup.get(identifier.strip().upper()))
             gene_counts["identifiers_listed"] += 1
             if index is None:
                 gene_counts["identifiers_unmappable"] += 1
-            elif index not in mapped_genes:
+                unmapped.add(identifier.strip().upper())
+            elif index in mapped_genes:
+                gene_counts["identifiers_repeated"] += 1
+            else:
                 mapped_genes.append(index)
-        return mapped_genes
+        return mapped_genes, len(unmapped)
 
     for case in cases:
         disease_id = disease_index.get(str(NodeID(DataSource.MONDO, case.disease)))
@@ -767,10 +774,17 @@ def map_cases(
             "disease_id": disease_id,
         }
         if case.causal_genes:
-            sample["causal_gene_ids"] = map_genes(case.causal_genes)
+            causal, unmapped_causal = map_genes(case.causal_genes)
+            sample["causal_gene_ids"] = causal
             gene_counts["cases_with_causal_genes"] += 1
+            if unmapped_causal:
+                # The truth the case listed, the graph's genes and the rest:
+                # a gene the graph lacks stays a positive the case could not
+                # rank (E5, F9), never "no causal gene".
+                sample["causal_genes_listed"] = len(causal) + unmapped_causal
+                gene_counts["cases_with_unmapped_causal_genes"] += 1
         if case.candidate_genes:
-            sample["gene_ids"] = map_genes(case.candidate_genes)
+            sample["gene_ids"] = map_genes(case.candidate_genes)[0]
             gene_counts["cases_with_candidate_genes"] += 1
         samples.append(sample)
 

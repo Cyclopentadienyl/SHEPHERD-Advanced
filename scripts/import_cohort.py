@@ -148,6 +148,18 @@ def format_preview(plan: ImportPlan) -> List[str]:
         f"case(s) (phenotype normalisation v"
         f"{manifest['mapping']['phenotype_normalisation_version']})",
         f"  partial phenotypes  {manifest['mapping']['partial_phenotypes']}",
+    ]
+    genes = counts.get("genes")
+    if genes:
+        lines += [
+            f"  gene identifiers  {genes['identifiers_listed']} listed, "
+            f"{genes['identifiers_unmappable']} name no gene of the graph, "
+            f"{genes['identifiers_repeated']} repeat an earlier one",
+            f"  cases with genes  {genes['cases_with_causal_genes']} with causal genes "
+            f"({genes['cases_with_unmapped_causal_genes']} with some unmapped), "
+            f"{genes['cases_with_candidate_genes']} with candidate genes",
+        ]
+    lines += [
         "  graph (the workspace manifest's digests):",
     ]
     lines += [f"    {role:14s} {digest}" for role, digest in manifest["graph"].items()]

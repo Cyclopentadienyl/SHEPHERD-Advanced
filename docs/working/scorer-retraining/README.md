@@ -550,7 +550,16 @@ computation below; there is no distance file of either kind.
   source's default (`only_hard_distractors` False, `up:gene_prioritization_model.py:127-140`).
   Validation, measurement and serving rank each case's own list.
 - **Denominators:** a case's assessable positives are the causal genes it lists, in the view or not
-  (F9, E5). A task measurement in which no case binds is refused before anything is written (E6).
+  (F9, E5); the importer records the count when some name no gene of the graph
+  (`causal_genes_listed`). A case recording no causal gene is no reliable truth (E4). A task
+  measurement in which no case binds, or a patients-like-me cohort with no causal gene, is
+  refused before anything is written (E6).
+- **Patients-like-me:** batches seed every member's phenotypes, causal genes, candidate genes
+  (anchors upsampled, `upsample_cand` 1, U14) and disease (U9). A patient excluded at binding keeps
+  its E4 state (no reliable truth, no other positive, or input excluded with each same-gene patient
+  as a positive), and a ranked patient's excluded partners are relevant items it could not rank.
+- **Served gene identity:** the served identity names the model's η and shortest paths in state
+  `computed`; a `gene_task/v1` result names its SP bounds.
 
 ---
 

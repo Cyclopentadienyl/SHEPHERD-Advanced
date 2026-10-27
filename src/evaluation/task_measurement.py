@@ -208,10 +208,16 @@ def run_patients_like_me_measurement(*, bundle: Any, view: Any, samples: Sequenc
         raise ValueError(f"a {bundle.task!r} model does not rank patients")
     binding = bind_patients(view, samples)
     _require_bound(binding, "patients-like-me")
+    if not any(c.genes for c in binding.cases):
+        # E4/E6: without a causal gene no pair is positive; a report would
+        # only say that no patient has a reliable truth.
+        raise ValueError("no patient of the cohort records a causal gene, so no pair can be "
+                         "positive; nothing was written")
     _check_regime(device, manifest)
     cases = binding.cases
     z = full_view_vectors(bundle, view.edge_index(), view.rel, device)
-    ranked = rank_patients(bundle, z, cases, cases, chunk=batch_size)
+    ranked = rank_patients(bundle, z, cases, cases, chunk=batch_size,
+                           unranked=binding.unranked_positives)
     report = ranking_report(ranked + binding.excluded_outcomes(), TASK_KS)
     return _mode_result(
         manifest=manifest, report=report, ranked=ranked, binding=binding, samples=samples,

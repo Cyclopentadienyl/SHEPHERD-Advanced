@@ -23,18 +23,12 @@ Module: src/models/tasks/scoring.py
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Sequence, Set, Tuple
+from typing import Any, Dict, List, Sequence, Tuple
 
 import torch
 from torch import Tensor
 
-from src.models.bundle.metrics import (
-    INPUT_EXCLUDED,
-    NO_RELIABLE_TRUTH,
-    RANKED,
-    QueryOutcome,
-    average_ranks,
-)
+from src.models.bundle.metrics import INPUT_EXCLUDED, RANKED, QueryOutcome, average_ranks
 
 
 @dataclass
@@ -54,16 +48,23 @@ class Binding:
     #: An excluded case's assessable positives (the truths it lists), where a
     #: task knows more than one (E5's conservative denominator); 1 otherwise.
     excluded_positives: Dict[str, int] = field(default_factory=dict)
-    #: Excluded cases that record no truth at all (E4's no reliable truth).
-    no_truth: Set[str] = field(default_factory=set)
+    #: An excluded case's E4 state when it has no assessable truth:
+    #: `no_reliable_truth` (it records none) or `no_other_positive` (no one
+    #: else in the cohort shares it); every other excluded case is
+    #: `input_excluded`.
+    excluded_states: Dict[str, str] = field(default_factory=dict)
+    #: A bound case's relevant items that cannot be ranked because they were
+    #: excluded (patients-like-me: same-gene patients left out of the
+    #: reference); E5 counts them as 0.
+    unranked_positives: Dict[str, int] = field(default_factory=dict)
 
     def excluded_outcomes(self) -> List[QueryOutcome]:
-        """Each excluded case as a unit with its reason (E4): `NO_RELIABLE_TRUTH`
-        when it records no truth, which stays in coverage but never reads as a
-        0; else `INPUT_EXCLUDED`, which stays in coverage and the conservative
-        reading (E5)."""
-        return [QueryOutcome(case_id, NO_RELIABLE_TRUTH, reason=reason)
-                if case_id in self.no_truth else
+        """Each excluded case as a unit with its reason (E4): a state with no
+        assessable truth stays in coverage but never reads as a 0;
+        `INPUT_EXCLUDED` stays in coverage and the conservative reading
+        (E5)."""
+        return [QueryOutcome(case_id, self.excluded_states[case_id], reason=reason)
+                if case_id in self.excluded_states else
                 QueryOutcome(case_id, INPUT_EXCLUDED,
                              n_positives=self.excluded_positives.get(case_id, 1), reason=reason)
                 for case_id, reason in self.excluded]

@@ -7,8 +7,12 @@ Patients-like-me: cases bound to the view, ranked against a reference set.
 **Cases.** A patient's phenotypes are mapped to the view (dropped and counted
 outside it); its causal genes are kept as the workspace's gene ids, so a gene
 outside the view still identifies the gene two patients share. A pair is
-positive when the two causal-gene sets intersect (F9). A case with no phenotype
-in the view is excluded; one without a causal gene has no reliable truth (E4)
+positive when the two causal-gene sets intersect (F9). Its causal genes,
+candidate genes and disease in the view are kept as well: training seeds them
+(U9). A case with no phenotype in the view is excluded, in the state its truth
+gives it (E4): no reliable truth without a causal gene, no other positive when
+no one else in the cohort shares one, else input excluded with every same-gene
+patient as a positive (E5). One without a causal gene has no reliable truth
 and is neither an anchor nor a query with positives.
 
 **Ranking (E1–E5).** Each query patient against every reference patient but
@@ -16,14 +20,16 @@ itself, the self excluded by stable case identity (`case_id`), also when the
 query and reference lists are ordered differently; scores `−‖ẑ_a − ẑ_b‖²` of
 the patient tower's vectors (A9, U10), exact, average ranks. States kept apart:
 no other positive in the reference set, no reliable truth, input excluded;
-none of them is a recall of 0.
+none of them is a recall of 0. Same-gene patients excluded at binding are a
+ranked query's relevant items it could not rank (E5), and a query whose
+positives were all excluded is not scorable.
 
 Module: src/models/tasks/patients_like_me.py
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Dict, FrozenSet, List, Sequence, Tuple
+from dataclasses import dataclass, field
+from typing import Any, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple
 
 import torch
 from torch import Tensor
@@ -31,11 +37,16 @@ from torch import Tensor
 from src.models.bundle.metrics import (
     NO_OTHER_POSITIVE,
     NO_RELIABLE_TRUTH,
+    NOT_SCORABLE,
     RANKED,
     QueryOutcome,
     average_ranks,
 )
 from src.models.tasks.scoring import Binding, padded, patient_vectors
+
+
+def _no_ids() -> Tensor:
+    return torch.empty(0, dtype=torch.long)
 
 
 @dataclass
@@ -45,34 +56,76 @@ class BoundPatient:
     phenotypes: Tensor
     #: The causal genes, as the workspace's gene ids (empty: no reliable truth).
     genes: FrozenSet[int]
+    #: View ids of its causal genes and candidate genes in the view, and of
+    #: its disease or -1: training seeds them (U9).
+    truths: Tensor = field(default_factory=_no_ids)
+    candidates: Tensor = field(default_factory=_no_ids)
+    disease: int = -1
+
+
+def _in_view(view: Any, node_type: str, ids: Optional[Sequence[int]]) -> Tensor:
+    if not ids or node_type not in view.node_types:
+        return _no_ids()
+    mapped = view.view_ids(node_type, torch.tensor(list(ids), dtype=torch.long))
+    return torch.unique(mapped[mapped >= 0])
 
 
 def bind_patients(view: Any, samples: Sequence[Any]) -> Binding:
-    """Map rows (`patient_id`, `phenotype_ids`, `causal_gene_ids`) to bound
-    patients; a patient with no phenotype in the view is excluded."""
+    """Map rows (`patient_id`, `phenotype_ids`, `causal_gene_ids`, and the
+    optional `gene_ids` and `disease_id`) to bound patients; a patient with no
+    phenotype in the view is excluded, in its E4 state."""
     cases: List[BoundPatient] = []
     excluded: List[Tuple[str, str]] = []
     counts = {"cases": len(samples), "phenotypes_outside_view": 0, "no_causal_gene": 0}
     seen = set()
+    by_gene: Dict[int, set] = {}
     for sample in samples:
         if sample.patient_id in seen:
             raise ValueError(f"case id {sample.patient_id!r} appears twice; self-exclusion "
                              "needs a stable, unique case identity (E5)")
         seen.add(sample.patient_id)
+        for gene in sample.causal_gene_ids or ():
+            by_gene.setdefault(int(gene), set()).add(sample.patient_id)
+    excluded_ids = set()
+    for sample in samples:
         phen = view.view_ids("phenotype", torch.tensor(list(sample.phenotype_ids),
                                                        dtype=torch.long))
         counts["phenotypes_outside_view"] += int((phen < 0).sum())
         phen = torch.unique(phen[phen >= 0])
         if phen.numel() == 0:
             excluded.append((sample.patient_id, "no_phenotype_in_view"))
+            excluded_ids.add(sample.patient_id)
             continue
         genes = frozenset(int(g) for g in (sample.causal_gene_ids or ()))
         counts["no_causal_gene"] += int(not genes)
-        cases.append(BoundPatient(sample.patient_id, phen, genes))
+        disease = getattr(sample, "disease_id", None)
+        in_view = _in_view(view, "disease", [] if disease is None else [int(disease)])
+        cases.append(BoundPatient(sample.patient_id, phen, genes,
+                                  _in_view(view, "gene", sample.causal_gene_ids),
+                                  _in_view(view, "gene", getattr(sample, "gene_ids", None)),
+                                  int(in_view[0]) if in_view.numel() else -1))
+
+    def partners(case_id: str, genes: Sequence[int]) -> set:
+        return set().union(*(by_gene[int(g)] for g in genes)) - {case_id} if genes else set()
+
+    states: Dict[str, str] = {}
+    positives: Dict[str, int] = {}
+    for sample in samples:
+        if sample.patient_id not in excluded_ids:
+            continue
+        others = partners(sample.patient_id, sample.causal_gene_ids or ())
+        if not sample.causal_gene_ids:
+            states[sample.patient_id] = NO_RELIABLE_TRUTH
+        elif not others:
+            states[sample.patient_id] = NO_OTHER_POSITIVE
+        else:
+            positives[sample.patient_id] = len(others)
+    unranked = {c.case_id: n for c in cases
+                if (n := len(partners(c.case_id, sorted(c.genes)) & excluded_ids))}
     counts.update({"bound": len(cases), "excluded": len(excluded)})
     for _, reason in excluded:
         counts[f"excluded_{reason}"] = counts.get(f"excluded_{reason}", 0) + 1
-    return Binding(cases, excluded, counts)
+    return Binding(cases, excluded, counts, positives, states, unranked)
 
 
 def shares_gene(a: BoundPatient, b: BoundPatient) -> bool:
@@ -110,8 +163,13 @@ def patient_tower_vectors(bundle: Any, z: Tensor, patients: Sequence[BoundPatien
 
 
 def rank_patients(bundle: Any, z: Tensor, queries: Sequence[BoundPatient],
-                  reference: Sequence[BoundPatient], *, chunk: int = 256) -> List[QueryOutcome]:
-    """Each query's positives ranked among the reference patients but itself."""
+                  reference: Sequence[BoundPatient], *, chunk: int = 256,
+                  unranked: Optional[Mapping[str, int]] = None) -> List[QueryOutcome]:
+    """Each query's positives ranked among the reference patients but itself.
+    `unranked`: a query's same-gene patients excluded from the reference at
+    binding (`Binding.unranked_positives`, when the reference is the queries'
+    own cohort), relevant items it could not rank (E5)."""
+    unranked = unranked or {}
     head = bundle.task_head
     q_vec = patient_tower_vectors(bundle, z, queries, chunk=chunk)
     r_vec = q_vec if queries is reference else patient_tower_vectors(bundle, z, reference,
@@ -124,15 +182,19 @@ def rank_patients(bundle: Any, z: Tensor, queries: Sequence[BoundPatient],
             outcomes.append(QueryOutcome(query.case_id, NO_RELIABLE_TRUTH))
             continue
         relevant = int(positive[i].sum())
+        missing = int(unranked.get(query.case_id, 0))
         if relevant == 0:
-            outcomes.append(QueryOutcome(query.case_id, NO_OTHER_POSITIVE))
+            outcomes.append(QueryOutcome(query.case_id, NOT_SCORABLE, n_positives=missing,
+                                         reason="positives_excluded") if missing else
+                            QueryOutcome(query.case_id, NO_OTHER_POSITIVE))
             continue
         keep = ~is_self[i]
         scores = head.scores(q_vec[i:i + 1], r_vec[keep])[0]
         ranks = average_ranks(scores.tolist())
         where = torch.nonzero(positive[i][keep]).flatten()
         outcomes.append(QueryOutcome(query.case_id, RANKED, [float(ranks[j]) for j in where],
-                                     n_positives=relevant, candidates=int(keep.sum())))
+                                     n_positives=relevant + missing,
+                                     candidates=int(keep.sum())))
     return outcomes
 
 

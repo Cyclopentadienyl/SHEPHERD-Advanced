@@ -86,7 +86,7 @@ FINETUNE_TASKS: Dict[str, Dict[str, Any]] = {
              "candidate_upsample_size": 2},
     "patients_like_me": {"learning_rate": 5e-5, "num_neighbors": [15, 10, 5],
                          "sparse_sample_size": 300, "task_loss_weight": 0.3,
-                         "lp_loss_weight": 0.7},
+                         "lp_loss_weight": 0.7, "candidate_upsample_size": 1},
 }
 
 FINETUNE_TASK_SOURCES: Dict[str, Dict[str, str]] = {
@@ -120,6 +120,8 @@ FINETUNE_TASK_SOURCES: Dict[str, Dict[str, str]] = {
         "task_loss_weight": f"{UPSTREAM} patients-like-me run_*.sh script lmbda 0.7 on LP, so "
                             "0.3 on the task (README C3)",
         "lp_loss_weight": f"{UPSTREAM} patients-like-me run_*.sh script lmbda 0.7 (README C3)",
+        "candidate_upsample_size": f"{UPSTREAM} run_patients_like_me.sh (upsample_cand 1; "
+                                   "README U3, U9, U14)",
     },
 }
 

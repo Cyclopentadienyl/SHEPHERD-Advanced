@@ -2278,3 +2278,18 @@ def test_a_refusal_worded_outside_the_known_forms_still_names_no_case_id():
     assert "cases[2]: a problem that names its case id" in said and "cases[0]: no terms" in said
     unplaced = tp.import_refusal(MalformedSource("intake.json", ["duplicate case_id \"Q-1\""]))
     assert "Q-1" not in unplaced and "a case: a problem that names its case id" in unplaced
+
+
+def test_the_preview_shows_the_gene_counts_when_the_source_lists_genes():
+    """README §8: the operator sees, before commit, how many gene identifiers
+    map; a source without genes shows no gene row."""
+    from src.webui.components.test_page import preview_html
+
+    genes = {"identifiers_listed": 5, "identifiers_unmappable": 2, "identifiers_repeated": 1,
+             "cases_with_causal_genes": 3, "cases_with_unmapped_causal_genes": 1,
+             "cases_with_candidate_genes": 2}
+    html = preview_html({"counts": {"source_cases": 3, "genes": genes}, "samples_n": 3})
+    assert "Gene identifiers" in html and "2 name no gene of the graph" in html
+    assert "1 with some unmapped" in html
+    assert "Gene identifiers" not in preview_html({"counts": {"source_cases": 3},
+                                                   "samples_n": 3})

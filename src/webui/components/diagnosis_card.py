@@ -757,7 +757,8 @@ def _serving_note(status: Mapping[str, Any], facts: Mapping[str, Any],
     parts.append("graph ✓" if graph_state == "verified" else f"graph {graph_state or 'not reported'}")
     sp = _part(identity, "shortest_paths", "state")
     parts.append(f"SP table ✓ build {_part(identity, 'shortest_paths', 'build_id')}"
-                 if sp == "verified" else "no SP table")
+                 if sp == "verified" else "SP from the graph view" if sp == "computed"
+                 else "no SP table")
     origin = _part(identity, "dataset_record", "origin")
     if _part(identity, "dataset_record", "state") == "verified":
         parts.append(f"dataset record ✓ {origin}")
