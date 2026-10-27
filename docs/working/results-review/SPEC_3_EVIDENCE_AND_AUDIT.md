@@ -190,9 +190,11 @@ history. **Approval route:** the reviewer's technical review, then the owner's c
 the project's other designs; no new approval process. The design is not approved yet, so gate 3 is
 not cleared. It is built with B-1, as B-1c, in batch 5. *(2026-10-27: batch 5 is replaced by work
 packages A–C ([`../scorer-retraining/README.md`](../scorer-retraining/README.md) §8; policy rev 11).
-This design and its approval route are unchanged, and it is built when package C prepares the
-served switch. "Batch 5" below reads as that package. The analogy list's similarity (§7, "Who
-computes the list") is fixed with the served model's spec.)*
+This design and its approval route are unchanged. It is not built in the A + B round, since it
+is not approved: the new disease ranking keeps path evidence as today's post-ranking explanation
+for the displayed candidates, never as a candidate gate. "Batch 5" below reads as the round that
+implements it after approval. The analogy list's similarity (§7, "Who computes the list") is fixed
+with the served model's spec.)*
 
 **Authority:**
 - policy §6, gate 3's seven requirements;

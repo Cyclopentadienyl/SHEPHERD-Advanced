@@ -3,13 +3,44 @@
 **Status:** Accepted (2026-08) by the deploying institution. **Not yet implemented** — see the
 status table in §2. Implementation is work item B-1, which remains gated (§6).
 
+**Revision: rev 12 (2026-10-27). A factual update recording the owner's engineering decisions; no
+normative statement changes, and the gate text is unchanged.**
+- **No deployment exists.** The system has never been deployed at the hospital; it is a research
+  platform. Merging into `main` accepts an engineering version. It is not a hospital deployment, a
+  clinical switch or a clinical performance approval.
+- **The owner's decisions for the research platform** (2026-10-27):
+  - **one switch:** when the paper-aligned integration is delivered, active training, inference and
+    evaluation use only the new contract; the served disease mixture and the execution of old
+    checkpoints retire, with no configuration switch kept between them;
+  - **the Mode C/D comparison is archived:** it is not run again and is no longer a prerequisite of
+    any implementation or retirement. It is not marked as passed, and nothing here says it lacked
+    meaning; gate 1 as written is not cleared;
+  - **the path-reasoning fallback ranking retires:** with a graph and no model, diagnosis is
+    refused. Path reasoning stays as post-ranking evidence.
+- **What this means for the gates.** Gates 1 and 3 gate B-1, the raw-cosine implementation, which is
+  not built. They do not block the research implementation. After the archived code is removed,
+  gate 1 as written (B-0's Mode C and Mode D report, BACKLOG 8a and 8b) can only be reproduced from a
+  fixed revision.
+- **What still holds, unchanged.** Clinical adoption of any model needs its own effect evidence and
+  the institution's procedure; this revision completes neither. Statements 1 and 3–6 bind the new
+  disease ranking as they bound B-1: GNN-primary, every disease of the configured universe scored,
+  no SP in the ranking, SP only as an optional post-ranking view, numeric SP and path evidence kept
+  apart. Statement 7 has nothing to bind once the fallback retires. Statement 2's raw cosine has no
+  served implementation on the research platform after the switch; its proposed replacement (rev 11)
+  still needs the owner's and then the institution's approval for clinical use.
+- **Proposed, not approved** (the owner, then the institution), added to rev 11's list: gate 1's
+  engineering prerequisite (the B-0 comparison) is replaced by the new task models' own effect
+  evaluation, kept separate from clinical adoption conditions.
+- **Notice:** the institution should be informed of this record's status.
+
 **Revision: rev 11 (2026-10-27). A factual update and a factual correction, with proposed
 revisions that are not approved.** No normative statement changes in this revision.
 - **Factual update: the track is scheduled.** The paper-parity retraining track, which statement 2
   and §8 condition 2 anticipate, is scheduled as work packages A–C of the paper-aligned two-stage
   design ([`working/scorer-retraining/README.md`](working/scorer-retraining/README.md)).
   - **Package A** builds its disease model as a research implementation. Nothing served changes
-    until package C passes this record's gates.
+    until package C passes this record's gates. *(Superseded by rev 12: one switch on the research
+    platform, which has no hospital deployment.)*
   - **The raw-cosine B-1 is not built first.** The owner's direction is not to build a scorer that is
     about to be replaced.
   - **What still applies, unchanged, to whatever model a switch would serve:**

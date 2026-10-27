@@ -10,6 +10,10 @@
 > ([`working/scorer-retraining/README.md`](working/scorer-retraining/README.md)) replaces the cosine
 > flow of §2.2 and the methods of §3.1–§3.3. What runs (§8, §11) is unchanged. B-1 as a raw-cosine
 > ranking is not built first (policy rev 11).
+> **Revision 2 of that design (2026-10-27):** one switch when the integration is delivered (the
+> served disease mixture, the path-reasoning fallback ranking, Mode C's raw-cosine recipe and Mode D
+> retire); the Mode C/D comparison is archived; the system has never been deployed at the hospital,
+> so merging into `main` is an engineering version, not a clinical switch (policy rev 12).
 
 ---
 
@@ -502,7 +506,7 @@ and integration tests sit beside each module.
 | **Model quality, institutional acceptance** | — | — | — | Not implemented (external) | — | data, terms and a declared protocol |
 | **Diagnose** (served score of §8, `gnn_only`, path fallback), result identity, CSV and report | `POST /api/v1/diagnose` | `src/inference/pipeline.py`, `scoring.py`, `served_identity` | Diagnosis page and exports | Connected | HTTP and the tab at `52152e4` (M3c); by hand at `f9202b6`; probes E7, R6 at `b14c4de` call the pipeline without explanations | whether serving with no model configured needs an opt-in (B-2). Batch 4 (implemented and accepted, 2026-10-27) answers each kind with its own fields: path reasoning is `path_reasoning/v1`, an SP value with no number is a status, never 0.0 (policy C9; §11.1 step 7) |
 | **Evidence and explanations** | the pipeline's explanations step | `evidence_panel.py`, `explanation_generator.py` | Evidence, Explanation, Paths | Connected (Mode A only) | by hand at `f9202b6` | evidence Mode B and INSUFFICIENT unreachable until B-1, whose target-restricted traversal is gate 3's design (§11.1 step 6); a computed summary the route drops; inert flags (BACKLOG 56) |
-| **B-1**: GNN-primary ranking over every disease; SP as an optional analysis surface; evidence for the visible page only | — | to reuse: Mode C's canonical ranking, `sp_index` for the SP surface. The disease scorer becomes the model bundle's head (`working/scorer-retraining/README.md` §3) | — | Not implemented | — | **Superseded 2026-10-27:** the raw-cosine B-1 is not built first. The paper-aligned disease model (work package A) is what a future switch would serve, through policy gates 1 and 3 (§6; package C; policy rev 11). The GNN-primary rule, SP as an optional surface and lazy evidence stay the target |
+| **B-1**: GNN-primary ranking over every disease; SP as an optional analysis surface; evidence for the visible page only | — | to reuse: Mode C's canonical ranking, `sp_index` for the SP surface. The disease scorer becomes the model bundle's head (`working/scorer-retraining/README.md` §3) | — | Not implemented | — | **Superseded 2026-10-27:** the raw-cosine B-1 is not built. The paper-aligned disease model is served on the research platform when the A + B integration is delivered (one switch, policy rev 12); clinical adoption keeps its own conditions. The GNN-primary rule, SP as an optional surface and lazy evidence stay the target |
 | **Paper-aligned two-stage training**: KG base, `finetune`, the disease, gene and patients-like-me tasks, one model builder | — | — | — | Not implemented | — | designed 2026-10-27 (`working/scorer-retraining/README.md`, `working/PLAN_PROVENANCE_CONTRACT.md` §9, `working/PLAN_TEST_RESULTS.md` §8): work packages A–C |
 | **HPO search, disease details, keeping a diagnosis, `candidate_genes`** | mock routes (HPO search, disease details); `GET /api/v1/diagnose/{session_id}` answers 501; a reserved field | — | — | Not implemented | — | BACKLOG 56 |
 | **Operator access (D8) and the read-only view** | `OPERATOR_ONLY` (`src/api/operator_access.py`) on every gated route; the dashboard's helper `src/webui/operator_access.py` in each operator handler | `src/utils/operator_access.py` (`check_operator_access`, the one check) | chips; greyed controls with the reason | Connected | W2–W6 at `b14c4de`; a read-only tab by hand at `773dc4a` | open read routes name server paths (BACKLOG 53) |
@@ -542,7 +546,8 @@ Mode C and Mode D change no served value. B-1 does.
   - the disease head over every disease;
   - `canonical_ranking` and `selection_limit` still apply;
   - a new result kind for that model, not `gnn_ranking/v1` as raw cosine.
-- **The served switch** waits for package C and the policy's gates.
+- **The served switch** happens on the research platform when the A + B integration is delivered
+  (policy rev 12); clinical adoption keeps its own conditions.
 - **Step 6** (gate 3's evidence) keeps its design.
 - **The rows** stay as the record of the Batch 2 design
   ([`working/scorer-retraining/README.md`](working/scorer-retraining/README.md) §8).

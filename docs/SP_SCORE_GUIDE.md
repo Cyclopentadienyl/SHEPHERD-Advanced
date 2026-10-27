@@ -460,19 +460,29 @@ The transform difference has two consequences:
   term spans 0.7 while the SP term spans 0.107 — nominally 70/30, but 87/13 by span. This is a
   statement about the ranges the two terms can occupy, **not** a measurement of their actual
   contribution, which depends on how widely each varies in practice and has not been measured here.
-- **A phenotype equally distant from every candidate shifts every candidate's mean by the same
-  amount.** An example is a phenotype unreachable from all of them, which gives every candidate the
-  same `UNREACHABLE` value.
-  - **The released code's affine map** turns that shift into the same constant on every candidate's
-    SPLSIM. Its spread stays as it was, so the order is unchanged, mixed with EMBSIM or not.
-  - **The transform here, `1/(1 + d)`, is not affine.** The shift changes no SP-only order either,
-    but it compresses the SP term's spread. In the η mixture that lowers SP's effective weight. So
-    §1's "least-connected symptom" effect moves the mixture's balance here, where the released
-    code's form would not.
+- **Adding a phenotype that is equally distant from every candidate shrinks the gaps between
+  candidates; it does not add one constant to every mean.** An example is a phenotype unreachable
+  from all of them, which gives every candidate the same `UNREACHABLE` value. With `n` phenotypes
+  before and the new one at distance `c` from every candidate, each new mean is
+  `(n × old mean + c)/(n + 1)`, so every gap between two candidates' means is multiplied by
+  `n/(n + 1)`.
+  - **Both transforms shrink the SP spread.** The released code's affine map shrinks the SPLSIM
+    gaps in the same proportion; `1/(1 + d)` shrinks them and also bends them. In either form the
+    SP-only order stays the same.
+  - **Mixed with EMBSIM, the order can change in either form.** Worked example, isolating the SP
+    effect (EMBSIM fixed at [0, 0.5], η = 0.5, `S(d) = 1 − 2(d − 1)/5.84`): means [1, 3] give mixed
+    scores [0.500000, 0.407534], first candidate ahead; adding a phenotype at distance 5 from both
+    gives means [3, 4] and mixed scores [0.157534, 0.236301], second candidate ahead. Adding a real
+    phenotype may also change EMBSIM; the example does not claim it stays fixed.
+  - **Only a change to a shared distance with the phenotype count fixed** adds the same constant to
+    every mean, and only that leaves the affine form's mixed order unchanged.
+  - So §1's "least-connected symptom" effect moves the mixture's balance under both forms.
   - **Large distances alone cancel nothing.** Distances of 5 to one candidate and 6 to another still
     contribute to the spread in both forms.
-  - *(Corrected 2026-10-27: an earlier text described the paper's form as a candidate-relative
-    min–max that "can attenuate" this effect.)*
+  - *(Corrected twice on 2026-10-27: an earlier text described the paper's form as a
+    candidate-relative min–max that "can attenuate" this effect; the next one claimed a constant
+    shift that leaves the affine form's order unchanged. The reviewer's review of `5d0327a`, R3,
+    gave the counterexample above.)*
 
 **The traversal: same direction and type handling, different reach** (corrected 2026-10-27). The
 paper's text says only "the minimum number of hops between p and g in the KG". Its released code

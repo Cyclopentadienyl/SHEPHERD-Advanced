@@ -386,16 +386,21 @@ be removed cleanly afterwards. This is a boundary, not a retirement plan.
    things in hand: the finished comparison, the switch's state, and an inventory of callers. No
    plugin or retirement framework is built for it.
 
-**2026-10-27: the paper-aligned direction keeps this boundary.** The plan is
-[`../scorer-retraining/README.md`](../scorer-retraining/README.md), work packages A–C.
-- **Mode D stays temporary and removable.** The new models, their training, measurement and serving
-  import nothing from `mode_d`, use no `run_mode_c` observer and change no `run_mode_c` semantics
-  (`.import-linter.ini`). Mode D is not extended for the three tasks.
-- **Its comparison partner may change.** If policy rev 11's proposed gate 1 revision is approved,
-  gate 1 compares the served ranking with the paper-aligned disease model, measured as its own mode.
-  Mode D's reports stay valid evidence about today's served behaviour.
-- **Both retirements of point 5 move to package C,** each still counted apart. The legacy mixture
-  goes when the paper-aligned disease model has taken over serving, rather than B-1's raw cosine.
+**2026-10-27, revised the same day: Mode D is archived.** The owner archived the Mode C/D comparison
+(the reviewer's decision record; [`../scorer-retraining/README.md`](../scorer-retraining/README.md)
+§1, §7).
+- **Point 1 no longer applies:** the comparison is not run again and is no longer a prerequisite. It
+  is not marked as passed, and nothing here says it lacked meaning: it still measures, for the same
+  old model, what the candidate set, ties and the mixture change. It cannot by itself attribute the
+  gap between the old and new training systems; answering that later means reproducing from a fixed
+  revision or a separate controlled ablation.
+- **Both retirements of point 5 happen in the A + B round,** each counted apart, once the new task
+  measurement and serving are wired (the owner's one-switch decision). Mode D is not re-pointed at a
+  new head.
+- **Points 2–4 and 6 hold:** nothing new depends on Mode D; its reports, summaries and the read-only
+  identification its records need stay; no executor, fallback or alias is kept; the shared ranking,
+  metrics, readers, registry, report store, ledger and GPU lock stay. The `be0ee1a` evidence and the
+  fixed revision are kept.
 
 ---
 

@@ -4023,7 +4023,9 @@ labelled differently.
 
 ## 9. The paper-aligned two-stage extension (design, 2026-10-27)
 
-**Status: designed, not implemented.** Work package A builds it. The recipe, the model bundle and
+**Status: designed, being built on this branch (revision 2, 2026-10-27).** The A + B integration
+builds it. Revision 2 applies the reviewer's review of `5d0327a` (R2: one switch, no second
+execution path) and the decision record of the same day. The recipe, the model bundle and
 the work packages are [`scorer-retraining/README.md`](scorer-retraining/README.md); this section is
 the record contract. It extends the record M3a writes (`build_checkpoint_payload`,
 `CHECKPOINT_RECORD_VERSION`). It adds no second provenance system, ledger or model database. The
@@ -4036,15 +4038,15 @@ These come in addition to `record_version`, `producer`, `environment`, `training
 
 | Field | Meaning | Written by |
 |---|---|---|
-| `model_spec` | Versioned. The one builder rebuilds the whole bundle from it: input module, encoder, LP head and, for a finetune, the patient encoder and task head. Required. Nothing is inferred from weight names | every operation |
+| `model_spec` | Versioned. The one builder rebuilds the whole bundle from it: graph view identity, input module, encoder, LP head and, for a finetune, the patient encoder and task head. Every provisional default carries its source. Required. Nothing is inferred from weight names | every operation |
 | `learning_stage` | `base` or `finetune` | `new` (base) and `finetune`; inherited by `resume`, `extend` and `branch` |
 | `task` | None for a base; `disease`, `gene` or `patients_like_me` | `finetune`; inherited |
 | `operation` | `new`, `resume`, `extend`, `branch` or `finetune` | the operation that produced the run |
 | `parent` | The SHA-256 of the exact parent checkpoint file, and the parent run. It generalises today's `training_input_digests.resume_checkpoint` | every operation but `new` |
 | `family_id` | The id of the root run (the one whose operation is `new`), inherited unchanged. Not the seed, and not a dataset digest plus seed | every operation |
 | `weight_transfer` | Per parameter group: loaded from the parent or initialised new, trainable or frozen | `finetune`, and any operation that loads weights |
-| Data roles | The digests of the KG and the edge split artifact; the base's train, validation and test edge roles; a finetune's train and validation roles. R10 takes the union of the roles it can verify (§8, question 3) | every operation |
-| `graph_exposure` | For each stage: the message-passing graph, the supervision edges and the SP graph it saw | every operation |
+| Data roles | The digests of the KG, the graph view (its rule and result, and the stable node mapping) and the edge split artifact; the base's train, validation and test edge roles; a finetune's task data artifacts (train and validation roles) and, for patients-like-me, the reference cohort version; derived tables (SP distances, the augmentation neighbour table) by digest. R10 takes the union of the roles it can verify (§8, question 3) | every operation |
+| `graph_exposure` | For each stage: the message-passing graph, the supervision edges and the SP graph it saw. Base: training edges for message passing in training and LP validation. Finetune: training edges in training; the full view in validation, task tests and serving | every operation |
 | Loss identity | Term names, `task_loss_weight` and `lp_loss_weight`, versions | every operation |
 | Scoring identity | The task scorer's name and version: distance, normalisation, candidate universe | `finetune` |
 | `selection` | The digest of the validation report that selected the parent, and the selection rule | `finetune` |
@@ -4069,25 +4071,41 @@ learning stage never reuses that name.
   - a finetune checkpoint, since children never chain.
 - **The checks run where the job starts,** before anything is written, as §2 requires.
 
-### 9.3 Migration: only what is needed
+### 9.3 One switch, and the six hazards
+
+**One switch (the reviewer's R2, adopted by the owner).** When the integration is delivered, active
+training, inference and evaluation accept only this contract.
+- A checkpoint without a `model_spec` is listed as history. The new system never runs it, never
+  guesses its spec from weight names and never re-registers its reports.
+- Historical checkpoints, reports, ledgers, registries, workspaces and fixed Git revisions stay as
+  they are: not overwritten, not migrated in bulk.
+- Old code and environments are preserved by fixed revisions and existing evidence, never by a
+  `legacy/` tree run as a second pipeline.
+- Intermediate commits may still hold a path not yet retired; the delivered batch has none.
 
 The six hazards found in the verification, each with its rule:
 
 1. **A new record version means old checkpoints do not resume.** The extension raises the record
-   version.
+   version for checkpoints written by the new path.
    - Checkpoints written before it stay readable as history and keep their records.
    - Resume across the boundary is refused with the reason ("written before the model spec; start a
      new run"). No missing field is filled in by guessing.
-2. **A new manifest field must not orphan old reports.** Measurement manifests get a schema version.
-   - `build_record` keeps registering a known older schema as that schema.
-   - A field set that matches no known schema is refused.
-   - Old reports stay readable. Re-registering an old report under the new schema is not promised.
-   - `build_manifest` is shared by Modes C and D, so Mode D's reports follow the same rule.
+   - While old and new paths coexist inside the build, the new version and the `model_spec`
+     requirement apply to checkpoints the new path writes; the old path's removal ends the overlap.
+2. **New manifests must not orphan old records.** A new measurement manifest names its task, metric
+   schema and scoring identity in its semantic fields, with a per-record manifest schema version.
+   - The ledger's file-level schema stays 3 and its key fields are unchanged, so existing ledgers
+     stay readable and appendable.
+   - Old Mode C/D records are listed read-only as historical, with their own scoring semantics,
+     never ordered with new records and never re-registered. `build_record` does not keep accepting
+     old manifests for new registration (it already refuses a foreign field set today).
+   - No existing ledger, registry or workspace is refused as a whole. If that proves unavoidable for
+     some part, that part stops and is recorded for the owner.
 3. **Checkpoint selection filters by task first.** Automatic selection reads `learning_stage` and
    `task` from the record before it chooses.
-   - A base or gene checkpoint is never selected for disease serving.
-   - A checkpoint without a `model_spec` is served only by today's path, and a spec checkpoint only
-     by the new one. Neither loads the other's.
+   - A base or gene checkpoint is never selected for disease serving, and a base serves no
+     diagnosis.
+   - A checkpoint without a `model_spec` is not selectable for serving after the switch.
 4. **Task parameters are submodules of the bundle,** so the optimizer updates them and the
    checkpoint saves them. The one builder guarantees it, and regressions 2 and 6 pin it.
 5. **Finetune gets its own check; resume keeps its blocks.** Decision 7, `check_resume_parent`'s data
@@ -4105,8 +4123,13 @@ resolves the parent when a configured, allowed root contains it, and otherwise t
 "parent unavailable". No second model database is built, and no patient-data access boundary is
 widened.
 
-**Mode D stays one-way** (`.import-linter.ini`). New code imports nothing from `mode_d`, uses no
-`run_mode_c` observer and changes no `run_mode_c` semantics.
+**Reference cohorts and derived artifacts.** A patients-like-me model is bound to its reference
+cohort version as well as its checkpoint: results, exports, caches and reuse checks name both. Task
+data artifacts and derived tables are bound by digest to the workspace they come from, through the
+same sidecar pattern as the SP table, and are produced by explicit CLIs.
+
+**Mode D is archived.** Its runner, observer, CLI branch and probes retire once task measurement is
+wired; its reports stay readable as history.
 
 ### 9.4 What these records claim
 
