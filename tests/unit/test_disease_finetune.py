@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
 from src.kg.graph_view import build_graph_view, split_facts  # noqa: E402
 from src.models.bundle import build_bundle, finetune_spec_from_parent, reference_spec  # noqa: E402
+from src.models.bundle.metrics import INPUT_EXCLUDED, QueryOutcome  # noqa: E402
 from src.models.bundle.record import load_bundle  # noqa: E402
 from src.models.bundle.spec import InputSpec, PatientEncoderSpec  # noqa: E402
 from src.training.finetune_task import (  # noqa: E402
@@ -79,7 +80,7 @@ def _task_setup(workspace):
                        view.edge_index(train), view.rel[train], sizes=[3, 3], batch_size=8, seed=0)
     sampler = FinetuneSampler(view, cases.cases, lp, batch_size=4, candidate_sample_size=3,
                               sparse_sample_size=5, seed=0)
-    task = DiseaseTask(view=view, val_cases=cases.cases[:4], val_excluded=1,
+    task = DiseaseTask(view=view, val_cases=cases.cases[:4], val_excluded=[QueryOutcome("x", INPUT_EXCLUDED, n_positives=1)],
                        full_edges=view.edge_index(), full_relations=view.rel,
                        task_loss_weight=0.1, lp_loss_weight=0.9)
     return view, sampler, task

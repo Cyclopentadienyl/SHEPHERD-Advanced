@@ -151,3 +151,21 @@ def test_a_base_is_refused(trained):
 
     with pytest.raises(PipelineBuildError, match="not a finetune"):
         _pipeline(trained, trained["base"])
+
+
+def test_a_phenotype_outside_the_view_is_reported_unknown_not_used(trained):
+    """The mapping step admits only what the served model can score: a graph
+    phenotype outside the model's graph view is listed as unknown, warned, and
+    never reported as used."""
+    pipeline = _pipeline(trained, trained["child"])
+    view = pipeline._bundle_view
+    index = pipeline._node_id_to_idx["phenotype"]
+    outside = [key for key, row in index.items()
+               if int(view.view_ids("phenotype", torch.tensor([row]))[0]) < 0]
+    assert outside, "the demo view excludes phenotypes outside its largest component"
+    term = outside[0].split(":", 1)[1]
+    result = pipeline.run(PatientPhenotypes(patient_id="p3", phenotypes=["HP:0001250", term]),
+                          top_k=3)
+    assert term in result.phenotype_input.unknown
+    assert term not in result.phenotype_input.used
+    assert any("outside the model's graph view" in w for w in result.warnings)

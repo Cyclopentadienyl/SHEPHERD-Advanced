@@ -189,6 +189,9 @@ class BoundGeneCase:
     candidates: Tensor
     #: The view id of the case's disease, or -1 (a seed in training, U9).
     disease: int = -1
+    #: The distinct causal genes the case lists, in the view or not: its
+    #: assessable positives (F9; E5's conservative denominator).
+    listed_truths: int = 0
 
 
 def bind_gene_cases(view: Any, samples: Sequence[Any]) -> Binding:
@@ -198,12 +201,18 @@ def bind_gene_cases(view: Any, samples: Sequence[Any]) -> Binding:
     cases: List[BoundGeneCase] = []
     excluded: List[Tuple[str, str]] = []
     counts = {"cases": len(samples), "phenotypes_outside_view": 0,
-              "causal_genes_outside_view": 0, "candidates_outside_view": 0}
+              "causal_genes_outside_view": 0, "candidates_outside_view": 0,
+              "candidates_submitted": 0, "cases_with_several_causal_genes": 0}
+    positives: Dict[str, int] = {}
     has_disease = "disease" in view.node_types
     for sample in samples:
+        listed = len(set(sample.causal_gene_ids or ()))
+        positives[sample.patient_id] = max(listed, 1)
         if not sample.causal_gene_ids or not sample.gene_ids:
             excluded.append((sample.patient_id, "no_causal_gene_or_candidate_list"))
             continue
+        counts["candidates_submitted"] += len(set(sample.gene_ids))
+        counts["cases_with_several_causal_genes"] += int(listed > 1)
         phen = view.view_ids("phenotype", torch.tensor(list(sample.phenotype_ids),
                                                        dtype=torch.long))
         truths = view.view_ids("gene", torch.tensor(list(sample.causal_gene_ids)))
@@ -221,11 +230,13 @@ def bind_gene_cases(view: Any, samples: Sequence[Any]) -> Binding:
         else:
             disease = (int(view.view_ids("disease", torch.tensor([int(sample.disease_id)]))[0])
                        if has_disease else -1)
-            cases.append(BoundGeneCase(sample.patient_id, phen, truths, cands, disease))
-    counts.update({"bound": len(cases), "excluded": len(excluded)})
+            cases.append(BoundGeneCase(sample.patient_id, phen, truths, cands, disease, listed))
+    counts.update({"bound": len(cases), "excluded": len(excluded),
+                   "candidates_mapped": sum(int(c.candidates.numel()) for c in cases)})
     for _, reason in excluded:
         counts[f"excluded_{reason}"] = counts.get(f"excluded_{reason}", 0) + 1
-    return Binding(cases, excluded, counts)
+    return Binding(cases, excluded, counts,
+                   {case_id: positives[case_id] for case_id, _ in excluded})
 
 
 @dataclass
@@ -319,14 +330,17 @@ def rank_gene_cases(bundle: Any, z: Tensor, cases: Sequence[BoundGeneCase],
     outcomes: List[QueryOutcome] = []
     scored = score_gene_cases(bundle, z, cases, distances, neighbours, case_chunk=case_chunk)
     for case, (scores, defined) in zip(cases, scored, strict=True):
+        listed = max(case.listed_truths, int(case.truths.numel()))
         if not bool(defined.all()):
-            outcomes.append(QueryOutcome(case.case_id, NOT_SCORABLE,
-                                         n_positives=int(case.truths.numel()),
+            outcomes.append(QueryOutcome(case.case_id, NOT_SCORABLE, n_positives=listed,
                                          reason="distance_undefined"))
             continue
         ranks = average_ranks(scores.tolist())
         where = torch.nonzero(torch.isin(case.candidates, case.truths)).flatten()
+        # The ranks follow the candidates' order, so `case.candidates[where]`
+        # names the gene each rank belongs to.
         outcomes.append(QueryOutcome(case.case_id, RANKED, [float(ranks[j]) for j in where],
+                                     n_positives=listed,
                                      candidates=int(case.candidates.numel())))
     return outcomes
 

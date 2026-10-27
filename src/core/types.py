@@ -708,7 +708,9 @@ class PhenotypeInputAccount:
     """
     #: Entries the request carried, repeats and unknown ids included.
     received: int
-    #: Ids with no node in the graph, in request order. Dropped, not scored.
+    #: Ids the served model has no node for, in request order: none in the
+    #: graph, or (a model bundle served) none in the model's graph view.
+    #: Dropped, not scored.
     unknown: Tuple[str, ...]
     #: Entries that repeated a phenotype already kept.
     repeats_removed: int

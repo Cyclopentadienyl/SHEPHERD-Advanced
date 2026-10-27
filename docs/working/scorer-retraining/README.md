@@ -540,6 +540,12 @@ reader are extended for exact distances, not replaced by a second distance file.
 - **Task data:** `scripts/derive_task_fixture.py` writes the functional fixture to
   `derived/gene_fixture/`, bound to the workspace's split manifest by digest
   (`src.kg.task_fixture`).
+- **Training candidates:** in training each patient is scored against the union of the batch's
+  candidate lists, upsampled genes included, with its own causal genes as the positives. That is the
+  source's default (`only_hard_distractors` False, `up:gene_prioritization_model.py:127-140`).
+  Validation, measurement and serving rank each case's own list.
+- **Denominators:** a case's assessable positives are the causal genes it lists, in the view or not
+  (F9, E5). A task measurement in which no case binds is refused before anything is written (E6).
 
 ---
 

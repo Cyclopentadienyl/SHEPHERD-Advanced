@@ -16,12 +16,16 @@ process; the batch's candidates are counted, each patient gets its share of
 the least-seen genes, ties by view id, minus its causal and listed genes, and
 the added genes are counted). The counter is reset at each epoch start and
 checkpoints are written at epoch ends, so a resumed epoch draws what an
-uninterrupted one would. The score is the mixed SPLSIM/EMBSIM with Eq 10
-augmentation; the task term is the multi-similarity loss on it, every causal
-gene a positive. A negative with an undefined distance leaves the patient's
-list, a patient whose causal gene's distance is undefined leaves the step's
-task term, both counted (§6 rule 7). Validation ranks each validation case's
-own list, without upsampling.
+uninterrupted one would. **In training each patient is scored against the
+union of the batch's lists** (upsampled genes included), its own causal genes
+the positives, as the source does with its default `only_hard_distractors`
+False (`up:gene_prioritization_model.py:127-140`, `up:task_heads/gp_aligner.py:
+119-127`). The score is the mixed SPLSIM/EMBSIM with Eq 10 augmentation; the
+task term is the multi-similarity loss on it, every causal gene a positive. A
+negative with an undefined distance leaves the patient's candidates, a patient
+whose causal gene's distance is undefined leaves the step's task term, both
+counted (§6 rule 7). Validation ranks each validation case's own list,
+without upsampling.
 
 **Patients-like-me (README A9, F9, F11, E1, E5).** Only a patient with at least
 two other patients sharing a causal gene anchors (F11); each anchor brings two
@@ -59,7 +63,7 @@ from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 import torch
 from torch import Tensor
 
-from src.models.bundle.metrics import INPUT_EXCLUDED, QueryOutcome, ranking_report
+from src.models.bundle.metrics import QueryOutcome, ranking_report
 from src.models.tasks.gene import (
     BoundGeneCase,
     DistanceTable,
@@ -67,7 +71,6 @@ from src.models.tasks.gene import (
     case_sp,
     gene_list_scores,
     neighbour_inputs,
-    padded_lists,
     rank_gene_cases,
 )
 from src.models.tasks.losses import multi_similarity_loss, nca_loss
@@ -204,10 +207,11 @@ def _lp_term(model: Any, z: Tensor, lp: LPBatch, counts: Dict[str, int]) -> Opti
     return model.lp_head.hinge(pos, neg)
 
 
-def _report(outcomes: List[QueryOutcome], excluded: int, ks: Sequence[int]) -> Dict[str, Any]:
-    outcomes = outcomes + [QueryOutcome(f"excluded-{i}", INPUT_EXCLUDED, n_positives=1)
-                           for i in range(excluded)]
-    report = ranking_report(outcomes, ks)
+def _report(outcomes: List[QueryOutcome], excluded: Sequence[QueryOutcome],
+            ks: Sequence[int]) -> Dict[str, Any]:
+    """The validation report over the ranked cases and the excluded ones
+    (`Binding.excluded_outcomes`), which stay in its denominators (E5)."""
+    report = ranking_report(list(outcomes) + list(excluded), ks)
     flat = {k: v for k, v in report.items() if not isinstance(v, dict)}
     flat.update({f"units_{k}": v for k, v in report["units_by_status"].items() if v})
     return flat
@@ -218,13 +222,13 @@ class DiseaseTask:
 
     selection_metric = FINETUNE_SELECTION_METRIC
 
-    def __init__(self, *, view: Any, val_cases: Sequence[BoundCase], val_excluded: int,
+    def __init__(self, *, view: Any, val_cases: Sequence[BoundCase], val_excluded: Sequence[QueryOutcome],
                  full_edges: Tensor, full_relations: Tensor, task_loss_weight: float,
                  lp_loss_weight: float, ks: Sequence[int] = (1, 3, 5, 10),
                  chunk_size: int = 65536):
         self.view = view
         self.val_cases = list(val_cases)
-        self.val_excluded = int(val_excluded)
+        self.val_excluded = list(val_excluded)
         if not self.val_cases:
             raise ValueError("no bound validation case; the disease task cannot be validated "
                              "and selected")
@@ -330,9 +334,12 @@ class GeneSampler(_PatientBatches):
 
     def batch(self, cases: Sequence[BoundGeneCase], generator: torch.Generator) -> GeneBatch:
         lists, upsampled = self._upsample(cases)
-        gene_view, gene_mask = padded_lists(lists)
-        positive = torch.stack([torch.isin(gene_view[i], c.truths) & gene_mask[i]
-                                for i, c in enumerate(cases)])
+        # Every patient against the union of the batch's lists (the source's
+        # training candidates), each row the same union.
+        union = torch.unique(torch.cat(lists))
+        gene_view = union.unsqueeze(0).expand(len(cases), -1).clone()
+        gene_mask = torch.ones_like(gene_view, dtype=torch.bool)
+        positive = torch.stack([torch.isin(union, c.truths) for c in cases])
         if self.neighbours is not None:
             near, weight, degree = neighbour_inputs(self.neighbours, gene_view)
             weight = weight * gene_mask.unsqueeze(-1)
@@ -366,14 +373,14 @@ class GeneTask:
 
     selection_metric = FINETUNE_SELECTION_METRIC
 
-    def __init__(self, *, view: Any, val_cases: Sequence[BoundGeneCase], val_excluded: int,
+    def __init__(self, *, view: Any, val_cases: Sequence[BoundGeneCase], val_excluded: Sequence[QueryOutcome],
                  full_edges: Tensor, full_relations: Tensor, distances: DistanceTable,
                  neighbours: Optional[NeighbourTable], task_loss_weight: float,
                  lp_loss_weight: float, ks: Sequence[int] = (1, 3, 5, 10),
                  chunk_size: int = 65536):
         self.view = view
         self.val_cases = list(val_cases)
-        self.val_excluded = int(val_excluded)
+        self.val_excluded = list(val_excluded)
         if not self.val_cases:
             raise ValueError("no bound validation case; the gene task cannot be validated "
                              "and selected")
@@ -495,13 +502,13 @@ class PatientsTask:
 
     selection_metric = FINETUNE_SELECTION_METRIC
 
-    def __init__(self, *, view: Any, val_cases: Sequence[BoundPatient], val_excluded: int,
+    def __init__(self, *, view: Any, val_cases: Sequence[BoundPatient], val_excluded: Sequence[QueryOutcome],
                  full_edges: Tensor, full_relations: Tensor, task_loss_weight: float,
                  lp_loss_weight: float, ks: Sequence[int] = (1, 3, 5, 10),
                  chunk_size: int = 65536):
         self.view = view
         self.val_cases = list(val_cases)
-        self.val_excluded = int(val_excluded)
+        self.val_excluded = list(val_excluded)
         if not bool(positive_matrix(self.val_cases, self.val_cases).any()):
             raise ValueError("no validation patient shares a causal gene with another; "
                              "patients-like-me cannot be validated and selected")

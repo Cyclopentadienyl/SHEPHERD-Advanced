@@ -28,7 +28,7 @@ from typing import Any, Dict, List, Sequence, Tuple
 import torch
 from torch import Tensor
 
-from src.models.bundle.metrics import RANKED, QueryOutcome, average_ranks
+from src.models.bundle.metrics import INPUT_EXCLUDED, RANKED, QueryOutcome, average_ranks
 
 
 @dataclass
@@ -42,9 +42,19 @@ class BoundCase:
 
 @dataclass
 class Binding:
-    cases: List[BoundCase]
+    cases: List[Any]
     excluded: List[Tuple[str, str]] = field(default_factory=list)
     counts: Dict[str, int] = field(default_factory=dict)
+    #: An excluded case's assessable positives (the truths it lists), where a
+    #: task knows more than one (E5's conservative denominator); 1 otherwise.
+    excluded_positives: Dict[str, int] = field(default_factory=dict)
+
+    def excluded_outcomes(self) -> List[QueryOutcome]:
+        """Each excluded case as an `INPUT_EXCLUDED` unit with its reason: it
+        stays in coverage and the conservative reading (E4, E5)."""
+        return [QueryOutcome(case_id, INPUT_EXCLUDED,
+                             n_positives=self.excluded_positives.get(case_id, 1), reason=reason)
+                for case_id, reason in self.excluded]
 
 
 def bind_disease_cases(view: Any, samples: Sequence[Any]) -> Binding:

@@ -117,7 +117,7 @@ def _setup(trained):
     lp = BaseLPSampler(view.num_nodes, view.edge_index(train), view.rel[train],
                        view.edge_index(train), view.rel[train], sizes=[3, 3], batch_size=8, seed=0)
     sampler = PatientsSampler(view, cases, lp, batch_size=4, sparse_sample_size=4, seed=0)
-    task = PatientsTask(view=view, val_cases=val, val_excluded=0, full_edges=view.edge_index(),
+    task = PatientsTask(view=view, val_cases=val, val_excluded=[], full_edges=view.edge_index(),
                         full_relations=view.rel, task_loss_weight=0.3, lp_loss_weight=0.7)
     return view, sampler, task
 

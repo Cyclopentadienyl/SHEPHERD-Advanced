@@ -368,7 +368,8 @@ class PhenotypeInput(_Strict):
     (`src.core.types.PhenotypeInputAccount`)."""
 
     received: int = Field(..., ge=0, description="Entries the request carried")
-    unknown: List[str] = Field(..., description="Ids with no node in the graph, dropped")
+    unknown: List[str] = Field(..., description="Ids the served model has no node for (none "
+                               "in the graph, or outside a model bundle's graph view), dropped")
     repeats_removed: int = Field(..., ge=0)
     used: List[str] = Field(..., description="The phenotypes scored, in first-occurrence "
                             "order; empty when the request was refused")

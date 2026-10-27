@@ -1397,7 +1397,7 @@ def train_bundle(config: TrainConfig, explicit: Optional[Collection[str]] = None
             candidate_sample_size=config.candidate_sample_size,
             sparse_sample_size=config.sparse_sample_size, seed=seed)
         task = DiseaseTask(
-            view=view, val_cases=binding["val"].cases, val_excluded=len(binding["val"].excluded),
+            view=view, val_cases=binding["val"].cases, val_excluded=binding["val"].excluded_outcomes(),
             full_edges=view.edge_index(), full_relations=view.rel,
             task_loss_weight=config.task_loss_weight, lp_loss_weight=config.lp_loss_weight)
         monitor = FINETUNE_SELECTION_METRIC
@@ -1410,7 +1410,7 @@ def train_bundle(config: TrainConfig, explicit: Optional[Collection[str]] = None
             view, binding["train"].cases, lp_sampler, batch_size=config.batch_size,
             sparse_sample_size=config.sparse_sample_size, seed=seed)
         task = PatientsTask(
-            view=view, val_cases=binding["val"].cases, val_excluded=len(binding["val"].excluded),
+            view=view, val_cases=binding["val"].cases, val_excluded=binding["val"].excluded_outcomes(),
             full_edges=view.edge_index(), full_relations=view.rel,
             task_loss_weight=config.task_loss_weight, lp_loss_weight=config.lp_loss_weight)
         monitor = FINETUNE_SELECTION_METRIC
@@ -1423,7 +1423,7 @@ def train_bundle(config: TrainConfig, explicit: Optional[Collection[str]] = None
             sparse_sample_size=config.sparse_sample_size, seed=seed,
             augmentation_k=spec.task_head.gene.augmentation_k)
         task = GeneTask(
-            view=view, val_cases=binding["val"].cases, val_excluded=len(binding["val"].excluded),
+            view=view, val_cases=binding["val"].cases, val_excluded=binding["val"].excluded_outcomes(),
             full_edges=view.edge_index(), full_relations=view.rel,
             distances=derived["distances"], neighbours=derived["neighbours"],
             task_loss_weight=config.task_loss_weight, lp_loss_weight=config.lp_loss_weight)

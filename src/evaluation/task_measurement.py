@@ -27,7 +27,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 import torch
 
-from src.models.bundle.metrics import INPUT_EXCLUDED, QueryOutcome, ranking_report
+from src.models.bundle.metrics import ranking_report
 
 #: The ranking report's schema for task measurements (E1–E5), apart from Mode
 #: C's metric schema 1 (`src.evaluation.measurement.METRIC_SCHEMA_VERSION`).
@@ -97,6 +97,15 @@ def _mode_result(*, manifest: Any, report: Dict[str, Any], ranked: Sequence[Any]
         truth_global_ids=[truth.get(i) for i in sample_ids], canonical_ranks=ranks)
 
 
+def _require_bound(binding: Any, task: str) -> None:
+    """A cohort none of whose cases binds is refused before anything is written
+    (E6): it is not this task's cohort or not this graph's, and a report would
+    only say coverage 0."""
+    if not binding.cases:
+        raise ValueError(f"no case of the cohort can be ranked by the {task} model: "
+                         f"{binding.counts}; nothing was written")
+
+
 def _check_regime(device: torch.device, manifest: Any) -> None:
     from src.utils.run_environment import AutocastRegime, observe_autocast_regime
 
@@ -113,15 +122,13 @@ def run_disease_measurement(*, bundle: Any, view: Any, samples: Sequence[Any],
 
     if bundle.task != "disease":
         raise ValueError(f"a {bundle.task!r} model does not rank diseases")
-    _check_regime(device, manifest)
     binding = bind_disease_cases(view, samples)
+    _require_bound(binding, "disease")
+    _check_regime(device, manifest)
     z = full_view_vectors(bundle, view.edge_index(), view.rel, device)
     diseases = view.type_nodes("disease")
     ranked = rank_cases(bundle, z, binding.cases, diseases, case_chunk=batch_size)
-    excluded: List[QueryOutcome] = [
-        QueryOutcome(case_id, INPUT_EXCLUDED, n_positives=1, reason=reason)
-        for case_id, reason in binding.excluded]
-    report = ranking_report(ranked + excluded, TASK_KS)
+    report = ranking_report(ranked + binding.excluded_outcomes(), TASK_KS)
     return _mode_result(
         manifest=manifest, report=report, ranked=ranked, binding=binding, samples=samples,
         truth={c.case_id: int(c.truths[0]) for c in binding.cases},
@@ -146,30 +153,35 @@ def run_gene_measurement(*, bundle: Any, view: Any, samples: Sequence[Any],
 
     if bundle.task != "gene":
         raise ValueError(f"a {bundle.task!r} model does not rank candidate genes")
-    _check_regime(device, manifest)
     binding = bind_gene_cases(view, samples)
+    _require_bound(binding, "gene")
+    _check_regime(device, manifest)
     gene = bundle.task_head.spec.gene
     cases = binding.cases
-    evidence: Dict[str, Any] = {"graph_view": view.digest}
-    ranked: List[QueryOutcome] = []
-    if cases:
-        distances = distance_table(view, torch.cat([c.phenotypes for c in cases]),
-                                   torch.cat([c.candidates for c in cases]))
-        neighbours = neighbour_table(view, gene.augmentation_k) if gene.augmentation else None
-        z = full_view_vectors(bundle, view.edge_index(), view.rel, device)
-        ranked = rank_gene_cases(bundle, z, cases, distances, neighbours, case_chunk=batch_size)
-        lengths = [int(c.candidates.numel()) for c in cases]
-        evidence.update({
-            "candidate_columns": {"min": min(lengths), "max": max(lengths)},
-            "derived_tables": {"sp_distances": distances.digest,
-                               "augmentation_neighbours": (neighbours.record["digest"]
-                                                           if neighbours is not None else None)}})
-    excluded = [QueryOutcome(case_id, INPUT_EXCLUDED, n_positives=1, reason=reason)
-                for case_id, reason in binding.excluded]
-    report = ranking_report(ranked + excluded, TASK_KS)
+    distances = distance_table(view, torch.cat([c.phenotypes for c in cases]),
+                               torch.cat([c.candidates for c in cases]))
+    neighbours = neighbour_table(view, gene.augmentation_k) if gene.augmentation else None
+    z = full_view_vectors(bundle, view.edge_index(), view.rel, device)
+    ranked = rank_gene_cases(bundle, z, cases, distances, neighbours, case_chunk=batch_size)
+    lengths = [int(c.candidates.numel()) for c in cases]
+    evidence: Dict[str, Any] = {
+        "graph_view": view.digest,
+        "candidate_columns": {"min": min(lengths), "max": max(lengths)},
+        "derived_tables": {"sp_distances": distances.digest,
+                           "augmentation_neighbours": (neighbours.record["digest"]
+                                                       if neighbours is not None else None)}}
+    report = ranking_report(ranked + binding.excluded_outcomes(), TASK_KS)
+    # Each case's best-ranked causal gene, the one its canonical rank belongs to
+    # (the ranks follow the candidates' order, `rank_gene_cases`).
+    truth: Dict[str, int] = {}
+    for case, outcome in zip(cases, ranked, strict=True):
+        if outcome.ranks:
+            genes = case.candidates[torch.isin(case.candidates, case.truths)].tolist()
+            truth[case.case_id] = int(genes[min(range(len(outcome.ranks)),
+                                                key=outcome.ranks.__getitem__)])
     return _mode_result(
         manifest=manifest, report=report, ranked=ranked, binding=binding, samples=samples,
-        truth={c.case_id: int(c.truths.min()) for c in cases}, evidence=evidence)
+        truth=truth, evidence=evidence)
 
 
 #: The patients-like-me manifest values (PLAN_TEST_RESULTS §8.4).
@@ -194,16 +206,13 @@ def run_patients_like_me_measurement(*, bundle: Any, view: Any, samples: Sequenc
 
     if bundle.task != "patients_like_me":
         raise ValueError(f"a {bundle.task!r} model does not rank patients")
-    _check_regime(device, manifest)
     binding = bind_patients(view, samples)
+    _require_bound(binding, "patients-like-me")
+    _check_regime(device, manifest)
     cases = binding.cases
-    ranked: List[QueryOutcome] = []
-    if cases:
-        z = full_view_vectors(bundle, view.edge_index(), view.rel, device)
-        ranked = rank_patients(bundle, z, cases, cases, chunk=batch_size)
-    excluded = [QueryOutcome(case_id, INPUT_EXCLUDED, n_positives=1, reason=reason)
-                for case_id, reason in binding.excluded]
-    report = ranking_report(ranked + excluded, TASK_KS)
+    z = full_view_vectors(bundle, view.edge_index(), view.rel, device)
+    ranked = rank_patients(bundle, z, cases, cases, chunk=batch_size)
+    report = ranking_report(ranked + binding.excluded_outcomes(), TASK_KS)
     return _mode_result(
         manifest=manifest, report=report, ranked=ranked, binding=binding, samples=samples,
         truth={}, evidence={"graph_view": view.digest,

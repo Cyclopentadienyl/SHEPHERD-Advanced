@@ -82,7 +82,7 @@ def _setup(trained, *, upsample=2):
                        view.edge_index(train), view.rel[train], sizes=[3, 3], batch_size=8, seed=0)
     sampler = GeneSampler(view, cases, lp, neighbours, batch_size=4, upsample_size=upsample,
                           sparse_sample_size=4, seed=0, augmentation_k=3)
-    task = GeneTask(view=view, val_cases=val, val_excluded=0, full_edges=view.edge_index(),
+    task = GeneTask(view=view, val_cases=val, val_excluded=[], full_edges=view.edge_index(),
                     full_relations=view.rel, distances=distances, neighbours=neighbours,
                     task_loss_weight=0.6, lp_loss_weight=0.4)
     return view, sampler, task, cases
@@ -107,14 +107,17 @@ def test_upsampling_adds_rare_genes_and_an_epoch_does_not_depend_on_the_last(tra
     view, sampler, _, cases = _setup(trained)
     batch = next(iter(sampler))
     assert batch.counts["upsampled"] > 0
-    by_id = {c.case_id: c for c in cases}
     order = torch.randperm(len(cases), generator=torch.Generator().manual_seed(0)).tolist()
-    for row, i in enumerate(order[:4]):
-        case = by_id[cases[i].case_id]
-        listed = batch.gene_view[row][batch.gene_mask[row]]
-        extra = listed[~torch.isin(listed, case.candidates)]
-        assert torch.equal(listed[:case.candidates.numel()], case.candidates)
-        assert extra.numel() <= 2 and not bool(torch.isin(extra, case.truths).any())
+    in_batch = [cases[i] for i in order[:4]]
+    # Every row is the union of the batch's lists (the source's training
+    # candidates): each list, plus at most two upsampled genes per patient.
+    union = batch.gene_view[0]
+    assert all(torch.equal(row, union) for row in batch.gene_view)
+    listed = torch.unique(torch.cat([c.candidates for c in in_batch]))
+    assert bool(torch.isin(listed, union).all())
+    assert union.numel() - listed.numel() <= 2 * len(in_batch)
+    for row, case in enumerate(in_batch):
+        assert torch.equal(union[batch.positive[row]], case.truths)
     # Regression 8: epoch 1 drawn after epoch 0 equals epoch 1 drawn fresh, as
     # after a resume (the counter is reset at each epoch start).
     sampler.set_epoch(0)
@@ -222,3 +225,32 @@ def test_gene_measurement_over_the_fixture_split(trained, tmp_path):
     assert "task_fixture" in manifest["artifact_digests"]
     metrics = report["authoritative_metrics"]
     assert 0 < metrics["pooled_mrr"] <= 1 and metrics["coverage"] == 1.0
+    ranks = json.loads((tmp_path / "report_ranks.json").read_text())
+    assert ranks and all(r is not None for r in ranks)
+
+
+def test_every_listed_causal_gene_stays_in_the_denominators(trained):
+    """E5/F9: a case's assessable positives are the causal genes it lists, in
+    the view or not, ranked or excluded."""
+    view, _, task, cases = _setup(trained)
+    rows = [SimpleNamespace(patient_id="off-list", phenotype_ids=[0], disease_id=0,
+                            causal_gene_ids=[0, 1], gene_ids=[2, 3])]
+    binding = bind_gene_cases(view, rows)
+    (excluded,) = binding.excluded_outcomes()
+    assert excluded.reason == "truth_not_in_candidates" and excluded.n_positives == 2
+    listed = dataclasses.replace(cases[0], listed_truths=3)
+    bundle = build_bundle(_gene_spec(), view)
+    (outcome,) = task.rank_cases(bundle, [listed], torch.device("cpu"))
+    assert outcome.n_positives == 3 and len(outcome.ranks) == int(listed.truths.numel())
+
+
+def test_a_gene_measurement_with_no_bindable_case_is_refused(trained):
+    from src.evaluation.task_measurement import run_gene_measurement
+
+    view, _, _, _ = _setup(trained)
+    bundle = build_bundle(_gene_spec(), view)
+    rows = [SimpleNamespace(patient_id="a", phenotype_ids=[0], disease_id=0,
+                            causal_gene_ids=None, gene_ids=None)]
+    with pytest.raises(ValueError, match="no case of the cohort can be ranked"):
+        run_gene_measurement(bundle=bundle, view=view, samples=rows, manifest=None,
+                             device=torch.device("cpu"), batch_size=8)

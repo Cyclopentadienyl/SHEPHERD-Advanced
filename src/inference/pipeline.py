@@ -1565,27 +1565,14 @@ class DiagnosisPipeline:
                               validation: "ValidationResult", warnings: List[str],
                               source_ids: List[NodeID]) -> ServedRanking:
         """`disease_task/v1`: every disease of the model's graph view, ranked by
-        the disease head (README A7, U6), ties by view id. A phenotype outside
-        the view is dropped and said so; with none left, nothing is ranked."""
+        the disease head (README A7, U6), ties by view id. The mapping step
+        admitted only phenotypes in the view (`_knows_phenotype`)."""
         from src.models.tasks.scoring import patient_vectors
 
         view = self._bundle_view
-        rows = torch.tensor(list(validation.rows or []), dtype=torch.long)
-        view_ids = view.view_ids("phenotype", rows) if rows.numel() else rows
-        kept = view_ids[view_ids >= 0]
-        dropped = int((view_ids < 0).sum())
-        if dropped:
-            warnings = warnings + [
-                f"{dropped} phenotype(s) are outside the model's graph view and were not "
-                "scored"]
-        if kept.numel() == 0:
-            return ServedRanking(
-                outcome="no_candidates",
-                warnings=warnings + ["None of the phenotypes is in the model's graph view"],
-                patient_input=patient_input, phenotype_input=validation.phenotype_input,
-                source_ids=source_ids)
+        kept, warnings = self._bundle_phenotypes(validation, warnings)
         z = self._bundle_z
-        kept = torch.unique(kept).to(z.device)
+        kept = kept.to(z.device)
         with torch.no_grad():
             patient = patient_vectors(self.model, z, kept.unsqueeze(0),
                                       torch.ones(1, kept.numel(), dtype=torch.bool,
@@ -1614,17 +1601,11 @@ class DiagnosisPipeline:
 
     def _bundle_phenotypes(self, validation: "ValidationResult", warnings: List[str]
                            ) -> Tuple[Any, List[str]]:
-        """The request's phenotypes as view ids of the model's graph, each
-        outside it dropped and said so."""
-        view = self._bundle_view
+        """The request's phenotypes as view ids of the model's graph; the
+        mapping step (`_knows_phenotype`) admitted only phenotypes in the view."""
         rows = torch.tensor(list(validation.rows or []), dtype=torch.long)
-        view_ids = view.view_ids("phenotype", rows) if rows.numel() else rows
-        dropped = int((view_ids < 0).sum())
-        if dropped:
-            warnings = warnings + [
-                f"{dropped} phenotype(s) are outside the model's graph view and were not "
-                "scored"]
-        return torch.unique(view_ids[view_ids >= 0]), warnings
+        view_ids = self._bundle_view.view_ids("phenotype", rows) if rows.numel() else rows
+        return torch.unique(view_ids), warnings
 
     def _rank_by_gene_task(self, patient_input: PatientPhenotypes,
                            validation: "ValidationResult", warnings: List[str],
@@ -2021,12 +2002,13 @@ class DiagnosisPipeline:
         unknown: List[str] = []
         for position, pheno_id in enumerate(phenotypes):
             node_id = NodeID(source=DataSource.HPO, local_id=pheno_id)
-            if self.kg.has_node(node_id):
+            if self._knows_phenotype(node_id):
                 known_nodes.append(str(node_id))
                 known_positions.append(position)
             else:
                 unknown.append(pheno_id)
-                warnings.append(f"Unknown phenotype: {pheno_id}")
+                warnings.append(f"Unknown phenotype: {pheno_id}" if not self.kg.has_node(node_id)
+                                else f"Phenotype outside the model's graph view: {pheno_id}")
 
         normalised = normalise_phenotypes(known_nodes, positions=known_positions)
         used = [phenotypes[position] for position in normalised.kept_positions]
@@ -2067,6 +2049,20 @@ class DiagnosisPipeline:
             node_ids=[] if errors else node_ids,
             rows=rows,
         )
+
+    def _knows_phenotype(self, node_id: NodeID) -> bool:
+        """Whether the served model can score this phenotype: a node of the
+        graph and, with a model bundle served, of the model's graph view."""
+        if self._bundle_view is None:
+            return self.kg.has_node(node_id)
+        if getattr(self, "_view_phenotypes", None) is None:
+            index = (self._node_id_to_idx or {}).get(NodeType.PHENOTYPE.value, {})
+            keys = list(index)
+            rows = torch.tensor([index[k] for k in keys], dtype=torch.long)
+            in_view = (self._bundle_view.view_ids("phenotype", rows) >= 0).tolist() if keys \
+                else []
+            self._view_phenotypes = {k for k, ok in zip(keys, in_view, strict=True) if ok}
+        return str(node_id) in self._view_phenotypes
 
     def _phenotype_rows(self, node_ids: List[NodeID]) -> Optional[List[int]]:
         """Each node's row in the phenotype embedding table, in order; None when
