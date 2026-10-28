@@ -11,7 +11,8 @@ Purpose:
     Provide an API-layer service that:
     - Runs each job type's own script as a subprocess (M5): **training**,
       scripts/train_model.py with its config in a temp YAML, and **test runs**,
-      scripts/measure_scorer.py on one registered cohort version
+      scripts/measure_scorer.py on one registered cohort version, measuring a
+      finetuned model by its own task (`--mode <task>`; never Mode C or D)
     - Holds **one GPU slot**: a job that is running or stopping keeps it,
       whatever its type, and the deployment's GPU lock
       (src/utils/gpu_lock.py) is checked before a start, so a job a CLI
@@ -288,8 +289,10 @@ class TestRunInputs:
     The caller resolves a request's names through those lists (WP1): the
     registry from its setting, the version by label with its `cohort.json`
     digest, the workspace by name under the workspace root, the checkpoint by
-    name and digest from that workspace's listing, the evidence directories
-    from their setting. `record` and `deterministic` are the operator's two
+    name and digest from that workspace's listing, `task` from the same
+    listing's model record (a finetuned model is measured by its own task; the
+    run checks it again on the bytes it reads), the evidence directories from
+    their setting. `record` and `deterministic` are the operator's two
     choices. Nothing else is chosen: the batch size is the CLI's default and
     the device the deployment's (D5).
     """
@@ -302,6 +305,7 @@ class TestRunInputs:
     workspace: Path
     checkpoint: Path
     checkpoint_sha256: str
+    task: str
     evidence_dirs: Tuple[Path, ...] = ()
     record: bool = False
     deterministic: bool = False
@@ -311,11 +315,17 @@ class TestRunInputs:
         checked. The run checks the files themselves when it reads them.
 
         Raises:
-            ValueError: a digest that is not a full SHA-256, a path that is not
-                absolute, or a registry or label the registry's rules refuse.
+            ValueError: a task that is not a model spec's task
+                (`src.models.bundle.spec.TASKS`), a digest that is not a full
+                SHA-256, a path that is not absolute, or a registry or label
+                the registry's rules refuse.
         """
         from src.evaluation import cohort_registry
+        from src.models.bundle.spec import TASKS
 
+        if self.task not in TASKS:
+            raise ValueError(f"The task {self.task!r} is not one of {', '.join(TASKS)}: a test "
+                             "run measures a finetuned model by its task.")
         for name, digest in (("checkpoint", self.checkpoint_sha256),
                              ("cohort version", self.version_sha256)):
             if not (isinstance(digest, str) and _SHA256.fullmatch(digest)):
@@ -340,6 +350,7 @@ class TestRunInputs:
             "workspace": str(self.workspace),
             "checkpoint": str(self.checkpoint),
             "checkpoint_sha256": self.checkpoint_sha256,
+            "task": self.task,
             "evidence_dirs": [str(d) for d in self.evidence_dirs],
             "record": bool(self.record),
             "deterministic": bool(self.deterministic),
@@ -498,12 +509,15 @@ def build_test_argv(inputs: TestRunInputs, device: Optional[str], outcome: Path)
     `outcome`, the new file in the job's own directory where the run says what
     it published (`--outcome`).
 
+    `--mode` is always the model's task, so the runner never launches Mode C
+    or D (README §1: archived; only the command line runs them, until K7).
     The expected digests make the run refuse before measuring when the
     checkpoint or the version it reads is not the one chosen. `--batch-size`
     is not passed: the CLI's default stays its one definition.
     """
     argv = [
         sys.executable, str(PROJECT_ROOT / JOB_TYPES["test"].script),
+        "--mode", inputs.task,
         "--checkpoint", str(inputs.checkpoint),
         "--data-dir", str(inputs.workspace),
         "--cohort", inputs.version_label,

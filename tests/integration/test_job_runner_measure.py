@@ -1,25 +1,29 @@
 """
-A test run through the job runner, with the real measure_scorer (M5).
-=====================================================================
-The runner builds the command line from its inputs, the real CLI takes the GPU
-lock and measures the fixture cohort on CPU and writes its outcome file
-(`--outcome`, in the job's own directory), and once it has ended the runner
-reads from that file which report it published and, through the registration's
-one helper, whether that report is kept and registered. Expected digests that
-are not the files' make the run refuse before measuring: no outcome file, no
-report, nothing kept.
+A test run through the job runner, with the real measure_scorer (M5, K6).
+=========================================================================
+The runner builds the command line from its inputs (always `--mode <task>`:
+a finetuned model is measured by its task), the real CLI takes the GPU lock
+and measures the fixture cohort on CPU with a disease child trained for one
+epoch (`tests/fixtures/trained_children.train_children`, filed under the
+workspace's `runs/gatv2`) and writes its outcome file (`--outcome`, in the
+job's own directory), and once it has ended the runner reads from that file
+which report it published and, through the registration's one helper, whether
+that report is kept and registered. Expected digests that are not the files'
+make the run refuse before measuring: no outcome file, no report, nothing
+kept; so does a task the checkpoint's record does not name.
 
 Runs once `measure_scorer` takes the expected digests (`--expect-checkpoint-
 sha256`, `--expect-version-sha256`, WP4 of M5-1); skipped before that.
 
-> The checkpoint is untrained and the graph synthetic: nothing here is a result
-> about the scorer, only about the runner's flow.
+> The model is trained for one epoch on CPU and the graph is synthetic: nothing
+> here is a result about the model, only about the runner's flow.
 
 Module: tests/integration/test_job_runner_measure.py
 """
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -61,7 +65,19 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def cohort(tmp_path_factory):
-    return build_registered_cohort(tmp_path_factory.mktemp("runner") / "c")
+    """The registered fixture cohort, its workspace holding a base and a
+    disease child trained for one epoch (`child`, its digest `child_sha256`)."""
+    from types import SimpleNamespace
+
+    from src.utils.fingerprint import file_sha256
+    from tests.fixtures.trained_children import train_children
+
+    built = build_registered_cohort(tmp_path_factory.mktemp("runner") / "c")
+    trained = train_children(built.data_dir, ("disease",))
+    return SimpleNamespace(registry=built.registry, version=built.version,
+                           data_dir=built.data_dir, base=trained["base"],
+                           child=trained["disease"],
+                           child_sha256=file_sha256(trained["disease"]))
 
 
 def _run(cohort, monkeypatch, **change):
@@ -72,7 +88,8 @@ def _run(cohort, monkeypatch, **change):
     monkeypatch.setenv(WORKSPACES_ROOT_ENV, str(cohort.data_dir.parent))
     fields = {"registry": cohort.registry, "version_label": LABEL,
               "version_sha256": cohort.version.identity.sha256, "workspace": cohort.data_dir,
-              "checkpoint": cohort.checkpoint, "checkpoint_sha256": cohort.checkpoint_sha256}
+              "checkpoint": cohort.child, "checkpoint_sha256": cohort.child_sha256,
+              "task": "disease"}
     asked = []
 
     def reader(report: Path, **kwargs):
@@ -97,6 +114,7 @@ def test_a_real_test_run_keeps_its_report_and_the_runner_finds_it(cohort, monkey
     log = "\n".join(manager.get_log("test")["lines"])
     assert status["status"] == "completed" and status["exit_code"] == 0, log
     assert "GPU lock" in log and "held" in log, "the child took the lock itself"
+    assert status["inputs"]["task"] == "disease"
 
     created = sorted(n for n in {p.name for p in reports.iterdir()} - before if is_run_id(n))
     assert len(created) == 1
@@ -109,7 +127,9 @@ def test_a_real_test_run_keeps_its_report_and_the_runner_finds_it(cohort, monkey
     assert status["outcome"]["report_dir"] == str(run_dir)
     published = status["outcome"]["run_outcome"]["report_sha256"]
     assert published == hashlib.sha256(report.read_bytes()).hexdigest()
-    assert asked == [(report, cohort.checkpoint, published)]
+    assert json.loads(report.read_text())["manifest"]["mode"] == "disease", \
+        "the run measured the model's task, never Mode C"
+    assert asked == [(report, cohort.child, published)]
     assert status["outcome"]["kept"] is True
     # No --record: the run said so, and the ledger beside the checkpoint holds
     # no record of it.
@@ -125,3 +145,31 @@ def test_a_digest_that_is_not_the_files_refuses_before_measuring(cohort, monkeyp
     assert status["outcome"]["kept"] is False and asked == []
     assert status["outcome"]["summary"].startswith(
         "No report was published: the run wrote no outcome file")
+
+
+@pytest.mark.parametrize("change", [
+    {"task": "gene", "says": "a checkpoint for task 'disease', not 'gene'"},
+    {"task": "disease", "base": True, "says": "a base checkpoint, not a finetune"},
+])
+def test_a_task_the_record_does_not_name_refuses_before_measuring(cohort, monkeypatch, change):
+    """The task comes from the listing; the run checks it again on the bytes
+    it reads: a disease child measured as gene, or the base measured as
+    disease, is refused before anything is written."""
+    reports = cohort.registry / "versions" / LABEL / "reports"
+
+    def stored():
+        return {p.name for p in reports.iterdir()} if reports.is_dir() else set()
+
+    before = stored()
+    fields = {"task": change["task"]}
+    if change.get("base"):
+        from src.utils.fingerprint import file_sha256
+
+        fields.update(checkpoint=cohort.base, checkpoint_sha256=file_sha256(cohort.base))
+    manager, asked = _run(cohort, monkeypatch, **fields)
+    status = manager.get_test_status()
+    log = "\n".join(manager.get_log("test")["lines"])
+    assert status["status"] == "failed", log
+    assert change["says"] in log, log
+    assert status["outcome"]["kept"] is False and asked == []
+    assert stored() == before, "the refused run left a report"

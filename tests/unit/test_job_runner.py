@@ -99,8 +99,9 @@ def inputs(tmp_path):
     workspace = tmp_path / "workspaces" / "ws"
     return TestRunInputs(
         registry=registry, version_label="mygene2-2026-10", version_sha256=SHA_VERSION,
-        workspace=workspace, checkpoint=workspace / "runs" / "hgt" / "r1" / "checkpoints" / "best.pt",
-        checkpoint_sha256=SHA_CKPT)
+        workspace=workspace,
+        checkpoint=workspace / "runs" / "gatv2" / "r1" / "checkpoints" / "best.pt",
+        checkpoint_sha256=SHA_CKPT, task="disease")
 
 
 def reports(inputs: TestRunInputs) -> Path:
@@ -490,15 +491,34 @@ def test_the_stop_route_does_not_run_on_the_event_loop():
 
 # --------------------------------------------------------------------------- the test job's inputs
 def test_the_test_command_line_comes_from_the_inputs_only(inputs):
+    """The run always measures the model by its task (`--mode <task>`, K6): the
+    runner never launches Mode C (the CLI's default) or D."""
     outcome = Path("/tmp/job/outcome.json")
     argv = build_test_argv(inputs, None, outcome)
     assert argv[:2] == [sys.executable, str(tm.PROJECT_ROOT / "scripts" / "measure_scorer.py")]
     assert argv[2:] == [
+        "--mode", "disease",
         "--checkpoint", str(inputs.checkpoint), "--data-dir", str(inputs.workspace),
         "--cohort", "mygene2-2026-10", "--registry", str(inputs.registry),
         "--expect-checkpoint-sha256", SHA_CKPT, "--expect-version-sha256", SHA_VERSION,
         "--outcome", str(outcome)]
     assert "--batch-size" not in argv, "the CLI's default stays its one definition"
+    from dataclasses import replace
+
+    for task in ("gene", "patients_like_me"):
+        argv = build_test_argv(replace(inputs, task=task), None, outcome)
+        assert argv[argv.index("--mode") + 1] == task and argv.count("--mode") == 1
+
+
+def test_the_status_shows_the_runs_task(popen, inputs):
+    process = FakeProcess(pid=3)
+    popen(process)
+    manager = TrainingManager(report_state=Reader(True, False))
+    assert manager.start_test(inputs)["success"]
+    assert manager.get_test_status()["inputs"]["task"] == "disease"
+    assert inputs.summary()["task"] == "disease"
+    process.finish(1)
+    ended(manager, "test")
 
 
 def test_every_test_run_writes_its_outcome_to_a_new_file_in_its_own_directory(popen, inputs):
@@ -554,6 +574,12 @@ def test_a_deployment_device_the_cli_cannot_take_refuses_the_start(monkeypatch, 
     ({"evidence_dirs": (Path("evidence"),)}, "not an absolute path"),
     ({"version_label": "../x"}, "cohort label is refused"),
     ({"registry": Path("registry")}, "not an absolute path"),
+    # A test run measures a finetuned model by its task: Mode C, Mode D, no task
+    # and a word that is no task are refused before anything is launched.
+    ({"task": "C"}, "The task 'C' is not one of disease, gene, patients_like_me"),
+    ({"task": "D"}, "not one of"),
+    ({"task": None}, "The task None is not one of"),
+    ({"task": "Disease"}, "not one of"),
 ])
 def test_inputs_of_the_wrong_shape_are_refused_before_launch(popen, inputs, change, says):
     from dataclasses import replace

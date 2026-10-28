@@ -3796,9 +3796,12 @@ def _listed_test_inputs(label: str, workspace: str, run: str, filename: str,
     """A test run's inputs as the Test page builds them
     (`test_page.start_test_run`): the version, the workspace and the checkpoint
     found in the server's lists again by name, the digests those lists show
-    passed as the expected ones, and the registry and evidence directories
-    from their settings. `choices` are the operator's two (`record`,
-    `deterministic`)."""
+    passed as the expected ones, the task the listing's model record names,
+    and the registry and evidence directories from their settings. `choices`
+    are the operator's two (`record`, `deterministic`). A ShepherdGNN
+    checkpoint's listing names no task, so the runner refuses its start (K6:
+    a test run measures a finetuned model by its task) until K8 gives the
+    probe chain a trained child."""
     from src.api.services import server_lists
     from src.api.services.training_manager import TestRunInputs
     from src.config import server_settings
@@ -3819,7 +3822,8 @@ def _listed_test_inputs(label: str, workspace: str, run: str, filename: str,
         workspace=server_lists.resolve_workspace(workspace),
         checkpoint=server_lists.resolve_checkpoint(workspace, listed.architecture, run,
                                                    filename),
-        checkpoint_sha256=listed.sha256, evidence_dirs=tuple(evidence.value), **choices)
+        checkpoint_sha256=listed.sha256, task=listed.task, evidence_dirs=tuple(evidence.value),
+        **choices)
 
 
 def _first_line(process: Any, timeout: float) -> str:
@@ -4828,10 +4832,13 @@ def _m5_real(report: Report, runs: Path, real: Path, workspaces_root: Path, devi
         before, usage_before = _store_runs(reports), len(read_usage_history(version)[0])
         manager = TrainingManager()
         with _job_ended_on_exit(manager, "test"):
+            # A test run measures a finetuned model by its task (K6). R3's
+            # checkpoint is a ShepherdGNN one, which the run refuses as
+            # history, until K8 gives this chain a trained disease child.
             started = manager.start_test(TestRunInputs(
                 registry=registry, version_label=M4_REAL_LABEL,
                 version_sha256=version.identity.sha256, workspace=real, checkpoint=parent,
-                checkpoint_sha256=sha256, record=True))
+                checkpoint_sha256=sha256, task="disease", record=True))
             assert started.get("success"), "the runner refused the test run"
             not_reached = _training_stop_does_not_reach_a_test_run(manager)
             word = _job_ended(manager, "test", _TEST_RUN_SECONDS)
@@ -4879,10 +4886,12 @@ def _m5_real(report: Report, runs: Path, real: Path, workspaces_root: Path, devi
             f"so this training (num_workers {workers}) would fail with 'AF_UNIX path too long'. "
             "Run the probe with a short TMPDIR, such as TMPDIR=/tmp")
         version, parent = state["m4"]["version"], state.get("parent", state.get("child"))
+        # Only refused while training runs (the slot, then the CLI's lock), so
+        # the task is never read here; a test run always names one.
         inputs = TestRunInputs(
             registry=registry, version_label=M4_REAL_LABEL,
             version_sha256=version.identity.sha256, workspace=real, checkpoint=parent,
-            checkpoint_sha256=_read_run_checkpoint(parent)["sha256"])
+            checkpoint_sha256=_read_run_checkpoint(parent)["sha256"], task="disease")
         manager = TrainingManager()
         # A new run held by configuration whatever the settings file holds
         # (`_start_training_job` applies `_held_config`): the real settings'

@@ -1,21 +1,30 @@
 #!/usr/bin/env python
 r"""
-Measure the disease scorer — Mode C, and Mode D beside it.
-==========================================================
-**Mode C** (the default): every patient in a cohort scored against every disease
-in the knowledge graph, with the model the deployed pipeline builds and raw
-cosine. This is the formal Test's measurement (`docs/working/PLAN_TEST_RESULTS.md`,
-"This is Mode C").
+Measure a model on a cohort — by its task; Mode C and Mode D from here only.
+===========================================================================
+**The task modes** (`--mode disease`, `gene`, `patients_like_me`): a finetuned
+model bundle measured by its own task (`src/evaluation/task_measurement.py`,
+`docs/working/PLAN_TEST_RESULTS.md` §8), its model record checked for that
+stage and task right after the checkpoint is read. **The Test page runs the
+task modes**: the job runner always passes `--mode <task>`, the task the
+listed checkpoint's record names.
 
-**Mode D** (`--mode D`, a registered cohort version only): what the Diagnosis
-page serves today, each import-eligible case ranked through the served
-pipeline's own `rank()`, with Mode C run beside it on the same embeddings
-(`docs/working/scorer-measurement/PLAN_B05.md`; `src/evaluation/mode_d.py`). It is
-policy gate 1's comparison, not the approved policy.
+**Mode C** (the default; command line only until K7 retires it): every patient
+in a cohort scored against every disease in the knowledge graph, with the model
+the deployed pipeline builds and raw cosine; the formal Test's measurement
+before the tasks (`docs/working/PLAN_TEST_RESULTS.md`, "This is Mode C").
+
+**Mode D** (`--mode D`, a registered cohort version only; command line only
+until K7): what the Diagnosis page serves today, each import-eligible case
+ranked through the served pipeline's own `rank()`, with Mode C run beside it
+on the same embeddings (`docs/working/scorer-measurement/PLAN_B05.md`;
+`src/evaluation/mode_d.py`). It is policy gate 1's comparison, not the
+approved policy.
 
 **A thin CLI.** Argument parsing, one read of each input, manifest assembly, one
-call into `src.evaluation.measurement.run_mode_c` (or `mode_d.run_mode_d`), and
-publishing what it returns. No measurement logic lives here, so the harness stays
+call into the task's run (`task_measurement.TASK_RUNS`),
+`src.evaluation.measurement.run_mode_c` or `mode_d.run_mode_d`, and publishing
+what it returns. No measurement logic lives here, so the harness stays
 testable without a subprocess.
 
 **Two kinds of cohort, named by the argument that names them** (contract M4,
@@ -1017,17 +1026,19 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Measure the disease scorer: every patient against every disease (Mode C), "
-                    "or the ranking the Diagnosis page serves today beside it (Mode D)"
+        description="Measure a model on a cohort: a finetuned model by its own task (what the "
+                    "Test page runs), or Mode C and Mode D (command line only until K7)"
     )
     parser.add_argument("--mode", choices=MODES, default="C",
-                        help="C (default): the approved scorer, raw cosine over every disease. "
-                             "D: the served ranking (path discovery and the served score), "
-                             "measured through the served pipeline's own rank(), with Mode C "
-                             "run on the same embeddings beside it. D needs --cohort; "
-                             "--batch-size is the C side's chunk. disease: a finetuned "
-                             "model bundle's disease task, every disease of its graph view, "
-                             "average ranks (docs/working/PLAN_TEST_RESULTS.md §8)")
+                        help="disease, gene, patients_like_me: a finetuned model bundle "
+                             "measured by its own task, average ranks "
+                             "(docs/working/PLAN_TEST_RESULTS.md §8); the Test page runs these. "
+                             "C and D are command-line only until K7. C (default): the "
+                             "approved scorer, raw cosine over every disease. D: the served "
+                             "ranking (path discovery and the served score), measured through "
+                             "the served pipeline's own rank(), with Mode C run on the same "
+                             "embeddings beside it. D needs --cohort; --batch-size is the C "
+                             "side's chunk.")
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--data-dir", type=Path, required=True)
     cohort = parser.add_mutually_exclusive_group(required=True)
