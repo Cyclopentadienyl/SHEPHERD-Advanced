@@ -1975,22 +1975,36 @@ def test_an_empty_gene_list_is_said_at_the_click_and_nothing_is_asked(monkeypatc
 
 def test_run_waits_for_a_readable_reference_cohort_version():
     """4: a patients-like-me model with a registry problem, no version or no
-    readable version: Run off, with the reason visible (the card's redacted
-    words, escaped) and its registered topic; a readable version turns it on."""
+    readable version: Run off, with the reason visible in its own words per
+    cause, saying who can act (skill §9), and its registered topic; the
+    registry setting's own words (its name, a command's flag) are an
+    operator's and never reach the reason, read-only or not (skill §5). A
+    readable version turns Run on."""
+    from src.config.server_settings import cohort_registry
     from src.webui.components.help import text_id
 
-    problem = "SHEPHERD_REGISTRY is not set, so the features that read the cohort registry are off."
-    for cohorts, words in ((_cohorts(problem=problem), problem),
+    unset = cohort_registry(environ={}).problem
+    assert "SHEPHERD_REGISTRY" in unset and "--registry" in unset
+    for cohorts, words in ((_cohorts(problem=unset), dp.NO_COHORT_REGISTRY),
+                           (_cohorts(problem="the cohort registry could not be listed"),
+                            dp.NO_COHORT_REGISTRY),
                            (_cohorts(), dp.NO_COHORT_VERSION),
                            (_cohorts(_version("torn-1", problem="<registry>/versions/torn-1 has "
                                                                  "no cohort.json")),
                             dp.NO_READABLE_VERSION),
                            (None, dp.NO_COHORT_VERSION)):
-        run = dp.run_controls(_task_card("patients_like_me", cohorts), "idle")
-        assert run["run_btn"]["interactive"] is False
-        assert dp._e(f"{dp.RUN_DISABLED_NO_COHORT} {words}") in run["run_reason"]
-        assert f'aria-describedby="{text_id("dx-run-no-cohort")}"' in run["run_cover"]
+        for operator in (True, False):
+            run = dp.run_controls(_task_card("patients_like_me", cohorts, operator=operator),
+                                  "idle")
+            assert run["run_btn"]["interactive"] is False
+            assert run["run_reason"].endswith(
+                f"{dp._e(f'{dp.RUN_DISABLED_NO_COHORT} {words}')}</p>")
+            assert "operator" in words and "SHEPHERD_" not in run["run_reason"]
+            assert "--registry" not in run["run_reason"] and "<registry>" not in run["run_reason"]
+            assert f'aria-describedby="{text_id("dx-run-no-cohort")}"' in run["run_cover"]
     assert "dx-run-no-cohort" in dp.TOPIC_HELP
+    # The empty select says what it holds, not that the user should pick.
+    assert dp.cohort_info(_cohorts(problem=unset), None) == "No version is listed."
     ready = _task_card("patients_like_me", _cohorts(_version("other-1", "another"),
                                                     _version("reference-1")))
     assert dp.run_controls(ready, "idle")["run_btn"]["interactive"] is True
@@ -1998,6 +2012,36 @@ def test_run_waits_for_a_readable_reference_cohort_version():
     assert dp.run_controls(_task_card("gene_task"), "idle")["run_btn"]["interactive"] is True
     assert dp.run_controls(_task_card("patients_like_me", _cohorts()), "confirming")[
         "run_reason"].count(dp.RUN_DISABLED_CHANGE) == 1
+
+
+def _assert_options_tell_versions_apart(options):
+    """Every option at most 40 characters, with at most one separator, and
+    telling its version from every other listed one: read as a pattern (the
+    mark dropped, each "…" standing for hidden characters) it fits its own
+    label and no other; so the texts are unique too."""
+    labels = [value for _text, value in options]
+    for text, label in options:
+        assert len(text) <= dp.OPTION_MAX and text.count(" · ") <= 1, text
+        shown = text.split(" · ")[0]
+        pattern = ".*".join(re.escape(piece) for piece in shown.split("…"))
+        assert [other for other in labels if re.fullmatch(pattern, other)] == [label], text
+
+
+def test_long_reference_cohort_labels_show_the_part_that_tells_them_apart():
+    """5 (options): labels over 40 characters that share their start and end
+    show where they differ (the date, the version token), bound or marked;
+    a label told apart by its middle cut keeps it."""
+    v1 = "hospital_a_rare_disease_reference_v1_cohort_2026_10_import"
+    v2 = v1.replace("_v1_", "_v2_")
+    first, second = (f"cohort_2026_10_{day}_hospital_a_rare_disease_reference_import"
+                     for day in ("01", "15"))
+    options, _chosen = dp.cohort_choices(_cohorts(_version(v1), _version(v2), _version(first),
+                                                  _version(second, "another")), None)
+    _assert_options_tell_versions_apart(options)
+    texts = [text for text, _value in options]
+    assert texts[:2] == ["…v1_cohort_2026_10_import", "…v2_cohort_2026_10_import"]
+    assert texts[2] == "cohort_2026_10_01_ho…se_reference_import"
+    assert texts[3] == "…15_hospital_a_rare_dis… · another graph"
 
 
 def test_the_reference_cohort_options_are_short_unique_and_keep_the_full_label():
@@ -2014,9 +2058,12 @@ def test_the_reference_cohort_options_are_short_unique_and_keep_the_full_label()
     options, chosen = dp.cohort_choices(cohorts, None)
     texts, values = [t for t, _v in options], [v for _t, v in options]
     assert values == [long_a, long_b, "torn-1", "reference-1", "reference-2"]
-    assert len(set(texts)) == len(texts)
-    assert all(len(t) <= dp.OPTION_MAX and t.count(" · ") <= 1 for t in texts)
+    _assert_options_tell_versions_apart(options)
     assert texts[0].endswith(" · another graph") and "…" in texts[0]
+    # Two long labels that differ only inside the middle cut: each option leads
+    # with the token where it differs (skill §8: the distinguishing token first).
+    assert texts[0] == "…left-" + "z" * 17 + "… · another graph"
+    assert texts[1] == "…rght-" + "z" * 17 + "… · another graph"
     assert texts[2] == "torn-1 · cannot be read" and texts[3] == "reference-1"
     assert chosen == "reference-1"
     assert dp.cohort_choices(cohorts, "reference-2")[1] == "reference-2"
@@ -2043,11 +2090,35 @@ def test_the_timer_never_redraws_the_reference_cohort_select_for_nothing():
     picked = dp.cohort_picked(None, again["card_state"], "reference-2")
     assert picked["cohort"]["info"].startswith("reference-2: version ")
     assert "value" not in picked["cohort"] and "results_state" not in picked
-    ticked = dp.card_outputs(picked["card_state"], None, "idle", cohort="reference-2")
+    # The pick writes no card state back over a read running beside it.
+    assert "card_state" not in picked
+    ticked = dp.card_outputs(again["card_state"], None, "idle", cohort="reference-2")
     assert "cohort" not in ticked and "genes_box" not in ticked
     # A pick after a result clears it, as edited phenotypes do.
     cleared = dp.cohort_picked(_patients_result(), again["card_state"], "reference-2")
     assert "Inputs changed" in cleared["results_body"] and cleared["results_state"] is None
+
+
+def test_a_timer_read_racing_a_pick_never_redraws_the_reference_cohort_select():
+    """5 (timer, a race): the slow timer runs outside the queue, so a read
+    that started before a pick can write the card's state after the pick's
+    event, and a read sent just after the pick can still get the state from
+    before it. The select's cache holds the server's facts, never the user's
+    pick: neither read sends the select again. Facts that change still do."""
+    cohorts = _cohorts(_version("reference-1"), _version("reference-2"))
+    before = dp.card_outputs(_task_card("patients_like_me", cohorts), None, "idle")["card_state"]
+    dp.cohort_picked(None, before, "reference-2")
+    late = dp.card_outputs(before, None, "idle", cohort="reference-1")
+    assert "cohort" not in late
+    assert "cohort" not in dp.card_outputs(late["card_state"], None, "idle", cohort="reference-2")
+    assert "cohort" not in dp.card_outputs(before, None, "idle", cohort="reference-2")
+    # The chosen version's facts change (now mapped against another graph).
+    moved = _task_card("patients_like_me", _cohorts(_version("reference-1"),
+                                                    _version("reference-2", "another")))
+    update = dp.card_outputs({**moved, "rendered": late["card_state"]["rendered"]}, None, "idle",
+                             cohort="reference-2")["cohort"]
+    assert update["info"].startswith("reference-2: version ") and "another graph" in update["info"]
+    assert "value" not in update
 
 
 def test_the_task_inputs_are_never_run_outputs_and_clear_on_input(monkeypatch):
@@ -2128,6 +2199,17 @@ def test_a_patients_like_me_result_shows_reference_patients_and_its_version():
         assert f'<code class="shep-full">{digest}</code>' in digests
         assert f'data-copy="{digest}"' in digests
     assert "Reference cohort reference-1 · version (cohort.json)" in digests
+
+
+def test_the_task_tables_mark_the_selected_row_without_aria_selected():
+    """7, 8: a plain table's rows take no `aria-selected` (skill §8): the
+    selected gene or reference patient is `shep-on` and `aria-current`."""
+    for result in (_gene_result(), _patients_result()):
+        body = dp.results_body_html(result, 2)
+        rows = re.findall(r"<tr data-key[^>]*>", body)
+        assert len(rows) == 2 and "aria-selected" not in body
+        assert rows == ['<tr data-key="1" tabindex="0">',
+                        '<tr data-key="2" tabindex="0" class="shep-on" aria-current="true">']
 
 
 def _escaped_results():

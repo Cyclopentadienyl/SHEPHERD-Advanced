@@ -1594,11 +1594,17 @@ RUN_DISABLED_NO_MODEL_READ_ONLY = (
     "Disabled: no model loaded. An operator on the server's machine can load one.")
 RUN_DISABLED_CHANGE = "Disabled: finish or cancel the model change first."
 RUN_DISABLED_LOADING = "Disabled: a model load is in progress; diagnoses wait until it finishes."
-#: A patients-like-me model with no reference cohort version to rank; the
-#: registry's own reason (without a server path), or which case it is, follows.
+#: A patients-like-me model with no reference cohort version to rank: the
+#: lead, then the cause in its own words with who can act (skill §9). The
+#: registry setting's own words (its name, a command's flag) are an
+#: operator's and never reach this reason (Research › Test shows them).
 RUN_DISABLED_NO_COHORT = "Disabled: no reference cohort version can be read."
-NO_COHORT_VERSION = "The registry holds no cohort version yet."
-NO_READABLE_VERSION = "Every version in the registry is marked “cannot be read”."
+NO_COHORT_REGISTRY = ("The server's cohort registry is not set up or cannot be used; an operator "
+                      "corrects it on the server.")
+NO_COHORT_VERSION = ("The registry holds no cohort version yet; an operator imports one in "
+                     "Research\u00a0› Test.")
+NO_READABLE_VERSION = ("Every version in the registry is marked “cannot be read”; an operator "
+                       "imports a readable one in Research\u00a0› Test.")
 
 #: The change drawer's link to Research › Models: each "›" held to the word
 #: before it by a no-break space, so it is never alone on a line.
@@ -1840,7 +1846,9 @@ def _task_table_html(candidates: List[Mapping[str, Any]], selected: Any, kind: s
     """The ranked rows of a task kind, every value escaped: a gene task model's
     candidate genes (Rank, Gene with its id in the title, Score, Model
     similarity, SP similarity) or a patients-like-me model's reference
-    patients (Rank, Research ID, Similarity, Diagnosis, Causal genes)."""
+    patients (Rank, Research ID, Similarity, Diagnosis, Causal genes). The
+    selected row is `shep-on` and `aria-current` (a plain table's rows take
+    no `aria-selected`, skill §8)."""
     rows = []
     for c in candidates:
         rank = c.get("rank")
@@ -1859,9 +1867,8 @@ def _task_table_html(candidates: List[Mapping[str, Any]], selected: Any, kind: s
                      f'<td class="shep-dx-dis">{_diagnosis_html(c)}</td>'
                      f'<td class="shep-dx-wrap">{_e("; ".join(genes)) if genes else _not_recorded()}'
                      '</td>')
-        selected_class = ' class="shep-on"' if on else ""
-        rows.append(f'<tr data-key="{_e(rank)}" tabindex="0" aria-selected='
-                    f'"{"true" if on else "false"}"{selected_class}>{cells}</tr>')
+        current = ' class="shep-on" aria-current="true"' if on else ""
+        rows.append(f'<tr data-key="{_e(rank)}" tabindex="0"{current}>{cells}</tr>')
     if kind == GENE_TASK:
         head = ('<th scope="col" class="shep-num">Rank</th><th scope="col">Gene</th>'
                 f'<th scope="col" class="shep-num">Score{help_button("dx-gene-score", "Score")}</th>'
@@ -2276,19 +2283,69 @@ def _cohorts(state: Mapping[str, Any]) -> Dict[str, Any]:
     return dict(cohorts) if isinstance(cohorts, Mapping) else {"versions": [], "problem": None}
 
 
-def _option_text(label: str, mark: str, taken: set) -> str:
-    """`label` and its `mark` within `OPTION_MAX` characters, a long label
-    shortened with a middle "…", the text unique among `taken` (the split
-    moves until it is)."""
+def _fits(text: str, label: str) -> bool:
+    """Whether an option's visible `text` (its mark dropped) can be read as
+    `label`: each "…" stands for hidden characters."""
+    if "…" not in text:
+        return text == label
+    pattern = ".*".join(re.escape(piece) for piece in text.split("…"))
+    return re.fullmatch(pattern, label, re.DOTALL) is not None
+
+
+def _shared_start(label: str, other: str) -> int:
+    """How many leading characters `label` and `other` share."""
+    return next((i for i, (a, b) in enumerate(zip(label, other, strict=False)) if a != b),
+                min(len(label), len(other)))
+
+
+def _led_by_difference(label: str, other: str, room: int) -> Optional[str]:
+    """`label` within `room` characters, from the start of the token where it
+    first differs from `other` (skill §8: the distinguishing token first), a
+    "…" for each side cut; None when `other` begins with all of `label`."""
+    differs = _shared_start(label, other)
+    if differs >= len(label):
+        return None
+    start = differs
+    while start and label[start - 1].isalnum():
+        start -= 1
+    if len(label) - start <= room - (1 if start else 0):
+        return ("…" if start else "") + label[start:]
+    width = room - (2 if start else 1)
+    if differs >= start + width:    # a token longer than the room: its differing character stays
+        width = room - 2
+        start = differs + 1 - width
+    return ("…" if start else "") + label[start:start + width] + "…"
+
+
+def _option_text(label: str, mark: str, others: List[str], taken: set) -> str:
+    """`label` and its `mark` within `OPTION_MAX` characters, unique among
+    `taken`, and telling the label from every other listed one (`others`): no
+    other label fits its visible text (`_fits`). The first of these that
+    does: the label whole; cut in the middle; led by the token where it first
+    differs from another label (the one sharing its longest start first);
+    cut elsewhere. A label no shortening tells apart keeps the middle cut,
+    moved until unique; the full label is under the select once it is chosen
+    (`cohort_info`)."""
     room = OPTION_MAX - len(mark)
-    if len(label) <= room and label + mark not in taken:
-        return label + mark
     keep = room - 1
     first = (keep + 1) // 2
+
+    def cut(head: int) -> str:
+        return label[:head] + "…" + label[len(label) - (keep - head):]
+
+    if len(label) <= room:
+        candidates: List[Optional[str]] = [label]
+    else:
+        by_start = sorted(others, key=lambda other: -_shared_start(label, other))
+        candidates = [cut(first), *(_led_by_difference(label, other, room) for other in by_start),
+                      *(cut(head) for head in range(keep + 1))]
+    for text in candidates:
+        if text is not None and text + mark not in taken \
+                and not any(_fits(text, other) for other in others):
+            return text + mark
     for head in (first, *range(first - 1, -1, -1), *range(first + 1, keep + 1)):
-        text = label[:head] + "…" + label[len(label) - (keep - head):] + mark
-        if text not in taken:
-            return text
+        if cut(head) + mark not in taken:
+            return cut(head) + mark
     raise ValueError(f"no unique option of {OPTION_MAX} characters for {label!r}")
 
 
@@ -2297,20 +2354,21 @@ def cohort_choices(cohorts: Mapping[str, Any], current: Any
     """The Reference cohort options and the version chosen. Every listed
     version, as ``(text, full label)``: the text is the label with at most one
     mark ("another graph", "cannot be read"), at most `OPTION_MAX` characters
-    (a long label shortened in the middle) and unique. The chosen one is the
-    current value while it is listed, else the first version mapped against
-    the serving workspace's graph, else the first readable one."""
-    options: List[Tuple[str, str]] = []
-    taken: set = set()
-    for version in cohorts.get("versions") or []:
-        label = str(version.get("label"))
-        mark = _VERSION_MARKS["unreadable"] if version.get("problem") else \
-            _VERSION_MARKS.get(version.get("binding"), "")
-        text = _option_text(label, mark, taken)
-        taken.add(text)
-        options.append((text, label))
+    (a long label shortened where it shows what tells it from the others,
+    `_option_text`) and unique. The chosen one is the current value while it
+    is listed, else the first version mapped against the serving workspace's
+    graph, else the first readable one."""
     versions = cohorts.get("versions") or []
     labels = [str(v.get("label")) for v in versions]
+    options: List[Tuple[str, str]] = []
+    taken: set = set()
+    for index, version in enumerate(versions):
+        label = labels[index]
+        mark = _VERSION_MARKS["unreadable"] if version.get("problem") else \
+            _VERSION_MARKS.get(version.get("binding"), "")
+        text = _option_text(label, mark, labels[:index] + labels[index + 1:], taken)
+        taken.add(text)
+        options.append((text, label))
     if current in labels:
         return options, current
     bound = [str(v.get("label")) for v in versions if v.get("binding") == "bound"]
@@ -2322,9 +2380,11 @@ def cohort_info(cohorts: Mapping[str, Any], chosen: Any) -> str:
     """The chosen version's facts under the select (plain text; the server
     stays the authority): its full label, version fingerprint and whether it
     was mapped against the served graph, or why it cannot be read."""
-    version = next((v for v in cohorts.get("versions") or [] if v.get("label") == chosen), None)
+    versions = cohorts.get("versions") or []
+    version = next((v for v in versions if v.get("label") == chosen), None)
     if version is None:
-        return "No version is chosen."
+        # What the select holds; why is the Run reason's (`cohort_refusal`).
+        return "No version is chosen." if versions else "No version is listed."
     if version.get("problem"):
         return f"{chosen}: cannot be read: {version['problem']}"
     return (f"{chosen}: version {_short_hex(version.get('manifest_sha256'))}, "
@@ -2332,14 +2392,16 @@ def cohort_info(cohorts: Mapping[str, Any], chosen: Any) -> str:
 
 
 def cohort_refusal(state: Mapping[str, Any]) -> Optional[str]:
-    """Why Run Diagnosis is off for a patients-like-me model, or None: the
-    registry's problem (without a server path), no version, or no readable one."""
+    """Why Run Diagnosis is off for a patients-like-me model, or None: no
+    usable registry, no version, or no readable one, each in its own words
+    with who can act (the registry's own problem, an operator's text, is not
+    repeated here)."""
     if card.served_task(state.get("status")) != "patients_like_me":
         return None
     cohorts = _cohorts(state)
     versions = cohorts.get("versions") or []
     if cohorts.get("problem"):
-        return f"{RUN_DISABLED_NO_COHORT} {cohorts['problem']}"
+        return f"{RUN_DISABLED_NO_COHORT} {NO_COHORT_REGISTRY}"
     if not versions:
         return f"{RUN_DISABLED_NO_COHORT} {NO_COHORT_VERSION}"
     if all(v.get("problem") for v in versions):
@@ -2434,10 +2496,12 @@ def card_outputs(state: Mapping[str, Any], result: Optional[Mapping[str, Any]], 
     Candidate genes box shown for a gene task model and the Reference cohort
     select for a patients-like-me model, each by its container's class; the
     select's options and its chosen version's facts (`cohort_info`). The
-    select is sent only when its options or facts change, or when `cohort`
-    (its value now) is no longer listed: a user's pick never makes the timer
-    redraw it. Run Diagnosis passes ``inputs=False`` (its outputs hold none of
-    them)."""
+    select is sent only when its options or a listed version's facts change,
+    or when `cohort` (its value now) is no longer listed: its cache holds the
+    server's facts, never the user's pick, so a pick never makes the timer
+    redraw it, even when a read that ran beside the pick writes the state
+    last (the timer runs outside the queue). Run Diagnosis passes
+    ``inputs=False`` (its outputs hold none of them)."""
     produced = _produced_at(result)
     button = card.change_button(state)
     run = run_controls(state, phase)
@@ -2458,7 +2522,7 @@ def card_outputs(state: Mapping[str, Any], result: Optional[Mapping[str, Any]], 
     if view.get("open"):
         for name, update in identity_outputs(view, state, result).items():
             fresh[name] = update
-    chosen = cohort
+    chosen, info = cohort, None
     if inputs:
         task = card.served_task(state.get("status"))
         fresh["genes_box"] = task == "gene"
@@ -2466,8 +2530,10 @@ def card_outputs(state: Mapping[str, Any], result: Optional[Mapping[str, Any]], 
         if task == "patients_like_me":    # a hidden select keeps its last options
             cohorts = _cohorts(state)
             options, chosen = cohort_choices(cohorts, cohort)
+            info = cohort_info(cohorts, chosen)
             fresh["cohort"] = {"choices": [list(option) for option in options],
-                               "info": cohort_info(cohorts, chosen)}
+                               "facts": {label: cohort_info(cohorts, label)
+                                         for _text, label in options}}
     previous = state.get("rendered") if isinstance(state.get("rendered"), Mapping) else {}
     out: Dict[str, Any] = {}
     for name, value in fresh.items():
@@ -2483,8 +2549,7 @@ def card_outputs(state: Mapping[str, Any], result: Optional[Mapping[str, Any]], 
             out[name] = view_update(value, *_TASK_BOX)
         elif name == "cohort":
             out[name] = gr.update(choices=[tuple(option) for option in value["choices"]],
-                                  info=value["info"],
-                                  **({"value": chosen} if chosen != cohort else {}))
+                                  info=info, **({"value": chosen} if chosen != cohort else {}))
         else:
             out[name] = value
     out["card_state"] = {**state, "rendered": {**previous, **fresh}}
@@ -2648,17 +2713,13 @@ def phenotypes_changed(result: Any, state: Any) -> Dict[str, Any]:
 def cohort_picked(result: Any, state: Any, cohort: Any) -> Dict[str, Any]:
     """A Reference cohort picked (its ``.input``, never a card update): the
     result is cleared as for edited phenotypes, and the select's facts follow
-    the pick (`cohort_info`), kept as rendered so the timer does not send the
-    select again."""
+    the pick (`cohort_info`). The card's state is written back only with a
+    cleared result: the select's cache holds the server's facts, not the pick
+    (`card_outputs`), so the timer has nothing to send again and a read
+    running beside the pick is not written over."""
     state = state if isinstance(state, Mapping) else card.new_state()
     out = phenotypes_changed(result, state)
-    base = out.get("card_state", state)
-    rendered = dict(base.get("rendered") or {})
-    info = cohort_info(_cohorts(base), cohort)
-    if isinstance(rendered.get("cohort"), Mapping):
-        rendered["cohort"] = {**rendered["cohort"], "info": info}
-    out["cohort"] = gr.update(info=info)
-    out["card_state"] = {**base, "rendered": rendered}
+    out["cohort"] = gr.update(info=cohort_info(_cohorts(state), cohort))
     return out
 
 
