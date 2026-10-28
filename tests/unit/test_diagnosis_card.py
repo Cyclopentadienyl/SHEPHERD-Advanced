@@ -497,6 +497,7 @@ def test_the_normal_card_names_the_model_its_fingerprint_and_its_states(root):
 def test_mode_chips_appear_only_when_true(root):
     files = _status(root)
     files["served_identity"]["dataset_record"]["origin"] = "files"
+    files["served_identity"]["scoring_mode"] = "gnn_plus_shortest_path"
     files["served_identity"]["shortest_paths"] = {"state": "verified", "build_id": "b",
                                                   "max_hops": 3}
     body = card.body_html(_state(root, status=files))
@@ -662,3 +663,143 @@ def test_the_cards_times_are_utc_and_say_so_on_a_server_in_another_zone(root):
                              d8_short=None, open_checkpoints=True)
         assert later["change"]["at"] == "15:52 UTC"
         assert "Model changed at 15:52 UTC</b>" in card.body_html(later)
+
+
+# --------------------------------------------------------------------------- the task (K6)
+#: A model bundle's run, filed under its encoder kind as training files it.
+BUNDLE_RUN = "20261021-090000_run_bundle"
+
+
+def _bundle_status(root, mode, *, served=True):
+    """A finetuned bundle served from ``runs/gatv2`` (K6 decision 4: the card
+    names its task), in the scoring mode of its task; no table, the gene
+    model's distances computed from its view."""
+    from src.utils.checkpoint_io import write_checkpoint
+
+    directory = root["workspace"] / "runs" / "gatv2" / BUNDLE_RUN / "checkpoints"
+    directory.mkdir(parents=True, exist_ok=True)
+    sha = write_checkpoint({"checkpoint_kind": "weights", "epoch": 3}, directory / "last.pt")
+    status = _status(root)
+    status["current_checkpoint_path"] = str(directory / "last.pt") if served else "/x/last.pt"
+    identity = status["served_identity"]
+    identity["scoring_mode"] = mode
+    identity["checkpoint"]["sha256"] = sha
+    identity["shortest_paths"] = {"state": "computed" if mode == "gene_task" else "absent",
+                                  "build_id": None, "max_hops": None}
+    identity["settings"]["eta"] = 0.5 if mode == "gene_task" else None
+    return status
+
+
+@pytest.mark.parametrize("mode, name", [("disease_task", "Disease task model"),
+                                        ("gene_task", "Gene task model"),
+                                        ("patients_like_me", "Patients-like-me task model")])
+def test_a_task_model_is_named_by_its_task_once(root, mode, name):
+    """Decision 4: the name line says the task (from the served scoring mode,
+    the one table), the run under it reads "GATv2", and no "Task:" line."""
+    from src.core.types import SCORING_MODE_TASKS
+
+    status = _bundle_status(root, mode)
+    assert card.served_task(status) == SCORING_MODE_TASKS[mode]
+    body = card.body_html(_state(root, status=status))
+    assert (f'<p class="shep-dx-name">{name}</p><p class="shep-dx-line shep-dx-sub">GATv2 · '
+            f"run 2026-10-21 09:00 · epoch 5</p>") in body
+    assert body.count("task model") == 1 and "Task:" not in body and "GATV2" not in body
+    # Not in the served runs: the task still names it, the reason under it.
+    lost = card.body_html(_state(root, status=_bundle_status(root, mode, served=False)))
+    assert (f"<p class=\"shep-dx-name\">{name}</p><p class=\"shep-dx-line shep-dx-sub\">"
+            "Checkpoint · epoch 5 · the checkpoint in use is not in the serving workspace&#x27;s "
+            "runs</p>") in lost
+
+
+def test_a_shepherdgnn_file_keeps_its_name_line_and_no_task(root):
+    assert card.served_task(_status(root)) is None
+    assert card.served_task({"initialized": False}) is None
+    body = card.body_html(_state(root))
+    assert '<p class="shep-dx-name">GAT · run 2026-10-17 09:15 · epoch 5</p>' in body
+    assert "task model" not in body
+
+
+@pytest.mark.parametrize("mode", ["disease_task", "gene_task", "patients_like_me"])
+def test_a_task_model_misses_no_sp_table(root, mode):
+    """A task model is not missing a table it never uses: no "no SP table" chip
+    or warning (only `gnn_only` has them); the serving note says what it uses."""
+    state = _state(root, status=_bundle_status(root, mode))
+    body = card.body_html(state)
+    details = card.served_facts_html(state)
+    assert "no SP table" not in body and "NO SHORTEST-PATH TABLE" not in details
+    note = "SP from the graph view" if mode == "gene_task" else "SP not used by this task"
+    assert note in details and "no SP table" not in details
+    # The ShepherdGNN file served without its table keeps both.
+    legacy = _state(root)
+    assert "no SP table" in card.body_html(legacy)
+    assert "no SP table" in card.served_facts_html(legacy)
+    assert "its task" in card.CARD_HELP[1]
+
+
+@pytest.fixture(scope="module")
+def registry_root(demo_workspace, tmp_path_factory):
+    """A registry with three versions: one imported against the demo
+    workspace (the card's served one: bound), one against the same graph
+    exported with other node features (another graph: `verify_cohort_binding`
+    compares all four graph digests), and an interrupted import (cannot be
+    read)."""
+    from tests.fixtures.registered_cohort import (
+        graph_source_cases,
+        import_version,
+        write_demo_workspace,
+        write_source,
+    )
+
+    root = tmp_path_factory.mktemp("cardregistry")
+    registry = root / "registry"
+    registry.mkdir()
+    source = write_source(root / "cases.json", graph_source_cases(demo_workspace))
+    import_version(registry, demo_workspace, source, label="bound-1")
+    other = write_demo_workspace(root / "other", feature_seed=7)
+    import_version(registry, other, source, label="other-1")
+    (registry / "versions" / "torn-1").mkdir()
+    return registry
+
+
+def test_a_patients_like_me_model_lists_the_reference_cohorts_on_a_queued_refresh(
+        root, registry_root, monkeypatch):
+    """The versions the Reference cohort select offers: every registry version,
+    each with whether it was mapped against the serving workspace's graph (the
+    registry's one comparison), a problem without a server path; listed on a
+    queued refresh and kept on the timer; none for another model."""
+    from src.api.services import server_lists
+
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(registry_root))
+    status = _bundle_status(root, "patients_like_me")
+    first = _state(root, status=status)
+    cohorts = first["facts"]["cohorts"]
+    assert cohorts["problem"] is None
+    by_label = {v["label"]: v for v in cohorts["versions"]}
+    assert list(by_label) == ["bound-1", "other-1", "torn-1"]
+    assert by_label["bound-1"]["binding"] == "bound"
+    assert by_label["bound-1"]["manifest_sha256"] and not by_label["bound-1"]["problem"]
+    assert by_label["other-1"]["binding"] == "another"
+    assert "node_features" in by_label["other-1"]["binding_words"]
+    assert by_label["torn-1"]["problem"].startswith("<registry>/versions/torn-1 has no")
+    assert str(registry_root) not in str(cohorts)
+    # The timer keeps them: the registry is not listed again.
+    monkeypatch.setattr(server_lists, "list_cohort_versions",
+                        lambda **kw: pytest.fail("the timer listed the registry"))
+    kept = card.advance(first, status, None, now=NOW, operator=True, d8_short=None,
+                        open_checkpoints=False)
+    assert kept["facts"]["cohorts"] == cohorts
+    # Another model lists none.
+    assert _state(root, status=_bundle_status(root, "disease_task"))["facts"]["cohorts"] is None
+
+
+def test_no_registry_is_said_without_a_path(root, tmp_path, monkeypatch):
+    monkeypatch.delenv("SHEPHERD_REGISTRY", raising=False)
+    cohorts = card.reference_cohorts("demo", [], {})
+    assert cohorts["versions"] == [] and "SHEPHERD_REGISTRY is not set" in cohorts["problem"]
+    registry = tmp_path / "reg"
+    registry.mkdir()
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(registry))
+    said = card.redacted(f"the registry {registry} holds no cohort version 'x' (no "
+                         f"{registry}/versions/x); see /etc/shepherd/notes.txt")
+    assert said == ("the registry <registry> holds no cohort version 'x' (no "
+                    "<registry>/versions/x); see a server path")
