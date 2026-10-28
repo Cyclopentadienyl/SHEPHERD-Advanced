@@ -11,9 +11,11 @@ checkpoints by, so there is one definition of "a checkpoint's ranking metrics".
 
 The keys the trainer writes are taken from the trainer rather than typed here: the
 training keys from the real `Trainer._train_epoch`, the validation keys from the
-real `Trainer._validate` over the real `RankingMetrics`. A rename on either side
-fails this file instead of silently emptying the display again. One step is
-copied rather than run: `_run_evaluation_pass` needs a model and data, so its
+real `Trainer._validate` over the real `RankingMetrics`, and, for a model bundle
+run, over the real reports its stage's task validates with (the base's LP
+metrics, a finetune's ranking report). A rename on either side fails this file
+instead of silently emptying the display again. One step is copied rather than
+run: `_run_evaluation_pass` needs a model and data, so its
 `RankingMetrics().compute_all(...)` call, with default k values, is repeated here.
 """
 from types import SimpleNamespace
@@ -65,12 +67,40 @@ def _current_trainer_logs():
     return {**train_metrics, **val_metrics}
 
 
+def _task_validation_logs():
+    """What `Trainer._validate` writes for a model bundle run, whose stage's
+    task validates itself: the base's LP metrics (`lp_metrics`) and a
+    finetune's ranking report (`finetune_task._report`), from the real
+    functions the tasks return."""
+    pytest.importorskip("torch")
+    from src.models.bundle.metrics import QueryOutcome, lp_metrics
+    from src.training.finetune_task import _report
+    from src.training.trainer import Trainer
+
+    logs = {}
+    for report in (lp_metrics([1.0, 0.2], [0.1, 0.5]),
+                   _report([QueryOutcome("q", "ranked", [2.0])], [], (1, 10))):
+        stub = SimpleNamespace(
+            model=SimpleNamespace(eval=lambda: None), device="cpu",
+            callbacks=SimpleNamespace(on_validation_begin=lambda trainer: None,
+                                      on_validation_end=lambda trainer, metrics: None),
+            task=SimpleNamespace(validate=lambda model, device, report=report: dict(report)),
+            config=SimpleNamespace(early_stopping_monitor="val_mrr", early_stopping_mode="max"),
+            state=SimpleNamespace(best_metric=None, best_epoch=None, val_metric_history=[]),
+        )
+        stub._is_best_metric = lambda value, stub=stub: Trainer._is_best_metric(stub, value)
+        logs.update(Trainer._validate(stub, 0))
+    return logs
+
+
 def test_every_metric_the_pipeline_copies_is_one_the_trainer_writes():
     """No guessed names: a key the trainer never writes is a lookup that can only
-    come back empty, which is how the display lost its ranking metrics."""
+    come back empty, which is how the display lost its ranking metrics. Written
+    is what either validation path writes: the ShepherdGNN pass or a model
+    bundle stage's task."""
     from src.inference.pipeline import CHECKPOINT_LOG_METRICS
 
-    written = _current_trainer_logs()
+    written = {**_current_trainer_logs(), **_task_validation_logs()}
 
     missing = [key for key in CHECKPOINT_LOG_METRICS if key not in written]
     assert not missing, f"the pipeline copies keys the trainer does not write: {missing}"
