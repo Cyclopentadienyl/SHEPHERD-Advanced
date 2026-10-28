@@ -238,17 +238,14 @@ def test_the_run_bars_start_sends_what_it_showed_and_the_runner_refuses_a_rebuil
     monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(workspace.parent))
     fresh = TrainingManager()
     monkeypatch.setattr(tc, "training_manager", fresh)
-    state = tc._workspace_state("demo")
+    state = tc.workspace_state("demo")
     shown = _fingerprint(workspace)
     assert state["row"]["dataset_fingerprint"] == shown
     assert state["row"]["dataset_fingerprint"][:12] in tc.chip_html(state)
     _rewrite_manifest(workspace)
 
-    form = [""] + [100, 1e-4, "32", "gat", "cpu", 42, "256", 4, 0.1, 0.01, "cosine", 500, 0.01,
-                   10, 1.0, 0.5, 0.3, 0.2, 1, 1.0, "8", True, "float16", 0.07, 0.1, 1.0,
-                   "15, 10, 5", 5000]
     with patch("subprocess.Popen") as popen:
-        notice, _seed = tc._on_start(gradio_request(), state, *form, False)
+        notice = tc._on_start(gradio_request(), state, "", "cpu", *tc.base_form_defaults())
     assert notice == tc.notice_html(
         "Not started: The dataset changed since it was shown; select it again. Its "
         f"split_manifest.json holds {_fingerprint(workspace)[:12]}... now "

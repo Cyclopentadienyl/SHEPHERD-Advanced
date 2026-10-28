@@ -26,7 +26,10 @@ refusal from them, with the action for where the fingerprint was shown):
   its decisions came from, whether or not the caller sent a digest.
 
 Through the real runner, the real training process, the real route and the
-console's handlers.
+console's handlers. The runner's and the process's tests continue ShepherdGNN
+runs, which the API and the CLI still continue until K7; the console's
+continue model bundle bases, since the dashboard offers model records only
+(K6 decision 1).
 
 Module: tests/unit/test_training_parent_expected.py
 """
@@ -360,14 +363,46 @@ def test_the_route_passes_the_parent_digest_to_the_service(monkeypatch):
 OP = gradio_request()
 
 
+@pytest.fixture(scope="module")
+def bundle_trained(tmp_path_factory):
+    """A workspace a workspaces root lists (``data``), with three paused model
+    bundle bases trained for real on the CPU (the Continue drawer offers
+    model records only)."""
+    sys.path.insert(0, str(REPO / "scripts"))
+    import train_model
+    from tests.fixtures.base_workspace import write_base_workspace
+    from tests.unit.test_train_base_stage import _config
+
+    root = tmp_path_factory.mktemp("bundle_parents")
+    ws = write_base_workspace(root)
+    for name, (_arch, seed) in RUNS.items():
+        run = ws / "runs" / "gatv2" / f"20261001-00000{seed}_{name}_aaaaa{seed}"
+        train_model.train(*_config(ws, run, seed=seed, pause_after_epoch=1))
+    return root
+
+
 @pytest.fixture
-def console(case, monkeypatch):
+def bundle_case(bundle_trained, tmp_path, monkeypatch):
+    """A copy of the bundle workspace per test (the tests swap its files),
+    listed by the server."""
+    root = tmp_path / "root"
+    shutil.copytree(bundle_trained, root)
+    ws = root / "data"
+    monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(root))
+    parents = {name: next((ws / "runs" / "gatv2").glob(f"*_{name}_*")) / "checkpoints" / "last.pt"
+               for name in RUNS}
+    return {"root": root, "ws": ws, "parents": parents,
+            "dataset": _sha(ws / "split_manifest.json")}
+
+
+@pytest.fixture
+def console(bundle_case, monkeypatch):
     """The Training page's session state for the copied workspace, and a
     recorder in place of the start."""
     from src.webui.components import training_console as tc
 
     operator_mode(monkeypatch)
-    ws = tc._workspace_state("data")
+    ws = tc.workspace_state("data")
     parents, _problem = tc._list_parents(ws)
     started = []
 
@@ -377,7 +412,8 @@ def console(case, monkeypatch):
 
     monkeypatch.setattr(tc.training_manager, "start_training", start)
     key = next(k for k in parents if "_a_" in k and k.endswith("/last.pt"))
-    return {**case, "tc": tc, "state": ws, "listed": parents, "key": key, "started": started}
+    return {**bundle_case, "tc": tc, "state": ws, "listed": parents, "key": key,
+            "started": started}
 
 
 def _check(c, source, typed="", mode=None):
@@ -442,7 +478,7 @@ def test_a_listed_parent_whose_bytes_changed_since_it_was_listed_is_refused(cons
     _swap(console, "other")()
     text, _e, mode, _c = _check(console, tc.CONTINUE_FROM_LIST)
     assert CHANGED in text and f"(chosen: {shown[:12]}...)" in text and REFRESH in text
-    assert "data/runs/gat/" in text, "the refused check names the file"
+    assert console["key"] in text, "the refused check names the file by its list key"
     assert mode["parent"]["refused"] is True
 
 
@@ -455,9 +491,9 @@ def test_a_listed_parent_refused_as_changed_is_shown_again_by_refresh(console):
     _swap(console, "same")()
     text, _e, mode, _c = _check(console, tc.CONTINUE_FROM_LIST)
     assert CHANGED in text and REFRESH in text
-    mode, _compare = tc._on_parent_chosen(tc.CONTINUE_FROM_LIST, console["key"], "",
-                                          console["listed"], console["state"],
-                                          {**mode, "drawer": True})
+    mode, _compare, _details = tc._on_parent_chosen(tc.CONTINUE_FROM_LIST, console["key"], "",
+                                                    console["listed"], console["state"],
+                                                    {**mode, "drawer": True})
     again, _e, mode, _c = _check(console, tc.CONTINUE_FROM_LIST, mode=mode)
     assert CHANGED in again and REFRESH in again
     refreshed, _problem = tc._list_parents(console["state"])
@@ -468,7 +504,7 @@ def test_a_listed_parent_refused_as_changed_is_shown_again_by_refresh(console):
     assert "Checkpoint read; it can continue" in text and mode["parent"]["sha256"] == now
 
 
-def test_a_typed_parent_changed_after_the_consoles_check_is_refused_by_the_start(case,
+def test_a_typed_parent_changed_after_the_consoles_check_is_refused_by_the_start(bundle_case,
                                                                               monkeypatch):
     """Continue Training on a typed path without a Check first: the console's
     own check reads and records the file, and the start's preview compares
@@ -477,7 +513,7 @@ def test_a_typed_parent_changed_after_the_consoles_check_is_refused_by_the_start
     from src.webui.components import training_console as tc
 
     operator_mode(monkeypatch)
-    ws = tc._workspace_state("data")
+    ws = tc.workspace_state("data")
     parents, _problem = tc._list_parents(ws)
     key = next(k for k in parents if "_a_" in k and k.endswith("/last.pt"))
     manager = tm.TrainingManager()
@@ -489,14 +525,14 @@ def test_a_typed_parent_changed_after_the_consoles_check_is_refused_by_the_start
         sent.append(kwargs.get("expected_sha256"))
         result = real(parent, **kwargs)
         if len(sent) == 1:
-            _swap(case, "same")()
+            _swap(bundle_case, "same")()
         return result
 
     monkeypatch.setattr(manager, "preview_continuation", preview)
-    shown = _sha(case["parents"]["a"])
+    shown = _sha(bundle_case["parents"]["a"])
     with patch.object(tm.subprocess, "Popen") as popen:
         said, *_rest = tc._on_resume(ws, "cpu", tc.CONTINUE_FROM_PATH, key,
-                                     str(case["parents"]["a"]), None, parents, {}, OP)
+                                     str(bundle_case["parents"]["a"]), None, parents, {}, OP)
     assert sent == [None, shown]
     assert CHANGED in said and CHECK_AGAIN in said, said
     popen.assert_not_called()

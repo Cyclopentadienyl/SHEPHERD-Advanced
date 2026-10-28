@@ -32,28 +32,39 @@ refuses a different one before anything is written or started
 (`TrainingManager.start_training`'s ``expected_dataset_fingerprint``, the one
 start path the API route uses too).
 
-**Parameters "for the next run"**: the same fields, groups, defaults and
-validation as before (Basic open, Advanced and Expert closed), their help
-behind the shared ⓘ (`FIELD_HELP`). The Data Paths section and its path save
-are gone: the workspace is the run bar's select.
+**Parameters "for the next base run"** (K6 decision 12): exactly the
+reference recipe's base settings (`src.config.recipe.BASE`), each field
+starting at the recipe's value (Epochs, Learning rate, Batch size and Seed
+shown; the rest under "More reference settings"), their help behind the
+shared ⓘ (`FIELD_HELP`: what it is, the reference value and its source), and
+one visible line saying which differ from the reference settings (decision
+5). Start sends ``learning_stage="base"`` and only the settings that differ;
+each value is checked by its field spec first, a problem named by its label.
+A base's task models are trained on Research › Fine-tune
+(`src/webui/components/finetune_page.py`).
 
 **Continue…** opens a drawer over the parameters column: the parent list is
-the run bar's workspace's runs only (`server_lists.list_checkpoints`, an
-operator control since it opens every checkpoint), or a typed path; Check
-checkpoint shows what continuing does (the shared run plan) and compares the
-parent's recorded dataset fingerprint with the workspace's current one. While
-it is open the run bar's actions are Start (disabled, with the reason),
-🔒 Continue Training (disabled while the datasets differ, with the reason) and
-Cancel. A listed parent is resolved by the server from its list again (never a
-client path) and its bytes compared with the digest listed; the runner and the
+the run bar's workspace's model records only (bases and task models; a file
+without a model spec is never continued from the dashboard, decision 1),
+from `server_lists.list_checkpoints` (an operator control since it opens
+every checkpoint), or a typed path that locates one of them; Check checkpoint
+shows what continuing does (the shared run plan) and compares the parent's
+recorded dataset fingerprint with the workspace's current one. While it is
+open the run bar's actions are Start (disabled, with the reason), 🔒 Continue
+Training (disabled while the datasets differ, with the reason) and Cancel. A
+listed parent is resolved by the server from its list again (never a client
+path) and its bytes compared with the digest listed; the runner and the
 training process still decide at start.
 
-**The run view**: the run the job runner started last, or, before any since
-the server started, the latest run of the run bar's workspace; its header
-says which dataset fingerprint the run used (from its checkpoint: operators
-only; a read-only request sees "not shown"), the snapshot sentence (operators:
-where it can be continued from), the shared chart component
-(`src/webui/components/charts.py`: Loss, MRR, Hits@K and the learning rate on
+**The run view**: the run the job runner started last (a Fine-tune child
+included), or, before any since the server started, the latest run of the run
+bar's workspace; its header says which dataset fingerprint the run used (from
+its checkpoint: operators only; a read-only request sees "not shown"), the
+snapshot sentence (operators: where it can be continued from), the shared
+chart component (`src/webui/components/charts.py`: Loss, the Trainer's
+validation figure and its companions, chosen by the keys the run's log holds
+(a base's LP accuracy, ROC-AUC and AP; a task model's pooled MRR and pooled
+top-k; a file without a model spec's MRR and Hits@K), and the learning rate on
 a log axis, one 2×2 figure sharing the epoch axis; the data from the run's
 metrics log through the component's server function) and the resources line.
 
@@ -94,7 +105,9 @@ first, on their own request, then the shared service in process; each is
 followed by the chips' read. A read-only request sees every action disabled
 with D8's reason as text, and no checkpoint path, snapshot or recorded
 fingerprint. The metrics log and the workspaces' JSON records are not
-operator-only.
+operator-only. Stop's question also names the Fine-tune children queued after
+the running one (`stop_question`); the Fine-tune page's Stop runs the same
+stop logic (`ask_stop`, `confirm_stop`) behind its own D8-checked handlers.
 
 Architecture Note:
     The training service is the job runner (`src.api.services.training_manager`,
@@ -108,9 +121,9 @@ import csv
 import io
 import json
 import logging
-import random
 import re
 import time
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
@@ -118,7 +131,10 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 import gradio as gr
 
 from src.api.services.training_manager import training_manager
+from src.config.recipe import BASE, BASE_SOURCES
 from src.config.runtime_presets import load_runtime_settings
+from src.config.training_fields import by_name, value_problem
+from src.evaluation.caveats import TASK_NAMES
 from src.utils.gpu_lock import lock_state
 from src.webui.components import charts
 from src.webui.components import renderers as r
@@ -156,16 +172,6 @@ def plain_html(value: Any = "", **kwargs: Any) -> Any:
 TRAINING_CONFIG_FILE = Path(".shepherd_training_config.json")
 DISPLAY_PREFIX = "SHEPHERD-Advanced/"
 
-# Max seed value. trainer._set_seed calls np.random.seed(), whose legal range is
-# [0, 2**32 - 1] (the binding limit; torch.manual_seed is wider). Generated and
-# accepted seeds stay in this range.
-_MAX_SEED = 2**32 - 1
-
-# Position of the `seed` value in `_collect_config`'s parameters. `_on_start`
-# puts the workspace's directory first and the form's values after it, in this
-# order, and swaps in a random seed at this index when "Randomize seed" is on.
-SEED_PARAM_INDEX = 7
-
 #: Every this many renders the fast poll hands over, the run bar and the run
 #: view are sent whole, whatever the session's record of what it was last sent
 #: says (each other one sends what changed; the render after an action, whole).
@@ -186,17 +192,6 @@ DETAILS_POPOVER_WIDTH = 480
 #: (Gradio's 40), which its Details popover opens over in a narrow window
 #: (M5-3: at 1280 x 720 "Learning Rate" and "Batch Size" were drawn on it).
 CHIP_Z_INDEX = 60
-
-
-def _random_seed() -> int:
-    """A fresh seed in NumPy's legal range [0, _MAX_SEED]."""
-    return random.randint(0, _MAX_SEED)
-
-
-def _seed_field_lock(randomize: bool):
-    """Lock (grey out) the seed field while "Randomize seed" is on; the random
-    seed is generated on Start and written back, so manual editing is disabled."""
-    return gr.update(interactive=not bool(randomize))
 
 
 def _save_training_config(data_dir: str, request: gr.Request) -> str:
@@ -220,166 +215,186 @@ def _save_training_config(data_dir: str, request: gr.Request) -> str:
         return f"Failed to save: {e}"
 
 
-class ConfigValidationError(ValueError):
-    """Raised when Training inputs are empty or illegal.
+# =============================================================================
+# The recipe's settings in a form (K6 decisions 5, 11, 12)
+# =============================================================================
+#: **The label of each recipe setting a form offers**, one name per setting:
+#: the base form (`BASE_FIELDS`) and the Fine-tune page's Epochs and Seed.
+SETTING_LABELS: Dict[str, str] = {
+    "num_epochs": "Epochs",
+    "learning_rate": "Learning rate",
+    "batch_size": "Batch size",
+    "seed": "Seed",
+    "num_neighbors": "Neighbours per hop",
+    "max_grad_norm": "Gradient clip",
+    "scheduler_type": "Scheduler",
+    "warmup_steps": "Warmup steps",
+    "weight_decay": "Weight decay",
+    "use_amp": "Mixed precision",
+    "early_stopping_patience": "Early stopping patience",
+}
+#: The base form's fields, in its order: **exactly the reference recipe's base
+#: settings** (`recipe.BASE`), the first `BASE_SHOWN` of them shown, the rest
+#: under "More reference settings".
+BASE_FIELDS: Tuple[str, ...] = ("num_epochs", "learning_rate", "batch_size", "seed",
+                                "num_neighbors", "max_grad_norm", "scheduler_type",
+                                "warmup_steps", "weight_decay", "use_amp",
+                                "early_stopping_patience")
+BASE_SHOWN = 4
 
-    The message is user-facing: callers surface it as a gr.Warning toast and
-    abort without launching training.
-    """
+#: Each setting's help lead (what it is, under 90 characters), before its
+#: reference value and source (`setting_help`).
+_SETTING_LEADS = {
+    "num_epochs": "How many passes over the training data the run makes.",
+    "learning_rate": "The optimizer's step size; with the scheduler none it stays constant.",
+    "batch_size": "Training examples per step: larger is faster and needs more memory.",
+    "seed": "The random seed of the weights' start and the sampling (the split has its own).",
+    "num_neighbors": "Neighbours sampled at each hop, one number per encoder layer; -1 takes all.",
+    "max_grad_norm": "The largest gradient norm a step takes; a larger one is scaled down.",
+    "scheduler_type": "How the learning rate changes over the run; none keeps it constant.",
+    "warmup_steps": "Steps over which the learning rate ramps up from zero; 0 is none.",
+    "weight_decay": "The optimizer's penalty on large weights; 0 is none.",
+    "use_amp": "16-bit arithmetic on CUDA to save memory and time; off keeps float32.",
+    "early_stopping_patience": "Epochs without a better Trainer validation figure before the "
+                               "run stops; empty is off.",
+}
 
 
-def _num(value, label, cast, errors, *, positive=False, lo=None, hi=None):
-    """Coerce and range-check one numeric widget value, accumulating a friendly,
-    field-named message into ``errors`` instead of leaking a raw
-    TypeError/ValueError or Gradio's terse field-less bound error.
-
-    A cleared gr.Number yields None; string/punctuation is already blocked by the
-    number input client-side, but the try/except keeps a clean error contract for
-    direct/programmatic calls (e.g. tests). ``lo``/``hi`` are inclusive bounds
-    (replacing the widgets' minimum/maximum so the message names the field);
-    ``positive`` is a strict > 0 check (learning_rate, which has no widget bound).
-    Returns the cast value, or None when invalid (the caller aborts on a
-    non-empty ``errors`` list).
-    """
+def setting_shown(value: Any) -> str:
+    """A setting's value as a form and its notes say it: a list as its
+    comma-separated items, on/off for a switch, "off" for no patience."""
     if value is None:
-        errors.append(f"{label} is empty — enter a value.")
-        return None
-    try:
-        v = cast(value)
-    except (TypeError, ValueError):
-        errors.append(f"{label} must be a number (got {value!r}).")
-        return None
-    if positive and v <= 0:
-        errors.append(f"{label} must be > 0 (got {v}).")
-    if lo is not None and v < lo:
-        errors.append(f"{label} must be >= {lo} (got {v}).")
-    if hi is not None and v > hi:
-        errors.append(f"{label} must be <= {hi} (got {v}).")
-    return v
+        return "off"
+    if isinstance(value, bool):
+        return "on" if value else "off"
+    if isinstance(value, (list, tuple)):
+        return ", ".join(str(v) for v in value)
+    if isinstance(value, float):
+        return f"{value:g}"
+    return str(value)
 
 
-def _collect_config(
-    # Paths
-    data_dir: str,
-    run_name: str,
-    # Tier 1 — Basic
-    num_epochs: int,
-    learning_rate: float,
-    batch_size: str,
-    conv_type: str,
-    device: str,
-    seed: int,
-    # Tier 2 — Advanced
-    hidden_dim: str,
-    num_layers: int,
-    dropout: float,
-    weight_decay: float,
-    scheduler_type: str,
-    warmup_steps: int,
-    min_lr_ratio: float,
-    early_stopping_patience: int,
-    diagnosis_weight: float,
-    link_prediction_weight: float,
-    contrastive_weight: float,
-    ortholog_weight: float,
-    # Tier 3 — Expert
-    gradient_accumulation_steps: int,
-    max_grad_norm: float,
-    num_heads: str,
-    use_ortholog_gate: bool,
-    amp_mode: str,
-    temperature: float,
-    label_smoothing: float,
-    margin: float,
-    num_neighbors_str: str,
-    max_subgraph_nodes: int,
-) -> Dict[str, Any]:
-    """Collect all parameter widgets into a config dict. `data_dir` is the
-    workspace's directory, as the server resolved it from its list."""
-    errors: List[str] = []
+def setting_help(name: str, references: Mapping[str, Any], sources: Mapping[str, str]
+                 ) -> Tuple[str, str]:
+    """A setting's help, ``(title, text)``: its label, then what it is, its
+    reference value and the source of that value (`src.config.recipe`)."""
+    return (SETTING_LABELS[name],
+            f"{_SETTING_LEADS[name]}\n\n"
+            f"Reference: {setting_shown(references[name])}.\n"
+            f"Source: {sources[name]}.\n\n"
+            "A provisional default from the source, not tuned on this data.")
 
-    # Parse comma-separated neighbors. An unparseable, empty or illegal entry surfaces as a
-    # validation error rather than silently falling back to the default — a silent fallback
-    # would start a run with a fan-out the user never asked for. Mirrors the API policy
-    # (non-empty, each entry >= 1).
-    num_neighbors: List[int] = []
-    try:
-        num_neighbors = [int(x.strip()) for x in num_neighbors_str.split(",") if x.strip()]
-    except (ValueError, AttributeError):
-        errors.append('Num Neighbors must be comma-separated integers (e.g. "15, 10, 5").')
+
+def form_value(name: str, value: Any) -> Any:
+    """A recipe value as its field holds it (the hop list as text)."""
+    return setting_shown(value) if name == "num_neighbors" else value
+
+
+def setting_field(name: str, value: Any, *, elem_id: str) -> Any:
+    """**The one field of a recipe setting** (the base form's and the
+    Fine-tune page's), by its field spec: the hop list as text, a switch, the
+    spec's few choices as a radio, else a number box (whole numbers for an
+    integer setting, which `value_problem` refuses as a float). Labelled by
+    `SETTING_LABELS`, its help behind the ⓘ (never ``info=``)."""
+    label, spec = SETTING_LABELS[name], by_name(name)
+    if name == "num_neighbors":
+        return gr.Textbox(label=label, value=form_value(name, value), max_lines=1,
+                          elem_id=elem_id)
+    if spec.kind == "bool":
+        return gr.Checkbox(label=label, value=bool(value), elem_id=elem_id)
+    if spec.choices:
+        return gr.Radio(label=label, choices=list(spec.choices), value=value, elem_id=elem_id)
+    return gr.Number(label=label, value=value, precision=0 if spec.kind == "int" else None,
+                     elem_id=elem_id)
+
+
+def base_form_defaults() -> Tuple[Any, ...]:
+    """The base form's starting values, in `BASE_FIELDS` order: the recipe's."""
+    return tuple(form_value(name, BASE[name]) for name in BASE_FIELDS)
+
+
+def _parsed(name: str, value: Any) -> Tuple[Any, Optional[str]]:
+    """A field's value as its setting takes it: the hop text as a list of
+    whole numbers; a whole float of an integer field (a number box's value) as
+    an int; an int of a float field as a float. ``(value, why not)``."""
+    if name == "num_neighbors":
+        try:
+            return [int(part) for part in str(value or "").split(",") if part.strip()], None
+        except ValueError:
+            return None, "must be whole numbers separated by commas, such as 15, 10, 5."
+    kind = by_name(name).kind
+    if kind == "int" and isinstance(value, float) and value.is_integer():
+        return int(value), None
+    if kind == "float" and isinstance(value, int) and not isinstance(value, bool):
+        return float(value), None
+    return value, None
+
+
+def setting_problem(name: str, value: Any, reference: Any) -> Tuple[Any, Optional[str]]:
+    """A field's value parsed and checked by its field spec (`value_problem`,
+    the one check the start makes again): ``(value, problem)``, the problem
+    named by the field's label (`SETTING_LABELS`). Empty is taken only where the
+    reference value is (early stopping's patience)."""
+    label = SETTING_LABELS[name]
+    parsed, why = _parsed(name, value)
+    if why:
+        return None, f"{label} {why}"
+    problem = value_problem(name, parsed, allow_none=reference is None)
+    if problem and problem.startswith(name):
+        problem = label + problem[len(name):]
+    elif problem:
+        problem = f"{label}: {problem}"
+    return parsed, problem
+
+
+def _same(value: Any, reference: Any) -> bool:
+    return value == reference and isinstance(value, bool) == isinstance(reference, bool)
+
+
+def recipe_differences(values: Mapping[str, Any], references: Mapping[str, Any]
+                       ) -> Tuple[Dict[str, Any], List[str]]:
+    """**What a start sends of a form** (K6 decisions 11, 12): ``(settings,
+    problems)``, the settings whose value differs from `references` (the
+    recipe's), each parsed and checked (`setting_problem`), and every problem,
+    named by its label. A setting left at its reference value is not sent, so
+    the run records it as the recipe's, never as the operator's."""
+    settings: Dict[str, Any] = {}
+    problems: List[str] = []
+    for name, value in values.items():
+        parsed, problem = setting_problem(name, value, references[name])
+        if problem:
+            problems.append(problem)
+        elif not _same(parsed, references[name]):
+            settings[name] = parsed
+    return settings, problems
+
+
+def differs_html(values: Mapping[str, Any], references: Mapping[str, Any]) -> str:
+    """The form's one line on the reference settings (decision 5): "Differs
+    from the reference settings: Epochs 5 (200)", each setting that differs
+    with its reference value in brackets, or "Uses the reference settings.";
+    then any value the start would refuse, by its label. Escaped."""
+    settings, problems = recipe_differences(values, references)
+    if settings:
+        text = "Differs from the reference settings: " + ", ".join(
+            f"{SETTING_LABELS[name]} {setting_shown(value)} ({setting_shown(references[name])})"
+            for name, value in settings.items())
     else:
-        if not num_neighbors:
-            errors.append('Num Neighbors must not be empty (e.g. "15, 10, 5").')
-        elif any(n < 1 for n in num_neighbors):
-            errors.append("Num Neighbors entries must each be >= 1.")
+        text = "Uses the reference settings."
+    refused = (f'<p class="shep-amber-t">Not valid: {r.e(" ".join(problems))}</p>'
+               if problems else "")
+    return f'<div class="shep-differs"><p>{r.e(text)}</p>{refused}</div>'
 
-    # Strip the display prefix — training subprocess uses paths relative to project root
-    def _strip_prefix(path: str) -> str:
-        p = path.strip()
-        if p.startswith("SHEPHERD-Advanced/"):
-            p = p[len("SHEPHERD-Advanced/"):]
-        return p
 
-    # Numeric gr.Number fields can arrive as None when a user clears them; route
-    # them through _num so an empty/illegal value becomes a friendly toast instead
-    # of a raw TypeError. Sliders and (string-choice) dropdowns can't be None, so
-    # they keep their bare casts. learning_rate is the one Number with no widget
-    # minimum, so it also gets a >0 check (aligns with the API's Field(gt=0)).
-    config: Dict[str, Any] = {
-        "data_dir": _strip_prefix(data_dir) or "data/workspaces/default",
-        # The run writes into a directory of its own, allocated under the
-        # workspace (contract M3a-2); the name is optional and for people.
-        "run_name": (run_name or "").strip(),
-        # Tier 1
-        "num_epochs": _num(num_epochs, "Epochs", int, errors, lo=1, hi=10000),
-        "learning_rate": _num(learning_rate, "Learning Rate", float, errors, positive=True),
-        "batch_size": int(batch_size),
-        "conv_type": conv_type,
-        "device": device,
-        "seed": _num(seed, "Seed", int, errors, lo=0, hi=_MAX_SEED),
-        # Tier 2
-        "hidden_dim": int(hidden_dim),
-        "num_layers": int(num_layers),
-        "dropout": float(dropout),
-        "weight_decay": float(weight_decay),
-        "scheduler_type": scheduler_type,
-        "warmup_steps": _num(warmup_steps, "Warmup Steps", int, errors, lo=0),
-        "min_lr_ratio": _num(min_lr_ratio, "Min LR Ratio", float, errors, lo=1e-4, hi=1.0),
-        "early_stopping_patience": _num(early_stopping_patience, "Early Stopping Patience", int, errors, lo=1),
-        "diagnosis_weight": float(diagnosis_weight),
-        "link_prediction_weight": float(link_prediction_weight),
-        "contrastive_weight": float(contrastive_weight),
-        "ortholog_weight": float(ortholog_weight),
-        # Tier 3
-        "gradient_accumulation_steps": _num(gradient_accumulation_steps, "Gradient Accumulation Steps", int, errors, lo=1),
-        "max_grad_norm": _num(max_grad_norm, "Max Grad Norm", float, errors, lo=0.01),
-        "num_heads": int(num_heads),
-        "use_ortholog_gate": use_ortholog_gate,
-        "use_amp": False if (conv_type == "hgt" or amp_mode == "Off") else True,
-        "amp_dtype": amp_mode if amp_mode != "Off" else "float16",
-        "temperature": float(temperature),
-        "label_smoothing": float(label_smoothing),
-        "margin": float(margin),
-        "num_neighbors": num_neighbors,
-        "max_subgraph_nodes": _num(max_subgraph_nodes, "Max Subgraph Nodes", int, errors, lo=100),
-        # torch.compile is configured in the Runtime Settings tab (per-run, no
-        # restart). Read its persisted value here so it flows into the training
-        # config exactly once, sourced from a single place.
-        "compile": bool(load_runtime_settings().get("torch_compile", False)),
-    }
-
-    if errors:
-        raise ConfigValidationError(
-            "Cannot start training — please fix:\n• " + "\n• ".join(errors)
-        )
-
-    return config
+def _on_base_changed(*values: Any) -> str:
+    """Any base field changed: the line on the reference settings again."""
+    return differs_html(dict(zip(BASE_FIELDS, values)), BASE)
 
 
 # =============================================================================
 # The run bar's workspace (the session's selection)
 # =============================================================================
-def _empty_workspace() -> Dict[str, Any]:
+def empty_workspace() -> Dict[str, Any]:
     return {"name": None, "row": None, "facts": None, "choices": [], "listed": [],
             "digits": r.SHORT_HEX, "problem": None, "latest_run": None}
 
@@ -398,7 +413,7 @@ def _latest_run(directory: Optional[Path]) -> Optional[str]:
     return f"{run_architecture(runs[0])}/{runs[0].name}" if runs else None
 
 
-def _workspace_state(name: Optional[str], listed: Optional[Mapping[str, Any]] = None
+def workspace_state(name: Optional[str], listed: Optional[Mapping[str, Any]] = None
                      ) -> Dict[str, Any]:
     """The session's run-bar workspace, read now (or from `listed`, a
     `read_workspaces` answer just read): the server's list (the dashboard's one
@@ -408,7 +423,7 @@ def _workspace_state(name: Optional[str], listed: Optional[Mapping[str, Any]] = 
     here is the one Start sends."""
     listed = listed if listed is not None else read_workspaces()
     rows = listed["rows"]
-    state = _empty_workspace()
+    state = empty_workspace()
     # The options name the workspace; its identity (fingerprint, synthetic) is
     # the chip's, beside the select (said once on the page). A workspace that
     # cannot be trained keeps its reason in its option, read before choosing.
@@ -429,23 +444,23 @@ def _workspace_state(name: Optional[str], listed: Optional[Mapping[str, Any]] = 
     return state
 
 
-def _fingerprint(ws: Optional[Mapping[str, Any]]) -> Optional[str]:
+def workspace_fingerprint(ws: Optional[Mapping[str, Any]]) -> Optional[str]:
     row = (ws or {}).get("row") or {}
     value = row.get("dataset_fingerprint")
     return value if r.is_digest(value) else None
 
 
-def _dataset_choices_update(ws: Mapping[str, Any], *, interactive: bool = True) -> Any:
+def dataset_choices_update(ws: Mapping[str, Any], *, interactive: bool = True) -> Any:
     choices = [tuple(c) for c in ws.get("choices") or []]
     return gr.update(choices=choices, value=ws.get("name"), interactive=interactive)
 
 
 # --------------------------------------------------------------------------- the chip
-_LOCK = ('<svg class="shep-lock" width="12" height="12" viewBox="0 0 16 16" aria-hidden="true" '
+LOCK_ICON = ('<svg class="shep-lock" width="12" height="12" viewBox="0 0 16 16" aria-hidden="true" '
          'focusable="false"><rect x="3" y="7" width="10" height="7.5" rx="1.6" '
          'fill="currentColor"/><path d="M5.2 7V5.2a2.8 2.8 0 0 1 5.6 0V7" fill="none" '
          'stroke="currentColor" stroke-width="1.6"/></svg>')
-_NO = ('<svg class="shep-no" width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" '
+NO_ICON = ('<svg class="shep-no" width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" '
        'focusable="false"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" '
        'stroke-width="1.5"/><path d="M4.6 8h6.8" stroke="currentColor" stroke-width="1.5"/></svg>')
 
@@ -520,7 +535,7 @@ document.addEventListener('pointerdown', function (e) {
 """
 
 #: Cross-links in the reason line ("Open Test ›") and the banner's Dismiss.
-_TRIGGER_JS = r"""
+TRIGGER_JS = r"""
 element.addEventListener('click', function (e) {
   var a = e.target.closest ? e.target.closest('[data-act]') : null;
   if (a) { trigger('click', {act: a.getAttribute('data-act'), key: a.getAttribute('data-key') || ''}); }
@@ -531,11 +546,11 @@ element.addEventListener('click', function (e) {
 #: a shorter one shows its summary line, so the charts keep their room.
 BANNER_OPEN_HEIGHT = 1000
 
-#: The banner: Dismiss (`_TRIGGER_JS`) and its output tail's disclosure, sent
+#: The banner: Dismiss (`TRIGGER_JS`) and its output tail's disclosure, sent
 #: open and closed here once per banner on a wide window under
 #: `BANNER_OPEN_HEIGHT` px; once the user opens or closes it, their choice
 #: holds for the banners that follow on this page.
-_BANNER_JS = _TRIGGER_JS + r"""
+_BANNER_JS = TRIGGER_JS + r"""
 function fitTail() {
   var d = element.querySelector('details.shep-banner-more:not([data-fit])');
   if (!d) { return; }
@@ -584,9 +599,14 @@ def _epochs(status: Mapping[str, Any], sep: str = " of ") -> Optional[str]:
     return f"epoch {epoch}{sep}{total}" if total else f"epoch {epoch}"
 
 
-#: Pill classes: never green for a failed, stopped or cancelled run.
+#: **The status table of the training jobs** (K6 decision 9): each state's
+#: kind, never green for a failed, stopped or cancelled run. The run bar's
+#: pill reads it, and so does the Fine-tune job card for each child, whose
+#: own states are a Fine-tune start's: queued, cancelled (by a stop) and
+#: refused (the slot would not take it).
 PILL_KIND = {"idle": "idle", "starting": "accent", "running": "running", "stopping": "accent",
-             "completed": "ok", "stopped": "grey", "failed": "red"}
+             "completed": "ok", "stopped": "grey", "failed": "red",
+             "queued": "grey", "cancelled": "grey", "refused": "red"}
 
 
 def pill_state(status: Mapping[str, Any]) -> Tuple[str, str]:
@@ -680,12 +700,12 @@ def run_bar_view(status: Mapping[str, Any], ws: Mapping[str, Any], mode: Mapping
 
     if not access.allowed:
         short = D8_SHORT.get(access.condition, "request not readable")
-        view["reason"] = line(_LOCK, f"Operator controls only: {short}")
+        view["reason"] = line(LOCK_ICON, f"Operator controls only: {short}")
         view["drawer_reason"] = view["reason"]
         return view
     if training_busy:
         view["stop"] = s == "running" and not confirming(status, mode)
-        view["reason"] = line(_NO, "Start and Continue… disabled: a training job is running."
+        view["reason"] = line(NO_ICON, "Start and Continue… disabled: a training job is running."
                               if s == "running" else
                               "Stopping: the job is ending; Start and Continue… wait for it.")
         view["drawer_reason"] = view["reason"]
@@ -700,17 +720,17 @@ def run_bar_view(status: Mapping[str, Any], ws: Mapping[str, Any], mode: Mapping
         view["drawer_reason"] = view["reason"]
         return view
     if not row:
-        view["reason"] = line(_NO, "Start and Continue… disabled: select a dataset.")
+        view["reason"] = line(NO_ICON, "Start and Continue… disabled: select a dataset.")
         view["drawer_reason"] = view["reason"]
         return view
     if not row.get("trainable"):
-        view["reason"] = line(_NO, f"Start and Continue… disabled: {row.get('name')} is not "
+        view["reason"] = line(NO_ICON, f"Start and Continue… disabled: {row.get('name')} is not "
                                    f"trainable: {r.not_trainable_short(row)}.")
         view["drawer_reason"] = view["reason"]
         return view
     if not drawer:
         view["start"] = view["cont"] = True
-        view["reason"] = line(_NO, "Stop disabled: no training is running.")
+        view["reason"] = line(NO_ICON, "Stop disabled: no training is running.")
         return view
     parent = mode.get("parent") or {}
     why = continue_refusal(parent, ws)
@@ -720,11 +740,11 @@ def run_bar_view(status: Mapping[str, Any], ws: Mapping[str, Any], mode: Mapping
         # One word group per sentence (`renderers.word_groups`): a line breaks
         # between the two sentences, never leaving the last word of the second
         # alone on a line under the first ("…cannot be" / "continued.").
-        view["reason"] = (f'<span class="shep-rb-why">{_NO}<span>'
+        view["reason"] = (f'<span class="shep-rb-why">{NO_ICON}<span>'
                           f'{r.word_groups(text, f"Continue Training disabled: {why}")}</span></span>')
-        view["drawer_reason"] = line(_NO, f"Continue Training, in the run bar above, is disabled: {why}")
+        view["drawer_reason"] = line(NO_ICON, f"Continue Training, in the run bar above, is disabled: {why}")
     else:
-        view["reason"] = line(_NO, text)
+        view["reason"] = line(NO_ICON, text)
     return view
 
 
@@ -747,7 +767,7 @@ def continue_refusal(parent: Mapping[str, Any], ws: Mapping[str, Any]) -> Option
         return other
     if parent.get("refused"):
         return "the check says this checkpoint cannot be continued."
-    recorded, current = parent.get("fingerprint"), _fingerprint(ws)
+    recorded, current = parent.get("fingerprint"), workspace_fingerprint(ws)
     if r.is_digest(recorded) and current and recorded != current:
         return "the parent’s dataset is not this workspace’s current one."
     return None
@@ -942,33 +962,35 @@ class RunRef(Dict[str, Any]):
     the server started)."""
 
 
+def workspace_of_run(run_dir: Any) -> Optional[str]:
+    """The listed workspace a run directory is inside, by the name the server
+    lists it under, or None (one listing of the root: `resolve_workspaces`)."""
+    from src.api.services.server_lists import ServerListRefused, resolve_workspaces
+
+    try:
+        directories = resolve_workspaces()
+    except ServerListRefused:
+        return None
+    try:
+        resolved = Path(run_dir).resolve()
+    except OSError:
+        resolved = Path(run_dir)
+    return next((listed for listed, directory in directories.items()
+                 if directory in resolved.parents), None)
+
+
 def _runner_run(status: Mapping[str, Any], cache: Dict[str, Any]) -> Optional[RunRef]:
     """The run the job runner started last, named by its listed workspace
     (``<workspace>/<arch>/<run>``) or, when the workspace is not listed, by
     its job (``job:<id>``). The workspace's name is looked up once per run
-    and session (one listing of the root)."""
+    and session (`workspace_of_run`)."""
     run_dir = training_manager.run_dir
     if run_dir is None or (status.get("status") or "idle") == "idle":
         return None
     key = str(run_dir)
     named = cache.get("runner_ws")
     if not named or named[0] != key:
-        from src.api.services.server_lists import ServerListRefused, resolve_workspaces
-
-        try:
-            directories = resolve_workspaces()
-        except ServerListRefused:
-            directories = {}
-        name = None
-        try:
-            resolved = Path(run_dir).resolve()
-        except OSError:
-            resolved = Path(run_dir)
-        for listed, directory in directories.items():
-            if directory in resolved.parents:
-                name = listed
-                break
-        named = (key, name)
+        named = (key, workspace_of_run(run_dir))
         cache["runner_ws"] = named
     arch = Path(run_dir).parent.name
     label = f"{arch}/{Path(run_dir).name}"
@@ -1019,8 +1041,10 @@ def _current_run(status: Mapping[str, Any], ws: Mapping[str, Any],
 def resolve_run(run_id: Any) -> Optional[Path]:
     """The directory of the run the server lists as `run_id`, or None: a
     listed workspace's run, found by listing ``runs/<arch>/`` again (never by
-    joining the id onto a path), inside that workspace; or ``job:<id>``, the
-    job runner's latest training job."""
+    joining the id onto a path), inside that workspace, for a run layout key
+    (`RUN_LAYOUT_KEYS`: a model bundle's encoder kind, or a ShepherdGNN conv
+    type for a run kept as history); or ``job:<id>``, the job runner's latest
+    training job."""
     if not isinstance(run_id, str) or len(run_id) > 400:
         return None
     if run_id.startswith("job:"):
@@ -1032,10 +1056,9 @@ def resolve_run(run_id: Any) -> Optional[Path]:
         return None
     workspace, arch, run = parts
     from src.api.services.server_lists import ServerListRefused, resolve_workspace
-    from src.config.model_types import SUPPORTED_CONV_TYPES
-    from src.utils.checkpoint_paths import RUNS_DIRNAME
+    from src.utils.checkpoint_paths import RUN_LAYOUT_KEYS, RUNS_DIRNAME
 
-    if arch not in SUPPORTED_CONV_TYPES:
+    if arch not in RUN_LAYOUT_KEYS:
         return None
     try:
         directory = resolve_workspace(workspace)
@@ -1104,7 +1127,7 @@ def _newest_checkpoint(run_dir: Path) -> Optional[Path]:
     return best
 
 
-def _digest_html(digest: Any, digits: int = r.SHORT_HEX, what: str = "fingerprint") -> str:
+def digest_html(digest: Any, digits: int = r.SHORT_HEX, what: str = "fingerprint") -> str:
     """A digest's short form in bold monospace, the full value in its title
     and on an icon Copy; "not recorded" when there is none."""
     if not r.is_digest(digest):
@@ -1121,7 +1144,7 @@ def _dataset_relation(ws: Mapping[str, Any], *, operator: bool,
     fingerprint itself. Reading it opens the run's checkpoint: an operator's
     only."""
     if not operator:
-        return (f'<span class="shep-tag shep-tag-grey">{_LOCK} dataset not shown · operator '
+        return (f'<span class="shep-tag shep-tag-grey">{LOCK_ICON} dataset not shown · operator '
                 'control</span>',
                 '<span class="shep-muted">not shown: reading the checkpoint is an operator '
                 'control</span>')
@@ -1131,8 +1154,8 @@ def _dataset_relation(ws: Mapping[str, Any], *, operator: bool,
     if not snapshot.get("readable", True):
         return ('<span class="shep-tag shep-tag-amber">checkpoint cannot be read</span>',
                 '<span class="shep-muted">not read (the checkpoint cannot be read)</span>')
-    recorded, current = snapshot.get("dataset_fingerprint"), _fingerprint(ws)
-    row = _digest_html(recorded, ws.get("digits") or r.SHORT_HEX, "dataset fingerprint")
+    recorded, current = snapshot.get("dataset_fingerprint"), workspace_fingerprint(ws)
+    row = digest_html(recorded, ws.get("digits") or r.SHORT_HEX, "dataset fingerprint")
     if not (r.is_digest(recorded) and current):
         return '<span class="shep-muted">dataset not recorded</span>', row
     if recorded == current:
@@ -1252,15 +1275,60 @@ def run_snapshot_html(run: Optional[RunRef], status: Mapping[str, Any], *, opera
 # =============================================================================
 # The charts: data from the run's metrics log (the server function)
 # =============================================================================
-#: The four charts, in figure order (2×2: Loss, MRR / Hits@K, learning rate).
+#: The four charts, in figure order (2×2): Loss, the Trainer's validation
+#: figure ("mrr") and its companions ("hits"), the learning rate. The ids stay
+#: whatever the run's kind; the middle two take their titles and series from
+#: `VALIDATION_CHARTS`.
 CHART_TITLES = {
     "loss": "Loss",
-    "mrr": "MRR (validation, Trainer top-20)",
-    "hits": "Hits@K (validation, Trainer)",
     "lr": "Learning rate (log)",
 }
 SHARED_AXIS = "epoch (shared axis)"
 _HITS = re.compile(r"^val_hits@(\d+)$")
+_POOLED_TOP = re.compile(r"^val_pooled_top(\d+)$")
+#: The middle two charts by the run's kind, read from the keys its validation
+#: log holds (`validation_kind`): ``(the figure's title, its series, the
+#: companions' title, theirs)``, each series ``(label, key)``; the companions
+#: by cut-off are filled from the log (`_k_series`). A run that has logged no
+#: validation yet is "none": its two charts wait, titled by what they will
+#: show for any run.
+VALIDATION_CHARTS = {
+    "base": ("LP accuracy (validation, Trainer)", (("LP accuracy", "val_lp_accuracy"),),
+             "ROC-AUC and AP (validation, Trainer)",
+             (("ROC-AUC", "val_lp_roc_auc"), ("AP", "val_lp_average_precision"))),
+    "finetune": ("Pooled MRR (validation, Trainer)", (("pooled MRR", "val_pooled_mrr"),),
+                 "Pooled top-k (validation, Trainer)", _POOLED_TOP),
+    "history": ("MRR (validation, Trainer top-20)", (("MRR", "val_mrr"),),
+                "Hits@K (validation, Trainer)", _HITS),
+    "none": ("Validation figure (Trainer)", (), "More validation figures (Trainer)", ()),
+}
+
+
+def validation_kind(validation: Sequence[Mapping[str, Any]]) -> str:
+    """Which run a validation log is, by its keys: "history" for a file
+    without a model spec (MRR, Hits@K), "finetune" (pooled MRR), "base" (LP
+    accuracy), or "none" before the first validation."""
+    keys = {str(key) for entry in validation for key in entry}
+    if "val_mrr" in keys or any(_HITS.match(key) for key in keys):
+        return "history"
+    if "val_pooled_mrr" in keys:
+        return "finetune"
+    if "val_lp_accuracy" in keys:
+        return "base"
+    return "none"
+
+
+def _k_series(validation: Sequence[Mapping[str, Any]], pattern: Any, words: str
+              ) -> List[Tuple[str, str]]:
+    """Every cut-off k the log names by `pattern`, in order, as ``(label,
+    key)``: "Hits@1", "top-10"."""
+    found = {}
+    for entry in validation:
+        for key in entry:
+            match = pattern.match(str(key))
+            if match:
+                found[int(match.group(1))] = str(key)
+    return [(f"{words}{k}", found[k]) for k in sorted(found)]
 
 
 def _by_epoch(entries: Sequence[Mapping[str, Any]], *keys: str) -> Dict[int, Any]:
@@ -1284,27 +1352,37 @@ def _has_value(values: Sequence[Any]) -> bool:
 
 def training_charts(history: Mapping[str, Any]) -> List[Dict[str, Any]]:
     """The four chart specs from a metrics history (`get_metrics_history`):
-    Loss (train, validation), MRR and Hits@K (the Trainer's validation
-    figures; a Hits@K appears when the log has it) and the learning rate on a
-    log axis. A series with no value yet is left out."""
+    Loss (train, and validation where the run logs one: ``val_loss``, a
+    base's ``val_lp_loss``), the Trainer's validation figure and its
+    companions as the run's kind logs them (`VALIDATION_CHARTS`: a base's LP
+    accuracy, then its ROC-AUC and AP; a task model's pooled MRR, then its
+    pooled top-k; a file without a model spec's MRR, then its Hits@K), and
+    the learning rate on a log axis. A series with no value yet is left out,
+    so no chart draws a figure the run does not log."""
     train = [e for e in history.get("train") or [] if isinstance(e, Mapping)]
     val = [e for e in history.get("validation") or [] if isinstance(e, Mapping)]
     specs = []
 
-    def spec(chart_id, columns, *, y_scale="linear", x_label=None):
+    def spec(chart_id, title, columns, *, y_scale="linear", x_label=None):
         epochs = sorted(set().union(*[set(c) for _label, c in columns])) if columns else []
         series = [(label, [col.get(x) for x in epochs]) for label, col in columns]
         series = [(label, values) for label, values in series if _has_value(values)]
-        return charts.chart_spec(chart_id, CHART_TITLES[chart_id], epochs if series else [],
+        return charts.chart_spec(chart_id, title, epochs if series else [],
                                  series, y_scale=y_scale, x_label=x_label)
 
-    specs.append(spec("loss", [("train", _by_epoch(train, "total", "train_loss")),
-                               ("validation", _by_epoch(val, "val_loss"))]))
-    specs.append(spec("mrr", [("MRR", _by_epoch(val, "val_mrr"))]))
-    ks = sorted({int(m.group(1)) for e in val for k in e for m in [_HITS.match(str(k))] if m})
-    specs.append(spec("hits", [(f"Hits@{k}", _by_epoch(val, f"val_hits@{k}")) for k in ks],
-                      x_label=SHARED_AXIS))
-    specs.append(spec("lr", [("learning rate", _by_epoch(train, "learning_rate"))],
+    def columns(pairs):
+        return [(label, _by_epoch(val, key)) for label, key in pairs]
+
+    figure_title, figure, others_title, others = VALIDATION_CHARTS[validation_kind(val)]
+    if not isinstance(others, tuple):
+        others = _k_series(val, others, "Hits@" if others is _HITS else "top-")
+    specs.append(spec("loss", CHART_TITLES["loss"],
+                      [("train", _by_epoch(train, "total", "train_loss")),
+                       ("validation", _by_epoch(val, "val_loss", "val_lp_loss"))]))
+    specs.append(spec("mrr", figure_title, columns(figure)))
+    specs.append(spec("hits", others_title, columns(others), x_label=SHARED_AXIS))
+    specs.append(spec("lr", CHART_TITLES["lr"],
+                      [("learning rate", _by_epoch(train, "learning_rate"))],
                       y_scale="log", x_label=SHARED_AXIS))
     return specs
 
@@ -1487,7 +1565,7 @@ POLL_READS = ("lock", "latest")
 CHANGED_ID = "shep-train-changed"
 
 
-def _gpu_view(active, cache: Dict[str, Any], operator: bool) -> Optional[Dict[str, Any]]:
+def gpu_view(active, cache: Dict[str, Any], operator: bool) -> Optional[Dict[str, Any]]:
     """The GPU line: the job runner each time; the lock (it probes the flock)
     at most every `LOCK_READ_SECONDS` per session, when the runner holds no job."""
     if active:
@@ -1510,7 +1588,7 @@ def render(ws: Optional[Mapping[str, Any]], mode: Optional[Mapping[str, Any]],
            request: Optional[gr.Request]) -> Dict[str, Any]:
     """Every piece of the run bar and the run view, computed now for this
     request, as plain values (`VIEW_KEYS`) plus the session's new cache."""
-    ws = dict(ws or _empty_workspace())
+    ws = dict(ws or empty_workspace())
     mode = dict(mode or {})
     cache = dict(cache or {})
     access = operator_access(request)
@@ -1523,9 +1601,9 @@ def render(ws: Optional[Mapping[str, Any]], mode: Optional[Mapping[str, Any]],
     in_use = s in ("running", "stopping")
     ws_changed = False
     if in_use and run is not None and run.get("workspace") and run["workspace"] != ws.get("name"):
-        ws = _workspace_state(run["workspace"])
+        ws = workspace_state(run["workspace"])
         ws_changed = True
-    gpu = None if in_use else _gpu_view(active, cache, access.allowed)
+    gpu = None if in_use else gpu_view(active, cache, access.allowed)
     view = run_bar_view(status, ws, mode, access=access, active=active, gpu=gpu)
     # What this render read of the GPU slot, for the header's chips
     # (`chips_on_change`): the training state, the runner's job, the lock's
@@ -1767,8 +1845,8 @@ def _open(ws, preferred):
         trainable = [x["name"] for x in rows if x.get("trainable")]
         choice = (serving if serving in trainable else
                   trainable[0] if trainable else names[0] if names else None)
-    state = _workspace_state(choice, listed)
-    return (state, _dataset_choices_update(state), chip_html(state), choice, {},
+    state = workspace_state(choice, listed)
+    return (state, dataset_choices_update(state), chip_html(state), choice, {},
             _poll_resources(TRAINING))
 
 
@@ -1777,7 +1855,7 @@ def _on_dataset(name, mode, request: gr.Request):
     chip shows them), the session's run-bar workspace set (Datasets marks
     it), any check of a parent cleared (the drawer lists the new workspace's
     runs on its next refresh)."""
-    state = _workspace_state(name)
+    state = workspace_state(name)
     mode = dict(mode or {})
     if mode.get("parent"):
         mode["parent"] = {}
@@ -1789,16 +1867,16 @@ def _on_training_workspace(name, ws, mode):
     bar selects that workspace (nothing changes on the server)."""
     if not name or name == (ws or {}).get("name"):
         return gr.update(), gr.update(), gr.update(), gr.update()
-    state = _workspace_state(name)
+    state = workspace_state(name)
     if state.get("name") is None:
         return gr.update(), gr.update(), gr.update(), gr.update()
     mode = dict(mode or {})
     mode["parent"] = {}
-    return state, _dataset_choices_update(state), chip_html(state), mode
+    return state, dataset_choices_update(state), chip_html(state), mode
 
 
-def _act(evt: Any) -> Optional[str]:
-    """The ``act`` a page element's trigger sent (`_TRIGGER_JS`, `_POPOVER_JS`)."""
+def event_act(evt: Any) -> Optional[str]:
+    """The ``act`` a page element's trigger sent (`TRIGGER_JS`, `_POPOVER_JS`)."""
     data = getattr(evt, "_data", None)
     return data.get("act") if isinstance(data, Mapping) else None
 
@@ -1815,7 +1893,7 @@ def notice_html(text: Any) -> str:
 def _on_banner_click(dismissed, cache, evt: gr.EventData):
     """Dismiss: this session hides this banner until its content changes."""
     key = (cache or {}).get("banner_key")
-    if _act(evt) != "dismiss" or not key:
+    if event_act(evt) != "dismiss" or not key:
         return gr.update(), gr.update()
     return [*(dismissed or []), key][-20:], ""
 
@@ -1828,59 +1906,56 @@ def _workspace_path(name: Any) -> Path:
     return resolve_workspace(name)
 
 
-def _on_start(request: gr.Request, ws, *args):
+def _on_start(request: gr.Request, ws, run_name, device, *values):
     """Start: an operator control (D8), checked first on this event's own
-    request; then the form's values (validated as before), the workspace
-    resolved by the server from its list, and the job runner's start with the
-    full dataset fingerprint this session showed. ``args`` are the form's
-    values in `_collect_config`'s order after the directory, then "Randomize
-    seed".
+    request; then a new base run (`_start`). ``values`` are the base form's,
+    in `BASE_FIELDS` order.
 
-    Returns the notice (`notice_html`) and the seed field (echoing a drawn
-    seed).
+    Returns the notice (`notice_html`): the refusal, inline, or nothing once
+    started.
     """
     access = operator_access(request)
     if not access.allowed:
-        return notice_html(access.refusal), gr.update()
-    said, seed = _start(ws, args)
-    return notice_html(said), seed
+        return notice_html(access.refusal)
+    return notice_html(_start(ws, run_name, device, values))
 
 
-def _start(ws, args) -> Tuple[str, Any]:
-    """Start's work after D8: ``(sentence, seed update)``, the sentence plain
-    text ("" once started)."""
-    randomize = bool(args[-1])
+def _start(ws, run_name, device, values) -> str:
+    """Start's work after D8, as a plain sentence ("" once started): **a new
+    base run** (K6 decision 12) on the workspace the server resolves from its
+    list, through the job runner's one start (`start_training`) with
+    ``learning_stage="base"``, the run keys, and only the settings that differ
+    from the recipe's (`recipe_differences`), with the full dataset
+    fingerprint this session showed. The runner checks the settings again
+    (`_new_bundle_run`) and refuses what the recipe does not take."""
     row = (ws or {}).get("row") or {}
-    fingerprint = _fingerprint(ws)
+    fingerprint = workspace_fingerprint(ws)
     if not row or not fingerprint:
-        return "Not started: select a dataset from the server's list first.", gr.update()
+        return "Not started: select a dataset from the server's list first."
     if not row.get("trainable"):
-        return (f"Not started: {row.get('name')} is not trainable: {r.not_trainable_short(row)}.",
-                gr.update())
+        return f"Not started: {row.get('name')} is not trainable: {r.not_trainable_short(row)}."
+    settings, problems = recipe_differences(dict(zip(BASE_FIELDS, values)), BASE)
+    if problems:
+        return "Not started: " + " ".join(problems)
     from src.api.services.server_lists import ServerListRefused
 
     try:
         directory = _workspace_path(row["name"])
     except ServerListRefused:
         return (f"Not started: {row['name']} is no longer listed by the server; select a dataset "
-                "again.", gr.update())
-    params = [str(directory), *args[:-1]]
-    if randomize:
-        # Swap in a fresh seed BEFORE validation so a locked/empty seed field
-        # still launches; the used seed is echoed back to the (locked) field.
-        params[SEED_PARAM_INDEX] = _random_seed()
-    try:
-        config = _collect_config(*params)
-    except ConfigValidationError as e:
-        gr.Warning(str(e), duration=12)
-        return ("Not started: invalid parameters, listed in the notification.", gr.update())
+                "again.")
+    config = {"data_dir": str(directory), "learning_stage": "base",
+              "device": device or "auto", "run_name": (run_name or "").strip(),
+              # torch.compile is a runtime setting (Settings), read once here.
+              "compile": bool(load_runtime_settings().get("torch_compile", False)),
+              **settings}
     result = training_manager.start_training(config, expected_dataset_fingerprint=fingerprint)
     if result.get("success"):
-        return "", gr.update(value=config["seed"])
-    return f"Not started: {result.get('error', 'unknown error')}", gr.update()
+        return ""
+    return f"Not started: {result.get('error', 'unknown error')}"
 
 
-def _running_job(status: Mapping[str, Any]) -> Optional[str]:
+def running_job(status: Mapping[str, Any]) -> Optional[str]:
     """The id of the training job running now (the one Stop would stop), or
     None when none is running."""
     if (status.get("status") or "idle") != "running":
@@ -1894,7 +1969,7 @@ def confirming(status: Mapping[str, Any], mode: Mapping[str, Any]) -> bool:
     job ended (completed, failed, or stopped elsewhere) is never shown for, or
     applied to, the next job."""
     asked = mode.get("confirm")
-    return isinstance(asked, str) and asked == _running_job(status)
+    return isinstance(asked, str) and asked == running_job(status)
 
 
 #: Stop's question. It names no epoch: the job goes on training while the
@@ -1908,26 +1983,74 @@ STOP_QUESTION = ("<b>Stop training now?</b> The job stops. The checkpoints it ha
                  "continued from.")
 
 
-def _on_stop_request(request: gr.Request, mode):
-    """Stop's first step: ask before anything happens (`STOP_QUESTION`),
-    reading nothing. D8 is checked first, as for the Stop itself. The
+def stop_question(status: Mapping[str, Any]) -> str:
+    """Stop's question (`STOP_QUESTION`, HTML), and, when the job is a
+    Fine-tune child with children queued after it, that those will not start
+    (a stop cancels them: `TrainingManager._stop`). Read from the status the
+    question is asked with; nothing else is read."""
+    finetune = status.get("finetune") or {}
+    queued = [TASK_NAMES.get(child.get("task"), str(child.get("task")))
+              for child in finetune.get("children") or [] if child.get("status") == "queued"]
+    if not queued:
+        return STOP_QUESTION
+    return (f"{STOP_QUESTION} The queued Fine-tune children ({r.e(', '.join(queued))}) will "
+            "not start.")
+
+
+def ask_stop(access: Any, mode: Optional[Mapping[str, Any]]) -> Tuple[str, Dict[str, Any]]:
+    """**Stop's first step, the one for every page** (the Training run bar,
+    the Fine-tune job card): for a request D8 allowed (`access`, read by the
+    page's own handler on its own request), ask before anything happens
+    (`stop_question`), reading nothing but the job's status. The
     confirmation is recorded for the job running now (its id).
 
     Returns the confirmation's text and the session's mode.
     """
-    access = operator_access(request)
     mode = dict(mode or {})
     mode["confirm"] = None
     if not access.allowed:
         return notice_html(access.refusal), mode
-    job = _running_job(training_manager.get_status())
+    status = training_manager.get_status()
+    job = running_job(status)
     if job is None:
         return notice_html("Nothing to stop: no training job is running."), mode
     mode["confirm"] = job
-    return f'<div class="shep-rb-confirm-q">{STOP_QUESTION}</div>', mode
+    return f'<div class="shep-rb-confirm-q">{stop_question(status)}</div>', mode
 
 
-def _on_stop_cancel(mode):
+def confirm_stop(access: Any, mode: Optional[Mapping[str, Any]]) -> Tuple[str, Dict[str, Any]]:
+    """**The confirmed Stop, the one for every page**: for a request D8
+    allowed (`access`; refused, nothing is stopped). A confirmation asked for
+    another job than the one running now stops nothing (it described that
+    job). The notice names the queued Fine-tune children the stop cancelled.
+
+    Returns the notice and the session's mode (the confirmation closed).
+    """
+    mode = dict(mode or {})
+    asked = mode.get("confirm")
+    mode["confirm"] = None
+    if not access.allowed:
+        return notice_html(access.refusal), mode
+    if isinstance(asked, str) and asked != running_job(training_manager.get_status()):
+        return notice_html("Not stopped: the training job you asked to stop is no longer the "
+                           "one running; click Stop again if this one should stop."), mode
+    result = training_manager.stop_training()
+    if result.get("success"):
+        cancelled = [TASK_NAMES.get(task, str(task)) for task in result.get("cancelled_children")
+                     or ()]
+        tail = (f" The queued Fine-tune children ({', '.join(cancelled)}) were cancelled."
+                if cancelled else "")
+        return notice_html("Stopped. " + _snapshot_sentence(result.get("outcome")) + tail), mode
+    return notice_html(f"Not stopped: {result.get('error', 'unknown error')}"), mode
+
+
+def _on_stop_request(request: gr.Request, mode):
+    """Stop, on the run bar: D8 checked first, on this event's own request,
+    as for the Stop itself; then the question (`ask_stop`)."""
+    return ask_stop(operator_access(request), mode)
+
+
+def close_stop_question(mode):
     """Keep training (and any Start: a confirmation left from an earlier job
     is closed)."""
     mode = dict(mode or {})
@@ -1936,25 +2059,9 @@ def _on_stop_cancel(mode):
 
 
 def _on_stop(request: gr.Request, mode):
-    """The confirmed Stop: an operator control (D8), checked on this event's
-    own request; refused, nothing is stopped. A confirmation asked for another
-    job than the one running now stops nothing (it described that job).
-
-    Returns the notice and the session's mode (the confirmation closed).
-    """
-    mode = dict(mode or {})
-    asked = mode.get("confirm")
-    mode["confirm"] = None
-    access = operator_access(request)
-    if not access.allowed:
-        return notice_html(access.refusal), mode
-    if isinstance(asked, str) and asked != _running_job(training_manager.get_status()):
-        return notice_html("Not stopped: the training job you asked to stop is no longer the "
-                           "one running; click Stop again if this one should stop."), mode
-    result = training_manager.stop_training()
-    if result.get("success"):
-        return notice_html("Stopped. " + _snapshot_sentence(result.get("outcome"))), mode
-    return notice_html(f"Not stopped: {result.get('error', 'unknown error')}"), mode
+    """The confirmed Stop, on the run bar: an operator control (D8), checked
+    on this event's own request (`confirm_stop`)."""
+    return confirm_stop(operator_access(request), mode)
 
 
 # --------------------------------------------------------------------------- Continue…
@@ -1969,10 +2076,10 @@ _CONTINUE_PROMPT = "Select a checkpoint, then click <b>Check checkpoint</b>."
 #: What a checkpoint file holds, as its record says (`checkpoint_kind`).
 CHECKPOINT_KINDS = {"training_state": "training state", "weights": "weights only"}
 #: A file the trainer keeps as one of its top-k by the validation metric
-#: (`ModelCheckpoint`'s ``model-{epoch:02d}-{val_mrr:.4f}.pt``).
+#: (`ModelCheckpoint`'s ``model-{epoch:02d}-{metric:.4f}.pt``).
 _TOP_K_FILE = re.compile(r"^model-\d+-\d+(?:\.\d+)?\.pt$")
-#: How a stage ended (`progress.end`), where it limits what continuing can do.
-_END_WORDS = {"finished": "finished", "stopped_early": "stopped early, cannot continue"}
+#: The longest option a select offers (the WebUI skill §8).
+OPTION_CHARS = 40
 
 
 def run_words(architecture: Any, run: Any) -> str:
@@ -1994,7 +2101,7 @@ def _run_key(item: Mapping[str, Any]) -> str:
     return f"{item.get('architecture')}/{item.get('run')}"
 
 
-def _runs_of(parents: Mapping[str, Any]) -> Dict[str, List[str]]:
+def runs_of(parents: Mapping[str, Any]) -> Dict[str, List[str]]:
     """The listed checkpoints by run, in the list's order (latest run first,
     newest file first): ``{"<architecture>/<run>": [key, ...]}``."""
     runs: Dict[str, List[str]] = {}
@@ -2015,7 +2122,7 @@ def _progress_words(item: Mapping[str, Any]) -> Optional[str]:
     return None
 
 
-def _validation_words(item: Mapping[str, Any]) -> Optional[str]:
+def validation_words(item: Mapping[str, Any]) -> Optional[str]:
     """"Validation MRR (Trainer, top-20) 0.2867": the Trainer's validation
     figure the file records, in the dashboard's one map of their names
     (`renderers.VALIDATION_LABELS`), never a test result."""
@@ -2026,26 +2133,31 @@ def _validation_words(item: Mapping[str, Any]) -> Optional[str]:
     return f"{r.VALIDATION_LABELS[metric]} {value:.4f}"
 
 
+def _fit(what: str, rest: Optional[str]) -> str:
+    """"<what> · <rest>" in at most `OPTION_CHARS` characters with one
+    separator: `what` (a file's name) shortened with an ellipsis to fit."""
+    room = OPTION_CHARS - (len(rest) + 3 if rest else 0)
+    if len(what) > room:
+        what = what[:max(room - 1, 1)] + "…"
+    return f"{what} · {rest}" if rest else what
+
+
 def checkpoint_words(item: Mapping[str, Any]) -> str:
-    """A checkpoint's option in its run: what it is, how far it trained, and
-    what limits continuing from it. "Latest save · 195 epochs completed";
-    "Top-k save · 21 epochs completed · Validation MRR (Trainer, top-20)
-    0.2867"; a file that cannot be read or holds weights only says so. The
-    file's name, kind and model fingerprint are in its details
+    """A checkpoint's option in its run, in a few words (the WebUI skill §8:
+    at most `OPTION_CHARS` characters, one separator): what it is and how far
+    it trained, "Latest save · 195 epochs completed", "Top-k save · 21 epochs
+    completed"; a file that holds weights only, or cannot be read, says so.
+    How its stage ended, its stage, its Trainer validation figure, what it
+    holds and its model fingerprint are the chosen file's details
     (`parent_details_html`)."""
     filename = str(item.get("filename") or "")
     if item.get("problem") or not r.is_digest(item.get("sha256")):
-        return f"{filename} · cannot be read"
+        return _fit(filename, "cannot be read")
     what = ("Latest save" if filename == "last.pt" else
             "Top-k save" if _TOP_K_FILE.match(filename) else filename)
     if item.get("checkpoint_kind") == "weights":
-        return f"{what} · weights only, cannot continue"
-    parts = [what]
-    for words in (_progress_words(item), _END_WORDS.get(item.get("end") or ""),
-                  _validation_words(item)):
-        if words:
-            parts.append(words)
-    return " · ".join(parts)
+        return _fit(what, "weights only")
+    return _fit(what, _progress_words(item))
 
 
 def _choices(labels: Sequence[Tuple[str, str]], fallback: Mapping[str, str]) -> List[Tuple[str, str]]:
@@ -2058,74 +2170,101 @@ def _choices(labels: Sequence[Tuple[str, str]], fallback: Mapping[str, str]) -> 
             for label, key in labels]
 
 
-def _run_choices(parents: Mapping[str, Any]) -> List[Tuple[str, str]]:
-    runs = _runs_of(parents)
+def run_choices(parents: Mapping[str, Any]) -> List[Tuple[str, str]]:
+    runs = runs_of(parents)
     first = {run: parents[keys[0]] for run, keys in runs.items()}
     return _choices([(run_words(item.get("architecture"), item.get("run")), run)
                      for run, item in first.items()],
                     {run: str(item.get("run")) for run, item in first.items()})
 
 
-def _checkpoint_choices(parents: Mapping[str, Any], keys: Sequence[str]) -> List[Tuple[str, str]]:
-    return _choices([(checkpoint_words(parents[key]), key) for key in keys],
-                    {key: str(parents[key].get("filename")) for key in keys})
+def checkpoint_choices(parents: Mapping[str, Any], keys: Sequence[str]) -> List[Tuple[str, str]]:
+    """A run's checkpoints as options: their words (`checkpoint_words`); two
+    that would read alike are named by their file instead (unique in a run),
+    still one separator and `OPTION_CHARS` at most."""
+    labels = [(checkpoint_words(parents[key]), key) for key in keys]
+    seen = Counter(label for label, _key in labels)
+    return [(label if seen[label] == 1 else
+             _fit(str(parents[key].get("filename")), _progress_words(parents[key])), key)
+            for label, key in labels]
+
+
+def checkpoint_items(listing: Any) -> Tuple[Dict[str, Any], Optional[str]]:
+    """A checkpoint listing (`server_lists.list_checkpoints`) as the session
+    keeps it: ``({"<architecture>/<run>/<file>": item}, problem)``, the
+    problem redacted (no absolute path)."""
+    from dataclasses import asdict
+
+    if not listing.available:
+        return {}, redact(listing.problem, workspaces_root()[0])
+    return {f"{item.architecture}/{item.run}/{item.filename}": asdict(item)
+            for item in listing.items}, None
 
 
 def _list_parents(ws: Mapping[str, Any]) -> Tuple[Dict[str, Any], Optional[str]]:
-    """The run bar's workspace's checkpoints from the server's list (it opens
-    every checkpoint: the caller checked D8): ``({key: item}, problem)``."""
-    from dataclasses import asdict
-
+    """The run bar's workspace's model records from the server's list (it
+    opens every checkpoint: the caller checked D8): ``({key: item},
+    problem)``. **Only a model record is offered** (K6 decision 1): a file
+    without a model spec, or one whose record cannot be read, is never
+    continued from the dashboard; Research › Models lists it."""
     from src.api.services.server_lists import list_checkpoints
 
     name = ws.get("name")
     if not name:
         return {}, "Select a dataset in the run bar first."
-    listing = list_checkpoints(name)
-    if not listing.available:
-        return {}, redact(listing.problem, workspaces_root()[0])
-    parents: Dict[str, Any] = {}
-    for item in listing.items:
-        data = asdict(item)
-        parents[f"{item.architecture}/{item.run}/{item.filename}"] = data
+    listed, problem = checkpoint_items(list_checkpoints(name))
+    if problem:
+        return {}, problem
+    parents = {key: item for key, item in listed.items() if item.get("record") == "model"}
+    if listed and not parents:
+        return {}, (f"None of the {len(listed)} checkpoint files of this dataset's runs holds a "
+                    "model record; a file without a model spec is never continued here "
+                    "(Research › Models lists it).")
     return parents, None
 
 
-def _parents_update(parents: Mapping[str, Any], keep: Optional[str] = None) -> Tuple[Any, Any]:
+def parents_update(parents: Mapping[str, Any], keep: Optional[str] = None) -> Tuple[Any, Any]:
     """The two selects for `parents`: the runs, and the chosen run's
     checkpoints. `keep` (a checkpoint's key) stays chosen while it is listed;
     otherwise the first run and its first checkpoint (its latest save)."""
-    runs = _runs_of(parents)
+    runs = runs_of(parents)
     run = _run_key(parents[keep]) if keep in parents else next(iter(runs), None)
     keys = runs.get(run, []) if run else []
     value = keep if keep in keys else (keys[0] if keys else None)
-    return (gr.update(choices=_run_choices(parents), value=run),
-            gr.update(choices=_checkpoint_choices(parents, keys), value=value))
+    return (gr.update(choices=run_choices(parents), value=run),
+            gr.update(choices=checkpoint_choices(parents, keys), value=value))
 
 
-def _on_run_chosen(run, parents, current):
+def on_run_chosen(run, parents, current):
     """A run chosen: its checkpoints, the latest save first. The checkpoint
     chosen stays when it is this run's (opening the drawer sets both)."""
-    keys = _runs_of(parents or {}).get(run or "", [])
+    keys = runs_of(parents or {}).get(run or "", [])
     value = current if current in keys else (keys[0] if keys else None)
-    return gr.update(choices=_checkpoint_choices(parents or {}, keys), value=value)
+    return gr.update(choices=checkpoint_choices(parents or {}, keys), value=value)
 
 
 def _parents_note(ws: Mapping[str, Any], parents: Mapping[str, Any], problem: Optional[str]) -> str:
     if problem:
         return f'<span class="shep-muted">{r.e(problem)}</span>'
-    runs = len(_runs_of(parents))
-    return (f'<span class="shep-muted">{_LOCK} server list · {runs} run{"s" if runs != 1 else ""}, '
+    runs = len(runs_of(parents))
+    return (f'<span class="shep-muted">{LOCK_ICON} server list · {runs} run{"s" if runs != 1 else ""}, '
             f'{len(parents)} checkpoint{"s" if len(parents) != 1 else ""} · latest first</span>')
+
+
+def stage_words(item: Mapping[str, Any]) -> str:
+    """A listed model's stage, in its record's words: "Base", or "Fine-tune ·
+    Gene" (`renderers.record_kind_text`, built on `caveats.TASK_NAMES`)."""
+    kind = r.record_kind_text(item)
+    return f"Fine-tune · {kind}" if item.get("learning_stage") == "finetune" else kind
 
 
 def parent_details_html(item: Optional[Mapping[str, Any]]) -> str:
     """The chosen checkpoint's details, as a two-column table, saying what its
-    option does not (`checkpoint_words` gives its progress and validation
-    figure): its file, what it holds, what continuing does when its stage
-    ended, its model fingerprint (copyable) and its run's directory. A file
-    that cannot be read says why, in amber. Empty when none is chosen from the
-    list."""
+    option does not (`checkpoint_words` gives what it is and its progress):
+    its file, its stage, what it holds, how its stage ended where that limits
+    continuing, its Trainer validation figure (never a test result), its model
+    fingerprint (copyable) and its run's directory. A file that cannot be read
+    says why, in amber. Empty when none is chosen from the list."""
     if not item:
         return ""
     filename = str(item.get("filename") or "")
@@ -2136,6 +2275,7 @@ def parent_details_html(item: Optional[Mapping[str, Any]]) -> str:
                 f'<span class="shep-k">File</span><span class="shep-v"><code>{r.e(filename)}</code></span>'
                 f'<span class="shep-k">Cannot be read</span><span class="shep-v">{r.e(why)}</span>'
                 '</div></div>')
+    rows.append(("Stage", r.e(stage_words(item))))
     kind = item.get("checkpoint_kind")
     rows.append(("Holds", "weights only (cannot be continued)" if kind == "weights" else
                  r.e(CHECKPOINT_KINDS.get(kind or "", "not recorded"))))
@@ -2143,7 +2283,10 @@ def parent_details_html(item: Optional[Mapping[str, Any]]) -> str:
                 "stopped_early": "not possible: it stopped early"}.get(item.get("end") or "")
     if going_on and kind != "weights":
         rows.append(("Continuing", r.e(going_on)))
-    rows.append(("Model fingerprint", _digest_html(item["sha256"], what="model fingerprint")))
+    figure = validation_words(item)
+    rows.append(("Validation", r.e(figure.removeprefix("Validation ") if figure
+                                   else "not recorded in this file")))
+    rows.append(("Model fingerprint", digest_html(item["sha256"], what="model fingerprint")))
     rows.append(("Run", f"<code>{r.e(_run_key(item))}</code>"))
     cells = "".join(f'<span class="shep-k">{k}</span><span class="shep-v">{v}</span>' for k, v in rows)
     return f'<div class="shep-ckpt"><div class="shep-kv">{cells}</div></div>'
@@ -2163,7 +2306,7 @@ def _on_continue_open(request: gr.Request, ws, mode):
                 gr.update(), gr.update())
     parents, problem = _list_parents(ws or {})
     mode.update(drawer=True, confirm=None, parent={})
-    runs, checkpoints = _parents_update(parents)
+    runs, checkpoints = parents_update(parents)
     first = checkpoints.get("value") if isinstance(checkpoints, dict) else None
     mode["parent"] = _chosen(CONTINUE_FROM_LIST, first, "", parents, ws)
     return ("", mode, parents, runs, checkpoints, _parents_note(ws or {}, parents, problem),
@@ -2187,7 +2330,7 @@ def _parents_listed(access: Any, ws: Optional[Mapping[str, Any]], current: Any):
         return ({}, gr.update(choices=[], value=None), gr.update(choices=[], value=None),
                 f'<span class="shep-muted">{r.e(access.refusal)}</span>')
     parents, problem = _list_parents(ws or {})
-    return (parents, *_parents_update(parents, current),
+    return (parents, *parents_update(parents, current),
             _parents_note(ws or {}, parents, problem))
 
 
@@ -2242,7 +2385,7 @@ def compare_html(parent: Mapping[str, Any], ws: Mapping[str, Any]) -> str:
     workspace", or the listed workspace it matches), or what is not known yet."""
     if not parent.get("chosen"):
         return ""
-    recorded, current = parent.get("fingerprint"), _fingerprint(ws)
+    recorded, current = parent.get("fingerprint"), workspace_fingerprint(ws)
     digits = ws.get("digits") or r.SHORT_HEX
     if not r.is_digest(recorded):
         why = ("The parent’s recorded dataset is read when you check it."
@@ -2402,10 +2545,13 @@ def _parent_path(source: str, listed: Any, manual: Any, ws: Mapping[str, Any],
             architecture, run, filename = locate_checkpoint(ws.get("name"), typed)
         except ServerListRefused as exc:
             return None, redact(exc, workspaces_root()[0]), None
-        listed = f"{architecture}/{run}/{filename}"
-        item = (parents or {}).get(listed) or {"workspace": ws.get("name"),
-                                               "architecture": architecture, "run": run,
-                                               "filename": filename}
+        item = (parents or {}).get(f"{architecture}/{run}/{filename}")
+        if not item:
+            # Only a model record the run list offers is continued (K6
+            # decision 1), so a file without a model spec is refused unopened.
+            return None, ("the typed path is not a model record the run list offers (a file "
+                          "without a model spec is never continued here); refresh the list if "
+                          "its run is new"), None
     else:
         item = (parents or {}).get(listed) if listed else None
     if not item:
@@ -2533,7 +2679,7 @@ def _resume(ws, device, source, listed, manual, extend_epochs, parents, mode):
     epochs update, mode)``, the sentence plain text ("" once started)."""
     mode = dict(mode or {})
     row = (ws or {}).get("row") or {}
-    fingerprint = _fingerprint(ws)
+    fingerprint = workspace_fingerprint(ws)
     if not row or not fingerprint:
         return "Not started: select a dataset first.", gr.update(), gr.update(), mode
     preview, why, record = _checked(source, listed, manual, device, extend_epochs, ws, parents,
@@ -2609,26 +2755,9 @@ FIELD_HELP = {
         "Letters, digits and hyphens are kept; blank uses \"run\". The run view shows the "
         "name once training starts.",
     ),
-    "num_epochs": (
-        "Epochs",
-        "Smoke test: 2-5 | Quick: 10-50 | Full: 100-500",
-    ),
-    "learning_rate": (
-        "Learning Rate",
-        "Initial LR. Recommended: 1e-4 (GAT) | 5e-5 (HGT). Supports scientific notation (e.g."
-        " 5e-5).",
-    ),
-    "batch_size": (
-        "Batch Size",
-        "Samples per step. Larger = faster but more VRAM. 32 = safe default; 1024 for "
-        "large-VRAM GPUs (e.g. GB10); 2048 is experimental (HGT will OOM). Raise LR & warmup "
-        "with batch.",
-    ),
-    "conv_type": (
-        "GNN Conv Type",
-        "GAT: attention-based (default) | HGT: heterogeneous transformer (no AMP, high VRAM "
-        "requirements - batch size ≤16 for 16GB GPUs) | SAGE: mean aggregation",
-    ),
+    # The base form: each recipe setting's label, what it is, its reference
+    # value and that value's source (`setting_help`).
+    **{name: setting_help(name, BASE, BASE_SOURCES) for name in BASE_FIELDS},
     "device": (
         "Device",
         "auto: the GPU (CUDA). With no CUDA device visible, Start is refused: training never "
@@ -2636,113 +2765,15 @@ FIELD_HELP = {
         "- cpu: for development, recorded as asked.\n"
         "- Continue… has its own Device, which starts from this one.",
     ),
-    "seed": (
-        "Seed",
-        "Random seed for reproducibility. Change to try different initializations.",
-    ),
-    "randomize_seed": (
-        "🎲 Randomize seed",
-        "On: the seed field is locked and a fresh random seed (0..2^32-1) is drawn on each "
-        "Start and shown here. Off: the entered seed is used.",
-    ),
-    "hidden_dim": (
-        "Hidden Dim",
-        "GNN embedding dimension. 256 balances quality/speed. 512 for large KGs.",
-    ),
-    "num_layers": (
-        "Num Layers",
-        "GNN message-passing depth. 3-4 typical. More layers = wider receptive field.",
-    ),
-    "dropout": (
-        "Dropout",
-        "Regularization. 0.1 typical. Increase to 0.2-0.3 if overfitting.",
-    ),
-    "weight_decay": (
-        "Weight Decay",
-        "L2 regularization. 0.01 typical for AdamW. Lower (1e-4) if underfitting.",
-    ),
-    "scheduler_type": (
-        "Scheduler",
-        "cosine: smooth decay (recommended) | onecycle: aggressive | linear: steady",
-    ),
-    "warmup_steps": (
-        "Warmup Steps",
-        "Steps to linearly ramp LR from 0. 500 typical. Set 0 to disable.",
-    ),
-    "min_lr_ratio": (
-        "Min LR Ratio",
-        "Floor of LR decay as a fraction of peak (must be > 0; onecycle uses 1/min_lr_ratio)."
-        " 0.01 = decay to 1% of peak; raise (e.g. 0.1) to keep learning in late epochs.",
-    ),
-    "early_stopping_patience": (
-        "Early Stopping Patience",
-        "Epochs without improvement before stopping. 10 is a good default.",
-    ),
-    "diagnosis_weight": (
-        "Diagnosis Weight",
-        "Primary task weight. Keep at 1.0 (anchor). Other weights are relative to this.",
-    ),
-    "link_prediction_weight": (
-        "Link Prediction Weight",
-        "KG structure learning. 0.3-0.5 typical. Higher improves KG representation.",
-    ),
-    "contrastive_weight": (
-        "Contrastive Weight",
-        "Phenotype-disease similarity learning. 0.2-0.5 typical.",
-    ),
-    "ortholog_weight": (
-        "Ortholog Weight",
-        "Cross-species gene mapping. 0.1-0.3 typical. Set 0 to disable.",
-    ),
-    "gradient_accumulation_steps": (
-        "Gradient Accumulation Steps",
-        "Simulate larger batch by accumulating N steps. Useful when VRAM-limited.",
-    ),
-    "max_grad_norm": (
-        "Max Grad Norm",
-        "Gradient clipping threshold. 1.0 typical. Prevents training instability.",
-    ),
-    "num_heads": (
-        "Attention Heads",
-        "Multi-head attention count. 8 typical. Must evenly divide hidden_dim.",
-    ),
-    "use_ortholog_gate": (
-        "Use Ortholog Gate",
-        "Learnable gate for cross-species gene signals. Disable if no ortholog data.",
-    ),
-    "amp_mode": (
-        "Mixed Precision (AMP)",
-        "Faster & less VRAM on modern GPUs. Off: full float32. float16: wider GPU support. "
-        "bfloat16: better numerical stability (RTX 30+, A100+).",
-    ),
-    "temperature": (
-        "Contrastive Temperature",
-        "Lower = sharper similarity. 0.07 typical for contrastive learning.",
-    ),
-    "label_smoothing": (
-        "Label Smoothing",
-        "Softens one-hot labels. 0.1 typical. Prevents overconfident predictions.",
-    ),
-    "margin": (
-        "Margin",
-        "Margin for ranking loss. 1.0 typical. Larger margin = stricter separation.",
-    ),
-    "num_neighbors_str": (
-        "Num Neighbors (comma-separated)",
-        "Neighbor samples per GNN layer (deepest to shallowest). E.g. '15, 10, 5'.",
-    ),
-    "max_subgraph_nodes": (
-        "Max Subgraph Nodes",
-        "Max nodes in sampled subgraph. Larger = more context but slower. 5000 typical.",
-    ),
     "continue_source": (
         "Checkpoint source",
         "Where the checkpoint to continue from comes from.\n\n"
-        "• From run list: the run bar's dataset's runs, as the server lists them.\n"
+        "• From run list: the run bar's dataset's model records (bases and task models), as "
+        "the server lists them.\n"
         "• Manual path: a typed path. It only finds a checkpoint that list has; any other "
         "file is refused, unopened.\n\n"
-        "Both are checked the same way. Listing opens each checkpoint, so it is an operator "
-        "control.",
+        "A file without a model spec is never continued here. Both are checked the same way. "
+        "Listing opens each checkpoint, so it is an operator control.",
     ),
     "continue_run": (
         "Run",
@@ -2755,13 +2786,13 @@ FIELD_HELP = {
         "• Latest save: last.pt, the run's last training state.\n"
         "• Top-k save: kept for its Trainer validation figure (LP accuracy for a base, pooled "
         "MRR for a task model; not a test result).\n\n"
-        "The table under it shows the file, what it holds and its model fingerprint. The server "
-        "finds the file in its list again and compares its bytes with that fingerprint. "
-        "Refresh lists them again.",
+        "The table under it shows the file, its stage, what it holds, its Trainer validation "
+        "figure and its model fingerprint. The server finds the file in its list again and "
+        "compares its bytes with that fingerprint. Refresh lists them again.",
     ),
     "manual_checkpoint": (
         "Checkpoint path",
-        "The path of a checkpoint the run list has, typed or pasted. It is checked the same "
+        "The path of a model record the run list has, typed or pasted. It is checked the same "
         "way as a listed one.",
     ),
     "continue_device": (
@@ -2805,20 +2836,6 @@ TOPIC_HELP = {
 }
 
 
-#: The AMP radio's refusal under HGT: state, so visible text (``info=``), never
-#: behind the ⓘ.
-AMP_HGT_REFUSAL = "Disabled: HGT requires full float32 (pyg_lib limitation)."
-
-
-def _on_conv_type_change(ct):
-    """HGT requires float32: AMP off and locked, with the refusal shown; any
-    other architecture unlocks it and clears the refusal (``""``: Gradio 6.30
-    keeps an info sent as None)."""
-    if ct == "hgt":
-        return gr.update(value="Off", interactive=False, info=AMP_HGT_REFUSAL)
-    return gr.update(interactive=True, info="")
-
-
 # =============================================================================
 # The page
 # =============================================================================
@@ -2830,7 +2847,7 @@ def create_training_tab(ctx: Any) -> None:
     ctx.help.fields(FIELD_HELP)
     ctx.help.topics(TOPIC_HELP)
 
-    ws = gr.State(_empty_workspace())
+    ws = gr.State(empty_workspace())
     mode = gr.State({})
     cache = gr.State({})
     # The fast poll's own record (its reads kept by time, `POLL_READS`, and the
@@ -2853,7 +2870,7 @@ def create_training_tab(ctx: Any) -> None:
                                       scale=0, min_width=240, container=False)
                 continues = plain_html("", elem_id="shep-train-continues")
                 reason = plain_html('<div class="shep-rb-reason"></div>', elem_id="shep-train-reason",
-                                    js_on_load=_TRIGGER_JS)
+                                    js_on_load=TRIGGER_JS)
                 start_btn = gr.Button("▸ Start", variant="primary", interactive=False, scale=0,
                                       elem_id="shep-train-start", elem_classes=["shep-gated"])
                 cont_btn = gr.Button("Continue…", interactive=False, scale=0,
@@ -2881,90 +2898,27 @@ def create_training_tab(ctx: Any) -> None:
             with gr.Column(elem_id="shep-train-params", elem_classes=["shep-panel"], scale=10,
                            min_width=360):
                 plain_html('<div class="shep-panel-hd"><h2>Parameters</h2>'
-                           '<span class="shep-panel-right">for the next run</span></div>',
+                           '<span class="shep-panel-right">for the next base run</span></div>',
                            elem_id="shep-train-params-hd")
                 with gr.Column(elem_id="shep-train-params-bd", elem_classes=["shep-train-bd"]):
-                    with gr.Accordion("Basic Training Parameters", open=True,
-                                      elem_id="shep-train-basic"):
-                        with gr.Group(elem_classes=["shep-train-grid"]):
-                            num_epochs = gr.Number(label="Epochs", value=100, precision=0,
-                                                   elem_id="num_epochs")
-                            learning_rate = gr.Number(label="Learning Rate", value=1e-4, precision=8,
-                                                      elem_id="learning_rate")
-                            batch_size = gr.Dropdown(
-                                label="Batch Size",
-                                choices=["8", "16", "32", "64", "128", "256", "512", "1024", "2048"],
-                                value="32", elem_id="batch_size")
-                            conv_type = gr.Radio(label="GNN Conv Type", choices=["gat", "hgt", "sage"],
-                                                 value="gat", elem_id="conv_type")
-                            device = gr.Radio(label="Device", choices=["auto", "cuda", "cpu"],
-                                              value="auto", elem_id="device")
-                            seed = gr.Number(label="Seed", value=42, precision=0, elem_id="seed")
-                            randomize_seed = gr.Checkbox(label="🎲 Randomize seed", value=False,
-                                                         elem_id="randomize_seed")
-                    with gr.Accordion("Advanced Parameters", open=False):
+                    # Exactly the reference recipe's base settings (decision 12),
+                    # each starting at the recipe's value.
+                    with gr.Group(elem_classes=["shep-train-grid"]):
+                        shown_fields = [setting_field(name, BASE[name], elem_id=name)
+                                        for name in BASE_FIELDS[:BASE_SHOWN]]
+                        device = gr.Radio(label="Device", choices=["auto", "cuda", "cpu"],
+                                          value="auto", elem_id="device")
+                    with gr.Accordion("More reference settings", open=False,
+                                      elem_id="shep-train-more"):
                         with gr.Group():
-                            hidden_dim = gr.Dropdown(label="Hidden Dim", choices=["128", "256", "512"],
-                                                     value="256", elem_id="hidden_dim")
-                            num_layers = gr.Slider(label="Num Layers", minimum=2, maximum=8, value=4,
-                                                   step=1, elem_id="num_layers")
-                            dropout = gr.Slider(label="Dropout", minimum=0.0, maximum=0.5, value=0.1,
-                                                step=0.01, elem_id="dropout")
-                            weight_decay = gr.Slider(label="Weight Decay", minimum=1e-5, maximum=0.1,
-                                                     value=0.01, step=1e-5, elem_id="weight_decay")
-                            scheduler_type = gr.Dropdown(
-                                label="Scheduler", choices=["cosine", "onecycle", "linear", "none"],
-                                value="cosine", elem_id="scheduler_type")
-                            warmup_steps = gr.Number(label="Warmup Steps", value=500, precision=0,
-                                                     elem_id="warmup_steps")
-                            min_lr_ratio = gr.Number(label="Min LR Ratio", value=0.01,
-                                                     elem_id="min_lr_ratio")
-                            early_stopping_patience = gr.Number(
-                                label="Early Stopping Patience", value=10, precision=0,
-                                elem_id="early_stopping_patience")
-                        gr.Markdown("##### Loss Weights")
-                        with gr.Group():
-                            diagnosis_weight = gr.Slider(label="Diagnosis Weight", minimum=0.0,
-                                                         maximum=2.0, value=1.0, step=0.1,
-                                                         elem_id="diagnosis_weight")
-                            link_prediction_weight = gr.Slider(
-                                label="Link Prediction Weight", minimum=0.0, maximum=2.0, value=0.5,
-                                step=0.1, elem_id="link_prediction_weight")
-                            contrastive_weight = gr.Slider(label="Contrastive Weight", minimum=0.0,
-                                                           maximum=2.0, value=0.3, step=0.1,
-                                                           elem_id="contrastive_weight")
-                            ortholog_weight = gr.Slider(label="Ortholog Weight", minimum=0.0,
-                                                        maximum=2.0, value=0.2, step=0.1,
-                                                        elem_id="ortholog_weight")
-                    with gr.Accordion("Expert Parameters", open=False):
-                        with gr.Group():
-                            gradient_accumulation_steps = gr.Number(
-                                label="Gradient Accumulation Steps", value=1, precision=0,
-                                elem_id="gradient_accumulation_steps")
-                            max_grad_norm = gr.Number(label="Max Grad Norm", value=1.0,
-                                                      elem_id="max_grad_norm")
-                            num_heads = gr.Dropdown(label="Attention Heads", choices=["4", "8", "16"],
-                                                    value="8", elem_id="num_heads")
-                            use_ortholog_gate = gr.Checkbox(label="Use Ortholog Gate", value=True,
-                                                            elem_id="use_ortholog_gate")
-                            amp_mode = gr.Radio(label="Mixed Precision (AMP)",
-                                                choices=["Off", "float16", "bfloat16"],
-                                                value="float16", elem_id="amp_mode")
-                            temperature = gr.Slider(label="Contrastive Temperature", minimum=0.01,
-                                                    maximum=1.0, value=0.07, step=0.01,
-                                                    elem_id="temperature")
-                            label_smoothing = gr.Slider(label="Label Smoothing", minimum=0.0,
-                                                        maximum=0.3, value=0.1, step=0.01,
-                                                        elem_id="label_smoothing")
-                            margin = gr.Slider(label="Margin", minimum=0.1, maximum=3.0, value=1.0,
-                                               step=0.1, elem_id="margin")
-                            num_neighbors_str = gr.Textbox(label="Num Neighbors (comma-separated)",
-                                                           value="15, 10, 5",
-                                                           elem_id="num_neighbors_str")
-                            max_subgraph_nodes = gr.Number(label="Max Subgraph Nodes", value=5000,
-                                                           precision=0, elem_id="max_subgraph_nodes")
+                            more_fields = [setting_field(name, BASE[name], elem_id=name)
+                                           for name in BASE_FIELDS[BASE_SHOWN:]]
+                    differs = plain_html(
+                        differs_html(dict(zip(BASE_FIELDS, base_form_defaults())), BASE),
+                        elem_id="shep-train-differs")
                     # torch.compile is configured in the Runtime Settings tab (it is an
                     # execution/runtime knob, applied per training run).
+                base_fields = [*shown_fields, *more_fields]
 
             # ------------------------------------------------- Continue… drawer
             with gr.Column(elem_id="shep-train-drawer", elem_classes=["shep-panel"], scale=10,
@@ -3034,16 +2988,9 @@ def create_training_tab(ctx: Any) -> None:
     # =========================================================================
     # Wiring
     # =========================================================================
-    form = [
-        run_name,
-        num_epochs, learning_rate, batch_size, conv_type, device, seed,
-        hidden_dim, num_layers, dropout, weight_decay, scheduler_type,
-        warmup_steps, min_lr_ratio, early_stopping_patience,
-        diagnosis_weight, link_prediction_weight, contrastive_weight, ortholog_weight,
-        gradient_accumulation_steps, max_grad_norm, num_heads,
-        use_ortholog_gate, amp_mode,
-        temperature, label_smoothing, margin, num_neighbors_str, max_subgraph_nodes,
-    ]
+    # The line on the reference settings follows every base field (one listener).
+    gr.on(triggers=[field.change for field in base_fields], fn=_on_base_changed,
+          inputs=base_fields, outputs=[differs], queue=False, show_progress="hidden")
     view_outputs = [ws, dataset, chip, pill, reason, start_btn, cont_btn, stop_btn, resume_btn,
                     runbar, page, run_name, banner, run_head, run_snap, figure, drawer_reason,
                     ctx.training_workspace, cache]
@@ -3108,11 +3055,11 @@ def create_training_tab(ctx: Any) -> None:
         **view_step).then(**ctx.chip_refresh)
     def _on_chip_click(evt: gr.EventData):
         """The chip's "All datasets ›": Research › Datasets."""
-        return ctx.go("datasets") if _act(evt) == "datasets" else ctx.no_nav()
+        return ctx.go("datasets") if event_act(evt) == "datasets" else ctx.no_nav()
 
     def _on_reason_click(evt: gr.EventData):
         """The reason line's "Open Test ›": Research › Test."""
-        return ctx.go("test") if _act(evt) == "open-test" else ctx.no_nav()
+        return ctx.go("test") if event_act(evt) == "open-test" else ctx.no_nav()
 
     chip.click(_on_chip_click, inputs=None, outputs=ctx.nav_outputs, show_progress="hidden")
     reason.click(_on_reason_click, inputs=None, outputs=ctx.nav_outputs, show_progress="hidden")
@@ -3121,16 +3068,15 @@ def create_training_tab(ctx: Any) -> None:
 
     # Start, Stop.
     # Start also closes a Stop confirmation left from an earlier job.
-    start_btn.click(_on_start, inputs=[ws, *form, randomize_seed], outputs=[notice, seed],
+    start_btn.click(_on_start, inputs=[ws, run_name, device, *base_fields], outputs=[notice],
                     show_progress="hidden").then(
-        _on_stop_cancel, inputs=[mode], outputs=[mode], show_progress="hidden").then(
+        close_stop_question, inputs=[mode], outputs=[mode], show_progress="hidden").then(
         **view_step).then(**ctx.chip_refresh)
-    randomize_seed.change(fn=_seed_field_lock, inputs=[randomize_seed], outputs=[seed])
     stop_btn.click(_on_stop_request, inputs=[mode], outputs=[stop_text, mode],
                    show_progress="hidden").then(**view_step).then(**ctx.chip_refresh)
     stop_confirm_btn.click(_on_stop, inputs=[mode], outputs=[notice, mode],
                            show_progress="hidden").then(**view_step).then(**ctx.chip_refresh)
-    stop_keep_btn.click(_on_stop_cancel, inputs=[mode], outputs=[mode],
+    stop_keep_btn.click(close_stop_question, inputs=[mode], outputs=[mode],
                         show_progress="hidden").then(**view_step)
 
     # Continue…
@@ -3148,7 +3094,7 @@ def create_training_tab(ctx: Any) -> None:
                            show_progress="hidden").then(**ctx.chip_refresh)
     # A run chosen: its checkpoints (the checkpoint select's change then
     # clears the last check and records the parent, as for any choice).
-    continue_run.change(_on_run_chosen, inputs=[continue_run, parents, checkpoint_dropdown],
+    continue_run.change(on_run_chosen, inputs=[continue_run, parents, checkpoint_dropdown],
                         outputs=[checkpoint_dropdown], show_progress="hidden")
     check_continue_btn.click(
         _on_check_continue,
@@ -3182,11 +3128,6 @@ def create_training_tab(ctx: Any) -> None:
         component.change(_on_parent_chosen, inputs=chosen_inputs,
                          outputs=[mode, compare, parent_details],
                          show_progress="hidden").then(**view_step)
-
-    # HGT requires float32 (AMP disabled): the refusal is state, so it stays
-    # visible text in `info=`; "" clears it (Gradio 6.30 keeps an info sent
-    # as None).
-    conv_type.change(fn=_on_conv_type_change, inputs=[conv_type], outputs=[amp_mode])
 
     # The run bar's line for a continued run (while the drawer is open): a new
     # run of its own (contract M3a-2), continued from the checkpoint the drawer
@@ -3378,6 +3319,9 @@ PAGE_CSS = charts.CHART_CSS + f"""
 {_PAGE} #extend_epochs input[type="number"] {{ width: 96px; }}
 {_PAGE} #shep-train-check {{ align-self: flex-end; width: auto !important; min-width: max-content !important; }}
 {_PAGE} #shep-train-parents-note {{ margin-top: -4px; }}
+/* The base form's line on the reference settings (decision 5), and a value Start would refuse. */
+{_PAGE} .shep-differs p {{ margin: 0; font-size: 14px; color: var(--shep-text-2); overflow-wrap: anywhere; }}
+{_PAGE} .shep-differs p.shep-amber-t {{ margin-top: 4px; color: var(--shep-amber-800); }}
 @media (min-width: 1400px) and (min-height: 760px) {{
   {_PAGE} > .column {{ height: 100%; min-height: 0 !important; }}
   {_PAGE} #shep-train {{ flex: 1 1 auto; min-height: 0; height: 100%; flex-wrap: nowrap !important; }}

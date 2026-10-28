@@ -1,10 +1,21 @@
 """
-Unit tests for Training Console numeric-input validation (_collect_config).
+The Training page's base form and its Start (K6 decisions 5 and 12).
+===================================================================
+`src/webui/components/training_console.py`. The ShepherdGNN form and its
+collector are gone; the form is exactly the reference recipe's base settings
+(`src.config.recipe.BASE`). What these pin:
 
-A cleared gr.Number arrives as None; bare int()/float() would raise a raw
-TypeError. _collect_config now routes numeric fields through _num and raises a
-user-facing ConfigValidationError listing every offending field, which the
-Start/Resume handlers surface as a gr.Warning toast instead of launching.
+- **Start sends a base run**: ``learning_stage="base"``, the run keys (the
+  workspace the server resolves from its list, the device, the run name
+  stripped, compile from the runtime settings) and only the settings whose
+  value differs from the recipe's, with the dataset fingerprint shown;
+- **a value its field spec refuses starts nothing**, and the notice names it by
+  its label, inline (no toast); every kind is parsed as its setting takes it;
+- **the line on the reference settings** says which differ, with the recipe's
+  value beside each, and which value Start would refuse;
+- D8, the dataset and the runner's own refusal, as before.
+
+Module: tests/unit/test_training_console_config.py
 """
 from __future__ import annotations
 
@@ -13,6 +24,7 @@ import pytest
 # training_console imports gradio (and the api/service stack) at module load.
 pytest.importorskip("gradio")
 
+from src.config.recipe import BASE  # noqa: E402
 from src.webui.components import training_console as tc  # noqa: E402
 from tests.fixtures.operator_access import gradio_request, operator_mode  # noqa: E402
 
@@ -20,237 +32,164 @@ from tests.fixtures.operator_access import gradio_request, operator_mode  # noqa
 #: Start is an operator control since M5-1.
 OP = gradio_request()
 
-
-@pytest.fixture(autouse=True)
-def _operator_mode(monkeypatch):
-    operator_mode(monkeypatch)
-
-
-# _collect_config is positional; keep a valid baseline in signature order.
-_DEFAULTS = {
-    "data_dir": "data/workspaces/default",
-    "run_name": "",
-    "num_epochs": 100,
-    "learning_rate": 1e-4,
-    "batch_size": "32",
-    "conv_type": "gat",
-    "device": "auto",
-    "seed": 42,
-    "hidden_dim": "256",
-    "num_layers": 4,
-    "dropout": 0.1,
-    "weight_decay": 0.01,
-    "scheduler_type": "cosine",
-    "warmup_steps": 500,
-    "min_lr_ratio": 0.01,
-    "early_stopping_patience": 10,
-    "diagnosis_weight": 1.0,
-    "link_prediction_weight": 0.5,
-    "contrastive_weight": 0.3,
-    "ortholog_weight": 0.2,
-    "gradient_accumulation_steps": 1,
-    "max_grad_norm": 1.0,
-    "num_heads": "8",
-    "use_ortholog_gate": True,
-    "amp_mode": "float16",
-    "temperature": 0.07,
-    "label_smoothing": 0.1,
-    "margin": 1.0,
-    "num_neighbors_str": "15, 10, 5",
-    "max_subgraph_nodes": 5000,
-}
-_ORDER = list(_DEFAULTS.keys())
-
-
-def _args(**overrides):
-    vals = dict(_DEFAULTS)
-    vals.update(overrides)
-    return tuple(vals[name] for name in _ORDER)
-
-
-def _ufield(update, key):
-    """Read a field from a gr.update(...) result, tolerant across Gradio versions."""
-    if isinstance(update, dict):
-        return update.get(key)
-    return getattr(update, key, None)
-
-
-def test_valid_config_returns_dict():
-    cfg = tc._collect_config(*_args())
-    assert cfg["num_epochs"] == 100
-    assert cfg["learning_rate"] == pytest.approx(1e-4)
-    assert cfg["batch_size"] == 32
-    assert cfg["min_lr_ratio"] == pytest.approx(0.01)
-
-
-def test_empty_numeric_field_raises_and_names_it():
-    with pytest.raises(tc.ConfigValidationError) as ei:
-        tc._collect_config(*_args(num_epochs=None))
-    assert "Epochs" in str(ei.value)
-
-
-def test_multiple_empty_fields_all_listed():
-    with pytest.raises(tc.ConfigValidationError) as ei:
-        tc._collect_config(*_args(seed=None, warmup_steps=None))
-    msg = str(ei.value)
-    assert "Seed" in msg and "Warmup Steps" in msg
-
-
-@pytest.mark.parametrize("bad_lr", [0.0, -1e-4])
-def test_nonpositive_learning_rate_raises(bad_lr):
-    with pytest.raises(tc.ConfigValidationError) as ei:
-        tc._collect_config(*_args(learning_rate=bad_lr))
-    assert "Learning Rate" in str(ei.value)
-
-
-def test_min_lr_ratio_below_minimum_rejected():
-    # WS5 moved the widget's minimum=1e-4 into _collect_config so the message
-    # names the field. (WS1's backend rule allows 0 for cosine/linear; relaxing
-    # the UI to match is a separate opt-in, not part of this behavior-preserving
-    # change.)
-    with pytest.raises(tc.ConfigValidationError) as ei:
-        tc._collect_config(*_args(min_lr_ratio=0.0))
-    msg = str(ei.value)
-    assert "Min LR Ratio" in msg and "0.0001" in msg
-
-
-def test_below_minimum_names_field():
-    with pytest.raises(tc.ConfigValidationError) as ei:
-        tc._collect_config(*_args(max_subgraph_nodes=50))
-    assert "Max Subgraph Nodes" in str(ei.value)
-
-
-def test_above_maximum_names_field():
-    with pytest.raises(tc.ConfigValidationError) as ei:
-        tc._collect_config(*_args(num_epochs=10001))
-    assert "Epochs" in str(ei.value)
-
-
-def test_boundary_values_accepted():
-    # seed=0 (lo=0), num_epochs=1 (lo=1), min_lr_ratio=1e-4 (lo) are all valid.
-    cfg = tc._collect_config(*_args(seed=0, num_epochs=1, min_lr_ratio=1e-4))
-    assert cfg["seed"] == 0 and cfg["num_epochs"] == 1
-
-
-def test_multi_error_aggregation_lists_all():
-    with pytest.raises(tc.ConfigValidationError) as ei:
-        tc._collect_config(
-            *_args(num_epochs=0, learning_rate=None, max_subgraph_nodes=50)
-        )
-    msg = str(ei.value)
-    assert "Epochs" in msg and "Learning Rate" in msg and "Max Subgraph Nodes" in msg
-
-
-# --------------------------------------------------------------- WS6: random seed
-def test_random_seed_in_numpy_range():
-    for _ in range(50):
-        s = tc._random_seed()
-        assert isinstance(s, int) and 0 <= s <= 2**32 - 1
-
-
-def test_seed_above_numpy_max_rejected():
-    with pytest.raises(tc.ConfigValidationError) as ei:
-        tc._collect_config(*_args(seed=2**32))
-    assert "Seed" in str(ei.value)
-
-
-def test_seed_boundaries_accepted():
-    assert tc._collect_config(*_args(seed=0))["seed"] == 0
-    assert tc._collect_config(*_args(seed=2**32 - 1))["seed"] == 2**32 - 1
-
-
-def test_seed_field_lock_toggles_interactive():
-    assert _ufield(tc._seed_field_lock(True), "interactive") is False
-    assert _ufield(tc._seed_field_lock(False), "interactive") is True
-
-
-#: The run bar's workspace as a session holds it (`_workspace_state`): the
+#: The run bar's workspace as a session holds it (`workspace_state`): the
 #: Start handler resolves the name through the server's list (here replaced)
 #: and sends the full fingerprint shown.
 FP = "a" * 64
 WS = {"name": "demo", "row": {"name": "demo", "dataset_fingerprint": FP, "trainable": True}}
 
 
+@pytest.fixture(autouse=True)
+def _operator_mode(monkeypatch):
+    operator_mode(monkeypatch)
+
+
 @pytest.fixture
 def listed(monkeypatch, tmp_path):
     """The server's list resolves "demo" to a directory (`_workspace_path`)."""
     monkeypatch.setattr(tc, "_workspace_path", lambda name: tmp_path / name)
+    monkeypatch.setattr(tc, "load_runtime_settings", lambda *a, **k: {})
     return tmp_path / "demo"
 
 
-def _form(**overrides):
-    """The form's values as Start receives them: `_collect_config`'s order
-    after the workspace's directory."""
-    return _args(**overrides)[1:]
+@pytest.fixture
+def started(monkeypatch):
+    """A recorder in place of the job runner's start."""
+    calls = []
 
-
-def _starts(captured, kwargs_seen=None):
     def start(config, **kwargs):
-        captured.update(config)
-        if kwargs_seen is not None:
-            kwargs_seen.update(kwargs)
+        calls.append({**config, "__kwargs__": kwargs})
         return {"success": True, "pid": 1}
-    return start
+
+    monkeypatch.setattr(tc.training_manager, "start_training", start)
+    return calls
 
 
-def test_on_start_randomize_overrides_and_echoes_seed(monkeypatch, listed):
-    captured, kwargs = {}, {}
-    monkeypatch.setattr(tc, "_random_seed", lambda: 777)
-    monkeypatch.setattr(tc.training_manager, "start_training", _starts(captured, kwargs))
-    # randomize=True overrides a typed seed (999) with the generated one, and the
-    # seed field (last output) echoes the seed actually used.
-    out = tc._on_start(OP, WS, *_form(seed=999), True)
-    assert captured.get("seed") == 777
-    assert _ufield(out[-1], "value") == 777
-    assert len(out) == 2 and out[0] == ""
-    # The workspace is the one the server lists, and the start carries the
-    # full dataset fingerprint this session showed.
-    assert captured["data_dir"] == str(listed)
-    assert kwargs == {"expected_dataset_fingerprint": FP}
+def _form(**changed):
+    """The base form's values in `BASE_FIELDS` order: the recipe's, but those
+    named."""
+    values = dict(zip(tc.BASE_FIELDS, tc.base_form_defaults()))
+    values.update(changed)
+    return tuple(values[name] for name in tc.BASE_FIELDS)
 
 
-def test_on_start_randomize_empty_seed_still_launches(monkeypatch, listed):
-    captured = {}
-    monkeypatch.setattr(tc, "_random_seed", lambda: 4242)
-    monkeypatch.setattr(tc.training_manager, "start_training", _starts(captured))
-    # An empty/locked seed field must still launch when randomize is on.
-    tc._on_start(OP, WS, *_form(seed=None), True)
-    assert captured.get("seed") == 4242
+# --------------------------------------------------------------------------- what Start sends
+def test_start_sends_a_base_run_with_only_the_settings_that_differ(listed, started):
+    assert tc._on_start(OP, WS, "  Pilot Run  ", "cpu", *_form()) == ""
+    assert started[-1] == {"data_dir": str(listed), "learning_stage": "base", "device": "cpu",
+                           "run_name": "Pilot Run", "compile": False,
+                           "__kwargs__": {"expected_dataset_fingerprint": FP}}
+    # Changed values only, each as its setting takes it (a whole float of an
+    # integer box as an int, the hop text as a list, an int of a float field
+    # as a float, an empty patience as none).
+    tc._on_start(OP, WS, "", "auto", *_form(num_epochs=5.0, num_neighbors="20, -1",
+                                            learning_rate=1, use_amp=True,
+                                            early_stopping_patience=7))
+    sent = {k: v for k, v in started[-1].items() if k not in (
+        "data_dir", "learning_stage", "device", "run_name", "compile", "__kwargs__")}
+    assert sent == {"num_epochs": 5, "num_neighbors": [20, -1], "learning_rate": 1.0,
+                    "use_amp": True, "early_stopping_patience": 7}
+    assert type(sent["num_epochs"]) is int and type(sent["learning_rate"]) is float
+    # The recipe's own values, typed again, are not sent: the run records them
+    # as the recipe's, never as the operator's.
+    tc._on_start(OP, WS, "", "auto", *_form(num_epochs=200, learning_rate=0.0001,
+                                            num_neighbors="15,10,5", max_grad_norm=1))
+    assert set(started[-1]) == {"data_dir", "learning_stage", "device", "run_name", "compile",
+                                "__kwargs__"}
 
 
-def test_on_start_no_randomize_empty_seed_aborts(monkeypatch, listed):
-    calls, warned = [], []
-    monkeypatch.setattr(tc.gr, "Warning", lambda message, **k: warned.append(message))
-    monkeypatch.setattr(tc.training_manager, "start_training",
-                        lambda config, **kwargs: calls.append(config))
-    out = tc._on_start(OP, WS, *_form(seed=None), False)
-    assert calls == []  # validation aborted -> never launched
-    assert "invalid parameters" in out[0] and "Seed" in warned[0]
-    assert len(out) == 2
+def test_start_takes_compile_from_the_runtime_settings(listed, started, monkeypatch):
+    monkeypatch.setattr(tc, "load_runtime_settings", lambda *a, **k: {"torch_compile": True})
+    tc._on_start(OP, WS, "", "cpu", *_form())
+    assert started[-1]["compile"] is True
 
 
-def test_on_start_refuses_without_a_trainable_listed_dataset(monkeypatch, listed):
+@pytest.mark.parametrize("name, value, words", [
+    ("num_epochs", None, "Epochs must be set"),
+    ("num_epochs", 0, "Epochs 0 is outside"),
+    ("learning_rate", 0.0, "Learning rate 0.0 is outside"),
+    ("batch_size", 4096, "Batch size 4096 is outside"),
+    ("seed", 2 ** 32, "Seed 4294967296 is outside"),
+    ("num_neighbors", "15, x, 5", "Neighbours per hop must be whole numbers"),
+    ("num_neighbors", "", "Neighbours per hop needs at least 1"),
+    ("num_neighbors", "15, 0, 5", "Neighbours per hop [15, 0, 5] has an item outside"),
+    ("warmup_steps", -1, "Warmup steps -1 is outside"),
+    ("weight_decay", -0.1, "Weight decay -0.1 is outside"),
+    ("max_grad_norm", 0.0, "Gradient clip 0.0 is outside"),
+    ("early_stopping_patience", 0, "Early stopping patience 0 is outside"),
+    ("scheduler_type", "cyclic", "Scheduler must be one of"),
+])
+def test_a_value_its_field_spec_refuses_starts_nothing_and_is_named(listed, started, name,
+                                                                    value, words):
+    notice = tc._on_start(OP, WS, "", "cpu", *_form(**{name: value}))
+    assert started == [] and words in notice and notice.startswith(
+        '<span class="shep-notice-t">Not started: ')
+    # The same words in the form's own line, before any Start.
+    assert words in tc.differs_html(dict(zip(tc.BASE_FIELDS, _form(**{name: value}))), BASE)
+
+
+def test_every_problem_is_listed_at_once_and_escaped(listed, started):
+    notice = tc._on_start(OP, WS, "", "cpu", *_form(num_epochs=None,
+                                                    num_neighbors="<img src=x onerror=alert(1)>"))
+    assert started == [] and "Epochs must be set" in notice
+    assert "Neighbours per hop must be whole numbers" in notice and "<img" not in notice
+
+
+# --------------------------------------------------------------------------- the line on the reference
+def test_the_form_says_which_settings_differ_from_the_reference_settings():
+    """Decision 5: "Differs from the reference settings: Epochs 5 (200)"; the
+    model spec keeps its own word ("reference recipe")."""
+    values = dict(zip(tc.BASE_FIELDS, _form()))
+    assert tc.differs_html(values, BASE) == (
+        '<div class="shep-differs"><p>Uses the reference settings.</p></div>')
+    changed = tc.differs_html({**values, "num_epochs": 5, "use_amp": True,
+                               "early_stopping_patience": 10, "num_neighbors": "20, 10, 5"},
+                              BASE)
+    assert ("Differs from the reference settings: Epochs 5 (200), Neighbours per hop "
+            "20, 10, 5 (15, 10, 5), Mixed precision on (off), Early stopping patience 10 (off)"
+            in changed)
+    assert "recipe" not in changed and tc._on_base_changed(*_form(num_epochs=5)) == (
+        tc.differs_html({**values, "num_epochs": 5}, BASE))
+
+
+def test_each_settings_help_says_what_it_is_its_reference_and_its_source():
+    from src.config.recipe import BASE_SOURCES
+
+    for name in tc.BASE_FIELDS:
+        title, text = tc.FIELD_HELP[name]
+        lead = text.split("\n", 1)[0]
+        assert title == tc.SETTING_LABELS[name] and len(lead) <= 90, (name, lead)
+        assert f"Reference: {tc.setting_shown(BASE[name])}." in text
+        assert BASE_SOURCES[name] in text
+
+
+# --------------------------------------------------------------------------- D8, the dataset, the runner
+def test_start_is_refused_for_a_read_only_request_before_anything_is_read(monkeypatch,
+                                                                          started):
+    monkeypatch.delenv("SHEPHERD_DEPLOYMENT_MODE", raising=False)
+    monkeypatch.setattr(tc, "_workspace_path", lambda name: pytest.fail("the list was read"))
+    notice = tc._on_start(gradio_request(), WS, "", "cpu", *_form())
+    assert "Refused" in notice and started == []
+
+
+def test_on_start_refuses_without_a_trainable_listed_dataset(monkeypatch, listed, started):
     """No dataset selected, one not trainable, or one the server no longer
     lists: nothing is started, and the notice says why."""
     from src.api.services.server_lists import ServerListRefused
 
-    calls = []
-    monkeypatch.setattr(tc.training_manager, "start_training",
-                        lambda config, **kwargs: calls.append(config))
-    out = tc._on_start(OP, {"name": None, "row": None}, *_form(), False)
-    assert "select a dataset" in out[0]
+    assert "select a dataset" in tc._on_start(OP, {"name": None, "row": None}, "", "cpu",
+                                              *_form())
     untrainable = {"name": "x", "row": {"name": "x", "dataset_fingerprint": FP, "trainable": False,
                                         "not_trainable": "files missing", "manifest": "read"}}
-    out = tc._on_start(OP, untrainable, *_form(), False)
-    assert "x is not trainable: files missing" in out[0]
+    assert "x is not trainable: files missing" in tc._on_start(OP, untrainable, "", "cpu",
+                                                               *_form())
 
     def unlisted(name):
         raise ServerListRefused("gone")
 
     monkeypatch.setattr(tc, "_workspace_path", unlisted)
-    out = tc._on_start(OP, WS, *_form(), False)
-    assert "no longer listed" in out[0]
-    assert calls == []
+    assert "no longer listed" in tc._on_start(OP, WS, "", "cpu", *_form())
+    assert started == []
 
 
 def test_on_start_says_the_runners_refusal(monkeypatch, listed):
@@ -258,23 +197,19 @@ def test_on_start_says_the_runners_refusal(monkeypatch, listed):
                         lambda config, **kwargs: {"success": False,
                                                   "error": "The dataset changed since it was "
                                                            "shown; select it again."})
-    out = tc._on_start(OP, WS, *_form(), False)
-    assert out[0] == tc.notice_html("Not started: The dataset changed since it was shown; "
-                                    "select it again.")
+    assert tc._on_start(OP, WS, "", "cpu", *_form()) == tc.notice_html(
+        "Not started: The dataset changed since it was shown; select it again.")
 
 
-def test_nonnumeric_value_reports_friendly_error():
-    # Direct/programmatic call contract: garbage -> friendly error, not raw ValueError.
-    with pytest.raises(tc.ConfigValidationError) as ei:
-        tc._collect_config(*_args(num_epochs="abc"))
-    assert "Epochs" in str(ei.value)
+def test_the_runner_takes_what_the_form_sends(tmp_path, monkeypatch):
+    """The form's start passes the runner's own check of a new base run
+    (`_new_bundle_run`): the run keys and the recipe's base settings only."""
+    from src.api.services.training_manager import _new_bundle_run
 
-
-def test_the_seed_index_matches_the_collect_signature():
-    """`_on_start` swaps the seed in by position; the index must follow the
-    signature when path fields change (contract M3a-2 replaced two with one)."""
-    import inspect
-
-    names = list(inspect.signature(tc._collect_config).parameters)
-    assert names == _ORDER
-    assert names[tc.SEED_PARAM_INDEX] == "seed"
+    sent = []
+    monkeypatch.setattr(tc, "_workspace_path", lambda name: tmp_path / name)
+    monkeypatch.setattr(tc.training_manager, "start_training",
+                        lambda config, **k: sent.append(config) or {"success": True})
+    tc._on_start(OP, WS, "r", "cpu", *_form(num_epochs=3, batch_size=64, use_amp=True,
+                                            scheduler_type="cosine", warmup_steps=10))
+    assert _new_bundle_run(sent[-1]) == ("gatv2", None)

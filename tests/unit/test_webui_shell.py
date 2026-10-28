@@ -66,7 +66,10 @@ def test_two_levels_in_order_with_their_defaults(built):
     inner = [t for t in _tabs(demo) if t.elem_id and t.elem_id.startswith("shep-page-")]
     assert [(t.label, t.id, t.elem_id) for t in inner] == [
         ("Datasets", "datasets", "shep-page-datasets"), ("Training", "training", "shep-page-training"),
+        ("Fine-tune", "finetune", "shep-page-finetune"),
         ("Test", "test", "shep-page-test"), ("Models", "models", "shep-page-models")]
+    assert shell.RESEARCH_TABLIST_LABEL == (
+        "Research pages: Prepare (Datasets, Training, Fine-tune), Evaluate (Test, Models)")
 
 
 def test_the_research_tabs_sit_inside_research(built):
@@ -115,7 +118,8 @@ def test_every_builder_gets_the_one_context_and_can_cross_link():
         return build
 
     pages = {page: builder(page) for page in (shell.CLINICAL, shell.DATASETS, shell.TRAINING,
-                                              shell.TEST, shell.MODELS, shell.SETTINGS)}
+                                              shell.FINETUNE, shell.TEST, shell.MODELS,
+                                              shell.SETTINGS)}
     demo, ctx = _built(pages)
     assert set(seen) == set(pages) and all(c is ctx for c in seen.values())
     assert ctx.nav_outputs == [ctx.nav, ctx.research_nav, ctx.research_page]
@@ -128,7 +132,7 @@ def test_every_builder_gets_the_one_context_and_can_cross_link():
     with pytest.raises(ValueError):
         ctx.go("nowhere")
     links = [fn for fn in demo.fns.values() if fn.outputs == ctx.nav_outputs]
-    assert len(links) == 6
+    assert len(links) == 7
 
 
 def test_the_shared_timers_are_outside_the_tabs(built):
@@ -154,7 +158,7 @@ def _walk(node):
 
 def test_a_research_page_refreshes_only_when_it_is_the_page_shown(built):
     """Returning to Research refreshes the research page shown, never the
-    other three (Models' refresh opens every checkpoint)."""
+    other four (Models' refresh opens every checkpoint)."""
     demo, ctx = built
     tokens = [ctx.page_tokens[p] for p in shell.RESEARCH_PAGES]
     (research,) = [fn for fn in demo.fns.values()
@@ -162,10 +166,14 @@ def test_a_research_page_refreshes_only_when_it_is_the_page_shown(built):
     assert research.inputs == [ctx.location, ctx.research_page, *tokens]
     # queued: Gradio 6.30 dispatches a State's .change only from a queued answer
     assert research.outputs == [ctx.location, *tokens] and research.queue is not False
-    location, *bumped = research.fn("clinical", "datasets", 0, 4, 0, 0)
-    assert location == "datasets" and bumped == [1, gr.update(), gr.update(), gr.update()]
-    location, *bumped = research.fn("settings", None, 0, 4, 0, 0)  # nothing chosen yet: Training
-    assert location == "training" and bumped == [gr.update(), 5, gr.update(), gr.update()]
+    location, *bumped = research.fn("clinical", "datasets", 0, 4, 0, 0, 0)
+    assert location == "datasets" and bumped == [1, gr.update(), gr.update(), gr.update(),
+                                                 gr.update()]
+    location, *bumped = research.fn("settings", None, 0, 4, 0, 0, 0)  # nothing chosen: Training
+    assert location == "training" and bumped == [gr.update(), 5, gr.update(), gr.update(),
+                                                  gr.update()]
+    location, *bumped = research.fn("clinical", "finetune", 0, 0, 2, 0, 0)
+    assert location == "finetune" and bumped[2] == 3
     for page in shell.RESEARCH_PAGES:
         (own,) = [fn for fn in demo.fns.values() if (ctx.tabs[page]._id, "select") in fn.targets]
         assert own.inputs == [ctx.location, ctx.page_tokens[page]]
@@ -195,18 +203,18 @@ def test_a_research_page_refreshes_once_per_opening(built):
                         if (ctx.tabs[page]._id, "select") in fn.targets)
              for page in shell.RESEARCH_PAGES}
     # first opening: Research's select, then Training's mount select
-    location, *bumped = research.fn("clinical", "training", 0, 0, 0, 0)
+    location, *bumped = research.fn("clinical", "training", 0, 0, 0, 0, 0)
     assert location == "training" and bumped[1] == 1
     assert inner["training"].fn(location, 1) == ("training", "training", gr.update())
     # the other order: the inner select first, then Research's
     page, _, token = inner["models"].fn("clinical", 0)
     assert (page, token) == ("models", 1)
-    assert research.fn(page, "models", 0, 0, 0, 1) == (
-        "models", gr.update(), gr.update(), gr.update(), gr.update())
+    assert research.fn(page, "models", 0, 0, 0, 0, 1) == (
+        "models", gr.update(), gr.update(), gr.update(), gr.update(), gr.update())
     # within Research, another page's tab still refreshes it
     assert inner["test"].fn("training", 4) == ("test", "test", 5)
     # returning to Research from another page refreshes the page shown
-    assert research.fn("settings", "test", 0, 0, 5, 0)[3] == 6
+    assert research.fn("settings", "test", 0, 0, 0, 5, 0)[4] == 6
     for fn in (research, *inner.values()):
         assert fn.concurrency_id == shell.OPEN_PAGE_CONCURRENCY and fn.concurrency_limit == 1
 
@@ -244,9 +252,9 @@ def test_on_page_open_runs_on_its_own_tab_for_a_first_level_page():
 
 def test_every_gated_act_is_followed_by_the_chips_read(built):
     """Training Start, Continue…, Continue Training, Stop (asking and
-    confirming), Check checkpoint and the parent list's Refresh, Diagnosis'
-    Change model… (it lists checkpoints), Settings Apply and Restart: each
-    act's chain reads the chips again."""
+    confirming), Check checkpoint and the parent list's Refresh, Fine-tune's
+    base list and Start, Diagnosis' Change model… (it lists checkpoints),
+    Settings Apply and Restart: each act's chain reads the chips again."""
     from src.webui.components.chips import read_chips
 
     demo, _ctx = built
@@ -265,7 +273,8 @@ def test_every_gated_act_is_followed_by_the_chips_read(built):
 
     names = {"_on_start", "_on_stop", "_on_resume", "_on_change_model",
              "_on_apply", "_on_restart", "_on_check_continue", "_on_stop_request",
-             "_on_continue_open"}
+             "_on_continue_open", "_on_finetune_bases", "_on_finetune_start",
+             "_on_finetune_stop_request", "_on_finetune_stop"}
     acts = [fn for fn in by_id.values() if fn.name in names
             or getattr(getattr(fn.fn, "__wrapped__", None), "__name__", None) in names]
     found = {fn.name if fn.name in names else fn.fn.__wrapped__.__name__ for fn in acts}
@@ -285,6 +294,7 @@ def test_the_title_follows_the_location():
         "settings": "Settings — SHEPHERD-Advanced",
         "datasets": "Datasets · Research — SHEPHERD-Advanced",
         "training": "Training · Research — SHEPHERD-Advanced",
+        "finetune": "Fine-tune · Research — SHEPHERD-Advanced",
         "test": "Test · Research — SHEPHERD-Advanced",
         "models": "Models · Research — SHEPHERD-Advanced",
     }

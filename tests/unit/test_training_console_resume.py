@@ -1,14 +1,16 @@
 """
-Continuing a run from the Training page (contract M3a; M5-2, UI-C).
+Continuing a run from the Training page (contract M3a; M5-2, UI-C; K6).
 
 Covers the Continue drawer's read path aligning with the run layout (contract
 M3a-2) and the server's lists (M5-2): the parent list is the run bar's
-workspace's runs only, through the shared listing; a listed parent is resolved
-by the server from its list again (never a client path) and its bytes compared
-with the digest listed, by the service's preview (P22-S1); the listed and the
-typed checkpoint go through one check; Continue Training sends only
-operational fields, the dataset fingerprint and the parent's model
-fingerprint the session showed.
+workspace's model records only (K6 decision 1: a file without a model spec,
+or one whose record cannot be read, is never continued from the dashboard),
+through the shared listing; a listed parent is resolved by the server from
+its list again (never a client path) and its bytes compared with the digest
+listed, by the service's preview (P22-S1); the listed and the typed
+checkpoint go through one check; Continue Training sends only operational
+fields, the dataset fingerprint and the parent's model fingerprint the
+session showed. The parents are model bundle bases trained for real on CPU.
 """
 from pathlib import Path
 
@@ -48,31 +50,46 @@ def _manifest(ws):
 
 
 # --------------------------------------------------------------- the parent list
-def test_the_parent_list_is_the_run_bars_workspaces_runs_only(tmp_path, monkeypatch):
+def test_the_parent_list_is_the_run_bars_workspaces_model_records_only(tmp_path, monkeypatch):
+    """The run bar's workspace's runs, never another's; and of its files only
+    the model records (a base and a task model): a file without a model spec
+    and a file the read refuses are listed on Research › Models, never
+    offered to continue (K6 decision 1)."""
+    from tests.unit.test_task_first_selection import GNN_PAYLOAD, _put, _record_payload
+
     root = tmp_path / "root"
     ws, other = _manifest(root / "ws"), _manifest(root / "other")
-    hgt = _run_file(ws, "hgt", "20261001-000000_a_111111", "last.pt")
-    gat = _run_file(ws, "gat", "20261002-000000_b_222222", "model-1-0.9.pt")
-    _run_file(other, "gat", "20261003-000000_c_333333", "last.pt")
+    base = _put(ws, "gatv2", "20261001-000000_a_111111", _record_payload(), 100)
+    child = _put(ws, "gatv2", "20261002-000000_b_222222", _record_payload("gene"), 200,
+                 name="model-01-0.4000.pt")
+    _put(ws, "gat", "20261003-000000_hist_333333", GNN_PAYLOAD, 300)
+    _run_file(ws, "gat", "20261004-000000_torn_444444", "model-1-0.9.pt")
+    _put(other, "gatv2", "20261005-000000_c_555555", _record_payload(), 400)
     monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(root))
 
     parents, runs, update, note = tc._refresh_checkpoints(OP, {"name": "ws"}, {}, None)
-    assert set(parents) == {"hgt/20261001-000000_a_111111/last.pt",
-                            "gat/20261002-000000_b_222222/model-1-0.9.pt"}
+    child_key = "gatv2/20261002-000000_b_222222/model-01-0.4000.pt"
+    assert set(parents) == {"gatv2/20261001-000000_a_111111/last.pt", child_key}
     run_labels = {value: label for label, value in runs["choices"]}
-    assert run_labels == {"hgt/20261001-000000_a_111111": "a · HGT · 2026-10-01 00:00",
-                          "gat/20261002-000000_b_222222": "b · GAT · 2026-10-02 00:00"}
+    assert run_labels == {"gatv2/20261001-000000_a_111111": "a · GATv2 · 2026-10-01 00:00",
+                          "gatv2/20261002-000000_b_222222": "b · GATv2 · 2026-10-02 00:00"}
     # The chosen run's files only; the chosen run is the first listed.
     labels = dict((value, label) for label, value in update["choices"])
     assert set(labels) == {key for key in parents if key.startswith(runs["value"] + "/")}
-    # A file the read refuses is listed, never offered as loadable.
-    gat_files = tc._on_run_chosen("gat/20261002-000000_b_222222", parents, None)
-    assert gat_files["choices"] == [("model-1-0.9.pt · cannot be read",
-                                     "gat/20261002-000000_b_222222/model-1-0.9.pt")]
+    child_files = tc.on_run_chosen("gatv2/20261002-000000_b_222222", parents, None)
+    assert [key for _label, key in child_files["choices"]] == [child_key]
+    assert "Fine-tune · Gene" in tc.parent_details_html(parents[child_key])
     assert "2 runs, 2 checkpoints" in note
     # No client path anywhere: the values are keys the server resolves again.
     assert all(str(root) not in value for value in (*labels, *run_labels))
-    assert {hgt.name, gat.name} == {key.rsplit("/", 1)[1] for key in parents}
+    assert {base.name, child.name} == {key.rsplit("/", 1)[1] for key in parents}
+
+    # A workspace whose files hold no model record offers none, and says why.
+    only_history = _manifest(root / "old")
+    _put(only_history, "gat", "20261006-000000_hist_666666", GNN_PAYLOAD, 500)
+    parents, runs, update, note = tc._refresh_checkpoints(OP, {"name": "old"}, {}, None)
+    assert parents == {} and update["choices"] == [] and runs["choices"] == []
+    assert "holds a model record" in note and "never continued here" in note
 
 
 def test_the_parent_list_does_not_list_the_old_layout(tmp_path, monkeypatch):
@@ -110,29 +127,34 @@ def test_cli_resume_docstring_names_the_run_layout():
 
 
 # --------------------------------------------------------------- continue block (M3a)
-_TINY = dict(device="cpu", hidden_dim=16, num_layers=1, num_heads=2, num_workers=0,
-             use_amp=False, num_epochs=2, batch_size=5, warmup_steps=1, seed=42)
 PAUSED_RUN = "20261001-000000_paused_aaaaaa"
 DONE_RUN = "20261002-000000_done_bbbbbb"
+HISTORY_RUN = "20261003-000000_history_cccccc"
 
 
 @pytest.fixture(scope="module")
 def trained(tmp_path_factory):
-    """A paused and a finished checkpoint, trained for real on the CPU in the
-    run layout of a workspace a workspaces root lists (``data``)."""
-    import scripts.train_model as train_model
-    from tests.fixtures.trainable_workspace import write_trainable_workspace
+    """A paused and a finished model bundle base (two epochs, the first
+    paused after one), trained for real on the CPU in the run layout of a
+    workspace a workspaces root lists (``data``), and a file without a model
+    spec beside them."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    import train_model
+    from tests.fixtures.base_workspace import write_base_workspace
+    from tests.unit.test_task_first_selection import GNN_PAYLOAD, _put
+    from tests.unit.test_train_base_stage import _config
 
     root = tmp_path_factory.mktemp("console")
-    ws = write_trainable_workspace(root)
-    runs = ws / "runs" / "gat"
-    train_model.train(train_model.TrainConfig(data_dir=str(ws), run_dir=str(runs / PAUSED_RUN),
-                                              pause_after_epoch=1, **_TINY))
-    train_model.train(train_model.TrainConfig(data_dir=str(ws), run_dir=str(runs / DONE_RUN),
-                                              **_TINY))
+    ws = write_base_workspace(root)
+    runs = ws / "runs" / "gatv2"
+    train_model.train(*_config(ws, runs / PAUSED_RUN, pause_after_epoch=1))
+    train_model.train(*_config(ws, runs / DONE_RUN))
+    history = _put(ws, "gat", HISTORY_RUN, GNN_PAYLOAD, 1_000)
     return {"root": root, "ws": ws,
             "paused": runs / PAUSED_RUN / "checkpoints" / "last.pt",
-            "finished": runs / DONE_RUN / "checkpoints" / "last.pt"}
+            "finished": runs / DONE_RUN / "checkpoints" / "last.pt", "history": history}
 
 
 @pytest.fixture
@@ -140,10 +162,11 @@ def checkpoints(trained, monkeypatch):
     """The trained workspace listed by the server, with the session's state
     as the page holds it: the run bar's workspace and the parent list."""
     monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(trained["root"]))
-    ws = tc._workspace_state("data")
+    ws = tc.workspace_state("data")
     parents, _problem = tc._list_parents(ws)
     return {**trained, "state": ws, "parents": parents,
-            "paused_key": f"gat/{PAUSED_RUN}/last.pt", "done_key": f"gat/{DONE_RUN}/last.pt"}
+            "paused_key": f"gatv2/{PAUSED_RUN}/last.pt",
+            "done_key": f"gatv2/{DONE_RUN}/last.pt"}
 
 
 def _check(c, source, listed, manual, device="cpu", extend=None, mode=None):
@@ -176,7 +199,7 @@ def test_the_listed_and_the_typed_checkpoint_go_through_one_check(checkpoints):
     # The listed parent was resolved by the server from its list: the file
     # read is the one listed (its run and name; its fingerprint is in the
     # chosen checkpoint's details, not repeated here).
-    assert f"<b>Checked</b> <code>gat/{PAUSED_RUN}/last.pt</code> from the run list" in from_list
+    assert f"<b>Checked</b> <code>gatv2/{PAUSED_RUN}/last.pt</code> from the run list" in from_list
     assert "model fingerprint" not in from_list and "model fingerprint" in typed
     # The parent recorded this workspace's dataset: the same, so Continue
     # Training is on.
@@ -225,7 +248,7 @@ def test_a_typed_path_only_locates_a_checkpoint_the_server_lists(checkpoints, mo
     elif where == "server_file":
         typed = Path(__file__).resolve()
     else:
-        other = checkpoints["root"] / "other" / "runs" / "gat" / PAUSED_RUN / "checkpoints"
+        other = checkpoints["root"] / "other" / "runs" / "gatv2" / PAUSED_RUN / "checkpoints"
         other.mkdir(parents=True)
         typed = other / "last.pt"
         shutil.copy2(checkpoints["paused"], typed)
@@ -344,7 +367,7 @@ def test_stop_asks_without_naming_an_epoch_the_job_has_moved_past(checkpoints, m
     # Keep training closes the question and stops nothing.
     monkeypatch.setattr(training_manager, "stop_training",
                         lambda: pytest.fail("Keep training stopped the job"))
-    assert tc._on_stop_cancel({"confirm": "j1"}) == {"confirm": None}
+    assert tc.close_stop_question({"confirm": "j1"}) == {"confirm": None}
 
     # Nothing running: nothing is asked.
     monkeypatch.setattr(training_manager, "get_status", lambda: {"status": "completed",
@@ -365,7 +388,7 @@ def test_a_stopped_run_shows_stopped_and_where_it_can_be_continued(checkpoints):
     assert tc.PILL_KIND[kind] == "grey"
     sentence = tc._snapshot_sentence(outcome)
     assert sentence.startswith("Paused at epoch 1 of 2")
-    assert f"data/runs/gat/{PAUSED_RUN}/checkpoints/last.pt" in sentence
+    assert f"data/runs/gatv2/{PAUSED_RUN}/checkpoints/last.pt" in sentence
     assert "No checkpoint was saved" in tc._snapshot_sentence(None)
 
 
@@ -531,3 +554,42 @@ def test_continue_without_check_on_a_finished_checkpoint_shows_extra_epochs(
     assert started == [] and "Not started" in result[0]
     assert "Enter <b>Extra epochs</b> above" in result[1]           # the field is above the check
     assert result[2]["visible"] is True
+
+
+# --------------------------------------------------------------- K6: history files and Fine-tune children
+def test_a_file_without_a_model_spec_is_never_continued_from_the_dashboard(checkpoints,
+                                                                           monkeypatch):
+    """K6 decision 1: the run list offers model records only, and a typed path
+    that locates a file the server lists but that holds no model spec is
+    refused unopened, for Check checkpoint and Continue Training alike."""
+    opened, started = [], []
+    monkeypatch.setattr(training_manager, "preview_continuation",
+                        lambda *a, **k: opened.append(a) or {"ok": False})
+    monkeypatch.setattr(training_manager, "start_training", _starts(started))
+    assert not [key for key in checkpoints["parents"] if HISTORY_RUN in key]
+    typed = str(checkpoints["history"])
+    text, *_rest = _check(checkpoints, tc.CONTINUE_FROM_PATH, None, typed)
+    assert "Nothing to check" in text and "not a model record the run list offers" in text
+    said, *_rest = _resume(checkpoints, tc.CONTINUE_FROM_PATH, None, typed)
+    assert "Not started: the typed path is not a model record" in said
+    assert opened == [] and started == []
+
+
+def test_stop_names_the_fine_tune_children_it_will_cancel(monkeypatch):
+    """A stop reaches a Fine-tune start: the question says which queued
+    children will not start (a stop cancels them), and the notice which
+    were cancelled. Without a queue it is Stop's own question."""
+    status = {"status": "running", "job_id": "j1",
+              "finetune": {"children": [{"task": "disease", "status": "running"},
+                                        {"task": "gene", "status": "queued"},
+                                        {"task": "patients_like_me", "status": "queued"}]}}
+    monkeypatch.setattr(training_manager, "get_status", lambda: status)
+    text, mode = tc._on_stop_request(OP, {})
+    assert mode["confirm"] == "j1" and tc.STOP_QUESTION in text
+    assert "The queued Fine-tune children (Gene, Patients-like-me) will not start." in text
+    assert tc.stop_question({"status": "running"}) == tc.STOP_QUESTION
+    monkeypatch.setattr(training_manager, "stop_training", lambda: {
+        "success": True, "status": "stopped", "outcome": None,
+        "cancelled_children": ["gene", "patients_like_me"]})
+    notice, _mode = tc._on_stop(OP, {"confirm": "j1"})
+    assert "The queued Fine-tune children (Gene, Patients-like-me) were cancelled." in notice

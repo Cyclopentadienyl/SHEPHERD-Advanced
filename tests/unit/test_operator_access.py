@@ -473,6 +473,10 @@ GATED_HANDLERS = {
     "src.webui.components.training_console": (
         "_on_start", "_on_stop", "_on_resume", "_on_check_continue", "_refresh_checkpoints",
         "_save_training_config", "_on_stop_request", "_on_continue_open"),
+    # The Fine-tune page: its base list opens every checkpoint; its Stop is
+    # the Training page's stop logic, behind handlers of its own.
+    "src.webui.components.finetune_page": ("_on_finetune_bases", "_on_finetune_start",
+                                            "_on_finetune_stop_request", "_on_finetune_stop"),
 }
 
 
@@ -600,6 +604,8 @@ def spies(monkeypatch, tmp_path):
     monkeypatch.setattr(rs, "save_runtime_settings", recorder("save_runtime_settings", None))
     monkeypatch.setattr(training_manager, "start_training",
                         recorder("start_training", {"success": False, "error": "spy"}))
+    monkeypatch.setattr(training_manager, "start_finetune",
+                        recorder("start_finetune", {"success": False, "error": "spy"}))
     monkeypatch.setattr(training_manager, "stop_training",
                         recorder("stop_training", {"success": False, "error": "spy"}))
     monkeypatch.setattr(training_manager, "get_checkpoints", recorder("get_checkpoints", []))
@@ -622,6 +628,7 @@ def spies(monkeypatch, tmp_path):
 
 def _dashboard_calls():
     from src.webui.components import diagnosis_panel as dp
+    from src.webui.components import finetune_page as fp
     from src.webui.components import runtime_settings as rs
     from src.webui.components import training_console as tc
 
@@ -647,6 +654,12 @@ def _dashboard_calls():
         (tc._on_check_continue, [path, None, "/srv/x.pt", "cpu", None, {"name": "ws"}, {},
                                  {}], None),
         (tc._on_resume, [{}, "cpu", path, None, "/srv/x.pt", None, {}, {}], None),
+        # Fine-tune: a fresh session has no dataset, so the base list and
+        # Start stop before their service when allowed.
+        (fp._on_finetune_bases, [{}, None], None),
+        (fp._on_finetune_start, [{}, {}, None, [], 100, 33, "cpu", ""], None),
+        (fp._on_finetune_stop_request, [{}], None),         # asks, reading nothing
+        (fp._on_finetune_stop, [{}], "stop_training"),
     ]
 
 
@@ -692,6 +705,36 @@ def test_a_direct_call_from_an_operator_on_loopback_reaches_each_service(
                 assert reached == [service], fn.__name__
             else:
                 assert spies[len(before):] == [], fn.__name__
+
+
+def test_a_read_only_fine_tune_poll_never_lists_checkpoints(spies, monkeypatch):
+    """The Fine-tune job card reads a child's products (its run's saved files)
+    for an operator only: a read-only request's poll draws the card from the
+    job runner's status alone, never opening a checkpoint, and says the
+    products are an operator control. An operator's poll reads them once
+    the child has ended."""
+    from src.api.services.training_manager import training_manager
+    from src.webui.components import finetune_page as fp
+    from src.webui.components import training_console as tc
+    from tests.fixtures.operator_access import gradio_request
+
+    ended = {"status": "completed", "job_id": "j", "gpu": {},
+             "finetune": {"parent": "/w/runs/gatv2/r/checkpoints/last.pt",
+                          "parent_sha256": "b" * 64, "tasks": ["disease"], "cancelled": False,
+                          "children": [{"task": "disease", "status": "completed", "job_id": "j",
+                                        "run_dir": "/w/runs/gatv2/c", "error": None}]}}
+    monkeypatch.setattr(training_manager, "get_status", lambda: ended)
+    monkeypatch.setattr(tc, "workspace_of_run", lambda run_dir: "w")
+    monkeypatch.setattr(tc, "gpu_view", lambda *a, **k: None)
+    card, *_rest, cache = fp._poll(fp.PAGE, {}, {}, gradio_request())
+    assert spies == [] and "not shown: reading the checkpoints is an operator control" in card
+    assert cache.get("products") is None
+    operator_mode(monkeypatch)
+    card, *_rest, cache = fp._poll(fp.PAGE, {}, {}, gradio_request())
+    assert spies == ["list_checkpoints"] and "no saved file records a validation figure" in card
+    # Read once per child ending: the next tick takes the session's record.
+    fp._poll(fp.PAGE, {}, cache, gradio_request())
+    assert spies == ["list_checkpoints"]
 
 
 # --------------------------------------------------------------------------- CORS and uploads

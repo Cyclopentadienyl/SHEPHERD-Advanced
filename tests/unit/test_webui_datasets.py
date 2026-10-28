@@ -388,7 +388,7 @@ def test_the_training_popover_and_datasets_show_one_details_body(root, monkeypat
     body = r.dataset_details_html(row, row["facts"], problem=row["facts_problem"])
     assert "diseases (train / val)" in body and "What the manifest binds" in body
     assert body in dsp.details_html(data, "demo")
-    state = tc._workspace_state("demo")
+    state = tc.workspace_state("demo")
     assert state["facts"] == row["facts"]
     assert r.dataset_details_html(state["row"], state["facts"]) in tc.details_html(state)
     assert body == r.dataset_details_html(state["row"], state["facts"])

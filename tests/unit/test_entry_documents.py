@@ -171,9 +171,12 @@ def test_every_command_parses_with_its_script_s_own_parser(document, script, arg
 # ---------------------------------------------------------------------------
 # The pages and fields they name
 # ---------------------------------------------------------------------------
-#: The Training page's fields and actions the playbook names, as `**name**`.
-TRAINING_NAMES = ("Dataset", "Run name", "GNN Conv Type", "Batch Size", "Max Subgraph Nodes",
-                  "Continue…", "Check checkpoint", "Continue Training", "Stop")
+#: The Training and Fine-tune pages' fields and actions the playbook names, as
+#: `**name**` (K6: the base form's labels; the ShepherdGNN form's are gone).
+TRAINING_NAMES = ("Dataset", "Run name", "Epochs", "Learning rate", "Batch size", "Seed",
+                  "Continue…", "Check checkpoint", "Continue Training", "Stop", "Tasks")
+#: Names of the retired ShepherdGNN form the documents no longer teach (K6).
+RETIRED_FORM = ("GNN Conv Type", "Max Subgraph Nodes", "Batch Size")
 #: Names of what the dashboard no longer has (M5-2).
 RETIRED = ("training console", "data dir", "diagnosis panel")
 
@@ -211,7 +214,8 @@ def test_no_retired_page_or_field_is_named(document):
 def test_every_research_page_named_is_the_dashboard_s(document, shown):
     groups = _research_groups()
     plain = _text(document).replace("**", "")
-    named = re.findall(r"Research(?: \(pre-clinical\))? › (\w+) › (\w+)", plain)
+    # A page name may hold a hyphen ("Fine-tune").
+    named = re.findall(r"Research(?: \(pre-clinical\))? › (\w+) › ([\w-]+)", plain)
     assert named, f"{document} names no research page"
     for group, page in named:
         assert page in groups.get(group, []), (document, group, page, groups)
@@ -225,6 +229,9 @@ def test_the_training_page_s_names_in_the_playbook_are_its_labels_and_buttons(sh
     for name in TRAINING_NAMES:
         assert re.search(rf"\*\*{re.escape(name)}(?: = [^*]*)?\*\*", playbook), name
         assert any(text == name or text.endswith(f" {name}") for text in shown), name
+    for name in RETIRED_FORM:
+        assert f"**{name}" not in playbook, name
+        assert name not in shown, name
 
 
 # ---------------------------------------------------------------------------

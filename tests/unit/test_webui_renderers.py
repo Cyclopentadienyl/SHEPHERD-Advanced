@@ -390,9 +390,12 @@ def test_a_base_and_a_task_models_validation_figures_are_named(metric, label):
     from src.webui.components import training_console as tc
 
     assert not hasattr(tc, "_METRIC_WORDS"), "one map, the renderers'"
-    assert tc.checkpoint_words({"filename": "last.pt", "sha256": SHA, "completed_epochs": 1,
-                                "validation": {"metric": metric, "value": 0.5}}) == (
-        f"Latest save · 1 epoch completed · {label} 0.5000")
+    item = {"filename": "last.pt", "sha256": SHA, "completed_epochs": 1,
+            "validation": {"metric": metric, "value": 0.5}}
+    # The figure is the chosen file's details on Training, not its option (K6b:
+    # the skill's 40 characters and one separator).
+    assert tc.validation_words(item) == f"{label} 0.5000"
+    assert tc.checkpoint_words(item) == "Latest save · 1 epoch completed"
 
 
 def test_model_facts_show_the_task_and_the_configuration_escaped():

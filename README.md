@@ -68,7 +68,7 @@ a test run) need `SHEPHERD_DEPLOYMENT_MODE=M1`, every training and test run need
 
 | | |
 |---|---|
-| Dashboard (Diagnosis; Research › Datasets, Training, Test, Models; Settings) | http://127.0.0.1:8000/ui |
+| Dashboard (Diagnosis; Research › Datasets, Training, Fine-tune, Test, Models; Settings) | http://127.0.0.1:8000/ui |
 | API docs (Swagger) | http://127.0.0.1:8000/docs |
 | Health check | http://127.0.0.1:8000/health |
 
@@ -81,7 +81,7 @@ Three steps, in order. Full walkthrough with data sources and expected artifacts
 |---|---|---|
 | 1. Knowledge graph | `scripts/build_knowledge_graph.py` | `kg.json`, `node_features.pt`, `edge_indices.pt` |
 | 2. Shortest paths | `scripts/compute_shortest_paths.py` | `shortest_paths.pt` |
-| 3. Train | the dashboard's Research › Prepare › Training, or `scripts/train_model.py --data-dir <workspace>` in a shell given the service's `SHEPHERD_WORKSPACES_ROOT` (deployment guide §4.11) | `runs/<arch>/<run>/checkpoints/*.pt` |
+| 3. Train | a base on the dashboard's Research › Prepare › Training, then its task models on Research › Prepare › Fine-tune; or `scripts/train_model.py --data-dir <workspace> --stage base` in a shell given the service's `SHEPHERD_WORKSPACES_ROOT` (deployment guide §4.11) | `runs/<arch>/<run>/checkpoints/*.pt` |
 
 Artifacts live under `data/workspaces/<kg>/`, keeping each knowledge graph's outputs separate from
 the KG-independent models in `models/pretrained/`. See

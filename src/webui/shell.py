@@ -15,7 +15,8 @@ them from Python, and Gradio's tablist semantics and keyboard stay):
   segmented control: the selected stage is filled in the accent colour and bold.
   Settings, selected, has a light fill, a 3 px underline and bold.
 - **Level 2** (``#shep-research-nav``, inside Research): Datasets · Training ·
-  Test · Models under the group labels PREPARE and EVALUATE with a divider. The
+  Fine-tune · Test · Models under the group labels PREPARE and EVALUATE with a
+  divider. The
   labels are CSS generated content with empty alternative text and
   ``pointer-events: none``: not clickable and not part of a tab's name; the
   tablist's ``aria-label`` gives the grouping to a screen reader. The selected
@@ -48,6 +49,7 @@ Page                       Builder                                       Owner
 Diagnosis (clinical)       ``diagnosis_panel.create_diagnosis_tab``      UI-B
 Research › Datasets        ``datasets_page.create_datasets_page``        UI-A
 Research › Training        ``training_console.create_training_tab``      UI-C
+Research › Fine-tune       ``finetune_page.create_finetune_page``        K6
 Research › Test            ``test_page.create_test_page``                UI-D
 Research › Models          ``models_page.create_models_page``            UI-D
 ⚙ Settings                 ``runtime_settings.create_runtime_settings_tab``  UI-A
@@ -70,7 +72,7 @@ page:
   ``outputs``, …) **each time the page is shown**: Diagnosis and Settings on
   their tab's ``select``; a research page when its own tab is selected and when
   Research is selected while it is the research page shown (only that page:
-  returning to Research never refreshes the other three). The research pages
+  returning to Research never refreshes the other four). The research pages
   are refreshed through ``ctx.page_tokens[page]`` (a `gr.State` the shell
   bumps from queued events, since Gradio 6.30 dispatches a State's ``.change``
   only from a queued event's answer; ``on_page_open`` listens to its
@@ -183,8 +185,8 @@ BRAND = "SHEPHERD-Advanced"
 #: Level 1 (outer) tab ids and labels, in order.
 CLINICAL, RESEARCH, SETTINGS = "clinical", "research", "settings"
 #: Level 2 (Research) page ids.
-DATASETS, TRAINING, TEST, MODELS = "datasets", "training", "test", "models"
-RESEARCH_PAGES = (DATASETS, TRAINING, TEST, MODELS)
+DATASETS, TRAINING, FINETUNE, TEST, MODELS = "datasets", "training", "finetune", "test", "models"
+RESEARCH_PAGES = (DATASETS, TRAINING, FINETUNE, TEST, MODELS)
 DEFAULT_RESEARCH_PAGE = TRAINING
 
 LABELS = {
@@ -193,6 +195,7 @@ LABELS = {
     SETTINGS: "⚙ Settings",
     DATASETS: "Datasets",
     TRAINING: "Training",
+    FINETUNE: "Fine-tune",
     TEST: "Test",
     MODELS: "Models",
 }
@@ -206,7 +209,7 @@ TITLES = {
 
 #: The research tablist's name for a screen reader (the visual group labels are
 #: generated content with empty alternative text).
-RESEARCH_TABLIST_LABEL = ("Research pages: Prepare (Datasets, Training), "
+RESEARCH_TABLIST_LABEL = ("Research pages: Prepare (Datasets, Training, Fine-tune), "
                           "Evaluate (Test, Models)")
 
 #: The shared timers' periods, in seconds.
@@ -388,8 +391,8 @@ def build_shell(blocks: Any, pages: Dict[str, Callable[[PageContext], None]],
                 *, help_registry: Optional[HelpRegistry] = None) -> PageContext:
     """Lay out the header, the two navigation levels and every page.
 
-    `pages` maps every page id (clinical, datasets, training, test, models,
-    settings) to its builder; a missing one is a ``KeyError``. Returns the
+    `pages` maps every page id (clinical, datasets, training, finetune, test,
+    models, settings) to its builder; a missing one is a ``KeyError``. Returns the
     context the pages were given."""
     registry = help_registry or HelpRegistry()
     registry.topics(RENDERER_HELP)
@@ -588,6 +591,7 @@ __all__ = [
     "CLINICAL",
     "DATASETS",
     "DEFAULT_RESEARCH_PAGE",
+    "FINETUNE",
     "LABELS",
     "MODELS",
     "OPEN_PAGE_CONCURRENCY",

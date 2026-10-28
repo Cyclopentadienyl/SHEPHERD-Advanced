@@ -6,7 +6,8 @@ declarative description of the ~30 user-facing training-start parameters that to
 hand-maintained and drifting, across three surfaces:
 
     - the API request model   (src/api/routes/training.py :: TrainingStartRequest)
-    - the WebUI form + collect (src/webui/components/training_console.py)
+    - the WebUI form           (src/webui/components/training_console.py; since K6 the base
+                                form of the reference recipe's base settings, see below)
     - the CLI + projection hub (scripts/train_model.py :: TrainConfig -> downstream configs)
 
 Rollout phase (this file = PR-4a): **descriptive only.** It PINS current behavior and REPRESENTS
@@ -17,9 +18,11 @@ Constraint representation
 All bounds are structured dicts using the Pydantic/annotated-types vocabulary
 ``{"ge"|"gt"|"le"|"lt": value}`` so inclusive and exclusive bounds are distinguishable:
 
-    valid       — TARGET hard validity (PyTorch/compute-lib norms). Drives the API in PR-4c.
-    ui          — CURRENT conservative WebUI bounds. ``ui`` ⊆ ``valid`` except where a bound key
-                  is declared in ``ui_wider_than_valid`` (a real, self-validated divergence).
+    valid       — TARGET hard validity (PyTorch/compute-lib norms). Drives the API in PR-4c, and
+                  the one value check of a model bundle start (`value_problem`), which the
+                  WebUI's base form and Fine-tune page make before the job runner makes it again.
+    ui          — the bounds of the retired ShepherdGNN WebUI form (below). ``ui`` ⊆ ``valid``
+                  except where a bound key is declared in ``ui_wider_than_valid``.
     current_api — CURRENT API constraints, compared mechanically against the live Pydantic model.
 
 ``valid`` and ``current_api`` share one shape on purpose: PR-4c's job is exactly the diff between
@@ -30,17 +33,11 @@ What PR-4a's parity tests mechanically pin — and what is deliberately deferred
 
   Pinned now:
     - API: field existence, defaults, name coverage, and the exact ge/gt/le/lt constraints.
-    - WebUI collect: which fields ``_collect_config`` emits (``webui_exposed``), each default, and
-      EVERY ``_num`` range guard (``webui_num_guarded``), derived from ``ui`` — both sides where
-      the field is bounded on both sides.
     - Projection: every ``projects_to`` target attribute exists on the real config class.
     - Self-validation: constraint dicts are well-formed; cross-field rules reference real fields
       and real choices; declared ui/valid divergences are actually divergent.
-  Deliberately NOT pinned in PR-4a (narrowed claim):
-    - Slider/Dropdown widget min/max/choices live only on the gr components created inside
-      ``create_training_tab()``; introspecting them would require changing WebUI source, which
-      PR-4a must not do. They are recorded here as ``ui`` / ``ui_choices`` / ``ui_step`` (the
-      source of truth) and become pinned-by-construction when PR-4d derives the widgets.
+  Not pinned: ``ui`` / ``ui_choices`` / ``ui_step`` recorded the retired ShepherdGNN form's
+  widgets (below); no widget reads them any more.
 
 Phase status:
     - PR-4b (done): ``temperature`` / ``label_smoothing`` / ``margin`` are wired through
@@ -59,8 +56,15 @@ Phase status:
       The surfaces still hand-write their constraints — the spec is the authority and the tests
       assert the two agree (guard, not derive).
 
-Later phases:
-    - PR-4d: derive WebUI widgets from this spec (removing SEED_PARAM_INDEX / positional coupling).
+**The retired WebUI form (K6).** The ShepherdGNN form and its collector (``_collect_config``)
+are gone: the Training page offers exactly the reference recipe's base settings
+(`src.config.recipe.BASE`, starting at the recipe's values, sending only those that differ, with
+``learning_stage="base"``), and the Fine-tune page Epochs and Seed. Their widgets follow each
+field's ``kind`` and ``choices`` (`training_console.setting_field`) and their values are checked
+by `value_problem`. The ``ui``, ``ui_step``, ``ui_choices``, ``ui_widget``,
+``ui_wider_than_valid``, ``webui_exposed``, ``webui_num_guarded`` and ``current_webui``
+attributes describe that retired form only; they are listed for removal in K7 with the
+ShepherdGNN fields.
 
 Dependency-light (no torch / pydantic / gradio): any surface can read it and torch-free unit tests
 can exercise it.
@@ -136,8 +140,8 @@ class FieldSpec:
     ``valid`` / ``choices`` / ``valid_pattern`` / ``item_valid`` / ``min_length`` are the TARGET
     canonical policy (enforced in PR-4c). ``current_api`` is the STRUCTURED constraint the API
     enforces TODAY (``{}`` = accepted but unconstrained, e.g. a free string; ``None`` = not an API
-    field). ``webui_exposed`` / ``webui_num_guarded`` / ``ui`` describe what ``_collect_config``
-    does today.
+    field). ``webui_exposed`` / ``webui_num_guarded`` / ``ui`` describe the retired ShepherdGNN
+    WebUI form (module docstring; listed for removal in K7).
     """
 
     name: str
@@ -158,8 +162,8 @@ class FieldSpec:
     ui_step: Optional[float] = None
     ui_choices: Optional[Tuple[Any, ...]] = None
     ui_widget: Optional[str] = None
-    webui_exposed: bool = True                    # _collect_config emits it today
-    webui_num_guarded: bool = False               # _collect_config routes it through _num
+    webui_exposed: bool = True                    # the retired form's collector emitted it
+    webui_num_guarded: bool = False               # the retired form range-checked it
     ui_wider_than_valid: Tuple[str, ...] = ()     # bound keys where current UI is looser than valid
 
     # current API behavior pinned by PR-4a (numeric), extended by PR-4c (enum/pattern/list):
@@ -198,8 +202,8 @@ class FieldSpec:
 
 # =============================================================================================
 # The spec. current_api transcribed from src/api/routes/training.py::TrainingStartRequest;
-# ui / webui_* from src/webui/components/training_console.py::_collect_config; scope/projects_to
-# from the scripts/train_model.py projection into the downstream configs.
+# ui / webui_* from the retired ShepherdGNN WebUI form (module docstring; K7 removes them);
+# scope/projects_to from the scripts/train_model.py projection into the downstream configs.
 # =============================================================================================
 FIELDS: Tuple[FieldSpec, ...] = (
     # ---- paths (effective -> they DO project into TrainConfig) ------------------------------
@@ -230,7 +234,10 @@ FIELDS: Tuple[FieldSpec, ...] = (
     FieldSpec("learning_stage", "str", None, "trainer", projects_to="TrainConfig.learning_stage",
               choices=("base", "finetune"), current_api=None, current_webui="not-exposed",
               webui_exposed=False, known_divergence=True,
-              divergence_note="CLI only (--stage) until the functional UI (K6).",
+              divergence_note="CLI (--stage); the WebUI's Training base form sends "
+                              "learning_stage='base' and its Fine-tune page starts finetunes "
+                              "(POST /training/finetune's start); POST /training/start has none "
+                              "until K7.",
               description="Model bundle stage: base (KG link prediction) or finetune. Unset is "
                           "the ShepherdGNN path, which retires with the switch."),
     FieldSpec("model_spec", "dict", None, "model", projects_to="TrainConfig.model_spec",
@@ -247,12 +254,14 @@ FIELDS: Tuple[FieldSpec, ...] = (
               choices=("disease", "gene", "patients_like_me"), current_api=None,
               current_webui="not-exposed",
               webui_exposed=False, known_divergence=True,
-              divergence_note="CLI (--task) and POST /training/finetune; the UI at K6.",
+              divergence_note="CLI (--task), POST /training/finetune and the WebUI's "
+                              "Fine-tune page (its Tasks).",
               description="A finetune's task."),
     FieldSpec("finetune_from", "str", None, "path", projects_to="TrainConfig.finetune_from",
               current_api=None, current_webui="not-exposed", webui_exposed=False,
               known_divergence=True,
-              divergence_note="CLI (--finetune-from) and POST /training/finetune; the UI at K6.",
+              divergence_note="CLI (--finetune-from), POST /training/finetune and the WebUI's "
+                              "Fine-tune page (a listed base).",
               description="The base checkpoint a finetune starts from."),
     FieldSpec("branch_from", "str", None, "path", projects_to="TrainConfig.branch_from",
               current_api=None, current_webui="not-exposed", webui_exposed=False,
@@ -501,7 +510,8 @@ FIELDS: Tuple[FieldSpec, ...] = (
               current_api=None, current_webui="derived from .shepherd_runtime_settings.json (torch_compile)",
               known_divergence=True,
               divergence_note="Runtime setting, not a training-form field. API does not expose it; "
-                              "_collect_config emits it, sourced from the Runtime Settings file.",
+                              "the WebUI's base start and Continue send it, sourced from the "
+                              "Runtime Settings file.",
               description="torch.compile toggle (Runtime Settings)."),
 )
 

@@ -5,14 +5,14 @@ Groups:
   * self-consistency — torch-free, always run: the spec (incl. target policy and cross-field
     rules) is well-formed and self-validating.
   * API parity — pin CURRENT Pydantic behavior mechanically (defaults + ge/gt/le/lt + coverage).
-  * WebUI collect parity — drive _collect_config and pin exposure, defaults, and EVERY _num guard.
   * projection parity — every projects_to target attribute exists on the real config class.
 Parity groups are importorskip-guarded so they skip where fastapi/pydantic/gradio/torch are
 absent and pin reality where those are installed.
+The WebUI collect parity group went with the retired ShepherdGNN form (K6): the base form
+reads `recipe.BASE` and checks values with `value_problem` (tests/unit/test_training_page.py).
 """
 import ast
 import dataclasses
-import inspect
 from pathlib import Path
 
 import pytest
@@ -27,8 +27,6 @@ DEVICE_REJECTS = (
     "gpu0", "cuda:", "cuda:x", "CUDA", "", "cuda:1:2",
     "cuda\n", "cuda:1\n", "cpu\n", " mps", "cuda ",
 )
-STR_PARAMS = {"batch_size", "hidden_dim", "num_heads"}  # passed to _collect_config as strings
-NUM_GUARDED = tuple(f for f in tf.FIELDS if f.webui_num_guarded)
 
 
 # --------------------------------------------------------------------------- self-consistency
@@ -388,93 +386,6 @@ def test_cli_device_arg_matches_the_api_grammar():
     for bad in DEVICE_REJECTS:
         with pytest.raises(argparse.ArgumentTypeError):
             mod._device_arg(bad)
-
-
-# --------------------------------------------------------------------- WebUI collect parity (pin)
-def _training_console():
-    pytest.importorskip("gradio")
-    pytest.importorskip("pandas")
-    from src.webui.components import training_console as tc
-    return tc
-
-
-def _default_collect_kwargs(tc):
-    """Build _collect_config kwargs from the spec (composites use their widget defaults)."""
-    kw = {}
-    for p in inspect.signature(tc._collect_config).parameters:
-        if p == "amp_mode":
-            kw[p] = "float16"
-        elif p == "num_neighbors_str":
-            kw[p] = "15, 10, 5"
-        else:
-            assert p in tf.names(), f"_collect_config param {p} is not a spec field"
-            d = tf.by_name(p).default
-            kw[p] = str(d) if p in STR_PARAMS else d
-    return kw
-
-
-def test_webui_collect_exposure_and_defaults(monkeypatch):
-    tc = _training_console()
-    monkeypatch.setattr(tc, "load_runtime_settings", lambda *a, **k: {})
-    cfg = tc._collect_config(**_default_collect_kwargs(tc))
-
-    assert set(cfg) == {f.name for f in tf.FIELDS if f.webui_exposed}
-    for key, val in cfg.items():
-        expected = _spec_default(tf.by_name(key))
-        got = list(val) if isinstance(val, (list, tuple)) else val
-        assert got == expected, f"{key}: collect default {got} != spec default {expected}"
-
-
-def test_every_num_guarded_field_is_actually_guarded(monkeypatch):
-    """The spec claims _collect_config routes these through _num — verify all of them, both sides."""
-    tc = _training_console()
-    monkeypatch.setattr(tc, "load_runtime_settings", lambda *a, **k: {})
-    base = _default_collect_kwargs(tc)
-    assert len(NUM_GUARDED) == 9, "expected 9 _num-guarded fields"
-
-    checked = 0
-    for f in NUM_GUARDED:
-        lo, lo_x, hi, hi_x = tf.bounds(f.ui)
-        assert lo is not None or hi is not None, f"{f.name}: num-guarded but no ui bound declared"
-        cast = int if f.kind == "int" else float
-        cases = []
-        if lo is not None:
-            cases.append(cast(lo) if lo_x else cast(lo - 1))       # exclusive -> the bound itself
-        if hi is not None:
-            cases.append(cast(hi) if hi_x else cast(hi + 1))
-        for bad in cases:
-            with pytest.raises(tc.ConfigValidationError):
-                tc._collect_config(**{**base, f.name: bad})
-            checked += 1
-    assert checked >= len(NUM_GUARDED), "every guarded field must be exercised at least once"
-
-
-def test_webui_num_neighbors_fails_loud_instead_of_silent_fallback(monkeypatch):
-    """PR-4c: an unparseable/empty/illegal fan-out must raise (toast), not silently become
-    the default — starting a run with a fan-out the user never asked for is worse than a toast."""
-    tc = _training_console()
-    monkeypatch.setattr(tc, "load_runtime_settings", lambda *a, **k: {})
-    base = _default_collect_kwargs(tc)
-    for bad in ("not-numbers", "", "   ", "15, x, 5", "0, 10", "-1"):
-        with pytest.raises(tc.ConfigValidationError):
-            tc._collect_config(**{**base, "num_neighbors_str": bad})
-    # a valid list still parses
-    cfg = tc._collect_config(**{**base, "num_neighbors_str": "20, 10"})
-    assert cfg["num_neighbors"] == [20, 10]
-
-
-def test_num_guarded_fields_accept_their_boundary_values(monkeypatch):
-    """Guards must not be over-strict: the declared ui bounds themselves are accepted."""
-    tc = _training_console()
-    monkeypatch.setattr(tc, "load_runtime_settings", lambda *a, **k: {})
-    base = _default_collect_kwargs(tc)
-    for f in NUM_GUARDED:
-        lo, lo_x, hi, _ = tf.bounds(f.ui)
-        if lo is None or lo_x:      # exclusive lower bound has no inclusive edge to test
-            continue
-        cast = int if f.kind == "int" else float
-        cfg = tc._collect_config(**{**base, f.name: cast(lo)})
-        assert cfg[f.name] == cast(lo), f"{f.name}: boundary value {lo} should be accepted"
 
 
 # ------------------------------------------------------------------- projection parity (pin)

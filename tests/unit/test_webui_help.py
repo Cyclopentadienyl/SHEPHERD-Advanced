@@ -8,12 +8,9 @@ The shared ⓘ (M5-2, UI-A): one help control for every ordinary help text.
   ``aria-describedby``;
 - **the built dashboard**: every registered field exists (by ``elem_id``) and
   its title is the field's label; no component keeps ordinary help in
-  ``info=`` (only the AMP refusal, which is state, is set there at runtime);
-  every ⓘ the shared renderers draw names a registered text;
+  ``info=``; every ⓘ the shared renderers draw names a registered text;
 - **the browser side** fills the bubble with ``textContent`` and is given to
-  the mount's ``head`` (Gradio 6 drops a head given to ``gr.Blocks``);
-- **the AMP refusal** stays visible text under HGT and is cleared with ``""``
-  (Gradio 6.30 keeps an info sent as None).
+  the mount's ``head`` (Gradio 6 drops a head given to ``gr.Blocks``).
 
 Module: tests/unit/test_webui_help.py
 """
@@ -152,7 +149,7 @@ def test_every_registered_help_target_exists_in_the_built_app(built):
 
 def test_no_component_keeps_ordinary_help_in_info(built):
     """Only state-bearing text travels in ``info=``, and none is set at build
-    time: the AMP refusal is set when HGT is chosen."""
+    time."""
     demo, _registry, _texts = built
     with_info = [(getattr(b, "elem_id", None), b.info) for b in demo.blocks.values()
                  if getattr(b, "info", None)]
@@ -185,36 +182,3 @@ def test_every_renderer_help_key_is_registered(built):
     assert set(keys) >= {"dataset-fingerprint", "validation-trainer", "model-fingerprint"}
     for key in keys:
         assert key in registry, key
-
-
-# --------------------------------------------------------------------------- the AMP refusal
-def test_hgt_shows_the_amp_refusal_and_any_other_architecture_clears_it():
-    from src.webui.components import training_console as tc
-
-    hgt = tc._on_conv_type_change("hgt")
-    assert hgt["info"] == tc.AMP_HGT_REFUSAL == (
-        "Disabled: HGT requires full float32 (pyg_lib limitation).")
-    assert hgt["interactive"] is False and hgt["value"] == "Off"
-    for other in ("gat", "sage"):
-        cleared = tc._on_conv_type_change(other)
-        assert cleared["info"] == "" and cleared["interactive"] is True
-        assert "value" not in cleared
-
-
-def test_the_architecture_change_updates_the_amp_radio_once():
-    """One listener: two would send two requests per change, both writing
-    the AMP radio."""
-    from src.webui.components import training_console as tc
-    from src.webui.shell import standalone_context
-
-    with gr.Blocks() as demo:
-        tc.create_training_tab(standalone_context(demo))
-    listeners = [fn for fn in demo.fns.values() if fn.fn is tc._on_conv_type_change]
-    assert len(listeners) == 1
-
-
-def test_the_amp_radio_has_its_ordinary_help_behind_the_i():
-    from src.webui.components import training_console as tc
-
-    title, text = tc.FIELD_HELP["amp_mode"]
-    assert title == "Mixed Precision (AMP)" and text.startswith("Faster & less VRAM")

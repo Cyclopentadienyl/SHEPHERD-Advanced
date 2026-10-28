@@ -36,7 +36,14 @@ import gradio as gr
 
 from src.utils.version_checker import DEGRADED, NOTICE, format_runtime_line, probe_runtime
 from src.webui import shell
-from src.webui.components import datasets_page, diagnosis_panel, models_page, test_page, training_console
+from src.webui.components import (
+    datasets_page,
+    diagnosis_panel,
+    finetune_page,
+    models_page,
+    test_page,
+    training_console,
+)
 from src.webui.components.datasets_page import create_datasets_page
 from src.webui.components.diagnosis_panel import create_diagnosis_tab
 from src.webui.components.help import HELP_CSS, HELP_HEAD, HelpRegistry
@@ -186,6 +193,7 @@ PAGE_CSS = (
     test_page.PAGE_CSS,
     models_page.PAGE_CSS,
     training_console.PAGE_CSS,
+    finetune_page.PAGE_CSS,
 )
 
 
@@ -229,6 +237,7 @@ PAGES = {
     shell.CLINICAL: create_diagnosis_tab,
     shell.DATASETS: create_datasets_page,
     shell.TRAINING: create_training_tab,
+    shell.FINETUNE: finetune_page.create_finetune_page,
     shell.TEST: test_page.create_test_page,
     shell.MODELS: models_page.create_models_page,
     shell.SETTINGS: create_runtime_settings_tab,

@@ -30,8 +30,9 @@ genes_to_           node_features.pt                           (fingerprint
 ```
 
 Steps 1 and 2 are **CLI prerequisites** run once per dataset version. Step 3
-(training) is driven from the dashboard's **Research › Prepare › Training** page.
-Step 4 serves inference.
+(training) is driven from the dashboard: a base on **Research › Prepare ›
+Training**, then its task models on **Research › Prepare › Fine-tune**. Step 4
+serves inference.
 
 ---
 
@@ -98,7 +99,7 @@ Ontology files (HPO, MONDO `.obo`) are **auto-downloaded** by `OntologyLoader`
 
 | Flag | Notes |
 |------|-------|
-| `--feature-dim 128` | **Input** node-feature dimension. Keep it identical across rebuilds of the same dataset — it is part of the fingerprint, and is *separate* from the model's `hidden_dim` (set in the UI, e.g. 256). |
+| `--feature-dim 128` | **Input** node-feature dimension. Keep it identical across rebuilds of the same dataset — it is part of the fingerprint, and is *separate* from the model's encoder width (the model spec's, not a form field). |
 | `--num-train / --num-val` | Simulated patient samples. Recommended 50K–100K train, val ≈ 10–20% of train. More = less overfitting, slower build. |
 
 **Produces in `$WS/`**: `kg.json`, `node_features.pt`, `edge_indices.pt`,
@@ -130,22 +131,30 @@ On Spark's 128 GB unified memory this is comfortable.
 
 ---
 
-## Step 3 — Train (Research › Prepare › Training)
+## Step 3 — Train (Research › Prepare › Training, then Fine-tune)
 
 1. Launch the app with the service's settings (see Step 4) and open `/ui` →
    **Research (pre-clinical)** › Prepare › **Training**.
 2. Choose your workspace, `$WS`'s last part (`hpo_2026_v1`), in the run bar's
    **Dataset** list.
-3. Recommended first run — validate the whole pipeline cheaply:
-   - **GNN Conv Type = `gat`** (AMP works, fastest, lowest memory). Get a clean
-     baseline end-to-end before touching HGT.
-   - A handful of epochs first to confirm loss curves move and checkpoints save.
-4. Then switch **GNN Conv Type = `hgt`** for the real run. HGT forces float32
-   (pyg_lib limitation) and uses more memory — this is exactly the case that OOMs
-   a 16 GB 5070 Ti but fits easily on Spark's unified memory. On Spark you can
-   raise **Batch Size** and **Max Subgraph Nodes** (defaults are tuned for 16 GB).
-5. Watch for `hits@10` to climb. Milestone reference: 3 epochs → 0.581; the ≥ 80%
-   target needs 30+ epochs.
+3. The form trains a **base** (link prediction on the knowledge graph) with the
+   reference recipe's base settings, each starting at the recipe's value:
+   **Epochs**, **Learning rate**, **Batch size** and **Seed**, the rest under
+   "More reference settings". The line under the form says which you changed
+   ("Differs from the reference settings: Epochs 5 (200)"); Start sends only
+   those, and the run records the rest as the recipe's.
+4. Recommended first run — validate the whole pipeline cheaply: a handful of
+   **Epochs** first, to confirm the loss curves move and checkpoints save. On
+   Spark you can raise **Batch size** (the reference is the source's 512).
+5. Watch the Trainer's validation LP accuracy (with ROC-AUC and AP beside it)
+   climb in the run view. It selects the top-k saves on the val pairs; it is not
+   a test result.
+6. Then open Research › Prepare › **Fine-tune**: choose the dataset, a base
+   checkpoint of it, and one to three **Tasks** (Disease, Gene,
+   Patients-like-me; each option says whether it is ready on the dataset).
+   Start trains one child run per task, in order. The job card shows each
+   child's status and, once it has ended, its best save by the Trainer's pooled
+   MRR; **Stop** there names the queued children it cancels.
 
 **Every run writes into a new folder of its own** (contract M3a-2):
 `$WS/runs/<arch>/<date-time>_<run name>_<id>/`, holding `config.yaml`,
@@ -155,9 +164,10 @@ epoch, and the top-K `model-<epoch>-<metric>.pt`) and `logs/`. The optional
 starts. No run writes into or prunes another run's folder.
 
 **Continue Training** (contract M3a-3, M3a-4): open **Continue…**, pick a
-checkpoint of the run bar's dataset from the run list or type its path, click
-**Check checkpoint**, then **Continue Training**.
-What happens is decided by the checkpoint's own record:
+model checkpoint (a base or a task model) of the run bar's dataset from the run
+list or type its path, click **Check checkpoint**, then **Continue Training**.
+A file without a model spec is listed on Research › Models but never continued
+from the dashboard. What happens is decided by the checkpoint's own record:
 
 - an unfinished run (stopped between epochs, or paused) is resumed with its own
   settings, shown read-only; only its remaining epochs run;
@@ -168,7 +178,7 @@ What happens is decided by the checkpoint's own record:
 
 The child is a new run in its own folder and records its parent by SHA-256. To
 train from a checkpoint with other settings, start a new run: changing settings
-from a parent (a branch) is not available yet.
+from a parent (a branch) is not available from the dashboard yet.
 
 **Stop** asks first and says how much progress is lost; a stopped run shows
 **Stopped** and the latest checkpoint it can be continued from.
@@ -274,8 +284,8 @@ records no fingerprint.
   (one shared unified-memory figure; GPU util + temperature still read normally).
   Not a bug.
 - **`sm_121` capability warning** from torch on GB10 is harmless/expected.
-- **Memory headroom**: the 16 GB-oriented defaults (`max_subgraph_nodes=5000`,
-  conservative `batch_size`, HGT batch ≤ 16) can be raised on Spark.
+- **Memory headroom**: on Spark the base's **Batch size** can be raised above
+  the reference 512; the line under the form records it as changed.
 - **PyG**: ARM wheels were self-compiled during deploy; the startup PyG status
   line and `scripts/validate_pyg_ext.py` (5/5) confirm they are active.
 
