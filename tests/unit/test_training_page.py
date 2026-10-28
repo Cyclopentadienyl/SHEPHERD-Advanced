@@ -1904,6 +1904,25 @@ def test_the_drawer_lists_runs_then_the_chosen_runs_checkpoints():
     assert told == ["model-03-0.1.pt · 3 epochs completed", "model-03-0.2.pt · 3 epochs completed"]
     _option_rules(labels)
     _option_rules(told)
+    # Long names alike at their start keep the end that tells them apart (a
+    # copy, a versioned top-k file); names alike at both ends are numbered in
+    # the list's order. Never two options alike.
+    for names, epochs in ((("base_model_before_change_epoch10_copy_a.pt",
+                            "base_model_before_change_epoch10_copy_b.pt"), 10),
+                          (("model-195-0.2867.pt", "model-195-0.2867-v1.pt"), 195),
+                          (("checkpoint_run1_of_the_final.pt", "checkpoint_run2_of_the_final.pt",
+                            "checkpoint_run3_of_the_final.pt"), 3)):
+        files = {f"gatv2/{old}/{name}": item(old, name, epochs) for name in names}
+        told = [label for label, _key in tc.checkpoint_choices(files, list(files))]
+        _option_rules(told)
+        assert all(label.endswith(f" · {epochs} epochs completed") for label in told), told
+    assert told == ["checkpo…inal.pt (1) · 3 epochs completed",
+                    "checkpo…inal.pt (2) · 3 epochs completed",
+                    "checkpo…inal.pt (3) · 3 epochs completed"]
+    copies = {f"gatv2/{old}/base_model_before_change_epoch10_copy_{x}.pt":
+              item(old, f"base_model_before_change_epoch10_copy_{x}.pt", 10) for x in "ab"}
+    assert [label for label, _key in tc.checkpoint_choices(copies, list(copies))] == [
+        "base_mod…copy_a.pt · 10 epochs completed", "base_mod…copy_b.pt · 10 epochs completed"]
     kept = tc.on_run_chosen(f"gatv2/{old}", parents, f"gatv2/{old}/model-01-0.2160.pt")
     assert kept["value"] == f"gatv2/{old}/model-01-0.2160.pt"
     assert tc.parents_update(parents, f"gatv2/{old}/model-02-0.2160.pt")[0]["value"] == \

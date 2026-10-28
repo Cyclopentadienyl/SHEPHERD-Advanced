@@ -234,6 +234,21 @@ def test_the_training_page_s_names_in_the_playbook_are_its_labels_and_buttons(sh
         assert name not in shown, name
 
 
+def test_the_architecture_names_the_dashboard_s_pages_and_no_retired_control():
+    """`docs/ARCHITECTURE.md` describes the dashboard as built: its "WebUI
+    pages" row names every page module the app mounts (K6 added Fine-tune),
+    and it names no slider, a control the dashboard no longer has (the
+    Training page's loss-weight sliders went with the ShepherdGNN form, K6)."""
+    pytest.importorskip("gradio")
+    from src.webui.app import PAGES
+
+    text = _text("docs/ARCHITECTURE.md")
+    (row,) = [line for line in text.splitlines() if line.startswith("| WebUI pages |")]
+    for builder in PAGES.values():
+        assert f"`{builder.__module__.rsplit('.', 1)[-1]}.py`" in row, builder.__module__
+    assert "slider" not in text.lower()
+
+
 # ---------------------------------------------------------------------------
 # The settings: pointed to, not copied
 # ---------------------------------------------------------------------------

@@ -21,8 +21,9 @@ Module: src/webui/components/finetune_page.py
   child never chains), a file without a model spec and an unreadable file are
   never offered; a weights-only or early-stopped base is. Listing opens every
   checkpoint, so it is an operator control (D8). The chosen base's summary
-  (key-value rows) says its run, file, configuration, Trainer validation
-  figure, the dataset it trained on and the model fingerprint Start sends.
+  (key-value rows) says its run's directory, file, configuration, Trainer
+  validation figure, the dataset it trained on and the model fingerprint
+  Start sends.
 - **Tasks**: a checkbox group in `TASKS` order whose option text says whether
   each is ready on this workspace (`server_lists.task_readiness`, small JSON
   files only, no D8), and why not in the line under it.
@@ -50,8 +51,10 @@ result), are read for an operator and only once the child has ended
 (`list_checkpoints(run=)`, opening that run's files; kept per session by the
 child's run and status). Stop asks first: the Training page's stop logic
 (`training_console.ask_stop`, `confirm_stop`) behind this page's own D8-checked
-handlers; the question names the queued children. Once the next base or
-continued run cleared the Fine-tune status, the card says so in its own words.
+handlers, reaching a running child of the start shown only (`running_child`),
+never another page's job; the question names the queued children. Once the
+next base or continued run cleared the Fine-tune status, the card says so in
+its own words.
 
 **Polls**: the shell's slow timer, ``queue=False``, doing nothing while another
 page is shown (``ctx.location``); the card again after every action. Per
@@ -89,10 +92,12 @@ logger = logging.getLogger(__name__)
 FINETUNE_FIELDS = ("num_epochs", "seed")
 #: A child's states after which its run's saved files are final.
 ENDED = ("completed", "failed", "stopped")
-#: Each status kind's mark (the WebUI skill §6): its shape (the spinner for a
-#: job still running) and the ``--shep-status-*`` token its colour reads.
+#: Each status kind's mark (the WebUI skill §6): its shape and the
+#: ``--shep-status-*`` token its colour reads. The spinner (None) is Running's
+#: alone; a stopping child, still busy but asked to stop, is blue with the
+#: Stop button's own ■.
 _MARKS = {"ok": ("●", "ok"), "grey": ("○", "neutral"), "idle": ("○", "neutral"),
-          "red": ("✕", "error"), "running": (None, "info"), "accent": (None, "info")}
+          "red": ("✕", "error"), "running": (None, "info"), "accent": ("■", "info")}
 
 
 # =============================================================================
@@ -168,10 +173,12 @@ def bases_note_html(parents: Mapping[str, Any], problem: Optional[str]) -> str:
 
 
 def base_summary_html(item: Optional[Mapping[str, Any]]) -> str:
-    """The chosen base's summary as key-value rows: its run, file,
-    configuration, what it holds, its Trainer validation figure, how its
-    dataset stands to the one selected, and the model fingerprint Start sends
-    (copyable). Escaped; empty when none is chosen."""
+    """The chosen base's summary as key-value rows, saying what the two
+    selects above do not: its run's directory (the Run select gives its
+    name, architecture and time), file, configuration, what it holds, its
+    Trainer validation figure, how its dataset stands to the one selected,
+    and the model fingerprint Start sends (copyable). Escaped; empty when
+    none is chosen."""
     if not item:
         return ""
     figure = tc.validation_words(item)
@@ -185,7 +192,7 @@ def base_summary_html(item: Optional[Mapping[str, Any]]) -> str:
         on = '<span class="shep-muted">not recorded</span>'
     kind = item.get("checkpoint_kind")
     rows = [
-        ("Run", r.e(tc.run_words(item.get("architecture"), item.get("run")))),
+        ("Run", f"<code>{r.e(item.get('architecture'))}/{r.e(item.get('run'))}</code>"),
         ("File", f"<code>{r.e(item.get('filename'))}</code>"),
         ("Configuration", r.e(r.configuration_text(item))),
         ("Holds", r.e(tc.CHECKPOINT_KINDS.get(kind or "", "not recorded"))),
@@ -354,6 +361,19 @@ def _why(icon: str, text: str) -> str:
     return f'<span class="shep-ft-reason">{icon}<span>{r.e(text)}</span></span>'
 
 
+def running_child(status: Mapping[str, Any]) -> Optional[str]:
+    """**The one job the card's Stop reaches**: the id of the training job
+    running now when it is a child of the Fine-tune start the status shows,
+    else None. A base or continued run started on Research › Training is
+    never asked about or stopped from here (the run bar stops it)."""
+    job = tc.running_job(status)
+    children = (status.get("finetune") or {}).get("children") or []
+    if job is not None and any(child.get("status") == "running" and child.get("job_id") == job
+                               for child in children):
+        return job
+    return None
+
+
 def actions_view(status: Mapping[str, Any], *, access: Any,
                  gpu: Optional[Mapping[str, Any]], confirming: bool) -> Dict[str, Any]:
     """Start and Stop (interactive or not) and the one reason line, as one
@@ -362,8 +382,7 @@ def actions_view(status: Mapping[str, Any], *, access: Any,
     or stopping, the GPU slot held elsewhere. Stop stops a running Fine-tune
     child (and so cancels the queued ones), never another page's job."""
     s = status.get("status") or "idle"
-    children = (status.get("finetune") or {}).get("children") or []
-    child_running = s == "running" and any(c.get("status") == "running" for c in children)
+    child_running = running_child(status) is not None
     view = {"start": False, "stop": False}
     if not access.allowed:
         short = D8_SHORT.get(access.condition, "request not readable")
@@ -494,16 +513,19 @@ def _on_finetune_start(request: gr.Request, ws, parents, key, tasks, epochs, see
 def _on_finetune_stop_request(request: gr.Request, mode):
     """Stop, on the card: D8 checked first, on this event's own request; then
     the Training page's own question (`training_console.ask_stop`, which
-    names the queued children)."""
-    return tc.ask_stop(operator_access(request), mode)
+    names the queued children), for a running child only (`running_child`)."""
+    return tc.ask_stop(operator_access(request), mode, reaches=running_child,
+                       what="Fine-tune child")
 
 
 def _on_finetune_stop(request: gr.Request, mode):
     """The confirmed Stop, on the card: an operator control (D8), checked on
     this event's own request; then the Training page's own stop
-    (`training_console.confirm_stop`). It stops the running child and so
-    cancels the queued ones."""
-    return tc.confirm_stop(operator_access(request), mode)
+    (`training_console.confirm_stop`), which reaches a running child only
+    (`running_child`): it stops it and so cancels the queued ones, and never
+    stops another page's job."""
+    return tc.confirm_stop(operator_access(request), mode, reaches=running_child,
+                           what="Fine-tune child")
 
 
 def _start(ws, parents, key, tasks, epochs, seed, device, run_name) -> str:

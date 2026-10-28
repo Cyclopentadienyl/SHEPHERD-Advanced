@@ -135,6 +135,7 @@ from src.config.recipe import BASE, BASE_SOURCES
 from src.config.runtime_presets import load_runtime_settings
 from src.config.training_fields import by_name, value_problem
 from src.evaluation.caveats import TASK_NAMES
+from src.models.bundle.spec import hops_problem, reference_spec
 from src.utils.gpu_lock import lock_state
 from src.webui.components import charts
 from src.webui.components import renderers as r
@@ -334,12 +335,17 @@ def setting_problem(name: str, value: Any, reference: Any) -> Tuple[Any, Optiona
     """A field's value parsed and checked by its field spec (`value_problem`,
     the one check the start makes again): ``(value, problem)``, the problem
     named by the field's label (`SETTING_LABELS`). Empty is taken only where the
-    reference value is (early stopping's patience)."""
+    reference value is (early stopping's patience). The hop list also needs
+    one number per layer of the encoder the base form's run builds, the
+    reference recipe's (`hops_problem`, which the start asks too: the form
+    offers no encoder setting, and the Fine-tune page no hop list)."""
     label = SETTING_LABELS[name]
     parsed, why = _parsed(name, value)
     if why:
         return None, f"{label} {why}"
     problem = value_problem(name, parsed, allow_none=reference is None)
+    if not problem and name == "num_neighbors":
+        problem = hops_problem(parsed, reference_spec("base").encoder)
     if problem and problem.startswith(name):
         problem = label + problem[len(name):]
     elif problem:
@@ -1997,12 +2003,21 @@ def stop_question(status: Mapping[str, Any]) -> str:
             "not start.")
 
 
-def ask_stop(access: Any, mode: Optional[Mapping[str, Any]]) -> Tuple[str, Dict[str, Any]]:
+#: How a job's process ended, as a stop that came after it says so.
+_ENDED = ("completed", "failed", "stopped")
+
+
+def ask_stop(access: Any, mode: Optional[Mapping[str, Any]], *,
+             reaches: Callable[[Mapping[str, Any]], Optional[str]] = running_job,
+             what: str = "training job") -> Tuple[str, Dict[str, Any]]:
     """**Stop's first step, the one for every page** (the Training run bar,
     the Fine-tune job card): for a request D8 allowed (`access`, read by the
     page's own handler on its own request), ask before anything happens
     (`stop_question`), reading nothing but the job's status. The
-    confirmation is recorded for the job running now (its id).
+    confirmation is recorded for the job this page's Stop reaches now (its
+    id, from `reaches`: the run bar's reaches the training job running,
+    whichever page started it; the Fine-tune card's only a running child of
+    its Fine-tune start). `what` names that job in the words.
 
     Returns the confirmation's text and the session's mode.
     """
@@ -2011,18 +2026,24 @@ def ask_stop(access: Any, mode: Optional[Mapping[str, Any]]) -> Tuple[str, Dict[
     if not access.allowed:
         return notice_html(access.refusal), mode
     status = training_manager.get_status()
-    job = running_job(status)
+    job = reaches(status)
     if job is None:
-        return notice_html("Nothing to stop: no training job is running."), mode
+        return notice_html(f"Nothing to stop: no {what} is running."), mode
     mode["confirm"] = job
     return f'<div class="shep-rb-confirm-q">{stop_question(status)}</div>', mode
 
 
-def confirm_stop(access: Any, mode: Optional[Mapping[str, Any]]) -> Tuple[str, Dict[str, Any]]:
+def confirm_stop(access: Any, mode: Optional[Mapping[str, Any]], *,
+                 reaches: Callable[[Mapping[str, Any]], Optional[str]] = running_job,
+                 what: str = "training job") -> Tuple[str, Dict[str, Any]]:
     """**The confirmed Stop, the one for every page**: for a request D8
     allowed (`access`; refused, nothing is stopped). A confirmation asked for
-    another job than the one running now stops nothing (it described that
-    job). The notice names the queued Fine-tune children the stop cancelled.
+    another job than the one this page's Stop reaches now (`reaches`, as for
+    `ask_stop`) stops nothing (it described that job), and nor does any
+    confirmation while the job running is one it does not reach (another
+    page's). The notice names the queued Fine-tune children the stop
+    cancelled, and says nothing was stopped when the job had already ended on
+    its own (the runner's ``message``: `TrainingManager._stop`).
 
     Returns the notice and the session's mode (the confirmation closed).
     """
@@ -2031,15 +2052,26 @@ def confirm_stop(access: Any, mode: Optional[Mapping[str, Any]]) -> Tuple[str, D
     mode["confirm"] = None
     if not access.allowed:
         return notice_html(access.refusal), mode
-    if isinstance(asked, str) and asked != running_job(training_manager.get_status()):
-        return notice_html("Not stopped: the training job you asked to stop is no longer the "
-                           "one running; click Stop again if this one should stop."), mode
+    status = training_manager.get_status()
+    job = reaches(status)
+    if isinstance(asked, str) and asked != job:
+        return notice_html(f"Not stopped: the {what} you asked to stop is no longer the one "
+                           "running; click Stop again if this one should stop."), mode
+    if job is None and running_job(status) is not None:
+        return notice_html(f"Not stopped: no {what} is running."), mode
     result = training_manager.stop_training()
     if result.get("success"):
         cancelled = [TASK_NAMES.get(task, str(task)) for task in result.get("cancelled_children")
                      or ()]
         tail = (f" The queued Fine-tune children ({', '.join(cancelled)}) were cancelled."
                 if cancelled else "")
+        if result.get("message"):
+            # The process had ended on its own before the stop arrived: the
+            # stop only cancelled the queued children.
+            ended = result.get("status")
+            how = f" ({ended})" if ended in _ENDED else ""
+            return notice_html(f"Nothing was stopped: the job had already ended on its own{how}."
+                               + tail), mode
         return notice_html("Stopped. " + _snapshot_sentence(result.get("outcome")) + tail), mode
     return notice_html(f"Not stopped: {result.get('error', 'unknown error')}"), mode
 
@@ -2133,12 +2165,17 @@ def validation_words(item: Mapping[str, Any]) -> Optional[str]:
     return f"{r.VALIDATION_LABELS[metric]} {value:.4f}"
 
 
-def _fit(what: str, rest: Optional[str]) -> str:
-    """"<what> · <rest>" in at most `OPTION_CHARS` characters with one
-    separator: `what` (a file's name) shortened with an ellipsis to fit."""
-    room = OPTION_CHARS - (len(rest) + 3 if rest else 0)
+def _fit(what: str, rest: Optional[str], mark: str = "") -> str:
+    """"<what><mark> · <rest>" in at most `OPTION_CHARS` characters with one
+    separator: `what` (a file's name) shortened in its middle with an
+    ellipsis, so its start and its end stay (where a copy or a version
+    differs: "…copy_b.pt", "…67-v1.pt")."""
+    room = OPTION_CHARS - (len(rest) + 3 if rest else 0) - len(mark)
     if len(what) > room:
-        what = what[:max(room - 1, 1)] + "…"
+        keep = max(room - 1, 2)
+        head = keep // 2
+        what = what[:head] + "…" + what[len(what) - (keep - head):]
+    what += mark
     return f"{what} · {rest}" if rest else what
 
 
@@ -2180,13 +2217,25 @@ def run_choices(parents: Mapping[str, Any]) -> List[Tuple[str, str]]:
 
 def checkpoint_choices(parents: Mapping[str, Any], keys: Sequence[str]) -> List[Tuple[str, str]]:
     """A run's checkpoints as options: their words (`checkpoint_words`); two
-    that would read alike are named by their file instead (unique in a run),
-    still one separator and `OPTION_CHARS` at most."""
-    labels = [(checkpoint_words(parents[key]), key) for key in keys]
-    seen = Counter(label for label, _key in labels)
-    return [(label if seen[label] == 1 else
-             _fit(str(parents[key].get("filename")), _progress_words(parents[key])), key)
-            for label, key in labels]
+    that would read alike are named by their file instead (unique in a run,
+    `_fit` keeping both its ends), and files whose shortened names still read
+    alike are numbered in the list's order, "(2)"; still one separator and
+    `OPTION_CHARS` at most. No two options read the same (the WebUI skill
+    §8); the chosen file's full name is in its details."""
+    def named(key: str, mark: str = "") -> str:
+        return _fit(str(parents[key].get("filename")), _progress_words(parents[key]), mark)
+
+    labels = [checkpoint_words(parents[key]) for key in keys]
+    seen = Counter(labels)
+    labels = [label if seen[label] == 1 else named(key) for label, key in zip(labels, keys)]
+    seen, nth = Counter(labels), Counter()
+    choices = []
+    for label, key in zip(labels, keys):
+        if seen[label] > 1:
+            nth[label] += 1
+            label = named(key, f" ({nth[label]})")
+        choices.append((label, key))
+    return choices
 
 
 def checkpoint_items(listing: Any) -> Tuple[Dict[str, Any], Optional[str]]:

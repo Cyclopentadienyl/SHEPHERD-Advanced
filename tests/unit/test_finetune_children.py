@@ -410,6 +410,10 @@ def test_a_new_base_run_is_filed_under_its_spec_encoder_with_only_what_was_sent(
     (dict(num_epochs=0), "num_epochs 0 is outside"),
     (dict(learning_rate="fast"), "learning_rate must be a number, not 'fast'"),
     (dict(early_stopping_patience=None, seed=None), "seed must be set, not null"),
+    # One hop per layer of the spec's encoder (the reference recipe's three):
+    # refused by the start, not by the process after a run directory exists.
+    (dict(num_neighbors=[15, 10]), "num_neighbors needs 3 numbers, one hop per encoder layer, "
+                                   "not 2"),
     (dict(learning_stage="finetune"), "A finetune is started as a Fine-tune start"),
     (dict(learning_stage="pretrain"), "'pretrain' is not a learning stage a new run starts"),
     (dict(model_spec={"spec_version": 0}), "The model_spec cannot be read"),

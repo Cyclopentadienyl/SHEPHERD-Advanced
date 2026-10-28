@@ -593,3 +593,26 @@ def test_stop_names_the_fine_tune_children_it_will_cancel(monkeypatch):
         "cancelled_children": ["gene", "patients_like_me"]})
     notice, _mode = tc._on_stop(OP, {"confirm": "j1"})
     assert "The queued Fine-tune children (Gene, Patients-like-me) were cancelled." in notice
+
+
+def test_a_stop_after_the_child_ended_on_its_own_says_nothing_was_stopped(monkeypatch):
+    """The running child ended on its own just before the stop arrived: the
+    runner stopped nothing and only cancelled the queued children
+    (`TrainingManager._stop`, its ``message``). The notice says so; it never
+    reads "Stopped." while the child shows Completed."""
+    status = {"status": "running", "job_id": "j1",
+              "finetune": {"children": [{"task": "disease", "status": "running",
+                                         "job_id": "j1"},
+                                        {"task": "gene", "status": "queued"}]}}
+    monkeypatch.setattr(training_manager, "get_status", lambda: status)
+    monkeypatch.setattr(training_manager, "stop_training", lambda: {
+        "success": True, "status": "completed", "cancelled_children": ["gene"],
+        "outcome": {"checkpoint": "/x/model.pt", "readable": True, "completed_epochs": 100,
+                    "target_epochs": 100, "end": "finished"},
+        "message": "Training (job j1) had already ended on its own (completed, exit code 0) "
+                   "before this stop arrived; nothing was stopped. The queued children (gene) "
+                   "were cancelled."})
+    notice, mode = tc._on_stop(OP, {"confirm": "j1"})
+    assert "Stopped." not in notice and mode["confirm"] is None
+    assert ("Nothing was stopped: the job had already ended on its own (completed). "
+            "The queued Fine-tune children (Gene) were cancelled.") in notice

@@ -5,8 +5,10 @@ Research › Prepare › Fine-tune (K6 decisions 2, 9, 11).
 
 - **the parents are listed bases only**: never a task model, a file without a
   model spec or a refused record; listing is an operator control;
-- **the options follow the skill** (unique, at most 40 characters, one
-  separator), the tasks' carrying their readiness, why not under them;
+- **the checkpoint and task options follow the skill §8** (unique, at most
+  40 characters, one separator), the tasks' carrying their readiness, why not
+  under them; the Run options are the identity label the Training page's
+  Continue drawer shares (§5: name · architecture · time), unique;
 - **Start** sends the base's listed digest, the dataset fingerprint shown, the
   tasks in `TASKS` order and only the settings that differ from the recipe's,
   through the server's lists (never a client path); a refusal is the runner's
@@ -103,8 +105,13 @@ def test_only_listed_bases_are_offered_as_parents(root, operator):
     assert runs["value"] == f"gatv2/{BASE_RUN}" and checkpoints["value"] == (
         f"gatv2/{BASE_RUN}/last.pt")
     assert "3 base checkpoints in 2 runs" in note
-    _option_rules([label for label, _key in runs["choices"]] and
-                  [label for label, _key in checkpoints["choices"]])
+    # Each select checked on its own: the Run options are the identity label
+    # (`training_console.run_words`, shared with the Continue drawer), unique;
+    # the checkpoint options follow §8.
+    run_labels = [label for label, _key in runs["choices"]]
+    assert run_labels == ["base · GATv2 · 2026-10-01 00:00", "old · GATv2 · 2026-09-01 00:00"]
+    assert len(set(run_labels)) == len(run_labels)
+    _option_rules([label for label, _key in checkpoints["choices"]])
     # A choice kept by key stays chosen.
     kept = fp._on_finetune_bases(operator, {"name": "demo"}, f"gatv2/{OLD_BASE_RUN}/last.pt")
     assert kept[1]["value"] == f"gatv2/{OLD_BASE_RUN}" and kept[2]["value"] == (
@@ -131,11 +138,14 @@ def test_the_chosen_bases_summary_says_what_start_sends_escaped(root, operator):
     parents = fp._on_finetune_bases(operator, {"name": "demo"}, None)[0]
     item = parents[f"gatv2/{BASE_RUN}/model-03-0.8300.pt"]
     html = fp._on_base_chosen(f"gatv2/{BASE_RUN}/model-03-0.8300.pt", parents)
-    for words in ("Run", "GATv2 · 2026-10-01 00:00", "model-03-0.8300.pt", "Configuration",
+    for words in ("Run", f"<code>gatv2/{BASE_RUN}</code>", "model-03-0.8300.pt", "Configuration",
                   "GATv2 · recipe changed in", "Holds", "Validation", "LP accuracy (Trainer)",
                   "0.8300", "Trained on", "not recorded", "Model fingerprint",
                   item["sha256"][:12], f'data-copy="{item["sha256"]}"'):
         assert words in html, words
+    # The run is named by its directory, a fact the Run select above does not
+    # give; never its option's words again (the WebUI skill §1.2).
+    assert tc.run_words("gatv2", BASE_RUN) not in html
     assert fp._on_base_chosen(None, parents) == ""
     odd = fp.base_summary_html({**item, "filename": TAG, "trained_on_this_dataset": False})
     assert "<img" not in odd and "&lt;img" in odd and "another dataset" in odd
@@ -276,14 +286,17 @@ def _status(*children, status="running", parent=None):
 
 
 def _child(task, status, run=None, error=None):
-    return {"task": task, "status": status, "job_id": None,
+    """A child as `_Finetune.describe` gives it: a running one is the job
+    running (`_status`'s ``j2``)."""
+    return {"task": task, "status": status,
+            "job_id": "j2" if status in ("running", "stopping") else None,
             "run_dir": f"/w/demo/runs/gatv2/{run}" if run else None, "error": error}
 
 
 @pytest.mark.parametrize("status, shape, token, word", [
     ("queued", "○", "neutral", "Queued"),
     ("running", None, "info", "Running"),
-    ("stopping", None, "info", "Stopping"),
+    ("stopping", "■", "info", "Stopping"),
     ("completed", "●", "ok", "Completed"),
     ("failed", "✕", "error", "Failed"),
     ("refused", "✕", "error", "Refused"),
@@ -294,6 +307,8 @@ def test_each_status_is_colour_shape_and_word(status, shape, token, word):
     html = fp.status_mark_html(status)
     assert f"shep-ft-st-{token}" in html and f"<span>{word}</span>" in html
     assert ("shep-ft-spin" in html) if shape is None else (f">{shape}</span>" in html)
+    # The spinner is Running's alone (the WebUI skill §6).
+    assert ("shep-ft-spin" in html) == (status == "running")
     css = fp.PAGE_CSS
     assert f".shep-ft-st-{token} {{ color: var(--shep-status-{token}); }}" in css
     # Never green for a child that did not complete.
@@ -421,6 +436,30 @@ def test_stop_asks_with_the_training_pages_stop_logic(monkeypatch):
         "success": True, "outcome": None, "cancelled_children": ["gene"]})
     notice, mode = fp._on_finetune_stop(gradio_request(), mode)
     assert "(Gene) were cancelled" in notice and mode["confirm"] is None
+
+
+def test_the_cards_stop_never_reaches_another_pages_job(monkeypatch):
+    """The card's Stop reaches a running Fine-tune child only. A base run
+    started on Research › Training (it clears the Fine-tune status) is not
+    asked about, and a confirmation, left from an earlier question or sent
+    directly, never stops it."""
+    operator_mode(monkeypatch)
+    base = {"status": "running", "job_id": "base-job-9", "finetune": None}
+    monkeypatch.setattr(tc.training_manager, "get_status", lambda: base)
+    monkeypatch.setattr(tc.training_manager, "stop_training",
+                        lambda: pytest.fail("the card's Stop stopped another page's job"))
+    text, mode = fp._on_finetune_stop_request(gradio_request(), {})
+    assert mode["confirm"] is None and "Nothing to stop: no Fine-tune child is running." in text
+    assert not tc.confirming(base, mode)
+    for asked in ({"confirm": "j2"}, {"confirm": "base-job-9"}, {}):
+        notice, mode = fp._on_finetune_stop(gradio_request(), asked)
+        assert "Not stopped" in notice and mode["confirm"] is None, asked
+    assert fp.running_child(base) is None
+    assert fp.running_child(_status(_child("disease", "running", "r"))) == "j2"
+    # A child the status still lists while another job runs is not reached.
+    stale = {**_status(_child("disease", "running", "r")), "job_id": "base-job-9"}
+    assert fp.running_child(stale) is None
+    assert fp.actions_view(stale, access=_Access(True), gpu=None, confirming=False)["stop"] is False
 
 
 # --------------------------------------------------------------------------- the page contract

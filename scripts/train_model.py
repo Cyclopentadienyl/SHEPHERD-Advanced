@@ -1340,6 +1340,7 @@ def train_bundle(config: TrainConfig, explicit: Optional[Collection[str]] = None
 
     from src.kg.graph_view import build_graph_view, split_facts
     from src.models.bundle import ModelSpec, build_bundle, finetune_spec_from_parent, reference_spec
+    from src.models.bundle.spec import hops_problem
     from src.models.bundle.record import (
         MODEL_RECORD_VERSION, ModelRecord, ModelRecordError, read_model_record,
     )
@@ -1474,10 +1475,9 @@ def train_bundle(config: TrainConfig, explicit: Optional[Collection[str]] = None
         if any(getattr(spec, f) != getattr(base_record.model_spec, f) for f in graph_side):
             raise ValueError("a finetune keeps its base's graph view, input, encoder and LP head "
                              "(README §3.3, Inheritance)")
-    if len(config.num_neighbors) != spec.encoder.layers:
-        raise ValueError(
-            f"num_neighbors has {len(config.num_neighbors)} hops and the encoder "
-            f"{spec.encoder.layers} layers; the reference GATv2 needs one hop per layer")
+    hops = hops_problem(config.num_neighbors, spec.encoder)
+    if hops:
+        raise ValueError(hops)
     config.model_spec = spec.to_dict()
 
     # The view and its split, from the graph read (G1, F2), before any output.

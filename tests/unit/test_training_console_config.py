@@ -82,12 +82,12 @@ def test_start_sends_a_base_run_with_only_the_settings_that_differ(listed, start
     # Changed values only, each as its setting takes it (a whole float of an
     # integer box as an int, the hop text as a list, an int of a float field
     # as a float, an empty patience as none).
-    tc._on_start(OP, WS, "", "auto", *_form(num_epochs=5.0, num_neighbors="20, -1",
+    tc._on_start(OP, WS, "", "auto", *_form(num_epochs=5.0, num_neighbors="20, 10, -1",
                                             learning_rate=1, use_amp=True,
                                             early_stopping_patience=7))
     sent = {k: v for k, v in started[-1].items() if k not in (
         "data_dir", "learning_stage", "device", "run_name", "compile", "__kwargs__")}
-    assert sent == {"num_epochs": 5, "num_neighbors": [20, -1], "learning_rate": 1.0,
+    assert sent == {"num_epochs": 5, "num_neighbors": [20, 10, -1], "learning_rate": 1.0,
                     "use_amp": True, "early_stopping_patience": 7}
     assert type(sent["num_epochs"]) is int and type(sent["learning_rate"]) is float
     # The recipe's own values, typed again, are not sent: the run records them
@@ -113,6 +113,11 @@ def test_start_takes_compile_from_the_runtime_settings(listed, started, monkeypa
     ("num_neighbors", "15, x, 5", "Neighbours per hop must be whole numbers"),
     ("num_neighbors", "", "Neighbours per hop needs at least 1"),
     ("num_neighbors", "15, 0, 5", "Neighbours per hop [15, 0, 5] has an item outside"),
+    # One hop per layer of the encoder the form's base builds (the reference
+    # recipe's three), refused here rather than by the training process.
+    ("num_neighbors", "15, 10", "Neighbours per hop needs 3 numbers, one hop per encoder "
+                                "layer, not 2"),
+    ("num_neighbors", "15, 10, 5, 5", "Neighbours per hop needs 3 numbers"),
     ("warmup_steps", -1, "Warmup steps -1 is outside"),
     ("weight_decay", -0.1, "Weight decay -0.1 is outside"),
     ("max_grad_norm", 0.0, "Gradient clip 0.0 is outside"),
@@ -211,5 +216,6 @@ def test_the_runner_takes_what_the_form_sends(tmp_path, monkeypatch):
     monkeypatch.setattr(tc.training_manager, "start_training",
                         lambda config, **k: sent.append(config) or {"success": True})
     tc._on_start(OP, WS, "r", "cpu", *_form(num_epochs=3, batch_size=64, use_amp=True,
-                                            scheduler_type="cosine", warmup_steps=10))
+                                            scheduler_type="cosine", warmup_steps=10,
+                                            num_neighbors="20, 10, -1"))
     assert _new_bundle_run(sent[-1]) == ("gatv2", None)

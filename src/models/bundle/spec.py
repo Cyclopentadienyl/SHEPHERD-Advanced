@@ -22,7 +22,7 @@ Module: src/models/bundle/spec.py
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field, fields
-from typing import Any, Dict, Mapping, Optional, Tuple
+from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
 #: Bumped when a field's meaning changes or a field is removed. A reader never
 #: guesses a field an older or newer version may have meant.
@@ -442,6 +442,19 @@ def reference_spec(learning_stage: str = "base", task: Optional[str] = None) -> 
                      patient, head, sources=dict(REFERENCE_SOURCES)).validate()
 
 
+def hops_problem(num_neighbors: Sequence[Any], encoder: EncoderSpec) -> Optional[str]:
+    """Why a sampler's hop list (`num_neighbors`) does not fit `encoder`, or
+    None: the sampler takes one hop per message-passing layer, so the list
+    has `encoder.layers` numbers. **The one statement of this rule**: the
+    start's check of a new base run (`training_manager._new_bundle_run`), the
+    Training page's base form (`training_console.setting_problem`) and the
+    training process (`scripts/train_model.py`) all ask it."""
+    if len(num_neighbors) == encoder.layers:
+        return None
+    return (f"num_neighbors needs {encoder.layers} numbers, one hop per encoder layer, "
+            f"not {len(num_neighbors)}.")
+
+
 def finetune_spec_from_parent(parent: ModelSpec, task: str) -> ModelSpec:
     """A finetune spec over `parent`'s graph side, with the reference head for
     `task`. A finetune never changes the parent's encoder (README §3.3)."""
@@ -470,5 +483,6 @@ __all__ = [
     "ViewShape",
     "finetune_head",
     "finetune_spec_from_parent",
+    "hops_problem",
     "reference_spec",
 ]

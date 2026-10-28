@@ -108,7 +108,7 @@ def test_refusals_before_anything_is_written(workspace, tmp_path):
     with pytest.raises(ValueError, match="ShepherdGNN path"):
         train_model.train(config, explicit | {"hidden_dim"})
     config, explicit = _config(workspace, tmp_path / "y", num_neighbors=[4, 4, 4])
-    with pytest.raises(ValueError, match="one hop per layer"):
+    with pytest.raises(ValueError, match="one hop per encoder layer"):
         train_model.train(config, explicit)
     assert not (tmp_path / "x").exists() and not (tmp_path / "y").exists()
 

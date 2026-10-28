@@ -458,10 +458,12 @@ def _new_bundle_run(config: Mapping[str, Any]) -> Tuple[Optional[str], Optional[
     Only a base starts here: a finetune is a Fine-tune start's
     (`start_finetune`, one child per task from a base). Its keys are the
     recipe's base settings and `_NEW_RUN_KEYS`, each value one its field spec
-    takes (`_recipe_settings_problem`); a ShepherdGNN setting is refused, never
-    passed on for the process to refuse."""
+    takes (`_recipe_settings_problem`), and its hop list one number per layer
+    of the spec's encoder (`hops_problem`, the recipe's list when it names
+    none); a ShepherdGNN setting is refused, never passed on for the process
+    to refuse."""
     from src.config.recipe import reference_settings
-    from src.models.bundle.spec import ModelSpec, SpecError, reference_spec
+    from src.models.bundle.spec import ModelSpec, SpecError, hops_problem, reference_spec
 
     stage = config.get("learning_stage")
     if stage == "finetune":
@@ -469,19 +471,24 @@ def _new_bundle_run(config: Mapping[str, Any]) -> Tuple[Optional[str], Optional[
                       "base: POST /api/v1/training/finetune), not as a training run.")
     if stage != "base":
         return None, f"{stage!r} is not a learning stage a new run starts; a new run is a base."
+    references = reference_settings("base")[0]
     problem = _recipe_settings_problem(
         {name: value for name, value in config.items() if name not in _NEW_RUN_KEYS},
-        [reference_settings("base")[0]], "a base run")
+        [references], "a base run")
     if problem:
         return None, problem
     if config.get("model_spec") is None:
-        return reference_spec("base").encoder.kind, None
-    try:
-        spec = ModelSpec.from_dict(config["model_spec"]).validate()
-    except (SpecError, TypeError, ValueError, KeyError, AttributeError) as exc:
-        return None, f"The model_spec cannot be read: {exc}."
-    if spec.learning_stage != "base":
-        return None, f"The model_spec is a {spec.learning_stage} spec; a new run is a base."
+        spec = reference_spec("base")
+    else:
+        try:
+            spec = ModelSpec.from_dict(config["model_spec"]).validate()
+        except (SpecError, TypeError, ValueError, KeyError, AttributeError) as exc:
+            return None, f"The model_spec cannot be read: {exc}."
+        if spec.learning_stage != "base":
+            return None, f"The model_spec is a {spec.learning_stage} spec; a new run is a base."
+    problem = hops_problem(config.get("num_neighbors", references["num_neighbors"]), spec.encoder)
+    if problem:
+        return None, problem
     return spec.encoder.kind, None
 
 

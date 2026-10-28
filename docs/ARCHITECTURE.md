@@ -203,7 +203,7 @@ trains on a generated workspace's simulated patients with one loss, `MultiTaskLo
 diagnosis 1.0, contrastive 0.3, link prediction 0.5 and ortholog consistency 0.2, but only the
 diagnosis and contrastive terms are computed: the other two run only when a batch carries
 `positive_triples`/`negative_triples` or `ortholog_pairs`, and no loader produces them, so their
-weights (sliders on the Training page among them) change nothing (BACKLOG 57). Each run writes its own run
+weights change nothing (BACKLOG 57). Each run writes its own run
 directory; a run can be paused, resumed with every learning setting inherited, or extended at a
 fixed rate (M3a). The checkpoint payload records the producer, the environment, the settings
 requested and in effect, the progress, and the digests of the graph, the sample files and the split
@@ -296,7 +296,7 @@ Layer 8 (Interface):   src/api/           FastAPI REST endpoints; src/api/servic
 | Server settings | `src/config/server_settings.py`; `src/config/serving_device.py` | `SHEPHERD_DEPLOYMENT_MODE`, `_WORKSPACES_ROOT`, `_REGISTRY`, `_INTAKE_DIR`, `_TRAINING_EVIDENCE_DIRS`, `_ORDERING_ROLES` (server settings) and `_DEVICE` (serving device), read where used |
 | Record states, ordering | `src/api/services/record_states.py`; `src/evaluation/ordering.py` | Kept, registered and contested states for display; D4's ordering by test score |
 | Backend control | `src/api/services/backend_control.py`; `src/api/main.py` | Restart Backend (re-exec in place); shutdown that stops the active job |
-| WebUI pages | `src/webui/components/` (`diagnosis_panel.py`, `diagnosis_card.py`, `model_list.py`, `datasets_page.py`, `training_console.py`, `test_page.py`, `models_page.py`, `runtime_settings.py`) | The pages; the shared help, renderers and model list |
+| WebUI pages | `src/webui/components/` (`diagnosis_panel.py`, `diagnosis_card.py`, `model_list.py`, `datasets_page.py`, `training_console.py`, `finetune_page.py`, `test_page.py`, `models_page.py`, `runtime_settings.py`) | The pages; the shared help, renderers and model list |
 
 ---
 
@@ -480,7 +480,7 @@ and integration tests sit beside each module.
 | **Demo workspace**, optionally with a small trained model | `scripts/setup_demo.py` | the same writer; the GPU lock | none | CLI only | probe B1 at `b14c4de` writes the demo graph (`build_demo_kg`) through the shared writer; `setup_demo.py` itself and its `--train-model` lock have no GB10 record | none |
 | **Workspace list, dataset and build records, Datasets page** (read-only, compare, "Use for training") | `GET /api/v1/workspaces`; `server_lists` | `src/api/services/server_lists.py`, `src/kg/artifacts.py`, `src/webui/components/workspaces.py` | Datasets; the Training run bar; Test's workspace | Connected | W1, RW1 at `b14c4de` | the open route returns problem texts with absolute paths (BACKLOG 53) |
 | **Inventory before deployment** (M2.6) and dataset audits | `scripts/audit_checkpoint_family.py --inventory`, `scripts/audit_*.py` | the readers they audit | none | CLI only | M2's acceptance | two audits record a digest from a second read of what they parsed (BACKLOG 19.9; 19.12, optional) |
-| **Start a training run** | `scripts/train_model.py`; `POST /api/v1/training/start` (D8); the job runner | `src/training/trainer.py`, `src/utils/checkpoint_paths.py` (the run directory), `src/api/services/training_manager.py` | Training run bar, Start | Connected | W11, RW3 at `b14c4de`; manual Start at `b14c4de` | the API takes raw paths (BACKLOG 54; unknown keys are refused since K5); two of the four loss terms never run, so their weight sliders change nothing (BACKLOG 57) |
+| **Start a training run** | `scripts/train_model.py`; `POST /api/v1/training/start` (D8); the job runner | `src/training/trainer.py`, `src/utils/checkpoint_paths.py` (the run directory), `src/api/services/training_manager.py` | Training run bar, Start | Connected | W11, RW3 at `b14c4de`; manual Start at `b14c4de` | the API takes raw paths (BACKLOG 54; unknown keys are refused since K5); two of the four loss terms never run, so their weights change nothing (BACKLOG 57) |
 | **Resume and extend** (inherited settings; extend at a fixed rate). Not branch | CLI flags; the API's `resume_from`; the job runner | `src/utils/run_plan.py`, the trainer, `checkpoint_paths.py` | Continue… drawer: Run → Checkpoint, Check, preview | Connected | M2, M9, M10, R3, R4 at `b14c4de` (the CLI path); Continue preview by hand at `f9202b6`; no GB10 record of a resume started from the drawer (unit tests cover it) | the API takes `resume_from` as a raw path (BACKLOG 54) and, since K5, refuses `extend_lr` (422) instead of dropping it; the drawer sends no `extend_lr` either, so a parent whose rate ended at 0 is extended from the CLI only. A model bundle run is resumed through the runner with its stage and task from its own record (K5) |
 | **Pause after epoch N** | `train_model.py --pause-after-epoch` | the trainer | none, by decision | CLI only | probe M2 | the API refuses the field (422) since K5, instead of dropping it (BACKLOG 54) |
 | **Stop training** | `POST /api/v1/training/stop` (D8); the runner | `training_manager.py` | Stop, with its question | Connected | W11, RW3; by hand at `b14c4de` | none |
