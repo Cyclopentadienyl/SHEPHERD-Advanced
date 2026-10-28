@@ -148,13 +148,46 @@ def _registry_with_genes(trained, tmp_path):
     return registry
 
 
-def test_the_api_resolves_a_reference_cohort_and_validates_the_response(trained, tmp_path,
-                                                                        monkeypatch):
+def _response(result, patient_id, **kind_fields):
+    """The API's response to `result` (`DiagnoseResponse`), its kind's own
+    result-level fields given by the caller, as the route assembles it."""
     from dataclasses import asdict
 
+    from src.api.routes.diagnose import DiagnoseResponse, _candidate_body
+
+    return DiagnoseResponse.model_validate({
+        "result_kind": result.result_kind, "served_identity": result.served_identity.to_dict(),
+        "phenotype_input": asdict(result.phenotype_input),
+        "candidates": [_candidate_body(c, False, False) for c in result.candidates],
+        "tie_policy": result.tie_policy, "result_schema_version": 2, "session_id": "s",
+        "patient_id": patient_id, "timestamp": "2026-10-27T00:00:00", "summary": None,
+        "inference_time_ms": 1.0, "warnings": list(result.warnings), **kind_fields})
+
+
+def _patients_response(trained, tmp_path, monkeypatch):
+    """A patients-like-me child's response for a registered reference cohort
+    version imported with causal genes."""
+    from src.api.routes.diagnose import _reference_cohort
+
+    pipeline = _pipeline(trained, "patients_like_me")
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(_registry_with_genes(trained, tmp_path)))
+    reference = _reference_cohort("reference-1", "patients_like_me", pipeline)
+    result = pipeline.run(PatientPhenotypes(patient_id="q1", phenotypes=["HP:0001250"]),
+                          top_k=5, reference_cohort=reference)
+    return _response(result, "q1", reference_cohort=result.reference_cohort)
+
+
+def _gene_response(trained):
+    result = _pipeline(trained, "gene").run(PatientPhenotypes(
+        patient_id="g3", phenotypes=["HP:0001250"], candidate_genes=["SCN1A", "PTEN"]))
+    return _response(result, "g3", sp_bounds=list(result.sp_bounds))
+
+
+def test_the_api_resolves_a_reference_cohort_and_validates_the_response(trained, tmp_path,
+                                                                        monkeypatch):
     from fastapi import HTTPException
 
-    from src.api.routes.diagnose import DiagnoseResponse, _candidate_body, _reference_cohort
+    from src.api.routes.diagnose import _reference_cohort
 
     pipeline = _pipeline(trained, "patients_like_me")
     with pytest.raises(HTTPException, match="SHEPHERD_REGISTRY") as caught:
@@ -171,40 +204,59 @@ def test_the_api_resolves_a_reference_cohort_and_validates_the_response(trained,
     assert all(s.causal_gene_ids for s in reference.samples)
     result = pipeline.run(PatientPhenotypes(patient_id="q1", phenotypes=["HP:0001250"]),
                           top_k=5, reference_cohort=reference)
-    body = {
-        "result_kind": result.result_kind, "served_identity": result.served_identity.to_dict(),
-        "phenotype_input": asdict(result.phenotype_input),
-        "candidates": [_candidate_body(c, False, False) for c in result.candidates],
-        "tie_policy": result.tie_policy, "reference_cohort": result.reference_cohort,
-        "result_schema_version": 2, "session_id": "s", "patient_id": "q1",
-        "timestamp": "2026-10-27T00:00:00", "summary": None, "inference_time_ms": 1.0,
-        "warnings": [],
-    }
-    response = DiagnoseResponse.model_validate(body)
+    response = _response(result, "q1", reference_cohort=result.reference_cohort)
     assert response.root.result_kind == "patients_like_me/v1"
     assert response.root.reference_cohort.label == "reference-1"
     assert response.root.candidates[0].causal_genes
 
 
 def test_a_gene_response_validates(trained):
-    from dataclasses import asdict
-
-    from src.api.routes.diagnose import DiagnoseResponse, _candidate_body
-
-    result = _pipeline(trained, "gene").run(PatientPhenotypes(
-        patient_id="g3", phenotypes=["HP:0001250"], candidate_genes=["SCN1A", "PTEN"]))
-    body = {
-        "result_kind": result.result_kind, "served_identity": result.served_identity.to_dict(),
-        "phenotype_input": asdict(result.phenotype_input),
-        "candidates": [_candidate_body(c, False, False) for c in result.candidates],
-        "tie_policy": result.tie_policy, "sp_bounds": list(result.sp_bounds),
-        "result_schema_version": 2, "session_id": "s",
-        "patient_id": "g3", "timestamp": "2026-10-27T00:00:00", "summary": None,
-        "inference_time_ms": 1.0, "warnings": [],
-    }
-    response = DiagnoseResponse.model_validate(body).root
+    response = _gene_response(trained).root
     assert response.result_kind == "gene_task/v1" and response.sp_bounds == (1.0, 6.84)
     assert response.served_identity.settings.eta == 0.5
+
+
+def test_the_diagnosis_page_and_exports_read_both_kinds(trained, tmp_path, monkeypatch):
+    """The page's contract with the real bodies (as `test_disease_serving`'s):
+    a gene child's and a patients-like-me child's responses, through
+    `model_dump`, draw every row in the table and the details, and their CSV
+    and report carry the kind's values and the reference cohort version."""
+    import csv
+    import io
+
+    from src.webui.components import diagnosis_panel as dp
+
+    gene = _gene_response(trained).model_dump(mode="json")
+    table = dp.results_body_html(gene, 1)
+    assert table.count("<tr data-key=") == len(gene["candidates"]) == 2
+    assert "Gene task model" in table and ">SP similarity</th>" in table
+    for candidate in gene["candidates"]:
+        assert f'title="{candidate["gene_id"]}">{candidate["gene_name"]}<' in table
+        assert dp._num(candidate["score"]) in table
+    assert "1.000 to 6.840" in dp.details_outputs(gene, 1)["details_html"]["value"]
+    rows = list(csv.DictReader(io.StringIO(dp._build_results_csv(gene))))
+    assert [r["gene_name"] for r in rows] == [c["gene_name"] for c in gene["candidates"]]
+    assert {(r["sp_bounds_lower"], r["sp_bounds_upper"]) for r in rows} == {("1.0000", "6.8400")}
+    assert rows[0]["served_scoring_mode"] == "gene_task" and rows[0]["served_eta"] == "0.5"
+    report = dp._build_results_report_md(gene)
+    assert dp.GENE_SCORE_NOTE in report and "a gene task model discovers no paths" in report
+
+    patients = _patients_response(trained, tmp_path, monkeypatch).model_dump(mode="json")
+    reference = patients["reference_cohort"]
+    table = dp.results_body_html(patients, 1)
+    assert table.count("<tr data-key=") == len(patients["candidates"]) > 0
+    assert f"version <code>{reference['version_sha256'][:12]}</code>" in table
+    first = patients["candidates"][0]
+    details = dp.details_outputs(patients, first["rank"])["details_html"]["value"]
+    assert all(f"<code>{term}</code>" in details for term in first["phenotypes"])
+    rows = list(csv.DictReader(io.StringIO(dp._build_results_csv(patients))))
+    assert [r["case_id"] for r in rows] == [c["case_id"] for c in patients["candidates"]]
+    assert rows[0]["reference_cohort_version_sha256"] == f"sha256:{reference['version_sha256']}"
+    assert rows[0]["reference_cohort_patients"] == str(reference["patients"])
+    assert rows[0]["causal_genes"] == "; ".join(first["causal_genes"])
+    report = dp._build_results_report_md(patients)
+    assert f"`sha256:{reference['samples_sha256']}`" in report
+    assert dp.SIMILARITY_NOTE in report and "**Recorded HPO terms**" in report
 
 
 def test_a_wrong_reference_cohort_is_refused(trained, tmp_path, monkeypatch):

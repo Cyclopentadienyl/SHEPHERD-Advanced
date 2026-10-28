@@ -693,7 +693,8 @@ def test_a_too_long_entry_without_ctx_at_all_falls_back_too():
 
 @pytest.mark.parametrize("response", [
     _response(422, text="<html>gateway</html>"),
-    _response(422, {"error": "no detail key"}),
+    _response(422, {"error": 5}),
+    _response(422, {"error": "   "}),
     _response(422, {"detail": "a string, not a list"}),
     _response(422, {"detail": []}),
     _response(422, {"detail": ["not an entry", 3, None]}),
@@ -781,6 +782,15 @@ _KIND_CSV_COLUMNS = {
         "evidence_label", "evidence_mode", "evidence_summary", "min_path_length",
         "num_direct_paths", "num_analogies", "supporting_genes", "matching_phenotypes"],
     "demo/v1": ["result_kind", "rank", "disease_id", "disease_name", "matching_phenotypes"],
+    # A task kind's own columns, then what the result carries for every row (K6).
+    "gene_task/v1": [
+        "result_kind", "rank", "gene_id", "gene_name", "score", "embsim", "sp_similarity",
+        "mean_distance", "sp_bounds_lower", "sp_bounds_upper"],
+    "patients_like_me/v1": [
+        "result_kind", "rank", "case_id", "similarity", "disease_id", "disease_name",
+        "causal_genes", "phenotypes", "reference_cohort_label",
+        "reference_cohort_version_sha256", "reference_cohort_samples_sha256",
+        "reference_cohort_patients"],
 }
 _SERVED_COLUMNS = [
     "served_scoring_mode", "served_checkpoint_state", "served_checkpoint_sha256",
@@ -1801,3 +1811,471 @@ def test_a_code_chip_in_this_result_is_text_in_its_line():
     rule = dp.PAGE_CSS[start:dp.PAGE_CSS.index("}", start)]
     assert "display: inline;" in rule and "word-break: normal" in rule
     assert "break-all" not in rule
+
+
+# -------------------------------------------------- Diagnosis by task (K6 decision 15)
+# A gene task model ranks the request's candidate genes; a patients-like-me
+# model ranks a registered reference cohort version's patients. The page offers
+# the served task's input, sends it only to its task, and draws both kinds'
+# rows, details and exports escaped (README §8, "In scope for the UI").
+VERSION_SHA = _digest("cohort.json")
+SAMPLES_SHA = _digest("reference_samples.json")
+_EVIL = "<img src=x onerror=alert(1)>"
+_EVIL_SHOWN = "&lt;img src=x onerror=alert(1)&gt;"
+
+
+def _task_identity(mode):
+    """What the API sends for a finetuned bundle of `mode`: no table (the gene
+    model's distances computed from its view), the gene model's own η."""
+    identity = _served_identity(origin="files")
+    identity["scoring_mode"] = mode
+    identity["shortest_paths"] = {"state": "computed" if mode == "gene_task" else "absent",
+                                  "build_id": None, "max_hops": None}
+    identity["settings"] = _settings(eta=0.5 if mode == "gene_task" else None)
+    return identity
+
+
+def _version(label, binding="bound", problem=None):
+    """A reference cohort version as the card lists it
+    (`diagnosis_card.reference_cohorts`)."""
+    words = {"bound": "bound to this graph",
+             "another": "mapped against another graph (node_features differ)",
+             "unknown": "the version cannot be read"}
+    return {"label": label, "manifest_sha256": None if problem else VERSION_SHA,
+            "problem": problem, "binding": "unknown" if problem else binding,
+            "binding_words": words["unknown" if problem else binding]}
+
+
+def _cohorts(*versions, problem=None):
+    return {"versions": list(versions), "problem": problem}
+
+
+def _task_card(mode, cohorts=None, *, operator=True):
+    """The card's state serving a task model of `mode`, its facts holding
+    `cohorts` (the reference cohort versions, for patients-like-me)."""
+    from datetime import datetime
+
+    return dp.card.advance(None, _status_serving(_task_identity(mode)), None,
+                           now=datetime.fromisoformat(_NOW), operator=operator, d8_short=None,
+                           open_checkpoints=False, facts=lambda s, **k: {
+                               "key": dp.card.served_key(s), "operator": operator,
+                               "workspaces": [], "serving": None, "item": None,
+                               "item_problem": None, "recorded": None, "trained": None,
+                               "cohorts": cohorts})
+
+
+def _gene_result():
+    """A `gene_task/v1` result as the API sends it (`GeneTaskResponse`)."""
+    return {
+        "result_kind": "gene_task/v1", "result_schema_version": 2, "session_id": "sess_g",
+        "patient_id": "pt_g", "timestamp": "2026-07-07T16:00:00Z",
+        "served_identity": _task_identity("gene_task"),
+        "phenotype_input": {"received": 1, "unknown": [], "repeats_removed": 0,
+                            "used": ["HP:0001250"]},
+        "tie_policy": "score-desc-then-view-id-asc/v1", "sp_bounds": [1.0, 6.84],
+        "inference_time_ms": 12.0, "summary": "Found 2 candidate genes",
+        "warnings": ["2 of 3 candidate genes scored; 1 map to no gene"],
+        "_query_phenotypes": ["HP:0001250"],
+        "_query_candidate_genes": ["SCN1A", "disgenet:PTEN", "NOT_A_GENE"],
+        "candidates": [
+            {"rank": 1, "gene_id": "disgenet:SCN1A", "gene_name": "SCN1A", "score": 0.61,
+             "embsim": 0.4, "sp_similarity": 0.82, "mean_distance": 1.5},
+            {"rank": 2, "gene_id": "disgenet:PTEN", "gene_name": "PTEN", "score": -0.2,
+             "embsim": -0.3, "sp_similarity": -0.1, "mean_distance": 4.0}],
+    }
+
+
+def _patients_result():
+    """A `patients_like_me/v1` result (`PatientsLikeMeResponse`): a patient
+    with a recorded diagnosis and causal gene, and one with neither."""
+    return {
+        "result_kind": "patients_like_me/v1", "result_schema_version": 2, "session_id": "sess_p",
+        "patient_id": "pt_p", "timestamp": "2026-07-07T16:00:00Z",
+        "served_identity": _task_identity("patients_like_me"),
+        "phenotype_input": {"received": 1, "unknown": [], "repeats_removed": 0,
+                            "used": ["HP:0001250"]},
+        "tie_policy": "similarity-desc-then-case-id-asc/v1",
+        "reference_cohort": {"label": "reference-1", "version_sha256": VERSION_SHA,
+                             "samples_sha256": SAMPLES_SHA, "patients": 12},
+        "inference_time_ms": 9.0, "summary": "Found 2 similar patients", "warnings": [],
+        "_query_phenotypes": ["HP:0001250"],
+        "candidates": [
+            {"rank": 1, "case_id": "case-07", "similarity": -0.12,
+             "phenotypes": ["HP:0001250", "HP:0001263"], "disease_id": "mondo:MONDO:0011073",
+             "disease_name": "Dravet syndrome", "causal_genes": ["SCN1A"]},
+            {"rank": 2, "case_id": "case-02", "similarity": -0.5, "phenotypes": ["HP:0002376"],
+             "disease_id": None, "disease_name": None, "causal_genes": []}],
+    }
+
+
+@pytest.mark.parametrize("mode, genes, cohort", [
+    ("gene_task", True, False), ("patients_like_me", False, True),
+    ("disease_task", False, False), ("gnn_plus_shortest_path", False, False)])
+def test_the_inputs_follow_the_served_task(mode, genes, cohort):
+    """1: Candidate genes for a gene task model, Reference cohort for a
+    patients-like-me model, neither otherwise; each shown by its container's
+    class (`view_update`), never `visible`."""
+    state = _task_card(mode, _cohorts(_version("reference-1")))
+    out = dp.card_outputs(state, None, "idle")
+    assert _shown(out["genes_box"]) is genes and _shown(out["cohort_box"]) is cohort
+    _assert_views_switch_by_class(out)
+    assert ("cohort" in out) is cohort
+    for state in (_card(_no_model_status()), _card(None, "timed out (5 s)")):
+        out = dp.card_outputs(state, None, "idle")
+        assert not _shown(out["genes_box"]) and not _shown(out["cohort_box"])
+
+
+def _sent(monkeypatch, result):
+    """`_self_request` answered with `result`; returns the payloads sent."""
+    sent = []
+
+    class _Ok:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return dict(result)
+
+    monkeypatch.setattr(dp, "_self_request",
+                        lambda method, path, **kw: sent.append(kw["json"]) or _Ok())
+    return sent
+
+
+def test_each_task_gets_only_its_own_input(monkeypatch, status_read):
+    """2: the gene list goes to a gene task model, split on whitespace, commas
+    and semicolons with order, repeats and case kept; the reference cohort
+    label to a patients-like-me model; neither to any other model."""
+    genes = "SCN1A\ndisgenet:PTEN, ;scn1a  "
+    sent = _sent(monkeypatch, _gene_result())
+    out = dp.diagnose("HP:0001250", "", 10, True, _task_card("gene_task"), "idle", {}, None,
+                      genes_text=genes, cohort="reference-1")
+    assert sent[-1]["candidate_genes"] == ["SCN1A", "disgenet:PTEN", "scn1a"]
+    assert "reference_cohort" not in sent[-1]
+    assert out["results_state"]["_query_candidate_genes"] == ["SCN1A", "disgenet:PTEN", "scn1a"]
+    sent = _sent(monkeypatch, _patients_result())
+    dp.diagnose("HP:0001250", "", 10, True,
+                _task_card("patients_like_me", _cohorts(_version("reference-1"))), "idle", {},
+                None, genes_text=genes, cohort="reference-1")
+    assert sent[-1]["reference_cohort"] == "reference-1" and "candidate_genes" not in sent[-1]
+    for state in (_task_card("disease_task"), _card(_status_serving(_served_identity()))):
+        sent = _sent(monkeypatch, _sample_result())
+        dp.diagnose("HP:0001250", "", 10, True, state, "idle", {}, None, genes_text=genes,
+                    cohort="reference-1")
+        assert "candidate_genes" not in sent[-1] and "reference_cohort" not in sent[-1]
+
+
+def test_an_empty_gene_list_is_said_at_the_click_and_nothing_is_asked(monkeypatch, status_read):
+    """3: a gene task model with no candidate genes: a notice, no API call."""
+    monkeypatch.setattr(dp, "_call_diagnose", lambda **kw: pytest.fail("the API was called"))
+    out = dp.diagnose("HP:0001250", "", 10, True, _task_card("gene_task"), "idle", {}, None,
+                      genes_text=" ,; \n")
+    assert dp.NO_CANDIDATE_GENES in out["results_body"] and out["results_state"] is None
+    assert out["export_csv"] is dp._EXPORTS_HIDDEN and status_read["reads"] == []
+
+
+def test_run_waits_for_a_readable_reference_cohort_version():
+    """4: a patients-like-me model with a registry problem, no version or no
+    readable version: Run off, with the reason visible (the card's redacted
+    words, escaped) and its registered topic; a readable version turns it on."""
+    from src.webui.components.help import text_id
+
+    problem = "SHEPHERD_REGISTRY is not set, so the features that read the cohort registry are off."
+    for cohorts, words in ((_cohorts(problem=problem), problem),
+                           (_cohorts(), dp.NO_COHORT_VERSION),
+                           (_cohorts(_version("torn-1", problem="<registry>/versions/torn-1 has "
+                                                                 "no cohort.json")),
+                            dp.NO_READABLE_VERSION),
+                           (None, dp.NO_COHORT_VERSION)):
+        run = dp.run_controls(_task_card("patients_like_me", cohorts), "idle")
+        assert run["run_btn"]["interactive"] is False
+        assert dp._e(f"{dp.RUN_DISABLED_NO_COHORT} {words}") in run["run_reason"]
+        assert f'aria-describedby="{text_id("dx-run-no-cohort")}"' in run["run_cover"]
+    assert "dx-run-no-cohort" in dp.TOPIC_HELP
+    ready = _task_card("patients_like_me", _cohorts(_version("other-1", "another"),
+                                                    _version("reference-1")))
+    assert dp.run_controls(ready, "idle")["run_btn"]["interactive"] is True
+    # Another model is never gated on cohorts.
+    assert dp.run_controls(_task_card("gene_task"), "idle")["run_btn"]["interactive"] is True
+    assert dp.run_controls(_task_card("patients_like_me", _cohorts()), "confirming")[
+        "run_reason"].count(dp.RUN_DISABLED_CHANGE) == 1
+
+
+def test_the_reference_cohort_options_are_short_unique_and_keep_the_full_label():
+    """5: every option at most 40 characters, unique, with at most one
+    separator; the values are the full labels; "another graph" and "cannot
+    be read" marked; the default the first bound version, a current value
+    kept while listed."""
+    long_a = "a" * 30 + "-left-" + "z" * 28
+    long_b = "a" * 30 + "-rght-" + "z" * 28
+    assert len(long_a) == len(long_b) == 64
+    cohorts = _cohorts(_version(long_a, "another"), _version(long_b, "another"),
+                       _version("torn-1", problem="x"), _version("reference-1"),
+                       _version("reference-2"))
+    options, chosen = dp.cohort_choices(cohorts, None)
+    texts, values = [t for t, _v in options], [v for _t, v in options]
+    assert values == [long_a, long_b, "torn-1", "reference-1", "reference-2"]
+    assert len(set(texts)) == len(texts)
+    assert all(len(t) <= dp.OPTION_MAX and t.count(" · ") <= 1 for t in texts)
+    assert texts[0].endswith(" · another graph") and "…" in texts[0]
+    assert texts[2] == "torn-1 · cannot be read" and texts[3] == "reference-1"
+    assert chosen == "reference-1"
+    assert dp.cohort_choices(cohorts, "reference-2")[1] == "reference-2"
+    assert dp.cohort_choices(cohorts, "gone")[1] == "reference-1"
+    assert dp.cohort_choices(_cohorts(_version("other-1", "another")), None)[1] == "other-1"
+    assert dp.cohort_choices(_cohorts(_version("torn-1", problem="x")), None)[1] is None
+    info = dp.cohort_info(cohorts, "reference-1")
+    assert info == f"reference-1: version {VERSION_SHA[:12]}, bound to this graph"
+    assert dp.cohort_info(cohorts, "torn-1") == "torn-1: cannot be read: x"
+
+
+def test_the_timer_never_redraws_the_reference_cohort_select_for_nothing():
+    """5 (timer): a read with the same options sends no select update, and a
+    user's pick (its `.input`) is not sent back by the next read."""
+    cohorts = _cohorts(_version("reference-1"), _version("reference-2"))
+    state = _task_card("patients_like_me", cohorts)
+    first = dp.card_outputs(state, None, "idle", cohort=None)
+    update = first["cohort"]
+    assert update["value"] == "reference-1"
+    assert update["choices"] == [("reference-1", "reference-1"), ("reference-2", "reference-2")]
+    assert update["info"].startswith("reference-1: version ")
+    again = dp.card_outputs(first["card_state"], None, "idle", cohort="reference-1")
+    assert "cohort" not in again
+    picked = dp.cohort_picked(None, again["card_state"], "reference-2")
+    assert picked["cohort"]["info"].startswith("reference-2: version ")
+    assert "value" not in picked["cohort"] and "results_state" not in picked
+    ticked = dp.card_outputs(picked["card_state"], None, "idle", cohort="reference-2")
+    assert "cohort" not in ticked and "genes_box" not in ticked
+    # A pick after a result clears it, as edited phenotypes do.
+    cleared = dp.cohort_picked(_patients_result(), again["card_state"], "reference-2")
+    assert "Inputs changed" in cleared["results_body"] and cleared["results_state"] is None
+
+
+def test_the_task_inputs_are_never_run_outputs_and_clear_on_input(monkeypatch):
+    """6: the genes box and the select are inputs of Run Diagnosis, never its
+    outputs; the card's reads show and fill them; the user's edit (`.input`,
+    never `.change`, which a card update fires) clears the result; Clear
+    empties the genes box too."""
+    demo, _ctx = _build_tab(monkeypatch)
+    blocks = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
+    genes, cohort = blocks["dx_candidate_genes"], blocks["dx_reference_cohort"]
+    genes_box, cohort_box = blocks["shep-dx-genes-box"], blocks["shep-dx-cohort-box"]
+    assert genes.label == "Candidate genes" and cohort.label == "Reference cohort"
+    assert cohort.info is None and dp.VIEW_OFF in genes_box.elem_classes
+    (run,) = _named(demo, "_run_diagnosis")
+    assert genes in run.inputs and cohort in run.inputs
+    assert not {genes, cohort, genes_box, cohort_box} & set(run.outputs)
+    for name in ("_card_refresh", "_card_poll", "_card_reread", "_card_link"):
+        for fn in _named(demo, name):
+            assert {genes_box, cohort_box, cohort} <= set(fn.outputs), name
+            assert genes not in fn.outputs, name
+    triggers = {(fn.name, t) for fn in demo.fns.values() for t in fn.targets}
+    assert ("_phenotypes_edited", (genes._id, "input")) in triggers
+    assert ("_cohort_picked", (cohort._id, "input")) in triggers
+    assert not {t for _n, t in triggers if t in ((genes._id, "change"), (cohort._id, "change"))}
+    clear = blocks["shep-dx-clear"]
+    assert any(genes in fn.outputs for fn in demo.fns.values()
+               if (clear._id, "click") in fn.targets)
+
+
+def test_a_gene_result_shows_its_genes_and_their_values():
+    """7: the kind's label, its columns and formatted numbers; no disease or
+    evidence column; no segment; the details add the mean hop distance and the
+    model's SP bounds."""
+    result = _gene_result()
+    body = dp.results_body_html(result, 1)
+    assert "Gene task model: your candidate genes" in body
+    for head in (">Gene</th>", ">Model similarity</th>", ">SP similarity</th>"):
+        assert head in body
+    assert 'data-help="dx-gene-score"' in body and ">0.610</td>" in body and ">0.820</td>" in body
+    assert "Disease" not in body and "Evidence" not in body and "0.000" not in body
+    assert "2 of 3 candidate genes scored" in body
+    out = dp.details_outputs(result, 1)
+    assert dp.VIEW_OFF in out["details_seg"]["elem_classes"]
+    details = out["details_html"]["value"]
+    assert "Mean hop distance" in details and ">1.500<" in details
+    assert "1.000 to 6.840" in details
+    assert "#1</span> SCN1A</h2>" in out["details_hd"]
+    assert "<code>disgenet:SCN1A</code> Score <b>0.610</b>" in out["details_hd"]
+    _assert_views_switch_by_class(out)
+    assert dp.select_candidate(result, "evidence", "2")["selected"] == 2
+
+
+def test_a_patients_like_me_result_shows_reference_patients_and_its_version():
+    """8: research id, rank, similarity, recorded diagnosis and causal genes,
+    "not recorded" where nothing was; the reference cohort label and 12-hex
+    over the table, never the full digest there; the details list the recorded
+    HPO terms as context; the full digests to copy in "This result in full"."""
+    result = _patients_result()
+    body = dp.results_body_html(result, 1)
+    for head in (">Research ID</th>", ">Diagnosis</th>", ">Causal genes</th>"):
+        assert head in body
+    assert 'data-help="dx-similarity"' in body and ">-0.120</td>" in body
+    assert "Dravet syndrome" in body and ">SCN1A</td>" in body
+    assert body.count("not recorded") == 2
+    assert (f"Reference cohort <b>reference-1</b> · version <code>{VERSION_SHA[:12]}</code>"
+            in body)
+    assert VERSION_SHA not in body and SAMPLES_SHA not in body
+    out = dp.details_outputs(result, 1)
+    details = out["details_html"]["value"]
+    assert "<code>HP:0001250</code> <code>HP:0001263</code>" in details
+    assert "Recorded HPO terms (2)" in details and dp.REFERENCE_CONTEXT_NOTE in details
+    assert "<code>MONDO:0011073</code>" in details
+    assert "#1</span> case-07</h2>" in out["details_hd"] and "<b>-0.120</b>" in out["details_hd"]
+    second = dp.details_outputs(result, 2)["details_html"]["value"]
+    assert second.count("not recorded") == 2
+    digests = dp.result_digests_html(result)
+    for digest in (VERSION_SHA, SAMPLES_SHA):
+        assert f'<code class="shep-full">{digest}</code>' in digests
+        assert f'data-copy="{digest}"' in digests
+    assert "Reference cohort reference-1 · version (cohort.json)" in digests
+
+
+def _escaped_results():
+    gene = _gene_result()
+    gene["candidates"][0].update(gene_name=_EVIL, gene_id=_EVIL)
+    patients = _patients_result()
+    patients["candidates"][0].update(case_id=_EVIL, disease_name=_EVIL, phenotypes=[_EVIL],
+                                     causal_genes=[_EVIL])
+    patients["candidates"][1].update(disease_id=_EVIL)
+    patients["reference_cohort"]["label"] = _EVIL
+    return gene, patients
+
+
+def test_values_of_both_task_kinds_are_escaped_on_every_surface():
+    """9: markup in a gene's name or id, a reference patient's research id,
+    diagnosis, HPO terms or causal genes, or the reference label is never
+    drawn as markup: not in the table, details, header or digests; the report
+    escapes it or keeps it in a code span; the CSV defuses a formula."""
+    for result in _escaped_results():
+        kind = result["result_kind"]
+        html = dp.results_body_html(result, 1) + dp.result_digests_html(result)
+        for rank in (1, 2):
+            out = dp.details_outputs(result, rank)
+            html += out["details_hd"] + out["details_html"]["value"]
+            html += dp.details_header_html(result["candidates"][rank - 1], kind)
+        assert "<img" not in html and _EVIL_SHOWN in html, kind
+        # Markdown: escaped (``\<img``), or literal inside a code span.
+        report = _re.sub(r"(`+)[^`]*?\1", "", dp._build_results_report_md(result))
+        assert not _re.search(r"(?<!\\)<img", report) and "\\<img" in report, kind
+    _, patients = _escaped_results()
+    patients["candidates"][0]["case_id"] = "=HYPERLINK(\"http://x\")"
+    _, (first, _second), _ = _csv_records(dp._build_results_csv(patients))
+    assert first["case_id"] == "'=HYPERLINK(\"http://x\")"
+    assert first["reference_cohort_label"] == _EVIL
+
+
+def test_each_task_kinds_csv_holds_its_own_columns_before_the_served_ones():
+    """10: the kind's columns, then what the result carries for every row, then
+    the unchanged served columns; numbers to four places, digests sha256:."""
+    header, (first, second), rows = _csv_records(dp._build_results_csv(_gene_result()))
+    assert header == _KIND_CSV_COLUMNS["gene_task/v1"] + _SERVED_COLUMNS
+    assert (first["gene_id"], first["score"], first["embsim"]) == ("disgenet:SCN1A", "0.6100",
+                                                                   "0.4000")
+    assert (first["sp_bounds_lower"], first["sp_bounds_upper"]) == ("1.0000", "6.8400")
+    assert second["sp_bounds_upper"] == "6.8400" and second["score"] == "-0.2000"
+    assert first["served_scoring_mode"] == "gene_task" and first["served_eta"] == "0.5"
+    header, (first, second), _ = _csv_records(dp._build_results_csv(_patients_result()))
+    assert header == _KIND_CSV_COLUMNS["patients_like_me/v1"] + _SERVED_COLUMNS
+    assert first["reference_cohort_version_sha256"] == f"sha256:{VERSION_SHA}"
+    assert first["reference_cohort_samples_sha256"] == f"sha256:{SAMPLES_SHA}"
+    assert (first["reference_cohort_label"], first["reference_cohort_patients"]) == (
+        "reference-1", "12")
+    assert (first["phenotypes"], first["causal_genes"]) == ("HP:0001250; HP:0001263", "SCN1A")
+    assert (first["disease_id"], first["similarity"]) == ("MONDO:0011073", "-0.1200")
+    assert (second["disease_name"], second["causal_genes"]) == ("", "")
+
+
+def test_each_task_kinds_report_says_what_its_numbers_are_and_what_it_ranked():
+    """11: the kind's own note (never "disease probability"), the submitted
+    genes and the SP bounds, or the reference cohort version; no evidence or
+    explanation for either kind."""
+    gene = dp._build_results_report_md(_gene_result())
+    assert dp.GENE_SCORE_NOTE in gene and "disease probability" not in gene
+    assert "- **Candidate genes submitted**: SCN1A, disgenet:PTEN, NOT\\_A\\_GENE" in gene
+    assert "- **SP similarity bounds** (the model's own): 1.000 to 6.840" in gene
+    assert "| 1 | **SCN1A** | `disgenet:SCN1A` | 0.610 | 0.400 | 0.820 | 1.500 |" in gene
+    assert "## Per-candidate detail" not in gene and "**Evidence**" not in gene
+    patients = dp._build_results_report_md(_patients_result())
+    assert dp.SIMILARITY_NOTE in patients and "disease probability" not in patients
+    assert "- **Reference cohort**: `reference-1`" in patients
+    assert f"- **Reference cohort version** (cohort.json): `sha256:{VERSION_SHA}`" in patients
+    assert f"- **Reference cohort samples**: `sha256:{SAMPLES_SHA}`" in patients
+    assert "- **Reference cohort patients**: 12" in patients
+    assert "| 2 | `case-02` | -0.500 | not recorded | not recorded |" in patients
+    assert "**Recorded HPO terms**: HP:0001250; HP:0001263" in patients
+    assert dp.REFERENCE_CONTEXT_NOTE in patients and "**Evidence**" not in patients
+    assert "| Path settings | not applicable |" in patients
+
+
+def test_a_refusal_the_route_raises_is_shown_in_words_without_a_path(monkeypatch, tmp_path):
+    """12: every reference cohort refusal reaches the page as
+    ``{"error": "<detail>"}``; its words are shown, the registry's paths
+    named ``<registry>/…`` and any other server path hidden."""
+    registry = tmp_path / "registry"
+    registry.mkdir()
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(registry))
+    detail = (f"reference cohort 'x': {registry}/versions/x was mapped against another graph "
+              "(node_features differ); see /srv/private/notes.txt")
+    said = dp._describe_refused_request(_response(422, {"error": detail, "status_code": 422}))
+    assert said == ("Request refused — reference cohort 'x': <registry>/versions/x was mapped "
+                    "against another graph (node_features differ); see a server path")
+    monkeypatch.setattr(dp, "_self_request",
+                        lambda method, path, **kw: _response(422, {"error": detail}))
+    assert dp._call_diagnose(["HP:0001250"], reference_cohort="x")["error"] == said
+    # The server's own condition (503, no registry) is said in its words too.
+    monkeypatch.setattr(dp, "_self_request", lambda method, path, **kw: _response(
+        503, {"error": f"no reference cohort version can be read: {registry} is refused"}))
+    assert dp._call_diagnose(["HP:0001250"])["error"] == (
+        "API error: 503 — no reference cohort version can be read: <registry> is refused")
+
+
+def test_path_settings_are_not_applicable_where_no_path_is_discovered():
+    """13: a gene task or patients-like-me model discovers no paths."""
+    assert dp._path_settings_cells(_task_identity("gene_task")) == (
+        "not applicable", "not applicable — a gene task model discovers no paths")
+    assert dp._path_settings_cells(_task_identity("patients_like_me")) == (
+        "not applicable", "not applicable — a patients-like-me model discovers no paths")
+    for identity in (_task_identity("disease_task"), _served_identity()):
+        state, value = dp._path_settings_cells(identity)
+        assert state == "in effect" and "`max_path_length` 4" in value
+
+
+def test_the_task_help_texts_answer_first_within_their_budget():
+    """Skill §5/§7: each new text leads with its answer (about 90 characters),
+    about 80 words, sentences of 25 words at most; each field's title is its
+    label (`test_webui_help.py` pins that against the built app)."""
+    texts = [dp.FIELD_HELP["dx_candidate_genes"], dp.FIELD_HELP["dx_reference_cohort"],
+             dp.TOPIC_HELP["dx-gene-score"], dp.TOPIC_HELP["dx-similarity"],
+             dp.TOPIC_HELP["dx-run-no-cohort"]]
+    for title, text in texts:
+        lead = re.split(r"(?<=[.!?])\s+", text)[0]
+        assert len(lead) <= 95, (title, lead)
+        assert len(text.split()) <= 80, title
+        assert max(len(s.split()) for s in re.split(r"(?<=[.!?])\s+", text)) <= 25, title
+    assert [dp.FIELD_HELP[k][0] for k in ("dx_candidate_genes", "dx_reference_cohort")] == [
+        "Candidate genes", "Reference cohort"]
+
+
+def test_the_change_drawer_filters_its_list_by_task(monkeypatch):
+    """The drawer's Task control (K6 decision 14, map_models §D): All tasks,
+    Disease, Gene, Patients-like-me, All tasks first; its `.input` sets the
+    shared list's view (``{"task": …}``), which the list redraws on; the
+    compare link stays beside it."""
+    demo, _ctx = _build_tab(monkeypatch)
+    blocks = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
+    control = blocks["shep-dx-change-task"]
+    assert isinstance(control, gr.Radio) and control.value == "all"
+    labels = [label for label, _value in control.choices]
+    assert labels == ["All tasks", "Disease", "Gene", "Patients-like-me"]
+    assert [value for _label, value in control.choices] == [
+        "all", "disease", "gene", "patients_like_me"]
+    assert len(set(labels)) == len(labels)
+    assert all(len(label) <= 40 and label.count(" · ") <= 1 for label in labels)
+    (fn,) = [f for f in demo.fns.values() if f.fn is dp.task_view]
+    assert fn.targets == [(control._id, "input")]
+    (view,) = fn.outputs
+    assert any(f.name == "_redraw" and (view._id, "change") in f.targets
+               for f in demo.fns.values())
+    assert dp.task_view("gene") == {"task": "gene"}
+    assert dp.task_view("history") == {"task": "all"}
+    assert "shep-dx-compare" in blocks

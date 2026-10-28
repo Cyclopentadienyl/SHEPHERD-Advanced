@@ -11,7 +11,11 @@ wide (at least 1400 × 760 CSS px) one screen in three panels — the input colu
 scrolling inside its own panel; narrow, the panels stack and only the page
 scrolls.
 
-- **The input column**: HPO terms, Patient ID (a blank field is sent as no id,
+- **The input column**: HPO terms, **the served task's own input** (K6
+  decision 15: "Candidate genes" for a gene task model, "Reference cohort" for
+  a patients-like-me model, chosen from the registry's versions; shown and
+  hidden by a class as the card's read of the served task says,
+  `diagnosis_card.served_task`), Patient ID (a blank field is sent as no id,
   so the API gives the result its own), Options (Top-K, Explanations), then the
   **"Model in use" card** and Run Diagnosis, the last item of the column's
   scroll body and sticky at its bottom: they follow Options when there is room
@@ -31,17 +35,22 @@ scrolls.
 - **The candidates**: the results badge ("Produced by the model in use" /
   "Produced by an earlier model or pipeline — N parts differ ›" / "Cannot
   check against the model in use yet" with its one reason), the identity
-  banners of the result, its warnings and the ranked table. **The badge
+  banners of the result, its warnings and the ranked table, in the result
+  kind's columns: diseases, a gene task model's candidate genes, or a
+  patients-like-me model's reference patients (with the reference cohort
+  version the result ranked). **The badge
   compares the whole served identity**, part by part, as the identity table
   reads it (`_identity_rows`), the result's against the card's last read; a
   read that failed or is older than the result never leaves "equal" showing.
   The footer holds the exports (unchanged: CSV and report keep the result's own
   identity; not shown until a result exists) and the medical-device line, once.
 - **The details** of the selected row: Evidence · Explanation · Matching
-  phenotypes · Paths (in-page segments).
+  phenotypes · Paths (in-page segments) for a disease; a gene's or a reference
+  patient's values as one key-value list (no segment: no path is discovered).
 - **Two drawers**, one open at a time: the identity drawer ("Model in use |
   This result") over the details column, and "Change model…" (the clinical
-  preset of the shared model list and its Load) over the candidates and the
+  preset of the shared model list and its Load, with a Task control: All
+  tasks, Disease, Gene, Patients-like-me) over the candidates and the
   details. A request D8 refuses gets Change model… disabled with the reason;
   the list is never shown to it.
 
@@ -84,6 +93,7 @@ from src.core.types import (
     SP_STATUS_WORDS,
     result_label,
 )
+from src.evaluation.caveats import TASK_NAMES
 from src.utils.server_address import ServerAddressUnknownError, api_base_url
 from src.webui.components import diagnosis_card as card
 from src.webui.components.chips import D8_SHORT
@@ -91,6 +101,7 @@ from src.webui.components.help import copy_button, help_button, text_id
 from src.webui.components.renderers import IDENTITY_BANNERS
 from src.webui.components.renderers import NOT_A_MEDICAL_DEVICE as _NOT_A_MEDICAL_DEVICE
 from src.webui.components.renderers import e as _e
+from src.webui.components.renderers import kv_cells as _kv_cells
 from src.webui.components.renderers import short_hex as _short_hex
 from src.webui.operator_access import operator_access
 
@@ -152,12 +163,37 @@ def _parse_hpo_ids(text: str) -> List[str]:
     """
     return [f"HP:{match.group(1)}" for match in _HPO_ID_RE.finditer(text or "")]
 
+
+_GENE_SEPARATORS = re.compile(r"[\s,;]+")
+
+
+def _parse_gene_list(text: str) -> List[str]:
+    """The Candidate genes box as the list a gene task model ranks: entries
+    split on whitespace, commas and semicolons, empty ones dropped. **Order,
+    repeats and case are kept**: the service maps each entry
+    (`KnowledgeGraph.gene_lookup`) and counts the repeats and the unmapped
+    ones in its warning, as it does for phenotypes (decision W)."""
+    return [entry for entry in _GENE_SEPARATORS.split(text or "") if entry]
+
+
 #: What a candidate's score is, said under the report's table and in the
 #: Score column's help: the value its result kind ranks by (`served_score`,
 #: `path_score` or `score`, Spec 1 §2.1); the words shown say what the number is. The demo
 #: answer has no score, and no note.
 SCORE_NOTE = ("Score ranks the candidates of this result. It is not a calibrated "
               "disease probability.")
+#: The same for a gene task model's candidate genes (the report's note and the
+#: lead of the gene Score's help).
+GENE_SCORE_NOTE = ("Score ranks your candidate genes: η × model similarity + (1 − η) × SP "
+                   "similarity. It is not a calibrated probability.")
+#: The same for a patients-like-me model's reference patients.
+SIMILARITY_NOTE = ("Similarity ranks the reference cohort's patients: 0 is the closest, lower "
+                   "is less alike. It is not a calibrated probability, and a shared causal "
+                   "gene is not implied.")
+#: What a reference patient's recorded diagnosis, causal genes and HPO terms
+#: are (the details and the report).
+REFERENCE_CONTEXT_NOTE = ("Recorded by the reference cohort: context, never an input of this "
+                          "query.")
 
 # Evidence label (the API's evidence_label) → (emoji, CSS color)
 LABEL_STYLES = {
@@ -176,6 +212,9 @@ def _call_diagnose(
     patient_id: Optional[str] = None,
     top_k: int = 10,
     include_explanations: bool = True,
+    *,
+    candidate_genes: Optional[List[str]] = None,
+    reference_cohort: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Call the /api/v1/diagnose endpoint and return parsed JSON.
 
@@ -183,14 +222,23 @@ def _call_diagnose(
     the API then gives the result its own id (``patient_…``), as the field
     promises ("auto-generated if blank"). A fixed placeholder named every blank
     result from every browser as one patient.
+
+    **A task's own input is sent only when given** (K6 decision 15): the
+    candidate genes a gene task model ranks, or the label of the reference
+    cohort version a patients-like-me model ranks; `diagnose` gives each only
+    to its task, and the server refuses or ignores one sent to another model.
     """
     patient = patient_id.strip() if isinstance(patient_id, str) else None
-    payload = {
+    payload: Dict[str, Any] = {
         "patient_id": patient or None,
         "phenotypes": phenotypes,
         "top_k": top_k,
         "include_explanations": include_explanations,
     }
+    if candidate_genes is not None:
+        payload["candidate_genes"] = candidate_genes
+    if reference_cohort is not None:
+        payload["reference_cohort"] = reference_cohort
     try:
         resp = _self_request("POST", "/api/v1/diagnose", json=payload, timeout=30)
         resp.raise_for_status()
@@ -205,7 +253,9 @@ def _call_diagnose(
         refusal = _describe_refused_result(e.response)
         if refusal:
             return {"error": refusal}
-        return {"error": f"API error: {e.response.status_code} — {e.response.text}"}
+        said = _error_words(e.response)
+        return {"error": f"API error: {e.response.status_code} — "
+                         f"{said if said is not None else e.response.text}"}
     except Exception as e:
         return {"error": f"Unexpected error: {e}"}
 
@@ -250,9 +300,18 @@ def _describe_refused_request(response: requests.Response) -> str:
     stays the one place it is set. If either number is missing or not a whole
     number, the entry falls back to its plain line rather than guessing one.
 
+    **A refusal the route raises itself** (``HTTPException``) reaches the page
+    as ``{"error": "<detail>"}`` (`src.api.main`): every reference cohort
+    refusal (another model, none named, another graph, changed samples, an
+    unreadable version). Its words are shown, without a server path
+    (`_error_words`).
+
     Never raises: a body that is not JSON, or JSON of another shape, gets the
     general line.
     """
+    said = _error_words(response)
+    if said is not None:
+        return f"Request refused — {said}"
     try:
         body = response.json()
     except ValueError:
@@ -269,6 +328,21 @@ def _describe_refused_request(response: requests.Response) -> str:
         if line:
             lines.append(line)
     return "\n\n".join(lines) if lines else _UNREADABLE_REFUSAL
+
+
+def _error_words(response: Any) -> Optional[str]:
+    """A response's own refusal words, ``body["error"]`` when it is a non-blank
+    string (the service's answer to an ``HTTPException``), with no server path
+    left (`diagnosis_card.redacted`: the registry's files read ``<registry>/…``);
+    None for any other body."""
+    try:
+        body = response.json()
+    except ValueError:
+        return None
+    error = body.get("error") if isinstance(body, dict) else None
+    if not isinstance(error, str) or not error.strip():
+        return None
+    return card.redacted(" ".join(error.split()))
 
 
 def _too_many_phenotypes(entry: Dict[str, Any]) -> Optional[str]:
@@ -318,11 +392,15 @@ def _label_of(kind: str, result: Mapping[str, Any]) -> Optional[str]:
         return None
 
 
-#: The kinds this page draws: disease rows. The gene and patients-like-me kinds
-#: (`gene_task/v1`, `patients_like_me/v1`) get their own views with the
-#: Diagnosis inputs of their tasks (K6); until then the page says it cannot read
-#: them rather than drawing gene or patient rows as diseases.
-PAGE_KINDS = tuple(k for k in RESULT_KINDS if k not in (GENE_TASK, PATIENTS_LIKE_ME))
+#: The kinds this page draws: every kind of the result union. Disease rows for
+#: today's served kinds, the demo answer and the disease task; a gene task
+#: model's candidate genes and a patients-like-me model's reference patients in
+#: their own columns, details and exports (K6 decision 15). A kind not listed
+#: (a newer API) is said, never drawn as another kind's rows.
+PAGE_KINDS = RESULT_KINDS
+#: The task kinds whose rows are not diseases: no evidence, explanation or path
+#: is discovered for them, so their details are one key-value list.
+TASK_ROW_KINDS = (GENE_TASK, PATIENTS_LIKE_ME)
 
 
 def _result_kind(result: Any) -> Optional[str]:
@@ -367,8 +445,10 @@ def _score(candidate: Mapping[str, Any], kind: Optional[str]) -> Any:
         return candidate.get("served_score")
     if kind == PATH_REASONING:
         return candidate.get("path_score")
-    if kind == DISEASE_TASK:
+    if kind in (DISEASE_TASK, GENE_TASK):
         return candidate.get("score")
+    if kind == PATIENTS_LIKE_ME:
+        return candidate.get("similarity")
     return None
 
 
@@ -407,6 +487,8 @@ def _format_results_table(candidates: List[Dict], kind: Optional[str] = None,
         return f"*{KIND_NOT_REPORTED}*"
     if not candidates:
         return "*No candidates found.*"
+    if kind in TASK_ROW_KINDS:
+        return _format_task_table(candidates, kind)
 
     columns = ["Rank", "Disease"]
     if kind == SERVED_MIXTURE:
@@ -433,6 +515,45 @@ def _format_results_table(candidates: List[Dict], kind: Optional[str] = None,
               + "|" + "|".join(":----:" if c == "Rank" else "---" for c in columns) + "|\n")
     table = header + "\n".join(rows)
     return table + ("" if kind == DEMO else "\n\n" + SCORE_NOTE)
+
+
+def _md_list(values: Any) -> str:
+    """Recorded values for a Markdown cell or line, each escaped, "; "-joined;
+    "not recorded" for none."""
+    shown = [_md_text(v) for v in values or [] if str(v).strip()]
+    return "; ".join(shown) if shown else "not recorded"
+
+
+def _md_diagnosis(candidate: Mapping[str, Any]) -> str:
+    """A reference patient's recorded diagnosis: its name, else its id, else
+    "not recorded"."""
+    if candidate.get("disease_name"):
+        return _md_text(candidate["disease_name"])
+    if candidate.get("disease_id"):
+        return _md_code(_clean_disease_id(candidate["disease_id"]))
+    return "not recorded"
+
+
+def _format_task_table(candidates: List[Mapping[str, Any]], kind: str) -> str:
+    """The report's table of a gene task model's candidate genes or a
+    patients-like-me model's reference patients, every value escaped, and the
+    kind's note under it."""
+    if kind == GENE_TASK:
+        columns = ["Rank", "Gene", "Gene id", "Score", "Model similarity", "SP similarity",
+                   "Mean hop distance"]
+        rows = [[_md_text(c.get("rank")), f"**{_md_text(c.get('gene_name'))}**",
+                 _md_code(c.get("gene_id")), _num(c.get("score")), _num(c.get("embsim")),
+                 _num(c.get("sp_similarity")), _num(c.get("mean_distance"))]
+                for c in candidates]
+        note = GENE_SCORE_NOTE
+    else:
+        columns = ["Rank", "Research ID", "Similarity", "Diagnosis", "Causal genes"]
+        rows = [[_md_text(c.get("rank")), _md_code(c.get("case_id")), _num(c.get("similarity")),
+                 _md_diagnosis(c), _md_list(c.get("causal_genes"))] for c in candidates]
+        note = SIMILARITY_NOTE
+    header = ("| " + " | ".join(columns) + " |\n"
+              + "|" + "|".join(":----:" if c == "Rank" else "---" for c in columns) + "|\n")
+    return header + "\n".join("| " + " | ".join(row) + " |" for row in rows) + "\n\n" + note
 
 
 def _format_evidence_detail(candidate: Dict) -> str:
@@ -825,11 +946,20 @@ def _eta_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
     return "in effect", f"{_md_text(eta)}{note}"
 
 
+#: The scoring modes that discover no path: their rows are genes or reference
+#: patients, so the path settings are not applicable to them.
+_NO_PATHS = {"gene_task": "a gene task model discovers no paths",
+             "patients_like_me": "a patients-like-me model discovers no paths"}
+
+
 def _path_settings_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
-    # In effect in every mode: candidates are the diseases these paths reach.
+    # In effect in every disease mode: paths reach or explain the diseases.
     settings = _field(identity, "settings")
     if not isinstance(settings, dict):
         return _NOT_REPORTED_CELLS
+    mode = _field(identity, "scoring_mode")
+    if mode in _NO_PATHS:
+        return "not applicable", f"not applicable — {_NO_PATHS[mode]}"
     return "in effect", " · ".join(
         f"`{key}` {_md_setting(_field(settings, key))}" for key in _PATH_SETTING_KEYS
     )
@@ -927,14 +1057,50 @@ _CSV_SCORE_COLUMNS = {
 _CSV_EVIDENCE_COLUMNS = ["evidence_label", "evidence_mode", "evidence_summary",
                          "min_path_length", "num_direct_paths", "num_analogies",
                          "supporting_genes"]
+#: **The task kinds' own columns** (K6 decision 15): a gene's or a reference
+#: patient's values, then what the whole result carries that its rows need to
+#: be read (a gene task model's fixed SP bounds; the reference cohort version a
+#: patients-like-me result ranked), the same on every row, before the served
+#: columns. A reference patient's lists are "; "-joined.
+_CSV_TASK_COLUMNS = {
+    GENE_TASK: ["result_kind", "rank", "gene_id", "gene_name", "score", "embsim",
+                "sp_similarity", "mean_distance", "sp_bounds_lower", "sp_bounds_upper"],
+    PATIENTS_LIKE_ME: ["result_kind", "rank", "case_id", "similarity", "disease_id",
+                       "disease_name", "causal_genes", "phenotypes", "reference_cohort_label",
+                       "reference_cohort_version_sha256", "reference_cohort_samples_sha256",
+                       "reference_cohort_patients"],
+}
 
 
 def _candidate_csv_columns(kind: Optional[str]) -> List[str]:
-    """The kind's candidate columns, in order: the evidence columns for the
+    """The kind's candidate columns, in order: a task kind's own
+    (`_CSV_TASK_COLUMNS`); for a disease kind, the evidence columns for the
     served kinds only (the demo answer has none), the matches for every kind."""
+    if kind in _CSV_TASK_COLUMNS:
+        return list(_CSV_TASK_COLUMNS[kind])
     evidence = [] if kind == DEMO else _CSV_EVIDENCE_COLUMNS
     return (_CSV_BASE_COLUMNS + _CSV_SCORE_COLUMNS.get(kind, []) + evidence
             + ["matching_phenotypes"])
+
+
+def _result_csv_values(result: Mapping[str, Any]) -> Dict[str, Any]:
+    """What a task result carries for every row of its CSV (`_CSV_TASK_COLUMNS`'
+    result-level columns): the gene task's SP bounds, the patients-like-me
+    reference cohort version. Numbers by `_fmt_num`, texts defused, digests
+    ``sha256:``-prefixed; an absent value is an empty cell, never 0."""
+    bounds = result.get("sp_bounds")
+    bounds = bounds if isinstance(bounds, (list, tuple)) and len(bounds) == 2 else (None, None)
+    reference = result.get("reference_cohort")
+    reference = reference if isinstance(reference, Mapping) else {}
+    patients = reference.get("patients")
+    return {
+        "sp_bounds_lower": _fmt_num(bounds[0]), "sp_bounds_upper": _fmt_num(bounds[1]),
+        "reference_cohort_label": _csv_text(reference.get("label") or ""),
+        "reference_cohort_version_sha256": _csv_digest(reference.get("version_sha256"), ""),
+        "reference_cohort_samples_sha256": _csv_digest(reference.get("samples_sha256"), ""),
+        "reference_cohort_patients": (patients if isinstance(patients, int)
+                                      and not isinstance(patients, bool) else ""),
+    }
 
 
 # **What produced the result, on every row** (contract M3c). Appended after the
@@ -1091,6 +1257,7 @@ def _build_results_csv(result: Dict[str, Any]) -> str:
     the result (`_SERVED_CSV_COLUMNS`) repeated on each row."""
     kind = _result_kind(result)
     served = _served_csv_values(result)
+    whole = _result_csv_values(result) if kind in _CSV_TASK_COLUMNS else {}
     buf = io.StringIO()
     writer = csv.DictWriter(buf, fieldnames=_candidate_csv_columns(kind) + _SERVED_CSV_COLUMNS,
                             extrasaction="ignore")
@@ -1101,8 +1268,18 @@ def _build_results_csv(result: Dict[str, Any]) -> str:
         writer.writerow({
             "result_kind": kind,
             "rank": c.get("rank"),
-            "disease_id": _csv_text(_clean_disease_id(c.get("disease_id", ""))),
-            "disease_name": _csv_text(c.get("disease_name", "")),
+            "disease_id": _csv_text(_clean_disease_id(c.get("disease_id") or "")),
+            "disease_name": _csv_text(c.get("disease_name") or ""),
+            "gene_id": _csv_text(c.get("gene_id") or ""),
+            "gene_name": _csv_text(c.get("gene_name") or ""),
+            "embsim": _fmt_num(c.get("embsim")),
+            "sp_similarity": _fmt_num(c.get("sp_similarity")),
+            "mean_distance": _fmt_num(c.get("mean_distance")),
+            "case_id": _csv_text(c.get("case_id") or ""),
+            "similarity": _fmt_num(c.get("similarity")),
+            "causal_genes": _csv_text("; ".join(map(str, c.get("causal_genes") or []))),
+            "phenotypes": _csv_text("; ".join(map(str, c.get("phenotypes") or []))),
+            **whole,
             "served_score": _fmt_num(c.get("served_score")),
             "model_term": _fmt_num(c.get("model_term")),
             "sp_term_status": _csv_text(sp.get("status") or ""),
@@ -1152,6 +1329,7 @@ def _build_results_report_md(result: Dict[str, Any]) -> str:
     query = result.get("_query_phenotypes") or []
     if query:
         lines.append(f"- **Query phenotypes**: {', '.join(query)}")
+    lines += _task_meta_lines(result, result_kind)
     warnings = result.get("warnings") or []
     if warnings:
         lines.append(f"- **Warnings**: {'; '.join(warnings)}")
@@ -1169,8 +1347,17 @@ def _build_results_report_md(result: Dict[str, Any]) -> str:
     lines += ["", "## Ranked candidates", ""]
     if result_kind is not None:     # else the table line below says why
         lines += [f"*{kind_label(result).rstrip('.')}.*", ""]
-    lines += [_format_results_table(candidates, result_kind, _shows_sp(result)),
-              "", "## Per-candidate detail"]
+    lines += [_format_results_table(candidates, result_kind, _shows_sp(result))]
+    if result_kind == GENE_TASK:     # the table holds every value of a gene
+        return "\n".join(lines)
+    lines += ["", "## Per-candidate detail"]
+    if result_kind == PATIENTS_LIKE_ME:
+        for c in candidates:
+            lines += ["", f"### #{_md_text(c.get('rank'))} — {_md_code(c.get('case_id'), False)}",
+                      f"Similarity {_num(c.get('similarity'))}", "",
+                      f"**Recorded HPO terms**: {_md_list(c.get('phenotypes'))}", "",
+                      f"*{REFERENCE_CONTEXT_NOTE}*", "", "---"]
+        return "\n".join(lines)
     for c in candidates if result_kind is not None else []:
         score = _score(c, result_kind)
         lines += [
@@ -1195,6 +1382,33 @@ def _build_results_report_md(result: Dict[str, Any]) -> str:
             "---",
         ]
     return "\n".join(lines)
+
+
+def _task_meta_lines(result: Mapping[str, Any], kind: Optional[str]) -> List[str]:
+    """The report's lines for what a task's query carried beside its
+    phenotypes, every value escaped: the candidate genes submitted and the gene
+    model's SP bounds; the reference cohort version a patients-like-me result
+    ranked (label, version and samples digests, patients)."""
+    if kind == GENE_TASK:
+        lines = []
+        genes = result.get("_query_candidate_genes") or []
+        if genes:
+            lines.append(f"- **Candidate genes submitted**: "
+                         f"{', '.join(_md_text(g) for g in genes)}")
+        bounds = result.get("sp_bounds")
+        if isinstance(bounds, (list, tuple)) and len(bounds) == 2:
+            lines.append(f"- **SP similarity bounds** (the model's own): {_num(bounds[0])} to "
+                         f"{_num(bounds[1])}")
+        return lines
+    if kind == PATIENTS_LIKE_ME:
+        reference = result.get("reference_cohort")
+        reference = reference if isinstance(reference, Mapping) else {}
+        return [f"- **Reference cohort**: {_md_code(reference.get('label'), False)}",
+                f"- **Reference cohort version** (cohort.json): "
+                f"{_md_digest(reference.get('version_sha256'))}",
+                f"- **Reference cohort samples**: {_md_digest(reference.get('samples_sha256'))}",
+                f"- **Reference cohort patients**: {_md_text(reference.get('patients'))}"]
+    return []
 
 
 def _slug(value: Any, default: str) -> str:
@@ -1268,6 +1482,20 @@ FIELD_HELP = {
         "stray punctuation are ignored; only HP:####### ids are used. Repeats are sent as "
         "typed; the service removes them and says how many.",
     ),
+    "dx_candidate_genes": (
+        "Candidate genes",
+        "The patient's candidate genes, which a gene task model ranks. Enter gene symbols "
+        "(SCN1A) or gene ids (disgenet:PTEN), one per line or separated by commas, spaces or "
+        "semicolons. They are sent as typed, repeats included; the service counts any that "
+        "name no gene of the model's graph.",
+    ),
+    "dx_reference_cohort": (
+        "Reference cohort",
+        "The registered cohort version whose patients a patients-like-me model ranks for this "
+        "query. Every version in the server's registry is listed. One mapped against another "
+        "graph, or one that cannot be read, is marked; the server refuses it. Under the "
+        "select: the chosen version's fingerprint and its graph check.",
+    ),
     "dx_patient_id": (
         "Patient ID (optional)",
         "An identifier for this diagnosis, carried by the result and its exports. Left blank, "
@@ -1276,7 +1504,8 @@ FIELD_HELP = {
     ),
     "dx_top_k": (
         "Top-K",
-        "Number of candidate diagnoses to return (1 to 20).",
+        "Number of candidates to return (1 to 20): diagnoses, candidate genes or reference "
+        "patients, as the model in use ranks.",
     ),
     "dx_explanations": (
         "Explanations",
@@ -1305,12 +1534,26 @@ TOPIC_HELP = {
         "path score. Disease task model: its head's score, 0 or below.\n\n"
         "SP 0.273 (3/4): from 3 of the 4 phenotypes submitted. SP in words: no number.",
     ),
+    "dx-gene-score": (
+        "Score",
+        GENE_SCORE_NOTE + "\n\n"
+        "Model similarity: the gene head's similarity to the patient, from −1 to 1. SP "
+        "similarity: the gene's mean hop distance to the phenotypes, scaled by the model's fixed "
+        "bounds and not clipped. η is the model's own (This result › Mixing weight eta).",
+    ),
+    "dx-similarity": (
+        "Similarity",
+        SIMILARITY_NOTE + "\n\n"
+        "The model's patient tower compares this query's phenotypes with each reference "
+        "patient's recorded terms. The diagnosis, causal genes and terms shown are what the "
+        "cohort recorded: context, never an input of this query.",
+    ),
     "dx-exports": (
         "Exports",
         "CSV = one row per candidate (all Top-K) for spreadsheets, in the result kind's "
-        "columns (result_kind on every row) · report = full evidence + explanation for "
-        "every candidate. Both say what produced the result (the served_ columns; the "
-        "report's identity section).",
+        "columns (result_kind on every row) · report = every candidate's details: a "
+        "disease's evidence and explanation, a reference patient's recorded terms. Both say "
+        "what produced the result (the served_ columns; the report's identity section).",
     ),
     "dx-candidate": (
         "Candidate details",
@@ -1335,6 +1578,13 @@ TOPIC_HELP = {
         "answers no diagnosis until it finishes. Closing the change-model drawer does not stop "
         "it.",
     ),
+    "dx-run-no-cohort": (
+        "Run Diagnosis is disabled",
+        "This model ranks a registered reference cohort's patients, and no version can be read. "
+        "The registry is not set or refused, holds no version yet, or "
+        "every version is marked \"cannot be read\". An operator imports a version in "
+        "Research › Test, or corrects SHEPHERD_REGISTRY on the server.",
+    ),
     **{f"dx-banner-{key}": (headline, detail) for key, (headline, detail) in IDENTITY_BANNERS.items()},
 }
 
@@ -1344,10 +1594,20 @@ RUN_DISABLED_NO_MODEL_READ_ONLY = (
     "Disabled: no model loaded. An operator on the server's machine can load one.")
 RUN_DISABLED_CHANGE = "Disabled: finish or cancel the model change first."
 RUN_DISABLED_LOADING = "Disabled: a model load is in progress; diagnoses wait until it finishes."
+#: A patients-like-me model with no reference cohort version to rank; the
+#: registry's own reason (without a server path), or which case it is, follows.
+RUN_DISABLED_NO_COHORT = "Disabled: no reference cohort version can be read."
+NO_COHORT_VERSION = "The registry holds no cohort version yet."
+NO_READABLE_VERSION = "Every version in the registry is marked “cannot be read”."
 
 #: The change drawer's link to Research › Models: each "›" held to the word
 #: before it by a no-break space, so it is never alone on a line.
 COMPARE_LINK = "Compare in Research\u00a0› Models\u00a0›"
+
+#: The change drawer's Task control (K6 decision 14): (label, the shared list's
+#: view filter). The clinical preset lists task models only, so "All tasks" is
+#: every one of them; the task names are `caveats.TASK_NAMES`.
+TASK_VIEWS = (("All tasks", "all"), *((name, task) for task, name in TASK_NAMES.items()))
 
 #: The details segments: (label, value); the counts are added per candidate.
 SEGMENTS = (("Evidence", "evidence"), ("Explanation", "explanation"),
@@ -1390,6 +1650,12 @@ def _produced_at(result: Optional[Mapping[str, Any]]) -> Optional[str]:
         return None
     stamp = result.get("timestamp")
     return stamp if card.parse_local(stamp) is not None else result.get("_received_at")
+
+
+def task_view(task: Any) -> Dict[str, str]:
+    """The shared list's view for the drawer's Task control (the K6d1 contract:
+    ``{"task": <filter>}``); a value the control does not offer is "all"."""
+    return {"task": task if task in {value for _label, value in TASK_VIEWS} else "all"}
 
 
 def results_header_html(result: Optional[Mapping[str, Any]]) -> str:
@@ -1514,6 +1780,8 @@ def candidates_table_html(candidates: List[Mapping[str, Any]], selected: Any,
         return f'<div class="shep-reason">{_e(KIND_NOT_REPORTED)}</div>'
     if not candidates:
         return '<div class="shep-reason">No candidates found.</div>'
+    if kind in TASK_ROW_KINDS:
+        return _task_table_html(candidates, selected, kind)
     rows = []
     selected_class = ' class="shep-on"'
     for c in candidates:
@@ -1554,17 +1822,84 @@ def candidates_table_html(candidates: List[Mapping[str, Any]], selected: Any,
             f'{"".join(rows)}</tbody></table></div>')
 
 
+def _not_recorded() -> str:
+    return '<span class="shep-muted">not recorded</span>'
+
+
+def _diagnosis_html(candidate: Mapping[str, Any]) -> str:
+    """A reference patient's recorded diagnosis, escaped: its name, else its
+    id, else "not recorded" (skill §6: an absent value keeps its own word)."""
+    if candidate.get("disease_name"):
+        return _e(candidate["disease_name"])
+    if candidate.get("disease_id"):
+        return f'<code>{_e(_clean_disease_id(candidate["disease_id"]))}</code>'
+    return _not_recorded()
+
+
+def _task_table_html(candidates: List[Mapping[str, Any]], selected: Any, kind: str) -> str:
+    """The ranked rows of a task kind, every value escaped: a gene task model's
+    candidate genes (Rank, Gene with its id in the title, Score, Model
+    similarity, SP similarity) or a patients-like-me model's reference
+    patients (Rank, Research ID, Similarity, Diagnosis, Causal genes)."""
+    rows = []
+    for c in candidates:
+        rank = c.get("rank")
+        on = rank == selected
+        if kind == GENE_TASK:
+            name = _e(c.get("gene_name"))
+            cells = (f'<td class="shep-num">{_e(rank)}</td><td class="shep-dx-dis">'
+                     f'<span class="shep-dx-clamp" title="{_e(c.get("gene_id"))}">{name}</span></td>'
+                     f'<td class="shep-num">{_num(c.get("score"))}</td>'
+                     f'<td class="shep-num">{_num(c.get("embsim"))}</td>'
+                     f'<td class="shep-num">{_num(c.get("sp_similarity"))}</td>')
+        else:
+            genes = [str(g) for g in c.get("causal_genes") or [] if str(g).strip()]
+            cells = (f'<td class="shep-num">{_e(rank)}</td><td>{_e(c.get("case_id"))}</td>'
+                     f'<td class="shep-num">{_num(c.get("similarity"))}</td>'
+                     f'<td class="shep-dx-dis">{_diagnosis_html(c)}</td>'
+                     f'<td class="shep-dx-wrap">{_e("; ".join(genes)) if genes else _not_recorded()}'
+                     '</td>')
+        selected_class = ' class="shep-on"' if on else ""
+        rows.append(f'<tr data-key="{_e(rank)}" tabindex="0" aria-selected='
+                    f'"{"true" if on else "false"}"{selected_class}>{cells}</tr>')
+    if kind == GENE_TASK:
+        head = ('<th scope="col" class="shep-num">Rank</th><th scope="col">Gene</th>'
+                f'<th scope="col" class="shep-num">Score{help_button("dx-gene-score", "Score")}</th>'
+                '<th scope="col" class="shep-num">Model similarity</th>'
+                '<th scope="col" class="shep-num">SP similarity</th>')
+    else:
+        head = ('<th scope="col" class="shep-num">Rank</th><th scope="col">Research ID</th>'
+                f'<th scope="col" class="shep-num">Similarity'
+                f'{help_button("dx-similarity", "Similarity")}</th>'
+                '<th scope="col">Diagnosis</th><th scope="col">Causal genes</th>')
+    return ('<div class="shep-tbl-wrap shep-dx-tbl-wrap"><table class="shep-tbl shep-dx-tbl" '
+            f'aria-label="Ranked candidates"><thead><tr>{head}</tr></thead><tbody>'
+            f'{"".join(rows)}</tbody></table></div>')
+
+
+def reference_line_html(result: Mapping[str, Any]) -> str:
+    """A patients-like-me result's reference cohort version, as the result
+    names it: "Reference cohort <label> · version <12 hex>" (the full digests
+    are in the identity drawer's "This result in full"); "" for another kind."""
+    reference = result.get("reference_cohort")
+    if _result_kind(result) != PATIENTS_LIKE_ME or not isinstance(reference, Mapping):
+        return ""
+    return (f'<p class="shep-dx-kind shep-dx-ref">Reference cohort <b>{_e(reference.get("label"))}'
+            f'</b> · version <code>{_e(_short_hex(reference.get("version_sha256")))}</code></p>')
+
+
 def results_body_html(result: Mapping[str, Any], selected: Any) -> str:
     """Under the badge: the banners, the result's warnings, the kind's label
-    (what the Score column holds, visible text) and the table."""
+    (what the Score column holds, visible text), a patients-like-me result's
+    reference cohort version, and the table."""
     warnings = result.get("warnings") or []
     note = (f'<p class="shep-dx-warnings">⚠ Warnings: {_e("; ".join(str(w) for w in warnings))}'
             '</p>' if warnings else "")
     kind = _result_kind(result)
     label = (f'<p class="shep-dx-kind">{_e(kind_label(result))}</p>'
              if kind is not None else "")
-    return banners_html(result) + note + label + candidates_table_html(
-        result.get("candidates") or [], selected, kind, _shows_sp(result))
+    return banners_html(result) + note + label + reference_line_html(result) + \
+        candidates_table_html(result.get("candidates") or [], selected, kind, _shows_sp(result))
 
 
 # ----------------------------------------------------------------- details
@@ -1600,6 +1935,16 @@ def details_header_html(candidate: Optional[Mapping[str, Any]], kind: Optional[s
     demo answer."""
     if candidate is None:
         return '<div class="shep-panel-hd"><h2>Candidate details</h2></div>'
+    if kind == GENE_TASK:
+        return (f'<div class="shep-panel-hd shep-dx-det-hd"><h2><span class="shep-dx-rank">'
+                f'#{_e(candidate.get("rank"))}</span> {_e(candidate.get("gene_name"))}</h2>'
+                f'<p class="shep-dx-det-sub"><code>{_e(candidate.get("gene_id"))}</code> Score '
+                f'<b>{_num(candidate.get("score"))}</b></p></div>')
+    if kind == PATIENTS_LIKE_ME:
+        return (f'<div class="shep-panel-hd shep-dx-det-hd"><h2><span class="shep-dx-rank">'
+                f'#{_e(candidate.get("rank"))}</span> {_e(candidate.get("case_id"))}</h2>'
+                f'<p class="shep-dx-det-sub">Reference patient · Similarity '
+                f'<b>{_num(candidate.get("similarity"))}</b></p></div>')
     values = ""
     if kind not in (None, DEMO):
         values = f" Score <b>{_num(_score(candidate, kind))}</b>"
@@ -1683,6 +2028,34 @@ def paths_html(candidate: Mapping[str, Any]) -> str:
     return f'<ol class="shep-dx-paths">{items}</ol>'
 
 
+def task_details_html(candidate: Mapping[str, Any], kind: str,
+                      result: Mapping[str, Any]) -> str:
+    """A gene's or a reference patient's values beyond the header's, as one
+    key-value list (`renderers.kv_cells`), every value escaped: a gene's model
+    and SP similarities, its mean hop distance and the model's SP bounds; a
+    reference patient's recorded diagnosis, causal genes and every recorded HPO
+    term, with the note that they are reference context, never an input."""
+    if kind == GENE_TASK:
+        bounds = result.get("sp_bounds")
+        bounds = bounds if isinstance(bounds, (list, tuple)) and len(bounds) == 2 else (None, None)
+        rows = [("Model similarity", _num(candidate.get("embsim"))),
+                ("SP similarity", _num(candidate.get("sp_similarity"))),
+                ("Mean hop distance", _num(candidate.get("mean_distance"))),
+                ("SP bounds (the model's own)", f"{_num(bounds[0])} to {_num(bounds[1])}")]
+        return f'<div class="shep-kv">{_kv_cells(rows)}</div>'
+    genes = [str(g) for g in candidate.get("causal_genes") or [] if str(g).strip()]
+    terms = [str(t) for t in candidate.get("phenotypes") or [] if str(t).strip()]
+    rows = [("Recorded diagnosis", _diagnosis_html(candidate)
+             + (f' <code>{_e(_clean_disease_id(candidate.get("disease_id")))}</code>'
+                if candidate.get("disease_name") and candidate.get("disease_id") else "")),
+            ("Causal genes", "".join(f'<span class="shep-dx-gene">{_e(g)}</span> ' for g in genes)
+             .strip() or _not_recorded()),
+            (f"Recorded HPO terms ({len(terms)})",
+             " ".join(f"<code>{_e(t)}</code>" for t in terms) or _not_recorded())]
+    return (f'<div class="shep-kv">{_kv_cells(rows)}</div>'
+            f'<p class="shep-note">{_e(REFERENCE_CONTEXT_NOTE)}</p>')
+
+
 def details_footer_html(result: Optional[Mapping[str, Any]], rank: Any) -> str:
     if not isinstance(result, Mapping) or _candidate(result, rank) is None:
         return ""
@@ -1728,13 +2101,17 @@ def details_outputs(result: Optional[Mapping[str, Any]], rank: Any,
                 "details_seg": view_update(False, "shep-seg"),
                 "details_html": view_update(True, *_HTML_VIEW, value=details_empty_html()),
                 "details_md": view_update(False, *_MD_VIEW), "details_ft": ""}
-    if _result_kind(result) == DEMO:
-        # No query ran: an empty matching list or path list is not a finding,
-        # so no segment is offered (the report says the same).
-        return {"details_hd": details_header_html(candidate, DEMO),
+    kind = _result_kind(result)
+    if kind == DEMO or kind in TASK_ROW_KINDS:
+        # No segment is offered: the demo answer ran no query (an empty
+        # matching list or path list is not a finding; the report says the
+        # same), and a gene or a reference patient has no evidence,
+        # explanation or path, only its values.
+        body = (f'<p class="shep-muted">{DEMO_DETAILS}</p>' if kind == DEMO
+                else task_details_html(candidate, kind, result))
+        return {"details_hd": details_header_html(candidate, kind),
                 "details_seg": view_update(False, "shep-seg"),
-                "details_html": view_update(True, *_HTML_VIEW,
-                                            value=f'<p class="shep-muted">{DEMO_DETAILS}</p>'),
+                "details_html": view_update(True, *_HTML_VIEW, value=body),
                 "details_md": view_update(False, *_MD_VIEW),
                 "details_ft": details_footer_html(result, rank)}
     segment = segment if segment in _SEGMENT_VALUES else "evidence"
@@ -1822,6 +2199,14 @@ def result_digests_html(result: Optional[Mapping[str, Any]]) -> str:
              _field(_field(identity, "graph"), "split_manifest_sha256")),
             (f"Dataset record (kg.provenance.json) · origin {_field(record, 'origin')}",
              _field(record, "sha256"))]
+    reference = result.get("reference_cohort")
+    if _result_kind(result) == PATIENTS_LIKE_ME and isinstance(reference, Mapping):
+        # What the result ranked: a request input, not served identity, so it
+        # is here and never in the badge's comparison.
+        label = reference.get("label")
+        rows += [(f"Reference cohort {label} · version (cohort.json)",
+                  reference.get("version_sha256")),
+                 (f"Reference cohort {label} · samples", reference.get("samples_sha256"))]
     items = "".join(
         f'<div class="shep-digest"><span class="shep-dl">{_e(label)}</span>'
         f'<code class="shep-full">{_e(value)}</code>{copy_button(value, "the full " + label)}</div>'
@@ -1872,13 +2257,106 @@ def identity_outputs(view: Mapping[str, Any], state: Mapping[str, Any],
 
 
 # =============================================================================
+# The served task's inputs (K6 decision 15)
+# =============================================================================
+#: The task inputs' containers' own class (a view's classes are never empty).
+_TASK_BOX = ("shep-dx-task-box",)
+#: An option's visible text is at most this long (skill §8); its value is the
+#: version's full label.
+OPTION_MAX = 40
+#: The marks an option carries for a version the server would refuse.
+_VERSION_MARKS = {"another": " · another graph", "unreadable": " · cannot be read"}
+
+
+def _cohorts(state: Mapping[str, Any]) -> Dict[str, Any]:
+    """The reference cohort versions the card's facts hold
+    (`diagnosis_card.reference_cohorts`); none read reads as none listed."""
+    facts = state.get("facts") if isinstance(state.get("facts"), Mapping) else {}
+    cohorts = facts.get("cohorts")
+    return dict(cohorts) if isinstance(cohorts, Mapping) else {"versions": [], "problem": None}
+
+
+def _option_text(label: str, mark: str, taken: set) -> str:
+    """`label` and its `mark` within `OPTION_MAX` characters, a long label
+    shortened with a middle "…", the text unique among `taken` (the split
+    moves until it is)."""
+    room = OPTION_MAX - len(mark)
+    if len(label) <= room and label + mark not in taken:
+        return label + mark
+    keep = room - 1
+    first = (keep + 1) // 2
+    for head in (first, *range(first - 1, -1, -1), *range(first + 1, keep + 1)):
+        text = label[:head] + "…" + label[len(label) - (keep - head):] + mark
+        if text not in taken:
+            return text
+    raise ValueError(f"no unique option of {OPTION_MAX} characters for {label!r}")
+
+
+def cohort_choices(cohorts: Mapping[str, Any], current: Any
+                   ) -> Tuple[List[Tuple[str, str]], Optional[str]]:
+    """The Reference cohort options and the version chosen. Every listed
+    version, as ``(text, full label)``: the text is the label with at most one
+    mark ("another graph", "cannot be read"), at most `OPTION_MAX` characters
+    (a long label shortened in the middle) and unique. The chosen one is the
+    current value while it is listed, else the first version mapped against
+    the serving workspace's graph, else the first readable one."""
+    options: List[Tuple[str, str]] = []
+    taken: set = set()
+    for version in cohorts.get("versions") or []:
+        label = str(version.get("label"))
+        mark = _VERSION_MARKS["unreadable"] if version.get("problem") else \
+            _VERSION_MARKS.get(version.get("binding"), "")
+        text = _option_text(label, mark, taken)
+        taken.add(text)
+        options.append((text, label))
+    versions = cohorts.get("versions") or []
+    labels = [str(v.get("label")) for v in versions]
+    if current in labels:
+        return options, current
+    bound = [str(v.get("label")) for v in versions if v.get("binding") == "bound"]
+    readable = [str(v.get("label")) for v in versions if not v.get("problem")]
+    return options, (bound or readable or [None])[0]
+
+
+def cohort_info(cohorts: Mapping[str, Any], chosen: Any) -> str:
+    """The chosen version's facts under the select (plain text; the server
+    stays the authority): its full label, version fingerprint and whether it
+    was mapped against the served graph, or why it cannot be read."""
+    version = next((v for v in cohorts.get("versions") or [] if v.get("label") == chosen), None)
+    if version is None:
+        return "No version is chosen."
+    if version.get("problem"):
+        return f"{chosen}: cannot be read: {version['problem']}"
+    return (f"{chosen}: version {_short_hex(version.get('manifest_sha256'))}, "
+            f"{version.get('binding_words') or 'not checked'}")
+
+
+def cohort_refusal(state: Mapping[str, Any]) -> Optional[str]:
+    """Why Run Diagnosis is off for a patients-like-me model, or None: the
+    registry's problem (without a server path), no version, or no readable one."""
+    if card.served_task(state.get("status")) != "patients_like_me":
+        return None
+    cohorts = _cohorts(state)
+    versions = cohorts.get("versions") or []
+    if cohorts.get("problem"):
+        return f"{RUN_DISABLED_NO_COHORT} {cohorts['problem']}"
+    if not versions:
+        return f"{RUN_DISABLED_NO_COHORT} {NO_COHORT_VERSION}"
+    if all(v.get("problem") for v in versions):
+        return f"{RUN_DISABLED_NO_COHORT} {NO_READABLE_VERSION}"
+    return None
+
+
+# =============================================================================
 # The card's outputs, the Run controls
 # =============================================================================
 def run_controls(state: Mapping[str, Any], phase: Any) -> Dict[str, Any]:
-    """Run Diagnosis: off while a model change is open, or when no model is
-    loaded; greyed and not clickable, with the reason as visible text under it
-    and a bubble on hover and on keyboard focus (a transparent ⓘ over the
+    """Run Diagnosis: off while a model change is open, when no model is
+    loaded, or when a patients-like-me model has no reference cohort version
+    to rank; greyed and not clickable, with the reason as visible text under
+    it and a bubble on hover and on keyboard focus (a transparent ⓘ over the
     button: the shared help control)."""
+    no_cohort = cohort_refusal(state)
     if phase == "loading":
         key, why = "dx-run-loading", RUN_DISABLED_LOADING
     elif phase not in (None, "idle"):
@@ -1886,6 +2364,8 @@ def run_controls(state: Mapping[str, Any], phase: Any) -> Dict[str, Any]:
     elif card.run_blocked(state):
         key = "dx-run-no-model"
         why = RUN_DISABLED_NO_MODEL if state.get("operator") else RUN_DISABLED_NO_MODEL_READ_ONLY
+    elif no_cohort is not None:
+        key, why = "dx-run-no-cohort", no_cohort
     else:
         return {"run_btn": gr.update(interactive=True), "run_cover": "", "run_reason": ""}
     title = TOPIC_HELP[key][0]
@@ -1937,11 +2417,27 @@ def card_loaded_outputs(state: Mapping[str, Any], phase: Any) -> Tuple[Any, ...]
     return ("", *_run_tuple(state, phase))
 
 
+#: The outputs that follow the served task (`card_outputs(..., inputs=True)`):
+#: the two inputs' containers and the Reference cohort select. Never outputs
+#: of Run Diagnosis, which reads the inputs.
+TASK_OUTPUTS = ("genes_box", "cohort_box", "cohort")
+
+
 def card_outputs(state: Mapping[str, Any], result: Optional[Mapping[str, Any]], phase: Any,
-                 view: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+                 view: Optional[Mapping[str, Any]] = None, *, cohort: Any = None,
+                 inputs: bool = True) -> Dict[str, Any]:
     """Every output that follows the card's state, sending only what changed
     since this session's last send (kept in the state's ``rendered``): a
-    focused control is never redrawn by the timer for nothing."""
+    focused control is never redrawn by the timer for nothing.
+
+    With `inputs`, the served task's inputs too (`TASK_OUTPUTS`): the
+    Candidate genes box shown for a gene task model and the Reference cohort
+    select for a patients-like-me model, each by its container's class; the
+    select's options and its chosen version's facts (`cohort_info`). The
+    select is sent only when its options or facts change, or when `cohort`
+    (its value now) is no longer listed: a user's pick never makes the timer
+    redraw it. Run Diagnosis passes ``inputs=False`` (its outputs hold none of
+    them)."""
     produced = _produced_at(result)
     button = card.change_button(state)
     run = run_controls(state, phase)
@@ -1962,10 +2458,20 @@ def card_outputs(state: Mapping[str, Any], result: Optional[Mapping[str, Any]], 
     if view.get("open"):
         for name, update in identity_outputs(view, state, result).items():
             fresh[name] = update
+    chosen = cohort
+    if inputs:
+        task = card.served_task(state.get("status"))
+        fresh["genes_box"] = task == "gene"
+        fresh["cohort_box"] = task == "patients_like_me"
+        if task == "patients_like_me":    # a hidden select keeps its last options
+            cohorts = _cohorts(state)
+            options, chosen = cohort_choices(cohorts, cohort)
+            fresh["cohort"] = {"choices": [list(option) for option in options],
+                               "info": cohort_info(cohorts, chosen)}
     previous = state.get("rendered") if isinstance(state.get("rendered"), Mapping) else {}
     out: Dict[str, Any] = {}
     for name, value in fresh.items():
-        if previous.get(name) == value:
+        if previous.get(name) == value and not (name == "cohort" and chosen != cohort):
             continue
         if name == "change_btn":
             out[name] = gr.update(**value)
@@ -1973,6 +2479,12 @@ def card_outputs(state: Mapping[str, Any], result: Optional[Mapping[str, Any]], 
             out[name] = gr.update(visible=value)
         elif name == "run_btn":
             out[name] = gr.update(interactive=value)
+        elif name in ("genes_box", "cohort_box"):
+            out[name] = view_update(value, *_TASK_BOX)
+        elif name == "cohort":
+            out[name] = gr.update(choices=[tuple(option) for option in value["choices"]],
+                                  info=value["info"],
+                                  **({"value": chosen} if chosen != cohort else {}))
         else:
             out[name] = value
     out["card_state"] = {**state, "rendered": {**previous, **fresh}}
@@ -1996,20 +2508,22 @@ def read_card(state: Any, request: Any, *, open_checkpoints: bool, reread: bool 
 
 
 def refresh_card(state: Any, result: Any, phase: Any, view: Any, request: Any, *,
-                 reread: bool = False) -> Dict[str, Any]:
+                 reread: bool = False, cohort: Any = None) -> Dict[str, Any]:
     """Page load, Diagnosis shown, ↻, a Load: read and show (queued: the
-    trained-on dataset may be read from the served checkpoint)."""
+    trained-on dataset may be read from the served checkpoint, the reference
+    cohort versions are listed again); `cohort` is the select's value now."""
     return card_outputs(read_card(state, request, open_checkpoints=True, reread=reread),
-                        result, phase, view)
+                        result, phase, view, cohort=cohort)
 
 
 def poll_card(location: Any, state: Any, result: Any, phase: Any, view: Any,
-              request: Any) -> Dict[str, Any]:
+              request: Any, cohort: Any = None) -> Dict[str, Any]:
     """The shell's slow timer, while Diagnosis is shown: one status read, no
     checkpoint opened (`queue=False`); nothing while another page is shown."""
     if location != CLINICAL:
         return {}
-    return card_outputs(read_card(state, request, open_checkpoints=False), result, phase, view)
+    return card_outputs(read_card(state, request, open_checkpoints=False), result, phase, view,
+                        cohort=cohort)
 
 
 # =============================================================================
@@ -2033,12 +2547,28 @@ def _no_result_outputs(state: Mapping[str, Any], notice: Optional[str]) -> Dict[
     }
 
 
+#: Said at the click, with no API call, when a gene task model is served and
+#: the Candidate genes box holds none (decision 15: a click-time notice, as for
+#: missing HPO terms).
+NO_CANDIDATE_GENES = (
+    '<p class="shep-dx-warn"><b>No candidate genes entered.</b> The model in use ranks the '
+    'genes you list: enter gene symbols or ids under Candidate genes, one per line or '
+    'comma-separated.</p>')
+
+
 def diagnose(phenotype_text: str, patient_id: str, top_k: Any, explanations: bool,
-             state: Any, phase: Any, view: Any, request: Any) -> Dict[str, Any]:
+             state: Any, phase: Any, view: Any, request: Any, *, genes_text: str = "",
+             cohort: Any = None) -> Dict[str, Any]:
     """Run Diagnosis: the shared API (`_call_diagnose`), then the status read
     again for the badge, so a result never meets an older read. The full
     result is kept in this session's state; the export files are written up
-    front, so one click downloads them."""
+    front, so one click downloads them.
+
+    **The served task's input goes only to its task** (the card's last read,
+    `diagnosis_card.served_task`): a gene task model gets the Candidate genes
+    (`_parse_gene_list`; none is a notice at the click, and nothing is asked
+    of the server), a patients-like-me model the Reference cohort label;
+    any other model neither."""
     state = state if isinstance(state, Mapping) else card.new_state()
     view = view if isinstance(view, Mapping) else {}
     hpo_ids = _parse_hpo_ids(phenotype_text)
@@ -2048,13 +2578,22 @@ def diagnose(phenotype_text: str, patient_id: str, top_k: Any, explanations: boo
             '<code>HP:0001250</code> — one per line, or comma/space-separated; names are '
             'optional.</p>'))
         return out
+    task = card.served_task(state.get("status"))
+    genes = _parse_gene_list(genes_text) if task == "gene" else None
+    if task == "gene" and not genes:
+        return _no_result_outputs(state, NO_CANDIDATE_GENES)
+    reference = cohort if task == "patients_like_me" and isinstance(cohort, str) and cohort \
+        else None
     explanations = bool(explanations)
     result = _call_diagnose(phenotypes=hpo_ids, patient_id=patient_id, top_k=_clamped_top_k(top_k),
-                            include_explanations=explanations)
+                            include_explanations=explanations, candidate_genes=genes,
+                            reference_cohort=reference)
     if "error" in result:
         error = _e(result["error"]).replace("\n\n", "<br><br>")
         return _no_result_outputs(state, f'<p class="shep-dx-error"><b>Error:</b> {error}</p>')
     result["_query_phenotypes"] = hpo_ids
+    if genes is not None:
+        result["_query_candidate_genes"] = genes
     result["_explanations"] = explanations
     result["_received_at"] = card.stamp(datetime.now())
     # A response that does not name its kind shows no candidate: nothing is
@@ -2076,7 +2615,7 @@ def diagnose(phenotype_text: str, patient_id: str, top_k: Any, explanations: boo
     else:
         csv_update = md_update = _DOWNLOAD_DISABLED
     new_state = read_card(state, request, open_checkpoints=True)
-    out = card_outputs(new_state, result, phase, view)
+    out = card_outputs(new_state, result, phase, view, inputs=False)
     out.update({
         "results_hd": results_header_html(result),
         "badge": badge_html(result, new_state),
@@ -2103,6 +2642,23 @@ def phenotypes_changed(result: Any, state: Any) -> Dict[str, Any]:
                                     'to refresh the results.</p>')
     out["card_state"] = {**state, "rendered": {
         **(state.get("rendered") or {}), "badge": ""}}
+    return out
+
+
+def cohort_picked(result: Any, state: Any, cohort: Any) -> Dict[str, Any]:
+    """A Reference cohort picked (its ``.input``, never a card update): the
+    result is cleared as for edited phenotypes, and the select's facts follow
+    the pick (`cohort_info`), kept as rendered so the timer does not send the
+    select again."""
+    state = state if isinstance(state, Mapping) else card.new_state()
+    out = phenotypes_changed(result, state)
+    base = out.get("card_state", state)
+    rendered = dict(base.get("rendered") or {})
+    info = cohort_info(_cohorts(base), cohort)
+    if isinstance(rendered.get("cohort"), Mapping):
+        rendered["cohort"] = {**rendered["cohort"], "info": info}
+    out["cohort"] = gr.update(info=info)
+    out["card_state"] = {**base, "rendered": rendered}
     return out
 
 
@@ -2251,6 +2807,20 @@ def create_diagnosis_tab(ctx: Any) -> None:
                         placeholder=("HP:0001250 — Seizure\n"
                                      "HP:0001263, HP:0002376   (commas / spaces are fine too)"))
                     with gr.Column(elem_id="shep-dx-side", elem_classes=["shep-dx-side"]):
+                        # The served task's input, shown by its container's
+                        # class (`card_outputs`): containers, so no handler
+                        # that redraws them writes to the input inside.
+                        with gr.Column(elem_id="shep-dx-genes-box", min_width=0,
+                                       elem_classes=[*_TASK_BOX, VIEW_OFF]) as genes_box:
+                            genes_input = gr.Textbox(
+                                label="Candidate genes", lines=3, max_lines=12,
+                                elem_id="dx_candidate_genes",
+                                placeholder="SCN1A\ndisgenet:PTEN, MECP2")
+                        with gr.Column(elem_id="shep-dx-cohort-box", min_width=0,
+                                       elem_classes=[*_TASK_BOX, VIEW_OFF]) as cohort_box:
+                            cohort_input = gr.Dropdown(label="Reference cohort", choices=[],
+                                                       value=None, interactive=True,
+                                                       elem_id="dx_reference_cohort")
                         patient_id_input = gr.Textbox(label="Patient ID (optional)", value="",
                                                       placeholder="(auto-generated if blank)",
                                                       max_lines=1, elem_id="dx_patient_id")
@@ -2299,8 +2869,8 @@ def create_diagnosis_tab(ctx: Any) -> None:
                             run_btn = gr.Button("▶ Run Diagnosis", variant="primary", size="lg",
                                                 elem_id="shep-dx-run-btn")
                             run_cover = plain_html("", elem_id="shep-dx-run-cover")
-                        gr.ClearButton(components=[phenotype_input], value="Clear", size="lg",
-                                       elem_id="shep-dx-clear", scale=0, min_width=0)
+                        gr.ClearButton(components=[phenotype_input, genes_input], value="Clear",
+                                       size="lg", elem_id="shep-dx-clear", scale=0, min_width=0)
                     run_reason = plain_html("", elem_id="shep-dx-run-why")
 
         # --- the drawers (wide: over the columns; narrow: in the page's flow) -
@@ -2334,6 +2904,11 @@ def create_diagnosis_tab(ctx: Any) -> None:
                 links: Dict[str, Any] = {}
 
                 def _head() -> Any:
+                    # The Task control: its `.input` sets the shared list's view.
+                    links["task"] = gr.Radio(choices=list(TASK_VIEWS), value="all",
+                                             label="Task", show_label=False, container=False,
+                                             elem_classes=["shep-seg"],
+                                             elem_id="shep-dx-change-task")
                     # Each "›" keeps to the word before it (a no-break space):
                     # at 1440 x 900 the last one was left alone on a line.
                     links["compare"] = plain_html(
@@ -2404,7 +2979,8 @@ def create_diagnosis_tab(ctx: Any) -> None:
         "id_result_md": id_result_md, "id_result_html": id_result_html,
         "change_drawer": change_drawer, "plan": handle.plan, "confirm": handle.confirm,
         "confirm_html": handle.confirm_html, "list_reason": handle.reason, "phase": handle.phase,
-        "change_closed": change_closed,
+        "change_closed": change_closed, "genes_box": genes_box, "cohort_box": cohort_box,
+        "cohort": cohort_input,
     }
 
     def outputs(*names: str) -> List[Any]:
@@ -2419,26 +2995,30 @@ def create_diagnosis_tab(ctx: Any) -> None:
     card_names = ("card_state", "card_time", "card_body", "change_btn", "change_reason",
                   "details_btn", "run_btn", "run_cover", "run_reason", "badge", "results_body",
                   "identity_drawer", "identity_seg", "id_model", "id_result_md", "id_result_html")
-    card_inputs = [card_state, results_state, handle.phase, identity_view]
+    # The card's reads also show the served task's inputs (`TASK_OUTPUTS`);
+    # Run Diagnosis, which reads those inputs, never writes them.
+    read_names = card_names + TASK_OUTPUTS
+    card_inputs = [card_state, results_state, handle.phase, identity_view, cohort_input]
 
-    def _card_refresh(state, result, phase, view, request: gr.Request):
-        return mapped(refresh_card(state, result, phase, view, request))
+    def _card_refresh(state, result, phase, view, cohort, request: gr.Request):
+        return mapped(refresh_card(state, result, phase, view, request, cohort=cohort))
 
-    def _card_reread(state, result, phase, view, request: gr.Request):
-        return mapped(refresh_card(state, result, phase, view, request, reread=True))
+    def _card_reread(state, result, phase, view, cohort, request: gr.Request):
+        return mapped(refresh_card(state, result, phase, view, request, reread=True,
+                                   cohort=cohort))
 
-    def _card_poll(location, state, result, phase, view, request: gr.Request):
-        return mapped(poll_card(location, state, result, phase, view, request))
+    def _card_poll(location, state, result, phase, view, cohort, request: gr.Request):
+        return mapped(poll_card(location, state, result, phase, view, request, cohort))
 
-    refresh = {"fn": _card_refresh, "inputs": card_inputs, "outputs": outputs(*card_names),
+    refresh = {"fn": _card_refresh, "inputs": card_inputs, "outputs": outputs(*read_names),
                "show_progress": "hidden"}
     # Diagnosis is shown at page load with no tab select, and on each select.
     ctx.blocks.load(**refresh)
     ctx.on_page_open(CLINICAL, refresh)
     ctx.served_model_changed.change(**refresh)
     ctx.timer_slow.tick(_card_poll, inputs=[ctx.location, *card_inputs],
-                        outputs=outputs(*card_names), queue=False, show_progress="hidden")
-    reread.click(_card_reread, inputs=card_inputs, outputs=outputs(*card_names),
+                        outputs=outputs(*read_names), queue=False, show_progress="hidden")
+    reread.click(_card_reread, inputs=card_inputs, outputs=outputs(*read_names),
                  show_progress="hidden")
 
     def _phase_changed(state, phase):
@@ -2464,18 +3044,20 @@ def create_diagnosis_tab(ctx: Any) -> None:
     identity_names = ("identity_view", "identity_drawer", "change_drawer", "identity_seg",
                       "id_model", "id_result_md", "id_result_html")
 
-    def _card_link(state, result, phase, view, evt: gr.EventData, request: gr.Request):
+    def _card_link(state, result, phase, view, cohort, evt: gr.EventData, request: gr.Request):
         key = _event_key(evt)
         if key == "dismiss":
-            return mapped(card_outputs(card.dismiss_change(state), result, phase, view))
+            return mapped(card_outputs(card.dismiss_change(state), result, phase, view,
+                                       cohort=cohort))
         if key == "refresh":
-            return mapped(refresh_card(state, result, phase, view, request, reread=True))
+            return mapped(refresh_card(state, result, phase, view, request, reread=True,
+                                       cohort=cohort))
         if key == "evidence":
             return mapped(open_identity(state, result, "model", "evidence", phase))
         return gr.skip()
 
     card_body.click(_card_link, inputs=card_inputs,
-                    outputs=outputs(*dict.fromkeys(card_names + identity_names)),
+                    outputs=outputs(*dict.fromkeys(read_names + identity_names)),
                     show_progress="hidden")
 
     def _open_details(state, result, phase):
@@ -2514,6 +3096,10 @@ def create_diagnosis_tab(ctx: Any) -> None:
     links["compare"].click(_to_models, inputs=None, outputs=ctx.nav_outputs,
                            show_progress="hidden")
 
+    # The drawer's Task control: the shared list redraws on its view's change.
+    links["task"].input(task_view, inputs=[links["task"]], outputs=[handle.view],
+                        show_progress="hidden")
+
     # --- Change model…: D8 first, then the shared list's own refresh, then the chips
     change_btn.click(_on_change_model, inputs=None, outputs=outputs(*CHANGE_OUTPUTS),
                      show_progress="hidden").then(**handle.refresh).then(**ctx.chip_refresh)
@@ -2547,21 +3133,33 @@ def create_diagnosis_tab(ctx: Any) -> None:
                     "export_csv", "export_report", "details_hd", "details_seg", "details_html",
                     "details_md", "details_ft")
 
-    def _run_diagnosis(text, patient, top_k, explanations, state, phase, view,
+    def _run_diagnosis(text, patient, top_k, explanations, state, phase, view, genes, cohort,
                        request: gr.Request):
-        return mapped(diagnose(text, patient, top_k, explanations, state, phase, view, request))
+        return mapped(diagnose(text, patient, top_k, explanations, state, phase, view, request,
+                               genes_text=genes, cohort=cohort))
 
     run_btn.click(_run_diagnosis,
                   inputs=[phenotype_input, patient_id_input, top_k_input, explanations_input,
-                          card_state, handle.phase, identity_view],
+                          card_state, handle.phase, identity_view, genes_input, cohort_input],
                   outputs=outputs(*dict.fromkeys(result_names + card_names + identity_names)))
 
     def _phenotypes_edited(result, state):
         return mapped(phenotypes_changed(result, state))
 
-    phenotype_input.change(_phenotypes_edited, inputs=[results_state, card_state],
-                           outputs=outputs(*dict.fromkeys(result_names + ("card_state",))),
-                           show_progress="hidden")
+    edited = {"fn": _phenotypes_edited, "inputs": [results_state, card_state],
+              "outputs": outputs(*dict.fromkeys(result_names + ("card_state",))),
+              "show_progress": "hidden"}
+    phenotype_input.change(**edited)
+    # The task inputs clear the result on the user's edit only (`.input`): a
+    # card update of the select must not clear it.
+    genes_input.input(**edited)
+
+    def _cohort_picked(result, state, cohort):
+        return mapped(cohort_picked(result, state, cohort))
+
+    cohort_input.input(_cohort_picked, inputs=[results_state, card_state, cohort_input],
+                       outputs=outputs(*dict.fromkeys(result_names + ("card_state", "cohort"))),
+                       show_progress="hidden")
 
     def _select_candidate(result, segment, evt: gr.EventData):
         return mapped(select_candidate(result, segment, _event_key(evt)))
@@ -2699,6 +3297,10 @@ PAGE_CSS = f"""
 {_TAB} .shep-dx-tbl td, {_TAB} .shep-dx-tbl th {{ white-space: nowrap; }}
 {_TAB} .shep-dx-tbl td.shep-dx-dis {{ white-space: normal; width: 100%; min-width: 9em; }}
 {_TAB} .shep-dx-tbl td.shep-dx-sp {{ white-space: normal; min-width: 5em; }}
+{_TAB} .shep-dx-tbl td.shep-dx-wrap {{ white-space: normal; min-width: 7em; overflow-wrap: anywhere; }}
+{_TAB} .shep-dx-ref code {{ font-family: var(--shep-mono); }}
+{_TAB} .shep-dx-task-box {{ gap: 0 !important; }}
+{_TAB} #shep-dx-change-task {{ flex: 0 0 auto !important; width: auto !important; }}
 {_TAB} .shep-dx-kind {{ margin: 0 0 8px; font-size: 14px; color: var(--shep-text-2); }}
 {_TAB} .shep-dx-tbl tbody tr[data-key] {{ cursor: pointer; }}
 {_TAB} .shep-dx-tbl tbody tr.shep-on td.shep-dx-dis {{ color: var(--shep-accent-text); font-weight: 600; }}
@@ -2817,17 +3419,26 @@ __all__ = [
     "FIELD_HELP",
     "PAGE_CSS",
     "SEGMENTS",
+    "TASK_OUTPUTS",
+    "TASK_VIEWS",
     "TOPIC_HELP",
     "badge_html",
     "card_outputs",
+    "cohort_choices",
+    "cohort_info",
+    "cohort_picked",
+    "cohort_refusal",
     "compare_with_served",
     "create_diagnosis_tab",
     "details_outputs",
     "diagnose",
     "open_change",
     "poll_card",
+    "reference_line_html",
     "refresh_card",
     "result_identity_md",
     "results_body_html",
     "run_controls",
+    "task_details_html",
+    "task_view",
 ]
