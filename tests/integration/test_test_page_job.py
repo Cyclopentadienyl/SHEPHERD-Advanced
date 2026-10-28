@@ -166,5 +166,6 @@ def test_a_base_and_a_history_file_are_listed_and_never_started(site, monkeypatc
         assert result["success"] is False and result["error"].endswith("Nothing was started.")
         assert result["error"].startswith(says[:1].upper() + says[1:])
     # The fixture version lists no genes; the disease task needs none.
-    assert "Measurement</span><span>Disease task" in tp.fixed_html(page, tp.find_model(models,
-                                                                                      child))
+    # The child's option names its task; the Measurement row refers to it (rule 1.2).
+    assert "Measurement</span><span>same task as the chosen model" in tp.fixed_html(
+        page, tp.find_model(models, child))

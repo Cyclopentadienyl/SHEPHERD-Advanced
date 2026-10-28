@@ -2500,7 +2500,13 @@ def test_a_task_record_shows_its_own_tiles_coverage_and_figures(mode):
     assert mode_label(mode) in text
     assert "8 of 10 import-eligible cases ranked by the model · 13 source cases; 3 excluded " \
         "at import: ground truth absent 3" in text
-    assert "8 of 10 cases ranked" in text and "pooled over positive pairs" in text
+    # The counts are the Coverage row's alone (rule 1.2): a tile's footer says
+    # what its figure is over, never "n of M" or the n ranked again.
+    notes = re.findall(r'shep-test-tile-n">([^<]*)<', raw)
+    assert len(notes) == 4 and "pooled over positive pairs" in notes
+    assert notes[-1] == "share of import-eligible cases ranked"
+    assert not any(ch.isdigit() for note in notes for ch in note), notes
+    assert text.count("8 of 10") == 1
     assert "Conservative pooled MRR" in text and "0.2100 · an unranked case whose truth can be " \
         "assessed counts 0" in text
     assert "Mean rank" not in text and "Mode C" not in text and "Mode D" not in text
@@ -2526,11 +2532,18 @@ def test_a_task_report_row_names_its_task_first():
 
 
 def test_the_fixed_measurement_is_the_chosen_models_own_task():
+    """The Model select's option names the task (`record_kind_text`); the
+    Measurement row refers to it and never names it again (rule 1.2: the two
+    come from one listing entry, so they cannot differ)."""
+    from src.webui.components import renderers as r
+
     for task, words in (("disease", "Disease"), ("gene", "Gene"),
                         ("patients_like_me", "Patients-like-me")):
-        fixed = tp.fixed_html({}, _model(task))
-        assert f"Measurement</span><span>{words} task · read from the model&#x27;s record" \
-            in fixed
+        item = _model(task)
+        fixed = tp.fixed_html({}, item)
+        row = fixed.split("Measurement</span><span>")[1].split("</span>")[0]
+        assert row == "same task as the chosen model · read from its record"
+        assert r.record_kind_text(item) == words and words not in row
     for item in (None, _model(None, "base"), {"record": "history"}, {"record": None}):
         fixed = tp.fixed_html({}, item)
         assert "the chosen model&#x27;s own task (a finetuned model only)" in fixed

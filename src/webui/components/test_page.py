@@ -1259,15 +1259,16 @@ def evidence_html(page: Mapping[str, Any], workspace: Optional[str]) -> str:
 def fixed_html(page: Mapping[str, Any], item: Optional[Mapping[str, Any]]) -> str:
     """What the server fixes for a run (D5): the batch size, the device, and
     the measurement, which is the chosen model's own task (`item`, the chosen
-    listing entry, or None), never chosen here."""
+    listing entry, or None), never chosen here. The row refers to the task the
+    Model select's option already names (`model_choices`, from the same entry),
+    never naming it again (skill rule 1.2)."""
     device = page.get("device") or {}
     if device.get("problem"):
         shown = f'<span class="shep-amber-t">{e(device["problem"])}</span>'
     else:
         value = device.get("value") or "auto"
         shown = (f"<code>{e(value)}</code>" + (" (requires CUDA)" if value == "auto" else ""))
-    task = measured_task(item)
-    measurement = (f"{TASK_NAMES[task]} task · read from the model's record" if task
+    measurement = ("same task as the chosen model · read from its record" if measured_task(item)
                    else "the chosen model's own task (a finetuned model only)")
     return (f'<div class="shep-test-kv"><span class="shep-k">Batch size'
             f'{help_button("test-fixed", "Fixed by the server")}</span>'
@@ -1601,18 +1602,19 @@ def result_html(reports: Mapping[str, Any], run_id: Optional[str],
 
 def _tile_note(mode: Optional[str], name: str, n_ranked: Any, eligible: str) -> str:
     """What a tile's figure is over: Mode D's import-eligible cases; a task's
-    positive pairs (pooled), ranked cases (macro) or "n of M cases ranked"
-    (coverage, M the version's import-eligible cases, which a task measures
-    every one of); otherwise the cases ranked."""
+    positive pairs (pooled), ranked cases (macro) or the share of the
+    import-eligible cases ranked (coverage), with no count, since the record's
+    Coverage row says "n of M" once (skill rule 1.2); otherwise the cases
+    ranked."""
     if mode == "D":
         return f"over {eligible} import-eligible"
     if mode in TASK_NAMES:
         if name == "coverage":
-            return f"{_count(n_ranked)} of {eligible} cases ranked"
+            return "share of import-eligible cases ranked"
         if name.startswith("pooled_"):
             return "pooled over positive pairs"
         if name.startswith("macro_"):
-            return f"mean over {_count(n_ranked)} ranked cases"
+            return "mean over the ranked cases"
     return f"over {_count(n_ranked)} ranked"
 
 
