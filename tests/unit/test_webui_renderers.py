@@ -363,8 +363,9 @@ def test_a_listed_checkpoint_leads_with_its_kind_word():
         "Disease", "Gene", "Patients-like-me"]
     assert r.record_kind_text(_record("history")) == "History · never run"
     assert r.record_kind_text(_record("refused")) == "Record not readable"
+    # A record never read keeps its own word (skill §6), apart from a refused one.
     assert r.record_kind_text({**checkpoint(problem="torn"), "record": None}) == (
-        "Record not readable")
+        "Record not read")
 
 
 def test_a_bundle_run_reads_gatv2_and_a_shepherdgnn_run_its_upper_case():
@@ -413,6 +414,14 @@ def test_model_facts_show_the_task_and_the_configuration_escaped():
     history = r.facts_from_checkpoint(_record("history"), [workspace()])
     assert (history.task, history.configuration) == ("History · never run", "No model spec")
     assert r.configuration_text(_record("refused")) == "Not readable"
+    assert r.configuration_text({**checkpoint(), "record": None}) == "Not read"
+    # An item built without reading a record (the Diagnosis card's served item)
+    # shows neither row: the card names its task in the name line (decision 4).
+    unread = r.facts_from_checkpoint(checkpoint(), [workspace()])
+    assert (unread.task, unread.configuration) == (None, None)
+    unread_html = r.model_facts_html(unread)
+    assert 'class="shep-k">Task<' not in unread_html
+    assert 'class="shep-k">Configuration<' not in unread_html
     odd = r.model_facts_html(r.facts_from_checkpoint(_record(encoder="<b>odd"), [workspace()]))
     assert "<b>odd" not in odd and "&lt;B&gt;ODD · reference recipe" in odd
     bare = r.model_facts_html(r.ModelFacts(
@@ -420,4 +429,4 @@ def test_model_facts_show_the_task_and_the_configuration_escaped():
         trained_on_fingerprint=None, trained_on_names=(), synthetic=False, sources="",
         validation=None, recorded=None, warnings=(), task="<i>x</i>", configuration=None))
     assert "&lt;i&gt;x&lt;/i&gt;" in bare and "<i>x</i>" not in bare
-    assert '<span class="shep-k">Configuration</span><span class="shep-v">—</span>' in bare
+    assert '<span class="shep-k">Configuration</span>' not in bare  # None: no row, no dash

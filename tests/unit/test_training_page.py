@@ -1754,6 +1754,8 @@ def test_a_run_reads_as_its_name_architecture_and_start_time():
         "ui-live-stop-02 · GAT · 2026-10-24 17:39"
     assert tc.run_words("gat", "20261024-163856_run_559817") == "GAT · 2026-10-24 16:38"
     assert tc.run_words("hgt", "my-old-run") == "HGT · my-old-run"
+    # A model bundle's run reads as Models reads it (`renderers.architecture_label`).
+    assert tc.run_words("gatv2", "20261028-100000_run_abcdef") == "GATv2 · 2026-10-28 10:00"
 
 
 def test_the_drawer_lists_runs_then_the_chosen_runs_checkpoints():

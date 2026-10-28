@@ -1981,7 +1981,7 @@ def run_words(architecture: Any, run: Any) -> str:
     from ``20261024-173909_ui-live-stop-02_c1d9cf``; an unnamed run ("run") is
     its architecture and time; a directory not named by its start time is its
     whole name."""
-    arch = str(architecture or "").upper() or "MODEL"
+    arch = r.architecture_label(architecture)
     started = r.run_started(run)
     if not started:
         return f"{arch} · {run}"
@@ -2282,7 +2282,7 @@ def _check_html(preview: Mapping[str, Any], source: str, *, differs: bool = Fals
     if preview.get("sha256") and source == CONTINUE_FROM_PATH:
         arch = preview.get("architecture")
         lines.append('<div>' + r.fingerprint_html("model fingerprint", preview["sha256"], copy=False)
-                     + (f", architecture <b>{r.e(str(arch).upper())}</b>" if arch else "") + "</div>")
+                     + (f", architecture <b>{r.e(r.architecture_label(arch))}</b>" if arch else "") + "</div>")
     if not preview.get("ok"):
         return ('<div class="shep-check shep-check-amber"><div class="shep-check-h">⚠ Cannot '
                 f'continue.</div>{"".join(lines)}<p>{r.e(preview.get("reason"))}</p></div>')
@@ -2753,7 +2753,8 @@ FIELD_HELP = {
         "Checkpoint",
         "The chosen run's checkpoints, newest first.\n\n"
         "• Latest save: last.pt, the run's last training state.\n"
-        "• Top-k save: kept for its Trainer validation MRR (not a test result).\n\n"
+        "• Top-k save: kept for its Trainer validation figure (LP accuracy for a base, pooled "
+        "MRR for a task model; not a test result).\n\n"
         "The table under it shows the file, what it holds and its model fingerprint. The server "
         "finds the file in its list again and compares its bytes with that fingerprint. "
         "Refresh lists them again.",

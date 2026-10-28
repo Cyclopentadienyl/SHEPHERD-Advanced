@@ -82,7 +82,7 @@ def test_differences_from_reference_name_each_field():
     diffs = spec.differences_from_reference()
     assert diffs["input.dim"] == (2048, 6)
     assert diffs["encoder.layers"] == (3, 2)
-    assert reference_spec("base").is_reference()
+    assert reference_spec("base").differences_from_reference() == {}
 
 
 # --------------------------------------------------------------------------- builder

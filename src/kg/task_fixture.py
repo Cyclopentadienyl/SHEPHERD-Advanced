@@ -187,7 +187,14 @@ def read_fixture_record(data_dir: Path, *, manifest_sha256: str) -> Tuple[Dict[s
             or record.get("schema_version") != FIXTURE_SCHEMA_VERSION:
         raise TaskFixtureError(f"{out / FIXTURE_RECORD} is not a gene fixture record of schema "
                                f"{FIXTURE_SCHEMA_VERSION}")
-    bound = (record.get("workspace") or {}).get("split_manifest")
+    # The parts read below and by `read_gene_fixture` must have their shape:
+    # a part of another kind is an unreadable record, never an AttributeError.
+    files = record.get("files")
+    if not isinstance(record.get("workspace"), dict) or not isinstance(files, dict) \
+            or not all(isinstance(files.get(split), dict) for split in FIXTURE_SPLITS):
+        raise TaskFixtureError(f"{out / FIXTURE_RECORD} is not a readable record: its workspace "
+                               f"or files part is not an object")
+    bound = record["workspace"].get("split_manifest")
     if bound != manifest_sha256:
         raise TaskFixtureError(
             f"The gene fixture was derived from another build of this workspace (split "

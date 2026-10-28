@@ -312,11 +312,6 @@ class ModelSpec:
             raise SpecError("sources maps field names to source strings")
         return self
 
-    def is_reference(self) -> bool:
-        """Whether the graph side matches the reference recipe (README §5 axis 2
-        reads the full list of differences from `differences_from_reference`)."""
-        return not self.differences_from_reference()
-
     def differences_from_reference(self) -> Dict[str, Tuple[Any, Any]]:
         """Each field that differs from the reference recipe, as
         `{"section.field": (reference, this)}`. Task heads are compared with

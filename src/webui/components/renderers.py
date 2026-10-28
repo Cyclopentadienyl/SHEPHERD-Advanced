@@ -97,10 +97,12 @@ RENDERER_HELP = {
     ),
     "validation-trainer": (
         "Validation (Trainer)",
-        "The Trainer's own figure on the workspace's val samples, recorded in the checkpoint: "
-        "LP accuracy for a base, pooled MRR for a task model, MRR over its top 20 or Hits@K "
-        "for a file without a model spec. Training selects a checkpoint by it, so it is not "
-        "an independent test; recorded test results are kept apart from it.",
+        "The Trainer's own figure on the val samples, recorded in the checkpoint.\n"
+        "• Base: LP accuracy.\n"
+        "• Task model: pooled MRR.\n"
+        "• File without a model spec: MRR over its top 20, or Hits@K.\n"
+        "Training selects a checkpoint by it, so it is not an independent test; recorded "
+        "test results are kept apart from it.",
     ),
 }
 
@@ -496,8 +498,9 @@ def record_kind_text(item: Any) -> str:
     """**What a listed checkpoint is, in the one word every page leads with**
     (K6 decision 6), from its model record (`listed_record`): "Base", the task's
     name (`caveats.TASK_NAMES`: "Disease", "Gene", "Patients-like-me"),
-    "History · never run" for a file without a model spec, or "Record not
-    readable" for a record this build refused or a file that was not read."""
+    "History · never run" for a file without a model spec, "Record not
+    readable" for a record this build refused, or "Record not read" for a file
+    whose record was never read (skill §6: missing states keep their own words)."""
     record = _get(item, "record")
     if record == "model":
         if _get(item, "learning_stage") == "base":
@@ -507,6 +510,8 @@ def record_kind_text(item: Any) -> str:
             return TASK_NAMES[task]
     elif record == "history":
         return "History · never run"
+    elif record is None:
+        return "Record not read"
     return "Record not readable"
 
 
@@ -515,10 +520,12 @@ def configuration_text(item: Any) -> str:
     whether its spec is the reference recipe, "GATv2 · reference recipe" or
     "GATv2 · recipe changed in 3 fields" (`differences`: which fields is axis
     2's, shown where the full list fits). A file without a model spec says so;
-    a record not read says that."""
+    a record refused or never read says which."""
     record = _get(item, "record")
     if record == "history":
         return "No model spec"
+    if record is None:
+        return "Not read"
     differences = _get(item, "differences")
     if record != "model" or differences is None:
         return "Not readable"
@@ -749,8 +756,12 @@ def facts_from_checkpoint(item: Any, workspaces: Sequence[Any], *,
         recorded=recorded,
         warnings=tuple(warnings),
         serving_note=serving_note,
-        task=record_kind_text(item),
-        configuration=configuration_text(item),
+        # Task and Configuration come from the file's model record; an item
+        # built without reading one (the Diagnosis card's served item, which
+        # names its task in the name line, K6 decision 4) shows neither row.
+        task=record_kind_text(item) if _get(item, "record") is not None else None,
+        configuration=(configuration_text(item) if _get(item, "record") is not None
+                       else None),
     )
 
 
@@ -812,8 +823,8 @@ def model_facts_html(facts: ModelFacts, *, open_section: str = "identity") -> st
                                         if facts.trained_on_names else "")
     identity = _kv([
         ("Model", e(facts.name_line)),
-        ("Task", e(facts.task) if facts.task else "—"),
-        ("Configuration", e(facts.configuration) if facts.configuration else "—"),
+        *([("Task", e(facts.task))] if facts.task else []),
+        *([("Configuration", e(facts.configuration))] if facts.configuration else []),
         ("Run", f"<code>{e(facts.run)}</code>" if facts.run else "—"),
         ("Checkpoint file", location or "—"),
         (FACTS_MODEL_FP, model_fp),

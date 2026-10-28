@@ -148,6 +148,14 @@ def test_the_record_read_alone_says_absent_another_build_or_bound(workspace, tmp
     with pytest.raises(TaskFixtureError, match="another build") as other:
         read_fixture_record(data_dir, manifest_sha256="0" * 64)
     assert other.value.state == "another_build"
+    # A record whose parts have another shape is refused as unreadable, never
+    # an AttributeError that the readiness list and the Fine-tune start miss.
+    for part, value in (("workspace", "x"), ("workspace", [1]), ("files", 5),
+                        ("files", {"train": "x", "val": {}})):
+        (fixture_dir(data_dir) / FIXTURE_RECORD).write_text(json.dumps({**record, part: value}))
+        with pytest.raises(TaskFixtureError, match="not a readable record") as shaped:
+            read_fixture_record(data_dir, manifest_sha256=_manifest_sha(data_dir))
+        assert shaped.value.state == "unreadable"
     (fixture_dir(data_dir) / FIXTURE_RECORD).write_text("{not json")
     with pytest.raises(TaskFixtureError, match="not a readable record") as torn:
         read_fixture_record(data_dir, manifest_sha256=_manifest_sha(data_dir))

@@ -542,6 +542,10 @@ def test_details_add_what_a_served_model_has_to_model_facts(root):
                  "origin synthetic", "6,569 params", root["recorded"]):
         assert text in identity
     assert "Validation MRR (Trainer, top-20) 0.2410" in html
+    # The card reads no model record: no Task or Configuration row claims one
+    # is unreadable (K6 decision 4 names the task in the name line instead).
+    assert "Record not" not in html and 'class="shep-k">Task<' not in identity
+    assert 'class="shep-k">Configuration<' not in identity
     assert 'data-key="models">Full records: Research › Models ›' in html
     assert "Graph structural fingerprint: no warnings · GNN loaded" in html
     warnings = html[html.index('data-sec="warnings"'):]
