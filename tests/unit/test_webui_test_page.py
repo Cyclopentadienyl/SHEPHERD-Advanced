@@ -139,6 +139,27 @@ def _models(page, request):
     return tp.read_models("demo", request)
 
 
+#: Synthetic bundle runs filed beside the fixture's ShepherdGNN run (which the
+#: listing reads as history, K6 decision 1).
+CHILD_RUN = "20261020-000000_disease_bbbbbb"
+BUNDLE_BASE_RUN = "20261019-000000_base_aaaaaa"
+
+
+def _put_bundle(site, run=CHILD_RUN, task="disease", **change):
+    """A model bundle's checkpoint under ``runs/gatv2/<run>`` (a finetune child
+    of `task`, or a base for `task` None), its record as the training payload
+    writes it (`test_task_first_selection._record_payload`, K6 decision 10's
+    precedent for listing tests, `test_finetune_children`), `change` overriding
+    payload keys; for the tests that start a run through `FakeManager`, so its
+    weights are never measured. Returns its path and listing key."""
+    import time
+
+    from tests.unit.test_task_first_selection import _put, _record_payload
+
+    path = _put(site.demo, "gatv2", run, {**_record_payload(task), **change}, time.time())
+    return path, f"gatv2/{run}/last.pt"
+
+
 class FakeManager:
     """The job runner's surface the page uses, recording what it is given."""
 
@@ -322,6 +343,8 @@ def test_an_operator_lists_the_workspaces_checkpoints(site, monkeypatch):
     assert models["items"][0]["sha256"] == site.sha
     (label, key), = tp.model_choices(models)
     assert key == site.key and f"model fingerprint {site.sha[:12]}" in label
+    # The fixture's ShepherdGNN checkpoint is listed, led by what it is.
+    assert label.startswith("History · never run · epoch ")
 
 
 def test_the_reports_of_a_version_with_their_state_and_record(site):
@@ -561,7 +584,8 @@ def test_a_result_of_another_or_no_mode_is_never_shown_as_mode_c(site):
     """A record whose mode this version does not describe, or whose mode cannot
     be read, is named for what it is: never Mode C's label, tiles or coverage
     words (the internal review of Batch 3, ui_api-4). Each report row names its
-    mode first, and the Run panel says Start runs Mode C (ui_api-5)."""
+    mode first (ui_api-5), and the Run panel says Start measures the chosen
+    model's own task, never Mode C (K6 decision 13)."""
     import html as html_lib
 
     reports = tp.read_reports(LABEL)
@@ -574,7 +598,10 @@ def test_a_result_of_another_or_no_mode_is_never_shown_as_mode_c(site):
         assert label in text and "Mode C" not in text
         assert "source cases ranked" not in text and "not described for this mode" in text
     assert "model ranking (Mode C): report kept" in tp.reports_html(reports, None)
-    assert "model ranking (Mode C) · fixed by the server" in tp.fixed_html({})
+    fixed = tp.fixed_html({}, None)
+    assert "Mode C" not in fixed and "Mode D" not in fixed
+    assert "Measurement</span><span>the chosen model&#x27;s own task (a finetuned model " \
+        "only)" in fixed
 
 
 def test_a_run_without_a_report_says_none_was_kept(site):
@@ -590,21 +617,26 @@ def test_a_run_without_a_report_says_none_was_kept(site):
 
 
 def test_start_waits_for_every_choice_and_says_why(site, monkeypatch):
+    _child, child = _put_bundle(site)
     page, request = _page(monkeypatch)
     models = tp.read_models("demo", request)
     binding = tp.workspace_binding(site.demo, tp.find(page["workspaces"], "name", "demo"))
     state = lambda ws, label, key, gpu=("none", ""): tp.start_state(  # noqa: E731
         page, models, ws, label, key, binding, gpu)
-    assert state(None, LABEL, site.key) == (False, "Disabled: choose a workspace.")
-    assert state("demo", None, site.key) == (False, "Disabled: choose a cohort version.")
+    assert state(None, LABEL, child) == (False, "Disabled: choose a workspace.")
+    assert state("demo", None, child) == (False, "Disabled: choose a cohort version.")
     assert state("demo", LABEL, None) == (False, "Disabled: choose a model.")
-    assert state("demo", LABEL, site.key) == (True, None)
-    busy = state("demo", LABEL, site.key, ("busy", "GPU job: training (job runner)"))
+    assert state("demo", LABEL, child) == (True, None)
+    busy = state("demo", LABEL, child, ("busy", "GPU job: training (job runner)"))
     assert busy == (False, "Disabled: GPU job: training (job runner). One managed GPU job at a "
                            "time (training or evaluation).")
     another = dict(binding, graph={**binding["graph"], "kg": "0" * 64})
-    allowed, why = tp.start_state(page, models, "demo", LABEL, site.key, another, ("none", ""))
+    allowed, why = tp.start_state(page, models, "demo", LABEL, child, another, ("none", ""))
     assert allowed is False and "mapped against another graph" in why
+    # The fixture's ShepherdGNN checkpoint is history: listed, never measured.
+    assert state("demo", LABEL, site.key) == (
+        False, "Disabled: this checkpoint has no model spec (a ShepherdGNN checkpoint): it is "
+               "history and is not measured here. Choose a model finetuned for a task.")
 
 
 # --------------------------------------------------------------------------- the operator controls
@@ -622,31 +654,39 @@ def test_start_passes_the_digests_shown_and_the_servers_paths(site, monkeypatch)
     evidence = site.root / "evidence"
     evidence.mkdir()
     monkeypatch.setenv("SHEPHERD_TRAINING_EVIDENCE_DIRS", str(evidence))
+    from src.utils.fingerprint import file_sha256
+
+    path, child = _put_bundle(site)
     page, request = _page(monkeypatch)
     models = tp.read_models("demo", request)
     manager = FakeManager()
-    result = tp.start_test_run(page, models, "demo", LABEL, site.key, True, True, request,
+    result = tp.start_test_run(page, models, "demo", LABEL, child, True, True, request,
                                manager=manager)
     assert result["success"] is True
     (inputs,) = manager.started
-    assert inputs.checkpoint_sha256 == site.sha and inputs.version_sha256 == site.version_sha
+    assert inputs.checkpoint_sha256 == file_sha256(path)
+    assert inputs.version_sha256 == site.version_sha
     assert inputs.registry == site.registry.resolve() and inputs.version_label == LABEL
     assert inputs.workspace == site.demo.resolve()
-    assert inputs.checkpoint.resolve() == site.checkpoint.resolve()
+    assert inputs.checkpoint.resolve() == path.resolve()
+    # The task is the listing's, from the model record: never the client's.
+    assert inputs.task == "disease"
     assert inputs.evidence_dirs == (evidence.resolve(),)
     assert inputs.record is True and inputs.deterministic is True
 
 
 def test_start_runs_only_what_the_session_was_shown(site, monkeypatch):
+    path, child = _put_bundle(site)
     page, request = _page(monkeypatch)
     models = tp.read_models("demo", request)
     manager = FakeManager()
     # a key that is not in the session's list, a path, and another workspace
-    for ws, key in (("demo", "gat/x/y.pt"), ("demo", str(site.checkpoint)), ("other", site.key)):
+    for ws, key in (("demo", "gatv2/x/y.pt"), ("demo", str(path)), ("other", child)):
         result = tp.start_test_run(page, models, ws, LABEL, key, False, False, request,
                                    manager=manager)
         assert result["success"] is False and "Nothing was started." in result["error"]
-    result = tp.start_test_run(page, models, "demo", "not-a-version", site.key, False, False,
+        assert "Choose a model the server lists in this workspace" in result["error"]
+    result = tp.start_test_run(page, models, "demo", "not-a-version", child, False, False,
                                request, manager=manager)
     assert result["success"] is False and manager.started == []
     # A listed workspace holding the same run and file: the model was listed
@@ -654,21 +694,23 @@ def test_start_runs_only_what_the_session_was_shown(site, monkeypatch):
     shutil.copytree(site.demo, site.ws / "copy", symlinks=True)
     page = tp.read_page(request)
     assert "copy" in page["directories"]
-    result = tp.start_test_run(page, models, "copy", LABEL, site.key, False, False, request,
+    result = tp.start_test_run(page, models, "copy", LABEL, child, False, False, request,
                                manager=manager)
     assert result["success"] is False and "in this workspace" in result["error"]
     assert manager.started == []
 
 
 def test_a_checkpoint_the_server_no_longer_lists_is_refused_at_start(site, monkeypatch):
+    path, child = _put_bundle(site)
     page, request = _page(monkeypatch)
     models = tp.read_models("demo", request)
-    site.checkpoint.unlink()
+    path.unlink()
     manager = FakeManager()
-    result = tp.start_test_run(page, models, "demo", LABEL, site.key, False, False, request,
+    result = tp.start_test_run(page, models, "demo", LABEL, child, False, False, request,
                                manager=manager)
     assert result["success"] is False and manager.started == []
     assert result["error"].endswith("Nothing was started.")
+    assert "this checkpoint" not in result["error"].lower(), "refused by the list, not the record"
 
 
 def test_cancel_is_refused_for_a_read_only_request(monkeypatch):
@@ -1171,6 +1213,7 @@ def test_the_gpu_line_changing_hands_start_over_to_the_selections_group(site, mo
     monkeypatch.setattr(tp, "read_job", lambda **k: dict(job))
     line = ("busy", "GPU job: training (job runner)")
     monkeypatch.setattr(tp, "gpu_line", lambda **k: line)
+    _path, child = _put_bundle(site)
     page, request = _page(monkeypatch)
     models = tp.read_models("demo", request)
     binding = tp.workspace_binding(site.demo, tp.find(page["workspaces"], "name", "demo"))
@@ -1180,12 +1223,12 @@ def test_the_gpu_line_changing_hands_start_over_to_the_selections_group(site, mo
     line = ("none", "GPU jobs: none")
     handoff = poll.fn("test", page, seen, request)[-2]
     assert handoff["seen"] == handoff["now"] == {"job_id": None, "status": "idle"}
-    out = after.fn(page, models, binding, "demo", site.key, site.run_id, reports, handoff,
+    out = after.fn(page, models, binding, "demo", child, site.run_id, reports, handoff,
                    request)
     assert out[1] == site.run_id
     assert out[start_at] == gr.update(interactive=True) and out[reason_at] == ""
     line = ("busy", "GPU job: training (job runner)")
-    out = after.fn(page, models, binding, "demo", site.key, site.run_id, reports, handoff,
+    out = after.fn(page, models, binding, "demo", child, site.run_id, reports, handoff,
                    request)
     assert out[start_at] == gr.update(interactive=False)
     assert "Disabled: GPU job: training (job runner)." in out[reason_at]
@@ -2101,7 +2144,9 @@ def test_a_long_choice_ends_in_an_ellipsis_with_its_whole_text_as_title():
     assert not by_id["shep-test-cohort-hd"].js_on_load
     (label, _key), = tp.model_choices({"items": [{
         "architecture": "gat", "run": RUN, "filename": "best.pt", "epoch": 12, "sha256": "c" * 64}]})
-    assert label.startswith("epoch 12 · GAT · run 2026-10-17 09:15") and label.endswith("· best.pt")
+    # The kind word leads (K6 decision 13); a record never read says so.
+    assert label.startswith("Record not read · epoch 12 · GAT · run 2026-10-17 09:15")
+    assert label.endswith("· best.pt")
 
 
 def test_a_read_only_request_cannot_type_a_note(site, monkeypatch):
@@ -2293,3 +2338,243 @@ def test_the_preview_shows_the_gene_counts_when_the_source_lists_genes():
     assert "1 with some unmapped" in html
     assert "Gene identifiers" not in preview_html({"counts": {"source_cases": 3},
                                                    "samples_n": 3})
+
+
+# --------------------------------------------------------------------------- K6: by task
+HOSTILE = "<img src=x onerror=alert(1)>"
+#: A version's gene counts (`cohort_registry`, written only for a source that
+#: lists genes), by what the gate reads.
+NO_GENES = {"source_cases": 3, "ranked_eligible": 3}
+GENES = {**NO_GENES, "genes": {"cases_with_causal_genes": 3, "cases_with_candidate_genes": 3}}
+NO_CANDIDATES = {**NO_GENES, "genes": {"cases_with_causal_genes": 3,
+                                       "cases_with_candidate_genes": 0}}
+NO_CAUSAL = {**NO_GENES, "genes": {"cases_with_causal_genes": 0,
+                                   "cases_with_candidate_genes": 3}}
+
+
+def _model(task="disease", stage="finetune", record="model", **extra):
+    return {"record": record, "learning_stage": stage, "task": task, **extra}
+
+
+def test_measure_refusal_says_why_each_kind_is_not_measured():
+    """K6 decision 13: only a model finetuned for a task is measured; each
+    other kind says why, in its own words."""
+    refusal = tp.measure_refusal
+    assert refusal(_model("disease"), {"counts": NO_GENES}) is None
+    assert refusal(_model(None, "base"), {"counts": NO_GENES}) == (
+        "this checkpoint is a base: it has no task to measure. Choose a model finetuned from "
+        "it for a task")
+    assert refusal({"record": "history"}, None).startswith(
+        "this checkpoint has no model spec (a ShepherdGNN checkpoint): it is history")
+    assert refusal({"record": "refused", "record_problem": "record version 9"}, None) == (
+        "this checkpoint's model record cannot be read (record version 9)")
+    assert refusal({"record": None}, None) == "this checkpoint's model record was not read"
+    assert refusal(_model("C"), None) == (
+        "this checkpoint's model record names no task this page measures")
+
+
+@pytest.mark.parametrize("task, counts, says", [
+    ("gene", NO_GENES, "this cohort version lists no causal genes, so the gene task has no "
+                       "truth to rank. Import a source that lists causal_genes and "
+                       "candidate_genes"),
+    ("gene", NO_CAUSAL, "this cohort version lists no causal genes, so the gene task"),
+    ("gene", NO_CANDIDATES, "this cohort version lists no candidate genes, the list the gene "
+                            "task ranks. Import a source that lists candidate_genes"),
+    ("gene", GENES, None),
+    ("patients_like_me", NO_GENES, "this cohort version lists no causal genes, so no two of "
+                                   "its patients can be relevant to each other. Import a "
+                                   "source that lists causal_genes"),
+    ("patients_like_me", NO_CAUSAL, "this cohort version lists no causal genes, so no two"),
+    # Candidate genes are the gene task's list; patients-like-me needs none.
+    ("patients_like_me", NO_CANDIDATES, None),
+    ("disease", NO_GENES, None), ("disease", NO_CAUSAL, None), ("disease", GENES, None),
+])
+def test_a_gene_task_needs_a_version_that_lists_its_genes(task, counts, says):
+    got = tp.measure_refusal(_model(task), {"counts": counts})
+    assert (got is None) if says is None else got.startswith(says), got
+
+
+def test_start_and_its_reason_refuse_what_is_not_measured_with_one_rule(site, monkeypatch):
+    """The listing's real records: a base, a record this build refuses and the
+    fixture's history file are listed; Start says why (`start_state`,
+    "Disabled: …") and the start refuses them before the runner is asked
+    ("… Nothing was started."), from the one rule (`measure_refusal`). A gene
+    child on the fixture version, which lists no genes, is refused for that."""
+    _put_bundle(site, BUNDLE_BASE_RUN, None)
+    _put_bundle(site, "20261021-000000_refused_cccccc", "disease", record_version=999)
+    _put_bundle(site, "20261022-000000_gene_dddddd", "gene")
+    page, request = _page(monkeypatch)
+    models = tp.read_models("demo", request)
+    binding = tp.workspace_binding(site.demo, tp.find(page["workspaces"], "name", "demo"))
+    manager = FakeManager()
+    cases = {
+        f"gatv2/{BUNDLE_BASE_RUN}/last.pt": "this checkpoint is a base",
+        "gatv2/20261021-000000_refused_cccccc/last.pt":
+            "this checkpoint's model record cannot be read (checkpoint record version 999",
+        site.key: "this checkpoint has no model spec",
+        "gatv2/20261022-000000_gene_dddddd/last.pt": "this cohort version lists no causal genes",
+    }
+    for key, says in cases.items():
+        allowed, why = tp.start_state(page, models, "demo", LABEL, key, binding, ("none", ""))
+        assert allowed is False and why.startswith(f"Disabled: {says}") and why.endswith("."), why
+        result = tp.start_test_run(page, models, "demo", LABEL, key, False, False, request,
+                                   manager=manager)
+        assert result["success"] is False, key
+        assert result["error"].startswith(says[:1].upper() + says[1:]), result["error"]
+        assert result["error"].endswith(". Nothing was started.")
+    assert manager.started == []
+    # The version listing causal and candidate genes lifts the gene child's refusal.
+    page["versions"][0]["counts"] = {**page["versions"][0]["counts"], **GENES}
+    gene = "gatv2/20261022-000000_gene_dddddd/last.pt"
+    assert tp.start_state(page, models, "demo", LABEL, gene, binding, ("none", "")) == (True, None)
+    assert tp.start_test_run(page, models, "demo", LABEL, gene, False, False, request,
+                             manager=manager)["success"] is True
+    assert [inputs.task for inputs in manager.started] == ["gene"]
+
+
+def test_a_refusal_naming_a_record_problem_is_shown_escaped():
+    page = {"access": {"allowed": True}, "roots": [],
+            "workspaces": [{"name": "demo"}],
+            "versions": [{"label": LABEL, "counts": NO_GENES, "manifest_sha256": "e" * 64}]}
+    models = {"workspace": "demo", "items": [{
+        "architecture": "gatv2", "run": "r", "filename": "last.pt", "sha256": "c" * 64,
+        "record": "refused", "record_problem": HOSTILE}]}
+    allowed, why = tp.start_state(page, models, "demo", LABEL, "gatv2/r/last.pt", None,
+                                  ("none", ""))
+    assert allowed is False and HOSTILE in why            # plain text, as the select's
+    shown = tp._reason_html(why)
+    assert HOSTILE not in shown and "&lt;img src=x onerror=alert(1)&gt;" in shown
+
+
+def test_every_checkpoint_is_listed_led_by_what_it_is(site, monkeypatch):
+    """K6 decision 13: the select lists every checkpoint, each option led by
+    `renderers.record_kind_text`; the values stay the listing's keys, and the
+    options stay unique."""
+    from src.webui.components import renderers as r
+
+    _put_bundle(site, BUNDLE_BASE_RUN, None)
+    for task, run in (("disease", CHILD_RUN), ("gene", "20261022-000000_gene_dddddd"),
+                      ("patients_like_me", "20261023-000000_plm_eeeeee")):
+        _put_bundle(site, run, task)
+    _put_bundle(site, "20261021-000000_refused_cccccc", "disease", record_version=999)
+    page, request = _page(monkeypatch)
+    models = tp.read_models("demo", request)
+    choices = tp.model_choices(models)
+    assert [key for _label, key in choices] == [tp.item_key(i) for i in models["items"]]
+    labels = [label for label, _key in choices]
+    assert len(set(labels)) == len(labels) and len({k for _l, k in choices}) == len(choices)
+    for (label, _key), item in zip(choices, models["items"], strict=True):
+        assert label.startswith(r.record_kind_text(item) + " · epoch "), label
+    leads = sorted(label.split(" · epoch ")[0] for label in labels)
+    assert leads == sorted(["Base", "Disease", "Gene", "Patients-like-me", "History · never run",
+                            "Record not readable"])
+
+
+def _task_record(mode, **metrics):
+    base = {"pooled_mrr": 0.3125, "pooled_top1": 0.25, "pooled_top3": 0.5, "pooled_top10": 0.75,
+            "macro_recall@1": 0.2, "macro_recall@5": 0.4, "macro_recall@10": 0.6,
+            "macro_precision@1": 0.25, "macro_mrr": 0.33, "best_positive_mrr": 0.4,
+            "conservative_pooled_mrr": 0.21, "coverage": 0.8}
+    return {"scoring": {"mode": mode}, "metrics": {**base, **metrics}, "n_ranked": 8,
+            "cohort": {"label": "v", "counts": {"source_cases": 13, "ranked_eligible": 10,
+                                                "n_excluded": 3,
+                                                "excluded": {"ground_truth_absent": 3}}}}
+
+
+@pytest.mark.parametrize("mode", ["disease", "gene", "patients_like_me"])
+def test_a_task_record_shows_its_own_tiles_coverage_and_figures(mode):
+    """A task record (`task_measurement`): its three tiles and coverage, each
+    named by `caveats.metric_text`; coverage "n of M import-eligible cases";
+    the conservative pooled MRR with what it counts; no mean rank and no Mode
+    C; its own help topic; a metric of another name shown escaped."""
+    import html as html_lib
+
+    from src.evaluation.caveats import TASK_NAMES, metric_text, mode_label, mode_note
+
+    raw = tp._record_html(_task_record(mode, **{HOSTILE: 0.5}), {}, {})
+    text = " ".join(html_lib.unescape(re.sub(r"<[^>]+>", " ", raw)).split())
+    tiles = tp._TILES[mode]
+    assert len(tiles) == 4 and tiles[0] == "pooled_mrr" and tiles[-1] == "coverage"
+    for name in tiles:
+        assert f'shep-test-tile-l">{html_lib.escape(metric_text(mode, name))}<' in raw
+    assert mode_label(mode) in text
+    assert "8 of 10 import-eligible cases ranked by the model · 13 source cases; 3 excluded " \
+        "at import: ground truth absent 3" in text
+    assert "8 of 10 cases ranked" in text and "pooled over positive pairs" in text
+    assert "Conservative pooled MRR" in text and "0.2100 · an unranked case whose truth can be " \
+        "assessed counts 0" in text
+    assert "Mean rank" not in text and "Mode C" not in text and "Mode D" not in text
+    assert "Macro MRR" in text and "Best-positive MRR" in text and "Pooled top-k" in text
+    # A tile's figure is not repeated in its family's row (rule 1.2).
+    pooled = raw.split('>Pooled top-k</span><span class="shep-v">')[1].split("</span>")[0]
+    shown = {f"k={name[len('pooled_top'):]} " for name in tiles if name.startswith("pooled_top")}
+    assert shown and not any(k in pooled for k in shown)
+    assert all(f"k={k} " in pooled for k in (1, 3, 10) if f"k={k} " not in shown)
+    assert f'data-help="test-mode-{mode}"' in raw
+    assert tp.TOPIC_HELP[f"test-mode-{mode}"] == (f"{TASK_NAMES[mode]} task result",
+                                                  mode_note(mode))
+    assert HOSTILE not in raw and html_lib.escape(HOSTILE, quote=False) in raw
+
+
+def test_a_task_report_row_names_its_task_first():
+    record = _task_record("gene")
+    run = {"run_id": "r", "record": record, "state": {"kept": "kept",
+                                                      "registered": "not_registered"}}
+    assert tp._row_state(run, []).startswith("gene task: report kept · not registered")
+    plm = dict(run, record=_task_record("patients_like_me"))
+    assert tp._row_state(plm, []).startswith("patients-like-me task: report kept")
+
+
+def test_the_fixed_measurement_is_the_chosen_models_own_task():
+    for task, words in (("disease", "Disease"), ("gene", "Gene"),
+                        ("patients_like_me", "Patients-like-me")):
+        fixed = tp.fixed_html({}, _model(task))
+        assert f"Measurement</span><span>{words} task · read from the model&#x27;s record" \
+            in fixed
+    for item in (None, _model(None, "base"), {"record": "history"}, {"record": None}):
+        fixed = tp.fixed_html({}, item)
+        assert "the chosen model&#x27;s own task (a finetuned model only)" in fixed
+        assert "Mode C" not in fixed
+
+
+def test_the_job_card_names_the_runs_task_escaped():
+    job = {"status": "running", "inputs": {"version_label": LABEL, "task": "gene",
+                                           "checkpoint_sha256": "c" * 64, "workspace": "/w/ws"},
+           "log": []}
+    body = tp.job_body_html(job, [], ("busy", "GPU job: test run"))
+    assert "Gene task" in body
+    hostile = dict(job, inputs={**job["inputs"], "task": HOSTILE})
+    body = tp.job_body_html(hostile, [], ("busy", ""))
+    assert "task not recorded" in body and HOSTILE not in body
+
+
+def test_the_help_says_the_measurement_is_the_models_task():
+    """Skill §12: the titles equal the labels (pinned by the registration
+    test), the leads answer the question, and the measurement is said where
+    the choice is made: never Mode C."""
+    title, text = tp.TOPIC_HELP["test-fixed"]
+    assert title == "Fixed by the server" and "Mode C" not in text
+    lead = text.split("\n")[0]
+    assert len(lead) <= 100 and "fixes them" in lead
+    assert "Measurement: the chosen model's own task" in text
+    title, text = tp.FIELD_HELP["shep-test-model"]
+    assert title == "Model" and len(text.split("\n")[0]) <= 100
+    assert "a base, or a file without a model spec, is listed but not measured here" in text
+
+
+def test_a_gatv2_childs_report_is_registered_beside_its_own_file(site, monkeypatch):
+    """K5a fixed the gatv2 layout key the ledger placement resolves through;
+    the page's placement for a bundle run had no test: a manifest naming the
+    child's digest and path is placed beside that listed file."""
+    from src.utils.fingerprint import file_sha256
+
+    path, child = _put_bundle(site)
+    page, request = _page(monkeypatch)
+    models = tp.read_models("demo", request)
+    manifest = {"artifact_digests": {"checkpoint": file_sha256(path)},
+                "checkpoint_path": str(path), "data_dir": str(site.demo)}
+    place = tp.ledger_checkpoint(manifest, page, models, "demo")
+    assert place.path is not None and place.path.resolve() == path.resolve()
+    assert tp.item_key(place.item) == child and place.item["architecture"] == "gatv2"
+    assert place.path.parent / "evaluations.json" == \
+        site.demo / "runs" / "gatv2" / CHILD_RUN / "checkpoints" / "evaluations.json"

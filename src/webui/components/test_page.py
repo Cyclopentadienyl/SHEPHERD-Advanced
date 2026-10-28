@@ -18,23 +18,33 @@ docstring. Three panels, as the mockup draws them (``test-wide.png``,
   server's one run listing that ``GET /api/v1/cohorts`` shares
   (`server_lists.version_item`); a running test, or the last one that ended
   with nothing in the store, is the top row;
-- **Run**: the model (WP1's checkpoint list of the workspace, by name and model
-  fingerprint: listing opens every checkpoint, so it is an operator control and
-  a read-only request is not shown it), the R10 evidence the server's setting
-  names, "Register the result" and "Deterministic execution", the batch size and
-  device the server fixes (D5), "🔒 Start test" through the job runner
-  (`TrainingManager.start_test`) with the **full digests shown** as the expected
+- **Run**: the model (WP1's checkpoint list of the workspace, every checkpoint,
+  each option led by what its model record says it is,
+  `renderers.record_kind_text`: listing opens every checkpoint, so it is an
+  operator control and a read-only request is not shown it), the R10 evidence
+  the server's setting names, "Register the result" and "Deterministic
+  execution", the batch size, device and measurement the server fixes (D5; the
+  measurement is the chosen model's own task, never chosen here), "🔒 Start
+  test" through the job runner (`TrainingManager.start_test`, given the task
+  from the session's listing) with the **full digests shown** as the expected
   ones, so the run refuses before measuring when the file or the version it
-  reads is not the one chosen; then the job: its state, elapsed time, inputs,
+  reads is not the one chosen. **Only a model finetuned for a task is
+  measured** (K6 decision 13, `measure_refusal`, one rule for Start's reason
+  and for the start itself): a base, a history file (no model spec), a record
+  refused or not read, and a gene or patients-like-me model on a version that
+  lists no causal (or candidate) genes are refused with their reason; the
+  runner never launches Mode C or D, which only the command line runs until
+  K7; then the job: its state, elapsed time, inputs,
   output tail, "🔒 Cancel" (the runner's stop for test runs only), and once it
   has ended, **what it left, from the runner** (its outcome file, kept and
   registered read from disk by WP4's helper; "no report was published" when
   there is no outcome file; a cancel says what was left);
 - **Result**: the selected report as the record the ledger would hold
-  (`build_record`, through the store's scan): the Mode C metrics over the cases
-  ranked, coverage with every exclusion, relations, R10 in the caveats' words
-  (*unverifiable* is a word, never a 0), environment, dataset origin, whether
-  it is kept and registered; "🔒 Register this report" through the one
+  (`build_record`, through the store's scan): the metrics of the record's own
+  measurement (a task's, or a kept Mode C or D report's), each named by
+  `caveats.metric_text`, coverage with every exclusion, relations, R10 in the
+  caveats' words (*unverifiable* is a word, never a 0), environment, dataset
+  origin, whether it is kept and registered; "🔒 Register this report" through the one
   registration function (`register_report`, the ledger beside the listed
   checkpoint holding the weights it measured, found by digest in the server's
   checkpoint list, never the report's recorded path); while runs under its key
@@ -117,8 +127,10 @@ from src.evaluation.caveats import (
     R10_STATE_TEXT,
     R10_UNVERIFIABLE_REASON,
     RELATION_DISPLAY_NAMES,
+    TASK_NAMES,
     metric_text,
     mode_label,
+    mode_note,
 )
 from src.webui.components import renderers as r
 from src.webui.components.chips import D8_SHORT, chips_on_change
@@ -183,18 +195,31 @@ _R10_EVIDENCE_WORDS = {
 }
 #: The metrics shown as tiles, in order, by the record's mode (`scoring.mode`);
 #: each is named by `caveats.metric_text`. Mode D's are over the import-eligible
-#: cases, a case not reached counting 0 (PLAN_B05 §5).
+#: cases, a case not reached counting 0 (PLAN_B05 §5). A task's
+#: (`src.evaluation.task_measurement`) are pooled over its positive pairs or a
+#: mean over its ranked cases, and its coverage; Mode C and D stay for the
+#: reports kept from before the tasks (the page starts neither).
 _TILES = {
     "C": ("untruncated_mrr", "hits@1", "hits@5", "hits@10"),
     "D": ("post_import_mrr", "post_import_hits@1", "post_import_hits@10", "coverage"),
+    "disease": ("pooled_mrr", "pooled_top1", "pooled_top10", "coverage"),
+    "gene": ("pooled_mrr", "pooled_top1", "macro_recall@5", "coverage"),
+    "patients_like_me": ("pooled_mrr", "pooled_top10", "macro_recall@10", "coverage"),
 }
-#: The mean rank each mode reports, over the cases it ranked or reached.
+#: The mean rank Mode C and D report, over the cases they ranked or reached (a
+#: task reports none).
 _MEAN_RANK = {"C": "mean_rank", "D": "reached_mean_rank"}
+#: A task record's metric families that take a cut-off k, each shown as one
+#: row (its k values in order), and its single figures shown as a row each.
+_TASK_FAMILIES = ("pooled_top", "macro_recall@", "macro_precision@")
+_TASK_ROWS = ("macro_mrr", "best_positive_mrr")
 #: The ⓘ beside each mode's label.
-_MODE_HELP = {"C": "test-mode-c", "D": "test-mode-d"}
+_MODE_HELP = {"C": "test-mode-c", "D": "test-mode-d",
+              **{task: f"test-mode-{task}" for task in TASK_NAMES}}
 #: Each report row's mode, first in its state line: a plain label, the code
 #: beside it. A report of another mode, or one whose mode cannot be read, says so.
-_MODE_ROW_WORDS = {"C": "model ranking (Mode C)", "D": "served ranking (Mode D)"}
+_MODE_ROW_WORDS = {"C": "model ranking (Mode C)", "D": "served ranking (Mode D)",
+                   **{task: f"{name.lower()} task" for task, name in TASK_NAMES.items()}}
 #: The job's statuses, as its pill shows them: never green for failed,
 #: stopped or cancelled.
 _PILLS = {
@@ -221,10 +246,13 @@ FIELD_HELP = {
     ),
     "shep-test-model": (
         "Model",
-        "The workspace's checkpoints, read from the server's list (each file is read once "
-        "and named by its model fingerprint). Listing them opens every checkpoint, so it is "
-        "an operator control. The run is given the model fingerprint shown here and refuses "
-        "before measuring if the file it reads holds other bytes.",
+        "The workspace's checkpoints from the server's list, each led by what its record "
+        "says it is.\n"
+        "• A model finetuned for a task is measured by that task; a base, or a file without "
+        "a model spec, is listed but not measured here.\n"
+        "• Listing opens every checkpoint, so it is an operator control.\n"
+        "• The run is given the model fingerprint shown here and refuses before measuring if "
+        "the file it reads holds other bytes.",
     ),
     "shep-test-record": (
         "Register the result",
@@ -286,6 +314,8 @@ TOPIC_HELP = {
     ),
     "test-mode-c": ("Mode C result", PRE_B1_NOTE),
     "test-mode-d": ("Mode D result", MODE_D_NOTE),
+    **{f"test-mode-{task}": (f"{name} task result", mode_note(task))
+       for task, name in TASK_NAMES.items()},
     "test-r10": (
         "R10 labels",
         " · ".join(f"{text['name']}: {text['definition']}"
@@ -293,11 +323,12 @@ TOPIC_HELP = {
     ),
     "test-fixed": (
         "Fixed by the server",
-        "A test run has no reason to vary these, so the job runner fixes them (D5): the "
-        "batch size is the measurement's default and the device the deployment's "
-        "(SHEPHERD_DEVICE), with no fallback. The mode is Mode C, the model's own ranking; "
-        "Mode D, the served ranking, is an operator's command-line run. Only deterministic "
-        "execution is chosen here, and it is recorded.",
+        "A test run has no reason to vary these, so the job runner fixes them (D5).\n"
+        "• Batch size: the measurement's default.\n"
+        "• Device: the deployment's (SHEPHERD_DEVICE), with no fallback.\n"
+        "• Measurement: the chosen model's own task, read from its model record, never "
+        "chosen here.\n"
+        "Only deterministic execution is chosen here, and it is recorded.",
     ),
     "test-evidence": (
         "R10 evidence",
@@ -850,15 +881,19 @@ def gpu_line(*, manager: Any = None, operator: bool = False) -> Tuple[str, str]:
 # Choices
 # ---------------------------------------------------------------------------
 def model_choices(models: Mapping[str, Any]) -> List[Tuple[str, str]]:
-    """The model select's options: the epoch first (what tells a run's
-    checkpoints apart when the select is narrow and its text ends in an
-    ellipsis), the run, the model fingerprint or why a checkpoint cannot be
-    tested, then the file name."""
+    """The model select's options: what the checkpoint is first, from its model
+    record (`renderers.record_kind_text`: "Disease", "Base", "History · never
+    run", …, K6 decision 13: every checkpoint is listed, only a task model is
+    measured), then the epoch (what tells a run's checkpoints apart when the
+    select is narrow and its text ends in an ellipsis), the run, the model
+    fingerprint or why a checkpoint cannot be tested, then the file name. The
+    values are the listing's keys, whatever the words."""
     choices = []
     for item in models.get("items") or []:
         epoch = item.get("epoch")
         epoch_text = str(epoch) if isinstance(epoch, int) and not isinstance(epoch, bool) else "—"
-        label = f"epoch {epoch_text} · {r.run_label(item.get('architecture'), item.get('run'))}"
+        label = (f"{r.record_kind_text(item)} · epoch {epoch_text} · "
+                 f"{r.run_label(item.get('architecture'), item.get('run'))}")
         if item.get("problem") or not r.is_digest(item.get("sha256")):
             label += " · metadata not readable"
         else:
@@ -1221,19 +1256,77 @@ def evidence_html(page: Mapping[str, Any], workspace: Optional[str]) -> str:
             f'{help_button("test-evidence", "R10 evidence")}</span><span>{measured}{extra}</span></div>')
 
 
-def fixed_html(page: Mapping[str, Any]) -> str:
+def fixed_html(page: Mapping[str, Any], item: Optional[Mapping[str, Any]]) -> str:
+    """What the server fixes for a run (D5): the batch size, the device, and
+    the measurement, which is the chosen model's own task (`item`, the chosen
+    listing entry, or None), never chosen here."""
     device = page.get("device") or {}
     if device.get("problem"):
         shown = f'<span class="shep-amber-t">{e(device["problem"])}</span>'
     else:
         value = device.get("value") or "auto"
         shown = (f"<code>{e(value)}</code>" + (" (requires CUDA)" if value == "auto" else ""))
+    task = measured_task(item)
+    measurement = (f"{TASK_NAMES[task]} task · read from the model's record" if task
+                   else "the chosen model's own task (a finetuned model only)")
     return (f'<div class="shep-test-kv"><span class="shep-k">Batch size'
             f'{help_button("test-fixed", "Fixed by the server")}</span>'
             f'<span>{BATCH_SIZE_SHOWN} · fixed by the server</span>'
             f'<span class="shep-k">Device</span><span>{shown} · fixed by the server</span>'
-            f'<span class="shep-k">Mode</span><span>{e(_MODE_ROW_WORDS["C"])} · fixed by the '
-            'server</span></div>')
+            f'<span class="shep-k">Measurement</span><span>{e(measurement)}</span></div>')
+
+
+def measured_task(item: Optional[Mapping[str, Any]]) -> Optional[str]:
+    """The task a listed checkpoint is measured by: its model record's task
+    when the record is a finetuned task model's (`listed_record`), else None."""
+    if not item or item.get("record") != "model" or item.get("learning_stage") != "finetune":
+        return None
+    task = item.get("task")
+    return task if task in TASK_NAMES else None
+
+
+def measure_refusal(item: Mapping[str, Any], version: Optional[Mapping[str, Any]]
+                    ) -> Optional[str]:
+    """Why this page does not measure the listed checkpoint `item` on the
+    listed cohort version `version`, or None (K6 decision 13). **The one rule**
+    behind Start's reason (`start_state`) and the start itself
+    (`start_test_run`); the run checks the record again on the bytes it reads.
+
+    Only a model finetuned for a task is measured, by that task: a record
+    refused or not read, a file without a model spec (history, never run from
+    the WebUI) and a base are refused. A gene model needs a version that lists
+    causal and candidate genes, a patients-like-me model one that lists causal
+    genes (its `counts["genes"]`, which the importer writes only for a source
+    that lists genes); a version whose causal genes are all unmapped passes
+    here and the run refuses it."""
+    record = item.get("record")
+    if record == "refused":
+        return (f"this checkpoint's model record cannot be read "
+                f"({item.get('record_problem') or 'no reason was given'})")
+    if record is None:
+        return "this checkpoint's model record was not read"
+    if record == "history":
+        return ("this checkpoint has no model spec (a ShepherdGNN checkpoint): it is history "
+                "and is not measured here. Choose a model finetuned for a task")
+    if item.get("learning_stage") == "base":
+        return ("this checkpoint is a base: it has no task to measure. Choose a model "
+                "finetuned from it for a task")
+    task = measured_task(item)
+    if task is None:
+        return "this checkpoint's model record names no task this page measures"
+    counts = (version or {}).get("counts")
+    genes = counts.get("genes") if isinstance(counts, Mapping) else None
+    genes = genes if isinstance(genes, Mapping) else {}
+    if task in ("gene", "patients_like_me") and not genes.get("cases_with_causal_genes"):
+        why = ("so the gene task has no truth to rank. Import a source that lists causal_genes "
+               "and candidate_genes" if task == "gene" else
+               "so no two of its patients can be relevant to each other. Import a source that "
+               "lists causal_genes")
+        return f"this cohort version lists no causal genes, {why}"
+    if task == "gene" and not genes.get("cases_with_candidate_genes"):
+        return ("this cohort version lists no candidate genes, the list the gene task ranks. "
+                "Import a source that lists candidate_genes")
+    return None
 
 
 def start_state(page: Mapping[str, Any], models: Mapping[str, Any], workspace: Optional[str],
@@ -1272,6 +1365,9 @@ def start_state(page: Mapping[str, Any], models: Mapping[str, Any], workspace: O
         return False, "Disabled: choose a model."
     if item.get("problem") or not r.is_digest(item.get("sha256")):
         return False, "Disabled: this checkpoint's metadata is not readable."
+    refusal = measure_refusal(item, version)
+    if refusal:
+        return False, "Disabled: " + said(redact(refusal, roots), "")
     if (page.get("evidence") or {}).get("problem"):
         return False, ("Disabled: the evidence directories setting is refused: "
                        + redact(page["evidence"]["problem"], roots))
@@ -1304,8 +1400,11 @@ def job_body_html(job: Mapping[str, Any], roots: Sequence[Tuple[str, str]],
     inputs = job.get("inputs") or {}
     started = utc_time(job.get("start_time"))
     evidence = inputs.get("evidence_dirs") or []
+    # The run's own task, which can differ from the model chosen now.
+    task = inputs.get("task")
     parts = [e(inputs.get("version_label") or "—"),
              f"model <code>{e(str(inputs.get('checkpoint_sha256') or '')[:12])}</code>",
+             e(f"{TASK_NAMES[task]} task" if task in TASK_NAMES else "task not recorded"),
              f"workspace {e(Path(str(inputs.get('workspace') or '')).name or '—')}",
              f"register {'on' if inputs.get('record') else 'off'}",
              f"deterministic {'on' if inputs.get('deterministic') else 'off'}",
@@ -1500,6 +1599,85 @@ def result_html(reports: Mapping[str, Any], run_id: Optional[str],
     return head + f'<div class="shep-test-pad shep-test-result">{"".join(parts)}</div>'
 
 
+def _tile_note(mode: Optional[str], name: str, n_ranked: Any, eligible: str) -> str:
+    """What a tile's figure is over: Mode D's import-eligible cases; a task's
+    positive pairs (pooled), ranked cases (macro) or "n of M cases ranked"
+    (coverage, M the version's import-eligible cases, which a task measures
+    every one of); otherwise the cases ranked."""
+    if mode == "D":
+        return f"over {eligible} import-eligible"
+    if mode in TASK_NAMES:
+        if name == "coverage":
+            return f"{_count(n_ranked)} of {eligible} cases ranked"
+        if name.startswith("pooled_"):
+            return "pooled over positive pairs"
+        if name.startswith("macro_"):
+            return f"mean over {_count(n_ranked)} ranked cases"
+    return f"over {_count(n_ranked)} ranked"
+
+
+def _figure_words(mode: str, name: str) -> str:
+    """A task metric's words as a row under the record's label, which names
+    the task once: `caveats.metric_text`'s "Disease pooled top-k" less the
+    task's name, "Pooled top-k"."""
+    words = metric_text(mode, name)[len(TASK_NAMES[mode]) + 1:]
+    return words[:1].upper() + words[1:]
+
+
+def _task_rows(mode: str, metrics: Mapping[str, Any], tiles: Sequence[str]
+               ) -> List[Tuple[str, str]]:
+    """A task record's figures past its tiles (README E1, E2, E5): the
+    conservative pooled MRR with what it counts, one row for each family that
+    takes a cut-off k (its k values in order, a tile's left out), the macro
+    and best-positive MRR, and any other figure the record holds. No mean
+    rank: a task reports none."""
+    shown = set(tiles) | {"conservative_pooled_mrr"}
+    conservative = _number(metrics.get("conservative_pooled_mrr"))
+    rows = [(_figure_words(mode, "conservative_pooled_mrr"),
+             (conservative if conservative != "—" else "not reported")
+             + " · an unranked case whose truth can be assessed counts 0")]
+    for prefix in _TASK_FAMILIES:
+        family = sorted((int(name[len(prefix):]), name) for name in metrics
+                        if str(name).startswith(prefix) and str(name)[len(prefix):].isdigit())
+        shown.update(name for _k, name in family)
+        values = [f"k={k} {_number(metrics[name])}" for k, name in family if name not in tiles]
+        if values:
+            rows.append((_figure_words(mode, f"{prefix}k"), e(", ".join(values))))
+    for name in _TASK_ROWS:
+        if name in metrics:
+            shown.add(name)
+            rows.append((_figure_words(mode, name), e(_number(metrics[name]))))
+    other = [f"{metric_text(mode, str(k))} {_number(v)}" for k, v in sorted(metrics.items())
+             if k not in shown]
+    if other:
+        rows.append(("Other metrics", e(" · ".join(other))))
+    return rows
+
+
+def _mode_rows(mode: Optional[str], metrics: Mapping[str, Any], tiles: Sequence[str],
+               n_ranked: Any) -> List[Tuple[str, str]]:
+    """A kept Mode C or D record's figures past its tiles (or a record of a
+    mode this version does not describe): its mean rank, and every other
+    figure, each named by `caveats.metric_text`."""
+    mean_name = _MEAN_RANK.get(mode)
+    mean = metrics.get(mean_name) if mean_name else None
+    if mean_name is None:
+        mean_text = "—"
+    elif isinstance(mean, (int, float)) and not isinstance(mean, bool):
+        mean_text = (f"{e(metric_text(mode, mean_name))} "
+                     f"{e(_number(mean).rstrip('0').rstrip('.'))}, over {e(_count(n_ranked))} "
+                     f"{'reached' if mode == 'D' else 'ranked'} cases")
+    else:
+        mean_text = (f"{e(metric_text(mode, mean_name))} not reported"
+                     + (": no case was reached" if mode == "D" and n_ranked == 0 else ""))
+    return [
+        ("Mean rank", mean_text),
+        ("Other metrics", " · ".join(f"{e(metric_text(mode, k))} {e(_number(v))}"
+                                     for k, v in sorted(metrics.items())
+                                     if k not in set(tiles) | {mean_name}) or "—"),
+    ]
+
+
 def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
                  state: Mapping[str, Any]) -> str:
     cohort = record.get("cohort") if isinstance(record.get("cohort"), Mapping) else {}
@@ -1514,10 +1692,8 @@ def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
     semantics = scoring.get("score_semantics")
     label = mode_label(mode, semantics if isinstance(semantics, str) else None)
     tile_names = _TILES.get(mode, ())
-    mean_name = _MEAN_RANK.get(mode)
+    task = mode in TASK_NAMES
     eligible = _count(counts.get("ranked_eligible"))
-    over = (f"over {eligible} import-eligible" if mode == "D"
-            else f"over {_count(n_ranked)} ranked")
     deterministic = regime.get("deterministic_algorithms")
     line = (f'{e(cohort.get("label"))} (version <code>{e(str(record.get("cohort_digest") or "")[:12])}</code>, '
             f'role {r.ident_html(record.get("cohort_role"))}) · model '
@@ -1527,14 +1703,19 @@ def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
     tiles = "".join(
         f'<div class="shep-test-tile"><div class="shep-test-tile-l">{e(metric_text(mode, name))}</div>'
         f'<div class="shep-test-tile-v">{e(_number(metrics.get(name)))}</div>'
-        f'<div class="shep-test-tile-n">{e(over)}</div></div>'
+        f'<div class="shep-test-tile-n">{e(_tile_note(mode, name, n_ranked, eligible))}</div>'
+        '</div>'
         for name in tile_names)
     excluded = counts.get("excluded") if isinstance(counts.get("excluded"), Mapping) else {}
     reasons = " · ".join(f"{str(k).replace('_', ' ')} {_count(v)}" for k, v in excluded.items())
     excluded_text = (f"{e(_count(counts.get('n_excluded')))} excluded"
-                     f"{' at import' if mode == 'D' else ''}"
+                     f"{' at import' if mode == 'D' or task else ''}"
                      f"{': ' + e(reasons) if reasons else ''}")
-    if mode == "D":
+    if task:
+        coverage = (f"<b>{e(_count(n_ranked))} of {e(eligible)}</b> import-eligible cases ranked "
+                    f"by the model · {e(_count(counts.get('source_cases')))} source cases; "
+                    f"{excluded_text}")
+    elif mode == "D":
         coverage = (f"<b>{e(_count(n_ranked))} of {e(eligible)}</b> import-eligible cases reached "
                     f"by the served pipeline · {e(_count(counts.get('source_cases')))} source "
                     f"cases; {excluded_text}")
@@ -1546,22 +1727,11 @@ def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
         coverage = (f"{e(_count(counts.get('source_cases')))} source cases · {excluded_text}; "
                     f"{e(_count(n_ranked))} cases counted by the record; what they are is not "
                     "described for this mode")
-    mean = metrics.get(mean_name) if mean_name else None
-    if mean_name is None:
-        mean_text = "—"
-    elif isinstance(mean, (int, float)) and not isinstance(mean, bool):
-        mean_text = (f"{e(metric_text(mode, mean_name))} "
-                     f"{e(_number(mean).rstrip('0').rstrip('.'))}, over {e(_count(n_ranked))} "
-                     f"{'reached' if mode == 'D' else 'ranked'} cases")
-    else:
-        mean_text = (f"{e(metric_text(mode, mean_name))} not reported"
-                     + (": no case was reached" if mode == "D" and n_ranked == 0 else ""))
+    figures = (_task_rows(mode, metrics, tile_names) if task
+               else _mode_rows(mode, metrics, tile_names, n_ranked))
     lines = [
         ("Coverage", coverage),
-        ("Mean rank", mean_text),
-        ("Other metrics", " · ".join(f"{e(metric_text(mode, k))} {e(_number(v))}"
-                                     for k, v in sorted(metrics.items())
-                                     if k not in set(tile_names) | {mean_name}) or "—"),
+        *figures,
         ("Relations", _relations(record.get("relations"))),
         *_r10_lines(record.get("r10")),
         ("Environment", _environment(record)),
@@ -1850,10 +2020,13 @@ def start_test_run(page: Mapping[str, Any], models: Mapping[str, Any], workspace
                    manager: Any = None, environ: Optional[Mapping[str, str]] = None
                    ) -> Dict[str, Any]:
     """"Start test": D8 on this request; the workspace, the version and the
-    checkpoint found in the server's lists again (never a client path); the
-    **digests shown to the operator** passed as the expected ones, so the run
-    refuses before measuring when the checkpoint or the version it reads is
-    not the one chosen; the runner's one start for test runs."""
+    checkpoint found in the server's lists again (never a client path); a
+    checkpoint this page does not measure refused (`measure_refusal`, the rule
+    Start's reason shows); the **digests shown to the operator** passed as the
+    expected ones, and the task from the session's listing, so the run refuses
+    before measuring when the checkpoint or the version it reads is not the
+    one chosen, or its record is not that task's; the runner's one start for
+    test runs."""
     from src.api.services.server_lists import (
         ServerListRefused,
         resolve_checkpoint,
@@ -1875,6 +2048,10 @@ def start_test_run(page: Mapping[str, Any], models: Mapping[str, Any], workspace
             or not r.is_digest(item.get("sha256"))):
         return {"success": False, "error": "Choose a model the server lists in this workspace. "
                                            "Nothing was started."}
+    refusal = measure_refusal(item, version)
+    if refusal:
+        return {"success": False, "error": said(refusal[:1].upper() + refusal[1:],
+                                                "Nothing was started.")}
     registry = server_settings.cohort_registry(environ)
     evidence = server_settings.training_evidence_dirs(environ)
     if not registry.available:
@@ -1890,7 +2067,7 @@ def start_test_run(page: Mapping[str, Any], models: Mapping[str, Any], workspace
     inputs = TestRunInputs(
         registry=registry.value, version_label=str(label),
         version_sha256=version["manifest_sha256"], workspace=data_dir, checkpoint=checkpoint,
-        checkpoint_sha256=item["sha256"], evidence_dirs=tuple(evidence.value),
+        checkpoint_sha256=item["sha256"], task=item["task"], evidence_dirs=tuple(evidence.value),
         record=bool(record), deterministic=bool(deterministic))
     return manager.start_test(inputs)
 
@@ -2336,7 +2513,7 @@ def create_test_page(ctx: Any) -> None:
             gr.update(interactive=allowed and bool(ws)),
             model_html(page, models, key),
             evidence_html(page, ws),
-            fixed_html(page),
+            fixed_html(page, find_model(models, key)),
             *_start_outputs(page, models, binding, ws, label, key, gpu),
             *_card_outputs(page, job, gpu),
             gr.update(interactive=allowed),
