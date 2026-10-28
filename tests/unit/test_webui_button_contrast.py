@@ -12,7 +12,9 @@ grey with grey text. These tests compute the contrast (WCAG 2.x) of what each
 actually gets: the stylesheet's value where it sets one, the theme's
 otherwise, so removing the stylesheet's rules fails them. Text needs 4.5:1;
 the checkbox's border, a control's boundary, 3:1 against its fill and against
-every background a checkbox sits on (WCAG 1.4.11).
+every background a checkbox sits on (WCAG 1.4.11). The status tokens
+(``--shep-status-*``, K6 decision 2) are aliases of the tag colours and read as
+text on every surface a status mark sits on.
 
 Module: tests/unit/test_webui_button_contrast.py
 """
@@ -220,3 +222,32 @@ def test_a_disabled_unchecked_box_does_not_answer_hover(kind):
     assert declarations.get("border-color") == "var(--checkbox-border-color)"
     assert declarations.get("background-color") == "var(--checkbox-background-color)"
     assert _specificity(selector) > _specificity(_GRADIO_HOVER[kind])
+
+
+# --------------------------------------------------------------------------- status tokens
+#: Each status token (the WebUI skill §6; K6 decision 2), the tag class whose
+#: word colour it aliases, and that tag's tint.
+STATUS_TOKENS = {
+    "--shep-status-ok": (".shep-tag-ok", "--shep-green-800", "--shep-green-50"),
+    "--shep-status-neutral": (".shep-tag-grey", "--shep-grey-800", "--shep-grey-50"),
+    "--shep-status-warn": (".shep-tag-amber", "--shep-amber-800", "--shep-amber-50"),
+    "--shep-status-error": (".shep-tag-red", "--shep-red-700", "--shep-red-50"),
+    "--shep-status-info": (".shep-tag-accent", "--shep-accent-text", "--shep-accent-50"),
+}
+
+
+def test_the_status_tokens_alias_the_tag_colours_and_read_on_every_surface():
+    """The five status tokens are aliases of the colours the tags already
+    draw their words in (no new hex), and each reads as text (4.5:1, so a
+    mark's 3:1 holds too) on the panel, the second panel, the page and its own
+    tag's tint."""
+    declared = dict(re.findall(r"(--shep-status-[a-z]+)\s*:\s*([^;]+);", style.SHELL_CSS))
+    assert set(declared) == set(STATUS_TOKENS)
+    tokens = _tokens()
+    surfaces = {name: tokens[name] for name in ("--shep-panel", "--shep-panel-2", "--shep-bg")}
+    for name, (tag, alias, tint) in STATUS_TOKENS.items():
+        assert declared[name].strip() == f"var({alias})", f"{name} is an alias, never a new hex"
+        assert f"color: var({alias})" in _block(tag), f"{tag} draws its word in {alias}"
+        colour = _resolve(declared[name], tokens)
+        for where, background in {**surfaces, tint: tokens[tint]}.items():
+            assert contrast(colour, background) >= 4.5, (name, where)

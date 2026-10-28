@@ -17,6 +17,10 @@ items to escaped HTML. What these pin:
 - **Model Facts**: Identity, Uses (the code's fixed statement and the synthetic
   line), Data, Evidence ("selection metric on val, not an independent test";
   recorded tests as states) and Warnings, always open;
+- **one vocabulary** (K6 decisions 6 and 8): a listed checkpoint's kind word
+  (`record_kind_text`, on `caveats.TASK_NAMES`), "GATv2" for a model bundle's
+  encoder, the Trainer's validation figures of a base and of a task model by
+  name, and Model Facts' Task and Configuration rows;
 - **everything escaped**: a workspace or run name may hold markup.
 
 Module: tests/unit/test_webui_renderers.py
@@ -246,7 +250,8 @@ def test_the_research_table_row_has_its_columns_and_escapes():
     assert "In use (Diagnosis)" in cells[0] and "<b>x" not in row
     assert f'model <code class="shep-fpv" title="{SHA}">{SHA[:12]}</code>' in cells[1]
     assert "dataset <b>demo</b>" in cells[1] and "synthetic" in cells[1]
-    assert cells[2] == "0.3180" and cells[3] == "<span>regime</span>"
+    assert cells[2] == '0.3180<div class="shep-sub">Validation MRR (Trainer, top-20)</div>'
+    assert cells[3] == "<span>regime</span>"
     assert cells[4] == "3 · 1 contested"
     unmatched = r.model_table_row_html(checkpoint(fingerprint=FP_B), [workspace()])
     assert "matches no listed workspace" in unmatched and unmatched.count("<td") == 4
@@ -291,10 +296,13 @@ def test_word_groups_break_only_between_groups_and_are_escaped():
 def test_the_run_suffix_and_a_validation_figure_by_its_name():
     assert r.run_suffix("20261017-091500_run_3fa9c1") == "run_3fa9c1"
     assert r.run_suffix("my-run") is None
-    assert r.validation_cell({"metric": "val_mrr", "value": 0.24101}) == "0.2410"
+    # The column says "Validation (Trainer)": each cell names its own figure.
+    assert r.validation_cell({"metric": "val_mrr", "value": 0.24101}) == (
+        '0.2410<div class="shep-sub">Validation MRR (Trainer, top-20)</div>')
     assert "Validation Hits@10 (Trainer)" in r.validation_cell({"metric": "val_hits@10",
                                                                  "value": 0.5})
     assert "—" in r.validation_cell(None)
+    assert r.MODEL_TABLE_COLUMNS[2] == "Validation (Trainer)"
 
 
 def test_every_clock_time_is_utc_with_its_label():
@@ -332,3 +340,84 @@ def test_model_facts_digest_rows_take_a_line_over_their_full_value():
     from src.webui.style import SHELL_CSS
 
     assert ".shep-kv > .shep-kv-wide { grid-column: 1 / -1;" in SHELL_CSS
+
+
+# --------------------------------------------------------------------------- one vocabulary
+def _record(record="model", stage="finetune", task="disease", differences=(), encoder="gatv2"):
+    return {**checkpoint(), "architecture": "gatv2", "record": record,
+            "learning_stage": stage if record == "model" else None,
+            "task": task if record == "model" else None,
+            "encoder": encoder if record == "model" else None,
+            "differences": differences if record == "model" else None,
+            "reference": (not differences) if record == "model" else None}
+
+
+def test_a_listed_checkpoint_leads_with_its_kind_word():
+    """Decision 6: one word per kind, the task names `caveats.TASK_NAMES`'."""
+    from src.evaluation.caveats import TASK_NAMES
+    from src.models.bundle.spec import TASKS
+
+    assert tuple(TASK_NAMES) == TASKS
+    assert r.record_kind_text(_record(stage="base", task=None)) == "Base"
+    assert [r.record_kind_text(_record(task=t)) for t in TASKS] == [
+        "Disease", "Gene", "Patients-like-me"]
+    assert r.record_kind_text(_record("history")) == "History · never run"
+    assert r.record_kind_text(_record("refused")) == "Record not readable"
+    assert r.record_kind_text({**checkpoint(problem="torn"), "record": None}) == (
+        "Record not readable")
+
+
+def test_a_bundle_run_reads_gatv2_and_a_shepherdgnn_run_its_upper_case():
+    assert r.run_label("gatv2", "20261017-091500_run_3fa9c1") == "GATv2 · run 2026-10-17 09:15"
+    assert r.run_label_html("gatv2", "20261017-091500_run_3fa9c1") == (
+        'GATv2 · <span class="shep-nowrap">run 2026-10-17 09:15</span>')
+    assert r.model_name_line(_record()) == "GATv2 · run 2026-10-17 09:15 · epoch 5"
+    assert (r.architecture_label("gat"), r.architecture_label("hgt"),
+            r.architecture_label(None)) == ("GAT", "HGT", "MODEL")
+
+
+@pytest.mark.parametrize("metric, label", [
+    ("val_pooled_mrr", "Validation pooled MRR (Trainer)"),
+    ("val_lp_accuracy", "Validation LP accuracy (Trainer)"),
+])
+def test_a_base_and_a_task_models_validation_figures_are_named(metric, label):
+    """G4: a bundle file's figure read "Validation val_pooled_mrr (Trainer)"."""
+    assert r.VALIDATION_LABELS[metric] == label
+    assert r.validation_cell({"metric": metric, "value": 0.5}) == (
+        f'0.5000<div class="shep-sub">{label}</div>')
+    assert r.validation_text((metric, 0.5)).startswith(f"{label} 0.5000 — selection metric")
+    from src.webui.components import training_console as tc
+
+    assert not hasattr(tc, "_METRIC_WORDS"), "one map, the renderers'"
+    assert tc.checkpoint_words({"filename": "last.pt", "sha256": SHA, "completed_epochs": 1,
+                                "validation": {"metric": metric, "value": 0.5}}) == (
+        f"Latest save · 1 epoch completed · {label} 0.5000")
+
+
+def test_model_facts_show_the_task_and_the_configuration_escaped():
+    """Axis 1 in the facts: the kind word, then the encoder and whether the
+    spec is the reference recipe; a recipe changed in N fields counts them."""
+    def identity(item):
+        return text_of(r.model_facts_html(r.facts_from_checkpoint(item, [workspace()])))
+
+    reference = r.facts_from_checkpoint(_record(task="gene"), [workspace()])
+    assert (reference.task, reference.configuration) == ("Gene", "GATv2 · reference recipe")
+    assert "TaskGene" in identity(_record(task="gene"))
+    assert "ConfigurationGATv2 · reference recipe" in identity(_record(task="gene"))
+    changed = r.facts_from_checkpoint(
+        _record(stage="base", task=None, differences=("encoder.heads", "input.dim")),
+        [workspace()])
+    assert (changed.task, changed.configuration) == ("Base", "GATv2 · recipe changed in 2 fields")
+    one = r.configuration_text(_record(differences=("input.dim",)))
+    assert one == "GATv2 · recipe changed in 1 field"
+    history = r.facts_from_checkpoint(_record("history"), [workspace()])
+    assert (history.task, history.configuration) == ("History · never run", "No model spec")
+    assert r.configuration_text(_record("refused")) == "Not readable"
+    odd = r.model_facts_html(r.facts_from_checkpoint(_record(encoder="<b>odd"), [workspace()]))
+    assert "<b>odd" not in odd and "&lt;B&gt;ODD · reference recipe" in odd
+    bare = r.model_facts_html(r.ModelFacts(
+        name_line="n", run=None, checkpoint_file=None, workspace=None, model_fingerprint=None,
+        trained_on_fingerprint=None, trained_on_names=(), synthetic=False, sources="",
+        validation=None, recorded=None, warnings=(), task="<i>x</i>", configuration=None))
+    assert "&lt;i&gt;x&lt;/i&gt;" in bare and "<i>x</i>" not in bare
+    assert '<span class="shep-k">Configuration</span><span class="shep-v">—</span>' in bare

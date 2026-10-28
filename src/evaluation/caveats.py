@@ -10,9 +10,10 @@ two places cannot be compared, and a claim that has to be corrected in two
 places will eventually be corrected in one.
 
 **Constants, and pure lookups over them (`mode_label`, `served_scoring`, `mode_note`,
-`metric_text`). No imports beyond the standard library, no I/O.** These strings
-are rendered into ``--help`` text, where ``argparse`` performs ``%`` substitution,
-so every literal percent sign here is escaped as ``%%``.
+`metric_text`), with the one name of each finetuned task (`TASK_NAMES`). No
+imports beyond the standard library, no I/O.** These strings are rendered into
+``--help`` text, where ``argparse`` performs ``%`` substitution, so every literal
+percent sign here is escaped as ``%%``.
 
 Module: src/evaluation/caveats.py
 """
@@ -145,6 +146,15 @@ MODE_D_NOTE = (
     "cases excluded at import are counted beside it, not in it."
 )
 
+#: **Each finetuned task's name, the one every surface shows** (K6 decision 6):
+#: the Test page's measurement, the Models page's filter and records, the
+#: Fine-tune page's options and the Diagnosis card's name line read it, and
+#: `src.webui.components.renderers.record_kind_text` builds on it. Keyed by
+#: the model spec's tasks (`src.models.bundle.spec.TASKS`, which this
+#: standard-library-only module does not import; `tests/unit/test_mode_d.py`
+#: pins the two equal).
+TASK_NAMES = {"disease": "Disease", "gene": "Gene", "patients_like_me": "Patients-like-me"}
+
 #: Each recorded mode's label, by the record's `scoring.mode`.
 #: A finetuned model bundle's disease task measurement
 #: (`src.evaluation.task_measurement`): its own scoring semantics, never grouped
@@ -218,6 +228,16 @@ def mode_note(mode: Optional[str]) -> Optional[str]:
 MODE_D_CASE_SETS = {"post_import_": "import-eligible", "reached_": "reached only"}
 
 
+#: A task measurement's metrics (`src.models.bundle.metrics.ranking_report`),
+#: as a surface names them; a family that takes a cut-off k gets it appended.
+_TASK_METRIC_WORDS = {"pooled_mrr": "pooled MRR", "macro_mrr": "macro MRR",
+                      "best_positive_mrr": "best-positive MRR",
+                      "conservative_pooled_mrr": "conservative pooled MRR",
+                      "coverage": "coverage"}
+_TASK_METRIC_FAMILIES = {"pooled_top": "pooled top-", "macro_recall@": "macro recall@",
+                         "macro_precision@": "macro precision@"}
+
+
 def _metric_words(name: str) -> str:
     if name == "mrr":
         return "MRR"
@@ -225,16 +245,25 @@ def _metric_words(name: str) -> str:
         return "mean rank"
     if name.startswith("hits@"):
         return f"Hits@{name[len('hits@'):]}"
+    if name in _TASK_METRIC_WORDS:
+        return _TASK_METRIC_WORDS[name]
+    for prefix, words in _TASK_METRIC_FAMILIES.items():
+        if name.startswith(prefix):
+            return f"{words}{name[len(prefix):]}"
     return name
 
 
 def metric_text(mode: Optional[str], name: str) -> str:
     """A recorded metric as a surface names it, never without its mode: "Mode C
     MRR (untruncated)", "Mode C Hits@10", "Mode D MRR (import-eligible)", "Mode D
-    mean rank (reached only)", "Mode D coverage"; "MRR (mode not recorded)" when
-    the mode cannot be read."""
+    mean rank (reached only)", "Mode D coverage"; a task's by its name
+    (`TASK_NAMES`): "Gene pooled MRR", "Disease pooled top-10",
+    "Patients-like-me macro recall@10"; "MRR (mode not recorded)" when the mode
+    cannot be read."""
     if not mode or not mode.strip():
         return f"{_metric_words(name)} (mode not recorded)"
+    if mode in TASK_NAMES:
+        return f"{TASK_NAMES[mode]} {_metric_words(name)}"
     if mode == "C" and name == "untruncated_mrr":
         return "Mode C MRR (untruncated)"
     if mode == "D":

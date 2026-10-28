@@ -694,3 +694,27 @@ def test_a_version_bound_to_another_graph_is_refused_before_any_case_is_ranked(
         cli.main(["--mode", "D", *_argv(cohort, data_dir=other, checkpoint=other_checkpoint)])
     assert not ranked
     assert not (cohort.version.directory / "reports").exists()
+
+
+def test_a_task_metric_is_named_by_its_task_never_as_a_mode():
+    """K6 decision 6: one vocabulary. A task measurement's metric reads "Gene
+    pooled MRR", never "Mode gene pooled_mrr"; Mode C's and Mode D's names are
+    unchanged; the task names are the model spec's tasks."""
+    from src.evaluation.caveats import TASK_NAMES, metric_text
+    from src.models.bundle.spec import TASKS
+
+    assert tuple(TASK_NAMES) == TASKS
+    assert metric_text("gene", "pooled_mrr") == "Gene pooled MRR"
+    assert [metric_text("disease", name) for name in (
+        "pooled_top10", "macro_recall@5", "macro_precision@20", "macro_mrr",
+        "best_positive_mrr", "conservative_pooled_mrr", "coverage")] == [
+        "Disease pooled top-10", "Disease macro recall@5", "Disease macro precision@20",
+        "Disease macro MRR", "Disease best-positive MRR", "Disease conservative pooled MRR",
+        "Disease coverage"]
+    assert metric_text("patients_like_me", "macro_recall@10") == (
+        "Patients-like-me macro recall@10")
+    assert (metric_text("C", "untruncated_mrr"), metric_text("C", "hits@10"),
+            metric_text("D", "post_import_mrr"), metric_text("D", "coverage"),
+            metric_text(None, "pooled_mrr")) == (
+        "Mode C MRR (untruncated)", "Mode C Hits@10", "Mode D MRR (import-eligible)",
+        "Mode D coverage", "pooled MRR (mode not recorded)")

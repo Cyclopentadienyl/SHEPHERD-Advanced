@@ -1733,7 +1733,8 @@ def test_a_checkpoints_option_says_what_it_is_how_far_it_trained_and_its_limit()
     validation figure, named as the Trainer's."""
     item = {**_item("demo").__dict__, "completed_epochs": 195, "end": "paused",
             "validation": {"metric": "val_mrr", "value": 0.28}}
-    assert tc.checkpoint_words(item) == "Latest save · 195 epochs completed · Trainer val MRR 0.2800"
+    assert tc.checkpoint_words(item) == (
+        "Latest save · 195 epochs completed · Validation MRR (Trainer, top-20) 0.2800")
     top = {**item, "filename": "model-20-0.2867.pt", "completed_epochs": 21, "end": None}
     assert tc.checkpoint_words(top).startswith("Top-k save · 21 epochs completed")
     assert tc.checkpoint_words({**item, "end": "finished"}).startswith(
@@ -1775,7 +1776,8 @@ def test_the_drawer_lists_runs_then_the_chosen_runs_checkpoints():
                                ("GAT · 2026-10-24 16:38", f"gat/{old}")]
     assert runs["value"] == f"gat/{new}" and files["value"] == f"gat/{new}/last.pt"
     assert [label for label, _key in files["choices"]] == [
-        "Latest save · 195 epochs completed", "Top-k save · 21 epochs completed · Trainer val MRR 0.2867"]
+        "Latest save · 195 epochs completed",
+        "Top-k save · 21 epochs completed · Validation MRR (Trainer, top-20) 0.2867"]
     others = tc._on_run_chosen(f"gat/{old}", parents, f"gat/{new}/last.pt")
     assert others["value"] == f"gat/{old}/last.pt"                       # its latest save
     assert [key for _label, key in others["choices"]] == [k for k in parents if old in k]

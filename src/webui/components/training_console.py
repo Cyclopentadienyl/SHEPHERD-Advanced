@@ -1971,8 +1971,6 @@ CHECKPOINT_KINDS = {"training_state": "training state", "weights": "weights only
 #: A file the trainer keeps as one of its top-k by the validation metric
 #: (`ModelCheckpoint`'s ``model-{epoch:02d}-{val_mrr:.4f}.pt``).
 _TOP_K_FILE = re.compile(r"^model-\d+-\d+(?:\.\d+)?\.pt$")
-#: The Trainer's validation metrics, in the words the list uses.
-_METRIC_WORDS = {"val_mrr": "MRR", "val_hits@10": "Hits@10", "val_hits@1": "Hits@1"}
 #: How a stage ended (`progress.end`), where it limits what continuing can do.
 _END_WORDS = {"finished": "finished", "stopped_early": "stopped early, cannot continue"}
 
@@ -2018,21 +2016,23 @@ def _progress_words(item: Mapping[str, Any]) -> Optional[str]:
 
 
 def _validation_words(item: Mapping[str, Any]) -> Optional[str]:
-    """"Trainer val MRR 0.2867": the Trainer's validation figure the file
-    records, never a test result."""
+    """"Validation MRR (Trainer, top-20) 0.2867": the Trainer's validation
+    figure the file records, in the dashboard's one map of their names
+    (`renderers.VALIDATION_LABELS`), never a test result."""
     validation = item.get("validation") or {}
     metric, value = validation.get("metric"), validation.get("value")
-    if metric not in _METRIC_WORDS or not isinstance(value, (int, float)):
+    if metric not in r.VALIDATION_LABELS or not isinstance(value, (int, float)):
         return None
-    return f"Trainer val {_METRIC_WORDS[metric]} {value:.4f}"
+    return f"{r.VALIDATION_LABELS[metric]} {value:.4f}"
 
 
 def checkpoint_words(item: Mapping[str, Any]) -> str:
     """A checkpoint's option in its run: what it is, how far it trained, and
     what limits continuing from it. "Latest save · 195 epochs completed";
-    "Top-k save · 21 epochs completed · Trainer val MRR 0.2867"; a file that
-    cannot be read or holds weights only says so. The file's name, kind and
-    model fingerprint are in its details (`parent_details_html`)."""
+    "Top-k save · 21 epochs completed · Validation MRR (Trainer, top-20)
+    0.2867"; a file that cannot be read or holds weights only says so. The
+    file's name, kind and model fingerprint are in its details
+    (`parent_details_html`)."""
     filename = str(item.get("filename") or "")
     if item.get("problem") or not r.is_digest(item.get("sha256")):
         return f"{filename} · cannot be read"

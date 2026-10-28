@@ -124,7 +124,12 @@ from src.webui.components import renderers as r
 from src.webui.components.chips import D8_SHORT, chips_on_change
 from src.webui.components.help import help_button
 from src.webui.components.model_list import item_key
-from src.webui.components.workspaces import redact_paths
+from src.webui.components.workspaces import (
+    binding_state,
+    redact_paths,
+    version_row,
+    workspace_binding,
+)
 from src.webui.operator_access import operator_access
 from src.webui.shell import page_elem_id, plain_html
 
@@ -482,58 +487,6 @@ def _number(value: Any) -> str:
 # ---------------------------------------------------------------------------
 # Reading what the page shows (one session's data, plain JSON for gr.State)
 # ---------------------------------------------------------------------------
-def _version_row(item: Any) -> Dict[str, Any]:
-    row = asdict(item)
-    row.pop("reports", None)
-    row.pop("reports_problem", None)
-    return row
-
-
-def workspace_binding(directory: Optional[Path], row: Optional[Mapping[str, Any]]
-                      ) -> Dict[str, Any]:
-    """What a cohort version is compared with to say whether it was mapped
-    against this workspace's graph: the four graph digests its manifest binds
-    (one read of ``split_manifest.json``) and its verified dataset record's
-    digest. A display hint only: the run compares the bytes it reads."""
-    from src.kg.artifacts import GRAPH_ARTIFACTS, read_split_manifest
-
-    if directory is None or row is None:
-        return {"graph": None, "record_sha256": None, "problem": "no workspace is chosen"}
-    try:
-        artifacts = read_split_manifest(directory).manifest.get("artifacts")
-    except (ValueError, OSError):
-        return {"graph": None, "record_sha256": None,
-                "problem": "its split_manifest.json cannot be read"}
-    artifacts = artifacts if isinstance(artifacts, Mapping) else {}
-    record = row.get("dataset_record") or {}
-    sha = record.get("sha256") if record.get("binding") == "verified" else None
-    return {"graph": {role: artifacts.get(role) for role in GRAPH_ARTIFACTS},
-            "record_sha256": sha,
-            "problem": None if sha else "its dataset record is not verified"}
-
-
-def binding_state(version: Mapping[str, Any], binding: Optional[Mapping[str, Any]]
-                  ) -> Tuple[str, str]:
-    """``("bound" | "another" | "unknown", words)``: whether `version` was
-    mapped against the workspace `binding` describes, by the registry's one
-    comparison (`verify_cohort_binding`, R3's)."""
-    from src.evaluation.cohort_registry import CohortBindingMismatch, verify_cohort_binding
-
-    if version.get("problem"):
-        return "unknown", "the version cannot be read"
-    if not binding or binding.get("problem") or not binding.get("graph"):
-        why = (binding or {}).get("problem") or "no workspace is chosen"
-        return "unknown", f"not checked against this workspace: {why}"
-    try:
-        verify_cohort_binding({"graph": version.get("graph"),
-                               "dataset_record": version.get("dataset_record"),
-                               "label": version.get("label")},
-                              binding["graph"], binding["record_sha256"])
-    except CohortBindingMismatch as exc:
-        return "another", f"mapped against another graph ({', '.join(exc.roles)} differ)"
-    return "bound", "bound to this graph"
-
-
 def read_page(request: Any, *, environ: Optional[Mapping[str, str]] = None) -> Dict[str, Any]:
     """The page's server lists for one session: D8's answer for this request,
     the workspaces (the dashboard's one reader), the serving workspace, the
@@ -566,7 +519,7 @@ def read_page(request: Any, *, environ: Optional[Mapping[str, str]] = None) -> D
         "workspaces_problem": listed["problem"],
         "serving": serving,
         "registry_problem": None if registry.available else registry.problem,
-        "versions": [_version_row(item) for item in versions.items] if versions else [],
+        "versions": [version_row(item) for item in versions.items] if versions else [],
         "versions_problem": versions.problem if versions is not None else None,
         "evidence": {"names": [Path(d).name for d in (evidence.value or ())],
                      "problem": evidence.problem},

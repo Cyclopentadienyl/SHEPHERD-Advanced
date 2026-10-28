@@ -791,7 +791,7 @@ def test_the_research_preset_is_a_table_with_in_use_on_its_own_row(root, serving
     research = ml.list_html(listing, None, ml.PRESETS["research"])
     assert '<table class="shep-tbl shep-mtbl"' in research and "In use now" not in research
     for column in ("Model", "Fingerprints: model · dataset trained on",
-                   "Validation MRR (Trainer, top-20)", "Recorded tests"):
+                   "Validation (Trainer)", "Recorded tests"):
         assert f">{column}</th>" in research, column
     served_row = next(row for row in research.split("<tr") if "run_3fa9c1" in row)
     assert "In use (Diagnosis)" in served_row and "0.3500" in served_row

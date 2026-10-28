@@ -20,6 +20,13 @@ lives in that page's module. Gradio's own markup is reached only through the
 The page is always light (the shell's head script keeps Gradio's dark mode
 off): the tokens below have no dark values.
 
+**Status colours** (the WebUI skill §6; K6 decision 2): ``--shep-status-ok``,
+``-neutral``, ``-warn``, ``-error`` and ``-info`` are the colours of a status
+mark and its word, aliases of the existing tag colours (``.shep-tag-ok``,
+``-grey``, ``-amber``, ``-red``, ``-accent``), so no new hex enters; a mark
+always carries its shape and word too. `tests/unit/test_webui_button_contrast.py`
+holds them to WCAG's 4.5:1 for text against every surface a mark sits on.
+
 Module: src/webui/style.py
 """
 from __future__ import annotations
@@ -39,6 +46,9 @@ SHELL_CSS = """
   --shep-green-50: #edf9f1; --shep-green-200: #a9dfbb; --shep-green-800: #126133;
   --shep-grey-50: #f2f3f5; --shep-grey-200: #d9dce2; --shep-grey-500: #737a87; --shep-grey-600: #535a66; --shep-grey-800: #2f3540;
   --shep-red-50: #fdf0f0; --shep-red-200: #f1b9b9; --shep-red-700: #a52222;
+  --shep-status-ok: var(--shep-green-800); --shep-status-neutral: var(--shep-grey-800);
+  --shep-status-warn: var(--shep-amber-800); --shep-status-error: var(--shep-red-700);
+  --shep-status-info: var(--shep-accent-text);
   --shep-mono: 'IBM Plex Mono', 'DejaVu Sans Mono', 'Liberation Mono', monospace;
   --shep-row1-h: 54px; --shep-brand-w: __BRAND__px;
 }
