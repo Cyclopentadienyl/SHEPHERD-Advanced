@@ -804,12 +804,30 @@ and the GB10 acceptance.**
   disease and a gene child measured and registered, the base and the history file refused;
   Diagnosis with each task's model loaded through Change model, its results, exports and report.
   Its two P2 (the base form's patience, the sticky card over a focused control at 1536 × 760) and
-  four of its seven P3 are fixed in `f835fc5`, unit-tested and not measured again in a browser; the
-  other three are `../BACKLOG.md` 52 (I)–(K).
+  four of its seven P3 are fixed in `f835fc5`; the two P2 were measured again in the browser at
+  `29e6f96`: the patience field reads "off" once mounted and an Epochs edit leaves the form valid,
+  and no focused Diagnosis control is covered at 1536 × 760 or 1850 × 960 with the disease, gene or
+  patients-like-me model loaded. The other three P3 are `../BACKLOG.md` 52 (I)–(K).
 - **Geometry** at 1850 × 960, 1920 × 1080, 1536 × 760, 960 × 1080 and 1080 × 1920 on six pages: no
   horizontal page scroll; the research navigation one row (45 px); at wide sizes at most one scroll
   region per area, none nested; every open dropdown uncovered; narrow then wide measures as a fresh
   wide load.
+- **Checkpoint review (the six checks above):**
+  1. *Blueprint:* every "In scope for the UI" item of this section is built (the "As built at K6"
+     notes); the product defaults K6 took for open details are the ones listed with it.
+  2. *Extension points:* the UI reads tasks from the model spec (`TASKS`, `caveats.TASK_NAMES`), the
+     scoring mode from the one task table (`core.types.TASK_SCORING_MODES`) and a run's encoder from
+     its spec (`architecture_label`); no page is written for one encoder or one task head.
+  3. *Paper deviations:* the UI never runs a file without a model spec (Load, Test and Continue
+     refuse or filter it), Test measures a model by its own task, Diagnosis serves task models only.
+  4. *One pipeline:* the smoke ran Training's base → Fine-tune → Models → Test → Diagnosis on one
+     workspace through the production entries.
+  5. *No parallel copies:* one vocabulary (task names, record-state words, task list, validation
+     labels, status tokens), one settings check for new bundle runs and Fine-tune, one listing read
+     for the family view. The one recorded exception: the Fine-tune page uses the Training page's
+     public training-form pieces (`src/webui/shell.py`).
+  6. *Retirement:* the replaced form, its helpers and widgets are deleted; what stays is listed in
+     §7 "Listed at K6 for K7", the probe chain's remainder there for K8.
 - **Not verified:** axe-core (not installed, installing not allowed); a read-only browser (it needs
   a second server); GPU paths (device auto or cuda, the GPU chip, AMP); that base and history
   refusals happen before any read of the file (only their words were seen); a base run's Stop and a
