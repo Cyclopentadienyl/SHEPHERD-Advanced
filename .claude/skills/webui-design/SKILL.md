@@ -85,8 +85,8 @@ Text that runs past two lines gets structure: an answer-first lead, then bullets
 
 ## 6. Status indicators (traffic lights)
 
-The `--shep-status-*` tokens are to be introduced with the first change that touches status marks; until then the
-existing `shep-tag-ok/-grey/-amber/-red` classes carry these colours.
+The `--shep-status-*` tokens exist since K6 (`src/webui/style.py`), as aliases of the tag colours with no new hex; the
+existing `shep-tag-ok/-grey/-amber/-red` classes carry the same colours.
 
 | State | Colour token | Shape | Word |
 |---|---|---|---|

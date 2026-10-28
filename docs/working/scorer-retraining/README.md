@@ -123,6 +123,9 @@ flag read in different ways.
     branches over one split compare on one set.
 - `finetune` is its own operation and page. It never borrows resume or branch to get past a parent
   check.
+  - As built at K6: the page is Research › Prepare › Fine-tune
+    (`src/webui/components/finetune_page.py`), beside Training's base form; both start through the
+    one job runner (§8, "As built at K6").
 
 **Parents and the family tree.** The original base and its qualified descendants may all be
 finetune parents. The tree sits under the actual parent checkpoint. Run directories stay flat (no
@@ -131,6 +134,9 @@ nesting, no copies). One reader serves the tree and the tag filter; tags stay no
   under the listed file whose SHA-256 its record names. Families are grouped by family id, and
   files without a model spec form a history group. A task or stage filter keeps a child's base as a
   context row. `GET /workspaces/{name}/family` serves it behind D8.
+- As built at K6: Research › Models draws it as the By family order (`models_page.family_view`
+  over `server_lists.list_family`): one group per family, the parent first, a Lineage column,
+  a task filter's context rows, and "parent unavailable" in amber.
 - Tags are deferred: nothing stores them yet, and no filter reads them.
 
 **Evidence paths stay; the fallback ranking goes.** PathReasoner is kept as the post-ranking
@@ -613,6 +619,57 @@ fallback.
 build_index (retrieval stays for planned natural-language work) on the one builder; the
 heterogeneous GAT/HGT/SAGE encoders behind the contract; every historical artifact.
 
+**Listed at K6 for K7** (checkpoint check 6; merged from the K6a–K6d2 lists and the probe fix's
+remainder). Each stays because a file without a model spec (history) can still be served or trained
+outside the WebUI, or an old report must stay readable (item 8: read, never run); each is deleted,
+not adapted, when its reason goes.
+- **ShepherdGNN starts outside the WebUI.** `src/api/routes/training.py` `TrainingStartRequest` has
+  no `learning_stage`, so `POST /training/start` starts only ShepherdGNN runs and resumes through
+  `TrainingManager.start_training`'s conv-type path (pinned by `tests/unit/test_finetune_children.py`,
+  a gat start unchanged); `scripts/train_model.py` keeps the ShepherdGNN path (`SHEPHERD_ONLY_FIELDS`)
+  and the API reload can serve a history file, as `src/models/bundle/record.py`
+  `LISTED_WITHOUT_SPEC` says. Why: K6 gives the API no base start (K6 decision 12); history is never
+  run from the WebUI (decision 1).
+- **ShepherdGNN serving and its words.** `src/inference/pipeline.py` `_scoring_mode`'s
+  `gnn_plus_shortest_path`, `gnn_only` and `path_reasoning_fallback`; in
+  `src/webui/components/diagnosis_panel.py` the `SERVED_MIXTURE` / `PATH_REASONING` branches
+  (`_score`, `_format_results_table`, `candidates_table_html`, `details_header_html`, `_shows_sp`,
+  `sp_text`, `MIXTURE_ETA_NOT_REPORTED`, `_CSV_SCORE_COLUMNS`), the three legacy
+  `_SCORING_MODE_WORDS`, the `gnn_only` branches of `_shortest_path_cells` and `_identity_banners`,
+  and the `dx-score` help's mixture and no-model sentences; in `diagnosis_card.py` the "no SP table"
+  chip, the `no_sp` banner and serving-note word, the ShepherdGNN name-line branches and the
+  path-reasoning-only state (`served_kind`'s `no_trained`, its `IDENTITY_BANNERS["no_model"]`
+  banner); in `model_list.py` the Load confirmation's ShepherdGNN From cells (`_from_side`,
+  `_cell`). Why: what is served must be said while a history file can be; they go with the first
+  two rows above.
+- **Readers of listed history files.** `renderers.VALIDATION_LABELS`' `val_mrr` and `val_hits@k`,
+  `architecture_label`'s upper-cased conv types and the validation-trainer help's history line;
+  `training_console.VALIDATION_CHARTS["history"]` and the `val_loss` fallback of `training_charts`;
+  `model_list` `FILTER_WORDS["history"]`, `HISTORY_REFUSAL` and the history branches of
+  `load_refusal` and `matches`; Models' History option. Why: they retire only if K7 stops listing
+  history files.
+- **Mode C and Mode D.** `scripts/measure_scorer.py` (`MODES` C and D, `--mode` default C,
+  `_measure_mode_c`, `_measure_mode_d`: command line only until K7); `test_page.py`'s readers of
+  kept C/D reports (`_TILES` C/D, `_MEAN_RANK`, the C/D entries of `_MODE_HELP` and
+  `_MODE_ROW_WORDS`, `TOPIC_HELP["test-mode-c"/"test-mode-d"]` pinned by `tests/unit/test_mode_d.py`,
+  `_mode_rows`, `_record_html`'s C/D coverage) and registering a kept C/D report (`register_state`,
+  `register_selected`; gated in `build_record` when Mode C retires, `../PLAN_TEST_RESULTS.md` §8.5);
+  `models_page.py` `RECORD_COLUMNS` C/D and By test score over Mode C records (`controls`, `rank`),
+  with the usage entry an ordered Load writes (`model_list._record_usage`); the field descriptions
+  of `src/api/routes/evaluations.py` `RecordView`, which name Modes C and D only. Why: K6 decisions
+  13 and 14; kept reports stay readable.
+- **The retired form's descriptions.** `src/config/training_fields.py`: the per-field `ui*`,
+  `webui_*` and `current_webui` attributes and the WebUI parts of `divergence_note` (two
+  `current_webui` texts still name `ConfigValidationError` and `_collect_config`). Why: their
+  parity tests are gone and no widget reads them; K7 removes them.
+- **The probe chain (K8).** `scripts/probe_deployment.py`: D1, M2–M11, T1–T7, R3–R7, RT1–RT3, W1's
+  listed run, W7's refused training starts and W11's and RW3's held training job still train and
+  measure ShepherdGNN checkpoints; only W7–W11's test runs and RW2 use a trained disease child
+  (`792861b`). Why: §10's hazard, "the probe trains a base and a child", is K8's.
+- **Dated records naming deleted code, left as written.** `../WEBUI_UX_REVIEW_2026-10-25.md` items
+  32 and 61 (`AMP_HGT_REFUSAL`, `_run_choices`, `_checkpoint_choices`); `../../CONFIG_AUTHORITY.md`'s
+  B-lite paragraph (a dated K6 note under it). Why: review and decision records, not current text.
+
 ---
 
 ## 8. Scope of this round and acceptance
@@ -647,6 +704,46 @@ query; candidates show research id, rank, similarity and the recorded HPO terms 
 gene; a known causal gene is used as evaluation truth or reference context, never as input for an
 unknown query; results, exports and caches carry the reference cohort version; no name or contact
 field is added. Existing D8 and session isolation apply; no multi-tenant platform.
+
+As built at K6 (`2827428..f835fc5`):
+- **Base and Fine-tune separately.** Research › Prepare › Training's form offers exactly
+  `recipe.BASE`, each field at its reference value; Start sends `learning_stage="base"` and only the
+  settings that differ, which the line under the form names ("Differs from the reference settings:
+  Epochs 2 (200)"). The runner checks a new bundle run whole before anything is written
+  (`_new_bundle_run`, `_recipe_settings_problem`, `spec.hops_problem`) and files it under its
+  encoder kind (`runs/gatv2`). Fine-tune is Training's second form, the one page allowed
+  `training_console`'s public form pieces (the shell's page contract). The ShepherdGNN form, its
+  collector and the AMP/HGT refusal are deleted.
+- **A qualified parent and one to three tasks.** Fine-tune offers listed bases only (Run →
+  Checkpoint; weights-only and early-stopped bases included), a Tasks group saying whether each task
+  is ready on the workspace (`server_lists.task_readiness`), and Epochs and Seed only, sent when
+  they differ. `start_finetune` refuses before any child starts: a parent that is not a base with
+  weights, a parent trained on another graph, a gene or patients-like-me task whose functional
+  fixture is absent or from another build, a setting not every chosen task reads.
+- **Job cards.** The Fine-tune card reads the runner's `finetune` status: Task | Status | Run | Best
+  save | Validation (Trainer), each status a colour, shape and word (`--shep-status-*`). Stop asks
+  first, reaches only a running child of the start shown and cancels the queued ones; products are
+  read for an operator once a child has ended.
+- **Models with the family and a task filter.** A Task select (All, Base, Disease, Gene,
+  Patients-like-me, History) and three orders: Newest first, By family (§1), By test score (Mode C
+  records only, K6 decision 14). Every row leads with its kind word (`renderers.record_kind_text`);
+  a base, a history file or a refused record is refused from its listed record, before the file is
+  read again (`model_list.load_refusal`). Task records have their own metric columns.
+- **Test by task.** The runner always passes `--mode <task>` (`TestRunInputs.task`); the page never
+  starts Mode C or D. Every checkpoint is listed, led by its kind word; Start is disabled, with the
+  reason, for anything that is not a model finetuned for a task and for a gene or patients-like-me
+  model on a version without causal (gene: or candidate) genes (`test_page.measure_refusal`). A
+  patients-like-me measurement ranks the version's own patients; it takes no reference cohort.
+- **Diagnosis by task.** The card names the task once ("Disease task model"), read from the served
+  scoring mode (`core.types.SCORING_MODE_TASKS`). A gene model shows Candidate genes and sends
+  `candidate_genes`; an empty list is a notice at the click, with no request. Results, CSV and
+  report draw each kind's own columns, escaped.
+- **Patients-like-me on Diagnosis.** A Reference cohort select over every registry version
+  ("another graph" and "cannot be read" marked, the first bound version chosen) sends
+  `reference_cohort`; Run is off, with its reason, while no version can be read. Rows show research
+  id, similarity, diagnosis and causal genes, the details the recorded HPO terms as "context, never
+  an input of this query"; the CSV and report carry the version's label and digests. Patient-level
+  rows against `../PLAN_TEST_RESULTS.md` D7 are the owner's to decide (`../BACKLOG.md` 62).
 
 **Data in this round:** synthetic functional fixtures with real task truth roles. Gene and
 patients-like-me samples come from a declared rule (one causal gene from the disease's genes plus
@@ -693,6 +790,33 @@ batch; later narrow fixes rerun what they touch. A browser smoke of the new UI r
 launcher with an explicit CPU setting; what cannot be checked is reported as not verified. A
 functional pass, alignment with the paper's method, reproduction on the original data and clinical
 validity are reported separately.
+
+**K6 delivery (2026-10-28): functional integration done in the container, awaiting external review
+and the GB10 acceptance.**
+- **Full suite** once on the integrated batch: 5948 passed, 14 skipped, 4 probe failures fixed by
+  `792861b` and rerun narrowly. The closing fixes (`f835fc5`) and these documents ran their touched
+  tests and neighbours only.
+- **Browser smoke** on the normal launcher (`launch_shepherd.sh`, `SHEPHERD_DEVICE=cpu`, a seeded
+  demo workspace, headless Chromium, no request leaving the machine). Passed: a base trained to the
+  end and Continue listing model records only (a history file on disk not offered); a Fine-tune of
+  all three tasks in order, and a Stop that cancelled the queued child; Models' task filter, By
+  family, the base and history Load refusals, a disease child loaded; Test's import drawer, a
+  disease and a gene child measured and registered, the base and the history file refused;
+  Diagnosis with each task's model loaded through Change model, its results, exports and report.
+  Its two P2 (the base form's patience, the sticky card over a focused control at 1536 × 760) and
+  four of its seven P3 are fixed in `f835fc5`, unit-tested and not measured again in a browser; the
+  other three are `../BACKLOG.md` 52 (I)–(K).
+- **Geometry** at 1850 × 960, 1920 × 1080, 1536 × 760, 960 × 1080 and 1080 × 1920 on six pages: no
+  horizontal page scroll; the research navigation one row (45 px); at wide sizes at most one scroll
+  region per area, none nested; every open dropdown uncovered; narrow then wide measures as a fresh
+  wide load.
+- **Not verified:** axe-core (not installed, installing not allowed); a read-only browser (it needs
+  a second server); GPU paths (device auto or cuda, the GPU chip, AMP); that base and history
+  refusals happen before any read of the file (only their words were seen); a base run's Stop and a
+  Continue start; Fine-tune's pre-start refusals, the Epochs and Seed record, a failed or refused
+  child; a patients-like-me measurement, a gene refusal on a version without genes and the manual
+  Register click; Diagnosis' "another graph" and "cannot be read" marks, a string error body and
+  its path redaction, Top-K bounds, the Explanation and Paths content; light and dark contrast.
 
 **BACKLOG items in scope, bounded:** 23 (branch's closed list and lineage), 54 (shared validation and
 unknown-field refusal for the training API, CLI and UI touched here, without the unsupported HGT/AMP

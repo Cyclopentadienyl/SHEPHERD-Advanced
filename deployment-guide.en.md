@@ -1542,8 +1542,9 @@ records' state cannot be checked; counted apart), "none in ledger", "no ledger",
 readable" or "not read", the same words as the checkpoint's row in
 "Change model…", found by the checkpoint's digest, not its file name (after another model is
 loaded the previous model's state is never shown). Its › opens Details at Evidence, where the same
-state stands beside the Trainer's validation figure ("Validation MRR (Trainer, top-20) … —
-selection metric on val, not an independent test"); no Mode C number is shown on the page. The
+state stands beside the Trainer's validation figure ("Validation pooled MRR (Trainer) … —
+selection metric on val, not an independent test" for a task model); no test number is shown on
+the page. The
 records themselves are listed under Research › Evaluate › Models.
 
 Until M5-2 the model status (Model Configuration) listed them in full under its "Serving" line,
@@ -2360,6 +2361,7 @@ help control for every field. Nothing an operator sets changed; what moved is wh
 | **Diagnosis (clinical)** | Patient phenotypes, the results and the selected candidate's details, with the model in use on a card (below). It is the first screen |
 | **Research (pre-clinical)** › Prepare › **Datasets** | The server's workspaces, read-only (below) |
 | **Research (pre-clinical)** › Prepare › **Training** | The run bar, the parameters for the next run, Continue… and the run view with its charts (below). It is the research page shown first |
+| **Research (pre-clinical)** › Prepare › **Fine-tune** | A base's task models (since K6): one listed base, one to three tasks (Disease, Gene, Patients-like-me), each trained as its own run in order, and a job card with each task's status, Stop and products |
 | **Research (pre-clinical)** › Evaluate › **Test** | Import a cohort version from the server's intake directory, run a test, keep and register its report (below) |
 | **Research (pre-clinical)** › Evaluate › **Models** | The server's checkpoints of a workspace, their recorded test results, ordering by test score and Load (below) |
 | **⚙ Settings**, at the right of the header | Runtime Settings, as before. For a read-only browser, Apply Settings and Restart Backend are greyed out, with the reason written below them |
@@ -2515,9 +2517,9 @@ drawer is open at a time.
 ### Research › Prepare › Datasets
 
 A read-only list of the workspaces the server lists under `SHEPHERD_WORKSPACES_ROOT` (§4.12):
-the same list Training, Test and Models choose from. Each row shows the name; when it was built
-(UTC, from `workspace_build.json`), or "build time not recorded" with its sources' declared
-releases; the **dataset fingerprint**, the first 12 hex digits of the SHA-256 of its
+the same list Training, Fine-tune, Test and Models choose from. Each row shows the name; when it
+was built (UTC, from `workspace_build.json`), or "build time not recorded" with its sources'
+declared releases; the **dataset fingerprint**, the first 12 hex digits of the SHA-256 of its
 `split_manifest.json` (Copy gives all 64, and more digits are shown when two workspaces share
 the first 12); the origin (`synthetic` in amber); whether the dataset record is verified; the
 train and validation sample counts. The markers:
@@ -2630,22 +2632,23 @@ plot's box is sized by the layout alone, never by the canvas drawn in it, so the
 gives the same plots whether the page was opened there, reloaded, or came back from a narrow
 window.
 
-**Continue…** opens a drawer in place of the parameters: the checkpoints of the run bar's
-workspace (the server's list: an operator control, since listing opens every checkpoint), chosen
+**Continue…** opens a drawer in place of the parameters: the model records of the run bar's
+workspace, bases and task models (since K6 a file without a model spec is never continued from the
+dashboard; the server's list: an operator control, since listing opens every checkpoint), chosen
 in two steps, or the path of one of those checkpoints typed by hand. **Run**: the runs, latest
-first, each as its name, architecture and start time ("ui-live-stop-02 · GAT · 2026-10-24
-17:39"; an unnamed run is its architecture and time). **Checkpoint**: that run's files, newest
-first, each in a few words from its own record: "Latest save · 195 epochs completed", or
-"Top-k save · 21 epochs completed · Trainer val MRR 0.2867" (a file the trainer kept for its
-validation MRR, the Trainer's, not a test result); the epochs are the file's progress record
-(a file without one says the epoch it records, never a count made from it), and what limits
-continuing is said in the option ("finished", "stopped early, cannot continue", "weights only,
-cannot continue", "cannot be read"). Choosing another run offers its files with its latest save
-chosen. Under the two, a table says what the option does not: the file, what it holds, what
-continuing does when its stage ended, its model fingerprint (Copy gives all 64) and its run's
-directory. Since M5-3 a typed path only
-finds a checkpoint that list holds, and any other file is refused without being opened
-(`PLAN_TEST_RESULTS.md` D8). **Check checkpoint** shows what continuing would do, and the
+first, each as its name, architecture and start time ("base-a · GATv2 · 2026-10-28 13:57"; an
+unnamed run is its architecture and time). **Checkpoint**: that run's files, newest first, each in
+at most 40 characters saying what it is and how far it trained: "Latest save · 195 epochs
+completed", or "Top-k save · 21 epochs completed" (a file the trainer kept for its validation
+figure); the epochs are the file's progress record (a file without one says the epoch it records,
+never a count made from it), and a file that holds weights only or cannot be read says so
+("weights only", "cannot be read"). Choosing another run offers its files with its latest save
+chosen. Under the two, a table says what the option does not: the file, its stage, what it holds,
+what continuing does when its stage ended ("not possible: it stopped early" for an early-stopped
+one), the Trainer's validation figure ("LP accuracy (Trainer) 0.5000" for a base; the Trainer's,
+not a test result), its model fingerprint (Copy gives all 64) and its run's directory. Since M5-3
+a typed path only finds a checkpoint that list holds, and any other file is refused without being
+opened (`PLAN_TEST_RESULTS.md` D8). **Check checkpoint** shows what continuing would do, and the
 dataset fingerprint the parent recorded against the workspace's current one: ✓ the same, or amber
 when it differs (with the listed workspace it matches, or "matches no listed workspace"). While
 the drawer is open the run bar shows Start (disabled: "close Continue… to start a new run"),
@@ -2668,7 +2671,7 @@ checkpoints again when it opens). The API takes the parent's digest as an
 optional query parameter too, `expected_parent_sha256=<64 hex digits>` beside `resume_from`
 (409 when it is not the file's, 422 when malformed); without it the process is still bound to
 the parent the runner read. The job runner and the training process still check everything
-else at start. Check checkpoint names the listed file it read ("Checked gat/<run>/<file> from
+else at start. Check checkpoint names the listed file it read ("Checked gatv2/<run>/<file> from
 the run list"; a typed path's check gives its path and fingerprint), and a matching dataset is said
 once, as "✓ Trained on the dataset selected in the run bar" (the fingerprint is the run bar's).
 While the drawer is open the run bar's line reads "Run: a new one, continued from the checkpoint
@@ -2827,18 +2830,22 @@ root, the intake directory, an evidence directory or the repository is written u
 ### Research › Evaluate › Models
 
 The research view of the same model list the Diagnosis tab's "Change model…" uses, over the
-checkpoints the server lists for one workspace (choose the **Workspace**; **Architecture**
-narrows the list). Under the workspace select, the chosen workspace's dataset identity is said
-again (build time, dataset fingerprint, `synthetic`, the record's state), so a long workspace
-name that the select cuts never hides it. Every run is shown, newest first. Columns:
+checkpoints the server lists for one workspace (choose the **Workspace**; since K6 **Task**
+narrows the list: All, Base, Disease, Gene, Patients-like-me or History). Under the workspace
+select, the chosen workspace's dataset identity is said again (build time, dataset fingerprint,
+`synthetic`, the record's state), so a long workspace name that the select cuts never hides it.
+Every run is shown, newest first. Columns:
 
-- **Model**: architecture, the run's start time, the epoch; **In use (Diagnosis)** on the
-  checkpoint being served (matched by its full model fingerprint);
+- **Model**: what the file is first (Base, Disease, Gene, Patients-like-me, "History · never
+  run", "Record not readable" or "Record not read"), then the architecture, the run's start
+  time, the epoch; **In use (Diagnosis)** on the checkpoint being served (matched by its full
+  model fingerprint);
 - **Fingerprints: model · dataset trained on**: the model fingerprint (12 hex digits of the
   checkpoint's SHA-256) over the listed workspace whose full dataset fingerprint the checkpoint
   records, or "matches no listed workspace"; `synthetic` in amber;
-- **Validation MRR (Trainer, top-20)**: the Trainer's own figure on the val samples, the metric
-  training selects by. It is never a test result and never shares a column with one;
+- **Validation (Trainer)**: the Trainer's own figure on the val samples, the metric training
+  selects by, named under its value (a base's LP accuracy, a task model's pooled MRR, a history
+  file's MRR over its top 20). It is never a test result and never shares a column with one;
 - **Recorded tests**: what the ledger beside the checkpoint holds, as a state ("none in
   ledger", "no ledger", "3 · 1 contested", …), never a number of a result.
 
@@ -2856,7 +2863,8 @@ regime (device, deterministic on or off) is the one the record holds, as an oper
 this; a CPU record's environment class alone does not say it). There are no Trainer validation
 figures and no Load there.
 
-**Order: Newest first | By test score.** Ordering by test score is offered only for a cohort
+**Order: Newest first | By family | By test score.** By family (since K6) draws one group per
+family, the parent first, with a Lineage column. Ordering by test score is offered only for a cohort
 version whose role is in `SHEPHERD_ORDERING_ROLES` (§4.12); the other versions are listed with
 why they are off, and `institutional_acceptance` is always off ("awaits the institution's formal
 evaluation rules"), even when the setting names it. Choose the metric (Mode C MRR (untruncated),

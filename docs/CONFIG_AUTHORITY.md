@@ -22,6 +22,11 @@
   It will be consolidated into a **lightweight training field-spec** module
   (names / types / defaults / ranges / descriptions) that the API and WebUI *derive* from —
   **not** by resurrecting a heavyweight manager.
+  - *Note (2026-10-28, K6):* the WebUI form this paragraph names is gone. `_collect_config`, its
+    widgets and `SEED_PARAM_INDEX` were deleted with the ShepherdGNN form; the Training page's base
+    form offers the reference recipe's base settings (`src/config/recipe.py` `BASE`), each checked
+    by the field spec's `value_problem` (`src/config/training_fields.py`), the check the job
+    runner's start makes again. The record above is left as written.
 
 ## Rationale
 

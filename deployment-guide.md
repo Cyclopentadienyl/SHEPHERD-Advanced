@@ -1881,8 +1881,8 @@ python scripts/measure_scorer.py --mode D \
 contested state of 1 not checked"（部分紀錄的狀態無法檢查；分開計數）、"none in ledger"、
 "no ledger"、"ledger not readable" 或 "not read"，與該 checkpoint 在「Change model…」中那一列的用語相同，並以
 checkpoint 的 digest 而不是檔名來找（換成另一個模型之後，絕不會顯示前一個模型的狀態）。它的 ›
-會打開 Details 的 Evidence，同一個狀態在那裡與訓練器的驗證數值並列（"Validation MRR (Trainer,
-top-20) … — selection metric on val, not an independent test"）；頁面上不顯示任何 Mode C 數字。
+會打開 Details 的 Evidence，同一個狀態在那裡與訓練器的驗證數值並列（任務模型為 "Validation pooled MRR
+(Trainer) … — selection metric on val, not an independent test"）；頁面上不顯示任何測試數字。
 紀錄本身列在 Research › Evaluate › Models。
 
 在 M5-2 之前，模型狀態（Model Configuration）在「Serving」那一行下方，為目前載入的 checkpoint
@@ -2582,6 +2582,7 @@ CORS 只決定頁面能讀取什麼。不需要預檢的跨來源請求仍會抵
 | **Diagnosis (clinical)** | 病患表型、結果與選中候選的細節，使用中的模型顯示在一張卡片上（見下文）。它是第一個畫面 |
 | **Research (pre-clinical)** › Prepare › **Datasets** | 伺服器的 workspace，唯讀（見下文） |
 | **Research (pre-clinical)** › Prepare › **Training** | run bar、下一次 run 的參數、Continue… 與附圖表的 run 檢視（見下文）。它是 Research 下最先顯示的頁面 |
+| **Research (pre-clinical)** › Prepare › **Fine-tune** | 一個 base 的任務模型（自 K6 起）：一個已列出的 base、一到三個任務（Disease、Gene、Patients-like-me），每個任務依序各自訓練成一個 run；一張 job card 顯示每個任務的狀態、Stop 與產出 |
 | **Research (pre-clinical)** › Evaluate › **Test** | 從伺服器的 intake 目錄匯入 cohort 版本、執行測試、保留並登錄其報告（見下文） |
 | **Research (pre-clinical)** › Evaluate › **Models** | 伺服器為某個 workspace 列出的 checkpoint、它們已記錄的測試結果、依測試分數排序與 Load（見下文） |
 | 頁首右側的 **⚙ Settings** | Runtime Settings，與以前相同。對唯讀的瀏覽器，Apply Settings 與 Restart Backend 會呈灰色不可用，原因寫在它們下方 |
@@ -2718,7 +2719,7 @@ Close 或 × 會立即關閉抽屜，重新載入照常進行（無法中止）�
 ### Research › Prepare › Datasets
 
 伺服器在 `SHEPHERD_WORKSPACES_ROOT` 下列出的 workspace 的唯讀清單（§4.12）：也就是 Training、
-Test 與 Models 選擇時使用的同一份清單。每一列顯示名稱；建置時間（UTC，來自
+Fine-tune、Test 與 Models 選擇時使用的同一份清單。每一列顯示名稱；建置時間（UTC，來自
 `workspace_build.json`），或「build time not recorded」加上各來源宣告的版本；**資料集指紋**，
 即其 `split_manifest.json` 的 SHA-256 的前 12 個十六進位數字（Copy 會複製完整的 64 個；兩個
 workspace 前 12 個相同時會顯示更多位數）；來源（`synthetic` 以琥珀色顯示）；資料集紀錄是否通過
@@ -2816,18 +2817,19 @@ Expert 收合。**Data Paths 與它的 Save Path 已移除**：workspace 由 run
 只由版面決定，不受畫在裡面的 canvas 影響，所以同一個視窗大小下，不論是直接開啟、重新載入，
 還是從窄視窗恢復，圖表大小都相同。
 
-**Continue…** 會打開一個取代參數欄的抽屜：run bar 所選 workspace 的 checkpoint（伺服器的清單：
-列出時會開啟每個 checkpoint，所以是操作者控制項），分兩步選擇，或手動輸入其中某個 checkpoint
-的路徑。**Run**：各個 run，最新的在前，每個以名稱、架構與開始時間表示（「ui-live-stop-02 · GAT ·
-2026-10-24 17:39」；沒有命名的 run 只有架構與時間）。**Checkpoint**：該 run 的檔案，最新的在前，
-每個以它自己紀錄中的幾個詞表示：「Latest save · 195 epochs completed」，或「Top-k save · 21
-epochs completed · Trainer val MRR 0.2867」（訓練器因 validation MRR 保留的檔案，是 Trainer 的
-數字，不是測試結果）；epoch 數取自檔案的進度紀錄（沒有進度紀錄的檔案只說它記錄的 epoch，從不由此
-推算完成數），限制繼續訓練的條件直接寫在選項裡（「finished」、「stopped early, cannot continue」、
-「weights only, cannot continue」、「cannot be read」）。改選另一個 run 時，會列出它的檔案並選好它
-的 Latest save。兩個選單下方有一張表，列出選項沒說的部分：檔案、保存的內容、階段已結束時繼續訓練
-會做什麼、模型指紋（Copy 會複製完整的 64 個）與 run 的目錄名稱。自 M5-3 起，手動輸入的路徑只會找到該清單中的 checkpoint，其他任何檔案都會在
-開啟之前被拒絕（`PLAN_TEST_RESULTS.md` D8）。
+**Continue…** 會打開一個取代參數欄的抽屜：run bar 所選 workspace 的模型紀錄，也就是 base 與任務
+模型（自 K6 起，沒有 model spec 的檔案永遠不會從儀表板繼續訓練；伺服器的清單：列出時會開啟每個
+checkpoint，所以是操作者控制項），分兩步選擇，或手動輸入其中某個 checkpoint 的路徑。**Run**：
+各個 run，最新的在前，每個以名稱、架構與開始時間表示（「base-a · GATv2 · 2026-10-28 13:57」；
+沒有命名的 run 只有架構與時間）。**Checkpoint**：該 run 的檔案，最新的在前，每個最多 40 個字元，
+說明它是什麼以及訓練到哪裡：「Latest save · 195 epochs completed」，或「Top-k save · 21 epochs
+completed」（訓練器因驗證數值保留的檔案）；epoch 數取自檔案的進度紀錄（沒有進度紀錄的檔案只說它
+記錄的 epoch，從不由此推算完成數），只保存權重或無法讀取的檔案會直接說明（「weights only」、
+「cannot be read」）。改選另一個 run 時，會列出它的檔案並選好它的 Latest save。兩個選單下方有一張
+表，列出選項沒說的部分：檔案、階段、保存的內容、階段已結束時繼續訓練會做什麼（提前停止的檔案為
+「not possible: it stopped early」）、Trainer 的驗證數值（base 為「LP accuracy (Trainer) 0.5000」；
+是 Trainer 的數字，不是測試結果）、模型指紋（Copy 會複製完整的 64 個）與 run 的目錄名稱。
+自 M5-3 起，手動輸入的路徑只會找到該清單中的 checkpoint，其他任何檔案都會在開啟之前被拒絕（`PLAN_TEST_RESULTS.md` D8）。
 **Check checkpoint** 顯示繼續訓練會做什麼，並比較 parent 記錄的資料集指紋與 workspace 目前的
 指紋：相同時為 ✓，不同時為琥珀色（附上相符的已列出 workspace，或「matches no listed
 workspace」）。抽屜打開期間，run bar 顯示 Start（停用：「close Continue… to start a new
@@ -2847,7 +2849,7 @@ checkpoint）。API 也以選用的查詢參數接受 parent 的 digest，
 `expected_parent_sha256=<64 個十六進位數字>`，與 `resume_from` 一起使用（不是該檔案時 409，
 格式錯誤時 422）；沒有這個參數時，訓練行程仍綁定在 runner 讀到的 parent。job runner 與訓練
 行程在啟動時仍會檢查其他一切。Check checkpoint 會說明它讀取的是清單上的哪個檔案（「Checked
-gat/<run>/<file> from the run list」；手動輸入的路徑則顯示路徑與指紋），資料集相符時只說一次
+gatv2/<run>/<file> from the run list」；手動輸入的路徑則顯示路徑與指紋），資料集相符時只說一次
 「✓ Trained on the dataset selected in the run bar」（指紋在 run bar）。抽屜打開期間，run bar 的
 那一行是「Run: a new one, continued from the checkpoint chosen in Continue a run」：繼續訓練的
 run 會在自己的 run 目錄中訓練。抽屜有自己的 **Device**（auto、cuda 或 cpu），每次打開時
@@ -2974,17 +2976,20 @@ repository 之下的路徑以其名稱書寫（`<registry>/versions/…`），�
 ### Research › Evaluate › Models
 
 這是 Diagnosis 分頁「Change model…」所用的同一份模型清單的研究檢視，列出伺服器為某一個 workspace
-列出的 checkpoint（選擇 **Workspace**；**Architecture** 可縮小清單）。Workspace 選單下方會再次列出所選
+列出的 checkpoint（選擇 **Workspace**；自 K6 起以 **Task** 縮小清單：All、Base、Disease、Gene、
+Patients-like-me 或 History）。Workspace 選單下方會再次列出所選
 workspace 的資料集識別（建置時間、資料集指紋、`synthetic`、紀錄的狀態），因此即使選單截斷了很長的
 workspace 名稱，這些資訊也不會被遮住。所有 run 都會顯示，最新的在前。各欄：
 
-- **Model**：架構、run 的開始時間、epoch；正在提供服務的 checkpoint 標示 **In use (Diagnosis)**
-  （以完整的模型指紋比對）；
+- **Model**：先說明檔案是什麼（Base、Disease、Gene、Patients-like-me、「History · never run」、
+  「Record not readable」或「Record not read」），然後是架構、run 的開始時間、epoch；正在提供服務的
+  checkpoint 標示 **In use (Diagnosis)**（以完整的模型指紋比對）；
 - **Fingerprints: model · dataset trained on**：模型指紋（checkpoint 的 SHA-256 的前 12 個十六進位
   數字），下方是 checkpoint 所記錄的完整資料集指紋所對應的已列出 workspace，或「matches no listed
   workspace」；`synthetic` 以琥珀色顯示；
-- **Validation MRR (Trainer, top-20)**：Trainer 自己在 val 樣本上的數值，也就是訓練用來挑選
-  checkpoint 的指標。它從來不是測試結果，也從不與測試結果放在同一欄；
+- **Validation (Trainer)**：Trainer 自己在 val 樣本上的數值，也就是訓練用來挑選 checkpoint 的
+  指標，數值下方寫出它的名稱（base 為 LP accuracy，任務模型為 pooled MRR，沒有 model spec 的檔案
+  為其前 20 名的 MRR）。它從來不是測試結果，也從不與測試結果放在同一欄；
 - **Recorded tests**：checkpoint 旁的 ledger 所記錄的內容，以狀態顯示（「none in ledger」、「no
   ledger」、「3 · 1 contested」……），從不顯示某個結果的數值。
 
@@ -2999,7 +3004,8 @@ workspace 名稱，這些資訊也不會被遮住。所有 run 都會顯示，�
 紀錄附上 `deterministic_algorithms`；CPU 紀錄單憑 environment class 看不出來）。那裡沒有 Trainer 的
 驗證數值，也沒有 Load。
 
-**Order: Newest first | By test score。** 只有角色列在 `SHEPHERD_ORDERING_ROLES`（§4.12）中的 cohort
+**Order: Newest first | By family | By test score。** By family（自 K6 起）每個 family 一組，
+parent 在前，並有 Lineage 欄。只有角色列在 `SHEPHERD_ORDERING_ROLES`（§4.12）中的 cohort
 version 才提供依測試分數排序；其他 version 會列出並說明為何關閉，而 `institutional_acceptance` 一律
 關閉（「awaits the institution's formal evaluation rules」），即使設定中列出它也一樣。選擇指標（Mode C
 MRR (untruncated)、Hits@k，或 mean rank——它以最低者在前排序）與 cohort version。其他 scoring

@@ -110,9 +110,11 @@ guide §4.11): `SHEPHERD_REGISTRY` naming the deployment's registry, the `<regis
 
 The Diagnosis page's "Model in use" card shows the loaded checkpoint's recorded results as a
 state (how many, how many contested); Research › Evaluate › Models lists them, and API clients
-read them through `GET /api/v1/evaluations/loaded-model`. They are the model's own Mode C disease
-ranking: until work item B-1 ships, the Diagnosis page itself ranks by the GNN + shortest-path
-mixture above, so a recorded number does not describe its ranking.
+read them through `GET /api/v1/evaluations/loaded-model`. Since K6 the Test page measures only a
+model finetuned for a task, by that task, so the records it registers are task records (Disease,
+Gene or Patients-like-me), each naming its task. A Mode C record, the model's own disease ranking
+from before the tasks, is historical: it stays readable, and step 2 above without `--mode` still
+writes one until K7 retires Mode C.
 
 ## Development
 
