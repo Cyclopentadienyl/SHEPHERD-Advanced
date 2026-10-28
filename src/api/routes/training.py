@@ -9,13 +9,16 @@ Absolute Path: /home/user/SHEPHERD-Advanced/src/api/routes/training.py
 Purpose:
     Provide training management API endpoints:
     - POST /training/start: Start a training run
-    - POST /training/stop: Stop the current training run
+    - POST /training/finetune: Start one to three finetune children of a base,
+      in order (README §1; contract §9.3 hazard 6)
+    - POST /training/stop: Stop the current training run (and cancel the
+      queued finetune children)
     - GET  /training/status: Get current training status
     - GET  /training/metrics: Get full metrics history
     - GET  /training/checkpoints: List model checkpoints
 
-    Start, stop and the checkpoint list (which opens checkpoint files, SPEC_4
-    C3) are operator controls: each takes D8's one dependency
+    Start, Fine-tune, stop and the checkpoint list (which opens checkpoint
+    files, SPEC_4 C3) are operator controls: each takes D8's one dependency
     (`src/api/operator_access.py`) and is refused before it runs unless D8
     allows the request. Status and metrics stay open.
 
@@ -33,10 +36,10 @@ import re
 from typing import Annotated, Any, Dict, List, Literal, Mapping, Optional
 
 from fastapi import APIRouter, HTTPException, Query, status
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from src.api.operator_access import OPERATOR_ONLY
-from src.api.services.training_manager import training_manager
+from src.api.services.training_manager import FinetuneInputs, training_manager
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +91,10 @@ def cross_field_errors(settings: Mapping[str, Any]) -> List[str]:
 # Request/Response Models
 # =============================================================================
 class TrainingStartRequest(BaseModel):
-    """Training start request with configuration parameters."""
+    """Training start request with configuration parameters. A field this
+    request does not define is refused (422), never dropped (BACKLOG 54)."""
+
+    model_config = ConfigDict(extra="forbid")
 
     # Paths. Every run writes into a directory of its own, allocated under the
     # workspace (contract M3a-2); the name is optional and for people.
@@ -208,6 +214,31 @@ class TrainingStartRequest(BaseModel):
         return self
 
 
+class FinetuneStartRequest(BaseModel):
+    """A Fine-tune start: one to three tasks from one base checkpoint, each an
+    independent child run, in order (README §1, §8). `settings` apply to every
+    child and must be read by every chosen task; the task's recipe fills the
+    rest. Strict: any other field is refused (422)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    data_dir: str = Field(..., description="Workspace directory")
+    finetune_from: str = Field(..., description="The base checkpoint the children start from")
+    tasks: List[Literal["disease", "gene", "patients_like_me"]] = Field(
+        ..., min_length=1, max_length=3, description="The tasks, one child each, in order")
+    device: str = Field(default="auto", description="auto, cpu, cuda or cuda:N")
+    run_name: str = Field(default="", max_length=200, description="Optional run name prefix")
+    settings: Dict[str, Any] = Field(default_factory=dict,
+                                     description="Training settings for every child")
+
+    @field_validator("device")
+    @classmethod
+    def _validate_device(cls, value: str) -> str:
+        if not _DEVICE_RE.fullmatch(value):
+            raise ValueError(f"device {value!r} is not auto, cpu, mps, cuda or cuda:N")
+        return value
+
+
 class TrainingStatusResponse(BaseModel):
     """Training status response."""
 
@@ -230,6 +261,9 @@ class TrainingStatusResponse(BaseModel):
     exit_code: Optional[int] = None
     # The one GPU slot: the job holding it, of either type, and the GPU lock.
     gpu: Optional[Dict[str, Any]] = None
+    # The latest Fine-tune start's children, each with its own status (README
+    # §1); None until one is started, and after another training start.
+    finetune: Optional[Dict[str, Any]] = None
 
 
 class CheckpointInfo(BaseModel):
@@ -324,6 +358,34 @@ async def start_training(
             detail=result.get("error", "Failed to start training"),
         )
 
+    return result
+
+
+@router.post("/training/finetune", response_model=Dict[str, Any], dependencies=OPERATOR_ONLY)
+async def start_finetune(
+    request: FinetuneStartRequest,
+    expected_dataset_fingerprint: Annotated[Optional[str], Query(
+        pattern=r"^[0-9a-f]{64}$",
+        description="Refuse the start (409) unless the workspace's dataset fingerprint is "
+                    "still this one")] = None,
+    expected_parent_sha256: Annotated[Optional[str], Query(
+        pattern=r"^[0-9a-f]{64}$",
+        description="Refuse the start (409) unless the base checkpoint still has this "
+                    "SHA-256 (the model fingerprint shown)")] = None,
+) -> Dict[str, Any]:
+    """Start one to three finetune children of a base, in order, through the
+    one job runner (`TrainingManager.start_finetune`): each its own run,
+    status and record; a failed child does not stop its siblings, and
+    /training/stop ends the running child and cancels the queued ones."""
+    result = training_manager.start_finetune(
+        FinetuneInputs(data_dir=request.data_dir, finetune_from=request.finetune_from,
+                       tasks=tuple(request.tasks), device=request.device,
+                       run_name=request.run_name, settings=dict(request.settings),
+                       expected_parent_sha256=expected_parent_sha256),
+        expected_dataset_fingerprint=expected_dataset_fingerprint)
+    if not result.get("success"):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail=result.get("error", "Failed to start the finetune"))
     return result
 
 

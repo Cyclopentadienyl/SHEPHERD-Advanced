@@ -285,7 +285,7 @@ def test_the_demo_phase_passes_and_every_required_probe_runs(tmp_path, served_st
     assert facts["W1"]["workspaces"][0]["dataset_fingerprint"] == hashlib.sha256(
         (workspace / "split_manifest.json").read_bytes()).hexdigest()
     # W2 and W5: every request shape was decided by the condition named for it,
-    # on every gated API route (D8's seven) and the three gated dashboard events.
+    # on every gated API route (D8's eight) and the three gated dashboard events.
     assert sorted({seen["condition"] for seen in facts["W2"]["requests"].values()}) == [
         "cross_site", "enabled", "forwarding_header", "host_not_loopback", "origin_mismatch"]
     operator = sorted(f"{method} {path}" for method, path, _ in probe.OPERATOR_ROUTES)

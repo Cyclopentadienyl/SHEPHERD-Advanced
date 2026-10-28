@@ -461,12 +461,14 @@ class TestTrainingAPIEndpoints:
         written = yaml.safe_load(Path(resp.json()["config_path"]).read_text())
         assert set(written) == {"num_epochs", "device", "run_dir"}
 
-    def test_an_empty_retired_location_is_the_old_default(self, sample_config):
-        mock_proc = FakeProcess(pid=2)
-        with patch("subprocess.Popen", return_value=mock_proc):
+    def test_a_retired_location_is_refused_even_empty(self, sample_config):
+        """The request is strict (BACKLOG 54): a field it does not define, a
+        retired location among them, is refused, empty or not, never dropped."""
+        with patch("subprocess.Popen") as popen:
             resp = self.client.post("/api/v1/training/start",
                                     json={**sample_config, "checkpoint_dir": ""})
-        assert resp.status_code == 200 and resp.json()["run_dir"]
+        assert resp.status_code == 422 and "checkpoint_dir" in resp.text
+        popen.assert_not_called()
 
 
 class TestTrainingRoutesAreGated:

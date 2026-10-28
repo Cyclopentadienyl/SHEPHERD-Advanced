@@ -358,7 +358,8 @@ def test_every_state_changing_route_takes_the_one_dependency():
             (gated if deps else open_routes).add((method, route.path))
     assert gated == {
         ("POST", "/api/v1/pipeline/reload"), ("POST", "/api/v1/pipeline/config"),
-        ("POST", "/api/v1/training/start"), ("POST", "/api/v1/training/stop"),
+        ("POST", "/api/v1/training/start"), ("POST", "/api/v1/training/finetune"),
+        ("POST", "/api/v1/training/stop"),
         ("GET", "/api/v1/training/checkpoints"), ("GET", "/api/v1/workspaces/{name}/checkpoints"),
         ("GET", "/api/v1/workspaces/{name}/family"),
     }

@@ -104,6 +104,9 @@ is further evidence that the scripts are not a proven executed configuration.
 
 **Children never chain.** Choosing three tasks starts three children from the same parent; no task
 feeds another. The "finetuned base" of a task is simply that task's first finetune.
+- As built at K5: the children run in order through the one job runner
+  (`TrainingManager.start_finetune`, `POST /training/finetune`), each its own run and record (the
+  provenance contract §9.3, hazard 6).
 
 **Operations.** `new`, `resume`, `extend`, `branch` and `finetune` are distinct operations, never one
 flag read in different ways.

@@ -4126,6 +4126,14 @@ The six hazards found in the verification, each with its rule:
    - Between children the existing GPU-lock lifecycle decides. If another legitimate holder takes
      the lock, the next child waits or is refused explicitly.
    - The manager never releases a lock it does not hold.
+   - As built at K5: `TrainingManager.start_finetune` checks every task, setting and the parent
+     (a base with weights, the digest shown) before the first child starts. The next child is
+     started under the lock that freed the slot. When the slot refuses it (the GPU lock held
+     elsewhere, the backend stopping), the remaining children are refused and say why; nothing
+     waits.
+   - A stop ends the running child and cancels the queued ones; a failed child does not stop its
+     siblings. Every child is bound to the parent's digest (`--expect-parent-sha256`).
+     `POST /training/finetune` (D8) takes the same request, strictly.
 
 **Parents in another workspace.** The parent digest is always recorded. The one inventory reader
 resolves the parent when a configured, allowed root contains it, and otherwise the tree shows

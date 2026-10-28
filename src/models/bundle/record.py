@@ -167,6 +167,19 @@ def check_model_record(record: ModelRecord, *, learning_stage: Optional[str] = N
                                f"{view_digest[:12]}")
 
 
+def finetune_parent_problem(record: ModelRecord, payload: Mapping[str, Any]) -> Optional[str]:
+    """Why a read checkpoint cannot be a finetune's parent (contract §9.2), as
+    the rest of a sentence naming it, or None: a base with weights; children
+    never chain. Its graph is compared with the workspace's where the
+    workspace is read (`train_model.read_finetune_parent`)."""
+    if record.learning_stage != "base":
+        return (f"is a {record.learning_stage} checkpoint; a finetune's parent is a base, "
+                "and children never chain.")
+    if not isinstance(payload, Mapping) or payload.get("state_dict") is None:
+        return "holds no model weights."
+    return None
+
+
 #: What a model list shows of a checkpoint's record (`listed_record`).
 LISTED_RECORD_FIELDS = ("record", "record_problem", "learning_stage", "task", "operation",
                         "family_id", "parent_sha256", "parent_run", "encoder", "reference")
@@ -228,6 +241,7 @@ __all__ = [
     "OPERATIONS",
     "RECORD_KEYS",
     "check_model_record",
+    "finetune_parent_problem",
     "has_model_spec",
     "listed_record",
     "load_bundle",

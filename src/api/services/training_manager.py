@@ -114,7 +114,9 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Deque, Dict, List, Optional, Sequence, Set, Tuple
+from typing import (
+    Any, Callable, Deque, Dict, List, Mapping, Optional, Sequence, Set, Tuple,
+)
 
 import yaml
 
@@ -344,6 +346,67 @@ class TestRunInputs:
         }
 
 
+@dataclass(frozen=True)
+class FinetuneInputs:
+    """A Fine-tune start (README §1, §8): one to three tasks from one base
+    checkpoint, each an independent child run, in order (contract §9.3
+    hazard 6). `settings` are the training settings the caller sets for every
+    child, each one every chosen task reads (`src.config.recipe`); the task's
+    recipe fills the rest. `expected_parent_sha256` is the digest the caller
+    showed: the start reads the parent against it, and every child is bound
+    to the digest of that read."""
+
+    data_dir: str
+    finetune_from: str
+    tasks: Tuple[str, ...]
+    expected_parent_sha256: Optional[str] = None
+    device: str = "auto"
+    run_name: str = ""
+    settings: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class _Child:
+    """One task of a Fine-tune start: queued, then its own training job
+    (running, stopping, completed, failed, stopped), or never started
+    (cancelled by a stop, or refused when the slot would not take it)."""
+
+    task: str
+    status: str = "queued"
+    job_id: Optional[str] = None
+    run_dir: Optional[str] = None
+    error: Optional[str] = None
+
+    def describe(self) -> Dict[str, Any]:
+        return {"task": self.task, "status": self.status, "job_id": self.job_id,
+                "run_dir": self.run_dir, "error": self.error}
+
+
+@dataclass
+class _Finetune:
+    """The ordered children of one Fine-tune start, held by the runner (no
+    second queue, slot or lock): each started when the one before has ended."""
+
+    inputs: FinetuneInputs
+    parent_sha256: str
+    encoder: str
+    children: List[_Child]
+    expected_dataset_fingerprint: Optional[str] = None
+    cancelled: bool = False
+
+    def queued(self) -> List[_Child]:
+        return [child for child in self.children if child.status == "queued"]
+
+    def end_queued(self, status: str, why: str) -> None:
+        for child in self.queued():
+            child.status, child.error = status, why
+
+    def describe(self) -> Dict[str, Any]:
+        return {"parent": str(self.inputs.finetune_from), "parent_sha256": self.parent_sha256,
+                "tasks": list(self.inputs.tasks), "cancelled": self.cancelled,
+                "children": [child.describe() for child in self.children]}
+
+
 def deployment_device() -> Optional[str]:
     """The device a test run is given: the deployment's (D5), `SHEPHERD_DEVICE`
     as the served pipeline reads it (`requested_serving_device`). None leaves
@@ -429,6 +492,8 @@ class _Job:
     #: SIGTERM and SIGKILL and the monitor's cleanup reach; None on Windows and
     #: for a process that does not lead one (`_job_group`).
     group: Optional[int] = None
+    #: The finetune child this training job runs (`start_finetune`), if any.
+    child: Optional["_Child"] = None
     done: threading.Event = field(default_factory=threading.Event)
 
     def tail(self, n: Optional[int] = None) -> List[str]:
@@ -606,6 +671,9 @@ class TrainingManager:
         self._report_state: ReportStateReader = report_state or _registration_report_state
         #: The last training request (as started, with its run directory).
         self._config: Optional[Dict[str, Any]] = None
+        #: The latest Fine-tune start's children (`start_finetune`), shown
+        #: until another training start replaces it.
+        self._finetune: Optional[_Finetune] = None
 
         #: The directory of the run started last (contract M3a-2). Named here
         #: and claimed by the training process once its inputs pass, so a
@@ -938,6 +1006,7 @@ class TrainingManager:
             config = {**config, "run_dir": str(run_dir)}
             self._config = config
             self.run_dir = run_dir
+            self._finetune = None
 
             # Write config to temp YAML
             temp_fd, temp_path = tempfile.mkstemp(suffix=".yaml", prefix="train_config_")
@@ -995,6 +1064,164 @@ class TrainingManager:
             return (f"The dataset's {MANIFEST_FILENAME} cannot be read now "
                     f"({type(exc).__name__}). Nothing was started.")
         return None
+
+    def start_finetune(self, inputs: FinetuneInputs, *,
+                       expected_dataset_fingerprint: Optional[str] = None) -> Dict[str, Any]:
+        """**One to three finetune children from one base, in order** (README
+        §1, "Children never chain"; contract §9.3 hazard 6): one training job
+        per task, each its own run with its own record, status, failure and
+        cancellation; the parent is only read.
+
+        Refused before anything starts: no task, more than three, one twice or
+        one this build does not train; a setting not every chosen task reads;
+        a parent that is not a base with weights, or not the bytes the caller
+        showed; a dataset that changed; a busy slot. Then the first child
+        starts; each next one starts when the one before has ended, whatever
+        its ending, unless a stop cancelled the rest. **Between children the
+        slot's rules decide** (`_slot_refusal_locked`): when the GPU lock is
+        held elsewhere, or the backend is stopping, the remaining children are
+        refused and say why; nothing waits. Every child is bound to the
+        digest of this start's read of the parent (`--expect-parent-sha256`).
+        """
+        from src.config.recipe import reference_settings
+        from src.models.bundle.record import (
+            ModelRecordError, finetune_parent_problem, read_model_record,
+        )
+        from src.models.bundle.spec import TASKS
+        from src.utils.checkpoint_io import CheckpointChanged, read_checkpoint
+
+        def refused(why: str) -> Dict[str, Any]:
+            return {"success": False, "error": f"{why} Nothing was started.",
+                    "status": self.get_job_status_word("training")}
+
+        tasks = tuple(inputs.tasks)
+        if not 1 <= len(tasks) <= 3:
+            return refused("A Fine-tune start names one to three tasks.")
+        unknown = [task for task in tasks if task not in TASKS]
+        if unknown:
+            return refused(f"{unknown[0]!r} is not a task; one of {list(TASKS)}.")
+        if len(set(tasks)) != len(tasks):
+            return refused("A task is named more than once; each task is one child.")
+        common = set.intersection(*(set(reference_settings("finetune", task)[0])
+                                    for task in tasks))
+        unread = sorted(set(inputs.settings) - common)
+        if unread:
+            return refused(f"{', '.join(unread)} is not a setting every chosen task reads "
+                           f"(those are {', '.join(sorted(common))}).")
+        if expected_dataset_fingerprint is not None:
+            refusal = self.dataset_refusal(inputs.data_dir, expected_dataset_fingerprint)
+            if refusal:
+                return {"success": False, "error": refusal, "dataset_changed": True,
+                        "status": self.get_job_status_word("training")}
+
+        # The parent, read once, against the digest shown (the training
+        # process reads it again against this read's digest).
+        path = Path(inputs.finetune_from)
+        if not path.is_absolute():
+            path = PROJECT_ROOT / path
+        try:
+            read = read_checkpoint(path, map_location="cpu", weights_only=True,
+                                   expected_sha256=inputs.expected_parent_sha256)
+            record = read_model_record(read.checkpoint)
+        except CheckpointChanged as exc:
+            now = f"it holds {exc.found[:12]} now" if exc.found is not None else "it is gone"
+            return {**refused(f"The parent {path.name} changed since it was chosen: {now}."),
+                    "parent_changed": True}
+        except (ModelRecordError, FileNotFoundError) as exc:
+            return refused(f"The parent {path.name}: {exc}.")
+        except Exception as exc:  # noqa: BLE001 - a refusal to show
+            return refused(f"The parent {path.name} cannot be read as a checkpoint "
+                           f"({type(exc).__name__}: {exc}).")
+        problem = finetune_parent_problem(record, read.checkpoint)
+        if problem:
+            return refused(f"The parent {path.name} {problem}")
+
+        sequence = _Finetune(inputs=FinetuneInputs(**{**inputs.__dict__, "finetune_from": str(path),
+                                                      "tasks": tasks}),
+                             parent_sha256=read.identity.sha256,
+                             encoder=record.model_spec.encoder.kind,
+                             children=[_Child(task) for task in tasks],
+                             expected_dataset_fingerprint=expected_dataset_fingerprint)
+        kind = JOB_TYPES["training"]
+        with self._lock:
+            refusal = self._slot_refusal_locked(kind)
+            if refusal:
+                return {"success": False, "error": refusal,
+                        "status": self._status_locked("training")}
+            error = self._launch_child_locked(sequence, sequence.children[0])
+            if error is not None:
+                return {"success": False, "error": error, "status": "failed"}
+            self._finetune = sequence
+            return {"success": True, "finetune": sequence.describe(), "status": "running"}
+
+    def _launch_child_locked(self, sequence: _Finetune, child: _Child) -> Optional[str]:
+        """Start `child` as a training job: its own run directory under the
+        parent's encoder kind, a configuration of only what was asked (the
+        task's recipe fills the rest), bound to the parent's digest. Called
+        under the lock, the slot free. Returns why it could not start, after
+        recording it on the child, or None."""
+        from src.utils.checkpoint_paths import propose_run_dir
+
+        inputs = sequence.inputs
+        kind = JOB_TYPES["training"]
+        try:
+            run_dir = propose_run_dir(self.workspace_path(inputs.data_dir), sequence.encoder,
+                                      "-".join(filter(None, (inputs.run_name, child.task))))
+        except (ValueError, OSError) as exc:
+            child.status, child.error = "failed", str(exc)
+            return str(exc)
+        config = {"data_dir": inputs.data_dir, "learning_stage": "finetune", "task": child.task,
+                  "finetune_from": inputs.finetune_from, "device": inputs.device,
+                  **dict(inputs.settings), "run_dir": str(run_dir)}
+        temp_fd, temp_path = tempfile.mkstemp(suffix=".yaml", prefix="train_config_")
+        config_path = Path(temp_path)
+        try:
+            with os.fdopen(temp_fd, "w") as f:
+                yaml.dump(config, f, default_flow_style=False)
+        except Exception as exc:  # noqa: BLE001 - recorded on the child
+            config_path.unlink(missing_ok=True)
+            child.status, child.error = "failed", f"Its configuration could not be written ({exc})."
+            return child.error
+        cmd = [sys.executable, str(PROJECT_ROOT / kind.script), "--config", str(config_path),
+               "--expect-parent-sha256", sequence.parent_sha256]
+        if sequence.expected_dataset_fingerprint is not None:
+            cmd += ["--expect-dataset-sha256", sequence.expected_dataset_fingerprint]
+        job, error = self._spawn_locked(kind, cmd, inputs={"config_path": str(config_path),
+                                                           "finetune_task": child.task},
+                                        cleanup=[config_path], run_dir=run_dir)
+        if job is None:
+            child.status, child.error = "failed", error
+            return error
+        job.child = child
+        child.status, child.job_id, child.run_dir = "running", job.job_id, str(run_dir)
+        self._config = config
+        self.run_dir = run_dir
+        logger.info("Finetune child %s started (job %s), run directory %s", child.task,
+                    job.job_id, run_dir)
+        return None
+
+    def _child_ended_locked(self, job: _Job) -> None:
+        """A finetune child's job has ended (its status recorded): start the
+        next queued child unless a stop cancelled them, the slot's rules
+        permitting, or refuse the rest with why. Called under the lock, from
+        the monitor, once the slot is free."""
+        child, sequence = job.child, self._finetune
+        child.status, child.error = job.status, job.error_message
+        if sequence is None or child not in sequence.children:
+            return
+        if job.status == JOB_TYPES["training"].stopped_status or sequence.cancelled:
+            sequence.cancelled = True
+            sequence.end_queued("cancelled", "Cancelled: the training was stopped.")
+            return
+        queued = sequence.queued()
+        if not queued:
+            return
+        refusal = self._slot_refusal_locked(JOB_TYPES["training"])
+        if refusal:
+            sequence.end_queued("refused", refusal)
+            return
+        while queued and self._launch_child_locked(sequence, queued[0]) is not None:
+            queued = sequence.queued()
 
     def stop_training(self) -> Dict[str, Any]:
         """
@@ -1117,6 +1344,11 @@ class TrainingManager:
             if job.status != "running":
                 return {"success": False, "error": f"{kind.noun} is already stopping.",
                         "status": job.status}, None
+            if job.child is not None and self._finetune is not None:
+                # A stop reaches the Fine-tune start: the queued children never
+                # start, also when the running one ended on its own meanwhile.
+                self._finetune.cancelled = True
+                self._finetune.end_queued("cancelled", "Cancelled: the training was stopped.")
             process = job.process
             ended_on_its_own = process.poll() is not None
             if not ended_on_its_own:
@@ -1342,6 +1574,10 @@ class TrainingManager:
                     job.error_message = self._failure_text(job, returncode)
                 if self._active is job:
                     self._active = None
+                if job.child is not None:
+                    # The next child starts here, under the lock that freed the
+                    # slot, so no other start comes between two children.
+                    self._child_ended_locked(job)
             for path in job.cleanup:
                 _remove(path)
             job.done.set()
@@ -1601,6 +1837,8 @@ class TrainingManager:
             result = self._job_fields(self._last.get("training"))
             result["config"] = self._config
             result["run_dir"] = str(self.run_dir) if self.run_dir is not None else None
+            result["finetune"] = (self._finetune.describe() if self._finetune is not None
+                                  else None)
         result["gpu"] = self.gpu_state()
 
         # How the run stands, from its last snapshot's own record, once the
@@ -1789,8 +2027,11 @@ class TrainingManager:
         workspace's data and graph (M2.3) and decides again on those bytes;
         `start_training` binds it to this preview's read.
         """
+        from src.models.bundle.record import MODEL_RECORD_VERSION, has_model_spec
         from src.utils.run_plan import OPERATIONAL_FIELDS, RunPlanRefused, plan_continuation
-        from src.utils.checkpoint_io import CheckpointChanged, read_checkpoint
+        from src.utils.checkpoint_io import (
+            CHECKPOINT_RECORD_VERSION, CheckpointChanged, read_checkpoint,
+        )
 
         if expected_sha256 is not None and not (
                 isinstance(expected_sha256, str) and _SHA256.fullmatch(expected_sha256)):
@@ -1827,8 +2068,12 @@ class TrainingManager:
             "completed_epochs": progress.get("completed_epochs"),
             "target_epochs": (int(stage.get("start_epoch", 0))
                               + int(stage.get("target_epochs", 0))) if stage else None,
-            "architecture": ((record.get("config") or {}).get("model_config") or {}).get(
-                "conv_type"),
+            # Where a continued run is filed: a model bundle's encoder kind,
+            # else the ShepherdGNN conv type (the run layout's key).
+            "architecture": (((record.get("model_spec") or {}).get("encoder") or {}).get("kind")
+                             if has_model_spec(record) else
+                             ((record.get("config") or {}).get("model_config") or {}).get(
+                                 "conv_type")),
             # The dataset the parent trained on, as it records it (M5-2: the
             # Continue drawer compares it with the workspace's current one).
             "dataset_fingerprint": _recorded_dataset(record),
@@ -1846,7 +2091,9 @@ class TrainingManager:
         try:
             plan = plan_continuation(record, path, request, set(explicit),
                                      device=effective_device,
-                                     parent_sha256=read.identity.sha256)
+                                     parent_sha256=read.identity.sha256,
+                                     record_version=(MODEL_RECORD_VERSION if has_model_spec(record)
+                                                     else CHECKPOINT_RECORD_VERSION))
         except RunPlanRefused as exc:
             return {**facts, "ok": False, "reason": str(exc)}
         return {**facts, "ok": True, "mode": plan.mode, "action": plan.action,

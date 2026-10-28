@@ -1283,15 +1283,15 @@ def read_finetune_parent(requested: str, inputs: TrainingInputs, device: str, *,
     all accepted; a finetune checkpoint is refused (children never chain), and
     so is a checkpoint without a model spec (nothing is guessed). Patient data
     may differ from the parent's: only the graph is compared."""
+    from src.models.bundle.record import finetune_parent_problem
     from src.utils.run_plan import RunPlanRefused
 
     parent, record = _read_bundle_parent(requested, "finetune", device,
                                          expected_sha256=expected_sha256)
     path = Path(requested)
-    if record.learning_stage != "base":
-        raise RunPlanRefused(
-            f"The finetune parent {path.name} is a {record.learning_stage} checkpoint; a "
-            "finetune's parent is a base, and children never chain.")
+    problem = finetune_parent_problem(record, parent.checkpoint)
+    if problem:
+        raise RunPlanRefused(f"The finetune parent {path.name} {problem}")
     if record.data_roles.get("kg") != inputs.bound.get("kg"):
         raise RunPlanRefused(
             f"The finetune parent {path.name} was trained on another knowledge graph; its "
