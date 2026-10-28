@@ -21,11 +21,21 @@ registry's report store (`tests/fixtures/model_records.py`):
 - **contested records left out (D5)**, and a state that cannot be checked
   never read as uncontested;
 - **the shared Load writes the usage history entry** for a Load from an ordered
-  list (the page's ``ordering``), and none for newest first;
-- **the detail**: Trainer validation in its own card, Mode C in the records,
-  never together; *unverifiable* never a number; D4's pick and the others'
-  difference; the usage history segment (this checkpoint's entries, newest
-  first); ledger states said, never a path;
+  list (the page's ``ordering``), and none for newest first; a history file
+  (every ordered row) is refused, a task model loaded from the list instead;
+- **task and family**: the Task select's options (the list's one vocabulary,
+  short, unique); the task filter orders only what is shown (History keeps
+  the Mode C order, Disease has none); newest first's Kind column under All;
+  By family's groups (parent first, indented Lineage cells, a context row in
+  grey with ○, an unavailable parent in amber with ▲, escaped; the history and
+  not-readable groups under All), offered with no ordering version;
+- **the detail**: what the model is (kind, operation, parent and where it is,
+  family, encoder, relation to the paper) without Model Facts' Task and
+  Configuration rows; Trainer validation in its own card, Mode C in the
+  records, never together; a registered task record under its own metric
+  names; *unverifiable* never a number; D4's pick and the others' difference;
+  the usage history segment (this checkpoint's entries, newest first); ledger
+  states said, never a path;
 - **read-only (D8)**: no list, D8's three conditions named, and "Recorded test
   results of the model in use" read by the API's read-only route function from
   the ledger beside the served checkpoint, by its digest, opening no
@@ -192,8 +202,55 @@ def _key(world, name):
     raise KeyError(name)
 
 
+#: Model bundles beside the ShepherdGNN files (which are history: every Mode C
+#: record is theirs): a base and its disease and gene children, filed under
+#: ``gatv2``, older than every file above so the orders over those stay.
+BASE_RUN = "20261001-000000_base_aaaaaa"
+BUNDLES = {"base": (BASE_RUN, "base.pt"), "disease": ("20261002-000000_disease_bbbbbb", "last.pt"),
+           "gene": ("20261003-000000_gene_cccccc", "last.pt")}
+
+
+def bundle_key(kind):
+    run, name = BUNDLES[kind]
+    return f"gatv2/{run}/{name}"
+
+
+def _add_bundles(world, *, orphan_parent_run=None):
+    """Write the base and its children (`test_task_first_selection`'s record
+    writer); with `orphan_parent_run`, one more disease child whose recorded
+    parent is in that run and not available. Returns the files' digests."""
+    from src.utils.checkpoint_io import write_checkpoint
+    from tests.unit import test_task_first_selection as bundles
+
+    assert bundles.BASE_RUN == BASE_RUN
+    fingerprint = file_sha256(world["workspace"] / "split_manifest.json")
+    meta = {"checkpoint_kind": "weights", "training_input_digests": {"split_manifest": fingerprint}}
+    now, shas = time.time(), {}
+
+    def put(run, name, record, epoch, age):
+        path = world["workspace"] / "runs" / "gatv2" / run / "checkpoints" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        sha = write_checkpoint({**record, **meta, "epoch": epoch}, path)
+        os.utime(path, (now - age * 3600,) * 2)
+        world["paths"][f"{run}/{name}"] = path
+        return sha
+
+    shas["base"] = put(*BUNDLES["base"], bundles._record_payload(
+        logs={"val_lp_accuracy": 0.81}), 4, 22)
+    parent = {"sha256": shas["base"], "run": BASE_RUN}
+    for age, task in ((20, "disease"), (21, "gene")):
+        shas[task] = put(*BUNDLES[task], bundles._record_payload(
+            task, logs={"val_pooled_mrr": 0.42}, parent=parent), 2, age)
+    if orphan_parent_run is not None:
+        orphan = "20261004-000000_disease_dddddd"
+        shas["orphan"] = put(orphan, "last.pt", {**bundles._record_payload(
+            "disease", logs={"val_pooled_mrr": 0.4},
+            parent={"sha256": "9" * 64, "run": orphan_parent_run}), "family_id": orphan}, 3, 23)
+    return shas
+
+
 def _read(world, monkeypatch):
-    listing = ml.list_models("demo", operator_request(monkeypatch))
+    listing = ml.list_models("demo", operator_request(monkeypatch), family=True)
     return listing, mp.read_page(listing)
 
 
@@ -202,9 +259,9 @@ def _text(markup):
     return html_lib.unescape(re.sub(r"<[^>]+>", "", markup)).replace("\xa0", " ")
 
 
-def _ordered(world, monkeypatch, metric="untruncated_mrr", arch=None, scoring=None):
+def _ordered(world, monkeypatch, metric="untruncated_mrr", task=None, scoring=None):
     listing, data = _read(world, monkeypatch)
-    ctl = mp.controls(listing, data, mp.BY_SCORE, MYGENE, metric, scoring, arch)
+    ctl = mp.controls(listing, data, mp.BY_SCORE, MYGENE, metric, scoring, task)
     view, ordering = mp.shape(listing, data, ctl)
     return listing, data, ctl, view, ordering
 
@@ -334,10 +391,20 @@ def test_mean_rank_orders_lowest_first(world, monkeypatch):
                                          for n in ("model-20.pt", "model-05.pt", "model-08.pt")]
 
 
-def test_the_architecture_filter_orders_only_what_is_shown(world, monkeypatch):
-    _listing, _data, ctl, view, _ordering = _ordered(world, monkeypatch, arch="hgt")
-    assert ctl["arch"] == "hgt" and view["architecture"] == "hgt"
-    assert [g["title"] for g in view["groups"]] == [mp.GROUP_CONTESTED]
+def test_the_task_filter_orders_only_what_is_shown(world, monkeypatch):
+    """By test score keeps its policy (Mode C records only, every one a history
+    file's): History keeps the Mode C order; Disease has no ordered group, its
+    rows not tested on the version; an unknown filter is All."""
+    _add_bundles(world)
+    listing, _data, ctl, view, _ordering = _ordered(world, monkeypatch, task="history")
+    assert ctl["task"] == "history" and view["task"] == "history"
+    assert view["groups"][0]["keys"] == [_key(world, n)
+                                         for n in ("model-05.pt", "model-08.pt", "model-20.pt")]
+    _listing, _data, ctl, view, ordering = _ordered(world, monkeypatch, task="disease")
+    assert [g["title"] for g in view["groups"]] == [mp.GROUP_NOT_TESTED]
+    assert view["groups"][0]["keys"] == [bundle_key("disease")]
+    assert ordering is not None                   # a Load from it is still a Load from the order
+    assert mp.controls(listing, _data, mp.BY_SCORE, MYGENE, None, None, "gat")["task"] == "all"
 
 
 def test_a_second_scoring_semantics_is_a_choice_never_interleaved(world, monkeypatch):
@@ -515,16 +582,26 @@ def test_the_page_reads_no_ledger_and_scans_no_store_the_listing_already_read(wo
 
 # --------------------------------------------------------------------------- the shared Load
 def test_a_load_from_the_ordered_list_writes_the_usage_history_entry(world, monkeypatch):
+    """The ordered rows are history files (every Mode C record is one), which
+    are never run from the UI (K6 decision 1): a Load of one is refused before
+    anything is read. A task model loaded from the ordered list (not tested on
+    the version) writes the usage history entry."""
     from src.api.routes.pipeline import PipelineReloadResponse, PipelineStatusResponse
     from src.evaluation.report_store import read_usage_history
     from tests.fixtures.report_store import version_of
 
-    listing, _data, _ctl, _view, ordering = _ordered(world, monkeypatch)
-    key = _key(world, "model-05.pt")
+    shas = _add_bundles(world)
+    listing, _data, _ctl, view, ordering = _ordered(world, monkeypatch)
+    plan, html = ml.request_load(listing, _key(world, "model-05.pt"), ordering,
+                                 operator_request(monkeypatch))
+    assert plan is None and ml.HISTORY_REFUSAL in html
+    key = bundle_key("disease")
+    assert key in view["groups"][-1]["keys"]                   # not tested on this version
     plan, _html = ml.request_load(listing, key, ordering, operator_request(monkeypatch))
-    sha = world["shas"]["model-05.pt"]
+    sha = shas["disease"]
 
     def reload(request):
+        assert request.task == "disease"
         return PipelineReloadResponse(success=True, message="ok", status=PipelineStatusResponse(
             **_status(world["workspace"], sha)))
 
@@ -538,10 +615,20 @@ def test_a_load_from_the_ordered_list_writes_the_usage_history_entry(world, monk
 
 
 def test_newest_first_gives_the_load_no_ordering(world, monkeypatch):
+    """Newest first: no ordering; under All a Kind column says what each row
+    is (`renderers.record_kind_text`), under one filter none."""
+    _add_bundles(world)
     listing, data = _read(world, monkeypatch)
     ctl = mp.controls(listing, data, mp.NEWEST, MYGENE, None, None, None)
     view, ordering = mp.shape(listing, data, ctl)
-    assert ordering is None and view == {"architecture": None, "note": mp.LOAD_NOTE}
+    assert ordering is None and view["task"] == "all" and view["note"] == mp.LOAD_NOTE
+    assert view["column"] == mp.KIND_COLUMN and "groups" not in view
+    cells = view["cells"]
+    assert cells[_key(world, "model-05.pt")] == "History · never run"
+    assert cells[_key(world, "broken.pt")] == "Record not read"
+    assert (cells[bundle_key("base")], cells[bundle_key("gene")]) == ("Base", "Gene")
+    ctl = mp.controls(listing, data, mp.NEWEST, MYGENE, None, None, "disease")
+    assert mp.shape(listing, data, ctl) == ({"task": "disease", "note": mp.LOAD_NOTE}, None)
 
 
 
@@ -720,6 +807,160 @@ def test_markup_in_a_run_name_is_escaped(world, monkeypatch):
     assert "&lt;i&gt;y_run" in detail["header"]               # the title names it, escaped
 
 
+# --------------------------------------------------------------------------- task and family
+EVIL = "<img src=x onerror=alert(1)>"
+
+
+def test_the_task_and_order_options_are_short_unique_and_plain():
+    """Skill §8: options 40 characters or fewer, unique, the distinguishing
+    token first, at most one separator; the task words are the list's own."""
+    for choices in (mp.TASK_CHOICES, mp.ORDER_CHOICES):
+        labels = [label for label, _value in choices]
+        values = [value for _label, value in choices]
+        assert len(set(labels)) == len(labels) and len(set(values)) == len(values)
+        assert all(len(label) <= 40 and label.count(" · ") <= 1 for label in labels)
+    assert mp.TASK_CHOICES == [("All", "all"), ("Base", "base"), ("Disease", "disease"),
+                               ("Gene", "gene"), ("Patients-like-me", "patients_like_me"),
+                               ("History", "history")]
+    assert {value for _label, value in mp.TASK_CHOICES} <= set(ml.TASK_FILTERS)
+    assert [label for label, _value in mp.ORDER_CHOICES] == ["Newest first", "By family",
+                                                             "By test score"]
+    title, text = mp.PAGE_HELP["models-ordering"]
+    assert title == "Order" and text.split("\n")[0].startswith("How the list is ordered")
+
+
+def test_by_family_draws_each_family_parent_first_with_its_lineage(world, monkeypatch):
+    """By family (offered with no ordering version): one group per family,
+    the base first and its children under it, indented, each with its kind,
+    operation and exact parent; a child whose parent is not available says so
+    in amber with ▲ and its words, escaped; under All the history files and the
+    records not readable follow as two groups; a task's view keeps its base as
+    a context row."""
+    monkeypatch.delenv("SHEPHERD_ORDERING_ROLES")
+    shas = _add_bundles(world, orphan_parent_run=EVIL)
+    listing, data = _read(world, monkeypatch)
+    assert not mp.offered_versions(data)
+    ctl = mp.controls(listing, data, mp.BY_FAMILY, None, None, None, None)
+    assert ctl["order"] == mp.BY_FAMILY
+    view, ordering = mp.shape(listing, data, ctl)
+    assert ordering is None and view["column"] == mp.LINEAGE_COLUMN
+    titles = [g["title"] for g in view["groups"]]
+    assert titles == ["Family from run 2026-10-01 00:00 · 3 files",
+                      "Family from run 2026-10-04 00:00 · 1 file",
+                      mp.GROUP_HISTORY, mp.GROUP_REFUSED]
+    assert view["groups"][0]["keys"] == [bundle_key("base"), bundle_key("disease"),
+                                         bundle_key("gene")]
+    assert view["groups"][3]["keys"] == [_key(world, "broken.pt")]
+    assert len(view["groups"][2]["keys"]) == 7                       # every ShepherdGNN file
+    cells = view["cells"]
+    child = cells[bundle_key("disease")]
+    assert 'class="shep-mp-lin shep-mp-d1"' in child and "Disease" in child
+    assert f"Finetune of <code class=\"shep-fpv\">{shas['base'][:12]}</code>" in child
+    assert 'class="shep-mp-lin shep-mp-d0"' in cells[bundle_key("base")]
+    assert "New run" in cells[bundle_key("base")]
+    orphan = cells["gatv2/20261004-000000_disease_dddddd/last.pt"]
+    assert ('<span class="shep-mp-warn"><span aria-hidden="true">▲</span> parent unavailable: '
+            in orphan)
+    assert EVIL not in orphan and html_lib.escape(EVIL) in orphan
+    assert "History · never run" in cells[_key(world, "model-05.pt")]
+    # The shared list draws them: groups in order, the Lineage column.
+    html = ml.list_html(listing, None, ml.PRESETS["research"], view=view)
+    assert ">Lineage</th>" in html and EVIL not in html
+    assert html.index("Family from run 2026-10-01") < html.index(mp.GROUP_HISTORY)
+    # A task's view: its base as a context row, grey, ○ and its words.
+    ctl = mp.controls(listing, data, mp.BY_FAMILY, None, None, None, "gene")
+    view, _ordering = mp.shape(listing, data, ctl)
+    assert [g["keys"] for g in view["groups"]] == [[bundle_key("base"), bundle_key("gene")]]
+    assert ('<div class="shep-sub shep-mp-ctx"><span aria-hidden="true">○</span> '
+            'Context: parent of a shown file</div>') in view["cells"][bundle_key("base")]
+    assert mp.shown_view(listing, ctl) == {"keys": [bundle_key("base"), bundle_key("gene")]}
+    # History alone; the CSS gives the marks their status tokens.
+    ctl = mp.controls(listing, data, mp.BY_FAMILY, None, None, None, "history")
+    view, _ordering = mp.shape(listing, data, ctl)
+    assert [g["title"] for g in view["groups"]] == [mp.GROUP_HISTORY]
+    assert ".shep-mp-warn {{ color: var(--shep-status-warn); }}".replace(
+        "{{", "{").replace("}}", "}") in mp.PAGE_CSS.replace(f"{mp._PAGE} ", "")
+    assert "var(--shep-status-neutral)" in mp.PAGE_CSS
+    # Without a family view (a listing read without one): newest first, said.
+    bare = {k: v for k, v in listing.items() if k != "family"}
+    view, _ordering = mp.shape(bare, data, mp.controls(bare, data, mp.BY_FAMILY, None, None,
+                                                        None, None))
+    assert view["refused"] == mp.FAMILY_NOT_READ and "groups" not in view
+
+
+def test_the_detail_says_what_the_model_is_and_its_relation_to_the_paper(world, monkeypatch):
+    """The detail's identity (README §5): kind, operation, the exact parent
+    and where it is, family, encoder and axis 2 (the fields that differ, or
+    "matches the reference recipe" with what that recipe is); Model Facts'
+    Task and Configuration rows are not repeated; a history file says its
+    kind only; Load is refused for a base with its reason."""
+    shas = _add_bundles(world)
+    listing, data = _read(world, monkeypatch)
+    ctl = mp.controls(listing, data, mp.NEWEST, None, None, None, None)
+    top = mp.detail_parts(listing, data, bundle_key("disease"), ctl)["top"]
+    ident = top[top.index('<div class="shep-kv shep-mp-ident">'):]
+    ident = ident[:ident.index("</div></div>") + 12]
+    keys = re.findall(r'<span class="shep-k">([^<]*)</span>', ident)
+    assert keys == ["Kind", "Operation", "Parent", "Family", "Encoder", "Relation to the paper"]
+    text = _text(ident)
+    assert "Disease" in text and "Finetune" in text and "GATv2" in text
+    assert f"{shas['base'][:12]} of run 2026-10-01 00:00 · listed here" in text
+    assert "Family" in text and "run 2026-10-01 00:00" in text
+    assert "differs in: " in text and "encoder.hidden" in text   # a shrunk test spec
+    assert "Configuration" not in top and ">Task<" not in top
+    history = mp.detail_parts(listing, data, _key(world, "model-05.pt"), ctl)["top"]
+    ident = history[history.index('<div class="shep-kv shep-mp-ident">'):]
+    ident = ident[:ident.index("</span></div>") + 13]
+    assert re.findall(r'<span class="shep-k">([^<]*)</span>', ident) == ["Kind"]
+    assert "History · never run" in ident
+    # Axis 2 for a reference spec, and for a parent elsewhere or unavailable.
+    item = {"record": "model", "learning_stage": "finetune", "task": "gene",
+            "operation": "finetune", "family_id": BASE_RUN, "encoder": "gatv2",
+            "differences": (), "parent_sha256": "a" * 64, "parent_run": EVIL}
+    html = mp.identity_html(item, {"parent_state": "elsewhere", "parent_workspace": EVIL})
+    assert "matches the reference recipe" in html and mp.REFERENCE_ANCHOR in _text(html)
+    assert EVIL not in html and "in workspace <b>&lt;img" in html
+    html = mp.identity_html(item, {"parent_state": "unavailable", "parent_problem": EVIL})
+    assert "▲</span> parent unavailable: &lt;img" in html and EVIL not in html
+    assert "none: a new run" in mp.identity_html({**item, "parent_sha256": None}, None)
+    # Load is off for the base, with its reason (the shared list's).
+    assert ml.load_refusal(ml.find_item(listing, bundle_key("base"))) == ml.BASE_REFUSAL
+
+
+def test_a_registered_task_record_shows_its_own_named_metrics(world, monkeypatch):
+    """A disease, gene or patients-like-me record (K6 Test registers them) is
+    shown in its own table under its task's metric names
+    (`caveats.metric_text`): pooled MRR beside pooled top-10 or macro
+    recall@10, the other figures after them in E1/E5/E2's order, its coverage
+    in its own words; never "not described" under bare headers."""
+    listing, data, ctl, _view, _ordering = _ordered(world, monkeypatch)
+    record = next(r for entry in data["ledgers"].values() for r in entry.get("records") or [])
+    base = mp.record_view(record)
+    metrics = {"pooled_mrr": 0.4123, "pooled_top10": 0.75, "macro_recall@10": 0.6,
+               "macro_mrr": 0.4, "conservative_pooled_mrr": 0.38, "best_positive_mrr": 0.5,
+               "coverage": 0.9, "pooled_top1": 0.25, "macro_precision@10": 0.06}
+    for task, second, value in (("disease", "Disease pooled top-10", "0.7500"),
+                                ("gene", "Gene macro recall@10", "0.6000"),
+                                ("patients_like_me", "Patients-like-me macro recall@10",
+                                 "0.6000")):
+        view = {**base, "mode": task, "metrics": metrics}
+        html = mp.records_block_html([view], {})
+        heads = re.findall(r'<th scope="col" class="shep-num">([^<]*)</th>', html)
+        name = {"disease": "Disease", "gene": "Gene", "patients_like_me": "Patients-like-me"}[task]
+        assert heads == [f"{name} pooled MRR", second], heads
+        assert "0.4123" in html and value in html and "not described" not in html
+        text = _text(html)
+        others = text[text.index(f"{name} coverage"):]
+        order = [others.index(f"{name} {words}") for words in (
+            "coverage", "conservative pooled MRR", "pooled top-1 ", "macro precision@10")]
+        assert order == sorted(order), order
+        assert "source cases ranked by the model" in text
+    entry = {"kind": "test_run", "at": "2026-10-26T12:00:00Z", "version": "v", "run_id": "r",
+             "metrics": {"pooled_mrr": 0.5}, "n_ranked": 3, "device": "cpu",
+             "deterministic": True, "record_requested": False, "mode": "gene"}
+    assert "Gene pooled MRR 0.5000 over 3 ranked cases" in _text(mp.usage_entry_html(entry))
+
+
 # --------------------------------------------------------------------------- read-only
 class _ServedPipeline:
     def __init__(self, read):
@@ -891,11 +1132,11 @@ def test_the_page_is_read_when_shown_and_shapes_the_shared_list(world, monkeypat
     assert len(states) >= 4                    # listing, selected, page data, view, ordering
     inputs = [getattr(i, "elem_id", None) for i in opened.inputs]
     assert {"shep-mp-order", "shep-mp-version", "shep-mp-metric", "shep-mp-scoring",
-            "shep-mp-arch"} <= set(inputs)
+            "shep-mp-task"} <= set(inputs)
     stale = _sync_states(demo)["stale"]
     assert stale in opened.outputs
     out = opened.fn("demo", False, None, None, None, mp.BY_SCORE, MYGENE, "untruncated_mrr", None,
-                    mp.ALL_ARCHITECTURES, mp.RECORDS, "idle", operator_request(monkeypatch))
+                    mp.ALL_TASKS, mp.RECORDS, "idle", operator_request(monkeypatch))
     assert len(out) == len(opened.outputs)
     by_output = dict(zip(map(id, opened.outputs), out, strict=True))
     listing = out[0]
@@ -939,11 +1180,11 @@ def _sync_states(demo):
 
 
 def _sync(states, monkeypatch, listing, data, *, trigger, stale=False, last=None, phase="idle",
-          order=mp.BY_SCORE, version=MYGENE, arch=mp.ALL_ARCHITECTURES, selected=None,
+          order=mp.BY_SCORE, version=MYGENE, task=mp.ALL_TASKS, selected=None,
           seg=mp.RECORDS):
     sync = states["fn"]
     out = sync.fn(listing, data, stale, last, phase, order, version, "untruncated_mrr", None,
-                  arch, selected, seg, operator_request(monkeypatch), gr.EventData(trigger, None))
+                  task, selected, seg, operator_request(monkeypatch), gr.EventData(trigger, None))
     assert len(out) == len(sync.outputs)
     by = dict(zip(map(id, sync.outputs), out, strict=True))
     return {name: by[id(states[name])] for name in ("stale", "last", "selected", "data")} | {
@@ -1000,8 +1241,9 @@ def test_after_a_load_the_page_reads_again_and_selects_the_same_checkpoint(world
 
     demo, _ctx = _page()
     states = _sync_states(demo)
+    shas = _add_bundles(world)
     listing, data, _ctl, _view, ordering = _ordered(world, monkeypatch)
-    key, sha = _key(world, "model-05.pt"), world["shas"]["model-05.pt"]
+    key, sha = bundle_key("disease"), shas["disease"]
     assert sha not in data["usage"]["entries"]
     plan, _html = ml.request_load(listing, key, ordering, operator_request(monkeypatch))
     served = world["shas"]["model-12.pt"]
@@ -1013,7 +1255,8 @@ def test_after_a_load_the_page_reads_again_and_selects_the_same_checkpoint(world
 
     step = ml.finish_load(plan, operator_request(monkeypatch), reload=refused)
     assert "Not reloaded" in step.confirm_html
-    after = ml.list_models("demo", operator_request(monkeypatch))       # the shared refresh
+    # the shared refresh, as the research preset reads it (with its family view)
+    after = ml.list_models("demo", operator_request(monkeypatch), family=True)
     assert mp.listing_key(after) == data["listing_key"]                # nothing listed changed
     reads = []
     real = mp.read_page
@@ -1046,8 +1289,12 @@ def test_after_a_load_the_page_reads_again_and_selects_the_same_checkpoint(world
     assert reads == [1] and again["data"] == gr.update() and again["selected"] == gr.update()
     # A checkpoint the view no longer shows is not selected again.
     out = _sync(states, monkeypatch, after, data, trigger=states["selected"], stale=True,
-                last=last, arch="hgt")
+                last=last, task="gene")
     assert reads == [1, 1] and out["selected"] == gr.update() and "redraw" not in out["page"][1]
+    # By family shows it (among its family's rows): selected again.
+    out = _sync(states, monkeypatch, after, data, trigger=states["selected"], stale=True,
+                last=last, order=mp.BY_FAMILY)
+    assert out["selected"] == key and out["page"][1]["column"] == mp.LINEAGE_COLUMN
 
 
 def test_controls_selection_and_segments_are_wired(world, monkeypatch):
@@ -1060,7 +1307,7 @@ def test_controls_selection_and_segments_are_wired(world, monkeypatch):
     assert {(demo.blocks[t[0]], t[1]) for t in sync.targets} == {
         (states["listing"], "change"), (states["selected"], "change"),
         *((by_id[c], "input") for c in ("shep-mp-order", "shep-mp-version", "shep-mp-metric",
-                                        "shep-mp-scoring", "shep-mp-arch"))}
+                                        "shep-mp-scoring", "shep-mp-task"))}
     assert sync.trigger_mode == "always_last"
     assert sync.outputs[:3] == [states["stale"], states["last"], states["selected"]]
     assert sync.outputs[-5:] == [by_id["shep-mp-detail-hd"], by_id["shep-mp-detail-top"],

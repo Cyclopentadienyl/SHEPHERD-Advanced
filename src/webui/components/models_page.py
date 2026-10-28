@@ -14,10 +14,26 @@ dataset trained on", the Trainer's validation figure, the recorded tests' state)
 "In use (Diagnosis)" on the served row, and the one gated Load with its
 confirmation. This module never
 lists a checkpoint, never reloads and never writes a usage history entry itself:
-it shapes the list through the handle's ``view`` (an architecture, its groups,
-one extra column, the note beside Load) and ``ordering`` (so that a Load from a
-list ordered by a cohort version's score is written to that version's usage
-history by the shared Load, `model_list._record_usage`).
+it shapes the list through the handle's ``view`` (a task filter, its rows and
+groups, one extra column, the note beside Load) and ``ordering`` (so that a
+Load from a list ordered by a cohort version's score is written to that
+version's usage history by the shared Load, `model_list._record_usage`).
+
+**Task and order (README §8: "Models with the family and a task filter").**
+The Task select (All, Base, Disease, Gene, Patients-like-me, History) is the
+shared list's one filter vocabulary (`model_list.TASK_FILTERS`); a file whose
+record was refused or not read is listed under All only. Newest first under
+All adds a Kind column (`renderers.record_kind_text`). By family draws the
+families of the listing's family view (`model_list.family_views`, from the one
+listing), each parent before its children, with a Lineage column (the kind,
+the operation and the exact parent file, indented by depth; a task's base kept
+as a context row; a parent that is not available said in amber, "▲ parent
+unavailable: …"), and under All the history files and the records not
+readable as two groups after them. By test score keeps its policy (Mode C
+records only, below); task records are shown in the detail with their own
+metrics (`RECORD_COLUMNS`), and ordering by them is the owner's open item.
+Load is refused for a base, a history file or a record not readable before
+anything is read (`model_list.load_refusal`), its reason beside the button.
 
 **Ordering by test score (D4).** Offered only for a cohort version whose role is
 in ``SHEPHERD_ORDERING_ROLES`` (WP1's version list says so per version,
@@ -46,7 +62,9 @@ by the next one. The page shows:
   not the one most ordered rows share.
 
 **The detail** of the selected checkpoint: its full model fingerprint (Copy), what
-it was trained on, the Trainer's validation figure in its own card (a selection
+it was trained on, what it is (kind, operation, parent, family, encoder and its
+relation to the paper, README §5 axis 2: "matches the reference recipe" or the
+fields that differ), the Trainer's validation figure in its own card (a selection
 metric on val, never beside a Mode C number), Model Facts' warnings, and two
 in-page segments: "Recorded test results" (every record its ledger holds, one
 table per mode, as the API's record view shows a record: its mode's label, coverage with every
@@ -107,6 +125,7 @@ from src.evaluation.caveats import (
     R10_UNVERIFIABLE_REASON,
     RECORD_ABSENCE,
     RELATION_DISPLAY_NAMES,
+    TASK_NAMES,
     metric_text,
     mode_label,
     mode_note,
@@ -134,20 +153,42 @@ METRIC_LABELS: Dict[str, str] = {
                  "hits@100", "mean_rank")
 }
 DEFAULT_METRIC = "untruncated_mrr"
-#: The two metrics a record shows in their own columns (an MRR and a Hits@10), by
-#: its mode; Mode D's are over the import-eligible cases (PLAN_B05 §5).
+#: The two metrics a record shows in their own columns (an MRR and a top-10
+#: figure), by its mode; Mode D's are over the import-eligible cases (PLAN_B05
+#: §5). A task's: its pooled MRR (README §2.6 E1) and, for genes and
+#: patients-like-me, the macro recall@10 reported beside it (E2); the disease
+#: task's pooled top-10 (one truth per case).
 RECORD_COLUMNS: Dict[str, Tuple[str, str]] = {
     "C": ("untruncated_mrr", "hits@10"),
     "D": ("post_import_mrr", "post_import_hits@10"),
+    "disease": ("pooled_mrr", "pooled_top10"),
+    "gene": ("pooled_mrr", "macro_recall@10"),
+    "patients_like_me": ("pooled_mrr", "macro_recall@10"),
 }
 
-NEWEST, BY_SCORE = "newest", "score"
-ORDER_CHOICES = [("Newest first", NEWEST), ("By test score", BY_SCORE)]
-ALL_ARCHITECTURES = "all"
-#: The architecture select's first option (the mockup's "all"): short, so the
+NEWEST, BY_FAMILY, BY_SCORE = "newest", "family", "score"
+ORDER_CHOICES = [("Newest first", NEWEST), ("By family", BY_FAMILY), ("By test score", BY_SCORE)]
+#: The Task select's options: the shared list's filters a page offers, in the
+#: list's own words (`model_list.FILTER_WORDS`); "all" first, short, so the
 #: workspace select beside it keeps the room its value needs.
-ALL_ARCHITECTURES_LABEL = "All"
+TASK_CHOICES = [(ml.FILTER_WORDS[name][0], name)
+                for name in ("all", "base", *TASK_NAMES, "history")]
+ALL_TASKS = "all"
 RECORDS, USAGE = "records", "usage"
+
+#: By family's groups and extra column; Newest first's column under All.
+FAMILY_TITLE = "Family from run {run} · {count} file{s}"
+GROUP_HISTORY = "History · listed, never run"
+GROUP_REFUSED = "Record not readable"
+LINEAGE_COLUMN = "Lineage"
+KIND_COLUMN = "Kind"
+FAMILY_NOT_READ = "the family view was not read with this list"
+#: A model record's operation (`record.OPERATIONS`) as the lineage says it.
+OPERATION_WORDS = {"new": "New run", "resume": "Resumed run", "extend": "Extended run",
+                   "branch": "Branch", "finetune": "Finetune"}
+#: The reference recipe as README §5 axis 2 has it read, never "identical to upstream".
+REFERENCE_ANCHOR = ("The reference recipe is anchored on e95433a, with corrections "
+                    "(Ref: README §2.4).")
 
 #: §4.9 question 1: said wherever ordering is offered.
 INDEPENDENCE_NOTE = ("A cohort version whose scores were used to choose a model is no longer an "
@@ -204,16 +245,16 @@ _RELATION_SHORT = {"cohort_graph": "cohort↔graph"}
 #: The help texts this page's ⓘ name (registered through `ctx.help`).
 PAGE_HELP = {
     "models-ordering": (
-        "Ordering by test score",
-        "Newest first lists every checkpoint of the workspace, latest run first. By test score "
-        "orders them by one Mode C metric of their recorded results on one cohort version under "
-        "one scoring semantics (D4); Mode D records (the served ranking) are shown, never "
-        "ordered. It is offered only for a cohort version whose role is in "
-        "the server's model-selection roles (SHEPHERD_ORDERING_ROLES), never for "
-        "institutional_acceptance. One record per checkpoint, by a fixed rule: its first "
-        "registered record from a deterministic regime, else its first registered record. A "
-        "contested record is not ordered, and the next record is never put in its place. No "
-        "model is ever chosen automatically by a test score.",
+        "Order",
+        "How the list is ordered; the Task select chooses which rows.\n"
+        "• Newest first: latest run first.\n"
+        "• By family: each base, then the models finetuned from it.\n"
+        "• By test score: one Mode C metric of the recorded results on one cohort version "
+        "and one scoring semantics (D4); Mode D and task records are shown, never ordered. "
+        "Offered only for a role in SHEPHERD_ORDERING_ROLES, never institutional_acceptance.\n"
+        "One record per checkpoint by a fixed rule (its first registered deterministic record, "
+        "else its first); a contested record is not ordered and never replaced. No model is "
+        "ever chosen automatically by a test score.",
     ),
     "models-regime": (
         "Regime",
@@ -611,6 +652,13 @@ def coverage_html(view: Mapping[str, Any]) -> str:
                 f'cases ranked ({r.e(counts.get("ranked_eligible"))} eligible)</div>'
                 f'<div class="shep-sub">{r.e(counts.get("n_excluded"))} excluded: '
                 f'{r.e(reasons)}</div>')
+    if mode in TASK_NAMES:
+        # A task record's n_ranked counts the cases (query patients) with a
+        # ranked positive; its coverage metric says the share (README §2.6 E5).
+        return (f'<div>{r.e(view.get("n_ranked"))} of {r.e(counts.get("source_cases"))} source '
+                'cases ranked by the model</div>'
+                f'<div class="shep-sub">{r.e(counts.get("n_excluded"))} excluded at import: '
+                f'{r.e(reasons)}</div>')
     # A mode this version does not describe: its counts, and no claim of what
     # its n_ranked counts.
     return (f'<div>{r.e(counts.get("source_cases"))} source cases; '
@@ -869,9 +917,24 @@ def _column_head(mode: Optional[str], index: int) -> str:
     return r.e(head) + (f' <span class="shep-nowrap">({r.e(tail)}</span>' if tail else "")
 
 
+#: A task record's single figures, then its cut-off families, in the order a
+#: record shows them (README §2.6: E1's pooled reading, E5's conservative one,
+#: the macro and best-positive MRRs; pooled top-k, then E2's macro recall and
+#: precision by k).
+_TASK_FIGURES = ("pooled_mrr", "conservative_pooled_mrr", "macro_mrr", "best_positive_mrr")
+_TASK_FAMILIES = ("pooled_top", "macro_recall@", "macro_precision@")
+
+
 def _metric_order(name: str) -> Tuple[int, int, int, str]:
     """MRR, mean rank, Hits@K by K, the rest; Mode D's import-eligible family
-    first, then coverage, then its reached family."""
+    first, then coverage, then its reached family. A task record's after
+    coverage: its MRRs, then each cut-off family by k."""
+    if name in _TASK_FIGURES:
+        return (3, _TASK_FIGURES.index(name), 0, name)
+    for index, prefix in enumerate(_TASK_FAMILIES):
+        k = name[len(prefix):]
+        if name.startswith(prefix) and k.isdigit():
+            return (4 + index, 0, int(k), name)
     family, base = 0, name
     if name.startswith("post_import_"):
         base = name[len("post_import_"):]
@@ -934,24 +997,19 @@ def records_block_html(views: Sequence[Mapping[str, Any]], contest: Mapping[str,
 # ---------------------------------------------------------------------------
 # The controls, the order and the view (pure)
 # ---------------------------------------------------------------------------
-def architectures(listing: Mapping[str, Any]) -> List[str]:
-    return sorted({str(i.get("architecture")) for i in listing.get("items") or []
-                   if i.get("architecture")})
-
-
 def offered_versions(data: Mapping[str, Any]) -> List[Mapping[str, Any]]:
     return [v for v in data.get("versions") or []
             if v.get("offers") and r.is_digest(v.get("sha256"))]
 
 
 def scoring_groups(listing: Mapping[str, Any], data: Mapping[str, Any], version_sha: Any,
-                   arch: Optional[str]) -> List[Tuple[str, int]]:
+                   task: Optional[str]) -> List[Tuple[str, int]]:
     """The scoring semantics the shown checkpoints' Mode C records on this version
     are under, with how many checkpoints each, most first. Only Mode C's: the
-    metrics a list is ordered by are Mode C's, and a Mode D record is shown,
-    never ordered (PLAN_B05 §6)."""
+    metrics a list is ordered by are Mode C's, and a Mode D or task record is
+    shown, never ordered (PLAN_B05 §6; K6 decision 14)."""
     counts: Dict[str, set] = {}
-    for item in ml.shown_items(listing, {"architecture": arch}):
+    for item in ml.shown_items(listing, {"task": task}):
         entry = (data.get("ledgers") or {}).get(ml.item_key(item))
         for record in (entry or {}).get("records") or []:
             scoring = record.get("scoring")
@@ -965,28 +1023,29 @@ def scoring_groups(listing: Mapping[str, Any], data: Mapping[str, Any], version_
 
 
 def controls(listing: Mapping[str, Any], data: Mapping[str, Any], order: Any, version: Any,
-             metric: Any, scoring: Any, arch: Any) -> Dict[str, Any]:
-    """The page's controls as they can apply now: an architecture the listing
-    has (else all), "By test score" only when a version offers ordering (else
-    newest first), an offered version (else the first offered), an orderable
-    metric, and a scoring semantics the records are under (else the one most
-    checkpoints share)."""
+             metric: Any, scoring: Any, task: Any) -> Dict[str, Any]:
+    """The page's controls as they can apply now: a task filter of the Task
+    select (else all), "By family" for an operator's list, "By test score"
+    only when a version offers ordering (else newest first), an offered
+    version (else the first offered), an orderable metric, and a scoring
+    semantics the records are under (else the one most checkpoints share)."""
     from src.evaluation.ordering import ORDERABLE_METRICS
 
-    archs = architectures(listing)
-    chosen_arch = arch if arch in archs else None
+    chosen_task = task if task in {value for _label, value in TASK_CHOICES} else ALL_TASKS
     offered = offered_versions(data)
     labels = [v["label"] for v in offered]
     chosen_version = version if version in labels else (labels[0] if labels else None)
-    mode = BY_SCORE if (order == BY_SCORE and offered and not data.get("readonly")) else NEWEST
+    readonly = bool(data.get("readonly"))
+    mode = (BY_SCORE if order == BY_SCORE and offered and not readonly else
+            BY_FAMILY if order == BY_FAMILY and not readonly else NEWEST)
     chosen_metric = metric if metric in ORDERABLE_METRICS else DEFAULT_METRIC
     entry = next((v for v in offered if v["label"] == chosen_version), None)
-    groups = scoring_groups(listing, data, entry["sha256"], chosen_arch) if entry else []
+    groups = scoring_groups(listing, data, entry["sha256"], chosen_task) if entry else []
     digests = [d for d, _n in groups]
     chosen_scoring = scoring if scoring in digests else (digests[0] if digests else None)
-    return {"arch": chosen_arch, "order": mode, "version": chosen_version, "metric": chosen_metric,
-            "scoring": chosen_scoring, "scoring_groups": groups, "version_entry": entry,
-            "architectures": archs}
+    return {"task": chosen_task, "order": mode, "version": chosen_version,
+            "metric": chosen_metric, "scoring": chosen_scoring, "scoring_groups": groups,
+            "version_entry": entry}
 
 
 def rank(listing: Mapping[str, Any], data: Mapping[str, Any], ctl: Mapping[str, Any]
@@ -1001,7 +1060,7 @@ def rank(listing: Mapping[str, Any], data: Mapping[str, Any], ctl: Mapping[str, 
     if ctl.get("order") != BY_SCORE or ctl.get("version_entry") is None:
         return None
     entry = ctl["version_entry"]
-    items = ml.shown_items(listing, {"architecture": ctl.get("arch")})
+    items = ml.shown_items(listing, {"task": ctl.get("task")})
     ledgers = data.get("ledgers") or {}
     candidates, outside, keys = [], {}, {}
     for item in items:
@@ -1050,26 +1109,153 @@ def _regime_cell(row: Any) -> str:
     return f'<div class="shep-sub shep-mp-regime">{html}</div>{mark}'
 
 
+def _run_words(run: Any) -> str:
+    """"run 2026-10-01 00:00" for a run named by its start time, else its name."""
+    started = r.run_started(run)
+    return f"run {started}" if started else f"run {run}"
+
+
+def warn_mark_html(text: str) -> str:
+    """A condition to watch (skill §6): amber, ▲ and its words, escaped."""
+    return (f'<span class="shep-mp-warn"><span aria-hidden="true">▲</span> '
+            f'{r.e(text)}</span>')
+
+
+def parent_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]]) -> str:
+    """Where the exact parent file a model's record names is (its 12-hex and
+    run; listed here, in another listed workspace, or not available and why,
+    from the family view's row); "none: a new run" for a file with no parent."""
+    sha = item.get("parent_sha256")
+    if not r.is_digest(sha):
+        return "none: a new run"
+    where = (f'<code class="shep-fpv">{r.e(r.short_hex(sha))}</code> of '
+             f'{r.e(_run_words(item.get("parent_run")))}')
+    state = (row or {}).get("parent_state")
+    if state == "listed":
+        return f"{where} · listed here"
+    if state == "elsewhere":
+        return f'{where} · in workspace <b>{r.e(row.get("parent_workspace"))}</b>'
+    if state == "unavailable":
+        return (f'{where}<div>'
+                + warn_mark_html("parent unavailable: "
+                                 + r.short_reason(row.get("parent_problem") or "not found", 160))
+                + "</div>")
+    return where
+
+
+def lineage_cell_html(item: Mapping[str, Any], row: Mapping[str, Any]) -> str:
+    """A row's Lineage cell in By family: its kind, then its operation and the
+    exact parent file (or that the parent is not available, in amber, or that
+    it is only a context row), indented by its depth in the family."""
+    depth = min(int(row.get("depth") or 0), 3)
+    lines = [f'<div class="shep-w600">{r.e(r.record_kind_text(item))}</div>']
+    operation = item.get("operation")
+    sha = item.get("parent_sha256")
+    if operation and r.is_digest(sha):
+        where = (f' in workspace <b>{r.e(row.get("parent_workspace"))}</b>'
+                 if row.get("parent_state") == "elsewhere" else "")
+        lines.append(f'<div class="shep-sub">{r.e(OPERATION_WORDS.get(operation, operation))} of '
+                     f'<code class="shep-fpv">{r.e(r.short_hex(sha))}</code>{where}</div>')
+    elif operation:
+        lines.append(f'<div class="shep-sub">{r.e(OPERATION_WORDS.get(operation, operation))}'
+                     '</div>')
+    if row.get("parent_state") == "unavailable":
+        lines.append('<div class="shep-sub">' + warn_mark_html(
+            "parent unavailable: " + r.short_reason(row.get("parent_problem") or "not found"))
+            + "</div>")
+    if row.get("context"):
+        lines.append('<div class="shep-sub shep-mp-ctx"><span aria-hidden="true">○</span> '
+                     'Context: parent of a shown file</div>')
+    return f'<div class="shep-mp-lin shep-mp-d{depth}">{"".join(lines)}</div>'
+
+
+def family_view(listing: Mapping[str, Any], task: str) -> Optional[Dict[str, Any]]:
+    """By family's rows for the Task filter, from the listing's family view
+    (`model_list.family_views`, one listing): ``keys`` (context rows
+    included), ``groups`` (one per family, parent first, in the view's order;
+    under All the history files and the records not readable after them;
+    History is its group alone) and the Lineage ``cells``. None when the
+    listing carries no family view."""
+    views = listing.get("family")
+    if not isinstance(views, Mapping) or "all" not in views:
+        return None
+    rows = views.get("all" if task in (ALL_TASKS, "history") else task) or []
+    if task == "history":
+        rows = [row for row in rows if row.get("group") == "history"]
+    items = {ml.item_key(i): i for i in listing.get("items") or []}
+    groups: List[Dict[str, Any]] = []
+    cells: Dict[str, str] = {}
+    current: Optional[Tuple[str, Any]] = None
+    for row in rows:
+        key = row.get("key")
+        if key not in items:
+            continue
+        group = (row.get("group"), row.get("family_id") if row.get("group") == "family" else None)
+        if group != current:
+            current = group
+            groups.append({"group": group, "keys": []})
+        groups[-1]["keys"].append(key)
+        cells[key] = lineage_cell_html(items[key], row)
+    for group in groups:
+        kind, family = group.pop("group")
+        count = len(group["keys"])
+        group["title"] = (FAMILY_TITLE.format(run=(r.run_started(family) or family), count=count,
+                                              s="s" if count != 1 else "")
+                          if kind == "family" else GROUP_HISTORY if kind == "history"
+                          else GROUP_REFUSED)
+    return {"keys": [key for group in groups for key in group["keys"]], "groups": groups,
+            "cells": cells}
+
+
+def family_row(listing: Mapping[str, Any], key: str) -> Optional[Mapping[str, Any]]:
+    """A checkpoint's row in the listing's whole family view, or None."""
+    views = listing.get("family")
+    rows = views.get("all") if isinstance(views, Mapping) else None
+    return next((row for row in rows or [] if row.get("key") == key), None)
+
+
+def shown_view(listing: Mapping[str, Any], ctl: Mapping[str, Any]) -> Dict[str, Any]:
+    """Which rows the controls show (the shared list's ``view`` without its
+    order): By family's rows, context rows included, else the Task filter's."""
+    if ctl.get("order") == BY_FAMILY:
+        family = family_view(listing, ctl.get("task") or ALL_TASKS)
+        if family is not None:
+            return {"keys": family["keys"]}
+    return {"task": ctl.get("task")}
+
+
 def shape(listing: Mapping[str, Any], data: Mapping[str, Any], ctl: Mapping[str, Any]
           ) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
     """The shared list's ``view`` and ``ordering`` for these controls.
 
-    Newest first: the architecture and the Load note only. By test score: the
-    groups in D4's order (the ordered rows, each checkpoint's listed keys in the
-    listing's order; then contested; then those whose contested status cannot be
-    checked; then not compared; then not tested, newest first), the Mode C
-    column with each row's value, record number and regime, and the note saying
-    the usage history records the Load."""
+    Newest first: the Task filter and the Load note, and under All a Kind
+    column. By family: the families' groups and rows (`family_view`) with
+    their Lineage column. By test score: the groups in D4's order (the ordered
+    rows, each checkpoint's listed keys in the listing's order; then contested;
+    then those whose contested status cannot be checked; then not compared;
+    then not tested, newest first), the Mode C column with each row's value,
+    record number and regime, and the note saying the usage history records
+    the Load."""
     if data.get("readonly"):
         return {"note": ""}, None
+    task = ctl.get("task") or ALL_TASKS
+    newest: Dict[str, Any] = {"task": task, "note": LOAD_NOTE}
+    if task == ALL_TASKS:
+        newest.update(column=KIND_COLUMN, cells={
+            ml.item_key(i): r.e(r.record_kind_text(i)) for i in listing.get("items") or []})
+    if ctl.get("order") == BY_FAMILY:
+        family = family_view(listing, task)
+        if family is None:
+            return {**newest, "refused": FAMILY_NOT_READ}, None
+        return {"task": task, "keys": family["keys"], "groups": family["groups"],
+                "column": LINEAGE_COLUMN, "cells": family["cells"], "note": LOAD_NOTE}, None
     ranked = rank(listing, data, ctl)
     if ranked is None:
-        return {"architecture": ctl.get("arch"), "note": LOAD_NOTE}, None
+        return newest, None
     if not ranked["offered"]:
         # Asked for, and refused by the ordering itself (a record naming
         # another role than the version's, say): newest first, and why.
-        return {"architecture": ctl.get("arch"), "note": LOAD_NOTE,
-                "refused": ranked["why"]}, None
+        return {**newest, "refused": ranked["why"]}, None
     entry = ctl["version_entry"]
     metric = ctl["metric"]
     label = metric_label(metric)
@@ -1118,7 +1304,7 @@ def shape(listing: Mapping[str, Any], data: Mapping[str, Any], ctl: Mapping[str,
             groups.append({"title": title, "keys": keys})
     # The column says the metric briefly (the group's title names it in full).
     short = "Mode C MRR" if metric == "untruncated_mrr" else label
-    view = {"architecture": ctl.get("arch"), "groups": groups, "rest_title": GROUP_UNREAD,
+    view = {"task": task, "groups": groups, "rest_title": GROUP_UNREAD,
             "column": f"{short}, {entry['label']} · regime", "cells": cells,
             "note": LOAD_NOTE_ORDERED.format(metric=label, version=entry["label"])}
     ordering = {"version": entry["label"], "version_sha256": entry["sha256"], "metric": metric,
@@ -1270,6 +1456,32 @@ def _served_line(listing: Mapping[str, Any]) -> str:
     return "nothing is in use for diagnosis"
 
 
+def identity_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]]) -> str:
+    """What the selected checkpoint is, as one key-value list (README §5):
+    its kind; for a model record its operation, the exact parent file and
+    where it is (`parent_html`), its family, its encoder and its relation to
+    the paper (axis 2: "matches the reference recipe" with what that recipe
+    is, or the fields that differ). Model Facts' Task and Configuration rows
+    say the kind and axis 1 elsewhere; neither is repeated here."""
+    rows = [("Kind", r.e(r.record_kind_text(item)))]
+    if item.get("record") == "model":
+        operation = item.get("operation")
+        differences = item.get("differences")
+        if differences:
+            relation = f'differs in: {r.e(", ".join(str(d) for d in differences))}'
+        elif differences is not None:
+            relation = (f'matches the reference recipe<div class="shep-sub">'
+                        f'{r.e(REFERENCE_ANCHOR)}</div>')
+        else:
+            relation = '<span class="shep-muted">not read</span>'
+        rows += [("Operation", r.e(OPERATION_WORDS.get(operation, operation or "not read"))),
+                 ("Parent", parent_html(item, row)),
+                 ("Family", r.e(_run_words(item.get("family_id")))),
+                 ("Encoder", r.e(r.architecture_label(item.get("encoder")))),
+                 ("Relation to the paper", relation)]
+    return f'<div class="shep-kv shep-mp-ident">{r.kv_cells(rows)}</div>'
+
+
 def detail_parts(listing: Mapping[str, Any], data: Mapping[str, Any], key: Any,
                  ctl: Mapping[str, Any]) -> Dict[str, Any]:
     """The detail of the selected checkpoint (operator), or the read-only view.
@@ -1278,7 +1490,7 @@ def detail_parts(listing: Mapping[str, Any], data: Mapping[str, Any], key: Any,
     if data.get("readonly"):
         return readonly_parts(data)
     item = ml.find_item(listing, key)
-    if item is None or item not in ml.shown_items(listing, {"architecture": ctl.get("arch")}):
+    if item is None or item not in ml.shown_items(listing, shown_view(listing, ctl)):
         return {"header": ('<div class="shep-panel-hd"><h2>Details</h2>'
                            f'<span class="shep-panel-right">{_served_line(listing)}</span></div>'),
                 "top": ('<p class="shep-muted shep-mp-p">Select a model to see its fingerprints, '
@@ -1320,8 +1532,8 @@ def detail_parts(listing: Mapping[str, Any], data: Mapping[str, Any], key: Any,
     # above and the records' dataset line say synthetic for this checkpoint.
     warnings = "".join(f'<p class="shep-warn"><b>⚠ {r.e(h)}</b> <span>{r.e(d)}</span></p>'
                        for h, d in facts.warnings if (h, d) != r.IDENTITY_BANNERS["synthetic"])
-    top = (ident + f'<div class="shep-mp-trained">{trained} {" ".join(marks)}</div>' + validation
-           + warnings)
+    top = (ident + f'<div class="shep-mp-trained">{trained} {" ".join(marks)}</div>'
+           + identity_html(item, family_row(listing, ml.item_key(item))) + validation + warnings)
     ledger = (data.get("ledgers") or {}).get(ml.item_key(item))
     ranked = rank(listing, data, ctl)
     records, count, contested = _records_for_item(item, ledger, data, ranked, ctl)
@@ -1507,10 +1719,8 @@ def create_models_page(ctx: Any) -> None:
     def head() -> Dict[str, Any]:
         parts["lhd"] = plain_html(left_header_html({}, {}), elem_id="shep-mp-hd")
         parts["wsline"] = plain_html("", elem_id="shep-mp-wsline")
-        parts["arch"] = gr.Dropdown(label="Architecture",
-                                    choices=[(ALL_ARCHITECTURES_LABEL, ALL_ARCHITECTURES)],
-                                    value=ALL_ARCHITECTURES, interactive=True,
-                                    elem_id="shep-mp-arch")
+        parts["task"] = gr.Dropdown(label="Task", choices=TASK_CHOICES, value=ALL_TASKS,
+                                    interactive=True, elem_id="shep-mp-task")
         with gr.Column(elem_id="shep-mp-controls", elem_classes=["shep-mp-controls"]):
             with gr.Row(elem_classes=["shep-mp-order-row"]):
                 plain_html('<span class="shep-mp-lbl">Order</span>', elem_id="shep-mp-order-lbl")
@@ -1518,8 +1728,7 @@ def create_models_page(ctx: Any) -> None:
                                           show_label=False, interactive=False,
                                           elem_id="shep-mp-order", elem_classes=["shep-seg"],
                                           container=False)
-                plain_html(help_button("models-ordering", "Ordering by test score"),
-                           elem_id="shep-mp-order-i")
+                plain_html(help_button("models-ordering", "Order"), elem_id="shep-mp-order-i")
             # First under the switch, so it stays in view however short the window.
             parts["independence"] = plain_html("", elem_id="shep-mp-independence")
             with gr.Column(elem_classes=["shep-mp-opts"], visible=False) as opts:
@@ -1563,11 +1772,11 @@ def create_models_page(ctx: Any) -> None:
         handle = ctx.create_model_list("research", head=head, foot=foot)
 
     control_inputs = [parts["order"], parts["version"], parts["metric"], parts["scoring"],
-                      parts["arch"]]
+                      parts["task"]]
     #: By element id: once the page has updated a control, Gradio keeps a new
     #: instance of it in the session (another ``_id``), which an event names.
     control_ids = {c.elem_id for c in control_inputs}
-    page_outputs = [data_state, handle.view, handle.ordering, parts["arch"], parts["order"],
+    page_outputs = [data_state, handle.view, handle.ordering, parts["task"], parts["order"],
                     parts["opts"], parts["version"], parts["scoring"], parts["options"],
                     parts["independence"], parts["lhd"], parts["wsline"], parts["detail_hd"],
                     parts["detail_top"], parts["seg"], parts["records"], parts["usage"]]
@@ -1588,14 +1797,13 @@ def create_models_page(ctx: Any) -> None:
                     new_data: bool) -> Tuple[Any, ...]:
         ctl = controls(listing, data, *ctl_values)
         view, ordering = shape(listing, data, ctl)
-        offered = bool(offered_versions(data)) and not data.get("readonly")
-        arch_choices = [(ALL_ARCHITECTURES_LABEL, ALL_ARCHITECTURES)] + [
-            (a.upper(), a) for a in ctl["architectures"]]
         return (
             data if new_data else gr.update(),
             view, ordering,
-            gr.update(choices=arch_choices, value=ctl["arch"] or ALL_ARCHITECTURES),
-            gr.update(value=ctl["order"], interactive=offered),
+            gr.update(value=ctl["task"]),
+            # Always offered to an operator: By test score asked where no
+            # version offers it falls back to newest first, and says why.
+            gr.update(value=ctl["order"], interactive=not data.get("readonly")),
             gr.update(visible=ctl["order"] == BY_SCORE),
             gr.update(choices=version_choices(data), value=ctl["version"]),
             gr.update(choices=scoring_choices(ctl["scoring_groups"]), value=ctl["scoring"],
@@ -1614,7 +1822,7 @@ def create_models_page(ctx: Any) -> None:
 
     shared_refresh = handle.refresh["fn"]
 
-    def _open(name, older, current_view, previous, key, order, version, metric, scoring, arch,
+    def _open(name, older, current_view, previous, key, order, version, metric, scoring, task,
               seg_value, phase, request: gr.Request):
         shared = shared_refresh(name, older, current_view, previous, key, request)
         listing = shared[0]
@@ -1622,7 +1830,7 @@ def create_models_page(ctx: Any) -> None:
         condition = operator_access(request).condition
         # Read now; a Load still running reads again once it has finished.
         stale = False if phase != "loading" else gr.update()
-        return (*shared, stale, *outputs_for(listing, data, (order, version, metric, scoring, arch),
+        return (*shared, stale, *outputs_for(listing, data, (order, version, metric, scoring, task),
                                              None, seg_value, condition, new_data=True))
 
     ctx.on_page_open("models", {
@@ -1639,14 +1847,14 @@ def create_models_page(ctx: Any) -> None:
     handle.reload_button.click(_load_started, inputs=None, outputs=[stale_state], queue=False,
                                show_progress="hidden")
 
-    def _sync(listing, data, stale, last, phase, order, version, metric, scoring, arch, selected,
+    def _sync(listing, data, stale, last, phase, order, version, metric, scoring, task, selected,
               seg_value, request: gr.Request, evt: gr.EventData):
         """A new listing (a workspace chosen, the refresh after a Load), a
         selection, or a control changed. The page reads its own data again for
         a listing it has not read, and once after a Load has finished (the
         listing may be unchanged); after a Load it selects the last checkpoint
         again while its row is shown, when the shared refresh did not keep it."""
-        ctl_values = (order, version, metric, scoring, arch)
+        ctl_values = (order, version, metric, scoring, task)
         settled = phase != "loading"
         after_load = bool(stale) and settled
         fresh = (not isinstance(data, Mapping) or bool(listing.get("refused"))
@@ -1657,8 +1865,8 @@ def create_models_page(ctx: Any) -> None:
         if key is None and after_load and isinstance(last, Mapping) \
                 and last.get("workspace") == listing.get("workspace"):
             item = ml.find_item(listing, last.get("key"))
-            arch_now = controls(listing, data, *ctl_values)["arch"]
-            if item is not None and item in ml.shown_items(listing, {"architecture": arch_now}):
+            shown = shown_view(listing, controls(listing, data, *ctl_values))
+            if item is not None and item in ml.shown_items(listing, shown):
                 key = again = last["key"]
         states = (False if fresh and settled else gr.update(),
                   ({"workspace": listing.get("workspace"), "key": key} if key is not None
@@ -1697,7 +1905,7 @@ _LIST = "#shep-models-research"
 
 #: This page's style sheet (the page contract: listed in `src/webui/app.py`'s
 #: ``PAGE_CSS``). The shared list's column is laid out as the mockup draws the
-#: page: the list panel (its header, the workspace and architecture selects, the
+#: page: the list panel (its header, the workspace and task selects, the
 #: order controls, the count and the table) on the left; the selected model's
 #: detail with the Load footer on the right, the confirmation drawn over them
 #: while it is open. The research preset's Model Facts are not shown here: the
@@ -1711,7 +1919,7 @@ PAGE_CSS = f"""
   grid-template-areas: "main foot";
   padding: 0 !important; border: 0 !important; background: none !important;
 }}
-/* The list panel: its header (the workspace and architecture selects, the
+/* The list panel: its header (the workspace and task selects, the
    order controls, the count) and the table, in one column (M5-3 review UI-1:
    a header capped in its own scroll region cut off the independence note and
    hid the order controls under a second scrollbar). */
@@ -1724,22 +1932,22 @@ PAGE_CSS = f"""
 {_PAGE} {_LIST} > .shep-model-main > .shep-model-head {{
   flex: none; display: grid !important; gap: 10px 10px !important; align-items: start;
   align-content: start;
-  /* The workspace select takes the row but what the architecture select needs
-     for "All" or one architecture (the workspace value carries the name, the
-     fingerprint and "synthetic"; the identity line under it says them again). */
-  grid-template-columns: minmax(0, 1fr) 128px;
+  /* The workspace select takes the row but what the task select needs for its
+     longest option, "Patients-like-me" (the workspace value carries the name,
+     the fingerprint and "synthetic"; the identity line under it says them again). */
+  grid-template-columns: minmax(0, 1fr) 170px;
   grid-template-rows: repeat(5, max-content);
-  grid-template-areas: "lhd lhd" "ws arch" "wsline wsline" "ctl ctl" "count count";
+  grid-template-areas: "lhd lhd" "ws task" "wsline wsline" "ctl ctl" "count count";
   background: none; border: 0; padding: 0 16px 8px !important; margin: 0 !important;
 }}
 {_PAGE} {_LIST} > .shep-model-main > .shep-model-head > * {{ min-width: 0 !important; }}
 {_PAGE} #shep-mp-hd {{ grid-area: lhd; margin: 0 -16px; width: calc(100% + 32px) !important; max-width: none; }}
 {_PAGE} {_LIST} .shep-model-head > .form:has(#shep-models-research-workspace) {{ grid-area: ws; }}
-{_PAGE} {_LIST} .shep-model-head > .form:has(#shep-mp-arch) {{ grid-area: arch; }}
+{_PAGE} {_LIST} .shep-model-head > .form:has(#shep-mp-task) {{ grid-area: task; }}
 {_PAGE} #shep-mp-wsline {{ grid-area: wsline; margin-top: -4px; }}
 /* A value too long for its select ends in "…" before the chevron, never under it (the
    titled ellipsis is the shell's rule for every select). */
-{_PAGE} #shep-models-research-workspace input, {_PAGE} #shep-mp-arch input,
+{_PAGE} #shep-models-research-workspace input, {_PAGE} #shep-mp-task input,
 {_PAGE} #shep-mp-version input {{
   padding-right: 24px !important;
 }}
@@ -1827,6 +2035,15 @@ PAGE_CSS = f"""
   padding: 12px 14px; font-size: 15px; color: var(--shep-grey-800); }}
 {_PAGE} .shep-mp-ro {{ padding: 0 16px 8px; }}
 {_PAGE} .shep-mtbl td.shep-num .shep-sub {{ text-align: right; }}
+/* By family's Lineage cell: a child sits one step in from its parent; a
+   parent that is not available is a condition to watch (amber, ▲, its words),
+   a context row a neutral state (grey, ○, its words): skill §6. */
+{_PAGE} .shep-mp-lin.shep-mp-d1 {{ padding-left: 12px; }}
+{_PAGE} .shep-mp-lin.shep-mp-d2 {{ padding-left: 24px; }}
+{_PAGE} .shep-mp-lin.shep-mp-d3 {{ padding-left: 36px; }}
+{_PAGE} .shep-mp-warn {{ color: var(--shep-status-warn); }}
+{_PAGE} .shep-mp-ctx {{ color: var(--shep-status-neutral); }}
+{_PAGE} .shep-mp-ident {{ font-size: 15px; }}
 /* Read-only: no list, no workspace, no order; the reason is the header's. */
 {_PAGE} {_LIST}:has(.shep-mp-ro) .shep-model-head > .form,
 {_PAGE} {_LIST}:has(.shep-mp-ro) #shep-mp-wsline,
@@ -1867,9 +2084,9 @@ PAGE_CSS = f"""
      box), so the title sticks to the panel, not to the header row. */
   {_PAGE} {_LIST} > .shep-model-main {{
     display: grid !important; align-items: start; align-content: start; gap: 10px 10px !important;
-    grid-template-columns: minmax(0, 1fr) 128px;
+    grid-template-columns: minmax(0, 1fr) 170px;
     grid-template-rows: repeat(5, max-content) auto;
-    grid-template-areas: "lhd lhd" "ws arch" "wsline wsline" "ctl ctl" "count count" "body body";
+    grid-template-areas: "lhd lhd" "ws task" "wsline wsline" "ctl ctl" "count count" "body body";
     padding: 0 16px !important;
   }}
   {_PAGE} {_LIST} > .shep-model-main > .shep-model-head {{ display: contents !important; }}
@@ -1899,35 +2116,49 @@ PAGE_CSS = f"""
   {_PAGE} {_LIST}:has(.shep-mp-ro) {{ grid-template-columns: minmax(0, 1fr); }}
   {_PAGE} {_LIST} > .shep-model-main {{ margin-bottom: 16px !important; }}
   {_PAGE} {_LIST} > .shep-model-confirm-box {{ grid-area: confirm; margin-top: 16px !important; overflow: visible; }}
-  {_PAGE} {_LIST} > .shep-model-main > .shep-model-head {{ grid-template-columns: minmax(0, 1fr); grid-template-rows: repeat(6, max-content); grid-template-areas: "lhd" "ws" "wsline" "arch" "ctl" "count"; }}
+  {_PAGE} {_LIST} > .shep-model-main > .shep-model-head {{ grid-template-columns: minmax(0, 1fr); grid-template-rows: repeat(6, max-content); grid-template-areas: "lhd" "ws" "wsline" "task" "ctl" "count"; }}
   {_PAGE} .shep-mp-back {{ display: inline-flex; align-items: center; margin-left: auto; }}
 }}
 """
 
 
 __all__ = [
+    "ALL_TASKS",
+    "BY_FAMILY",
     "BY_SCORE",
     "D8_CONDITIONS",
+    "FAMILY_TITLE",
     "GROUP_CONTESTED",
+    "GROUP_HISTORY",
     "GROUP_NOT_COMPARED",
     "GROUP_NOT_TESTED",
+    "GROUP_REFUSED",
     "GROUP_UNCHECKED",
     "GROUP_UNREAD",
     "INDEPENDENCE_NOTE",
+    "KIND_COLUMN",
+    "LINEAGE_COLUMN",
     "LOAD_NOTE",
     "LOAD_NOTE_ORDERED",
     "METRIC_LABELS",
     "NEWEST",
+    "ORDER_CHOICES",
     "PAGE_CSS",
     "PAGE_HELP",
     "READONLY_TITLE",
+    "RECORD_COLUMNS",
+    "TASK_CHOICES",
     "controls",
     "create_models_page",
     "detail_parts",
+    "family_view",
+    "identity_html",
     "independence_html",
     "left_header_html",
+    "lineage_cell_html",
     "listing_key",
     "options_html",
+    "parent_html",
     "picks_for",
     "rank",
     "read_page",
@@ -1937,5 +2168,6 @@ __all__ = [
     "record_view",
     "records_block_html",
     "shape",
+    "shown_view",
     "usage_entries",
 ]
