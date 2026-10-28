@@ -287,18 +287,22 @@ def setting_help(name: str, references: Mapping[str, Any], sources: Mapping[str,
 
 
 def form_value(name: str, value: Any) -> Any:
-    """A recipe value as its field holds it (the hop list as text)."""
-    return setting_shown(value) if name == "num_neighbors" else value
+    """A recipe value as its field holds it: the hop list as text, and an
+    optional number's None as "off" (`setting_field`)."""
+    return setting_shown(value) if name == "num_neighbors" or value is None else value
 
 
 def setting_field(name: str, value: Any, *, elem_id: str) -> Any:
     """**The one field of a recipe setting** (the base form's and the
     Fine-tune page's), by its field spec: the hop list as text, a switch, the
     spec's few choices as a radio, else a number box (whole numbers for an
-    integer setting, which `value_problem` refuses as a float). Labelled by
-    `SETTING_LABELS`, its help behind the ⓘ (never ``info=``)."""
+    integer setting, which `value_problem` refuses as a float). **An optional
+    number whose value is None** (early stopping's patience) is a text box
+    reading "off", a state the browser keeps: a number box shows None as 0
+    once mounted and sends 0 after any edit. Labelled by `SETTING_LABELS`, its
+    help behind the ⓘ (never ``info=``)."""
     label, spec = SETTING_LABELS[name], by_name(name)
-    if name == "num_neighbors":
+    if name == "num_neighbors" or (value is None and spec.kind in ("int", "float")):
         return gr.Textbox(label=label, value=form_value(name, value), max_lines=1,
                           elem_id=elem_id)
     if spec.kind == "bool":
@@ -316,14 +320,25 @@ def base_form_defaults() -> Tuple[Any, ...]:
 
 def _parsed(name: str, value: Any) -> Tuple[Any, Optional[str]]:
     """A field's value as its setting takes it: the hop text as a list of
-    whole numbers; a whole float of an integer field (a number box's value) as
-    an int; an int of a float field as a float. ``(value, why not)``."""
+    whole numbers; an optional number's text (`setting_field`), "off" or empty
+    as None, else the number it says; a whole float of an integer field (a
+    number box's value) as an int; an int of a float field as a float.
+    ``(value, why not)``."""
     if name == "num_neighbors":
         try:
             return [int(part) for part in str(value or "").split(",") if part.strip()], None
         except ValueError:
             return None, "must be whole numbers separated by commas, such as 15, 10, 5."
     kind = by_name(name).kind
+    if kind in ("int", "float") and isinstance(value, str):
+        text = value.strip()
+        if text.lower() in ("", "off"):
+            return None, None
+        try:
+            return (int(text) if kind == "int" else float(text)), None
+        except ValueError:
+            return None, ('must be a whole number or "off".' if kind == "int"
+                          else 'must be a number or "off".')
     if kind == "int" and isinstance(value, float) and value.is_integer():
         return int(value), None
     if kind == "float" and isinstance(value, int) and not isinstance(value, bool):
@@ -1958,7 +1973,15 @@ def _start(ws, run_name, device, values) -> str:
     result = training_manager.start_training(config, expected_dataset_fingerprint=fingerprint)
     if result.get("success"):
         return ""
-    return f"Not started: {result.get('error', 'unknown error')}"
+    return not_started(result.get("error"))
+
+
+def not_started(error: Any) -> str:
+    """A start the job runner refused, as a page says it: its sentence after
+    "Not started: ", unless the sentence already ends by saying nothing was
+    started (the runner's refusals before anything starts do)."""
+    text = str(error or "unknown error")
+    return text if text.endswith("Nothing was started.") else f"Not started: {text}"
 
 
 def running_job(status: Mapping[str, Any]) -> Optional[str]:
@@ -2124,8 +2147,7 @@ def run_words(architecture: Any, run: Any) -> str:
     started = r.run_started(run)
     if not started:
         return f"{arch} · {run}"
-    rest = r.run_suffix(run) or ""
-    name = re.sub(r"_[0-9a-f]{6}$", "", rest)
+    name = r.run_name(run)
     return f"{name} · {arch} · {started}" if name and name != "run" else f"{arch} · {started}"
 
 
@@ -2768,10 +2790,10 @@ def _resume(ws, device, source, listed, manual, extend_epochs, parents, mode):
     if result.get("success"):
         mode.update(drawer=False, parent={}, confirm=None)
         return "", text, _extra_epochs_update(preview), mode
-    error = result.get("error", "unknown error")
+    said = not_started(result.get("error"))
     if result.get("parent_changed"):  # changed after this check's own read
-        error = f"{error} {_changed_parent_action(source)}"
-    return f"Not started: {error}", text, _extra_epochs_update(preview), mode
+        said = f"{said} {_changed_parent_action(source)}"
+    return said, text, _extra_epochs_update(preview), mode
 
 
 def _toggle_continue_source(source):

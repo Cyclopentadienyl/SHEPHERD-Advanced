@@ -511,6 +511,36 @@ def test_the_page_css_hides_a_view_by_its_class_and_keeps_the_confirmation_in_vi
     assert css.index(f"{confirming} > .shep-model-body {{ display: none !important; }}") > low
 
 
+def test_the_sticky_card_and_run_row_never_cover_a_focused_control(monkeypatch):
+    """K6 closing smoke at 1536x760: the sticky Model-in-use card and Run row
+    (bottom 0 inside the input column's scroll region) covered a focused
+    Reference cohort select, Patient ID, Top-K or Explanations (the disease
+    model's Explanations too). The scroll region keeps a scroll padding as tall
+    as the sticky block, which a ResizeObserver writes as a CSS variable (as the
+    shell writes ``--shep-chips-h``), so focusing a control scrolls it above
+    the block. The browser re-measure is the integrator's."""
+    css = " ".join(dp.PAGE_CSS.split())
+    wide = css.index("@media (min-width: 1400px) and (min-height: 760px) {")
+    narrow = css.index("@media (max-width: 1399px), (max-height: 759px) {")
+    rule = (f"{dp._TAB} #shep-dx-input-bd {{ display: flex; flex-direction: column; "
+            "scroll-padding-bottom: var(--shep-dx-sticky-h, 0px); }")
+    assert wide < css.index(rule) < narrow
+    assert f"{dp._TAB} .shep-dx-sticky {{ position: sticky; bottom: 0;" in css
+    js = dp.STICKY_JS
+    assert "element.closest('#shep-dx-sticky')" in js
+    assert "sticky.closest('#shep-dx-input-bd')" in js
+    assert "body.style.setProperty('--shep-dx-sticky-h', sticky.offsetHeight + 'px')" in js
+    assert "new ResizeObserver(fit).observe(sticky)" in js
+    # Wired on a component inside the sticky block, so its observer finds it.
+    demo, _ctx = _build_tab(monkeypatch)
+    (host,) = [b for b in demo.blocks.values() if getattr(b, "js_on_load", None) == js]
+    ancestors, block = [], host
+    while block is not None:
+        ancestors.append(getattr(block, "elem_id", None))
+        block = getattr(block, "parent", None)
+    assert "shep-dx-sticky" in ancestors and "shep-dx-input-bd" in ancestors, ancestors
+
+
 # ------------------------------------------------- the phenotype list and the API
 # docs/working/PLAN_PHENOTYPE_NORMALISATION.md, N1 and decision W: the panel sends
 # what it parsed, repeats included; the service removes repeats and enforces the
@@ -2003,6 +2033,11 @@ def test_run_waits_for_a_readable_reference_cohort_version():
             assert "--registry" not in run["run_reason"] and "<registry>" not in run["run_reason"]
             assert f'aria-describedby="{text_id("dx-run-no-cohort")}"' in run["run_cover"]
     assert "dx-run-no-cohort" in dp.TOPIC_HELP
+    # The cover's bubble explains this reason to whoever reads it (a clinician
+    # too): the registry setting's own words stay off it (K6 closing review).
+    help_text = " ".join(dp.TOPIC_HELP["dx-run-no-cohort"])
+    assert "SHEPHERD_" not in help_text and "--registry" not in help_text
+    assert "the server's cohort registry setting" in help_text
     # The empty select says what it holds, not that the user should pick.
     assert dp.cohort_info(_cohorts(problem=unset), None) == "No version is listed."
     ready = _task_card("patients_like_me", _cohorts(_version("other-1", "another"),

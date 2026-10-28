@@ -554,6 +554,26 @@ def bounds(constraint: Optional[Dict[str, Any]]) -> Tuple[Any, bool, Any, bool]:
     return (lo, "gt" in constraint, hi, "lt" in constraint)
 
 
+def bound_words(constraint: Optional[Dict[str, Any]]) -> str:
+    """A constraint's bounds in words, from `bounds`: "1 or more", "between 0
+    and 1", "more than 0 and at most 1"; empty for none."""
+    lo, lo_open, hi, hi_open = bounds(constraint)
+
+    def num(value: Any) -> str:
+        return str(int(value)) if isinstance(value, float) and value.is_integer() else str(value)
+
+    if lo is not None and hi is not None:
+        if not lo_open and not hi_open:
+            return f"between {num(lo)} and {num(hi)}"
+        return (f"{'more than' if lo_open else 'at least'} {num(lo)} and "
+                f"{'less than' if hi_open else 'at most'} {num(hi)}")
+    if lo is not None:
+        return f"more than {num(lo)}" if lo_open else f"{num(lo)} or more"
+    if hi is not None:
+        return f"less than {num(hi)}" if hi_open else f"{num(hi)} or less"
+    return ""
+
+
 #: The sampler's "every neighbour" hop size (the gene task's first hop, README
 #: U3), beside the field spec's per-hop floor of 1.
 _ALL_NEIGHBOURS = -1
@@ -596,11 +616,14 @@ def value_problem(name: str, value: Any, *, allow_none: bool = False) -> Optiona
                 or (hi is not None and (number >= hi if hi_open else number > hi)))
 
     if spec.kind in ("int", "float") and outside(value, spec.valid):
-        return f"{name} {value!r} is outside {spec.valid}."
+        return f"{name} must be {bound_words(spec.valid)}, not {value!r}."
     if spec.kind == "list[int]":
         if spec.min_length is not None and len(value) < spec.min_length:
             return f"{name} needs at least {spec.min_length} item(s)."
-        items = [v for v in value if not (name == "num_neighbors" and v == _ALL_NEIGHBOURS)]
+        every = name == "num_neighbors"
+        items = [v for v in value if not (every and v == _ALL_NEIGHBOURS)]
         if any(outside(v, spec.item_valid) for v in items):
-            return f"{name} {value!r} has an item outside {spec.item_valid}."
+            return (f"{name} items must be {bound_words(spec.item_valid)}"
+                    f"{f' (or {_ALL_NEIGHBOURS}, every neighbour)' if every else ''}, "
+                    f"not {value!r}.")
     return None

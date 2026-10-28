@@ -234,7 +234,7 @@ def test_start_sends_the_listed_digest_the_fingerprint_shown_and_what_differs(
 @pytest.mark.parametrize("change, words", [
     ({"tasks": []}, "choose at least one task"),
     ({"key": None}, "choose a base checkpoint"),
-    ({"epochs": 0}, "Epochs 0 is outside"),
+    ({"epochs": 0}, "Epochs must be between 1 and 10000, not 0."),
     ({"seed": None}, "Seed must be set"),
     ({"ws": {"name": None, "row": None}}, "select a dataset"),
 ])
@@ -269,6 +269,15 @@ def test_a_refused_start_shows_the_runners_sentence_escaped(root, operator, monk
     said = fp._on_finetune_start(operator, ws, parents, f"gatv2/{BASE_RUN}/last.pt",
                                  ["disease"], 100, 33, "cpu", "")
     assert "<img" not in said and "&lt;img" in said and "another knowledge graph" in said
+    # The runner's sentence already says nothing was started: not said twice
+    # (K6 closing review: "Not started: … Nothing was started.").
+    assert "Not started" not in said and said.count("Nothing was started.") == 1
+    # A refusal that does not say it keeps the page's lead.
+    monkeypatch.setattr(fp.training_manager, "start_finetune",
+                        lambda inputs, **k: {"success": False, "error": "The slot is busy."})
+    said = fp._on_finetune_start(operator, ws, parents, f"gatv2/{BASE_RUN}/last.pt",
+                                 ["disease"], 100, 33, "cpu", "")
+    assert said == tc.notice_html("Not started: The slot is busy.")
 
 
 def test_start_is_refused_for_a_read_only_request(root, started):
@@ -335,6 +344,23 @@ def test_the_card_draws_one_row_per_child_escaped_without_a_path(root):
     assert "never started" in cancelled and "no run" in cancelled
 
 
+def test_the_cards_run_is_its_name_part_with_the_whole_id_in_its_title():
+    """K6 closing smoke: the Run cell cut the id at 22ch ("gatv2/20261028-14001…"),
+    hiding the run's name, which only a hover showed. The cell shows the name
+    part (between the start time and the 6-hex id), the whole id in its title;
+    a name is at most 40 characters (`slugify_run_name`), the cell's cap."""
+    run = "20261028-140013_smoke-ft-patients-like-me_0e8106"
+    row = fp.child_row_html(_child("patients_like_me", "completed", run), operator=False,
+                            products={})
+    assert (f'<code class="shep-ident" title="gatv2/{run}">smoke-ft-patients-like-me</code>'
+            in row)
+    assert "max-width: 22ch" not in fp.PAGE_CSS
+    assert f"{fp._PAGE} .shep-ft-table code.shep-ident {{ max-width: 40ch; }}" in fp.PAGE_CSS
+    # A directory not named by its start time is its whole id.
+    assert ">gatv2/odd-run</code>" in fp.child_row_html(
+        _child("disease", "completed", "odd-run"), operator=False, products={})
+
+
 def test_the_best_save_is_the_highest_trainer_figure_never_a_file_name(root, monkeypatch):
     """The products of an ended child, for an operator: the saved file with
     the highest Trainer validation figure its record holds, ties shared, read
@@ -388,7 +414,9 @@ class _Access:
 def test_start_and_stop_follow_the_training_run_bars_states():
     child = _child("disease", "running", "r")
     idle = fp.actions_view({"status": "idle"}, access=_Access(True), gpu=None, confirming=False)
-    assert (idle["start"], idle["stop"]) == (True, False) and "Stop disabled" in idle["reason"]
+    # No reason beside an enabled Start (K6 closing smoke: the line beside it
+    # spoke of Stop, which is in the job panel; the card says no job runs).
+    assert (idle["start"], idle["stop"]) == (True, False) and idle["reason"] == ""
     refused = fp.actions_view({"status": "idle"}, access=_Access(False, "deployment_mode"),
                               gpu=None, confirming=False)
     assert (refused["start"], refused["stop"]) == (False, False)

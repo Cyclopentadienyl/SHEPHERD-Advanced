@@ -1286,6 +1286,10 @@ def measured_task(item: Optional[Mapping[str, Any]]) -> Optional[str]:
     return task if task in TASK_NAMES else None
 
 
+#: This page's own reason beside a record's state (`measure_refusal`).
+NOT_MEASURED_HERE = "not measured here. Choose a model finetuned for a task"
+
+
 def measure_refusal(item: Mapping[str, Any], version: Optional[Mapping[str, Any]]
                     ) -> Optional[str]:
     """Why this page does not measure the listed checkpoint `item` on the
@@ -1299,16 +1303,14 @@ def measure_refusal(item: Mapping[str, Any], version: Optional[Mapping[str, Any]
     causal and candidate genes, a patients-like-me model one that lists causal
     genes (its `counts["genes"]`, which the importer writes only for a source
     that lists genes); a version whose causal genes are all unmapped passes
-    here and the run refuses it."""
+    here and the run refuses it. A record's state is said in the word the
+    Model option leads with (`renderers.record_kind_text`), then this page's
+    reason (`NOT_MEASURED_HERE`)."""
     record = item.get("record")
-    if record == "refused":
-        return (f"this checkpoint's model record cannot be read "
-                f"({item.get('record_problem') or 'no reason was given'})")
-    if record is None:
-        return "this checkpoint's model record was not read"
-    if record == "history":
-        return ("this checkpoint has no model spec (a ShepherdGNN checkpoint): it is history "
-                "and is not measured here. Choose a model finetuned for a task")
+    if record in ("refused", None, "history"):
+        why = {"refused": f" ({item.get('record_problem') or 'no reason was given'})",
+               "history": " (no model spec: a ShepherdGNN checkpoint)"}.get(record, "")
+        return f"{r.record_kind_text(item)}{why}: {NOT_MEASURED_HERE}"
     if item.get("learning_stage") == "base":
         return ("this checkpoint is a base: it has no task to measure. Choose a model "
                 "finetuned from it for a task")

@@ -494,6 +494,14 @@ def run_suffix(run: Any) -> Optional[str]:
     return rest or None
 
 
+def run_name(run: Any) -> Optional[str]:
+    """"smoke-ft-disease" from a run directory named
+    "20261028-140013_smoke-ft-disease_0e8106": its name, between its start
+    time and its 6-hex id; None when it is not named by its start time."""
+    rest = run_suffix(run)
+    return re.sub(r"_[0-9a-f]{6}$", "", rest) if rest else None
+
+
 def record_kind_text(item: Any) -> str:
     """**What a listed checkpoint is, in the one word every page leads with**
     (K6 decision 6), from its model record (`listed_record`): "Base", the task's
@@ -909,6 +917,7 @@ __all__ = [
     "recorded_tests_text",
     "run_label",
     "run_label_html",
+    "run_name",
     "run_started",
     "run_suffix",
     "short_hex",

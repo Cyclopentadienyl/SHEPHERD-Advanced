@@ -300,14 +300,14 @@ def test_what_fails_in_starting_a_child_never_stops_the_monitor(base, popen, mon
     (dict(tasks=("disease", "disease")), "more than once"),
     (dict(tasks=("disease", "genes")), "'genes' is not a task"),
     (dict(settings={"candidate_sample_size": 8}, tasks=("disease", "gene")),
-     "candidate_sample_size is not a setting a Fine-tune start of disease, gene takes"),
+     "candidate_sample_size is not a setting a Fine-tune start of Disease and Gene takes"),
     (dict(settings={"hidden_dim": 8}),
-     "hidden_dim is not a setting a Fine-tune start of disease takes"),
+     "hidden_dim is not a setting a Fine-tune start of Disease takes"),
     (dict(settings={"save_top_k": 2}), "save_top_k is not a setting"),
-    (dict(settings={"num_epochs": 0}), "num_epochs 0 is outside"),
+    (dict(settings={"num_epochs": 0}), "num_epochs must be between 1 and 10000, not 0."),
     (dict(settings={"learning_rate": "fast"}), "learning_rate must be a number, not 'fast'"),
     (dict(settings={"use_amp": "false"}), "use_amp must be true or false, not 'false'"),
-    (dict(settings={"num_neighbors": [3, 0]}), "num_neighbors [3, 0] has an item outside"),
+    (dict(settings={"num_neighbors": [3, 0]}), "num_neighbors items must be 1 or more"),
     (dict(expected_parent_sha256="0" * 64), "changed since it was chosen"),
 ])
 def test_a_finetune_is_refused_before_anything_starts(base, popen, change, fragment):
@@ -339,10 +339,15 @@ def test_a_fixture_task_is_refused_without_its_fixture_and_disease_alone_starts(
     job = FakeProcess(pid=1)
     calls = popen(job)
     manager = TrainingManager()
-    for tasks in (("gene",), ("disease", "patients_like_me")):
+    # The tasks named as every page names them (`caveats.TASK_NAMES`), never
+    # by their ids (K6 closing review: "gene and patients_like_me train on …").
+    for tasks, lead in ((("gene",), "Gene trains"),
+                        (("disease", "patients_like_me"), "Patients-like-me trains"),
+                        (("gene", "patients_like_me"), "Gene and Patients-like-me train")):
         refused = manager.start_finetune(_inputs(base, *tasks))
         assert refused["success"] is False and fragment in refused["error"]
-        assert "train on the gene task's functional fixture" in refused["error"]
+        assert refused["error"].startswith(f"{lead} on the gene task's functional fixture: ")
+        assert "patients_like_me" not in refused["error"] and "gene train" not in refused["error"]
         assert refused["error"].endswith("Nothing was started.")
     assert calls.calls == [] and manager.get_status()["finetune"] is None
     started = manager.start_finetune(_inputs(base, "disease"))
@@ -407,7 +412,7 @@ def test_a_new_base_run_is_filed_under_its_spec_encoder_with_only_what_was_sent(
     (dict(task_loss_weight=0.5), "task_loss_weight is not a setting a base run takes"),
     (dict(conv_type="gat"), "conv_type is not a setting a base run takes"),
     (dict(task="disease"), "task is not a setting a base run takes"),
-    (dict(num_epochs=0), "num_epochs 0 is outside"),
+    (dict(num_epochs=0), "num_epochs must be between 1 and 10000, not 0."),
     (dict(learning_rate="fast"), "learning_rate must be a number, not 'fast'"),
     (dict(early_stopping_patience=None, seed=None), "seed must be set, not null"),
     # One hop per layer of the spec's encoder (the reference recipe's three):

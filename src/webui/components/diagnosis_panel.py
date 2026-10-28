@@ -1583,7 +1583,7 @@ TOPIC_HELP = {
         "This model ranks a registered reference cohort's patients, and no version can be read. "
         "The registry is not set or refused, holds no version yet, or "
         "every version is marked \"cannot be read\". An operator imports a version in "
-        "Research › Test, or corrects SHEPHERD_REGISTRY on the server.",
+        "Research › Test, or corrects the server's cohort registry setting.",
     ),
     **{f"dx-banner-{key}": (headline, detail) for key, (headline, detail) in IDENTITY_BANNERS.items()},
 }
@@ -2899,7 +2899,7 @@ def create_diagnosis_tab(ctx: Any) -> None:
                         with gr.Row(elem_id="shep-dx-card-hd", elem_classes=["shep-dx-card-hd"]):
                             plain_html('<span class="shep-dx-card-title">Model in use</span>'
                                        + help_button("dx-card", "Model in use"),
-                                       elem_id="shep-dx-card-title")
+                                       elem_id="shep-dx-card-title", js_on_load=STICKY_JS)
                             # "checked HH:MM:SS ↻" stay together: on a narrow column
                             # they move under the title as one, at its right.
                             with gr.Row(elem_id="shep-dx-card-when",
@@ -3249,13 +3249,34 @@ def create_diagnosis_tab(ctx: Any) -> None:
 # =============================================================================
 # The page's style sheet (the page contract: listed in `src/webui/app.py`)
 # =============================================================================
+#: The sticky block's height as ``--shep-dx-sticky-h`` on the input column's
+#: scroll region, kept by a ResizeObserver (as the shell keeps
+#: ``--shep-chips-h``): the region's ``scroll-padding-bottom`` (`PAGE_CSS`), so
+#: a control focused in the region scrolls above the Model-in-use card and the
+#: Run row instead of under them (K6 closing smoke, 1536 x 760). Run by a
+#: component inside the block (its title), once per mount.
+STICKY_JS = r"""
+(function find(tries) {
+  var sticky = element.closest('#shep-dx-sticky');
+  var body = sticky ? sticky.closest('#shep-dx-input-bd') : null;
+  if (!sticky || !body) {
+    if (tries > 0) { requestAnimationFrame(function () { find(tries - 1); }); }
+    return;
+  }
+  var fit = function () { body.style.setProperty('--shep-dx-sticky-h', sticky.offsetHeight + 'px'); };
+  if (window.ResizeObserver) { new ResizeObserver(fit).observe(sticky); }
+  fit();
+})(20);
+"""
+
 #: The page's tab (`src.webui.shell.tab_elem_id(CLINICAL)`).
 _TAB = "#shep-tab-clinical"
 
 #: Diagnosis' layout: the input column 370 px wide from 1800 px of window, 320
 #: px from 1600, 300 px below; the candidates and the details share the rest
 #: 5:4. Wide, each panel scrolls inside and the input column's card and Run
-#: Diagnosis stick to the bottom of its scroll body; narrow, the panels stack.
+#: Diagnosis stick to the bottom of its scroll body, which keeps their height
+#: as its scroll padding (`STICKY_JS`); narrow, the panels stack.
 #: While the Load confirmation is open (UI-A's confirmation box is mounted only
 #: then) the list's footer is hidden and its rows give up their height to it
 #: (all of it below 820 px of height), so the from → to rows and the warning
@@ -3446,7 +3467,7 @@ PAGE_CSS = f"""
   {_TAB} #shep-dx {{ height: 100%; }}
   {_TAB} #shep-dx > .shep-panel {{ max-height: 100%; }}
   {_TAB} .shep-dx-scroll {{ flex: 1 1 auto !important; min-height: 0; overflow: auto; }}
-  {_TAB} #shep-dx-input-bd {{ display: flex; flex-direction: column; }}
+  {_TAB} #shep-dx-input-bd {{ display: flex; flex-direction: column; scroll-padding-bottom: var(--shep-dx-sticky-h, 0px); }}
   {_TAB} .shep-dx-drawer {{ position: absolute !important; top: 0; bottom: 0; z-index: 20; }}
   {_TAB} #shep-dx-identity {{ right: 0; width: max(600px, calc((100% - var(--dx-in-w) - 32px) * 4 / 9 + 16px)); }}
   {_TAB} #shep-dx-change {{ left: calc(var(--dx-in-w) + 16px); right: 0; }}
@@ -3480,6 +3501,7 @@ __all__ = [
     "FIELD_HELP",
     "PAGE_CSS",
     "SEGMENTS",
+    "STICKY_JS",
     "TASK_OUTPUTS",
     "TASK_VIEWS",
     "TOPIC_HELP",

@@ -5,7 +5,7 @@ The dashboard's shell (M5-2, UI-A): navigation, the page contract, the head.
 
 - **two navigation levels**: "Diagnosis (clinical)" first and selected,
   "Research (pre-clinical)", "⚙ Settings" aligned right; under Research,
-  Datasets · Training · Test · Models with Training selected; both levels wrap,
+  Datasets · Training · Fine-tune · Test · Models with Training selected; both levels wrap,
   never into an overflow menu; each page in its own tab with its elem_id;
 - **the page contract**: each builder is called with the one context; Test
   and Models hold the one-line temporary body until their builders exist;
@@ -29,6 +29,7 @@ Module: tests/unit/test_webui_shell.py
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import pytest
 
@@ -410,6 +411,23 @@ def test_the_dead_code_the_m5_review_found_stays_gone():
     assert "math" not in vars(training_console)
     assert "status_display" not in app.DASHBOARD_CSS
     assert "shep-temporary" not in style.SHELL_CSS
+
+
+def test_no_text_names_the_deleted_amp_refusal_and_the_app_lists_its_pages():
+    """K6 closing review: K6b deleted the AMP/HGT refusal, yet the help, shell
+    and style texts still gave it as the runtime ``info=`` example, and the
+    app's docstring listed the research pages without Fine-tune."""
+    from src.webui import app, style
+    from src.webui.components import help as help_module
+
+    for text in (help_module.__doc__, shell.__doc__, style.SHELL_CSS,
+                 Path(style.__file__).read_text(encoding="utf-8")):
+        assert "HGT" not in text and "AMP radio" not in text
+    for text in (help_module.__doc__, shell.__doc__, style.SHELL_CSS):
+        assert "Reference cohort select" in " ".join(text.split())
+    pages = " · ".join(shell.LABELS[page] for page in shell.RESEARCH_PAGES)
+    assert pages == "Datasets · Training · Fine-tune · Test · Models"
+    assert f"with {pages}," in " ".join(app.__doc__.split())
 
 
 # --------------------------------------------------------------------------- M5-3 polish

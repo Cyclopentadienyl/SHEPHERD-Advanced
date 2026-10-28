@@ -425,6 +425,15 @@ _NEW_RUN_KEYS = frozenset({"data_dir", "run_name", "run_dir", "device", "compile
                            "learning_stage", "model_spec"})
 
 
+def _task_words(tasks: Sequence[str]) -> str:
+    """Tasks as every page names them (`caveats.TASK_NAMES`): "Gene", "Gene and
+    Patients-like-me", "Disease, Gene and Patients-like-me"."""
+    from src.evaluation.caveats import TASK_NAMES
+
+    names = [TASK_NAMES.get(task, task) for task in tasks]
+    return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+
+
 def _recipe_settings_problem(settings: Mapping[str, Any], references: Sequence[Mapping[str, Any]],
                              what: str) -> Optional[str]:
     """**The one check of the settings a new model bundle run is started with**
@@ -1225,7 +1234,7 @@ class TrainingManager:
             return refused("A task is named more than once; each task is one child.")
         problem = _recipe_settings_problem(
             inputs.settings, [reference_settings("finetune", task)[0] for task in tasks],
-            f"a Fine-tune start of {', '.join(tasks)}")
+            f"a Fine-tune start of {_task_words(tasks)}")
         if problem:
             return {**refused(problem), "invalid_settings": True}
         if expected_dataset_fingerprint is not None:
@@ -1276,7 +1285,8 @@ class TrainingManager:
             try:
                 read_fixture_record(workspace, manifest_sha256=manifest.identity.sha256)
             except TaskFixtureError as exc:
-                return refused(f"{' and '.join(on_fixture)} train on the gene task's functional "
+                verb = "trains" if len(on_fixture) == 1 else "train"
+                return refused(f"{_task_words(on_fixture)} {verb} on the gene task's functional "
                                f"fixture: {exc}.")
 
         sequence = _Finetune(inputs=FinetuneInputs(**{**inputs.__dict__, "finetune_from": str(path),

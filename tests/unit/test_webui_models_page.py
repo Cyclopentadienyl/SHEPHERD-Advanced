@@ -856,10 +856,16 @@ def test_by_family_draws_each_family_parent_first_with_its_lineage(world, monkey
     assert ordering is None and view["column"] == mp.LINEAGE_COLUMN
     titles = [g["title"] for g in view["groups"]]
     # A file whose record was never read is under its own word, "Record not
-    # read" (`record_kind_text`), never under "Record not readable".
+    # read" (`record_kind_text`), never under "Record not readable"; the
+    # history files under the word each of their rows leads with (K6 closing
+    # review: the page kept its own "History · listed, never run").
+    history = r.record_kind_text({"record": "history"})
     assert titles == ["Family from run 2026-10-01 00:00 · 3 files",
                       "Family from run 2026-10-04 00:00 · 1 file",
-                      mp.GROUP_HISTORY, "Record not read"]
+                      history, "Record not read"]
+    assert not hasattr(mp, "GROUP_HISTORY")
+    assert {r.record_kind_text(ml.find_item(listing, key))
+            for key in view["groups"][2]["keys"]} == {history}
     assert view["groups"][0]["keys"] == [bundle_key("base"), bundle_key("disease"),
                                          bundle_key("gene")]
     assert view["groups"][3]["keys"] == [_key(world, "broken.pt")]
@@ -881,7 +887,7 @@ def test_by_family_draws_each_family_parent_first_with_its_lineage(world, monkey
     # The shared list draws them: groups in order, the Lineage column.
     html = ml.list_html(listing, None, ml.PRESETS["research"], view=view)
     assert ">Lineage</th>" in html and EVIL not in html
-    assert html.index("Family from run 2026-10-01") < html.index(mp.GROUP_HISTORY)
+    assert html.index("Family from run 2026-10-01") < html.index(f">{history}<")
     # A record this build refused and a file never read: two groups, each
     # titled with its own word (skill §6: missing states are never merged).
     broken = ml.find_item(listing, _key(world, "broken.pt"))
@@ -904,7 +910,7 @@ def test_by_family_draws_each_family_parent_first_with_its_lineage(world, monkey
     # History alone; the CSS gives the marks their status tokens.
     ctl = mp.controls(listing, data, mp.BY_FAMILY, None, None, None, "history")
     view, _ordering = mp.shape(listing, data, ctl)
-    assert [g["title"] for g in view["groups"]] == [mp.GROUP_HISTORY]
+    assert [g["title"] for g in view["groups"]] == [history]
     assert ".shep-mp-warn {{ color: var(--shep-status-warn); }}".replace(
         "{{", "{").replace("}}", "}") in mp.PAGE_CSS.replace(f"{mp._PAGE} ", "")
     assert "var(--shep-status-neutral)" in mp.PAGE_CSS
@@ -981,6 +987,32 @@ def test_the_detail_says_what_the_model_is_and_its_relation_to_the_paper(world, 
     assert ml.load_refusal(ml.find_item(listing, bundle_key("base"))) == ml.BASE_REFUSAL
 
 
+def test_a_task_records_coverage_reads_the_same_on_models_and_on_test(world, monkeypatch):
+    """K6 closing review (P2): for one registered task record of a cohort with
+    import exclusions, Models said "8 of 13 source cases ranked by the model"
+    and Test "8 of 10 import-eligible cases ranked by the model · 13 source
+    cases". A task measurement ranks the version's import-eligible samples
+    (`counts.ranked_eligible`), so both pages say n of those, the source cases
+    and the import exclusions on the line under it."""
+    from src.webui.components import test_page as tp
+
+    _listing, data, _ctl, _view, _ordering = _ordered(world, monkeypatch)
+    raw = next(r for entry in data["ledgers"].values() for r in entry.get("records") or [])
+    counts = {**raw["cohort"]["counts"], "source_cases": 13, "ranked_eligible": 10,
+              "n_excluded": 3, "excluded": {"ground_truth_absent": 3}}
+    record = {**raw, "n_ranked": 8, "scoring": {**raw["scoring"], "mode": "disease"},
+              "cohort": {**raw["cohort"], "counts": counts},
+              "metrics": {**raw["metrics"], "coverage": 0.8}}
+    view = mp.record_view(record)
+    assert view is not None and view["mode"] == "disease"
+    said = re.compile(r"(\d+) of (\d+) (?:[a-z-]+ )*cases ranked by the model")
+    models = said.findall(_text(mp.coverage_html(view)))
+    test = said.findall(_text(tp._record_html(record, {}, {})))
+    assert models == test == [("8", "10")], (models, test)
+    assert "13 source cases; 3 excluded at import: ground truth absent 3" in _text(
+        mp.coverage_html(view))
+
+
 def test_a_registered_task_record_shows_its_own_named_metrics(world, monkeypatch):
     """A disease, gene or patients-like-me record (K6 Test registers them) is
     shown in its own table under its task's metric names
@@ -1008,7 +1040,7 @@ def test_a_registered_task_record_shows_its_own_named_metrics(world, monkeypatch
         order = [others.index(f"{name} {words}") for words in (
             "coverage", "conservative pooled MRR", "pooled top-1 ", "macro precision@10")]
         assert order == sorted(order), order
-        assert "source cases ranked by the model" in text
+        assert "import-eligible cases ranked by the model" in text
     entry = {"kind": "test_run", "at": "2026-10-26T12:00:00Z", "version": "v", "run_id": "r",
              "metrics": {"pooled_mrr": 0.5}, "n_ranked": 3, "device": "cpu",
              "deterministic": True, "record_requested": False, "mode": "gene"}

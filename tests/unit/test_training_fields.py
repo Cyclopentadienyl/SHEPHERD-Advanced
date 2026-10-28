@@ -479,9 +479,37 @@ def test_a_value_is_checked_by_its_field_spec_without_coercion():
             ("num_epochs", True, "must be an integer, not True"),
             ("num_epochs", "3", "must be an integer, not '3'"),
             ("use_amp", 1, "must be true or false, not 1"),
-            ("num_epochs", 0, "num_epochs 0 is outside"),
-            ("num_neighbors", [3, -2], "has an item outside"),
+            ("num_epochs", 0, "num_epochs must be between 1 and 10000, not 0."),
+            ("num_neighbors", [3, -2], "num_neighbors items must be 1 or more (or -1, every "
+                                       "neighbour), not [3, -2]."),
             ("num_neighbors", [], "needs at least"),
             ("num_epochs", None, "must be set, not null")):
         problem = value_problem(name, value)
         assert problem is not None and fragment in problem, (name, value, problem)
+
+
+def test_a_value_outside_its_bounds_is_refused_with_the_bounds_in_words():
+    """K6 closing smoke: the base form and its Start said "Early stopping
+    patience 0 is outside {'ge': 1}", a raw dict. The bound is said in words,
+    from the same bounds the check reads (`bounds`), for every kind of bound."""
+    from src.config.training_fields import FIELDS, bound_words, bounds, value_problem
+
+    assert value_problem("early_stopping_patience", 0) == (
+        "early_stopping_patience must be 1 or more, not 0.")
+    assert value_problem("dropout", 1.5) == "dropout must be between 0 and 0.9, not 1.5."
+    assert value_problem("learning_rate", 0.0) == (
+        "learning_rate must be more than 0 and at most 1, not 0.0.")
+    assert value_problem("seed", -1) == "seed must be between 0 and 4294967295, not -1."
+    assert [bound_words(c) for c in ({"ge": 1}, {"gt": 0}, {"le": 5}, {"lt": 5},
+                                     {"ge": 0.0, "le": 1.0}, {"gt": 0, "le": 1.0},
+                                     {"ge": 1, "lt": 5}, {"gt": 0, "lt": 1})] == [
+        "1 or more", "more than 0", "5 or less", "less than 5", "between 0 and 1",
+        "more than 0 and at most 1", "at least 1 and less than 5", "more than 0 and less than 1"]
+    for spec in FIELDS:
+        for constraint in (spec.valid, spec.item_valid):
+            if constraint:
+                words = bound_words(constraint)
+                assert "{" not in words and "'" not in words, (spec.name, words)
+                lo, _lo_open, hi, _hi_open = bounds(constraint)
+                assert all(str(v if not float(v).is_integer() else int(v)) in words
+                           for v in (lo, hi) if v is not None), (spec.name, words)

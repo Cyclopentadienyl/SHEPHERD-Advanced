@@ -147,8 +147,9 @@ def test_the_themes_own_info_line_and_placeholder_are_below_the_threshold():
 
 @pytest.mark.parametrize("text", ["--block-info-text-color", "--input-placeholder-color"])
 def test_an_info_line_and_a_placeholder_have_four_and_a_half_to_one_where_fields_sit(text):
-    """A field's info= line carries refusals (the AMP radio's "Disabled: …")
-    and a placeholder is read as a hint: both are text, on a field or a panel."""
+    """A field's info= line carries a state set at runtime (the Reference
+    cohort select's facts) and a placeholder is read as a hint: both are text,
+    on a field or a panel."""
     tokens = _tokens()
     around = {"field": _effective("--input-background-fill"), "white": "#ffffff",
               "panel": tokens["--shep-panel"], "panel-2": tokens["--shep-panel-2"],

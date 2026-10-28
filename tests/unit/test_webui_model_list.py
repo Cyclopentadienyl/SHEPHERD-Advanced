@@ -1032,6 +1032,9 @@ def test_one_filter_vocabulary_and_the_drawer_lists_task_models_only(root, servi
         "no checkpoint shown · Gene only, of 8 listed")
     assert ml.count_line(listing, research, False, {"task": "patients_like_me"}).endswith(
         "· Patients-like-me only, of 9 listed")
+    # Each count in its own number (K6 closing smoke: "1 checkpoints in 1 runs").
+    assert ml.count_line(listing, research, False, {"task": "gene"}) == (
+        "newest first · 1 checkpoint in 1 run · Gene only, of 9 listed")
     # The drawer's task filter is counted against what the drawer lists (its
     # six task models), never against the bases and history files it hides;
     # asking for every row it shows names no filter at all.

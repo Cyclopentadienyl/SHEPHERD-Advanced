@@ -635,8 +635,8 @@ def test_start_waits_for_every_choice_and_says_why(site, monkeypatch):
     assert allowed is False and "mapped against another graph" in why
     # The fixture's ShepherdGNN checkpoint is history: listed, never measured.
     assert state("demo", LABEL, site.key) == (
-        False, "Disabled: this checkpoint has no model spec (a ShepherdGNN checkpoint): it is "
-               "history and is not measured here. Choose a model finetuned for a task.")
+        False, "Disabled: History · never run (no model spec: a ShepherdGNN checkpoint): not "
+               "measured here. Choose a model finetuned for a task.")
 
 
 # --------------------------------------------------------------------------- the operator controls
@@ -2358,17 +2358,28 @@ def _model(task="disease", stage="finetune", record="model", **extra):
 
 def test_measure_refusal_says_why_each_kind_is_not_measured():
     """K6 decision 13: only a model finetuned for a task is measured; each
-    other kind says why, in its own words."""
+    other kind says why, in its own words. A record's state is said in the
+    word the Model option leads with (`renderers.record_kind_text`, K6 decision
+    6; the closing review found the page's own copies), then the page's own
+    reason."""
+    from src.webui.components import renderers as r
+
     refusal = tp.measure_refusal
     assert refusal(_model("disease"), {"counts": NO_GENES}) is None
     assert refusal(_model(None, "base"), {"counts": NO_GENES}) == (
         "this checkpoint is a base: it has no task to measure. Choose a model finetuned from "
         "it for a task")
-    assert refusal({"record": "history"}, None).startswith(
-        "this checkpoint has no model spec (a ShepherdGNN checkpoint): it is history")
-    assert refusal({"record": "refused", "record_problem": "record version 9"}, None) == (
-        "this checkpoint's model record cannot be read (record version 9)")
-    assert refusal({"record": None}, None) == "this checkpoint's model record was not read"
+    history, refused, unread = ({"record": "history"},
+                                {"record": "refused", "record_problem": "record version 9"},
+                                {"record": None})
+    for item in (history, refused, unread):
+        assert refusal(item, None).startswith(r.record_kind_text(item)), refusal(item, None)
+        assert refusal(item, None).endswith(tp.NOT_MEASURED_HERE)
+    assert refusal(history, None) == (
+        "History · never run (no model spec: a ShepherdGNN checkpoint): " + tp.NOT_MEASURED_HERE)
+    assert refusal(refused, None) == (
+        "Record not readable (record version 9): " + tp.NOT_MEASURED_HERE)
+    assert refusal(unread, None) == "Record not read: " + tp.NOT_MEASURED_HERE
     assert refusal(_model("C"), None) == (
         "this checkpoint's model record names no task this page measures")
 
@@ -2410,8 +2421,8 @@ def test_start_and_its_reason_refuse_what_is_not_measured_with_one_rule(site, mo
     cases = {
         f"gatv2/{BUNDLE_BASE_RUN}/last.pt": "this checkpoint is a base",
         "gatv2/20261021-000000_refused_cccccc/last.pt":
-            "this checkpoint's model record cannot be read (checkpoint record version 999",
-        site.key: "this checkpoint has no model spec",
+            "Record not readable (checkpoint record version 999",
+        site.key: "History · never run (no model spec",
         "gatv2/20261022-000000_gene_dddddd/last.pt": "this cohort version lists no causal genes",
     }
     for key, says in cases.items():

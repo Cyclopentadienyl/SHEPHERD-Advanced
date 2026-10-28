@@ -106,22 +106,24 @@ def test_start_takes_compile_from_the_runtime_settings(listed, started, monkeypa
 
 @pytest.mark.parametrize("name, value, words", [
     ("num_epochs", None, "Epochs must be set"),
-    ("num_epochs", 0, "Epochs 0 is outside"),
-    ("learning_rate", 0.0, "Learning rate 0.0 is outside"),
-    ("batch_size", 4096, "Batch size 4096 is outside"),
-    ("seed", 2 ** 32, "Seed 4294967296 is outside"),
+    ("num_epochs", 0, "Epochs must be between 1 and 10000, not 0."),
+    ("learning_rate", 0.0, "Learning rate must be more than 0 and at most 1, not 0.0."),
+    ("batch_size", 4096, "Batch size must be between 1 and 2048, not 4096."),
+    ("seed", 2 ** 32, "Seed must be between 0 and 4294967295, not 4294967296."),
     ("num_neighbors", "15, x, 5", "Neighbours per hop must be whole numbers"),
     ("num_neighbors", "", "Neighbours per hop needs at least 1"),
-    ("num_neighbors", "15, 0, 5", "Neighbours per hop [15, 0, 5] has an item outside"),
+    ("num_neighbors", "15, 0, 5", "Neighbours per hop items must be 1 or more (or -1, every "
+                                  "neighbour), not [15, 0, 5]."),
     # One hop per layer of the encoder the form's base builds (the reference
     # recipe's three), refused here rather than by the training process.
     ("num_neighbors", "15, 10", "Neighbours per hop needs 3 numbers, one hop per encoder "
                                 "layer, not 2"),
     ("num_neighbors", "15, 10, 5, 5", "Neighbours per hop needs 3 numbers"),
-    ("warmup_steps", -1, "Warmup steps -1 is outside"),
-    ("weight_decay", -0.1, "Weight decay -0.1 is outside"),
-    ("max_grad_norm", 0.0, "Gradient clip 0.0 is outside"),
-    ("early_stopping_patience", 0, "Early stopping patience 0 is outside"),
+    ("warmup_steps", -1, "Warmup steps must be 0 or more, not -1."),
+    ("weight_decay", -0.1, "Weight decay must be 0 or more, not -0.1."),
+    ("max_grad_norm", 0.0, "Gradient clip must be more than 0, not 0.0."),
+    # What the browser sends for patience is text (`setting_field`).
+    ("early_stopping_patience", "0", "Early stopping patience must be 1 or more, not 0."),
     ("scheduler_type", "cyclic", "Scheduler must be one of"),
 ])
 def test_a_value_its_field_spec_refuses_starts_nothing_and_is_named(listed, started, name,
@@ -131,6 +133,44 @@ def test_a_value_its_field_spec_refuses_starts_nothing_and_is_named(listed, star
         '<span class="shep-notice-t">Not started: ')
     # The same words in the form's own line, before any Start.
     assert words in tc.differs_html(dict(zip(tc.BASE_FIELDS, _form(**{name: value}))), BASE)
+
+
+def test_an_optional_setting_reads_off_and_what_the_browser_sends_is_the_recipes_none(
+        listed, started):
+    """K6 closing smoke: patience's reference is None (off). A number box showed
+    it as 0 once "More reference settings" was opened, any later edit sent 0,
+    and Start was refused ("is outside"), so the reference recipe could not be
+    started after looking at its settings. The field is a text box reading
+    "off" (a state, not a placeholder); what the browser sends for it, "off" or
+    empty once cleared, is the recipe's None and is not sent; a whole number is
+    the int; anything else is named."""
+    import gradio as gr
+
+    field = tc.setting_field("early_stopping_patience", BASE["early_stopping_patience"],
+                             elem_id="p")
+    assert BASE["early_stopping_patience"] is None
+    assert isinstance(field, gr.Textbox) and field.value == "off"
+    assert dict(zip(tc.BASE_FIELDS, tc.base_form_defaults(), strict=True))["early_stopping_patience"] == "off"
+    for sent in ("off", "", " Off "):
+        values = _form(num_epochs=2, early_stopping_patience=sent)
+        assert tc.recipe_differences(dict(zip(tc.BASE_FIELDS, values, strict=True)), BASE) == (
+            {"num_epochs": 2}, [])
+        assert "Not valid" not in tc._on_base_changed(*values)
+        assert tc._on_start(OP, WS, "", "cpu", *values) == ""
+        assert "early_stopping_patience" not in started[-1] and started[-1]["num_epochs"] == 2
+    seven = dict(zip(tc.BASE_FIELDS, _form(early_stopping_patience=" 7 "), strict=True))
+    assert tc.recipe_differences(seven, BASE) == ({"early_stopping_patience": 7}, [])
+    assert "Early stopping patience 7 (off)" in tc.differs_html(seven, BASE)
+    for typed in ("seven", "7.5"):
+        _settings, problems = tc.recipe_differences(
+            dict(zip(tc.BASE_FIELDS, _form(early_stopping_patience=typed), strict=True)), BASE)
+        assert problems == ['Early stopping patience must be a whole number or "off".']
+    # The Fine-tune page's fields (Epochs and Seed) have set references: number
+    # boxes, as before.
+    from src.config.recipe import FINETUNE
+
+    for name in ("num_epochs", "seed"):
+        assert isinstance(tc.setting_field(name, FINETUNE[name], elem_id=name), gr.Number)
 
 
 def test_every_problem_is_listed_at_once_and_escaped(listed, started):

@@ -12,7 +12,8 @@ Purpose:
 
 Layout (M5-2, UI-A): the shell (`src/webui/shell.py`) lays out two navigation
 levels, "Diagnosis (clinical)" (the first screen), "Research (pre-clinical)"
-with Datasets · Training · Test · Models, and "⚙ Settings"; the header's chips;
+with Datasets · Training · Fine-tune · Test · Models, and "⚙ Settings"; the
+header's chips;
 the shared timers; and gives each page builder the page context (the page
 contract is the shell's docstring). The runtime line stays at the bottom.
 

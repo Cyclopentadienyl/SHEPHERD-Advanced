@@ -177,10 +177,10 @@ TASK_CHOICES = [(ml.FILTER_WORDS[name][0], name)
 ALL_TASKS = "all"
 RECORDS, USAGE = "records", "usage"
 
-#: By family's groups and extra column (the files whose record was refused,
-#: or never read, are each grouped under their own `record_kind_text` word).
+#: By family's groups and extra column (the history files, and the files
+#: whose record was refused or never read, are each grouped under their own
+#: `record_kind_text` word, the one their rows lead with).
 FAMILY_TITLE = "Family from run {run} · {count} file{s}"
-GROUP_HISTORY = "History · listed, never run"
 LINEAGE_COLUMN = "Lineage"
 FAMILY_NOT_READ = "the family view was not read with this list"
 #: A model record's operation (`record.OPERATIONS`) as the lineage says it.
@@ -632,7 +632,8 @@ def regime_text(device: Any, deterministic: Any) -> str:
 
 def coverage_html(view: Mapping[str, Any]) -> str:
     """The record's case sets: a Mode C record's ranked cases of the source cases;
-    a Mode D record's reached cases of the import-eligible ones (PLAN_B05 §4)."""
+    a Mode D record's reached cases and a task record's ranked cases of the
+    import-eligible ones (PLAN_B05 §4)."""
     counts = view.get("counts") if isinstance(view.get("counts"), Mapping) else {}
     excluded = counts.get("excluded") if isinstance(counts.get("excluded"), Mapping) else None
     if excluded is None:
@@ -652,12 +653,13 @@ def coverage_html(view: Mapping[str, Any]) -> str:
                 f'<div class="shep-sub">{r.e(counts.get("n_excluded"))} excluded: '
                 f'{r.e(reasons)}</div>')
     if mode in TASK_NAMES:
-        # A task record's n_ranked counts the cases (query patients) with a
-        # ranked positive; its coverage metric says the share (README §2.6 E5).
-        return (f'<div>{r.e(view.get("n_ranked"))} of {r.e(counts.get("source_cases"))} source '
-                'cases ranked by the model</div>'
-                f'<div class="shep-sub">{r.e(counts.get("n_excluded"))} excluded at import: '
-                f'{r.e(reasons)}</div>')
+        # A task record's n_ranked counts the version's import-eligible cases
+        # (query patients) with a ranked positive; its coverage metric is that
+        # share (README §2.6 E5), as the Test page says it (`_record_html`).
+        return (f'<div>{r.e(view.get("n_ranked"))} of {r.e(counts.get("ranked_eligible"))} '
+                'import-eligible cases ranked by the model</div>'
+                f'<div class="shep-sub">{r.e(counts.get("source_cases"))} source cases; '
+                f'{r.e(counts.get("n_excluded"))} excluded at import: {r.e(reasons)}</div>')
     # A mode this version does not describe: its counts, and no claim of what
     # its n_ranked counts.
     return (f'<div>{r.e(counts.get("source_cases"))} source cases; '
@@ -1195,12 +1197,11 @@ def family_view(listing: Mapping[str, Any], task: str) -> Optional[Dict[str, Any
         kind = row.get("group")
         if kind == "family":
             name = row.get("family_id")
-        elif kind == "history":
-            name = None
         else:
-            # The server groups every file without a usable record as
-            # "refused"; a record never read and a record refused say
-            # different things (skill §6), each under its own word.
+            # The history files under their rows' own word; the server groups
+            # every file without a usable record as "refused", and a record
+            # never read and a record refused say different things (skill §6),
+            # each under its own word.
             name = r.record_kind_text(items[key])
         group = (kind, name)
         groups.setdefault(group, {"group": group, "keys": []})["keys"].append(key)
@@ -1210,7 +1211,7 @@ def family_view(listing: Mapping[str, Any], task: str) -> Optional[Dict[str, Any
         count = len(group["keys"])
         group["title"] = (FAMILY_TITLE.format(run=(r.run_started(name) or name), count=count,
                                               s="s" if count != 1 else "")
-                          if kind == "family" else GROUP_HISTORY if kind == "history" else name)
+                          if kind == "family" else name)
     ordered = list(groups.values())
     return {"keys": [key for group in ordered for key in group["keys"]], "groups": ordered,
             "cells": cells}
@@ -2135,7 +2136,6 @@ __all__ = [
     "D8_CONDITIONS",
     "FAMILY_TITLE",
     "GROUP_CONTESTED",
-    "GROUP_HISTORY",
     "GROUP_NOT_COMPARED",
     "GROUP_NOT_TESTED",
     "GROUP_UNCHECKED",

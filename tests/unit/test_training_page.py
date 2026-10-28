@@ -150,7 +150,10 @@ def test_the_form_is_exactly_the_recipes_base_settings_at_the_recipes_values():
             assert field.precision == (0 if isinstance(BASE[name], int) or BASE[name] is None
                                        else None), name
     assert by_id["num_neighbors"].value == "15, 10, 5" and by_id["use_amp"].value is False
-    assert by_id["early_stopping_patience"].value is None          # empty: early stopping off
+    # Early stopping off: a text box reading "off", which the browser keeps (a
+    # number box showed None as 0 once mounted, K6 closing smoke).
+    assert isinstance(by_id["early_stopping_patience"], gr.Textbox)
+    assert by_id["early_stopping_patience"].value == "off"
     assert by_id["scheduler_type"].choices == [(c, c) for c in ("cosine", "onecycle", "linear",
                                                                 "none")]
     accordions = {b.label: b.open for b in demo.blocks.values() if isinstance(b, gr.Accordion)}

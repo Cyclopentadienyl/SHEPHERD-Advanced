@@ -692,6 +692,11 @@ def _table_html(sections: Sequence[Tuple[str, Sequence[Mapping[str, Any]]]],
             f'</tbody></table></div>{more}')
 
 
+def _counted(count: int, word: str) -> str:
+    """"1 checkpoint", "3 checkpoints": a count with its word in its number."""
+    return f"{count} {word}{'s' if count != 1 else ''}"
+
+
 def count_line(listing: Mapping[str, Any], preset: Preset, show_older: bool,
                view: Any = None) -> str:
     """How many checkpoints the list shows and in which order, then the
@@ -709,8 +714,7 @@ def count_line(listing: Mapping[str, Any], preset: Preset, show_older: bool,
     runs = _runs_in_order(items)
     of = ""
     if chosen not in ("all", preset.rows):
-        rows = (f", with {context} context row{'s' if context != 1 else ''}" if context
-                else " only")
+        rows = f", with {_counted(context, 'context row')}" if context else " only"
         of = (f" · {FILTER_WORDS[chosen][0]}{rows}, of {len(shown_items(listing, None, preset))} "
               "listed")
     if not items:
@@ -719,9 +723,11 @@ def count_line(listing: Mapping[str, Any], preset: Preset, show_older: bool,
     if (preset.latest_runs is not None and not show_older and len(runs) > preset.latest_runs
             and _view(view).get("groups") is None):
         shown = sum(len(v) for _, v in runs[:preset.latest_runs])
-        return (f"{order} · latest {preset.latest_runs} runs · {shown} checkpoints "
-                f"(of {len(items)} in {len(runs)} runs){of}")
-    return f"{order} · {len(items)} checkpoints in {len(runs)} runs{of}"
+        return (f"{order} · latest {_counted(preset.latest_runs, 'run')} · "
+                f"{_counted(shown, 'checkpoint')} (of {len(items)} in "
+                f"{_counted(len(runs), 'run')}){of}")
+    return (f"{order} · {_counted(len(items), 'checkpoint')} in "
+            f"{_counted(len(runs), 'run')}{of}")
 
 
 def find_item(listing: Mapping[str, Any], key: Any) -> Optional[Mapping[str, Any]]:

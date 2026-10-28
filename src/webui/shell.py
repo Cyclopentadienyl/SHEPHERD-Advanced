@@ -60,14 +60,16 @@ built, never a placeholder). **Registering a page**
 is one line each in `src/webui/app.py`: its builder in ``PAGES`` (by the page
 ids here) and, when it has one, its style sheet in ``PAGE_CSS``. The context
 gives a page everything it shares, and a page reaches nothing else of another
-page:
+page (one exception, recorded after this list):
 
 - ``ctx.blocks``: the ``gr.Blocks`` (``ctx.blocks.load(...)`` for a page-load
   read);
 - ``ctx.help``: the shared ⓘ registry (`HelpRegistry`): ``ctx.help.field(elem_id,
   title, text)`` for a component's help, ``ctx.help.topic(key, title, text)`` for
   a ⓘ inside rendered HTML (`help_button`). No ordinary help stays in ``info=``;
-  only a state-bearing text does (a refusal, the HGT/AMP one);
+  only a state-bearing text does (Diagnosis' Reference cohort select: the
+  chosen version's fingerprint and whether it was mapped against the served
+  graph, or why it cannot be read);
 - ``ctx.on_page_open(page, kwargs)``: run an event (``fn``, ``inputs``,
   ``outputs``, …) **each time the page is shown**: Diagnosis and Settings on
   their tab's ``select``; a research page when its own tab is selected and when
@@ -131,6 +133,13 @@ page:
   bar's workspace) takes ``**ctx.training_workspace_writes``: one queued group
   of one (`TRAINING_SELECTION_CONCURRENCY`), first asked first run, so none
   writes back a workspace it started from over one chosen meanwhile.
+
+**The one exception to "nothing else of another page"**: Fine-tune is
+Training's second form (README §1: a base, then its task children; §8: "base
+training and Fine-tune separately"). `finetune_page` uses `training_console`'s
+public training-form pieces (the workspace state, the recipe settings' fields,
+the parent selects, the stop question, the job status marks) and no other
+page's; `tests/unit/test_webui_datasets.py` pins both.
 
 **Recognise a component by its ``elem_id``, never by identity.** Once an
 answer updates a component's properties, Gradio 6.30 keeps a rebuilt copy in

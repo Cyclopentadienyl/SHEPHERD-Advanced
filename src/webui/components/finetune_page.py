@@ -307,7 +307,8 @@ def child_row_html(child: Mapping[str, Any], *, operator: bool, products: Mappin
                    scrub: Any = str) -> str:
     """One child's row: Task | Status | Run | Best save | Validation
     (Trainer), escaped (a failure's first line through `scrub`, a read-only
-    request's redaction)."""
+    request's redaction). The run is its name part (`renderers.run_name`; the
+    parent line and the Task column say the rest), its whole id in its title."""
     status = str(child.get("status") or "queued")
     task = TASK_NAMES.get(child.get("task"), str(child.get("task")))
     why = ""
@@ -316,7 +317,9 @@ def child_row_html(child: Mapping[str, Any], *, operator: bool, products: Mappin
         why = f'<div class="shep-sub">{r.e(r.short_reason(scrub(first)))}</div>'
     architecture, run = _run_parts(child.get("run_dir"))
     if run:
-        run_cell = r.ident_html(f"{architecture}/{run}")
+        whole = f"{architecture}/{run}"
+        run_cell = (f'<code class="shep-ident" title="{r.e(whole)}">'
+                    f'{r.e(r.run_name(run) or whole)}</code>')
     else:
         run_cell = ('<span class="shep-muted">not started yet</span>' if status == "queued" else
                     '<span class="shep-muted">never started</span>')
@@ -376,11 +379,13 @@ def running_child(status: Mapping[str, Any]) -> Optional[str]:
 
 def actions_view(status: Mapping[str, Any], *, access: Any,
                  gpu: Optional[Mapping[str, Any]], confirming: bool) -> Dict[str, Any]:
-    """Start and Stop (interactive or not) and the one reason line, as one
-    decision for the tick and after every action, in the states the Training
-    run bar uses (`training_console.run_bar_view`): D8, a training job running
-    or stopping, the GPU slot held elsewhere. Stop stops a running Fine-tune
-    child (and so cancels the queued ones), never another page's job."""
+    """Start and Stop (interactive or not) and the one reason line, beside
+    Start, as one decision for the tick and after every action, in the states
+    the Training run bar uses (`training_console.run_bar_view`): D8, a training
+    job running or stopping, the GPU slot held elsewhere. Stop stops a running
+    Fine-tune child (and so cancels the queued ones), never another page's
+    job. An enabled Start has no reason beside it: Stop, off then, is in the
+    job panel under the card, whose statuses say that nothing runs."""
     s = status.get("status") or "idle"
     child_running = running_child(status) is not None
     view = {"start": False, "stop": False}
@@ -399,7 +404,7 @@ def actions_view(status: Mapping[str, Any], *, access: Any,
         view["reason"] = _why(tc.NO_ICON, f"Start disabled — {gpu['text']}.")
     else:
         view["start"] = True
-        view["reason"] = _why(tc.NO_ICON, "Stop disabled: no Fine-tune job is running.")
+        view["reason"] = ""
     return view
 
 
@@ -573,7 +578,7 @@ def _start(ws, parents, key, tasks, epochs, seed, device, run_name) -> str:
         expected_dataset_fingerprint=fingerprint)
     if result.get("success"):
         return ""
-    return f"Not started: {result.get('error', 'unknown error')}"
+    return tc.not_started(result.get("error"))
 
 
 # =============================================================================
@@ -795,7 +800,7 @@ PAGE_CSS = f"""
 {_PAGE} .shep-ft-table {{ width: 100%; border-collapse: collapse; font-size: 15px; }}
 {_PAGE} .shep-ft-table th {{ text-align: left; font-size: 14px; font-weight: 600; color: var(--shep-text-2); padding: 6px 8px; border-bottom: 1px solid var(--shep-border); white-space: nowrap; }}
 {_PAGE} .shep-ft-table td {{ padding: 8px; border-bottom: 1px solid var(--shep-border); vertical-align: top; min-width: 0; }}
-{_PAGE} .shep-ft-table code.shep-ident {{ max-width: 22ch; }}
+{_PAGE} .shep-ft-table code.shep-ident {{ max-width: 40ch; }}
 {_PAGE} .shep-ft-st {{ display: inline-flex; align-items: center; gap: 6px; font-weight: 600; white-space: nowrap; }}
 {_PAGE} .shep-ft-st-ok {{ color: var(--shep-status-ok); }}
 {_PAGE} .shep-ft-st-neutral {{ color: var(--shep-status-neutral); }}

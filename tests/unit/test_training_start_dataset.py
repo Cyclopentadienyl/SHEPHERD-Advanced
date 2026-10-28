@@ -246,8 +246,10 @@ def test_the_run_bars_start_sends_what_it_showed_and_the_runner_refuses_a_rebuil
 
     with patch("subprocess.Popen") as popen:
         notice = tc._on_start(gradio_request(), state, "", "cpu", *tc.base_form_defaults())
+    # The runner's sentence says nothing was started; the page does not say it
+    # twice (K6 closing review).
     assert notice == tc.notice_html(
-        "Not started: The dataset changed since it was shown; select it again. Its "
+        "The dataset changed since it was shown; select it again. Its "
         f"split_manifest.json holds {_fingerprint(workspace)[:12]}... now "
         f"(shown: {shown[:12]}...). Nothing was started.")
     popen.assert_not_called()
