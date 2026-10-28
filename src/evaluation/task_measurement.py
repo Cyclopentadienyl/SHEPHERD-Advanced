@@ -190,7 +190,9 @@ PATIENTS_LIKE_ME_SEMANTICS: Dict[str, Any] = {
     "metric_schema_version": TASK_METRIC_SCHEMA_VERSION,
     "candidate_construction": "every other patient of the measured cohort; self excluded by case id",
     "score_semantics": ("patient tower: -||z_a - z_b||^2 on L2-normalised projected vectors; a "
-                        "pair is positive when the causal-gene sets intersect"),
+                        "pair is positive when the declared causal-gene sets intersect: the "
+                        "same gene of the graph, or the same normalised identifier outside it "
+                        "(no alias resolved)"),
     "model_construction": DISEASE_SEMANTICS["model_construction"],
     "canonical_tie_policy_version": "average-rank/v1",
 }
@@ -211,7 +213,7 @@ def run_patients_like_me_measurement(*, bundle: Any, view: Any, samples: Sequenc
     if not any(c.genes for c in binding.cases):
         # E4/E6: without a causal gene no pair is positive; a report would
         # only say that no patient has a reliable truth.
-        raise ValueError("no patient of the cohort records a causal gene, so no pair can be "
+        raise ValueError("no patient of the cohort declares a causal gene, so no pair can be "
                          "positive; nothing was written")
     _check_regime(device, manifest)
     cases = binding.cases

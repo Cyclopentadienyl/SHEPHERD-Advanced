@@ -550,14 +550,18 @@ computation below; there is no distance file of either kind.
   source's default (`only_hard_distractors` False, `up:gene_prioritization_model.py:127-140`).
   Validation, measurement and serving rank each case's own list.
 - **Denominators:** a case's assessable positives are the causal genes it lists, in the view or not
-  (F9, E5); the importer records the count when some name no gene of the graph
-  (`causal_genes_listed`). A case recording no causal gene is no reliable truth (E4). A task
-  measurement in which no case binds, or a patients-like-me cohort with no causal gene, is
-  refused before anything is written (E6).
+  (F9, E5). The importer keeps the declared causal genes that name no single gene of the graph
+  as their normalised identifiers (`causal_genes_unmapped`: stripped, upper-case, each once), so
+  such a case stays assessable. A case declaring no causal gene is no reliable truth (E4). A task
+  measurement in which no case binds, or a patients-like-me cohort with no declared causal gene,
+  is refused before anything is written (E6).
 - **Patients-like-me:** batches seed every member's phenotypes, causal genes, candidate genes
-  (anchors upsampled, `upsample_cand` 1, U14) and disease (U9). A patient excluded at binding keeps
-  its E4 state (no reliable truth, no other positive, or input excluded with each same-gene patient
-  as a positive), and a ranked patient's excluded partners are relevant items it could not rank.
+  (anchors upsampled, `upsample_cand` 1, U14) and disease (U9). The batch's anchors are the NCA
+  term's only queries (F11); a partner is a reference patient. A pair is positive when the declared
+  causal-gene sets intersect: the same gene of the graph, or the same normalised identifier
+  outside it; no alias is resolved. A patient excluded at binding keeps its E4 state (no reliable
+  truth, no other positive, or input excluded with each same-gene patient as a positive), and a
+  ranked patient's excluded partners are relevant items it could not rank.
 - **Served gene identity:** the served identity names the model's η and shortest paths in state
   `computed`; a `gene_task/v1` result names its SP bounds.
 

@@ -1765,6 +1765,8 @@ class DiagnosisPipeline:
         for key in ids("gene", getattr(row, "causal_gene_ids", None)):
             gene = self.kg.get_node(NodeID.from_string(key))
             genes.append(gene.name if gene else key)
+        # Declared causal genes outside the graph, as the cohort recorded them.
+        genes.extend(getattr(row, "causal_genes_unmapped", None) or ())
         return PatientCandidate(rank=rank, case_id=case_id, similarity=similarity,
                                 phenotypes=phenotypes, disease_id=disease_id,
                                 disease_name=node.name if node else None,

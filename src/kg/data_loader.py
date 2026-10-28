@@ -618,10 +618,13 @@ class DiagnosisSample:
     #: The causal genes, all of them positives of the gene task (README F9); a
     #: patients-like-me pair is positive when two patients' sets intersect.
     causal_gene_ids: Optional[List[int]] = None
-    #: How many causal genes the case listed, written by the importer only
-    #: when some name no gene of the graph; otherwise `causal_gene_ids`'
-    #: length. They stay positives the case could not rank (E5).
-    causal_genes_listed: Optional[int] = None
+    #: The declared causal genes that name no single gene of the graph (not
+    #: in it, or a symbol several gene nodes carry), as the importer
+    #: normalised them (stripped, upper-case), distinct, in source order;
+    #: written only when there are some. With `causal_gene_ids` they are the
+    #: case's declared truth: each stays a positive it cannot rank (E5, F9),
+    #: and two patients share one when they declared the same identifier.
+    causal_genes_unmapped: Optional[List[str]] = None
 
 
 class DiagnosisDataset(Dataset):

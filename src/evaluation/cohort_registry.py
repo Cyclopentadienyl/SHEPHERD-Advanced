@@ -715,22 +715,24 @@ def map_cases(
                    "identifiers_listed": 0, "identifiers_unmappable": 0,
                    "identifiers_repeated": 0, "cases_with_unmapped_causal_genes": 0}
 
-    def map_genes(identifiers: Sequence[str]) -> Tuple[List[int], int]:
-        """The genes the identifiers name, each once, and how many distinct
-        identifiers name no gene."""
+    def map_genes(identifiers: Sequence[str]) -> Tuple[List[int], List[str]]:
+        """The genes the identifiers name, each once, and the identifiers that
+        name no single gene, normalised by the lookup's case rule (stripped,
+        upper-case), each once, in source order."""
         mapped_genes: List[int] = []
-        unmapped = set()
+        unmapped: List[str] = []
         for identifier in identifiers:
             index = gene_lookup.get(identifier, gene_lookup.get(identifier.strip().upper()))
             gene_counts["identifiers_listed"] += 1
             if index is None:
                 gene_counts["identifiers_unmappable"] += 1
-                unmapped.add(identifier.strip().upper())
+                if identifier.strip().upper() not in unmapped:
+                    unmapped.append(identifier.strip().upper())
             elif index in mapped_genes:
                 gene_counts["identifiers_repeated"] += 1
             else:
                 mapped_genes.append(index)
-        return mapped_genes, len(unmapped)
+        return mapped_genes, unmapped
 
     for case in cases:
         disease_id = disease_index.get(str(NodeID(DataSource.MONDO, case.disease)))
@@ -778,10 +780,11 @@ def map_cases(
             sample["causal_gene_ids"] = causal
             gene_counts["cases_with_causal_genes"] += 1
             if unmapped_causal:
-                # The truth the case listed, the graph's genes and the rest:
-                # a gene the graph lacks stays a positive the case could not
-                # rank (E5, F9), never "no causal gene".
-                sample["causal_genes_listed"] = len(causal) + unmapped_causal
+                # The declared truth is the graph's genes and these: a gene the
+                # graph lacks stays a positive the case could not rank (E5,
+                # F9), and its identifier says which patients share it; never
+                # "no causal gene".
+                sample["causal_genes_unmapped"] = unmapped_causal
                 gene_counts["cases_with_unmapped_causal_genes"] += 1
         if case.candidate_genes:
             sample["gene_ids"] = map_genes(case.candidate_genes)[0]

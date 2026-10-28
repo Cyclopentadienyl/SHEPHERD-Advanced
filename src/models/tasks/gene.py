@@ -217,8 +217,9 @@ def bind_gene_cases(view: Any, samples: Sequence[Any]) -> Binding:
     states: Dict[str, str] = {}
     has_disease = "disease" in view.node_types
     for sample in samples:
-        listed = (getattr(sample, "causal_genes_listed", None)
-                  or len(set(sample.causal_gene_ids or ())))
+        # The declared truth: the graph's causal genes and those outside it.
+        listed = (len(set(sample.causal_gene_ids or ()))
+                  + len(getattr(sample, "causal_genes_unmapped", None) or ()))
         positives[sample.patient_id] = listed
         if not listed:
             excluded.append((sample.patient_id, "no_causal_gene"))

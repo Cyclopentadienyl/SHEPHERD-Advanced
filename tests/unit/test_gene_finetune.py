@@ -99,7 +99,8 @@ def test_binding_keeps_every_causal_gene_and_names_exclusions(trained):
             SimpleNamespace(patient_id="unlisted", phenotype_ids=[0], disease_id=0,
                             causal_gene_ids=[0, 1], gene_ids=None),
             SimpleNamespace(patient_id="unmapped", phenotype_ids=[0], disease_id=0,
-                            causal_gene_ids=[], causal_genes_listed=2, gene_ids=[0])]
+                            causal_gene_ids=[], causal_genes_unmapped=["GENE_X", "GENE_Y"],
+                            gene_ids=[0])]
     binding = bind_gene_cases(view, rows)
     assert [c.case_id for c in binding.cases] == ["two"]
     assert binding.cases[0].truths.numel() == 2
@@ -200,6 +201,9 @@ def test_gene_finetune_from_a_base(trained, tmp_path):
     assert {"task_fixture", "task_train_samples", "task_val_samples"} <= set(
         last["training_input_digests"])
     assert last["config"]["requested"]["candidate_upsample_size"] == 2
+    # Training's candidates are the batch's union; evaluation's each case's own list.
+    candidates = record.scoring_identity["candidates"]
+    assert "training: the batch's union" in candidates and "each case's own list" in candidates
     assert last["config"]["requested"]["learning_rate"] == 1e-5
 
 

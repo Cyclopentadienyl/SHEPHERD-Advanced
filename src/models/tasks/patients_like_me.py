@@ -5,14 +5,18 @@ Patients-like-me: cases bound to the view, ranked against a reference set.
 `docs/working/PLAN_TEST_RESULTS.md` §8.4.
 
 **Cases.** A patient's phenotypes are mapped to the view (dropped and counted
-outside it); its causal genes are kept as the workspace's gene ids, so a gene
-outside the view still identifies the gene two patients share. A pair is
-positive when the two causal-gene sets intersect (F9). Its causal genes,
-candidate genes and disease in the view are kept as well: training seeds them
-(U9). A case with no phenotype in the view is excluded, in the state its truth
-gives it (E4): no reliable truth without a causal gene, no other positive when
-no one else in the cohort shares one, else input excluded with every same-gene
-patient as a positive (E5). One without a causal gene has no reliable truth
+outside it); its declared causal genes are kept as the workspace's gene ids,
+and those that name no single gene of the graph as the importer's normalised
+identifiers (`causal_genes_unmapped`), so a gene outside the view, or outside
+the graph, still identifies the gene two patients share. A pair is positive
+when the two declared sets intersect (F9): the same gene of the graph, or the
+same identifier outside it; an identifier outside the graph never matches a
+graph gene (no alias is resolved). Its causal genes, candidate genes and
+disease in the view are kept as well: training seeds them (U9). A case with no
+phenotype in the view is excluded, in the state its truth gives it (E4): no
+reliable truth without a declared causal gene, no other positive when no one
+else in the cohort shares one, else input excluded with every same-gene patient
+as a positive (E5). One without a declared causal gene has no reliable truth
 and is neither an anchor nor a query with positives.
 
 **Ranking (E1–E5).** Each query patient against every reference patient but
@@ -29,7 +33,7 @@ Module: src/models/tasks/patients_like_me.py
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, FrozenSet, List, Mapping, Optional, Sequence, Tuple, Union
 
 import torch
 from torch import Tensor
@@ -54,8 +58,9 @@ class BoundPatient:
     case_id: str
     #: View ids of the patient's phenotypes in the view.
     phenotypes: Tensor
-    #: The causal genes, as the workspace's gene ids (empty: no reliable truth).
-    genes: FrozenSet[int]
+    #: The declared causal genes (empty: no reliable truth): the workspace's
+    #: gene ids, and the normalised identifiers of those outside the graph.
+    genes: FrozenSet[Union[int, str]]
     #: View ids of its causal genes and candidate genes in the view, and of
     #: its disease or -1: training seeds them (U9).
     truths: Tensor = field(default_factory=_no_ids)
@@ -70,22 +75,33 @@ def _in_view(view: Any, node_type: str, ids: Optional[Sequence[int]]) -> Tensor:
     return torch.unique(mapped[mapped >= 0])
 
 
+def declared_genes(sample: Any) -> FrozenSet[Union[int, str]]:
+    """A row's declared causal genes: the graph's gene ids and the identifiers
+    that name no single gene of it (`causal_genes_unmapped`)."""
+    return (frozenset(int(g) for g in (sample.causal_gene_ids or ()))
+            | frozenset(getattr(sample, "causal_genes_unmapped", None) or ()))
+
+
 def bind_patients(view: Any, samples: Sequence[Any]) -> Binding:
     """Map rows (`patient_id`, `phenotype_ids`, `causal_gene_ids`, and the
-    optional `gene_ids` and `disease_id`) to bound patients; a patient with no
-    phenotype in the view is excluded, in its E4 state."""
+    optional `causal_genes_unmapped`, `gene_ids` and `disease_id`) to bound
+    patients; a patient with no phenotype in the view is excluded, in its E4
+    state."""
     cases: List[BoundPatient] = []
     excluded: List[Tuple[str, str]] = []
-    counts = {"cases": len(samples), "phenotypes_outside_view": 0, "no_causal_gene": 0}
+    counts = {"cases": len(samples), "phenotypes_outside_view": 0, "no_causal_gene": 0,
+              "with_causal_genes_outside_graph": 0}
     seen = set()
-    by_gene: Dict[int, set] = {}
+    by_gene: Dict[Union[int, str], set] = {}
     for sample in samples:
         if sample.patient_id in seen:
             raise ValueError(f"case id {sample.patient_id!r} appears twice; self-exclusion "
                              "needs a stable, unique case identity (E5)")
         seen.add(sample.patient_id)
-        for gene in sample.causal_gene_ids or ():
-            by_gene.setdefault(int(gene), set()).add(sample.patient_id)
+        for gene in declared_genes(sample):
+            by_gene.setdefault(gene, set()).add(sample.patient_id)
+        counts["with_causal_genes_outside_graph"] += int(
+            bool(getattr(sample, "causal_genes_unmapped", None)))
     excluded_ids = set()
     for sample in samples:
         phen = view.view_ids("phenotype", torch.tensor(list(sample.phenotype_ids),
@@ -96,7 +112,7 @@ def bind_patients(view: Any, samples: Sequence[Any]) -> Binding:
             excluded.append((sample.patient_id, "no_phenotype_in_view"))
             excluded_ids.add(sample.patient_id)
             continue
-        genes = frozenset(int(g) for g in (sample.causal_gene_ids or ()))
+        genes = declared_genes(sample)
         counts["no_causal_gene"] += int(not genes)
         disease = getattr(sample, "disease_id", None)
         in_view = _in_view(view, "disease", [] if disease is None else [int(disease)])
@@ -105,23 +121,24 @@ def bind_patients(view: Any, samples: Sequence[Any]) -> Binding:
                                   _in_view(view, "gene", getattr(sample, "gene_ids", None)),
                                   int(in_view[0]) if in_view.numel() else -1))
 
-    def partners(case_id: str, genes: Sequence[int]) -> set:
-        return set().union(*(by_gene[int(g)] for g in genes)) - {case_id} if genes else set()
+    def partners(case_id: str, genes: FrozenSet[Union[int, str]]) -> set:
+        return set().union(*(by_gene[g] for g in genes)) - {case_id} if genes else set()
 
     states: Dict[str, str] = {}
     positives: Dict[str, int] = {}
     for sample in samples:
         if sample.patient_id not in excluded_ids:
             continue
-        others = partners(sample.patient_id, sample.causal_gene_ids or ())
-        if not sample.causal_gene_ids:
+        genes = declared_genes(sample)
+        others = partners(sample.patient_id, genes)
+        if not genes:
             states[sample.patient_id] = NO_RELIABLE_TRUTH
         elif not others:
             states[sample.patient_id] = NO_OTHER_POSITIVE
         else:
             positives[sample.patient_id] = len(others)
     unranked = {c.case_id: n for c in cases
-                if (n := len(partners(c.case_id, sorted(c.genes)) & excluded_ids))}
+                if (n := len(partners(c.case_id, c.genes) & excluded_ids))}
     counts.update({"bound": len(cases), "excluded": len(excluded)})
     for _, reason in excluded:
         counts[f"excluded_{reason}"] = counts.get(f"excluded_{reason}", 0) + 1
@@ -213,5 +230,6 @@ def anchor_groups(cases: Sequence[BoundPatient]) -> Tuple[List[int], Dict[int, L
     return anchors, partners
 
 
-__all__ = ["BoundPatient", "anchor_groups", "bind_patients", "patient_tower_vectors",
-           "positive_matrix", "rank_patients", "self_matrix", "shares_gene"]
+__all__ = ["BoundPatient", "anchor_groups", "bind_patients", "declared_genes",
+           "patient_tower_vectors", "positive_matrix", "rank_patients", "self_matrix",
+           "shares_gene"]

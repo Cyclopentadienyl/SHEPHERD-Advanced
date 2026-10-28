@@ -1605,7 +1605,9 @@ def train_bundle(config: TrainConfig, explicit: Optional[Collection[str]] = None
                 "augmentation": ({"k": gene_spec.augmentation_k,
                                   "omega": gene_spec.augmentation_omega}
                                  if gene_spec.augmentation else "off"),
-                "candidates": "each case's own list; upsampled in training only (U14)",
+                "candidates": ("training: the batch's union of its cases' lists, upsampled "
+                               "(U14); validation, measurement and serving: each case's own "
+                               "list"),
                 "ties": "average rank", "version": 1}
         selection = ({"rule": "the operator's choice of base checkpoint",
                       "parent_logs": base_logs}

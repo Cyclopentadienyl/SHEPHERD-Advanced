@@ -145,17 +145,91 @@ def _setup(trained):
 def test_every_anchor_has_two_positives_in_its_batch_and_the_step_reaches_every_part(trained):
     view, sampler, task = _setup(trained)
     batch = next(iter(sampler))
-    anchors = batch.counts["anchors"]
-    assert bool((batch.positive[:anchors].sum(dim=1) >= 2).all())
+    # F11: the loss's queries are exactly the batch's anchors, each with at
+    # least two positives in the batch; the step averages over those alone.
+    query = batch.query
+    assert int(query.sum()) == batch.counts["anchors"] == batch.counts["queries"]
+    assert bool((batch.positive[query].sum(dim=1) >= 2).all())
     assert not bool(batch.positive.diagonal().any())
     torch.manual_seed(0)
     bundle = build_bundle(_plm_spec(), view).train()
     step = task.training_step(bundle, batch, torch.device("cpu"))
+    assert step.counts["task_queries"] == int(query.sum())
     expected = 0.3 * step.terms["task"] + 0.7 * step.terms.get("lp", 0.0)
     assert step.loss.item() == pytest.approx(expected, rel=1e-5)
     step.loss.backward()
     for part in (bundle.input, bundle.encoder, bundle.patient_encoder, bundle.task_head):
         assert any(p.grad is not None and p.grad.abs().sum() > 0 for p in part.parameters())
+
+
+def test_a_partner_with_one_positive_is_a_reference_patient_not_a_query():
+    """F11, overlapping genes: A={7,8} anchors with B={7} and C={8}; B and C
+    each have one positive in the batch, so A is the only NCA query (review
+    of 52cb900, P2-2)."""
+    from src.models.tasks.losses import nca_loss
+
+    cases = [_p("A", {7, 8}), _p("B", {7}), _p("C", {8})]
+    view = SimpleNamespace(num_nodes=10, node_types=["gene", "phenotype", "disease"],
+                           type_nodes=lambda t: {"gene": torch.tensor([7, 8]),
+                                                 "phenotype": torch.tensor([0]),
+                                                 "disease": torch.tensor([9])}[t])
+    sampler = PatientsSampler(view, cases, None, batch_size=1, upsample_size=0,
+                              sparse_sample_size=0, seed=0)
+    # The LP draw is not under test; the sampler's own batch logic is.
+    sampler._lp = lambda seeds, rng: SimpleNamespace(counts={}, seed_index=lambda ids: ids)
+    assert [c.case_id for c in sampler.cases] == ["A"]
+    batch = sampler.batch(sampler.cases, torch.Generator().manual_seed(0))
+    rows = batch.positive.sum(dim=1).tolist()
+    assert sorted(rows) == [1, 1, 2]
+    assert batch.query.tolist() == [r == 2 for r in rows] and int(batch.query.sum()) == 1
+    assert (batch.counts["queries"], batch.counts["non_anchoring_patients"]) == (1, 2)
+    vectors = torch.tensor([[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0]])
+    loss = nca_loss(vectors[batch.query], vectors, batch.positive[batch.query], scale=1.0,
+                    eps=1e-12, exclude=torch.eye(3, dtype=torch.bool)[batch.query])
+    assert loss.units == 1
+
+
+def test_declared_genes_outside_the_graph_pair_by_identifier_through_import_and_measurement(
+        trained, tmp_path):
+    """Review of 52cb900, P2-1: a declared causal gene the graph lacks is a
+    truth, not "no causal gene"; two patients share it when they declared the
+    same identifier (the importer's normalised form). Import, reader, binding
+    and measurement, with the same identifier, different ones, a partial
+    mapping and a patient that declares none."""
+    from src.evaluation.cohort_registry import map_cases, parse_source
+    from src.evaluation.task_measurement import run_patients_like_me_measurement
+    from src.kg.storage.file_storage import read_samples_file
+
+    view, _, _ = _setup(trained)
+    case = lambda cid, genes: {"case_id": cid, "phenotypes": ["HP:0001250"],  # noqa: E731
+                               "disease": "MONDO:0011073", **({"causal_genes": genes}
+                                                              if genes else {})}
+    source = {"format": "shepherd-cases/1", "cases": [
+        case("a", ["GENE_X"]), case("b", [" gene_x"]), case("c", ["GENE_Y"]),
+        case("d", ["SCN1A", "GENE_X"]), case("e", ["SCN1A"]), case("f", None)]}
+    mapped = map_cases(parse_source(json.dumps(source).encode()),
+                       {"phenotype": {"hpo:HP:0001250": 0},
+                        "disease": {"mondo:MONDO:0011073": 0}}, "keep", {"SCN1A": 0})
+    path = tmp_path / "samples.json"
+    path.write_text(json.dumps(mapped.samples))
+    rows = read_samples_file(path, gene_fields=True).samples
+    assert [r.causal_genes_unmapped for r in rows] == [["GENE_X"], ["GENE_X"], ["GENE_Y"],
+                                                       ["GENE_X"], None, None]
+    binding = bind_patients(view, rows)
+    assert binding.counts["no_causal_gene"] == 1
+    assert binding.counts["with_causal_genes_outside_graph"] == 4
+    ids = [c.case_id for c in binding.cases]
+    pairs = {(ids[i], ids[j]) for i, j in positive_matrix(binding.cases, binding.cases)
+             .nonzero().tolist()}
+    assert pairs == {("a", "b"), ("b", "a"), ("a", "d"), ("d", "a"), ("b", "d"), ("d", "b"),
+                     ("d", "e"), ("e", "d")}
+    result = run_patients_like_me_measurement(
+        bundle=build_bundle(_plm_spec(), view), view=view, samples=rows,
+        manifest=SimpleNamespace(amp_enabled=False, amp_dtype=None),
+        device=torch.device("cpu"), batch_size=8)
+    states = result.sampler_evidence["units_by_status"]
+    assert (states["ranked"], states[NO_OTHER_POSITIVE], states[NO_RELIABLE_TRUTH]) == (4, 1, 1)
+    assert result.sampler_evidence["conservative_denominator_pairs"] == 8
 
 
 def test_every_member_node_is_a_seed_and_the_anchors_lists_are_upsampled(trained):
@@ -181,7 +255,7 @@ def test_a_cohort_without_causal_genes_is_refused_before_anything_is_written(tra
     view, _, _ = _setup(trained)
     rows = [SimpleNamespace(patient_id=f"p{i}", phenotype_ids=[0], causal_gene_ids=None)
             for i in range(3)]
-    with pytest.raises(ValueError, match="no patient of the cohort records a causal gene"):
+    with pytest.raises(ValueError, match="no patient of the cohort declares a causal gene"):
         run_patients_like_me_measurement(bundle=build_bundle(_plm_spec(), view), view=view,
                                          samples=rows, manifest=None,
                                          device=torch.device("cpu"), batch_size=8)

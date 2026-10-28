@@ -239,7 +239,7 @@ def read_samples(data_dir: Path, split: str, *, training_fields: bool = False,
     **Three fields by default; `training_fields=True` adds the two only
     ShepherdGNN training reads,** `candidate_disease_ids` and `gene_ids`.
     `gene_fields=True` adds the gene task's two (`gene_ids`, the candidate list,
-    and `causal_gene_ids`, with `causal_genes_listed` where the importer
+    and `causal_gene_ids`, with `causal_genes_unmapped` where the importer
     wrote it), which the gene and patients-like-me tasks read
     (README §8). Measurement and the verifiers read the three default fields.
 
@@ -301,7 +301,7 @@ def read_samples_file(
     # name too: without `expected_sha256`, the entry point compares digests only
     # after this parse.
     optional = (("candidate_disease_ids", "gene_ids") if training_fields
-                else ("gene_ids", "causal_gene_ids", "causal_genes_listed") if gene_fields
+                else ("gene_ids", "causal_gene_ids", "causal_genes_unmapped") if gene_fields
                 else ())
     try:
         samples = [
@@ -382,11 +382,20 @@ def _refuse_non_integer_ids(path: Path, samples: List[Any], identity: ReadIdenti
         for field in ("candidate_disease_ids", "gene_ids", "causal_gene_ids"):
             if getattr(sample, field) is not None:
                 lists[field] = getattr(sample, field)
-        listed = sample.causal_genes_listed
-        if listed is not None and not (
-                is_id(listed) and listed > len(sample.causal_gene_ids or ())):
-            refuse(index, sample, "causal_genes_listed", listed,
-                   "an integer above the number of causal_gene_ids")
+        outside = sample.causal_genes_unmapped
+        if outside is not None and not (
+                isinstance(outside, list) and outside
+                and all(isinstance(g, str) and g and g == g.strip().upper() for g in outside)
+                and len(set(outside)) == len(outside)):
+            # Identifiers, not ids: compared as written, so they are refused
+            # unless they are the importer's normalised form, each once.
+            raise UnparseableFile(
+                f"{path}: sample {index} (patient {sample.patient_id!r}) has "
+                f"causal_genes_unmapped {outside!r}, which is not a non-empty list of "
+                "distinct identifiers in the importer's normalised form (stripped, "
+                "upper-case)",
+                identity=identity, what="a samples file with integer ids",
+            )
         for field, values in lists.items():
             if not isinstance(values, list):
                 refuse(index, sample, field, values, "a list of integer ids")

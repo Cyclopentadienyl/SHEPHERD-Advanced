@@ -265,3 +265,16 @@ def test_the_summary_names_each_kinds_rows():
     assert _summary(3, 2, None, "gene_task/v1").startswith("Found 3 candidate genes")
     assert _summary(3, 2, None, "patients_like_me/v1").startswith("Found 3 similar patients")
     assert _summary(3, 2, None, "disease_task/v1").startswith("Found 3 candidate diagnoses")
+
+
+def test_a_reference_patients_context_names_its_causal_genes_outside_the_graph(trained):
+    """The serving consumer of the declared truth (review of 52cb900, P2-1): a
+    reference patient's recorded causal genes include those that name no
+    single gene of the graph, as the cohort recorded them."""
+    from types import SimpleNamespace
+
+    pipeline = _pipeline(trained, "patients_like_me")
+    row = SimpleNamespace(phenotype_ids=[0], disease_id=0, causal_gene_ids=[0],
+                          causal_genes_unmapped=["GENE_X"])
+    candidate = pipeline._patient_candidate(1, "r1", -1.0, row)
+    assert len(candidate.causal_genes) == 2 and candidate.causal_genes[-1] == "GENE_X"

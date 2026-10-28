@@ -30,10 +30,12 @@ without upsampling.
 **Patients-like-me (README A9, F9, F11, E1, E5).** Only a patient with at least
 two other patients sharing a causal gene anchors (F11); each anchor brings two
 of them, drawn seeded, never itself; a group too small to anchor is counted.
-The task term is the NCA over the batch's patient vectors, the self excluded,
-a pair positive when the causal-gene sets intersect. Validation ranks each
-validation patient against every other validation patient (E1's recorded
-deviation from the source's in-batch ranking), self excluded by case id.
+The task term is the NCA with the batch's anchors as its only queries, against
+every patient of the batch (a partner is a reference patient only), the self
+excluded, a pair positive when the declared causal-gene sets intersect.
+Validation ranks each validation patient against every other validation
+patient (E1's recorded deviation from the source's in-batch ranking), self
+excluded by case id.
 
 **Batches (U9).** Each epoch takes the bound training cases in a seeded order,
 `batch_size` a batch. Seeds are every node of the batch's patients
@@ -274,14 +276,17 @@ class DiseaseTask:
 
 @dataclass
 class GeneBatch:
-    """One gene finetune step: the LP subgraph and each patient's own list."""
+    """One gene finetune step: the LP subgraph and the batch's candidates, the
+    union of its patients' lists with the upsampled genes, the same row for
+    every patient (the source's training candidates)."""
 
     lp: LPBatch
     #: `[B, P]` seed indices of the phenotypes, their view ids and the mask.
     phenotype_index: Tensor
     phenotype_view: Tensor
     phenotype_mask: Tensor
-    #: `[B, M]` seed indices of the candidates (upsampled included), view ids, mask.
+    #: `[B, M]` seed indices of the batch's union of candidates (upsampled
+    #: included), view ids, mask.
     gene_index: Tensor
     gene_view: Tensor
     gene_mask: Tensor
@@ -465,7 +470,8 @@ class PatientBatch:
     phenotype_index: Tensor
     phenotype_mask: Tensor
     #: `[N, N]` pairs sharing a causal gene (the diagonal False), and the
-    #: patients that are queries of the loss (with a positive in the batch).
+    #: batch's anchors, the NCA term's only queries (F11: each has at least
+    #: two positives in the batch); the other members are reference patients.
     positive: Tensor
     query: Tensor
     counts: Dict[str, int] = field(default_factory=dict)
@@ -510,6 +516,11 @@ class PatientsSampler(_PatientBatches):
                     seen.add(j)
         patients = [self.patients[i] for i in members]
         positive = positive_matrix(patients, patients)
+        # F11: the anchors are the loss's queries; a partner is a reference
+        # patient, a positive of its anchor and a negative of the others.
+        row = {m: k for k, m in enumerate(members)}
+        query = torch.zeros(len(patients), dtype=torch.bool)
+        query[[row[self.index[a.case_id]] for a in anchors]] = True
         phenotype_view, phenotype_mask = padded(patients)
         diseases = torch.tensor([p.disease for p in patients if p.disease >= 0], dtype=torch.long)
         task_nodes = torch.unique(torch.cat([
@@ -518,7 +529,6 @@ class PatientsSampler(_PatientBatches):
         lp = self._lp(task_nodes, generator)
         phenotype_index = torch.zeros_like(phenotype_view)
         phenotype_index[phenotype_mask] = lp.seed_index(phenotype_view[phenotype_mask])
-        query = positive.any(dim=1)
         counts = dict(lp.counts)
         counts.update({"anchors": len(anchors), "patients": len(patients),
                        "queries": int(query.sum()), "non_anchoring_patients": self.non_anchors,
@@ -565,6 +575,7 @@ class PatientsTask:
         loss = self.task_loss_weight * task.value
         terms = {"task": float(task.value.detach())}
         counts = dict(batch.counts)
+        counts["task_queries"] = task.units
         lp_value = _lp_term(model, z, lp, counts)
         if lp_value is not None:
             loss = loss + self.lp_loss_weight * lp_value
