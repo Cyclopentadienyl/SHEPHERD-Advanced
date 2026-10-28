@@ -10,7 +10,8 @@ before anything is written, started or listed. A route opts in with
 Gated: every state-changing route and the checkpoint lists, which open
 checkpoint files (SPEC_4 C3): ``POST /pipeline/reload``, ``POST
 /pipeline/config``, ``POST /training/start``, ``POST /training/stop``, ``GET
-/training/checkpoints`` and ``GET /workspaces/{name}/checkpoints``. A route
+/training/checkpoints``, ``GET /workspaces/{name}/checkpoints`` and ``GET
+/workspaces/{name}/family``. A route
 M5-2 adds that imports, starts or cancels a test, registers or loads a model is
 to take the same dependency. Read-only routes (status, metrics, the lists of workspaces
 and cohort versions, the recorded results, diagnosis) stay open.

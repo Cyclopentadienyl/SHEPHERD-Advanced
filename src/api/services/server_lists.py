@@ -75,23 +75,28 @@ Module: src/api/services/server_lists.py
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from src.config import server_settings
 
 __all__ = [
+    "FAMILY_GROUPS",
     "CheckpointItem",
     "CohortVersionItem",
+    "FamilyRow",
     "IntakeFileItem",
     "Listing",
+    "ParentLookup",
     "ReportItem",
     "ServerListRefused",
     "WorkspaceItem",
     "cohort_version_item",
+    "family_rows",
     "list_checkpoints",
     "list_cohort_versions",
+    "list_family",
     "list_intake_files",
     "list_workspaces",
     "locate_checkpoint",
@@ -492,6 +497,7 @@ def resolve_workspaces(*, environ: Optional[Mapping[str, str]] = None) -> Dict[s
 # ---------------------------------------------------------------------------
 def list_checkpoints(
     workspace: Any, architecture: Optional[str] = None, *,
+    task: Optional[str] = None, learning_stage: Optional[str] = None,
     environ: Optional[Mapping[str, str]] = None,
 ) -> Listing:
     """The checkpoints of a listed workspace's runs, every architecture's or
@@ -502,6 +508,10 @@ def list_checkpoints(
     resolves outside it is listed with that reason and never opened
     (`read_run_checkpoints`' `within`). Each item names the workspace as the
     list does, so `resolve_checkpoint` finds it again by that name.
+
+    `task` and `learning_stage` keep the files whose model record names them
+    (`listed_record`); a file without a readable record names neither, so
+    either filter leaves it out.
     """
     from src.kg.artifacts import read_split_manifest
     from src.models.bundle.record import listed_record
@@ -514,6 +524,7 @@ def list_checkpoints(
     try:
         name, path = _find_workspace(workspace, environ)
         conv_type = normalize_run_layout_key(architecture) if architecture else None
+        _check_record_filter(task, learning_stage)
     except ValueError as exc:  # ServerListRefused, or an unsupported architecture
         return Listing((), str(exc))
     try:
@@ -552,7 +563,234 @@ def list_checkpoints(
             end=entry.end,
             **summary,
         ))
-    return Listing(tuple(items))
+    return Listing(tuple(item for item in items if _record_matches(item, task, learning_stage)))
+
+
+def _check_record_filter(task: Optional[str], learning_stage: Optional[str]) -> None:
+    from src.models.bundle.spec import LEARNING_STAGES, TASKS
+
+    if task is not None and task not in TASKS:
+        raise ServerListRefused(f"{_echo(task)} is not a task; one of {list(TASKS)}")
+    if learning_stage is not None and learning_stage not in LEARNING_STAGES:
+        raise ServerListRefused(
+            f"{_echo(learning_stage)} is not a learning stage; one of {list(LEARNING_STAGES)}")
+
+
+def _record_matches(item: "CheckpointItem", task: Optional[str],
+                    learning_stage: Optional[str]) -> bool:
+    return ((task is None or item.task == task)
+            and (learning_stage is None or item.learning_stage == learning_stage))
+
+
+#: A parent looked up outside the listed workspace (`family_rows`): given the
+#: run a child records and the SHA-256 of the exact parent file, ``("found",
+#: workspace)`` for another listed workspace whose run of that name holds those
+#: bytes, ``("changed", workspace)`` for one whose run no longer holds them, or
+#: ``("absent", None)``.
+ParentLookup = Callable[[str, str], Tuple[str, Optional[str]]]
+
+#: The groups of a family view, in order: the model families, the files
+#: without a model spec (history, never run) and the files whose record or
+#: read was refused (with why).
+FAMILY_GROUPS = ("family", "history", "refused")
+
+
+@dataclass(frozen=True)
+class FamilyRow:
+    """One file of a workspace's family view (`family_rows`).
+
+    `group` is one of `FAMILY_GROUPS`. In a family, `depth` counts the listed
+    ancestors above the file. `parent_state` says where the exact parent file
+    its record names is: "listed" (`parent` is that file's key,
+    ``architecture/run/file``), "elsewhere" (`parent_workspace`, another listed
+    workspace, holds those bytes) or "unavailable" (`parent_problem` says why);
+    `None` for a file with no parent. `context` marks a row a filter kept only
+    because a kept file descends from it (a task's base)."""
+
+    item: CheckpointItem
+    group: str
+    family_id: Optional[str] = None
+    depth: int = 0
+    parent: Optional[str] = None
+    parent_state: Optional[str] = None
+    parent_workspace: Optional[str] = None
+    parent_problem: Optional[str] = None
+    context: bool = False
+
+
+def _row_key(item: CheckpointItem) -> str:
+    return f"{item.architecture}/{item.run}/{item.filename}"
+
+
+def _not_held(run: str, sha256: str, workspace: Optional[str] = None) -> str:
+    where = f" in the workspace {workspace!r}" if workspace is not None else ""
+    return (f"the run {run}{where} no longer holds the parent's bytes ({sha256[:12]}): "
+            "rewritten or removed")
+
+
+def family_rows(
+    items: Tuple[CheckpointItem, ...], *, lookup: Optional[ParentLookup] = None,
+    task: Optional[str] = None, learning_stage: Optional[str] = None,
+) -> Tuple[FamilyRow, ...]:
+    """A workspace's checkpoints as families (README §1, "Parents and the
+    family tree"), from the items of one listing (`list_checkpoints`), so the
+    tree applies no reading or record rule of its own.
+
+    **Each child sits under the exact file its record names**, matched by
+    SHA-256, never by run or name: a run's other files are other bytes. A
+    child whose parent is not listed here is looked up by `lookup` (another
+    listed workspace, `list_family`), and otherwise reads "parent
+    unavailable" with why. Families are grouped by the family id of their
+    topmost listed file, the family with the newest file first; within one,
+    each file is followed by its children, in listing order. Files without a
+    model spec are the history group, refused ones the last group.
+
+    `task` and `learning_stage` keep the matching model files and, as context
+    rows, the listed files they descend from (a task's base); the history and
+    refused groups name neither, so a filter leaves them out.
+    """
+    lookup = lookup or (lambda run, sha256: ("absent", None))
+    models = [item for item in items if item.record == "model"]
+    by_digest: Dict[str, List[CheckpointItem]] = {}
+    for item in models:
+        by_digest.setdefault(item.sha256, []).append(item)
+    runs_listed = {item.run for item in items}
+
+    parent_of: Dict[str, CheckpointItem] = {}
+    placed: Dict[str, Tuple[Optional[str], Optional[str], Optional[str]]] = {}
+    for item in models:
+        key, sha256, run = _row_key(item), item.parent_sha256, item.parent_run
+        if sha256 is None:
+            placed[key] = (None, None, None)
+            continue
+        listed = by_digest.get(sha256, [])
+        listed = [p for p in listed if p.run == run] or listed
+        if listed:
+            parent_of[key] = listed[0]
+            placed[key] = ("listed", None, None)
+        elif run in runs_listed:
+            placed[key] = ("unavailable", None, _not_held(run, sha256))
+        else:
+            state, where = lookup(run, sha256)
+            placed[key] = (
+                ("elsewhere", where, None) if state == "found" else
+                ("unavailable", where, _not_held(run, sha256, where)) if state == "changed" else
+                ("unavailable", None,
+                 f"the parent run {run} ({sha256[:12]}) is not in a listed workspace"))
+
+    children: Dict[str, List[CheckpointItem]] = {}
+    for item in models:
+        if _row_key(item) in parent_of:
+            children.setdefault(_row_key(parent_of[_row_key(item)]), []).append(item)
+
+    def top(item: CheckpointItem) -> CheckpointItem:
+        seen = {_row_key(item)}
+        while _row_key(item) in parent_of and _row_key(parent_of[_row_key(item)]) not in seen:
+            item = parent_of[_row_key(item)]
+            seen.add(_row_key(item))
+        return item
+
+    families: Dict[str, List[FamilyRow]] = {}
+    shown: set = set()
+
+    def emit(start: CheckpointItem, family: str) -> None:
+        stack = [(start, 0)]
+        while stack:
+            item, depth = stack.pop()
+            key = _row_key(item)
+            if key in shown:
+                continue
+            shown.add(key)
+            state, where, problem = placed[key]
+            if depth:  # under the listed parent
+                parent, state = _row_key(parent_of[key]), "listed"
+            else:  # topmost: no parent listed (a record naming its descendant shows none)
+                parent, state = None, (state if state != "listed" else None)
+            families[family].append(FamilyRow(item, "family", family, depth, parent, state,
+                                              where, problem))
+            stack.extend((child, depth + 1) for child in reversed(children.get(key, [])))
+
+    def family_of(item: CheckpointItem) -> str:
+        root = top(item)
+        return root.family_id or root.run
+
+    for item in models:  # the family with the newest file first
+        families.setdefault(family_of(item), [])
+    for item in models:  # within one, the topmost files in listing order
+        if _row_key(item) not in parent_of:
+            emit(item, family_of(item))
+    for item in models:  # a record naming its own descendant: from its topmost file
+        if _row_key(item) not in shown:
+            emit(top(item), family_of(item))
+
+    rows = [row for family in families.values() for row in family]
+    if task is not None or learning_stage is not None:
+        by_key = {_row_key(row.item): row for row in rows}
+        keep = {key for key, row in by_key.items()
+                if _record_matches(row.item, task, learning_stage)}
+        needed = set(keep)
+        for key in keep:
+            parent = by_key[key].parent
+            while parent is not None and parent not in needed:
+                needed.add(parent)
+                parent = by_key[parent].parent
+        return tuple(replace(row, context=_row_key(row.item) not in keep)
+                     for row in rows if _row_key(row.item) in needed)
+    return tuple(rows) + tuple(
+        FamilyRow(item, "history") for item in items if item.record == "history") + tuple(
+        FamilyRow(item, "refused") for item in items if item.record not in ("model", "history"))
+
+
+def list_family(
+    workspace: Any, *, task: Optional[str] = None, learning_stage: Optional[str] = None,
+    environ: Optional[Mapping[str, str]] = None,
+) -> Listing:
+    """A listed workspace's checkpoints as families (`family_rows`), from one
+    listing (`list_checkpoints`). A parent outside the workspace is looked for
+    in the other listed workspaces only, by the run its child records, and
+    matched by its SHA-256 (provenance §9.3, "Parents in another workspace"):
+    only that run of each is read, and no other root is searched."""
+    try:
+        _check_record_filter(task, learning_stage)
+    except ValueError as exc:
+        return Listing((), str(exc))
+    listing = list_checkpoints(workspace, environ=environ)
+    if not listing.available or not listing.items:
+        return listing
+    return Listing(family_rows(listing.items,
+                               lookup=_parent_lookup(listing.items[0].workspace, environ),
+                               task=task, learning_stage=learning_stage))
+
+
+def _parent_lookup(home: str, environ: Optional[Mapping[str, str]]) -> ParentLookup:
+    """`ParentLookup` over the listed workspaces other than `home`, by name:
+    each one's run of the recorded name, read through the one reader within
+    that workspace; nothing else is opened."""
+    from src.utils.checkpoint_paths import read_run_checkpoints
+
+    listed: Dict[str, Path] = {}
+
+    def lookup(run: str, sha256: str) -> Tuple[str, Optional[str]]:
+        if not listed:  # one listing of the root per view
+            try:
+                listed.update(resolve_workspaces(environ=environ))
+            except ServerListRefused:
+                return "absent", None
+        changed: Optional[str] = None
+        for name, path in sorted(listed.items()):
+            if name == home:
+                continue
+            try:
+                entries = read_run_checkpoints(path, within=path, run=run)
+            except OSError:
+                continue
+            if any(e.sha256 == sha256 and e.problem is None for e in entries):
+                return "found", name
+            if entries and changed is None:
+                changed = name
+        return ("changed", changed) if changed is not None else ("absent", None)
+
+    return lookup
 
 
 def resolve_checkpoint(

@@ -4127,6 +4127,11 @@ The six hazards found in the verification, each with its rule:
 resolves the parent when a configured, allowed root contains it, and otherwise the tree shows
 "parent unavailable". No second model database is built, and no patient-data access boundary is
 widened.
+- As built at K5: the allowed root is the workspaces root (`SHEPHERD_WORKSPACES_ROOT`). A parent
+  not listed in the child's workspace is looked up in the other listed workspaces. Only the run
+  the child records is read, and its files are matched by SHA-256.
+- "Parent unavailable" says why: the run no longer holds those bytes (rewritten or removed), or
+  no listed workspace has the run.
 
 **Reference cohorts and derived artifacts.** A patients-like-me model is bound to its reference
 cohort version as well as its checkpoint: results, exports, caches and reuse checks name both. Task

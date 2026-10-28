@@ -373,17 +373,20 @@ def run_architecture(run_dir: PathLike) -> str:
 
 
 def list_run_checkpoints(
-    data_dir: PathLike, conv_type: Optional[str] = None
+    data_dir: PathLike, conv_type: Optional[str] = None, *, run: Optional[str] = None
 ) -> List[Tuple[Path, Path]]:
     """Every checkpoint in a workspace's runs, as ``(run_dir, checkpoint)``:
     runs most recently trained first (`list_runs`), and within a run the newest
     file first, then by name. The one listing the console, the training service
     and the API show; what a file is comes from its own record, read by the
-    caller, never from where it sits."""
+    caller, never from where it sits. `run`, a run directory's name, lists that
+    run alone (a parent looked up by the run its child records)."""
     entries: List[Tuple[Path, Path]] = []
-    for run in list_runs(data_dir, conv_type):
-        files = sorted(run_checkpoints(run), key=lambda p: (_mtime(p), p.name), reverse=True)
-        entries.extend((run, path) for path in files)
+    for run_dir in list_runs(data_dir, conv_type):
+        if run is not None and run_dir.name != run:
+            continue
+        files = sorted(run_checkpoints(run_dir), key=lambda p: (_mtime(p), p.name), reverse=True)
+        entries.extend((run_dir, path) for path in files)
     return entries
 
 
@@ -567,10 +570,10 @@ def _read_one(run: Path, path: Path) -> ListedCheckpoint:
 
 def read_run_checkpoints(
     data_dir: PathLike, conv_type: Optional[str] = None, *,
-    within: Optional[PathLike] = None,
+    within: Optional[PathLike] = None, run: Optional[str] = None,
 ) -> List[ListedCheckpoint]:
-    """The listing (`list_run_checkpoints`, same order), each file read once,
-    and again only when it changes.
+    """The listing (`list_run_checkpoints`, same order, `run` as there), each
+    file read once, and again only when it changes.
 
     Each file is loaded through `read_checkpoint` with `weights_only=True`
     (tensors and plain data only, contract decision 10) on the CPU, and what
@@ -605,19 +608,19 @@ def read_run_checkpoints(
     """
     bound = Path(within).resolve() if within is not None else None
     entries: List[ListedCheckpoint] = []
-    for run, path in list_run_checkpoints(data_dir, conv_type):
+    for run_dir, path in list_run_checkpoints(data_dir, conv_type, run=run):
         outside = _outside(path, bound) if bound is not None else None
         if outside is not None:
             entries.append(ListedCheckpoint(
-                run, path, problem=f"{run.name}/{path.name} {outside}"))
+                run_dir, path, problem=f"{run_dir.name}/{path.name} {outside}"))
             continue
         identity = _identity(path)
         kept = _recalled(path, identity)
         if kept is not None:
-            entries.append(ListedCheckpoint(run, path, **kept))
+            entries.append(ListedCheckpoint(run_dir, path, **kept))
             continue
         started_ns = time.time_ns()
-        entry = _read_one(run, path)
+        entry = _read_one(run_dir, path)
         _remember(path, identity, started_ns, entry)
         entries.append(entry)
     return entries

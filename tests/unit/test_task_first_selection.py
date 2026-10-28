@@ -54,15 +54,16 @@ def _base_spec():
     ).validate()
 
 
-def _record_payload(task=None, *, logs=None):
+def _record_payload(task=None, *, logs=None, parent=None, family_id=BASE_RUN):
     """A bundle checkpoint's payload: a base (`task` None) or a child of
-    `BASE_RUN`, its record as the training payload writes it."""
+    `parent` (`{sha256, run}`; by default a file of `BASE_RUN`), its record as
+    the training payload writes it."""
     base = _base_spec()
     spec = base if task is None else finetune_spec_from_parent(base, task)
     bundle = build_bundle(spec, VIEW)
-    lineage = (dict(operation="new", family_id=BASE_RUN) if task is None else
-               dict(operation="finetune", family_id=BASE_RUN,
-                    parent={"sha256": "a" * 64, "run": BASE_RUN}))
+    lineage = (dict(operation="new", family_id=family_id) if task is None else
+               dict(operation="finetune", family_id=family_id,
+                    parent=parent or {"sha256": "a" * 64, "run": BASE_RUN}))
     record = ModelRecord(model_spec=spec, graph_view=bundle.view,
                          data_roles={"kg": "k" * 64, "split": "s" * 64},
                          graph_exposure={"base": {"message_passing": "train_edges"}},

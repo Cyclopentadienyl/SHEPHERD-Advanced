@@ -117,6 +117,11 @@ flag read in different ways.
 **Parents and the family tree.** The original base and its qualified descendants may all be
 finetune parents. The tree sits under the actual parent checkpoint. Run directories stay flat (no
 nesting, no copies). One reader serves the tree and the tag filter; tags stay non-authoritative.
+- As built at K5: `server_lists.family_rows` builds the tree from the one listing. Each file sits
+  under the listed file whose SHA-256 its record names. Families are grouped by family id, and
+  files without a model spec form a history group. A task or stage filter keeps a child's base as a
+  context row. `GET /workspaces/{name}/family` serves it behind D8.
+- Tags are deferred: nothing stores them yet, and no filter reads them.
 
 **Evidence paths stay; the fallback ranking goes.** PathReasoner is kept as the post-ranking
 evidence for a ranked result: it never decides which candidates exist and never scores them. It is

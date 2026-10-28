@@ -3038,6 +3038,7 @@ OPERATOR_ROUTES: Tuple[Tuple[str, str, int], ...] = (
     ("POST", "/api/v1/training/stop", 409),
     ("GET", "/api/v1/training/checkpoints", 200),
     ("GET", "/api/v1/workspaces/{name}/checkpoints", 200),
+    ("GET", "/api/v1/workspaces/{name}/family", 200),
 )
 #: The gated dashboard events called directly through Gradio's HTTP API, as a
 #: script or `gradio_client` would, each found by the handler it is registered

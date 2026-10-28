@@ -340,7 +340,7 @@ def _app_client(base_url=OPERATOR_BASE_URL, **kwargs):
 
 
 def test_every_state_changing_route_takes_the_one_dependency():
-    """Every POST on the API except diagnosis (C1, open by SPEC_4), and the two
+    """Every POST on the API except diagnosis (C1, open by SPEC_4), and the
     checkpoint lists (C3), are gated by `require_operator_access`, and nothing
     else is: read-only routes stay open."""
     from fastapi.routing import APIRoute
@@ -360,6 +360,7 @@ def test_every_state_changing_route_takes_the_one_dependency():
         ("POST", "/api/v1/pipeline/reload"), ("POST", "/api/v1/pipeline/config"),
         ("POST", "/api/v1/training/start"), ("POST", "/api/v1/training/stop"),
         ("GET", "/api/v1/training/checkpoints"), ("GET", "/api/v1/workspaces/{name}/checkpoints"),
+        ("GET", "/api/v1/workspaces/{name}/family"),
     }
     assert {method for method, _ in open_routes} == {"GET", "POST"}
     assert [path for method, path in open_routes if method == "POST"] == ["/api/v1/diagnose"]
@@ -420,8 +421,9 @@ def test_the_reload_route_runs_the_reload_on_the_event_loop(monkeypatch):
 @pytest.mark.parametrize("url, service", [
     ("/api/v1/training/checkpoints", "get_checkpoints"),
     ("/api/v1/workspaces/demo/checkpoints", "list_checkpoints"),
+    ("/api/v1/workspaces/demo/family", "list_family"),
 ])
-def test_another_sites_image_cannot_make_either_checkpoint_list_open_a_file(
+def test_another_sites_image_cannot_make_a_checkpoint_list_open_a_file(
         monkeypatch, url, service):
     """An ``<img>`` on another site's page sends a GET with no Origin; its
     Sec-Fetch-Site refuses it before a checkpoint is opened (C3), while the
@@ -434,6 +436,9 @@ def test_another_sites_image_cannot_make_either_checkpoint_list_open_a_file(
                         lambda *a, **k: reached.append("get_checkpoints") or [])
     monkeypatch.setattr(server_lists, "list_checkpoints",
                         lambda *a, **k: reached.append("list_checkpoints")
+                        or server_lists.Listing(()))
+    monkeypatch.setattr(server_lists, "list_family",
+                        lambda *a, **k: reached.append("list_family")
                         or server_lists.Listing(()))
     operator_mode(monkeypatch)
     image = dict(CROSS_SITE_IMAGE)
