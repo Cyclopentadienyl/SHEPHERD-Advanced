@@ -1449,20 +1449,22 @@ class _StartsRecorded:
 
 
 def _rw3(probe, tmp_path, monkeypatch, settings):
-    """Phase R's M5 part with a recording runner (`_StartsRecorded`); its RW3."""
+    """Phase R's M5 part with a recording runner (`_StartsRecorded`); its RW3.
+    The disease child RW3's refused test start names is a stand-in already in
+    the phase's state, as RW2 leaves it once it trained one."""
     import src.api.services.training_manager as training_manager
 
     _StartsRecorded.made = []
     monkeypatch.setattr(training_manager, "TrainingManager", _StartsRecorded)
-    monkeypatch.setattr(probe, "_read_run_checkpoint", lambda path: {"sha256": "c" * 64})
     monkeypatch.setattr(probe, "_deployment_gpu_lock", lambda: {
         "configured": False, "held": False, "unreadable": False})
     real = tmp_path / "workspaces" / "real"
     real.mkdir(parents=True)
     version = SimpleNamespace(identity=SimpleNamespace(sha256="e" * 64))
+    child = {"path": tmp_path / "c.pt", "sha256": "c" * 64, "training_seconds": {}}
     report = probe.Report()
     probe._m5_real(report, tmp_path / "work", real, tmp_path / "workspaces", "cpu",
-                   {"read": {"split_manifest.json": "f" * 64}, "parent": tmp_path / "p.pt",
+                   {"read": {"split_manifest.json": "f" * 64}, "task_child": child,
                     "settings": settings, "m4": {"version": version}})
     return {p.probe_id: p for p in report.probes}["RW3"]
 

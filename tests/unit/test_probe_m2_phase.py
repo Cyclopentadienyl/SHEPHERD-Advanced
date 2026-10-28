@@ -20,9 +20,11 @@ phase R also from the operator's shell, whose directories stay untouched.
 
 M5's acceptance rides on them too (W1-W11 after T6, RW1-RW3 before R8): the
 service started as the launcher starts it, in M1 and read-only, the job runner
-running the real CLIs on CPU, the GPU lock. The phase tests require every one to
-pass and check its evidence against the disk; the helpers' own checks are shown
-to fire in tests/unit/test_probe_m5_acceptance.py.
+running the real CLIs on CPU, the GPU lock. Their test runs measure a disease
+child the probe trains itself (a model-bundle base and one child, one epoch
+each, at the demo's sizes here). The phase tests require every one to pass and
+check its evidence against the disk; the helpers' own checks are shown to fire
+in tests/unit/test_probe_m5_acceptance.py.
 
 Module: tests/unit/test_probe_m2_phase.py
 """
@@ -211,8 +213,8 @@ def test_the_demo_phase_passes_and_every_required_probe_runs(tmp_path, served_st
     # T2: the one Mode C report kept for D1's weights is what the first record
     # names, beside the copy of D1's checkpoint (the bytes D1 trained), and
     # R10's evidence was found. (T7 keeps D1's Mode D report beside it and W8's
-    # run another, for M2's resumed weights; a run directory is named for the
-    # checkpoint it measured.)
+    # run another, for the probe's disease child; a run directory is named for
+    # the checkpoint it measured.)
     d1_sha = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
     d1_reports = {json.loads(path.read_text())["manifest"]["mode"]: path
                   for path in (version / "reports").glob("*/report.json")
@@ -309,16 +311,32 @@ def test_the_demo_phase_passes_and_every_required_probe_runs(tmp_path, served_st
     for mode in ("m1", "read-only"):
         assert "Finished server process" in (
             tmp_path / "m5" / f"service-{mode}" / "server.log").read_text()
-    # W8 and W9: the run's report is kept in T1's version, and the one record
-    # beside the listed checkpoint is built from those bytes; the usage history
-    # holds the run and its registration. W10 left no fourth report (T2's,
-    # T7's and W8's are the three).
+    # W8 and W9: a test run measures a finetuned model by its task (K6), so
+    # W7-W11 name the probe's own disease child, a base and a child trained
+    # on the same workspace copy and filed under runs/gatv2. W8's report is
+    # kept in T1's version, measured as the disease task, and the one record
+    # beside the child's checkpoint, in its run, is built from those bytes and
+    # scored as that task; the usage history holds the run and its
+    # registration. Nothing is registered beside W1's listed ShepherdGNN run.
+    # W10 left no fourth report (T2's, T7's and W8's are the three).
+    task_runs = workspace / "runs" / "gatv2"
+    assert sorted(path.name for path in task_runs.iterdir()) == sorted(
+        [probe.M5_TASK_BASE_RUN, probe.M5_TASK_RUN])
+    task_child = task_runs / probe.M5_TASK_RUN / "checkpoints" / probe.M5_CHECKPOINT
+    task_sha = hashlib.sha256(task_child.read_bytes()).hexdigest()
+    assert facts["W8"]["measured"]["sha256"] == task_sha
+    assert facts["W8"]["measured"]["task"] == "disease"
+    assert set(facts["W8"]["measured"]["training_seconds"]) == {"base", "disease"}
     reports = sorted((version / "reports").glob("*/report.json"))
     assert len(reports) == 3
-    (w8_report,) = [path for path in reports if f"-{child[:12]}-" in path.parent.name]
+    (w8_report,) = [path for path in reports if f"-{task_sha[:12]}-" in path.parent.name]
     assert hashlib.sha256(w8_report.read_bytes()).hexdigest() == facts["W8"]["report_sha256"]
-    (w9_record,) = _ledger_records(listed.parent)
+    assert json.loads(w8_report.read_text())["manifest"]["mode"] == "disease"
+    (w9_record,) = _ledger_records(task_child.parent)
     assert w9_record["source_artifact_digest"] == facts["W8"]["report_sha256"]
+    assert w9_record["checkpoint_digest"] == task_sha
+    assert w9_record["scoring"]["mode"] == facts["W9"]["scoring_mode"] == "disease"
+    assert not (listed.parent / "evaluations.json").exists()
     usage = [json.loads(line) for line in
              (version / "reports" / "usage.jsonl").read_text().splitlines()]
     assert [entry["kind"] for entry in usage
@@ -413,7 +431,11 @@ def test_the_real_phase_passes_and_leaves_the_workspace_as_it_was(
 
     report = probe.Report()
     work = tmp_path / "work"
-    probe.phase_m2_real(report, work, real, config, reference, root, device="cpu")
+    # RW2's disease child at the demo's sizes, as config.yaml above holds the
+    # demo's ShepherdGNN settings: the deployment's run trains it by the
+    # reference recipe, whose checkpoints are hundreds of megabytes.
+    probe.phase_m2_real(report, work, real, config, reference, root, device="cpu",
+                        task_sizes=probe._demo_task_training())
 
     phase = _statuses(report, "R")
     assert set(phase) == set(probe.M2_REAL_REQUIRED)
@@ -458,18 +480,28 @@ def test_the_real_phase_passes_and_leaves_the_workspace_as_it_was(
     assert not list(real.rglob("evaluations.json")) and not (real / "registry").exists()
 
     # ---- M5's acceptance on the (stand-in) real workspace, before R8: listed
-    # by its manifest's digest; RW2's record beside R3's checkpoint, under the
-    # work directory; RW3 stopped. The lock is the probe's own, under a
-    # workspaces root of its own in the work directory, never the one under
-    # the deployment's root.
+    # by its manifest's digest; RW2 measured the probe's own disease child (a
+    # base and a child trained on the workspace into the work directory, K6:
+    # a test run measures a finetuned model by its task), its record beside
+    # the child's checkpoint and scored as the disease task, none beside R3's;
+    # RW3 stopped. The lock is the probe's own, under a workspaces root of its
+    # own in the work directory, never the one under the deployment's root.
     import hashlib
 
     assert str(tmp_path) not in json.dumps({k: facts[k] for k in probe.M5_REAL_PROBES})
     assert facts["RW1"]["dataset_fingerprint"] == hashlib.sha256(
         (real / "split_manifest.json").read_bytes()).hexdigest()
     assert facts["RW1"]["dataset_record"] == {"binding": "verified", "origin": "files"}
-    (rw2_record,) = _ledger_records(work / "real" / "initial" / "checkpoints")
+    disease_child = work / "real" / "m5" / "disease-child" / "checkpoints" / "last.pt"
+    assert (work / "real" / "m5" / "disease-base" / "checkpoints" / "last.pt").is_file()
+    child_sha = hashlib.sha256(disease_child.read_bytes()).hexdigest()
+    assert (facts["RW2"]["measured"]["sha256"], facts["RW2"]["measured"]["task"]) == (
+        child_sha, "disease")
+    (rw2_record,) = _ledger_records(disease_child.parent)
     assert rw2_record["source_artifact_digest"] == facts["RW2"]["report_sha256"]
+    assert rw2_record["checkpoint_digest"] == child_sha
+    assert rw2_record["scoring"]["mode"] == "disease"
+    assert not (work / "real" / "initial" / "checkpoints" / "evaluations.json").exists()
     assert facts["RW2"]["training_stop_while_it_ran"].startswith("refused")
     assert facts["RW1"]["deployment_gpu_lock"]["held"] is False
     assert facts["RW3"]["stop"]["status"] == "stopped"

@@ -150,7 +150,11 @@ ones nothing installed requires (an older lock's leftovers). A set that differs 
 on the console, never hidden, and said again beside the acceptance's verdict.
     Phase M, after T6, on the probe's own deployment under <work>/m5: a copy of
     the demo workspace under its own workspace root, M2's resumed checkpoint in
-    a run there, T1's registry. The server's lists name the workspace, its
+    a run there, T1's registry; from W7 on, also a disease task model the probe
+    trains there by the production trainer, a model-bundle base and one
+    disease child of it, one epoch each in the demo's sizes, filed as listed
+    runs (a test run measures a finetuned model by its task, K6, so W7-W11's
+    test runs name it). The server's lists name the workspace, its
     checkpoints and the cohort versions by name and digest and resolve only
     what they list (W1). The service, started as the launcher starts it in its
     own process on a free loopback port, in mode M1 and read-only: D8 allows a
@@ -175,8 +179,14 @@ on the console, never hidden, and said again beside the acceptance's verdict.
     stopped (W11).
     Phase R, after RT3 and before R8, which therefore covers them: the real
     workspace as the server lists it (RW1); a test run through the runner on
-    it, on the device, kept and registered (RW2); a training job on it
-    started and stopped, other jobs refused while it runs (RW3).
+    it, on the device, kept and registered, of a disease child the probe
+    trains on it by the reference recipe (a base and the child, one epoch
+    each, into --work-dir) (RW2); a training job on it started and stopped,
+    other jobs refused while it runs (RW3).
+    **The rest of the probe chain still trains and measures ShepherdGNN
+    checkpoints** (D1, M2-M11, T1-T7, R3-R7, RT1-RT3, W1's listed run, W7's
+    refused training starts and W11's and RW3's held training job): moving it
+    to the model bundle path is K8's (the scorer-retraining README, §10).
     **W11's and RW3's training job holds the GPU by configuration**, applied
     where it is started (`_held_config`: `_HOLD_EPOCHS` epochs, early stopping
     as long, no pause, a new run), so it ends only by the probe's stop. **One
@@ -204,11 +214,13 @@ on the console, never hidden, and said again beside the acceptance's verdict.
     (`_probes_own_gpu_lock`); they therefore do not exclude a deployment job
     that runs meanwhile. **The training probes take
     no GPU lock at all**, not even the probe's own (D1, M2, M9, R3 and R4
-    train; M5, M10 and M11.training are refused before they do): they call
-    the production trainer in this process, and `train()` takes no lock, only
-    the program entries do (`src/utils/gpu_lock.py`), so they exclude nothing
-    either. The deployment's lock is only read, once at W1 and once at RW1, to
-    say whether a job holds it at that moment; a job that ran during the
+    train, and so do the disease task models, in the first of W7-W11 to need
+    one and in RW2; M5, M10 and M11.training are refused before they do):
+    they call the production trainer in this process, and `train()` takes no
+    lock, only the program entries do (`src/utils/gpu_lock.py`), so they
+    exclude nothing either. The deployment's lock is only read, once at W1
+    and once at RW1, to say whether a job holds it at that moment; a job that
+    ran during the
     training probes and ended before is not seen (root-cause round, INT-2, and
     its verification). Run the acceptance while no managed GPU job runs. The
     job runner's own temporary files (a training job's settings file, a test
@@ -2297,6 +2309,70 @@ def _train_run(
     return run_checkpoint_dir(run)
 
 
+def _demo_task_training() -> Dict[str, Dict[str, Any]]:
+    """The demo's sizes for the probe's disease task model
+    (`_train_disease_child`), by stage, as `_DEMO_TRAINING` is the demo's
+    ShepherdGNN settings: the reference base spec shrunk (input 8, two layers
+    of width 4 with 2 heads) and small batches, hops and samples, so the base
+    and the child each train in seconds on CPU. Every other setting is the
+    stage's reference recipe (`src.config.recipe`), which the trainer fills
+    and records. The real phase passes none: the reference recipe itself."""
+    import dataclasses
+
+    from src.models.bundle import reference_spec
+    from src.models.bundle.spec import InputSpec
+
+    spec = reference_spec("base")
+    small = dataclasses.replace(
+        spec, input=InputSpec(dim=8),
+        encoder=dataclasses.replace(spec.encoder, layers=2, hidden=4, output=4, heads=2),
+    ).validate()
+    return {
+        "base": {"model_spec": small.to_dict(), "batch_size": 32, "num_neighbors": [4, 4]},
+        "disease": {"batch_size": 8, "num_neighbors": [3, 3], "candidate_sample_size": 8,
+                    "sparse_sample_size": 8},
+    }
+
+
+def _train_disease_child(
+    data_dir: Path, base_run: Path, child_run: Path, device: str, *,
+    sizes: Optional[Mapping[str, Mapping[str, Any]]] = None,
+) -> Tuple[Path, Dict[str, float]]:
+    """The disease task model M5's test runs measure (K6: a test run measures
+    a finetuned model by its task, so a checkpoint without a model spec is
+    never started): a model-bundle base trained on `data_dir` into
+    `base_run`, then one disease child of it into `child_run`, one epoch each
+    on `device`, both by the production trainer (`train_model.train`, the
+    model bundle path: `learning_stage` "base", then "finetune" with
+    `finetune_from` the base's last.pt). Returns the child's last.pt and the
+    seconds each run took.
+
+    The stage's reference recipe fills every setting not given here and
+    records which it filled (`apply_stage_recipe`); `sizes` (by "base" and
+    "disease") replaces some for a smaller run (`_demo_task_training`), and
+    with none the runs are the reference recipe's, the epochs aside. Every
+    setting given counts as the operator's, as a configuration file's keys
+    do. Each run writes only into its run directory (contract M3a-2)."""
+    from scripts.train_model import TrainConfig, train
+    from src.utils.checkpoint_paths import run_checkpoint_dir
+
+    sizes = sizes or {}
+    seconds: Dict[str, float] = {}
+
+    def run(stage: str, run_dir: Path, **fields: Any) -> Path:
+        fields = {**(sizes.get(stage) or {}), **fields, "data_dir": str(data_dir),
+                  "run_dir": str(run_dir), "num_epochs": 1, "device": device}
+        started = time.monotonic()
+        train(TrainConfig(**fields), set(fields) - {"data_dir", "run_dir"})
+        seconds[stage] = round(time.monotonic() - started, 1)
+        return _last(run_checkpoint_dir(run_dir))
+
+    base = run("base", base_run, learning_stage="base")
+    child = run("disease", child_run, learning_stage="finetune", task="disease",
+                finetune_from=str(base))
+    return child, seconds
+
+
 def _scaler_numbers(state: Any) -> Optional[Dict[str, Any]]:
     """A gradient scaler's state as plain numbers (all GradScaler records), or
     `None` without one."""
@@ -3014,14 +3090,23 @@ M5_REAL_PROBES: Tuple[str, ...] = ("RW1", "RW2", "RW3")
 #: Phase M's M5 probes run on the probe's own deployment under <work>/m5: one
 #: workspace under its workspace root, a copy of the demo workspace, with one
 #: run holding a copy of M2's resumed checkpoint and one whose checkpoint is a
-#: link out of the workspace (listed with that reason, never opened).
+#: link out of the workspace (listed with that reason, never opened). From W7
+#: on it also holds the disease task model the test runs measure, a base and
+#: one disease child the probe trains there (`_train_disease_child`).
 M5_WORKSPACE = "probe-demo"
 M5_LISTED_RUN = "probe-m5-listed"
 M5_LINKED_RUN = "probe-m5-link-out"
+M5_TASK_BASE_RUN = "probe-m5-base"
+M5_TASK_RUN = "probe-m5-disease"
 M5_CHECKPOINT = "last.pt"
-#: The architecture of every demo run (`_DEMO_TRAINING`), and so of the runs'
-#: directory in the workspace.
+#: The architecture of every demo ShepherdGNN run (`_DEMO_TRAINING`), and so
+#: of the runs' directory in the workspace.
 _M5_ARCHITECTURE = "gat"
+#: The encoder kind of the reference model spec (`EncoderSpec.kind`), which
+#: the demo's shrunk spec keeps (`_demo_task_training`): the directory the
+#: disease task model's runs are filed under (K2: a bundle run is filed under
+#: its encoder kind).
+_M5_TASK_ARCHITECTURE = "gatv2"
 #: D8's operator routes (`src/api/operator_access.py`: every state-changing
 #: route and the checkpoint lists), each with the status it answers when D8
 #: allows the probe's request. **Nothing runs either way**: a POST carries
@@ -3798,10 +3883,10 @@ def _listed_test_inputs(label: str, workspace: str, run: str, filename: str,
     found in the server's lists again by name, the digests those lists show
     passed as the expected ones, the task the listing's model record names,
     and the registry and evidence directories from their settings. `choices`
-    are the operator's two (`record`, `deterministic`). A ShepherdGNN
-    checkpoint's listing names no task, so the runner refuses its start (K6:
-    a test run measures a finetuned model by its task) until K8 gives the
-    probe chain a trained child."""
+    are the operator's two (`record`, `deterministic`). A test run measures a
+    finetuned model by its task (K6), and a ShepherdGNN checkpoint's listing
+    names none, so M5's test runs are given the probe's own disease child
+    (`_train_disease_child`)."""
     from src.api.services import server_lists
     from src.api.services.training_manager import TestRunInputs
     from src.config import server_settings
@@ -3814,6 +3899,7 @@ def _listed_test_inputs(label: str, workspace: str, run: str, filename: str,
                    if (item.run, item.filename) == (run, filename)), None)
     assert listed is not None and listed.sha256, (
         f"the server lists no readable checkpoint {run}/{filename} in {workspace}")
+    assert listed.task, f"the listed checkpoint {run}/{filename} names no task to measure"
     registry, evidence = (server_settings.cohort_registry(),
                           server_settings.training_evidence_dirs())
     assert registry.available and evidence.available, "the registry or evidence setting is refused"
@@ -4067,11 +4153,15 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
              m4_runs: Sequence[str] = (), m4_registered: Sequence[str] = ()) -> None:
     """M5's acceptance on the demo workspace (W1-W11), after M4's flow, on the
     probe's own deployment under <work>/m5 with M2's resumed checkpoint
-    (`child`) and T1's cohort version (`version` in `registry`). `m4_runs` are
-    the run ids M4's flow published in that version's store, T2's first, then
-    T7's (Mode D) when it published one: W1 lists exactly those, so a Mode D
-    failure is T7's alone and never W1's. `m4_registered` are those of them
-    whose probe passed, so registered: W1 checks each is listed as registered.
+    (`child`, W1's listed run) and T1's cohort version (`version` in
+    `registry`). W7-W11's test runs measure a disease task model the probe
+    trains on the same workspace copy, the graph T1's version is bound to
+    (`_task_child`): a test run measures a finetuned model by its task (K6).
+    `m4_runs` are the run ids M4's flow published in that version's store,
+    T2's first, then T7's (Mode D) when it published one: W1 lists exactly
+    those, so a Mode D failure is T7's alone and never W1's. `m4_registered`
+    are those of them whose probe passed, so registered: W1 checks each is
+    listed as registered.
 
     Functional only: what M5 adds to serving and evaluation (the server's
     lists, D8 on every operator control, no cross-origin access, the route
@@ -4478,6 +4568,40 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
 
         return build_test_argv(inputs, deployment_device(), outcome)[2:]
 
+    def _task_child() -> Dict[str, Any]:
+        """The disease task model W7-W11's test runs measure: a base and one
+        disease child trained by the production trainer on W1's workspace
+        copy, in the demo's sizes (`_train_disease_child`), and filed there as
+        listed runs under the encoder kind's directory. Trained once, by the
+        first probe that needs it, and before that probe takes or holds any
+        lock (`train()` takes none); a training that fails is that probe's
+        failure, and every later one says it is not available."""
+        _need("workspace")
+        if "task_child" not in state:
+            assert "task_child_tried" not in state, (
+                "the disease child could not be trained (the first probe that needed it says "
+                "why)")
+            state["task_child_tried"] = True
+            runs = state["workspace"] / RUNS_DIRNAME / _M5_TASK_ARCHITECTURE
+            path, seconds = _train_disease_child(
+                state["workspace"], runs / M5_TASK_BASE_RUN, runs / M5_TASK_RUN, device,
+                sizes=_demo_task_training())
+            state["task_child"] = {"path": path, "sha256": _read_run_checkpoint(path)["sha256"],
+                                   "training_seconds": seconds}
+        return state["task_child"]
+
+    def _task_inputs(**choices: Any) -> Any:
+        """The test-run inputs for the disease child, found in the server's
+        lists again by name (`_listed_test_inputs`): listed by the digest of
+        the bytes the probe read, and by its task."""
+        child = _task_child()
+        inputs = _listed_test_inputs(M4_DEMO_LABEL, M5_WORKSPACE, M5_TASK_RUN, M5_CHECKPOINT,
+                                     **choices)
+        assert (inputs.checkpoint, inputs.checkpoint_sha256, inputs.task) == (
+            child["path"], child["sha256"], "disease"), (
+            "the disease child is not listed by its run, its digest as read and its task")
+        return inputs
+
     def _gpu_lock() -> Tuple[str, Dict[str, Any]]:
         import subprocess
 
@@ -4485,7 +4609,7 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
 
         _need("workspace", "fingerprint")
         lock_path = _lock_path()
-        inputs = _listed_test_inputs(M4_DEMO_LABEL, M5_WORKSPACE, M5_LISTED_RUN, M5_CHECKPOINT)
+        inputs = _task_inputs()
         before = _store_runs(reports)
         holder = subprocess.Popen([sys.executable, "-c", _LOCK_HOLDER], cwd=project_root,
                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -4551,10 +4675,9 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
                }
 
     def _test_job() -> Tuple[str, Dict[str, Any]]:
-        _need("listed", "listed_sha")
         lock_path = _lock_path()
-        inputs = _listed_test_inputs(M4_DEMO_LABEL, M5_WORKSPACE, M5_LISTED_RUN, M5_CHECKPOINT,
-                                     record=False)
+        inputs = _task_inputs(record=False)
+        child = state["task_child"]
         before = _store_runs(reports)
         usage_before = len(read_usage_history(version)[0])
         manager = TrainingManager()
@@ -4588,24 +4711,34 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
         # (the run was not asked to record).
         assert (outcome.get("kept"), outcome.get("registered")) == (True, False), (
             f"the outcome says kept {outcome.get('kept')}, registered {outcome.get('registered')}")
-        assert kept["manifest"]["artifact_digests"]["checkpoint"] == state["listed_sha"]
+        assert kept["manifest"]["artifact_digests"]["checkpoint"] == child["sha256"]
         assert kept["manifest"]["cohort_version"]["manifest_sha256"] == version.identity.sha256
+        # **Measured by its task**, as the runner always asks (`--mode <task>`).
+        assert kept["manifest"]["mode"] == "disease", (
+            f"the run measured {kept['manifest']['mode']!r}, not the model's task")
         entries, problems = read_usage_history(version)
         new = entries[usage_before:]
         assert not problems and [entry.get("kind") for entry in new] == ["test_run"], (
             f"the usage history gained {[entry.get('kind') for entry in new]}")
         entry = new[0]
         assert (entry.get("run_id"), entry.get("checkpoint_sha256"), entry.get("report_sha256"),
-                entry.get("record_requested")) == (created[0], state["listed_sha"], published,
+                entry.get("record_requested")) == (created[0], child["sha256"], published,
                                                    False), "the usage entry is not this run's"
         assert str(entry.get("device", "")).split(":")[0] == device, (
             f"the run measured on {entry.get('device')}, not {device}")
         assert lock_probe(lock_path) is None, "the GPU lock stayed held after the run ended"
-        state["job"] = {"run_id": created[0], "report": report_file, "published": published}
+        state["job"] = {"run_id": created[0], "report": report_file, "published": published,
+                        "checkpoint": child["path"]}
         return "a test run from the server's lists: its report kept, not registered, in the " \
                "usage history", {
                    "inputs": "the version, workspace and checkpoint found in the server's lists "
                              "again, their digests passed as the expected ones",
+                   "measured": {"model": "the probe's disease child: a model-bundle base and "
+                                         "one disease child of it, one epoch each, by the "
+                                         "production trainer",
+                                "run": M5_TASK_RUN, "sha256": child["sha256"],
+                                "task": kept["manifest"]["mode"],
+                                "training_seconds": child["training_seconds"]},
                    "status": word, "exit_code": status["exit_code"],
                    "exit_meaning": status.get("exit_meaning"),
                    "outcome_file_names_the_kept_report": True, "report_sha256": published,
@@ -4622,7 +4755,9 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
         from src.evaluation.sidecar import read_ledger
 
         assert "job" in state, "the test run (W8) is not available"
-        job, listed = state["job"], state["listed"]
+        # The checkpoint W8 measured, the disease child: its ledger is the
+        # one beside it, under runs/<encoder kind>/<run>/checkpoints.
+        job, listed = state["job"], state["job"]["checkpoint"]
         # **Found in the server's list of the version's runs**, as the Test
         # page's Register finds it, never from a client's path.
         path = server_lists.resolve_report(M4_DEMO_LABEL, job["run_id"])
@@ -4643,6 +4778,12 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
         ledger, ledger_sha256 = read_ledger(ledger_dir / "evaluations.json")
         assert [record.get("source_artifact_digest") for record in ledger["records"]] == [
             job["published"]], "the ledger does not hold one record built from the kept report"
+        # **The disease task's record**: its scoring identity and metrics are
+        # the task measurement's (`task_measurement.DISEASE_SEMANTICS`), never
+        # Mode C's.
+        scoring, metrics = ledger["records"][0]["scoring"], ledger["records"][0]["metrics"]
+        assert scoring.get("mode") == "disease" and "pooled_mrr" in metrics, (
+            f"the record is scored as {scoring.get('mode')!r}, not as the disease task")
         after = report_state(path, checkpoint=listed, expected_sha256=job["published"])
         assert (after.kept, after.registered, after.sequence) == ("kept", "registered", 1), (
             f"the report reads {after.kept}, {after.registered}")
@@ -4657,6 +4798,8 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
         return "a copy outside the store refused; the store's report registered from the list", {
             "copy_outside_the_store": "refused, the ledger unchanged",
             "registered_from": "the report the server lists for the run",
+            "ledger": "beside the disease child's checkpoint, in its run",
+            "scoring_mode": scoring["mode"],
             "outcome": result.outcome, "sequence": sequence, "ledger_sha256": ledger_sha256,
             "report_state": {"kept": after.kept, "registered": after.registered},
             "usage_history": "registered", "server_list": "kept, registered",
@@ -4665,9 +4808,8 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
     def _start_checked_again() -> Tuple[str, Dict[str, Any]]:
         import dataclasses
 
-        _need("listed_sha")
         lock_path = _lock_path()
-        inputs = _listed_test_inputs(M4_DEMO_LABEL, M5_WORKSPACE, M5_LISTED_RUN, M5_CHECKPOINT)
+        inputs = _task_inputs()
         other_checkpoint = _read_run_checkpoint(checkpoint)["sha256"]
         assert other_checkpoint != inputs.checkpoint_sha256
         try:
@@ -4705,8 +4847,10 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
     def _training_job() -> Tuple[str, Dict[str, Any]]:
         _need("workspace", "fingerprint")
         lock_path = _lock_path()
-        inputs = _listed_test_inputs(M4_DEMO_LABEL, M5_WORKSPACE, M5_LISTED_RUN, M5_CHECKPOINT)
+        inputs = _task_inputs()
         manager = TrainingManager()
+        # The held job is a ShepherdGNN training job (`_DEMO_TRAINING`) until
+        # K8 moves the rest of the probe chain to the bundle path.
         config = {**_DEMO_TRAINING, "data_dir": str(state["workspace"]),
                   "run_dir": str(m5 / "jobs" / "stopped-training"), "device": device}
         with _job_ended_on_exit(manager, "training"):
@@ -4755,16 +4899,20 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
 
 
 def _m5_real(report: Report, runs: Path, real: Path, workspaces_root: Path, device: str,
-             state: Dict[str, Any]) -> None:
+             state: Dict[str, Any],
+             task_sizes: Optional[Mapping[str, Mapping[str, Any]]] = None) -> None:
     """M5's acceptance on the real workspace (RW1-RW3), after M4's RT1-RT3 and
     before R8, which therefore covers them: the workspace as the server lists
-    it, a test run through the job runner on the device, and a short training
-    job started and stopped through it (no long training). Everything the runs
-    write is under --work-dir: the GPU lock is the one under a workspaces root
-    of the probe's own there (an empty directory, never listed), the registry is
-    RT1's (named as `SHEPHERD_REGISTRY` while they run: a test run measures
-    only in the deployment's registry, BACKLOG 37), the runs' directories and
-    ledgers are beside R3's checkpoint or under <work>/real/m5. The
+    it, a test run through the job runner on the device of a disease task
+    model the probe trains on the workspace (a base and one disease child,
+    one epoch each, `_train_disease_child`; the reference recipe, or
+    `task_sizes` over it), and a short training job started and stopped
+    through the runner (no long training). Everything the runs write is under
+    --work-dir: the GPU lock is the one under a workspaces root of the probe's
+    own there (an empty directory, never listed), the registry is RT1's (named
+    as `SHEPHERD_REGISTRY` while they run: a test run measures only in the
+    deployment's registry, BACKLOG 37), the runs' directories and ledgers,
+    the disease child's among them, are under <work>/real/m5. The
     deployment's own root, lock and registry are never used; the root is only
     read, to list."""
     from src.api.services import server_lists
@@ -4824,21 +4972,38 @@ def _m5_real(report: Report, runs: Path, real: Path, workspaces_root: Path, devi
     report.run("RW1", "real", "M5: the server lists the real workspace by its dataset "
                "fingerprint", _listed)
 
+    def _task_child() -> Dict[str, Any]:
+        """The disease task model RW2 measures and RW3's refused test start
+        names: a base and one disease child trained by the production trainer
+        on the real workspace, which is only read, into run directories under
+        <work>/real/m5 (`_train_disease_child`). Trained once, by RW2; a
+        training that fails is RW2's failure, and RW3 then says it is not
+        available."""
+        assert "read" in state, "R1 did not pass"
+        if "task_child" not in state:
+            assert "task_child_tried" not in state, (
+                "the disease child could not be trained (RW2 says why)")
+            state["task_child_tried"] = True
+            path, seconds = _train_disease_child(real, m5 / "disease-base", m5 / "disease-child",
+                                                 device, sizes=task_sizes)
+            state["task_child"] = {"path": path, "sha256": _read_run_checkpoint(path)["sha256"],
+                                   "training_seconds": seconds}
+        return state["task_child"]
+
     def _test_job() -> Tuple[str, Dict[str, Any]]:
         assert "record" in state.get("m4", {}), "the cohort version (RT1, RT2) is not available"
-        assert "parent" in state, "R3 did not pass"
-        version, parent = state["m4"]["version"], state["parent"]
-        sha256 = _read_run_checkpoint(parent)["sha256"]
+        version = state["m4"]["version"]
+        # A test run measures a finetuned model by its task (K6): the probe's
+        # own disease child, trained here on the real workspace.
+        child = _task_child()
         before, usage_before = _store_runs(reports), len(read_usage_history(version)[0])
         manager = TrainingManager()
         with _job_ended_on_exit(manager, "test"):
-            # A test run measures a finetuned model by its task (K6). R3's
-            # checkpoint is a ShepherdGNN one, which the run refuses as
-            # history, until K8 gives this chain a trained disease child.
             started = manager.start_test(TestRunInputs(
                 registry=registry, version_label=M4_REAL_LABEL,
-                version_sha256=version.identity.sha256, workspace=real, checkpoint=parent,
-                checkpoint_sha256=sha256, task="disease", record=True))
+                version_sha256=version.identity.sha256, workspace=real,
+                checkpoint=child["path"], checkpoint_sha256=child["sha256"], task="disease",
+                record=True))
             assert started.get("success"), "the runner refused the test run"
             not_reached = _training_stop_does_not_reach_a_test_run(manager)
             word = _job_ended(manager, "test", _TEST_RUN_SECONDS)
@@ -4851,20 +5016,32 @@ def _m5_real(report: Report, runs: Path, real: Path, workspaces_root: Path, devi
         assert len(created) == 1, f"the run left {len(created)} report directories"
         outcome = status["outcome"] or {}
         published = (outcome.get("run_outcome") or {}).get("report_sha256")
-        assert published == _read_json(reports / created[0] / REPORT_FILE)[1].sha256, (
+        kept, kept_read = _read_json(reports / created[0] / REPORT_FILE)
+        assert published == kept_read.sha256, (
             "the outcome file's digest is not the kept report's bytes")
+        assert (kept["manifest"]["artifact_digests"]["checkpoint"], kept["manifest"]["mode"]) == (
+            child["sha256"], "disease"), "the kept report is not the disease child's, by its task"
         assert (outcome.get("kept"), outcome.get("registered")) == (True, True), (
             f"the outcome says kept {outcome.get('kept')}, registered {outcome.get('registered')}")
-        ledger, _ = read_ledger(parent.resolve().parent / "evaluations.json")
+        ledger, _ = read_ledger(child["path"].resolve().parent / "evaluations.json")
         assert [record.get("source_artifact_digest") for record in ledger["records"]] == [
-            published], "the ledger beside R3's checkpoint does not hold the run's one record"
+            published], "the ledger beside the disease child does not hold the run's one record"
+        assert ledger["records"][0]["scoring"].get("mode") == "disease", (
+            "the registered record is not scored as the disease task")
         new = read_usage_history(version)[0][usage_before:]
         assert [(e.get("kind"), e.get("run_id")) for e in new] == [
             ("test_run", created[0]), ("registered", created[0])], (
             f"the usage history gained {[e.get('kind') for e in new]}")
         assert lock_probe(lock_path) is None, "the GPU lock stayed held after the run ended"
         return "a test run through the runner on the real workspace, kept and registered", {
-            "checkpoint": "R3's paused checkpoint, under the work directory",
+            "checkpoint": "the probe's disease child, trained on the real workspace into the "
+                          "work directory",
+            "measured": {"model": "a model-bundle base and one disease child of it, one epoch "
+                                  "each, by the production trainer",
+                         "recipe": ("the reference recipe" if task_sizes is None
+                                    else "the reference recipe at smaller sizes"),
+                         "sha256": child["sha256"], "task": kept["manifest"]["mode"],
+                         "training_seconds": child["training_seconds"]},
             "status": word, "exit_code": status["exit_code"], "report_sha256": published,
             "kept": True, "registered": True, "usage_history": ["test_run", "registered"],
             "device": new[0].get("device"), "n_ranked": new[0].get("n_ranked"),
@@ -4885,18 +5062,21 @@ def _m5_real(report: Report, runs: Path, real: Path, workspaces_root: Path, devi
             f"(its path is {room['path_bytes']} bytes; {room['refusal'] or room['checked']}), "
             f"so this training (num_workers {workers}) would fail with 'AF_UNIX path too long'. "
             "Run the probe with a short TMPDIR, such as TMPDIR=/tmp")
-        version, parent = state["m4"]["version"], state.get("parent", state.get("child"))
-        # Only refused while training runs (the slot, then the CLI's lock), so
-        # the task is never read here; a test run always names one.
+        version = state["m4"]["version"]
+        # The test run RW2 measured, the disease child's: only refused while
+        # training runs (the slot, then the CLI's lock).
+        child = _task_child()
         inputs = TestRunInputs(
             registry=registry, version_label=M4_REAL_LABEL,
-            version_sha256=version.identity.sha256, workspace=real, checkpoint=parent,
-            checkpoint_sha256=_read_run_checkpoint(parent)["sha256"], task="disease")
+            version_sha256=version.identity.sha256, workspace=real, checkpoint=child["path"],
+            checkpoint_sha256=child["sha256"], task="disease")
         manager = TrainingManager()
         # A new run held by configuration whatever the settings file holds
         # (`_start_training_job` applies `_held_config`): the real settings'
         # epochs and patience would let it end by itself during the check, and
         # a parent named there would make it a continuation (contract M3a-3).
+        # It is a ShepherdGNN training job from those settings, as R3's run
+        # is, until K8 moves the rest of the probe chain to the bundle path.
         config = {**settings_now, "data_dir": str(real), "run_dir": str(m5 / "stopped-training"),
                   "device": device}
         with _job_ended_on_exit(manager, "training"):
@@ -5655,13 +5835,19 @@ def _training_settings(config_path: Path) -> Tuple[Dict[str, Any], str]:
 @_under_the_probes_own_gpu_lock
 def phase_m2_real(
     report: Report, work: Path, real: Path, config_path: Path, reference: Path,
-    workspaces_root: Path, device: str,
+    workspaces_root: Path, device: str, *,
+    task_sizes: Optional[Mapping[str, Mapping[str, Any]]] = None,
 ) -> None:
     """Contract M2's acceptance on real data: the full success path, from the
     production entry points, on a workspace that is read and never written;
     contract M4's flow on it (RT1-RT3) and M5's (RW1-RW3) before R8 checks it
     unchanged. The formal entry points take the probe's own GPU lock
-    (`_probes_own_gpu_lock`), under the work directory."""
+    (`_probes_own_gpu_lock`), under the work directory.
+
+    RW2 measures a disease child the probe trains on the workspace by the
+    reference recipe, one epoch each for the base and the child; `task_sizes`
+    replaces some of its sizes (`_demo_task_training`), as the CPU test does
+    for a workspace of the demo's size. The deployment's run passes none."""
     print("\nR. Contract M2 on real data, with M4's flow")
     from src.utils.fingerprint import file_sha256
 
@@ -5952,7 +6138,7 @@ def phase_m2_real(
                    "real checkpoint", _real_view)
 
     # ---- M5's acceptance on real data, before R8 so R8 covers it.
-    _m5_real(report, runs, real, workspaces_root, device, state)
+    _m5_real(report, runs, real, workspaces_root, device, state, task_sizes)
 
     def _untouched() -> Tuple[str, Dict[str, Any]]:
         after = _stat_tree(real)
