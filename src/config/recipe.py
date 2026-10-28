@@ -8,8 +8,10 @@ anchored on the fixed source (§0.3), never a claim that it is tuned for this
 project's data; an operator's value replaces it and is recorded as theirs.
 
 Model architecture is the model spec's (`src.models.bundle.spec`), not here.
+Plain data, in `src.config` so the run planner (`src.utils.run_plan`) and the
+training service read the same lists as training does.
 
-Module: src/training/recipe.py
+Module: src/config/recipe.py
 """
 from __future__ import annotations
 
@@ -29,7 +31,13 @@ BASE: Dict[str, Any] = {
     "scheduler_type": "none",
     "warmup_steps": 0,
     "use_amp": False,
+    "early_stopping_patience": None,
 }
+
+#: Early stopping is disabled in the source (C6): no patience. An operator who
+#: sets one asks for early stopping, recorded as theirs; a continued run
+#: inherits the patience in effect, so on or off, with the other settings.
+_NO_EARLY_STOPPING = "early stopping disabled in the source (README C6): no patience"
 
 BASE_SOURCES: Dict[str, str] = {
     "num_epochs": f"{UPSTREAM} hparams.py:18-44 (200 epochs)",
@@ -43,12 +51,16 @@ BASE_SOURCES: Dict[str, str] = {
                       "never fires within 200 epochs: a constant rate; README C6)",
     "warmup_steps": "no warmup in the source (README C6)",
     "use_amp": f"{UPSTREAM} pretrain.py:109-117 (precision 16 never passed: fp32; README U15)",
+    "early_stopping_patience": _NO_EARLY_STOPPING,
 }
 
-#: Settings that are not training choices of the recipe: early stopping is
-#: disabled (C6), and the base selects on LP accuracy (A5).
-BASE_FIXED: Dict[str, Any] = {"early_stopping": False, "monitor": "val_lp_accuracy",
-                              "monitor_mode": "max"}
+#: Settings that are not training choices: the base selects on LP accuracy
+#: (A5), and its validation pairs depend on the split alone (every validation
+#: edge once, ordered and given negatives by the split's seed, in batches of
+#: this size), so runs over one split, whatever their seed or batch size,
+#: validate on the same pairs (F3).
+BASE_FIXED: Dict[str, Any] = {"monitor": "val_lp_accuracy", "monitor_mode": "max",
+                              "validation_seed": "split_seed", "validation_batch_size": 512}
 
 
 #: Finetune settings shared by the tasks, README U3, U8, U15, C6.
@@ -61,6 +73,7 @@ FINETUNE: Dict[str, Any] = {
     "scheduler_type": "none",
     "warmup_steps": 0,
     "use_amp": False,
+    "early_stopping_patience": None,
 }
 
 FINETUNE_SOURCES: Dict[str, str] = {
@@ -72,6 +85,7 @@ FINETUNE_SOURCES: Dict[str, str] = {
     "scheduler_type": f"{UPSTREAM} train.py:283-292,311 (no scheduler; README C6, U8)",
     "warmup_steps": "no warmup in the source (README C6)",
     "use_amp": f"{UPSTREAM} train.py:308-317 (precision 16 never passed: fp32; README U15)",
+    "early_stopping_patience": _NO_EARLY_STOPPING,
 }
 
 #: Per task: learning rate, first-hop size, sparse sample and the two named
@@ -125,9 +139,15 @@ FINETUNE_TASK_SOURCES: Dict[str, Dict[str, str]] = {
     },
 }
 
-#: The finetune selects on pooled MRR (E1); early stopping is disabled (C6).
-FINETUNE_FIXED: Dict[str, Any] = {"early_stopping": False, "monitor": "val_pooled_mrr",
-                                  "monitor_mode": "max"}
+#: The finetune selects on pooled MRR (E1).
+FINETUNE_FIXED: Dict[str, Any] = {"monitor": "val_pooled_mrr", "monitor_mode": "max"}
+
+#: Settings a branch may change beside the stage's reference settings
+#: (BACKLOG 23: the schedule's floor, the precision and the accumulation).
+BRANCH_COMPANIONS = ("min_lr_ratio", "amp_dtype", "gradient_accumulation_steps")
+#: Reference settings a branch keeps: early stopping on or off is not a
+#: setting to compare runs by this round.
+BRANCH_KEPT = ("early_stopping_patience",)
 
 
 def reference_settings(learning_stage: str, task: Optional[str] = None
@@ -155,6 +175,15 @@ def unread_settings(learning_stage: str, task: Optional[str] = None) -> FrozenSe
     return frozenset(every - set(values))
 
 
-__all__ = ["BASE", "BASE_FIXED", "BASE_SOURCES", "FINETUNE", "FINETUNE_FIXED",
-           "FINETUNE_SOURCES", "FINETUNE_TASKS", "FINETUNE_TASK_SOURCES", "reference_settings",
-           "unread_settings"]
+def branch_settings(learning_stage: str, task: Optional[str] = None) -> FrozenSet[str]:
+    """The closed list of settings a branch of this stage and task may change
+    (README §1, BACKLOG 23): the reference settings, but `BRANCH_KEPT`, and
+    `BRANCH_COMPANIONS`. Every other setting, the model spec, the split seed
+    and the data stay the parent's."""
+    values, _ = reference_settings(learning_stage, task)
+    return frozenset(set(values) - set(BRANCH_KEPT) | set(BRANCH_COMPANIONS))
+
+
+__all__ = ["BASE", "BASE_FIXED", "BASE_SOURCES", "BRANCH_COMPANIONS", "BRANCH_KEPT", "FINETUNE",
+           "FINETUNE_FIXED", "FINETUNE_SOURCES", "FINETUNE_TASKS", "FINETUNE_TASK_SOURCES",
+           "branch_settings", "reference_settings", "unread_settings"]

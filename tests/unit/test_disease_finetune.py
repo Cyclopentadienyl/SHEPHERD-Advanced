@@ -200,7 +200,7 @@ def test_finetune_refusals(workspace, tmp_path):
     with pytest.raises(ValueError, match="names its task"):
         train_model.train(config, explicit)
     config, explicit = _finetune_config(workspace, tmp_path / "w", parent, resume_from=str(child))
-    with pytest.raises(ValueError, match="exactly one"):
+    with pytest.raises(ValueError, match="resume_from and finetune_from name two parents"):
         train_model.train(config, explicit)
     for name in ("x", "y", "z", "w"):
         assert not (tmp_path / name).exists()

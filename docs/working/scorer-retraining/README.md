@@ -111,6 +111,13 @@ flag read in different ways.
 - `branch` keeps architecture and data (BACKLOG 23), starts a new optimizer and records every
   difference. Its closed list of changeable settings is built in this round, before any variable
   comparison. An extend never carries a seed or learning-setting change.
+  - As built at K5: the list is `src.config.recipe.branch_settings`, the stage's reference settings
+    plus `min_lr_ratio`, `amp_dtype` and `gradient_accumulation_steps`. Early stopping, the split
+    seed, the evaluation cadence, the kept files, the model spec and the data stay the parent's.
+  - Each change is recorded as `parent.changes` {setting: {parent, new}}. A branch with no change,
+    a weights-only parent and an extension are refused. It is CLI only (`--branch-from`).
+  - The base validates on pairs fixed by its split, whatever a run's seed or batch size, so
+    branches over one split compare on one set.
 - `finetune` is its own operation and page. It never borrows resume or branch to get past a parent
   check.
 

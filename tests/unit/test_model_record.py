@@ -115,6 +115,30 @@ def test_lineage_rules():
         task_root.validate()
 
 
+def test_a_branch_records_its_changes_and_its_weights():
+    """BACKLOG 23: a branch names each changed setting, from the parent's value
+    to the new one, beside the exact parent, and how its weights were loaded;
+    no other operation records changes."""
+    parent = {"sha256": "p" * 64, "run": "run-a"}
+    changes = {"learning_rate": {"parent": 1e-4, "new": 1e-3}}
+    transfer = {"loaded_from_parent": ["encoder"], "initialised_new": [], "trainable": "all",
+                "optimizer": "new"}
+    _, branch = _record(operation="branch", parent={**parent, "changes": changes},
+                        weight_transfer=transfer)
+    branch.validate()
+    for broken in ({**parent}, {**parent, "changes": {}},
+                   {**parent, "changes": {"learning_rate": 1e-3}}):
+        _, record = _record(operation="branch", parent=broken, weight_transfer=transfer)
+        with pytest.raises(ModelRecordError, match="parent.changes"):
+            record.validate()
+    _, untransferred = _record(operation="branch", parent={**parent, "changes": changes})
+    with pytest.raises(ModelRecordError, match="how its parent's weights were loaded"):
+        untransferred.validate()
+    _, resumed = _record(operation="resume", parent={**parent, "changes": changes})
+    with pytest.raises(ModelRecordError, match="only a branch records changed settings"):
+        resumed.validate()
+
+
 def _trainer(tmp_path, model):
     from src.training.trainer import Trainer, TrainerConfig
 

@@ -215,11 +215,11 @@ record itself (M2, M3a, M3b).
   used for early stopping and checkpoint selection; it is not a test.
 - **No held-out test split** is generated, and no institutional holdout protocol is defined
   (BACKLOG item 11). External cohorts are measured as registered versions (Mode C, §11).
-- **Not implemented**: a separate KG pretraining stage, and *branch* training that starts from a
-  parent with changed learning settings (BACKLOG 23).
-- **Designed 2026-10-27, not implemented:**
-  - the KG pretraining stage and the `finetune` operation, built in work package A
-    (`working/scorer-retraining/README.md`; `working/PLAN_PROVENANCE_CONTRACT.md` §9);
+- **Built on the integration branch, awaiting acceptance** (`working/scorer-retraining/README.md`;
+  `working/PLAN_PROVENANCE_CONTRACT.md` §9):
+  - the KG pretraining stage and the `finetune` operation for three tasks;
+  - *branch* training, which starts from a parent with changed settings on its stage's closed list
+    (BACKLOG 23; from the CLI);
   - for new specs, the loss terms above are replaced, with their retirement listed in that README's
     §7.
 
@@ -463,8 +463,9 @@ and integration tests sit beside each module.
 **Boundaries that are easy to confuse:**
 - **A Mode C test score is not the Diagnosis page's ranking.** Mode C ranks every disease by raw
   cosine; Diagnosis serves the path-gated GNN/SP mixture of §8 until B-1.
-- **Resume and extend are done; branch training is not.** A continued run inherits every learning
-  setting (BACKLOG 23).
+- **Resume and extend are done; branch training is built for model bundles, from the CLI** (K5,
+  awaiting acceptance). A continued run inherits every learning setting. A branch changes only
+  settings on its stage's list, and records each change (BACKLOG 23).
 - **The GPU lock covers managed training and test jobs and the GPU CLIs (`train_model.py`,
   `measure_scorer.py`, `setup_demo.py --train-model`), not the resident inference service.** Training and serving do not exclude each other (BACKLOG 48).
 - **Trustworthy provenance and test records are not model quality or institutional acceptance.**
@@ -488,7 +489,7 @@ and integration tests sit beside each module.
 | **Move old checkpoints into the run layout** | `scripts/migrate_checkpoints.py` | the safe reader; M2's record check | none | CLI only | its tests | none |
 | **Training settings validation** | the API's cross-field check; per-surface limits; `src/config/training_fields.py` (read by tests only) | `routes/training.py` `cross_field_errors` | the parameters form | Partial | `test_training_fields.py` | `cross_field_errors` is called by the API route only: the page's Start relies on the form's choices, and its Continue starts from the parent's recorded settings without the check; the CLI checks neither rule and the trainer repeats the onecycle rule; two rules exist only in the page (HGT turns AMP off; compile from Settings): each is checked against its dependency and the evidence before any becomes shared, and the HGT one is contradicted by M5's acceptance, which trained HGT with AMP (R2, R4 at `b14c4de`) (BACKLOG 54) |
 | **Run housekeeping** (delete, archive, rename, tags, compare, lineage) | — | — | — | Not implemented | — | BACKLOG 31 (compare, archive), 52 (D) (lineage); tags are named in BACKLOG 23 as a prerequisite of the experiment phase; delete and rename have no item yet |
-| **Branch training** (a parent with changed learning settings) | — | — | — | Not implemented | — | BACKLOG 23 |
+| **Branch training** (a model bundle parent with changed settings on its stage's list) | `scripts/train_model.py --branch-from` | `src/utils/run_plan.py` (`plan_branch`), `src/config/recipe.py` (`branch_settings`) | none | CLI only (K5) | unit tests only; no GB10 record | no API, job runner or page yet (BACKLOG 23) |
 | **One managed GPU job at a time**: the lock, its holder, refusals naming it | the job runner; `train_model.py`, `measure_scorer.py`, `setup_demo.py --train-model` | `src/utils/gpu_lock.py`, `training_manager.py` | header chip; Training and Test GPU lines | Connected | W7, W11, RW3 at `b14c4de` | a job this backend did not start is shown and refused, and stopped by pid only (by design) |
 | **Test run start and cancel**, process-group reaping | the runner's test job | `training_manager.start_test`, `cancel_test` | Test: Start test, Cancel | Connected | W8, W10 at `b14c4de` (a start run to the end, a training stop refused meanwhile; a start refused before measuring); Start test by hand at `773dc4a`; no GB10 record of a running test cancelled or of leftover group processes ended (unit and integration tests cover them) | none |
 | **Backend stop stops its job; Restart Backend** | process signals, the systemd unit; Settings | `src/api/main.py` shutdown, `backend_control.py` | Settings: Restart Backend; stopping stays an operator action | Connected (Restart); CLI only (stop) | normal stops at `b14c4de`, `f9202b6`, `773dc4a` (no job running); no GB10 record of a Restart Backend (`tests/unit/test_backend_control.py` covers it) | no GB10 record of a stop while a job runs; a SIGKILLed backend leaves its job holding the lock |

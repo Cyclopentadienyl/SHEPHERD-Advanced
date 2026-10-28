@@ -11,6 +11,12 @@ the training service, the console's preview and the probe all go through
 `plan_continuation`; the entry point decides again on the bytes it actually
 restores, so a preview is never the check.
 
+A model bundle run given a parent to **branch** (`branch_from`, contract §9.2,
+BACKLOG 23) is planned by `plan_branch`: a new run of the parent's stage and
+task, with its weights, settings and data, changing some of the settings on
+the stage's closed list (`src.config.recipe.branch_settings`) and recording
+each change; a new optimizer, schedule and stage.
+
 **What the parent's state allows:**
 
 - an unfinished stage (`progress.end` is `None` or `"paused"`) is resumed:
@@ -28,8 +34,8 @@ Each refusal says why. Nothing falls back to training from scratch.
 `TrainConfig` field outside `OPERATIONAL_FIELDS` takes the parent's recorded
 value (`config.requested`). A field the operator set explicitly to another
 value is refused, never ignored; one left at its default is inherited and shown
-in the plan. Changing settings from a parent is a branch, which M3 does not
-build (BACKLOG item 23).
+in the plan. Changing settings from a parent is a branch (`plan_branch`), and
+only the settings on its closed list.
 
 **Provenance and mode rules stay apart.** Whether the parent was trained on
 this workspace's data and graph is M2.3's check (`train_model.check_resume_
@@ -51,6 +57,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Collection, Dict, List, Mapping, Optional
 
+from src.config.recipe import branch_settings
 from src.utils.checkpoint_io import CHECKPOINT_RECORD_VERSION
 
 #: Fields that say where a run reads and writes, how it is run on this host, or
@@ -60,9 +67,9 @@ OPERATIONAL_FIELDS = frozenset({
     "data_dir", "config_file", "run_name", "run_dir", "resume_from",
     "device", "num_workers", "compile",
     "pause_after_epoch", "extend_epochs", "extend_lr",
-    # The model bundle path: a finetune's parent is in its model record, not
-    # a setting a continued run inherits.
-    "finetune_from",
+    # The model bundle path: a finetune's or a branch's parent is in its model
+    # record, not a setting a continued run inherits.
+    "finetune_from", "branch_from",
 })
 
 
@@ -99,6 +106,23 @@ class ContinuationPlan:
     best_k: List[Dict[str, Any]] = field(default_factory=list)
     #: The parent's callback state as recorded.
     callbacks: Optional[Dict[str, Any]] = None
+
+
+@dataclass(frozen=True)
+class BranchPlan:
+    """What a branch of a parent does (`plan_branch`).
+
+    `settings` is the whole configuration the run uses: the parent's learning
+    settings, the request's changes and its operational fields. `inherited`
+    lists the settings taken from the parent that the request did not set;
+    `changes` each changed setting as ``{"parent": old, "new": new}``, as the
+    record keeps them (`parent.changes`).
+    """
+
+    action: str
+    settings: Dict[str, Any]
+    inherited: Dict[str, Any]
+    changes: Dict[str, Dict[str, Any]]
 
 
 def _same(a: Any, b: Any) -> bool:
@@ -157,21 +181,7 @@ def plan_continuation(
         RunPlanRefused: with the reason and the remedy.
     """
     where = f"The parent {parent_path.name}"
-    if (isinstance(parent, Mapping) and record_version != CHECKPOINT_RECORD_VERSION
-            and parent.get("record_version") != record_version):
-        # The model bundle path (record version 2, contract §9.3 hazard 1): a
-        # parent written before the model spec, or by another path, is not
-        # continued across the boundary.
-        raise RunPlanRefused(
-            f"{where} was written before the model spec (record version "
-            f"{parent.get('record_version')!r}, not {record_version}); its spec cannot be "
-            "known without guessing. Start a new run.")
-    if not isinstance(parent, Mapping) or parent.get("record_version") != record_version:
-        raise RunPlanRefused(
-            f"{where} holds no training state this version can continue: it was written "
-            "before contract M3a's checkpoint record, so its schedule, progress and "
-            "callback state are unknown. Start a new run; to keep its weights as a "
-            "reference, serve or measure it by path.")
+    _check_record_version(parent, record_version, where)
     if parent.get("checkpoint_kind") != "training_state":
         weights_from = parent.get("weights_from") or {}
         raise RunPlanRefused(
@@ -213,7 +223,7 @@ def plan_continuation(
     else:
         raise RunPlanRefused(f"{where} records an unknown end state {end!r}.")
 
-    settings, inherited = _inherit_settings(parent, request, explicit, where)
+    settings, inherited, _ = _inherit_settings(parent, request, explicit, where)
     _check_amp_takes_effect_alike(parent, settings, device, where)
     if mode == "resume" and request.get("extend_lr") is not None:
         raise RunPlanRefused("extend_lr applies only when extending a finished stage.")
@@ -252,10 +262,79 @@ def plan_continuation(
     )
 
 
+def _check_record_version(parent: Any, record_version: int, where: str) -> None:
+    if (isinstance(parent, Mapping) and record_version != CHECKPOINT_RECORD_VERSION
+            and parent.get("record_version") != record_version):
+        # The model bundle path (record version 2, contract §9.3 hazard 1): a
+        # parent written before the model spec, or by another path, is not
+        # continued across the boundary.
+        raise RunPlanRefused(
+            f"{where} was written before the model spec (record version "
+            f"{parent.get('record_version')!r}, not {record_version}); its spec cannot be "
+            "known without guessing. Start a new run.")
+    if not isinstance(parent, Mapping) or parent.get("record_version") != record_version:
+        raise RunPlanRefused(
+            f"{where} holds no training state this version can continue: it was written "
+            "before contract M3a's checkpoint record, so its schedule, progress and "
+            "callback state are unknown. Start a new run; to keep its weights as a "
+            "reference, serve or measure it by path.")
+
+
+def plan_branch(
+    parent: Mapping[str, Any],
+    parent_path: Path,
+    request: Mapping[str, Any],
+    explicit: Collection[str],
+    *,
+    device: str,
+    record_version: int,
+) -> BranchPlan:
+    """Decide a branch of `parent` (contract §9.2, BACKLOG 23): a new run of
+    the parent's stage and task, from its weights, with every setting of the
+    parent's but those the request changes, each on the closed list of the
+    parent's stage and task (`branch_settings`), and at least one.
+
+    The parent's end state does not matter: a finished, early-stopped, paused
+    or running run may be branched, since nothing of its progress continues.
+    It must record the settings it trained with (a training-state checkpoint;
+    a weights-only file records none), and an extension is not a branch.
+
+    Raises:
+        RunPlanRefused: with the reason and the remedy.
+    """
+    where = f"The parent {parent_path.name}"
+    _check_record_version(parent, record_version, where)
+    if parent.get("checkpoint_kind") != "training_state":
+        raise RunPlanRefused(
+            f"{where} holds weights only, without the settings a branch keeps and changes. "
+            "Choose a training-state checkpoint of its run (last.pt or a top-k file).")
+    if request.get("extend_epochs") or request.get("extend_lr") is not None:
+        raise RunPlanRefused(
+            "extend_epochs and extend_lr extend a finished run at a fixed rate, with every "
+            "setting kept; a branch starts a new run. Give one of them, not both.")
+    changeable = branch_settings(parent.get("learning_stage"), parent.get("task"))
+    settings, inherited, changes = _inherit_settings(parent, request, explicit, where,
+                                                     changeable=changeable)
+    if not changes:
+        raise RunPlanRefused(
+            f"A branch changes at least one setting of its parent ({', '.join(sorted(changeable))}), "
+            "and this request changes none. To continue the parent with its settings, resume "
+            "it (resume_from).")
+    if not {"use_amp", "amp_dtype"} & set(changes):
+        _check_amp_takes_effect_alike(parent, settings, device, where)
+    shown = "; ".join(f"{name} {change['parent']!r} -> {change['new']!r}"
+                      for name, change in sorted(changes.items()))
+    return BranchPlan(action=f"Branch {parent_path.name}: {shown}", settings=settings,
+                      inherited=inherited, changes=changes)
+
+
 def _inherit_settings(
     parent: Mapping[str, Any], request: Mapping[str, Any], explicit: Collection[str],
-    where: str,
-) -> "tuple[Dict[str, Any], Dict[str, Any]]":
+    where: str, *, changeable: Collection[str] = frozenset(),
+) -> "tuple[Dict[str, Any], Dict[str, Any], Dict[str, Dict[str, Any]]]":
+    """The parent's learning settings with the request's operational fields:
+    `(settings, inherited, changes)`. A setting set explicitly to another value
+    is a change when `changeable` names it (a branch), and refused otherwise."""
     recorded = (parent.get("config") or {}).get("requested")
     if not isinstance(recorded, Mapping):
         raise RunPlanRefused(
@@ -269,6 +348,7 @@ def _inherit_settings(
 
     settings = dict(request)
     inherited: Dict[str, Any] = {}
+    changes: Dict[str, Dict[str, Any]] = {}
     conflicts: List[str] = []
     missing: List[str] = []
     for name in request:
@@ -279,7 +359,10 @@ def _inherit_settings(
             continue
         value = recorded[name]
         if name in explicit and not _same(request[name], value):
-            conflicts.append(f"{name}: the parent's {value!r}, requested {request[name]!r}")
+            if name in changeable:
+                changes[name] = {"parent": value, "new": request[name]}
+            else:
+                conflicts.append(f"{name}: the parent's {value!r}, requested {request[name]!r}")
             continue
         settings[name] = value
         if name not in explicit:
@@ -288,13 +371,18 @@ def _inherit_settings(
         raise RunPlanRefused(
             f"{where} does not record {', '.join(sorted(missing))}, so the run cannot "
             "inherit them.")
+    if conflicts and changeable:
+        raise RunPlanRefused(
+            f"A branch keeps every setting of its parent but those on its list "
+            f"({', '.join(sorted(changeable))}); this request changes others: "
+            + "; ".join(conflicts) + ".")
     if conflicts:
         raise RunPlanRefused(
             f"{where} was trained with other settings than this request sets explicitly: "
             + "; ".join(conflicts) + ". A continued run keeps every learning setting of "
-            "its parent; remove these to inherit them. Starting from a parent with "
-            "changed settings (a branch) is not available yet.")
-    return settings, inherited
+            "its parent; remove these to inherit them, or branch the parent (branch_from) "
+            "to change settings on a model bundle's list.")
+    return settings, inherited, changes
 
 
 def _check_amp_takes_effect_alike(
@@ -425,9 +513,11 @@ def _locate_best_weights(
 
 
 __all__ = [
+    "BranchPlan",
     "ContinuationPlan",
     "OPERATIONAL_FIELDS",
     "RunPlanRefused",
+    "plan_branch",
     "plan_continuation",
     "resolve_recorded_file",
 ]

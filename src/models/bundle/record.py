@@ -79,6 +79,20 @@ class ModelRecord:
             raise ModelRecordError("a finetune operation produces a finetune spec")
         if self.operation == "new" and self.learning_stage != "base":
             raise ModelRecordError("a new run is a base; a task model comes from finetune")
+        changes = (self.parent or {}).get("changes")
+        if self.operation == "branch":
+            # BACKLOG 23: a branch is its parent with the recorded changes,
+            # each from the parent's value to the new one, its weights loaded.
+            if not (isinstance(changes, dict) and changes and all(
+                    isinstance(c, dict) and set(c) == {"parent", "new"}
+                    for c in changes.values())):
+                raise ModelRecordError("a branch records each setting it changed as "
+                                       "parent.changes {name: {parent, new}}")
+            if self.weight_transfer is None:
+                raise ModelRecordError("a branch records how its parent's weights were loaded")
+        elif changes is not None:
+            raise ModelRecordError(f"only a branch records changed settings, not a "
+                                   f"{self.operation} run")
         return self
 
     def to_payload(self) -> Dict[str, Any]:

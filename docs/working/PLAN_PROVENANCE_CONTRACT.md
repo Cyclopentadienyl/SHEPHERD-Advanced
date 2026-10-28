@@ -4042,9 +4042,9 @@ These come in addition to `record_version`, `producer`, `environment`, `training
 | `learning_stage` | `base` or `finetune` | `new` (base) and `finetune`; inherited by `resume`, `extend` and `branch` |
 | `task` | None for a base; `disease`, `gene` or `patients_like_me` | `finetune`; inherited |
 | `operation` | `new`, `resume`, `extend`, `branch` or `finetune` | the operation that produced the run |
-| `parent` | The SHA-256 of the exact parent checkpoint file, and the parent run. It generalises today's `training_input_digests.resume_checkpoint` | every operation but `new` |
+| `parent` | The SHA-256 of the exact parent checkpoint file, and the parent run. It generalises today's `training_input_digests.resume_checkpoint`. A branch adds `changes`: each changed setting, `{parent, new}` | every operation but `new` |
 | `family_id` | The id of the root run (the one whose operation is `new`), inherited unchanged. Not the seed, and not a dataset digest plus seed | every operation |
-| `weight_transfer` | Per parameter group: loaded from the parent or initialised new, trainable or frozen | `finetune`, and any operation that loads weights |
+| `weight_transfer` | Per parameter group: loaded from the parent or initialised new, trainable or frozen. A branch loads every part, strictly | `finetune` and `branch`, and any operation that loads weights |
 | Data roles | The digests of the KG, the graph view (its rule and result, and the stable node mapping) and the edge split artifact; the base's train, validation and test edge roles; a finetune's task data artifacts (train and validation roles) and, for patients-like-me, the reference cohort version; derived tables (SP distances, the augmentation neighbour table) by digest. R10 takes the union of the roles it can verify (§8, question 3) | every operation |
 | `graph_exposure` | For each stage: the message-passing graph, the supervision edges and the SP graph it saw. Base: training edges for message passing in training and LP validation. Finetune: training edges in training; the full view in validation, task tests and serving | every operation |
 | Loss identity | Term names, `task_loss_weight` and `lp_loss_weight`, versions | every operation |
@@ -4066,6 +4066,10 @@ learning stage never reuses that name.
 
 - **Accepted as a finetune parent:** an early-stopped or weights-only base. It is still refused as a
   resume parent, and `run_plan`'s refusals for resume are unchanged.
+- **A qualified branch parent** (as built at K5, `run_plan.plan_branch`) is a training-state
+  checkpoint with a model record, of the branch's stage and task, trained on the same data, view
+  and split. Any end state qualifies, since nothing of its progress continues. A weights-only file
+  is refused: it records no settings.
 - **Refused as a finetune parent:**
   - a weights-only file **without** a `model_spec`, since nothing is guessed from weight names;
   - a finetune checkpoint, since children never chain.
