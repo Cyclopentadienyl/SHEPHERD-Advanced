@@ -103,3 +103,49 @@ def test_gene_lookup_maps_ids_and_unique_symbols_only():
     assert "ABC" not in lookup
     assert lookup["XYZ"] == lookup["disgenet:3"]
     assert {"disgenet:1", "clinvar:2", "disgenet:3"} <= set(lookup)
+
+
+_ROW = {"phenotype_ids": [0], "disease_id": 0, "gene_ids": [0]}
+
+
+@pytest.mark.parametrize("row", [
+    {"patient_id": "partly-mapped", "causal_gene_ids": [0], "causal_genes_listed": 2},
+    {"patient_id": "unmapped", "causal_gene_ids": [], "causal_genes_listed": 1},
+    {"patient_id": "both", "causal_gene_ids": [], "causal_genes_unmapped": ["GENE_X"],
+     "causal_genes_listed": 1},
+], ids=["partly-mapped", "unmapped", "beside-its-replacement"])
+def test_a_gene_read_refuses_the_retired_count_even_with_the_right_digest(tmp_path, row):
+    """Recheck of d7221f4: the retired `causal_genes_listed` (a count, which
+    cannot say which genes two patients share) is refused by the reader of
+    the gene fields, alone or beside `causal_genes_unmapped`, never read past;
+    the version is re-imported from its source."""
+    import hashlib
+
+    from src.kg.storage.file_storage import read_samples_file
+
+    path = tmp_path / "samples.json"
+    path.write_text(json.dumps([{**_ROW, **row}]))
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    with pytest.raises(ValueError, match="retired field 'causal_genes_listed'.*Re-import"):
+        read_samples_file(path, gene_fields=True, expected_sha256=digest)
+
+
+def test_the_current_gene_fields_and_rows_without_them_read_as_before(tmp_path):
+    """The controls: the importer's current form, and a row with no gene
+    field, read unchanged; a read that takes no gene field (the disease task,
+    measurement's defaults) reads no gene truth, so it ignores every gene
+    field, retired or not."""
+    from src.kg.storage.file_storage import read_samples_file
+
+    path = tmp_path / "samples.json"
+    rows = [{**_ROW, "patient_id": "new", "causal_gene_ids": [],
+             "causal_genes_unmapped": ["GENE_X"]},
+            {"patient_id": "plain", "phenotype_ids": [0], "disease_id": 0}]
+    path.write_text(json.dumps(rows))
+    new, plain = read_samples_file(path, gene_fields=True).samples
+    assert new.causal_genes_unmapped == ["GENE_X"] and new.causal_gene_ids == []
+    assert plain.causal_gene_ids is None and plain.causal_genes_unmapped is None
+    path.write_text(json.dumps([{**_ROW, "patient_id": "old", "causal_gene_ids": [0],
+                                 "causal_genes_listed": 2}]))
+    (old,) = read_samples_file(path).samples
+    assert old.patient_id == "old" and old.causal_gene_ids is None

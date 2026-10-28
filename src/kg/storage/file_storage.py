@@ -297,6 +297,8 @@ def read_samples_file(
         entries, identity = _read_json(path, expected)
     except FileNotFoundError as exc:
         raise FileNotFoundError(f"Samples file not found: {path}") from exc
+    if gene_fields:
+        _refuse_retired_gene_fields(path, entries, identity)
     # A file that is JSON but not a list of sample rows is refused under its
     # name too: without `expected_sha256`, the entry point compares digests only
     # after this parse.
@@ -318,6 +320,32 @@ def read_samples_file(
     _refuse_non_integer_ids(path, samples, identity)
     _refuse_phenotype_repeats(path, samples, identity)
     return SamplesRead(samples, identity)
+
+
+#: Retired forms of the declared causal-gene truth, and what replaced each. A
+#: reader of the gene fields refuses them: read past, the truth they carried
+#: would be lost, and none of it can be recovered from them.
+RETIRED_GENE_FIELDS = {"causal_genes_listed": "causal_genes_unmapped"}
+
+
+def _refuse_retired_gene_fields(path: Path, entries: Any, identity: ReadIdentity) -> None:
+    """Refuse a row carrying a retired gene field, alone or beside its
+    replacement. `causal_genes_listed` counted the declared causal genes that
+    name no single gene of the graph, and a count cannot say which genes two
+    patients share; the version is re-imported from its source, which writes
+    the identifiers."""
+    for index, entry in enumerate(entries if isinstance(entries, list) else ()):
+        if not isinstance(entry, dict):
+            continue  # the row parser refuses it, under its own message
+        for field, replacement in RETIRED_GENE_FIELDS.items():
+            if field in entry:
+                raise UnparseableFile(
+                    f"{path}: sample {index} (patient {entry.get('patient_id')!r}) carries "
+                    f"the retired field {field!r}, whose truth cannot be read back from it. "
+                    f"Re-import the cohort from its source (scripts/import_cohort.py), "
+                    f"which writes {replacement!r}; nothing is guessed from the old field",
+                    identity=identity, what="a samples file with integer ids",
+                )
 
 
 def _expected_digests(

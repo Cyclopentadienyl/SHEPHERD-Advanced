@@ -552,7 +552,9 @@ computation below; there is no distance file of either kind.
 - **Denominators:** a case's assessable positives are the causal genes it lists, in the view or not
   (F9, E5). The importer keeps the declared causal genes that name no single gene of the graph
   as their normalised identifiers (`causal_genes_unmapped`: stripped, upper-case, each once), so
-  such a case stays assessable. A case declaring no causal gene is no reliable truth (E4). A task
+  such a case stays assessable. The retired count (`causal_genes_listed`) is refused by every read
+  of the gene fields, alone or beside its replacement; such a version is re-imported from its
+  source. A case declaring no causal gene is no reliable truth (E4). A task
   measurement in which no case binds, or a patients-like-me cohort with no declared causal gene,
   is refused before anything is written (E6).
 - **Patients-like-me:** batches seed every member's phenotypes, causal genes, candidate genes
