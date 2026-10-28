@@ -22,14 +22,15 @@ version's usage history by the shared Load, `model_list._record_usage`).
 **Task and order (README §8: "Models with the family and a task filter").**
 The Task select (All, Base, Disease, Gene, Patients-like-me, History) is the
 shared list's one filter vocabulary (`model_list.TASK_FILTERS`); a file whose
-record was refused or not read is listed under All only. Newest first under
-All adds a Kind column (`renderers.record_kind_text`). By family draws the
-families of the listing's family view (`model_list.family_views`, from the one
-listing), each parent before its children, with a Lineage column (the kind,
-the operation and the exact parent file, indented by depth; a task's base kept
-as a context row; a parent that is not available said in amber, "▲ parent
-unavailable: …"), and under All the history files and the records not
-readable as two groups after them. By test score keeps its policy (Mode C
+record was refused or not read is listed under All only. Every row says what
+its file is (the shared list's first line, `renderers.record_kind_text`),
+under every order. By family draws the families of the listing's family view
+(`model_list.family_views`, from the one listing), each parent before its
+children, with a Lineage column (the operation and the exact parent file,
+indented by depth; a task's base kept as a context row; a parent that is not
+available said in amber, "▲ parent unavailable: …"), and under All the
+history files, the records not read and the records not readable as groups
+after them. By test score keeps its policy (Mode C
 records only, below); task records are shown in the detail with their own
 metrics (`RECORD_COLUMNS`), and ordering by them is the owner's open item.
 Load is refused for a base, a history file or a record not readable before
@@ -176,12 +177,11 @@ TASK_CHOICES = [(ml.FILTER_WORDS[name][0], name)
 ALL_TASKS = "all"
 RECORDS, USAGE = "records", "usage"
 
-#: By family's groups and extra column; Newest first's column under All.
+#: By family's groups and extra column (the files whose record was refused,
+#: or never read, are each grouped under their own `record_kind_text` word).
 FAMILY_TITLE = "Family from run {run} · {count} file{s}"
 GROUP_HISTORY = "History · listed, never run"
-GROUP_REFUSED = "Record not readable"
 LINEAGE_COLUMN = "Lineage"
-KIND_COLUMN = "Kind"
 FAMILY_NOT_READ = "the family view was not read with this list"
 #: A model record's operation (`record.OPERATIONS`) as the lineage says it.
 OPERATION_WORDS = {"new": "New run", "resume": "Resumed run", "extend": "Extended run",
@@ -209,7 +209,7 @@ GROUP_UNCHECKED = "Contested status cannot be checked · not ordered"
 GROUP_NOT_COMPARED = "Not compared on this version · not ordered"
 GROUP_NOT_TESTED = "Not tested on this cohort version · newest first"
 #: Every shown checkpoint is placed in a group; one that is not was listed
-#: after the page last read its records (another workspace just chosen).
+#: after the page last read its records.
 GROUP_UNREAD = "Records not read yet · newest first"
 
 LOAD_NOTE = ("Reloads the pipeline and asks once, from → to, as Change model does. Results "
@@ -246,15 +246,14 @@ _RELATION_SHORT = {"cohort_graph": "cohort↔graph"}
 PAGE_HELP = {
     "models-ordering": (
         "Order",
-        "How the list is ordered; the Task select chooses which rows.\n"
+        "How the list is ordered; the Task select chooses the rows.\n"
         "• Newest first: latest run first.\n"
-        "• By family: each base, then the models finetuned from it.\n"
-        "• By test score: one Mode C metric of the recorded results on one cohort version "
-        "and one scoring semantics (D4); Mode D and task records are shown, never ordered. "
-        "Offered only for a role in SHEPHERD_ORDERING_ROLES, never institutional_acceptance.\n"
+        "• By family: each base, then its finetuned models.\n"
+        "• By test score: one Mode C metric, within one cohort version and scoring semantics; "
+        "Mode D and task records are shown, never ordered.\n"
         "One record per checkpoint by a fixed rule (its first registered deterministic record, "
-        "else its first); a contested record is not ordered and never replaced. No model is "
-        "ever chosen automatically by a test score.",
+        "else its first); a contested record is never ordered or replaced. No model is chosen "
+        "automatically by a test score.",
     ),
     "models-regime": (
         "Regime",
@@ -1144,11 +1143,13 @@ def parent_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]]) -> st
 
 
 def lineage_cell_html(item: Mapping[str, Any], row: Mapping[str, Any]) -> str:
-    """A row's Lineage cell in By family: its kind, then its operation and the
-    exact parent file (or that the parent is not available, in amber, or that
-    it is only a context row), indented by its depth in the family."""
+    """A row's Lineage cell in By family: its operation and the exact parent
+    file (or that the parent is not available, in amber, or that it is only a
+    context row), indented by its depth in the family; "—" for a file with no
+    lineage (history, a record not read). Its kind is the row's own line (the
+    shared list's Model cell)."""
     depth = min(int(row.get("depth") or 0), 3)
-    lines = [f'<div class="shep-w600">{r.e(r.record_kind_text(item))}</div>']
+    lines = []
     operation = item.get("operation")
     sha = item.get("parent_sha256")
     if operation and r.is_digest(sha):
@@ -1166,16 +1167,18 @@ def lineage_cell_html(item: Mapping[str, Any], row: Mapping[str, Any]) -> str:
     if row.get("context"):
         lines.append('<div class="shep-sub shep-mp-ctx"><span aria-hidden="true">○</span> '
                      'Context: parent of a shown file</div>')
-    return f'<div class="shep-mp-lin shep-mp-d{depth}">{"".join(lines)}</div>'
+    body = "".join(lines) or '<span class="shep-muted">—</span>'
+    return f'<div class="shep-mp-lin shep-mp-d{depth}">{body}</div>'
 
 
 def family_view(listing: Mapping[str, Any], task: str) -> Optional[Dict[str, Any]]:
     """By family's rows for the Task filter, from the listing's family view
     (`model_list.family_views`, one listing): ``keys`` (context rows
     included), ``groups`` (one per family, parent first, in the view's order;
-    under All the history files and the records not readable after them;
-    History is its group alone) and the Lineage ``cells``. None when the
-    listing carries no family view."""
+    under All the history files, then the files whose record was not read and
+    those whose record is not readable, each group under its own
+    `record_kind_text` word; History is its group alone) and the Lineage
+    ``cells``. None when the listing carries no family view."""
     views = listing.get("family")
     if not isinstance(views, Mapping) or "all" not in views:
         return None
@@ -1183,27 +1186,33 @@ def family_view(listing: Mapping[str, Any], task: str) -> Optional[Dict[str, Any
     if task == "history":
         rows = [row for row in rows if row.get("group") == "history"]
     items = {ml.item_key(i): i for i in listing.get("items") or []}
-    groups: List[Dict[str, Any]] = []
+    groups: Dict[Tuple[Any, Any], Dict[str, Any]] = {}
     cells: Dict[str, str] = {}
-    current: Optional[Tuple[str, Any]] = None
     for row in rows:
         key = row.get("key")
         if key not in items:
             continue
-        group = (row.get("group"), row.get("family_id") if row.get("group") == "family" else None)
-        if group != current:
-            current = group
-            groups.append({"group": group, "keys": []})
-        groups[-1]["keys"].append(key)
+        kind = row.get("group")
+        if kind == "family":
+            name = row.get("family_id")
+        elif kind == "history":
+            name = None
+        else:
+            # The server groups every file without a usable record as
+            # "refused"; a record never read and a record refused say
+            # different things (skill §6), each under its own word.
+            name = r.record_kind_text(items[key])
+        group = (kind, name)
+        groups.setdefault(group, {"group": group, "keys": []})["keys"].append(key)
         cells[key] = lineage_cell_html(items[key], row)
-    for group in groups:
-        kind, family = group.pop("group")
+    for group in groups.values():
+        kind, name = group.pop("group")
         count = len(group["keys"])
-        group["title"] = (FAMILY_TITLE.format(run=(r.run_started(family) or family), count=count,
+        group["title"] = (FAMILY_TITLE.format(run=(r.run_started(name) or name), count=count,
                                               s="s" if count != 1 else "")
-                          if kind == "family" else GROUP_HISTORY if kind == "history"
-                          else GROUP_REFUSED)
-    return {"keys": [key for group in groups for key in group["keys"]], "groups": groups,
+                          if kind == "family" else GROUP_HISTORY if kind == "history" else name)
+    ordered = list(groups.values())
+    return {"keys": [key for group in ordered for key in group["keys"]], "groups": ordered,
             "cells": cells}
 
 
@@ -1228,9 +1237,9 @@ def shape(listing: Mapping[str, Any], data: Mapping[str, Any], ctl: Mapping[str,
           ) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
     """The shared list's ``view`` and ``ordering`` for these controls.
 
-    Newest first: the Task filter and the Load note, and under All a Kind
-    column. By family: the families' groups and rows (`family_view`) with
-    their Lineage column. By test score: the groups in D4's order (the ordered
+    Newest first: the Task filter and the Load note (each row's kind is the
+    shared list's own line). By family: the families' groups and rows
+    (`family_view`) with their Lineage column. By test score: the groups in D4's order (the ordered
     rows, each checkpoint's listed keys in the listing's order; then contested;
     then those whose contested status cannot be checked; then not compared;
     then not tested, newest first), the Mode C column with each row's value,
@@ -1240,9 +1249,6 @@ def shape(listing: Mapping[str, Any], data: Mapping[str, Any], ctl: Mapping[str,
         return {"note": ""}, None
     task = ctl.get("task") or ALL_TASKS
     newest: Dict[str, Any] = {"task": task, "note": LOAD_NOTE}
-    if task == ALL_TASKS:
-        newest.update(column=KIND_COLUMN, cells={
-            ml.item_key(i): r.e(r.record_kind_text(i)) for i in listing.get("items") or []})
     if ctl.get("order") == BY_FAMILY:
         family = family_view(listing, task)
         if family is None:
@@ -2132,11 +2138,9 @@ __all__ = [
     "GROUP_HISTORY",
     "GROUP_NOT_COMPARED",
     "GROUP_NOT_TESTED",
-    "GROUP_REFUSED",
     "GROUP_UNCHECKED",
     "GROUP_UNREAD",
     "INDEPENDENCE_NOTE",
-    "KIND_COLUMN",
     "LINEAGE_COLUMN",
     "LOAD_NOTE",
     "LOAD_NOTE_ORDERED",

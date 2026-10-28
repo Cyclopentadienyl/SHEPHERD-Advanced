@@ -372,6 +372,36 @@ def test_the_identity_refuses_a_scoring_mode_outside_its_vocabulary():
                             scoring_mode="gnn")
 
 
+def test_each_scoring_mode_is_served_with_exactly_the_sp_state_its_one_table_names():
+    """`SCORING_MODE_SP_STATES` is the one rule (the pipeline builds from it,
+    the WebUI's reload confirmation says it before a load): every mode has a
+    state, and the identity accepts that state and refuses every other, so a
+    change of the rule is a change of this table alone."""
+    from src.core.types import (
+        SCORING_MODE_SP_STATES,
+        SERVED_SCORING_MODES,
+        SERVED_SHORTEST_PATHS_STATES,
+    )
+
+    assert set(SCORING_MODE_SP_STATES) == set(SERVED_SCORING_MODES)
+    assert SCORING_MODE_SP_STATES["gene_task"] == "computed"
+    tables = {**TABLES, "computed": ServedShortestPaths(state="computed")}
+    for mode in SERVED_SCORING_MODES:
+        checkpoint = "absent" if mode == "path_reasoning_fallback" else "verified"
+        for state in SERVED_SHORTEST_PATHS_STATES:
+            def build(mode=mode, checkpoint=checkpoint, state=state):
+                return ServedIdentity(
+                    scoring_mode=mode, checkpoint=CHECKPOINTS[checkpoint],
+                    graph=GRAPHS["verified"], shortest_paths=tables[state],
+                    dataset_record=RECORDS["verified"],
+                    settings=SETTINGS_NO_MODEL if checkpoint == "absent" else SETTINGS_WITH_MODEL)
+            if state == SCORING_MODE_SP_STATES[mode]:
+                assert build().shortest_paths.state == state
+            else:
+                with pytest.raises(ValueError, match="contradicts a shortest-path table"):
+                    build()
+
+
 @pytest.mark.parametrize("case", sorted(LEGAL))
 def test_every_combination_a_pipeline_builds_is_accepted_and_round_trips(case):
     """The rules refuse contradictions, not the states a pipeline really serves.

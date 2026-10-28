@@ -220,9 +220,10 @@ def test_an_operator_lists_the_serving_workspace_with_in_use_pinned(root, servin
     assert "disease_cccccc" in older and "Show older runs" not in older
     research = ml.list_html(listing, None, ml.PRESETS["research"])
     assert "disease_cccccc" in research and 'In use (Diagnosis)<' in research
+    # The drawer's own rule is its scope, not a filter it names: no "· Task
+    # models only, of 9 listed" (the 9 would count files it never shows).
     assert ml.count_line(listing, ml.PRESETS["clinical"], False) == (
-        "newest first · latest 4 runs · 5 checkpoints (of 6 in 5 runs) · Task models only, "
-        "of 9 listed")
+        "newest first · latest 4 runs · 5 checkpoints (of 6 in 5 runs)")
 
 
 def test_in_use_is_matched_by_the_full_fingerprint_only(root, serving, monkeypatch):
@@ -580,6 +581,25 @@ def test_a_workspace_sp_table_never_changes_a_task_models_to_side(root, serving,
                                                            root, served="model-12.pt")))))
     assert len(sent) == 1 and ml.TO_CHANGED not in step.confirm_html
     assert "Reloaded." in step.confirm_html and sent[0].task == "disease"
+
+
+def test_the_to_sides_sp_state_is_the_served_identitys_one_rule(root, serving, monkeypatch):
+    """The SP state the To column says for a task model is the one its scoring
+    mode is served with (`core.types.SCORING_MODE_SP_STATES`, the rule
+    `ServedIdentity` checks and the pipeline builds from), read from that one
+    table and never from a copy: a change of the rule changes what the
+    confirmation says, so reloading the same model never marks its SP row
+    changed."""
+    from src.core import types
+
+    listing = _listing(root, monkeypatch)
+    item = ml.find_item(listing, _key("model-12.pt"))
+    for task, mode in types.TASK_SCORING_MODES.items():
+        side = ml._to_side({**item, "task": task}, "demo", root["workspace"], [])
+        assert (side["mode"], side["sp"]) == (mode, types.SCORING_MODE_SP_STATES[mode])
+    monkeypatch.setitem(types.SCORING_MODE_SP_STATES, "patients_like_me", "computed")
+    side = ml._to_side({**item, "task": "patients_like_me"}, "demo", root["workspace"], [])
+    assert side["sp"] == "computed"
 
 
 def test_a_list_read_earlier_is_caught_when_load_is_asked(root, serving, monkeypatch):
@@ -969,6 +989,16 @@ def test_a_pages_view_orders_filters_and_adds_a_column(root, serving, monkeypatc
     # A view's explicit rows (a family view's, its context rows included).
     rows = ml.shown_items(listing, {"task": "disease", "keys": [_key("base.pt"), first]})
     assert [ml.item_key(i) for i in rows] == [first, _key("base.pt")]
+    # Its count says the filter's rows and the context rows apart: the base
+    # shown as the parent of the disease models is never counted as one, and
+    # the line never says "Disease only" beside it.
+    family = [_key(name) for name in ("base.pt", "model-12.pt", "model-08.pt", "model-05.pt",
+                                      "model-01.pt")]
+    view = {"task": "disease", "keys": family,
+            "groups": [{"title": "Family from run 2026-10-01 00:00 · 5 files", "keys": family}]}
+    assert ml.count_line(listing, ml.PRESETS["research"], False, view) == (
+        "in the groups below · 4 checkpoints in 3 runs · Disease, with 1 context row, of 9 "
+        "listed")
 
 
 def test_one_filter_vocabulary_and_the_drawer_lists_task_models_only(root, serving, monkeypatch):
@@ -1002,6 +1032,13 @@ def test_one_filter_vocabulary_and_the_drawer_lists_task_models_only(root, servi
         "no checkpoint shown · Gene only, of 8 listed")
     assert ml.count_line(listing, research, False, {"task": "patients_like_me"}).endswith(
         "· Patients-like-me only, of 9 listed")
+    # The drawer's task filter is counted against what the drawer lists (its
+    # six task models), never against the bases and history files it hides;
+    # asking for every row it shows names no filter at all.
+    assert ml.count_line(listing, clinical, False, {"task": "disease"}) == (
+        "newest first · 4 checkpoints in 3 runs · Disease only, of 6 listed")
+    assert ml.count_line(listing, clinical, False, {"task": "task_models"}) == ml.count_line(
+        listing, clinical, False, {"task": "all"}) == ml.count_line(listing, clinical, False)
 
 
 def test_the_list_redraws_when_the_page_changes_its_view(root, serving, monkeypatch):
@@ -1054,6 +1091,80 @@ def test_the_research_load_is_off_for_a_base_or_history_row_with_its_reason(
     by = dict(zip(map(id, handle.refresh["outputs"]), refreshed, strict=True))
     assert by[id(handle.load_button)]["interactive"] is False
     assert ml.BASE_REFUSAL in by[id(handle.reason)]
+
+
+def test_a_view_shaped_for_another_workspace_never_hides_this_workspaces_rows(
+        root, serving, monkeypatch):
+    """Choosing another workspace redraws the list (the shared refresh) with
+    the page's view before the page shapes a new one. What a view names by key
+    (a family view's rows, its groups and cells) was read from one workspace's
+    listing, so on another workspace's listing it is left out and the view's
+    filter, column and note apply: never "No checkpoint is listed in this
+    workspace." over a workspace that holds checkpoints, nor another
+    workspace's family titles. The same workspace's listing (the refresh after
+    a Load) keeps the view whole."""
+    from src.webui.shell import standalone_context
+
+    with gr.Blocks() as demo:
+        ctx = standalone_context(demo)
+        handle = ctx.create_model_list("research")
+    elsewhere = "gatv2/20260901-000000_base_ffffff/base.pt"
+    family = {"task": "disease", "keys": [elsewhere],
+              "groups": [{"title": "Family from run 2026-09-01 00:00 · 1 file",
+                          "keys": [elsewhere]}],
+              "column": "Lineage", "cells": {elsewhere: "New run"}, "note": "Reloads."}
+    operator_mode(monkeypatch)
+
+    def refresh(view, previous):
+        out = handle.refresh["fn"]("demo", False, view, previous, None, gradio_request())
+        return dict(zip(map(id, handle.refresh["outputs"]), out, strict=True))
+
+    by = refresh(family, {**ml.empty_listing(), "workspace": "other"})
+    rows = by[id(handle.rows)]
+    for name in ("model-12.pt", "model-08.pt", "model-05.pt", "model-01.pt"):
+        assert f'data-key="{_key(name)}"' in rows, name
+    assert "Family from run" not in rows and ">Lineage</th>" in rows
+    assert by[id(handle.count)] == (
+        "newest first · 4 checkpoints in 3 runs · Disease only, of 9 listed")
+    assert by[id(handle.note)] == '<span class="shep-note">Reloads.</span>'
+    # The same workspace: the view's own rows and groups.
+    listing = by[id(handle.listing)]
+    mine = {**family, "keys": [_key("model-05.pt")],
+            "groups": [{"title": "Family from run 2026-10-01 00:00 · 1 file",
+                        "keys": [_key("model-05.pt")]}]}
+    rows = refresh(mine, listing)[id(handle.rows)]
+    assert rows.count(" data-key=") == 1 and "Family from run 2026-10-01" in rows
+
+
+def _row_of(html, name):
+    """The row (a drawer's button, or a table's row) of the file `name`."""
+    at = html.index(f'data-key="{_key(name)}"')
+    start = max(html.rfind("<button", 0, at), html.rfind("<tr", 0, at))
+    return html[start:html.index("</button>" if html[start:].startswith("<button") else "</tr>",
+                                 at)]
+
+
+def test_every_row_says_what_its_file_is_in_both_presets(root, serving, monkeypatch):
+    """README §5 (map B7): every row leads with its kind word
+    (`renderers.record_kind_text`), whatever the view or the order: the
+    drawer's rows, which list every task's models together, and the research
+    table's Model cell under any order (here, groups as By test score draws
+    them), its history and unreadable files included."""
+    listing = _listing(root, monkeypatch)
+    rows = ml.list_html(listing, None, ml.PRESETS["clinical"], show_older=True)
+    for name, kind in (("model-12.pt", "Disease"), ("model-05.pt", "Disease"),
+                       ("model-03.pt", "Gene"), ("model-02.pt", "Patients-like-me")):
+        row = _row_of(rows, name)
+        assert (f'"><span class="shep-row-sub shep-row-kind">{kind}</span>'
+                f'<span class="shep-row-main">') in row, (name, row)
+    view = {"groups": [{"title": "Ordered by Mode C MRR (untruncated) on v1 · highest first",
+                        "keys": [_key("model-07.pt")]}],
+            "column": "Mode C MRR, v1 · regime", "cells": {}}
+    table = ml.list_html(listing, None, ml.PRESETS["research"], view=view)
+    for name, kind in (("base.pt", "Base"), ("model-07.pt", "History · never run"),
+                       ("broken.pt", "Record not read"), ("model-03.pt", "Gene")):
+        row = _row_of(table, name)
+        assert f'"><td><div class="shep-sub shep-row-kind">{kind}</div>' in row, (name, row)
 
 
 def test_the_research_listing_carries_the_family_view_from_its_one_listing(
@@ -1348,7 +1459,7 @@ def test_a_direct_call_through_gradios_api_meets_the_same_check(root, serving, m
     listed = call(OPERATOR_BASE_URL)
     _state, _selected, workspace, count, rows = listed[:5]
     assert workspace["value"] == "demo"
-    assert "(of 6 in 5 runs) · Task models only, of 9 listed" in count
+    assert "5 checkpoints (of 6 in 5 runs)" in count and "listed" not in count
     assert "run 2026-10-18 09:12 · epoch 12" in rows
     assert handle.load_button is not None and handle.refresh["fn"] is refresh.fn
 

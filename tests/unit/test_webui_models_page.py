@@ -25,10 +25,11 @@ registry's report store (`tests/fixtures/model_records.py`):
   (every ordered row) is refused, a task model loaded from the list instead;
 - **task and family**: the Task select's options (the list's one vocabulary,
   short, unique); the task filter orders only what is shown (History keeps
-  the Mode C order, Disease has none); newest first's Kind column under All;
-  By family's groups (parent first, indented Lineage cells, a context row in
-  grey with ○, an unavailable parent in amber with ▲, escaped; the history and
-  not-readable groups under All), offered with no ordering version;
+  the Mode C order, Disease has none); every row's kind in the shared list's
+  Model cell, under every order; By family's groups (parent first, indented
+  Lineage cells, a context row in grey with ○, an unavailable parent in amber
+  with ▲, escaped; the history, not-read and not-readable groups under All,
+  each under its own word), the Order switch on with no ordering version;
 - **the detail**: what the model is (kind, operation, parent and where it is,
   family, encoder, relation to the paper) without Model Facts' Task and
   Configuration rows; Trainer validation in its own card, Mode C in the
@@ -615,18 +616,21 @@ def test_a_load_from_the_ordered_list_writes_the_usage_history_entry(world, monk
 
 
 def test_newest_first_gives_the_load_no_ordering(world, monkeypatch):
-    """Newest first: no ordering; under All a Kind column says what each row
-    is (`renderers.record_kind_text`), under one filter none."""
+    """Newest first: no ordering and no column of the page's own; what each
+    row is (`renderers.record_kind_text`) is said by the shared list in every
+    row's Model cell, as under every other order."""
     _add_bundles(world)
     listing, data = _read(world, monkeypatch)
     ctl = mp.controls(listing, data, mp.NEWEST, MYGENE, None, None, None)
     view, ordering = mp.shape(listing, data, ctl)
-    assert ordering is None and view["task"] == "all" and view["note"] == mp.LOAD_NOTE
-    assert view["column"] == mp.KIND_COLUMN and "groups" not in view
-    cells = view["cells"]
-    assert cells[_key(world, "model-05.pt")] == "History · never run"
-    assert cells[_key(world, "broken.pt")] == "Record not read"
-    assert (cells[bundle_key("base")], cells[bundle_key("gene")]) == ("Base", "Gene")
+    assert (view, ordering) == ({"task": "all", "note": mp.LOAD_NOTE}, None)
+    html = ml.list_html(listing, None, ml.PRESETS["research"], view=view)
+    for key, kind in ((_key(world, "model-05.pt"), "History · never run"),
+                      (_key(world, "broken.pt"), "Record not read"),
+                      (bundle_key("base"), "Base"), (bundle_key("gene"), "Gene")):
+        row = html[html.index(f'data-key="{key}"'):]
+        assert row.split("</tr>")[0].count(f'<div class="shep-sub shep-row-kind">{kind}</div>') \
+            == 1, key
     ctl = mp.controls(listing, data, mp.NEWEST, MYGENE, None, None, "disease")
     assert mp.shape(listing, data, ctl) == ({"task": "disease", "note": mp.LOAD_NOTE}, None)
 
@@ -827,6 +831,12 @@ def test_the_task_and_order_options_are_short_unique_and_plain():
                                                              "By test score"]
     title, text = mp.PAGE_HELP["models-ordering"]
     assert title == "Order" and text.split("\n")[0].startswith("How the list is ordered")
+    # Skill §7's budget: a lead of about 90 characters, about 60-80 words in
+    # all; the fixed record rule stays (no visible line says it).
+    words = [w for w in text.split() if w != "•"]
+    assert len(text.split("\n")[0]) <= 90 and len(words) <= 80, len(words)
+    assert "first registered deterministic record" in text
+    assert "No model is chosen automatically by a test score." in text
 
 
 def test_by_family_draws_each_family_parent_first_with_its_lineage(world, monkeypatch):
@@ -845,16 +855,20 @@ def test_by_family_draws_each_family_parent_first_with_its_lineage(world, monkey
     view, ordering = mp.shape(listing, data, ctl)
     assert ordering is None and view["column"] == mp.LINEAGE_COLUMN
     titles = [g["title"] for g in view["groups"]]
+    # A file whose record was never read is under its own word, "Record not
+    # read" (`record_kind_text`), never under "Record not readable".
     assert titles == ["Family from run 2026-10-01 00:00 · 3 files",
                       "Family from run 2026-10-04 00:00 · 1 file",
-                      mp.GROUP_HISTORY, mp.GROUP_REFUSED]
+                      mp.GROUP_HISTORY, "Record not read"]
     assert view["groups"][0]["keys"] == [bundle_key("base"), bundle_key("disease"),
                                          bundle_key("gene")]
     assert view["groups"][3]["keys"] == [_key(world, "broken.pt")]
     assert len(view["groups"][2]["keys"]) == 7                       # every ShepherdGNN file
     cells = view["cells"]
     child = cells[bundle_key("disease")]
-    assert 'class="shep-mp-lin shep-mp-d1"' in child and "Disease" in child
+    # The kind is the row's own (the shared list's Model cell), never said
+    # again in the Lineage cell; a file with no lineage has no value there.
+    assert child.startswith('<div class="shep-mp-lin shep-mp-d1"><div class="shep-sub">Finetune')
     assert f"Finetune of <code class=\"shep-fpv\">{shas['base'][:12]}</code>" in child
     assert 'class="shep-mp-lin shep-mp-d0"' in cells[bundle_key("base")]
     assert "New run" in cells[bundle_key("base")]
@@ -862,11 +876,24 @@ def test_by_family_draws_each_family_parent_first_with_its_lineage(world, monkey
     assert ('<span class="shep-mp-warn"><span aria-hidden="true">▲</span> parent unavailable: '
             in orphan)
     assert EVIL not in orphan and html_lib.escape(EVIL) in orphan
-    assert "History · never run" in cells[_key(world, "model-05.pt")]
+    assert cells[_key(world, "model-05.pt")] == (
+        '<div class="shep-mp-lin shep-mp-d0"><span class="shep-muted">—</span></div>')
     # The shared list draws them: groups in order, the Lineage column.
     html = ml.list_html(listing, None, ml.PRESETS["research"], view=view)
     assert ">Lineage</th>" in html and EVIL not in html
     assert html.index("Family from run 2026-10-01") < html.index(mp.GROUP_HISTORY)
+    # A record this build refused and a file never read: two groups, each
+    # titled with its own word (skill §6: missing states are never merged).
+    broken = ml.find_item(listing, _key(world, "broken.pt"))
+    refused = {**broken, "filename": "refused.pt", "record": "refused",
+               "record_problem": "an unknown field"}
+    row = {**mp.family_row(listing, _key(world, "broken.pt")), "key": ml.item_key(refused)}
+    both = {**listing, "items": [*listing["items"], refused],
+            "family": {**listing["family"], "all": [*listing["family"]["all"], row]}}
+    groups = mp.family_view(both, mp.ALL_TASKS)["groups"]
+    assert [(g["title"], g["keys"]) for g in groups[-2:]] == [
+        ("Record not read", [_key(world, "broken.pt")]),
+        ("Record not readable", [ml.item_key(refused)])]
     # A task's view: its base as a context row, grey, ○ and its words.
     ctl = mp.controls(listing, data, mp.BY_FAMILY, None, None, None, "gene")
     view, _ordering = mp.shape(listing, data, ctl)
@@ -886,6 +913,33 @@ def test_by_family_draws_each_family_parent_first_with_its_lineage(world, monkey
     view, _ordering = mp.shape(bare, data, mp.controls(bare, data, mp.BY_FAMILY, None, None,
                                                         None, None))
     assert view["refused"] == mp.FAMILY_NOT_READ and "groups" not in view
+
+
+def test_the_order_switch_reaches_by_family_with_no_version_offering_ordering(
+        world, monkeypatch):
+    """The Order switch is the one control that reaches By family, and it is
+    built off: the page turns it on for every operator's list, whether or not
+    a cohort version offers ordering (By test score asked there falls back to
+    newest first and says why), and leaves it off for a read-only request."""
+    monkeypatch.delenv("SHEPHERD_ORDERING_ROLES")
+    demo, _ctx = _page()
+    opened = _fn(demo, "_open")
+    order = next(b for b in demo.blocks.values() if getattr(b, "elem_id", None) == "shep-mp-order")
+    assert order.interactive is False
+
+    def open_as(request):
+        out = opened.fn("demo", False, None, None, None, mp.BY_FAMILY, None, None, None,
+                        mp.ALL_TASKS, mp.RECORDS, "idle", request)
+        by = dict(zip(map(id, opened.outputs), out, strict=True))
+        return next(v for v in out if isinstance(v, dict) and "listing_key" in v), by[id(order)]
+
+    data, switch = open_as(operator_request(monkeypatch))
+    assert not mp.offered_versions(data)
+    assert (switch["value"], switch["interactive"]) == (mp.BY_FAMILY, True)
+    _served_read_only(world, monkeypatch)
+    data, switch = open_as(gradio_request())
+    assert data["readonly"] is True
+    assert (switch["value"], switch["interactive"]) == (mp.NEWEST, False)
 
 
 def test_the_detail_says_what_the_model_is_and_its_relation_to_the_paper(world, monkeypatch):

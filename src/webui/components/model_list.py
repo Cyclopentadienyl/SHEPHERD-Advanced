@@ -19,7 +19,9 @@ unreadable entry is greyed "metadata not readable · cannot be loaded". "In use"
 is matched by the **full** model fingerprint the status serves and marks the
 checkpoint only.
 
-**The two presets** (`PRESETS`):
+**The two presets** (`PRESETS`), each row of either leading with what its
+file is (`renderers.record_kind_text`: "Disease", "Base", "History · never
+run" …), under every view and order:
 
 - ``clinical`` (the drawer): rows (`renderers.model_row_html`), "In use now"
   pinned on top, the latest 4 runs, then "Show older runs"; **models
@@ -40,7 +42,10 @@ those rows instead (a family view's, its context rows included); ``"groups":
 (checkpoints in no group follow under ``"rest_title"``); ``"column"`` and
 ``"cells": {key: html}`` add one column the page fills (HTML it built with the
 shared renderers, which escape); ``"note"`` is plain text beside the Load
-button. Models orders the list this way (its groups "Ordered by …",
+button. What a view names by key (``keys``, ``groups``, ``cells``) belongs to
+the workspace it was read from: another workspace's listing is drawn with the
+view's filter, column and note only (`view_for_listing`) until the page
+shapes its view again. Models orders the list this way (its groups "Ordered by …",
 "Contested on this version · not ordered", "Not tested on this cohort version ·
 newest first", its regime column; its families and their lineage column) and
 sets ``ModelList.ordering`` too, so that a Load from it writes a usage history
@@ -134,7 +139,7 @@ import gradio as gr
 # (BACKLOG 36).
 from src.api.services.record_states import CohortVersions, contest_states, key_text
 from src.api.services.server_lists import record_matches
-from src.core.types import SCORING_MODE_TASKS, TASK_SCORING_MODES
+from src.core.types import SCORING_MODE_SP_STATES, SCORING_MODE_TASKS, TASK_SCORING_MODES
 from src.evaluation.caveats import TASK_NAMES
 from src.webui.components import renderers as r
 from src.webui.components.served_status import (
@@ -190,12 +195,6 @@ FILTER_WORDS: Dict[str, Tuple[str, str]] = {
 #: without a model spec is listed as history and never run; K6 decision 1).
 BASE_REFUSAL = "A base offers no diagnosis: load a model finetuned for a task."
 HISTORY_REFUSAL = "No model spec: listed as history, never run."
-
-#: What the confirmation's SP row says of a model whose task computes its
-#: shortest-path term from its own graph view (the served identity's
-#: ``computed`` state, `InferencePipeline.served_identity`), by scoring mode;
-#: every other task model uses none ("not used by this task").
-_SP_OF_MODE = {TASK_SCORING_MODES["gene"]: "computed"}
 
 
 @dataclass(frozen=True)
@@ -497,6 +496,24 @@ def shown_items(listing: Mapping[str, Any], view: Any = None,
     return [i for i in items if matches(i, chosen)]
 
 
+#: The parts of a view that name rows by key, read from one workspace's listing.
+_KEYED_VIEW_PARTS = ("keys", "groups", "cells")
+
+
+def view_for_listing(view: Any, previous: Any, listing: Mapping[str, Any]) -> Any:
+    """The page's view as it applies to a listing just read (the shared
+    refresh draws it before the page shapes a new view): what the view names
+    by key (a family's rows, an order's groups, the page's cells) was read from
+    the `previous` listing's workspace, so for another workspace's listing it
+    is left out and the view's filter, column and note apply. Another
+    workspace's keys would hide every row of this one."""
+    current = _view(view)
+    if (isinstance(previous, Mapping) and previous.get("workspace") == listing.get("workspace")) \
+            or not any(part in current for part in _KEYED_VIEW_PARTS):
+        return view
+    return {k: v for k, v in current.items() if k not in _KEYED_VIEW_PARTS}
+
+
 def refused_line(listing: Mapping[str, Any]) -> str:
     """Why a refused listing lists nothing, as every page says an operator
     control that is off for this request: "Operator controls only: <the
@@ -540,6 +557,14 @@ def _groups(items: Sequence[Mapping[str, Any]], view: Any
     if rest:
         sections.append((str(_view(view).get("rest_title") or REST_TITLE), rest))
     return sections
+
+
+def _kind_line(item: Mapping[str, Any], tag: str) -> str:
+    """A row's first line: what its file is, in the one word every page leads
+    with (`renderers.record_kind_text`: "Disease", "Base", "History · never
+    run", "Record not read" …), escaped."""
+    css = "shep-row-sub" if tag == "span" else "shep-sub"
+    return f'<{tag} class="{css} shep-row-kind">{r.e(r.record_kind_text(item))}</{tag}>'
 
 
 def _no_items_html(listing: Mapping[str, Any], view: Any, preset: Optional[Preset]) -> str:
@@ -600,6 +625,10 @@ def list_html(listing: Mapping[str, Any], selected: Optional[str], preset: Prese
         html_ = r.model_row_html(item, workspaces, recorded=_recorded(listing, key),
                                  in_use=in_use, selected=key == selected, digits=digits,
                                  key=key, in_use_label=preset.in_use_label)
+        # The row leads with what its file is (the drawer lists every task's
+        # models together, and its name line does not say the task).
+        html_ = html_.replace('<span class="shep-row-main">', f'{_kind_line(item, "span")}'
+                              '<span class="shep-row-main">', 1)
         extra = cells.get(key)
         if extra:
             html_ = html_.replace("</button>", f'<span class="shep-row-sub">{extra}</span></button>', 1)
@@ -638,11 +667,14 @@ def _table_html(sections: Sequence[Tuple[str, Sequence[Mapping[str, Any]]]],
 
     def row(item: Mapping[str, Any]) -> str:
         key = item_key(item)
-        return r.model_table_row_html(
+        html_ = r.model_table_row_html(
             item, workspaces, recorded=_recorded(listing, key),
             in_use=bool(served) and item.get("sha256") == served, selected=key == selected,
             digits=digits, key=key, in_use_label=preset.in_use_label,
             extra=(str(cells.get(key) or '<span class="shep-muted">—</span>') if column else None))
+        # The Model cell (the row's first) leads with what the file is, under
+        # every order and filter.
+        return html_.replace("<td>", f"<td>{_kind_line(item, 'div')}", 1)
 
     body = []
     if pinned:
@@ -662,14 +694,25 @@ def _table_html(sections: Sequence[Tuple[str, Sequence[Mapping[str, Any]]]],
 
 def count_line(listing: Mapping[str, Any], preset: Preset, show_older: bool,
                view: Any = None) -> str:
+    """How many checkpoints the list shows and in which order, then the
+    view's filter ("· Disease only, of 9 listed"), counted against what the
+    preset ever lists (the drawer: its task models): nothing for a view that
+    asks for every row the preset shows, its own rule being its scope. A
+    view's context rows (a family view's parents of shown files) are counted
+    apart, never as rows of its filter."""
     if listing.get("refused") or not listing.get("items"):
         return ""
-    items = shown_items(listing, view, preset)
+    shown = shown_items(listing, view, preset)
+    chosen = task_filter(view)
+    items = [i for i in shown if matches(i, chosen)]
+    context = len(shown) - len(items)
     runs = _runs_in_order(items)
     of = ""
-    chosen = _rows_filter(view, preset)
-    if chosen != "all":
-        of = f" · {FILTER_WORDS[chosen][0]} only, of {len(listing.get('items') or [])} listed"
+    if chosen not in ("all", preset.rows):
+        rows = (f", with {context} context row{'s' if context != 1 else ''}" if context
+                else " only")
+        of = (f" · {FILTER_WORDS[chosen][0]}{rows}, of {len(shown_items(listing, None, preset))} "
+              "listed")
     if not items:
         return f"no checkpoint shown{of}"
     order = "newest first" if _view(view).get("groups") is None else "in the groups below"
@@ -800,9 +843,10 @@ def _to_side(item: Mapping[str, Any], workspace: str, workspace_dir: Path,
     """What would be served, as the confirmation's "To" column needs it: the
     scoring mode is the one the task the model's record names is served under
     (`core.types.TASK_SCORING_MODES`, the pipeline's own table), and its
-    shortest-path term a state of that task (`_SP_OF_MODE`); neither is
-    guessed from the workspace, which a task model's serving never reads for
-    them, and no mixing weight is predicted."""
+    shortest-path term the state that mode is served with
+    (`core.types.SCORING_MODE_SP_STATES`, the rule the served identity is
+    checked against); neither is guessed from the workspace, which a task
+    model's serving never reads for them, and no mixing weight is predicted."""
     origin = next((r.origin_of(w) for w in workspaces if r._get(w, "name") == workspace), None)
     mode = TASK_SCORING_MODES.get(item.get("task"))
     return {
@@ -812,7 +856,7 @@ def _to_side(item: Mapping[str, Any], workspace: str, workspace_dir: Path,
         "trained_on_known": True,
         "workspace": workspace,
         "graph": _graph_digest(workspace_dir),
-        "sp": _SP_OF_MODE.get(mode, "absent"),
+        "sp": SCORING_MODE_SP_STATES.get(mode, "absent"),
         "sp_build": None,
         "mode": mode,
         "synthetic": origin == "synthetic",
@@ -1508,6 +1552,7 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
         # A selection still listed in the same workspace stays selected (M5-3
         # review UI-3: the re-read after a Load dropped a row picked meanwhile).
         data = list_models(name, request, family=chosen.family)
+        current_view = view_for_listing(current_view, previous, data)
         key = kept_selection(previous, data, key, current_view, chosen)
         item = find_item(data, key)
         choices = r.workspace_choices(data.get("workspaces") or [])
@@ -1706,4 +1751,5 @@ __all__ = [
     "shown_items",
     "start_wait_js",
     "task_filter",
+    "view_for_listing",
 ]

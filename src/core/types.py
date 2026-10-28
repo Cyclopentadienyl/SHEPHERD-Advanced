@@ -744,6 +744,15 @@ SERVED_SCORING_MODES = ("gnn_plus_shortest_path", "gnn_only", "path_reasoning_fa
 TASK_SCORING_MODES: Dict[str, str] = {"disease": "disease_task", "gene": "gene_task",
                                       "patients_like_me": "patients_like_me"}
 SCORING_MODE_TASKS: Dict[str, str] = {mode: task for task, mode in TASK_SCORING_MODES.items()}
+#: **The shortest-path state each scoring mode is served with**, the one rule:
+#: `ServedIdentity` refuses any other, the pipeline builds its identity from it
+#: and the WebUI's reload confirmation says it before a load. A verified table
+#: for the GNN with its SP term; the gene task's exact hop distances computed
+#: from the model's own graph view; no table for every other mode.
+SCORING_MODE_SP_STATES: Dict[str, str] = {
+    "gnn_plus_shortest_path": "verified", "gnn_only": "absent",
+    "path_reasoning_fallback": "absent", "disease_task": "absent", "gene_task": "computed",
+    "patients_like_me": "absent"}
 
 _HEX = frozenset("0123456789abcdef")
 
@@ -913,10 +922,7 @@ class ServedIdentity:
                 f"scoring_mode {self.scoring_mode!r} contradicts a checkpoint "
                 f"in state {self.checkpoint.state!r}"
             )
-        with_sp = self.scoring_mode == "gnn_plus_shortest_path"
-        computed = self.scoring_mode == "gene_task"
-        if (with_sp != (self.shortest_paths.state == "verified")
-                or computed != (self.shortest_paths.state == "computed")):
+        if self.shortest_paths.state != SCORING_MODE_SP_STATES[self.scoring_mode]:
             raise ValueError(
                 f"scoring_mode {self.scoring_mode!r} contradicts a shortest-path "
                 f"table in state {self.shortest_paths.state!r}"

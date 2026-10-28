@@ -65,6 +65,7 @@ from src.kg.phenotype_normalisation import (
     normalise_phenotypes,
 )
 from src.core.types import (
+    SCORING_MODE_SP_STATES,
     SERVED_MIXTURE,
     TASK_SCORING_MODES,
     Candidate,
@@ -2705,7 +2706,7 @@ class DiagnosisPipeline:
             shortest_paths = ServedShortestPaths(
                 state="verified", build_id=self._sp_build_id, max_hops=self._sp_max_hops
             )
-        elif scoring_mode == "gene_task":
+        elif SCORING_MODE_SP_STATES[scoring_mode] == "computed":
             shortest_paths = ServedShortestPaths(state="computed")
         else:
             shortest_paths = ServedShortestPaths(state="absent")
