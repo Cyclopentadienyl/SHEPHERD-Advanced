@@ -444,7 +444,7 @@ class TestCheckpoints:
 
     @pytest.mark.parametrize("workspace, architecture, fragment", [
         ("missing", None, "is not a workspace the server lists"),
-        ("demo", "gatv9", "Unsupported conv_type"),
+        ("demo", "gatv9", "Unsupported run layout key"),
     ])
     def test_a_name_off_the_list(self, checkpoint_root, workspace, architecture, fragment):
         root, _, _ = checkpoint_root
@@ -471,7 +471,7 @@ class TestResolveCheckpoint:
         ("gat", "../sage/20261019-120000_old_bbbbbb", "weights.pt", "is listed"),
         ("", "20261020-120000_new_aaaaaa", "best.pt", "is not an architecture"),
         (None, "20261020-120000_new_aaaaaa", "best.pt", "is not an architecture"),
-        ("gatv9", "20261020-120000_new_aaaaaa", "best.pt", "Unsupported conv_type"),
+        ("gatv9", "20261020-120000_new_aaaaaa", "best.pt", "Unsupported run layout key"),
     ])
     def test_anything_else_is_refused(self, checkpoint_root, architecture, run, filename,
                                       fragment):

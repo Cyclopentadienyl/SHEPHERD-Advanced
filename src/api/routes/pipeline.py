@@ -29,7 +29,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, HTTPException, status
 from fastapi.encoders import jsonable_encoder
@@ -85,6 +85,12 @@ class PipelineStatusResponse(BaseModel):
     current_checkpoint_path: Optional[str] = None
 
 
+#: The task each model bundle scoring mode serves (the served identity's
+#: `scoring_mode`, `src.core.types.result_kind_for`).
+_TASK_OF_MODE = {"disease_task": "disease", "gene_task": "gene",
+                 "patients_like_me": "patients_like_me"}
+
+
 class PipelineReloadRequest(BaseModel):
     """Request to reload the pipeline with new paths."""
     data_dir: str = Field(
@@ -101,6 +107,15 @@ class PipelineReloadRequest(BaseModel):
         description="GNN architecture to serve: 'auto' (latest-trained), or "
         "'hgt'/'gat'/'sage' to load from that architecture's subdir. Ignored when "
         "checkpoint_path is given.",
+    )
+    task: Optional[Literal["disease", "gene", "patients_like_me"]] = Field(
+        None,
+        description="The task to serve: automatic selection then takes the latest run "
+        "holding a model finetuned for it, judged by each file's model record, never by "
+        "its directory (a base, another task's model and a checkpoint without a model "
+        "spec are never chosen); with checkpoint_path, the loaded model must be that "
+        "task's or nothing is published. Null: the ShepherdGNN selection, which never "
+        "chooses a model bundle.",
     )
     device: Optional[str] = Field(
         None,
@@ -388,6 +403,7 @@ def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
     #   3. auto -> the latest-trained run of any architecture, its best
     # Runs are not ranked against each other by metric. Checkpoints in an older
     # layout are NOT scanned here (see checkpoint_paths).
+    from src.models.bundle.record import has_model_spec, listed_record
     from src.utils.checkpoint_io import read_checkpoint
     from src.utils.checkpoint_paths import (
         normalize_conv_type,
@@ -409,21 +425,49 @@ def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
     # it is among them.
     scored_digests: Dict[str, str] = {}
     scored_paths: set = set()
+    #: Each candidate's one read in this scan: its digest, its ranking metric
+    #: and its model record's summary; None for a file the read refused.
+    inspected: Dict[str, Optional[Dict[str, Any]]] = {}
+
+    def _inspect(path: Path) -> Optional[Dict[str, Any]]:
+        if str(path) not in inspected:
+            try:
+                # Tensors and plain data only (contract decision 10): this scan
+                # reads files in a directory a request names.
+                scored = read_checkpoint(path, map_location="cpu", weights_only=True)
+            except Exception as exc:  # noqa: BLE001 — skip unreadable, don't fail reload
+                logger.debug("checkpoint score read failed for %s: %s", path, exc)
+                inspected[str(path)] = None
+            else:
+                ckpt = scored.checkpoint
+                meta = ckpt if isinstance(ckpt, dict) else {}
+                inspected[str(path)] = {
+                    "sha256": scored.identity.sha256,
+                    "detail": ranking_score_detail(meta.get("logs")),
+                    "record": listed_record(meta) if has_model_spec(meta) else None,
+                }
+        return inspected[str(path)]
 
     def _checkpoint_score(path: Path) -> Optional[float]:
-        try:
-            # Tensors and plain data only (contract decision 10): this scan
-            # reads files in a directory a request names.
-            scored = read_checkpoint(path, map_location="cpu", weights_only=True)
-        except Exception as exc:  # noqa: BLE001 — skip unreadable, don't fail reload
-            logger.debug("checkpoint score read failed for %s: %s", path, exc)
+        seen = _inspect(path)
+        if seen is None:
             return None
-        scored_digests[str(path)] = scored.identity.sha256
-        ckpt = scored.checkpoint
-        detail = ranking_score_detail(ckpt.get("logs") if isinstance(ckpt, dict) else None)
-        if detail:
+        scored_digests[str(path)] = seen["sha256"]
+        if seen["detail"]:
             scored_paths.add(str(path))
-        return detail[1] if detail else None
+        return seen["detail"][1] if seen["detail"] else None
+
+    def _accept(path: Path) -> bool:
+        """The record decides (provenance §9.3, hazard 3). With a task: a
+        model bundle finetuned for it. Without one (the ShepherdGNN reload):
+        any file that is not a model bundle, as before."""
+        seen = _inspect(path)
+        record = seen["record"] if seen is not None else None
+        if request.task is None:
+            return record is None
+        return (record is not None and record["record"] == "model"
+                and record["learning_stage"] == "finetune"
+                and record["task"] == request.task)
 
     # architecture = the real GNN arch when known (None for an explicit path,
     # where it's only known after load); selection_reason = how it was chosen.
@@ -436,7 +480,16 @@ def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
     if checkpoint_path:
         selection_reason = "explicit checkpoint_path"
     else:
-        if requested_conv and requested_conv != "auto":
+        if request.task is not None:
+            if requested_conv and requested_conv != "auto":
+                return _refused(
+                    "conv_type names a ShepherdGNN architecture; a task is served by "
+                    "the model finetuned for it, chosen by its record. Give one of them.",
+                    files, selection_reason="task with conv_type")
+            selected, architecture, selection_reason = select_auto_run_checkpoint(
+                data_dir, score_fn=_checkpoint_score, accept=_accept)
+            selection_reason = f"task {request.task}: {selection_reason}"
+        elif requested_conv and requested_conv != "auto":
             try:
                 architecture = normalize_conv_type(requested_conv)
             except ValueError as exc:
@@ -444,12 +497,15 @@ def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
                     str(exc), files, selection_reason="invalid conv_type"
                 )
             selected, selection_reason = select_run_checkpoint(
-                data_dir, architecture, score_fn=_checkpoint_score
+                data_dir, architecture, score_fn=_checkpoint_score, accept=_accept
             )
         else:
             selected, architecture, selection_reason = select_auto_run_checkpoint(
-                data_dir, score_fn=_checkpoint_score
+                data_dir, score_fn=_checkpoint_score, accept=_accept
             )
+        # What automatic selection could choose for this request, so the file
+        # report and the reason never disagree.
+        files["checkpoint"] = selected is not None
         if selected is not None:
             checkpoint_path = str(selected)
 
@@ -461,14 +517,19 @@ def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
         # If checkpoints exist outside the run layout, say so: they are not
         # selected automatically (decision 9: no runtime fallback), so guide the
         # user rather than contradict files_found.
-        if files.get("checkpoint_outside_runs"):
+        if request.task is not None:
+            hint = (f"No run holds a model finetuned for the {request.task} task; a base, "
+                    "another task's model and a checkpoint without a model spec are not "
+                    "chosen for it. Finetune one, or pass an explicit checkpoint_path.")
+        elif files.get("checkpoint_outside_runs"):
             hint = (
                 "Checkpoints exist outside the run layout (runs/) and are not "
                 "selected automatically; move them once with "
                 "scripts/migrate_checkpoints.py, or pass an explicit checkpoint_path."
             )
         else:
-            hint = "Train a model or pass an explicit checkpoint_path."
+            hint = ("Train a model or pass an explicit checkpoint_path; a model bundle is "
+                    "selected by its task (task).")
         return _refused(
             f"No checkpoint found ({selection_reason}). {hint}", files,
             architecture=architecture, selection_reason=selection_reason,
@@ -535,6 +596,18 @@ def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
     # (19.1's note below compares the scan's read with it).
     served_sha = ((candidate.config.get("served_identity") or {}).get("checkpoint")
                   or {}).get("sha256")
+
+    # **A task asked for is the loaded model's, or nothing is published**: an
+    # explicit checkpoint_path is judged by the build's own read of its record.
+    if request.task is not None:
+        served_mode = (candidate.config.get("served_identity") or {}).get("scoring_mode")
+        served_task = _TASK_OF_MODE.get(served_mode)
+        if served_task != request.task:
+            served = (f"the {served_task} task" if served_task is not None
+                      else f"scoring mode {served_mode!r}")
+            return _refused(
+                f"{checkpoint_path} serves {served}, not the {request.task} task asked "
+                f"for. Nothing was published.{_still_serving()}", files)
 
     if selected is not None:
         # **The metric reported is the served read's** (contract M3c, BACKLOG

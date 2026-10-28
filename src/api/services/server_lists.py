@@ -183,6 +183,14 @@ class CheckpointItem:
     completed; how its stage ended), `None` where the file records none (a
     weights-only file, an older format): `epoch` is the record's epoch index,
     never adjusted into a count.
+
+    The model record's summary comes from the same read, through the one
+    reader of records (`src.models.bundle.record.listed_record`): `record` is
+    "model", "history" (no model spec: listed, never run) or "refused" (with
+    `record_problem`); a model adds its learning stage, task, operation,
+    family, parent (`parent_sha256`, the exact parent file, and `parent_run`),
+    encoder kind and whether its spec is the reference recipe. All `None` for a
+    file that was not read.
     """
 
     workspace: str
@@ -199,6 +207,16 @@ class CheckpointItem:
     problem: Optional[str]
     completed_epochs: Optional[int] = None
     end: Optional[str] = None
+    record: Optional[str] = None
+    record_problem: Optional[str] = None
+    learning_stage: Optional[str] = None
+    task: Optional[str] = None
+    operation: Optional[str] = None
+    family_id: Optional[str] = None
+    parent_sha256: Optional[str] = None
+    parent_run: Optional[str] = None
+    encoder: Optional[str] = None
+    reference: Optional[bool] = None
 
 
 @dataclass(frozen=True)
@@ -486,15 +504,16 @@ def list_checkpoints(
     list does, so `resolve_checkpoint` finds it again by that name.
     """
     from src.kg.artifacts import read_split_manifest
+    from src.models.bundle.record import listed_record
     from src.utils.checkpoint_paths import (
-        normalize_conv_type,
+        normalize_run_layout_key,
         read_run_checkpoints,
         run_architecture,
     )
 
     try:
         name, path = _find_workspace(workspace, environ)
-        conv_type = normalize_conv_type(architecture) if architecture else None
+        conv_type = normalize_run_layout_key(architecture) if architecture else None
     except ValueError as exc:  # ServerListRefused, or an unsupported architecture
         return Listing((), str(exc))
     try:
@@ -510,6 +529,8 @@ def list_checkpoints(
     items = []
     for entry in entries:
         recorded = entry.dataset_fingerprint
+        read = entry.sha256 is not None and entry.problem is None
+        summary = listed_record(entry.model_record) if read else {}
         items.append(CheckpointItem(
             workspace=name,
             architecture=run_architecture(entry.run_dir),
@@ -529,6 +550,7 @@ def list_checkpoints(
             problem=entry.problem,
             completed_epochs=_count(entry.completed_epochs),
             end=entry.end,
+            **summary,
         ))
     return Listing(tuple(items))
 
@@ -550,14 +572,16 @@ def resolve_checkpoint(
         ServerListRefused: the workspace or the checkpoint is not listed, or the
             file resolves outside the workspace.
     """
-    from src.utils.checkpoint_paths import list_run_checkpoints, normalize_conv_type
+    from src.utils.checkpoint_paths import list_run_checkpoints, normalize_run_layout_key
 
     name, path = _find_workspace(workspace, environ)
     # An empty name would be read as the default architecture; a request names one.
     if not (isinstance(architecture, str) and architecture.strip()):
         raise ServerListRefused(f"{_echo(architecture)} is not an architecture")
     try:
-        conv_type = normalize_conv_type(architecture)
+        # The run layout's key: a ShepherdGNN conv type or a model bundle's
+        # encoder kind (``gatv2``), as the listing files and names them.
+        conv_type = normalize_run_layout_key(architecture)
     except ValueError as exc:
         raise ServerListRefused(str(exc)) from None
     try:

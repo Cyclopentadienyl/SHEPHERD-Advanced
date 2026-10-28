@@ -1886,6 +1886,7 @@ class TrainingManager:
         Returns:
             List of checkpoint info dicts.
         """
+        from src.models.bundle.record import listed_record
         from src.utils.checkpoint_paths import read_run_checkpoints, run_architecture
 
         if data_dir is None:
@@ -1920,6 +1921,8 @@ class TrainingManager:
                 info["epoch"] = entry.epoch
                 info["metrics"] = entry.logs
                 info["checkpoint_kind"] = entry.checkpoint_kind
+                # The model record's summary, by the one reader of records.
+                info.update(listed_record(entry.model_record))
 
             checkpoints.append(info)
 

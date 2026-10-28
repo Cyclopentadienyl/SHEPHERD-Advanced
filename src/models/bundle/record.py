@@ -23,16 +23,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, Mapping, Optional
 
+from src.config.model_types import MODEL_RECORD_KEYS
 from src.models.bundle.spec import LEARNING_STAGES, TASKS, ModelSpec, SpecError, ViewShape
 
 #: The checkpoint `record_version` the bundle path writes (M3a's was 1).
 MODEL_RECORD_VERSION = 2
 OPERATIONS = ("new", "resume", "extend", "branch", "finetune")
 
-#: Top-level payload keys this record owns (§9.1).
-RECORD_KEYS = ("model_spec", "graph_view", "learning_stage", "task", "operation", "parent",
-               "family_id", "weight_transfer", "data_roles", "graph_exposure",
-               "loss_identity", "scoring_identity", "selection")
+#: Top-level payload keys this record owns (§9.1), defined once beside the
+#: encoder kinds so the run listing can carry them without importing this.
+RECORD_KEYS = MODEL_RECORD_KEYS
 
 
 class ModelRecordError(ValueError):
@@ -153,6 +153,39 @@ def check_model_record(record: ModelRecord, *, learning_stage: Optional[str] = N
                                f"{view_digest[:12]}")
 
 
+#: What a model list shows of a checkpoint's record (`listed_record`).
+LISTED_RECORD_FIELDS = ("record", "record_problem", "learning_stage", "task", "operation",
+                        "family_id", "parent_sha256", "parent_run", "encoder", "reference")
+
+
+def listed_record(payload: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
+    """What a model list shows of a checkpoint's record, read by
+    `read_model_record` alone, so the lists apply no rule of their own.
+
+    `record` is "model" (a record this build reads), "history" (no model spec:
+    listed, never run, `HISTORY_ONLY`) or "refused" (a record this build cannot
+    read, its reason in `record_problem`). A model adds its learning stage,
+    task, operation, family (the root run), parent (the SHA-256 of the exact
+    parent file and the parent run), encoder kind and whether its spec is the
+    reference recipe (README §5, axis 2)."""
+    summary: Dict[str, Any] = dict.fromkeys(LISTED_RECORD_FIELDS)
+    if payload is None or not has_model_spec(payload):
+        summary.update(record="history", record_problem=HISTORY_ONLY)
+        return summary
+    try:
+        record = read_model_record(payload)
+    except ModelRecordError as exc:
+        summary.update(record="refused", record_problem=str(exc))
+        return summary
+    parent = record.parent or {}
+    summary.update(record="model", learning_stage=record.learning_stage, task=record.task,
+                   operation=record.operation, family_id=record.family_id,
+                   parent_sha256=parent.get("sha256"), parent_run=parent.get("run"),
+                   encoder=record.model_spec.encoder.kind,
+                   reference=record.model_spec.is_reference())
+    return summary
+
+
 def load_bundle(payload: Mapping[str, Any], *, learning_stage: Optional[str] = None,
                 task: Optional[str] = None, view_digest: Optional[str] = None) -> tuple:
     """Read, check and build a checkpoint's bundle, its weights loaded strictly.
@@ -174,6 +207,7 @@ def load_bundle(payload: Mapping[str, Any], *, learning_stage: Optional[str] = N
 
 __all__ = [
     "HISTORY_ONLY",
+    "LISTED_RECORD_FIELDS",
     "MODEL_RECORD_VERSION",
     "ModelRecord",
     "ModelRecordError",
@@ -181,6 +215,7 @@ __all__ = [
     "RECORD_KEYS",
     "check_model_record",
     "has_model_spec",
+    "listed_record",
     "load_bundle",
     "read_model_record",
 ]

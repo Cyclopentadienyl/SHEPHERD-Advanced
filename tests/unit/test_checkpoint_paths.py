@@ -138,6 +138,25 @@ def test_select_none_when_empty_or_missing(tmp_path):
     assert select_checkpoint_in_dir(tmp_path / "empty") is None
 
 
+def test_only_accepted_files_are_candidates_the_fallback_included(tmp_path):
+    """Automatic selection's record rule (provenance §9.3, hazard 3): a file
+    `accept` refuses is never chosen, not even as the `last.pt` fallback; a
+    judge that raises refuses the file it judged."""
+    d = tmp_path / "gatv2"
+    _touch(d / "last.pt", 100)
+    _touch(d / "model.pt", 50)
+    _touch(d / "unjudged.pt", 200)
+    fn = _score_map({"last.pt": 0.9})
+
+    def accept(path):
+        if path.name == "unjudged.pt":
+            raise RuntimeError("cannot be judged")
+        return path.name != "last.pt"
+
+    assert select_checkpoint_in_dir(d, score_fn=fn, accept=accept).name == "model.pt"
+    assert select_checkpoint_in_dir(d, accept=lambda p: False) is None
+
+
 # --------------------------------------------------------------- run directories (M3a-2)
 def test_a_run_directory_is_new_named_and_claimed(tmp_path, monkeypatch):
     from datetime import datetime
@@ -203,6 +222,35 @@ def test_selection_is_the_latest_run_then_the_existing_in_run_order(tmp_path):
 
     path, architecture, _ = select_auto_run_checkpoint(tmp_path, score_fn=fn)
     assert (path, architecture) == (newer / "model-20-hi.pt", "hgt")
+
+
+def test_with_accept_the_record_decides_and_later_runs_are_never_judged(tmp_path):
+    """The latest run holding an accepted file wins, whatever directory it is
+    filed under; the runs after it are not judged (`accept` may read every
+    file it is asked about). Without `accept`, as before: the ShepherdGNN
+    conv-type directories only."""
+    from src.utils.checkpoint_paths import select_auto_run_checkpoint, select_run_checkpoint
+
+    root = tmp_path / "runs"
+    _touch(root / "gat" / "20261004-000000_new_444444" / "checkpoints" / "last.pt", 400)
+    child = _touch(root / "gatv2" / "20261003-000000_mid_333333" / "checkpoints" / "ok.pt", 300)
+    _touch(root / "sage" / "20261002-000000_sage_222222" / "checkpoints" / "ok.pt", 200)
+    _touch(root / "gatv2" / "20261001-000000_old_111111" / "checkpoints" / "ok.pt", 100)
+    judged = []
+
+    def accept(path):
+        judged.append(path.parent.parent.name)
+        return path.name == "ok.pt"
+
+    path, key, reason = select_auto_run_checkpoint(tmp_path, accept=accept)
+    assert (path, key) == (child, "gatv2") and "20261003-000000_mid_333333" in reason
+    assert set(judged) == {"20261004-000000_new_444444", "20261003-000000_mid_333333"}
+    assert select_auto_run_checkpoint(tmp_path)[1] == "gat", "without accept: conv types only"
+    assert select_run_checkpoint(tmp_path, "sage", accept=accept)[0].parent.parent.name == (
+        "20261002-000000_sage_222222")
+    assert select_run_checkpoint(tmp_path, "gat", accept=accept) == (
+        None, "no run of 'gat' has a checkpoint")
+    assert select_auto_run_checkpoint(tmp_path, accept=lambda p: False)[0] is None
 
 
 def test_selection_finds_nothing_outside_the_run_layout(tmp_path):

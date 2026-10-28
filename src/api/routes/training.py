@@ -252,6 +252,19 @@ class CheckpointInfo(BaseModel):
     validation: Optional[Dict[str, Any]] = None
     dataset_fingerprint: Optional[str] = None
     metadata_problem: Optional[str] = None
+    # The model record's summary (`src.models.bundle.record.listed_record`):
+    # model, history or refused; a model's stage, task, operation, family and
+    # parent, encoder kind and whether its spec is the reference recipe.
+    record: Optional[str] = None
+    record_problem: Optional[str] = None
+    learning_stage: Optional[str] = None
+    task: Optional[str] = None
+    operation: Optional[str] = None
+    family_id: Optional[str] = None
+    parent_sha256: Optional[str] = None
+    parent_run: Optional[str] = None
+    encoder: Optional[str] = None
+    reference: Optional[bool] = None
 
 
 # =============================================================================

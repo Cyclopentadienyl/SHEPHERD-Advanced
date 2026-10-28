@@ -35,6 +35,13 @@ DEFAULT_CONV_TYPE = "gat"
 # layout (src/utils/checkpoint_paths.py) can key bundle runs by them.
 ENCODER_KINDS = ("gatv2", "hetero_gat", "hgt", "sage")
 
+# The top-level keys a model bundle checkpoint's record owns (provenance §9.1),
+# here, torch-free, so the run listing can carry them from its one read of a
+# file; src/models/bundle/record.py reads and checks them (its RECORD_KEYS).
+MODEL_RECORD_KEYS = ("model_spec", "graph_view", "learning_stage", "task", "operation",
+                     "parent", "family_id", "weight_transfer", "data_roles",
+                     "graph_exposure", "loss_identity", "scoring_identity", "selection")
+
 
 # ==============================================================================
 # Checkpoint architecture inference
@@ -213,4 +220,5 @@ def resolve_arch_params(
     return params
 
 
-__all__ = ["SUPPORTED_CONV_TYPES", "DEFAULT_CONV_TYPE", "ENCODER_KINDS", "resolve_arch_params"]
+__all__ = ["SUPPORTED_CONV_TYPES", "DEFAULT_CONV_TYPE", "ENCODER_KINDS", "MODEL_RECORD_KEYS",
+           "resolve_arch_params"]

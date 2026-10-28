@@ -4106,6 +4106,11 @@ The six hazards found in the verification, each with its rule:
    - A base or gene checkpoint is never selected for disease serving, and a base serves no
      diagnosis.
    - A checkpoint without a `model_spec` is not selectable for serving after the switch.
+   - As built at K5: a reload that names a task (`POST /pipeline/reload`, `task`) takes the latest
+     run holding a child finetuned for it, judged by each file's record and never by its directory.
+     An explicit checkpoint of another task is refused, and nothing is published. A reload without
+     a task never chooses a file with a `model_spec`, until K7 retires that path. The model lists
+     show each file's record (stage, task, operation, family, parent), read by the one reader.
 4. **Task parameters are submodules of the bundle,** so the optimizer updates them and the
    checkpoint saves them. The one builder guarantees it, and regressions 2 and 6 pin it.
 5. **Finetune gets its own check; resume keeps its blocks.** Decision 7, `check_resume_parent`'s data

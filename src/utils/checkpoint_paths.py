@@ -43,8 +43,15 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple, Union
 
 ScoreFn = Callable[[Path], Optional[float]]
+#: Whether a candidate file may be selected (automatic selection's record rule).
+AcceptFn = Callable[[Path], bool]
 
-from src.config.model_types import DEFAULT_CONV_TYPE, ENCODER_KINDS, SUPPORTED_CONV_TYPES
+from src.config.model_types import (
+    DEFAULT_CONV_TYPE,
+    ENCODER_KINDS,
+    MODEL_RECORD_KEYS,
+    SUPPORTED_CONV_TYPES,
+)
 
 PathLike = Union[str, Path]
 
@@ -55,7 +62,13 @@ PathLike = Union[str, Path]
 # monitor/filename is configured to, e.g. val_mrr here, val_loss by default), so
 # it must never be used to choose a model. val_loss is deliberately excluded — it
 # is a poor quality signal for this task; ranking metrics are what matter.
-RANKING_SCORE_KEYS = ("val_mrr", "val_hits@10", "val_hits@1")
+# A model bundle run monitors its stage's metric: a base val_lp_accuracy, a
+# finetune val_pooled_mrr (src.training.lp_task.BASE_SELECTION_METRIC and
+# finetune_task.FINETUNE_SELECTION_METRIC, which this layer cannot import; a
+# test pins them equal). One run has one stage and task, so the first one
+# available is that run's own.
+RANKING_SCORE_KEYS = ("val_mrr", "val_hits@10", "val_hits@1", "val_pooled_mrr",
+                      "val_lp_accuracy")
 
 
 def ranking_score_detail(logs) -> Optional[Tuple[str, float]]:
@@ -97,10 +110,24 @@ def normalize_conv_type(conv_type: Optional[str]) -> str:
     return ct
 
 
+def _accepted(accept: Optional[AcceptFn], path: Path) -> bool:
+    if accept is None:
+        return True
+    try:
+        return bool(accept(path))
+    except Exception:  # noqa: BLE001 - a file that cannot be judged is not chosen
+        return False
+
+
 def select_checkpoint_in_dir(
-    ckpt_dir: PathLike, score_fn: Optional[ScoreFn] = None
+    ckpt_dir: PathLike, score_fn: Optional[ScoreFn] = None,
+    accept: Optional[AcceptFn] = None,
 ) -> Optional[Path]:
     """Pick the checkpoint to serve from one directory.
+
+    With ``accept``, only the files it takes are candidates, the fallback
+    included (automatic selection's record rule: a checkpoint's learning stage
+    and task, provenance §9.3 hazard 3).
 
     When ``score_fn`` is given, every candidate is scored by it (``score_fn(path)
     -> Optional[float]``, **higher is better**) and the best-scoring one wins;
@@ -114,7 +141,7 @@ def select_checkpoint_in_dir(
     d = Path(ckpt_dir)
     if not d.is_dir():
         return None
-    pts = list(d.glob("*.pt"))
+    pts = [p for p in d.glob("*.pt") if _accepted(accept, p)]
     if not pts:
         return None
 
@@ -133,7 +160,7 @@ def select_checkpoint_in_dir(
             return best[3]
 
     last = d / "last.pt"
-    if last.exists():
+    if last in pts:
         return last
     return max(pts, key=lambda p: p.stat().st_mtime)
 
@@ -390,6 +417,12 @@ class ListedCheckpoint(NamedTuple):
     "paused", "finished", "stopped_early"). A file that records no progress (a
     weights-only file, an older format) has `None` for both; nothing is derived
     from `epoch` in their place.
+
+    `model_record` is a model bundle checkpoint's record as the same read found
+    it (`record_version` and the §9.1 keys, plain data), `None` for a file
+    without a model spec. It is not checked here: a caller reads it through
+    `src.models.bundle.record`, the one reader of records, which this layer
+    cannot import.
     """
 
     run_dir: Path
@@ -404,6 +437,7 @@ class ListedCheckpoint(NamedTuple):
     size_bytes: Optional[int] = None
     completed_epochs: Any = None
     end: Optional[str] = None
+    model_record: Optional[Dict[str, Any]] = None
 
 
 #: How much of a refusal's text a listing keeps: its first line, bounded, so a
@@ -470,7 +504,8 @@ def _recalled(path: Path, identity: Optional[Tuple[int, ...]]) -> Optional[Dict[
             return None
         _READS.move_to_end(str(path))
         fields = kept[1]
-    return {**fields, "logs": copy.deepcopy(fields["logs"])}
+    return {**fields, "logs": copy.deepcopy(fields["logs"]),
+            "model_record": copy.deepcopy(fields["model_record"])}
 
 
 def _remember(path: Path, before: Optional[Tuple[int, ...]], started_ns: int,
@@ -484,6 +519,7 @@ def _remember(path: Path, before: Optional[Tuple[int, ...]], started_ns: int,
     fields = entry._asdict()
     del fields["run_dir"], fields["path"]
     fields["logs"] = copy.deepcopy(fields["logs"])
+    fields["model_record"] = copy.deepcopy(fields["model_record"])
     with _READS_LOCK:
         _READS[str(path)] = (before, fields)
         _READS.move_to_end(str(path))
@@ -512,6 +548,9 @@ def _read_one(run: Path, path: Path) -> ListedCheckpoint:
     fingerprint = digests.get("split_manifest") if isinstance(digests, dict) else None
     progress = meta.get("progress") if isinstance(meta.get("progress"), dict) else {}
     end = progress.get("end")
+    record = ({"record_version": meta.get("record_version"),
+               **{k: meta[k] for k in MODEL_RECORD_KEYS if k in meta}}
+              if meta.get("model_spec") is not None else None)
     return ListedCheckpoint(
         run, path, sha256=read.identity.sha256,
         checkpoint_kind=meta.get("checkpoint_kind"),
@@ -522,6 +561,7 @@ def _read_one(run: Path, path: Path) -> ListedCheckpoint:
         size_bytes=size,
         completed_epochs=progress.get("completed_epochs"),
         end=end if isinstance(end, str) else None,
+        model_record=copy.deepcopy(record),
     )
 
 
@@ -583,40 +623,54 @@ def read_run_checkpoints(
     return entries
 
 
+def _first_run_holding(runs: List[Path], accept: Optional[AcceptFn]) -> Optional[Path]:
+    """The first of `runs` holding a candidate (`accept`'s, or any file). The
+    runs after it are never judged: `accept` may read every file it is asked
+    about."""
+    return next((run for run in runs
+                 if any(_accepted(accept, p) for p in run_checkpoints(run))), None)
+
+
 def select_run_checkpoint(
-    data_dir: PathLike, conv_type: Optional[str], score_fn: Optional[ScoreFn] = None
+    data_dir: PathLike, conv_type: Optional[str], score_fn: Optional[ScoreFn] = None,
+    accept: Optional[AcceptFn] = None,
 ) -> Tuple[Optional[Path], str]:
-    """One architecture's selection: its latest run, then the existing in-run
-    ordering (`select_checkpoint_in_dir`). Runs are not ranked against each
-    other by their metrics: they may differ in every setting."""
+    """One architecture's selection: its latest run holding a candidate
+    (`accept`'s, or any file), then the existing in-run ordering
+    (`select_checkpoint_in_dir`). Runs are not ranked against each other by
+    their metrics: they may differ in every setting."""
     architecture = normalize_conv_type(conv_type)
-    runs = [r for r in list_runs(data_dir, architecture) if run_checkpoints(r)]
-    if not runs:
+    run = _first_run_holding(list_runs(data_dir, architecture), accept)
+    if run is None:
         return None, f"no run of '{architecture}' has a checkpoint"
-    run = runs[0]
-    return (select_checkpoint_in_dir(run_checkpoint_dir(run), score_fn=score_fn),
+    return (select_checkpoint_in_dir(run_checkpoint_dir(run), score_fn=score_fn,
+                                     accept=accept),
             f"latest run '{run.name}' of '{architecture}'")
 
 
 def select_auto_run_checkpoint(
-    data_dir: PathLike, score_fn: Optional[ScoreFn] = None
+    data_dir: PathLike, score_fn: Optional[ScoreFn] = None,
+    accept: Optional[AcceptFn] = None,
 ) -> Tuple[Optional[Path], Optional[str], str]:
-    """Auto selection over runs: the most recently trained run of any
-    architecture, then the existing in-run ordering. Returns
-    ``(checkpoint_path, conv_type, reason)``. Only the run layout is searched;
-    checkpoints elsewhere are reached by an explicit path.
+    """Auto selection over runs: the most recently trained run holding a
+    candidate, then the existing in-run ordering. Returns
+    ``(checkpoint_path, run layout key, reason)``. Only the run layout is
+    searched; checkpoints elsewhere are reached by an explicit path.
 
-    Only ShepherdGNN runs are served today: a model bundle run (filed under an
-    encoder kind) is listed but never auto-selected for serving until serving
-    reads a checkpoint's learning stage and task first (provenance §9.3,
-    hazard 3)."""
-    runs = [r for r in list_runs(data_dir)
-            if run_architecture(r) in SUPPORTED_CONV_TYPES and run_checkpoints(r)]
-    if not runs:
+    **With ``accept``, the record decides, never the directory** (provenance
+    §9.3, hazard 3): every run-layout key is searched, and a run counts only
+    when it holds a file ``accept`` takes (the reload's rule: a model bundle
+    finetuned for the task asked for, or, for the ShepherdGNN reload, a file
+    that is not a model bundle). Without it, as before: the ShepherdGNN
+    conv-type directories only."""
+    run = _first_run_holding(
+        [r for r in list_runs(data_dir)
+         if accept is not None or run_architecture(r) in SUPPORTED_CONV_TYPES], accept)
+    if run is None:
         return None, None, "no run has a checkpoint"
-    run = runs[0]
     architecture = run_architecture(run)
-    return (select_checkpoint_in_dir(run_checkpoint_dir(run), score_fn=score_fn),
+    return (select_checkpoint_in_dir(run_checkpoint_dir(run), score_fn=score_fn,
+                                     accept=accept),
             architecture, f"auto: latest run '{run.name}' ({architecture})")
 
 
