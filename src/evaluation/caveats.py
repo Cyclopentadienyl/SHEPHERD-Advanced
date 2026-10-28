@@ -19,7 +19,7 @@ Module: src/evaluation/caveats.py
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Iterable, Optional
 
 #: Why a metric measured on `val` is not an independent test result.
 #:
@@ -154,6 +154,14 @@ MODE_D_NOTE = (
 #: standard-library-only module does not import; `tests/unit/test_mode_d.py`
 #: pins the two equal).
 TASK_NAMES = {"disease": "Disease", "gene": "Gene", "patients_like_me": "Patients-like-me"}
+
+
+def task_list_text(names: Iterable[str]) -> str:
+    """Task names as one phrase, "Gene", "Gene and Patients-like-me",
+    "Disease, Gene and Patients-like-me": the one way every page and the runner
+    name a set of tasks (each name already a `TASK_NAMES` word)."""
+    names = list(names)
+    return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
 
 #: Each recorded mode's label, by the record's `scoring.mode`.
 #: A finetuned model bundle's disease task measurement

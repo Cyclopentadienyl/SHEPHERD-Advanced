@@ -158,7 +158,7 @@ def test_a_base_and_a_history_file_are_listed_and_never_started(site, monkeypatc
             raise AssertionError("the runner was asked to start a refused checkpoint")
 
     for key, says in ((base, "this checkpoint is a base: it has no task to measure"),
-                      (history, "this checkpoint has no model spec (a ShepherdGNN checkpoint)")):
+                      (history, "History · never run (no model spec: a ShepherdGNN checkpoint)")):
         allowed, why = tp.start_state(page, models, "demo", LABEL, key, binding, ("none", ""))
         assert allowed is False and why.startswith(f"Disabled: {says}"), why
         result = tp.start_test_run(page, models, "demo", LABEL, key, False, False, request,

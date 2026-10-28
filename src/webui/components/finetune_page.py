@@ -74,7 +74,7 @@ import gradio as gr
 
 from src.api.services.training_manager import FinetuneInputs, training_manager
 from src.config.recipe import FINETUNE, FINETUNE_SOURCES
-from src.evaluation.caveats import TASK_NAMES
+from src.evaluation.caveats import TASK_NAMES, task_list_text
 from src.models.bundle.spec import TASKS
 from src.webui.components import renderers as r
 from src.webui.components import training_console as tc
@@ -129,8 +129,7 @@ def tasks_note_html(readiness: Mapping[str, Optional[str]]) -> str:
         return ""
     parts = []
     for why, names in reasons.items():
-        joined = names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
-        parts.append(f"{joined}: {why}")
+        parts.append(f"{task_list_text(names)}: {why}")
     return f'<p class="shep-ft-why">Not ready: {r.e("; ".join(parts))}.</p>'
 
 
@@ -318,8 +317,7 @@ def child_row_html(child: Mapping[str, Any], *, operator: bool, products: Mappin
     architecture, run = _run_parts(child.get("run_dir"))
     if run:
         whole = f"{architecture}/{run}"
-        run_cell = (f'<code class="shep-ident" title="{r.e(whole)}">'
-                    f'{r.e(r.run_name(run) or whole)}</code>')
+        run_cell = r.ident_html(r.run_name(run) or whole, title=whole)
     else:
         run_cell = ('<span class="shep-muted">not started yet</span>' if status == "queued" else
                     '<span class="shep-muted">never started</span>')

@@ -433,3 +433,13 @@ def test_model_facts_show_the_task_and_the_configuration_escaped():
         validation=None, recorded=None, warnings=(), task="<i>x</i>", configuration=None))
     assert "&lt;i&gt;x&lt;/i&gt;" in bare and "<i>x</i>" not in bare
     assert '<span class="shep-k">Configuration</span>' not in bare  # None: no row, no dash
+
+
+def test_an_identifier_shown_short_keeps_its_whole_value_as_its_title():
+    """A run's name part shown for its whole "arch/run" id (the Fine-tune job
+    card) goes through the one identifier markup, the whole id in its title."""
+    html = r.ident_html("smoke-ft-disease", title="gatv2/20261028-140013_smoke-ft-disease_0e8106")
+    assert html == ('<code class="shep-ident" title="gatv2/20261028-140013_smoke-ft-disease_0e8106">'
+                    "smoke-ft-disease</code>")
+    assert r.ident_html("<b>x", title="<i>y") == (
+        '<code class="shep-ident" title="&lt;i&gt;y">&lt;b&gt;x</code>')

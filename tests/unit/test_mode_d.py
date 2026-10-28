@@ -704,6 +704,10 @@ def test_a_task_metric_is_named_by_its_task_never_as_a_mode():
     from src.models.bundle.spec import TASKS
 
     assert tuple(TASK_NAMES) == TASKS
+    # One way to name a set of tasks (the runner's refusals, the Fine-tune page).
+    from src.evaluation.caveats import task_list_text
+    assert [task_list_text(TASK_NAMES[t] for t in TASKS[:n]) for n in (1, 2, 3)] == [
+        "Disease", "Disease and Gene", "Disease, Gene and Patients-like-me"]
     assert metric_text("gene", "pooled_mrr") == "Gene pooled MRR"
     assert [metric_text("disease", name) for name in (
         "pooled_top10", "macro_recall@5", "macro_precision@20", "macro_mrr",

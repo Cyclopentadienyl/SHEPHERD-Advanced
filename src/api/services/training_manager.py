@@ -428,10 +428,9 @@ _NEW_RUN_KEYS = frozenset({"data_dir", "run_name", "run_dir", "device", "compile
 def _task_words(tasks: Sequence[str]) -> str:
     """Tasks as every page names them (`caveats.TASK_NAMES`): "Gene", "Gene and
     Patients-like-me", "Disease, Gene and Patients-like-me"."""
-    from src.evaluation.caveats import TASK_NAMES
+    from src.evaluation.caveats import TASK_NAMES, task_list_text
 
-    names = [TASK_NAMES.get(task, task) for task in tasks]
-    return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+    return task_list_text([TASK_NAMES.get(task, task) for task in tasks])
 
 
 def _recipe_settings_problem(settings: Mapping[str, Any], references: Sequence[Mapping[str, Any]],

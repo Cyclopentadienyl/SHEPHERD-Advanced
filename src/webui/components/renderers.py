@@ -134,14 +134,15 @@ def e(value: Any) -> str:
     return html.escape("" if value is None else str(value), quote=True)
 
 
-def ident_html(value: Any) -> str:
+def ident_html(value: Any, *, title: Any = None) -> str:
     """An identifier (a role code, a run, a checkpoint file name) in code style,
     kept whole: never broken inside its name ("research_selection" is never
     "research_" / "selection"), and where it does not fit it ends in an
     ellipsis with its whole value as its title (``.shep-ident``,
-    `src/webui/style.py`)."""
+    `src/webui/style.py`). `title` names the whole identifier when `value` is
+    a short form of it (a run's name part, its whole "arch/run" id)."""
     text = e(value)
-    return f'<code class="shep-ident" title="{text}">{text}</code>'
+    return f'<code class="shep-ident" title="{e(title) if title is not None else text}">{text}</code>'
 
 
 def word_groups(*groups: str) -> str:

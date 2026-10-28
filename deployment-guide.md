@@ -2805,8 +2805,13 @@ Training Console 現在是分成三部分的一個頁面：上方橫跨整頁的
   瀏覽器分頁中隱藏橫幅。run bar 中的每則通知都把名稱與路徑當作文字顯示，不論 workspace 或 run
   名稱含有什麼字元。
 
-**參數，「for the next run」**：欄位、分組、預設值與驗證都與以前相同，Basic 展開，Advanced 與
-Expert 收合。**Data Paths 與它的 Save Path 已移除**：workspace 由 run bar 選擇，儀表板不再
+**參數，「for the next run」**（K6：base 的設定）：恰為 base 階段的參考設定（`src/config/recipe.py`
+的 BASE），每一欄都從參考值開始。Epochs、Learning rate、Batch size 與 Seed 直接顯示，其餘七欄
+收在預設收合的「More reference settings」之下。Early stopping patience 關閉時（參考值）顯示
+「off」，填入整數即開啟。表單下方一行顯示「Uses the reference settings.」或「Differs from the
+reference settings: Epochs 5 (200)」；欄位拒絕的值會在這一行指出（「Not valid: …」），Start 也會
+拒絕；Start 只送出與參考值不同的設定。任務模型由 base 在 Research › Prepare › Fine-tune 訓練。
+**Data Paths 與它的 Save Path 已移除**：workspace 由 run bar 選擇，儀表板不再
 讀取或寫入伺服器工作目錄中的 `.shepherd_training_config.json`（留在那裡的檔案會被忽略；是否
 提供「Save as the default dataset」是擁有者要決定的問題）。三個分組放不進視窗時（1920 × 1080
 放得下），參數在自己的欄內捲動；run bar 永遠不捲動。run 檢視分成三列：標題與狀態行、圖表、
@@ -2872,8 +2877,9 @@ checkpoint（相對於 workspace 根目錄；執行中為最新的一個）、�
 to train further, use Continue…」、「Stopped early (…) · … · cannot be continued」、「Running ·
 epoch 12 of 100」或「No checkpoint saved, so nothing can be continued」；沒有 run 目錄的 run（在
 建立 run 目錄之前就被拒絕）會如實說明：沒有 checkpoint、沒有日誌，也沒有可畫的圖。下方是一張共用 epoch 軸的四格圖：Loss（train，以及以虛線表示的
-validation）、MRR（validation，Trainer top-20）、Hits@K（validation，Trainer），以及對數軸的
-learning rate（0 或缺少的值為空隙）。圖下是資源列（GPU 與記憶體）。
+validation）、該 run 的驗證值與其伴隨指標，以及對數軸的 learning rate（0 或缺少的值為空隙）。
+中間兩張依 run 記錄的內容而定：base 畫 LP accuracy，再畫 ROC-AUC 與 AP；任務模型畫 pooled MRR，
+再畫 pooled top-k；沒有 model spec 的 run（history）畫 MRR（Trainer top-20），再畫 Hits@K。圖下是資源列（GPU 與記憶體）。
 
 - **縮放與平移**：在圖上滾動滾輪會以指標為中心縮放；在 epoch 軸上只縮放 epoch（四張圖一起），
   在數值軸上只縮放該圖的數值。拖曳可平移；雙擊或 **Reset view** 會重新容納全部資料；+ 與 −

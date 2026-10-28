@@ -2616,8 +2616,14 @@ a run.
   Dismiss hides the banner for this browser tab. Every notice in the run bar shows names and
   paths as text, whatever characters a workspace or run name holds.
 
-**Parameters, "for the next run"**: the same fields, groups, defaults and validation as before,
-Basic open, Advanced and Expert closed. **Data Paths and its Save Path are gone**: the workspace
+**Parameters, "for the next run"** (K6: a base's settings): exactly the base stage's reference
+settings (`src/config/recipe.py` BASE), each starting at its reference value. Epochs, Learning
+rate, Batch size and Seed show; the other seven sit under "More reference settings", closed.
+Early stopping patience reads "off" when it is off (the reference); a whole number turns it on.
+A line under the form says "Uses the reference settings." or "Differs from the reference
+settings: Epochs 5 (200)", and a value its field refuses is named there ("Not valid: …") and
+refused by Start, which sends only the settings that differ. Task models are trained from a base
+on Research › Prepare › Fine-tune. **Data Paths and its Save Path are gone**: the workspace
 is the run bar's choice, and the dashboard no longer reads or writes
 `.shepherd_training_config.json` in the server's working directory (a file left there is
 ignored; whether to offer "Save as the default dataset" is an owner question). When the three
@@ -2700,8 +2706,10 @@ further, use Continue…", "Stopped early (…) · … · cannot be continued", 
 100", or "No checkpoint saved, so nothing can be continued"; a run that has no run directory
 (refused before it made its run directory) says so, with no checkpoint, no log and nothing to
 chart. Below them, one figure of four charts sharing the epoch
-axis: Loss (train, and validation dashed), MRR (validation, Trainer top-20), Hits@K (validation,
-Trainer) and the learning rate on a log axis (a 0 or a missing value is a gap). Under it, the
+axis: Loss (train, and validation dashed), the run's validation figure and its companions, and
+the learning rate on a log axis (a 0 or a missing value is a gap). The middle two follow what the
+run logged: a base charts LP accuracy, then ROC-AUC and AP; a task model pooled MRR, then pooled
+top-k; a run without a model spec (history) MRR (Trainer top-20), then Hits@K. Under it, the
 resources line (GPU and memory).
 
 - **Zoom and pan**: the wheel over a chart zooms around the pointer; over the epoch axis it zooms
