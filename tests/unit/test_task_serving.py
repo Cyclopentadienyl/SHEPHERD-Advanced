@@ -278,3 +278,23 @@ def test_a_reference_patients_context_names_its_causal_genes_outside_the_graph(t
                           causal_genes_unmapped=["GENE_X"])
     candidate = pipeline._patient_candidate(1, "r1", -1.0, row)
     assert len(candidate.causal_genes) == 2 and candidate.causal_genes[-1] == "GENE_X"
+
+
+def test_a_reload_by_task_publishes_a_model_without_eta(trained, monkeypatch):
+    """A patients-like-me model scores by its own head alone (eta None, as a
+    disease model does): the reload's status reports that, and the reload
+    publishes the model, built as the service builds it."""
+    import src.api.main as api
+    from src.api.routes.pipeline import PipelineReloadRequest, run_reload
+
+    published = []
+    monkeypatch.setenv("SHEPHERD_DEVICE", "cpu")
+    monkeypatch.setattr(api, "publish_pipeline", published.append)
+    monkeypatch.setattr(api.app_state, "pipeline", None, raising=False)
+    monkeypatch.setattr(api.app_state, "real_pipeline_requested", False, raising=False)
+    result = run_reload(PipelineReloadRequest(
+        data_dir=str(trained["data_dir"]), task="patients_like_me",
+        checkpoint_path=str(trained["patients_like_me"])))
+    assert result.success, result.message
+    assert result.status.eta_effective is None and len(published) == 1
+    assert published[0].config["served_identity"]["scoring_mode"] == "patients_like_me"

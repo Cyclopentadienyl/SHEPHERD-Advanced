@@ -7,16 +7,17 @@ setting of its parent but those the request changes on the stage's closed
 list (`src.config.recipe.branch_settings`), and records each change beside
 the exact parent file (`parent.changes`). It is refused before anything is
 written when it names two parents, another stage or task, a setting off the
-list, an extension, no change, a weights-only parent or other bytes than
-expected. A paused branch resumes as its own run.
+list, an extension, no change, a weights-only parent, other bytes than
+expected or other data than its parent's. A paused branch resumes as its own
+run.
 
 With it, three shared defects are fixed at their root: early stopping follows
 the patience in effect, so a resumed or branched run keeps it on or off as
 its parent had it; a continued run's recipe record names its settings as
 inherited, never as the recipe's; and the base's validation pairs are the
 split's, whatever a run's seed or batch size. The configuration file is read
-strictly: an unknown key, a missing file or a document that is not a mapping
-is refused.
+strictly: an unknown key, a missing or unreadable path or a document that is
+not a mapping is refused; a pipe is read like a file.
 
 Module: tests/unit/test_branch_operation.py
 """
@@ -135,7 +136,8 @@ REFUSALS = {
                  "keeps every setting of its parent but those on its list"),
     "early stopping": (dict(early_stopping_patience=3), RunPlanRefused,
                        "keeps every setting of its parent but those on its list"),
-    "an extension": (dict(extend_epochs=1, learning_rate=1e-3), ValueError, "give resume_from"),
+    "an extension": (dict(extend_epochs=1, learning_rate=1e-3), RunPlanRefused,
+                     "a branch starts a new run: remove them to branch"),
     "no change": (dict(learning_rate=1e-4), RunPlanRefused, "changes at least one setting"),
     "the ShepherdGNN path": (dict(learning_stage=None, learning_rate=1e-3), ValueError,
                              "belong to the model bundle path"),
@@ -171,6 +173,19 @@ def test_a_parent_without_its_settings_or_its_bytes_is_refused(workspace, parent
     with pytest.raises(CheckpointChanged):
         train_model.train(*_branch(workspace, tmp_path / "x", parent, learning_rate=1e-3),
                           expected_parent_sha256="0" * 64)
+    assert not (tmp_path / "x").exists()
+
+
+def test_a_branch_over_other_data_is_refused(parent, tmp_path):
+    """The branch's data is its parent's (BACKLOG 23, M2.3's rule): another
+    workspace's graph is refused before anything is written."""
+    import train_model
+    from src.utils.fingerprint import TrainingRecordMismatch
+
+    other = write_base_workspace(tmp_path / "other", seed=8)
+    with pytest.raises(TrainingRecordMismatch,
+                       match="The branch parent .* does not match this run: .*kg differs"):
+        train_model.train(*_branch(other, tmp_path / "x", parent, learning_rate=1e-3))
     assert not (tmp_path / "x").exists()
 
 
@@ -273,6 +288,19 @@ def test_the_configuration_file_is_read_strictly(tmp_path, monkeypatch):
     config, explicit = train_model.load_config_with_explicit(
         args("--config", str(tmp_path / "empty.yaml")))
     assert explicit == set()
+    # A pipe is read like a file; a path that cannot be read says so.
+    import os
+    import threading
+
+    pipe = tmp_path / "config.fifo"
+    os.mkfifo(pipe)
+    writer = threading.Thread(target=pipe.write_text, args=("num_epochs: 4\n",))
+    writer.start()
+    config, explicit = train_model.load_config_with_explicit(args("--config", str(pipe)))
+    writer.join(timeout=10)
+    assert (config.num_epochs, explicit) == (4, {"num_epochs"})
+    with pytest.raises(ValueError, match="cannot be read .IsADirectoryError"):
+        train_model.load_config_with_explicit(args("--config", str(tmp_path)))
 
 
 def test_the_validation_pairs_are_the_splits(workspace):

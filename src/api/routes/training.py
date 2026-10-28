@@ -162,9 +162,9 @@ class TrainingStartRequest(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _refuse_retired_locations(cls, data: Any) -> Any:
-        # output_dir / checkpoint_dir / log_dir were retired by the run layout.
-        # Ignoring them, as an unknown key would be, would start a run that
-        # writes somewhere other than where its caller looks.
+        # output_dir / checkpoint_dir / log_dir were retired by the run layout:
+        # a value names that reason here; any key the request does not define,
+        # these ones empty included, is refused by extra="forbid".
         from src.utils.checkpoint_paths import refuse_retired_locations
 
         refuse_retired_locations(data, source="This request")
@@ -362,7 +362,7 @@ async def start_training(
 
 
 @router.post("/training/finetune", response_model=Dict[str, Any], dependencies=OPERATOR_ONLY)
-async def start_finetune(
+def start_finetune(
     request: FinetuneStartRequest,
     expected_dataset_fingerprint: Annotated[Optional[str], Query(
         pattern=r"^[0-9a-f]{64}$",
@@ -376,7 +376,10 @@ async def start_finetune(
     """Start one to three finetune children of a base, in order, through the
     one job runner (`TrainingManager.start_finetune`): each its own run,
     status and record; a failed child does not stop its siblings, and
-    /training/stop ends the running child and cancels the queued ones."""
+    /training/stop ends the running child and cancels the queued ones.
+    **A plain `def`**: the start reads the whole base checkpoint, so FastAPI
+    runs it in its threadpool, never on the event loop the API and the
+    dashboard share."""
     result = training_manager.start_finetune(
         FinetuneInputs(data_dir=request.data_dir, finetune_from=request.finetune_from,
                        tasks=tuple(request.tasks), device=request.device,

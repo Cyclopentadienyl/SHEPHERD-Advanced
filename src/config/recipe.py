@@ -2,8 +2,10 @@
 The reference training settings of each learning stage, with their sources.
 ==========================================================================
 `docs/working/scorer-retraining/README.md` §0.3, C6, U3, U8, U15. One place:
-`scripts/train_model.py` fills every setting the operator did not give from
-here, and records which it filled. Every value is a provisional default
+in a new run (a base, a finetune) `scripts/train_model.py` fills every setting
+the operator did not give from here, and records which it filled; a resumed,
+extended or branched run takes its parent's settings instead, recorded as
+inherited. Every value is a provisional default
 anchored on the fixed source (§0.3), never a claim that it is tuned for this
 project's data; an operator's value replaces it and is recorded as theirs.
 

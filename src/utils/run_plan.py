@@ -310,8 +310,9 @@ def plan_branch(
             "Choose a training-state checkpoint of its run (last.pt or a top-k file).")
     if request.get("extend_epochs") or request.get("extend_lr") is not None:
         raise RunPlanRefused(
-            "extend_epochs and extend_lr extend a finished run at a fixed rate, with every "
-            "setting kept; a branch starts a new run. Give one of them, not both.")
+            "extend_epochs and extend_lr extend a finished run at a fixed rate with every "
+            "setting kept, and a branch starts a new run: remove them to branch, or resume "
+            "the parent (resume_from, without branch_from) to extend it.")
     changeable = branch_settings(parent.get("learning_stage"), parent.get("task"))
     settings, inherited, changes = _inherit_settings(parent, request, explicit, where,
                                                      changeable=changeable)
@@ -320,7 +321,16 @@ def plan_branch(
             f"A branch changes at least one setting of its parent ({', '.join(sorted(changeable))}), "
             "and this request changes none. To continue the parent with its settings, resume "
             "it (resume_from).")
-    if not {"use_amp", "amp_dtype"} & set(changes):
+    if "use_amp" in changes:
+        # Mixed precision turned on or off is the change, recorded; on must
+        # take effect here, or the record would claim what did not happen.
+        if settings.get("use_amp") and not str(device).startswith("cuda"):
+            raise RunPlanRefused(
+                f"use_amp turned on would not take effect on {device}: mixed precision takes "
+                "effect only on CUDA. Branch it on a CUDA device, or keep use_amp off.")
+    else:
+        # Kept on or off (amp_dtype changed or not): it must take effect as it
+        # did for the parent, as a resume's must.
         _check_amp_takes_effect_alike(parent, settings, device, where)
     shown = "; ".join(f"{name} {change['parent']!r} -> {change['new']!r}"
                       for name, change in sorted(changes.items()))

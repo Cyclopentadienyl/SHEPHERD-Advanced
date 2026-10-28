@@ -115,6 +115,29 @@ def test_lineage_rules():
         task_root.validate()
 
 
+def test_a_record_part_of_the_wrong_kind_is_refused_whole():
+    """Each part is plain data of its kind (a parent names its file's SHA-256
+    and its run), or the record is refused with a reason, never half read or
+    raised as another error out of a list."""
+    spec = finetune_spec_from_parent(_base_spec(), "disease")
+    bundle, record = _record(spec, operation="finetune",
+                             parent={"sha256": "p" * 64, "run": "run-a"})
+    payload = _payload(bundle, record)
+    with pytest.raises(ModelRecordError, match="the record's parent is neither a mapping"):
+        read_model_record({**payload, "parent": "p" * 64})
+    for parent in ({"sha256": "p" * 64}, {"sha256": "p" * 64, "run": 3},
+                   {"sha256": None, "run": "run-a"}):
+        with pytest.raises(ModelRecordError, match="SHA-256 of its checkpoint file and its run"):
+            read_model_record({**payload, "parent": parent})
+    for key, value in (("data_roles", None), ("graph_exposure", ["base"]),
+                       ("weight_transfer", "all"), ("selection", 3)):
+        with pytest.raises(ModelRecordError, match=f"the record's {key} is"):
+            read_model_record({**payload, key: value})
+    for spec_form in (["not", "a", "mapping"], {"learning_stage": "finetune"}):
+        with pytest.raises(ModelRecordError, match="the model spec cannot be read"):
+            read_model_record({**payload, "model_spec": spec_form})
+
+
 def test_a_branch_records_its_changes_and_its_weights():
     """BACKLOG 23: a branch names each changed setting, from the parent's value
     to the new one, beside the exact parent, and how its weights were loaded;

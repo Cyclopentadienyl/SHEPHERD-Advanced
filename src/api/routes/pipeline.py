@@ -57,7 +57,9 @@ class PipelineStatusResponse(BaseModel):
     sp_ready: bool = False
     scoring_mode: str = "not_initialized"
     eta_configured: float = 0.7
-    eta_effective: float = 0.0
+    # None where the served model has no η: a disease or patients-like-me
+    # model scores by its own head alone (the served identity's eta).
+    eta_effective: Optional[float] = 0.0
     sp_max_hops: Optional[int] = None
     #: "sidecar": where the hop bound in effect was read. The only source since
     #: the configured bound was retired (contract M2.5); kept so a status reader
@@ -228,7 +230,7 @@ def _status_of(
         sp_ready=config.get("sp_ready", False),
         scoring_mode=config.get("scoring_mode", "unknown"),
         eta_configured=config.get("eta_configured", 0.7),
-        eta_effective=config.get("eta_effective", 0.0),
+        eta_effective=config.get("eta_effective"),
         sp_max_hops=config.get("sp_max_hops"),
         sp_hop_bound_source=config.get("sp_hop_bound_source"),
         sp_kg_binding=config.get("sp_kg_binding"),
@@ -406,6 +408,7 @@ def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
     from src.models.bundle.record import has_model_spec, listed_record
     from src.utils.checkpoint_io import read_checkpoint
     from src.utils.checkpoint_paths import (
+        RUN_LAYOUT_KEYS,
         normalize_conv_type,
         ranking_score_detail,
         select_auto_run_checkpoint,
@@ -459,10 +462,13 @@ def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
 
     def _accept(path: Path) -> bool:
         """The record decides (provenance §9.3, hazard 3). With a task: a
-        model bundle finetuned for it. Without one (the ShepherdGNN reload):
-        any file that is not a model bundle, as before."""
+        model bundle finetuned for it. Without one (the ShepherdGNN reload): a
+        file without a model spec. A file the scan could not read is judged by
+        nothing, so it is never a candidate on either path."""
         seen = _inspect(path)
-        record = seen["record"] if seen is not None else None
+        if seen is None:
+            return False
+        record = seen["record"]
         if request.task is None:
             return record is None
         return (record is not None and record["record"] == "model"
@@ -486,8 +492,10 @@ def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
                     "conv_type names a ShepherdGNN architecture; a task is served by "
                     "the model finetuned for it, chosen by its record. Give one of them.",
                     files, selection_reason="task with conv_type")
+            # Every run-layout key: a model bundle is filed under its encoder
+            # kind, and the record, never the directory, says what it is.
             selected, architecture, selection_reason = select_auto_run_checkpoint(
-                data_dir, score_fn=_checkpoint_score, accept=_accept)
+                data_dir, score_fn=_checkpoint_score, accept=_accept, keys=RUN_LAYOUT_KEYS)
             selection_reason = f"task {request.task}: {selection_reason}"
         elif requested_conv and requested_conv != "auto":
             try:
@@ -517,7 +525,9 @@ def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
         # If checkpoints exist outside the run layout, say so: they are not
         # selected automatically (decision 9: no runtime fallback), so guide the
         # user rather than contradict files_found.
-        if request.task is not None:
+        if request.checkpoint_path:
+            hint = f"{request.checkpoint_path} does not exist."
+        elif request.task is not None:
             hint = (f"No run holds a model finetuned for the {request.task} task; a base, "
                     "another task's model and a checkpoint without a model spec are not "
                     "chosen for it. Finetune one, or pass an explicit checkpoint_path.")

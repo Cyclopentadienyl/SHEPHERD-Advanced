@@ -552,3 +552,25 @@ def test_trainconfig_defaults_match_spec():
     # PR-4b: the formerly-dropped loss knobs must now exist here, with LossConfig's defaults.
     for n in WIRED_IN_PR4B:
         assert n in fields, f"{n} missing from TrainConfig — PR-4b wiring regressed"
+
+
+def test_a_value_is_checked_by_its_field_spec_without_coercion():
+    """`value_problem` (the Fine-tune start's value check): kinds strictly (a
+    bool is not a number, a string never coerced), bounds, choices and list
+    items, the gene task's "every neighbour" hop (-1) included."""
+    from src.config.training_fields import value_problem
+
+    assert value_problem("num_epochs", 3) is None
+    assert value_problem("learning_rate", 1) is None, "an int is a float's value"
+    assert value_problem("num_neighbors", [-1, 3]) is None
+    assert value_problem("early_stopping_patience", None, allow_none=True) is None
+    for name, value, fragment in (
+            ("num_epochs", True, "must be an integer, not True"),
+            ("num_epochs", "3", "must be an integer, not '3'"),
+            ("use_amp", 1, "must be true or false, not 1"),
+            ("num_epochs", 0, "num_epochs 0 is outside"),
+            ("num_neighbors", [3, -2], "has an item outside"),
+            ("num_neighbors", [], "needs at least"),
+            ("num_epochs", None, "must be set, not null")):
+        problem = value_problem(name, value)
+        assert problem is not None and fragment in problem, (name, value, problem)

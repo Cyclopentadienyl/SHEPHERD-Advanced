@@ -247,12 +247,12 @@ FIELDS: Tuple[FieldSpec, ...] = (
               choices=("disease", "gene", "patients_like_me"), current_api=None,
               current_webui="not-exposed",
               webui_exposed=False, known_divergence=True,
-              divergence_note="CLI only (--task) until the functional UI (K6).",
+              divergence_note="CLI (--task) and POST /training/finetune; the UI at K6.",
               description="A finetune's task."),
     FieldSpec("finetune_from", "str", None, "path", projects_to="TrainConfig.finetune_from",
               current_api=None, current_webui="not-exposed", webui_exposed=False,
               known_divergence=True,
-              divergence_note="CLI only (--finetune-from) until the functional UI (K6).",
+              divergence_note="CLI (--finetune-from) and POST /training/finetune; the UI at K6.",
               description="The base checkpoint a finetune starts from."),
     FieldSpec("branch_from", "str", None, "path", projects_to="TrainConfig.branch_from",
               current_api=None, current_webui="not-exposed", webui_exposed=False,
@@ -542,3 +542,55 @@ def bounds(constraint: Optional[Dict[str, Any]]) -> Tuple[Any, bool, Any, bool]:
     lo = constraint.get("ge", constraint.get("gt"))
     hi = constraint.get("le", constraint.get("lt"))
     return (lo, "gt" in constraint, hi, "lt" in constraint)
+
+
+#: The sampler's "every neighbour" hop size (the gene task's first hop, README
+#: U3), beside the field spec's per-hop floor of 1.
+_ALL_NEIGHBOURS = -1
+#: Each kind in a refusal's words.
+_KIND_WORDS = {"int": "an integer", "float": "a number", "bool": "true or false",
+               "str": "text", "list[int]": "a list of integers"}
+
+
+def value_problem(name: str, value: Any, *, allow_none: bool = False) -> Optional[str]:
+    """Why `value` is not a valid value of the field `name`, by its spec (kind,
+    bounds, choices, list items), or None. Strict about kinds: a bool is not a
+    number and a string is never coerced, so what is checked is what a run is
+    given. `allow_none` admits None where the caller's default is None (a
+    recipe value such as early stopping's patience)."""
+    spec = by_name(name)
+    if value is None:
+        return None if allow_none or spec.default is None else f"{name} must be set, not null."
+    numbers = (int, float)
+    if spec.kind == "int":
+        ok = isinstance(value, int) and not isinstance(value, bool)
+    elif spec.kind == "float":
+        ok = isinstance(value, numbers) and not isinstance(value, bool)
+    elif spec.kind == "bool":
+        ok = isinstance(value, bool)
+    elif spec.kind == "str":
+        ok = isinstance(value, str)
+    elif spec.kind == "list[int]":
+        ok = isinstance(value, list) and all(
+            isinstance(v, int) and not isinstance(v, bool) for v in value)
+    else:
+        ok = True
+    if not ok:
+        return f"{name} must be {_KIND_WORDS.get(spec.kind, spec.kind)}, not {value!r}."
+    if spec.choices is not None and value not in spec.choices:
+        return f"{name} must be one of {list(spec.choices)}, not {value!r}."
+
+    def outside(number: Any, constraint: Optional[Dict[str, Any]]) -> bool:
+        lo, lo_open, hi, hi_open = bounds(constraint)
+        return ((lo is not None and (number <= lo if lo_open else number < lo))
+                or (hi is not None and (number >= hi if hi_open else number > hi)))
+
+    if spec.kind in ("int", "float") and outside(value, spec.valid):
+        return f"{name} {value!r} is outside {spec.valid}."
+    if spec.kind == "list[int]":
+        if spec.min_length is not None and len(value) < spec.min_length:
+            return f"{name} needs at least {spec.min_length} item(s)."
+        items = [v for v in value if not (name == "num_neighbors" and v == _ALL_NEIGHBOURS)]
+        if any(outside(v, spec.item_valid) for v in items):
+            return f"{name} {value!r} has an item outside {spec.item_valid}."
+    return None

@@ -585,7 +585,9 @@ def _record_matches(item: "CheckpointItem", task: Optional[str],
 #: A parent looked up outside the listed workspace (`family_rows`): given the
 #: run a child records and the SHA-256 of the exact parent file, ``("found",
 #: workspace)`` for another listed workspace whose run of that name holds those
-#: bytes, ``("changed", workspace)`` for one whose run no longer holds them, or
+#: bytes, ``("unread", workspace)`` for one whose run holds files that could not
+#: be read (so whether they are the parent cannot be said), ``("changed",
+#: workspace)`` for one whose run was read and does not hold them, or
 #: ``("absent", None)``.
 ParentLookup = Callable[[str, str], Tuple[str, Optional[str]]]
 
@@ -628,6 +630,14 @@ def _not_held(run: str, sha256: str, workspace: Optional[str] = None) -> str:
             "rewritten or removed")
 
 
+def _parent_not_read(run: str, sha256: str, workspace: Optional[str] = None,
+                     problem: Optional[str] = None) -> str:
+    where = f" in the workspace {workspace!r}" if workspace is not None else ""
+    why = f" ({problem})" if problem else ""
+    return (f"the run {run}{where} holds files that could not be read{why}, so whether "
+            f"one is the parent ({sha256[:12]}) cannot be said")
+
+
 def family_rows(
     items: Tuple[CheckpointItem, ...], *, lookup: Optional[ParentLookup] = None,
     task: Optional[str] = None, learning_stage: Optional[str] = None,
@@ -655,6 +665,11 @@ def family_rows(
     for item in models:
         by_digest.setdefault(item.sha256, []).append(item)
     runs_listed = {item.run for item in items}
+    #: Per run, the first problem of a file its listing did not read.
+    unread_in: Dict[str, str] = {}
+    for item in items:
+        if item.sha256 is None or item.problem is not None:
+            unread_in.setdefault(item.run, item.problem or "not read")
 
     parent_of: Dict[str, CheckpointItem] = {}
     placed: Dict[str, Tuple[Optional[str], Optional[str], Optional[str]]] = {}
@@ -668,12 +683,21 @@ def family_rows(
         if listed:
             parent_of[key] = listed[0]
             placed[key] = ("listed", None, None)
+        elif not isinstance(run, str) or not run:
+            # The record reader requires the run; nothing is looked up without it.
+            placed[key] = ("unavailable", None,
+                           f"the parent ({sha256[:12]}) is recorded without its run")
+        elif run in unread_in:
+            placed[key] = ("unavailable", None,
+                           _parent_not_read(run, sha256, problem=unread_in[run]))
         elif run in runs_listed:
             placed[key] = ("unavailable", None, _not_held(run, sha256))
         else:
             state, where = lookup(run, sha256)
             placed[key] = (
                 ("elsewhere", where, None) if state == "found" else
+                ("unavailable", where, _parent_not_read(run, sha256, where))
+                if state == "unread" else
                 ("unavailable", where, _not_held(run, sha256, where)) if state == "changed" else
                 ("unavailable", None,
                  f"the parent run {run} ({sha256[:12]}) is not in a listed workspace"))
@@ -776,6 +800,7 @@ def _parent_lookup(home: str, environ: Optional[Mapping[str, str]]) -> ParentLoo
                 listed.update(resolve_workspaces(environ=environ))
             except ServerListRefused:
                 return "absent", None
+        unread: Optional[str] = None
         changed: Optional[str] = None
         for name, path in sorted(listed.items()):
             if name == home:
@@ -786,8 +811,12 @@ def _parent_lookup(home: str, environ: Optional[Mapping[str, str]]) -> ParentLoo
                 continue
             if any(e.sha256 == sha256 and e.problem is None for e in entries):
                 return "found", name
-            if entries and changed is None:
-                changed = name
+            if any(e.sha256 is None or e.problem is not None for e in entries):
+                unread = unread or name
+            elif entries:
+                changed = changed or name
+        if unread is not None:
+            return "unread", unread
         return ("changed", changed) if changed is not None else ("absent", None)
 
     return lookup

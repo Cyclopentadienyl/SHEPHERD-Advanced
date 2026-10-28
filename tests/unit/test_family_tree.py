@@ -117,6 +117,30 @@ def test_a_parent_not_listed_here_says_where_it_is():
         "the parent run far-base (777777777777) is not in a listed workspace")
 
 
+def test_a_parent_whose_run_holds_an_unread_file_is_not_called_rewritten():
+    """The run listed here holds a file its listing could not read: whether it
+    is the parent cannot be said, so the reason says that, not "rewritten or
+    removed". A parent recorded without its run is never looked up."""
+    child = _item("child", sha="1" * 64, stage="finetune", task="gene",
+                  parent=("0" * 64, "base"))
+    unread = _item("base", sha=None, record=None, problem="the read was refused")
+    row = next(r for r in sl.family_rows((child, unread)) if r.item.run == "child")
+    assert row.parent_state == "unavailable"
+    assert row.parent_problem == (
+        "the run base holds files that could not be read (the read was refused), so "
+        "whether one is the parent (000000000000) cannot be said")
+    elsewhere = sl.family_rows(
+        (replace(child, parent_run="far"),), lookup=lambda run, sha256: ("unread", "ws-b"))[0]
+    assert (elsewhere.parent_state, elsewhere.parent_workspace) == ("unavailable", "ws-b")
+    assert elsewhere.parent_problem.startswith(
+        "the run far in the workspace 'ws-b' holds files that could not be read")
+    asked = []
+    no_run = sl.family_rows((replace(child, parent_run=None),),
+                            lookup=lambda run, sha256: asked.append(run) or ("absent", None))[0]
+    assert asked == [] and no_run.parent_state == "unavailable"
+    assert no_run.parent_problem == "the parent (000000000000) is recorded without its run"
+
+
 def test_a_parent_copied_within_the_workspace_is_the_recorded_runs():
     """Identical bytes in two runs: the child sits under the run it records."""
     copy = replace(ITEMS[5], run="copy-of-base")
@@ -171,7 +195,12 @@ def test_a_parent_in_another_listed_workspace_is_found_by_its_run_and_bytes(tmp_
     rewritten = sl.list_family("b", environ=environ).items[0]
     assert (rewritten.parent_state, rewritten.parent_workspace) == ("unavailable", "a")
     assert "rewritten or removed" in rewritten.parent_problem
-    (root / "a" / "runs" / "gatv2" / BASE_RUN / "checkpoints" / "last.pt").unlink()
+    torn = root / "a" / "runs" / "gatv2" / BASE_RUN / "checkpoints" / "last.pt"
+    torn.write_bytes(b"not a checkpoint")
+    unread = sl.list_family("b", environ=environ).items[0]
+    assert (unread.parent_state, unread.parent_workspace) == ("unavailable", "a")
+    assert "holds files that could not be read" in unread.parent_problem
+    torn.unlink()
     gone = sl.list_family("b", environ=environ).items[0]
     assert gone.parent_problem.endswith("is not in a listed workspace")
 

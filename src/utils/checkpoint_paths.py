@@ -40,7 +40,7 @@ import time
 from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, NamedTuple, Optional, Sequence, Tuple, Union
 
 ScoreFn = Callable[[Path], Optional[float]]
 #: Whether a candidate file may be selected (automatic selection's record rule).
@@ -154,7 +154,9 @@ def select_checkpoint_in_dir(
                 score = None
             if isinstance(score, (int, float)) and not isinstance(score, bool) \
                     and math.isfinite(score):
-                scored.append((float(score), p.stat().st_mtime, p.name, p))
+                # `_mtime`: a file removed since its read (training prunes
+                # its top-k files) sorts last, never raising out of here.
+                scored.append((float(score), _mtime(p), p.name, p))
         if scored:
             best = max(scored, key=lambda t: (t[0], t[1], t[2]))
             return best[3]
@@ -162,7 +164,7 @@ def select_checkpoint_in_dir(
     last = d / "last.pt"
     if last in pts:
         return last
-    return max(pts, key=lambda p: p.stat().st_mtime)
+    return max(pts, key=lambda p: (_mtime(p), p.name))
 
 
 # =============================================================================
@@ -653,22 +655,22 @@ def select_run_checkpoint(
 
 def select_auto_run_checkpoint(
     data_dir: PathLike, score_fn: Optional[ScoreFn] = None,
-    accept: Optional[AcceptFn] = None,
+    accept: Optional[AcceptFn] = None, keys: Sequence[str] = SUPPORTED_CONV_TYPES,
 ) -> Tuple[Optional[Path], Optional[str], str]:
-    """Auto selection over runs: the most recently trained run holding a
+    """Auto selection over runs: the most recently trained run, filed under
+    one of `keys` (the ShepherdGNN conv types unless told), holding a
     candidate, then the existing in-run ordering. Returns
     ``(checkpoint_path, run layout key, reason)``. Only the run layout is
     searched; checkpoints elsewhere are reached by an explicit path.
 
     **With ``accept``, the record decides, never the directory** (provenance
-    §9.3, hazard 3): every run-layout key is searched, and a run counts only
-    when it holds a file ``accept`` takes (the reload's rule: a model bundle
-    finetuned for the task asked for, or, for the ShepherdGNN reload, a file
-    that is not a model bundle). Without it, as before: the ShepherdGNN
-    conv-type directories only."""
+    §9.3, hazard 3): a run counts only when it holds a file ``accept`` takes
+    (the reload's rule: a model bundle finetuned for the task asked for, over
+    every run-layout key; for the ShepherdGNN reload, a file without a model
+    spec, which a bundle filed under a shared conv type, ``hgt`` or ``sage``,
+    is not)."""
     run = _first_run_holding(
-        [r for r in list_runs(data_dir)
-         if accept is not None or run_architecture(r) in SUPPORTED_CONV_TYPES], accept)
+        [r for r in list_runs(data_dir) if run_architecture(r) in keys], accept)
     if run is None:
         return None, None, "no run has a checkpoint"
     architecture = run_architecture(run)

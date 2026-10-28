@@ -177,7 +177,7 @@ def test_a_parent_replaced_after_the_runners_preview_is_refused_by_the_process(
     assert PROCESS_CHANGED in log, log[-3000:]
     other = _sha(case["parents"][swapped])
     assert f"holds {other[:12]}..., not the {shown[:12]}... expected. Nothing was written." in log
-    assert "Traceback" not in log and "Resume parent accepted" not in log
+    assert "Traceback" not in log and "parent accepted:" not in log
     assert not Path(started["run_dir"]).exists(), "a refused run left its directory"
     assert set((case["ws"] / "runs").rglob("*")) == before
 

@@ -171,8 +171,10 @@ class TrainConfig:
     # The model bundle path (docs/working/scorer-retraining/README.md §3–§4):
     # "base" trains KG link prediction into a bundle checkpoint with a model
     # spec. None is the ShepherdGNN path below, which retires once the
-    # bundle path serves (README §7). Settings the operator leaves unset take
-    # the stage's reference values (src/config/recipe.py), recorded as such.
+    # bundle path serves (README §7). In a new run (a base, a finetune) the
+    # settings the operator leaves unset take the stage's reference values
+    # (src/config/recipe.py), recorded as such; a resumed, extended or branched
+    # run takes its parent's, recorded as inherited.
     learning_stage: Optional[str] = None
     # The model spec as plain data (ModelSpec.to_dict), read strictly; None is
     # the reference spec of the stage.
@@ -240,10 +242,10 @@ class TrainConfig:
     ortholog_weight: float = 0.2
 
     # Loss shape knobs. These are accepted by the API and the WebUI, so they must
-    # exist here: load_config() only copies a YAML key when TrainConfig has the
-    # attribute, and until they were added the user's values were silently dropped
-    # and LossConfig always used its own defaults. Defaults below match LossConfig
-    # exactly, so a run that does not set them behaves identically.
+    # exist here: a YAML key TrainConfig does not have is refused (BACKLOG 54;
+    # before that it was dropped silently, and LossConfig used its own defaults).
+    # Defaults below match LossConfig exactly, so a run that does not set them
+    # behaves identically.
     margin: float = 1.0
     label_smoothing: float = 0.1
     temperature: float = 0.07
@@ -540,10 +542,14 @@ def load_config_with_explicit(args: argparse.Namespace) -> Tuple[TrainConfig, Se
     # there, is not a mapping, or names a key this version does not have is
     # refused, never skipped, so a mistyped setting is not trained without.
     if args.config:
-        if not Path(args.config).is_file():
+        if not Path(args.config).exists():
             raise ValueError(f"The configuration {args.config} does not exist.")
-        with open(args.config) as f:
-            yaml_config = yaml.safe_load(f)
+        try:
+            with open(args.config) as f:
+                yaml_config = yaml.safe_load(f)
+        except OSError as exc:
+            raise ValueError(f"The configuration {args.config} cannot be read "
+                             f"({type(exc).__name__}: {exc.strerror or exc}).") from None
         if yaml_config is None:
             yaml_config = {}
         if not isinstance(yaml_config, dict):
@@ -1416,7 +1422,8 @@ def train_bundle(config: TrainConfig, explicit: Optional[Collection[str]] = None
                 f"The parent is a {parent_record.learning_stage} checkpoint"
                 + (f" for {parent_record.task}" if parent_record.task else "")
                 + "; a run continues only its own stage and task.")
-    elif config.extend_epochs or config.extend_lr is not None:
+    elif (config.extend_epochs or config.extend_lr is not None) and not config.branch_from:
+        # A branch with them is refused by its plan, in a branch's words.
         raise ValueError("extend_epochs and extend_lr continue a parent; give resume_from.")
     base_parent = base_record = None
     if config.finetune_from:

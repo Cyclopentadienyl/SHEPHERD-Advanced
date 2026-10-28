@@ -73,8 +73,12 @@ class ModelRecord:
             raise ModelRecordError("a model record names its family (the root run)")
         if (self.operation == "new") != (self.parent is None):
             raise ModelRecordError("a parent is recorded for every operation but 'new'")
-        if self.parent is not None and not self.parent.get("sha256"):
-            raise ModelRecordError("a parent is named by the SHA-256 of its checkpoint file")
+        if self.parent is not None and not (
+                isinstance(self.parent, dict) and isinstance(self.parent.get("sha256"), str)
+                and self.parent["sha256"] and isinstance(self.parent.get("run"), str)
+                and self.parent["run"]):
+            raise ModelRecordError("a parent is named by the SHA-256 of its checkpoint file "
+                                   "and its run")
         if self.operation == "finetune" and self.learning_stage != "finetune":
             raise ModelRecordError("a finetune operation produces a finetune spec")
         if self.operation == "new" and self.learning_stage != "base":
@@ -133,10 +137,18 @@ def read_model_record(payload: Mapping[str, Any]) -> ModelRecord:
     try:
         spec = ModelSpec.from_dict(payload["model_spec"])
         view = ViewShape.from_record(payload["graph_view"])
-    except SpecError as exc:
+    except (SpecError, TypeError, ValueError, KeyError, AttributeError) as exc:
         raise ModelRecordError(f"the model spec cannot be read: {exc}") from exc
     if payload["learning_stage"] != spec.learning_stage or payload["task"] != spec.task:
         raise ModelRecordError("the record's learning stage or task differs from its model spec")
+    # Each part as plain data of its kind, or the record is refused as a whole,
+    # never half read (a list shows it as refused, with this reason).
+    for key in ("data_roles", "graph_exposure", "loss_identity"):
+        if not isinstance(payload[key], dict):
+            raise ModelRecordError(f"the record's {key} is not a mapping")
+    for key in ("parent", "weight_transfer", "scoring_identity", "selection"):
+        if payload[key] is not None and not isinstance(payload[key], dict):
+            raise ModelRecordError(f"the record's {key} is neither a mapping nor null")
     record = ModelRecord(
         model_spec=spec, graph_view=view, operation=payload["operation"],
         family_id=payload["family_id"], parent=payload["parent"],
@@ -180,6 +192,12 @@ def finetune_parent_problem(record: ModelRecord, payload: Mapping[str, Any]) -> 
     return None
 
 
+#: What a list says of a checkpoint without a model spec, while the ShepherdGNN
+#: path still serves such a file (until K7 retires it).
+LISTED_WITHOUT_SPEC = ("no model spec (a ShepherdGNN checkpoint): the ShepherdGNN path still "
+                       "serves and continues it until K7 retires that path; the model bundle "
+                       "path never continues it")
+
 #: What a model list shows of a checkpoint's record (`listed_record`).
 LISTED_RECORD_FIELDS = ("record", "record_problem", "learning_stage", "task", "operation",
                         "family_id", "parent_sha256", "parent_run", "encoder", "reference")
@@ -190,14 +208,14 @@ def listed_record(payload: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
     `read_model_record` alone, so the lists apply no rule of their own.
 
     `record` is "model" (a record this build reads), "history" (no model spec:
-    listed, never run, `HISTORY_ONLY`) or "refused" (a record this build cannot
+    `LISTED_WITHOUT_SPEC`) or "refused" (a record this build cannot
     read, its reason in `record_problem`). A model adds its learning stage,
     task, operation, family (the root run), parent (the SHA-256 of the exact
     parent file and the parent run), encoder kind and whether its spec is the
     reference recipe (README §5, axis 2)."""
     summary: Dict[str, Any] = dict.fromkeys(LISTED_RECORD_FIELDS)
     if payload is None or not has_model_spec(payload):
-        summary.update(record="history", record_problem=HISTORY_ONLY)
+        summary.update(record="history", record_problem=LISTED_WITHOUT_SPEC)
         return summary
     try:
         record = read_model_record(payload)
@@ -235,6 +253,7 @@ def load_bundle(payload: Mapping[str, Any], *, learning_stage: Optional[str] = N
 __all__ = [
     "HISTORY_ONLY",
     "LISTED_RECORD_FIELDS",
+    "LISTED_WITHOUT_SPEC",
     "MODEL_RECORD_VERSION",
     "ModelRecord",
     "ModelRecordError",

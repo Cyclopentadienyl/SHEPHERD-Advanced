@@ -31,7 +31,7 @@ from src.api.routes.pipeline import (  # noqa: E402
 )
 from src.models.bundle import build_bundle, finetune_spec_from_parent, reference_spec  # noqa: E402
 from src.models.bundle.record import (  # noqa: E402
-    HISTORY_ONLY,
+    LISTED_WITHOUT_SPEC,
     LISTED_RECORD_FIELDS,
     MODEL_RECORD_VERSION,
     ModelRecord,
@@ -243,6 +243,72 @@ def test_a_reload_without_a_task_never_chooses_a_bundle(service):
     assert service.built == [str(gnn), str(gnn)]
 
 
+def test_a_reload_without_a_task_skips_what_it_cannot_read_and_no_bundle_directory(
+        service, monkeypatch):
+    """A file the scan could not read is judged by nothing: never a candidate,
+    so a newer torn file does not hide the readable ShepherdGNN run. Without
+    a task only the conv-type directories are searched, so a bundle-only
+    directory (``gatv2``) is never read."""
+    import src.utils.checkpoint_io as checkpoint_io
+
+    d = service.data_dir
+    gnn = _put(d, "gat", "20261001-000000_gnn_aaaaaa", GNN_PAYLOAD, 100)
+    torn = d / "runs" / "gat" / "20261005-000000_torn_bbbbbb" / "checkpoints" / "last.pt"
+    torn.parent.mkdir(parents=True)
+    torn.write_bytes(b"not a checkpoint")
+    os.utime(torn, (900, 900))
+    _put(d, "gatv2", "20261006-000000_child_cccccc", _record_payload("disease"), 950)
+    read, real_read = [], checkpoint_io.read_checkpoint
+
+    def counted(path, *args, **kwargs):
+        read.append(str(path))
+        return real_read(path, *args, **kwargs)
+
+    monkeypatch.setattr(checkpoint_io, "read_checkpoint", counted)
+    result = _reload(service)
+    assert result.success, result.message
+    assert result.checkpoint_path == str(gnn) and service.built == [str(gnn)]
+    assert read == [str(torn), str(gnn)], "a gatv2 run is never read without a task"
+
+
+def test_an_explicit_path_that_is_missing_is_named_with_a_task_too(service, family):
+    missing = service.data_dir / "runs" / "gatv2" / "nope.pt"
+    result = _reload(service, task="disease", checkpoint_path=str(missing))
+    assert not result.success and service.built == []
+    assert f"{missing} does not exist." in result.message
+    assert "No run holds" not in result.message and "pass an explicit" not in result.message
+
+
+def test_a_malformed_record_is_listed_as_refused_and_no_list_fails(tmp_path):
+    """A loadable file whose record parts are not plain data of their kind
+    (a parent as a string, no parent run, data roles null) is refused whole
+    with its reason; the checkpoint lists and the family view still answer."""
+    from src.api.services import server_lists as sl
+    from src.config import server_settings as ss
+
+    good = _record_payload("disease")
+    malformed = {
+        "a parent as a string": {**good, "parent": "a" * 64},
+        "a parent without its run": {**good, "parent": {"sha256": "a" * 64}},
+        "data roles null": {**good, "data_roles": None},
+        "a model spec of the wrong shape": {**good, "model_spec": ["not", "a", "mapping"]},
+    }
+    for case, payload in malformed.items():
+        summary = listed_record(_listed_form(payload))
+        assert summary["record"] == "refused", case
+        assert summary["record_problem"] and summary["task"] is None, case
+    root = tmp_path / "root"
+    ws = root / "ws"
+    for n, payload in enumerate(malformed.values()):
+        _put(ws, "gatv2", f"2026100{n + 1}-000000_bad_{n}{n}{n}{n}{n}{n}", payload, 100 + n)
+    environ = {ss.ENV_WORKSPACES_ROOT: str(root)}
+    listing = sl.list_checkpoints("ws", environ=environ)
+    assert listing.available, listing.problem
+    assert [item.record for item in listing.items] == ["refused"] * len(malformed)
+    family = sl.list_family("ws", environ=environ)
+    assert family.available, family.problem
+
+
 # ---------------------------------------------------------------------------
 # What the lists show of a record
 # ---------------------------------------------------------------------------
@@ -267,7 +333,7 @@ def test_the_listed_record_states():
         "base", None, "new", None)
     for history in (None, {"record_version": 1, "epoch": 2}):
         assert listed_record(history) == {**dict.fromkeys(LISTED_RECORD_FIELDS),
-                                          "record": "history", "record_problem": HISTORY_ONLY}
+                                          "record": "history", "record_problem": LISTED_WITHOUT_SPEC}
     refused = listed_record({**_listed_form(_record_payload("disease")), "record_version": 1})
     assert refused["record"] == "refused" and "record version" in refused["record_problem"]
     assert refused["task"] is None, "a refused record states nothing it could not read"
@@ -337,7 +403,7 @@ def test_the_lists_show_a_bundle_run_and_resolve_it_by_its_key(tmp_path):
             "gatv2", False)
         assert item.validation == {"metric": "val_pooled_mrr", "value": 0.3}
     gnn_item = sl.list_checkpoints("ws", "gat", environ=environ).items[0]
-    assert (gnn_item.record, gnn_item.record_problem) == ("history", HISTORY_ONLY)
+    assert (gnn_item.record, gnn_item.record_problem) == ("history", LISTED_WITHOUT_SPEC)
     assert sl.resolve_checkpoint("ws", "gatv2", "20261002-000000_disease_bbbbbb", "last.pt",
                                  environ=environ) == child
     by_manager = {c["architecture"]: c for c in training_manager.get_checkpoints(str(ws))}

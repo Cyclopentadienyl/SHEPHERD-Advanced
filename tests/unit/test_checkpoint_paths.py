@@ -157,6 +157,33 @@ def test_only_accepted_files_are_candidates_the_fallback_included(tmp_path):
     assert select_checkpoint_in_dir(d, accept=lambda p: False) is None
 
 
+def test_a_file_removed_between_its_read_and_the_ranking_is_never_fatal(tmp_path):
+    """Training prunes its top-k files while a reload ranks them: a file gone
+    since its score was read sorts last, and the selection still answers."""
+    d = tmp_path / "gatv2"
+    _touch(d / "last.pt", 100)
+    _touch(d / "epoch_a.pt", 200)
+    _touch(d / "epoch_b.pt", 300)
+
+    def pruning_score(path):
+        if path.name == "epoch_b.pt":
+            path.unlink()
+            return 0.9
+        return 0.5 if path.name == "epoch_a.pt" else None
+
+    assert select_checkpoint_in_dir(d, score_fn=pruning_score).name == "epoch_b.pt"
+    e = tmp_path / "hgt"
+    _touch(e / "epoch_a.pt", 100)
+    gone = _touch(e / "epoch_b.pt", 200)
+
+    def pruning_accept(path):
+        if path == gone:
+            path.unlink()
+        return True
+
+    assert select_checkpoint_in_dir(e, accept=pruning_accept).name == "epoch_a.pt"
+
+
 # --------------------------------------------------------------- run directories (M3a-2)
 def test_a_run_directory_is_new_named_and_claimed(tmp_path, monkeypatch):
     from datetime import datetime
@@ -225,11 +252,15 @@ def test_selection_is_the_latest_run_then_the_existing_in_run_order(tmp_path):
 
 
 def test_with_accept_the_record_decides_and_later_runs_are_never_judged(tmp_path):
-    """The latest run holding an accepted file wins, whatever directory it is
-    filed under; the runs after it are not judged (`accept` may read every
-    file it is asked about). Without `accept`, as before: the ShepherdGNN
-    conv-type directories only."""
-    from src.utils.checkpoint_paths import select_auto_run_checkpoint, select_run_checkpoint
+    """The latest run holding an accepted file wins among the layout keys
+    searched (the ShepherdGNN conv types unless told: a task's search names
+    every run-layout key); the runs after it are not judged (`accept` may read
+    every file it is asked about)."""
+    from src.utils.checkpoint_paths import (
+        RUN_LAYOUT_KEYS,
+        select_auto_run_checkpoint,
+        select_run_checkpoint,
+    )
 
     root = tmp_path / "runs"
     _touch(root / "gat" / "20261004-000000_new_444444" / "checkpoints" / "last.pt", 400)
@@ -242,10 +273,14 @@ def test_with_accept_the_record_decides_and_later_runs_are_never_judged(tmp_path
         judged.append(path.parent.parent.name)
         return path.name == "ok.pt"
 
-    path, key, reason = select_auto_run_checkpoint(tmp_path, accept=accept)
+    path, key, reason = select_auto_run_checkpoint(tmp_path, accept=accept, keys=RUN_LAYOUT_KEYS)
     assert (path, key) == (child, "gatv2") and "20261003-000000_mid_333333" in reason
     assert set(judged) == {"20261004-000000_new_444444", "20261003-000000_mid_333333"}
-    assert select_auto_run_checkpoint(tmp_path)[1] == "gat", "without accept: conv types only"
+    judged.clear()
+    # The conv types only (the ShepherdGNN reload): a gatv2 run is never read.
+    assert select_auto_run_checkpoint(tmp_path, accept=accept)[1] == "sage"
+    assert set(judged) == {"20261004-000000_new_444444", "20261002-000000_sage_222222"}
+    assert select_auto_run_checkpoint(tmp_path)[1] == "gat", "without accept: the newest run"
     assert select_run_checkpoint(tmp_path, "sage", accept=accept)[0].parent.parent.name == (
         "20261002-000000_sage_222222")
     assert select_run_checkpoint(tmp_path, "gat", accept=accept) == (

@@ -975,6 +975,12 @@ class TrainingManager:
                         "error": "The settings this run would use, its parent's with this "
                                  "request's: " + " ".join(errors)}
             architecture = preview.get("architecture") or architecture
+            if preview.get("learning_stage"):
+                # A model bundle parent: the process runs the bundle path only
+                # when told its stage (and task), read from this preview's read
+                # of the parent's record; it decides again on the same bytes.
+                config = {**config, "learning_stage": preview["learning_stage"],
+                          **({"task": preview["task"]} if preview.get("task") else {})}
 
         kind = JOB_TYPES["training"]
         with self._lock:
@@ -1084,6 +1090,7 @@ class TrainingManager:
         digest of this start's read of the parent (`--expect-parent-sha256`).
         """
         from src.config.recipe import reference_settings
+        from src.config.training_fields import value_problem
         from src.models.bundle.record import (
             ModelRecordError, finetune_parent_problem, read_model_record,
         )
@@ -1102,12 +1109,17 @@ class TrainingManager:
             return refused(f"{unknown[0]!r} is not a task; one of {list(TASKS)}.")
         if len(set(tasks)) != len(tasks):
             return refused("A task is named more than once; each task is one child.")
-        common = set.intersection(*(set(reference_settings("finetune", task)[0])
-                                    for task in tasks))
+        references = [reference_settings("finetune", task)[0] for task in tasks]
+        common = set.intersection(*(set(values) for values in references))
         unread = sorted(set(inputs.settings) - common)
         if unread:
-            return refused(f"{', '.join(unread)} is not a setting every chosen task reads "
-                           f"(those are {', '.join(sorted(common))}).")
+            return refused(f"{', '.join(unread)} is not a setting a Fine-tune start of "
+                           f"{', '.join(tasks)} takes (it takes {', '.join(sorted(common))}).")
+        problems = [problem for name, value in sorted(inputs.settings.items())
+                    for problem in [value_problem(name, value, allow_none=any(
+                        values.get(name) is None for values in references))] if problem]
+        if problems:
+            return refused(" ".join(problems))
         if expected_dataset_fingerprint is not None:
             refusal = self.dataset_refusal(inputs.data_dir, expected_dataset_fingerprint)
             if refusal:
@@ -1173,7 +1185,11 @@ class TrainingManager:
         config = {"data_dir": inputs.data_dir, "learning_stage": "finetune", "task": child.task,
                   "finetune_from": inputs.finetune_from, "device": inputs.device,
                   **dict(inputs.settings), "run_dir": str(run_dir)}
-        temp_fd, temp_path = tempfile.mkstemp(suffix=".yaml", prefix="train_config_")
+        try:
+            temp_fd, temp_path = tempfile.mkstemp(suffix=".yaml", prefix="train_config_")
+        except OSError as exc:
+            child.status, child.error = "failed", f"Its configuration could not be written ({exc})."
+            return child.error
         config_path = Path(temp_path)
         try:
             with os.fdopen(temp_fd, "w") as f:
@@ -1237,9 +1253,11 @@ class TrainingManager:
         # **Stopped, not completed** (contract M3a): the stage did not finish.
         # What can be continued is the run's last saved snapshot, if any;
         # progress after it is lost. Read from the stopped job's own run
-        # directory, whatever was started since the stop ended.
+        # directory, whatever was started since the stop ended. A Fine-tune
+        # start's cancelled children are named.
+        extra = {k: result[k] for k in ("cancelled_children", "message") if k in result}
         return {"success": True, "status": result["status"],
-                "outcome": self.latest_snapshot(job.run_dir)}
+                "outcome": self.latest_snapshot(job.run_dir), **extra}
 
     # =========================================================================
     # Test runs
@@ -1344,9 +1362,11 @@ class TrainingManager:
             if job.status != "running":
                 return {"success": False, "error": f"{kind.noun} is already stopping.",
                         "status": job.status}, None
+            cancelled: List[str] = []
             if job.child is not None and self._finetune is not None:
                 # A stop reaches the Fine-tune start: the queued children never
                 # start, also when the running one ended on its own meanwhile.
+                cancelled = [child.task for child in self._finetune.queued()]
                 self._finetune.cancelled = True
                 self._finetune.end_queued("cancelled", "Cancelled: the training was stopped.")
             process = job.process
@@ -1354,9 +1374,19 @@ class TrainingManager:
             if not ended_on_its_own:
                 job.status = "stopping"
                 job.stop_requested = True
+                if job.child is not None:
+                    job.child.status = "stopping"
 
         if ended_on_its_own:
-            return self._ended_before_stop(job, process), job
+            ended = self._ended_before_stop(job, process)
+            if cancelled:
+                # What this stop did: the running child had ended, and the
+                # queued ones will not start.
+                return {"success": True, "status": ended["status"],
+                        "cancelled_children": cancelled,
+                        "message": f"{ended['error']} The queued children "
+                                   f"({', '.join(cancelled)}) were cancelled."}, job
+            return ended, job
 
         logger.info("Stopping %s job %s (PID: %s)...", job_type, job.job_id, process.pid)
         try:
@@ -1576,8 +1606,16 @@ class TrainingManager:
                     self._active = None
                 if job.child is not None:
                     # The next child starts here, under the lock that freed the
-                    # slot, so no other start comes between two children.
-                    self._child_ended_locked(job)
+                    # slot, so no other start comes between two children. What
+                    # fails in starting it is the children's, never the
+                    # monitor's: this job's cleanup and ending still happen.
+                    try:
+                        self._child_ended_locked(job)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.exception("Starting the next finetune child failed")
+                        if self._finetune is not None:
+                            self._finetune.end_queued(
+                                "refused", f"The next child could not be started ({exc}).")
             for path in job.cleanup:
                 _remove(path)
             job.done.set()
@@ -2077,6 +2115,10 @@ class TrainingManager:
             # The dataset the parent trained on, as it records it (M5-2: the
             # Continue drawer compares it with the workspace's current one).
             "dataset_fingerprint": _recorded_dataset(record),
+            # A model bundle parent's learning stage and task, from its record
+            # (None for a ShepherdGNN parent): the run continues that stage.
+            "learning_stage": record.get("learning_stage") if has_model_spec(record) else None,
+            "task": record.get("task") if has_model_spec(record) else None,
         }
         # The parent's own settings, with the request's fields over them; only
         # the request's fields count as set explicitly, so every other learning

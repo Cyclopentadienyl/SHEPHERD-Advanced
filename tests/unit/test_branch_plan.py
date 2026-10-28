@@ -88,6 +88,17 @@ def test_mixed_precision_must_take_effect_alike_unless_it_is_changed():
         _plan(trained_on_cuda, learning_rate=1e-3, use_amp=True)
     plan = _plan(trained_on_cuda, learning_rate=1e-3, use_amp=False)
     assert plan.changes["use_amp"] == {"parent": True, "new": False}
+    # Kept on with only its dtype changed: it must still take effect here.
+    with pytest.raises(RunPlanRefused, match="mixed precision on"):
+        _plan(trained_on_cuda, amp_dtype="bfloat16", use_amp=True)
+    assert _plan(trained_on_cuda, amp_dtype="bfloat16", use_amp=True,
+                 device="cuda").changes == {"amp_dtype": {"parent": "float16",
+                                                          "new": "bfloat16"}}
+    # Turned on: recorded only where it takes effect.
+    with pytest.raises(RunPlanRefused, match="use_amp turned on would not take effect on cpu"):
+        _plan(_parent(), use_amp=True)
+    assert _plan(_parent(), use_amp=True, device="cuda").changes == {
+        "use_amp": {"parent": False, "new": True}}
 
 
 def test_the_closed_list_is_the_stages_reference_settings_and_companions():
