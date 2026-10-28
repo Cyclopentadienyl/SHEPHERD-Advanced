@@ -456,6 +456,85 @@ class TestCheckpoints:
         listing = sl.list_checkpoints("demo", environ=_roots(root))
         assert str(root) not in json.dumps(listing.as_dict("checkpoints"))
 
+    def test_one_run_is_listed_alone_and_only_its_files_are_opened(self, checkpoint_root,
+                                                                   monkeypatch):
+        """`run=` (a Fine-tune child's products): that run directory's files,
+        each read once, and no other file opened."""
+        from collections import OrderedDict
+
+        import src.utils.checkpoint_io as checkpoint_io
+        import src.utils.checkpoint_paths as cp
+
+        root, _, _ = checkpoint_root
+        monkeypatch.setattr(cp, "_READS", OrderedDict())
+        original, reads = checkpoint_io.read_checkpoint, []
+
+        def counting(path, **kwargs):
+            reads.append(Path(path).name)
+            return original(path, **kwargs)
+
+        monkeypatch.setattr(checkpoint_io, "read_checkpoint", counting)
+        listing = sl.list_checkpoints("demo", run="20261019-120000_old_bbbbbb",
+                                      environ=_roots(root))
+        assert listing.available, listing.problem
+        assert {item.run for item in listing.items} == {"20261019-120000_old_bbbbbb"}
+        assert sorted(item.filename for item in listing.items) == sorted(reads) == [
+            "garbage.pt", "pickled.pt", "weights.pt"]
+        assert sl.list_checkpoints("demo", run="missing", environ=_roots(root)).items == ()
+
+
+def _fixture_for(workspace: Path, manifest_sha256: str) -> None:
+    """A functional fixture record bound to `manifest_sha256`, through the
+    fixture's own publisher (its sample files are empty: readiness reads the
+    record alone)."""
+    from src.kg.task_fixture import publish_gene_fixture
+
+    publish_gene_fixture(workspace, {"train": [], "val": []},
+                         {"workspace": {"split_manifest": manifest_sha256}}, replace=True)
+
+
+class TestTaskReadiness:
+    """`task_readiness` (the Fine-tune page's task options): JSON reads only,
+    no checkpoint opened, words that name no path."""
+
+    @pytest.fixture(autouse=True)
+    def _no_checkpoint_read(self, monkeypatch):
+        import src.utils.checkpoint_io as checkpoint_io
+
+        monkeypatch.setattr(checkpoint_io, "read_checkpoint",
+                            lambda *a, **k: pytest.fail("readiness opened a checkpoint"))
+
+    def test_disease_is_ready_on_a_trainable_workspace_and_the_fixture_tasks_need_it(
+            self, demo_workspace, tmp_path):
+        root = tmp_path / "root"
+        ws = _copy(demo_workspace, root / "demo")
+        assert sl.task_readiness("demo", environ=_roots(root)) == {
+            "disease": None, "gene": "no functional fixture",
+            "patients_like_me": "no functional fixture"}
+        _fixture_for(ws, "0" * 64)
+        assert sl.task_readiness("demo", environ=_roots(root)) == {
+            "disease": None, "gene": "fixture from another build",
+            "patients_like_me": "fixture from another build"}
+        _fixture_for(ws, file_sha256(ws / "split_manifest.json"))
+        assert sl.task_readiness("demo", environ=_roots(root)) == dict.fromkeys(
+            ("disease", "gene", "patients_like_me"))
+        (ws / "derived" / "gene_fixture" / "task_fixture.json").write_text("{torn")
+        assert sl.task_readiness("demo", environ=_roots(root))["gene"] == "fixture not readable"
+
+    def test_no_task_is_ready_on_a_workspace_that_is_not_trainable_or_not_listed(
+            self, demo_workspace, tmp_path):
+        root = tmp_path / "root"
+        ws = _copy(demo_workspace, root / "demo")
+        _fixture_for(ws, file_sha256(ws / "split_manifest.json"))
+        (ws / "edge_indices.pt").unlink()
+        assert set(sl.task_readiness("demo", environ=_roots(root)).values()) == {
+            "dataset not trainable"}
+        for name, environ in (("missing", _roots(root)), ("demo", {})):
+            readiness = sl.task_readiness(name, environ=environ)
+            assert set(readiness) == {"disease", "gene", "patients_like_me"}
+            assert set(readiness.values()) == {"not a listed workspace"}
+            assert str(tmp_path) not in json.dumps(readiness)
+
 
 class TestResolveCheckpoint:
 

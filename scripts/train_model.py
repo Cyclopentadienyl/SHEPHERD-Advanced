@@ -766,9 +766,10 @@ def with_task_data(inputs: TrainingInputs, data_dir: Path, task: Optional[str]
     bundle run calls it after its parent's stage and task are checked, so a
     parent of another task is refused for that, not for a missing fixture
     (README §8 regression 7: the task filter runs first)."""
+    from src.kg.task_fixture import FIXTURE_TASKS, read_gene_fixture
+
     if task not in FIXTURE_TASKS:
         return inputs
-    from src.kg.task_fixture import read_gene_fixture
 
     task_data = read_gene_fixture(data_dir, manifest_sha256=inputs.manifest.identity.sha256)
     logger.info(f"Gene task fixture ({task_data.record.get('label')}): "
@@ -1181,8 +1182,6 @@ SHEPHERD_ONLY_FIELDS = frozenset({
 })
 LEARNING_STAGES_HERE = ("base", "finetune")
 FINETUNE_TASKS_HERE = ("disease", "gene", "patients_like_me")
-#: Tasks that train on the gene task's functional fixture (README §8).
-FIXTURE_TASKS = ("gene", "patients_like_me")
 
 
 def bind_task_data(task: str, spec: Any, view: Any, inputs: TrainingInputs

@@ -407,6 +407,73 @@ class _Finetune:
                 "children": [child.describe() for child in self.children]}
 
 
+#: What a new model bundle run's configuration may name besides its recipe
+#: settings (README §1, BACKLOG 54): where and how it runs, its stage, and the
+#: model spec it builds (the reference recipe's when it names none).
+_NEW_RUN_KEYS = frozenset({"data_dir", "run_name", "run_dir", "device", "compile",
+                           "learning_stage", "model_spec"})
+
+
+def _recipe_settings_problem(settings: Mapping[str, Any], references: Sequence[Mapping[str, Any]],
+                             what: str) -> Optional[str]:
+    """**The one check of the settings a new model bundle run is started with**
+    (BACKLOG 54), shared by `start_training` (a base) and `start_finetune`
+    (every child): why `settings` cannot start `what`, or None. `references`
+    are the recipe values of every run the start makes (`reference_settings`:
+    one per Fine-tune task, one for a base), so a setting is taken only when
+    every run reads it, its value only when its field spec takes it
+    (`value_problem`), and None only where a reference value is None. Checked
+    here, a refused setting starts nothing and writes nothing."""
+    from src.config.training_fields import value_problem
+
+    common = set.intersection(*(set(values) for values in references))
+    unread = sorted(set(settings) - common)
+    if unread:
+        return (f"{', '.join(unread)} is not a setting {what} takes (it takes "
+                f"{', '.join(sorted(common))}).")
+    problems = [problem for name, value in sorted(settings.items())
+                for problem in [value_problem(name, value, allow_none=any(
+                    values.get(name) is None for values in references))] if problem]
+    return " ".join(problems) or None
+
+
+def _new_bundle_run(config: Mapping[str, Any]) -> Tuple[Optional[str], Optional[str]]:
+    """A new model bundle run asked of `start_training` (`learning_stage` set,
+    no `resume_from`): ``(encoder kind, None)``, the run layout key it is filed
+    under (its model spec's encoder kind, the reference recipe's when the
+    request names no spec; never the ShepherdGNN conv-type default), or
+    ``(None, why not)``, decided before anything is read or written.
+
+    Only a base starts here: a finetune is a Fine-tune start's
+    (`start_finetune`, one child per task from a base). Its keys are the
+    recipe's base settings and `_NEW_RUN_KEYS`, each value one its field spec
+    takes (`_recipe_settings_problem`); a ShepherdGNN setting is refused, never
+    passed on for the process to refuse."""
+    from src.config.recipe import reference_settings
+    from src.models.bundle.spec import ModelSpec, SpecError, reference_spec
+
+    stage = config.get("learning_stage")
+    if stage == "finetune":
+        return None, ("A finetune is started as a Fine-tune start (one child per task, from a "
+                      "base: POST /api/v1/training/finetune), not as a training run.")
+    if stage != "base":
+        return None, f"{stage!r} is not a learning stage a new run starts; a new run is a base."
+    problem = _recipe_settings_problem(
+        {name: value for name, value in config.items() if name not in _NEW_RUN_KEYS},
+        [reference_settings("base")[0]], "a base run")
+    if problem:
+        return None, problem
+    if config.get("model_spec") is None:
+        return reference_spec("base").encoder.kind, None
+    try:
+        spec = ModelSpec.from_dict(config["model_spec"]).validate()
+    except (SpecError, TypeError, ValueError, KeyError, AttributeError) as exc:
+        return None, f"The model_spec cannot be read: {exc}."
+    if spec.learning_stage != "base":
+        return None, f"The model_spec is a {spec.learning_stage} spec; a new run is a base."
+    return spec.encoder.kind, None
+
+
 def deployment_device() -> Optional[str]:
     """The device a test run is given: the deployment's (D5), `SHEPHERD_DEVICE`
     as the served pipeline reads it (`requested_serving_device`). None leaves
@@ -932,10 +999,25 @@ class TrainingManager:
                 extend mode come from that read, and a file replaced after it is
                 refused by the process before it is loaded.
 
+        **A new model bundle run** (`learning_stage` set, no `resume_from`) is
+        a base: its configuration is checked whole first (`_new_bundle_run`:
+        only the recipe's base settings and the run keys, each value its field
+        spec takes; a finetune is refused here, since it starts through
+        `start_finetune`), and it is filed under its model spec's encoder kind.
+        A ShepherdGNN start and every continued run are decided as before.
+
         Returns:
             Status dict with success/error info. Refused while any GPU job is
             running or stopping, or while the GPU lock is held elsewhere.
         """
+        bundle_encoder = None
+        if config.get("learning_stage") is not None and not config.get("resume_from"):
+            bundle_encoder, refusal = _new_bundle_run(config)
+            if refusal:
+                return {"success": False, "invalid_settings": True,
+                        "error": f"{refusal} Nothing was started.",
+                        "status": self.get_job_status_word("training")}
+
         # The dataset the caller showed, checked first: nothing is read from a
         # parent, named, written or started for a dataset that changed since.
         if expected_dataset_fingerprint is not None:
@@ -951,7 +1033,7 @@ class TrainingManager:
         # The process decides again on the same bytes: it is given the digest
         # of this read and refuses any other (P22-S1). Read before the lock, so
         # the status stays readable meanwhile.
-        architecture = config.get("conv_type")
+        architecture = bundle_encoder or config.get("conv_type")
         parent_sha256 = None
         if expected_parent_sha256 is not None and not config.get("resume_from"):
             return {"success": False, "status": self.get_job_status_word("training"),
@@ -1079,9 +1161,17 @@ class TrainingManager:
         cancellation; the parent is only read.
 
         Refused before anything starts: no task, more than three, one twice or
-        one this build does not train; a setting not every chosen task reads;
-        a parent that is not a base with weights, or not the bytes the caller
-        showed; a dataset that changed; a busy slot. Then the first child
+        one this build does not train; a setting not every chosen task reads,
+        or a value its field spec refuses (`_recipe_settings_problem`, the
+        check a base start shares); a dataset that changed; a parent that is
+        not a base with weights, or not the bytes the caller showed, or was
+        trained on another graph than the workspace's; for a gene or
+        patients-like-me task, a functional fixture that is absent or derived
+        from another build of the workspace (`read_fixture_record`); a busy
+        slot. **The graph and the fixture are checked as each child's process
+        checks them** (`read_finetune_parent`, `with_task_data`), in its order,
+        the parent's stage first (README §8, regression 7), so a start every
+        child would refuse starts none (decision 3). Then the first child
         starts; each next one starts when the one before has ended, whatever
         its ending, unless a stop cancelled the rest. **Between children the
         slot's rules decide** (`_slot_refusal_locked`): when the GPU lock is
@@ -1090,7 +1180,10 @@ class TrainingManager:
         digest of this start's read of the parent (`--expect-parent-sha256`).
         """
         from src.config.recipe import reference_settings
-        from src.config.training_fields import value_problem
+        from src.kg.artifacts import (
+            MANIFEST_FILENAME, DatasetChanged, manifest_section, read_split_manifest,
+        )
+        from src.kg.task_fixture import FIXTURE_TASKS, TaskFixtureError, read_fixture_record
         from src.models.bundle.record import (
             ModelRecordError, finetune_parent_problem, read_model_record,
         )
@@ -1109,22 +1202,27 @@ class TrainingManager:
             return refused(f"{unknown[0]!r} is not a task; one of {list(TASKS)}.")
         if len(set(tasks)) != len(tasks):
             return refused("A task is named more than once; each task is one child.")
-        references = [reference_settings("finetune", task)[0] for task in tasks]
-        common = set.intersection(*(set(values) for values in references))
-        unread = sorted(set(inputs.settings) - common)
-        if unread:
-            return refused(f"{', '.join(unread)} is not a setting a Fine-tune start of "
-                           f"{', '.join(tasks)} takes (it takes {', '.join(sorted(common))}).")
-        problems = [problem for name, value in sorted(inputs.settings.items())
-                    for problem in [value_problem(name, value, allow_none=any(
-                        values.get(name) is None for values in references))] if problem]
-        if problems:
-            return refused(" ".join(problems))
+        problem = _recipe_settings_problem(
+            inputs.settings, [reference_settings("finetune", task)[0] for task in tasks],
+            f"a Fine-tune start of {', '.join(tasks)}")
+        if problem:
+            return {**refused(problem), "invalid_settings": True}
         if expected_dataset_fingerprint is not None:
             refusal = self.dataset_refusal(inputs.data_dir, expected_dataset_fingerprint)
             if refusal:
                 return {"success": False, "error": refusal, "dataset_changed": True,
                         "status": self.get_job_status_word("training")}
+        # The workspace every child trains on: its graph and the build its
+        # fixture must be derived from (against the fingerprint shown, if any).
+        workspace = self.workspace_path(inputs.data_dir)
+        try:
+            manifest = read_split_manifest(workspace, expected_sha256=expected_dataset_fingerprint)
+            graph = manifest_section(manifest.manifest, manifest.identity.path,
+                                     "artifacts").get("kg")
+        except DatasetChanged as exc:
+            return {**refused(str(exc)), "dataset_changed": True}
+        except (ValueError, OSError) as exc:  # the reader's refusals name the path
+            return refused(f"The dataset's {MANIFEST_FILENAME} cannot be read now ({exc}).")
 
         # The parent, read once, against the digest shown (the training
         # process reads it again against this read's digest).
@@ -1147,6 +1245,18 @@ class TrainingManager:
         problem = finetune_parent_problem(record, read.checkpoint)
         if problem:
             return refused(f"The parent {path.name} {problem}")
+        trained_on = record.data_roles.get("kg")
+        if trained_on != graph:
+            return refused(f"The parent {path.name} was trained on another knowledge graph "
+                           f"({str(trained_on)[:12]}; this workspace's is {str(graph)[:12]}); "
+                           "its learned node table belongs to that graph.")
+        on_fixture = [task for task in tasks if task in FIXTURE_TASKS]
+        if on_fixture:
+            try:
+                read_fixture_record(workspace, manifest_sha256=manifest.identity.sha256)
+            except TaskFixtureError as exc:
+                return refused(f"{' and '.join(on_fixture)} train on the gene task's functional "
+                               f"fixture: {exc}.")
 
         sequence = _Finetune(inputs=FinetuneInputs(**{**inputs.__dict__, "finetune_from": str(path),
                                                       "tasks": tasks}),
@@ -1414,7 +1524,10 @@ class TrainingManager:
         with self._lock:
             status = job.status
         logger.info("%s job %s ended: %s", job_type, job.job_id, status)
-        return {"success": True, "status": status}, job
+        # A Fine-tune start's queued children this stop cancelled are named on
+        # this path too, as when the child had ended on its own.
+        return ({"success": True, "status": status,
+                 **({"cancelled_children": cancelled} if cancelled else {})}, job)
 
     def _ended_before_stop(self, job: _Job, process: subprocess.Popen) -> Dict[str, Any]:
         """The refusal of a stop that reached a job whose process had already

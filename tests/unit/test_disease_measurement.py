@@ -12,7 +12,6 @@ Module: tests/unit/test_disease_measurement.py
 """
 from __future__ import annotations
 
-import dataclasses
 import json
 import sys
 from pathlib import Path
@@ -23,8 +22,6 @@ torch = pytest.importorskip("torch")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
-from src.models.bundle import reference_spec  # noqa: E402
-from src.models.bundle.spec import InputSpec  # noqa: E402
 from tests.fixtures.registered_cohort import (  # noqa: E402
     LABEL,
     graph_source_cases,
@@ -33,45 +30,20 @@ from tests.fixtures.registered_cohort import (  # noqa: E402
     write_fixture_checkpoint,
     write_source,
 )
-
-
-def _base_spec():
-    spec = reference_spec("base")
-    return dataclasses.replace(
-        spec, input=InputSpec(dim=8),
-        encoder=dataclasses.replace(spec.encoder, layers=2, hidden=4, output=4, heads=2)
-    ).validate()
+from tests.fixtures.trained_children import train_children  # noqa: E402
 
 
 @pytest.fixture(scope="module")
 def trained(tmp_path_factory):
-    import train_model
-
     root = tmp_path_factory.mktemp("measure")
     data_dir = write_demo_workspace(root / "workspace")
     registry = root / "registry"
     registry.mkdir()
     import_version(registry, data_dir, write_source(root / "cases.json",
                                                      graph_source_cases(data_dir)))
-    base_run = root / "base"
-    train_model.train(train_model.TrainConfig(
-        data_dir=str(data_dir), run_dir=str(base_run), learning_stage="base",
-        model_spec=_base_spec().to_dict(), num_epochs=1, batch_size=32, num_neighbors=[4, 4],
-        device="cpu", save_top_k=1),
-        {"learning_stage", "model_spec", "num_epochs", "batch_size", "num_neighbors", "device",
-         "save_top_k"})
-    child_run = root / "child"
-    train_model.train(train_model.TrainConfig(
-        data_dir=str(data_dir), run_dir=str(child_run), learning_stage="finetune",
-        task="disease", finetune_from=str(base_run / "checkpoints" / "last.pt"),
-        num_epochs=1, batch_size=8, num_neighbors=[3, 3], candidate_sample_size=8,
-        sparse_sample_size=8, device="cpu", save_top_k=1),
-        {"learning_stage", "task", "finetune_from", "num_epochs", "batch_size",
-         "num_neighbors", "candidate_sample_size", "sparse_sample_size", "device",
-         "save_top_k"})
+    trained = train_children(data_dir, ("disease",), runs=root)
     return {"root": root, "data_dir": data_dir, "registry": registry,
-            "base": base_run / "checkpoints" / "last.pt",
-            "child": child_run / "checkpoints" / "last.pt"}
+            "base": trained["base"], "child": trained["disease"]}
 
 
 def test_generated_split_report(trained, tmp_path):

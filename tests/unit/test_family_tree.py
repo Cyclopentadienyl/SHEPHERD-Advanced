@@ -254,3 +254,30 @@ def test_one_run_is_listed_alone(tmp_path, bundles):
     (entry,) = read_run_checkpoints(tmp_path, within=tmp_path, run=BASE_RUN)
     assert entry.path == a and entry.model_record["learning_stage"] == "base"
     assert list_run_checkpoints(tmp_path, run="missing") == []
+
+
+def test_the_family_is_drawn_from_a_listing_given_without_listing_again(tmp_path, bundles,
+                                                                        monkeypatch):
+    """`list_family(listing=)`: a page that already listed the workspace draws
+    its tree from that one listing (README §1); the filters still apply, and the
+    record matcher the server filters by is the one a page shows by."""
+    from src.utils.fingerprint import file_sha256
+
+    root = tmp_path / "root"
+    base = bundles._put(root / "a", "gatv2", BASE_RUN, bundles._record_payload(), 100)
+    bundles._put(root / "a", "gatv2", "20261002-000000_gene_bbbbbb",
+                 bundles._record_payload("gene", parent={"sha256": file_sha256(base),
+                                                         "run": BASE_RUN}), 200)
+    environ = {ss.ENV_WORKSPACES_ROOT: str(root)}
+    listing = sl.list_checkpoints("a", environ=environ)
+    monkeypatch.setattr(sl, "list_checkpoints",
+                        lambda *a, **k: pytest.fail("listed again"))
+    rows = sl.list_family("a", task="gene", listing=listing, environ=environ).items
+    assert [(r.item.run, r.context) for r in rows] == [(BASE_RUN, True),
+                                                       ("20261002-000000_gene_bbbbbb", False)]
+    from dataclasses import asdict
+
+    gene = rows[1].item
+    assert sl.record_matches(gene, "gene") and sl.record_matches(asdict(gene), "gene")
+    assert not sl.record_matches(asdict(gene), learning_stage="base")
+    assert sl.record_matches(asdict(rows[0].item)) and not hasattr(sl, "_record_matches")

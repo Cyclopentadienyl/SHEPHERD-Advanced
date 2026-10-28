@@ -116,3 +116,39 @@ def test_a_non_integer_causal_gene_is_refused(tmp_path):
                                  "causal_gene_ids": [2.0]}]))
     with pytest.raises(UnparseableFile, match="causal_gene_ids"):
         read_samples_file(path, gene_fields=True)
+
+
+def test_the_record_read_alone_says_absent_another_build_or_bound(workspace, tmp_path):
+    """`read_fixture_record` is the record half of `read_gene_fixture` (the
+    Fine-tune start's and the readiness list's check): each refusal carries its
+    state, and a record of this build is returned with the identity of its
+    bytes, no sample file read."""
+    import shutil
+
+    from derive_task_fixture import derive
+
+    from src.kg.task_fixture import FIXTURE_RECORD, FIXTURE_TASKS, read_fixture_record
+    from src.utils.fingerprint import file_sha256
+
+    assert FIXTURE_TASKS == ("gene", "patients_like_me")
+    data_dir = tmp_path / "ws"
+    shutil.copytree(workspace, data_dir)
+    with pytest.raises(TaskFixtureError, match="derive_task_fixture") as absent:
+        read_fixture_record(data_dir, manifest_sha256=_manifest_sha(data_dir))
+    assert absent.value.state == "absent"
+
+    derive(data_dir)
+    record, identity = read_fixture_record(data_dir, manifest_sha256=_manifest_sha(data_dir))
+    assert record["workspace"]["split_manifest"] == _manifest_sha(data_dir)
+    assert identity.sha256 == file_sha256(fixture_dir(data_dir) / FIXTURE_RECORD)
+    for split in ("train", "val"):  # the record half reads no sample file
+        (fixture_dir(data_dir) / f"{split}_samples.json").unlink()
+    assert read_fixture_record(data_dir, manifest_sha256=_manifest_sha(data_dir))[0] == record
+
+    with pytest.raises(TaskFixtureError, match="another build") as other:
+        read_fixture_record(data_dir, manifest_sha256="0" * 64)
+    assert other.value.state == "another_build"
+    (fixture_dir(data_dir) / FIXTURE_RECORD).write_text("{not json")
+    with pytest.raises(TaskFixtureError, match="not a readable record") as torn:
+        read_fixture_record(data_dir, manifest_sha256=_manifest_sha(data_dir))
+    assert torn.value.state == "unreadable"

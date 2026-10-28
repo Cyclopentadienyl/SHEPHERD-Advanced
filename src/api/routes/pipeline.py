@@ -37,6 +37,7 @@ from pydantic import BaseModel, Field
 
 from src.api.operator_access import OPERATOR_ONLY
 from src.api.routes.diagnose import ServedIdentity
+from src.core.types import SCORING_MODE_TASKS
 from src.utils.file_modes import create_staging_file
 
 logger = logging.getLogger(__name__)
@@ -85,12 +86,6 @@ class PipelineStatusResponse(BaseModel):
     checkpoint_meta: Dict[str, Any] = Field(default_factory=dict)
     current_data_dir: Optional[str] = None
     current_checkpoint_path: Optional[str] = None
-
-
-#: The task each model bundle scoring mode serves (the served identity's
-#: `scoring_mode`, `src.core.types.result_kind_for`).
-_TASK_OF_MODE = {"disease_task": "disease", "gene_task": "gene",
-                 "patients_like_me": "patients_like_me"}
 
 
 class PipelineReloadRequest(BaseModel):
@@ -611,7 +606,7 @@ def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
     # explicit checkpoint_path is judged by the build's own read of its record.
     if request.task is not None:
         served_mode = (candidate.config.get("served_identity") or {}).get("scoring_mode")
-        served_task = _TASK_OF_MODE.get(served_mode)
+        served_task = SCORING_MODE_TASKS.get(served_mode)
         if served_task != request.task:
             served = (f"the {served_task} task" if served_task is not None
                       else f"scoring mode {served_mode!r}")

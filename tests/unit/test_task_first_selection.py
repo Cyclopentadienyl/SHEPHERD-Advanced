@@ -29,6 +29,11 @@ from src.api.routes.pipeline import (  # noqa: E402
     PipelineReloadRequest,
     run_reload,
 )
+from src.core.types import (  # noqa: E402
+    SCORING_MODE_TASKS,
+    SERVED_SCORING_MODES,
+    TASK_SCORING_MODES,
+)
 from src.models.bundle import build_bundle, finetune_spec_from_parent, reference_spec  # noqa: E402
 from src.models.bundle.record import (  # noqa: E402
     LISTED_WITHOUT_SPEC,
@@ -87,10 +92,6 @@ def _put(data_dir, key, run, payload, mtime, name="last.pt"):
 # ---------------------------------------------------------------------------
 # The reload: a fake build, so what is tested is what is chosen and published
 # ---------------------------------------------------------------------------
-_MODE_OF_TASK = {"disease": "disease_task", "gene": "gene_task",
-                 "patients_like_me": "patients_like_me"}
-
-
 def _identity(mode, sha256):
     from src.core.types import (
         ServedCheckpoint,
@@ -137,7 +138,7 @@ def service(tmp_path, monkeypatch):
         elif payload.get("task") is None:
             raise RuntimeError("a base model is not served")
         else:
-            mode = _MODE_OF_TASK[payload["task"]]
+            mode = TASK_SCORING_MODES[payload["task"]]
         config = {"served_identity": _identity(mode, file_sha256(path)), "scoring_mode": mode,
                   "gnn_ready": True, "has_model": True, "checkpoint_meta": dict(payload["logs"])}
         return SimpleNamespace(config=config, kg=None, pipeline=object(),
@@ -327,7 +328,7 @@ def test_the_listed_record_states():
     assert child == {"record": "model", "record_problem": None, "learning_stage": "finetune",
                      "task": "disease", "operation": "finetune", "family_id": BASE_RUN,
                      "parent_sha256": "a" * 64, "parent_run": BASE_RUN, "encoder": "gatv2",
-                     "reference": False}
+                     "reference": False, "differences": SMALL_SPEC_DIFFERENCES}
     base = listed_record(_listed_form(_record_payload()))
     assert (base["learning_stage"], base["task"], base["operation"], base["parent_sha256"]) == (
         "base", None, "new", None)
@@ -337,6 +338,50 @@ def test_the_listed_record_states():
     refused = listed_record({**_listed_form(_record_payload("disease")), "record_version": 1})
     assert refused["record"] == "refused" and "record version" in refused["record_problem"]
     assert refused["task"] is None, "a refused record states nothing it could not read"
+    assert refused["differences"] is None and refused["reference"] is None
+
+
+#: The fields `_base_spec` changes from the reference recipe (README §5, axis 2).
+SMALL_SPEC_DIFFERENCES = ("encoder.heads", "encoder.hidden", "encoder.layers", "encoder.output",
+                          "input.dim")
+
+
+def test_the_listed_record_names_the_fields_that_differ_from_the_reference():
+    """README §5 axis 2 lists the differing items, not a bool: a reference spec
+    lists none and is the reference; a changed one names each field, sorted."""
+    assert LISTED_RECORD_FIELDS[-1] == "differences"
+    for task in (None, "gene"):
+        spec = reference_spec("base")
+        if task is not None:
+            spec = finetune_spec_from_parent(spec, task)
+        bundle = build_bundle(spec, VIEW)
+        record = ModelRecord(
+            model_spec=spec, graph_view=bundle.view, data_roles={"kg": "k" * 64},
+            graph_exposure={}, loss_identity={},
+            **(dict(operation="new", family_id=BASE_RUN) if task is None else
+               dict(operation="finetune", family_id=BASE_RUN,
+                    parent={"sha256": "a" * 64, "run": BASE_RUN})))
+        listed = listed_record({"record_version": MODEL_RECORD_VERSION, **record.to_payload()})
+        assert (listed["differences"], listed["reference"]) == ((), True)
+    changed = listed_record(_listed_form(_record_payload()))
+    assert (changed["differences"], changed["reference"]) == (SMALL_SPEC_DIFFERENCES, False)
+    assert changed["differences"] == tuple(sorted(_base_spec().differences_from_reference()))
+
+
+def test_one_task_scoring_mode_table_and_its_inverse():
+    """Decision 7: the pipeline, the reload route and the pages read one table."""
+    import inspect
+
+    import src.api.routes.pipeline as reload_route
+    import src.inference.pipeline as served
+    from src.models.bundle.spec import TASKS
+
+    assert tuple(TASK_SCORING_MODES) == TASKS
+    assert set(TASK_SCORING_MODES.values()) <= set(SERVED_SCORING_MODES)
+    assert {SCORING_MODE_TASKS[mode]: mode for mode in SCORING_MODE_TASKS} == TASK_SCORING_MODES
+    assert all(SCORING_MODE_TASKS[TASK_SCORING_MODES[t]] == t for t in TASKS)
+    assert not hasattr(reload_route, "_TASK_OF_MODE")
+    assert '"disease_task"' not in inspect.getsource(served.DiagnosisPipeline._scoring_mode)
 
 
 def test_the_listing_carries_the_record_from_its_one_read(tmp_path, monkeypatch):

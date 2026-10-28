@@ -12,7 +12,6 @@ Module: tests/unit/test_task_serving.py
 """
 from __future__ import annotations
 
-import dataclasses
 import sys
 from pathlib import Path
 
@@ -30,43 +29,15 @@ from src.core.types import (  # noqa: E402
     PatientCandidate,
     PatientPhenotypes,
 )
-from src.models.bundle import reference_spec  # noqa: E402
-from src.models.bundle.spec import InputSpec  # noqa: E402
 from tests.fixtures.registered_cohort import write_demo_workspace  # noqa: E402
-
-
-def _base_spec():
-    spec = reference_spec("base")
-    return dataclasses.replace(
-        spec, input=InputSpec(dim=8),
-        encoder=dataclasses.replace(spec.encoder, layers=2, hidden=4, output=4, heads=2)
-    ).validate()
+from tests.fixtures.trained_children import train_children  # noqa: E402
 
 
 @pytest.fixture(scope="module")
 def trained(tmp_path_factory):
-    import train_model
-    from derive_task_fixture import derive
-
     root = tmp_path_factory.mktemp("serve-tasks")
-    data_dir = write_demo_workspace(root / "workspace")
-    derive(data_dir, distractors=4)
-    train_model.train(train_model.TrainConfig(
-        data_dir=str(data_dir), run_dir=str(root / "base"), learning_stage="base",
-        model_spec=_base_spec().to_dict(), num_epochs=1, batch_size=32, num_neighbors=[4, 4],
-        device="cpu", save_top_k=1),
-        {"learning_stage", "model_spec", "num_epochs", "batch_size", "num_neighbors", "device",
-         "save_top_k"})
-    base = root / "base" / "checkpoints" / "last.pt"
-    for task in ("gene", "patients_like_me"):
-        train_model.train(train_model.TrainConfig(
-            data_dir=str(data_dir), run_dir=str(root / task), learning_stage="finetune",
-            task=task, finetune_from=str(base), num_epochs=1, batch_size=4,
-            num_neighbors=[3, 3], sparse_sample_size=4, device="cpu", save_top_k=1),
-            {"learning_stage", "task", "finetune_from", "num_epochs", "batch_size",
-             "num_neighbors", "sparse_sample_size", "device", "save_top_k"})
-    return {"data_dir": data_dir, "gene": root / "gene" / "checkpoints" / "last.pt",
-            "patients_like_me": root / "patients_like_me" / "checkpoints" / "last.pt"}
+    return train_children(write_demo_workspace(root / "workspace"),
+                          ("gene", "patients_like_me"), runs=root)
 
 
 def _pipeline(trained, task):

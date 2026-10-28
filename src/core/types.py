@@ -734,6 +734,16 @@ SERVED_DATASET_RECORD_STATES = ("verified", "absent")
 SERVED_DATASET_ORIGINS = ("files", "synthetic")
 SERVED_SCORING_MODES = ("gnn_plus_shortest_path", "gnn_only", "path_reasoning_fallback",
                         "disease_task", "gene_task", "patients_like_me")
+#: **The one table of the scoring mode each finetuned task is served under**
+#: (README §1: switching task means loading another model), and its inverse.
+#: The pipeline names the mode of the model it serves from it, and every
+#: reader of a served identity takes the task back from it; nobody keeps a copy.
+#: Keyed by the model spec's tasks (`src.models.bundle.spec.TASKS`, which this
+#: layer cannot import; `tests/unit/test_task_first_selection.py` pins the two
+#: equal).
+TASK_SCORING_MODES: Dict[str, str] = {"disease": "disease_task", "gene": "gene_task",
+                                      "patients_like_me": "patients_like_me"}
+SCORING_MODE_TASKS: Dict[str, str] = {mode: task for task, mode in TASK_SCORING_MODES.items()}
 
 _HEX = frozenset("0123456789abcdef")
 

@@ -89,8 +89,8 @@ ALLOWED = {
     ("src/utils/fingerprint.py", "DigestingFile.__init__", "hashlib.sha256"):
         (1, _IN_MEMORY.format(what="every byte a writer writes, as it is written (contract "
                                    "M3b)")),
-    ("src/kg/task_fixture.py", "read_gene_fixture", "json.loads"): (1, _READER),
-    ("src/kg/task_fixture.py", "read_gene_fixture", "read_once"): (1, _READER),
+    ("src/kg/task_fixture.py", "read_fixture_record", "json.loads"): (1, _READER),
+    ("src/kg/task_fixture.py", "read_fixture_record", "read_once"): (1, _READER),
     ("src/kg/graph.py", "KnowledgeGraph.read_json", "json.loads"): (1, _READER),
     ("src/kg/graph.py", "KnowledgeGraph.read_json", "read_once"): (1, _READER),
     ("src/utils/checkpoint_io.py", "read_checkpoint", "torch.load"): (1, _READER),

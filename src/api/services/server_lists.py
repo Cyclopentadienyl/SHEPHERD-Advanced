@@ -100,6 +100,7 @@ __all__ = [
     "list_intake_files",
     "list_workspaces",
     "locate_checkpoint",
+    "record_matches",
     "resolve_checkpoint",
     "resolve_cohort_version",
     "resolve_intake_file",
@@ -107,6 +108,7 @@ __all__ = [
     "resolve_workspace",
     "resolve_workspaces",
     "stored_report_state",
+    "task_readiness",
     "version_item",
 ]
 
@@ -194,8 +196,10 @@ class CheckpointItem:
     "model", "history" (no model spec: listed, never run) or "refused" (with
     `record_problem`); a model adds its learning stage, task, operation,
     family, parent (`parent_sha256`, the exact parent file, and `parent_run`),
-    encoder kind and whether its spec is the reference recipe. All `None` for a
-    file that was not read.
+    encoder kind, the names of its spec's fields that differ from the
+    reference recipe (`differences`, sorted; empty for the reference) and
+    whether there are none (`reference`). All `None` for a file that was not
+    read.
     """
 
     workspace: str
@@ -222,6 +226,7 @@ class CheckpointItem:
     parent_run: Optional[str] = None
     encoder: Optional[str] = None
     reference: Optional[bool] = None
+    differences: Optional[Tuple[str, ...]] = None
 
 
 @dataclass(frozen=True)
@@ -492,13 +497,63 @@ def resolve_workspaces(*, environ: Optional[Mapping[str, str]] = None) -> Dict[s
     return resolved
 
 
+#: Why a task cannot be started on a workspace (`task_readiness`), in words
+#: that name no server path: the list is open, where a refusal is not.
+READINESS_WORDS = {
+    "not_listed": "not a listed workspace",
+    "not_trainable": "dataset not trainable",
+    "absent": "no functional fixture",
+    "another_build": "fixture from another build",
+    "unreadable": "fixture not readable",
+}
+
+
+def task_readiness(workspace: Any, *, environ: Optional[Mapping[str, str]] = None
+                   ) -> Dict[str, Optional[str]]:
+    """Whether each task can be finetuned on the listed workspace `workspace`
+    now, as ``{task: None | why}`` (`READINESS_WORDS`), from small JSON files
+    only (the workspace's manifest and dataset record, then the fixture
+    record), so a page offers it without D8.
+
+    Every task needs a trainable workspace (`WorkspaceItem.trainable`); the
+    disease task needs nothing more. A task that trains on the gene task's
+    functional fixture (`FIXTURE_TASKS`) also needs its record derived from this
+    build of the workspace (`read_fixture_record` against the fingerprint the
+    item read): "ready" says no more than that. The sample files are hashed
+    by the training process, which may still refuse them, and a Fine-tune start
+    checks the record again (`TrainingManager.start_finetune`).
+    """
+    from src.kg.task_fixture import FIXTURE_TASKS, TaskFixtureError, read_fixture_record
+    from src.models.bundle.spec import TASKS
+
+    try:
+        root = _workspace_root(environ)
+        entry = next((e for e in _workspace_entries(root) if e.name == workspace), None)
+    except ServerListRefused:
+        entry = None
+    if entry is None:
+        return dict.fromkeys(TASKS, READINESS_WORDS["not_listed"])
+    item = _workspace_item(root, entry)
+    if not item.trainable:
+        return dict.fromkeys(TASKS, READINESS_WORDS["not_trainable"])
+    try:
+        read_fixture_record(entry.resolve(), manifest_sha256=item.dataset_fingerprint)
+    except TaskFixtureError as exc:
+        fixture: Optional[str] = READINESS_WORDS[exc.state]
+    except (OSError, RuntimeError):  # resolved by the item a moment ago
+        fixture = READINESS_WORDS["unreadable"]
+    else:
+        fixture = None
+    return {task: fixture if task in FIXTURE_TASKS else None for task in TASKS}
+
+
 # ---------------------------------------------------------------------------
 # Checkpoints
 # ---------------------------------------------------------------------------
 def list_checkpoints(
     workspace: Any, architecture: Optional[str] = None, *,
     task: Optional[str] = None, learning_stage: Optional[str] = None,
-    environ: Optional[Mapping[str, str]] = None,
+    run: Optional[str] = None, environ: Optional[Mapping[str, str]] = None,
 ) -> Listing:
     """The checkpoints of a listed workspace's runs, every architecture's or
     one's, in the listing's order (latest run first, newest file first), each
@@ -510,8 +565,10 @@ def list_checkpoints(
     list does, so `resolve_checkpoint` finds it again by that name.
 
     `task` and `learning_stage` keep the files whose model record names them
-    (`listed_record`); a file without a readable record names neither, so
-    either filter leaves it out.
+    (`listed_record`, `record_matches`); a file without a readable record
+    names neither, so either filter leaves it out. `run` lists that run
+    directory's files alone (`read_run_checkpoints`' `run`): only they are
+    opened.
     """
     from src.kg.artifacts import read_split_manifest
     from src.models.bundle.record import listed_record
@@ -532,7 +589,7 @@ def list_checkpoints(
     except (ValueError, OSError):
         fingerprint = None
     try:
-        entries = read_run_checkpoints(path, conv_type, within=path)
+        entries = read_run_checkpoints(path, conv_type, within=path, run=run)
     except OSError as exc:  # a runs directory this account may not enter
         return Listing((), (f"the runs of the workspace {name!r} cannot be listed "
                             f"({type(exc).__name__}: {exc.strerror or exc})"))
@@ -563,7 +620,7 @@ def list_checkpoints(
             end=entry.end,
             **summary,
         ))
-    return Listing(tuple(item for item in items if _record_matches(item, task, learning_stage)))
+    return Listing(tuple(item for item in items if record_matches(item, task, learning_stage)))
 
 
 def _check_record_filter(task: Optional[str], learning_stage: Optional[str]) -> None:
@@ -576,10 +633,17 @@ def _check_record_filter(task: Optional[str], learning_stage: Optional[str]) -> 
             f"{_echo(learning_stage)} is not a learning stage; one of {list(LEARNING_STAGES)}")
 
 
-def _record_matches(item: "CheckpointItem", task: Optional[str],
-                    learning_stage: Optional[str]) -> bool:
-    return ((task is None or item.task == task)
-            and (learning_stage is None or item.learning_stage == learning_stage))
+def record_matches(item: Any, task: Optional[str] = None,
+                   learning_stage: Optional[str] = None) -> bool:
+    """Whether a listed checkpoint's model record names `task` and
+    `learning_stage` (each None: any): **the one predicate** the server's lists
+    filter by and the WebUI's lists show by, so the two never keep different
+    files. `item` is a `CheckpointItem` or its JSON form (`asdict`)."""
+    def field(name: str) -> Any:
+        return item.get(name) if isinstance(item, Mapping) else getattr(item, name, None)
+
+    return ((task is None or field("task") == task)
+            and (learning_stage is None or field("learning_stage") == learning_stage))
 
 
 #: A parent looked up outside the listed workspace (`family_rows`): given the
@@ -751,7 +815,7 @@ def family_rows(
     if task is not None or learning_stage is not None:
         by_key = {_row_key(row.item): row for row in rows}
         keep = {key for key, row in by_key.items()
-                if _record_matches(row.item, task, learning_stage)}
+                if record_matches(row.item, task, learning_stage)}
         needed = set(keep)
         for key in keep:
             parent = by_key[key].parent
@@ -767,18 +831,24 @@ def family_rows(
 
 def list_family(
     workspace: Any, *, task: Optional[str] = None, learning_stage: Optional[str] = None,
-    environ: Optional[Mapping[str, str]] = None,
+    listing: Optional[Listing] = None, environ: Optional[Mapping[str, str]] = None,
 ) -> Listing:
     """A listed workspace's checkpoints as families (`family_rows`), from one
     listing (`list_checkpoints`). A parent outside the workspace is looked for
     in the other listed workspaces only, by the run its child records, and
     matched by its SHA-256 (provenance §9.3, "Parents in another workspace"):
-    only that run of each is read, and no other root is searched."""
+    only that run of each is read, and no other root is searched.
+
+    `listing` is that workspace's unfiltered `list_checkpoints` listing when
+    the caller already holds it: the tree is drawn from it and nothing is
+    listed again, so a page's list and its tree come from one read (README
+    §1)."""
     try:
         _check_record_filter(task, learning_stage)
     except ValueError as exc:
         return Listing((), str(exc))
-    listing = list_checkpoints(workspace, environ=environ)
+    if listing is None:
+        listing = list_checkpoints(workspace, environ=environ)
     if not listing.available or not listing.items:
         return listing
     return Listing(family_rows(listing.items,

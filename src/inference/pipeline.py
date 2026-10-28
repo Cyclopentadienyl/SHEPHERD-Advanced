@@ -66,6 +66,7 @@ from src.kg.phenotype_normalisation import (
 )
 from src.core.types import (
     SERVED_MIXTURE,
+    TASK_SCORING_MODES,
     Candidate,
     DiseaseTaskCandidate,
     GeneTaskCandidate,
@@ -2659,8 +2660,7 @@ class DiagnosisPipeline:
         if self._gnn_ready and self._bundle_view is not None:
             task = self.model.task
             eta = self.model.task_head.spec.gene.eta if task == "gene" else None
-            return {"disease": "disease_task", "gene": "gene_task",
-                    "patients_like_me": "patients_like_me"}[task], eta
+            return TASK_SCORING_MODES[task], eta
         if self._gnn_ready and self._sp_ready:
             return "gnn_plus_shortest_path", self.config.eta
         if self._gnn_ready:

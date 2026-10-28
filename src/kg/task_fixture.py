@@ -48,9 +48,27 @@ DEFAULT_DISTRACTORS = 19
 GENE_DISEASE_RELATION = ("gene", "gene_associated_with_disease", "disease")
 
 
+#: The tasks that train on the gene task's functional fixture (README §8): the
+#: training process reads it for them, and a Fine-tune start checks it first.
+FIXTURE_TASKS = ("gene", "patients_like_me")
+
+#: What a fixture refused for is (`TaskFixtureError.state`): no record, a
+#: record bound to another build of the workspace, or one that cannot be read
+#: (malformed, of another kind or schema, or files not the ones it names).
+FIXTURE_STATES = ("absent", "another_build", "unreadable")
+
+
 class TaskFixtureError(ValueError):
     """A fixture that is absent, malformed, from another workspace build, or
-    whose files are not the ones its record names."""
+    whose files are not the ones its record names. `state` says which, as
+    `FIXTURE_STATES` names it, so a caller that shows it without the message
+    (which may name a server path) can still say why."""
+
+    def __init__(self, message: str, state: str = "unreadable") -> None:
+        if state not in FIXTURE_STATES:
+            raise ValueError(f"unknown fixture state {state!r}")
+        super().__init__(message)
+        self.state = state
 
 
 @dataclass
@@ -137,11 +155,17 @@ def publish_gene_fixture(data_dir: Path, rows: Mapping[str, List[Dict[str, Any]]
     return full
 
 
-def read_gene_fixture(data_dir: Path, *, manifest_sha256: str) -> GeneFixtureRead:
-    """The fixture of this workspace build: its record read once, refused
-    unless it names `manifest_sha256` (the caller's one manifest reading), and
-    each sample file read once against the digest the record names."""
-    from src.kg.storage.file_storage import SamplesDigestMismatch, read_samples_file
+def read_fixture_record(data_dir: Path, *, manifest_sha256: str) -> Tuple[Dict[str, Any], Any]:
+    """The fixture record of this workspace build and the identity of its
+    bytes: read once, refused unless it is a gene fixture record of this schema
+    that names `manifest_sha256` (the caller's one manifest reading). The
+    sample files are not read here: `read_gene_fixture` reads each against the
+    digest the record names, and a Fine-tune start or a list that only asks
+    whether the fixture was derived for this build stops at the record.
+
+    Raises:
+        TaskFixtureError: with `state` "absent", "another_build" or "unreadable".
+    """
     from src.utils.fingerprint import read_once
 
     out = fixture_dir(data_dir)
@@ -150,7 +174,10 @@ def read_gene_fixture(data_dir: Path, *, manifest_sha256: str) -> GeneFixtureRea
     except FileNotFoundError:
         raise TaskFixtureError(
             f"No gene task fixture at {out}; derive one with scripts/derive_task_fixture.py "
-            f"--data-dir {data_dir}") from None
+            f"--data-dir {data_dir}", "absent") from None
+    except OSError as exc:  # a record this account may not read
+        raise TaskFixtureError(f"{out / FIXTURE_RECORD} cannot be read ({type(exc).__name__}: "
+                               f"{exc.strerror or exc})") from None
     identity = raw.identity
     try:
         record = json.loads(raw.data.decode("utf-8"))
@@ -164,7 +191,18 @@ def read_gene_fixture(data_dir: Path, *, manifest_sha256: str) -> GeneFixtureRea
     if bound != manifest_sha256:
         raise TaskFixtureError(
             f"The gene fixture was derived from another build of this workspace (split "
-            f"manifest {str(bound)[:12]}, this one {manifest_sha256[:12]}); derive it again")
+            f"manifest {str(bound)[:12]}, this one {manifest_sha256[:12]}); derive it again",
+            "another_build")
+    return record, identity
+
+
+def read_gene_fixture(data_dir: Path, *, manifest_sha256: str) -> GeneFixtureRead:
+    """The fixture of this workspace build: its record (`read_fixture_record`),
+    and each sample file read once against the digest the record names."""
+    from src.kg.storage.file_storage import SamplesDigestMismatch, read_samples_file
+
+    record, identity = read_fixture_record(data_dir, manifest_sha256=manifest_sha256)
+    out = fixture_dir(data_dir)
     samples = {}
     for split in FIXTURE_SPLITS:
         entry = (record.get("files") or {}).get(split) or {}
@@ -185,11 +223,14 @@ __all__ = [
     "FIXTURE_LABEL",
     "FIXTURE_RECORD",
     "FIXTURE_RULE",
+    "FIXTURE_STATES",
+    "FIXTURE_TASKS",
     "GeneFixtureRead",
     "TaskFixtureError",
     "derive_gene_rows",
     "disease_genes",
     "fixture_dir",
     "publish_gene_fixture",
+    "read_fixture_record",
     "read_gene_fixture",
 ]

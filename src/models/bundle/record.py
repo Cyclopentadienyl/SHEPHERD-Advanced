@@ -192,15 +192,18 @@ def finetune_parent_problem(record: ModelRecord, payload: Mapping[str, Any]) -> 
     return None
 
 
-#: What a list says of a checkpoint without a model spec, while the ShepherdGNN
-#: path still serves such a file (until K7 retires it).
-LISTED_WITHOUT_SPEC = ("no model spec (a ShepherdGNN checkpoint): the ShepherdGNN path still "
-                       "serves and continues it until K7 retires that path; the model bundle "
-                       "path never continues it")
+#: What a list says of a checkpoint without a model spec (README §4: listed as
+#: history, never run). The WebUI never loads, measures or continues one; only
+#: the ShepherdGNN path outside it (the command line and the HTTP API) still
+#: runs such a file, until K7 retires that path.
+LISTED_WITHOUT_SPEC = ("no model spec (a ShepherdGNN checkpoint): listed as history and never "
+                       "run from the WebUI; only the ShepherdGNN path outside it (command line, "
+                       "API) still runs it, until K7 retires that path")
 
 #: What a model list shows of a checkpoint's record (`listed_record`).
 LISTED_RECORD_FIELDS = ("record", "record_problem", "learning_stage", "task", "operation",
-                        "family_id", "parent_sha256", "parent_run", "encoder", "reference")
+                        "family_id", "parent_sha256", "parent_run", "encoder", "reference",
+                        "differences")
 
 
 def listed_record(payload: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
@@ -211,8 +214,11 @@ def listed_record(payload: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
     `LISTED_WITHOUT_SPEC`) or "refused" (a record this build cannot
     read, its reason in `record_problem`). A model adds its learning stage,
     task, operation, family (the root run), parent (the SHA-256 of the exact
-    parent file and the parent run), encoder kind and whether its spec is the
-    reference recipe (README §5, axis 2)."""
+    parent file and the parent run), encoder kind, and how its spec stands to
+    the reference recipe (README §5, axis 2): `differences`, the sorted names
+    (``section.field``) of the spec's fields that differ from it
+    (`ModelSpec.differences_from_reference`), and `reference`, true exactly
+    when there are none."""
     summary: Dict[str, Any] = dict.fromkeys(LISTED_RECORD_FIELDS)
     if payload is None or not has_model_spec(payload):
         summary.update(record="history", record_problem=LISTED_WITHOUT_SPEC)
@@ -223,11 +229,12 @@ def listed_record(payload: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
         summary.update(record="refused", record_problem=str(exc))
         return summary
     parent = record.parent or {}
+    differences = tuple(sorted(record.model_spec.differences_from_reference()))
     summary.update(record="model", learning_stage=record.learning_stage, task=record.task,
                    operation=record.operation, family_id=record.family_id,
                    parent_sha256=parent.get("sha256"), parent_run=parent.get("run"),
-                   encoder=record.model_spec.encoder.kind,
-                   reference=record.model_spec.is_reference())
+                   encoder=record.model_spec.encoder.kind, reference=not differences,
+                   differences=differences)
     return summary
 
 

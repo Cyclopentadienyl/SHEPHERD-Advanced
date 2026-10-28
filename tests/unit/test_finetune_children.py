@@ -10,15 +10,21 @@ held elsewhere or the backend is stopping, the remaining children are refused
 and say why. A failed child does not stop its siblings, and what fails in
 starting one never stops the monitor; a stop ends the running child (shown
 "stopping" meanwhile) and cancels the queued ones, also when the child had
-just ended on its own. Each child is bound to the parent's digest and given
-only the settings asked for, so the task's recipe fills the rest. A bundle
-parent is previewed for resume by its own record version and filed under its
-encoder, and the job started for it trains.
+just ended on its own; either way the stop names the cancelled children. Each
+child is bound to the parent's digest and given only the settings asked for,
+so the task's recipe fills the rest. A parent trained on another graph than
+the workspace's, and a gene or patients-like-me task whose functional fixture
+is absent or derived from another build, are refused before any child starts
+(decision 3). A new base run through `start_training` is checked by the same
+settings helper and filed under its spec's encoder kind, never the ShepherdGNN
+default (G1, G6). A bundle parent is previewed for resume by its own record
+version and filed under its encoder, and the job started for it trains.
 
 Module: tests/unit/test_finetune_children.py
 """
 from __future__ import annotations
 
+import shutil
 import time
 from pathlib import Path
 
@@ -55,14 +61,46 @@ def popen(monkeypatch):
         process.finish(0)
 
 
+@pytest.fixture(scope="module")
+def built(tmp_path_factory):
+    """One generated workspace, its manifest binding its graph, built once."""
+    from tests.fixtures.generated_workspace import write_generated_workspace
+
+    root, _manifest = write_generated_workspace(tmp_path_factory.mktemp("built") / "ws",
+                                                train_ids=[1, 2], val_ids=[3])
+    return root
+
+
+def _trained_on(workspace, payload):
+    """`payload` recording the workspace's graph as the one it trained on."""
+    from src.kg.artifacts import read_split_manifest
+
+    kg = read_split_manifest(workspace).manifest["artifacts"]["kg"]
+    return {**payload, "data_roles": {**payload["data_roles"], "kg": kg}}
+
+
+def _derive_fixture(workspace, manifest_sha256=None):
+    """A functional fixture record bound to this build of the workspace, or to
+    the build `manifest_sha256` names, through the fixture's own publisher."""
+    from src.kg.artifacts import read_split_manifest
+    from src.kg.task_fixture import publish_gene_fixture
+
+    sha = manifest_sha256 or read_split_manifest(workspace).identity.sha256
+    publish_gene_fixture(workspace, {"train": [], "val": []},
+                         {"workspace": {"split_manifest": sha}}, replace=True)
+
+
 @pytest.fixture
-def base(tmp_path):
-    """A workspace holding one base checkpoint and one disease child."""
+def base(tmp_path, built):
+    """A workspace with a functional fixture derived for it, holding one base
+    checkpoint trained on its graph and one disease child."""
     workspace = tmp_path / "ws"
-    path = _put(workspace, "gatv2", BASE_RUN, _record_payload(), 100)
+    shutil.copytree(built, workspace)
+    _derive_fixture(workspace)
+    path = _put(workspace, "gatv2", BASE_RUN, _trained_on(workspace, _record_payload()), 100)
     child = _put(workspace, "gatv2", "20261002-000000_disease_bbbbbb",
-                 _record_payload("disease", parent={"sha256": file_sha256(path),
-                                                    "run": BASE_RUN}), 200)
+                 _trained_on(workspace, _record_payload(
+                     "disease", parent={"sha256": file_sha256(path), "run": BASE_RUN})), 200)
     return workspace, path, child
 
 
@@ -130,6 +168,7 @@ def test_a_stop_ends_the_running_child_and_cancels_the_queued_ones(base, popen):
     assert manager.start_finetune(_inputs(base, "disease", "gene"))["success"]
     stopped = manager.stop_training()
     assert stopped["success"] and stopped["status"] == "stopped"
+    assert stopped["cancelled_children"] == ["gene"], "a normal stop names them too (G7)"
     _wait(lambda: manager.active_job() is None)
     assert _children(manager) == [("disease", "stopped"), ("gene", "cancelled")]
     assert manager.get_status()["finetune"]["cancelled"] is True
@@ -278,7 +317,115 @@ def test_a_finetune_is_refused_before_anything_starts(base, popen, change, fragm
     refused = manager.start_finetune(_inputs(base, *fields.pop("tasks"), **fields))
     assert refused["success"] is False and fragment in refused["error"]
     assert "Nothing was started" in refused["error"]
+    assert refused.get("invalid_settings", False) == ("settings" in change)
     assert calls.calls == [] and manager.get_status()["finetune"] is None
+
+
+@pytest.mark.parametrize("fixture, fragment", [
+    ("absent", "No gene task fixture"),
+    ("another build", "derived from another build of this workspace"),
+])
+def test_a_fixture_task_is_refused_without_its_fixture_and_disease_alone_starts(
+        base, popen, fixture, fragment):
+    """Decision 3 (G5): a gene or patients-like-me child would fail in its own
+    process while its siblings ran; the start refuses it before any child."""
+    from src.kg.task_fixture import fixture_dir
+
+    workspace = base[0]
+    if fixture == "absent":
+        shutil.rmtree(fixture_dir(workspace))
+    else:
+        _derive_fixture(workspace, "0" * 64)
+    job = FakeProcess(pid=1)
+    calls = popen(job)
+    manager = TrainingManager()
+    for tasks in (("gene",), ("disease", "patients_like_me")):
+        refused = manager.start_finetune(_inputs(base, *tasks))
+        assert refused["success"] is False and fragment in refused["error"]
+        assert "train on the gene task's functional fixture" in refused["error"]
+        assert refused["error"].endswith("Nothing was started.")
+    assert calls.calls == [] and manager.get_status()["finetune"] is None
+    started = manager.start_finetune(_inputs(base, "disease"))
+    assert started["success"], started
+    assert _children(manager) == [("disease", "running")]
+    job.finish(0)
+
+
+def test_a_parent_trained_on_another_graph_is_refused_before_any_child_starts(base, popen):
+    """Critic (a)1, README §8 refusal 7: the graph is compared at the start,
+    not by each child's process one after another."""
+    other = _put(base[0], "gatv2", "20261003-000000_base_cccccc", _record_payload(), 300)
+    calls = popen(FakeProcess(pid=1))
+    manager = TrainingManager()
+    refused = manager.start_finetune(_inputs(base, "disease", "gene", finetune_from=str(other)))
+    assert refused["success"] is False
+    assert "was trained on another knowledge graph" in refused["error"]
+    assert "Nothing was started" in refused["error"]
+    assert calls.calls == [] and manager.get_status()["finetune"] is None
+
+
+def test_a_new_base_run_is_filed_under_its_spec_encoder_with_only_what_was_sent(base, popen):
+    """G1: a base run named no conv type, so it was filed under the ShepherdGNN
+    default ``runs/gat`` while its record said gatv2. Its configuration holds
+    what was sent and nothing more, so the recipe fills the rest."""
+    import dataclasses
+
+    from src.models.bundle import reference_spec
+
+    jobs = [FakeProcess(pid=1), FakeProcess(pid=2), FakeProcess(pid=3)]
+    calls = popen(*jobs)
+    manager = TrainingManager()
+    sent = {"data_dir": str(base[0]), "learning_stage": "base", "device": "cpu",
+            "num_epochs": 5, "run_name": "short"}
+    started = manager.start_training(sent)
+    assert started["success"], started
+    assert "/runs/gatv2/" in started["run_dir"]
+    config = _config(calls.calls[0])
+    assert config == {**sent, "run_dir": started["run_dir"]}
+    jobs[0].finish(0)
+    _wait(lambda: manager.active_job() is None)
+
+    spec = reference_spec("base")
+    sage = dataclasses.replace(spec, encoder=dataclasses.replace(spec.encoder, kind="sage"))
+    started = manager.start_training({"data_dir": str(base[0]), "learning_stage": "base",
+                                      "device": "cpu", "model_spec": sage.to_dict()})
+    assert started["success"], started
+    assert "/runs/sage/" in started["run_dir"], "the spec's own encoder kind"
+    jobs[1].finish(0)
+    _wait(lambda: manager.active_job() is None)
+
+    # A ShepherdGNN start is decided as before: its conv type, its settings.
+    started = manager.start_training({"data_dir": str(base[0]), "conv_type": "gat",
+                                      "hidden_dim": 8})
+    assert started["success"], started
+    assert "/runs/gat/" in started["run_dir"]
+    jobs[2].finish(0)
+
+
+@pytest.mark.parametrize("change, fragment", [
+    (dict(hidden_dim=8), "hidden_dim is not a setting a base run takes"),
+    (dict(task_loss_weight=0.5), "task_loss_weight is not a setting a base run takes"),
+    (dict(conv_type="gat"), "conv_type is not a setting a base run takes"),
+    (dict(task="disease"), "task is not a setting a base run takes"),
+    (dict(num_epochs=0), "num_epochs 0 is outside"),
+    (dict(learning_rate="fast"), "learning_rate must be a number, not 'fast'"),
+    (dict(early_stopping_patience=None, seed=None), "seed must be set, not null"),
+    (dict(learning_stage="finetune"), "A finetune is started as a Fine-tune start"),
+    (dict(learning_stage="pretrain"), "'pretrain' is not a learning stage a new run starts"),
+    (dict(model_spec={"spec_version": 0}), "The model_spec cannot be read"),
+])
+def test_a_new_base_run_is_refused_whole_before_anything_starts(base, popen, change, fragment):
+    """G6, BACKLOG 54: every YAML key counts as the operator's, so a key outside
+    the recipe and the run keys, or a value its field spec refuses, is refused
+    by the start (the helper `start_finetune` shares), not passed on."""
+    calls = popen(FakeProcess(pid=1))
+    manager = TrainingManager()
+    refused = manager.start_training({"data_dir": str(base[0]), "learning_stage": "base",
+                                      "device": "cpu", **change})
+    assert refused["success"] is False and refused["invalid_settings"] is True
+    assert fragment in refused["error"] and refused["error"].endswith("Nothing was started.")
+    assert calls.calls == [] and manager.run_dir is None
+    assert not (base[0] / "runs" / "gat").exists()
 
 
 def test_a_parent_that_is_not_a_base_is_refused(base, popen, tmp_path):
