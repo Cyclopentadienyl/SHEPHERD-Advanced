@@ -6,7 +6,7 @@
 > `docs/ARCHITECTURE.md`; this doc is operational only.
 >
 > **Golden rule**: one **workspace** = one dataset version. Everything for a given
-> dataset (KG, shortest paths, checkpoints, index) lives under a single
+> dataset (KG, checkpoints, index) lives under a single
 > `data/workspaces/<name>/` folder. Never mix a checkpoint from one workspace with
 > the data of another — serving refuses such a checkpoint (see "The safety net"
 > near the end), but the discipline is the real fix.
@@ -16,22 +16,22 @@
 ## The pipeline at a glance
 
 ```
- (manual)            Step 1                 Step 2                Step 3
-HPO download  →  build_knowledge_graph  →  compute_shortest_  →  train_model
-                                            paths                 (WebUI)
-   │                    │                      │                    │
-phenotype.hpoa     kg.json                shortest_paths.pt    runs/<arch>/<run>/
-genes_to_           node_features.pt                           (fingerprint
- phenotype.txt      edge_indices.pt                             embedded)
+ (manual)            Step 1                 Step 2
+HPO download  →  build_knowledge_graph  →  train: a base, then its task models
+                                            (WebUI)
+   │                    │                      │
+phenotype.hpoa     kg.json                runs/<arch>/<run>/
+genes_to_           node_features.pt      (fingerprint embedded)
+ phenotype.txt      edge_indices.pt
                     num_nodes.json
                     train/val_samples.json
                               ↓
-                         Step 4: launch_shepherd.sh → /ui diagnosis
+                         Step 3: launch_shepherd.sh → /ui diagnosis
 ```
 
-Steps 1 and 2 are **CLI prerequisites** run once per dataset version. Step 3
+Step 1 is the **CLI prerequisite**, run once per dataset version. Step 2
 (training) is driven from the dashboard: a base on **Research › Prepare ›
-Training**, then its task models on **Research › Prepare › Fine-tune**. Step 4
+Training**, then its task models on **Research › Prepare › Fine-tune**. Step 3
 serves inference.
 
 ---
@@ -108,32 +108,21 @@ Ontology files (HPO, MONDO `.obo`) are **auto-downloaded** by `OntologyLoader`
 **Reference scale** (real HPO data, Milestone 4): ~52,308 nodes
 (27,990 diseases / 19,389 phenotypes / 4,929 genes) and ~494,223 edges.
 
----
+### No shortest-path step
 
-## Step 2 — Pre-compute shortest paths
-
-This is the heaviest prerequisite (it powers the SP-similarity term in scoring).
-
-```bash
-.venv/bin/python scripts/compute_shortest_paths.py \
-    --kg-path "$WS/kg.json" \
-    --output-dir "$WS" \
-    --max-hops 5
-```
-
-**Produces**: `$WS/shortest_paths.pt` (must live in the same dir as
-`node_features.pt`).
-
-**Cost reference** (Milestone 4 dataset): ~374 million (phenotype → target)
-pairs, file ≈ **8.9 GB**; loading it peaks ~12 GB RAM, steady ~8–9 GB. This grows
-with KG size — budget disk + RAM accordingly if you expand the ontology later.
-On Spark's 128 GB unified memory this is comfortable.
+No task model reads a shortest-path table: a disease model ranks every disease of its graph view,
+and a gene model computes the exact hop distances it uses from that view in process. So nothing
+here builds `shortest_paths.pt`. **Until K8** the GB10 acceptance probe still needs the table
+with its bound sidecar in a workspace it accepts (its R1, M4 and R6 checks); how to build the
+pair for a new workspace, and why R1 is never skipped, is in the
+[deployment guide](../deployment-guide.en.md) §4.3, "Until K8: the acceptance probe still needs
+the table".
 
 ---
 
-## Step 3 — Train (Research › Prepare › Training, then Fine-tune)
+## Step 2 — Train (Research › Prepare › Training, then Fine-tune)
 
-1. Launch the app with the service's settings (see Step 4) and open `/ui` →
+1. Launch the app with the service's settings (see Step 3) and open `/ui` →
    **Research (pre-clinical)** › Prepare › **Training**.
 2. Choose your workspace, `$WS`'s last part (`hpo_2026_v1`), in the run bar's
    **Dataset** list.
@@ -185,8 +174,10 @@ from a parent (a branch) is not available from the dashboard yet.
 
 > CLI (no UI), in a shell given the service's `SHEPHERD_WORKSPACES_ROOT` (the
 > GPU lock's one name; [deployment guide](../deployment-guide.en.md) §4.11):
-> `scripts/train_model.py --data-dir "$WS" [--run-name NAME]`, or
-> `--config <yaml>`. `--resume <checkpoint>` continues a parent as above,
+> `scripts/train_model.py --data-dir "$WS" --stage base [--run-name NAME]`, or
+> `--config <yaml>`; then each task model with
+> `--stage finetune --task <task> --finetune-from <the base's checkpoint>`.
+> `--resume <checkpoint>` continues a parent as above,
 > `--extend-epochs N` extends a finished one, `--extend-lr LR` replaces a rate
 > that ended at 0 (and only such a rate), and `--pause-after-epoch N` stops with
 > a resumable checkpoint after N epochs of total progress. `--run-dir` writes into
@@ -201,7 +192,7 @@ from a parent (a branch) is not available from the dashboard yet.
 
 ---
 
-## There is no step 4 — building a vector index is not part of this pipeline
+## There is no vector-index step — building a vector index is not part of this pipeline
 
 This step used to build an ANN index and point the inference pipeline at it. The
 vector-index subsystem has been **detached from diagnosis**: nothing on the
@@ -216,11 +207,11 @@ first: the similarity contract must be defined before the interface is reused.
 
 ---
 
-## Step 4 — Launch & run inference
+## Step 3 — Launch & run inference
 
 The launcher reads no environment file: set the service's settings first, in
 this shell or in the systemd unit ([deployment guide](../deployment-guide.en.md)
-§4.12; for Step 3, at least `SHEPHERD_DEPLOYMENT_MODE` and
+§4.12; for Step 2, at least `SHEPHERD_DEPLOYMENT_MODE` and
 `SHEPHERD_WORKSPACES_ROOT`).
 
 ```bash
@@ -299,5 +290,5 @@ records no fingerprint.
 | "Running slow" / HGT sluggish | PyG status line at training start; if any extension `MISSING`, re-run deploy PyG step |
 | A model will not load after a rebuild ("does not match this workspace's graph") | Expected: the checkpoint was trained on the old build (see the safety net above); retrain on the rebuilt workspace |
 | Inference rankings look wrong | The Diagnosis page's **Details ›** drawer: which workspace is served and whether the model was trained on it ("the same dataset ✓" or "another dataset"), and the structural fingerprint's warnings |
-| `No paths found` / empty results at inference | Check, in order: the pipeline is pointed at the intended `$WS`; `kg.json` and `shortest_paths.pt` are present there; the submitted HPO ids exist in the KG (unknown ids are dropped before scoring); at least one phenotype has a KG path to a disease — candidate discovery is BFS-gated, so a phenotype with no qualifying path yields nothing |
-| Build/SP killed (OOM) | Expected only on small-RAM machines; Spark's 128 GB is fine. See `docs/MILESTONE_REPORT.md` SP memory section |
+| `No paths found` beside a disease, or no result at inference | Check, in order: a model is loaded (with none, nothing is served and a diagnosis is refused with the reason); the pipeline is pointed at the intended `$WS`; the submitted HPO ids exist in the KG (unknown ids are dropped before scoring and listed in `phenotype_input.unknown`; with none known the request is refused). Ranking is not path-gated: a disease task model ranks every disease of its graph view, and paths are looked for only to explain the rows shown, so a disease with no path is still ranked |
+| Build, or the acceptance probe's shortest-path table (until K8), killed (OOM) | Expected only on small-RAM machines; Spark's 128 GB is fine. See `docs/MILESTONE_REPORT.md` SP memory section |

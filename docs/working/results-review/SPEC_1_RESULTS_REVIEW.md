@@ -56,6 +56,11 @@ implemented and accepted (2026-10-27; its GB10 check at `7fc417c`, BACKLOG §0):
 everything below that applies to them: the removed fields, unavailable never zero, the invariants,
 the labels and the consumers. The as-built choices are in the note after the consumer table. **Batch 5 builds** `gnn_ranking/v1` with B-1 (BACKLOG §0). *(2026-10-27: superseded. `gnn_ranking/v1` as raw cosine is not built. The kind for the paper-aligned disease model is defined with work package A's model spec ([`../scorer-retraining/README.md`](../scorer-retraining/README.md) §8; policy rev 11). The union's rules below apply to it unchanged.)* **Authority:** policy §7: one versioned discriminated union with required and
 forbidden fields per variant, never a flat envelope; statement 7; C9.
+*(2026-10-29, K7: `path_reasoning/v1` and `demo/v1` are removed, with no alias: a graph is never
+served without a model, and with no pipeline the API answers 503 (the owner's decisions; policy
+rev 13). The union now holds `served_mixture/v1` (a history file only, until K8) and the task
+kinds `disease_task/v1`, `gene_task/v1` and `patients_like_me/v1` (K3, K4), each under the rules
+below. The rows below for the two removed kinds are the design record.)*
 
 **The discriminator is `result_kind`, on the result, never on a candidate.** Every candidate of a
 result has the same score semantics. The kind is derived from what produced the result, never

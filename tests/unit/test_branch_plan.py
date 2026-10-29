@@ -99,7 +99,7 @@ def test_a_parent_trained_under_other_rules_is_neither_continued_nor_branched(ru
                               {**RECORDED, "extend_epochs": extend}, set(), device="cpu",
                               record_version=2)
     # The ShepherdGNN path (record version 1) records no bundle training rules
-    # and keeps resuming under M3a's until K7 retires it.
+    # and keeps resuming under M3a's until K8 retires it.
     shepherd = _parent(end="paused", record_version=1)
     shepherd.pop("training_rules")
     plan = plan_continuation(shepherd, Path("/runs/p/checkpoints/last.pt"), dict(RECORDED),

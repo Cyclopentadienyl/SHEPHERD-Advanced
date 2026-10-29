@@ -33,7 +33,7 @@ docstring. Three panels, as the mockup draws them (``test-wide.png``,
   and for the start itself): a base, a history file (no model spec), a record
   refused or not read, and a gene or patients-like-me model on a version that
   lists no causal (or candidate) genes are refused with their reason; the
-  runner never launches Mode C, which only the command line runs until K7, and
+  runner never launches Mode C, which only the command line runs until K8, and
   Mode D was removed in K7; then the job: its state, elapsed time, inputs,
   output tail, "🔒 Cancel" (the runner's stop for test runs only), and once it
   has ended, **what it left, from the runner** (its outcome file, kept and

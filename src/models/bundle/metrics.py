@@ -4,7 +4,7 @@ The one metrics module: link prediction and task ranking.
 `docs/working/scorer-retraining/README.md` A5, F3, F4 and §2.6 (E1–E7).
 The bundle path's training validation, measurement and reports call this
 module. The ShepherdGNN path's ranking metrics (`src/utils/metrics.py`) still
-serve that path and Mode C/D, and retire with them (README §7, K7).
+serve that path and Mode C, and retire with them at K8 (README §7).
 
 **Link prediction (whole-set, F4).** Accuracy at raw score > 0 (equal to the
 binary micro-F1 the paper selects on, A5), ROC-AUC by the Mann–Whitney

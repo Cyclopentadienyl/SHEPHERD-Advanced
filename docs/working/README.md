@@ -26,9 +26,9 @@ document to find what it means.
 | Phase | Status |
 |---|---|
 | [`results-review/`](results-review/) | under review — snapshot repository, results-review UX, deployment security. Of SPEC_4, the loopback bind and its guard, the launcher's display, cross-origin refusal and the operator controls refused off loopback (D8) were implemented in M5-1 (merged as #129); authentication, the multi-user state and a real systemd run on a deployment host are not |
-| [`scorer-measurement/`](scorer-measurement/) | in progress — work item B-0: Mode C implemented (the formal Test's measurement); Mode D (B-0.5) designed in batch 2 and built in batch 3, reviewed, and run on a synthetic cohort on the GB10 (`PLAN_B05.md` §11–§12.3), so `PLAN_B03.md` §4's design problem is resolved; the statistical protocol and the institutional run (BACKLOG 8a, 8b) not started; Modes A and B retired (R2). Policy Gate 1 stands as written |
+| [`scorer-measurement/`](scorer-measurement/) | winding down since the owner archived the Mode C/D comparison (2026-10-27) — work item B-0: Mode C implemented (the formal Test's measurement until K6; a command-line run on history files until K8); Mode D (B-0.5) designed in batch 2, built in batch 3, reviewed, run on a synthetic cohort on the GB10 (`PLAN_B05.md` §11–§12.3), and **removed in K7** (2026-10-29), its kept reports readable; the statistical protocol and the institutional run (BACKLOG 8a, 8b) not started; Modes A and B retired (R2). Policy Gate 1 stands as written |
 | [`task-scope/`](task-scope/) | what the institution's supplied-short-list use case changes. Scope decisions settled; the reserved-interface item is **implemented**, the rest unscheduled |
-| [`scorer-retraining/`](scorer-retraining/) | scoping only — selecting a patient-encoder / score-family / objective bundle, and the checkpoint scorer schema. No gate cleared |
+| [`scorer-retraining/`](scorer-retraining/) | in progress — the paper-aligned two-stage design (revision 2, 2026-10-27), built on `claude/paper-aligned-two-stage` in K0–K8: K0–K6 built, K7's retirement check done (2026-10-29, README §8), K8's integration and GB10 acceptance next. No clinical gate cleared |
 
 **Authority above everything here:** `docs/DISEASE_SCORER_POLICY.md` and
 `docs/SP_SCORE_GUIDE.md`.

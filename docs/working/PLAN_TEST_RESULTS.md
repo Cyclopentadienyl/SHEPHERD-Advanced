@@ -2410,6 +2410,16 @@ evaluation, report, ledger or registration system, and no evaluator per task.
   historical numbers.
 - **Registration** stays one function, with the task in the record. Old manifests are not accepted
   for new registration; their reports stay readable.
+- **Where the refusal lives (K7, 2026-10-29).** The refusal of an old mode is made in
+  `register_report`, the one writer, right after it reads the stored report and before anything is
+  written; never in `build_record`, which the report store also uses to read every kept report,
+  so a gate there would make every kept C/D report unreadable. **Mode D:** since K7 a kept D report
+  is refused there ("… is a Mode D report (the served ranking), and Mode D was removed in K7 …"),
+  through `--record`, `scripts/record_evaluation.py` and the Test page's Register alike; the
+  registry and the checkpoint directory are left byte for byte as they were, the report still reads
+  as before (mode D, its D5 key state), and a ledger's existing D record stays and does not stop the
+  next registration. **Mode C:** the same refusal, for a C report, lands at K8 in the commit that
+  moves probe T2, T3 and RT2 to task reports; until then a kept C report can still be registered.
 
 ### 8.6 Clinical evaluation status: three kinds of evidence
 

@@ -1,6 +1,8 @@
 # PLAN — backlog item 5a: productionising approach A
 
-**Status: revised and cleared to implement.** The blanket prohibition this
+**Status: revised and cleared to implement.** *(2026-10-29, K7: `scripts/benchmark_sp_lookup.py`,
+which this plan names, is deleted with its integration test; the shortest-path index it timed
+retires at K8, and the B-0.4 evidence is kept as written.)* The blanket prohibition this
 document carried — *"No file under `src/inference/` is edited until this is
 approved"* — is **removed, not satisfied**. It was written to stop production
 code being edited ahead of a plan. What it produced was a gate whose key nobody

@@ -430,7 +430,7 @@ not mistaken for a small change.
 
 | Component | Status | Evidence |
 |---|---|---|
-| `PhenotypeDiseaseMatcher` (`src/models/gnn/shepherd_gnn.py:314`) | `NOT WIRED` | No construction call anywhere in the repo (searched for `PhenotypeDiseaseMatcher(`); referenced only in imports and `__all__` |
+| `PhenotypeDiseaseMatcher` (`src/models/gnn/shepherd_gnn.py:314`; deleted in K7, 2026-10-29) | `NOT WIRED` | No construction call anywhere in the repo (searched for `PhenotypeDiseaseMatcher(`); referenced only in imports and `__all__` |
 
 This matters because the class carries a **learned phenotype aggregator** and supports
 cosine / bilinear / MLP scoring (`:354`, `:442`), whereas the live inference path uses unweighted
@@ -513,7 +513,7 @@ treat cross-species reasoning as immediate Phase-1 work. It is not.
    learned aggregation (§4)?
    *(Answered 2026-10-27 for the reference recipe, by the owner's paper-aligned direction: neither.
    It is the paper's patient encoder, a Transformer with attention pooling and a projection.
-   `PhenotypeDiseaseMatcher` retires with package A; see
+   `PhenotypeDiseaseMatcher` retires with package A (deleted in K7, 2026-10-29); see
    [`working/scorer-retraining/README.md`](working/scorer-retraining/README.md) §2 and §7.)*
 3. **Analogy semantics** — disease↔disease, disease↔gene, or gene↔gene; and align field names,
    clinician-facing text, and tests to whichever is chosen (§3.2).

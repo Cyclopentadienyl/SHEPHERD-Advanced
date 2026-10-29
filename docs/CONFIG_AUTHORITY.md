@@ -10,7 +10,12 @@
 |---|---|---|
 | Training runtime | `TrainerConfig` | `src/training/trainer.py` |
 | Inference runtime | `PipelineConfig` | `src/inference/pipeline.py` |
-| Model architecture | `ShepherdGNNConfig` | `src/models/gnn/shepherd_gnn.py` |
+| Model architecture | `ModelSpec` (the model spec a bundle checkpoint records); the reference recipe for lifecycle defaults | `src/models/bundle/spec.py`; `src/config/recipe.py` |
+
+*Model architecture (corrected at K7, 2026-10-29):* the model spec has been the architecture's
+authority since K1: every model bundle is rebuilt from the spec its checkpoint records, through
+the one builder. `ShepherdGNNConfig` (`src/models/gnn/shepherd_gnn.py`) describes only the
+ShepherdGNN path, which stays for history files and the acceptance probe until K8.
 
 - **No central `HyperparameterManager`.** `src/config/hyperparameters.py` is **removed**: it
   was never on the live runtime path (only re-exported from `config/__init__.py` and exercised

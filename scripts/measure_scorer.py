@@ -9,7 +9,7 @@ stage and task right after the checkpoint is read. **The Test page runs the
 task modes**: the job runner always passes `--mode <task>`, the task the
 listed checkpoint's record names.
 
-**Mode C** (the default; command line only until K7 retires it): every patient
+**Mode C** (the default; command line only until K8 retires it): every patient
 in a cohort scored against every disease in the knowledge graph, with the model
 the deployed pipeline builds and raw cosine; the formal Test's measurement
 before the tasks (`docs/working/PLAN_TEST_RESULTS.md`, "This is Mode C").
@@ -1000,13 +1000,13 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Measure a model on a cohort: a finetuned model by its own task (what the "
-                    "Test page runs), or Mode C (command line only until K7)"
+                    "Test page runs), or Mode C (command line only until K8)"
     )
     parser.add_argument("--mode", choices=MODES, default="C",
                         help="disease, gene, patients_like_me: a finetuned model bundle "
                              "measured by its own task, average ranks "
                              "(docs/working/PLAN_TEST_RESULTS.md §8); the Test page runs these. "
-                             "C is command-line only until K7. C (default): the approved "
+                             "C is command-line only until K8. C (default): the approved "
                              "scorer, raw cosine over every disease.")
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--data-dir", type=Path, required=True)

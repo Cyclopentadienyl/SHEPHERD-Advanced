@@ -508,7 +508,8 @@ def build_test_argv(inputs: TestRunInputs, device: Optional[str], outcome: Path)
     it published (`--outcome`).
 
     `--mode` is always the model's task, so the runner never launches Mode C
-    or D (README §1: archived; only the command line runs them, until K7).
+    (README §1: archived; only the command line runs it, until K8) or Mode D
+    (removed in K7).
     The expected digests make the run refuse before measuring when the
     checkpoint or the version it reads is not the one chosen. `--batch-size`
     is not passed: the CLI's default stays its one definition.

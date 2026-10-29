@@ -601,81 +601,73 @@ computation below; there is no distance file of either kind.
 
 An inventory carried out as each part's callers move, not a questionnaire and not a tail job (§10
 maps every entry). No retired part keeps a UI switch, a no-op flag, a command alias or an import
-fallback.
+fallback. **K7 (2026-10-29) is the retirement check**: each row says whether its part was removed
+in K7 or waits for K8, and why (the K7 deletion list, 127 rows, with the reviewer's audit and the
+owner's authorisation; the K7 record in §8).
 
-| Part | Where | Replaced by / why |
-|---|---|---|
-| The served disease mixture (`served_mixture/v1`, `_served_score`, path-gated candidate discovery as a ranking gate, SP mixed into the disease score) | `src/inference/pipeline.py`; `src/core/types.py` | The disease head over every disease of the view (K3). SP stays as the gene task's feature |
-| The path-reasoning fallback ranking (`path_reasoning/v1`) | `src/inference/pipeline.py`; `src/core/types.py` | Refusal when a graph has no model (owner decision). PathReasoner stays as evidence |
-| Mode D (`run_mode_d`, the `run_mode_c` observer, `--mode D`, its probes) | `src/evaluation/mode_d.py`; `scripts/measure_scorer.py`; `scripts/probe_deployment.py` | Archived (owner decision); history read-only |
-| Mode C's masked-mean raw-cosine recipe | `src/evaluation/measurement.py` | Task measurement through the same entry, with task, metric and scoring semantics (K3, K4). Shared ranking, metrics, readers, registry, report store, ledger and GPU lock are kept |
-| Structural inference and old-checkpoint execution (`build_shepherd_model`, `resolve_arch_params`, `create_model_from_config`) | `src/models/gnn/shepherd_gnn.py`; `scripts/train_model.py` | The one builder and the model spec |
-| `OrthologGate`, the edge-type split, `use_ortholog_gate`, `ortholog_gate_type`, the Training page toggle | `src/models/gnn/layers.py:248`; `src/models/gnn/shepherd_gnn.py:162-168,215-228,287`; `src/webui/components/training_console.py` | S1–S3 (§3.3) |
-| Positional encoder | `src/models/encoders/position_encoder.py:255`; built at `shepherd_gnn.py:136-137` | Applied only when a caller passes `pos_encoding_dict`; none does |
-| Ortholog consistency loss and its weight slider | `src/training/loss_functions.py:353`; `training_console.py` | No data reaches it (BACKLOG 57) |
-| The disease objective CE + hinge + InfoNCE on raw cosine over a masked mean | `loss_functions.py:88,279`; `src/training/trainer.py:744-751` | The disease head's NCA |
-| `LinkPredictionLoss` | `loss_functions.py:196`; `trainer.py:659-673` | Dead (no triples, gene→disease only, zero relations): the LP head's hinge |
-| `MultiTaskLoss` uncertainty weighting | `loss_functions.py:423-579` | The two named loss weights |
-| `DiagnosisHead`, `LinkPredictionHead` | `src/models/decoders/heads.py:34,273` | Unwired, not paper parts |
-| `PhenotypeDiseaseMatcher` | `shepherd_gnn.py:314` | Unwired; the paper's patient encoder answers its open question |
-| Separate pooling and scoring copies (Trainer, measurement, pipeline) | `trainer.py:744-751`; `src/evaluation/measurement.py`; the pipeline | The bundle's shared math |
-| The hop-capped SP file: producer, sidecar binding, index and reader (`compute_shortest_paths`, `sp_artifact`, `sp_index`, `_load_shortest_paths`, `sp_analysis_records`), with their benchmark, oracle and tests | `scripts/compute_shortest_paths.py`; `src/inference/sp_artifact.py`; `src/inference/sp_index.py`; `src/inference/pipeline.py`; `scripts/benchmark_sp_lookup.py`; `scripts/sp_scan_reference.py` | Exact distances computed in process from the view (§6, as built at K4); they serve only the mixture and leave with it |
-| `read_samples`' `training_fields` and the generator's disease genes in `gene_ids` | `src/kg/storage/file_storage.py`; `src/kg/sample_generator.py` | Their one reader is ShepherdGNN's `DiagnosisDataset`. `gene_ids` now means a gene-task candidate list, read with `gene_fields` |
+| Part | Where | Replaced by / why | Node |
+|---|---|---|---|
+| The served disease mixture (`served_mixture/v1`, `_served_score`, path-gated candidate discovery as a ranking gate, SP mixed into the disease score) | `src/inference/pipeline.py`; `src/core/types.py` | The disease head over every disease of the view (K3). SP stays as the gene task's feature. Reached only for a checkpoint without a model spec, which probe E1–E8, M4 and R6 still serve | K8 |
+| The path-reasoning fallback ranking (`path_reasoning/v1`), with its scoring mode, the "absent" checkpoint and "unverified" graph states, PathReasoner's path-score ranking (`aggregate_path_scores`, `get_top_candidates`, `aggregation_method`), the no-model `create_diagnosis_pipeline` and the WebUI's no-trained-model state | `src/inference/pipeline.py`; `src/core/types.py`; `src/reasoning/path_reasoning.py`; the API and the Diagnosis page | Refusal when a graph has no model (owner decision): `/diagnose` and `/ready` answer 503. PathReasoner's `find_paths` and `score_paths` stay as evidence | **removed in K7** |
+| The demo answer (`demo/v1`) and the in-memory model and graph seams (`DiagnosisPipeline(model=, graph_data=)`, the `supplied_in_memory` / `in_memory` states) | `src/api/routes/diagnose.py`; `src/inference/pipeline.py`; `src/core/types.py`; the Diagnosis page | Owner decision (DEMO1): with no pipeline `/diagnose` and `/ready` answer 503 from one predicate, `/health` stays 200. A served model is always read from a checkpoint over a verified workspace | **removed in K7** |
+| Mode D (`run_mode_d`, the `run_mode_c` observer, `--mode D`, the serving hooks only it read, probe T7) | `src/evaluation/mode_d.py` (deleted); `scripts/measure_scorer.py`; `src/inference/pipeline.py`; `scripts/probe_deployment.py` | Archived (owner decision); kept reports and records stay readable; a new registration of a kept D report is refused in `register_report`, never in `build_record` (the report store's reader) | **removed in K7** |
+| Mode C's masked-mean raw-cosine recipe | `src/evaluation/measurement.py`; `scripts/measure_scorer.py` (`--mode` default C) | Task measurement through the same entry, with task, metric and scoring semantics (K3, K4). Shared ranking, metrics, readers, registry, report store, ledger and GPU lock are kept. Command line only; probe M3, M7, M11, T2–T4, R5 and RT2 still run it. Its registration gate goes in `register_report` with them | K8 |
+| Structural inference and old-checkpoint execution (`build_shepherd_model`, `resolve_arch_params`, `create_model_from_config`) | `src/models/gnn/shepherd_gnn.py`; `scripts/train_model.py` | The one builder and the model spec. The probe chain and the API's reload of a history file still use them (`create_model` was removed in K7) | K8 |
+| `OrthologGate`, the edge-type split, `use_ortholog_gate`, `ortholog_gate_type` | `src/models/gnn/layers.py`; `src/models/gnn/shepherd_gnn.py` | S1–S3 (§3.3). Its weights are in every ShepherdGNN checkpoint the probe trains | K8 |
+| Positional encoder | `src/models/encoders/position_encoder.py`; built in `shepherd_gnn.py` | Unfed (no caller passes `pos_encoding_dict`), but its state is in every ShepherdGNN checkpoint. Its orphaned producer was removed in K7 (next row but one) | K8 |
+| Ortholog consistency loss | `src/training/loss_functions.py` | No data reaches it (BACKLOG 57). The weight slider went with the ShepherdGNN form (K6) | K8 |
+| The disease objective CE + hinge + InfoNCE on raw cosine over a masked mean; `LinkPredictionLoss`; `MultiTaskLoss` uncertainty weighting | `loss_functions.py`; `src/training/trainer.py` | The disease head's NCA; the LP head's hinge; the two named loss weights | K8 |
+| The decoders package: `DiagnosisHead`, `LinkPredictionHead`, `NodeClassificationHead`, `ExplanationHead` | `src/models/decoders/` (deleted) | Unwired, not paper parts: the LP head is `bundle/lp_head.py`, the task heads `models/tasks/heads.py` | **removed in K7** |
+| `PhenotypeDiseaseMatcher`, `EdgeTypeEncoder`, `FlexHeteroAttention` (with its ontology and species score mods), ShepherdGNN's layer-output capture | `shepherd_gnn.py`; `src/models/encoders/type_encoder.py`; `src/models/attention/flex_attention.py` (deleted) | Unwired: the paper's patient encoder and heads; GATv2Encoder's relation embedding; PyG attention and S1–S3. `AdaptiveAttentionBackend` and `HeteroGNNLayer` stay | **removed in K7** |
+| The positional-encoding preprocessing and its stub (`src/kg/preprocessing.py`, `scripts/preprocess_data.py`, `KnowledgeGraph.metadata` and `to_pyg_hetero_data`) | `src/kg/` (deleted); `scripts/` (deleted) | Orphaned: the encoder it fed is unfed, and relation metadata comes from the graph view | **removed in K7** |
+| The ShepherdGNN data-loader stack (`SubgraphSampler`, `NegativeSampler`, `DiagnosisDataset`, `DiagnosisDataLoader`, `create_diagnosis_dataloader`) | `src/kg/data_loader.py` | The stage samplers and task binders. `DiagnosisSample` stays (the samples reader and R10 use it). One consumer, the stage-less `train()`, which the probe still runs | K8 |
+| The unwired metric classes beside `RankingMetrics` and the `compute_*` helpers; the core `ModelConfig`, `TrainingConfig`, `DataConfig` | `src/utils/metrics.py`; `src/core/types.py` | Bundle metrics; the spec, the recipe and `TrainConfig`. `RankingMetrics` stays for the ShepherdGNN validation and Mode C until K8 | **removed in K7** |
+| Separate pooling and scoring copies (Trainer, measurement, pipeline) | `trainer.py`; `src/evaluation/measurement.py`; `src/inference/scoring.py` | The bundle's shared math | K8 |
+| The hop-capped SP file: producer, sidecar binding, index and reader (`compute_shortest_paths`, `sp_artifact`, `sp_index`, `_load_shortest_paths`, `sp_analysis_records`), with their oracle and tests | `scripts/compute_shortest_paths.py`; `src/inference/sp_artifact.py`; `src/inference/sp_index.py`; `src/inference/pipeline.py`; `scripts/sp_scan_reference.py` | Exact distances computed in process from the view (§6, as built at K4); they serve only the mixture and the probe (R1's pre-check, M4, R6) and leave with it. Its benchmark `scripts/benchmark_sp_lookup.py` was removed in K7. Documents no longer teach the table as a build step (K7); one transition note says what the probe needs until then | K8 |
+| `read_samples`' `training_fields` and the generator's disease genes in `gene_ids` | `src/kg/storage/file_storage.py`; `src/kg/sample_generator.py` | Their one reader is ShepherdGNN's `DiagnosisDataset`. `gene_ids` now means a gene-task candidate list, read with `gene_fields` | K8 |
 
-**Kept:** PathReasoner evidence; the KG builder's cross-species option;
-build_index (retrieval stays for planned natural-language work) on the one builder; the
-heterogeneous GAT/HGT/SAGE encoders behind the contract; every historical artifact.
+**Kept:** PathReasoner evidence (`find_paths`, `score_paths`); the KG builder's cross-species
+option; build_index (retrieval stays for planned natural-language work), which since K7 reads
+exported embeddings only (`--embeddings`) and builds no model; the heterogeneous GAT/HGT/SAGE
+encoders behind the contract; every historical artifact.
 
-**Listed at K6 for K7** (checkpoint check 6; merged from the K6a–K6d2 lists and the probe fix's
-remainder). Each stays because a file without a model spec (history) can still be served or trained
-outside the WebUI, or an old report must stay readable (item 8: read, never run); each is deleted,
-not adapted, when its reason goes.
-- **ShepherdGNN starts outside the WebUI.** `src/api/routes/training.py` `TrainingStartRequest` has
-  no `learning_stage`, so `POST /training/start` starts only ShepherdGNN runs and resumes through
-  `TrainingManager.start_training`'s conv-type path (pinned by `tests/unit/test_finetune_children.py`,
-  a gat start unchanged); `scripts/train_model.py` keeps the ShepherdGNN path (`SHEPHERD_ONLY_FIELDS`)
-  and the API reload can serve a history file, as `src/models/bundle/record.py`
-  `LISTED_WITHOUT_SPEC` says. Why: K6 gives the API no base start (K6 decision 12); history is never
-  run from the WebUI (decision 1).
-- **ShepherdGNN serving and its words.** `src/inference/pipeline.py` `_scoring_mode`'s
-  `gnn_plus_shortest_path`, `gnn_only` and `path_reasoning_fallback`; in
-  `src/webui/components/diagnosis_panel.py` the `SERVED_MIXTURE` / `PATH_REASONING` branches
-  (`_score`, `_format_results_table`, `candidates_table_html`, `details_header_html`, `_shows_sp`,
-  `sp_text`, `MIXTURE_ETA_NOT_REPORTED`, `_CSV_SCORE_COLUMNS`), the three legacy
-  `_SCORING_MODE_WORDS`, the `gnn_only` branches of `_shortest_path_cells` and `_identity_banners`,
-  and the `dx-score` help's mixture and no-model sentences; in `diagnosis_card.py` the "no SP table"
-  chip, the `no_sp` banner and serving-note word, the ShepherdGNN name-line branches and the
-  path-reasoning-only state (`served_kind`'s `no_trained`, its `IDENTITY_BANNERS["no_model"]`
-  banner); in `model_list.py` the Load confirmation's ShepherdGNN From cells (`_from_side`,
-  `_cell`). Why: what is served must be said while a history file can be; they go with the first
-  two rows above.
-- **Readers of listed history files.** `renderers.VALIDATION_LABELS`' `val_mrr` and `val_hits@k`,
-  `architecture_label`'s upper-cased conv types and the validation-trainer help's history line;
-  `training_console.VALIDATION_CHARTS["history"]` and the `val_loss` fallback of `training_charts`;
-  `model_list` `FILTER_WORDS["history"]`, `HISTORY_REFUSAL` and the history branches of
-  `load_refusal` and `matches`; Models' History option. Why: they retire only if K7 stops listing
-  history files.
-- **Mode C and Mode D.** `scripts/measure_scorer.py` (`MODES` C and D, `--mode` default C,
-  `_measure_mode_c`, `_measure_mode_d`: command line only until K7); `test_page.py`'s readers of
-  kept C/D reports (`_TILES` C/D, `_MEAN_RANK`, the C/D entries of `_MODE_HELP` and
-  `_MODE_ROW_WORDS`, `TOPIC_HELP["test-mode-c"/"test-mode-d"]` pinned by `tests/unit/test_mode_d.py`,
-  `_mode_rows`, `_record_html`'s C/D coverage) and registering a kept C/D report (`register_state`,
-  `register_selected`; gated in `build_record` when Mode C retires, `../PLAN_TEST_RESULTS.md` §8.5);
-  `models_page.py` `RECORD_COLUMNS` C/D and By test score over Mode C records (`controls`, `rank`),
-  with the usage entry an ordered Load writes (`model_list._record_usage`); the field descriptions
-  of `src/api/routes/evaluations.py` `RecordView`, which name Modes C and D only. Why: K6 decisions
-  13 and 14; kept reports stay readable.
-- **The retired form's descriptions.** `src/config/training_fields.py`: the per-field `ui*`,
-  `webui_*` and `current_webui` attributes and the WebUI parts of `divergence_note` (two
-  `current_webui` texts still name `ConfigValidationError` and `_collect_config`). Why: their
-  parity tests are gone and no widget reads them; K7 removes them.
-- **The probe chain (K8).** `scripts/probe_deployment.py`: D1, M2–M11, T1–T7, R3–R7, RT1–RT3, W1's
-  listed run, W7's refused training starts and W11's and RW3's held training job still train and
-  measure ShepherdGNN checkpoints; only W7–W11's test runs and RW2 use a trained disease child
-  (`792861b`). Why: §10's hazard, "the probe trains a base and a child", is K8's.
+**Listed at K6 for K7, as K7 closed them** (checkpoint check 6). Each part stayed because a file
+without a model spec (history) could still be served or trained outside the WebUI, or an old report
+had to stay readable (item 8: read, never run); each is deleted, not adapted, when its reason goes.
+- **ShepherdGNN starts outside the WebUI.** K7: `POST /training/start` is a strict base start
+  (`learning_stage` must be `base`; ShepherdGNN and unknown fields refused; owner decision 2).
+  Until K8: `scripts/train_model.py`'s ShepherdGNN path (`SHEPHERD_ONLY_FIELDS`),
+  `TrainingManager.start_training`'s stage-less start (probe W7, W11, RW3) and the API reload of a
+  history file, as `src/models/bundle/record.py` `LISTED_WITHOUT_SPEC` says.
+- **ShepherdGNN serving and its words.** K7: the path-reasoning-only state and its words are gone
+  (`path_reasoning_fallback`, `served_kind`'s `no_trained`, `IDENTITY_BANNERS["no_model"]`, the
+  path-reasoning columns, cells and CSV words), with the demo answer's. Until K8: the mixture's
+  `gnn_plus_shortest_path` and `gnn_only` and their WebUI branches (`SERVED_MIXTURE` in
+  `diagnosis_panel.py`, the "no SP table" chip and `no_sp` banner, the Load confirmation's
+  ShepherdGNN From cells), because a history file can still be served.
+- **Readers of listed history files.** Unchanged: they retire only if K8 stops listing history
+  files.
+- **Mode C and Mode D.** K7: Mode D removed (`_measure_mode_d`, `--mode D`, T7); a kept D report is
+  refused by `register_report`, the one writer, and its kept reports and records stay readable;
+  the API's `RecordView` descriptions name the task modes, with C and D as history; the C/D notes
+  and label are dated history (owner decision 4); the readers' `mode` arguments have no Mode C
+  default. Until K8: Mode C on the command line (`MODES` C, `--mode` default C,
+  `_measure_mode_c`); the Test page's readers of kept C/D reports; registering a kept C report
+  (gated in `register_report`, never in `build_record`, when Mode C retires;
+  `../PLAN_TEST_RESULTS.md` §8.5). By test score over Mode C records (`models_page.py` `controls`,
+  `rank`, `model_list._record_usage`) is unchanged, as K6 decision 14 left it (`../BACKLOG.md` 63).
+- **The retired form's descriptions.** K7: removed (`training_fields.py`'s `ui*`, `webui_*` and
+  `current_webui` attributes and the WebUI parts of `divergence_note`).
+- **The probe chain (K8).** `scripts/probe_deployment.py`: D1, D2, E1–E8, M2–M11, T1–T6, R1 (its
+  shortest-path pre-check), R2–R7, RT2–RT3, W1's listed run, W7's refused training starts and W11's
+  and RW3's held training job still train, serve or measure ShepherdGNN checkpoints or read the
+  shortest-path table; RT1 imports a cohort and needs no move; T7 went with Mode D in K7; only
+  W7–W11's test runs and RW2 use a trained disease child (`792861b`). K8 moves R1, M4 and R6
+  together. Why: §10's hazard, "the probe trains a base and a child", is K8's.
 - **Dated records naming deleted code, left as written.** `../WEBUI_UX_REVIEW_2026-10-25.md` items
   32 and 61 (`AMP_HGT_REFUSAL`, `_run_choices`, `_checkpoint_choices`); `../../CONFIG_AUTHORITY.md`'s
-  B-lite paragraph (a dated K6 note under it). Why: review and decision records, not current text.
+  B-lite paragraph (a dated K6 note under it); the acceptance folders and their evidence. Why:
+  review and decision records, not current text.
 
 ---
 
@@ -852,6 +844,103 @@ and the GB10 acceptance.**
   child; a patients-like-me measurement, a gene refusal on a version without genes and the manual
   Register click; Diagnosis' "another graph" and "cannot be read" marks, a string error body and
   its path redaction, Top-K bounds, the Explanation and Paths content; light and dark contrast.
+
+**The reviewer's K5 P2 narrow recheck (2026-10-29), `5d98e0c..a7d0171`: passed; K5 P2-1 is
+closed.** The fix separates the training rules from the record version: the one checkpoint payload
+builder writes `training_rules` (1) into a model bundle, and the one continuation check refuses a
+parent whose rules differ or are missing, for resume, extend and branch, before any setting is
+inherited (§4).
+- 143 targeted CPU tests passed (branch plan, base stage, branch operation, continue training,
+  checkpoint payload, finetune children, disease and gene finetune).
+- A K4 checkpoint produced by the real `ba992d1` code was refused for resume, extend and branch
+  ("other training rules"), with no run directory created and the manager preview refusing too;
+  its SHA-256 was unchanged by the checks.
+- A base trained by the pre-fix `59bfa84` code, which records no training rules, was finetuned at
+  `a7d0171` into disease, gene and patients-like-me children whose saves carry `training_rules=1`:
+  an older base cannot be continued, and stays a finetune parent.
+- `lint-imports`: 6 contracts kept, none broken.
+- Carried to K8: the commit that removes inherited `TrainConfig` fields must raise
+  `TRAINING_RULES_VERSION` in the same commit, with a test that the older version is refused and
+  the new one resumes. Writing `training_rules` into an old file by hand is not a fix.
+- Not run by the reviewer: the full suite, GPU, the GB10 or a browser.
+
+**The reviewer's K7 deletion-list audit (2026-10-29).** The split of the 127-row list holds (43
+delete_in_K7, 55 keep_until_K8, 11 keep_readable_history, 10 owner_decision, 8 already_gone; IDs
+unique), and the 11 whole-file deletions broke no kept flow the reviewer tested. Three additions
+were adopted:
+- **DEMO1's readiness and recovery matrix**: with nothing configured, a graph only, or a failed
+  model load, `/diagnose` and `/ready` answer 503 and `/health` 200; a valid model then makes both
+  succeed; reloading a bad file keeps the old model and its ready state; a repeated diagnose does not
+  re-read a failed source; the Diagnosis page keeps its Load entry and a read-only request sees the
+  reason without bypassing the operator gate.
+- **X2's two missing tests**: `tests/unit/test_webui_datasets.py`'s placeholder-script guard
+  (rewritten as "the script is retired and no shipped text points to it") and the whole old
+  preprocessing group in `tests/unit/test_kg.py`.
+- **The K8 shortest-path transition**: documents for task models say no table is needed, and one
+  note says that until K8 the GB10 acceptance probe's real phase (R1, M4, R6) still needs
+  `shortest_paths.pt` with its bound sidecar, how to build them, and that R1 is never skipped.
+
+It was a review of the plan and a partial simulation on a copy, not a pass of the K7
+implementation, and not an authorisation.
+
+**The owner's authorisation and decisions (2026-10-29).** The owner authorised the 43
+delete_in_K7 rows, with eleven whole-file deletions and no others, and decided four of the ten
+owner_decision rows as recommended, with the reviewer's technical conditions:
+- **DEMO1**: with no pipeline, `/diagnose` and `/ready` answer 503 from one predicate (no mock
+  candidates); `/health` stays 200.
+- **TM11**: `POST /training/start` is a strict base start (`learning_stage` must be `base`;
+  ShepherdGNN and unknown fields refused); TrainingManager's stage-less start stays for the probe
+  until K8.
+- **TM10**: `scripts/build_index.py` loses `--checkpoint` and keeps `--embeddings`; no second
+  builder guesses task vectors.
+- **EV7**: the Mode C and Mode D notes and the Mode D label are dated history, keeping each mode's
+  denominators, coverage and the caveat that the record does not describe the current diagnosis
+  model; no report, ledger, evidence or hash is rewritten.
+
+**K7 delivery (2026-10-29): the retirement check, done in the container, awaiting the full suite
+and external review.** The authorised list was executed in five sequential commits on
+`claude/paper-aligned-two-stage` from `a7d0171`, with no adapter, alias, legacy switch or degraded
+path (item 8):
+- **G1 `3d7d40a`** (dead code and whole files): S3, SP2, TM14, TM24, TM25, TM29, TM30, TM31, TM33,
+  TM34, X2, X4, X5, X6, X8, X11, X12, X13, X19, X21. Nine of the eleven authorised files deleted;
+  `tests/unit/test_package_exports.py` checks every touched package's exports and that the kept
+  ones remain.
+- **G2 `dc4af4d`** (nothing is served without a model): PATH1, PATH2, PATH3, G3, F4, DEMO1, X19's
+  and F5's parts. One requirement, `require_model_source`, before any file is read; the no-model
+  and in-memory tests moved to a disease child trained once per session.
+- **G3 `6f7240c`** (Mode D retires, its kept reports stay readable): EV3, EV4, P7, X15, EV12, EV13,
+  X16, EV7 and F5's part; `src/evaluation/mode_d.py` and `tests/unit/test_mode_d.py` deleted after
+  their task-generic pins moved.
+- **G4 `f316bea`** (base start, index builder, demo training, next steps): TM11, TM10, TM3 and D8's
+  code half.
+- **G5, this documents commit**: D1, D2, D3, D5, D6, D8's guide lines, D10, D11, X17, X18, the
+  Docs column of the rows above, the K8 transition note (README.md's build section, both
+  deployment guides §4.3, the playbook) and these records.
+
+Rows left to K8, unchanged by K7 except where a delete row changed a shared line:
+- the 55 keep_until_K8 rows (the mixture and SP chain, ShepherdGNN serving and training, Mode C,
+  the probe chain and its fixtures; §7's table and its "Listed at K6" bullets say which);
+- four owner_decision rows decided at K8, with the list's options recorded: **SP3**
+  (`scripts/audit_sp_reachability.py`; the list's reading: delete it with SP1 at K8, its evidence
+  kept readable, since inlining its imports would be a parallel copy), **M1**
+  (`scripts/measure_served_pipeline.py`: re-point its readiness at a task model's served identity,
+  or archive it with the mixture; it cannot stay unchanged past K8), **TM8/D4**
+  (`scripts/migrate_checkpoints.py` and the documents that teach it: retire it, with
+  `routes/pipeline.py`'s refusal text that names it, or keep it as a history-only organiser; one
+  decision for both rows), **X20** (EvidencePanel's analogy mode: retire it with the ShepherdGNN
+  embedding cache at K8 at the latest; wiring it to bundle vectors would be a new feature and is
+  not proposed);
+- **EV10** (By test score over Mode C records) unchanged, as K6 decision 14 left it;
+  `../BACKLOG.md` 63 stays open;
+- the 11 keep_readable_history rows stay; the 8 already_gone rows needed no change.
+
+Not verified in K7: GPU paths and the GB10 (the acceptance probe was not run, and in particular
+not on a newly built workspace with the K8 transition note's preparation step); no browser session
+of the changed Diagnosis states (no model loaded, the removed banners and chips) is recorded in
+K7's commits; the deployment
+guides' prose beyond the checks that read documents (`tests/unit/test_entry_documents.py`,
+`tests/unit/test_docs_index.py` and the guide checks in the settings, SP-binding and Datasets
+tests).
 
 **BACKLOG items in scope, bounded:** 23 (branch's closed list and lineage), 54 (shared validation and
 unknown-field refusal for the training API, CLI and UI touched here, without the unsupported HGT/AMP

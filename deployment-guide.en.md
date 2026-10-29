@@ -331,10 +331,14 @@ by hand.
 
 **After setup**:
 1. Build the knowledge graph: `python scripts/build_knowledge_graph.py`
-2. Precompute shortest paths: `python scripts/compute_shortest_paths.py`
-3. Train: `python scripts/train_model.py` (optionally `--config <hyperparameters.yaml>`), in a
-   shell where the GPU lock is configured: it refuses without one (§4.11)
-4. Launch: `./launch_shepherd.sh`
+2. Train a base: `python scripts/train_model.py --data-dir <workspace> --stage base` (optionally
+   `--config <settings.yaml>`), in a shell where the GPU lock is configured: it refuses without
+   one (§4.11). Then its task models on the dashboard's Research › Prepare › Fine-tune, or
+   `--stage finetune --task <task> --finetune-from <base run>/checkpoints/last.pt`
+3. Launch: `./launch_shepherd.sh`
+
+There is no shortest-path step: a task model never reads `shortest_paths.pt`. Until K8 the GB10
+acceptance probe still needs it (§4.3, "Until K8: the acceptance probe still needs the table").
 
 **Things to know**:
 - FlashAttention-2 is unavailable on ARM; the downgrade is automatic
@@ -458,6 +462,37 @@ A workspace's `shortest_paths.pt` is a precomputed distance table, and
 was generated with — `max_hops` above all. **The two belong to one build and must
 be copied or moved together.**
 
+**A task model never reads this table.** A disease model ranks every disease of its graph
+view, and a gene model computes the exact hop distances it uses from the view in process
+(`src/kg/graph_view.py`, `exact_distances`), so building a workspace for task models has no
+shortest-path step. What follows describes the one path that still reads the table: a
+checkpoint without a model spec (a ShepherdGNN history file), which the WebUI never runs but the
+command line and the API's model reload can still serve, through the mixture, until K8.
+
+### Until K8: the acceptance probe still needs the table
+
+The GB10 acceptance (`scripts/probe_deployment.py --m2-acceptance`) has not moved yet. Its real
+phase verifies the real workspace **with** `shortest_paths.pt` and its bound sidecar (R1), and
+its M4 and R6 checks serve with a verified table. So, until K8:
+
+- A workspace accepted before K8 must hold the pair. The current GB10 workspace has it; **to
+  accept a newly built workspace, build the pair first with the probe's own preparation step**
+  (the command M4 runs):
+
+  ```bash
+  python scripts/compute_shortest_paths.py --kg-path <workspace>/kg.json \
+      --output-dir <workspace> --max-hops 5
+  ```
+
+  It publishes `shortest_paths.pt` and `shortest_paths.meta.json` together, bound to that
+  workspace's graph. On a full graph it is heavy: the Milestone 4 graph's table was about
+  8.9 GB on disk and peaked near 12 GB of memory to load.
+- R1 is never skipped or passed without the pair: a workspace without it fails R1, and the
+  acceptance stays incomplete. Passing R1 alone would not help anyway, since R6 still serves
+  through the mixture with the table.
+- K8 moves R1, M4 and R6 to the task models together, drops the table from the acceptance and
+  removes this note.
+
 ### Why the sidecar cannot be skipped
 
 `max_hops` sets the cost assigned to "unreachable" (`max_hops + 1`). Every
@@ -568,9 +603,9 @@ shortest paths.
 `GET /api/v1/pipeline/status` reports `sp_kg_binding`: `verified` when the table
 names the graph being served. **It is never absent while shortest paths are on.**
 
-**Building from a graph held in memory rather than from a workspace** cannot
-check a binding at all, and a table that declares one is refused rather than
-assumed; a table without one is refused as above. Build from a workspace.
+**A pipeline is always built from a workspace** (since K7 a graph or a model
+handed over in memory is not served), so the binding is always checked against
+the workspace's own graph.
 
 ## 4.4 The build provenance record (`kg.provenance.json`)
 
@@ -662,11 +697,10 @@ wherever its record is shown:
   name, `diagnosis_SYNTHETIC_<patient>_<session>.csv`.
 
 What the record says it does not establish (`incomplete_by_design`) is
-displayed, never refused. Serving without a model — path reasoning over
-`kg.json` alone — verifies no workspace and is unaffected; its served identity
-says so (checkpoint `absent`, graph `unverified`, dataset record `absent`;
-§4.7, "Serving without a model"). The pipeline reload lists
-`kg.provenance.json` among the required files.
+displayed, never refused. Nothing is served without a model (since K7): every
+served pipeline reads its workspace, and with it this record (§4.7, "No model,
+no answer"). The pipeline reload lists `kg.provenance.json` among the required
+files.
 
 ### Older workspaces
 
@@ -888,31 +922,38 @@ hashed again when a result is produced, and nothing is filled in with
 - **`served_identity` is added** and is always present. It is copied from the
   result the response answers with, never from the service's shared state, so
   a reload that lands while a request runs cannot relabel its answer.
-- **It is `null` only for the demo answer.** With no pipeline configured at all,
-  the service still answers with illustrative candidates and the warning
-  `Pipeline not fully initialized - using mock data`; nothing was served, so
-  nothing is identified. A deployment that configured a pipeline and could not
-  build it answers 503, never the demo answer.
+- **It is never `null`** (since K7): every answer comes from a model. With no
+  pipeline served — nothing configured, a graph named without a model, or a
+  build that failed — `/api/v1/diagnose` answers 503 with the reason, and so
+  does `/ready`; `/health` stays 200 so the service starts and a model can be
+  loaded. The illustrative "demo answer" the service used to give when nothing
+  was configured (`demo/v1`, `Pipeline not fully initialized - using mock
+  data`) is removed.
 
 The service's own version (`1.0.0` in `/health`, `/` and the Swagger title) is
 the API's version, not the identity of what is served.
 
-### The diagnose response is one of three kinds (Batch 4)
+### The diagnose response is one kind of the result union (Batch 4; tasks since K3–K4)
 
 `POST /api/v1/diagnose` answers one kind of result, named by `result_kind`, with
 `result_schema_version` 2 (`docs/working/results-review/SPEC_1_RESULTS_REVIEW.md`
-§2.1). Each kind carries its own values and refuses another kind's:
+§2.1). The kind follows the model served; each kind carries its own values and
+refuses another kind's:
 
 | `result_kind` | Answered when | Each candidate's values | On the result |
 |---|---|---|---|
-| `served_mixture/v1` | a model is served | `served_score`, the value ranked by: η × `model_term` + (1 − η) × SP with a shortest-path table, `model_term` alone without one; `model_term`, (cos + 1) / 2; `sp_term`, the SP record | `eta`, `candidates_reached` (how many diseases discovery reached before the cut), `tie_policy` |
-| `path_reasoning/v1` | no model source is configured | `path_score`, the path aggregate | `path_score_aggregation`, `tie_policy` |
-| `demo/v1` | no pipeline was ever configured | none: no score, explanation, path or gene | — |
+| `disease_task/v1` | a model finetuned for the disease task is served | `score`, the disease head's score (in [−4, 0], uncalibrated) over every disease of the model's graph view; the evidence fields explain a row and change neither the score nor the order | `tie_policy` |
+| `gene_task/v1` | a gene task model is served; it ranks the request's `candidate_genes` | `score` = η × `embsim` + (1 − η) × `sp_similarity`; `embsim`; `sp_similarity`; `mean_distance`, the exact mean hop distance computed from the model's graph view | `sp_bounds`, `tie_policy` (η is the served identity's `settings.eta`) |
+| `patients_like_me/v1` | a patients-like-me model is served, with a reference cohort version | `similarity` (in [−4, 0], uncalibrated); `case_id`, the recorded `phenotypes`, diagnosis and `causal_genes` | `reference_cohort`, `tie_policy` |
+| `served_mixture/v1` | a checkpoint without a model spec (a ShepherdGNN history file) is served — never from the WebUI; the command line and the API's reload, until K8 | `served_score`, the value ranked by: η × `model_term` + (1 − η) × SP with a shortest-path table, `model_term` alone without one; `model_term`, (cos + 1) / 2; `sp_term`, the SP record | `eta`, `candidates_reached` (how many diseases discovery reached before the cut), `tie_policy` |
+
+The path-reasoning answer (`path_reasoning/v1`, a graph served with no model) and the demo
+answer (`demo/v1`) are removed since K7: with no model there is no answer (503, above).
 
 - **Removed, with no alias:** `confidence_score`, `gnn_score`, `sp_score`,
-  `reasoning_score` (now `path_score`, path reasoning only) and
-  `confidence_label` (now `evidence_label`, inside `evidence_package` too). A
-  client that read them reads the kind's own fields instead.
+  `reasoning_score` and `confidence_label` (now `evidence_label`, inside
+  `evidence_package` too). A client that read them reads the kind's own fields
+  instead. The bullets below describe the mixture's `sp_term` and refusals.
 - **`sp_term` never writes 0 for a missing value.** Its `status` is `COMPUTED`,
   `COMPUTED_PARTIAL` (some submitted phenotypes were not mapped;
   `phenotypes_mapped` / `phenotypes_submitted` say how many), `NO_TABLE`,
@@ -935,63 +976,67 @@ the API's version, not the identity of what is served.
   when the request is answered; when no id is known, the warning is the
   refusal.
 - **`phenotype_input`** (received, unknown, repeats removed, used) is in the
-  response; null in the demo answer, and when a request was refused before its
-  phenotypes were mapped.
+  response; null when a request was refused before its phenotypes were mapped.
 
 ### Its parts and states
 
 ```json
 "served_identity": {
-  "scoring_mode": "gnn_plus_shortest_path",
+  "scoring_mode": "disease_task",
   "checkpoint": {"state": "verified", "sha256": "<SHA-256 of the checkpoint read>"},
   "graph": {"state": "verified", "kg_sha256": "<SHA-256 of kg.json>",
             "split_manifest_sha256": "<SHA-256 of split_manifest.json>"},
-  "shortest_paths": {"state": "verified", "build_id": "<the sidecar's build_id>", "max_hops": 5},
+  "shortest_paths": {"state": "absent", "build_id": null, "max_hops": null},
   "dataset_record": {"state": "verified", "origin": "files",
                      "sha256": "<SHA-256 of kg.provenance.json>"},
-  "settings": {"device": "cuda:0", "device_requested": "auto", "eta": 0.7,
+  "settings": {"device": "cuda:0", "device_requested": "auto", "eta": null,
                "max_path_length": 4, "path_length_penalty": 0.9,
-               "aggregation_method": "weighted_sum", "max_paths_per_candidate": 10,
+               "max_paths_per_candidate": 10,
                "use_direct_path_optimization": true,
                "phenotype_normalisation_version": 1}
 }
 ```
 
+**A served model is always read from a checkpoint over a workspace verified with its dataset
+record** (since K7), so those three parts have one state each; only the shortest-path part
+varies, and it follows the scoring mode.
+
 | Part | State | Meaning | Values |
 |---|---|---|---|
 | `checkpoint` | `verified` | The model was built from one read of a checkpoint whose record matched the served graph (contract M2.4) | `sha256`: that read's digest |
-| | `supplied_in_memory` | A program handed the pipeline a model object; no checkpoint bytes were read | `sha256` null |
-| | `absent` | No model: path reasoning ranks the candidates | `sha256` null |
 | `graph` | `verified` | `kg.json` and `split_manifest.json` were each read once, and the graph's digest matched the manifest | `kg_sha256`, `split_manifest_sha256` |
-| | `unverified` | The graph was read from a file and checked against no workspace manifest (serving without a model, below) | `kg_sha256`; `split_manifest_sha256` null |
-| | `in_memory` | A program supplied the graph in memory; no file was read | both null |
-| `shortest_paths` | `verified` | The table and its sidecar share one `build_id` and name the served graph (§4.3) | `build_id`; `max_hops`, the sidecar's |
-| | `absent` | No table contributes to the score | both null |
-| `dataset_record` | `verified` | The record the manifest binds, naming the served graph (§4.4); verified exactly when the graph is | `origin` (`files` or `synthetic`); `sha256` of `kg.provenance.json` |
-| | `absent` | No workspace was verified, so no record was read | all null |
-| `scoring_mode` | — | `gnn_plus_shortest_path`, `gnn_only` or `path_reasoning_fallback` | |
+| `shortest_paths` | `computed` | The gene task's exact hop distances, computed in process from the model's graph view (no table) | both null |
+| | `verified` | The mixture only: the table and its sidecar share one `build_id` and name the served graph (§4.3) | `build_id`; `max_hops`, the sidecar's |
+| | `absent` | No shortest-path term contributes to the score | both null |
+| `dataset_record` | `verified` | The record the manifest binds, naming the served graph (§4.4) | `origin` (`files` or `synthetic`); `sha256` of `kg.provenance.json` |
+| `scoring_mode` | — | `disease_task`, `gene_task` or `patients_like_me` for a task model; `gnn_plus_shortest_path` or `gnn_only` for a history file served through the mixture (until K8) | |
 | `settings` | — | The serving settings that change scores, as in effect | below |
+
+The checkpoint states `supplied_in_memory` and `absent`, the graph states `unverified` and
+`in_memory`, and an `absent` dataset record are removed since K7, with the in-memory seams and
+the path-reasoning answer that produced them.
 
 `settings`:
 
 - `device`: where the model ran — torch's name for the device its parameters
-  are on (`cuda:0`, `cpu`). Null with no model.
+  are on (`cuda:0`, `cpu`).
 - `device_requested`: what was asked for — `auto` when nothing was named,
-  `cuda`, `cuda:N` or `cpu` (§4.8). Null with no model.
-- `eta`: the mixing weight in effect — the configured value with a table,
-  `1.0` without one. Null with no model.
-- `max_path_length`, `path_length_penalty`, `aggregation_method`,
-  `max_paths_per_candidate`, `use_direct_path_optimization`: path discovery
-  and scoring, in effect in every mode, because the candidates are the
-  diseases these paths reach.
+  `cuda`, `cuda:N` or `cpu` (§4.8).
+- `eta`: the mixing weight in effect — the gene task's η (from its model spec);
+  for the mixture the configured value with a table and `1.0` without one; null
+  for the disease and patients-like-me tasks, which mix nothing.
+- `max_path_length`, `path_length_penalty`, `max_paths_per_candidate`,
+  `use_direct_path_optimization`: path discovery and path scoring — the
+  evidence paths shown for a disease row (and, for the mixture, the diseases
+  it ranks). The path aggregation setting (`aggregation_method`) is gone since
+  K7: nothing ranks by an aggregate of path scores.
 - `phenotype_normalisation_version`: the rule applied to the phenotype list
   before scoring (currently `1`).
 
-The parts cannot contradict each other: a model is served exactly when the
-mode is not `path_reasoning_fallback`; the table is `verified` exactly in
-`gnn_plus_shortest_path`; a verified checkpoint or table is served only over a
-verified graph. A value is null only where its part's state says there is
-nothing to identify.
+The parts cannot contradict each other: each scoring mode has exactly one
+shortest-path state (`computed` for `gene_task`, `verified` for
+`gnn_plus_shortest_path`, `absent` otherwise), and an identity that says
+otherwise is refused when it is built.
 
 ### The same field in the pipeline status
 
@@ -1005,42 +1050,43 @@ result's own `served_identity`, or its report or CSV, not the status.
 ### How to read it
 
 - **A normal deployment** reads: checkpoint `verified`, graph `verified`,
-  shortest paths `verified`, dataset record `verified` with origin `files`,
-  `gnn_plus_shortest_path`, device `cuda:0`, requested `auto` or `cuda`.
+  dataset record `verified` with origin `files`, the task's scoring mode
+  (`disease_task`, `gene_task` or `patients_like_me`) with its shortest-path
+  state, device `cuda:0`, requested `auto` or `cuda`.
 - **Compare the digests with the files you deployed**: the SHA-256 of the
   checkpoint, `kg.json`, `split_manifest.json` and `kg.provenance.json` equal
-  the identity's digests, and the table's `build_id` is the one in
-  `shortest_paths.meta.json`.
+  the identity's digests (and, for the mixture, the table's `build_id` is the
+  one in `shortest_paths.meta.json`).
 - **Anything else is stated, not hidden**: origin `synthetic` is a generated
-  workspace, not clinical data (§4.4); shortest paths `absent` with `gnn_only`
-  and eta `1.0` means no table was served (§4.3); checkpoint `absent` is path
-  reasoning without a model (below); device `cpu` was asked for explicitly
-  (§4.8).
+  workspace, not clinical data (§4.4); `gnn_plus_shortest_path` or `gnn_only`
+  is a ShepherdGNN history file served through the mixture outside the WebUI
+  (§4.3); device `cpu` was asked for explicitly (§4.8).
 - **What it does not establish** is displayed under the identity, as the
   contract's claim boundary: "Checked: these files are the ones their records
   name, and the records agree on the relations marked ✓. Not checked: who
   changed them, or anything a person able to edit both files and records could
   alter."
 
-### Serving without a model
+### No model, no answer
 
-Path reasoning over `kg.json` alone, with no checkpoint configured, verifies no
-workspace (§4.4), and its identity says so: checkpoint `absent`; graph
-`unverified`, with the digest of the `kg.json` it read and no manifest digest;
-shortest paths and dataset record `absent`; `path_reasoning_fallback`; device,
-requested device and eta null. Nothing in it is claimed verified. Whether this
-mode stays available by default is an open policy question (B-2), not decided
-by M3c.
+Since K7 a graph is never served without a model (the path-reasoning fallback
+is removed, closing the open policy question B-2), and nothing is served from
+a model or graph handed over in memory. A service started with
+`SHEPHERD_KG_PATH` and no `SHEPHERD_CHECKPOINT_PATH`, or with nothing
+configured, publishes no pipeline: `/api/v1/diagnose` and `/ready` answer 503
+with the reason, `/health` answers 200, and the Diagnosis page offers "Load a
+model…". A reload that fails keeps the model in use and its ready state.
 
 ### In the Diagnosis tab and its exports
 
 The WebUI shows **the result's own identity**, never the status's:
 
 - **Banners above the results**, one per state that must not be missed:
-  `SYNTHETIC WORKSPACE: not a clinical result.`, `NO TRAINED MODEL:
-  path-reasoning fallback.`, `NO SHORTEST-PATH TABLE: GNN score alone.`,
-  `DEMO ANSWER: not computed.`, and `WHAT PRODUCED THIS RESULT WAS NOT
-  REPORTED.` for a response without the field (a server from before M3c).
+  `SYNTHETIC WORKSPACE: not a clinical result.`, `NO SHORTEST-PATH TABLE: GNN
+  score alone.` (a history file served through the mixture without a table),
+  and `WHAT PRODUCED THIS RESULT WAS NOT REPORTED.` for a response without the
+  field (a server from before M3c). The no-trained-model and demo banners are
+  gone since K7, with the answers they described.
 - **A badge above the results** (since M5-2) compares the result's whole
   identity, part by part, with the model in use as the "Model in use" card last
   read it: "Produced by the model in use", "Produced by an earlier model or
@@ -1060,20 +1106,26 @@ The WebUI shows **the result's own identity**, never the status's:
   candidates: the same banners, a Part | State | Value table with digests in
   full (`sha256:<64 hex>`), the claim boundary and the fixed statement. An
   absent part is written as its state and the reason, never left blank.
-- **The kind's label above the table** says what the Score column holds, with
-  the result's own η: "Served ranking today: diseases reached by path discovery,
-  scored as η × model term + (1 − η) × SP, η = 0.7" (or "…scored by the model
-  term alone" without a table), "No model loaded: ranked by path reasoning, not
-  by a model", or "Demo answer: no pipeline is configured; not a diagnosis".
-  The columns follow the kind: Score and Model term for the mixture, with SP
-  beside them when a table is served (a status with no number in words, never
-  0.000); Score for path reasoning; no score at all for the demo answer.
+- **The kind's label above the table** says what the Score column holds: "Disease
+  task model: every disease of the model's graph ranked by its Score
+  (uncalibrated); paths only explain the rows shown", "Gene task model: your
+  candidate genes ranked by their Score (uncalibrated), the model's similarity
+  mixed with shortest-path proximity", "Patients-like-me model: the reference
+  cohort's patients ranked by Similarity (uncalibrated); a shared causal gene is
+  not implied", or, for a history file served through the mixture, "Served
+  ranking today: diseases reached by path discovery, scored as η × model term +
+  (1 − η) × SP, η = 0.7" with the result's own η (or "…scored by the model term
+  alone" without a table). The columns follow the kind: Score for the disease
+  task; Score, model similarity and SP similarity for the gene task; Similarity
+  for patients-like-me; Score and Model term for the mixture, with SP beside
+  them when a table is served (a status with no number in words, never 0.000).
 - **A refused result** (`MODEL_TERM_UNAVAILABLE`, `NON_FINITE_SCORE`) is shown as
   one sentence naming the code and the node; nothing is ranked.
 - **The CSV** carries the identity in columns (below).
-- **File names** carry the two states a copied file must not lose:
+- **File names** carry the state a copied file must not lose:
   `diagnosis_SYNTHETIC_<patient>_<session>.csv` / `_report.md` for a synthetic
-  workspace, `diagnosis_DEMO_…` for the demo answer; otherwise unchanged.
+  workspace; otherwise unchanged (the `diagnosis_DEMO_…` name went with the demo
+  answer, K7).
 
 ### The CSV's candidate columns (Batch 4)
 
@@ -1081,44 +1133,48 @@ The candidate columns are the result kind's, and every row names the kind:
 
 | Kind | Candidate columns, in order |
 |---|---|
+| `disease_task/v1` | `result_kind`, `rank`, `disease_id`, `disease_name`, `score`, then the evidence columns |
+| `gene_task/v1` | `result_kind`, `rank`, `gene_id`, `gene_name`, `score`, `embsim`, `sp_similarity`, `mean_distance`, `sp_bounds_lower`, `sp_bounds_upper` |
+| `patients_like_me/v1` | `result_kind`, `rank`, `case_id`, `similarity`, `disease_id`, `disease_name`, `causal_genes`, `phenotypes`, `reference_cohort_label`, `reference_cohort_version_sha256`, `reference_cohort_samples_sha256`, `reference_cohort_patients` |
 | `served_mixture/v1` | `result_kind`, `rank`, `disease_id`, `disease_name`, `served_score`, `model_term`, `sp_term_status`, `sp_term_score`, `sp_term_mean_hop_distance`, `sp_term_phenotypes_mapped`, `sp_term_phenotypes_submitted`, `sp_term_mixed_as`, then the evidence columns |
-| `path_reasoning/v1` | `result_kind`, `rank`, `disease_id`, `disease_name`, `path_score`, then the evidence columns |
-| `demo/v1` | `result_kind`, `rank`, `disease_id`, `disease_name`, `matching_phenotypes` |
+
+The `path_reasoning/v1` (`path_score`) and `demo/v1` rows are gone since K7.
 
 The evidence columns are `evidence_label`, `evidence_mode`, `evidence_summary`,
 `min_path_length`, `num_direct_paths`, `num_analogies`, `supporting_genes` and
 `matching_phenotypes`. `sp_term_status` sits beside the SP values: where the
 status has no number, the value cells are empty, never 0, and `sp_term_mixed_as`
 is `0.0000` where the mixture still took it as 0. A path count is empty when no
-evidence package was built (explanations off). `served_score` is a candidate
-column, not part of the identity block below.
+evidence package was built (explanations off). `score` and `served_score` are
+candidate columns, not part of the identity block below. A gene result's SP
+bounds and a patients-like-me result's reference cohort version are the same on
+every row.
 
 ### The CSV's identity columns
 
 The CSV keeps **one header row** and no preamble. The result kind's candidate
-columns come first (above); 21 columns follow, each holding one part of the
+columns come first (above); 20 columns follow, each holding one part of the
 identity, **the same on every row**:
 
 | Column | Holds | When the identity holds null |
 |---|---|---|
-| `served_scoring_mode` | `gnn_plus_shortest_path`, `gnn_only` or `path_reasoning_fallback` | — |
-| `served_checkpoint_state` | `verified`, `supplied_in_memory` or `absent` | — |
-| `served_checkpoint_sha256` | `sha256:<hex>` of the checkpoint read | `absent` (no model); `none` (a model supplied in memory) |
-| `served_kg_state` | `verified`, `unverified` or `in_memory` | — |
-| `served_kg_sha256` | `sha256:<hex>` of the `kg.json` read | `none` (a graph supplied in memory) |
-| `served_split_manifest_sha256` | `sha256:<hex>` of the `split_manifest.json` read | `absent` (graph `unverified` or `in_memory`) |
-| `served_sp_state` | `verified` or `absent` | — |
+| `served_scoring_mode` | `disease_task`, `gene_task`, `patients_like_me`, `gnn_plus_shortest_path` or `gnn_only` | — |
+| `served_checkpoint_state` | `verified` | — |
+| `served_checkpoint_sha256` | `sha256:<hex>` of the checkpoint read | — |
+| `served_kg_state` | `verified` | — |
+| `served_kg_sha256` | `sha256:<hex>` of the `kg.json` read | — |
+| `served_split_manifest_sha256` | `sha256:<hex>` of the `split_manifest.json` read | — |
+| `served_sp_state` | `computed`, `verified` or `absent` | — |
 | `served_sp_build_id` | the `build_id` the table and its sidecar share | `absent` |
 | `served_sp_max_hops` | the sidecar's `max_hops` | `absent` |
-| `served_dataset_record_state` | `verified` or `absent` | — |
-| `served_dataset_origin` | `files` or `synthetic` | `absent` |
-| `served_dataset_record_sha256` | `sha256:<hex>` of the `kg.provenance.json` read | `absent` |
-| `served_device` | the device in effect (`cuda:0`, `cpu`) | `none` (no model); `not_stated` (a model supplied in memory that does not say) |
-| `served_device_requested` | `auto`, `cuda`, `cuda:N` or `cpu`, as asked | `none` (no model, or a model supplied in memory with no device named) |
-| `served_eta` | the mixing weight in effect | `none` (no model) |
+| `served_dataset_record_state` | `verified` | — |
+| `served_dataset_origin` | `files` or `synthetic` | — |
+| `served_dataset_record_sha256` | `sha256:<hex>` of the `kg.provenance.json` read | — |
+| `served_device` | the device in effect (`cuda:0`, `cpu`) | — |
+| `served_device_requested` | `auto`, `cuda`, `cuda:N` or `cpu`, as asked | — |
+| `served_eta` | the mixing weight in effect | `none` (a disease or patients-like-me model, which mixes nothing) |
 | `served_max_path_length` | integer | — |
 | `served_path_length_penalty` | number | — |
-| `served_aggregation_method` | text | — |
 | `served_max_paths_per_candidate` | integer | — |
 | `served_direct_path_optimization` | `true` or `false` (`use_direct_path_optimization`) | — |
 | `served_phenotype_normalisation_version` | integer (currently `1`) | — |
@@ -1134,11 +1190,12 @@ identity, **the same on every row**:
 
 | Word | Written when |
 |---|---|
-| `absent` | the part is absent: no checkpoint, table, manifest or dataset record |
-| `none` | nothing applies: no device, requested device or eta without a model; no digest for a model or graph supplied in memory; no requested device for a model supplied in memory |
-| `not_stated` | a model supplied in memory does not say its device (`served_device` only) |
-| `demo` | every `served_` column of the demo answer |
+| `absent` | no shortest-path table: its build id and hop bound |
+| `none` | nothing applies: no η for a model that mixes nothing |
 | `not_reported` | every `served_` column of a response that carried no `served_identity`, or a value one left out |
+
+The words for a model or graph supplied in memory (`none` digests, `not_stated`), for no model
+and for the demo answer (`demo`), and the `served_aggregation_method` column, are gone since K7.
 
 - A text cell that a spreadsheet would run as a formula — one starting with
   `=`, `+`, `-`, `@`, a tab or a carriage return — is written with a leading
@@ -1180,8 +1237,6 @@ leaves the served pipeline serving. The refusal reads:
 > development; the served identity records the device asked for and the one in
 > effect.
 
-Serving with no checkpoint — path reasoning alone — resolves no device.
-
 **Hardware acceleration is required for deployment, and CUDA (NVIDIA) is currently the only
 supported backend.** That is the present scope, not a permanent limit. torch's ROCm builds also
 name their device `cuda`, but they have not been verified here. Another accelerator would be
@@ -1200,8 +1255,9 @@ device the model's parameters are on (`cuda:0`, not just `cuda`). The status's
 > `"device": "cpu"` with a reload, or leave it null so that variable applies).
 > A literal `auto`, which used to reach torch and fail there, is the same
 > request as unset. The WebUI has no device selector.
-> `scripts/setup_demo.py` prints its serving command with the device its demo
-> was trained on.
+> `scripts/setup_demo.py --train-model` prints its serving command, naming the
+> disease child it trained (a base, then one disease child, since K7), with the
+> device they were trained on.
 
 ---
 
@@ -1345,12 +1401,18 @@ to measure.
 ### Measure
 
 ```bash
-python scripts/measure_scorer.py \
+python scripts/measure_scorer.py --mode disease \
     --checkpoint data/workspaces/<ws>/runs/<arch>/<run>/checkpoints/<file>.pt \
     --data-dir data/workspaces/<ws> \
     --cohort mygene2-2026-10 --registry /srv/shepherd/cohorts \
     [--training-evidence DIR ...] [--record] [--device auto|cuda|cpu] [--batch-size 32]
 ```
+
+`--mode` is the model's task (`disease`, `gene` or `patients_like_me`), checked against the
+model record right after the checkpoint is read; the Test page always passes it (since K6).
+Without `--mode` the run is **Mode C**, the model's own disease ranking from before the tasks,
+which measures only a checkpoint without a model spec (a ShepherdGNN history file); it stays a
+command-line run until K8.
 
 Run it in a shell where the GPU lock is configured, the same lock as the service's (§4.11);
 without one it refuses, exit 1, with nothing written.
@@ -1404,56 +1466,32 @@ hex>/`, a new directory for every run: `ranks.json` (per case, patient-level) an
 `report.json`, which names the ranks file by its digest. Reports are never overwritten, and every
 report is kept whether or not it is registered. `--output` is refused with `--cohort`.
 
-The console prints Mode C's metrics, the coverage (`N ranked of M source cases; K excluded`, with
+The console prints the run's metrics (the task's, or Mode C's), the coverage (`N ranked of M source cases; K excluded`, with
 each category), the four R10 labels in the shared words of `src/evaluation/caveats.py` (an
 `unverifiable` label with its reason), the label definitions once, the report's path and the run
 id. The report itself keeps the states and holds no prose.
 
-### Mode D: the served ranking (since Batch 3)
+### Mode D (removed in K7)
 
-`--mode D` measures **what the Diagnosis page serves today** on the same registered version: the
-checkpoint is served by the service's own builder over `--data-dir` (with its shortest-path table
-when the workspace holds one, as the service would), each import-eligible case is ranked through
-the served pipeline's own `rank()`, and Mode C is run beside it on the same embeddings. It is the
-input to the scorer policy's gate 1 comparison, not the approved policy
-(`docs/working/scorer-measurement/PLAN_B05.md`).
+Mode D (`--mode D`, Batch 3's measurement of what the Diagnosis page served in October 2026, the
+input to the scorer policy's gate 1 comparison) was removed in K7 with its executor and its probe:
+`--mode D` is refused at the command line (exit 2), and no page or job starts it. Its GB10 run of
+2026-10-27 is kept as evidence in `docs/working/batch3-acceptance-2026-10-27/`, and its design
+in `docs/working/scorer-measurement/PLAN_B05.md`.
 
-```bash
-python scripts/measure_scorer.py --mode D \
-    --checkpoint data/workspaces/<ws>/runs/<arch>/<run>/checkpoints/<file>.pt \
-    --data-dir data/workspaces/<ws> \
-    --cohort mygene2-2026-10 --registry /srv/shepherd/cohorts \
-    [--training-evidence DIR ...] [--record] [--device auto|cuda|cpu] [--batch-size 32]
-```
+**Kept Mode D reports and records stay readable**, under their own label ("Served ranking of
+October 2026 (Mode D) … not the approved scorer policy", with the scoring mode and η they were
+measured under) on the Test page's Result and the Models page, which lists each mode's records in
+a table of its own and never orders a Mode D record. Their figures are named for their case set:
+`post_import_*` and `coverage` over the version's import-eligible cases, a case not reached
+counting 0; `reached_*` over the reached cases only; the cases excluded at import counted beside
+them, never in them. Each report also set Mode C beside it on the same embeddings. A Mode D
+number is not the model's approved ranking and does not describe the current diagnosis model.
 
-- **The same run, the same rules.** Every check above, the GPU lock, the report store and
-  registration apply unchanged. `--split` with `--mode D` is refused (exit 2): its comparison is
-  reported on a version's import-eligible cases. A pipeline that would serve path reasoning alone,
-  a version bound to another workspace, and a version mapped under another phenotype normalisation
-  version than the one served (the two sides would score different terms) are refused before any
-  case is ranked; a `--batch-size` below 1 is refused at the command line (exit 2). During the
-  pass, a case whose served input is not the terms the version mapped refuses the run, with
-  nothing written. About 20 progress lines on the console say how many cases have gone through
-  the served path, how long it took and the outcomes so far.
-- **One case per call.** Mode D ranks each case through the served path (`batch_size` 1 in its
-  manifest; `--batch-size` is the Mode C side's), so it is slower than Mode C: on a large cohort,
-  time a pilot first.
-- **What the report adds.** The fields every report has, plus `outcomes` (`ranked`,
-  `not_reached` — of which `no_candidates` — and `refused`, adding up to the import-eligible
-  cases), `import_counts`, `served` (the served identity) and `comparison`: Mode C on the same
-  embeddings, the derived steps C → G1 → G2 → D (candidates, then ties, then the score), and for
-  each kept Mode C report of the same checkpoint and version, how many ranks agree (stated, never
-  an error). `ranks.json` has one row per import-eligible case.
-- **Named for their case set.** `post_import_*` and `coverage` are over the import-eligible cases,
-  a case not reached counting 0; `reached_*` over the reached cases only. No figure is end to end:
-  the cases excluded at import are counted beside them.
-- **Registered apart.** With `--record` it becomes its own record beside the checkpoint. Its
-  scoring semantics differ from Mode C's, so the two are never compared for disagreement, and a
-  Mode D record is shown on the Models page, never ordered. The console, the Test page's Result
-  and the Models page label it "Served ranking today (Mode D) … not the approved scorer policy",
-  with the served scoring mode and η (on the Models page in the label when every Mode D record
-  shown shares them, otherwise on each record's detail line); the Models page lists each mode's
-  records in a table of its own. No page starts a Mode D run: the Test page's Start runs Mode C.
+**A kept Mode D report is never registered again**: `--record`, `scripts/record_evaluation.py`
+and the Test page's Register refuse it ("… is a Mode D report (the served ranking), and Mode D was
+removed in K7 …") before anything is written; the records a ledger already holds stay, and do not
+stop the next registration of another report.
 
 ### Record
 
@@ -2262,7 +2300,8 @@ that asks: `enabled`, the `condition` that decided it and its `reason`. It is re
 showing it is not the control.
 
 **A reload that D8 refuses changes nothing.** Before, any caller's reload request, refused or
-not, turned every later diagnosis from the demo answer into "configured but not served" (503).
+not, turned every later diagnosis from the demo answer (removed since K7) into "configured but
+not served" (503).
 
 **Not claimed.** Loopback is not authorisation: whoever reaches the machine's loopback, through
 an SSH forward of their own too, passes. M1 therefore means one verified workspace deployment
@@ -2455,8 +2494,9 @@ it: both follow Options, and stay pinned at the panel's bottom when the inputs n
   browser sees "not shown · reading the checkpoint is an operator control". When another browser
   has changed the model, this card says "not read yet · read it" until the page is opened again
   or "read it" is clicked (the 5-second read never opens a checkpoint);
-- chips, only when true: `synthetic data` (amber), `no SP table`, `no trained model` or `GNN not
-  loaded` (red), `unverified` (amber: a graph checked against no workspace manifest);
+- chips, only when true: `synthetic data` (amber), `no SP table` (a history file served through
+  the mixture without its table), `GNN not loaded` (red). The `no trained model` and `unverified`
+  chips went with the path-reasoning state (K7);
 - "Recorded tests: <state>" (§4.9), whose › opens Details at Evidence; "Details ›"; "🔒 Change
   model…". The recorded tests, and the workspace names, are read again each time Diagnosis is
   shown, after each diagnosis, after a model change and with ↻ (the 5-second read reads only what
@@ -2467,8 +2507,7 @@ it: both follow Options, and stay pinned at the panel's bottom when the inputs n
 | "Model changed at HH:MM — was <old>, now <new>" with × | A read found another model, or another part of what is served, than this browser's previous read (another browser's Change model, for example). × dismisses it |
 | grey: "cannot check · <reason> · Retry", "last known HH:MM:SS · not current" | What is served could not be read: "status not read" (the full reason is in the badge's line and in Details) or "timed out (5 s)". The lines shown are the last known state, without ✓, with grey dashed chips |
 | grey: "read HH:MM:SS · older than this result" | The last good read is older than the result shown |
-| "No model loaded" and "🔒 Load a model…" | No pipeline is configured. Run Diagnosis is greyed out and cannot be clicked: pointing at it, or reaching it with Tab, shows why, and "Disabled: no model loaded. …" is written under it. An API client asking now still gets the demo answer |
-| "No trained model · path reasoning only" and a red chip | A graph is served without a trained model. Run Diagnosis stays on, and the result carries `NO TRAINED MODEL: path-reasoning fallback.` |
+| "No model loaded" and "🔒 Load a model…" | No model is served: none configured, a graph named without a model, or a build that failed (since K7 a graph is never served on its own). Run Diagnosis is greyed out and cannot be clicked: pointing at it, or reaching it with Tab, shows why, and "Disabled: no model loaded. …" is written under it. An API client asking now gets 503 with the reason (§4.7) |
 | "🔒 Change model…" greyed, "Operator controls only: <reason>" | A read-only browser (§4.13). It never sees the list of checkpoints |
 
 **The badge** above the results (§4.7) compares the result's whole served identity with the card's
@@ -2604,6 +2643,13 @@ a run.
   root-cause round), and the process checks nothing about the workspace before it, so a
   manifest that no longer parses, or is gone (its whole workspace included), is refused in the
   same words; a manifest that is the one shown but cannot be read now is refused as such.
+- **Over HTTP, `POST /api/v1/training/start` is this form's start** (since K7): a strict base
+  start. `learning_stage` must be `base`; it takes the run (`data_dir`, `run_name`, `device`,
+  `resume_from`, `extend_epochs`) and the reference recipe's base settings, each unset by default
+  so the recipe fills it. A finetune stage, a ShepherdGNN setting (`conv_type`, `hidden_dim`, …)
+  or any field it does not define is refused with 422, and continuing a checkpoint that is not a
+  base with 409, before a GPU slot or a run directory is taken. Task models are started with
+  `POST /api/v1/training/finetune`, as the Fine-tune page starts them.
 - A failed run's **error banner** spans the page. Under its headline ("Training failed: Process
   exited with code 1") is the last error line the run printed ("Last error printed:
   TrainingDeviceUnavailable: --device auto requires CUDA, …"), redacted for a read-only browser
@@ -2767,7 +2813,8 @@ and register it. Three panels:
   list again). Then the R10 evidence the run will look in (the measured workspace, and
   `SHEPHERD_TRAINING_EVIDENCE_DIRS`), **Register the result**, **Deterministic execution**, and
   the batch size, device and mode the server fixes (the measurement's default;
-  `SHEPHERD_DEVICE`; Mode C, the model's own ranking: Mode D is an operator's command-line run).
+  `SHEPHERD_DEVICE`; the model's own task, `--mode <task>`, since K6: the page never runs Mode C,
+  which stays a command-line run on a history file until K8, and Mode D was removed in K7).
   **🔒 Start test** starts the real `measure_scorer.py` through the job runner (§4.11), with the
   workspace, version and checkpoint the server finds again in its lists, and **the full model
   fingerprint and version digest the page showed as the expected ones**: the run refuses before
@@ -2790,8 +2837,8 @@ and register it. Three panels:
   just ended is selected, once for that run. A choice made while the page reads the version's
   store again (after the job changed, an act or an import) applies once that read has ended;
   the read never undoes it, and of several choices made meanwhile the last one stays.
-- **Result.** The selected report as the record the ledger would hold: the Mode C metrics over
-  the cases ranked, coverage with each exclusion, the relations, R10 in words (*unverifiable* is
+- **Result.** The selected report as the record the ledger would hold: its mode's metrics (a
+  task's; a kept Mode C or Mode D report under its own label), coverage with each exclusion, the relations, R10 in words (*unverifiable* is
   never a 0), the environment, the dataset origin, and whether it is registered (for an
   operator, checked in the ledger beside the listed checkpoint holding the weights it
   measured). **🔒 Register this report** registers a kept report through the one registration
@@ -2801,7 +2848,8 @@ and register it. Three panels:
   when it is listed with those weights, which is where the list looks, else another listed copy
   in the workspace the run measured, else one in the workspace shown) and registers it. A
   checkpoint moved since the run is not found that way; the page says so, and
-  `scripts/record_evaluation.py` on the machine remains. While runs under the report's key
+  `scripts/record_evaluation.py` on the machine remains. A kept Mode D report is refused, with
+  nothing written (Mode D was removed in K7; §4.9). While runs under the report's key
   disagree, the page shows the block, Register is off, and **investigation notes** (who, when,
   what; 🔒 Add note) are listed and kept with the key's reports. A note never lifts the block.
   On a wide screen the note form (Who, What was found, 🔒 Add note) stays at the panel's foot,

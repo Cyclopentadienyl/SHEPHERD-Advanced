@@ -23,14 +23,20 @@ exists so that anyone who sees an SP number knows precisely what it does and doe
 > |---|---|---|
 > | Trained model **and** shortest-path table | `served_mixture/v1` | `served_score` = η × `model_term` + (1 − η) × SP, with the result's own η (0.7 by default) |
 > | Trained model only | `served_mixture/v1` | `served_score` = `model_term` alone; `sp_term.status` is `NO_TABLE` |
-> | No trained model | `path_reasoning/v1` | `path_score`, a different quantity in its own field |
+>
+> **Since K7 (2026-10-29, on the integration branch), no answer is given without a trained model**:
+> the path-reasoning ranking (`path_reasoning/v1`) is removed, and a service with no model refuses.
+> There, a model finetuned for a task is served under its own kind: a disease task model
+> (`disease_task/v1`) ranks every disease with no SP term at all; a gene task model
+> (`gene_task/v1`) mixes its own SP similarity, from exact hop distances computed from the model's
+> graph view, into the score of your candidate genes. The two rows above describe a checkpoint
+> without a model spec (a history file), served only outside the dashboard until K8.
 >
 > **Which row applies is stated with each result.** Every result says which artifacts produced it
 > (its *served identity*) and its kind: the Diagnosis tab's kind label and "Produced by" line, the
 > downloadable report's "What produced this result" section and the CSV's `result_kind` and
 > `served_` columns name the trained model's checkpoint, the shortest-path table and the scoring
-> mode — `gnn_plus_shortest_path` (first row), `gnn_only` (second) or `path_reasoning_fallback`
-> (third, with a "NO TRAINED MODEL" banner).
+> mode — `gnn_plus_shortest_path` (first row) or `gnn_only` (second), or the task's own mode.
 >
 > **An SP value that cannot be computed is never written as a number.** Each candidate's `sp_term`
 > has a status: `COMPUTED`, `COMPUTED_PARTIAL` (some submitted phenotypes were not in the graph),

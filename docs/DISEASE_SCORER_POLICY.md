@@ -3,6 +3,23 @@
 **Status:** Accepted (2026-08) by the deploying institution. **Not yet implemented** — see the
 status table in §2. Implementation is work item B-1, which remains gated (§6).
 
+**Revision: rev 13 (2026-10-29). A factual update, no normative change; the gate text is
+unchanged.** The retirement check K7 on `claude/paper-aligned-two-stage`, by the owner's
+authorisation of 2026-10-29:
+- **The path-reasoning fallback ranking is removed.** A graph named without a model is refused
+  before it is read, and with no pipeline `/diagnose` and `/ready` answer 503 with the reason.
+  Statement 7 now has no subject; it is kept as written. B-2 (an opt-in for serving with no model)
+  is settled: nothing is served without a model. Path reasoning stays as post-ranking evidence.
+- **The demo answer is removed** (the owner's decision): with nothing configured nothing
+  answers either; `/health` stays up so a model can be loaded.
+- **Mode D's executor is removed**; its kept reports and records stay readable and are never
+  registered again. Gate 1 as written (B-0's Mode C and Mode D report) can now be reproduced only
+  from a revision before K7 (`a7d0171` or earlier).
+- **Still until K8:** the served mixture and Mode C, only for a checkpoint without a model spec
+  (a history file) outside the WebUI and for the GB10 acceptance probe. On the integration branch
+  the Diagnosis page serves task models; §2's "current behaviour" column describes `main`
+  `416a242`.
+
 **Revision: rev 12 (2026-10-27). A factual update recording the owner's engineering decisions; no
 normative statement changes, and the gate text is unchanged.**
 - **No deployment exists.** The system has never been deployed at the hospital; it is a research
@@ -255,7 +272,7 @@ column is implemented.
 | **Disease score** | `0.7 × ((cos+1)/2) + 0.3 × SP` when a checkpoint and `shortest_paths.pt` are both loaded (`_served_score` in `src/inference/pipeline.py`, mixing through `mix_embedding_and_sp_scores` in `src/inference/scoring.py`); since Batch 4 the result is `served_mixture/v1` and the value `served_score`, with η read from the result's identity | Raw cosine (interim, statement 2) | **Not implemented** — B-1 |
 | **SP role** | A ranking term with nominal coefficient 0.3, and therefore able to reorder candidates. The coefficient is not the term's effective contribution — see §3.5 | Optional post-ranking contextual analysis only; separate field or panel; no effect on identity, order, rank or ranking score | **Not implemented** — B-1 |
 | **Evidence-path role** | Path reasoning performs candidate discovery, supplies evidence, **and** becomes the ranking score when no GNN is loaded | Evidence only, via a target-restricted traversal that cannot alter the candidate set | **Not implemented** — design not yet approved (gate 3, §6) |
-| **GNN-unavailable fallback** | The path-reasoning aggregate ranks the candidates (`_score_and_rank_candidates` in `src/inference/pipeline.py`). Until Batch 4 it was written into `confidence_score`, the model's field; since Batch 4 the result is `path_reasoning/v1` and the value its own `path_score`, with no model term. Since provenance contract M3c each result also states its scoring mode (`path_reasoning_fallback`) in its served identity, with the checkpoint `absent` | Discriminated score semantics; fail-closed by default; fallback only by explicit request or approved deployment policy | **Fail-closed core implemented** (provenance contract M1, 2026-10-07): a requested model that cannot be built is refused, never replaced by this fallback. **Described per result** (provenance contract M3c, implemented 2026-10-16, merged as #124): the served identity names the scoring mode and what produced the result; it is a description, not discriminated score semantics. **Discriminated semantics implemented** (Batch 4, accepted 2026-10-27): the `path_reasoning/v1` kind. **Not implemented** — the rest of B-2: whether serving with no model configured needs an opt-in |
+| **GNN-unavailable fallback** | The path-reasoning aggregate ranks the candidates (`_score_and_rank_candidates` in `src/inference/pipeline.py`). Until Batch 4 it was written into `confidence_score`, the model's field; since Batch 4 the result is `path_reasoning/v1` and the value its own `path_score`, with no model term. Since provenance contract M3c each result also states its scoring mode (`path_reasoning_fallback`) in its served identity, with the checkpoint `absent` | Discriminated score semantics; fail-closed by default; fallback only by explicit request or approved deployment policy | **Fail-closed core implemented** (provenance contract M1, 2026-10-07): a requested model that cannot be built is refused, never replaced by this fallback. **Described per result** (provenance contract M3c, implemented 2026-10-16, merged as #124): the served identity names the scoring mode and what produced the result; it is a description, not discriminated score semantics. **Discriminated semantics implemented** (Batch 4, accepted 2026-10-27): the `path_reasoning/v1` kind. **Not implemented** — the rest of B-2: whether serving with no model configured needs an opt-in. *(Rev 13: settled at K7 on the integration branch: the fallback is removed, and with no model nothing is served.)* |
 
 Two further current behaviours, for completeness:
 

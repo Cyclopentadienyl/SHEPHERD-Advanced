@@ -180,10 +180,14 @@ on the console, never hidden, and said again beside the acceptance's verdict.
     trains on it by the reference recipe (a base and the child, one epoch
     each, into --work-dir) (RW2); a training job on it started and stopped,
     other jobs refused while it runs (RW3).
-    **The rest of the probe chain still trains and measures ShepherdGNN
-    checkpoints** (D1, M2-M11, T1-T6, R3-R7, RT1-RT3, W1's listed run, W7's
-    refused training starts and W11's and RW3's held training job): moving it
-    to the model bundle path is K8's (the scorer-retraining README, §10).
+    **The rest of the probe chain still trains, serves and measures
+    ShepherdGNN checkpoints, or reads the shortest-path table** (D1, D2,
+    E1-E8, M2-M11, T1-T6, R1's shortest-path pre-check, R2-R7, RT2-RT3, W1's
+    listed run, W7's refused training starts and W11's and RW3's held training
+    job; RT1 only imports a cohort and needs no move): moving them to the model
+    bundle path, with R1, M4 and R6 together, is K8's (the scorer-retraining
+    README, §7 and §10). Until then a real workspace this acceptance accepts
+    holds shortest_paths.pt with its bound sidecar (R1), as M4 builds one.
     **W11's and RW3's training job holds the GPU by configuration**, applied
     where it is started (`_held_config`: `_HOLD_EPOCHS` epochs, early stopping
     as long, no pause, a new run), so it ends only by the probe's stop. **One

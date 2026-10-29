@@ -4113,7 +4113,8 @@ The six hazards found in the verification, each with its rule:
    - As built at K5: a reload that names a task (`POST /pipeline/reload`, `task`) takes the latest
      run holding a child finetuned for it, judged by each file's record and never by its directory.
      An explicit checkpoint of another task is refused, and nothing is published. A reload without
-     a task never chooses a file with a `model_spec`, until K7 retires that path. The API's model
+     a task never chooses a file with a `model_spec`, until K8 retires that path (*corrected at K7:* the
+     task-less reload stayed through K7 because probe E4–E6 still reload by architecture). The API's model
      lists (`GET /workspaces/{name}/checkpoints`, `/family`, `GET /training/checkpoints`) show each
      file's record (stage, task, operation, family, parent), read by the one reader; the pages
      show it from K6.
