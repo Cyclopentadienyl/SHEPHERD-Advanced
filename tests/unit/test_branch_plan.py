@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 
 from src.config.recipe import branch_settings
+from src.utils.checkpoint_io import TRAINING_RULES_VERSION
 from src.utils.run_plan import RunPlanRefused, plan_branch, plan_continuation
 
 RECORDED = {"learning_rate": 1e-4, "seed": 1, "split_seed": 0, "num_epochs": 2,
@@ -26,8 +27,8 @@ RECORDED = {"learning_rate": 1e-4, "seed": 1, "split_seed": 0, "num_epochs": 2,
 
 
 def _parent(end="finished", **changes):
-    payload = {"record_version": 2, "checkpoint_kind": "training_state",
-               "learning_stage": "base", "task": None,
+    payload = {"record_version": 2, "training_rules": TRAINING_RULES_VERSION,
+               "checkpoint_kind": "training_state", "learning_stage": "base", "task": None,
                "config": {"requested": dict(RECORDED),
                           "effective": {"amp": {"enabled": False, "dtype": "float16"}}},
                "progress": {"end": end, "completed_epochs": 1,
@@ -78,6 +79,32 @@ def test_a_request_off_the_list_or_without_a_change_is_refused(request_, fragmen
 def test_a_parent_without_its_settings_is_refused(parent, fragment):
     with pytest.raises(RunPlanRefused, match=fragment):
         _plan(parent, learning_rate=1e-3)
+
+
+@pytest.mark.parametrize("rules", [None, TRAINING_RULES_VERSION + 1])
+def test_a_parent_trained_under_other_rules_is_neither_continued_nor_branched(rules):
+    """The reviewer's K5 review, P2-1: a resume, an extension and a branch keep
+    their parent's training rules, so a bundle parent of other rules (none
+    recorded: written before K5) is refused by the one check all three use."""
+    parent = _parent(end="paused")
+    if rules is None:
+        parent.pop("training_rules")
+    else:
+        parent["training_rules"] = rules
+    with pytest.raises(RunPlanRefused, match="other training rules"):
+        _plan(parent, learning_rate=1e-3)
+    for extend in (None, 1):
+        with pytest.raises(RunPlanRefused, match="other training rules"):
+            plan_continuation(parent, Path("/runs/p/checkpoints/last.pt"),
+                              {**RECORDED, "extend_epochs": extend}, set(), device="cpu",
+                              record_version=2)
+    # The ShepherdGNN path (record version 1) records no bundle training rules
+    # and keeps resuming under M3a's until K7 retires it.
+    shepherd = _parent(end="paused", record_version=1)
+    shepherd.pop("training_rules")
+    plan = plan_continuation(shepherd, Path("/runs/p/checkpoints/last.pt"), dict(RECORDED),
+                             set(), device="cpu")
+    assert plan.mode == "resume"
 
 
 def test_mixed_precision_must_take_effect_alike_unless_it_is_changed():

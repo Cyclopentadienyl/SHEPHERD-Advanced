@@ -471,7 +471,7 @@ def test_a_bundle_parent_is_previewed_by_its_own_record(base, tmp_path):
               "progress": {"end": "paused", "completed_epochs": 1,
                            "stage": {"kind": "original", "start_epoch": 0, "target_epochs": 2,
                                      "schedule": {"type": "constant"}}},
-              "config": {"requested": {"learning_rate": 1e-4}}}
+              "config": {"requested": {"learning_rate": 1e-4}}, "training_rules": 1}
     target = tmp_path / "paused.pt"
     torch.save(paused, target)
     preview = TrainingManager().preview_continuation(str(target), device="cpu",

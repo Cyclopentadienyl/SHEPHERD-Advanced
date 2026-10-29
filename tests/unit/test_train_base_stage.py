@@ -133,6 +133,88 @@ def test_parent_without_a_model_spec_is_refused(workspace, tmp_path):
     assert not (tmp_path / "q").exists()
 
 
+def _with_earlier_rules(payload):
+    """A parent as K4 wrote it (the reviewer's K5 review, P2-1): no training
+    rules recorded, early stopping off in effect while the requested settings
+    hold TrainConfig's default patience, the base validated with the run's own
+    seed and batch size. Only the record differs from a current parent."""
+    old = dict(payload)
+    old.pop("training_rules")
+    config = dict(old["config"])
+    config["early_stopping"] = False
+    config["requested"] = {**config["requested"], "early_stopping_patience": 10}
+    effective = dict(config["effective"])
+    loaders = dict(effective["loaders"])
+    loaders["val"] = {k: v for k, v in loaders["val"].items() if k not in ("seed", "batch_size")}
+    effective["loaders"] = loaders
+    config["effective"] = effective
+    old["config"] = config
+    return old
+
+
+def test_a_parent_trained_under_other_rules_is_never_continued(workspace, tmp_path):
+    """Resume, extend and branch keep their parent's rules, so a bundle parent
+    written under other training rules is refused before anything is written,
+    by the one continuation check the manager's preview uses too; K5's rules
+    would otherwise turn early stopping on and draw other validation pairs
+    beside the parent's restored best value and history."""
+    import train_model
+    from src.api.services.training_manager import TrainingManager
+    from src.utils.run_plan import RunPlanRefused
+
+    config, explicit = _config(workspace, tmp_path / "p", num_epochs=3, pause_after_epoch=1)
+    train_model.train(config, explicit)
+    payload = torch.load(tmp_path / "p" / "checkpoints" / "last.pt", map_location="cpu",
+                         weights_only=True)
+    assert payload["training_rules"] == 1
+    old = tmp_path / "old" / "checkpoints" / "last.pt"
+    old.parent.mkdir(parents=True)
+    torch.save(_with_earlier_rules(payload), old)
+
+    base = dict(data_dir=str(workspace), learning_stage="base", device="cpu")
+    attempts = {
+        "resume": dict(resume_from=str(old)),
+        "extend": dict(resume_from=str(old), extend_epochs=1),
+        "branch": dict(branch_from=str(old), learning_rate=5e-4),
+    }
+    for name, fields in attempts.items():
+        run = tmp_path / name
+        refused = train_model.TrainConfig(run_dir=str(run), **base, **fields)
+        with pytest.raises(RunPlanRefused, match="other training rules") as why:
+            train_model.train(refused, set(base) | set(fields))
+        assert "Start a new run, or finetune from it" in str(why.value), name
+        assert not run.exists(), f"a refused {name} wrote its run directory"
+    preview = TrainingManager().preview_continuation(str(old), device="cpu")
+    assert preview["ok"] is False and "other training rules" in preview["reason"]
+
+
+@pytest.mark.parametrize("patience", [None, 3])
+def test_a_parent_of_these_rules_resumes_with_its_early_stopping_and_validation(
+        workspace, tmp_path, patience):
+    """A parent written under the current rules resumes as before, keeping
+    early stopping on or off as it was and validating on the same pairs."""
+    import train_model
+
+    extra = {} if patience is None else {"early_stopping_patience": patience}
+    config, explicit = _config(workspace, tmp_path / "a", num_epochs=3, pause_after_epoch=1,
+                               **extra)
+    train_model.train(config, explicit)
+    parent = torch.load(tmp_path / "a" / "checkpoints" / "last.pt", map_location="cpu",
+                        weights_only=True)
+    resumed = train_model.TrainConfig(data_dir=str(workspace), run_dir=str(tmp_path / "b"),
+                                      learning_stage="base", resume_from=str(
+                                          tmp_path / "a" / "checkpoints" / "last.pt"),
+                                      device="cpu")
+    train_model.train(resumed, {"learning_stage", "resume_from", "device"})
+    child = torch.load(tmp_path / "b" / "checkpoints" / "last.pt", map_location="cpu",
+                       weights_only=True)
+    assert child["training_rules"] == parent["training_rules"] == 1
+    assert child["config"]["early_stopping"] is parent["config"]["early_stopping"] is (
+        patience is not None)
+    assert child["config"]["effective"]["loaders"]["val"] == (
+        parent["config"]["effective"]["loaders"]["val"])
+
+
 def test_bundle_runs_are_listed_but_not_auto_served(tmp_path):
     from src.utils.checkpoint_paths import list_runs, select_auto_run_checkpoint
 

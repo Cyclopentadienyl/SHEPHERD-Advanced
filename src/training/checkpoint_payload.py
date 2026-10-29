@@ -29,7 +29,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Dict, Mapping
 
-from src.utils.checkpoint_io import CHECKPOINT_RECORD_VERSION
+from src.utils.checkpoint_io import CHECKPOINT_RECORD_VERSION, TRAINING_RULES_VERSION
 from src.utils.run_environment import assert_primitive
 
 logger = logging.getLogger(__name__)
@@ -302,6 +302,8 @@ def build_checkpoint_payload(
         from src.models.bundle.record import MODEL_RECORD_VERSION
 
         payload["record_version"] = MODEL_RECORD_VERSION
+        # The rules it trained under, which a continued run must keep.
+        payload["training_rules"] = TRAINING_RULES_VERSION
         payload.update(model_record.to_payload())
 
     # Provenance, in every checkpoint, weights-only included: which inputs

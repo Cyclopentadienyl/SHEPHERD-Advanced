@@ -58,7 +58,7 @@ from pathlib import Path
 from typing import Any, Collection, Dict, List, Mapping, Optional
 
 from src.config.recipe import branch_settings
-from src.utils.checkpoint_io import CHECKPOINT_RECORD_VERSION
+from src.utils.checkpoint_io import CHECKPOINT_RECORD_VERSION, TRAINING_RULES_VERSION
 
 #: Fields that say where a run reads and writes, how it is run on this host, or
 #: how this run is continued: never inherited, free to differ from the parent.
@@ -278,6 +278,18 @@ def _check_record_version(parent: Any, record_version: int, where: str) -> None:
             "before contract M3a's checkpoint record, so its schedule, progress and "
             "callback state are unknown. Start a new run; to keep its weights as a "
             "reference, serve or measure it by path.")
+    if record_version != CHECKPOINT_RECORD_VERSION \
+            and parent.get("training_rules") != TRAINING_RULES_VERSION:
+        # A model bundle trained under other rules (the reviewer's K5 review,
+        # P2-1): continuing it would change early stopping and the base's
+        # validation pairs mid-run, beside its restored best value and history.
+        raise RunPlanRefused(
+            f"{where} was trained under other training rules (rules "
+            f"{parent.get('training_rules')!r}, not {TRAINING_RULES_VERSION}): this build "
+            "turns early stopping on exactly when a patience is in effect and validates a "
+            "base on the pairs its split fixes, so continuing it would change both mid-run. "
+            "Start a new run, or finetune from it: a finetune takes its weights, not these "
+            "rules.")
 
 
 def plan_branch(

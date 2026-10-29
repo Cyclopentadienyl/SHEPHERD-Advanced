@@ -445,6 +445,13 @@ The full design is `../PLAN_PROVENANCE_CONTRACT.md` §9. Every new checkpoint re
 
 `progress.stage` keeps its meaning (the `original` / `extension` schedule). An early-stopped or
 weights-only base **with a model spec** may be a finetune parent; strict resume is not loosened.
+- *As built after the reviewer's K5 review (2026-10-29, P2-1):* a bundle checkpoint also records
+  **`training_rules`**, the rules it trained under (`src.utils.checkpoint_io.TRAINING_RULES_VERSION`;
+  1 is K5's: early stopping on exactly when a patience is in effect, the base validated on the
+  pairs its split fixes). A resume, an extension or a branch keeps its parent's rules, so the one
+  continuation check (`src.utils.run_plan`, which the manager's preview and the training process
+  both call) refuses a parent of other rules before anything is written: start a new run, or
+  finetune from it. A finetune takes only the parent's weights and is unaffected.
 
 **One switch (R2).**
 - When the work is delivered, active training, inference and evaluation accept only the new
@@ -796,9 +803,13 @@ and the GB10 acceptance.**
 - **The reviewer's read-only review of `2827428..59bfa84` (2026-10-29):** no new P1 or P2. It reran
   1,334 tests of the touched areas on a CPU snapshot of the head (one failed only because the
   snapshot holds no `.git`, which the probe's commit record needs); it did not rerun the full suite,
-  the browser smoke, axe, a read-only browser, GPU or the GB10. K5 (`ba992d1..2827428`) is
-  implemented and internally reviewed; its independent review is still to be done, and this review
-  does not stand for it.
+  the browser smoke, axe, a read-only browser, GPU or the GB10.
+- **The reviewer's independent review of K5 (`ba992d1..2827428`, 2026-10-29):** one P2, reproduced
+  across versions and still present at `59bfa84`: a bundle parent written by K4 was resumed under
+  K5's rules (early stopping turned on, other base validation pairs) with no refusal. Fixed at the
+  one continuation check (§4, `training_rules`), with a parent of K4's record shape refused for
+  resume, extend, branch and the preview, and current parents resuming unchanged; awaiting the
+  reviewer's narrow recheck before K5 is marked done. No P1; the rest of K5 had no other finding.
 - **Full suite** once on the integrated batch: 5948 passed, 14 skipped, 4 probe failures fixed by
   `792861b` and rerun narrowly. The closing fixes (`f835fc5`) and these documents ran their touched
   tests and neighbours only.

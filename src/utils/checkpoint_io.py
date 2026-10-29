@@ -37,7 +37,18 @@ from src.utils.fingerprint import ReadIdentity
 #: whether a checkpoint holds a state a run can continue from.
 CHECKPOINT_RECORD_VERSION = 1
 
-__all__ = ["CheckpointChanged", "CheckpointRead", "read_checkpoint", "write_checkpoint"]
+#: **The training rules a model bundle's training-state checkpoint was written
+#: under** (its `training_rules`), read by `src.utils.run_plan` before a run
+#: continues one: a resume, an extension or a branch keeps its parent's rules,
+#: so a parent written under other rules is refused, never carried across
+#: (the reviewer's K5 review, P2-1). Rules 1 are K5's: early stopping is on
+#: exactly when a patience is in effect, and the base validates on the pairs its
+#: split fixes (seeded by the split's seed, in fixed batches), whatever a run's
+#: seed and batch size. Raise it when a rule a continued run depends on changes.
+TRAINING_RULES_VERSION = 1
+
+__all__ = ["CheckpointChanged", "CheckpointRead", "TRAINING_RULES_VERSION", "read_checkpoint",
+           "write_checkpoint"]
 
 
 class CheckpointRead(NamedTuple):
