@@ -11,14 +11,13 @@
 # Exports:
 #   - ShepherdGNNConfig: Model configuration dataclass
 #   - ShepherdGNN: Main heterogeneous GNN model
-#   - PhenotypeDiseaseMatcher: Phenotype to disease matching
-#   - create_model: Factory function
+#   - build_shepherd_model: Rebuild a trained model from its checkpoint
 #
 # Design Principles:
 #   - Flexible input: works with/without ortholog data
 #   - torch.compile() compatible (dynamic=True for variable graphs)
 #   - Mixed precision (bfloat16) ready
-#   - Interpretable: attention weights and gate values accessible
+#   - Interpretable: ortholog gate values accessible
 # ==============================================================================
 """
 from __future__ import annotations
@@ -28,7 +27,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch import Tensor
 
 from src.models.encoders import (
@@ -83,7 +81,6 @@ class ShepherdGNN(nn.Module):
     Features:
     - Flexible input handling (works with any subset of node/edge types)
     - Ortholog-aware gating for cross-species reasoning
-    - Interpretable attention weights
     - torch.compile() compatible
 
     The model processes a heterogeneous knowledge graph containing:
@@ -173,16 +170,11 @@ class ShepherdGNN(nn.Module):
             for node_type in self.node_types
         })
 
-        # Store intermediate representations for interpretability
-        self._layer_outputs: List[Dict[str, Tensor]] = []
-        self._attention_weights: Dict[EdgeType, Tensor] = {}
-
     def forward(
         self,
         x_dict: Dict[str, Tensor],
         edge_index_dict: Dict[EdgeType, Tensor],
         pos_encoding_dict: Optional[Dict[str, Dict[str, Tensor]]] = None,
-        return_all_layers: bool = False,
     ) -> Dict[str, Tensor]:
         """
         Forward pass through the heterogeneous GNN.
@@ -191,13 +183,10 @@ class ShepherdGNN(nn.Module):
             x_dict: {node_type: (num_nodes, in_dim)} node features
             edge_index_dict: {(src, rel, dst): (2, num_edges)} connectivity
             pos_encoding_dict: Optional {node_type: {"lap_pe": ..., "rwse": ...}}
-            return_all_layers: Whether to return intermediate layer outputs
 
         Returns:
             {node_type: (num_nodes, hidden_dim)} final node embeddings
         """
-        self._layer_outputs = []
-
         # === 1. Feature Encoding ===
         if self.feature_encoder is not None:
             h_dict = self.feature_encoder(x_dict)
@@ -226,9 +215,6 @@ class ShepherdGNN(nn.Module):
 
                 # Gate combination
                 h_dict = self.ortholog_gate(h_dict, h_ortholog)
-
-            if return_all_layers:
-                self._layer_outputs.append({k: v.clone() for k, v in h_dict.items()})
 
         # === 4. Final Normalization ===
         out_dict = {}
@@ -306,199 +292,6 @@ class ShepherdGNN(nn.Module):
             return self.ortholog_gate.get_ortholog_contribution()
         return None
 
-    def get_layer_outputs(self) -> List[Dict[str, Tensor]]:
-        """Get intermediate layer outputs (must call forward with return_all_layers=True)"""
-        return self._layer_outputs
-
-
-class PhenotypeDiseaseMatcher(nn.Module):
-    """
-    Matches patient phenotypes to candidate diseases.
-
-    Given:
-    - Patient phenotype embeddings (from ShepherdGNN)
-    - Candidate disease embeddings (from ShepherdGNN)
-
-    Computes:
-    - Similarity scores between patient profile and diseases
-    - Ranked disease predictions
-    """
-
-    def __init__(
-        self,
-        hidden_dim: int,
-        num_layers: int = 2,
-        dropout: float = 0.1,
-        similarity_type: str = "bilinear",  # "bilinear", "mlp", "cosine"
-    ):
-        """
-        Args:
-            hidden_dim: Embedding dimension
-            num_layers: Number of MLP layers for matching
-            dropout: Dropout rate
-            similarity_type: Type of similarity computation
-        """
-        super().__init__()
-        self.hidden_dim = hidden_dim
-        self.similarity_type = similarity_type
-
-        # Patient profile aggregator
-        self.phenotype_aggregator = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, hidden_dim),
-        )
-
-        if similarity_type == "bilinear":
-            self.bilinear = nn.Bilinear(hidden_dim, hidden_dim, 1)
-        elif similarity_type == "mlp":
-            self.match_mlp = nn.Sequential(
-                nn.Linear(hidden_dim * 2, hidden_dim),
-                nn.ReLU(),
-                nn.Dropout(dropout),
-                nn.Linear(hidden_dim, 1),
-            )
-
-    def forward(
-        self,
-        phenotype_embeddings: Tensor,
-        disease_embeddings: Tensor,
-        phenotype_mask: Optional[Tensor] = None,
-    ) -> Tensor:
-        """
-        Compute matching scores.
-
-        Args:
-            phenotype_embeddings: (batch, max_phenotypes, hidden_dim) or (num_phenotypes, hidden_dim)
-            disease_embeddings: (num_diseases, hidden_dim)
-            phenotype_mask: Optional (batch, max_phenotypes) mask for padding
-
-        Returns:
-            (batch, num_diseases) or (num_diseases,) similarity scores
-        """
-        # Handle batched vs unbatched input
-        if phenotype_embeddings.dim() == 2:
-            # Unbatched: (num_phenotypes, hidden_dim)
-            return self._compute_single(phenotype_embeddings, disease_embeddings)
-        else:
-            # Batched: (batch, max_phenotypes, hidden_dim)
-            return self._compute_batched(
-                phenotype_embeddings, disease_embeddings, phenotype_mask
-            )
-
-    def _compute_single(
-        self,
-        phenotype_embeddings: Tensor,
-        disease_embeddings: Tensor,
-    ) -> Tensor:
-        """Compute scores for single patient"""
-        # Aggregate phenotypes to patient profile
-        patient_profile = self.phenotype_aggregator(
-            phenotype_embeddings.mean(dim=0, keepdim=True)
-        )  # (1, hidden_dim)
-
-        return self._compute_similarity(patient_profile, disease_embeddings).squeeze(0)
-
-    def _compute_batched(
-        self,
-        phenotype_embeddings: Tensor,
-        disease_embeddings: Tensor,
-        phenotype_mask: Optional[Tensor],
-    ) -> Tensor:
-        """Compute scores for batch of patients"""
-        batch_size = phenotype_embeddings.size(0)
-
-        # Masked mean for phenotype aggregation
-        if phenotype_mask is not None:
-            mask = phenotype_mask.unsqueeze(-1).float()
-            summed = (phenotype_embeddings * mask).sum(dim=1)
-            counts = mask.sum(dim=1).clamp(min=1)
-            patient_profiles = summed / counts
-        else:
-            patient_profiles = phenotype_embeddings.mean(dim=1)
-
-        # Aggregate
-        patient_profiles = self.phenotype_aggregator(patient_profiles)  # (batch, hidden_dim)
-
-        return self._compute_similarity(patient_profiles, disease_embeddings)
-
-    def _compute_similarity(
-        self,
-        patient_profiles: Tensor,
-        disease_embeddings: Tensor,
-    ) -> Tensor:
-        """Compute similarity between profiles and diseases"""
-        # patient_profiles: (batch, hidden_dim) or (1, hidden_dim)
-        # disease_embeddings: (num_diseases, hidden_dim)
-
-        if self.similarity_type == "cosine":
-            # Normalize and dot product
-            p_norm = F.normalize(patient_profiles, p=2, dim=-1)
-            d_norm = F.normalize(disease_embeddings, p=2, dim=-1)
-            return torch.mm(p_norm, d_norm.t())
-
-        elif self.similarity_type == "bilinear":
-            # Bilinear similarity
-            batch_size = patient_profiles.size(0)
-            num_diseases = disease_embeddings.size(0)
-
-            # Expand for pairwise computation
-            p_exp = patient_profiles.unsqueeze(1).expand(-1, num_diseases, -1)
-            d_exp = disease_embeddings.unsqueeze(0).expand(batch_size, -1, -1)
-
-            return self.bilinear(
-                p_exp.reshape(-1, self.hidden_dim),
-                d_exp.reshape(-1, self.hidden_dim),
-            ).view(batch_size, num_diseases)
-
-        else:  # mlp
-            batch_size = patient_profiles.size(0)
-            num_diseases = disease_embeddings.size(0)
-
-            # Expand and concatenate
-            p_exp = patient_profiles.unsqueeze(1).expand(-1, num_diseases, -1)
-            d_exp = disease_embeddings.unsqueeze(0).expand(batch_size, -1, -1)
-            combined = torch.cat([p_exp, d_exp], dim=-1)
-
-            return self.match_mlp(combined).squeeze(-1)
-
-
-def create_model(
-    metadata: Metadata,
-    hidden_dim: int = 256,
-    num_layers: int = 4,
-    in_channels_dict: Optional[Dict[str, int]] = None,
-    use_ortholog_gate: bool = True,
-    **kwargs,
-) -> ShepherdGNN:
-    """
-    Factory function to create ShepherdGNN model.
-
-    Args:
-        metadata: (node_types, edge_types) from HeteroData.metadata()
-        hidden_dim: Hidden dimension
-        num_layers: Number of GNN layers
-        in_channels_dict: {node_type: input_dim} for feature projection
-        use_ortholog_gate: Whether to use ortholog gating
-        **kwargs: Additional config parameters
-
-    Returns:
-        Configured ShepherdGNN model
-    """
-    config = ShepherdGNNConfig(
-        hidden_dim=hidden_dim,
-        num_layers=num_layers,
-        use_ortholog_gate=use_ortholog_gate,
-        **kwargs,
-    )
-
-    return ShepherdGNN(
-        metadata=metadata,
-        in_channels_dict=in_channels_dict,
-        config=config,
-    )
-
 
 # ==============================================================================
 # Construction from a training checkpoint — production semantics, one copy
@@ -518,8 +311,8 @@ def build_shepherd_model(
 
     **Metadata comes from `graph_data`, never from the knowledge-graph object.**
     `scripts/train_model.py` builds the model from `graph_data` keys, which include
-    the `rev_*` reverse edges added for bidirectional message passing;
-    `kg.metadata()` has only the forward edges. Using the latter produces a model
+    the `rev_*` reverse edges added for bidirectional message passing; the
+    knowledge graph's own edges are only the forward ones. Using those produces a model
     with fewer conv layers than the checkpoint expects, and `load_state_dict`
     fails — which is the good case, because the alternative is a silently
     different model.

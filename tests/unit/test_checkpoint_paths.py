@@ -11,7 +11,6 @@ import pytest
 from src.utils.checkpoint_paths import (
     normalize_conv_type,
     ranking_score_detail,
-    ranking_score_from_logs,
     select_checkpoint_in_dir,
 )
 
@@ -58,7 +57,6 @@ def test_ranking_score_ignores_invalid():
     assert ranking_score_detail({"val_mrr": True}) is None  # bool is not a numeric score
     assert ranking_score_detail({}) is None
     assert ranking_score_detail(None) is None
-    assert ranking_score_from_logs({"val_hits@10": 0.75}) == 0.75
 
 
 # --------------------------------------------------------------- select in dir
@@ -190,13 +188,13 @@ def test_a_run_directory_is_new_named_and_claimed(tmp_path, monkeypatch):
 
     from src.utils import checkpoint_paths as cp
 
-    first = cp.allocate_run_dir(tmp_path, "HGT", "Temp Cosine / Pilot!",
-                                now=datetime(2026, 10, 15, 9, 30, 0))
+    first = cp.claim_run_dir(cp.propose_run_dir(tmp_path, "HGT", "Temp Cosine / Pilot!",
+                                                now=datetime(2026, 10, 15, 9, 30, 0)))
     assert first.parent == tmp_path / "runs" / "hgt"
     assert first.name.startswith("20261015-093000_temp-cosine-pilot_")
     assert sorted(p.name for p in first.iterdir()) == ["checkpoints", "logs"]
 
-    second = cp.allocate_run_dir(tmp_path, "hgt")
+    second = cp.claim_run_dir(cp.propose_run_dir(tmp_path, "hgt"))
     assert second != first and "_run_" in second.name
 
 
@@ -209,8 +207,8 @@ def test_a_colliding_run_id_is_drawn_again_never_reused(tmp_path, monkeypatch):
     monkeypatch.setattr(cp.secrets, "token_hex", lambda n: next(ids))
     when = datetime(2026, 10, 15, 9, 30, 0)
 
-    a = cp.allocate_run_dir(tmp_path, "gat", "x", now=when)
-    b = cp.allocate_run_dir(tmp_path, "gat", "x", now=when)
+    a = cp.claim_run_dir(cp.propose_run_dir(tmp_path, "gat", "x", now=when))
+    b = cp.propose_run_dir(tmp_path, "gat", "x", now=when)
 
     assert a.name.endswith("_aaaaaa") and b.name.endswith("_bbbbbb")
 

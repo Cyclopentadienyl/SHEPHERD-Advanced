@@ -502,7 +502,6 @@ def test_a_checkpoint_predating_the_field_still_verifies_structurally():
 _F821_CLEAN = (
     "scripts/train_model.py",
     "scripts/measure_scorer.py",
-    "scripts/benchmark_sp_lookup.py",
     "scripts/sp_scan_reference.py",
     "scripts/audit_sp_reachability.py",
     "src/inference/sp_index.py",

@@ -21,23 +21,18 @@ All bounds are structured dicts using the Pydantic/annotated-types vocabulary
     valid       — TARGET hard validity (PyTorch/compute-lib norms). Drives the API in PR-4c, and
                   the one value check of a model bundle start (`value_problem`), which the
                   WebUI's base form and Fine-tune page make before the job runner makes it again.
-    ui          — the bounds of the retired ShepherdGNN WebUI form (below). ``ui`` ⊆ ``valid``
-                  except where a bound key is declared in ``ui_wider_than_valid``.
     current_api — CURRENT API constraints, compared mechanically against the live Pydantic model.
 
 ``valid`` and ``current_api`` share one shape on purpose: PR-4c's job is exactly the diff between
 them, and cross-field rules live in ``CROSS_FIELD_RULES`` rather than in prose, so PR-4c consumes
 (or is guarded against) the spec instead of re-deriving policy.
 
-What PR-4a's parity tests mechanically pin — and what is deliberately deferred:
+What the parity tests mechanically pin:
 
-  Pinned now:
     - API: field existence, defaults, name coverage, and the exact ge/gt/le/lt constraints.
     - Projection: every ``projects_to`` target attribute exists on the real config class.
     - Self-validation: constraint dicts are well-formed; cross-field rules reference real fields
-      and real choices; declared ui/valid divergences are actually divergent.
-  Not pinned: ``ui`` / ``ui_choices`` / ``ui_step`` recorded the retired ShepherdGNN form's
-  widgets (below); no widget reads them any more.
+      and real choices.
 
 Phase status:
     - PR-4b (done): ``temperature`` / ``label_smoothing`` / ``margin`` are wired through
@@ -51,8 +46,9 @@ Phase status:
       ``scheduler_type`` / ``amp_dtype``, the PyTorch device grammar for ``device`` (so ``cuda:N``
       stays available on multi-GPU hosts), ``min_lr_ratio <= 1.0``, the ``num_neighbors``
       non-empty/element policy, and the conv-type-conditional divisibility rule. The CLI
-      ``--device`` follows the same grammar. The WebUI keeps its conservative ``ui`` ranges; its
-      only change was replacing the silent ``num_neighbors`` fallback with a validation error.
+      ``--device`` follows the same grammar. The WebUI form of that time kept its conservative
+      ranges; its only change was replacing the silent ``num_neighbors`` fallback with a
+      validation error.
       The surfaces still hand-write their constraints — the spec is the authority and the tests
       assert the two agree (guard, not derive).
 
@@ -61,10 +57,8 @@ are gone: the Training page offers exactly the reference recipe's base settings
 (`src.config.recipe.BASE`, starting at the recipe's values, sending only those that differ, with
 ``learning_stage="base"``), and the Fine-tune page Epochs and Seed. Their widgets follow each
 field's ``kind`` and ``choices`` (`training_console.setting_field`) and their values are checked
-by `value_problem`. The ``ui``, ``ui_step``, ``ui_choices``, ``ui_widget``,
-``ui_wider_than_valid``, ``webui_exposed``, ``webui_num_guarded`` and ``current_webui``
-attributes describe that retired form only; they are listed for removal in K7 with the
-ShepherdGNN fields.
+by `value_problem`. The spec no longer records the retired form's widgets or ranges (removed in
+K7); a divergence note names the WebUI only where a surface in use today differs.
 
 Dependency-light (no torch / pydantic / gradio): any surface can read it and torch-free unit tests
 can exercise it.
@@ -140,8 +134,8 @@ class FieldSpec:
     ``valid`` / ``choices`` / ``valid_pattern`` / ``item_valid`` / ``min_length`` are the TARGET
     canonical policy (enforced in PR-4c). ``current_api`` is the STRUCTURED constraint the API
     enforces TODAY (``{}`` = accepted but unconstrained, e.g. a free string; ``None`` = not an API
-    field). ``webui_exposed`` / ``webui_num_guarded`` / ``ui`` describe the retired ShepherdGNN
-    WebUI form (module docstring; listed for removal in K7).
+    field). ``known_divergence`` / ``divergence_note`` record where the surfaces (CLI, API, the
+    WebUI's base form, Fine-tune page and Continue) deliberately differ.
     """
 
     name: str
@@ -157,15 +151,6 @@ class FieldSpec:
     item_valid: Optional[Dict[str, Any]] = None   # list[int]: per-element constraint
     min_length: Optional[int] = None              # list[int]: non-empty etc.
 
-    # WebUI surface (structured):
-    ui: Optional[Dict[str, Any]] = None
-    ui_step: Optional[float] = None
-    ui_choices: Optional[Tuple[Any, ...]] = None
-    ui_widget: Optional[str] = None
-    webui_exposed: bool = True                    # the retired form's collector emitted it
-    webui_num_guarded: bool = False               # the retired form range-checked it
-    ui_wider_than_valid: Tuple[str, ...] = ()     # bound keys where current UI is looser than valid
-
     # current API behavior pinned by PR-4a (numeric), extended by PR-4c (enum/pattern/list):
     current_api: Optional[Dict[str, Any]] = None
     current_api_choices: Optional[Tuple[Any, ...]] = None   # enum the API rejects outside of
@@ -173,7 +158,6 @@ class FieldSpec:
     current_api_item: Optional[Dict[str, Any]] = None       # list element constraint enforced
     current_api_min_length: Optional[int] = None            # list min length enforced
 
-    current_webui: str = ""
     known_divergence: bool = False
     divergence_note: str = ""
 
@@ -185,7 +169,7 @@ class FieldSpec:
             raise ValueError(f"{self.name}: unknown kind {self.kind!r}")
         if self.scope not in SCOPES:
             raise ValueError(f"{self.name}: unknown scope {self.scope!r}")
-        for label in ("valid", "ui", "current_api", "item_valid", "current_api_item"):
+        for label in ("valid", "current_api", "item_valid", "current_api_item"):
             d = getattr(self, label)
             if d is None:
                 continue
@@ -202,29 +186,28 @@ class FieldSpec:
 
 # =============================================================================================
 # The spec. current_api transcribed from src/api/routes/training.py::TrainingStartRequest;
-# ui / webui_* from the retired ShepherdGNN WebUI form (module docstring; K7 removes them);
 # scope/projects_to from the scripts/train_model.py projection into the downstream configs.
 # =============================================================================================
 FIELDS: Tuple[FieldSpec, ...] = (
     # ---- paths (effective -> they DO project into TrainConfig) ------------------------------
     FieldSpec("data_dir", "str", "data/workspaces/default", "path", projects_to="TrainConfig.data_dir",
-              current_api={}, current_webui="Textbox", ui_widget="Textbox",
+              current_api={},
               description="Workspace directory."),
     # Contract M3a-2: every run writes into a directory of its own under the workspace. The
     # free output, checkpoint and log locations gave way to an optional run name; an explicit
     # directory (absent or empty) stays a CLI option.
     FieldSpec("run_name", "str", "", "path", projects_to="TrainConfig.run_name",
-              current_api={}, current_webui="Textbox", ui_widget="Textbox",
+              current_api={},
               description="Optional run name, part of the allocated run directory's name."),
     FieldSpec("run_dir", "str", "", "path", projects_to="TrainConfig.run_dir",
-              current_api=None, current_webui="not-exposed", webui_exposed=False,
+              current_api=None,
               known_divergence=True,
               divergence_note="CLI only (--run-dir). The API and the WebUI name a run and have "
                               "its directory allocated.",
               description="Explicit run directory; must be absent or empty."),
     FieldSpec("resume_from", "str", None, "path", projects_to="TrainConfig.resume_from",
-              current_api={}, current_webui="not-exposed (WebUI uses a checkpoint dropdown)",
-              webui_exposed=False, known_divergence=True,
+              current_api={},
+              known_divergence=True,
               divergence_note="WebUI resume uses a checkpoint dropdown, not this field.",
               description="Checkpoint path to resume from."),
 
@@ -232,282 +215,238 @@ FIELDS: Tuple[FieldSpec, ...] = (
     # CLI only in this phase: the API and the WebUI gain them with the functional UI (K6),
     # through this spec.
     FieldSpec("learning_stage", "str", None, "trainer", projects_to="TrainConfig.learning_stage",
-              choices=("base", "finetune"), current_api=None, current_webui="not-exposed",
-              webui_exposed=False, known_divergence=True,
+              choices=("base", "finetune"), current_api=None,
+              known_divergence=True,
               divergence_note="CLI (--stage); the WebUI's Training base form sends "
                               "learning_stage='base' and its Fine-tune page starts finetunes "
-                              "(POST /training/finetune's start); POST /training/start has none "
-                              "until K7.",
+                              "(POST /training/finetune's start); POST /training/start does not "
+                              "take it.",
               description="Model bundle stage: base (KG link prediction) or finetune. Unset is "
                           "the ShepherdGNN path, which retires with the switch."),
     FieldSpec("model_spec", "dict", None, "model", projects_to="TrainConfig.model_spec",
-              current_api=None, current_webui="not-exposed", webui_exposed=False,
+              current_api=None,
               known_divergence=True,
               divergence_note="Configuration file only; unset is the stage's reference spec.",
               description="The model spec as plain data, read strictly."),
     FieldSpec("split_seed", "int", 0, "dataloader", projects_to="TrainConfig.split_seed",
-              valid={"ge": 0}, current_api=None, current_webui="not-exposed",
-              webui_exposed=False, known_divergence=True,
+              valid={"ge": 0}, current_api=None,
+              known_divergence=True,
               divergence_note="CLI only (--split-seed); a finetune takes its base's.",
               description="Seed of the graph view's edge split (README F2)."),
     FieldSpec("task", "str", None, "trainer", projects_to="TrainConfig.task",
               choices=("disease", "gene", "patients_like_me"), current_api=None,
-              current_webui="not-exposed",
-              webui_exposed=False, known_divergence=True,
+              known_divergence=True,
               divergence_note="CLI (--task), POST /training/finetune and the WebUI's "
                               "Fine-tune page (its Tasks).",
               description="A finetune's task."),
     FieldSpec("finetune_from", "str", None, "path", projects_to="TrainConfig.finetune_from",
-              current_api=None, current_webui="not-exposed", webui_exposed=False,
+              current_api=None,
               known_divergence=True,
               divergence_note="CLI (--finetune-from), POST /training/finetune and the WebUI's "
                               "Fine-tune page (a listed base).",
               description="The base checkpoint a finetune starts from."),
     FieldSpec("branch_from", "str", None, "path", projects_to="TrainConfig.branch_from",
-              current_api=None, current_webui="not-exposed", webui_exposed=False,
+              current_api=None,
               known_divergence=True,
               divergence_note="CLI only (--branch-from) this round (README §1).",
               description="The checkpoint a branch starts from: its stage, task, weights "
                           "and settings, some changed on the stage's list."),
     FieldSpec("task_loss_weight", "float", None, "loss", projects_to="TrainConfig.task_loss_weight",
-              valid={"ge": 0}, current_api=None, current_webui="not-exposed",
-              webui_exposed=False, known_divergence=True,
+              valid={"ge": 0}, current_api=None,
+              known_divergence=True,
               divergence_note="Unset is the task's reference (README C3).",
               description="Weight of the task loss in a finetune."),
     FieldSpec("lp_loss_weight", "float", None, "loss", projects_to="TrainConfig.lp_loss_weight",
-              valid={"ge": 0}, current_api=None, current_webui="not-exposed",
-              webui_exposed=False, known_divergence=True,
+              valid={"ge": 0}, current_api=None,
+              known_divergence=True,
               divergence_note="Unset is the task's reference (README C3).",
               description="Weight of the LP loss in a finetune."),
     FieldSpec("candidate_sample_size", "int", None, "dataloader",
               projects_to="TrainConfig.candidate_sample_size", valid={"ge": 1},
-              current_api=None, current_webui="not-exposed", webui_exposed=False,
+              current_api=None,
               known_divergence=True, divergence_note="Unset is the task's reference (U9).",
               description="Random candidate diseases per finetune batch, plus the truths."),
     FieldSpec("sparse_sample_size", "int", None, "dataloader",
               projects_to="TrainConfig.sparse_sample_size", valid={"ge": 0},
-              current_api=None, current_webui="not-exposed", webui_exposed=False,
+              current_api=None,
               known_divergence=True, divergence_note="Unset is the task's reference (U9).",
               description="Random gene, phenotype and disease seeds per finetune batch."),
     FieldSpec("candidate_upsample_size", "int", None, "dataloader",
               projects_to="TrainConfig.candidate_upsample_size", valid={"ge": 0},
-              current_api=None, current_webui="not-exposed", webui_exposed=False,
+              current_api=None,
               known_divergence=True, divergence_note="Unset is the task's reference (U14).",
               description="Rarely seen genes added to each gene-task patient's list in training."),
 
     # ---- model (ShepherdGNNConfig) ----------------------------------------------------------
     FieldSpec("conv_type", "str", "gat", "model", projects_to="ShepherdGNNConfig.conv_type",
-              choices=("gat", "hgt", "sage"), ui_choices=("gat", "hgt", "sage"), ui_widget="Radio",
+              choices=("gat", "hgt", "sage"),
               current_api={}, current_api_choices=("gat", "hgt", "sage"),
-              current_webui="Radio{gat,hgt,sage}",
               description="GNN convolution type."),
     FieldSpec("hidden_dim", "int", 256, "model", projects_to="ShepherdGNNConfig.hidden_dim",
-              valid={"ge": 32}, ui_choices=(128, 256, 512), ui_widget="Dropdown",
-              current_api={"ge": 32}, current_webui="Dropdown{128,256,512}",
-              known_divergence=True,
-              divergence_note="Asymmetric: API continuous >=32, WebUI 3 choices. See "
-                              "CROSS_FIELD_RULES.hidden_dim_divisible_by_num_heads.",
-              description="Hidden dimension size."),
+              valid={"ge": 32},
+              current_api={"ge": 32},
+              description="Hidden dimension size (see "
+                          "CROSS_FIELD_RULES.hidden_dim_divisible_by_num_heads)."),
     FieldSpec("num_layers", "int", 4, "model", projects_to="ShepherdGNNConfig.num_layers",
-              valid={"ge": 1, "le": 16}, ui={"ge": 2, "le": 8}, ui_step=1, ui_widget="Slider",
-              current_api={"ge": 1, "le": 16}, current_webui="Slider 2-8",
-              known_divergence=True, divergence_note="WebUI conservative 2-8 vs API 1-16.",
+              valid={"ge": 1, "le": 16},
+              current_api={"ge": 1, "le": 16},
               description="Number of GNN layers."),
     FieldSpec("num_heads", "int", 8, "model", projects_to="ShepherdGNNConfig.num_heads",
-              valid={"ge": 1}, ui_choices=(4, 8, 16), ui_widget="Dropdown",
-              current_api={"ge": 1}, current_webui="Dropdown{4,8,16}",
-              known_divergence=True, divergence_note="Asymmetric. Used only when conv_type in {hgt,gat}.",
-              description="Number of attention heads."),
+              valid={"ge": 1},
+              current_api={"ge": 1},
+              description="Number of attention heads; used only when conv_type is hgt or gat."),
     FieldSpec("dropout", "float", 0.1, "model", projects_to="ShepherdGNNConfig.dropout",
-              valid={"ge": 0.0, "le": 0.9}, ui={"ge": 0.0, "le": 0.5}, ui_step=0.01, ui_widget="Slider",
-              current_api={"ge": 0.0, "le": 0.9}, current_webui="Slider 0.0-0.5",
-              known_divergence=True, divergence_note="WebUI caps at 0.5 vs API 0.9.",
+              valid={"ge": 0.0, "le": 0.9},
+              current_api={"ge": 0.0, "le": 0.9},
               description="Dropout rate."),
     FieldSpec("use_ortholog_gate", "bool", True, "model", projects_to="ShepherdGNNConfig.use_ortholog_gate",
-              current_api={}, current_webui="Checkbox", ui_widget="Checkbox",
+              current_api={},
               description="Use the cross-species ortholog gate."),
 
     # ---- dataloader (DataLoaderConfig) ------------------------------------------------------
     FieldSpec("batch_size", "int", 32, "dataloader", projects_to="DataLoaderConfig.batch_size",
               valid={"ge": 1, "le": 2048},
-              ui_choices=(8, 16, 32, 64, 128, 256, 512, 1024, 2048), ui_widget="Dropdown",
-              current_api={"ge": 1, "le": 2048}, current_webui="Dropdown{8..2048}",
-              known_divergence=True, divergence_note="API continuous 1-2048 vs WebUI discrete.",
+              current_api={"ge": 1, "le": 2048},
               description="Batch size."),
     FieldSpec("num_neighbors", "list[int]", (15, 10, 5), "dataloader",
               projects_to="DataLoaderConfig.num_neighbors",
               item_valid={"ge": 1}, min_length=1,
               current_api={}, current_api_item={"ge": 1}, current_api_min_length=1,
-              current_webui="Textbox parsed; unparseable/empty/<1 raises ConfigValidationError (toast)",
               known_divergence=True,
               divergence_note="len(num_neighbors) vs num_layers is deliberately left unlinked "
                               "(documented non-constraint).",
               description="Neighbor fan-out per sampling hop."),
     FieldSpec("max_subgraph_nodes", "int", 5000, "dataloader", projects_to="DataLoaderConfig.max_subgraph_nodes",
-              valid={"ge": 100}, ui={"ge": 100}, ui_widget="Number", webui_num_guarded=True,
-              current_api={"ge": 100}, current_webui="Number >=100 (_num)",
+              valid={"ge": 100},
+              current_api={"ge": 100},
               description="Max nodes per sampled subgraph."),
     FieldSpec("num_workers", "int", 4, "dataloader", projects_to="DataLoaderConfig.num_workers",
-              valid={"ge": 0}, current_api={"ge": 0}, current_webui="not-exposed", webui_exposed=False,
-              known_divergence=True, divergence_note="WebUI does not expose num_workers.",
+              valid={"ge": 0}, current_api={"ge": 0},
               description="DataLoader worker processes."),
     FieldSpec("num_negative_samples", "int", 5, "dataloader", projects_to="DataLoaderConfig.num_negative_samples",
-              valid={"ge": 1}, current_api={"ge": 1}, current_webui="not-exposed", webui_exposed=False,
-              known_divergence=True, divergence_note="WebUI does not expose num_negative_samples.",
+              valid={"ge": 1}, current_api={"ge": 1},
               description="Negative samples per positive (train loader only)."),
 
     # ---- trainer (TrainerConfig) ------------------------------------------------------------
     FieldSpec("num_epochs", "int", 100, "trainer", projects_to="TrainerConfig.num_epochs",
-              valid={"ge": 1, "le": 10000}, ui={"ge": 1, "le": 10000}, ui_widget="Number",
-              webui_num_guarded=True,
-              current_api={"ge": 1, "le": 10000}, current_webui="Number 1-10000 (_num)",
+              valid={"ge": 1, "le": 10000},
+              current_api={"ge": 1, "le": 10000},
               description="Number of training epochs."),
     FieldSpec("learning_rate", "float", 1e-4, "trainer", projects_to="TrainerConfig.learning_rate",
-              valid={"gt": 0, "le": 1.0}, ui={"gt": 0}, ui_widget="Number",
-              webui_num_guarded=True, ui_wider_than_valid=("le",),
-              current_api={"gt": 0, "le": 1.0}, current_webui="Number >0 (_num positive, no upper)",
-              known_divergence=True,
-              divergence_note="API caps at 1.0; WebUI has no upper bound (declared in "
-                              "ui_wider_than_valid). PR-4d would give the widget the valid upper.",
+              valid={"gt": 0, "le": 1.0},
+              current_api={"gt": 0, "le": 1.0},
               description="Learning rate."),
     FieldSpec("weight_decay", "float", 0.01, "trainer", projects_to="TrainerConfig.weight_decay",
-              valid={"ge": 0.0}, ui={"ge": 1e-5, "le": 0.1}, ui_step=1e-5, ui_widget="Slider",
-              current_api={"ge": 0.0}, current_webui="Slider 1e-5-0.1",
-              known_divergence=True, divergence_note="API unbounded above; WebUI 1e-5..0.1.",
+              valid={"ge": 0.0},
+              current_api={"ge": 0.0},
               description="Optimizer weight decay."),
     FieldSpec("scheduler_type", "str", "cosine", "trainer", projects_to="TrainerConfig.scheduler_type",
               choices=("cosine", "onecycle", "linear", "none"),
-              ui_choices=("cosine", "onecycle", "linear", "none"), ui_widget="Dropdown",
               current_api={}, current_api_choices=("cosine", "onecycle", "linear", "none"),
-              current_webui="Dropdown{cosine,onecycle,linear,none}",
               description="LR scheduler type."),
     FieldSpec("warmup_steps", "int", 500, "trainer", projects_to="TrainerConfig.warmup_steps",
-              valid={"ge": 0}, ui={"ge": 0}, ui_widget="Number", webui_num_guarded=True,
-              current_api={"ge": 0}, current_webui="Number >=0 (_num)",
+              valid={"ge": 0},
+              current_api={"ge": 0},
               description="Scheduler warmup steps."),
     FieldSpec("min_lr_ratio", "float", 0.01, "trainer", projects_to="TrainerConfig.min_lr_ratio",
-              valid={"ge": 0.0, "le": 1.0}, ui={"ge": 1e-4, "le": 1.0}, ui_widget="Number",
-              webui_num_guarded=True,
-              current_api={"ge": 0.0, "le": 1.0}, current_webui="Number 1e-4-1.0 (_num)",
-              known_divergence=True,
-              divergence_note="API allows 0 (decay-to-zero); WebUI's lower bound is 1e-4. "
-                              "onecycle needs >0 — see CROSS_FIELD_RULES.",
-              description="Final LR as a fraction of peak."),
+              valid={"ge": 0.0, "le": 1.0},
+              current_api={"ge": 0.0, "le": 1.0},
+              description="Final LR as a fraction of peak; 0 decays to zero, which onecycle "
+                          "cannot (see CROSS_FIELD_RULES)."),
     FieldSpec("gradient_accumulation_steps", "int", 1, "trainer",
               projects_to="TrainerConfig.gradient_accumulation_steps",
-              valid={"ge": 1}, ui={"ge": 1}, ui_widget="Number", webui_num_guarded=True,
-              current_api={"ge": 1}, current_webui="Number >=1 (_num)",
+              valid={"ge": 1},
+              current_api={"ge": 1},
               description="Micro-batches accumulated per optimizer step."),
     FieldSpec("max_grad_norm", "float", 1.0, "trainer", projects_to="TrainerConfig.max_grad_norm",
-              valid={"gt": 0}, ui={"ge": 0.01}, ui_widget="Number", webui_num_guarded=True,
-              current_api={"gt": 0.0}, current_webui="Number >=0.01 (_num)",
-              known_divergence=True, divergence_note="API >0; WebUI >=0.01.",
+              valid={"gt": 0},
+              current_api={"gt": 0.0},
               description="Gradient-norm clip threshold."),
     FieldSpec("use_amp", "bool", True, "trainer", projects_to="TrainerConfig.use_amp",
-              current_api={}, current_webui="derived from amp_mode (+ hgt->off)",
-              known_divergence=True, divergence_note="WebUI derives use_amp from the amp_mode Radio; composite.",
+              current_api={},
               description="Enable automatic mixed precision."),
     FieldSpec("amp_dtype", "str", "float16", "trainer", projects_to="TrainerConfig.amp_dtype",
-              choices=("float16", "bfloat16"), ui_choices=("Off", "float16", "bfloat16"), ui_widget="Radio",
+              choices=("float16", "bfloat16"),
               current_api={}, current_api_choices=("float16", "bfloat16"),
-              current_webui="derived from amp_mode Radio{Off,float16,bfloat16}",
-              known_divergence=True,
-              divergence_note="WebUI models this as the amp_mode composite (Off collapses to use_amp=False).",
               description="AMP compute dtype."),
     FieldSpec("eval_every_n_epochs", "int", 1, "trainer", projects_to="TrainerConfig.eval_every_n_epochs",
-              valid={"ge": 1}, current_api={"ge": 1}, current_webui="not-exposed", webui_exposed=False,
-              known_divergence=True, divergence_note="WebUI does not expose eval_every_n_epochs.",
+              valid={"ge": 1}, current_api={"ge": 1},
               description="Run validation every N epochs."),
     FieldSpec("early_stopping_patience", "int", 10, "trainer", projects_to="TrainerConfig.early_stopping_patience",
-              valid={"ge": 1}, ui={"ge": 1}, ui_widget="Number", webui_num_guarded=True,
-              current_api={"ge": 1}, current_webui="Number >=1 (_num)",
+              valid={"ge": 1},
+              current_api={"ge": 1},
               description="Epochs without improvement before stopping."),
     FieldSpec("save_top_k", "int", 3, "trainer", projects_to="TrainerConfig.save_top_k",
-              valid={"ge": 1}, current_api={"ge": 1}, current_webui="not-exposed", webui_exposed=False,
-              known_divergence=True, divergence_note="WebUI does not expose save_top_k.",
+              valid={"ge": 1}, current_api={"ge": 1},
               description="Keep the best K checkpoints."),
     FieldSpec("device", "str", "auto", "trainer", projects_to="TrainerConfig.device",
               valid_pattern=r"^(auto|cpu|mps|cuda(:\d+)?)$",
-              ui_choices=("auto", "cuda", "cpu"), ui_widget="Radio",
               current_api={}, current_api_pattern=r"^(auto|cpu|mps|cuda(:\d+)?)$",
-              current_webui="Radio{auto,cuda,cpu}",
               known_divergence=True,
               divergence_note="Deliberately asymmetric: API (and CLI --device) accept the PyTorch device "
                               "grammar incl. cuda:N for multi-GPU hosts; the WebUI stays conservative with "
                               "{auto,cuda,cpu}.",
               description="Compute device."),
     FieldSpec("seed", "int", 42, "trainer", projects_to="TrainerConfig.seed",
-              valid={"ge": 0, "le": 2**32 - 1}, ui={"ge": 0, "le": 2**32 - 1}, ui_widget="Number",
-              webui_num_guarded=True,
-              current_api={"ge": 0, "le": 2**32 - 1}, current_webui="Number 0-4294967295 (_num)",
+              valid={"ge": 0, "le": 2**32 - 1},
+              current_api={"ge": 0, "le": 2**32 - 1},
               description="Global RNG seed (numpy legal range)."),
 
     # ---- loss weights (LossConfig — projected) ---------------------------------------------
     FieldSpec("diagnosis_weight", "float", 1.0, "loss", projects_to="LossConfig.diagnosis_weight",
-              valid={"ge": 0.0}, ui={"ge": 0.0, "le": 2.0}, ui_step=0.1, ui_widget="Slider",
-              current_api={"ge": 0.0}, current_webui="Slider 0.0-2.0",
-              known_divergence=True, divergence_note="WebUI caps at 2.0.",
+              valid={"ge": 0.0},
+              current_api={"ge": 0.0},
               description="Diagnosis-task loss weight."),
     FieldSpec("link_prediction_weight", "float", 0.5, "loss", projects_to="LossConfig.link_prediction_weight",
-              valid={"ge": 0.0}, ui={"ge": 0.0, "le": 2.0}, ui_step=0.1, ui_widget="Slider",
-              current_api={"ge": 0.0}, current_webui="Slider 0.0-2.0",
-              known_divergence=True, divergence_note="WebUI caps at 2.0.",
+              valid={"ge": 0.0},
+              current_api={"ge": 0.0},
               description="Link-prediction loss weight."),
     FieldSpec("contrastive_weight", "float", 0.3, "loss", projects_to="LossConfig.contrastive_weight",
-              valid={"ge": 0.0}, ui={"ge": 0.0, "le": 2.0}, ui_step=0.1, ui_widget="Slider",
-              current_api={"ge": 0.0}, current_webui="Slider 0.0-2.0",
-              known_divergence=True, divergence_note="WebUI caps at 2.0.",
+              valid={"ge": 0.0},
+              current_api={"ge": 0.0},
               description="Contrastive loss weight."),
     FieldSpec("ortholog_weight", "float", 0.2, "loss", projects_to="LossConfig.ortholog_weight",
-              valid={"ge": 0.0}, ui={"ge": 0.0, "le": 2.0}, ui_step=0.1, ui_widget="Slider",
-              current_api={"ge": 0.0}, current_webui="Slider 0.0-2.0",
-              known_divergence=True, divergence_note="WebUI caps at 2.0.",
+              valid={"ge": 0.0},
+              current_api={"ge": 0.0},
               description="Ortholog loss weight."),
 
     # ---- loss shape knobs (wired through TrainConfig -> LossConfig in PR-4b) -----------------
     FieldSpec("temperature", "float", 0.07, "loss", projects_to="LossConfig.temperature",
-              valid={"gt": 0}, ui={"ge": 0.01, "le": 1.0}, ui_step=0.01, ui_widget="Slider",
-              current_api={"gt": 0.0}, current_webui="Slider 0.01-1.0",
-              known_divergence=True,
-              divergence_note="WebUI caps at 1.0; API unbounded above.",
+              valid={"gt": 0},
+              current_api={"gt": 0.0},
               description="Contrastive temperature."),
     FieldSpec("label_smoothing", "float", 0.1, "loss", projects_to="LossConfig.label_smoothing",
-              valid={"ge": 0.0, "le": 1.0}, ui={"ge": 0.0, "le": 0.3}, ui_step=0.01, ui_widget="Slider",
-              current_api={"ge": 0.0, "le": 1.0}, current_webui="Slider 0.0-0.3",
-              known_divergence=True,
-              divergence_note="WebUI caps at 0.3 vs API 1.0.",
+              valid={"ge": 0.0, "le": 1.0},
+              current_api={"ge": 0.0, "le": 1.0},
               description="Diagnosis-loss label smoothing."),
     FieldSpec("margin", "float", 1.0, "loss", projects_to="LossConfig.margin",
-              valid={"gt": 0}, ui={"ge": 0.1, "le": 3.0}, ui_step=0.1, ui_widget="Slider",
-              current_api={"gt": 0.0}, current_webui="Slider 0.1-3.0",
-              known_divergence=True,
-              divergence_note="WebUI clamps to 0.1-3.0; API unbounded above.",
+              valid={"gt": 0},
+              current_api={"gt": 0.0},
               description="Ranking-loss margin."),
 
     # ---- continuing from a parent (contract M3a-3, M3a-4) -----------------------------------
     # The parent is `resume_from`; what happens is decided by its record (src/utils/run_plan).
     FieldSpec("extend_epochs", "int", None, "trainer", projects_to="TrainConfig.extend_epochs",
               valid={"ge": 1}, current_api={"ge": 1},
-              current_webui="Number in the continue block (not _collect_config)",
-              webui_exposed=False, known_divergence=True,
+              known_divergence=True,
               divergence_note="Set in the console's continue block, shown only for a finished "
                               "parent; not a training-form field.",
               description="Extend a finished parent by this many epochs at a fixed rate."),
     FieldSpec("extend_lr", "float", None, "trainer", projects_to="TrainConfig.extend_lr",
-              valid={"gt": 0}, current_api=None, current_webui="not-exposed",
-              webui_exposed=False, known_divergence=True,
+              valid={"gt": 0}, current_api=None,
+              known_divergence=True,
               divergence_note="CLI only (--extend-lr): replaces a zero rate, and only a zero rate.",
               description="Rate for parameter groups whose rate ended at 0, when extending."),
     FieldSpec("pause_after_epoch", "int", None, "runtime_setting",
               projects_to="TrainConfig.pause_after_epoch",
-              valid={"ge": 1}, current_api=None, current_webui="not-exposed",
-              webui_exposed=False, known_divergence=True,
+              valid={"ge": 1}, current_api=None,
+              known_divergence=True,
               divergence_note="CLI and probe only (--pause-after-epoch); no WebUI or HTTP control.",
               description="Stop with a resumable checkpoint after this many epochs of progress."),
 
     # ---- runtime setting (exempt from the projection requirement) ----------------------------
     FieldSpec("compile", "bool", False, "runtime_setting", projects_to="TrainConfig.compile",
-              current_api=None, current_webui="derived from .shepherd_runtime_settings.json (torch_compile)",
+              current_api=None,
               known_divergence=True,
               divergence_note="Runtime setting, not a training-form field. API does not expose it; "
                               "the WebUI's base start and Continue send it, sourced from the "

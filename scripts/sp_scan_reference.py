@@ -22,8 +22,8 @@ exact integers of arbitrary width, so the defect has nowhere to live: an id that
 is not in the table is simply not in the dictionary.
 
 **Correct, not fast.** It is O(rows) to build and O(phenotypes x candidates) to
-query, in Python. It is used by tests and by `benchmark_sp_lookup.py` as the
-baseline the index is measured against. **Nothing under `src/` imports it**, and
+query, in Python. Tests use it as the baseline the index is checked against.
+**Nothing under `src/` imports it**, and
 it imports nothing from `src.inference.sp_index` — either direction would
 collapse the independence it exists for.
 

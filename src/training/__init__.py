@@ -28,8 +28,6 @@ Components (re-exported):
         - ModelCheckpoint, ModelCheckpointConfig: Model saving
         - LearningRateMonitor: LR tracking
         - MetricsLogger, MetricsLoggerConfig: Metrics logging
-        - ProgressBar: tqdm progress display
-        - GradientClipping: Gradient norm monitoring
 
     From trainer:
         - TrainerConfig: Training hyperparameters
@@ -67,8 +65,6 @@ from src.training.callbacks import (
     LearningRateMonitor,
     MetricsLogger,
     MetricsLoggerConfig,
-    ProgressBar,
-    GradientClipping,
 )
 
 # Trainer
@@ -97,8 +93,6 @@ __all__ = [
     "LearningRateMonitor",
     "MetricsLogger",
     "MetricsLoggerConfig",
-    "ProgressBar",
-    "GradientClipping",
     # Trainer
     "TrainerConfig",
     "TrainingState",

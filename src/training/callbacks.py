@@ -12,7 +12,6 @@ Purpose:
     - Model checkpoint saving with top-k retention
     - Learning rate monitoring and logging
     - Training metrics logging to file and console
-    - Gradient norm tracking
 
 Components:
     - Callback: Abstract base class defining hook interface
@@ -21,8 +20,6 @@ Components:
     - ModelCheckpoint: Save best/last model weights
     - LearningRateMonitor: Track LR changes across epochs
     - MetricsLogger: Log metrics to JSON and console
-    - ProgressBar: tqdm-based progress display
-    - GradientClipping: Monitor gradient norms
 
 Dependencies:
     - torch: Model state_dict, tensor operations
@@ -32,7 +29,6 @@ Dependencies:
     - pathlib: Checkpoint path handling
     - datetime: Timestamp generation
     - abc: Abstract base class
-    - tqdm (optional): Progress bar display
 
 Input (Callback hooks):
     - trainer: Trainer instance with model, optimizer, scheduler attributes
@@ -612,74 +608,6 @@ class MetricsLogger(Callback):
 
 
 # =============================================================================
-# Progress Bar (Optional)
-# =============================================================================
-class ProgressBar(Callback):
-    """
-    進度條回調
-
-    顯示訓練進度
-    """
-
-    def __init__(self, total_epochs: int):
-        self.total_epochs = total_epochs
-        self.pbar = None
-
-    def on_train_begin(self, trainer: "Trainer", **kwargs) -> None:
-        try:
-            from tqdm import tqdm
-            self.pbar = tqdm(total=self.total_epochs, desc="Training", unit="epoch")
-        except ImportError:
-            logger.warning("tqdm not installed, progress bar disabled")
-            self.pbar = None
-
-    def on_epoch_end(
-        self, trainer: "Trainer", epoch: int, logs: Dict[str, float], **kwargs
-    ) -> None:
-        if self.pbar is not None:
-            self.pbar.update(1)
-            # 更新進度條描述
-            desc = " | ".join(
-                f"{k}: {v:.4f}"
-                for k, v in logs.items()
-                if isinstance(v, (int, float)) and "loss" in k.lower()
-            )
-            self.pbar.set_postfix_str(desc)
-
-    def on_train_end(self, trainer: "Trainer", **kwargs) -> None:
-        if self.pbar is not None:
-            self.pbar.close()
-
-
-# =============================================================================
-# Gradient Clipping
-# =============================================================================
-class GradientClipping(Callback):
-    """
-    梯度裁剪回調
-    """
-
-    def __init__(self, max_norm: float = 1.0, norm_type: float = 2.0):
-        self.max_norm = max_norm
-        self.norm_type = norm_type
-        self.grad_norms: List[float] = []
-
-    def on_batch_end(
-        self, trainer: "Trainer", batch_idx: int, logs: Dict[str, float], **kwargs
-    ) -> None:
-        # 記錄梯度範數 (在 optimizer.step() 之前)
-        total_norm = 0.0
-        for p in trainer.model.parameters():
-            if p.grad is not None:
-                param_norm = p.grad.data.norm(self.norm_type)
-                total_norm += param_norm.item() ** self.norm_type
-        total_norm = total_norm ** (1.0 / self.norm_type)
-
-        self.grad_norms.append(total_norm)
-        logs["grad_norm"] = total_norm
-
-
-# =============================================================================
 # Callback List
 # =============================================================================
 class CallbackList:
@@ -750,6 +678,4 @@ __all__ = [
     "LearningRateMonitor",
     "MetricsLogger",
     "MetricsLoggerConfig",
-    "ProgressBar",
-    "GradientClipping",
 ]

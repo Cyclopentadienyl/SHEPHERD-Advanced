@@ -12,8 +12,8 @@ reader that does **not** retire with the frozen evaluator, and adding another
 copy to get one would have been the opposite of the point. Serving
 (`src/inference/pipeline.py`) and training (`scripts/train_model.py`) moved here
 in contract M2.1's S6 and S8, and `scripts/setup_demo.py` reads through
-training. `scripts/build_index.py` and `scripts/spikes/validate_fast_subgraph.py`
-still have their own; migrating them belongs to P1 and is not smuggled in here.
+training. `scripts/build_index.py` still has its own; migrating it belongs to
+P1 and is not smuggled in here.
 
 **No abstraction beyond the readers below.** No `Storage` Protocol, no
 backend registry, no adapter hierarchy, no migration framework. The package name

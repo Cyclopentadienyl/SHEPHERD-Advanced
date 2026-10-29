@@ -49,7 +49,7 @@ mix two pipelines.
 **Completing the readings is not passing a capacity gate** (§7.3). The numbers
 are recorded, not judged.
 
-Linux only, like `benchmark_sp_lookup.py`: every counter is read from `/proc`.
+Linux only: every counter is read from `/proc`.
 
 Usage:
     .venv/bin/python scripts/measure_served_pipeline.py \\

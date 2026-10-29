@@ -35,7 +35,8 @@ def _batches(values):
              "subgraph_edge_index_dict": {}} for v in values]
 
 
-def _trainer(tmp_path, values, *, accumulation, scheduler_type="none", num_epochs=1):
+def _trainer(tmp_path, values, *, accumulation, scheduler_type="none", num_epochs=1,
+             max_grad_norm=0.0):
     from src.training.trainer import Trainer, TrainerConfig
 
     model = _Toy()
@@ -45,7 +46,7 @@ def _trainer(tmp_path, values, *, accumulation, scheduler_type="none", num_epoch
         optimizer=torch.optim.SGD(model.parameters(), lr=1.0),
         config=TrainerConfig(
             device="cpu", use_amp=False, scheduler_type=scheduler_type, warmup_steps=0,
-            gradient_accumulation_steps=accumulation, max_grad_norm=0.0,
+            gradient_accumulation_steps=accumulation, max_grad_norm=max_grad_norm,
             num_epochs=num_epochs, checkpoint_dir=str(tmp_path / "ckpt"),
             log_dir=str(tmp_path / "logs"),
         ),
@@ -78,6 +79,17 @@ def test_no_gradient_crosses_an_epoch_boundary(tmp_path):
 
     # The second epoch repeats the first's updates exactly: nothing carried.
     assert trainer.model.w.item() == pytest.approx(2 * after_first)
+
+
+def test_the_update_clips_the_gradient_itself(tmp_path):
+    """K7 (X12) removed the GradientClipping callback, which only logged a norm.
+    The clip is the Trainer's own, in `_optimizer_update`: a gradient of 5
+    under max_grad_norm 1 moves w by 1, not 5."""
+    trainer = _trainer(tmp_path, [5], accumulation=1, max_grad_norm=1.0)
+
+    trainer._train_epoch(0)
+
+    assert trainer.model.w.item() == pytest.approx(-1.0)
 
 
 def test_an_accumulation_that_divides_is_unchanged(tmp_path):

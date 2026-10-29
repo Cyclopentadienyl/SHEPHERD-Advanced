@@ -27,8 +27,8 @@ Dependencies:
     - src.training.loss_functions: MultiTaskLoss, LossConfig
     - src.training.callbacks: CallbackList, EarlyStopping, ModelCheckpoint
     - src.kg.data_loader: DiagnosisDataLoader
-    - src.utils.metrics: DiagnosisMetrics
-    - src.models.gnn.shepherd_gnn: ShepherdGNN, PhenotypeDiseaseMatcher
+    - src.utils.metrics: RankingMetrics
+    - src.models.gnn.shepherd_gnn: ShepherdGNN
 
 Input:
     - model: ShepherdGNN instance
@@ -78,9 +78,8 @@ from src.training.callbacks import (
     MetricsLogger,
     MetricsLoggerConfig,
     LearningRateMonitor,
-    GradientClipping,
 )
-from src.utils.metrics import DiagnosisMetrics, RankingMetrics
+from src.utils.metrics import RankingMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -272,9 +271,6 @@ class Trainer:
 
         # Callbacks
         self.callbacks = CallbackList(callbacks or self._create_default_callbacks())
-
-        # Metrics
-        self.metrics = DiagnosisMetrics()
 
         # State
         self.state = TrainingState()
@@ -530,9 +526,6 @@ class Trainer:
 
         # Learning rate monitor
         callbacks.append(LearningRateMonitor())
-
-        # Gradient clipping monitor
-        callbacks.append(GradientClipping(max_norm=self.config.max_grad_norm))
 
         return callbacks
 
@@ -1120,32 +1113,6 @@ class Trainer:
 
         logger.info(f"Evaluation metrics: {metrics}")
         return metrics
-
-    def get_model_info(self) -> Dict[str, Any]:
-        """
-        獲取模型資訊，供 API 層使用
-
-        Returns:
-            Dict with model version, training state, and metrics
-        """
-        return {
-            "model_class": self.model.__class__.__name__,
-            "num_parameters": sum(p.numel() for p in self.model.parameters()),
-            "trainable_parameters": sum(
-                p.numel() for p in self.model.parameters() if p.requires_grad
-            ),
-            "training_state": {
-                "epoch": self.state.epoch,
-                "global_step": self.state.global_step,
-                "best_metric": self.state.best_metric,
-                "best_epoch": self.state.best_epoch,
-            },
-            "config": {
-                "learning_rate": self.config.learning_rate,
-                "num_epochs": self.config.num_epochs,
-                "device": self.config.device,
-            },
-        }
 
     # =========================================================================
     # Checkpoint Operations

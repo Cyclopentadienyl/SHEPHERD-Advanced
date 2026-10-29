@@ -9,7 +9,6 @@
 #   - GNN layer message passing
 #   - OrthologGate behavior
 #   - ShepherdGNN end-to-end
-#   - Prediction heads
 #   - torch.compile compatibility
 # ==============================================================================
 """
@@ -27,7 +26,6 @@ pytest.importorskip("torch_geometric")
 # Import modules under test
 from src.models.encoders import (
     NodeTypeEncoder,
-    EdgeTypeEncoder,
     LaplacianPE,
     RandomWalkSE,
     PositionalEncoder,
@@ -36,21 +34,10 @@ from src.models.encoders import (
 from src.models.gnn import (
     ShepherdGNN,
     ShepherdGNNConfig,
-    PhenotypeDiseaseMatcher,
-    create_model,
 )
 from src.models.gnn.layers import (
     HeteroGNNLayer,
     OrthologGate,
-)
-from src.models.attention import (
-    FlexHeteroAttention,
-)
-from src.models.decoders import (
-    DiagnosisHead,
-    LinkPredictionHead,
-    NodeClassificationHead,
-    ExplanationHead,
 )
 
 
@@ -60,11 +47,6 @@ from src.models.decoders import (
 @pytest.fixture
 def hidden_dim():
     return 64
-
-
-@pytest.fixture
-def num_heads():
-    return 4
 
 
 @pytest.fixture
@@ -230,18 +212,6 @@ class TestNodeTypeEncoder:
         assert output.shape == (3, hidden_dim)
 
 
-class TestEdgeTypeEncoder:
-    """Tests for EdgeTypeEncoder"""
-
-    def test_basic_encoding(self, hidden_dim):
-        encoder = EdgeTypeEncoder(num_types=10, hidden_dim=hidden_dim)
-        type_indices = torch.tensor([0, 1, 2, 3, 4])
-
-        output = encoder(type_indices)
-
-        assert output.shape == (5, hidden_dim)
-
-
 class TestPositionalEncoder:
     """Tests for PositionalEncoder"""
 
@@ -386,45 +356,6 @@ class TestOrthologGate:
         assert not OrthologGate.is_ortholog_edge(("gene", "causes", "disease"))
 
 
-class TestFlexHeteroAttention:
-    """Tests for FlexHeteroAttention"""
-
-    def test_forward(self, hidden_dim, num_heads):
-        attn = FlexHeteroAttention(
-            hidden_dim=hidden_dim,
-            num_heads=num_heads,
-        )
-
-        x_src = torch.randn(20, hidden_dim)
-        x_dst = torch.randn(10, hidden_dim)
-        edge_index = torch.stack([
-            torch.randint(0, 20, (50,)),
-            torch.randint(0, 10, (50,)),
-        ])
-
-        out = attn(x_src, x_dst, edge_index)
-
-        assert out.shape == (10, hidden_dim)
-
-    def test_with_edge_type(self, hidden_dim, num_heads):
-        attn = FlexHeteroAttention(
-            hidden_dim=hidden_dim,
-            num_heads=num_heads,
-            use_edge_type_bias=True,
-        )
-
-        x_src = torch.randn(20, hidden_dim)
-        x_dst = torch.randn(10, hidden_dim)
-        edge_index = torch.stack([
-            torch.randint(0, 20, (50,)),
-            torch.randint(0, 10, (50,)),
-        ])
-
-        out = attn(x_src, x_dst, edge_index, edge_type="causes")
-
-        assert out.shape == (10, hidden_dim)
-
-
 # ==============================================================================
 # Test ShepherdGNN
 # ==============================================================================
@@ -495,183 +426,6 @@ class TestShepherdGNN:
         assert "gene" in out_dict
         assert "disease" in out_dict
 
-    def test_return_all_layers(self, simple_metadata, sample_hetero_data, hidden_dim):
-        x_dict, edge_index_dict = sample_hetero_data
-
-        model = ShepherdGNN(
-            metadata=simple_metadata,
-            config=ShepherdGNNConfig(
-                hidden_dim=hidden_dim,
-                num_layers=3,
-            ),
-        )
-
-        out_dict = model(x_dict, edge_index_dict, return_all_layers=True)
-        layer_outputs = model.get_layer_outputs()
-
-        assert len(layer_outputs) == 3
-
-
-class TestCreateModel:
-    """Tests for create_model factory function"""
-
-    def test_create_default(self, simple_metadata):
-        model = create_model(
-            metadata=simple_metadata,
-            hidden_dim=64,
-            num_layers=2,
-        )
-
-        assert isinstance(model, ShepherdGNN)
-        assert model.config.hidden_dim == 64
-        assert model.config.num_layers == 2
-
-
-# ==============================================================================
-# Test Prediction Heads
-# ==============================================================================
-class TestDiagnosisHead:
-    """Tests for DiagnosisHead"""
-
-    def test_forward_unbatched(self, hidden_dim):
-        head = DiagnosisHead(hidden_dim=hidden_dim)
-
-        phenotype_emb = torch.randn(5, hidden_dim)  # 5 phenotypes
-        disease_emb = torch.randn(10, hidden_dim)   # 10 diseases
-
-        scores = head(phenotype_emb, disease_emb)
-
-        assert scores.shape == (10,)
-
-    def test_forward_batched(self, hidden_dim):
-        head = DiagnosisHead(hidden_dim=hidden_dim)
-
-        phenotype_emb = torch.randn(4, 5, hidden_dim)  # batch=4, 5 phenotypes each
-        disease_emb = torch.randn(10, hidden_dim)       # 10 diseases
-
-        scores = head(phenotype_emb, disease_emb)
-
-        assert scores.shape == (4, 10)
-
-    def test_with_mask(self, hidden_dim):
-        head = DiagnosisHead(hidden_dim=hidden_dim)
-
-        phenotype_emb = torch.randn(4, 5, hidden_dim)
-        disease_emb = torch.randn(10, hidden_dim)
-        mask = torch.tensor([
-            [True, True, True, False, False],
-            [True, True, False, False, False],
-            [True, True, True, True, True],
-            [True, False, False, False, False],
-        ])
-
-        scores = head(phenotype_emb, disease_emb, phenotype_mask=mask)
-
-        assert scores.shape == (4, 10)
-
-    def test_return_patient_profile(self, hidden_dim):
-        head = DiagnosisHead(hidden_dim=hidden_dim)
-
-        phenotype_emb = torch.randn(5, hidden_dim)
-        disease_emb = torch.randn(10, hidden_dim)
-
-        scores, profile = head(
-            phenotype_emb, disease_emb, return_patient_profile=True
-        )
-
-        assert scores.shape == (10,)
-        assert profile.shape == (hidden_dim,)
-
-
-class TestLinkPredictionHead:
-    """Tests for LinkPredictionHead"""
-
-    def test_distmult(self, hidden_dim):
-        head = LinkPredictionHead(
-            hidden_dim=hidden_dim,
-            num_edge_types=5,
-            decoder_type="distmult",
-        )
-
-        src = torch.randn(100, hidden_dim)
-        dst = torch.randn(100, hidden_dim)
-        edge_type = torch.randint(0, 5, (100,))
-
-        scores = head(src, dst, edge_type)
-
-        assert scores.shape == (100,)
-
-    def test_transe(self, hidden_dim):
-        head = LinkPredictionHead(
-            hidden_dim=hidden_dim,
-            decoder_type="transe",
-        )
-
-        src = torch.randn(100, hidden_dim)
-        dst = torch.randn(100, hidden_dim)
-
-        scores = head(src, dst)
-
-        assert scores.shape == (100,)
-
-    def test_compute_loss(self, hidden_dim):
-        head = LinkPredictionHead(hidden_dim=hidden_dim)
-
-        pos_scores = torch.randn(50)
-        neg_scores = torch.randn(100)
-
-        loss = head.compute_loss(pos_scores, neg_scores)
-
-        assert loss.dim() == 0  # scalar
-
-
-class TestNodeClassificationHead:
-    """Tests for NodeClassificationHead"""
-
-    def test_forward(self, hidden_dim):
-        head = NodeClassificationHead(
-            hidden_dim=hidden_dim,
-            num_classes=10,
-        )
-
-        node_emb = torch.randn(50, hidden_dim)
-
-        logits = head(node_emb)
-
-        assert logits.shape == (50, 10)
-
-    def test_compute_loss(self, hidden_dim):
-        head = NodeClassificationHead(
-            hidden_dim=hidden_dim,
-            num_classes=10,
-        )
-
-        logits = torch.randn(50, 10)
-        targets = torch.randint(0, 10, (50,))
-
-        loss = head.compute_loss(logits, targets)
-
-        assert loss.dim() == 0
-
-
-class TestExplanationHead:
-    """Tests for ExplanationHead"""
-
-    def test_forward(self, hidden_dim):
-        head = ExplanationHead(hidden_dim=hidden_dim)
-
-        patient_profile = torch.randn(hidden_dim)
-        disease_emb = torch.randn(hidden_dim)
-        phenotype_emb = torch.randn(5, hidden_dim)
-        gene_emb = torch.randn(10, hidden_dim)
-
-        explanations = head(patient_profile, disease_emb, phenotype_emb, gene_emb)
-
-        assert "phenotype_importance" in explanations
-        assert "gene_relevance" in explanations
-        assert explanations["phenotype_importance"].shape == (5,)
-        assert explanations["gene_relevance"].shape == (10,)
-
 
 # ==============================================================================
 # Test torch.compile Compatibility
@@ -725,19 +479,6 @@ class TestTorchCompile:
 
         assert output.shape == (3, hidden_dim)
 
-    @pytest.mark.skipif(not _CAN_TORCH_COMPILE, reason=_TORCH_COMPILE_SKIP_REASON)
-    def test_compile_diagnosis_head(self, hidden_dim):
-        head = DiagnosisHead(hidden_dim=hidden_dim)
-        compiled = torch.compile(head, dynamic=True)
-
-        phenotype_emb = torch.randn(5, hidden_dim)
-        disease_emb = torch.randn(10, hidden_dim)
-
-        scores = compiled(phenotype_emb, disease_emb)
-
-        assert scores.shape == (10,)
-
-
 # ==============================================================================
 # Test Gradient Flow
 # ==============================================================================
@@ -767,16 +508,3 @@ class TestGradientFlow:
         # Check gradients exist
         for k, v in x_dict.items():
             assert v.grad is not None, f"No gradient for {k}"
-
-    def test_diagnosis_head_gradients(self, hidden_dim):
-        head = DiagnosisHead(hidden_dim=hidden_dim)
-
-        phenotype_emb = torch.randn(5, hidden_dim, requires_grad=True)
-        disease_emb = torch.randn(10, hidden_dim, requires_grad=True)
-
-        scores = head(phenotype_emb, disease_emb)
-        loss = scores.sum()
-        loss.backward()
-
-        assert phenotype_emb.grad is not None
-        assert disease_emb.grad is not None

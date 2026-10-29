@@ -134,12 +134,10 @@ def file_sha256(path: Union[str, Path]) -> Optional[str]:
     claim being made.
 
     **Lives here rather than in a script.** It was defined in
-    `scripts/measure_scorer.py` and imported from there by
-    `scripts/calibrate_mode_a.py`, `scripts/benchmark_sp_lookup.py` and a test —
-    scripts importing a script, which makes an entry point into a library. The SP
-    benchmark in particular has nothing to do with scorer measurement and had no
-    business depending on it. `src.utils` is the bottom layer, so every caller can
-    reach this without reaching through anything else.
+    `scripts/measure_scorer.py` and imported from there by other scripts and a
+    test — scripts importing a script, which makes an entry point into a library.
+    `src.utils` is the bottom layer, so every caller can reach this without
+    reaching through anything else.
 
     **Absent is `None`, not an error.** A role a run did not consume, and a file
     that is genuinely missing, are both recorded rather than raised on; the caller

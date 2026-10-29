@@ -63,15 +63,11 @@ from src.core.types import (
     EvidenceSource,
     DataSource,
     Species,
-    ModelConfig,
-    TrainingConfig,
-    DataConfig,
     Result,
 )
 
 # Type variables
 T = TypeVar("T")
-GraphType = TypeVar("GraphType")  # For torch_geometric.data.HeteroData
 
 
 # =============================================================================
@@ -271,10 +267,6 @@ class KnowledgeGraphProtocol(Protocol):
         num_hops: int = 1,
     ) -> "KnowledgeGraphProtocol":
         """提取子圖"""
-        ...
-
-    def to_pyg_hetero_data(self) -> GraphType:
-        """轉換為 PyTorch Geometric HeteroData"""
         ...
 
 
@@ -624,7 +616,9 @@ class DecoderProtocol(Protocol):
     """
     解碼器協議
 
-    實現模組: src/models/decoders/ (IMPLEMENTED)
+    實現模組: src/models/tasks/heads.py (IMPLEMENTED)
+      ↳ The task heads (DiseaseHead, GeneHead, PatientsLikeMeHead) score a patient
+        against candidates.
     """
 
     def decode(
@@ -646,10 +640,11 @@ class DiagnosisModelProtocol(Protocol):
     """
     完整診斷模型協議
 
-    整合 Encoder + GNN + Decoder
+    整合 Encoder + GNN + task head
 
-    實現模組: src/models/tasks/diagnosis.py (PLANNED)
-      ↳ 該檔案尚未建立；目前的 encoder+GNN+decoder 組合實作於 src/models/gnn/shepherd_gnn.py
+    實現模組: src/models/bundle/builder.py (IMPLEMENTED)
+      ↳ ModelBundle composes the graph encoder with the patient encoder and the task
+        heads of src/models/tasks/; build_bundle builds it from a checkpoint's ModelSpec.
     """
 
     def predict(
@@ -1180,7 +1175,7 @@ class TrainerProtocol(Protocol):
         model: DiagnosisModelProtocol,
         train_data: Any,
         val_data: Optional[Any] = None,
-        config: Optional[TrainingConfig] = None,
+        config: Optional[Any] = None,  # src.training.trainer.TrainerConfig
     ) -> Dict[str, Any]:
         """
         訓練模型
@@ -1347,16 +1342,4 @@ class ConfigLoaderProtocol(Protocol):
 
     def validate(self, config: Dict[str, Any]) -> Result[Dict[str, Any]]:
         """驗證配置"""
-        ...
-
-    def get_model_config(self) -> ModelConfig:
-        """獲取模型配置"""
-        ...
-
-    def get_training_config(self) -> TrainingConfig:
-        """獲取訓練配置"""
-        ...
-
-    def get_data_config(self) -> DataConfig:
-        """獲取資料配置"""
         ...

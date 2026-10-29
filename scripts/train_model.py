@@ -127,7 +127,7 @@ from src.kg.data_loader import (
     DiagnosisSample,
     create_diagnosis_dataloader,
 )
-from src.models.gnn.shepherd_gnn import ShepherdGNN, ShepherdGNNConfig, create_model
+from src.models.gnn.shepherd_gnn import ShepherdGNN, ShepherdGNNConfig
 from src.evaluation.cohort import verify_cohort_reads
 from src.utils.gpu_lock import GpuLockMisconfigured, take_gpu_lock
 # The refusals of a dataset or a resume parent that is not the one chosen,

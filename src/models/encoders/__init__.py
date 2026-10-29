@@ -2,15 +2,15 @@
 # ==============================================================================
 # Module: src/models/encoders/__init__.py
 # ==============================================================================
-# Purpose: Feature encoders for heterogeneous graph nodes and edges
+# Purpose: Feature encoders for heterogeneous graph nodes
 #
 # Exports:
-#   - Type Encoders: NodeTypeEncoder, EdgeTypeEncoder
+#   - Type Encoders: NodeTypeEncoder
 #   - Position Encoders: LaplacianPE, RandomWalkSE, PositionalEncoder
 #   - Feature Encoders: HeteroFeatureEncoder
 # ==============================================================================
 """
-from src.models.encoders.type_encoder import NodeTypeEncoder, EdgeTypeEncoder
+from src.models.encoders.type_encoder import NodeTypeEncoder
 from src.models.encoders.position_encoder import (
     LaplacianPE,
     RandomWalkSE,
@@ -21,7 +21,6 @@ from src.models.encoders.feature_encoder import HeteroFeatureEncoder
 __all__ = [
     # Type encoders
     "NodeTypeEncoder",
-    "EdgeTypeEncoder",
     # Position encoders
     "LaplacianPE",
     "RandomWalkSE",

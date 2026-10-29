@@ -353,16 +353,16 @@ def test_the_build_line_names_only_a_command_that_builds_a_dataset():
         assert "def main(" in text and "argparse" in text, script
 
 
-def test_no_shipped_text_sends_an_operator_to_the_placeholder_script():
-    """The dashboard, the scripts and both deployment guides never tell anyone
-    to run the empty ``preprocess_data.py`` (only the file itself names it)."""
+def test_the_placeholder_script_is_retired_and_no_shipped_text_sends_an_operator_to_it():
+    """K7 (X2): the empty ``scripts/preprocess_data.py`` placeholder is deleted.
+    The guard stays: the dashboard, the scripts and both deployment guides never
+    tell anyone to run it."""
     repo = Path(__file__).resolve().parents[2]
-    stub = repo / "scripts" / "preprocess_data.py"
-    assert _PLANNED_STUB in stub.read_text(encoding="utf-8")
+    assert not (repo / "scripts" / "preprocess_data.py").exists()
     places = [*(repo / "src").rglob("*.py"), *(repo / "scripts").rglob("*.py"),
               repo / "deployment-guide.md", repo / "deployment-guide.en.md"]
     naming = [str(p.relative_to(repo)) for p in places
-              if p != stub and "preprocess_data.py" in p.read_text(encoding="utf-8")]
+              if "preprocess_data.py" in p.read_text(encoding="utf-8")]
     assert naming == []
 
 

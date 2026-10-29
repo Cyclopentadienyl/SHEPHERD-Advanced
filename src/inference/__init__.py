@@ -28,7 +28,6 @@
 #   - P1 Feature: Ortholog evidence (interfaces preserved)
 #   - Two-stage: Path reasoning + optional GNN scoring
 #   - Production-ready: Validation, logging, error handling
-#   - Extensible: Custom scorers
 # ==============================================================================
 """
 

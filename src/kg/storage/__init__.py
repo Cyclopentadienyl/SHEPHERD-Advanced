@@ -14,9 +14,9 @@ read these files — it receives an already-loaded ``graph_data`` dictionary. Th
 files are loaded by each consumer that needs them, and then handed to the
 dataloader. Measurement, serving and training read them through
 ``file_storage``, and ``scripts/setup_demo.py`` reads them through training;
-``scripts/build_index.py`` and ``scripts/spikes/validate_fast_subgraph.py``
-still load them independently. Every copy depends on the same filenames and the
-same serialisation format, so a format change breaks all of them at once.
+``scripts/build_index.py`` still loads them independently. Every copy depends
+on the same filenames and the same serialisation format, so a format change
+breaks all of them at once.
 
 Modules:
   - ``file_storage.py`` — the shared reader. **Started, not finished.** Its

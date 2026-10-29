@@ -50,7 +50,7 @@ import time
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union, TYPE_CHECKING
 
 from src.kg.artifacts import (
     GRAPH_ARTIFACTS,
@@ -152,21 +152,6 @@ CHECKPOINT_LOG_METRICS: Tuple[str, ...] = ("val_loss", "train_loss", *RANKING_SC
 
 
 # ==============================================================================
-# Type Aliases for Callbacks
-# ==============================================================================
-# Callback for custom scoring: (candidate, paths, kg) -> modified_score
-ScoringCallback = Callable[
-    ["Candidate", List[ReasoningPath], "KnowledgeGraph"],
-    float
-]
-# Callback for post-processing candidates
-PostProcessCallback = Callable[
-    [List["Candidate"], PatientPhenotypes],
-    List["Candidate"]
-]
-
-
-# ==============================================================================
 # Configuration
 # ==============================================================================
 @dataclass
@@ -199,8 +184,6 @@ class PipelineConfig:
     # If False, pipeline raises at init when both signals are not available.
     sp_optional: bool = True
 
-    ortholog_weight: float = 0.3  # P1: Weight for ortholog evidence
-
     # Output control
     include_explanations: bool = True
     include_ortholog_evidence: bool = True
@@ -220,11 +203,6 @@ class PipelineConfig:
         default_factory=lambda: ["mouse", "zebrafish", "rat"]
     )
     min_ortholog_confidence: float = 0.5
-
-    # Extensibility: Custom scoring callbacks (P1-ready)
-    # These will be called during scoring phase
-    custom_scorers: List[ScoringCallback] = field(default_factory=list)
-    post_process_callbacks: List[PostProcessCallback] = field(default_factory=list)
 
 
 # ==============================================================================

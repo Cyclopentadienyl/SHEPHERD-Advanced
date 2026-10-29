@@ -2,7 +2,7 @@
 # ==============================================================================
 # Module: src/models/encoders/type_encoder.py
 # ==============================================================================
-# Purpose: Type embeddings for heterogeneous graph nodes and edges
+# Purpose: Type embeddings for heterogeneous graph nodes
 #
 # Dependencies:
 #   - External: torch (>=2.9)
@@ -10,7 +10,6 @@
 #
 # Exports:
 #   - NodeTypeEncoder: Learnable node type embeddings
-#   - EdgeTypeEncoder: Learnable edge/relation type embeddings
 #
 # Design Notes:
 #   - torch.compile() compatible
@@ -99,45 +98,3 @@ class NodeTypeEncoder(nn.Module):
             return gate_value * features + (1 - gate_value) * type_emb
         else:
             raise ValueError(f"Unknown fusion mode: {self.fusion_mode}")
-
-
-class EdgeTypeEncoder(nn.Module):
-    """
-    Encodes edge types into learnable embeddings.
-
-    Used for:
-    1. Edge-type-specific message passing weights
-    2. Attention score modification based on relation type
-
-    torch.compile() compatible.
-    """
-
-    def __init__(
-        self,
-        num_types: int,
-        hidden_dim: int,
-    ):
-        """
-        Args:
-            num_types: Number of distinct edge/relation types
-            hidden_dim: Output embedding dimension
-        """
-        super().__init__()
-        self.num_types = num_types
-        self.hidden_dim = hidden_dim
-
-        self.type_embedding = nn.Embedding(num_types, hidden_dim)
-        self._init_weights()
-
-    def _init_weights(self):
-        nn.init.normal_(self.type_embedding.weight, std=0.02)
-
-    def forward(self, type_indices: Tensor) -> Tensor:
-        """
-        Args:
-            type_indices: (num_edges,) edge type indices
-
-        Returns:
-            (num_edges, hidden_dim) edge type embeddings
-        """
-        return self.type_embedding(type_indices)

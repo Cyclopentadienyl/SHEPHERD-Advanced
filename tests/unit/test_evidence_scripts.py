@@ -1124,8 +1124,8 @@ def test_the_three_scripts_offer_one_vocabulary(tmp_path):
 ])
 def test_no_evidence_file_is_replaced_silently(tmp_path, script, args):
     """Evidence is cited by digest. A file quietly overwritten by a later run is
-    not evidence — the guard `benchmark_sp_lookup.py` already carries. Asserted
-    for all three rather than the two someone remembered."""
+    not evidence. Asserted for all three rather than the two someone
+    remembered."""
     out = tmp_path / "existing.json"
     out.write_text("{}")
     argv = ["--output", str(out)]

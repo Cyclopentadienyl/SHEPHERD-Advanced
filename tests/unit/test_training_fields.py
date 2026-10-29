@@ -44,7 +44,7 @@ def test_kinds_and_scopes_valid():
 def test_constraint_dicts_are_well_formed():
     """Bound dicts use only ge/gt/le/lt and never mix inclusive with exclusive on a side."""
     for f in tf.FIELDS:
-        for label in ("valid", "ui", "current_api", "item_valid"):
+        for label in ("valid", "current_api", "item_valid"):
             d = getattr(f, label)
             if d is None:
                 continue
@@ -54,47 +54,6 @@ def test_constraint_dicts_are_well_formed():
         lo, _, hi, _ = tf.bounds(f.valid)
         if lo is not None and hi is not None:
             assert lo <= hi, f"{f.name}: valid lo {lo} > hi {hi}"
-
-
-def test_ui_within_valid():
-    """ui ⊆ valid, honouring exclusive bounds — except bound keys declared ui_wider_than_valid."""
-    for f in tf.FIELDS:
-        vlo, vlo_x, vhi, vhi_x = tf.bounds(f.valid)
-        ulo, ulo_x, uhi, uhi_x = tf.bounds(f.ui)
-        if vlo is not None and ulo is not None and "ge" not in f.ui_wider_than_valid \
-                and "gt" not in f.ui_wider_than_valid:
-            assert ulo >= vlo, f"{f.name}: ui lo {ulo} < valid lo {vlo}"
-            if ulo == vlo and vlo_x:
-                assert ulo_x, f"{f.name}: valid excludes {vlo} but ui includes it"
-        if vhi is not None and "le" not in f.ui_wider_than_valid and "lt" not in f.ui_wider_than_valid:
-            if f.ui is not None:
-                assert uhi is not None, f"{f.name}: valid caps at {vhi} but ui has no upper bound"
-                assert uhi <= vhi, f"{f.name}: ui hi {uhi} > valid hi {vhi}"
-                if uhi == vhi and vhi_x:
-                    assert uhi_x, f"{f.name}: valid excludes {vhi} but ui includes it"
-        for c in (f.ui_choices or ()):
-            if isinstance(c, (int, float)) and not isinstance(c, bool):
-                if vlo is not None:
-                    assert c > vlo if vlo_x else c >= vlo, f"{f.name}: ui choice {c} below valid"
-                if vhi is not None:
-                    assert c < vhi if vhi_x else c <= vhi, f"{f.name}: ui choice {c} above valid"
-
-
-def test_declared_ui_wider_than_valid_entries_are_real():
-    """The escape hatch cannot be stale: each declared key must actually be looser than valid."""
-    for f in tf.FIELDS:
-        for key in f.ui_wider_than_valid:
-            assert key in tf.BOUND_KEYS, f"{f.name}: bad ui_wider_than_valid key {key}"
-            vlo, _, vhi, _ = tf.bounds(f.valid)
-            ulo, _, uhi, _ = tf.bounds(f.ui)
-            if key in ("le", "lt"):
-                assert vhi is not None and uhi is None or (uhi is not None and vhi is not None and uhi > vhi), (
-                    f"{f.name}: declared ui wider on {key} but it is not"
-                )
-            else:
-                assert vlo is not None and ulo is None or (ulo is not None and vlo is not None and ulo < vlo), (
-                    f"{f.name}: declared ui wider on {key} but it is not"
-                )
 
 
 def test_no_field_is_marked_ineffective():

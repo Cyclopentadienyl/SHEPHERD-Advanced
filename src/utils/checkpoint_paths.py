@@ -86,12 +86,6 @@ def ranking_score_detail(logs) -> Optional[Tuple[str, float]]:
     return None
 
 
-def ranking_score_from_logs(logs) -> Optional[float]:
-    """Ranking score (higher is better) from a checkpoint's logs, or None."""
-    detail = ranking_score_detail(logs)
-    return detail[1] if detail else None
-
-
 def normalize_conv_type(conv_type: Optional[str]) -> str:
     """Lower-case a conv type.
 
@@ -299,24 +293,6 @@ def claim_run_dir(run_dir: PathLike) -> Path:
         raise RunDirectoryTaken(f"the run directory {path} was claimed by another run") from None
     run_log_dir(path).mkdir(exist_ok=True)
     return path
-
-
-def allocate_run_dir(
-    data_dir: PathLike,
-    conv_type: Optional[str],
-    name: Optional[str] = None,
-    *,
-    now: Optional[datetime] = None,
-) -> Path:
-    """Propose and claim a new run directory; a directory claimed in between
-    by another run is drawn again, never shared."""
-    for _ in range(100):
-        try:
-            return claim_run_dir(propose_run_dir(data_dir, conv_type, name, now=now))
-        except RunDirectoryTaken:
-            continue
-    raise RunDirectoryTaken(
-        f"no unused run directory under {runs_root(data_dir, conv_type)} after 100 tries")
 
 
 def run_checkpoint_dir(run_dir: PathLike) -> Path:
@@ -688,7 +664,6 @@ __all__ = [
     "RUN_LOGS_DIRNAME",
     "ListedCheckpoint",
     "RunDirectoryTaken",
-    "allocate_run_dir",
     "check_run_dir_free",
     "claim_run_dir",
     "list_run_checkpoints",
@@ -705,7 +680,6 @@ __all__ = [
     "select_run_checkpoint",
     "slugify_run_name",
     "ranking_score_detail",
-    "ranking_score_from_logs",
     "normalize_conv_type",
     "normalize_run_layout_key",
     "select_checkpoint_in_dir",

@@ -183,23 +183,6 @@ _GROUP_SETTLE_SECONDS = 1.0
 _GROUP_POLL_SECONDS = 0.05
 
 
-@dataclass
-class TrainingStatus:
-    """Snapshot of training state."""
-
-    # idle, running, stopping, stopped (by the operator), completed (the
-    # process exited cleanly; how the stage stood is the run's `outcome`),
-    # failed.
-    status: str = "idle"
-    pid: Optional[int] = None
-    current_epoch: Optional[int] = None
-    total_epochs: Optional[int] = None
-    start_time: Optional[str] = None
-    elapsed_seconds: Optional[float] = None
-    latest_metrics: Dict[str, float] = field(default_factory=dict)
-    error_message: Optional[str] = None
-
-
 # =============================================================================
 # Job types
 # =============================================================================
@@ -2561,6 +2544,5 @@ training_manager = TrainingManager()
 
 __all__ = [
     "TrainingManager",
-    "TrainingStatus",
     "training_manager",
 ]

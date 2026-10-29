@@ -5,7 +5,7 @@
 # Purpose: Core Knowledge Graph data structure with heterogeneous node/edge support
 #
 # Dependencies:
-#   - External: networkx, numpy, torch (optional), torch_geometric (optional)
+#   - External: networkx, numpy, torch (optional)
 #   - Internal: src.core.types (Node, Edge, NodeID, NodeType, EdgeType)
 #              src.core.schema (KnowledgeGraphSchema)
 #
@@ -15,7 +15,7 @@
 #
 # Output:
 #   - Graph queries: neighbors, subgraphs, paths
-#   - Export: PyG HeteroData, NetworkX graph, edge lists
+#   - Export: GNN graph data files, NetworkX graph, edge lists
 # ==============================================================================
 """
 from __future__ import annotations
@@ -165,7 +165,7 @@ class KnowledgeGraph:
     - Multiple edge types (GENE_ASSOCIATED_WITH_DISEASE, IS_A, etc.)
     - Efficient neighbor queries
     - Subgraph extraction
-    - Export to PyTorch Geometric HeteroData
+    - Export of GNN graph data (node features, edge indices)
     """
 
     def __init__(self, schema: Optional[KnowledgeGraphSchema] = None):
@@ -192,7 +192,7 @@ class KnowledgeGraph:
         # {EdgeType: [edge_idx]}
         self._edges_by_type: Dict[EdgeType, List[int]] = defaultdict(list)
 
-        # Node ID mapping for PyG export: {node_type: {node_id_str: int_idx}}
+        # Node ID mapping for the graph data export: {node_type: {node_id_str: int_idx}}
         self._node_id_to_idx: Dict[NodeType, Dict[str, int]] = defaultdict(dict)
 
         logger.info("KnowledgeGraph initialized")
@@ -522,70 +522,6 @@ class KnowledgeGraph:
 
         return G
 
-    def to_pyg_hetero_data(self):
-        """
-        Export to PyTorch Geometric HeteroData
-
-        Returns:
-            HeteroData object ready for GNN training
-
-        Raises:
-            ImportError if torch_geometric not installed
-        """
-        try:
-            import torch
-            from torch_geometric.data import HeteroData
-        except ImportError:
-            raise ImportError(
-                "torch and torch_geometric required for PyG export. "
-                "Install via platform-specific script."
-            )
-
-        data = HeteroData()
-
-        # Build node features (placeholder: just indices)
-        for node_type, node_ids in self._nodes_by_type.items():
-            num_nodes = len(node_ids)
-            if num_nodes > 0:
-                # Placeholder features (replace with actual embeddings later)
-                data[node_type.value].x = torch.zeros(num_nodes, 1)
-                data[node_type.value].num_nodes = num_nodes
-
-        # Build edge indices
-        edge_index_dict: Dict[Tuple[str, str, str], List[List[int]]] = defaultdict(
-            lambda: [[], []]
-        )
-
-        for edge in self._edges:
-            source_str = str(edge.source_id)
-            target_str = str(edge.target_id)
-
-            source_node = self._nodes.get(source_str)
-            target_node = self._nodes.get(target_str)
-
-            if source_node is None or target_node is None:
-                continue
-
-            src_type = source_node.node_type.value
-            tgt_type = target_node.node_type.value
-            edge_type = edge.edge_type.value
-
-            key = (src_type, edge_type, tgt_type)
-
-            src_idx = self._node_id_to_idx[source_node.node_type].get(source_str)
-            tgt_idx = self._node_id_to_idx[target_node.node_type].get(target_str)
-
-            if src_idx is not None and tgt_idx is not None:
-                edge_index_dict[key][0].append(src_idx)
-                edge_index_dict[key][1].append(tgt_idx)
-
-        # Convert to tensors
-        for key, (src_list, tgt_list) in edge_index_dict.items():
-            if src_list:
-                data[key].edge_index = torch.tensor([src_list, tgt_list], dtype=torch.long)
-
-        return data
-
     def export_graph_data(
         self,
         output_dir: Optional[Path] = None,
@@ -710,45 +646,6 @@ class KnowledgeGraph:
             for e in self._edges
         ]
 
-    def metadata(self) -> Tuple[List[str], List[Tuple[str, str, str]]]:
-        """
-        Get graph metadata for PyG models.
-
-        Returns:
-            (node_types, edge_types) where:
-            - node_types: List of node type strings
-            - edge_types: List of (src_type, rel_type, dst_type) tuples
-
-        Usage:
-            metadata = kg.metadata()
-            model = ShepherdGNN(metadata=metadata, ...)
-        """
-        # Collect node types that have nodes
-        node_types = [nt.value for nt in self._nodes_by_type.keys() if self._nodes_by_type[nt]]
-
-        # Collect edge types that have edges
-        edge_types = []
-        seen_edge_types = set()
-
-        for edge in self._edges:
-            source_node = self._nodes.get(str(edge.source_id))
-            target_node = self._nodes.get(str(edge.target_id))
-
-            if source_node is None or target_node is None:
-                continue
-
-            key = (
-                source_node.node_type.value,
-                edge.edge_type.value,
-                target_node.node_type.value,
-            )
-
-            if key not in seen_edge_types:
-                seen_edge_types.add(key)
-                edge_types.append(key)
-
-        return node_types, edge_types
-
     def get_node_id_mapping(self) -> Dict[str, Dict[str, int]]:
         """
         Get node ID to index mapping for each node type.
@@ -757,7 +654,7 @@ class KnowledgeGraph:
             {node_type: {node_id_str: int_idx}}
 
         Useful for:
-        - Looking up node indices in PyG HeteroData
+        - Looking up node indices in the exported graph data
         - Mapping inference results back to original IDs
         """
         return {

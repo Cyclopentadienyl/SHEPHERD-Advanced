@@ -348,6 +348,24 @@ class TestPipelineConfig:
         config_pure_sp = PipelineConfig(eta=0.0)
         assert config_pure_sp.eta == 0.0
 
+    @pytest.mark.parametrize(
+        "retired", ["ortholog_weight", "custom_scorers", "post_process_callbacks"]
+    )
+    def test_retired_no_op_fields_are_gone(self, retired):
+        """K7 (S3): fields nothing read are not configuration. A caller that
+        still passes one is refused, never silently ignored."""
+        import dataclasses
+
+        assert retired not in {f.name for f in dataclasses.fields(PipelineConfig)}
+        with pytest.raises(TypeError):
+            PipelineConfig(**{retired: None})
+
+    def test_retired_callback_aliases_are_gone(self):
+        import src.inference.pipeline as pipeline_module
+
+        assert not hasattr(pipeline_module, "ScoringCallback")
+        assert not hasattr(pipeline_module, "PostProcessCallback")
+
 
 # =============================================================================
 # Test GNN Inference Integration
