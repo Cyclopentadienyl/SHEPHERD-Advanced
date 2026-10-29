@@ -899,8 +899,8 @@ owner_decision rows as recommended, with the reviewer's technical conditions:
   denominators, coverage and the caveat that the record does not describe the current diagnosis
   model; no report, ledger, evidence or hash is rewritten.
 
-**K7 delivery (2026-10-29): the retirement check, done in the container, awaiting the full suite
-and external review.** The authorised list was executed in five sequential commits on
+**K7 delivery (2026-10-29): the retirement check, done in the container, awaiting external
+review.** The authorised list was executed in five sequential commits on
 `claude/paper-aligned-two-stage` from `a7d0171`, with no adapter, alias, legacy switch or degraded
 path (item 8):
 - **G1 `3d7d40a`** (dead code and whole files): S3, SP2, TM14, TM24, TM25, TM29, TM30, TM31, TM33,
@@ -938,7 +938,7 @@ Rows left to K8, unchanged by K7 except where a delete row changed a shared line
 
 **The K7 review round (2026-10-29).** Three read-only lenses, with a verifier for each finding,
 and a browser smoke at 1850x960 found no P1 or P2. The confirmed P3s were fixed in `56c8508`
-(code) and this commit (documents): stale documents; the Test page's Register offered for a kept
+(code), `3b10fd7` and `4fae6c2` (documents): stale documents; the Test page's Register offered for a kept
 Mode D report; `contest_html`'s Mode C default; the no-model refusal naming the wrong control; an
 unreachable SP-loader branch; the Load confirmation's From side with nothing served; test
 leftovers. The smoke: with nothing loaded, `/health` 200, `/ready` 503, diagnose 503, and Run off
@@ -946,6 +946,11 @@ with its reason; `scripts/setup_demo.py --train-model --device cpu` trained a ba
 child in about 11 s, which loaded and ranked; the exports carry no path or demo columns; the strict
 base start refused ShepherdGNN and finetune bodies with 422 and started nothing; the kept C and D
 reports read under their own modes.
+
+**Checks on the integrated K7 tree (`4fae6c2`):** the full suite once: 5964 passed, 14 skipped,
+no failure (13 min 24 s, CPU, `-n 4`); `lint-imports` 5 contracts kept, 0 broken (Mode D's
+one-way contract left with Mode D); `git diff --check a7d0171..HEAD` clean; the deleted files are
+exactly the eleven the owner authorised.
 
 Not verified in K7: GPU paths and the GB10 (the acceptance probe was not run, and in particular
 not on a newly built workspace with the K8 transition note's preparation step); in the browser,
