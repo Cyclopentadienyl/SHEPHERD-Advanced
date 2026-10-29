@@ -793,6 +793,12 @@ validity are reported separately.
 
 **K6 delivery (2026-10-28): functional integration done in the container, awaiting external review
 and the GB10 acceptance.**
+- **The reviewer's read-only review of `2827428..59bfa84` (2026-10-29):** no new P1 or P2. It reran
+  1,334 tests of the touched areas on a CPU snapshot of the head (one failed only because the
+  snapshot holds no `.git`, which the probe's commit record needs); it did not rerun the full suite,
+  the browser smoke, axe, a read-only browser, GPU or the GB10. K5 (`ba992d1..2827428`) is
+  implemented and internally reviewed; its independent review is still to be done, and this review
+  does not stand for it.
 - **Full suite** once on the integrated batch: 5948 passed, 14 skipped, 4 probe failures fixed by
   `792861b` and rerun narrowly. The closing fixes (`f835fc5`) and these documents ran their touched
   tests and neighbours only.
