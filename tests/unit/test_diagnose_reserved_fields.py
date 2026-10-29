@@ -12,7 +12,8 @@
 # tell. See docs/working/task-scope/README.md Q1.
 #
 # Tests:
-#   - the warning appears when the field is supplied, on the mock path too
+#   - the warning appears when the field is supplied to a model that ranks no
+#     genes (a disease child trained for real, tests/fixtures/trained_children)
 #   - no warning when it is absent
 #   - results are invariant to the field's contents
 #   - blank and whitespace-only entries are rejected
@@ -83,12 +84,15 @@ def _run(client, payload):
 
 
 @pytest.fixture
-def client():
+def client(monkeypatch, disease_pipeline):
+    """The real app serving a disease child: a model that ranks diseases and
+    ignores candidate genes (since K7 nothing answers without a model)."""
     from fastapi.testclient import TestClient
 
-    from src.api.main import app
+    from src.api import main as api_main
 
-    return TestClient(app)
+    monkeypatch.setattr(api_main.app_state, "pipeline", disease_pipeline, raising=False)
+    return TestClient(api_main.app)
 
 
 def test_supplying_the_field_warns_the_caller(client):
@@ -125,13 +129,10 @@ def test_results_are_invariant_to_the_field(client):
     deliberately, which is the point: until then the reservation cannot rot into
     a silent no-op unnoticed.
 
-    **What this covers, and what it does not.** With no checkpoint loaded the
-    route takes its mock fallback, so the comparison is over that path. The
-    warning is appended before the pipeline branch precisely because the field
-    is equally inert on both, but invariance *through the real pipeline* rests
-    on the separate fact that no scoring path reads `candidate_genes` at all:
-    it reaches `PatientPhenotypes` and stops. That fact is recorded in
-    docs/working/task-scope/README.md F2; it is not shown here.
+    **Through the real pipeline**: a disease child ranks the request, and no
+    disease scoring path reads `candidate_genes` (it reaches
+    `PatientPhenotypes` and stops; docs/working/task-scope/README.md F2), so
+    the candidates are the same with and without it.
     """
     without = _run(client, {"phenotypes": PHENOTYPES})
     with_genes = _run(

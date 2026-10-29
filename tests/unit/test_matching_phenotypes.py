@@ -3,8 +3,8 @@
 ==========================================================================
 BACKLOG item 17, F6. The API declared the field and the real path never filled
 it, while each candidate's explanation listed its matches under "Matching
-Phenotypes"; the demo answer filled it with the first request phenotypes. These
-tests pin the definition the field now states:
+Phenotypes"; the retired demo answer filled it with the first request
+phenotypes. These tests pin the definition the field now states:
 
   - **exact direct annotation only**: a `phenotype_of_disease` edge from the
     very term to the disease. A phenotype linked only through a gene does not
@@ -14,7 +14,12 @@ tests pin the definition the field now states:
   - filled whether or not explanations are asked for, by the helper the
     explanation's section uses: the section lists the first ten of the field,
     in its order, and says how many more there are;
-  - carried by the API and the WebUI's CSV, and empty in the demo answer.
+  - carried by the API and the WebUI's CSV.
+
+The definition is pinned on a small graph with an ontology (the helper); what
+the pipeline, the API and the CSV carry is pinned on a disease child trained
+for real over the demo graph (`tests/fixtures/trained_children`): since K7 no
+pipeline is served without a model.
 
 Module: tests/unit/test_matching_phenotypes.py
 """
@@ -100,10 +105,8 @@ def kg():
 
 
 @pytest.fixture
-def pipeline(kg):
-    from src.inference.pipeline import DiagnosisPipeline
-
-    return DiagnosisPipeline(kg=kg)
+def pipeline(disease_pipeline):
+    return disease_pipeline
 
 
 def _run(pipeline, phenotypes, include_explanations):
@@ -135,8 +138,13 @@ def _matching_section(explanation):
     return [_ENTRY.fullmatch(line).group(1) for line in section], more
 
 
-#: What a request for SEIZURE, ATAXIA and DELAY matches, by disease.
-_EXPECTED = {str(D1): [SEIZURE, ATAXIA], str(D2): [ATAXIA], str(D3): []}
+#: The demo graph's diseases, by the phenotypes annotated to them directly:
+#: seizure to Dravet, developmental delay to Rett and CDKL5 deficiency, none to
+#: tuberous sclerosis or achondroplasia (reached through genes only).
+DRAVET, RETT, CDKL5, TSC, ACHONDROPLASIA = (
+    f"mondo:MONDO:{n}" for n in ("0011073", "0010582", "0012091", "0010730", "0007037"))
+#: What a request for SEIZURE and DELAY matches, by disease.
+_EXPECTED = {DRAVET: [SEIZURE], RETT: [DELAY], CDKL5: [DELAY], TSC: [], ACHONDROPLASIA: []}
 
 
 # ------------------------------------------------------------------ the definition
@@ -147,48 +155,45 @@ def test_only_a_direct_annotation_of_the_exact_term_matches(kg):
     assert find_matching_phenotypes(D3, [SEIZURE, ATAXIA, DELAY], kg) == []
 
 
+def test_an_ancestor_or_descendant_of_an_annotated_term_does_not_match(kg):
+    """D1 is annotated with SEIZURE. A case listing a descendant (epileptic
+    spasm) and an ancestor of it matches nothing there; neither does DELAY,
+    linked to D2 only through a gene."""
+    assert find_matching_phenotypes(D1, [SPASM, NERVOUS], kg) == []
+    assert find_matching_phenotypes(D2, [DELAY], kg) == []
+
+
 @pytest.mark.parametrize("include_explanations", [False, True])
 def test_every_candidate_carries_its_direct_matches(pipeline, include_explanations):
-    """DELAY reaches all three diseases in two hops through the gene and matches
-    none of them; D3 is a candidate with no match at all."""
-    result = _run(pipeline, [SEIZURE, ATAXIA, DELAY], include_explanations)
+    """Every disease of the model's view is a row; the two reached only through
+    genes carry no match at all."""
+    result = _run(pipeline, [SEIZURE, DELAY], include_explanations)
 
     assert _matches(result) == _EXPECTED
     assert all((c.explanation is not None) is include_explanations
                for c in result.candidates)
 
 
-def test_an_ancestor_or_descendant_of_an_annotated_term_does_not_match(pipeline):
-    """D1 is annotated with SEIZURE. A case listing a descendant (epileptic
-    spasm) and an ancestor of it reaches D1 through the ontology, and matches
-    nothing there."""
-    matches = _matches(_run(pipeline, [SPASM, NERVOUS], include_explanations=True))
-
-    assert str(D1) in matches, "D1 must be a candidate for the test to mean anything"
-    assert matches[str(D1)] == []
-
-
 def test_the_matches_come_from_the_list_as_used(pipeline):
     """Unknown ids dropped, repeats removed, in the request's order and spelling:
     HPO ids as sent, not the graph's `hpo:` node ids."""
     result = _run(
-        pipeline, [UNKNOWN, ATAXIA, SEIZURE, ATAXIA, SEIZURE], include_explanations=False
+        pipeline, [UNKNOWN, DELAY, SEIZURE, DELAY, SEIZURE], include_explanations=False
     )
 
-    assert result.phenotype_input.used == (ATAXIA, SEIZURE)
-    assert _matches(result)[str(D1)] == [ATAXIA, SEIZURE]
-    assert _matches(result)[str(D2)] == [ATAXIA]
+    assert result.phenotype_input.used == (DELAY, SEIZURE)
+    assert _matches(result) == _EXPECTED
 
 
 def test_the_explanation_lists_all_of_a_field_of_ten_or_fewer(pipeline):
-    result = _run(pipeline, [DELAY, ATAXIA, SEIZURE, ATAXIA], include_explanations=True)
+    result = _run(pipeline, [DELAY, SEIZURE, DELAY], include_explanations=True)
 
     assert result.candidates
     for candidate in result.candidates:
         assert _matching_section(candidate.explanation) == (
             candidate.matching_phenotypes, None
         ), candidate.disease_id
-    assert _matches(result)[str(D1)] == [ATAXIA, SEIZURE]
+    assert _matches(result)[DRAVET] == [SEIZURE]
 
 
 #: A disease annotated directly with every phenotype it is built with.
@@ -220,22 +225,28 @@ _TWELVE = [f"HP:{n:07d}" for n in range(3012, 3000, -1)]
 def test_the_explanation_lists_the_first_ten_of_the_field_and_how_many_more(count, more):
     """A request carries up to 100 phenotypes and the field every match; the
     section lists the first ten in the field's order, then says how many it
-    left out, rather than cutting the list without a word."""
-    from src.inference.pipeline import DiagnosisPipeline
+    left out, rather than cutting the list without a word. Shown with the
+    explanation generator the pipeline calls, on a disease annotated with every
+    term (the demo graph annotates no disease with more than one)."""
+    from src.core.types import DiseaseTaskCandidate
+    from src.reasoning import ExplanationGenerator
 
     requested = _TWELVE[:count]
-    result = _run(DiagnosisPipeline(kg=_kg_annotating(requested)), requested,
-                  include_explanations=True)
+    kg = _kg_annotating(requested)
+    candidate = DiseaseTaskCandidate(rank=1, disease_id=D_MANY, disease_name="many",
+                                     score=-0.5)
+    explanation = ExplanationGenerator().generate_explanation(
+        candidate=candidate, kg=kg, paths=[],
+        phenotypes=PatientPhenotypes(patient_id="f6", phenotypes=list(requested)))
 
-    (candidate,) = [c for c in result.candidates if c.disease_id == D_MANY]
-    assert candidate.matching_phenotypes == requested
-    assert _matching_section(candidate.explanation) == (requested[:10], more)
+    assert find_matching_phenotypes(D_MANY, requested, kg) == requested
+    assert _matching_section(explanation) == (requested[:10], more)
 
 
 # ------------------------------------------------------------------ the API
 @pytest.fixture
 def client(monkeypatch, pipeline):
-    """The real app, serving a real path-reasoning pipeline on this graph."""
+    """The real app, serving a disease child trained for real."""
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
 
@@ -255,7 +266,7 @@ def _post(client, **payload):
 def test_the_api_carries_the_matches(client, include_explanations):
     body = _post(
         client,
-        phenotypes=[SEIZURE, UNKNOWN, ATAXIA, SEIZURE, DELAY],
+        phenotypes=[SEIZURE, UNKNOWN, DELAY, SEIZURE],
         include_explanations=include_explanations,
     )
 
@@ -266,38 +277,16 @@ def test_the_api_carries_the_matches(client, include_explanations):
 
 def test_the_field_states_its_definition():
     pytest.importorskip("fastapi")
-    from src.api.routes.diagnose import (
-        DemoCandidate,
-        PathReasoningCandidate,
-        ServedMixtureCandidate,
-    )
+    from src.api.routes.diagnose import DiseaseTaskCandidate, ServedMixtureCandidate
 
     descriptions = {kind.model_fields["matching_phenotypes"].description
-                    for kind in (ServedMixtureCandidate, PathReasoningCandidate, DemoCandidate)}
+                    for kind in (ServedMixtureCandidate, DiseaseTaskCandidate)}
     assert len(descriptions) == 1, "every kind's candidate states one definition"
     (description,) = descriptions
     assert "directly" in description and "exact term" in description
     assert "not ontology ancestors or descendants, not gene-mediated" in description
     assert "An empty list does not mean no clinical overlap." in description
-
-
-def test_the_demo_answer_claims_no_matches(monkeypatch):
-    """No pipeline configured: the invented candidates were matched against
-    nothing, so they carry no matches rather than the request's phenotypes."""
-    pytest.importorskip("fastapi")
-    from fastapi.testclient import TestClient
-
-    from src.api import main as api_main
-
-    monkeypatch.setattr(api_main.app_state, "pipeline", None, raising=False)
-    monkeypatch.setattr(api_main.app_state, "real_pipeline_requested", False, raising=False)
-    monkeypatch.delenv("SHEPHERD_KG_PATH", raising=False)
-
-    body = _post(TestClient(api_main.app), phenotypes=[SEIZURE, ATAXIA, DELAY])
-
-    assert body["served_identity"] is None  # the demo answer
-    assert body["candidates"]
-    assert all(c["matching_phenotypes"] == [] for c in body["candidates"])
+    assert "demo" not in description
 
 
 # ------------------------------------------------------------------ the CSV
@@ -305,13 +294,11 @@ def test_the_csv_column_carries_the_matches(client):
     pytest.importorskip("gradio")
     from src.webui.components import diagnosis_panel as dp
 
-    body = _post(client, phenotypes=[SEIZURE, ATAXIA, DELAY], include_explanations=False)
+    body = _post(client, phenotypes=[SEIZURE, DELAY], include_explanations=False)
     rows = list(csv.DictReader(io.StringIO(dp._build_results_csv(body))))
 
     assert {row["disease_id"]: row["matching_phenotypes"] for row in rows} == {
-        D1.local_id: f"{SEIZURE}; {ATAXIA}",
-        D2.local_id: ATAXIA,
-        D3.local_id: "",
+        disease.split(":", 1)[1]: "; ".join(matches) for disease, matches in _EXPECTED.items()
     }
 
 
@@ -326,17 +313,17 @@ def test_the_written_explanation_names_a_ranking_score_not_a_confidence_band(cli
     from src.reasoning import SCORE_MEANING
     from src.webui.components import diagnosis_panel as dp
 
-    body = _post(client, phenotypes=[SEIZURE, ATAXIA, DELAY], include_explanations=True)
+    body = _post(client, phenotypes=[SEIZURE, DELAY], include_explanations=True)
     assert body["candidates"]
     for candidate in body["candidates"]:
         explanation = candidate["explanation"]
-        assert f"Score: {candidate['path_score']:.3f} ({SCORE_MEANING})" in explanation
+        assert f"Score: {candidate['score']:.3f} ({SCORE_MEANING})" in explanation
         assert f"Ranking: {dp.kind_label(body)}" in explanation
         shown = dp.select_candidate(body, "explanation", str(candidate["rank"]))
         assert shown["details_md"]["value"] == explanation
     report = dp._build_results_report_md(body)
     assert "Full explanation" in report and SCORE_MEANING in report
-    summary = _run(pipeline, [SEIZURE, ATAXIA, DELAY], True).summary_explanation
+    summary = _run(pipeline, [SEIZURE, DELAY], True).summary_explanation
     assert "(Score: " in summary and SCORE_MEANING in summary
     for text in (report, summary):
         assert "Confidence" not in text and not re.search(r"\b(HIGH|MEDIUM|LOW)\b", text)

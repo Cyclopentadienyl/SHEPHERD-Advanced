@@ -30,8 +30,8 @@ scrolls.
   text under it) and while a model change is open; while this page's Load
   reloads, the card says "Loading <12 hex> for every session… <elapsed>" and
   Run Diagnosis says the load is in progress (the mockup's state 3; set in the
-  list's step before the reload, taken back after its answer). The API's demo
-  answer for API clients is unchanged.
+  list's step before the reload, taken back after its answer). With no model
+  loaded the API refuses a diagnosis (503) with its reason, for every client.
 - **The candidates**: the results badge ("Produced by the model in use" /
   "Produced by an earlier model or pipeline — N parts differ ›" / "Cannot
   check against the model in use yet" with its one reason), the identity
@@ -81,11 +81,9 @@ import gradio as gr
 import requests
 
 from src.core.types import (
-    DEMO,
     DISEASE_TASK,
     GENE_TASK,
     MIXED_AS_WORDS,
-    PATH_REASONING,
     PATIENTS_LIKE_ME,
     RESULT_KINDS,
     SERVED_MIXTURE,
@@ -177,9 +175,8 @@ def _parse_gene_list(text: str) -> List[str]:
 
 
 #: What a candidate's score is, said under the report's table and in the
-#: Score column's help: the value its result kind ranks by (`served_score`,
-#: `path_score` or `score`, Spec 1 §2.1); the words shown say what the number is. The demo
-#: answer has no score, and no note.
+#: Score column's help: the value its result kind ranks by (`served_score` or
+#: `score`, Spec 1 §2.1); the words shown say what the number is.
 SCORE_NOTE = ("Score ranks the candidates of this result. It is not a calibrated "
               "disease probability.")
 #: The same for a gene task model's candidate genes (the report's note and the
@@ -393,7 +390,7 @@ def _label_of(kind: str, result: Mapping[str, Any]) -> Optional[str]:
 
 
 #: The kinds this page draws: every kind of the result union. Disease rows for
-#: today's served kinds, the demo answer and the disease task; a gene task
+#: the mixture and the disease task; a gene task
 #: model's candidate genes and a patients-like-me model's reference patients in
 #: their own columns, details and exports (K6 decision 15). A kind not listed
 #: (a newer API) is said, never drawn as another kind's rows.
@@ -422,8 +419,6 @@ def _shows_sp(result: Any) -> bool:
 #: kind): nothing is drawn from it.
 KIND_NOT_REPORTED = ("The response does not name a result kind this page can read "
                      "(result_kind), so its candidates are not shown.")
-#: The demo answer's candidate details: nothing was looked up for it.
-DEMO_DETAILS = "Demo answer: no phenotype, evidence or path query was run for this candidate."
 #: A mixture whose identity does not give its η (only a malformed response):
 #: its candidates are shown, and the label says what is missing, never a constant.
 MIXTURE_ETA_NOT_REPORTED = ("Served ranking today: diseases reached by path discovery, "
@@ -440,11 +435,9 @@ def kind_label(result: Any) -> str:
 
 
 def _score(candidate: Mapping[str, Any], kind: Optional[str]) -> Any:
-    """The value the kind ranks by; None for the demo answer, which has none."""
+    """The value the kind ranks by; None for a kind this page does not know."""
     if kind == SERVED_MIXTURE:
         return candidate.get("served_score")
-    if kind == PATH_REASONING:
-        return candidate.get("path_score")
     if kind in (DISEASE_TASK, GENE_TASK):
         return candidate.get("score")
     if kind == PATIENTS_LIKE_ME:
@@ -481,8 +474,7 @@ def _format_results_table(candidates: List[Dict], kind: Optional[str] = None,
                           shows_sp: bool = False) -> str:
     """Format candidates as a Markdown table (the exported report), its columns
     the kind's: the score and model term of a mixture (SP beside them when a
-    table is served), the path score with no model, the task head's score for a
-    disease task model, no score in the demo."""
+    table is served), the task head's score for a disease task model."""
     if kind is None:
         return f"*{KIND_NOT_REPORTED}*"
     if not candidates:
@@ -490,31 +482,25 @@ def _format_results_table(candidates: List[Dict], kind: Optional[str] = None,
     if kind in TASK_ROW_KINDS:
         return _format_task_table(candidates, kind)
 
-    columns = ["Rank", "Disease"]
+    columns = ["Rank", "Disease", "Score"]
     if kind == SERVED_MIXTURE:
-        columns += ["Score", "Model term"] + (["SP"] if shows_sp else [])
-    elif kind in (PATH_REASONING, DISEASE_TASK):
-        columns += ["Score"]
-    if kind != DEMO:
-        columns += ["Evidence"]
+        columns += ["Model term"] + (["SP"] if shows_sp else [])
+    columns += ["Evidence"]
     rows = []
     for c in candidates:
-        cells = [str(c.get("rank")), f"**{c.get('disease_name')}**"]
-        if kind != DEMO:
-            cells.append(_num(_score(c, kind)))
+        cells = [str(c.get("rank")), f"**{c.get('disease_name')}**", _num(_score(c, kind))]
         if kind == SERVED_MIXTURE:
             cells.append(_num(c.get("model_term")))
             if shows_sp:
                 cells.append(sp_text(c.get("sp_term")))
-        if kind != DEMO:
-            label = c.get("evidence_label") or "—"
-            emoji, _ = LABEL_STYLES.get(label, ("", "#888"))
-            cells.append(f"{emoji} {label}".strip())
+        label = c.get("evidence_label") or "—"
+        emoji, _ = LABEL_STYLES.get(label, ("", "#888"))
+        cells.append(f"{emoji} {label}".strip())
         rows.append("| " + " | ".join(cells) + " |")
     header = ("| " + " | ".join(columns) + " |\n"
               + "|" + "|".join(":----:" if c == "Rank" else "---" for c in columns) + "|\n")
     table = header + "\n".join(rows)
-    return table + ("" if kind == DEMO else "\n\n" + SCORE_NOTE)
+    return table + "\n\n" + SCORE_NOTE
 
 
 def _md_list(values: Any) -> str:
@@ -640,8 +626,8 @@ def _format_full_explanation(candidate: Dict) -> str:
 # reads the loaded pipeline's, from the status). The table rows are built once,
 # by `_identity_rows`, so the report, the drawer and the badge's comparison
 # cannot describe one result two ways. Every part states its state in the contract's words (verified,
-# unverified, in_memory, supplied_in_memory, absent); a value that is not there
-# is written as that state and its reason, never left blank and never "unknown".
+# computed, absent); a value that is not there is written as that state and its
+# reason, never left blank and never "unknown".
 
 #: The plan's claim boundary for the UI (PLAN_PROVENANCE_CONTRACT.md §6), verbatim.
 #: Verified states carry ✓ in the identity table, so the sentence refers to them.
@@ -650,8 +636,9 @@ IDENTITY_CLAIM_BOUNDARY = (
     "on the relations marked ✓. Not checked: who changed them, or anything a "
     "person able to edit both files and records could alter."
 )
-#: Added under it when a served identity, or the demo answer, has no part marked
-#: ✓, so it is not read as a claim that something about this result was checked.
+#: Added under it when a served identity has no part marked ✓ (one the response
+#: left parts of out), so it is not read as a claim that something about this
+#: result was checked.
 IDENTITY_NOTHING_CHECKED = (
     "No relation is marked ✓ for this result: nothing in it was checked against a record."
 )
@@ -671,13 +658,13 @@ IDENTITY_CHECKS_NOT_REPORTED = (
 #: for the words: the shared renderers, which Model Facts also uses).
 NOT_A_MEDICAL_DEVICE = _NOT_A_MEDICAL_DEVICE
 
-#: The word for the demo answer (`served_identity` null: no pipeline is
-#: configured, nothing was served). It fills every identity cell and column.
-IDENTITY_DEMO = "demo"
-#: The word for a response that carried no `served_identity` at all (a server
-#: from before contract M3c, or a malformed reply), or a part of one it left out.
-#: Never "demo": that would claim the server said no pipeline was configured.
+#: The word for a response that carried no `served_identity` (a server from
+#: before contract M3c, or a malformed reply), or a part of one it left out.
 IDENTITY_NOT_REPORTED = "not_reported"
+#: The word for what is in use now when the card's read found no model loaded
+#: (the identity drawer's "In use now" side). A result never has it: every
+#: result comes from a model.
+IDENTITY_NO_MODEL = "no_model"
 _SERVED = "served"
 
 _VERIFIED_MARK = "✓"
@@ -703,13 +690,12 @@ _IDENTITY_PARTS = (
 )
 #: Why nothing can be said, for the two kinds that have no identity to read.
 _NO_IDENTITY_REASON = {
-    IDENTITY_DEMO: "no pipeline is configured on this server; nothing was served",
     IDENTITY_NOT_REPORTED: "the API's response did not carry a served identity",
+    IDENTITY_NO_MODEL: "no model is loaded on this server now; nothing is served",
 }
 _SCORING_MODE_WORDS = {
     "gnn_plus_shortest_path": "the GNN score combined with the shortest-path table",
     "gnn_only": "the GNN score alone",
-    "path_reasoning_fallback": "path reasoning over the knowledge graph alone",
     "disease_task": "a model finetuned for the disease task, over its graph view",
     "gene_task": "a model finetuned for the gene task: its similarity mixed with "
                  "shortest-path proximity",
@@ -717,33 +703,37 @@ _SCORING_MODE_WORDS = {
                         "similarity",
 }
 _PATH_SETTING_KEYS = (
-    "max_path_length", "path_length_penalty", "aggregation_method",
-    "max_paths_per_candidate", "use_direct_path_optimization",
+    "max_path_length", "path_length_penalty", "max_paths_per_candidate",
+    "use_direct_path_optimization",
 )
 
 #: (headline, detail) for each state a reader must not miss. Words carry the
 #: meaning; the tab adds an icon, the report a blockquote, neither relies on it.
 #: Defined once in the shared renderers (Model Facts' warnings say the same).
 _IDENTITY_BANNERS = IDENTITY_BANNERS
-assert set(_IDENTITY_BANNERS) >= {IDENTITY_DEMO, IDENTITY_NOT_REPORTED, "synthetic",
-                                  "no_model", "no_sp"}
+assert set(_IDENTITY_BANNERS) >= {IDENTITY_NOT_REPORTED, "synthetic", "no_sp"}
 
 
 def _identity_of(container: Dict[str, Any]) -> Tuple[str, Optional[Dict[str, Any]]]:
     """What a diagnosis result says produced it: ``(kind, identity)``.
 
-    ``kind`` is ``"served"`` with the identity dict, ``"demo"`` when the API sent
-    ``served_identity: null`` (its demo answer, no pipeline configured), or
-    ``"not_reported"`` when the key is missing or is not an object.
+    ``kind`` is ``"served"`` with the identity dict, or ``"not_reported"`` when
+    the key is missing or is not an object.
     """
-    if "served_identity" not in container:
-        return IDENTITY_NOT_REPORTED, None
-    identity = container["served_identity"]
-    if identity is None:
-        return IDENTITY_DEMO, None
+    identity = container.get("served_identity")
     if not isinstance(identity, dict):
         return IDENTITY_NOT_REPORTED, None
     return _SERVED, identity
+
+
+def _served_now(state: Mapping[str, Any]) -> Tuple[str, Optional[Dict[str, Any]]]:
+    """What the card's last read says is in use now: ``(kind, identity)``,
+    ``"no_model"`` when no pipeline is loaded, ``"not_reported"`` for a status
+    that names a pipeline and no identity."""
+    status = state.get("status") or {}
+    if not status.get("initialized"):
+        return IDENTITY_NO_MODEL, None
+    return _identity_of(status)
 
 
 def _field(part: Any, key: str) -> Any:
@@ -757,10 +747,6 @@ def _is_sha256(value: Any) -> bool:
 
 def _is_synthetic(identity: Dict[str, Any]) -> bool:
     return _field(_field(identity, "dataset_record"), "origin") == "synthetic"
-
-
-def _has_model(identity: Dict[str, Any]) -> bool:
-    return _field(_field(identity, "checkpoint"), "state") in ("verified", "supplied_in_memory")
 
 
 def _plain_value(value: Any) -> str:
@@ -821,12 +807,6 @@ def _checkpoint_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
     state = _field(part, "state")
     if state == "verified":
         return f"{_VERIFIED_MARK} verified", _md_digest(_field(part, "sha256"))
-    if state == "supplied_in_memory":
-        return ("supplied\\_in\\_memory",
-                "none — a model object was supplied in memory; no checkpoint bytes were read")
-    if state == "absent":
-        return ("absent", "absent — no trained model is served; path reasoning ranks "
-                "the candidates (path-reasoning fallback)")
     return _NOT_REPORTED_CELLS
 
 
@@ -835,11 +815,6 @@ def _graph_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
     state = _field(part, "state")
     if state == "verified":
         return f"{_VERIFIED_MARK} verified", _md_digest(_field(part, "kg_sha256"))
-    if state == "unverified":
-        return ("unverified", f"{_md_digest(_field(part, 'kg_sha256'))} — read from a "
-                "file, checked against no workspace manifest")
-    if state == "in_memory":
-        return "in\\_memory", "none — the graph was supplied in memory; no file was read"
     return _NOT_REPORTED_CELLS
 
 
@@ -849,11 +824,6 @@ def _manifest_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
     if state == "verified":
         return (f"{_VERIFIED_MARK} verified",
                 _md_digest(_field(part, "split_manifest_sha256")))
-    if state == "unverified":
-        return ("absent", "absent — no workspace manifest was read (serving without "
-                "a checkpoint verifies no workspace)")
-    if state == "in_memory":
-        return "absent", "absent — the graph was supplied in memory, from no workspace"
     return _NOT_REPORTED_CELLS
 
 
@@ -874,8 +844,6 @@ def _shortest_path_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
             reason = "a disease task model scores without one"
         elif _field(identity, "scoring_mode") == "patients_like_me":
             reason = "a patients-like-me model scores without one"
-        elif not _has_model(identity):
-            reason = "no model is served to combine it with (path-reasoning fallback)"
         else:
             reason = "it does not contribute to the score"
         return "absent", f"absent — no table is served; {reason}"
@@ -900,8 +868,6 @@ def _dataset_record_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
         meaning = _DATASET_ORIGIN_MEANING.get(origin, "not described by this page")
         return (f"{_VERIFIED_MARK} verified · {_md_text(origin)}",
                 f"{_md_digest(_field(part, 'sha256'))} — origin {_md_text(origin)}: {meaning}")
-    if state == "absent":
-        return "absent", "absent — no workspace was verified, so no dataset record was read"
     return _NOT_REPORTED_CELLS
 
 
@@ -916,15 +882,9 @@ def _scoring_mode_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
 def _device_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
     settings = _field(identity, "settings")
     device, requested = _field(settings, "device"), _field(settings, "device_requested")
-    if device is _MISSING or requested is _MISSING:
+    if device in (_MISSING, None) or requested in (_MISSING, None):
         return _NOT_REPORTED_CELLS
-    if device is None and requested is None and not _has_model(identity):
-        return "none", "none — no model is served, so nothing runs on a device"
-    in_effect = (_md_code(device) if device is not None
-                 else "not stated by the model supplied in memory")
-    asked = (_md_code(requested) if requested is not None
-             else "none (a model supplied in memory stays on its own device)")
-    return "in effect", f"{in_effect} in effect; requested: {asked}"
+    return "in effect", f"{_md_code(device)} in effect; requested: {_md_code(requested)}"
 
 
 def _eta_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
@@ -936,8 +896,7 @@ def _eta_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
     if eta is None and _field(identity, "scoring_mode") == "patients_like_me":
         return "none", "none — a patients-like-me model has no terms to mix"
     if eta is None:
-        return ("none", "none — no model is served, so there are no GNN and "
-                "shortest-path terms to mix")
+        return _NOT_REPORTED_CELLS
     mode = _field(identity, "scoring_mode")
     note = (" — no shortest-path table, so the GNN score is used alone"
             if mode == "gnn_only" else
@@ -1002,7 +961,7 @@ def _claim_boundary_lines(kind: str, identity: Optional[Dict[str, Any]],
     # **Not reported is not "nothing checked".** A response without a served
     # identity may come from a server that did check its inputs (one from
     # before contract M3c, for example); the panel was only not told, so it
-    # says that. The demo answer keeps the line: nothing was served there.
+    # says that.
     if kind == IDENTITY_NOT_REPORTED:
         lines.append(IDENTITY_CHECKS_NOT_REPORTED)
     elif not any(state.startswith(_VERIFIED_MARK)
@@ -1029,9 +988,7 @@ def _identity_banners(kind: str, identity: Optional[Dict[str, Any]]) -> List[Tup
     banners = []
     if _is_synthetic(identity):
         banners.append(_IDENTITY_BANNERS["synthetic"])
-    if _field(_field(identity, "checkpoint"), "state") == "absent":
-        banners.append(_IDENTITY_BANNERS["no_model"])
-    elif _field(identity, "scoring_mode") == "gnn_only":
+    if _field(identity, "scoring_mode") == "gnn_only":
         banners.append(_IDENTITY_BANNERS["no_sp"])
     return banners
 
@@ -1050,9 +1007,7 @@ _CSV_SCORE_COLUMNS = {
     SERVED_MIXTURE: ["served_score", "model_term", "sp_term_status", "sp_term_score",
                      "sp_term_mean_hop_distance", "sp_term_phenotypes_mapped",
                      "sp_term_phenotypes_submitted", "sp_term_mixed_as"],
-    PATH_REASONING: ["path_score"],
     DISEASE_TASK: ["score"],
-    DEMO: [],
 }
 _CSV_EVIDENCE_COLUMNS = ["evidence_label", "evidence_mode", "evidence_summary",
                          "min_path_length", "num_direct_paths", "num_analogies",
@@ -1074,12 +1029,11 @@ _CSV_TASK_COLUMNS = {
 
 def _candidate_csv_columns(kind: Optional[str]) -> List[str]:
     """The kind's candidate columns, in order: a task kind's own
-    (`_CSV_TASK_COLUMNS`); for a disease kind, the evidence columns for the
-    served kinds only (the demo answer has none), the matches for every kind."""
+    (`_CSV_TASK_COLUMNS`); for a disease kind, its score columns, the evidence
+    columns and the matches."""
     if kind in _CSV_TASK_COLUMNS:
         return list(_CSV_TASK_COLUMNS[kind])
-    evidence = [] if kind == DEMO else _CSV_EVIDENCE_COLUMNS
-    return (_CSV_BASE_COLUMNS + _CSV_SCORE_COLUMNS.get(kind, []) + evidence
+    return (_CSV_BASE_COLUMNS + _CSV_SCORE_COLUMNS.get(kind, []) + _CSV_EVIDENCE_COLUMNS
             + ["matching_phenotypes"])
 
 
@@ -1109,13 +1063,9 @@ def _result_csv_values(result: Mapping[str, Any]) -> Dict[str, Any]:
 # Digests are written in full as "sha256:<hex>" -- the prefix names the
 # algorithm and stops a spreadsheet reading an all-digit digest as a number. A
 # value the identity holds as null is written as a word, never an empty cell:
-#   absent        the part is absent: no checkpoint, table, manifest or record
-#   none          nothing applies: no device or eta without a model, no digest
-#                 for a model or graph supplied in memory, no device requested
-#                 for a model supplied in memory
-#   not_stated    a model supplied in memory that does not say its device
-#   demo          every column of the demo answer (`served_identity` null: no
-#                 pipeline configured, nothing served)
+#   absent        the part is absent: no shortest-path table (its build id and
+#                 hop bound)
+#   none          nothing applies: no eta for a model that mixes nothing
 #   not_reported  every column of a response with no `served_identity`, or a
 #                 value one left out
 _SERVED_CSV_COLUMNS = [
@@ -1127,7 +1077,7 @@ _SERVED_CSV_COLUMNS = [
     "served_dataset_record_sha256",
     "served_device", "served_device_requested", "served_eta",
     "served_max_path_length", "served_path_length_penalty",
-    "served_aggregation_method", "served_max_paths_per_candidate",
+    "served_max_paths_per_candidate",
     "served_direct_path_optimization", "served_phenotype_normalisation_version",
 ]
 
@@ -1178,36 +1128,31 @@ def _served_csv_values(result: Dict[str, Any]) -> Dict[str, str]:
     shortest_paths = _field(identity, "shortest_paths")
     record = _field(identity, "dataset_record")
     settings = _field(identity, "settings")
-    checkpoint_state = _field(checkpoint, "state")
-    model = _has_model(identity)
+    missing = IDENTITY_NOT_REPORTED
 
-    def setting(key: str, null_word: str = "none") -> str:
+    def setting(key: str, null_word: str = missing) -> str:
         return _csv_value(_field(settings, key), null_word)
 
     return {
-        "served_scoring_mode": _csv_value(_field(identity, "scoring_mode"), IDENTITY_NOT_REPORTED),
-        "served_checkpoint_state": _csv_value(checkpoint_state, IDENTITY_NOT_REPORTED),
-        "served_checkpoint_sha256": _csv_digest(
-            _field(checkpoint, "sha256"),
-            "none" if checkpoint_state == "supplied_in_memory" else "absent",
-        ),
-        "served_kg_state": _csv_value(_field(graph, "state"), IDENTITY_NOT_REPORTED),
-        "served_kg_sha256": _csv_digest(_field(graph, "kg_sha256"), "none"),
+        "served_scoring_mode": _csv_value(_field(identity, "scoring_mode"), missing),
+        "served_checkpoint_state": _csv_value(_field(checkpoint, "state"), missing),
+        "served_checkpoint_sha256": _csv_digest(_field(checkpoint, "sha256"), missing),
+        "served_kg_state": _csv_value(_field(graph, "state"), missing),
+        "served_kg_sha256": _csv_digest(_field(graph, "kg_sha256"), missing),
         "served_split_manifest_sha256": _csv_digest(
-            _field(graph, "split_manifest_sha256"), "absent"
+            _field(graph, "split_manifest_sha256"), missing
         ),
-        "served_sp_state": _csv_value(_field(shortest_paths, "state"), IDENTITY_NOT_REPORTED),
+        "served_sp_state": _csv_value(_field(shortest_paths, "state"), missing),
         "served_sp_build_id": _csv_value(_field(shortest_paths, "build_id"), "absent"),
         "served_sp_max_hops": _csv_value(_field(shortest_paths, "max_hops"), "absent"),
-        "served_dataset_record_state": _csv_value(_field(record, "state"), IDENTITY_NOT_REPORTED),
-        "served_dataset_origin": _csv_value(_field(record, "origin"), "absent"),
-        "served_dataset_record_sha256": _csv_digest(_field(record, "sha256"), "absent"),
-        "served_device": setting("device", "not_stated" if model else "none"),
+        "served_dataset_record_state": _csv_value(_field(record, "state"), missing),
+        "served_dataset_origin": _csv_value(_field(record, "origin"), missing),
+        "served_dataset_record_sha256": _csv_digest(_field(record, "sha256"), missing),
+        "served_device": setting("device"),
         "served_device_requested": setting("device_requested"),
-        "served_eta": setting("eta"),
-        "served_max_path_length": setting("max_path_length", IDENTITY_NOT_REPORTED),
-        "served_path_length_penalty": setting("path_length_penalty", IDENTITY_NOT_REPORTED),
-        "served_aggregation_method": setting("aggregation_method", IDENTITY_NOT_REPORTED),
+        "served_eta": setting("eta", "none"),
+        "served_max_path_length": setting("max_path_length"),
+        "served_path_length_penalty": setting("path_length_penalty"),
         "served_max_paths_per_candidate": setting(
             "max_paths_per_candidate", IDENTITY_NOT_REPORTED
         ),
@@ -1288,7 +1233,6 @@ def _build_results_csv(result: Dict[str, Any]) -> str:
             "sp_term_phenotypes_mapped": sp.get("phenotypes_mapped", ""),
             "sp_term_phenotypes_submitted": sp.get("phenotypes_submitted", ""),
             "sp_term_mixed_as": _fmt_num(sp.get("mixed_as")),
-            "path_score": _fmt_num(c.get("path_score")),
             "score": _fmt_num(c.get("score")),
             "evidence_label": _csv_text(c.get("evidence_label") or ""),
             "evidence_mode": _csv_text((pkg or {}).get("mode") or ""),
@@ -1363,13 +1307,9 @@ def _build_results_report_md(result: Dict[str, Any]) -> str:
         lines += [
             "",
             f"### #{c.get('rank')} — {c.get('disease_name')}",
-            f"`{_clean_disease_id(c.get('disease_id', ''))}`"
-            + (f" · score {_num(score)}" if result_kind != DEMO else ""),
+            f"`{_clean_disease_id(c.get('disease_id', ''))}` · score {_num(score)}",
             "",
         ]
-        if result_kind == DEMO:     # it never carries evidence, whatever the option
-            lines += ["*The demo answer carries no evidence or explanation.*", "", "---"]
-            continue
         lines += [
             "**Evidence**",
             "",
@@ -1428,23 +1368,18 @@ def _export_dir() -> Path:
 
 
 def _export_basename(result: Dict[str, Any]) -> str:
-    """diagnosis_[SYNTHETIC_|DEMO_]<patient>_<session-signature> — distinct per
-    run for easy filing.
+    """diagnosis_[SYNTHETIC_]<patient>_<session-signature> — distinct per run
+    for easy filing.
 
-    **A file name carries the two states a copied file must not lose** (contract
-    M3c): SYNTHETIC for a result from a synthetic workspace, DEMO for the demo
-    answer. A CSV has no place for a banner, and a file is often seen by its
-    name alone.
+    **A file name carries the state a copied file must not lose** (contract
+    M3c): SYNTHETIC for a result from a synthetic workspace. A CSV has no place
+    for a banner, and a file is often seen by its name alone.
     """
     patient = _slug(result.get("patient_id"), "webui_patient")
     session = _slug(result.get("session_id") or result.get("timestamp"), "run")
     kind, identity = _identity_of(result)
-    if kind == IDENTITY_DEMO:
-        marker = "DEMO_"
-    elif kind == _SERVED and identity is not None and _is_synthetic(identity):
-        marker = "SYNTHETIC_"
-    else:
-        marker = ""
+    marker = ("SYNTHETIC_" if kind == _SERVED and identity is not None
+              and _is_synthetic(identity) else "")
     return f"diagnosis_{marker}{patient}_{session}"
 
 
@@ -1530,8 +1465,8 @@ TOPIC_HELP = {
         "Score",
         SCORE_NOTE + " 0.72 does not mean a 72% chance of the disease.\n\n"
         "The kind above the table names it. Mixture: η × model term + "
-        "(1 − η) × SP, or the model term alone without an SP table. No model: the "
-        "path score. Disease task model: its head's score, 0 or below.\n\n"
+        "(1 − η) × SP, or the model term alone without an SP table. Disease task "
+        "model: its head's score, 0 or below.\n\n"
         "SP 0.273 (3/4): from 3 of the 4 phenotypes submitted. SP in words: no number.",
     ),
     "dx-gene-score": (
@@ -1563,9 +1498,9 @@ TOPIC_HELP = {
     ),
     "dx-run-no-model": (
         "Run Diagnosis is disabled",
-        "No model loaded: no pipeline is configured on this server, so nothing would compute "
-        "a diagnosis. An operator loads one with \"Load a model…\" on the card above. (An API "
-        "client asking now gets the demo answer, marked as such.)",
+        "No model loaded: nothing is served on this server, so nothing would compute a "
+        "diagnosis. An operator loads one with \"Load a model…\" on the card above. (An API "
+        "client asking now is refused, with this reason.)",
     ),
     "dx-run-change": (
         "Run Diagnosis is disabled",
@@ -1715,15 +1650,8 @@ def compare_with_served(result: Mapping[str, Any], state: Mapping[str, Any]) -> 
                            f"before this result was produced "
                            f"({card.hhmmss(_produced_at(result))}), so \"Produced by the model in "
                            f"use\" is not shown. {keep}")}
-    status = state.get("status") or {}
-    served = status.get("served_identity") if status.get("initialized") else None
-    served_kind_ = _SERVED if isinstance(served, dict) else IDENTITY_DEMO
-    if kind == IDENTITY_DEMO and served_kind_ == IDENTITY_DEMO:
-        return {"state": "unknown", "total": total, "differ": [],
-                "reason": "This is the demo answer: no pipeline is configured, so no model "
-                          "produced it."}
     mine = _identity_rows(kind, identity)
-    now = _identity_rows(served_kind_, served if isinstance(served, dict) else None)
+    now = _identity_rows(*_served_now(state))
     differ = [part for (part, s1, v1), (_, s2, v2) in zip(mine, now, strict=True)
               if (s1, v1) != (s2, v2)]
     return {"state": "differs" if differ else "equal", "total": total, "differ": differ,
@@ -1766,7 +1694,7 @@ def banners_html(result: Mapping[str, Any]) -> str:
     out = []
     for headline, _detail in _identity_banners(kind, identity):
         key = _BANNER_KEYS.get(headline, "")
-        tone = "red" if key in ("demo", "not_reported", "no_model") else "amber"
+        tone = "red" if key == "not_reported" else "amber"
         out.append(f'<div class="shep-dx-banner shep-dx-banner-{tone}" role="note">'
                    f'<span class="shep-dx-banner-ic" aria-hidden="true">⚠</span>'
                    f'<b>{_e(headline)}</b>'
@@ -1780,8 +1708,7 @@ def candidates_table_html(candidates: List[Mapping[str, Any]], selected: Any,
     or by Enter or Space when focused. Every value is escaped; a long name is
     clamped to two lines with the full name in its title. A mixture shows its
     score and model term, and its SP record in words when a table is served
-    (`shows_sp`); a path-reasoning result its path score; a disease task model
-    its head's score; the demo no score."""
+    (`shows_sp`); a disease task model its head's score."""
     if kind is None:
         return f'<div class="shep-reason">{_e(KIND_NOT_REPORTED)}</div>'
     if not candidates:
@@ -1795,9 +1722,8 @@ def candidates_table_html(candidates: List[Mapping[str, Any]], selected: Any,
         on = rank == selected
         name = _e(c.get("disease_name"))
         cells = (f'<td class="shep-num">{_e(rank)}</td><td class="shep-dx-dis">'
-                 f'<span class="shep-dx-clamp" title="{name}">{name}</span></td>')
-        if kind != DEMO:
-            cells += f'<td class="shep-num">{_num(_score(c, kind))}</td>'
+                 f'<span class="shep-dx-clamp" title="{name}">{name}</span></td>'
+                 f'<td class="shep-num">{_num(_score(c, kind))}</td>')
         if kind == SERVED_MIXTURE:
             cells += f'<td class="shep-num">{_num(c.get("model_term"))}</td>'
             if shows_sp:
@@ -1807,22 +1733,18 @@ def candidates_table_html(candidates: List[Mapping[str, Any]], selected: Any,
                              and sp_term.get("status") in SP_NUMERIC_STATUSES)
                 cells += (f'<td class="shep-num{" shep-dx-sp" if words else ""}">'
                           f'{_e(sp_text(sp_term, compact=True))}</td>')
-        if kind != DEMO:
-            label = c.get("evidence_label") or "—"
-            cells += (f'<td><span class="shep-dx-dot shep-dx-dot-{_DOT_CLASS.get(label, "none")}"'
-                      f' aria-hidden="true"></span>{_e(label)}</td>')
+        label = c.get("evidence_label") or "—"
+        cells += (f'<td><span class="shep-dx-dot shep-dx-dot-{_DOT_CLASS.get(label, "none")}"'
+                  f' aria-hidden="true"></span>{_e(label)}</td>')
         rows.append(f'<tr data-key="{_e(rank)}" tabindex="0" aria-selected='
                     f'"{"true" if on else "false"}"{selected_class if on else ""}>{cells}</tr>')
-    head = '<th scope="col" class="shep-num">Rank</th><th scope="col">Disease</th>'
-    if kind != DEMO:
-        head += (f'<th scope="col" class="shep-num">Score{help_button("dx-score", "Score")}'
-                 '</th>')
+    head = ('<th scope="col" class="shep-num">Rank</th><th scope="col">Disease</th>'
+            f'<th scope="col" class="shep-num">Score{help_button("dx-score", "Score")}</th>')
     if kind == SERVED_MIXTURE:
         head += '<th scope="col" class="shep-num">Model term</th>'
         if shows_sp:
             head += '<th scope="col" class="shep-num">SP</th>'
-    if kind != DEMO:
-        head += '<th scope="col">Evidence</th>'
+    head += '<th scope="col">Evidence</th>'
     return ('<div class="shep-tbl-wrap shep-dx-tbl-wrap"><table class="shep-tbl shep-dx-tbl" '
             f'aria-label="Ranked candidates"><thead><tr>{head}</tr></thead><tbody>'
             f'{"".join(rows)}</tbody></table></div>')
@@ -1938,8 +1860,7 @@ def details_header_html(candidate: Optional[Mapping[str, Any]], kind: Optional[s
                         shows_sp: bool = False) -> str:
     """The selected candidate's name, id and its kind's values: the score and
     model term of a mixture (its SP record on a line of its own when a table is
-    served), the score alone with no model or a disease task model, none in the
-    demo answer."""
+    served), the score alone for a disease task model."""
     if candidate is None:
         return '<div class="shep-panel-hd"><h2>Candidate details</h2></div>'
     if kind == GENE_TASK:
@@ -1953,7 +1874,7 @@ def details_header_html(candidate: Optional[Mapping[str, Any]], kind: Optional[s
                 f'<p class="shep-dx-det-sub">Reference patient · Similarity '
                 f'<b>{_num(candidate.get("similarity"))}</b></p></div>')
     values = ""
-    if kind not in (None, DEMO):
+    if kind is not None:
         values = f" Score <b>{_num(_score(candidate, kind))}</b>"
     if kind == SERVED_MIXTURE:
         values += f" · Model term {_num(candidate.get('model_term'))}"
@@ -2109,13 +2030,10 @@ def details_outputs(result: Optional[Mapping[str, Any]], rank: Any,
                 "details_html": view_update(True, *_HTML_VIEW, value=details_empty_html()),
                 "details_md": view_update(False, *_MD_VIEW), "details_ft": ""}
     kind = _result_kind(result)
-    if kind == DEMO or kind in TASK_ROW_KINDS:
-        # No segment is offered: the demo answer ran no query (an empty
-        # matching list or path list is not a finding; the report says the
-        # same), and a gene or a reference patient has no evidence,
-        # explanation or path, only its values.
-        body = (f'<p class="shep-muted">{DEMO_DETAILS}</p>' if kind == DEMO
-                else task_details_html(candidate, kind, result))
+    if kind in TASK_ROW_KINDS:
+        # No segment is offered: a gene or a reference patient has no
+        # evidence, explanation or path, only its values.
+        body = task_details_html(candidate, kind, result)
         return {"details_hd": details_header_html(candidate, kind),
                 "details_seg": view_update(False, "shep-seg"),
                 "details_html": view_update(True, *_HTML_VIEW, value=body),
@@ -2161,10 +2079,7 @@ def result_identity_md(result: Optional[Mapping[str, Any]], state: Mapping[str, 
     mine = _identity_rows(kind, identity)
     lines: List[str] = []
     if compared["state"] in ("equal", "differs"):
-        status = state.get("status") or {}
-        served = status.get("served_identity") if status.get("initialized") else None
-        now = _identity_rows(_SERVED if isinstance(served, dict) else IDENTITY_DEMO,
-                             served if isinstance(served, dict) else None)
+        now = _identity_rows(*_served_now(state))
         when = card.hhmmss(state.get("good_at"))
         if compared["state"] == "differs":
             n = len(compared["differ"])

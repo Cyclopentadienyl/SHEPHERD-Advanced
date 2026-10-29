@@ -110,7 +110,7 @@ def _identity(mode, sha256):
         dataset_record=ServedDatasetRecord(state="verified", origin="synthetic", sha256="3" * 64),
         settings=ServedSettings(
             device="cpu", device_requested="cpu", eta=1.0, max_path_length=4,
-            path_length_penalty=0.9, aggregation_method="weighted_sum",
+            path_length_penalty=0.9,
             max_paths_per_candidate=10, use_direct_path_optimization=True,
             phenotype_normalisation_version=1),
     ).to_dict()

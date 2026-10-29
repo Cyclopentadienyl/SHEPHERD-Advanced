@@ -728,19 +728,6 @@ class PathReasonerProtocol(Protocol):
         """
         ...
 
-    def aggregate_path_scores(
-        self,
-        scored_paths: List[Tuple[List[NodeID], float]],
-        target_ids: List[NodeID],
-    ) -> Dict[NodeID, float]:
-        """
-        聚合到同一目標的路徑分數
-
-        Returns:
-            {target_id: aggregated_score}
-        """
-        ...
-
 
 @runtime_checkable
 class OrthologReasonerProtocol(Protocol):

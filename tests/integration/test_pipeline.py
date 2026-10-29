@@ -31,7 +31,7 @@ from src.core.types import (
     PatientPhenotypes,
 )
 from src.kg import KnowledgeGraph
-from src.inference import DiagnosisPipeline, PipelineConfig, create_diagnosis_pipeline
+from src.inference import DiagnosisPipeline, PipelineConfig
 from src.models.gnn import ShepherdGNN, ShepherdGNNConfig
 
 
@@ -173,118 +173,6 @@ def gnn_model_and_data(medium_kg):
     return model, graph_data
 
 
-# =============================================================================
-# Test: GNN Pipeline End-to-End
-# =============================================================================
-class TestGNNPipelineE2E:
-    """End-to-end tests for GNN-powered diagnosis pipeline."""
-
-    def test_full_diagnosis_with_gnn(self, medium_kg, gnn_model_and_data):
-        """Full pipeline: phenotypes → BFS paths → GNN scoring → ranked results."""
-        model, graph_data = gnn_model_and_data
-        pipeline = DiagnosisPipeline(
-            kg=medium_kg,
-            model=model,
-            graph_data=graph_data,
-        )
-        assert pipeline._gnn_ready
-
-        patient = PatientPhenotypes(
-            patient_id="e2e_test_001",
-            phenotypes=["HP:0000001", "HP:0000002"],  # Should lead to Disease1 via GeneA
-        )
-
-        result = pipeline.run(patient, top_k=5, include_explanations=True)
-
-        # Basic sanity
-        assert len(result.candidates) > 0
-        assert result.inference_time_ms > 0
-
-        # A model with no SP table: served_mixture/v1, ranked by the model term
-        # alone, every SP record NO_TABLE (no number, nothing mixed).
-        assert result.result_kind == "served_mixture/v1"
-        assert result.eta == 1.0 and result.candidates_reached >= len(result.candidates)
-        for c in result.candidates:
-            assert c.model_term != 0.0
-            assert c.served_score == c.model_term
-            assert 0.0 <= c.model_term <= 1.0
-            assert c.sp_term.status == "NO_TABLE" and c.sp_term.score is None
-
-        # Top candidate should have reasoning paths
-        top = result.candidates[0]
-        assert top.rank == 1
-        assert top.explanation is not None
-
-    def test_different_phenotype_sets_give_different_embeddings(
-        self, medium_kg, gnn_model_and_data
-    ):
-        """Different phenotype inputs should produce different patient embeddings."""
-        model, graph_data = gnn_model_and_data
-        pipeline = DiagnosisPipeline(
-            kg=medium_kg, model=model, graph_data=graph_data,
-        )
-
-        node_mapping = pipeline._node_id_to_idx
-        pheno_type = NodeType.PHENOTYPE.value
-        pheno_emb = pipeline._node_embeddings[pheno_type]
-
-        # Get embedding for phenotype set A (indices 0, 1) vs set B (indices 6, 7)
-        pheno_map = node_mapping[pheno_type]
-        idx_a = [pheno_map[f"hpo:HP:0000001"], pheno_map[f"hpo:HP:0000002"]]
-        idx_b = [pheno_map[f"hpo:HP:0000007"], pheno_map[f"hpo:HP:0000008"]]
-
-        emb_a = pheno_emb[torch.tensor(idx_a)].mean(dim=0)
-        emb_b = pheno_emb[torch.tensor(idx_b)].mean(dim=0)
-
-        # Different phenotype sets should have different aggregated embeddings
-        assert not torch.allclose(emb_a, emb_b, atol=1e-6), (
-            "Different phenotype sets should produce different patient embeddings"
-        )
-
-    def test_a_pipeline_with_no_model_serves_path_reasoning(self, medium_kg):
-        """Moved from the removed `scripts/test_gnn_inference.py` (its step 4,
-        which pinned a fake GNN 0.0): with no model source the result is
-        `path_reasoning/v1`, ranked by the path score, and no candidate carries
-        a model term, a served score or an SP record (Spec 1 §2.1)."""
-        from src.core.types import PathReasoningCandidate
-
-        pipeline = DiagnosisPipeline(kg=medium_kg)
-        assert pipeline._gnn_ready is False
-        patient = PatientPhenotypes(
-            patient_id="path_only", phenotypes=["HP:0000001", "HP:0000002"])
-
-        result = pipeline.run(patient, top_k=5, include_explanations=False)
-
-        assert result.result_kind == "path_reasoning/v1"
-        assert result.path_score_aggregation == "weighted_sum/v1"
-        assert result.candidates_reached is None and result.eta is None
-        assert result.label == "No model loaded: ranked by path reasoning, not by a model"
-        assert result.candidates
-        for c in result.candidates:
-            assert type(c) is PathReasoningCandidate
-            assert 0.0 <= c.path_score <= 1.0
-            assert not any(hasattr(c, name) for name in ("model_term", "served_score", "sp_term"))
-
-    def test_gnn_scores_reproducible(self, medium_kg, gnn_model_and_data):
-        """Same input should produce identical GNN scores (deterministic)."""
-        model, graph_data = gnn_model_and_data
-        pipeline = DiagnosisPipeline(
-            kg=medium_kg, model=model, graph_data=graph_data,
-        )
-
-        patient = PatientPhenotypes(
-            patient_id="repro", phenotypes=["HP:0000003", "HP:0000004"],
-        )
-
-        result1 = pipeline.run(patient, top_k=5, include_explanations=False)
-        result2 = pipeline.run(patient, top_k=5, include_explanations=False)
-
-        scores1 = [c.model_term for c in result1.candidates]
-        scores2 = [c.model_term for c in result2.candidates]
-        assert scores1 == scores2
-# =============================================================================
-# Test: Checkpoint Save → Load → Inference (full bridge)
-# =============================================================================
 def bind_workspace(kg, graph_data, data_dir, feature_dim: int = 32) -> Path:
     """Write these exact tensors into a workspace whose manifest binds them.
 
@@ -555,6 +443,13 @@ class TestShortestPathIntegration:
         model, graph_data = gnn_model_and_data
         data_dir = tmp_path / "data"
         kg_path = bind_workspace(medium_kg, graph_data, data_dir)
+        ckpt_path = tmp_path / "ckpt.pt"
+        torch.save({
+            "epoch": 1,
+            "model_state_dict": model.state_dict(),
+            "config": {"hidden_dim": 32, "num_layers": 2, "num_heads": 4, "conv_type": "gat"},
+        }, ckpt_path)
+        record_training_graph(ckpt_path, data_dir)
 
         spec = importlib.util.spec_from_file_location(
             "compute_shortest_paths",
@@ -573,7 +468,7 @@ class TestShortestPathIntegration:
         with pytest.raises(ValueError, match="different graph"):
             DiagnosisPipeline(
                 graph=KnowledgeGraph.read_json(kg_path),
-                model=model,
+                checkpoint_path=str(ckpt_path),
                 data_dir=str(data_dir),
                 device="cpu",
             )
@@ -773,45 +668,38 @@ class TestShortestPathIntegration:
             # SP score should be in [0, 1]
             assert 0.0 <= c.sp_term.score <= 1.0
 
-    def test_sp_score_higher_for_closer_phenotypes(self, medium_kg, tmp_path):
+    def test_sp_score_higher_for_closer_phenotypes(
+        self, medium_kg, gnn_model_and_data, tmp_path
+    ):
         """Direct test of the one SP caller, `sp_analysis_records`: a closer
-        disease has the smaller mean hop distance and the higher SP score."""
-        # Pipeline with no model (just enough state for SP lookup)
-        pipeline = DiagnosisPipeline(kg=medium_kg)
-        pipeline._node_id_to_idx = medium_kg.get_node_id_mapping()
+        disease has the smaller mean hop distance and the higher SP score.
 
-        # Build SP table with the production script, then load it through the pipeline's OWN
-        # loader. Hand-building the lookup state here is what let this test rot when the table
-        # moved from a per-pair dict to a CSR layout, and again when 5a replaced that with a
-        # composite key; going through _load_shortest_paths keeps it honest against the next
-        # change to that structure, and there is now only one builder it could go through.
-        import importlib.util
-        spec = importlib.util.spec_from_file_location(
-            "compute_shortest_paths",
-            Path(__file__).parent.parent.parent / "scripts" / "compute_shortest_paths.py",
+        The table is built with the production script and loaded through the
+        pipeline's OWN loader, over a workspace it binds. Hand-building the lookup
+        state here is what let this test rot when the table moved from a per-pair
+        dict to a CSR layout, and again when 5a replaced that with a composite
+        key; going through `_load_shortest_paths` keeps it honest against the next
+        change to that structure, and there is only one builder it could go
+        through. A pipeline is built from a checkpoint since K7 (none is served
+        without a model), so the model is the one other tests here save."""
+        model, graph_data = gnn_model_and_data
+        data_dir = tmp_path / "data"
+        kg_path = bind_workspace(medium_kg, graph_data, data_dir)
+        self._build_sp_lookup(medium_kg, data_dir, max_hops=5)
+        ckpt_path = tmp_path / "ckpt.pt"
+        torch.save({
+            "epoch": 1,
+            "model_state_dict": model.state_dict(),
+            "config": {"hidden_dim": 32, "num_layers": 2, "num_heads": 4, "conv_type": "gat"},
+        }, ckpt_path)
+        record_training_graph(ckpt_path, data_dir)
+        pipeline = DiagnosisPipeline(
+            graph=KnowledgeGraph.read_json(kg_path),
+            checkpoint_path=str(ckpt_path),
+            data_dir=str(data_dir),
+            device="cpu",
         )
-        sp_module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(sp_module)
-        sp_data = sp_module.compute_shortest_paths(medium_kg, max_hops=5)
-        # This pipeline has no workspace — it was constructed from a KG held
-        # in memory — so the digest it would compare against is supplied the way
-        # a verified workspace would have set it. Without that the binding is
-        # unverifiable and the table is refused, which is the designed answer
-        # and not what this test is about.
-        from src.utils.fingerprint import file_sha256
-
-        medium_kg.save_json(str(tmp_path / "kg.json"))
-        kg_digest = file_sha256(tmp_path / "kg.json")
-        pipeline._graph_kg_digest = kg_digest
-        sp_module.save_shortest_paths(
-            sp_data,
-            tmp_path / "shortest_paths.pt",
-            {"max_hops": 5, "num_pairs": int(sp_data["distance"].numel())},
-            kg_digest=kg_digest,
-        )
-
-        pipeline._load_shortest_paths(tmp_path)
-        assert pipeline._sp_ready, "SP table should have loaded from the temp workspace"
+        assert pipeline._sp_ready, "SP table should have loaded from the workspace"
 
         # Patient with phenotypes directly connected to GeneA→Disease1
         from src.core.types import NodeID, DataSource
@@ -847,38 +735,35 @@ class TestEvidencePanel:
     """
     Verify Step C: PathReasoner is decoupled from scoring; evidence is
     presented as Mode A (direct path) or Mode B (analogy-based) with
-    confidence labels.
+    evidence labels. Served by a disease child trained for real
+    (`tests/fixtures/trained_children`): since K7 a pipeline is always a model
+    read from its checkpoint, and paths only explain the rows it ranked.
     """
 
-    def test_mode_a_strong_path_for_close_disease(
-        self, medium_kg, gnn_model_and_data
-    ):
+    #: Phenotypes of the demo graph: seizure and developmental delay, each
+    #: annotated to genes that cause diseases (two hops).
+    PHENOTYPES = ["HP:0001250", "HP:0001263"]
+    #: Every disease of the demo graph's view is a row, so the 2-hop diseases
+    #: are among them whatever the 1-epoch model's order.
+    ALL_ROWS = 100
+
+    def test_mode_a_strong_path_for_close_disease(self, disease_pipeline):
         """A disease reachable in 2 hops should get STRONG_PATH label."""
-        from src.reasoning import (
-            EvidencePanel, ConfidenceLabel, EvidenceMode,
-        )
-        from src.core.types import NodeID, DataSource
+        from src.reasoning import ConfidenceLabel, EvidenceMode
 
-        model, graph_data = gnn_model_and_data
-        pipeline = DiagnosisPipeline(
-            kg=medium_kg, model=model, graph_data=graph_data,
-        )
+        patient = PatientPhenotypes(patient_id="mode_a_test", phenotypes=self.PHENOTYPES)
+        result = disease_pipeline.run(patient, top_k=self.ALL_ROWS, include_explanations=True)
 
-        patient = PatientPhenotypes(
-            patient_id="mode_a_test",
-            phenotypes=["HP:0000001", "HP:0000002"],  # GeneA → Disease1 (2 hops)
-        )
-        result = pipeline.run(patient, top_k=5, include_explanations=True)
-
-        # The top candidate should have a Mode A evidence package
+        # The top candidate should have an evidence package of a known mode
         top = result.candidates[0]
         assert top.evidence_package is not None
         assert top.evidence_package["mode"] in (
-            EvidenceMode.DIRECT_PATH.value, EvidenceMode.ANALOGY_BASED.value
+            EvidenceMode.DIRECT_PATH.value, EvidenceMode.ANALOGY_BASED.value,
+            EvidenceMode.INSUFFICIENT.value,
         )
 
-        # At least one candidate should be Mode A with STRONG label
-        # (the one reachable via GeneA in 2 hops)
+        # At least one candidate should be Mode A with STRONG label (a disease
+        # one gene away from a phenotype of the patient)
         strong_found = any(
             c.evidence_package
             and c.evidence_package["mode"] == EvidenceMode.DIRECT_PATH.value
@@ -890,51 +775,33 @@ class TestEvidencePanel:
             f"{[c.evidence_label for c in result.candidates]}"
         )
 
-    def test_evidence_has_min_path_length(self, medium_kg, gnn_model_and_data):
+    def test_evidence_has_min_path_length(self, disease_pipeline):
         """Mode A evidence should report the minimum path length."""
         from src.reasoning import EvidenceMode
 
-        model, graph_data = gnn_model_and_data
-        pipeline = DiagnosisPipeline(
-            kg=medium_kg, model=model, graph_data=graph_data,
-        )
+        patient = PatientPhenotypes(patient_id="path_len_test", phenotypes=self.PHENOTYPES)
+        result = disease_pipeline.run(patient, top_k=self.ALL_ROWS, include_explanations=True)
 
-        patient = PatientPhenotypes(
-            patient_id="path_len_test",
-            phenotypes=["HP:0000001", "HP:0000002"],
-        )
-        result = pipeline.run(patient, top_k=5, include_explanations=True)
+        direct = [c for c in result.candidates if c.evidence_package
+                  and c.evidence_package["mode"] == EvidenceMode.DIRECT_PATH.value]
+        assert direct, "no Mode A evidence to check"
+        for c in direct:
+            assert c.evidence_package["min_path_length"] is not None
+            assert c.evidence_package["min_path_length"] > 0
 
-        for c in result.candidates:
-            if (
-                c.evidence_package
-                and c.evidence_package["mode"] == EvidenceMode.DIRECT_PATH.value
-            ):
-                assert c.evidence_package["min_path_length"] is not None
-                assert c.evidence_package["min_path_length"] > 0
-
-    def test_evidence_panel_used_when_explanations_enabled(
-        self, medium_kg, gnn_model_and_data
-    ):
+    def test_evidence_panel_used_when_explanations_enabled(self, disease_pipeline):
         """include_explanations=True should populate evidence_package."""
-        model, graph_data = gnn_model_and_data
-        pipeline = DiagnosisPipeline(
-            kg=medium_kg, model=model, graph_data=graph_data,
-        )
+        patient = PatientPhenotypes(patient_id="enabled", phenotypes=self.PHENOTYPES[:1])
+        result = disease_pipeline.run(patient, top_k=3, include_explanations=True)
 
-        patient = PatientPhenotypes(
-            patient_id="enabled",
-            phenotypes=["HP:0000001"],
-        )
-        result = pipeline.run(patient, top_k=3, include_explanations=True)
-
+        assert result.candidates
         # Every candidate should have an evidence package and label
         for c in result.candidates:
             assert c.evidence_package is not None, (
                 "evidence_package missing when include_explanations=True"
             )
             assert c.evidence_label is not None
-            # Confidence label should be one of the known values
+            # The evidence label should be one of the known values
             assert c.evidence_label in (
                 "Strong path support",
                 "Weak path support",
@@ -942,72 +809,49 @@ class TestEvidencePanel:
                 "Insufficient evidence",
             )
 
-    def test_evidence_skipped_when_explanations_disabled(
-        self, medium_kg, gnn_model_and_data
-    ):
+    def test_evidence_skipped_when_explanations_disabled(self, disease_pipeline):
         """include_explanations=False should NOT populate evidence_package."""
-        model, graph_data = gnn_model_and_data
-        pipeline = DiagnosisPipeline(
-            kg=medium_kg, model=model, graph_data=graph_data,
-        )
+        patient = PatientPhenotypes(patient_id="disabled", phenotypes=self.PHENOTYPES[:1])
+        result = disease_pipeline.run(patient, top_k=3, include_explanations=False)
 
-        patient = PatientPhenotypes(
-            patient_id="disabled",
-            phenotypes=["HP:0000001"],
-        )
-        result = pipeline.run(patient, top_k=3, include_explanations=False)
-
+        assert result.candidates
         for c in result.candidates:
             assert c.evidence_package is None
             assert c.evidence_label is None
 
-    def test_evidence_panel_does_not_affect_ranking(
-        self, medium_kg, gnn_model_and_data
-    ):
+    def test_evidence_panel_does_not_affect_ranking(self, trained_disease_child):
         """Critical invariant: enabling evidence must not change scores
         or ranking. Evidence is decorative/explanatory, not a scoring input."""
-        model, graph_data = gnn_model_and_data
+        from tests.fixtures.trained_children import serve
 
-        pipeline_a = DiagnosisPipeline(
-            kg=medium_kg, model=model, graph_data=graph_data,
-        )
-        pipeline_b = DiagnosisPipeline(
-            kg=medium_kg, model=model, graph_data=graph_data,
-        )
+        pipeline_a = serve(trained_disease_child)
+        pipeline_b = serve(trained_disease_child)
 
-        patient = PatientPhenotypes(
-            patient_id="invariant_test",
-            phenotypes=["HP:0000003", "HP:0000004"],
-        )
+        patient = PatientPhenotypes(patient_id="invariant_test", phenotypes=self.PHENOTYPES)
 
-        result_no_evidence = pipeline_a.run(
-            patient, top_k=5, include_explanations=False
-        )
-        result_with_evidence = pipeline_b.run(
-            patient, top_k=5, include_explanations=True
-        )
+        result_no_evidence = pipeline_a.run(patient, top_k=5, include_explanations=False)
+        result_with_evidence = pipeline_b.run(patient, top_k=5, include_explanations=True)
 
         # Same number of candidates, same ordering, same scores
-        assert len(result_no_evidence.candidates) == len(
-            result_with_evidence.candidates
-        )
+        assert len(result_no_evidence.candidates) == len(result_with_evidence.candidates) == 5
         for c_no, c_yes in zip(
             result_no_evidence.candidates, result_with_evidence.candidates
         ):
             assert c_no.disease_id == c_yes.disease_id, (
                 "Evidence panel changed ranking order"
             )
-            assert abs(c_no.served_score - c_yes.served_score) < 1e-9, (
-                "Evidence panel changed confidence scores"
+            assert abs(c_no.score - c_yes.score) < 1e-9, (
+                "Evidence panel changed the scores"
             )
 
     def test_evidence_panel_direct_unit_test(self, medium_kg):
         """Direct unit test of EvidencePanel without going through pipeline."""
+        from src.core.types import DataSource, DiseaseTaskCandidate, NodeID
         from src.reasoning import (
-            EvidencePanel, EvidencePanelConfig, EvidenceMode, ConfidenceLabel,
-        )
-        from src.core.types import (
-            NodeID, DataSource, PathReasoningCandidate,
+            ConfidenceLabel,
+            EvidenceMode,
+            EvidencePanel,
+            EvidencePanelConfig,
         )
 
         panel = EvidencePanel(
@@ -1019,11 +863,11 @@ class TestEvidencePanel:
         )
 
         # Disease1 is reachable from HP:0000001 via GeneA (2 hops)
-        candidate = PathReasoningCandidate(
+        candidate = DiseaseTaskCandidate(
             rank=1,
             disease_id=NodeID(source=DataSource.MONDO, local_id="MONDO:0000001"),
             disease_name="Disease 1",
-            path_score=0.5,
+            score=-0.5,
         )
         patient = PatientPhenotypes(
             patient_id="unit",
@@ -1054,10 +898,8 @@ class TestEvidencePanel:
         self, medium_kg
     ):
         """When neither paths nor embeddings are available → INSUFFICIENT."""
-        from src.reasoning import EvidencePanel, EvidenceMode, ConfidenceLabel
-        from src.core.types import (
-            NodeID, DataSource, PathReasoningCandidate, NodeType, Node,
-        )
+        from src.core.types import DataSource, DiseaseTaskCandidate, Node, NodeID, NodeType
+        from src.reasoning import ConfidenceLabel, EvidenceMode, EvidencePanel
 
         # Build a candidate for a disease the patient phenotype CANNOT
         # reach by adding an isolated disease to the KG.
@@ -1072,11 +914,11 @@ class TestEvidencePanel:
 
         panel = EvidencePanel(kg=kg)
 
-        candidate = PathReasoningCandidate(
+        candidate = DiseaseTaskCandidate(
             rank=1,
             disease_id=isolated_id,
             disease_name="Isolated Disease",
-            path_score=0.0,
+            score=-4.0,
         )
         patient = PatientPhenotypes(
             patient_id="iso",

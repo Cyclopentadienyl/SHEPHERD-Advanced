@@ -1,11 +1,12 @@
 """
-A two-phenotype graph for tests of the phenotype list through the API and UI.
-=============================================================================
-Two HPO phenotypes reach one disease through two genes, so a path-reasoning
-pipeline built on it produces a real result for either phenotype or both. Shared
-by tests/unit/test_diagnose_phenotype_input.py and
-tests/unit/test_diagnosis_panel.py, which drive the same `/diagnose` route from
-the API's side and from the WebUI's.
+A two-phenotype graph, and the phenotype ids the API and UI tests send.
+=======================================================================
+Two HPO phenotypes reach one disease through two genes. Since K7 no graph is
+served without a trained model, so the graph is the input of the no-model
+refusal (`tests/unit/test_diagnose_phenotype_input.py`): a graph alone is
+refused, never ranked by path reasoning. The ids are the demo graph's, so the
+tests that rank (served by a disease child, `tests/fixtures/trained_children`)
+send the same ones.
 
 Module: tests/fixtures/phenotype_kg.py
 """

@@ -61,7 +61,7 @@ def _identity(mode="gnn_only", eta=1.0, build_id=None, device="cpu"):
                            "build_id": build_id, "max_hops": 5 if build_id else None},
         "settings": {"device": device, "device_requested": device, "eta": eta,
                      "max_path_length": 4, "path_length_penalty": 0.9,
-                     "aggregation_method": "weighted_sum", "max_paths_per_candidate": 10,
+                     "max_paths_per_candidate": 10,
                      "use_direct_path_optimization": True,
                      "phenotype_normalisation_version": 1},
     }
@@ -70,11 +70,11 @@ def _identity(mode="gnn_only", eta=1.0, build_id=None, device="cpu"):
 # ---------------------------------------------------------------------------
 # What kind of scoring a Mode D record is
 # ---------------------------------------------------------------------------
-def test_semantics_name_the_served_scoring_and_refuse_the_fallback():
+def test_semantics_name_the_served_scoring():
     """The scoring mode, η and the table's build id are in `score_semantics`; the
     discovery settings are in `candidate_construction` by digest, the device
-    left out (a regime field). The fallback ranks without a model and is
-    refused."""
+    left out (a regime field). There is no fallback to refuse: since K7 every
+    served pipeline is a model read from its checkpoint."""
     plain = served_semantics(_identity())
     mixed = served_semantics(_identity("gnn_plus_shortest_path", 0.7, "b" * 32))
     assert plain["mode"] == "D" and plain["metric_schema_version"] == METRIC_SCHEMA_VERSION == 2
@@ -89,8 +89,6 @@ def test_semantics_name_the_served_scoring_and_refuse_the_fallback():
     other_settings["settings"]["max_path_length"] = 3
     assert served_semantics(other_settings)["candidate_construction"] != \
         plain["candidate_construction"]
-    with pytest.raises(ModeDRefused, match="path_reasoning_fallback"):
-        served_semantics(_identity("path_reasoning_fallback", None))
 
 
 # ---------------------------------------------------------------------------

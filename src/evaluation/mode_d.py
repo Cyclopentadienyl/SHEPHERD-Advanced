@@ -102,18 +102,11 @@ def served_semantics(served_identity: Any) -> Dict[str, Any]:
     served settings (the device excepted, which is a regime field), so a change
     of settings is a different measurement. `score_semantics` names the scoring
     mode, the mixing weight in effect and the shortest-path table by its build
-    id. Refuses the path-reasoning fallback: it ranks without a model, so there
-    is nothing to compare with Mode C (§3).
+    id.
     """
     identity = served_identity.to_dict() if hasattr(served_identity, "to_dict") else dict(
         served_identity)
     mode = identity["scoring_mode"]
-    if mode == "path_reasoning_fallback":
-        raise ModeDRefused(
-            "the pipeline serves path_reasoning_fallback: it ranks without a model, so "
-            "there is no checkpoint and no embeddings to set beside Mode C. Measure a "
-            "deployment that serves a checkpoint."
-        )
     settings = {k: v for k, v in identity["settings"].items() if k not in _REGIME_SETTINGS}
     digest = hashlib.sha256(
         json.dumps(settings, sort_keys=True, separators=(",", ":")).encode("utf-8")

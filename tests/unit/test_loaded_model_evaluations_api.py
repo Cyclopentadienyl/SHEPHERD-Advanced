@@ -6,10 +6,9 @@ loaded model was built from and shows that ledger's records for the model's
 digest. What is pinned here, on the real application and real served pipelines,
 over ledgers written by the real registration (`register_report`):
 
-- every state: no pipeline, a pipeline serving no model, a model supplied in
-  memory, no ledger, a ledger that is not read (schema 2, damaged, unopenable,
-  with no server directory in its problem whatever the directory's name), no
-  records for these weights, records;
+- every state: no pipeline, no ledger, a ledger that is not read (schema 2,
+  damaged, unopenable, with no server directory in its problem whatever the
+  directory's name), no records for these weights, records;
 - a record that does not have the shape registration writes is counted and not
   shown, never a 500, and never hides a good one;
 - records are found by digest: a model replaced by other bytes never shows its
@@ -26,8 +25,10 @@ over ledgers written by the real registration (`register_report`):
   once (BACKLOG 36); it opens no other file, lists no other version's store,
   writes nothing, and is mounted outside the C3 `pipeline` router; its one
   ``await`` comes after the identity is taken;
-- `DiagnosisPipeline.served_checkpoint_read` returns the read exactly when the
-  served identity reports the checkpoint verified.
+- `DiagnosisPipeline.served_checkpoint_read` returns the read the served
+  identity names the checkpoint by; a served pipeline always has one (K7: no
+  model is served without a checkpoint read), so the "not identified" state is
+  gone.
 
 On the dashboard, Research › Models' read-only view calls this route's handler
 in process (`models_page._route_records`, pinned in `test_webui_models_page.py`);
@@ -54,7 +55,6 @@ from src.evaluation.registration import MeasuredRun, register_report  # noqa: E4
 from src.utils.fingerprint import ReadIdentity  # noqa: E402
 from src.evaluation.sidecar import REGISTERED_RELATIONS  # noqa: E402
 from tests.fixtures.opens import count_opens  # noqa: E402
-from tests.fixtures.phenotype_kg import build_two_phenotype_kg  # noqa: E402
 from tests.fixtures.report_store import IMPORTED_AT, store_report  # noqa: E402
 from tests.unit.test_evaluation_sidecar import (  # noqa: E402
     cohort_version,
@@ -186,39 +186,6 @@ def test_the_served_read_is_the_one_the_model_was_built_from(served):
     assert opens.opens(checkpoint) == 0, "no I/O: nothing is read or hashed again"
 
 
-def test_a_pipeline_serving_no_model_has_no_served_read():
-    from src.inference.pipeline import DiagnosisPipeline
-
-    pipeline = DiagnosisPipeline(kg=build_two_phenotype_kg())
-
-    assert pipeline.served_identity().checkpoint.state == "absent"
-    assert pipeline.served_checkpoint_read() is None
-
-
-def test_a_model_supplied_in_memory_has_no_served_read(served_workspace):
-    from src.inference.pipeline import DiagnosisPipeline
-    from src.kg.graph import KnowledgeGraph
-    from tests.unit.test_serving_device import _in_memory_model
-
-    model, graph_data = _in_memory_model(*served_workspace)
-    pipeline = DiagnosisPipeline(kg=KnowledgeGraph(), model=model, graph_data=graph_data)
-
-    assert pipeline.served_identity().checkpoint.state == "supplied_in_memory"
-    assert pipeline.served_checkpoint_read() is None
-
-
-def test_the_served_read_follows_the_identity_even_when_a_read_is_kept(served):
-    """A model whose GNN is not ready is served as absent even though the
-    checkpoint read is kept: catches an accessor that returns the stored read
-    without asking the served identity."""
-    pipeline, _, _ = served
-    assert pipeline._checkpoint_identity is not None
-    pipeline._gnn_ready = False
-
-    assert pipeline.served_identity().checkpoint.state == "absent"
-    assert pipeline.served_checkpoint_read() is None
-
-
 # ---------------------------------------------------------------------------
 # 2. Nothing to look up
 # ---------------------------------------------------------------------------
@@ -229,34 +196,21 @@ def test_no_pipeline_has_nothing_to_look_up(app):
                     "records": [], "records_not_shown": 0}
 
 
-def test_a_pipeline_serving_no_model_has_nothing_to_look_up(app, monkeypatch):
-    from src.inference.pipeline import DiagnosisPipeline
+def test_the_not_identified_state_is_gone():
+    """K7 (G3): no model is supplied in memory, so every served model has a
+    checkpoint read to look up, and the response has no state for one that
+    does not."""
+    import typing
 
-    monkeypatch.setattr(app.app_state, "pipeline", DiagnosisPipeline(kg=build_two_phenotype_kg()))
+    from pydantic import ValidationError
 
-    body = _get(app)
+    from src.api.routes.evaluations import LoadedModelEvaluations
 
-    assert body["state"] == "no_model"
-    assert body["checkpoint_sha256"] is None and body["ledger"] is None
-
-
-def test_a_model_supplied_in_memory_is_not_identified(app, monkeypatch, served_workspace):
-    """No checkpoint bytes were read, so there is no digest to look up, even with
-    a ledger holding records beside the file the model happened to come from."""
-    from src.inference.pipeline import DiagnosisPipeline
-    from src.kg.graph import KnowledgeGraph
-    from tests.unit.test_serving_device import _in_memory_model
-
-    data_dir, checkpoint = served_workspace
-    _register(_report_for(_sha(checkpoint)), checkpoint.parent, checkpoint.parent / "reports")
-    model, graph_data = _in_memory_model(data_dir, checkpoint)
-    monkeypatch.setattr(app.app_state, "pipeline",
-                        DiagnosisPipeline(kg=KnowledgeGraph(), model=model, graph_data=graph_data))
-
-    body = _get(app)
-
-    assert body == {"state": "not_identified", "checkpoint_sha256": None, "ledger": None,
-                    "records": [], "records_not_shown": 0}
+    states = set(typing.get_args(LoadedModelEvaluations.model_fields["state"].annotation))
+    assert states == {"no_model", "no_ledger", "ledger_not_read", "no_records", "records"}
+    with pytest.raises(ValidationError):
+        LoadedModelEvaluations(state="not_identified", checkpoint_sha256=None, ledger=None,
+                               records=[], records_not_shown=0)
 
 
 # ---------------------------------------------------------------------------

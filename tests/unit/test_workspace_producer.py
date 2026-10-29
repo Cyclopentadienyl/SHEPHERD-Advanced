@@ -390,10 +390,10 @@ class TestTheWriterCarriesItsOwnCorrectness:
 class TestAGraphOnlyBuildSaysWhatItIs:
     """`--generate-samples` is optional, and the output of omitting it is not.
 
-    A graph export is a real mode — `compute_shortest_paths.py` reads `kg.json`,
-    `build_index.py` reads the tensors, and the API serves path-reasoning from
-    `kg.json` alone — but it is not trainable and not GNN-servable, because
-    nothing records which export those tensors are. The build used to print
+    A graph export is a real mode — `compute_shortest_paths.py` reads `kg.json`
+    and `build_index.py` reads the tensors — but it is not trainable and not
+    servable (since K7 nothing is served without a model trained on a
+    workspace), because nothing records which export those tensors are. The build used to print
     `train_model.py` as the next step regardless, so an operator learned that at
     the end of a thirty-minute build rather than at the start.
 

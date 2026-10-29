@@ -14,7 +14,7 @@ directory that looked complete, trained, and was then refused by the clinical
 verifier because no manifest bound it.
 
 Usage:
-    # Workspace only (path-reasoning fallback mode):
+    # Workspace only (nothing to serve until a model is trained on it):
     python scripts/setup_demo.py
 
     # Workspace + a small trained model (full GNN-primary mode):
@@ -33,9 +33,10 @@ Output files:
     <output_dir>/split_manifest.json  - Binds all six to one production event
     <output_dir>/runs/gat/<run>/      - The demo run (if --train-model)
 
-The command to start the API is printed on completion, with the checkpoint the
-run actually selected and the device it was trained on: serving refuses `auto`
-without CUDA (contract M3c), so the command names the device. It has no
+With `--train-model`, the command to start the API is printed on completion,
+with the checkpoint the run actually selected and the device it was trained on:
+serving refuses `auto` without CUDA (contract M3c), so the command names the
+device. Without a model nothing is served, so no command is printed. It has no
 `--reload`: uvicorn's reloader restarts the server on every saved source file,
 and the server's shutdown stops the GPU job it runs.
 
@@ -422,14 +423,13 @@ Start the API with GNN scoring (full mode):
 """)
     else:
         print(f"""
-Start the API with path-reasoning only (fallback mode):
+No model was trained, so this workspace has nothing to serve yet: the API
+answers diagnoses only with a trained model, and refuses them (503) until one
+is loaded.
 
-  SHEPHERD_KG_PATH={kg_path} \\
-  python -m uvicorn src.api.main:app --host 127.0.0.1 --port 8000
-
-To enable GNN scoring, train on this workspace, in a shell where the GPU lock
-is configured (training refuses without it; deployment guide §4.11), for
-example with the workspaces root the service is given:
+Train on this workspace, in a shell where the GPU lock is configured (training
+refuses without it; deployment guide §4.11), for example with the workspaces
+root the service is given:
   export SHEPHERD_WORKSPACES_ROOT={output_dir.resolve().parent}
   python scripts/setup_demo.py --train-model
   # or, equivalently, the production entry point:

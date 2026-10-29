@@ -11,13 +11,14 @@ deployment's hardware ran somewhere else and said so only in a log line. Now:
   without PyTorch it names PyTorch instead, whatever was asked for;
 - the pipeline settles the device before any workspace input or the checkpoint
   is opened, and `build_pipeline` before `kg.json` is read;
-- a model supplied in memory with no device named, and a path-only pipeline,
-  resolve nothing; one with a device named gets the same rule;
+- a pipeline with no model is refused for that, before any device is asked
+  about (K7: no graph is served without a model, no model is handed over in
+  memory);
 - the served identity records the device asked for and the one in effect apart,
   the second read from the model, and the service passes the request on as
   given;
 - a blank request defers to `SHEPHERD_DEVICE`, and a blank setting is unset;
-- a startup refused for its device answers 503, never the demo answer;
+- a startup refused for its device answers 503;
 - a reload refused for its device leaves the served pipeline serving.
 
 Module: tests/unit/test_serving_device.py
@@ -41,7 +42,6 @@ from src.inference.pipeline import (  # noqa: E402
 )
 from src.kg.graph import KnowledgeGraph  # noqa: E402
 from tests.fixtures.opens import count_opens  # noqa: E402
-from tests.fixtures.phenotype_kg import build_two_phenotype_kg  # noqa: E402
 from tests.unit import test_pipeline_fails_closed as fails_closed  # noqa: E402
 from tests.unit import test_serving_reads_once as reads_once  # noqa: E402
 
@@ -124,19 +124,6 @@ def _opened_inputs(opens, data_dir, checkpoint):
             if path.is_file() and opens.opens(path)]
 
 
-def _in_memory_model(data_dir, checkpoint):
-    """A model built from the checkpoint by the caller, and the graph data it
-    runs over: what a caller supplying `model=` hands the pipeline."""
-    from src.kg.storage.file_storage import read_graph_artifacts
-    from src.models.gnn.shepherd_gnn import build_shepherd_model
-
-    graph_data = read_graph_artifacts(data_dir, map_location="cpu").graph_data
-    model = build_shepherd_model(
-        torch.load(checkpoint, map_location="cpu", weights_only=True), graph_data
-    )
-    return model, graph_data
-
-
 # ---------------------------------------------------------------------------
 # 1. The rule
 # ---------------------------------------------------------------------------
@@ -207,67 +194,23 @@ def test_the_pipeline_refuses_before_any_input_is_opened(no_cuda, workspace, dev
     assert _opened_inputs(opens, data_dir, checkpoint) == []
 
 
-def test_a_model_supplied_in_memory_stays_on_its_own_device(no_cuda, workspace):
-    """Nothing is resolved for it, so no CUDA is needed. The identity says no
-    device was asked for and names the one its parameters are on: catches a
-    refusal of a caller who never asked for CUDA, and an identity that invents
-    a request."""
+@pytest.mark.parametrize("device", [None, "auto", "cuda"])
+def test_no_model_is_refused_for_that_before_any_device_is_asked_about(
+        no_cuda, workspace, device):
+    """K7: a pipeline with no checkpoint is not served by path reasoning, and is
+    refused for the missing model, before anything is opened. The operator
+    hears the real cause first, never a CUDA refusal for a model nobody
+    named."""
     data_dir, checkpoint = workspace
-    model, graph_data = _in_memory_model(data_dir, checkpoint)
-
-    pipeline = DiagnosisPipeline(kg=KnowledgeGraph(), model=model, graph_data=graph_data)
-
-    identity = pipeline.served_identity()
-    assert identity.scoring_mode == "gnn_only"
-    assert identity.checkpoint.state == "supplied_in_memory"
-    assert identity.settings.device_requested is None
-    assert identity.settings.device == str(next(model.parameters()).device) == "cpu"
-
-
-@pytest.mark.parametrize("device", ["auto", "cuda"])
-def test_a_model_supplied_in_memory_with_cuda_named_is_refused_before_any_input(
-    no_cuda, workspace, device
-):
-    """A device named with the model is a request, and the same rule answers it,
-    before the workspace is read. Catches the request handed to torch
-    unresolved, where `auto` is torch's own device-string error and `cuda` a
-    driver error, each raised after the manifest, the graph tensors and the
-    dataset record were read."""
-    data_dir, checkpoint = workspace
-    model, _ = _in_memory_model(data_dir, checkpoint)
     graph = KnowledgeGraph.read_json(data_dir / "kg.json")
 
     with count_opens() as opens:
-        with pytest.raises(ServingDeviceUnavailable, match=REMEDY):
-            DiagnosisPipeline(graph=graph, data_dir=str(data_dir), model=model,
+        with pytest.raises(PipelineBuildError, match="No model is configured") as refused:
+            DiagnosisPipeline(graph=graph, data_dir=str(data_dir), checkpoint_path=None,
                               device=device)
 
+    assert not isinstance(refused.value, ServingDeviceUnavailable)
     assert _opened_inputs(opens, data_dir, checkpoint) == []
-
-
-def test_a_model_supplied_in_memory_with_the_cpu_named_is_served_there(no_cuda, workspace):
-    """Torch is handed the resolved device, not the argument: catches `" cpu "`
-    reaching `torch.device` padded, which refused a request the rule allows and
-    the identity had already recorded as `cpu`."""
-    data_dir, checkpoint = workspace
-    model, _ = _in_memory_model(data_dir, checkpoint)
-
-    pipeline = DiagnosisPipeline(graph=KnowledgeGraph.read_json(data_dir / "kg.json"),
-                                 data_dir=str(data_dir), model=model, device=" cpu ")
-
-    identity = pipeline.served_identity()
-    assert identity.checkpoint.state == "supplied_in_memory"
-    assert (identity.settings.device_requested, identity.settings.device) == ("cpu", "cpu")
-
-
-@pytest.mark.parametrize("device", [None, "auto", "cuda"])
-def test_a_path_only_pipeline_resolves_no_device(no_cuda, device):
-    """No model, so nothing runs on a device and nothing is refused; the
-    identity states no device either way."""
-    pipeline = DiagnosisPipeline(kg=build_two_phenotype_kg(), device=device)
-
-    settings = pipeline.served_identity().settings
-    assert (settings.device, settings.device_requested, settings.eta) == (None, None, None)
 
 
 def test_the_identity_keeps_the_request_apart_from_the_device_in_effect(
@@ -337,17 +280,18 @@ def _served_fields(api):
 
 
 def test_the_service_build_refuses_before_the_graph_is_read(
-    no_cuda, no_device_configured, workspace, monkeypatch
+    no_cuda, no_device_configured, workspace, monkeypatch, disease_pipeline
 ):
     """A deployment that names a checkpoint and no device asks for CUDA. The
     refusal comes before `kg.json` is parsed and changes nothing served:
     catches a check placed after the graph load, or one that publishes. It
     comes after the request for a real pipeline is recorded, which is what
-    makes `/diagnose` answer 503 and not the demo: catches the check moved
-    ahead of that record."""
+    makes `/diagnose` refuse it as a configured pipeline that could not be
+    built, without trying the build again: catches the check moved ahead of
+    that record."""
     api = no_device_configured
     data_dir, checkpoint = workspace
-    serving = DiagnosisPipeline(kg=build_two_phenotype_kg())
+    serving = disease_pipeline
     monkeypatch.setattr(api.app_state, "pipeline", serving)
     monkeypatch.setattr(api.app_state, "real_pipeline_requested", False)
     before = _served_fields(api)
@@ -370,7 +314,7 @@ def test_the_service_build_refuses_before_the_graph_is_read(
     )
 
 
-def test_a_startup_refused_for_its_device_answers_503_not_the_demo(
+def test_a_startup_refused_for_its_device_answers_503(
     no_cuda, no_device_configured, workspace, monkeypatch, caplog
 ):
     """A deployment that names a checkpoint and no device, on a host without
@@ -378,9 +322,9 @@ def test_a_startup_refused_for_its_device_answers_503_not_the_demo(
     `/diagnose` and `/ready` answer 503, as for any configured pipeline that
     could not be built. Catches the device check moved ahead of the record that
     a real pipeline was asked for (a natural "settle the device first"
-    refactor): `/diagnose` then retries the build, is refused again, and hands
-    out the demo's invented candidates over HTTP 200. Driven through the real
-    lifespan and HTTP routes, as `TestReadinessFollowsWhatIsServed` is."""
+    refactor): `/diagnose` then retries the build on every request and says
+    nothing was configured. Driven through the real lifespan and HTTP routes,
+    as `TestReadinessFollowsWhatIsServed` is."""
     api = no_device_configured
     data_dir, checkpoint = workspace
     monkeypatch.setattr(api.app_state, "real_pipeline_requested", False)
@@ -395,7 +339,7 @@ def test_a_startup_refused_for_its_device_answers_503_not_the_demo(
         "startup failed for another reason than its device"
     )
     assert answers == Readiness.NOT_SERVING
-    assert "candidates" not in diagnosis.json(), "the demo answered"
+    assert "candidates" not in diagnosis.json(), "a diagnosis was answered"
     assert diagnosis.json()["error"].startswith("A pipeline is configured")
     assert ready.json()["error"].startswith("A pipeline is configured")
     assert api.app_state.pipeline is None
@@ -483,14 +427,20 @@ def test_the_service_build_on_the_cpu_is_asked_for_explicitly(
     assert _served_fields(api) == before, "a build publishes nothing"
 
 
-def test_a_service_with_no_checkpoint_needs_no_device(no_cuda, no_device_configured, workspace):
-    """Path reasoning alone runs no model, so an unset device refuses nothing."""
+def test_a_service_with_no_checkpoint_is_refused_for_that(no_cuda, no_device_configured,
+                                                          workspace):
+    """K7 (PATH1): a graph named with no checkpoint (a `SHEPHERD_KG_PATH`-only
+    start) is refused for the missing model, not for its device, and is
+    recorded as a request, so the service then answers 503."""
+    api = no_device_configured
     data_dir, _ = workspace
+    api.app_state.real_pipeline_requested = False
 
-    bundle = no_device_configured.build_pipeline(kg_path=str(data_dir / "kg.json"),
-                                                 data_dir=str(data_dir))
+    with pytest.raises(PipelineBuildError, match="No model is configured") as refused:
+        api.build_pipeline(kg_path=str(data_dir / "kg.json"), data_dir=str(data_dir))
 
-    assert bundle.config["served_identity"]["scoring_mode"] == "path_reasoning_fallback"
+    assert not isinstance(refused.value, ServingDeviceUnavailable)
+    assert api.app_state.real_pipeline_requested is True
 
 
 # ---------------------------------------------------------------------------
@@ -505,11 +455,10 @@ def _reload(data_dir, checkpoint, device):
 
 
 @pytest.fixture
-def serving(no_device_configured, monkeypatch):
+def serving(no_device_configured, monkeypatch, disease_pipeline):
     """A pipeline already being served when the reload arrives."""
-    pipeline = DiagnosisPipeline(kg=build_two_phenotype_kg())
-    monkeypatch.setattr(no_device_configured.app_state, "pipeline", pipeline)
-    return pipeline
+    monkeypatch.setattr(no_device_configured.app_state, "pipeline", disease_pipeline)
+    return disease_pipeline
 
 
 @pytest.mark.parametrize("device", [None, "auto", "cuda"])

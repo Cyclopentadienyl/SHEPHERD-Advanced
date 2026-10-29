@@ -34,10 +34,11 @@ torch = pytest.importorskip("torch")
 
 from src.core.types import (  # noqa: E402
     MAPPED_ONLY_DENOMINATOR,
+    RESULT_KINDS,
     DataSource,
+    DiseaseTaskCandidate,
     InferenceResult,
     NodeID,
-    PathReasoningCandidate,
     ResultRefused,
     SPAnalysisRecord,
     ServedCheckpoint,
@@ -50,31 +51,30 @@ from src.core.types import (  # noqa: E402
     result_kind_for,
     result_label,
 )
-from tests.fixtures.phenotype_kg import DELAY, SEIZURE, build_two_phenotype_kg  # noqa: E402
-
 DISEASE = NodeID(source=DataSource.MONDO, local_id="MONDO:1")
+#: Two phenotypes of the demo graph, in the trained disease child's view.
+SEIZURE, DELAY = "HP:0001250", "HP:0001263"
 
 
 def _settings(eta):
     return ServedSettings(
-        device="cpu", device_requested=None, eta=eta, max_path_length=4,
-        path_length_penalty=0.9, aggregation_method="weighted_sum",
-        max_paths_per_candidate=10, use_direct_path_optimization=True,
-        phenotype_normalisation_version=1)
+        device="cpu", device_requested="cpu", eta=eta, max_path_length=4,
+        path_length_penalty=0.9, max_paths_per_candidate=10,
+        use_direct_path_optimization=True, phenotype_normalisation_version=1)
 
 
 def _identity(scoring_mode):
-    """A legal identity for each mode, over a graph supplied in memory."""
-    if scoring_mode == "path_reasoning_fallback":
-        return ServedIdentity(
-            scoring_mode=scoring_mode, checkpoint=ServedCheckpoint(state="absent"),
-            graph=ServedGraph(state="in_memory"), shortest_paths=ServedShortestPaths(
-                state="absent"), dataset_record=ServedDatasetRecord(state="absent"),
-            settings=_settings(None))
+    """A legal identity for each mode: a model read from a checkpoint over a
+    verified workspace, the only identity a pipeline has (K7)."""
     return ServedIdentity(
-        scoring_mode="gnn_only", checkpoint=ServedCheckpoint(state="supplied_in_memory"),
-        graph=ServedGraph(state="in_memory"), shortest_paths=ServedShortestPaths(state="absent"),
-        dataset_record=ServedDatasetRecord(state="absent"), settings=_settings(1.0))
+        scoring_mode=scoring_mode, checkpoint=ServedCheckpoint(state="verified",
+                                                               sha256="a" * 64),
+        graph=ServedGraph(state="verified", kg_sha256="b" * 64,
+                          split_manifest_sha256="c" * 64),
+        shortest_paths=ServedShortestPaths(state="absent"),
+        dataset_record=ServedDatasetRecord(state="verified", origin="synthetic",
+                                           sha256="d" * 64),
+        settings=_settings(1.0 if scoring_mode == "gnn_only" else None))
 
 
 def _no_table(**overrides):
@@ -88,9 +88,8 @@ def _mixture(rank, score, record=None):
                                   sp_term=record or _no_table())
 
 
-def _path(rank, score):
-    return PathReasoningCandidate(rank=rank, disease_id=DISEASE, disease_name="d",
-                                  path_score=score)
+def _disease(rank, score):
+    return DiseaseTaskCandidate(rank=rank, disease_id=DISEASE, disease_name="d", score=score)
 
 
 def _result(candidates, mode="gnn_only", **fields):
@@ -100,21 +99,36 @@ def _result(candidates, mode="gnn_only", **fields):
 
 # ---------------------------------------------------------------- the kinds
 def test_the_kind_is_read_off_what_produced_the_result():
-    assert result_kind_for(None) == "demo/v1"
     assert result_kind_for("gnn_plus_shortest_path") == "served_mixture/v1"
     assert result_kind_for("gnn_only") == "served_mixture/v1"
-    assert result_kind_for("path_reasoning_fallback") == "path_reasoning/v1"
+    assert result_kind_for("disease_task") == "disease_task/v1"
     with pytest.raises(ValueError):
         result_kind_for("gnn_raw_cosine")  # batch 5's mode, not served yet
 
     mixture = _result([_mixture(1, 0.6)], candidates_reached=3)
     assert (mixture.result_kind, mixture.eta, mixture.result_schema_version) == (
         "served_mixture/v1", 1.0, 2)
-    assert mixture.path_score_aggregation is None
-    path = _result([_path(1, 0.6)], mode="path_reasoning_fallback")
-    assert (path.result_kind, path.eta, path.path_score_aggregation) == (
-        "path_reasoning/v1", None, "weighted_sum/v1")
-    assert path.tie_policy == mixture.tie_policy == "served-stable-discovery-order/v1"
+    assert mixture.tie_policy == "served-stable-discovery-order/v1"
+    disease = _result([_disease(1, -0.6)], mode="disease_task")
+    assert (disease.result_kind, disease.eta) == ("disease_task/v1", None)
+    assert disease.tie_policy == "score-desc-then-view-id-asc/v1"
+
+
+@pytest.mark.parametrize("retired_mode", ["path_reasoning_fallback", None])
+def test_no_kind_is_answered_without_a_model(retired_mode):
+    """K7 (PATH1, DEMO1): every result comes from a model. The path-reasoning
+    kind and the demo answer are gone, with no alias: their modes map to no
+    kind, their labels are unknown, and no result can be built without a
+    checkpoint read."""
+    assert "path_reasoning/v1" not in RESULT_KINDS and "demo/v1" not in RESULT_KINDS
+    with pytest.raises(ValueError):
+        result_kind_for(retired_mode)
+    for retired_kind in ("path_reasoning/v1", "demo/v1"):
+        with pytest.raises(ValueError):
+            result_label(retired_kind)
+    for state in ("absent", "supplied_in_memory"):
+        with pytest.raises(ValueError):
+            ServedCheckpoint(state=state, sha256="a" * 64)
 
 
 def test_the_labels_name_eta_from_the_result():
@@ -124,12 +138,11 @@ def test_the_labels_name_eta_from_the_result():
         "scored by the model term alone")
     with pytest.raises(ValueError):
         result_label("served_mixture/v1", "gnn_plus_shortest_path", None)
-    assert result_label("demo/v1") == "Demo answer: no pipeline is configured; not a diagnosis"
 
 
 @pytest.mark.parametrize("case, build", [
     ("a candidate of another kind",
-     lambda: _result([_path(1, 0.5)], candidates_reached=1)),
+     lambda: _result([_disease(1, -0.5)], candidates_reached=1)),
     ("ranks that are not 1..N",
      lambda: _result([_mixture(1, 0.6), _mixture(3, 0.5)], candidates_reached=2)),
     ("an order that rises",
@@ -138,8 +151,8 @@ def test_the_labels_name_eta_from_the_result():
      lambda: _result([_mixture(1, 0.5)])),
     ("fewer reached than it holds",
      lambda: _result([_mixture(1, 0.6), _mixture(2, 0.5)], candidates_reached=1)),
-    ("candidates_reached on path reasoning",
-     lambda: _result([_path(1, 0.5)], mode="path_reasoning_fallback", candidates_reached=1)),
+    ("candidates_reached on a disease task result",
+     lambda: _result([_disease(1, -0.5)], mode="disease_task", candidates_reached=1)),
     ("mixed_as where nothing was mixed",
      lambda: _result([_mixture(1, 0.5, _no_table(mixed_as=0.0))], candidates_reached=1)),
     ("a numeric record with no table served",
@@ -158,7 +171,7 @@ def test_a_score_that_is_not_finite_cannot_be_a_candidate():
         with pytest.raises(ValueError, match="finite"):
             _mixture(1, value)
         with pytest.raises(ValueError, match="finite"):
-            _path(1, value)
+            _disease(1, value)
 
 
 @pytest.mark.parametrize("fields", [
@@ -263,38 +276,17 @@ def test_a_phenotype_with_no_usable_row_refuses_at_the_mapping_step(case, mappin
     with pytest.raises(ResultRefused) as refused:
         DiagnosisPipeline._phenotype_rows(stub, [node])
     assert refused.value.code == "MODEL_TERM_UNAVAILABLE" and names in str(refused.value)
-    assert DiagnosisPipeline._phenotype_rows(_model_stub(_gnn_ready=False), [node]) is None
-
-
-def test_a_path_score_that_is_not_finite_refuses():
-    from src.inference.pipeline import DiagnosisPipeline
-    from src.reasoning.path_reasoning import ReasoningPath
-
-    phenotype = NodeID(source=DataSource.HPO, local_id="HP:1")
-    stub = SimpleNamespace(
-        _scoring_mode=lambda: ("path_reasoning_fallback", 0.0),
-        kg=SimpleNamespace(get_node=lambda _id: None),
-        _calculate_reasoning_score=lambda paths: math.nan,
-        _extract_supporting_genes=lambda paths: [],
-        _determine_evidence_sources=lambda paths: [],
-    )
-    paths = {str(DISEASE): [ReasoningPath(nodes=[phenotype, DISEASE], edges=[])]}
-    with pytest.raises(ResultRefused) as refused:
-        DiagnosisPipeline._score_and_rank_candidates(stub, paths, [phenotype], None, False)
-    assert refused.value.code == "NON_FINITE_SCORE" and str(DISEASE) in str(refused.value)
 
 
 # -------------------------------------------- through the pipeline and the API
 @pytest.fixture
-def gnn_pipeline():
-    """A model over the two-phenotype graph, supplied in memory (gnn_only)."""
-    from src.inference.pipeline import DiagnosisPipeline
-    from tests.unit.test_inference import _build_gnn_test_fixtures
+def own_pipeline(trained_disease_child):
+    """A disease child's pipeline of this test's own (the shared one is not
+    changed), with its view's phenotypes read once, as a first request does."""
+    from tests.fixtures.trained_children import serve
 
-    kg = build_two_phenotype_kg()
-    model, graph_data = _build_gnn_test_fixtures(kg)
-    pipeline = DiagnosisPipeline(kg=kg, model=model, graph_data=graph_data)
-    assert pipeline.served_identity().scoring_mode == "gnn_only"
+    pipeline = serve(trained_disease_child)
+    pipeline.run(_patient(), top_k=1, include_explanations=False)
     return pipeline
 
 
@@ -304,23 +296,30 @@ def _patient():
     return PatientPhenotypes(patient_id="p", phenotypes=[SEIZURE, DELAY])
 
 
-def test_a_disease_the_model_does_not_map_refuses_the_whole_result(gnn_pipeline):
-    """End to end: discovery reaches a disease the model's mapping lacks. The
-    result is refused naming it, never ranked with a 0.0 for it."""
-    ranked = gnn_pipeline.run(_patient(), top_k=5, include_explanations=False)
-    assert ranked.result_kind == "served_mixture/v1" and ranked.candidates
-    missing = str(ranked.candidates[0].disease_id)
-    gnn_pipeline._node_id_to_idx["disease"].pop(missing)
+def _seizure_unmapped(pipeline):
+    """The model's node mapping loses the seizure's row: a known phenotype
+    the model cannot place (a model–graph mismatch)."""
+    seizure = str(NodeID(source=DataSource.HPO, local_id=SEIZURE))
+    pipeline._node_id_to_idx["phenotype"].pop(seizure)
+    return seizure
+
+
+def test_a_phenotype_the_model_does_not_map_refuses_the_whole_result(own_pipeline):
+    """End to end: a phenotype in the model's view has no row in the node
+    mapping. The result is refused naming it, never ranked without it."""
+    ranked = own_pipeline.run(_patient(), top_k=5, include_explanations=False)
+    assert ranked.result_kind == "disease_task/v1" and ranked.candidates
+    missing = _seizure_unmapped(own_pipeline)
 
     with pytest.raises(ResultRefused) as refused:
-        gnn_pipeline.run(_patient(), top_k=5, include_explanations=False)
+        own_pipeline.run(_patient(), top_k=5, include_explanations=False)
     assert refused.value.code == "MODEL_TERM_UNAVAILABLE" and missing in str(refused.value)
 
 
-def test_a_refusal_reaches_the_api_and_the_page_with_its_code(monkeypatch, gnn_pipeline):
+def test_a_refusal_reaches_the_api_and_the_page_with_its_code(monkeypatch, own_pipeline):
     """A deliberate 500 whose detail starts with the code, not a validation
     accident; the page shows it as one sentence. A valid request on the same
-    pipeline answers the mixture's union, and carries no removed field."""
+    pipeline answers the disease task's union, and carries no removed field."""
     pytest.importorskip("fastapi")
     pytest.importorskip("gradio")
     from fastapi.testclient import TestClient
@@ -328,23 +327,20 @@ def test_a_refusal_reaches_the_api_and_the_page_with_its_code(monkeypatch, gnn_p
     from src.api import main as api_main
     from src.webui.components import diagnosis_panel as dp
 
-    monkeypatch.setattr(api_main.app_state, "pipeline", gnn_pipeline, raising=False)
+    monkeypatch.setattr(api_main.app_state, "pipeline", own_pipeline, raising=False)
     client = TestClient(api_main.app)
     payload = {"phenotypes": [SEIZURE, DELAY], "include_explanations": True}
 
     body = client.post("/api/v1/diagnose", json=payload).json()
-    assert body["result_kind"] == "served_mixture/v1" and body["candidates"]
-    assert body["candidates_reached"] >= len(body["candidates"]) and body["eta"] == 1.0
+    assert body["result_kind"] == "disease_task/v1" and body["candidates"]
+    assert not {"eta", "candidates_reached", "path_score_aggregation"} & set(body)
     for candidate in body["candidates"]:
-        assert candidate["sp_term"]["status"] == "NO_TABLE"
-        assert candidate["sp_term"]["score"] is None
-        assert candidate["served_score"] == candidate["model_term"]
+        assert candidate["score"] <= 0
         assert not {"confidence_score", "gnn_score", "sp_score", "reasoning_score",
-                    "confidence_label"} & set(candidate)
+                    "confidence_label", "path_score", "served_score"} & set(candidate)
         assert "confidence_label" not in (candidate["evidence_package"] or {})
 
-    missing = body["candidates"][0]["disease_id"]
-    gnn_pipeline._node_id_to_idx["disease"].pop(missing)
+    missing = _seizure_unmapped(own_pipeline)
     response = client.post("/api/v1/diagnose", json=payload)
     assert response.status_code == 500
     error = response.json()["error"]
@@ -354,28 +350,28 @@ def test_a_refusal_reaches_the_api_and_the_page_with_its_code(monkeypatch, gnn_p
 
 
 @pytest.mark.parametrize("term", [-5.960464477539063e-08, 1.0000001192092896])
-def test_a_model_term_an_ulp_outside_its_range_is_answered(monkeypatch, gnn_pipeline, term):
+def test_a_model_term_an_ulp_outside_its_range_is_answered(term):
     """The internal review's finding: (cos + 1) / 2 is float32, and a patient
     parallel or anti-parallel to a disease rounds an ulp past [0, 1]. That is a
     valid result; the API mirror answers it rather than failing with a 500."""
-    pytest.importorskip("fastapi")
-    from fastapi.testclient import TestClient
+    from dataclasses import asdict
 
-    from src.api import main as api_main
-    from src.inference.pipeline import DiagnosisPipeline
+    from src.api.routes.diagnose import DiagnoseResponse, _candidate_body
 
-    monkeypatch.setattr(DiagnosisPipeline, "_calculate_gnn_score",
-                        lambda self, patient_embedding, disease_id: term)
-    monkeypatch.setattr(api_main.app_state, "pipeline", gnn_pipeline, raising=False)
-    response = TestClient(api_main.app).post(
-        "/api/v1/diagnose", json={"phenotypes": [SEIZURE, DELAY]})
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["candidates"] and {c["model_term"] for c in body["candidates"]} == {term}
-    assert {c["served_score"] for c in body["candidates"]} == {term}     # gnn_only
+    candidate = _mixture(1, term)
+    body = {"result_kind": "served_mixture/v1", "result_schema_version": 2,
+            "session_id": "s", "patient_id": "p", "timestamp": "t", "inference_time_ms": 1.0,
+            "served_identity": _identity("gnn_only").to_dict(), "phenotype_input": None,
+            "candidates": [_candidate_body(candidate, True, True)], "eta": 1.0,
+            "candidates_reached": 1, "tie_policy": "served-stable-discovery-order/v1"}
+    answered = DiagnoseResponse.model_validate(body).root
+    assert answered.candidates[0].model_term == term == answered.candidates[0].served_score
+    assert asdict(candidate.sp_term)["status"] == "NO_TABLE"
 
 
-def test_the_demo_answer_carries_no_score(monkeypatch):
+def test_with_no_pipeline_nothing_is_answered(monkeypatch):
+    """K7 (DEMO1): with no pipeline served, a diagnosis is refused with its
+    reason (503), never answered with illustrative candidates."""
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
 
@@ -383,13 +379,11 @@ def test_the_demo_answer_carries_no_score(monkeypatch):
 
     monkeypatch.setattr(api_main.app_state, "pipeline", None, raising=False)
     monkeypatch.setattr(api_main.app_state, "real_pipeline_requested", True, raising=False)
-    monkeypatch.setattr(type(api_main.app_state), "requested_pipeline_missing",
-                        property(lambda self: False))
-    body = TestClient(api_main.app).post(
+    response = TestClient(api_main.app).post(
         "/api/v1/diagnose", json={"phenotypes": [SEIZURE], "top_k": 3,
-                                  "include_explanations": True}).json()
+                                  "include_explanations": True})
 
-    assert body["result_kind"] == "demo/v1" and body["served_identity"] is None
-    assert [c["rank"] for c in body["candidates"]] == [1, 2, 3]
-    for candidate in body["candidates"]:
-        assert set(candidate) == {"rank", "disease_id", "disease_name", "matching_phenotypes"}
+    assert response.status_code == 503
+    body = response.json()
+    assert "candidates" not in body and "result_kind" not in body
+    assert "none is being served" in body["error"]

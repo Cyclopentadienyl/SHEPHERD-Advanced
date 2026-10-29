@@ -88,7 +88,7 @@ class AppState:
         self.kg = None
         self.ontology = None
         #: Startup's half of what `/ready` answers; the other half is
-        #: `requested_pipeline_missing`. Set when startup completes, cleared
+        #: `no_pipeline_reason`. Set when startup completes, cleared
         #: when startup's build fails and at shutdown, and set again by
         #: `publish_pipeline` -- so a reload that succeeds after a failed
         #: startup restores it, and a refused reload leaves the flag as it was.
@@ -105,25 +105,39 @@ class AppState:
         # publish a pipeline and leave these reading as unknown.
         self._current_data_dir = None
         #: Whether any real workspace has ever been named for this service —
-        #: through `SHEPHERD_KG_PATH` at startup, or through a reload that
-        #: pointed at one. It records a **request**, not an outcome, so it stays
-        #: True after a build that failed. `/diagnose` needs exactly that: the
-        #: difference between "nobody configured a pipeline" and "a pipeline was
-        #: configured and cannot answer" is not visible from `pipeline is None`.
+        #: through `SHEPHERD_KG_PATH` or `SHEPHERD_CHECKPOINT_PATH` at startup,
+        #: or through a reload that pointed at one. It records a **request**,
+        #: not an outcome, so it stays True after a build that failed: a
+        #: diagnosis then does not try the build again (the way to retry is a
+        #: reload or a restart), and the refusal says the configured pipeline
+        #: could not be initialized rather than that nothing is configured.
         self.real_pipeline_requested = False
         self._current_checkpoint_path = None
 
     @property
-    def requested_pipeline_missing(self) -> bool:
-        """A real pipeline was asked for and none is being served.
+    def no_pipeline_reason(self) -> Optional[str]:
+        """Why no diagnosis can be answered, or None while a pipeline is served.
 
-        **One definition, two surfaces.** `/diagnose` refuses with 503 in this
-        state, and `/ready` reports it from the same definition, so the probe
-        cannot call ready a service whose every diagnosis is refused -- a
-        configured graph file that is missing at startup, or a refused reload
-        on a service that had no pipeline, leave `is_ready` set and this true.
+        **One definition, two surfaces** (K7, DEMO1): no pipeline served is the
+        state, whatever led to it -- nothing configured, a graph named without
+        a model, a build that failed. `/diagnose` refuses with 503 and this
+        reason, and `/ready` answers 503 from the same definition, so the
+        service is never called ready while every diagnosis is refused. Every
+        answer comes from a model: no illustrative candidates are invented.
+        `/health` stays 200, so the launcher starts the service and the
+        dashboard's Load entry can load a model.
         """
-        return self.pipeline is None and self.real_pipeline_requested
+        if self.pipeline is not None:
+            return None
+        if self.real_pipeline_requested:
+            return ("A pipeline is configured for this deployment but none is being "
+                    "served: it could not be initialized (the service logs name the "
+                    "condition that stopped it). Load a model (POST "
+                    "/api/v1/pipeline/reload) or restart the service to try again.")
+        return ("No model is loaded, so no diagnosis can be produced. Load one (POST "
+                "/api/v1/pipeline/reload, or Change model… on the Diagnosis page), or "
+                "start the service with SHEPHERD_KG_PATH, SHEPHERD_DATA_DIR and "
+                "SHEPHERD_CHECKPOINT_PATH naming a workspace and a model trained on it.")
 
 
 app_state = AppState()
@@ -202,17 +216,18 @@ async def lifespan(app: FastAPI):
         loop.set_exception_handler(_quiet_connection_reset)
 
     try:
-        # Attempt eager initialization if a pipeline is configured. A checkpoint
-        # alone counts: `build_pipeline` refuses it, and startup is where an
-        # operator should see that, not the first diagnosis.
+        # Attempt eager initialization if a pipeline is configured. A graph
+        # alone or a checkpoint alone counts: `build_pipeline` refuses either,
+        # and startup is where an operator should see that, not the first
+        # diagnosis.
         if os.environ.get("SHEPHERD_KG_PATH") or os.environ.get(
             "SHEPHERD_CHECKPOINT_PATH"
         ):
             initialize_pipeline()
         else:
             logger.info(
-                "No SHEPHERD_KG_PATH set. Pipeline will initialize "
-                "lazily on first request if configured later."
+                "No model is configured (SHEPHERD_KG_PATH, SHEPHERD_DATA_DIR, "
+                "SHEPHERD_CHECKPOINT_PATH): diagnoses are refused until one is loaded."
             )
 
         app_state.is_ready = True
@@ -598,20 +613,15 @@ async def readiness_check() -> Dict[str, Any]:
     """
     Readiness probe
 
-    Returns whether the service is ready to accept requests: startup succeeded
-    or a pipeline has since been published (`is_ready`), and the service is not
-    in the state `/diagnose` refuses (`AppState.requested_pipeline_missing`).
-    That state is checked first, so a failed startup -- the commonest way into
-    it -- is told how to recover, as `/diagnose` tells it.
+    Returns whether the service is ready to accept requests: a pipeline is
+    served (`AppState.no_pipeline_reason`, the state `/diagnose` refuses) and
+    startup succeeded or a pipeline has since been published (`is_ready`). The
+    pipeline is checked first, so a service with none is told how to recover,
+    as `/diagnose` tells it.
     """
-    if app_state.requested_pipeline_missing:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=(
-                "A pipeline is configured and none is being served; load one "
-                "(POST /api/v1/pipeline/reload) or restart the service."
-            ),
-        )
+    reason = app_state.no_pipeline_reason
+    if reason is not None:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=reason)
     if not app_state.is_ready:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -752,11 +762,13 @@ def build_pipeline(
     """
     Build a diagnosis pipeline without publishing it.
 
-    Loads the knowledge graph, creates the DiagnosisPipeline with optional GNN,
-    and reads back its configuration — everything that can fail. **Application
+    Loads the knowledge graph, creates the DiagnosisPipeline with its model, and
+    reads back its configuration — everything that can fail. **Application
     state is not touched.** Returns the finished bundle, or ``None`` when there
     is nothing to build because no KG path is configured or the configured one
-    does not exist; raises when a configured pipeline fails to build.
+    does not exist; raises when a configured pipeline fails to build, a graph
+    named with no checkpoint included (a graph is never served without a
+    model).
 
     Configuration is read from environment variables if not passed directly:
         SHEPHERD_KG_PATH: Path to KG JSON file. It may name a file outside
@@ -799,8 +811,8 @@ def build_pipeline(
     if not kg_path:
         if checkpoint_path:
             # **A model was asked for, so this is not "nothing configured".**
-            # Returning None here sent the service to its demo answer, invented
-            # candidates over HTTP 200, for a deployment that named a checkpoint.
+            # Returning None here would refuse diagnoses as though nothing were
+            # configured, for a deployment that named a checkpoint.
             app_state.real_pipeline_requested = True
             from src.inference.pipeline import PipelineBuildError
 
@@ -819,20 +831,26 @@ def build_pipeline(
     # resolves `SHEPHERD_KG_PATH` and a reload passes a workspace it derived from
     # the request; keying the distinction on the environment variable alone
     # covered only the first, so a caller who named a real workspace through the
-    # reload API and had it refused still received mock candidates. This is the
+    # reload API and had it refused was told nothing was configured. This is the
     # request, not its result — it stays True when the build below fails, which
     # is the whole point — and it touches nothing the published bundle owns, so
     # the build-then-publish separation is unchanged.
     app_state.real_pipeline_requested = True
 
     try:
-        from src.inference.pipeline import build_served_pipeline, resolve_serving_device
+        from src.inference.pipeline import (
+            build_served_pipeline,
+            require_model_source,
+            resolve_serving_device,
+        )
 
-        # **The device is settled before the graph is read** (contract M3c),
-        # before the file check below too, as it always was here; the shared
-        # build repeats the rule for its other callers.
-        if checkpoint_path:
-            resolve_serving_device(device)
+        # **A model, or no pipeline** (K7, PATH1): a graph named with no
+        # checkpoint is refused, never served by path reasoning. **The device is
+        # settled before the graph is read** (contract M3c). Both before the
+        # file check below; the shared build repeats both rules for its other
+        # callers.
+        require_model_source(checkpoint_path, data_dir)
+        resolve_serving_device(device)
 
         kg_file = Path(kg_path)
         if not kg_file.exists():
@@ -883,7 +901,7 @@ def publish_pipeline(bundle: PipelineBundle) -> None:
     through here, so `is_ready` is set with the fields it vouches for. Restoring
     it anywhere else would let the flag claim a pipeline before a candidate is
     built. A refused reload never gets here and leaves the flag as it was; what
-    `/ready` answers also depends on `AppState.requested_pipeline_missing`.
+    `/ready` answers also depends on `AppState.no_pipeline_reason`.
     """
     # **Formatted before the first assignment.** These are values out of an
     # arbitrary configuration dictionary, and formatting one calls its `__str__`;

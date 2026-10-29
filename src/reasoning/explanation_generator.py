@@ -54,7 +54,7 @@ logger = logging.getLogger(__name__)
 
 #: What a candidate's score is, wherever the pipeline writes it for a reader
 #: (each candidate's explanation, the run's summary): the value its result
-#: kind ranks by (`served_score` or `path_score`, Spec 1 §2.1). It is not a
+#: kind ranks by (`score` or `served_score`, Spec 1 §2.1). It is not a
 #: calibrated probability, so the text names no confidence band.
 SCORE_MEANING = "a ranking score, not a calibrated disease probability"
 

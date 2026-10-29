@@ -827,7 +827,7 @@ def _from_side(status: Optional[Mapping[str, Any]], listing: Mapping[str, Any]) 
     elif sha:
         model = f"epoch {meta.get('epoch', '—')} (not in this workspace's list)"
     else:
-        model = "no trained model" if (status or {}).get("initialized") else "no model loaded"
+        model = "not known" if (status or {}).get("initialized") else "no model loaded"
     sp = identity.get("shortest_paths") or {}
     record = identity.get("dataset_record") or {}
     return {

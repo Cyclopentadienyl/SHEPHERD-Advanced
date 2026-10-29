@@ -23,9 +23,8 @@ no knowledge graph is refused rather than treated as nothing configured; a blank
 environment value is unset; and `/diagnose` no longer rebuilds a failed pipeline
 on every request.
 
-**Unchanged here, deliberately:** a pipeline built with no model source at all
-still serves path reasoning. Whether that needs an explicit opt-in is B-2's open
-policy question, not this change.
+**No model source at all is the same refusal since K7** (PATH1, G3): a graph
+is never served by path reasoning, and no model is handed over in memory.
 
 Module: tests/unit/test_pipeline_fails_closed.py
 """
@@ -216,26 +215,22 @@ class TestARequestedModelIsBuiltOrRefused:
                 checkpoint_path=str(tmp_path / "stripped.pt"), device="cpu",
             )
 
-    def test_a_checkpoint_with_no_graph_is_refused(self, workspace):
-        _, checkpoint = workspace
+    def test_a_checkpoint_with_no_workspace_is_refused(self, workspace):
+        data_dir, checkpoint = workspace
 
-        with pytest.raises(PipelineBuildError, match="no graph"):
+        with pytest.raises(PipelineBuildError, match="no workspace"):
             DiagnosisPipeline(
-                kg=KnowledgeGraph(), checkpoint_path=str(checkpoint), device="cpu",
+                graph=KnowledgeGraph.read_json(data_dir / "kg.json"), data_dir=None,
+                checkpoint_path=str(checkpoint), device="cpu",
             )
 
-    def test_a_preloaded_model_with_no_graph_is_refused(self):
-        """The other model source. A model handed in directly is as much a
-        request for a GNN as a checkpoint path is."""
-        with pytest.raises(PipelineBuildError, match="no graph"):
-            DiagnosisPipeline(kg=KnowledgeGraph(), model=object(), device="cpu")
-
     def test_without_torch_a_requested_model_is_refused(self, monkeypatch, workspace):
-        _, checkpoint = workspace
+        data_dir, checkpoint = workspace
         monkeypatch.setattr(pipeline_module, "HAS_TORCH", False)
 
         with pytest.raises(PipelineBuildError, match="PyTorch is not available"):
-            DiagnosisPipeline(kg=KnowledgeGraph(), checkpoint_path=str(checkpoint))
+            DiagnosisPipeline(graph=KnowledgeGraph.read_json(data_dir / "kg.json"),
+                              data_dir=str(data_dir), checkpoint_path=str(checkpoint))
 
     def test_required_shortest_paths_that_are_absent_refuse_the_build(self, workspace):
         """`sp_optional=False` used to switch the GNN off and carry on, so a
@@ -252,58 +247,6 @@ class TestARequestedModelIsBuiltOrRefused:
                 device="cpu",
             )
 
-    def test_required_shortest_paths_with_no_directory_say_so(self, workspace):
-        """With the graph passed in memory there is no table to load and no load
-        message to point at; the refusal names that instead. The model is handed
-        in built: no checkpoint is loaded over an in-memory graph (M2.4)."""
-        from src.models.gnn.shepherd_gnn import build_shepherd_model
-
-        data_dir, checkpoint = workspace
-        graph = _graph_data(data_dir)
-        model = build_shepherd_model(
-            torch.load(checkpoint, map_location="cpu", weights_only=False), graph
-        )
-
-        with pytest.raises(PipelineBuildError, match="no data_dir was given"):
-            DiagnosisPipeline(
-                kg=KnowledgeGraph(),
-                config=PipelineConfig(sp_optional=False),
-                graph_data=graph,
-                model=model,
-                device="cpu",
-            )
-
-    @pytest.mark.parametrize("recorded", [True, False], ids=["recorded", "unrecorded"])
-    def test_a_checkpoint_over_an_in_memory_graph_is_refused(
-        self, workspace, monkeypatch, recorded
-    ):
-        """Contract M2.4, the review's P2-1. A graph supplied in memory has no
-        verified workspace, so nothing shows the checkpoint was trained on it.
-        Every feature shifted, the shapes unchanged: whatever the checkpoint
-        records, it is refused before it is opened and nothing is built."""
-        import src.models.gnn.shepherd_gnn as builder
-        import src.utils.checkpoint_io as checkpoint_io
-
-        data_dir, checkpoint = workspace
-        if not recorded:
-            contents = torch.load(checkpoint, map_location="cpu", weights_only=False)
-            del contents["training_input_digests"]
-            torch.save(contents, checkpoint)
-        graph = _graph_data(data_dir)
-        graph["x_dict"] = {k: v + 11.0 for k, v in graph["x_dict"].items()}
-        monkeypatch.setattr(builder, "build_shepherd_model",
-                            lambda *a, **k: pytest.fail("a model was built"))
-        monkeypatch.setattr(checkpoint_io, "read_checkpoint",
-                            lambda *a, **k: pytest.fail("the checkpoint was read"))
-        monkeypatch.setattr(pipeline_module, "read_checkpoint",
-                            lambda *a, **k: pytest.fail("the checkpoint was read"))
-
-        with pytest.raises(PipelineBuildError, match="supplied in memory"):
-            DiagnosisPipeline(
-                kg=KnowledgeGraph(), graph_data=graph,
-                checkpoint_path=str(checkpoint), device="cpu",
-            )
-
     def test_optional_shortest_paths_that_are_absent_still_build(self, workspace):
         """The default. Absent by configuration is the state
         `DISEASE_SCORER_POLICY.md` §2 blesses, and it stays a GNN pipeline."""
@@ -318,13 +261,14 @@ class TestARequestedModelIsBuiltOrRefused:
 
         assert pipeline.get_pipeline_config()["scoring_mode"] == "gnn_only"
 
-    def test_no_model_source_still_serves_path_reasoning(self):
-        """B-2's open policy question, left exactly where it was."""
-        pipeline = DiagnosisPipeline(kg=KnowledgeGraph())
+    def test_no_model_source_is_refused(self, workspace):
+        """K7 (PATH1): B-2's question is settled. A graph with no checkpoint is
+        refused, never served by path reasoning."""
+        data_dir, _ = workspace
 
-        config = pipeline.get_pipeline_config()
-        assert config["gnn_ready"] is False
-        assert config["scoring_mode"] == "path_reasoning_fallback"
+        with pytest.raises(PipelineBuildError, match="No model is configured"):
+            DiagnosisPipeline(graph=KnowledgeGraph.read_json(data_dir / "kg.json"),
+                              data_dir=str(data_dir), checkpoint_path=None, device="cpu")
 
 
 # ==============================================================================
@@ -432,12 +376,12 @@ class TestStartupPublishesNothing:
         assert statuses == [503, 503, 503]
         assert len(builds) == 1, f"{len(builds)} builds for one startup and 3 requests"
 
-    def test_a_checkpoint_with_no_knowledge_graph_is_refused_not_mocked(
+    def test_a_checkpoint_with_no_knowledge_graph_is_refused(
         self, api, monkeypatch, workspace
     ):
         """`build_pipeline` returned None with no KG path before recording the
-        request, so a deployment that named a checkpoint got the demo answer:
-        invented candidates over HTTP 200."""
+        request, so a deployment that named a checkpoint was treated as one
+        that configured nothing (then answered by the retired demo)."""
         from fastapi.testclient import TestClient
 
         data_dir, checkpoint = workspace
@@ -450,20 +394,19 @@ class TestStartupPublishesNothing:
             response = _diagnose(client)
 
         assert response.status_code == 503, response.text
-        assert "mock" not in response.text
+        assert response.json()["error"].startswith("A pipeline is configured")
 
     def test_a_blank_checkpoint_setting_is_no_checkpoint(self, api, monkeypatch, workspace):
-        """An exported-but-empty variable is how a shell says nothing. Read as a
-        path, it would refuse a deployment that asked for no model."""
+        """An exported-but-empty variable is how a shell says nothing: read as
+        no checkpoint, never as a path to look for. With no model the build is
+        refused for that (K7), not for a file named ""."""
         data_dir, _ = workspace
         monkeypatch.setenv("SHEPHERD_CHECKPOINT_PATH", "")
 
-        bundle = api.build_pipeline(
-            kg_path=str(data_dir / "kg.json"), data_dir=str(data_dir)
-        )
+        with pytest.raises(PipelineBuildError, match="No model is configured") as refused:
+            api.build_pipeline(kg_path=str(data_dir / "kg.json"), data_dir=str(data_dir))
 
-        assert bundle.checkpoint_path is None
-        assert bundle.config["scoring_mode"] == "path_reasoning_fallback"
+        assert "does not exist" not in str(refused.value)
 
 
 class TestAReloadKeepsWhatIsServing:
@@ -526,9 +469,9 @@ class TestAReloadKeepsWhatIsServing:
 
 
 class TestReadinessFollowsWhatIsServed:
-    """`/ready`, `/pipeline/status` and `/diagnose` agree on whether a configured
-    pipeline is being served. (With nothing configured, the demo answers and is
-    ready while the status reports no pipeline; that case is shown last.)
+    """`/ready`, `/pipeline/status` and `/diagnose` agree on whether a pipeline
+    is being served, configured or not (K7: with nothing configured, nothing
+    answers either; that case is shown last).
 
     A startup whose build fails clears readiness, and M1 makes that the outcome
     of the commonest misconfigurations. The 503 tells the operator to reload,
@@ -700,13 +643,14 @@ class TestReadinessFollowsWhatIsServed:
             assert self._answers(client) == self.NOT_SERVING
             assert "reload" in client.get("/ready").json()["error"]
 
-    def test_a_service_with_nothing_configured_is_ready_until_a_workspace_is_refused(
+    def test_a_service_with_nothing_configured_is_not_ready_and_says_why(
         self, api, tmp_path, monkeypatch
     ):
-        """Nothing configured is the demo, and it answers. A reload that names a
-        workspace is a request for a real pipeline; refused, every diagnosis is
-        refused, and the probe says so. (The reload is an operator's, which D8
-        allows: mode M1, loopback requests.)"""
+        """K7 (DEMO1): nothing configured is not ready, and no diagnosis is
+        answered; the reason says nothing is loaded. A reload that names a
+        workspace is a request for a real pipeline; refused, the reason says a
+        configured pipeline could not be initialized. (The reload is an
+        operator's, which D8 allows: mode M1, loopback requests.)"""
         from fastapi.testclient import TestClient
 
         from tests.fixtures.operator_access import OPERATOR_BASE_URL, operator_mode
@@ -716,10 +660,11 @@ class TestReadinessFollowsWhatIsServed:
         operator_mode(monkeypatch)
 
         with TestClient(api.app, base_url=OPERATOR_BASE_URL) as client:
-            demo = {"ready": 200, "diagnose": 200, "initialized": False, "gnn_ready": False}
-            assert self._answers(client) == demo
+            assert self._answers(client) == self.NOT_SERVING
+            assert client.get("/ready").json()["error"].startswith("No model is loaded")
 
             refused = client.post("/api/v1/pipeline/reload", json={"data_dir": str(empty)})
 
             assert refused.json()["success"] is False
             assert self._answers(client) == self.NOT_SERVING
+            assert client.get("/ready").json()["error"].startswith("A pipeline is configured")

@@ -360,9 +360,9 @@ def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
     # below — missing files, no checkpoint, a build that fails — all return
     # before `build_pipeline` records anything, and a caller who reached any of
     # them has still asked this service for a real pipeline. Without this,
-    # `/diagnose` would afterwards read them as a demo user and answer with
-    # invented candidates. Recorded here rather than after a successful build for
-    # exactly that reason.
+    # `/diagnose` would afterwards try to build again on the next diagnosis and
+    # refuse as though nothing were configured. Recorded here rather than after a
+    # successful build for exactly that reason.
     from src.api.main import app_state as _app_state
 
     _app_state.real_pipeline_requested = True

@@ -1679,17 +1679,14 @@ def readonly_parts(data: Mapping[str, Any]) -> Dict[str, Any]:
                f'{copy_button(served, "the full model fingerprint of the model in use")}</div>')
     else:
         top = ""
-    if state == "unavailable" or state not in ("no_model", "not_identified", "no_ledger",
-                                               "ledger_not_read", "no_records", "records"):
+    if state == "unavailable" or state not in ("no_model", "no_ledger", "ledger_not_read",
+                                               "no_records", "records"):
         body = '<p class="shep-mp-p shep-amber-t">The recorded results could not be read.</p>'
     elif answer.get("checkpoint_sha256") != served:
         body = f'<p class="shep-mp-p shep-amber-t">{r.e(RECORDS_MODEL_CHANGED)}</p>'
     elif state == "no_model":
-        body = ('<p class="shep-mp-p">No trained model is loaded, so there are no recorded '
-                'results to look up.</p>')
-    elif state == "not_identified":
-        body = ('<p class="shep-mp-p">The loaded model was supplied in memory, not read from a '
-                'checkpoint file, so it has no digest to look recorded results up by.</p>')
+        body = ('<p class="shep-mp-p">No model is loaded, so there are no recorded results to '
+                'look up.</p>')
     elif state == "no_ledger":
         body = ('<p class="shep-mp-p">No ledger (<code>evaluations.json</code>) is beside the '
                 'loaded checkpoint, so no recorded result can be shown; that does not mean these '

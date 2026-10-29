@@ -189,7 +189,7 @@ def _status(workspace, sha):
             "dataset_record": {"state": "verified", "origin": "synthetic", "sha256": "e" * 64},
             "settings": {"device": "cpu", "device_requested": "cpu", "eta": 1.0,
                          "max_path_length": 4, "path_length_penalty": 0.5,
-                         "aggregation_method": "max", "max_paths_per_candidate": 10,
+                         "max_paths_per_candidate": 10,
                          "use_direct_path_optimization": True,
                          "phenotype_normalisation_version": 1},
         },

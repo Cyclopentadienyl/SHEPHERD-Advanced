@@ -94,4 +94,15 @@ def train_children(data_dir: Path, tasks: Sequence[str] = ("disease",), *,
     return out
 
 
-__all__ = ["BASE_RUN", "CHILD_RUNS", "small_base_spec", "train_children"]
+def serve(trained: Dict[str, Path], task: str = "disease", **kwargs: Any) -> Any:
+    """The pipeline the service builds for ``trained[task]`` over its workspace
+    (`build_served_pipeline`, on the CPU): every served pipeline is a model
+    read from its checkpoint (K7: no graph is served without one)."""
+    from src.inference.pipeline import build_served_pipeline
+
+    data_dir = Path(trained["data_dir"])
+    return build_served_pipeline(data_dir / "kg.json", checkpoint_path=str(trained[task]),
+                                 data_dir=str(data_dir), **{"device": "cpu", **kwargs})
+
+
+__all__ = ["BASE_RUN", "CHILD_RUNS", "serve", "small_base_spec", "train_children"]

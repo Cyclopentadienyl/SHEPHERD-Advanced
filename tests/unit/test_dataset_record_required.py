@@ -274,12 +274,13 @@ STUB_CHECKPOINT_SHA256 = "c" * 64
 def _built(self, checkpoint_path, device, *, expected_sha256=None):
     """Stands for a model built from one checkpoint read: it keeps the read's
     identity, as `_load_model_from_checkpoint` does, so the served identity names
-    a verified checkpoint rather than an in-memory model."""
+    the verified checkpoint. A module with parameters, so the device in effect
+    is read from it as from any served model."""
     from src.utils.fingerprint import ReadIdentity
 
     self._checkpoint_identity = ReadIdentity(
         path=Path(checkpoint_path), sha256=STUB_CHECKPOINT_SHA256)
-    return object()
+    return torch.nn.Linear(1, 1)
 
 
 def _pipeline(monkeypatch, workspace, checkpoint_path, load=None):
@@ -343,12 +344,16 @@ def test_serving_publishes_the_record_with_its_origin_apart(tmp_path, monkeypatc
         "verified", "synthetic", record["sha256"])
 
 
-def test_a_pipeline_over_no_workspace_publishes_no_record():
-    """Nothing was verified, so nothing is claimed: an in-memory graph."""
+def test_a_pipeline_over_no_workspace_is_refused(tmp_path):
+    """K7 (G3): a served pipeline always reads its workspace's record, so a
+    graph with no workspace is refused before the checkpoint is read; no
+    pipeline is left to claim, or omit, a record."""
     from scripts.setup_demo import build_demo_kg
-    from src.inference.pipeline import DiagnosisPipeline
+    from src.inference.pipeline import DiagnosisPipeline, PipelineBuildError
 
-    assert DiagnosisPipeline(kg=build_demo_kg()).get_pipeline_config()["dataset_record"] is None
+    with pytest.raises(PipelineBuildError, match="data_dir"):
+        DiagnosisPipeline(graph=build_demo_kg(), checkpoint_path=str(tmp_path / "ck.pt"),
+                          data_dir=None)
 
 
 # ---------------------------------------------------------------------------

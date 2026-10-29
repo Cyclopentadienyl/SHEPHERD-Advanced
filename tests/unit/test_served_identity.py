@@ -9,9 +9,11 @@ and digest, the scoring mode, and the settings in effect. It replaces the two
 version strings a result used to carry, a class constant and "unknown". What is
 pinned here:
 
-- each part refuses a state outside its vocabulary, a stated part without its
-  digest or identifier, a digest that is not lowercase hexadecimal, and an
-  absent part carrying a value; the whole refuses a contradiction between parts;
+- each part refuses a state outside its vocabulary (the no-model and in-memory
+  states are gone since K7), a stated part without its digest or identifier,
+  a digest that is not lowercase hexadecimal, and an absent shortest-path term
+  carrying a value; the whole refuses a mode served with another
+  shortest-path state;
 - the API's Pydantic mirror and the dataclasses have one shape and one set of
   states, and the mirror refuses an unknown key and a missing one;
 - the identity a pipeline reports is built from its own reads: digests equal to
@@ -20,7 +22,8 @@ pinned here:
   in effect;
 - every result, valid, empty or refused, carries the pipeline's identity, and
   the API copies it from the result it answers with, never from shared state a
-  reload could swap; the demo answer carries none;
+  reload could swap; with nothing served a diagnosis is refused, and no answer
+  is given without an identity;
 - the reload route reports the metric of the checkpoint it served, from the
   build's own read (BACKLOG 19.2), calls it "best" only when the scan ranked the
   file by it, and says so when the file it chose was replaced before that read
@@ -54,11 +57,7 @@ from src.core.types import (  # noqa: E402
     SERVED_GRAPH_STATES,
     SERVED_SCORING_MODES,
     SERVED_SHORTEST_PATHS_STATES,
-    DataSource,
     InferenceResult,
-    Node,
-    NodeID,
-    NodeType,
     PatientPhenotypes,
     ServedCheckpoint,
     ServedDatasetRecord,
@@ -73,12 +72,6 @@ from tests.fixtures.generated_workspace import (  # noqa: E402
     write_generated_workspace,
 )
 from tests.fixtures.opens import count_opens  # noqa: E402
-from tests.fixtures.phenotype_kg import (  # noqa: E402
-    DELAY,
-    SEIZURE,
-    UNKNOWN,
-    build_two_phenotype_kg,
-)
 from tests.unit import test_serving_reads_once as reads_once  # noqa: E402
 from tests.unit.test_serving_reads_once import _sha  # noqa: E402
 from tests.unit.test_sp_artifact_binding import publish  # noqa: E402
@@ -97,8 +90,9 @@ BUILD_ID = "0123456789abcdef0123456789abcdef"
 WS = "ws"
 #: A phenotype of that workspace's graph, with an edge to a disease.
 PHENOTYPE = f"phenotype-0-of-{WS}"
-#: A phenotype node with no edge at all, so path search finds nothing.
-ISOLATED = "HP:0000001"
+#: Phenotypes of the demo graph the trained disease child serves, and one in
+#: no graph.
+SEIZURE, DELAY, UNKNOWN = "HP:0001250", "HP:0001263", "HP:9999999"
 
 
 # ---------------------------------------------------------------------------
@@ -168,6 +162,16 @@ def _full_pipeline(data_dir, checkpoint, config=None):
     )
 
 
+def _child_pipeline(trained, config=None):
+    """A pipeline of the test's own over the trained disease child."""
+    from src.inference.pipeline import DiagnosisPipeline
+
+    data_dir = trained["data_dir"]
+    return DiagnosisPipeline(graph=KnowledgeGraph.read_json(data_dir / "kg.json"),
+                             data_dir=str(data_dir), checkpoint_path=str(trained["disease"]),
+                             config=config, device="cpu")
+
+
 def _patient(phenotypes, confidences=None):
     return PatientPhenotypes(patient_id="identity-patient", phenotypes=list(phenotypes),
                              phenotype_confidences=confidences)
@@ -178,30 +182,24 @@ def _patient(phenotypes, confidences=None):
 # ---------------------------------------------------------------------------
 SETTINGS_WITH_MODEL = ServedSettings(
     device="cpu", device_requested="cpu", eta=0.7, max_path_length=4,
-    path_length_penalty=0.9, aggregation_method="weighted_sum",
-    max_paths_per_candidate=10, use_direct_path_optimization=True,
-    phenotype_normalisation_version=1,
+    path_length_penalty=0.9, max_paths_per_candidate=10,
+    use_direct_path_optimization=True, phenotype_normalisation_version=1,
 )
-SETTINGS_NO_MODEL = dataclasses.replace(
-    SETTINGS_WITH_MODEL, device=None, device_requested=None, eta=None
-)
+#: A task model that mixes nothing (disease, patients-like-me) has no eta.
+SETTINGS_NO_ETA = dataclasses.replace(SETTINGS_WITH_MODEL, eta=None)
 CHECKPOINTS = {
     "verified": ServedCheckpoint(state="verified", sha256=SHA_A),
-    "supplied_in_memory": ServedCheckpoint(state="supplied_in_memory"),
-    "absent": ServedCheckpoint(state="absent"),
 }
 GRAPHS = {
     "verified": ServedGraph(state="verified", kg_sha256=SHA_B, split_manifest_sha256=SHA_C),
-    "unverified": ServedGraph(state="unverified", kg_sha256=SHA_B),
-    "in_memory": ServedGraph(state="in_memory"),
 }
 TABLES = {
     "verified": ServedShortestPaths(state="verified", build_id=BUILD_ID, max_hops=5),
+    "computed": ServedShortestPaths(state="computed"),
     "absent": ServedShortestPaths(state="absent"),
 }
 RECORDS = {
     "verified": ServedDatasetRecord(state="verified", origin="synthetic", sha256=SHA_D),
-    "absent": ServedDatasetRecord(state="absent"),
 }
 
 
@@ -212,64 +210,66 @@ def _identity(mode, checkpoint, graph, table, record):
         graph=GRAPHS[graph],
         shortest_paths=TABLES[table],
         dataset_record=RECORDS[record],
-        settings=SETTINGS_NO_MODEL if checkpoint == "absent" else SETTINGS_WITH_MODEL,
+        settings=SETTINGS_NO_ETA if mode in ("disease_task", "patients_like_me")
+        else SETTINGS_WITH_MODEL,
     )
 
 
 #: Each a combination a pipeline builds: (mode, checkpoint, graph, table, record).
+#: Since K7 every one is a model read from a checkpoint over a verified
+#: workspace; only the scoring mode and its shortest-path term vary.
 LEGAL = {
     "gnn and table over a workspace": (
         "gnn_plus_shortest_path", "verified", "verified", "verified", "verified"),
     "gnn alone over a workspace": (
         "gnn_only", "verified", "verified", "absent", "verified"),
-    "a model in memory over a workspace with its table": (
-        "gnn_plus_shortest_path", "supplied_in_memory", "verified", "verified", "verified"),
-    "a model and graph data in memory": (
-        "gnn_only", "supplied_in_memory", "in_memory", "absent", "absent"),
-    "path reasoning over a graph file": (
-        "path_reasoning_fallback", "absent", "unverified", "absent", "absent"),
-    "path reasoning over a graph in memory": (
-        "path_reasoning_fallback", "absent", "in_memory", "absent", "absent"),
+    "a disease task model over a workspace": (
+        "disease_task", "verified", "verified", "absent", "verified"),
+    "a gene task model over a workspace": (
+        "gene_task", "verified", "verified", "computed", "verified"),
+    "a patients-like-me model over a workspace": (
+        "patients_like_me", "verified", "verified", "absent", "verified"),
 }
 
 #: Each part's refusals: (build, fragment of the refusal).
 PART_REFUSALS = {
     "checkpoint state outside its vocabulary": (
-        lambda: ServedCheckpoint(state="unknown"), "is not one of"),
+        lambda: ServedCheckpoint(state="unknown", sha256=SHA_A), "is not one of"),
     "verified checkpoint without its digest": (
-        lambda: ServedCheckpoint(state="verified"), "lowercase hexadecimal SHA-256"),
+        lambda: ServedCheckpoint(state="verified", sha256=None),
+        "lowercase hexadecimal SHA-256"),
     "checkpoint digest in uppercase": (
         lambda: ServedCheckpoint(state="verified", sha256=SHA_A.upper()), "lowercase"),
     "checkpoint digest not hexadecimal": (
         lambda: ServedCheckpoint(state="verified", sha256="g" * 64), "lowercase"),
     "checkpoint digest one character short": (
         lambda: ServedCheckpoint(state="verified", sha256="a" * 63), "lowercase"),
-    "absent checkpoint carrying a digest": (
-        lambda: ServedCheckpoint(state="absent", sha256=SHA_A), "carries no sha256"),
-    "model in memory carrying a digest": (
-        lambda: ServedCheckpoint(state="supplied_in_memory", sha256=SHA_A),
-        "carries no sha256"),
+    # K7: no model is served without a checkpoint read, and none in memory.
+    "the retired absent checkpoint": (
+        lambda: ServedCheckpoint(state="absent", sha256=SHA_A), "is not one of"),
+    "the retired model supplied in memory": (
+        lambda: ServedCheckpoint(state="supplied_in_memory", sha256=SHA_A), "is not one of"),
     "graph state outside its vocabulary": (
-        lambda: ServedGraph(state="cached", kg_sha256=SHA_B), "is not one of"),
+        lambda: ServedGraph(state="cached", kg_sha256=SHA_B, split_manifest_sha256=SHA_C),
+        "is not one of"),
+    "the retired unverified graph": (
+        lambda: ServedGraph(state="unverified", kg_sha256=SHA_B, split_manifest_sha256=SHA_C),
+        "is not one of"),
+    "the retired graph in memory": (
+        lambda: ServedGraph(state="in_memory", kg_sha256=SHA_B, split_manifest_sha256=SHA_C),
+        "is not one of"),
     "verified graph without its kg digest": (
-        lambda: ServedGraph(state="verified", split_manifest_sha256=SHA_C), "kg_sha256"),
+        lambda: ServedGraph(state="verified", kg_sha256=None, split_manifest_sha256=SHA_C),
+        "kg_sha256"),
     "verified graph without its manifest digest": (
-        lambda: ServedGraph(state="verified", kg_sha256=SHA_B), "split_manifest_sha256"),
-    "unverified graph without its kg digest": (
-        lambda: ServedGraph(state="unverified"), "kg_sha256"),
+        lambda: ServedGraph(state="verified", kg_sha256=SHA_B, split_manifest_sha256=None),
+        "split_manifest_sha256"),
     "kg digest in uppercase": (
-        lambda: ServedGraph(state="unverified", kg_sha256=SHA_B.upper()), "lowercase"),
+        lambda: ServedGraph(state="verified", kg_sha256=SHA_B.upper(),
+                            split_manifest_sha256=SHA_C), "lowercase"),
     "manifest digest not hexadecimal": (
         lambda: ServedGraph(state="verified", kg_sha256=SHA_B,
                             split_manifest_sha256="z" * 64), "lowercase"),
-    "graph in memory carrying a kg digest": (
-        lambda: ServedGraph(state="in_memory", kg_sha256=SHA_B), "carries no kg_sha256"),
-    "unverified graph carrying a manifest digest": (
-        lambda: ServedGraph(state="unverified", kg_sha256=SHA_B,
-                            split_manifest_sha256=SHA_C), "checked against no manifest"),
-    "graph in memory carrying a manifest digest": (
-        lambda: ServedGraph(state="in_memory", split_manifest_sha256=SHA_C),
-        "checked against no manifest"),
     "table state outside its vocabulary": (
         lambda: ServedShortestPaths(state="unrecorded"), "is not one of"),
     "verified table without its build_id": (
@@ -288,67 +288,47 @@ PART_REFUSALS = {
     "computed distances carrying a build_id": (
         lambda: ServedShortestPaths(state="computed", build_id=BUILD_ID), "carries no build_id"),
     "record state outside its vocabulary": (
-        lambda: ServedDatasetRecord(state="mismatch"), "is not one of"),
+        lambda: ServedDatasetRecord(state="mismatch", origin="files", sha256=SHA_D),
+        "is not one of"),
+    "the retired absent record": (
+        lambda: ServedDatasetRecord(state="absent", origin="files", sha256=SHA_D),
+        "is not one of"),
     "verified record with an origin outside its vocabulary": (
         lambda: ServedDatasetRecord(state="verified", origin="unknown", sha256=SHA_D),
         "origin"),
     "verified record without its origin": (
-        lambda: ServedDatasetRecord(state="verified", sha256=SHA_D), "origin"),
+        lambda: ServedDatasetRecord(state="verified", origin=None, sha256=SHA_D), "origin"),
     "verified record without its digest": (
-        lambda: ServedDatasetRecord(state="verified", origin="files"), "lowercase"),
+        lambda: ServedDatasetRecord(state="verified", origin="files", sha256=None),
+        "lowercase"),
     "record digest in uppercase": (
         lambda: ServedDatasetRecord(state="verified", origin="files", sha256=SHA_D.upper()),
         "lowercase"),
-    "absent record carrying an origin": (
-        lambda: ServedDatasetRecord(state="absent", origin="synthetic"), "carries no origin"),
-    "absent record carrying a digest": (
-        lambda: ServedDatasetRecord(state="absent", sha256=SHA_D), "carries no origin"),
 }
 
 #: Each combination of valid parts that contradict one another, built so only
 #: the rule named fails: (mode, checkpoint, graph, table, record), fragment.
 CONTRADICTIONS = {
-    "a model scored by path reasoning": (
-        ("path_reasoning_fallback", "supplied_in_memory", "in_memory", "absent", "absent"),
-        "contradicts a checkpoint"),
-    "a verified checkpoint scored by path reasoning": (
-        ("path_reasoning_fallback", "verified", "verified", "absent", "verified"),
-        "contradicts a checkpoint"),
-    "GNN scoring with no model": (
-        ("gnn_only", "absent", "in_memory", "absent", "absent"),
-        "contradicts a checkpoint"),
     "shortest-path scoring with no table": (
         ("gnn_plus_shortest_path", "verified", "verified", "absent", "verified"),
         "contradicts a shortest-path table"),
     "a verified table that GNN-only scoring leaves out": (
         ("gnn_only", "verified", "verified", "verified", "verified"),
         "contradicts a shortest-path table"),
-    "a verified graph without its record": (
-        ("gnn_only", "verified", "verified", "absent", "absent"),
-        "dataset record is verified exactly when"),
-    "a verified record over an unverified graph": (
-        ("path_reasoning_fallback", "absent", "unverified", "absent", "verified"),
-        "dataset record is verified exactly when"),
-    "a verified checkpoint over an unverified graph": (
-        ("gnn_only", "verified", "unverified", "absent", "absent"),
-        "verified checkpoint is served only over a verified workspace graph"),
-    "a verified checkpoint over a graph in memory": (
-        ("gnn_only", "verified", "in_memory", "absent", "absent"),
-        "verified checkpoint is served only over a verified workspace graph"),
-    "a verified table over a graph in memory": (
-        ("gnn_plus_shortest_path", "supplied_in_memory", "in_memory", "verified", "absent"),
-        "verified shortest-path table is served only over a verified workspace graph"),
-    "a verified table over an unverified graph": (
-        ("gnn_plus_shortest_path", "supplied_in_memory", "unverified", "verified", "absent"),
-        "verified shortest-path table is served only over a verified workspace graph"),
+    "a disease task model with a table": (
+        ("disease_task", "verified", "verified", "verified", "verified"),
+        "contradicts a shortest-path table"),
+    "a gene task model with no distances": (
+        ("gene_task", "verified", "verified", "absent", "verified"),
+        "contradicts a shortest-path table"),
 }
 
 
 @pytest.mark.parametrize("case", sorted(PART_REFUSALS))
 def test_each_part_refuses_a_value_its_state_does_not_allow(case):
-    """A part is either stated with what identifies it, or absent with nothing.
-    Catches a part that accepts a blank, a placeholder digest, or a value beside
-    a state that says there is none, which a reader would have to interpret."""
+    """A part is stated with what identifies it. Catches a part that accepts a
+    blank, a placeholder digest, a retired state, or a value beside a state that
+    says there is none, which a reader would have to interpret."""
     build, fragment = PART_REFUSALS[case]
 
     with pytest.raises(ValueError, match=fragment):
@@ -358,8 +338,8 @@ def test_each_part_refuses_a_value_its_state_does_not_allow(case):
 @pytest.mark.parametrize("case", sorted(CONTRADICTIONS))
 def test_the_identity_refuses_parts_that_contradict_each_other(case):
     """Valid parts can still describe no pipeline that exists. Catches a builder
-    that, say, reports a verified checkpoint over a graph nothing verified, or a
-    shortest-path table beside a mode that does not use one."""
+    that, say, reports a shortest-path table beside a mode that does not use
+    one."""
     combination, fragment = CONTRADICTIONS[case]
 
     with pytest.raises(ValueError, match=fragment):
@@ -385,16 +365,13 @@ def test_each_scoring_mode_is_served_with_exactly_the_sp_state_its_one_table_nam
 
     assert set(SCORING_MODE_SP_STATES) == set(SERVED_SCORING_MODES)
     assert SCORING_MODE_SP_STATES["gene_task"] == "computed"
-    tables = {**TABLES, "computed": ServedShortestPaths(state="computed")}
     for mode in SERVED_SCORING_MODES:
-        checkpoint = "absent" if mode == "path_reasoning_fallback" else "verified"
         for state in SERVED_SHORTEST_PATHS_STATES:
-            def build(mode=mode, checkpoint=checkpoint, state=state):
+            def build(mode=mode, state=state):
                 return ServedIdentity(
-                    scoring_mode=mode, checkpoint=CHECKPOINTS[checkpoint],
-                    graph=GRAPHS["verified"], shortest_paths=tables[state],
-                    dataset_record=RECORDS["verified"],
-                    settings=SETTINGS_NO_MODEL if checkpoint == "absent" else SETTINGS_WITH_MODEL)
+                    scoring_mode=mode, checkpoint=CHECKPOINTS["verified"],
+                    graph=GRAPHS["verified"], shortest_paths=TABLES[state],
+                    dataset_record=RECORDS["verified"], settings=SETTINGS_WITH_MODEL)
             if state == SCORING_MODE_SP_STATES[mode]:
                 assert build().shortest_paths.state == state
             else:
@@ -478,7 +455,6 @@ def test_the_result_unions_mirrors_have_the_core_types_fields():
         (types.SPAnalysisRecord, diagnose.SPTerm, set()),
         (types.PhenotypeInputAccount, diagnose.PhenotypeInput, set()),
         (types.ServedMixtureCandidate, diagnose.ServedMixtureCandidate, {"evidence_sources"}),
-        (types.PathReasoningCandidate, diagnose.PathReasoningCandidate, {"evidence_sources"}),
         (types.DiseaseTaskCandidate, diagnose.DiseaseTaskCandidate, {"evidence_sources"}),
         (types.GeneTaskCandidate, diagnose.GeneTaskCandidate, set()),
         (types.PatientCandidate, diagnose.PatientCandidate, set()),
@@ -486,20 +462,22 @@ def test_the_result_unions_mirrors_have_the_core_types_fields():
     for core, model, kept_back in pairs:
         assert {f.name for f in dataclasses.fields(core)} - kept_back == set(model.model_fields), (
             core.__name__)
-    assert set(diagnose.DemoCandidate.model_fields) == {
-        "rank", "disease_id", "disease_name", "matching_phenotypes"}
+    # K7 (PATH1, DEMO1): the path-reasoning and demo kinds are gone from both
+    # definitions, with no alias.
+    for retired in ("PathReasoningCandidate", "PathReasoningResponse", "DemoCandidate",
+                    "DemoResponse", "_generate_mock_candidates"):
+        assert not hasattr(diagnose, retired) and not hasattr(types, retired), retired
 
 
 def test_the_result_unions_vocabularies_are_the_core_ones():
-    """The kinds, the SP statuses and their numeric set, the tie policy, the
-    aggregations: one vocabulary each, in the dataclasses and the API."""
+    """The kinds, the SP statuses and their numeric set, the tie policies: one
+    vocabulary each, in the dataclasses and the API."""
     from src.api.routes import diagnose
     from src.core import types
 
     assert set(diagnose.RESULT_KINDS) == set(types.RESULT_KINDS)
     kinds = {model.model_fields["result_kind"].annotation for model in (
-        diagnose.ServedMixtureResponse, diagnose.PathReasoningResponse, diagnose.DemoResponse,
-        diagnose.DiseaseTaskResponse, diagnose.GeneTaskResponse,
+        diagnose.ServedMixtureResponse, diagnose.DiseaseTaskResponse, diagnose.GeneTaskResponse,
         diagnose.PatientsLikeMeResponse)}
     assert {value for kind in kinds for value in _literal_values(kind)} == set(types.RESULT_KINDS)
     assert _literal_values(diagnose.SPTerm.model_fields["status"].annotation) == set(
@@ -510,9 +488,7 @@ def test_the_result_unions_vocabularies_are_the_core_ones():
     assert diagnose.DISEASE_TASK_TIE_POLICY == types.DISEASE_TASK_TIE_POLICY
     assert diagnose.GENE_TASK_TIE_POLICY == types.GENE_TASK_TIE_POLICY
     assert diagnose.PATIENTS_LIKE_ME_TIE_POLICY == types.PATIENTS_LIKE_ME_TIE_POLICY
-    assert _literal_values(
-        diagnose.PathReasoningResponse.model_fields["path_score_aggregation"].annotation
-    ) == {f"{method}/v1" for method in types.PATH_SCORE_AGGREGATIONS}
+    assert not hasattr(types, "PATH_SCORE_AGGREGATIONS")
 
 
 def test_each_state_vocabulary_is_the_same_in_both_definitions():
@@ -600,7 +576,7 @@ def test_the_response_schema_requires_every_key():
                     if not field.is_required()]
         assert optional == [], f"{model.__name__}: {optional}"
 
-    identity = _identity(*LEGAL["path reasoning over a graph in memory"]).to_dict()
+    identity = _identity(*LEGAL["a disease task model over a workspace"]).to_dict()
     for path, mapping in list(_nested_dicts(identity)):
         for key in mapping:
             tampered = json.loads(json.dumps(identity))
@@ -658,7 +634,6 @@ def _settings_of(config, *, device, device_requested, eta):
         device=device, device_requested=device_requested, eta=eta,
         max_path_length=config.max_path_length,
         path_length_penalty=config.path_length_penalty,
-        aggregation_method=config.aggregation_method,
         max_paths_per_candidate=config.max_paths_per_candidate,
         use_direct_path_optimization=config.use_direct_path_optimization,
         phenotype_normalisation_version=PHENOTYPE_NORMALISATION_VERSION,
@@ -668,86 +643,54 @@ def _settings_of(config, *, device, device_requested, eta):
 #: Every path setting the identity records, each away from its default, so an
 #: identity built from the defaults instead of what is in effect cannot match.
 NON_DEFAULT_PATHS = dict(max_path_length=3, path_length_penalty=0.8,
-                         aggregation_method="max", max_paths_per_candidate=7,
-                         use_direct_path_optimization=False)
+                         max_paths_per_candidate=7, use_direct_path_optimization=False)
 
 
-def test_a_path_only_pipeline_over_a_graph_in_memory_states_every_absence():
-    """No model, no file, no table, no workspace: each said in words. The path
-    settings are the configuration's, since path search discovers the
-    candidates in every mode. Non-default values catch a builder that reports
+def test_a_disease_childs_identity_names_every_part_from_its_reads(trained_disease_child):
+    """A task model read from its checkpoint over its workspace: each part
+    against an independent account of the files (`hashlib` over their bytes,
+    the record as written), the path settings the configuration's, since paths
+    explain every disease row. Non-default values catch a builder that reports
     the defaults instead of what is in effect."""
-    from src.inference.pipeline import DiagnosisPipeline, PipelineConfig
+    from src.inference.pipeline import PipelineConfig
+    from src.kg.provenance import PROVENANCE_FILENAME
 
+    data_dir, checkpoint = trained_disease_child["data_dir"], trained_disease_child["disease"]
     config = PipelineConfig(**NON_DEFAULT_PATHS)
-    pipeline = DiagnosisPipeline(kg=build_two_phenotype_kg(), config=config)
+    pipeline = _child_pipeline(trained_disease_child, config)
 
     identity = pipeline.served_identity()
 
-    assert identity.scoring_mode == "path_reasoning_fallback"
-    assert identity.checkpoint == ServedCheckpoint(state="absent")
-    assert identity.graph == ServedGraph(state="in_memory")
+    assert identity.scoring_mode == "disease_task"
+    assert identity.checkpoint == ServedCheckpoint(state="verified", sha256=_sha(checkpoint))
+    assert identity.graph == ServedGraph(
+        state="verified", kg_sha256=_sha(data_dir / "kg.json"),
+        split_manifest_sha256=_sha(data_dir / "split_manifest.json"),
+    )
     assert identity.shortest_paths == ServedShortestPaths(state="absent")
-    assert identity.dataset_record == ServedDatasetRecord(state="absent")
-    assert identity.settings == _settings_of(config, device=None, device_requested=None,
+    record = json.loads((data_dir / PROVENANCE_FILENAME).read_text())
+    assert identity.dataset_record == ServedDatasetRecord(
+        state="verified", origin=record["origin"], sha256=_sha(data_dir / PROVENANCE_FILENAME))
+    assert identity.settings == _settings_of(config, device="cpu", device_requested="cpu",
                                              eta=None)
     assert pipeline.get_pipeline_config()["served_identity"] == identity.to_dict()
     assert "version" not in pipeline.get_pipeline_config()
 
 
-def test_a_graph_read_from_a_file_and_checked_against_nothing_is_unverified(tmp_path):
-    """BACKLOG 19.20: path-only serving reads no manifest, and says so. The
-    digest is the read's, equal to `hashlib` over the file: catches a digest
-    computed from another read, or a graph claimed verified that nothing
-    checked."""
-    from src.inference.pipeline import DiagnosisPipeline
-
-    kg_file = tmp_path / "kg.json"
-    build_two_phenotype_kg().save_json(str(kg_file))
-    read = KnowledgeGraph.read_json(kg_file)
-
-    identity = DiagnosisPipeline(graph=read).served_identity()
-
-    assert read.identity.sha256 == _sha(kg_file)
-    assert identity.graph == ServedGraph(state="unverified", kg_sha256=read.identity.sha256)
-    assert identity.scoring_mode == "path_reasoning_fallback"
-    assert identity.checkpoint.state == "absent"
-    assert identity.dataset_record.state == "absent"
-
-
-def test_a_workspace_beside_a_path_only_pipeline_is_not_claimed_verified(
-    served_workspace,
-):
-    """With no model, no manifest is read even when a data directory is named
-    (19.20), so the graph is unverified and no record is claimed: catches an
-    identity that borrows the workspace's verification without performing it."""
-    from src.inference.pipeline import DiagnosisPipeline
+def test_the_service_build_without_a_checkpoint_is_refused(api, served_workspace):
+    """K7 (PATH1): a graph named with no checkpoint is refused before it is
+    read, and nothing is published; it is never served by path reasoning."""
+    from src.inference.pipeline import PipelineBuildError
 
     data_dir, _ = served_workspace
-    read = KnowledgeGraph.read_json(data_dir / "kg.json")
+    served = api.app_state.pipeline
 
-    with count_opens() as opens:
-        identity = DiagnosisPipeline(graph=read, data_dir=str(data_dir)).served_identity()
+    with count_opens() as opens, pytest.raises(PipelineBuildError, match="No model is configured"):
+        api.build_pipeline(kg_path=str(data_dir / "kg.json"), data_dir=str(data_dir))
 
+    assert opens.opens(data_dir / "kg.json") == 0
     assert opens.opens(data_dir / "split_manifest.json") == 0
-    assert identity.graph == ServedGraph(state="unverified", kg_sha256=_sha(data_dir / "kg.json"))
-    assert identity.dataset_record.state == "absent"
-
-
-def test_the_service_build_without_a_checkpoint_reports_an_unverified_graph(
-    api, served_workspace
-):
-    data_dir, _ = served_workspace
-
-    bundle = api.build_pipeline(kg_path=str(data_dir / "kg.json"), data_dir=str(data_dir))
-
-    identity = bundle.config["served_identity"]
-    assert identity["scoring_mode"] == "path_reasoning_fallback"
-    assert identity["graph"] == {"state": "unverified",
-                                 "kg_sha256": _sha(data_dir / "kg.json"),
-                                 "split_manifest_sha256": None}
-    assert identity["settings"]["device"] is None
-    assert identity["settings"]["device_requested"] is None
+    assert api.app_state.pipeline is served
 
 
 def test_a_full_workspace_with_a_bound_table_is_verified_in_every_part(served_workspace):
@@ -801,19 +744,12 @@ def test_a_full_workspace_without_a_table_serves_the_gnn_alone(served_workspace)
 # ---------------------------------------------------------------------------
 # 4. Every result carries the identity of what produced it
 # ---------------------------------------------------------------------------
-def _kg_with_an_isolated_phenotype():
-    kg = build_two_phenotype_kg()
-    kg.add_node(Node(id=NodeID(source=DataSource.HPO, local_id=ISOLATED),
-                     node_type=NodeType.PHENOTYPE, name=ISOLATED))
-    return kg
-
-
 #: (phenotypes, confidences, kind, warning fragment). An input with no phenotype
 #: in the graph is refused by validation (Batch 4 removed the switch that sent it
-#: to the empty result instead).
+#: to the empty result instead). A disease task model ranks every disease, so
+#: it has no empty result; the mixture's is below.
 RESULT_PATHS = {
     "scored": ([SEIZURE, DELAY], None, "scored", None),
-    "empty, no path": ([ISOLATED], None, "empty", "No paths found"),
     "refused, no valid phenotype": (
         [UNKNOWN], None, "empty", "No valid phenotypes after validation"),
     "refused, a confidence list of another length": (
@@ -822,19 +758,15 @@ RESULT_PATHS = {
 
 
 @pytest.mark.parametrize("case", sorted(RESULT_PATHS))
-def test_every_result_path_carries_the_pipelines_identity(case):
-    """Valid, empty and refused results are built in three places; catches one
+def test_every_result_path_carries_the_pipelines_identity(trained_disease_child, case):
+    """Valid and refused results are built in different places; catches one
     of them returning without the identity, or with one built differently. The
-    path settings are the only values a path-only pipeline's identity has to
-    lose, so they are not the defaults: an identity built from a default
+    path settings are not the defaults: an identity built from a default
     configuration differs."""
-    from src.inference.pipeline import DiagnosisPipeline, PipelineConfig
+    from src.inference.pipeline import PipelineConfig
 
     phenotypes, confidences, kind, warning = RESULT_PATHS[case]
-    pipeline = DiagnosisPipeline(
-        kg=_kg_with_an_isolated_phenotype(),
-        config=PipelineConfig(**NON_DEFAULT_PATHS),
-    )
+    pipeline = _child_pipeline(trained_disease_child, PipelineConfig(**NON_DEFAULT_PATHS))
 
     result = pipeline.run(_patient(phenotypes, confidences), top_k=5)
 
@@ -845,20 +777,21 @@ def test_every_result_path_carries_the_pipelines_identity(case):
     assert result.served_identity == pipeline.served_identity()
     assert result.served_identity.to_dict() == pipeline.get_pipeline_config()["served_identity"]
     assert result.served_identity.settings != _settings_of(
-        PipelineConfig(), device=None, device_requested=None, eta=None
+        PipelineConfig(), device="cpu", device_requested="cpu", eta=None
     ), "the path settings in effect are the defaults; this case cannot tell them apart"
 
 
 #: The same places over the full pipeline: (phenotypes, kind, warning fragment).
 FULL_RESULT_PATHS = {
     "scored": ([PHENOTYPE], "scored", None),
+    "empty, no path": ([PHENOTYPE], "no path", "No paths found"),
     "refused, no valid phenotype": (
         ["HP:9999999"], "empty", "No valid phenotypes after validation"),
 }
 
 
 @pytest.mark.parametrize("case", sorted(FULL_RESULT_PATHS))
-def test_a_full_pipelines_results_carry_its_full_identity(served_workspace, case):
+def test_a_full_pipelines_results_carry_its_full_identity(served_workspace, case, monkeypatch):
     """The same over a checkpoint and a bound table, where every part has a
     value to lose on the way to the result. An answer that found nothing to rank
     was still produced by the model and table served: catches an empty result
@@ -870,6 +803,9 @@ def test_a_full_pipelines_results_carry_its_full_identity(served_workspace, case
     data_dir, checkpoint = served_workspace
     _with_table(data_dir)
     pipeline = _full_pipeline(data_dir, checkpoint, PipelineConfig())
+    if kind == "no path":
+        # Discovery reaches no disease: the mixture's empty result.
+        monkeypatch.setattr(pipeline, "_find_all_paths", lambda *args, **kwargs: {})
 
     result = pipeline.run(_patient(phenotypes), top_k=5)
 
@@ -902,10 +838,9 @@ def _client(api_main):
     return TestClient(api_main.app)
 
 
-def test_a_diagnosis_carries_the_identity_of_the_pipeline_that_answered(app, monkeypatch):
-    from src.inference.pipeline import DiagnosisPipeline
-
-    pipeline = DiagnosisPipeline(kg=build_two_phenotype_kg())
+def test_a_diagnosis_carries_the_identity_of_the_pipeline_that_answered(app, monkeypatch,
+                                                                       disease_pipeline):
+    pipeline = disease_pipeline
     monkeypatch.setattr(app.app_state, "pipeline", pipeline)
 
     response = _client(app).post("/api/v1/diagnose", json={"phenotypes": [SEIZURE, DELAY]})
@@ -932,25 +867,26 @@ def test_a_diagnosis_from_a_full_pipeline_carries_every_digest(app, monkeypatch,
     assert body["served_identity"]["checkpoint"]["sha256"] == _sha(checkpoint)
 
 
-def test_the_demo_answer_identifies_nothing_and_says_it_is_a_demo(app):
-    """Nothing was served, so the key is present and null; the warning stays."""
-    body = _client(app).post("/api/v1/diagnose", json={"phenotypes": [SEIZURE]}).json()
+def test_with_nothing_served_no_answer_is_given(app):
+    """K7 (DEMO1): nothing was served, so nothing answers: 503 with the reason,
+    no candidates and no identity to attribute them to."""
+    response = _client(app).post("/api/v1/diagnose", json={"phenotypes": [SEIZURE]})
 
-    assert "served_identity" in body
-    assert body["served_identity"] is None
-    assert "Pipeline not fully initialized - using mock data" in body["warnings"]
-    assert body["candidates"], "the demo still answers"
+    assert response.status_code == 503
+    body = response.json()
+    assert "served_identity" not in body and "candidates" not in body
+    assert body["error"].startswith("No model is loaded")
 
 
-def test_the_identity_is_the_results_even_when_a_reload_lands_mid_request(app, monkeypatch):
+def test_the_identity_is_the_results_even_when_a_reload_lands_mid_request(
+        app, monkeypatch, trained_disease_child):
     """A reload can publish another pipeline while a diagnosis runs. Catches a
     route that reads the identity from shared state after `run()`, which would
     attribute this result to a pipeline that did not produce it."""
-    from src.inference.pipeline import DiagnosisPipeline, PipelineConfig
+    from src.inference.pipeline import PipelineConfig
 
-    answering = DiagnosisPipeline(kg=build_two_phenotype_kg())
-    published = DiagnosisPipeline(kg=build_two_phenotype_kg(),
-                                  config=PipelineConfig(max_path_length=2))
+    answering = _child_pipeline(trained_disease_child)
+    published = _child_pipeline(trained_disease_child, PipelineConfig(max_path_length=2))
     assert answering.served_identity() != published.served_identity()
     original = answering.run
 
@@ -990,28 +926,34 @@ def test_the_status_with_nothing_loaded_identifies_nothing(app):
     assert body["served_identity"] is None
 
 
-def test_a_diagnose_response_without_the_identity_key_is_refused():
-    """Required-but-nullable: catches a default that would let a response path
-    leave the key out instead of answering it. Null only in the demo answer
-    (`demo/v1`): a served kind with a null identity is refused (Spec 1 §2.1)."""
+def test_a_diagnose_response_without_the_identity_is_refused():
+    """Required and never null: every answer comes from a model (K7), so a
+    response that leaves the identity out, or answers it with null, is
+    refused, whatever its kind (Spec 1 §2.1). The retired kinds are refused
+    too."""
     from pydantic import ValidationError
 
     from src.api.routes.diagnose import DiagnoseResponse
 
-    response = {"result_kind": "demo/v1", "result_schema_version": 2, "session_id": "s",
-                "patient_id": "p", "timestamp": "t", "candidates": [],
-                "inference_time_ms": 0.0, "phenotype_input": None}
+    response = {"result_kind": "disease_task/v1", "result_schema_version": 2,
+                "session_id": "s", "patient_id": "p", "timestamp": "t", "candidates": [],
+                "inference_time_ms": 0.0, "phenotype_input": None,
+                "tie_policy": "score-desc-then-view-id-asc/v1"}
+    identity = _identity(*LEGAL["a disease task model over a workspace"]).to_dict()
 
+    assert DiagnoseResponse.model_validate({**response, "served_identity": identity})
     with pytest.raises(ValidationError, match="served_identity"):
         DiagnoseResponse.model_validate(response)
-    assert DiagnoseResponse.model_validate({**response, "served_identity": None})
-    for kind, extra in (("served_mixture/v1", {"eta": 1.0, "candidates_reached": 0,
-                                               "tie_policy": "served-stable-discovery-order/v1"}),
-                        ("path_reasoning/v1", {"path_score_aggregation": "weighted_sum/v1",
+    for kind, extra in (("disease_task/v1", {}),
+                        ("served_mixture/v1", {"eta": 1.0, "candidates_reached": 0,
                                                "tie_policy": "served-stable-discovery-order/v1"})):
         with pytest.raises(ValidationError, match="served_identity"):
             DiagnoseResponse.model_validate(
                 {**response, **extra, "result_kind": kind, "served_identity": None})
+    for retired in ("demo/v1", "path_reasoning/v1"):
+        with pytest.raises(ValidationError):
+            DiagnoseResponse.model_validate({**response, "result_kind": retired,
+                                             "served_identity": None})
 
 
 # ---------------------------------------------------------------------------

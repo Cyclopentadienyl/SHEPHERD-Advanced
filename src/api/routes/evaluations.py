@@ -116,7 +116,7 @@ router = APIRouter()
 LEDGER_WHERE = "beside the loaded checkpoint"
 
 #: States with no checkpoint digest, and so no ledger to look in.
-_NOTHING_TO_LOOK_UP = ("no_model", "not_identified")
+_NOTHING_TO_LOOK_UP = ("no_model",)
 #: R10 states that carry a count (spec §3.2); every other state carries none.
 _COUNTED_R10_STATES = ("overlap", "none")
 
@@ -356,11 +356,9 @@ class LoadedModelEvaluations(_Strict):
     record with its D5 state (`RecordContest`)."""
 
     state: Literal[
-        "no_model", "not_identified", "no_ledger", "ledger_not_read", "no_records",
-        "records",
+        "no_model", "no_ledger", "ledger_not_read", "no_records", "records",
     ] = Field(
-        ..., description="no_model: no pipeline, or one serving no model; "
-        "not_identified: a model supplied in memory, no checkpoint read to look up; "
+        ..., description="no_model: no pipeline is served; "
         "no_ledger: no ledger beside the checkpoint; ledger_not_read: a ledger that "
         "cannot be read under this revision, so none of it is shown; no_records: the "
         "ledger holds no result for these weights; records: it holds at least one")
@@ -624,9 +622,6 @@ async def get_loaded_model_evaluations() -> LoadedModelEvaluations:
     if pipeline is None:
         return _nothing_to_look_up("no_model")
     read = pipeline.served_checkpoint_read()
-    if read is None:
-        absent = pipeline.served_identity().checkpoint.state == "absent"
-        return _nothing_to_look_up("no_model" if absent else "not_identified")
     # The identity is taken; what follows reads files only (the ledger and the
     # report store of each shown record's version), so it runs off the loop.
     return await run_in_threadpool(_recorded_results, read)

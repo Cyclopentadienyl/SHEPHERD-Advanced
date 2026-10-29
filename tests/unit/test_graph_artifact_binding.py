@@ -190,12 +190,15 @@ class TestTheClinicalPathIsAGraphConsumer:
         binding check would end in that refusal instead of in what it is about.
 
         The stand-in keeps a checkpoint read's identity, as the real build does
-        (contract M3c), so a pipeline built over it states a verified checkpoint
-        rather than a model supplied in memory. Callers construct with
+        (contract M3c), so a pipeline built over it states a verified checkpoint,
+        and returns a module with parameters, from which the pipeline reads the
+        device in effect. Callers construct with
         `device="cpu"` (or set `SHEPHERD_DEVICE=cpu` for the API): with no device
         named a checkpoint asks for CUDA, and on a host without it that refusal
         comes before the workspace these tests are about.
         """
+        import torch
+
         import src.inference.pipeline as pipeline
         from src.utils.fingerprint import ReadIdentity
 
@@ -203,7 +206,7 @@ class TestTheClinicalPathIsAGraphConsumer:
             reached.append("model")
             self._checkpoint_identity = ReadIdentity(
                 path=Path(checkpoint_path), sha256="c" * 64)
-            return object()
+            return torch.nn.Linear(1, 1)
 
         monkeypatch.setattr(
             pipeline.DiagnosisPipeline, "_load_model_from_checkpoint", _model_built,
@@ -247,65 +250,28 @@ class TestTheClinicalPathIsAGraphConsumer:
 
         assert reached == ["model"]
 
-    def test_a_file_backed_pipeline_without_a_graph_read_is_refused(
-        self, monkeypatch, tmp_path
-    ):
+    def test_a_pipeline_without_a_graph_read_is_refused(self, monkeypatch, tmp_path):
         """An optional check is no check for the caller who omits it, and that
         caller is the one it exists for.
 
         `verify_graph_reads` alone proves only that `data_dir` is consistent
-        with itself; the `kg` object stays bound to nothing, so workspace B's
-        graph can still be paired with workspace A's tensors. Nothing legitimate
-        is lost by requiring it: a graph built in memory belongs on the
-        `graph_data` seam, and a graph loaded from disk passes the `GraphRead`
-        `KnowledgeGraph.read_json` returned.
+        with itself; a graph object bound to nothing could still pair workspace
+        B's graph with workspace A's tensors. So the pipeline takes only the
+        `GraphRead` `KnowledgeGraph.read_json` returned: a graph built in memory
+        has no place (K7 removed the in-memory seams, `kg=` and `graph_data=`).
         """
         reached: list = []
         pipeline = self._pipeline_module(monkeypatch, reached)
         root = _workspace(tmp_path / "ws")
         (root / "ckpt.pt").write_bytes(b"weights")
 
-        with pytest.raises(ValueError, match="requires graph="):
+        with pytest.raises(TypeError, match="graph= takes the GraphRead"):
             pipeline.DiagnosisPipeline(
-                kg=KnowledgeGraph(), data_dir=str(root),
+                graph=KnowledgeGraph(), data_dir=str(root),
                 checkpoint_path=str(root / "ckpt.pt"), device="cpu",
             )
 
         assert reached == [], "the model was built without a source binding"
-
-    def test_in_memory_graph_data_makes_no_workspace_claim(self, monkeypatch, tmp_path):
-        """A caller supplying the graph directly is not pointing at a persisted
-        workspace, so there is no manifest for it to match and its files are not
-        read -- and, for the same reason, no checkpoint is loaded over that graph
-        (contract M2.4): nothing shows the checkpoint was trained on it.
-
-        **Both are passed on purpose.** Supplying a `data_dir` that *would* fail
-        the workspace check isolates the seam: the files are never read, and the
-        refusal is the checkpoint's, not the workspace's. The real loader runs
-        here, so the refusal is shown where the checkpoint would be read.
-        """
-        import src.inference.pipeline as pipeline
-        from src.inference.pipeline import PipelineBuildError
-        from tests.fixtures.opens import count_opens
-
-        root = _workspace(tmp_path / "ws")
-        other = _workspace(tmp_path / "other")
-        (root / "node_features.pt").write_bytes((other / "node_features.pt").read_bytes())
-        (root / "ckpt.pt").write_bytes(b"weights")
-
-        with count_opens() as opens:
-            with pytest.raises(PipelineBuildError, match="supplied in memory"):
-                pipeline.DiagnosisPipeline(
-                    kg=KnowledgeGraph(),
-                    graph_data={"x_dict": {}, "edge_index_dict": {}, "num_nodes_dict": {}},
-                    data_dir=str(root),
-                    checkpoint_path=str(root / "ckpt.pt"),
-                    device="cpu",
-                )
-
-        assert not [path for path in root.iterdir() if opens.opens(path)], (
-            "a workspace file, or the checkpoint, was opened for in-memory graph data"
-        )
 
 
 def test_a_pre_migration_manifest_is_refused_with_a_rebuild_instruction(tmp_path):
@@ -453,8 +419,8 @@ class TestTheCompositionMustNotCrossWorkspaces:
         monkeypatch.setattr(api.app_state, "pipeline", None, raising=False)
         monkeypatch.setenv("SHEPHERD_KG_PATH", str(b / "kg.json"))
         monkeypatch.setenv("SHEPHERD_DATA_DIR", str(a))
-        # Without a checkpoint the pipeline consumes no graph at all and verifies
-        # nothing, which is correct and would make this test vacuous.
+        # Without a checkpoint the build is refused before any graph is read
+        # (K7), which would make this test vacuous.
         monkeypatch.setenv("SHEPHERD_CHECKPOINT_PATH", str(a / "ckpt.pt"))
         # Without a device named the checkpoint asks for CUDA and, on a host
         # without it, is refused before the graph is read (contract M3c).

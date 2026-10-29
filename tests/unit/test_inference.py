@@ -1,127 +1,51 @@
 """
 Unit Tests for Inference Pipeline
 =================================
-Tests for DiagnosisPipeline and related components
+Tests for DiagnosisPipeline and related components, on a real disease child
+(`tests/fixtures/trained_children`, trained once per session): since K7 every
+pipeline serves a model read from its checkpoint, and one with no model is
+refused, never served by path reasoning.
 """
-import pytest
+import inspect
 from datetime import datetime
-from typing import List
 
-from src.core.types import (
-    DataSource,
-    Edge,
-    EdgeType,
-    Node,
-    NodeID,
-    NodeType,
-    PatientPhenotypes,
+import pytest
+
+torch = pytest.importorskip("torch")
+
+from src.core.types import (  # noqa: E402
+    DISEASE_TASK,
+    DiseaseTaskCandidate,
     InferenceResult,
-    PathReasoningCandidate,
-    ServedMixtureCandidate,
+    PatientPhenotypes,
 )
-from src.kg import KnowledgeGraph
-from src.inference import (
+from src.inference import (  # noqa: E402
     DiagnosisPipeline,
+    PipelineBuildError,
     PipelineConfig,
     create_diagnosis_pipeline,
 )
+from src.inference.pipeline import build_served_pipeline  # noqa: E402
+from src.kg import KnowledgeGraph  # noqa: E402
+
+#: Two phenotypes of the demo graph, in the disease child's graph view.
+SEIZURE = "HP:0001250"
+DEV_DELAY = "HP:0001263"
+UNKNOWN = "HP:9999999"
 
 
-# =============================================================================
-# Helper Functions
-# =============================================================================
-def make_node_id(source: DataSource, local_id: str) -> NodeID:
-    """Create a NodeID"""
-    return NodeID(source=source, local_id=local_id)
+def _built(trained, **kwargs):
+    """A pipeline of its own over the trained child (for a test that changes
+    the configuration)."""
+    data_dir = trained["data_dir"]
+    return DiagnosisPipeline(graph=KnowledgeGraph.read_json(data_dir / "kg.json"),
+                             checkpoint_path=str(trained["disease"]), data_dir=str(data_dir),
+                             device="cpu", **kwargs)
 
 
-def make_node(source: DataSource, local_id: str, node_type: NodeType, name: str) -> Node:
-    """Create a Node"""
-    return Node(
-        id=make_node_id(source, local_id),
-        node_type=node_type,
-        name=name,
-        data_sources={source},
-    )
-
-
-def make_edge(
-    src_source: DataSource, src_id: str,
-    tgt_source: DataSource, tgt_id: str,
-    edge_type: EdgeType,
-    weight: float = 1.0,
-) -> Edge:
-    """Create an Edge"""
-    return Edge(
-        source_id=make_node_id(src_source, src_id),
-        target_id=make_node_id(tgt_source, tgt_id),
-        edge_type=edge_type,
-        weight=weight,
-    )
-
-
-# =============================================================================
-# Fixtures
-# =============================================================================
 @pytest.fixture
-def simple_kg():
-    """
-    Create a simple KG for testing.
-
-    Structure:
-        Phenotype1 (HP:0001234) <-- Gene1 (BRCA1) --> Disease1 (MONDO:0001234)
-        Phenotype2 (HP:0002345) <-- Gene2 (TP53)  --> Disease1 (MONDO:0001234)
-                                    Gene2 (TP53)  --> Disease2 (MONDO:0003456)
-    """
-    kg = KnowledgeGraph()
-
-    # Add phenotypes
-    kg.add_node(make_node(DataSource.HPO, "HP:0001234", NodeType.PHENOTYPE, "Seizure"))
-    kg.add_node(make_node(DataSource.HPO, "HP:0002345", NodeType.PHENOTYPE, "Ataxia"))
-
-    # Add genes
-    kg.add_node(make_node(DataSource.DISGENET, "BRCA1", NodeType.GENE, "BRCA1"))
-    kg.add_node(make_node(DataSource.DISGENET, "TP53", NodeType.GENE, "TP53"))
-
-    # Add diseases
-    kg.add_node(make_node(DataSource.MONDO, "MONDO:0001234", NodeType.DISEASE, "Disease A"))
-    kg.add_node(make_node(DataSource.MONDO, "MONDO:0003456", NodeType.DISEASE, "Disease B"))
-
-    # Gene -> Phenotype edges
-    kg.add_edge(make_edge(
-        DataSource.DISGENET, "BRCA1",
-        DataSource.HPO, "HP:0001234",
-        EdgeType.GENE_HAS_PHENOTYPE,
-        weight=0.9,
-    ))
-    kg.add_edge(make_edge(
-        DataSource.DISGENET, "TP53",
-        DataSource.HPO, "HP:0002345",
-        EdgeType.GENE_HAS_PHENOTYPE,
-        weight=0.8,
-    ))
-
-    # Gene -> Disease edges
-    kg.add_edge(make_edge(
-        DataSource.DISGENET, "BRCA1",
-        DataSource.MONDO, "MONDO:0001234",
-        EdgeType.GENE_ASSOCIATED_WITH_DISEASE,
-        weight=0.95,
-    ))
-    kg.add_edge(make_edge(
-        DataSource.DISGENET, "TP53",
-        DataSource.MONDO, "MONDO:0001234",
-        EdgeType.GENE_ASSOCIATED_WITH_DISEASE,
-        weight=0.85,
-    ))
-    kg.add_edge(make_edge(
-        DataSource.DISGENET, "TP53",
-        DataSource.MONDO, "MONDO:0003456",
-        EdgeType.GENE_ASSOCIATED_WITH_DISEASE,
-        weight=0.7,
-    ))
-
-    return kg
+def pipeline(disease_pipeline):
+    return disease_pipeline
 
 
 @pytest.fixture
@@ -129,7 +53,7 @@ def patient_phenotypes():
     """Sample patient phenotypes with valid KG IDs"""
     return PatientPhenotypes(
         patient_id="test_patient_001",
-        phenotypes=["HP:0001234", "HP:0002345"],
+        phenotypes=[SEIZURE, DEV_DELAY],
     )
 
 
@@ -138,7 +62,7 @@ def patient_phenotypes_with_invalid():
     """Patient phenotypes with some invalid IDs"""
     return PatientPhenotypes(
         patient_id="test_patient_002",
-        phenotypes=["HP:0001234", "HP:9999999", "HP:0002345"],
+        phenotypes=[SEIZURE, UNKNOWN, DEV_DELAY],
     )
 
 
@@ -148,164 +72,167 @@ def patient_phenotypes_with_invalid():
 class TestDiagnosisPipeline:
     """Test DiagnosisPipeline"""
 
-    def test_create_pipeline(self, simple_kg):
-        """Test creating pipeline"""
-        pipeline = DiagnosisPipeline(kg=simple_kg)
-        assert pipeline is not None
-        assert pipeline.kg is simple_kg
+    def test_create_pipeline(self, pipeline):
+        assert pipeline.kg is not None
         assert pipeline.config is not None
+        assert pipeline.model is not None and pipeline._gnn_ready
 
-    def test_create_pipeline_with_config(self, simple_kg):
+    def test_create_pipeline_with_config(self, trained_disease_child):
         """Test creating pipeline with custom config"""
         config = PipelineConfig(
             max_path_length=3,
             include_explanations=False,
         )
-        pipeline = DiagnosisPipeline(kg=simple_kg, config=config)
+        pipeline = _built(trained_disease_child, config=config)
 
         assert pipeline.config.max_path_length == 3
         assert pipeline.config.include_explanations is False
+        assert pipeline.served_identity().settings.max_path_length == 3
 
-    def test_validate_input(self, simple_kg, patient_phenotypes):
-        """Test input validation"""
-        pipeline = DiagnosisPipeline(kg=simple_kg)
+    def test_validate_input(self, pipeline, patient_phenotypes):
         result = pipeline.validate_input(patient_phenotypes)
 
         assert result.is_valid
         assert len(result.validated_phenotypes) == 2
+        assert result.rows is not None and len(result.rows) == 2
 
-    def test_run_basic(self, simple_kg, patient_phenotypes):
-        """Test basic pipeline run"""
-        pipeline = DiagnosisPipeline(kg=simple_kg)
+    def test_run_basic(self, pipeline, patient_phenotypes):
         result = pipeline.run(
             patient_input=patient_phenotypes,
             top_k=5,
             include_explanations=False,
         )
 
-        # Check result structure
         assert isinstance(result, InferenceResult)
         assert result.patient_id == patient_phenotypes.patient_id
         assert isinstance(result.timestamp, datetime)
         assert result.inference_time_ms >= 0
+        assert len(result.candidates) == 5
 
-        # Should find candidates
-        assert len(result.candidates) > 0
-
-        # Check candidate structure
-        assert result.result_kind == "path_reasoning/v1"
+        # The model ranks: a disease task model's head scores every row.
+        assert result.result_kind == DISEASE_TASK
         for candidate in result.candidates:
-            assert isinstance(candidate, PathReasoningCandidate)
+            assert isinstance(candidate, DiseaseTaskCandidate)
             assert candidate.rank > 0
-            assert candidate.path_score >= 0
+            assert candidate.score <= 0
             assert candidate.disease_name is not None
 
-    def test_run_with_explanations(self, simple_kg, patient_phenotypes):
-        """Test pipeline run with explanations"""
-        pipeline = DiagnosisPipeline(kg=simple_kg)
+    def test_run_with_explanations(self, pipeline, patient_phenotypes):
         result = pipeline.run(
             patient_input=patient_phenotypes,
             top_k=5,
             include_explanations=True,
         )
 
-        # Should have candidates with explanations
         assert len(result.candidates) > 0
         for candidate in result.candidates:
             assert candidate.explanation is not None
             assert len(candidate.explanation) > 0
-
-        # Should have summary explanation
         assert result.summary_explanation is not None
 
-    def test_run_candidates_ranked(self, simple_kg, patient_phenotypes):
-        """Test that candidates are ranked correctly"""
-        pipeline = DiagnosisPipeline(kg=simple_kg)
+    def test_run_candidates_ranked(self, pipeline, patient_phenotypes):
         result = pipeline.run(
             patient_input=patient_phenotypes,
             top_k=10,
         )
 
-        # Ranks should be sequential
         for i, candidate in enumerate(result.candidates):
             assert candidate.rank == i + 1
-
-        # Scores should be descending
-        scores = [c.path_score for c in result.candidates]
+        scores = [c.score for c in result.candidates]
         assert scores == sorted(scores, reverse=True)
 
-    def test_run_with_invalid_phenotypes(self, simple_kg, patient_phenotypes_with_invalid):
-        """Test pipeline with some invalid phenotypes"""
-        pipeline = DiagnosisPipeline(kg=simple_kg)
+    def test_run_with_invalid_phenotypes(self, pipeline, patient_phenotypes_with_invalid):
         result = pipeline.run(
             patient_input=patient_phenotypes_with_invalid,
             top_k=5,
         )
 
-        # Should still work with valid phenotypes
         assert isinstance(result, InferenceResult)
-        # May have warnings about invalid phenotypes
+        assert result.candidates
+        assert result.phenotype_input.unknown == (UNKNOWN,)
 
-    def test_run_empty_phenotypes(self, simple_kg):
-        """Test pipeline with no valid phenotypes"""
-        pipeline = DiagnosisPipeline(kg=simple_kg)
+    def test_run_empty_phenotypes(self, pipeline):
         patient = PatientPhenotypes(
             patient_id="test",
             phenotypes=[],
         )
         result = pipeline.run(patient_input=patient, top_k=5)
 
-        # Should return empty result with errors
         assert len(result.candidates) == 0
         assert len(result.warnings) > 0
 
-    def test_run_nonexistent_phenotypes(self, simple_kg):
-        """Test pipeline with phenotypes not in KG"""
-        pipeline = DiagnosisPipeline(kg=simple_kg)
+    def test_run_nonexistent_phenotypes(self, pipeline):
         patient = PatientPhenotypes(
             patient_id="test",
             phenotypes=["HP:9999999", "HP:8888888"],
         )
         result = pipeline.run(patient_input=patient, top_k=5)
 
-        # Should handle gracefully
         assert isinstance(result, InferenceResult)
+        assert result.candidates == []
 
-    def test_get_pipeline_config(self, simple_kg):
-        """Test getting pipeline config"""
-        pipeline = DiagnosisPipeline(kg=simple_kg)
+    def test_get_pipeline_config(self, pipeline):
         config_dict = pipeline.get_pipeline_config()
 
         # The class version string is gone (contract M3c); what is served is
         # stated part by part instead.
         assert "version" not in config_dict
         assert "max_path_length" in config_dict
-        assert "aggregation_method" in config_dict
-        assert config_dict["has_model"] is False
+        assert "aggregation_method" not in config_dict
+        assert config_dict["has_model"] is True
         identity = config_dict["served_identity"]
-        assert identity["scoring_mode"] == "path_reasoning_fallback"
-        assert identity["checkpoint"] == {"state": "absent", "sha256": None}
-        assert identity["graph"] == {
-            "state": "in_memory", "kg_sha256": None, "split_manifest_sha256": None,
-        }
+        assert identity["scoring_mode"] == "disease_task"
+        assert identity["checkpoint"]["state"] == "verified"
+        assert identity["graph"]["state"] == "verified"
+        assert identity["dataset_record"]["state"] == "verified"
+        assert "aggregation_method" not in identity["settings"]
 
 
 # =============================================================================
-# Test Factory Functions
+# No model, no pipeline (K7, PATH1 and G3)
 # =============================================================================
-class TestFactoryFunctions:
-    """Test factory functions"""
+class TestNoModelIsRefused:
+    """A graph is never served without a trained model, and a model is never
+    handed over in memory: the pipeline is built from a checkpoint over a
+    verified workspace, or it is refused."""
 
-    def test_create_diagnosis_pipeline(self, simple_kg):
-        """Test factory function"""
-        pipeline = create_diagnosis_pipeline(kg=simple_kg)
-        assert isinstance(pipeline, DiagnosisPipeline)
+    def test_no_checkpoint_is_refused(self, trained_disease_child):
+        data_dir = trained_disease_child["data_dir"]
+        graph = KnowledgeGraph.read_json(data_dir / "kg.json")
+        for checkpoint in (None, ""):
+            with pytest.raises(PipelineBuildError, match="No model is configured"):
+                DiagnosisPipeline(graph=graph, checkpoint_path=checkpoint,
+                                  data_dir=str(data_dir), device="cpu")
 
-    def test_create_diagnosis_pipeline_with_config(self, simple_kg):
-        """Test factory with config"""
-        config = PipelineConfig(max_path_length=5)
-        pipeline = create_diagnosis_pipeline(kg=simple_kg, config=config)
-        assert pipeline.config.max_path_length == 5
+    def test_no_workspace_is_refused(self, trained_disease_child):
+        data_dir = trained_disease_child["data_dir"]
+        with pytest.raises(PipelineBuildError, match="no workspace"):
+            DiagnosisPipeline(graph=KnowledgeGraph.read_json(data_dir / "kg.json"),
+                              checkpoint_path=str(trained_disease_child["disease"]),
+                              data_dir=None, device="cpu")
+
+    def test_the_service_build_refuses_before_reading_the_graph(self, trained_disease_child,
+                                                                monkeypatch):
+        """`build_served_pipeline` with a graph and no checkpoint (a
+        `SHEPHERD_KG_PATH`-only start) refuses before `kg.json` is parsed."""
+        def no_read(*_args, **_kwargs):
+            raise AssertionError("the graph was read for a build that has no model")
+
+        monkeypatch.setattr(KnowledgeGraph, "read_json", staticmethod(no_read))
+        with pytest.raises(PipelineBuildError, match="No model is configured"):
+            build_served_pipeline(trained_disease_child["data_dir"] / "kg.json",
+                                  checkpoint_path=None,
+                                  data_dir=str(trained_disease_child["data_dir"]))
+
+    @pytest.mark.parametrize("construct", [DiagnosisPipeline, create_diagnosis_pipeline])
+    def test_there_is_no_in_memory_or_graph_only_seam(self, construct):
+        """No `kg=` (a graph alone), `model=` or `graph_data=` (a model and
+        tensors handed over in memory): no alias, no adapter."""
+        parameters = inspect.signature(construct).parameters
+        assert {"kg", "model", "graph_data"}.isdisjoint(parameters)
+        assert {"graph", "checkpoint_path", "data_dir"} <= set(parameters)
+        with pytest.raises(TypeError):
+            construct(kg=KnowledgeGraph())
 
 
 # =============================================================================
@@ -360,6 +287,19 @@ class TestPipelineConfig:
         with pytest.raises(TypeError):
             PipelineConfig(**{retired: None})
 
+    def test_the_path_score_aggregation_is_gone(self):
+        """K7 (PATH1, PATH2): nothing ranks by an aggregate of path scores, so
+        there is no aggregation to configure."""
+        import dataclasses
+
+        from src.reasoning import PathReasoningConfig
+
+        assert "aggregation_method" not in {f.name for f in dataclasses.fields(PipelineConfig)}
+        assert "aggregation_method" not in {
+            f.name for f in dataclasses.fields(PathReasoningConfig)}
+        with pytest.raises(TypeError):
+            PipelineConfig(aggregation_method="max")
+
     def test_retired_callback_aliases_are_gone(self):
         import src.inference.pipeline as pipeline_module
 
@@ -368,224 +308,43 @@ class TestPipelineConfig:
 
 
 # =============================================================================
-# Test GNN Inference Integration
+# The model is wired through
 # =============================================================================
-torch = pytest.importorskip("torch")
-pytest.importorskip("torch_geometric")
-
-
-def _build_gnn_test_fixtures(simple_kg):
-    """
-    Build a small GNN model + graph data that matches simple_kg's topology.
-
-    Returns (model, graph_data, node_id_to_idx) for pipeline initialization.
-    The model is untrained but structurally valid — enough to verify that
-    GNN scoring is actually wired through (score != 0.0).
-    """
-    from src.models.gnn import ShepherdGNN, ShepherdGNNConfig
-
-    hidden_dim = 32
-
-    # Node ID → index mappings (must match x_dict dimensions)
-    node_mapping = simple_kg.get_node_id_mapping()
-    # e.g. {"phenotype": {"hpo:HP:0001234": 0, "hpo:HP:0002345": 1}, ...}
-
-    num_phenotypes = len(node_mapping.get("phenotype", {}))
-    num_genes = len(node_mapping.get("gene", {}))
-    num_diseases = len(node_mapping.get("disease", {}))
-
-    # Build x_dict with random features
-    torch.manual_seed(42)
-    x_dict = {
-        "phenotype": torch.randn(num_phenotypes, hidden_dim),
-        "gene": torch.randn(num_genes, hidden_dim),
-        "disease": torch.randn(num_diseases, hidden_dim),
-    }
-
-    # Build edge_index_dict from KG edges
-    # simple_kg has edges: Gene→Phenotype, Gene→Disease
-    # We need bidirectional edges for message passing
-    pheno_map = node_mapping["phenotype"]
-    gene_map = node_mapping["gene"]
-    disease_map = node_mapping["disease"]
-
-    # gene -> phenotype (and reverse)
-    gp_src, gp_dst = [], []
-    # gene -> disease (and reverse)
-    gd_src, gd_dst = [], []
-
-    for edge in simple_kg._edges:
-        src_str = str(edge.source_id)
-        tgt_str = str(edge.target_id)
-
-        if src_str in gene_map and tgt_str in pheno_map:
-            gp_src.append(gene_map[src_str])
-            gp_dst.append(pheno_map[tgt_str])
-        elif src_str in gene_map and tgt_str in disease_map:
-            gd_src.append(gene_map[src_str])
-            gd_dst.append(disease_map[tgt_str])
-
-    edge_index_dict = {}
-
-    if gp_src:
-        gp_edges = torch.tensor([gp_src, gp_dst], dtype=torch.long)
-        edge_index_dict[("gene", "has_phenotype", "phenotype")] = gp_edges
-        edge_index_dict[("phenotype", "rev_has_phenotype", "gene")] = gp_edges.flip(0)
-
-    if gd_src:
-        gd_edges = torch.tensor([gd_src, gd_dst], dtype=torch.long)
-        edge_index_dict[("gene", "associated_with", "disease")] = gd_edges
-        edge_index_dict[("disease", "rev_associated_with", "gene")] = gd_edges.flip(0)
-
-    graph_data = {
-        "x_dict": x_dict,
-        "edge_index_dict": edge_index_dict,
-        "num_nodes_dict": {
-            "phenotype": num_phenotypes,
-            "gene": num_genes,
-            "disease": num_diseases,
-        },
-    }
-
-    # Build metadata for GNN
-    node_types = sorted(x_dict.keys())
-    edge_types = list(edge_index_dict.keys())
-    metadata = (node_types, edge_types)
-
-    in_channels_dict = {k: v.shape[1] for k, v in x_dict.items()}
-
-    config = ShepherdGNNConfig(
-        hidden_dim=hidden_dim,
-        num_layers=2,
-        num_heads=4,
-        conv_type="gat",
-        dropout=0.0,
-    )
-
-    model = ShepherdGNN(
-        metadata=metadata,
-        in_channels_dict=in_channels_dict,
-        config=config,
-    )
-    model.eval()
-
-    return model, graph_data
-
-
 class TestGNNInference:
-    """Test that GNN scoring is properly wired into the inference pipeline."""
+    """The trained child's vectors are computed once and score every request;
+    path reasoning only explains the rows shown."""
 
-    @pytest.fixture
-    def gnn_pipeline(self, simple_kg):
-        """Create a pipeline with a real (untrained) GNN model."""
-        model, graph_data = _build_gnn_test_fixtures(simple_kg)
-        pipeline = DiagnosisPipeline(
-            kg=simple_kg,
-            model=model,
-            graph_data=graph_data,
-        )
-        return pipeline
+    def test_gnn_ready(self, pipeline):
+        assert pipeline._gnn_ready is True
+        assert pipeline._bundle_z is not None and pipeline._bundle_candidates is not None
+        assert pipeline.served_identity().settings.device == "cpu"
 
-    def test_gnn_ready(self, gnn_pipeline):
-        """GNN should be marked as ready when model + graph_data are provided."""
-        assert gnn_pipeline._gnn_ready is True
-
-    def test_node_embeddings_precomputed(self, gnn_pipeline):
-        """Node embeddings should be populated after init."""
-        emb = gnn_pipeline._node_embeddings
-        assert emb is not None
-        assert "phenotype" in emb
-        assert "disease" in emb
-        # Embeddings should be on CPU
-        assert emb["disease"].device.type == "cpu"
-
-    def test_gnn_score_not_zero(self, gnn_pipeline, patient_phenotypes):
-        """The model term should NOT be 0.0 (the old stub behavior)."""
-        result = gnn_pipeline.run(
-            patient_input=patient_phenotypes,
-            top_k=5,
-            include_explanations=False,
-        )
-        assert len(result.candidates) > 0
-        for c in result.candidates:
-            # With a real model, the model term should be non-zero
-            assert c.model_term != 0.0, (
-                f"{c.disease_name}: model_term is 0.0 — GNN not wired correctly"
-            )
-
-    def test_confidence_uses_gnn_score(self, gnn_pipeline, patient_phenotypes):
-        """With a model and no SP table (gnn_only), the served score is the
-        model term itself, and no SP value is mixed in."""
-        result = gnn_pipeline.run(
-            patient_input=patient_phenotypes,
-            top_k=5,
-            include_explanations=False,
-        )
-        assert result.result_kind == "served_mixture/v1"
-        for c in result.candidates:
-            assert isinstance(c, ServedMixtureCandidate)
-            assert c.served_score == c.model_term, (
-                f"{c.disease_name}: served={c.served_score} != model={c.model_term}"
-            )
-            assert c.sp_term.status == "NO_TABLE" and c.sp_term.score is None
-
-    def test_gnn_score_in_valid_range(self, gnn_pipeline, patient_phenotypes):
-        """The model term should be normalized to [0, 1]."""
-        result = gnn_pipeline.run(
-            patient_input=patient_phenotypes,
-            top_k=5,
-            include_explanations=False,
-        )
-        for c in result.candidates:
-            assert 0.0 <= c.model_term <= 1.0, (
-                f"{c.disease_name}: model_term={c.model_term} out of [0,1]"
-            )
-
-    def test_pipeline_config_reports_gnn(self, gnn_pipeline):
-        """get_pipeline_config should report GNN status.
-
-        scoring_mode values (Step B+):
-          - "gnn_plus_shortest_path" — GNN + SP table both loaded
-          - "gnn_only"                — GNN loaded, SP table not found (eta=1.0 effective)
-          - "path_reasoning_fallback" — no GNN (PathReasoner only)
-        This fixture doesn't generate shortest_paths.pt → expect "gnn_only".
-        """
-        config = gnn_pipeline.get_pipeline_config()
-        assert config["gnn_ready"] is True
-        assert config["has_model"] is True
-        assert config["scoring_mode"] in ("gnn_only", "gnn_plus_shortest_path")
-        # Step C: evidence is decoupled from scoring
-        assert config["path_reasoner_role"] == "explanation_only"
-
-    def test_path_reasoner_still_runs(self, gnn_pipeline, patient_phenotypes):
-        """Path reasoning should still provide explanation paths alongside GNN."""
-        result = gnn_pipeline.run(
-            patient_input=patient_phenotypes,
-            top_k=5,
-            include_explanations=False,
-        )
-        # At least some candidates should have reasoning paths
-        candidates_with_paths = [
-            c for c in result.candidates if len(c.reasoning_paths) > 0
-        ]
-        assert len(candidates_with_paths) > 0
-
-    def test_without_gnn_uses_reasoning_fallback(self, simple_kg, patient_phenotypes):
-        """Without a model the result is path_reasoning/v1: ranked by the path
-        score, with no model term or SP value at all (no fake 0.0)."""
-        pipeline = DiagnosisPipeline(kg=simple_kg)
-        assert pipeline._gnn_ready is False
-
+    def test_scores_come_from_the_model(self, pipeline, patient_phenotypes):
         result = pipeline.run(
             patient_input=patient_phenotypes,
-            top_k=5,
+            top_k=10,
             include_explanations=False,
         )
-        assert result.result_kind == "path_reasoning/v1"
-        assert result.candidates
-        for c in result.candidates:
-            assert isinstance(c, PathReasoningCandidate)
-            assert not hasattr(c, "model_term") and not hasattr(c, "sp_term")
+        scores = [c.score for c in result.candidates]
+        assert len(set(scores)) > 1, "every disease scored the same: the model is not wired"
+        assert all(-4.0 <= s <= 0.0 for s in scores)
+
+    def test_pipeline_config_reports_gnn(self, pipeline):
+        config = pipeline.get_pipeline_config()
+        assert config["gnn_ready"] is True
+        assert config["has_model"] is True
+        assert config["scoring_mode"] == "disease_task"
+        # Evidence is decoupled from scoring
+        assert config["path_reasoner_role"] == "explanation_only"
+
+    def test_path_reasoner_still_runs(self, pipeline, patient_phenotypes):
+        """Path reasoning provides explanation paths for the rows shown."""
+        result = pipeline.run(
+            patient_input=patient_phenotypes,
+            top_k=10,
+            include_explanations=False,
+        )
+        assert any(len(c.reasoning_paths) > 0 for c in result.candidates)
 
 
 # =============================================================================
@@ -595,11 +354,6 @@ class TestGNNInference:
 # after mapping, first occurrence kept, and nothing is truncated. These tests go
 # through `run` (or `validate_input`, which `run` calls first) rather than
 # restating the rule; the rule alone is tested in test_phenotype_normalisation.py.
-SEIZURE = "HP:0001234"
-ATAXIA = "HP:0002345"
-UNKNOWN = "HP:9999999"
-
-
 def _patient(phenotypes, confidences=None):
     return PatientPhenotypes(
         patient_id="norm_patient",
@@ -609,66 +363,41 @@ def _patient(phenotypes, confidences=None):
 
 
 def _ranking(result):
-    return [
-        (c.disease_id, c.rank, c.served_score, c.model_term)
-        if isinstance(c, ServedMixtureCandidate) else (c.disease_id, c.rank, c.path_score)
-        for c in result.candidates
-    ]
+    return [(c.disease_id, c.rank, c.score) for c in result.candidates]
 
 
 class TestPhenotypeListRule:
     """The served path applies the one phenotype-list rule."""
 
-    def test_a_repeat_is_scored_once(self, simple_kg):
-        pipeline = DiagnosisPipeline(kg=simple_kg)
-
-        with_repeat = pipeline.run(_patient([SEIZURE, SEIZURE, ATAXIA]), top_k=5)
-        without = pipeline.run(_patient([SEIZURE, ATAXIA]), top_k=5)
+    def test_a_repeat_is_scored_once(self, pipeline):
+        with_repeat = pipeline.run(_patient([SEIZURE, SEIZURE, DEV_DELAY]), top_k=5)
+        without = pipeline.run(_patient([SEIZURE, DEV_DELAY]), top_k=5)
 
         assert _ranking(with_repeat) == _ranking(without)
-        assert with_repeat.phenotype_input.used == (SEIZURE, ATAXIA)
+        assert with_repeat.phenotype_input.used == (SEIZURE, DEV_DELAY)
         assert with_repeat.phenotype_input.repeats_removed == 1
         assert "Removed 1 repeated phenotype entry; each phenotype is scored once." in (
             with_repeat.warnings
         )
 
-    def test_a_repeat_is_scored_once_by_the_gnn_too(self, simple_kg):
-        """The GNN mean and the SP mean were where a repeat weighed most.
-
-        **This is the test whose scores move.** On `simple_kg` path reasoning
-        happens to rank `[A, A, B]` and `[A, B]` identically even without the
-        rule — checked by disabling it — so the test above relies on its account
-        and warning assertions. With the rule disabled, this one fails."""
-        model, graph_data = _build_gnn_test_fixtures(simple_kg)
-        pipeline = DiagnosisPipeline(kg=simple_kg, model=model, graph_data=graph_data)
-        assert pipeline._gnn_ready
-
-        with_repeat = pipeline.run(_patient([SEIZURE, SEIZURE, ATAXIA]), top_k=5)
-        without = pipeline.run(_patient([SEIZURE, ATAXIA]), top_k=5)
-
-        assert _ranking(with_repeat) == _ranking(without)
-        assert any(c.model_term != 0.0 for c in with_repeat.candidates)
-
-    def test_one_hundred_repeats_then_another_phenotype_keeps_both(self, simple_kg):
+    def test_one_hundred_repeats_then_another_phenotype_keeps_both(self, pipeline):
         """The previous version truncated to the first 100 entries before
         removing anything, so this input scored the seizure alone."""
-        pipeline = DiagnosisPipeline(kg=simple_kg)
-
-        result = pipeline.run(_patient([SEIZURE] * 100 + [ATAXIA]), top_k=5)
-        both = pipeline.run(_patient([SEIZURE, ATAXIA]), top_k=5)
+        result = pipeline.run(_patient([SEIZURE] * 100 + [DEV_DELAY]), top_k=5)
+        both = pipeline.run(_patient([SEIZURE, DEV_DELAY]), top_k=5)
 
         assert _ranking(result) == _ranking(both)
         assert result.phenotype_input.received == 101
-        assert result.phenotype_input.used == (SEIZURE, ATAXIA)
+        assert result.phenotype_input.used == (SEIZURE, DEV_DELAY)
         assert "Removed 99 repeated phenotype entries; each phenotype is scored once." in (
             result.warnings
         )
         assert not any("using first" in w for w in result.warnings)
 
-    def test_too_many_distinct_phenotypes_are_refused_not_truncated(self, simple_kg):
-        pipeline = DiagnosisPipeline(kg=simple_kg, config=PipelineConfig(max_phenotypes=1))
+    def test_too_many_distinct_phenotypes_are_refused_not_truncated(self, trained_disease_child):
+        pipeline = _built(trained_disease_child, config=PipelineConfig(max_phenotypes=1))
 
-        result = pipeline.run(_patient([SEIZURE, ATAXIA]), top_k=5)
+        result = pipeline.run(_patient([SEIZURE, DEV_DELAY]), top_k=5)
 
         assert result.candidates == []
         assert any(
@@ -680,53 +409,48 @@ class TestPhenotypeListRule:
         assert result.phenotype_input.used == ()
         assert result.phenotype_input.received == 2
 
-    def test_the_count_is_taken_after_repeats_are_removed(self, simple_kg):
-        pipeline = DiagnosisPipeline(kg=simple_kg, config=PipelineConfig(max_phenotypes=1))
+    def test_the_count_is_taken_after_repeats_are_removed(self, trained_disease_child):
+        pipeline = _built(trained_disease_child, config=PipelineConfig(max_phenotypes=1))
 
         result = pipeline.run(_patient([SEIZURE, SEIZURE, SEIZURE]), top_k=5)
 
         assert result.candidates
         assert result.phenotype_input.used == (SEIZURE,)
 
-    def test_unknown_ids_keep_their_policy_and_are_accounted_for(self, simple_kg):
-        pipeline = DiagnosisPipeline(kg=simple_kg)
-
-        result = pipeline.run(_patient([UNKNOWN, SEIZURE, ATAXIA]), top_k=5)
+    def test_unknown_ids_keep_their_policy_and_are_accounted_for(self, pipeline):
+        result = pipeline.run(_patient([UNKNOWN, SEIZURE, DEV_DELAY]), top_k=5)
 
         assert f"Unknown phenotype: {UNKNOWN}" in result.warnings
         assert result.phenotype_input.unknown == (UNKNOWN,)
-        assert result.phenotype_input.used == (SEIZURE, ATAXIA)
+        assert result.phenotype_input.used == (SEIZURE, DEV_DELAY)
 
     def test_everything_after_validation_reads_the_list_as_used(
-        self, simple_kg, monkeypatch
+        self, pipeline, monkeypatch
     ):
         """Scoring receives the normalised input, with each confidence still at
         the phenotype it was sent with: `[X, A, A, B]` keeps positions 1 and 3."""
-        pipeline = DiagnosisPipeline(kg=simple_kg)
         seen = {}
-        original = pipeline._score_and_rank_candidates
+        original = pipeline._rank_by_disease_task
 
-        def capture(**kwargs):
-            seen["input"] = kwargs["patient_input"]
-            return original(**kwargs)
+        def capture(patient_input, *args, **kwargs):
+            seen["input"] = patient_input
+            return original(patient_input, *args, **kwargs)
 
-        monkeypatch.setattr(pipeline, "_score_and_rank_candidates", capture)
+        monkeypatch.setattr(pipeline, "_rank_by_disease_task", capture)
 
         result = pipeline.run(
-            _patient([UNKNOWN, SEIZURE, SEIZURE, ATAXIA], confidences=[0.1, 0.2, 0.3, 0.4]),
+            _patient([UNKNOWN, SEIZURE, SEIZURE, DEV_DELAY], confidences=[0.1, 0.2, 0.3, 0.4]),
             top_k=5,
             include_explanations=True,
         )
 
-        assert seen["input"].phenotypes == [SEIZURE, ATAXIA]
+        assert seen["input"].phenotypes == [SEIZURE, DEV_DELAY]
         assert seen["input"].phenotype_confidences == [0.2, 0.4]
         assert "Based on 2 input phenotypes" in result.summary_explanation
 
     @pytest.mark.parametrize("confidences", [[], [0.5], [0.5, 0.5, 0.5]])
-    def test_a_confidence_list_of_the_wrong_length_is_refused(self, simple_kg, confidences):
-        pipeline = DiagnosisPipeline(kg=simple_kg)
-
-        result = pipeline.run(_patient([SEIZURE, ATAXIA], confidences=confidences), top_k=5)
+    def test_a_confidence_list_of_the_wrong_length_is_refused(self, pipeline, confidences):
+        result = pipeline.run(_patient([SEIZURE, DEV_DELAY], confidences=confidences), top_k=5)
 
         assert result.candidates == []
         assert result.phenotype_input is None
@@ -735,8 +459,6 @@ class TestPhenotypeListRule:
             for w in result.warnings
         )
 
-    def test_no_confidences_and_the_right_length_both_pass(self, simple_kg):
-        pipeline = DiagnosisPipeline(kg=simple_kg)
-
-        assert pipeline.validate_input(_patient([SEIZURE, ATAXIA])).is_valid
-        assert pipeline.validate_input(_patient([SEIZURE, ATAXIA], [0.9, 0.8])).is_valid
+    def test_no_confidences_and_the_right_length_both_pass(self, pipeline):
+        assert pipeline.validate_input(_patient([SEIZURE, DEV_DELAY])).is_valid
+        assert pipeline.validate_input(_patient([SEIZURE, DEV_DELAY], [0.9, 0.8])).is_valid

@@ -24,9 +24,9 @@ it is shown, after each diagnosis, after a Load ("served model changed") and on
   HH:MM:SS · older than this result";
 - *changed*: a read found something else served than this session's last read
   did: the dismissable "Model changed at HH:MM UTC — was …, now …";
-- what is served: *no model loaded* (no pipeline: Run Diagnosis is disabled
-  with its reason and a bubble), *no trained model* (a graph served for path
-  reasoning: Run stays on), a model *supplied in memory*, or a checkpoint.
+- what is served: *no model loaded* (no pipeline: the service refuses every
+  diagnosis, Run Diagnosis is disabled with its reason and a bubble, and the
+  card offers "Load a model…"), or a model read from its checkpoint.
 
 **What the card names, and where each fact comes from:**
 
@@ -51,8 +51,7 @@ it is shown, after each diagnosis, after a Load ("served model changed") and on
   identity is the same); the timer's read never opens a checkpoint;
 - the mode chips, only when true: amber "synthetic data", neutral "no SP
   table" (a ShepherdGNN file served without one, ``gnn_only``; a task model
-  that uses no table is not missing one), red "no trained model" / "GNN not
-  loaded", amber "unverified";
+  that uses no table is not missing one), red "GNN not loaded";
 - "Recorded tests: <state>" from the ledger beside the checkpoint and the
   cohort versions' report stores, by the shared model list's own reader
   (`model_list.recorded_tests_for`): a state, never a number of a result, the
@@ -125,8 +124,8 @@ CARD_HELP = (
     "What every session is served now, read from the server's status for this page: the model "
     "(its task, architecture, run, epoch), its model fingerprint, the dataset it records it was "
     "trained on, and the states that change results (synthetic data, a model file served "
-    "without its shortest-path table, no trained model, unverified parts). It is read when the "
-    "page opens, every 5 s while "
+    "without its shortest-path table). With no model loaded, diagnoses are refused until one "
+    "is loaded. It is read when the page opens, every 5 s while "
     "Diagnosis is shown, after each diagnosis, after a model change and with ↻; the recorded "
     "tests and the dataset names are read again each time Diagnosis is shown, after each "
     "diagnosis, after a model change and with ↻. A read that fails or is older than the result "
@@ -194,19 +193,14 @@ def _part(mapping: Any, *keys: str) -> Any:
 
 
 def served_kind(status: Optional[Mapping[str, Any]]) -> str:
-    """``no_model`` (no pipeline), ``no_trained`` (a graph served without a
-    model: path reasoning), ``in_memory`` (a model supplied in memory),
-    ``model`` (a checkpoint read), or ``unknown`` (a status without an
-    identity)."""
+    """``no_model`` (no pipeline: diagnoses are refused), ``model`` (a
+    checkpoint read; every served pipeline is one), or ``unknown`` (a status
+    without an identity)."""
     if not isinstance(status, Mapping):
         return "unknown"
     if not status.get("initialized"):
         return "no_model"
     state = _part(status, "served_identity", "checkpoint", "state")
-    if state == "absent":
-        return "no_trained"
-    if state == "supplied_in_memory":
-        return "in_memory"
     if state == "verified" and served_checkpoint_sha(status):
         return "model"
     return "unknown"
@@ -522,8 +516,7 @@ def advance(state: Optional[Mapping[str, Any]], status: Optional[Mapping[str, An
 
 
 def _kind_word(kind: str) -> str:
-    return {"no_model": "no model loaded", "no_trained": "no trained model",
-            "in_memory": "a model supplied in memory"}.get(kind, "not known")
+    return {"no_model": "no model loaded"}.get(kind, "not known")
 
 
 def dismiss_change(state: Mapping[str, Any]) -> Dict[str, Any]:
@@ -549,9 +542,8 @@ def card_mode(state: Mapping[str, Any], produced_at: Any = None) -> str:
 
 def run_blocked(state: Mapping[str, Any]) -> bool:
     """Run Diagnosis is off when the last read succeeded and found no model
-    loaded (no pipeline). A graph without a trained model leaves it on (path
-    reasoning, said by its banner); an unreadable status leaves it on (the
-    result says what produced it)."""
+    loaded (no pipeline: the service refuses every diagnosis). An unreadable
+    status leaves it on (the service answers, or refuses with its reason)."""
     return bool(state.get("ok")) and served_kind(state.get("status")) == "no_model"
 
 
@@ -561,7 +553,6 @@ def run_blocked(state: Mapping[str, Any]) -> bool:
 _CHECK = ('<svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true" focusable="false">'
           '<path d="M3.2 8.6l3 3 6.6-7.4" fill="none" stroke="currentColor" stroke-width="2.2" '
           'stroke-linecap="round" stroke-linejoin="round"/></svg>')
-_SEP = '<span class="shep-sep" aria-hidden="true"> · </span>'
 
 
 def time_html(state: Mapping[str, Any], produced_at: Any = None) -> str:
@@ -592,18 +583,14 @@ def _chips(status: Mapping[str, Any], *, grey: bool) -> List[str]:
     identity = status.get("served_identity") or {}
     kind = served_kind(status)
     chips: List[Tuple[str, str]] = []
-    if kind == "no_trained":
-        chips.append(("no trained model", "red"))
-    elif kind in ("model", "in_memory") and not status.get("gnn_ready", True):
+    if kind == "model" and not status.get("gnn_ready", True):
         chips.append(("GNN not loaded", "red"))
     if _part(identity, "dataset_record", "origin") == "synthetic":
         chips.append(("synthetic data", "amber"))
     # Only a file served without the table it would mix (the test
     # `served_warnings` uses): a task model that uses none is not missing one.
-    if kind in ("model", "in_memory") and _part(identity, "scoring_mode") == "gnn_only":
+    if kind == "model" and _part(identity, "scoring_mode") == "gnn_only":
         chips.append(("no SP table", "neutral"))
-    if _part(identity, "graph", "state") == "unverified":
-        chips.append(("unverified", "amber"))
     return [r.chip(text, "grey shep-tag-dashed" if grey else kind_) for text, kind_ in chips]
 
 
@@ -618,23 +605,6 @@ def _recorded_html(facts: Mapping[str, Any], *, grey: bool) -> str:
     return (f'<span class="shep-dx-tests">{r.e(text)} <button type="button" class="shep-dx-link" '
             'data-key="evidence" aria-label="Recorded tests: open Details at Evidence">›</button>'
             '</span>')
-
-
-def _graph_line(status: Mapping[str, Any], facts: Mapping[str, Any]) -> str:
-    identity = status.get("served_identity") or {}
-    graph_state = _part(identity, "graph", "state")
-    manifest = _part(identity, "graph", "split_manifest_sha256")
-    serving = facts.get("serving")
-    if graph_state == "verified":
-        where = f"graph from workspace <b>{r.e(serving)}</b>" if serving else \
-            'graph from <span class="shep-muted">a workspace the server does not list</span>'
-        return (f'{where}{_SEP}'
-                f'{r.fingerprint_html("dataset fingerprint", manifest, copy=False)}')
-    if graph_state == "unverified":
-        return ('graph read from a file, checked against no workspace manifest'
-                f'{_SEP}<code class="shep-fpv">'
-                f'{r.e(r.short_hex(_part(identity, "graph", "kg_sha256")))}</code>')
-    return '<span class="shep-muted">graph supplied in memory</span>'
 
 
 def body_html(state: Mapping[str, Any], produced_at: Any = None) -> str:
@@ -683,16 +653,8 @@ def body_html(state: Mapping[str, Any], produced_at: Any = None) -> str:
     lines: List[str] = []
     if kind == "no_model":
         lines.append('<p class="shep-dx-name">No model loaded</p>'
-                     '<p class="shep-dx-line">No pipeline is configured on this server; nothing is '
-                     'served.</p>')
-    elif kind == "no_trained":
-        lines.append('<p class="shep-dx-name">No trained model<span class="shep-dx-sub"> · path '
-                     'reasoning only</span></p>'
-                     f'<p class="shep-dx-line">{_graph_line(status, facts)}</p>')
-    elif kind == "in_memory":
-        lines.append('<p class="shep-dx-name">Model supplied in memory<span class="shep-dx-sub"> · '
-                     'no checkpoint file</span></p>'
-                     f'<p class="shep-dx-line">{_graph_line(status, facts)}</p>')
+                     '<p class="shep-dx-line">Nothing is served on this server: diagnoses are '
+                     'refused until a model is loaded.</p>')
     elif kind == "model":
         item = facts.get("item")
         sha = served_checkpoint_sha(status)
@@ -753,7 +715,7 @@ def change_reason_html(state: Mapping[str, Any]) -> str:
 
 def details_visible(state: Mapping[str, Any]) -> bool:
     """Details › is offered whenever something is served (or was last known)."""
-    return served_kind(state.get("status")) in ("model", "no_trained", "in_memory", "unknown") \
+    return served_kind(state.get("status")) in ("model", "unknown") \
         and state.get("status") is not None
 
 
@@ -809,15 +771,12 @@ def _full(digest: Any, what: str) -> str:
 
 def served_warnings(status: Mapping[str, Any]) -> List[Tuple[str, str]]:
     """The served state's warnings in the banners' words: synthetic, no
-    trained model, no shortest-path table."""
+    shortest-path table."""
     identity = status.get("served_identity") or {}
     found = []
     if _part(identity, "dataset_record", "origin") == "synthetic":
         found.append(r.IDENTITY_BANNERS["synthetic"])
-    kind = served_kind(status)
-    if kind == "no_trained":
-        found.append(r.IDENTITY_BANNERS["no_model"])
-    elif kind in ("model", "in_memory") and _part(identity, "scoring_mode") == "gnn_only":
+    if served_kind(status) == "model" and _part(identity, "scoring_mode") == "gnn_only":
         found.append(r.IDENTITY_BANNERS["no_sp"])
     return found
 
@@ -835,7 +794,7 @@ def _structure_line(status: Mapping[str, Any]) -> str:
     checkpoint records no structural fingerprint); or what differs, counted
     without the comparator's own headline."""
     warnings = [str(w) for w in status.get("fingerprint_warnings") or []]
-    gnn = "GNN loaded" if status.get("gnn_ready") else "GNN not loaded (path reasoning)"
+    gnn = "GNN loaded" if status.get("gnn_ready") else "GNN not loaded"
     if not warnings:
         return f'<p class="shep-muted">Graph structural fingerprint: no warnings · {r.e(gnn)}</p>'
     if len(warnings) == 1 and warnings[0].startswith(_STRUCTURE_LEGACY):
@@ -890,8 +849,11 @@ def served_facts_html(state: Mapping[str, Any], *, open_section: str = "identity
                 f'{r.e(hhmmss(state.get("good_at")))}, not current: {r.e(state.get("problem"))}.'
                 '</div>')
     if kind == "no_model":
-        return note + ('<div class="shep-reason">No model loaded: no pipeline is configured on this '
-                       'server, so nothing is served.</div>')
+        return note + ('<div class="shep-reason">No model loaded: nothing is served, and '
+                       'diagnoses are refused until a model is loaded.</div>')
+    if kind == "unknown":
+        return note + ('<div class="shep-reason shep-reason-grey">The status did not say what is '
+                       'served.</div>')
     served_rows = [
         ("Knowledge graph served (kg.json)", _full(_part(identity, "graph", "kg_sha256"),
                                                    "the full knowledge graph digest")),
@@ -900,24 +862,6 @@ def served_facts_html(state: Mapping[str, Any], *, open_section: str = "identity
          _full(_part(identity, "dataset_record", "sha256"), "the full dataset record digest")),
     ]
     warnings = served_warnings(status)
-    if kind != "model":
-        name = "No trained model · path reasoning only" if kind == "no_trained" else \
-            "Model supplied in memory · no checkpoint file"
-        rows = [("Model", r.e(name)),
-                ("Graph from workspace", r.e(facts.get("serving") or "not a listed workspace")),
-                ("Served workspace manifest (split_manifest.json)",
-                 _full(_part(identity, "graph", "split_manifest_sha256"),
-                       "the full dataset fingerprint")), *served_rows]
-        warn = "".join(f'<p class="shep-warn"><b>⚠ {r.e(h)}</b> <span>{r.e(d)}</span></p>'
-                       for h, d in warnings) or '<p class="shep-muted">No warnings.</p>'
-        return note + (
-            '<div class="shep-facts"><details class="shep-facts-sec" data-sec="identity" open>'
-            '<summary><span class="shep-facts-n">1</span> Identity</summary>'
-            f'<div class="shep-facts-bd"><div class="shep-kv">{_kv_rows(rows[:2])}'
-            f'{_kv_rows(rows[2:], wide=True)}</div></div></details>'
-            '<section class="shep-facts-sec shep-facts-warn" data-sec="warnings"><h4>'
-            '<span class="shep-facts-n">5</span> Warnings</h4>'
-            f'<div class="shep-facts-bd">{warn}{_structure_line(status)}</div></section></div>')
     item = dict(facts.get("item") or {})
     if not item:
         sha = served_checkpoint_sha(status)

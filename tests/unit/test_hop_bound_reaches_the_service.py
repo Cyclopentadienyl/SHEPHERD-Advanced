@@ -51,7 +51,8 @@ def test_the_service_neither_reads_nor_fails_on_the_retired_variable(monkeypatch
     kg_file.write_text(json.dumps({"nodes": [], "edges": []}))
 
     with pytest.raises(RuntimeError, match="stop here"):
-        api_main.build_pipeline(kg_path=str(kg_file))
+        api_main.build_pipeline(kg_path=str(kg_file), checkpoint_path=str(tmp_path / "m.pt"),
+                                data_dir=str(tmp_path), device="cpu")
 
     from src.kg.graph import GraphRead
 

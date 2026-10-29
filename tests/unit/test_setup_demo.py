@@ -4,8 +4,8 @@ Serving refuses `auto` without CUDA, as training does, so the command
 `scripts/setup_demo.py` prints after `--train-model` names the device the demo
 was trained on. These tests hold the command to that, and run it the way the
 service would: a demo trained on the CPU here must be served by the very
-environment the command sets, on this host without CUDA. Without a model, the
-path-reasoning command names no device, because no device is resolved.
+environment the command sets, on this host without CUDA. Without a model no
+serving command is printed: since K7 nothing is served without one.
 
 Module: tests/unit/test_setup_demo.py
 """
@@ -70,12 +70,16 @@ def test_the_printed_command_carries_shepherd_device(monkeypatch, capsys, tmp_pa
     }
 
 
-def test_the_path_reasoning_command_names_no_device(monkeypatch, capsys, tmp_path):
-    """No checkpoint, no device resolved (contract M3c): the command stays as it
-    was, and the training hint says what a host without CUDA must add."""
-    printed, output = _printed(monkeypatch, capsys, tmp_path)
-    assert _environment(printed) == {"SHEPHERD_KG_PATH": str(output / "kg.json")}
-    assert "path-reasoning only" in printed and "add --device cpu" in printed
+def test_without_a_model_no_serving_command_is_printed(monkeypatch, capsys, tmp_path):
+    """K7 (PATH1): a graph is never served without a model, so a workspace
+    with no model gets no command to start the API, only the reason and how
+    to train one; the hint says what a host without CUDA must add."""
+    printed, _ = _printed(monkeypatch, capsys, tmp_path)
+    assert _environment(printed) == {}
+    assert "uvicorn" not in printed and "path-reasoning" not in printed
+    assert "this workspace has nothing to serve yet" in printed
+    assert "refuses them (503) until one\nis loaded" in printed
+    assert "add --device cpu" in printed
 
 
 def test_a_demo_trained_on_the_cpu_is_served_by_the_printed_environment(
@@ -115,14 +119,16 @@ def test_a_demo_trained_on_the_cpu_is_served_by_the_printed_environment(
 def test_the_printed_commands_do_not_reload(monkeypatch, capsys, tmp_path):
     """uvicorn's reloader restarts the server on every saved file, and the
     server's shutdown stops the GPU job it runs (the owner's decision of
-    2026-10-22), so neither printed command has --reload. The training hint
-    says the lock must be configured, since training refuses without it."""
+    2026-10-22), so the printed command has no --reload (without a model none is
+    printed). The training hint says the lock must be configured, since
+    training refuses without it."""
     checkpoint = tmp_path / "demo" / "runs" / "gat" / "demo" / "checkpoints" / "best.pt"
     monkeypatch.setattr(setup_demo, "train_demo_model", lambda *a: checkpoint)
     trained, _ = _printed(monkeypatch, capsys, tmp_path, "--train-model")
     plain, output = _printed(monkeypatch, capsys, tmp_path / "plain")
+    assert "python -m uvicorn src.api.main:app --host 127.0.0.1 --port 8000\n" in trained
+    assert "uvicorn" not in plain
     for printed in (trained, plain):
-        assert "python -m uvicorn src.api.main:app --host 127.0.0.1 --port 8000\n" in printed
         assert "--reload" not in printed
     assert f"export SHEPHERD_WORKSPACES_ROOT={output.resolve().parent}" in plain
     assert "§4.11" in plain

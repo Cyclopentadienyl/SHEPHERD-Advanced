@@ -47,12 +47,6 @@ SYNTHETIC_FOR_TESTING = "Synthetic workspaces are for testing only."
 #: (headline, detail) for each state a reader must not miss: the Diagnosis tab's
 #: banners and Model Facts' warnings say them in these words.
 IDENTITY_BANNERS = {
-    "demo": (
-        "DEMO ANSWER: not computed.",
-        "No pipeline is configured on this server, so these candidates are "
-        "illustrative, not computed from any model, graph or table. Nothing here "
-        "is a diagnosis.",
-    ),
     "not_reported": (
         "WHAT PRODUCED THIS RESULT WAS NOT REPORTED.",
         "The API's response carried no served identity, so these candidates "
@@ -63,12 +57,6 @@ IDENTITY_BANNERS = {
         "The served workspace's dataset record gives its origin as synthetic: a "
         "generated stand-in, not a clinical knowledge graph. Results are for "
         "testing only.",
-    ),
-    "no_model": (
-        "NO TRAINED MODEL: path-reasoning fallback.",
-        "No checkpoint is served, so candidates are ranked by path reasoning over "
-        "the knowledge graph alone: a disease with no qualifying path is not "
-        "scored, and scores are not comparable with GNN scores.",
     ),
     "no_sp": (
         "NO SHORTEST-PATH TABLE: GNN score alone.",

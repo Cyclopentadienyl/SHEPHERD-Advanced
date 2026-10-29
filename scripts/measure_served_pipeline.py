@@ -111,9 +111,9 @@ READY_SHORTEST_PATHS = "verified"
 READY_SCORING_MODE = "gnn_plus_shortest_path"
 READY_DEVICE_PREFIX = "cuda"
 
-#: A 200 /diagnose response whose served identity is not the subject's, or is
-#: null (the demo answer, given when no pipeline is configured): its own
-#: failure class, never counted as accepted (contract M3c).
+#: A 200 /diagnose response whose served identity is not the subject's: its own
+#: failure class, never counted as accepted (contract M3c). A null identity is
+#: refused by the response schema (since K7 no answer is given without one).
 IDENTITY_MISMATCH = "served_identity_mismatch"
 
 #: Read raw from the server's /proc/<pid>/environ, each recorded as absent when
@@ -731,8 +731,8 @@ def run_workload(base: str, requests: Sequence[dict[str, Any]],
                 fail("schema_rejected")
             else:
                 # **Answered by the subject, or not counted** (contract M3c): a
-                # response from another pipeline, or the demo answer's null,
-                # would put a second subject inside the same readings.
+                # response from another pipeline would put a second subject
+                # inside the same readings.
                 if body.get("served_identity") != identity:
                     fail(IDENTITY_MISMATCH)
                 else:

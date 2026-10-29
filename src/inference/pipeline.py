@@ -10,32 +10,28 @@
 #
 # Input:
 #   - PatientPhenotypes: Patient's phenotype data (HPO IDs)
-#   - KnowledgeGraph: Pre-built knowledge graph
-#   - Model (optional): Pre-trained GNN model for scoring
+#   - A workspace: its knowledge graph (read once, with its identity) and the
+#     graph tensors and dataset record its manifest binds
+#   - A trained model, read from a checkpoint trained on the workspace's graph
 #
 # Output:
 #   - InferenceResult: Complete diagnosis result with candidates and explanations
 #
 # Design Notes:
-#   - Core functionality (P0): Phenotype -> Gene -> Disease reasoning
-#   - GNN scoring (P0): Neural phenotype-disease similarity via trained GNN
-#   - Ortholog support (P1): Cross-species evidence (interfaces preserved)
-#   - Scoring: GNN-primary when a model is configured; path reasoning only when
-#     none is. A configured model that cannot be built raises PipelineBuildError
+#   - Scoring: always by a trained model read from a checkpoint. No pipeline
+#     is built without one: a model that is missing or cannot be built raises
+#     PipelineBuildError, and a graph is never served on its own
 #   - PathReasoner: Explanation-only role (evidence paths, not scoring)
+#   - Ortholog support (P1): Cross-species evidence (interfaces preserved)
 #   - Interpretable: Full evidence paths and human-readable explanations
 #   - Production-ready: Input validation, error handling, logging
 #
 # Usage:
 #   from src.inference import DiagnosisPipeline
 #
-#   # Path-only reasoning (no GNN)
-#   pipeline = DiagnosisPipeline(kg=knowledge_graph)
-#
-#   # With GNN scoring from checkpoint, over a workspace
 #   pipeline = DiagnosisPipeline(
 #       graph=KnowledgeGraph.read_json("data/workspaces/demo/kg.json"),
-#       checkpoint_path="checkpoints/last.pt",
+#       checkpoint_path="data/workspaces/demo/runs/gatv2/<run>/checkpoints/last.pt",
 #       data_dir="data/workspaces/demo",
 #   )
 #   result = pipeline.run(patient_phenotypes, top_k=10)
@@ -77,7 +73,6 @@ from src.core.types import (
     InferenceResult,
     NodeID,
     NodeType,
-    PathReasoningCandidate,
     PatientPhenotypes,
     PhenotypeInputAccount,
     ResultRefused,
@@ -120,7 +115,6 @@ except ImportError:
     HAS_TORCH = False
 
 if TYPE_CHECKING:
-    from src.kg import KnowledgeGraph
     from src.kg.graph import GraphRead
     from src.models.gnn.shepherd_gnn import ShepherdGNN, ShepherdGNNConfig
     from src.utils.fingerprint import ReadIdentity
@@ -158,10 +152,9 @@ CHECKPOINT_LOG_METRICS: Tuple[str, ...] = ("val_loss", "train_loss", *RANKING_SC
 class PipelineConfig:
     """Configuration for the diagnosis pipeline."""
 
-    # Path reasoning
+    # Path discovery and path scoring (the evidence paths)
     max_path_length: int = 4
     path_length_penalty: float = 0.9
-    aggregation_method: str = "weighted_sum"
 
     # Scoring architecture (per original SHEPHERD paper):
     #   final_score = eta * embedding_similarity + (1 - eta) * SP_similarity
@@ -223,8 +216,8 @@ class ValidationResult:
     #: None when the request was refused before its phenotypes were mapped.
     phenotype_input: Optional[PhenotypeInputAccount] = None
     #: **The one mapping step's output** (Spec 1 §2.2): each validated phenotype's
-    #: graph node, and with a model served its row in the phenotype embedding
-    #: table, in the same order. `rows` is None when no model is served.
+    #: graph node and its row in the graph's phenotype node index, in the same
+    #: order. `rows` is None when the request was refused.
     node_ids: List[NodeID] = field(default_factory=list)
     rows: Optional[List[int]] = None
 
@@ -257,7 +250,7 @@ class ServedRanking:
     patient_input: PatientPhenotypes
     phenotype_input: Optional[PhenotypeInputAccount] = None
     #: Every served candidate in the served order, ranked 1..N, of the kind the
-    #: pipeline serves (`served_mixture/v1` or `path_reasoning/v1`).
+    #: pipeline serves.
     candidates: List[Candidate] = field(default_factory=list)
     discovery_ordinals: List[int] = field(default_factory=list)
     source_ids: List[NodeID] = field(default_factory=list)
@@ -313,14 +306,35 @@ class PipelineBuildError(RuntimeError):
     that asks for a model gets one, or gets this. An unreadable checkpoint
     already raised, as torch's own error; it raises this now, naming the file.
 
-    A pipeline built with no model source at all is a different case and is
-    unchanged: it serves path reasoning, which is the state B-2's open policy
-    question is about.
+    **No model source at all is the same refusal** (`require_model_source`): a
+    graph is never served without a trained model, so a deployment that names a
+    graph and no checkpoint is refused, never answered by path reasoning.
     """
 
 
 class ServingDeviceUnavailable(PipelineBuildError):
     """The device serving was asked to run the model on cannot be had here."""
+
+
+def require_model_source(checkpoint_path: Optional[Union[str, Path]],
+                         data_dir: Optional[Union[str, Path]]) -> None:
+    """**A pipeline serves a trained model, or it is not built.** Refuses
+    (`PipelineBuildError`) before anything is read when no checkpoint is named,
+    or no workspace whose graph tensors the model is computed over. A graph is
+    never served on its own: every answer comes from a model."""
+    if not checkpoint_path:
+        raise PipelineBuildError(
+            "No model is configured: a diagnosis is answered only by a trained model, "
+            "and no checkpoint was named (SHEPHERD_CHECKPOINT_PATH, on the service). "
+            "Load one (Change model… on the Diagnosis page, or POST "
+            "/api/v1/pipeline/reload); a graph is never served without a model."
+        )
+    if not data_dir:
+        raise PipelineBuildError(
+            "A model was requested and there is no workspace to compute its "
+            "embeddings over: data_dir (SHEPHERD_DATA_DIR, on the service) was not "
+            "given. No pipeline is built without it."
+        )
 
 
 def resolve_serving_device(requested: Optional[str]) -> str:
@@ -422,45 +436,39 @@ def _as_metric(value: Any) -> Optional[Union[float, str]]:
     return number if math.isfinite(number) else str(number)
 
 
-def _device_of(model: Any) -> Optional[str]:
-    """torch's name for the device a model's parameters are on, or None.
+def _device_of(model: Any) -> str:
+    """torch's name for the device a model's parameters are on.
 
     The device in effect, read from the model rather than from the request: a
-    `cuda` request serves on `cuda:0`, and that is what is recorded. None for a
-    model with no parameters to ask, which only an in-memory double is.
+    `cuda` request serves on `cuda:0`, and that is what is recorded.
     """
-    try:
-        return str(next(iter(model.parameters())).device)
-    except Exception:  # noqa: BLE001 — a model that cannot say states no device
-        return None
+    return str(next(iter(model.parameters())).device)
 
 
 class DiagnosisPipeline:
     """
     End-to-end diagnosis inference pipeline.
 
-    Scoring architecture, one result kind per configuration (Spec 1 §2.1):
-    - `served_mixture/v1`, when a trained model is served: each disease path
-      discovery reaches is ranked by `served_score`, η × model term + (1 − η) ×
-      SP with a shortest-path table, the model term alone without one.
-    - `path_reasoning/v1`, when no model source is given at all: diseases are
-      ranked by their paths' `path_score`. A model that was requested and cannot
-      be built raises `PipelineBuildError` instead; it is never replaced by this
-      fallback.
+    **Always a trained model, read from a checkpoint over a verified
+    workspace**; one result kind per model (Spec 1 §2.1):
+    - a model finetuned for a task (a checkpoint with a model spec):
+      `disease_task/v1`, `gene_task/v1` or `patients_like_me/v1`;
+    - a ShepherdGNN checkpoint (no model spec, served until K8):
+      `served_mixture/v1`, each disease path discovery reaches ranked by
+      `served_score`, η × model term + (1 − η) × SP with a shortest-path table,
+      the model term alone without one.
+    No checkpoint, or one that cannot be built, raises `PipelineBuildError`:
+    nothing is served without a model.
 
     PathReasoner role:
-    - Always runs to find the diseases ranked and their evidence paths
-      (Phenotype → Gene → Disease)
+    - Finds the evidence paths (Phenotype → Gene → Disease) that explain a
+      disease row
     - Provides human-readable reasoning chains for clinician review
-    - Ranks nothing when a model is served
-
-    Combines:
-    - Knowledge graph path reasoning for explainability (P0 core)
-    - GNN scoring for primary confidence (P0 core)
-    - Ortholog evidence integration (P1 feature, optional)
+    - Ranks nothing
 
     Usage:
-        pipeline = DiagnosisPipeline(kg=knowledge_graph)
+        pipeline = DiagnosisPipeline(graph=graph_read, checkpoint_path=checkpoint,
+                                     data_dir=workspace)
         result = pipeline.run(patient_phenotypes, top_k=10)
     """
 
@@ -476,104 +484,72 @@ class DiagnosisPipeline:
 
     def __init__(
         self,
-        kg: Optional["KnowledgeGraph"] = None,
+        *,
+        graph: "GraphRead",
+        checkpoint_path: str,
+        data_dir: str,
         config: Optional[PipelineConfig] = None,
-        model: Optional[Any] = None,  # Optional pre-loaded GNN model
-        checkpoint_path: Optional[str] = None,
-        graph_data: Optional[Dict[str, Any]] = None,
-        data_dir: Optional[str] = None,
-        graph: Optional["GraphRead"] = None,
         device: Optional[str] = None,
         expected_checkpoint_sha256: Optional[str] = None,
     ):
         """
-        Initialize the diagnosis pipeline.
+        Initialize the diagnosis pipeline: the workspace verified, the model
+        read from its checkpoint and built over it. Anything missing or
+        refused raises; no pipeline exists without its model.
 
         Args:
-            kg: An in-memory knowledge graph for reasoning, which makes no claim
-                about a persisted workspace. Give this or `graph`, not both.
-            config: Pipeline configuration
-            model: Optional pre-loaded GNN model instance
-            checkpoint_path: Path to trained model checkpoint (.pt file).
-                            If provided and model is None, the model will be
-                            loaded from this checkpoint automatically.
-            graph_data: Pre-loaded graph data dict with keys:
-                       "x_dict", "edge_index_dict", "num_nodes_dict".
-                       Required for GNN inference if data_dir is not set.
-            data_dir: Path to processed data directory containing
-                     node_features.pt, edge_indices.pt, num_nodes.json.
-                     Alternative to graph_data for GNN inference.
             graph: The `GraphRead` `KnowledgeGraph.read_json` returned: the
                      graph and the identity of the bytes it was parsed from, in
-                     one value. **Required whenever `data_dir` is used for GNN
-                     inference**, and checked: `data_dir` proves a workspace is
-                     internally consistent, and two consistent workspaces can
-                     still be crossed, one's `kg.json` paired with the other's
-                     tensors, so embedding rows are read through another graph's
-                     node identifiers. It is passed whole, so when it is the
-                     value `read_json` returned, the graph served and the digest
-                     checked come from one read (contract M2.1, S6); the type
-                     does not enforce that pairing. An in-memory graph
-                     (`kg`) has no source digest and is not pretended to have
-                     one.
-            device: Device for a checkpoint's model: "cuda", "cuda:N", "cpu",
-                or None / "auto" for CUDA, refused without it
-                (`resolve_serving_device`). A model supplied in memory stays
-                on its own device when this is None.
+                     one value, checked against the workspace manifest:
+                     `data_dir` proves a workspace is internally consistent,
+                     and two consistent workspaces can still be crossed, one's
+                     `kg.json` paired with the other's tensors, so embedding
+                     rows are read through another graph's node identifiers. It
+                     is passed whole, so when it is the value `read_json`
+                     returned, the graph served and the digest checked come
+                     from one read (contract M2.1, S6); the type does not
+                     enforce that pairing.
+            checkpoint_path: The trained model's checkpoint (.pt file).
+            data_dir: The workspace: its manifest, graph tensors and dataset
+                     record (`node_features.pt`, `edge_indices.pt`,
+                     `num_nodes.json`, `split_manifest.json`,
+                     `kg.provenance.json`).
+            config: Pipeline configuration
+            device: Device for the model: "cuda", "cuda:N", "cpu", or None /
+                "auto" for CUDA, refused without it (`resolve_serving_device`).
             expected_checkpoint_sha256: The SHA-256 the checkpoint at
                 `checkpoint_path` must have (the model a caller was shown, a
                 bound reload). Compared on the one checkpoint read before the
                 bytes are parsed (`read_checkpoint(expected_sha256=)`): other
                 bytes, a checkpoint or not, or no file raise `CheckpointChanged`
-                unchanged, and nothing about them is built. Only with
-                `checkpoint_path` and no `model`; None reads unbound.
+                unchanged, and nothing about them is built. None reads unbound.
         """
         from src.kg.graph import GraphRead
 
-        if expected_checkpoint_sha256 is not None and (checkpoint_path is None
-                                                       or model is not None):
-            raise ValueError(
-                "expected_checkpoint_sha256 binds the checkpoint read from "
-                "checkpoint_path; give checkpoint_path= and no model="
+        require_model_source(checkpoint_path, data_dir)
+        if not isinstance(graph, GraphRead):
+            raise TypeError(
+                "graph= takes the GraphRead KnowledgeGraph.read_json returned, "
+                f"not a {type(graph).__name__}"
             )
-
-        if graph is not None:
-            if kg is not None:
-                raise ValueError(
-                    "pass the graph read from a file (graph=) or an in-memory "
-                    "graph (kg=), not both: a graph and an identity given apart "
-                    "could come from two different reads"
-                )
-            if not isinstance(graph, GraphRead):
-                raise TypeError(
-                    "graph= takes the GraphRead KnowledgeGraph.read_json returned, "
-                    f"not a {type(graph).__name__}"
-                )
-            kg = graph.kg
-        elif kg is None:
-            raise ValueError("a pipeline needs a graph: pass kg= or graph=")
-        self.kg = kg
-        #: The identity of the bytes `self.kg` was parsed from, when it was read
-        #: from a file. None for an in-memory graph.
-        self._graph_identity: Optional["ReadIdentity"] = (
-            graph.identity if graph is not None else None
-        )
+        self.kg = graph.kg
+        #: The identity of the bytes `self.kg` was parsed from.
+        self._graph_identity: "ReadIdentity" = graph.identity
         self.config = config or PipelineConfig()
-        self.model = model
+        self.model: Any = None
 
         # GNN inference state (populated by _init_gnn_inference)
         self._node_embeddings: Optional[Dict[str, Any]] = None
         self._node_id_to_idx: Optional[Dict[str, Dict[str, int]]] = None
-        self._graph_data: Optional[Dict[str, Any]] = graph_data
+        self._graph_data: Optional[Dict[str, Any]] = None
         #: The four digests the manifest binds (`kg`, `node_features`,
         #: `edge_indices`, `num_nodes`), each compared with the read it names,
         #: once the workspace has been verified. Kept whole for M2.4's
-        #: comparison with the checkpoint; None for in-memory graph data, over
-        #: which no checkpoint is loaded.
+        #: comparison with the checkpoint.
         self._bound_digests: Optional[Dict[str, str]] = None
         #: The workspace's dataset record, read once and verified with the graph
-        #: (contract M3b); None when no workspace was verified. Published by
-        #: `get_pipeline_config` with its binding state and origin apart.
+        #: (contract M3b). Published by `get_pipeline_config` with its binding
+        #: state and origin apart.
         self._dataset_record: Optional[Any] = None
         #: The identity of the checkpoint bytes the model was built from.
         self._checkpoint_identity: Optional["ReadIdentity"] = None
@@ -584,11 +560,11 @@ class DiagnosisPipeline:
         #: computation (`observe_autocast_regime`); None until embeddings exist.
         self._embedding_regime: Optional[Any] = None
         #: SHA-256 of the one `split_manifest.json` read the workspace was
-        #: verified against (contract M3c); None when no workspace was verified.
+        #: verified against (contract M3c).
         self._manifest_sha256: Optional[str] = None
-        #: The device asked for, as given ("auto" when a checkpoint was loaded
-        #: with none named), and the one the model's parameters are on once it
-        #: is built. Both are part of the served identity (contract M3c).
+        #: The device asked for, as given ("auto" when none was named), and the
+        #: one the model's parameters are on once it is built. Both are part of
+        #: the served identity (contract M3c).
         self._device_requested: Optional[str] = (
             str(device).strip() if device is not None and str(device).strip() else None
         )
@@ -609,10 +585,7 @@ class DiagnosisPipeline:
         #: reader can see where the ceiling every SP score uses was read.
         self._sp_hop_bound_source: Optional[str] = None
         #: SHA-256 of the bytes this pipeline's graph was parsed from, as the
-        #: manifest binds it, once the workspace has been verified. **None for a
-        #: graph supplied in memory**, which is not an oversight: that caller made
-        #: no claim about a persisted workspace, so there is nothing to bind an
-        #: artifact to.
+        #: manifest binds it, once the workspace has been verified.
         #: The shortest-path artifact is checked against *this*, never against
         #: whatever `kg.json` happens to sit beside it — otherwise the binding
         #: could be bypassed by deleting a file.
@@ -634,10 +607,9 @@ class DiagnosisPipeline:
         self._init_reasoning_components()
         self._init_explanation_generator()
 
-        # Initialize GNN inference if resources are available
+        # The workspace verified, the model read and built over it
         self._init_gnn_inference(
             checkpoint_path=checkpoint_path,
-            graph_data=graph_data,
             data_dir=data_dir,
             device=device,
             expected_checkpoint_sha256=expected_checkpoint_sha256,
@@ -646,7 +618,6 @@ class DiagnosisPipeline:
         logger.info(
             f"DiagnosisPipeline initialized: "
             f"kg_nodes={len(self.kg._nodes)}, "
-            f"has_model={self.model is not None}, "
             f"gnn_ready={self._gnn_ready}, "
             f"device={self._device_in_effect}"
         )
@@ -656,7 +627,6 @@ class DiagnosisPipeline:
         reasoning_config = PathReasoningConfig(
             max_path_length=self.config.max_path_length,
             length_penalty=self.config.path_length_penalty,
-            aggregation_method=self.config.aggregation_method,
         )
         self.path_reasoner = create_path_reasoner(config=reasoning_config)
 
@@ -689,129 +659,81 @@ class DiagnosisPipeline:
     # ==========================================================================
     def _init_gnn_inference(
         self,
-        checkpoint_path: Optional[str],
-        graph_data: Optional[Dict[str, Any]],
-        data_dir: Optional[str],
+        checkpoint_path: str,
+        data_dir: str,
         device: Optional[str],
         expected_checkpoint_sha256: Optional[str] = None,
     ) -> None:
         """
-        Initialize GNN model and precompute node embeddings for inference.
+        Verify the workspace, build the model and precompute what it scores with.
 
         This method handles the full setup chain:
-        1. Load graph data (from graph_data dict or data_dir files)
-        2. Load model from checkpoint (if no pre-loaded model)
-        3. Run GNN forward pass to cache all node embeddings
+        1. Read and verify the workspace's graph tensors and dataset record
+        2. Load the model from its checkpoint
+        3. Run the model's forward pass to cache the node embeddings
         4. Build NodeID -> index mapping for score lookup
         """
         if not HAS_TORCH:
-            if checkpoint_path is not None or self.model is not None:
-                raise PipelineBuildError(
-                    "A GNN was requested, and PyTorch is not available to load "
-                    "it. No pipeline is built without the model it was asked "
-                    "for; install torch."
-                )
-            return
-
-        # Nothing to do if no model source is available
-        if self.model is None and checkpoint_path is None:
-            return
+            raise PipelineBuildError(
+                "A GNN was requested, and PyTorch is not available to load "
+                "it. No pipeline is built without the model it was asked "
+                "for; install torch."
+            )
 
         # **The device is settled before any input is read** (contract M3c,
         # §5.2), as training's is: `auto` without CUDA refuses here, instead of
         # after the workspace, the checkpoint and the model build, and instead of
-        # turning into the CPU. A model supplied in memory with no device named
-        # stays where it is; there is nothing to resolve for it. One with a
-        # device named gets the same rule, so `auto` or CUDA on a host without
-        # it is this refusal, not torch's error after the workspace was read.
-        if self.model is None:
-            device = resolve_serving_device(device)
-            self._device_requested = self._device_requested or "auto"
-        elif self._device_requested is not None:
-            device = resolve_serving_device(self._device_requested)
-        else:
-            device = None
+        # turning into the CPU.
+        device = resolve_serving_device(device)
+        self._device_requested = self._device_requested or "auto"
 
-        # Step 1: Load graph data
-        if self._graph_data is None and data_dir is not None:
-            # **The clinical path is a graph consumer, and the costliest one.**
-            # A same-shaped `node_features.pt` from another workspace is refused
-            # by training and by measurement, and without this it would still be
-            # adopted here, paired with a checkpoint, precomputed into embeddings
-            # and served. The tensors are parsed first (one read per input); the
-            # check runs before they are adopted, before the checkpoint is read
-            # and before anything is served.
-            #
-            # Only for the file-backed path. A caller supplying `graph_data`
-            # directly makes no claim about a persisted workspace, so there is no
-            # manifest for it to match and nothing to verify -- and, for that
-            # reason, no checkpoint is loaded over it (M2.4,
-            # `_load_model_from_checkpoint`); a model handed in is the caller's.
-            # **The graph's identity is required here, not optional.** Verifying
-            # only that `data_dir` is internally consistent leaves the `kg`
-            # object bound to nothing: a caller can still pair workspace B's
-            # graph with workspace A's tensors and get embeddings read through
-            # the wrong node identifiers. An optional check is no check for the
-            # caller who omits it, and that caller is the one this exists for.
-            #
-            # Nothing legitimate is lost. A caller who built its graph in memory
-            # never had a source file and belongs on the `graph_data` seam above,
-            # which makes no persisted-workspace claim; a caller who loaded one
-            # from disk passes what `KnowledgeGraph.read_json` returned.
-            if self._graph_identity is None:
-                raise ValueError(
-                    "loading graph data from a workspace requires graph= — the "
-                    "GraphRead KnowledgeGraph.read_json returned, so the graph "
-                    "served is the one whose bytes are checked. Without it the "
-                    "graph object is bound to nothing, and this workspace's "
-                    "tensors could belong to a different graph entirely. Pass "
-                    "graph_data directly if the graph was not loaded from a file."
-                )
-            # **One read per input, and the check compares those reads**
-            # (contract M2.1, S6). The manifest, the graph tensors and `kg.json`
-            # (read by the caller) are each read once; the digests compared
-            # are those of the bytes parsed, and nothing is hashed again by path.
-            # A file replaced after its read is either the one used and checked,
-            # or refused as not the artifact the manifest records.
-            workspace = Path(data_dir)
-            manifest = read_split_manifest(workspace)
-            graph_read = read_graph_artifacts(workspace, map_location="cpu")
-            bound = verify_graph_source_read(
-                manifest, self._graph_identity, graph_read.reads
-            )
-            # **The dataset record is required** (contract M3b): read once and
-            # refused unless it is the record this manifest reading binds and
-            # names the graph just verified. Before the tensors are adopted and
-            # before the checkpoint is read.
-            dataset_record = verify_dataset_record(manifest, bound["kg"])
-            # **All four are kept**, the opening for M2.4's comparison with the
-            # checkpoint. The shortest-path binding reads `kg` from them, so it
-            # binds to the graph that was verified, not to a file hashed again.
-            self._bound_digests = dict(bound)
-            self._graph_kg_digest = bound["kg"]
-            self._dataset_record = dataset_record
-            # The manifest's identity from the same one read, for the served
-            # identity (contract M3c); nothing hashes it again.
-            self._manifest_sha256 = manifest.identity.sha256
-            # **Only after the check.** The reader omits a file that is absent,
-            # and only the check turns that into a refusal.
-            self._graph_data = graph_read.graph_data
+        # Step 1: the workspace's graph tensors, verified against the graph.
+        # **The clinical path is a graph consumer, and the costliest one.** A
+        # same-shaped `node_features.pt` from another workspace is refused by
+        # training and by measurement, and without this it would still be
+        # adopted here, paired with a checkpoint, precomputed into embeddings and
+        # served. The tensors are parsed first (one read per input); the check
+        # runs before they are adopted, before the checkpoint is read and before
+        # anything is served. **The graph's identity is part of the check**
+        # (`graph=`): verifying only that `data_dir` is internally consistent
+        # would leave the `kg` object bound to nothing, and a caller could pair
+        # workspace B's graph with workspace A's tensors.
+        #
+        # **One read per input, and the check compares those reads**
+        # (contract M2.1, S6). The manifest, the graph tensors and `kg.json`
+        # (read by the caller) are each read once; the digests compared
+        # are those of the bytes parsed, and nothing is hashed again by path.
+        # A file replaced after its read is either the one used and checked,
+        # or refused as not the artifact the manifest records.
+        workspace = Path(data_dir)
+        manifest = read_split_manifest(workspace)
+        graph_read = read_graph_artifacts(workspace, map_location="cpu")
+        bound = verify_graph_source_read(
+            manifest, self._graph_identity, graph_read.reads
+        )
+        # **The dataset record is required** (contract M3b): read once and
+        # refused unless it is the record this manifest reading binds and
+        # names the graph just verified. Before the tensors are adopted and
+        # before the checkpoint is read.
+        dataset_record = verify_dataset_record(manifest, bound["kg"])
+        # **All four are kept**, the opening for M2.4's comparison with the
+        # checkpoint. The shortest-path binding reads `kg` from them, so it
+        # binds to the graph that was verified, not to a file hashed again.
+        self._bound_digests = dict(bound)
+        self._graph_kg_digest = bound["kg"]
+        self._dataset_record = dataset_record
+        # The manifest's identity from the same one read, for the served
+        # identity (contract M3c); nothing hashes it again.
+        self._manifest_sha256 = manifest.identity.sha256
+        # **Only after the check.** The reader omits a file that is absent,
+        # and only the check turns that into a refusal.
+        self._graph_data = graph_read.graph_data
 
-        if self._graph_data is None:
-            # A workspace without its tensors is refused by the check above, so
-            # only an absent source is left to report.
-            raise PipelineBuildError(
-                "A GNN was requested and there is no graph to compute its "
-                "embeddings from: neither data_dir (SHEPHERD_DATA_DIR, on the "
-                "service) nor graph_data was given."
-            )
-
-        # Step 2: Load model from checkpoint if needed. A checkpoint that does
+        # Step 2: Load the model from its checkpoint. A checkpoint that does
         # not load raises out of here (`_load_model_from_checkpoint`).
-        if self.model is None and checkpoint_path is not None:
-            self.model = self._load_model_from_checkpoint(
-                checkpoint_path, device, expected_sha256=expected_checkpoint_sha256
-            )
+        self.model = self._load_model_from_checkpoint(
+            checkpoint_path, device, expected_sha256=expected_checkpoint_sha256
+        )
 
         # Step 3: Precompute node embeddings
         self._precompute_node_embeddings(device)
@@ -819,10 +741,11 @@ class DiagnosisPipeline:
         # Step 4: Build NodeID -> index mapping from KG
         self._node_id_to_idx = self.kg.get_node_id_mapping()
 
-        # Step 5: Load shortest path lookup table (optional). A disease task
-        # model ranks without it (README §6: SP is the gene task's feature).
-        if data_dir is not None and self._bundle_view is None:
-            self._load_shortest_paths(Path(data_dir))
+        # Step 5: Load shortest path lookup table (optional). A task model
+        # ranks without it (README §6: SP is the gene task's feature, computed
+        # from its own graph view).
+        if self._bundle_view is None:
+            self._load_shortest_paths(workspace)
 
         if not self._sp_ready and not self.config.sp_optional and self._bundle_view is None:
             # **Names the state, not a guess at its cause.** This used to say
@@ -831,18 +754,11 @@ class DiagnosisPipeline:
             # bound, for one. The loader logs the specific reason at the point it
             # establishes it; this says what the configuration then does about it.
             #
-            # **A refusal, which is what `sp_optional=False` documents.** It used
-            # to log and switch the GNN off, so a configuration that required both
-            # signals was served with neither: path reasoning stood in for both.
-            why = (
-                "see the shortest-path load messages above for which condition "
-                "stopped it"
-                if data_dir is not None
-                else "no data_dir was given, so there was no table to load"
-            )
+            # **A refusal, which is what `sp_optional=False` documents.**
             raise PipelineBuildError(
                 "Shortest path lookup required (sp_optional=False) but it is "
-                f"not available; {why}. No pipeline is built."
+                "not available; see the shortest-path load messages above for "
+                "which condition stopped it. No pipeline is built."
             )
 
         # **`_gnn_ready` means built, not requested.** Every loader above raises
@@ -1159,29 +1075,19 @@ class DiagnosisPipeline:
             CheckpointChanged: `expected_sha256` is given and the read has other
                 bytes, or there is no file; raised unchanged, before anything is
                 parsed, so the caller can say the file is not the model shown.
-            PipelineBuildError: if the graph was not verified from a workspace,
-                or the checkpoint is missing, cannot be read, is not a training
-                checkpoint, was not trained on this graph (M2.4), or does not
-                build a model over it. A missing checkpoint and one that did not
-                build used to return None, and the pipeline went on without its
-                model.
+            PipelineBuildError: if the checkpoint is missing, cannot be read, is
+                not a training checkpoint, was not trained on this graph (M2.4),
+                or does not build a model over it. A missing checkpoint and one
+                that did not build used to return None, and the pipeline went on
+                without its model.
+
+        Called once the workspace is verified (`_init_gnn_inference`): the
+        checkpoint's record is compared with the digests that check took from
+        this build's reads (contract M2.4).
         """
         from src.models.gnn.shepherd_gnn import build_shepherd_model
 
         ckpt_path = Path(checkpoint_path)
-        # **A checkpoint is used only over a graph verified from a workspace**
-        # (contract M2.4). Its record can be compared only with the digests the
-        # workspace check took from this build's reads; a graph supplied in
-        # memory (`graph_data=`) has none, so nothing shows the model was trained
-        # on it, and that is a refusal, not an exemption. Before the checkpoint
-        # is opened.
-        if self._bound_digests is None:
-            raise PipelineBuildError(
-                f"Checkpoint {ckpt_path} is loaded only over a graph verified "
-                "from a workspace, and this pipeline's graph was supplied in "
-                "memory: nothing shows the checkpoint was trained on it. Build "
-                "the pipeline from the workspace (graph= and data_dir=)."
-            )
         if expected_sha256 is None and not ckpt_path.exists():
             raise PipelineBuildError(
                 f"Checkpoint {ckpt_path} does not exist. It was requested, so no "
@@ -1267,12 +1173,6 @@ class DiagnosisPipeline:
             for w in fp_warnings:
                 logger.warning(f"[Fingerprint] {w}")
         self._fingerprint_warnings = fp_warnings
-
-        if self._graph_data is None:
-            raise PipelineBuildError(
-                "Cannot reconstruct model: graph_data not loaded. "
-                "_init_gnn_inference must load graph_data before model."
-            )
 
         # Construction is shared with the measurement harness
         # (`src/models/gnn/shepherd_gnn.py:build_shepherd_model`), so measurement's
@@ -1385,8 +1285,10 @@ class DiagnosisPipeline:
         Run GNN forward pass on the full graph and cache all node embeddings.
 
         Embeddings are moved to CPU after computation for memory efficiency.
+        A loader that returned no model leaves nothing to compute; the build
+        refuses that (`_init_gnn_inference`).
         """
-        if self.model is None or self._graph_data is None:
+        if self.model is None:
             return
 
         if device is None:
@@ -2050,15 +1952,12 @@ class DiagnosisPipeline:
             self._view_phenotypes = {k for k, ok in zip(keys, in_view, strict=True) if ok}
         return str(node_id) in self._view_phenotypes
 
-    def _phenotype_rows(self, node_ids: List[NodeID]) -> Optional[List[int]]:
-        """Each node's row in the phenotype embedding table, in order; None when
-        no model is served (the path-reasoning kind reads no tensor).
+    def _phenotype_rows(self, node_ids: List[NodeID]) -> List[int]:
+        """Each node's row in the phenotype embedding table, in order.
 
         Raises `ResultRefused` (`MODEL_TERM_UNAVAILABLE`, naming the node) for a
         node with no row or a row outside the table: a model–graph mismatch is
         refused, never skipped and never clamped onto a neighbouring row."""
-        if not self._gnn_ready:
-            return None
         if self._bundle_view is not None:
             # The graph's phenotype rows; the view maps them (`_rank_by_disease_task`).
             index = (self._node_id_to_idx or {}).get(NodeType.PHENOTYPE.value, {})
@@ -2193,15 +2092,14 @@ class DiagnosisPipeline:
         unmapped_ids: Sequence[str] = (),
     ) -> Tuple[List[Candidate], List[int]]:
         """
-        Score every disease candidate and rank them all, as the served kind does.
+        Score every disease candidate and rank them all: `served_mixture/v1`,
+        a ShepherdGNN checkpoint's ranking.
 
-        - `served_mixture/v1` (a model served): `model_term` per candidate from
-          the pooled patient (`rows`, validation's), one `sp_analysis_records`
-          call over every reached candidate for `sp_term`, and `served_score`
-          mixed from the two (in `gnn_only` the model term alone). A non-numeric
-          SP status is still mixed as 0, and says so (`mixed_as`), so the legacy
-          ranking does not change.
-        - `path_reasoning/v1` (no model): `path_score`, the paths' aggregate.
+        `model_term` per candidate from the pooled patient (`rows`,
+        validation's), one `sp_analysis_records` call over every reached
+        candidate for `sp_term`, and `served_score` mixed from the two (in
+        `gnn_only` the model term alone). A non-numeric SP status is still mixed
+        as 0, and says so (`mixed_as`), so the legacy ranking does not change.
 
         A score that is not finite refuses the result (`ResultRefused`,
         `NON_FINITE_SCORE`), as does a model term that cannot be computed.
@@ -2211,7 +2109,7 @@ class DiagnosisPipeline:
             source_ids: Patient phenotype NodeIDs, as used
             patient_input: Patient phenotype data, as used
             include_ortholog_evidence: Include ortholog evidence
-            rows: The phenotypes' embedding rows (None without a model)
+            rows: The phenotypes' embedding rows
             unmapped_ids: The request's ids no node was found for
 
         Returns:
@@ -2222,7 +2120,6 @@ class DiagnosisPipeline:
         """
         from src.inference.sp_index import sp_analysis_records
 
-        mixture = result_kind_for(self._scoring_mode()[0]) == SERVED_MIXTURE
         entries: List[Tuple[NodeID, str, List[ReasoningPath]]] = []
         for paths in all_paths.values():
             if not paths:
@@ -2232,34 +2129,28 @@ class DiagnosisPipeline:
             entries.append(
                 (disease_id, disease_node.name if disease_node else str(disease_id), paths))
 
-        model_terms: List[float] = []
-        records: List[SPAnalysisRecord] = []
-        if mixture:
-            # The patient is pooled once: the same operation on the same rows
-            # for every candidate. Each candidate's cosine stays a batch of one,
-            # since a taller float32 matrix product can move a value's last bit.
-            patient = self._patient_embedding(rows)
-            model_terms = [self._calculate_gnn_score(patient, disease_id)
-                           for disease_id, _name, _paths in entries]
-            records = sp_analysis_records(
-                self._sp_lookup if self._sp_ready else None,
-                self._node_id_to_idx,
-                [str(node) for node in source_ids],
-                [str(disease_id) for disease_id, _name, _paths in entries],
-                1,  # disease
-                unmapped_ids=unmapped_ids,
-            )
-            if self._sp_ready:
-                records = [record if record.numeric else replace(record, mixed_as=0.0)
-                           for record in records]
-                scores = [self._served_score(term, record)
-                          for term, record in zip(model_terms, records)]
-            else:
-                # Nothing is mixed without a table: the model term ranks alone.
-                scores = list(model_terms)
+        # The patient is pooled once: the same operation on the same rows for
+        # every candidate. Each candidate's cosine stays a batch of one, since a
+        # taller float32 matrix product can move a value's last bit.
+        patient = self._patient_embedding(rows)
+        model_terms: List[float] = [self._calculate_gnn_score(patient, disease_id)
+                                    for disease_id, _name, _paths in entries]
+        records: List[SPAnalysisRecord] = sp_analysis_records(
+            self._sp_lookup if self._sp_ready else None,
+            self._node_id_to_idx,
+            [str(node) for node in source_ids],
+            [str(disease_id) for disease_id, _name, _paths in entries],
+            1,  # disease
+            unmapped_ids=unmapped_ids,
+        )
+        if self._sp_ready:
+            records = [record if record.numeric else replace(record, mixed_as=0.0)
+                       for record in records]
+            scores = [self._served_score(term, record)
+                      for term, record in zip(model_terms, records)]
         else:
-            scores = [self._calculate_reasoning_score(paths)
-                      for _id, _name, paths in entries]
+            # Nothing is mixed without a table: the model term ranks alone.
+            scores = list(model_terms)
         for (disease_id, _name, _paths), score in zip(entries, scores):
             if not math.isfinite(score):
                 raise ResultRefused(
@@ -2267,50 +2158,22 @@ class DiagnosisPipeline:
                     f"disease {disease_id} scored {score!r}; the result was refused, "
                     "not ranked")
 
-        # Sorted by the kind's score. **Stable**, so equal scores keep discovery
+        # Sorted by the served score. **Stable**, so equal scores keep discovery
         # order; the order is sorted by position so each candidate's discovery
         # ordinal travels with it, which the sorted list alone cannot give back.
         order = sorted(range(len(entries)), key=lambda i: scores[i], reverse=True)
         ranked: List[Candidate] = []
         for rank, i in enumerate(order, start=1):
             disease_id, disease_name, paths = entries[i]
-            common = dict(
+            ranked.append(ServedMixtureCandidate(
                 rank=rank,
                 disease_id=disease_id,
                 disease_name=disease_name,
                 supporting_genes=self._extract_supporting_genes(paths),
                 reasoning_paths=[list(p.nodes) for p in paths[:5]],
                 evidence_sources=self._determine_evidence_sources(paths),
-            )
-            if mixture:
-                ranked.append(ServedMixtureCandidate(
-                    served_score=scores[i], model_term=model_terms[i],
-                    sp_term=records[i], **common))
-            else:
-                ranked.append(PathReasoningCandidate(path_score=scores[i], **common))
+                served_score=scores[i], model_term=model_terms[i], sp_term=records[i]))
         return ranked, order
-
-    def _calculate_reasoning_score(self, paths: List[ReasoningPath]) -> float:
-        """Calculate aggregate reasoning score from paths."""
-        if not paths:
-            return 0.0
-
-        # Use configured aggregation method
-        method = self.config.aggregation_method
-        scores = [p.score for p in paths]
-
-        if method == "max":
-            return max(scores)
-        elif method == "mean":
-            return sum(scores) / len(scores)
-        elif method == "sum":
-            return min(sum(scores), 1.0)  # Cap at 1.0
-        elif method == "weighted_sum":
-            # Weighted by path count with diminishing returns
-            weighted = sum(s * (0.8 ** i) for i, s in enumerate(scores))
-            return min(weighted, 1.0)
-        else:
-            return max(scores)
 
     def _served_score(self, model_term: float, record: SPAnalysisRecord) -> float:
         """`served_mixture/v1`'s value with a table: η × model term + (1 − η) × SP,
@@ -2599,30 +2462,12 @@ class DiagnosisPipeline:
 
     def bound_inputs(self) -> BoundInputs:
         """What this pipeline read and bound from its verified workspace
-        (`BoundInputs`), for a measurement of the served pipeline that must not
-        read those files again (Mode D).
-
-        Raises `ValueError` for a pipeline whose graph was not verified from a
-        workspace or that serves no model: nothing binds what it would score.
+        (`BoundInputs`), for a caller that must not read those files again: the
+        patients-like-me reference cohort's binding (the graph and the dataset
+        record) and a measurement of the served pipeline (Mode D). Every
+        pipeline has them: none is built without its workspace verified and its
+        model read from a checkpoint.
         """
-        if self._bound_digests is None or self._dataset_record is None:
-            raise ValueError(
-                "this pipeline was not built over a verified workspace, so nothing "
-                "binds its graph, dataset record or model to files a measurement "
-                "can name"
-            )
-        if self._checkpoint_identity is None:
-            if self.model is None or not self._gnn_ready:
-                raise ValueError(
-                    "this pipeline serves no model (path_reasoning_fallback), so there "
-                    "is no checkpoint to name and no embeddings to measure"
-                )
-            # A model supplied in memory over a verified workspace serves a GNN,
-            # but no checkpoint read names the weights a measurement would score.
-            raise ValueError(
-                "this pipeline's model was supplied in memory, not read from a "
-                "checkpoint, so nothing binds the weights a measurement would score"
-            )
         return BoundInputs(
             graph=dict(self._bound_digests),
             dataset_record=self._dataset_record,
@@ -2636,15 +2481,13 @@ class DiagnosisPipeline:
         """The scoring mode in effect and the mixing weight it reports (the
         gene task's η; None for the disease and patients-like-me tasks, which
         mix nothing)."""
-        if self._gnn_ready and self._bundle_view is not None:
+        if self._bundle_view is not None:
             task = self.model.task
             eta = self.model.task_head.spec.gene.eta if task == "gene" else None
             return TASK_SCORING_MODES[task], eta
-        if self._gnn_ready and self._sp_ready:
+        if self._sp_ready:
             return "gnn_plus_shortest_path", self.config.eta
-        if self._gnn_ready:
-            return "gnn_only", 1.0
-        return "path_reasoning_fallback", 0.0
+        return "gnn_only", 1.0
 
     def served_identity(self) -> ServedIdentity:
         """What this pipeline serves, part by part (contract M3c, R8).
@@ -2660,25 +2503,12 @@ class DiagnosisPipeline:
         """
         scoring_mode, eta = self._scoring_mode()
 
-        if self.model is None or not self._gnn_ready:
-            checkpoint = ServedCheckpoint(state="absent")
-        elif self._checkpoint_identity is not None:
-            checkpoint = ServedCheckpoint(
-                state="verified", sha256=self._checkpoint_identity.sha256
-            )
-        else:
-            checkpoint = ServedCheckpoint(state="supplied_in_memory")
-
-        if self._bound_digests is not None:
-            graph = ServedGraph(
-                state="verified",
-                kg_sha256=self._graph_kg_digest,
-                split_manifest_sha256=self._manifest_sha256,
-            )
-        elif self._graph_identity is not None:
-            graph = ServedGraph(state="unverified", kg_sha256=self._graph_identity.sha256)
-        else:
-            graph = ServedGraph(state="in_memory")
+        checkpoint = ServedCheckpoint(state="verified", sha256=self._checkpoint_identity.sha256)
+        graph = ServedGraph(
+            state="verified",
+            kg_sha256=self._graph_kg_digest,
+            split_manifest_sha256=self._manifest_sha256,
+        )
 
         if self._sp_ready:
             shortest_paths = ServedShortestPaths(
@@ -2690,22 +2520,16 @@ class DiagnosisPipeline:
             shortest_paths = ServedShortestPaths(state="absent")
 
         record = self._dataset_record
-        dataset_record = (
-            ServedDatasetRecord(
-                state="verified", origin=record.origin, sha256=record.identity.sha256
-            )
-            if record is not None
-            else ServedDatasetRecord(state="absent")
+        dataset_record = ServedDatasetRecord(
+            state="verified", origin=record.origin, sha256=record.identity.sha256
         )
 
-        served_model = checkpoint.state != "absent"
         settings = ServedSettings(
-            device=self._device_in_effect if served_model else None,
-            device_requested=self._device_requested if served_model else None,
-            eta=float(eta) if served_model and eta is not None else None,
+            device=self._device_in_effect,
+            device_requested=self._device_requested,
+            eta=float(eta) if eta is not None else None,
             max_path_length=self.config.max_path_length,
             path_length_penalty=self.config.path_length_penalty,
-            aggregation_method=self.config.aggregation_method,
             max_paths_per_candidate=self.config.max_paths_per_candidate,
             use_direct_path_optimization=self.config.use_direct_path_optimization,
             phenotype_normalisation_version=PHENOTYPE_NORMALISATION_VERSION,
@@ -2719,8 +2543,8 @@ class DiagnosisPipeline:
             settings=settings,
         )
 
-    def served_checkpoint_read(self) -> Optional["ReadIdentity"]:
-        """The checkpoint read the served model was built from, or ``None``.
+    def served_checkpoint_read(self) -> "ReadIdentity":
+        """The checkpoint read the served model was built from.
 
         For a reader that needs the read's path as well as its digest: the
         recorded results view finds the ledger beside the checkpoint and filters
@@ -2732,13 +2556,9 @@ class DiagnosisPipeline:
         so its directory is the one the loaded bytes were in, whatever a link
         named at load time points to now.
 
-        **Returned exactly when `served_identity()` reports the checkpoint
-        verified**, by asking it rather than restating its condition, so the two
-        cannot drift apart: a model supplied in memory, or no model at all, has
-        no read to return. Nothing is hashed or read here.
+        The same read `served_identity()` names the checkpoint by. Nothing is
+        hashed or read here.
         """
-        if self.served_identity().checkpoint.state != "verified":
-            return None
         return self._checkpoint_identity
 
     def get_pipeline_config(self) -> Dict[str, Any]:
@@ -2752,7 +2572,6 @@ class DiagnosisPipeline:
             "served_identity": self.served_identity().to_dict(),
             "max_path_length": self.config.max_path_length,
             "path_length_penalty": self.config.path_length_penalty,
-            "aggregation_method": self.config.aggregation_method,
             "scoring_mode": scoring_mode,
             "eta_configured": self.config.eta,
             "eta_effective": effective_eta,
@@ -2764,14 +2583,12 @@ class DiagnosisPipeline:
             # The workspace's dataset record (contract M3b): its binding state
             # and its origin apart, so a synthetic workspace is never shown as
             # plainly verified. None when no workspace was verified.
-            "dataset_record": (
-                self._dataset_record.summary() if self._dataset_record is not None else None
-            ),
-            "path_reasoner_role": "explanation_only" if self._gnn_ready else "scoring_and_explanation",
+            "dataset_record": self._dataset_record.summary(),
+            "path_reasoner_role": "explanation_only",
             "include_explanations": self.config.include_explanations,
             "include_ortholog_evidence": self.config.include_ortholog_evidence,
             "include_literature_evidence": self.config.include_literature_evidence,
-            "has_model": self.model is not None,
+            "has_model": True,
             "gnn_ready": self._gnn_ready,
             "sp_ready": self._sp_ready,
             "fingerprint_warnings": getattr(self, "_fingerprint_warnings", []),
@@ -2786,8 +2603,8 @@ class DiagnosisPipeline:
 # ==============================================================================
 def build_served_pipeline(
     kg_path: Union[str, Path],
-    checkpoint_path: Optional[str] = None,
-    data_dir: Optional[str] = None,
+    checkpoint_path: Optional[str],
+    data_dir: Optional[str],
     device: Optional[str] = None,
     expected_checkpoint_sha256: Optional[str] = None,
 ) -> DiagnosisPipeline:
@@ -2801,23 +2618,24 @@ def build_served_pipeline(
     files by the same code, never a second construction. It sits here because
     `src.evaluation` may import `src.inference` and not `src.api`.
 
-    The device is settled before the graph is read when a checkpoint is named
-    (contract M3c): `auto` without CUDA refuses before a multi-gigabyte
-    `kg.json` is parsed for a model that cannot be served here. The pipeline
-    applies the same rule itself; the request is passed on as given, so the
-    served identity records what was asked for beside what took effect.
+    **No checkpoint, no pipeline** (`require_model_source`), refused before the
+    graph is read: a graph is never served without a trained model. The device
+    is settled before the graph is read too (contract M3c): `auto` without CUDA
+    refuses before a multi-gigabyte `kg.json` is parsed for a model that cannot
+    be served here. The pipeline applies the same rules itself; the device
+    request is passed on as given, so the served identity records what was
+    asked for beside what took effect.
     """
     from src.kg.graph import KnowledgeGraph
 
-    if checkpoint_path:
-        resolve_serving_device(device)
+    require_model_source(checkpoint_path, data_dir)
+    resolve_serving_device(device)
     kg_file = Path(kg_path)
     logger.info(f"Loading knowledge graph from {kg_file}...")
     # **One read, kept whole** (contract M2.1, S6). The graph and the identity of
     # the bytes it was parsed from travel together into the pipeline, which
-    # checks that identity against the workspace manifest when it builds a GNN
-    # over `data_dir`; a pipeline with no checkpoint checks nothing (BACKLOG
-    # 19.20). Nothing hashes the file again by path.
+    # checks that identity against the workspace manifest. Nothing hashes the
+    # file again by path.
     graph = KnowledgeGraph.read_json(kg_file)
     kg = graph.kg
     logger.info(f"KG loaded: {kg.total_nodes} nodes, {kg.total_edges} edges")
@@ -2838,29 +2656,26 @@ def build_served_pipeline(
 
 
 def create_diagnosis_pipeline(
-    kg: Optional["KnowledgeGraph"] = None,
+    *,
+    graph: "GraphRead",
+    checkpoint_path: str,
+    data_dir: str,
     config: Optional[PipelineConfig] = None,
-    model: Optional[Any] = None,
-    checkpoint_path: Optional[str] = None,
-    graph_data: Optional[Dict[str, Any]] = None,
-    data_dir: Optional[str] = None,
-    graph: Optional["GraphRead"] = None,
     device: Optional[str] = None,
     expected_checkpoint_sha256: Optional[str] = None,
 ) -> DiagnosisPipeline:
     """
-    Factory function to create a diagnosis pipeline.
+    Factory function to create a diagnosis pipeline: a trained model read from
+    `checkpoint_path`, over the workspace `data_dir` verified against `graph`
+    (`DiagnosisPipeline`, which refuses anything less).
 
     Args:
-        kg: An in-memory knowledge graph (give this or `graph`)
-        config: Pipeline configuration
-        model: Optional pre-loaded GNN model
-        checkpoint_path: Path to trained model checkpoint
-        graph_data: Pre-loaded graph data dict
-        data_dir: Path to processed data directory
         graph: The `GraphRead` `KnowledgeGraph.read_json` returned, passed
             whole, so the composition can be checked
-        device: Device for GNN inference
+        checkpoint_path: Path to the trained model's checkpoint
+        data_dir: The workspace directory
+        config: Pipeline configuration
+        device: Device for the model
         expected_checkpoint_sha256: The SHA-256 the checkpoint read must have
             (`DiagnosisPipeline`)
 
@@ -2868,13 +2683,10 @@ def create_diagnosis_pipeline(
         Configured DiagnosisPipeline instance
     """
     return DiagnosisPipeline(
-        kg=kg,
-        config=config,
-        model=model,
-        checkpoint_path=checkpoint_path,
-        graph_data=graph_data,
-        data_dir=data_dir,
         graph=graph,
+        checkpoint_path=checkpoint_path,
+        data_dir=data_dir,
+        config=config,
         device=device,
         expected_checkpoint_sha256=expected_checkpoint_sha256,
     )

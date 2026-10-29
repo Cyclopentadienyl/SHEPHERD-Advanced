@@ -303,24 +303,26 @@ def test_the_graph_read_arrives_whole(api, workspace, monkeypatch):
 def test_a_graph_and_an_identity_cannot_be_given_apart(workspace):
     from src.inference.pipeline import DiagnosisPipeline, create_diagnosis_pipeline
 
-    data_dir, _ = workspace
+    data_dir, checkpoint = workspace
     graph = KnowledgeGraph.read_json(data_dir / "kg.json")
 
-    with pytest.raises(ValueError, match="not both"):
-        DiagnosisPipeline(kg=KnowledgeGraph(), graph=graph)
     with pytest.raises(TypeError, match="GraphRead"):
-        DiagnosisPipeline(graph=(graph.kg, graph.identity.sha256))
-    with pytest.raises(ValueError, match="needs a graph"):
-        DiagnosisPipeline()
+        DiagnosisPipeline(graph=(graph.kg, graph.identity.sha256),
+                          checkpoint_path=str(checkpoint), data_dir=str(data_dir))
     for construct in (DiagnosisPipeline.__init__, create_diagnosis_pipeline):
-        assert "kg_path" not in inspect.signature(construct).parameters, (
-            "a path option kept beside the read would be a second way in"
+        parameters = inspect.signature(construct).parameters
+        assert not {"kg", "kg_path"} & set(parameters), (
+            "a graph or a path option kept beside the read would be a second way in"
         )
+        # K7: the graph read, the checkpoint and the workspace are all required.
+        for name in ("graph", "checkpoint_path", "data_dir"):
+            assert parameters[name].default is inspect.Parameter.empty, name
 
 
 def test_a_workspace_build_without_the_graph_read_is_refused(workspace, monkeypatch):
-    """An in-memory graph claims no persisted source, so it cannot be paired with
-    a workspace's tensors."""
+    """A graph built in memory claims no persisted source, so it cannot be
+    paired with a workspace's tensors: refused before any workspace file is
+    opened."""
     from src.inference.pipeline import DiagnosisPipeline
 
     data_dir, checkpoint = workspace
@@ -329,8 +331,8 @@ def test_a_workspace_build_without_the_graph_read_is_refused(workspace, monkeypa
     # without it, is refused first (contract M3c, §5.2). This test is about the
     # graph= refusal, so it names the development device to reach it.
     with count_opens() as opens:
-        with pytest.raises(ValueError, match="requires graph="):
-            DiagnosisPipeline(kg=KnowledgeGraph(), data_dir=str(data_dir),
+        with pytest.raises(TypeError, match="GraphRead"):
+            DiagnosisPipeline(graph=KnowledgeGraph(), data_dir=str(data_dir),
                               checkpoint_path=str(checkpoint), device="cpu")
 
     assert not [path for path in data_dir.iterdir() if opens.opens(path)]

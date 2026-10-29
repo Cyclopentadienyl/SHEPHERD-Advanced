@@ -54,7 +54,7 @@ def _identity() -> dict:
         dataset_record=ServedDatasetRecord(state="verified", origin="files", sha256="e" * 64),
         settings=ServedSettings(device="cuda:0", device_requested="cuda", eta=0.7,
                                 max_path_length=4, path_length_penalty=0.9,
-                                aggregation_method="weighted_sum", max_paths_per_candidate=10,
+                                max_paths_per_candidate=10,
                                 use_direct_path_optimization=True,
                                 phenotype_normalisation_version=1),
     ).to_dict()
@@ -64,14 +64,14 @@ IDENTITY = _identity()
 
 
 def _answer(identity=IDENTITY, candidates=()):
-    """A diagnose response as the service answers (Spec 1 §2.1): the served
-    kind for an identity, the demo answer (`demo/v1`) for none."""
+    """A diagnose response as the service answers (Spec 1 §2.1), the served
+    kind; with `identity` None, one carrying a null identity, which no service
+    sends since K7 (no answer without a model) and the schema refuses."""
     body = {"result_schema_version": 2, "session_id": "s", "patient_id": "p",
             "timestamp": "t", "candidates": list(candidates), "inference_time_ms": 1.0,
             "served_identity": identity, "phenotype_input": None}
-    if identity is None:
-        return {**body, "result_kind": "demo/v1"}
-    return {**body, "result_kind": "served_mixture/v1", "eta": identity["settings"]["eta"],
+    eta = identity["settings"]["eta"] if identity is not None else 1.0
+    return {**body, "result_kind": "served_mixture/v1", "eta": eta,
             "candidates_reached": len(candidates),
             "tie_policy": "served-stable-discovery-order/v1"}
 
@@ -345,10 +345,12 @@ def test_the_loaded_schema_accepts_a_response_and_refuses_a_malformed_one():
     schema = msp.load_diagnose_schema()
     body = _answer(candidates=[CANDIDATE])
     schema.DiagnoseResponse.model_validate(body)
-    # The demo answer's null passes the schema; the workload still does not
-    # count it (`test_a_response_counts_only_if_the_subject_answered_it`).
-    schema.DiagnoseResponse.model_validate(_answer(identity=None))
     from pydantic import ValidationError
+
+    # The retired demo answer (K7, DEMO1) is no kind of the union.
+    with pytest.raises(ValidationError):
+        schema.DiagnoseResponse.model_validate(
+            {**body, "result_kind": "demo/v1", "served_identity": None})
 
     with pytest.raises(ValidationError):
         schema.DiagnoseResponse.model_validate({**body, "candidates": [{"rank": 1}]})
@@ -559,14 +561,14 @@ def test_a_response_counts_only_if_the_subject_answered_it(monkeypatch):
     answers = iter([
         (200, body, ""),
         (200, {**body, "served_identity": _with(IDENTITY, "graph", kg_sha256="f" * 64)}, ""),
-        (200, _answer(identity=None), ""),       # the demo answer
+        (200, _answer(identity=None), ""),       # a null identity: refused by the schema
         (200, {**body, "served_identity": _with(IDENTITY, None, extra="x")}, ""),
     ])
     monkeypatch.setattr(msp, "http_json", lambda *a, **k: next(answers))
     outcome = msp.run_workload("http://x", [{"phenotypes": ["HP:1"]}] * 4, {}, schema,
                                alive=lambda: True, identity=IDENTITY)
     assert outcome["accepted"] == 1
-    assert outcome["failures"] == {msp.IDENTITY_MISMATCH: 2, "schema_rejected": 1}
+    assert outcome["failures"] == {msp.IDENTITY_MISMATCH: 1, "schema_rejected": 2}
 
 
 # ------------------------------------------------------------------ allocator
@@ -709,11 +711,9 @@ FAKE_SERVER = textwrap.dedent('''\
                 body = {"result_schema_version": 2, "session_id": "s", "patient_id": "p",
                         "timestamp": "t", "candidates": [], "inference_time_ms": 1.0,
                         "served_identity": answered_by, "phenotype_input": None,
-                        "result_kind": "demo/v1"}
-                if answered_by is not None:
-                    body.update(result_kind="served_mixture/v1",
-                                eta=answered_by["settings"]["eta"], candidates_reached=0,
-                                tie_policy="served-stable-discovery-order/v1")
+                        "result_kind": "served_mixture/v1", "candidates_reached": 0,
+                        "eta": answered_by["settings"]["eta"] if answered_by else 1.0,
+                        "tie_policy": "served-stable-discovery-order/v1"}
                 self.send(200, body)
             else:
                 ok = body["checkpoint_path"] == os.environ["SHEPHERD_CHECKPOINT_PATH"]
@@ -907,12 +907,16 @@ def test_an_identity_that_names_no_checkpoint_read_is_no_subject(fake_repeat):
     assert "R2" not in result["phases"]
 
 
-@pytest.mark.parametrize("mode", ["other_identity", "null_identity"])
+@pytest.mark.parametrize("mode, failure", [("other_identity", msp.IDENTITY_MISMATCH),
+                                           ("null_identity", "schema_rejected")])
 def test_responses_another_pipeline_answered_are_a_failure_class_of_their_own(fake_repeat,
-                                                                              mode):
+                                                                              mode, failure):
+    """Another pipeline's identity is its own failure class; a null identity is
+    refused by the schema (no answer is given without one since K7). Neither
+    is ever accepted."""
     r2 = fake_repeat(mode=mode)["phases"]["R2"]
     assert r2["workload"]["accepted"] == 0
-    assert r2["workload"]["failures"] == {msp.IDENTITY_MISMATCH: 2}
+    assert r2["workload"]["failures"] == {failure: 2}
     assert r2["status"] in ("incomplete", "inconclusive")
 
 

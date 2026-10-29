@@ -18,15 +18,17 @@
 #   (docs/working/PLAN_PHENOTYPE_NORMALISATION.md §5).
 #
 # Usage:
-#   from src.inference import DiagnosisPipeline, create_diagnosis_pipeline
+#   from src.inference import create_diagnosis_pipeline
 #
-#   pipeline = create_diagnosis_pipeline(kg=knowledge_graph)
+#   pipeline = create_diagnosis_pipeline(
+#       graph=KnowledgeGraph.read_json(workspace / "kg.json"),
+#       checkpoint_path=str(checkpoint), data_dir=str(workspace))
 #   result = pipeline.run(patient_phenotypes, top_k=10)
 #
 # Design Notes:
-#   - P0 Core: Phenotype → Gene → Disease reasoning
+#   - Always a trained model read from a checkpoint; no pipeline without one
+#   - Path reasoning explains a disease row, never ranks it
 #   - P1 Feature: Ortholog evidence (interfaces preserved)
-#   - Two-stage: Path reasoning + optional GNN scoring
 #   - Production-ready: Validation, logging, error handling
 # ==============================================================================
 """

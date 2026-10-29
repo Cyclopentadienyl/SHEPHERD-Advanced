@@ -7,8 +7,10 @@ sort, and `run` is `rank()` followed by the cut at `top_k` and what it builds on
 the rows it keeps. These tests pin that:
 
 - **serving did not change**: `run` reproduces the output captured before the
-  split (`tests/fixtures/served_rank_golden.json`), in all three scoring modes,
-  exact ties included, over the fields promised not to change (no timestamps);
+  split (`tests/fixtures/served_rank_golden.json`), in both of the mixture's
+  scoring modes (the path-reasoning fallback's capture went with the fallback,
+  K7), exact ties included, over the fields promised not to change (no
+  timestamps);
 - **`run` is `rank()` cut at `top_k`**, for every case and several cuts;
 - **each candidate's discovery ordinal** is its position before the sort, so
   ties keep discovery order and the order can be read back without inferring it
@@ -36,8 +38,7 @@ torch = pytest.importorskip("torch")
 
 REPO = Path(__file__).resolve().parents[2]
 GOLDEN = REPO / "tests" / "fixtures" / "served_rank_golden.json"
-MODES = {"fallback": "path_reasoning_fallback", "gnn_only": "gnn_only",
-         "gnn_plus_sp": "gnn_plus_shortest_path"}
+MODES = {"gnn_only": "gnn_only", "gnn_plus_sp": "gnn_plus_shortest_path"}
 SCORE_TOLERANCE = 1e-5
 
 
@@ -65,16 +66,13 @@ def served(tmp_path_factory):
     )
     assert produced.returncode == 0, produced.stderr[-2000:]
 
-    def pipeline(workspace: Path, with_model: bool) -> DiagnosisPipeline:
+    def pipeline(workspace: Path) -> DiagnosisPipeline:
         return DiagnosisPipeline(
             graph=KnowledgeGraph.read_json(workspace / "kg.json"), data_dir=str(workspace),
-            checkpoint_path=str(cohort.checkpoint) if with_model else None,
-            device="cpu" if with_model else None,
+            checkpoint_path=str(cohort.checkpoint), device="cpu",
         )
 
-    pipelines = {"fallback": pipeline(cohort.data_dir, False),
-                 "gnn_only": pipeline(cohort.data_dir, True),
-                 "gnn_plus_sp": pipeline(with_table, True)}
+    pipelines = {"gnn_only": pipeline(cohort.data_dir), "gnn_plus_sp": pipeline(with_table)}
     for name, built in pipelines.items():
         assert built.served_identity().scoring_mode == MODES[name], name
     cases = [case["phenotypes"] for case in graph_source_cases(cohort.data_dir)]
@@ -91,17 +89,15 @@ def _patient(phenotypes, patient_id="p"):
 
 
 def _row(candidate):
-    """A candidate as the golden records it, each of its kind's fields in the
+    """A candidate as the golden records it, each of the mixture's fields in the
     slot of the value it replaced (Spec 1 §2.1): [disease, rank, the ranked
-    score, the model term, the SP record, the path score]. A field the kind does
-    not carry is None, so a slot can never hold another kind's number."""
+    score, the model term, the SP record, the path score]. The path score went
+    with the path-reasoning fallback (K7), so its slot is None."""
     from src.core.types import ServedMixtureCandidate
 
-    if isinstance(candidate, ServedMixtureCandidate):
-        return [str(candidate.disease_id), candidate.rank, candidate.served_score,
-                candidate.model_term, candidate.sp_term, None]
-    return [str(candidate.disease_id), candidate.rank, candidate.path_score, None, None,
-            candidate.path_score]
+    assert isinstance(candidate, ServedMixtureCandidate), type(candidate).__name__
+    return [str(candidate.disease_id), candidate.rank, candidate.served_score,
+            candidate.model_term, candidate.sp_term, None]
 
 
 def _matches_capture(name, row, want):
@@ -109,8 +105,8 @@ def _matches_capture(name, row, want):
     before the union. Strictly, what each field means: the fields the kind
     carries, the SP status (numeric where a table is served, NO_TABLE where sp
     read 0.0), no mixed_as. Within SCORE_TOLERANCE, the numbers: the served
-    score and model term against confidence and gnn, the SP score against sp,
-    the path score against reasoning. The fixture runs the model forward again,
+    score and model term against confidence and gnn, the SP score against sp.
+    The fixture runs the model forward again,
     and its float32 differs by an ulp between supported CPUs (aarch64 against
     this x86 capture, the reviewer's run of ce1ce1d). Bit-for-bit equality
     holds between the versions in one environment, which is how it was shown."""
@@ -120,9 +116,8 @@ def _matches_capture(name, row, want):
     def close(value, captured):
         return value == pytest.approx(captured, abs=SCORE_TOLERANCE)
 
-    if name == "fallback":
-        return (close(path_score, reasoning) and score == path_score
-                and model_term is None and record is None)
+    if path_score is not None:
+        return False
     if record is None or not close(score, conf) or not close(model_term, gnn):
         return False
     if name == "gnn_plus_sp":
@@ -155,7 +150,9 @@ def test_the_capture_comparison_allows_an_ulp_and_nothing_else():
                                 unreachable_pair_count=0,
                                 denominator_policy="MAPPED_ONLY_DENOMINATOR")
     assert not _matches_capture("gnn_only", row(0.5461346507072449, computed), want)
-    assert not _matches_capture("fallback", row(0.5461346507072449), want)
+    with_path_score = row(0.5461346507072449)
+    with_path_score[5] = 1.0
+    assert not _matches_capture("gnn_only", with_path_score, want)
     assert _ties([1.0, 1.0, 0.5]) == [True, False]
 
 
@@ -176,7 +173,7 @@ def test_run_reproduces_the_output_captured_before_the_split(served):
     scores within 1e-5 of the capture before the split (e61253e), and each kind's
     fields against the capture before the union (755643a, Batch 4): what they
     mean exactly, their numbers within 1e-5 (`_matches_capture`), in each mode
-    and for every case, the fallback's exact ties at 1.0 included; and each
+    and for every case, exact ties included; and each
     mode's served identity, its digests reduced to whether they are there
     (PLAN_B05 §8's fields; the phenotype account and the identity added after
     the internal review, serving-2). Catches a split or a union that moved a
@@ -188,8 +185,8 @@ def test_run_reproduces_the_output_captured_before_the_split(served):
     fixture = json.loads(GOLDEN.read_text())
     golden = fixture["results"]
     exact = fixture["exact_scores_755643a"]
-    kinds = {"fallback": "path_reasoning/v1", "gnn_only": "served_mixture/v1",
-             "gnn_plus_sp": "served_mixture/v1"}
+    kinds = {"gnn_only": "served_mixture/v1", "gnn_plus_sp": "served_mixture/v1"}
+    assert set(fixture["served_identity"]) == set(MODES)
     cohort = served["cohort"]
     for name, pipeline in served["pipelines"].items():
         identity = pipeline.served_identity().to_dict()
@@ -280,11 +277,8 @@ def test_each_candidate_carries_its_discovery_ordinal(served):
 
 def test_bound_inputs_are_the_reads_the_build_took(served):
     """Against an independent account of the files: the four graph digests, the
-    checkpoint's bytes, its recorded training inputs and the dataset record. A
-    pipeline that serves no model verified no workspace and refuses."""
-    from src.inference.pipeline import DiagnosisPipeline
+    checkpoint's bytes, its recorded training inputs and the dataset record."""
     from src.kg.artifacts import GRAPH_TENSOR_ROLES
-    from src.kg.graph import KnowledgeGraph
     from src.kg.provenance import PROVENANCE_FILENAME
 
     cohort = served["cohort"]
@@ -299,18 +293,6 @@ def test_bound_inputs_are_the_reads_the_build_took(served):
     assert bound.dataset_record.identity.sha256 == _sha(cohort.data_dir / PROVENANCE_FILENAME)
     assert bound.manifest_sha256 == _sha(cohort.data_dir / "split_manifest.json")
     assert bound.graph_data is not None
-    with pytest.raises(ValueError, match="not built over a verified workspace"):
-        served["pipelines"]["fallback"].bound_inputs()
-    # A model supplied in memory over a verified workspace serves a GNN, and is
-    # refused for what it is: no checkpoint names its weights (the internal
-    # review's serving-1; the message used to say it served no model).
-    in_memory = DiagnosisPipeline(
-        graph=KnowledgeGraph.read_json(cohort.data_dir / "kg.json"),
-        data_dir=str(cohort.data_dir), model=served["pipelines"]["gnn_only"].model,
-        device="cpu")
-    assert in_memory.served_identity().scoring_mode == "gnn_only"
-    with pytest.raises(ValueError, match="supplied in memory, not read from a checkpoint"):
-        in_memory.bound_inputs()
 
 
 def test_the_embedding_regime_is_observed_at_the_forward(served):

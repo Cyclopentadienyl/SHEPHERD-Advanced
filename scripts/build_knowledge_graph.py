@@ -416,7 +416,7 @@ def build_knowledge_graph(
 
     # **Name what was produced, and print only the steps that work on it.**
     # Without cohorts this is a graph export, not a trainable workspace: nothing
-    # records which export the tensors are, so `train_model.py` and GNN serving
+    # records which export the tensors are, so `train_model.py` and serving
     # both refuse it. Printing the training command anyway is how an operator
     # learns that at the end of a 30-minute build instead of at the start.
     if generate_samples:
@@ -424,7 +424,7 @@ def build_knowledge_graph(
         print(f"  Validation samples: {len(val_samples)}")
     else:
         print("\n  Cohorts: none (graph export only, --generate-samples not given)")
-        print("  This workspace CANNOT be trained on or served with GNN scoring:")
+        print("  This workspace CANNOT be trained on or served:")
         print("  no split manifest binds these tensors to this export.")
 
     print("\nNext steps:")

@@ -81,7 +81,7 @@ def _settings(**overrides):
     settings = {
         "device": "cuda:0", "device_requested": "auto", "eta": 0.7,
         "max_path_length": 4, "path_length_penalty": 0.9,
-        "aggregation_method": "weighted_sum", "max_paths_per_candidate": 10,
+        "max_paths_per_candidate": 10,
         "use_direct_path_optimization": True, "phenotype_normalisation_version": 1,
     }
     settings.update(overrides)
@@ -103,18 +103,6 @@ def _served_identity(origin="synthetic"):
     }
 
 
-def _path_only_identity():
-    """Serving without a checkpoint from a graph file: no workspace verified."""
-    return {
-        "scoring_mode": "path_reasoning_fallback",
-        "checkpoint": {"state": "absent", "sha256": None},
-        "graph": {"state": "unverified", "kg_sha256": KG_SHA, "split_manifest_sha256": None},
-        "shortest_paths": {"state": "absent", "build_id": None, "max_hops": None},
-        "dataset_record": {"state": "absent", "origin": None, "sha256": None},
-        "settings": _settings(device=None, device_requested=None, eta=None),
-    }
-
-
 def _gnn_only_identity():
     identity = _served_identity(origin="files")
     identity["scoring_mode"] = "gnn_only"
@@ -123,16 +111,12 @@ def _gnn_only_identity():
     return identity
 
 
-def _in_memory_identity():
-    """A model object and a graph supplied in memory (tests, notebooks)."""
-    return {
-        "scoring_mode": "gnn_only",
-        "checkpoint": {"state": "supplied_in_memory", "sha256": None},
-        "graph": {"state": "in_memory", "kg_sha256": None, "split_manifest_sha256": None},
-        "shortest_paths": {"state": "absent", "build_id": None, "max_hops": None},
-        "dataset_record": {"state": "absent", "origin": None, "sha256": None},
-        "settings": _settings(device=None, device_requested=None, eta=1.0),
-    }
+def _parts_left_out():
+    """A served identity whose response left out every part a record checks
+    (the checkpoint, graph, table and dataset record): no part is marked ✓.
+    Since K7 every result comes from a model read from its checkpoint, so only
+    a malformed reply has nothing marked."""
+    return {"scoring_mode": "gnn_only", "settings": _settings(eta=1.0)}
 
 
 def _sp(status="COMPUTED", score=0.55, mapped=2, submitted=2, mixed=False):
@@ -151,14 +135,11 @@ def _sp(status="COMPUTED", score=0.55, mapped=2, submitted=2, mixed=False):
 
 def _candidates(kind, table=True):
     """Two candidates of `kind` (Spec 1 §2.1): a mixture's served score, model
-    term and SP record (NO_TABLE without a table), a path score with no model,
-    no score of any kind in the demo answer."""
+    term and SP record (NO_TABLE without a table)."""
     first = {"rank": 1, "disease_id": "mondo:MONDO:0011073", "disease_name": "Dravet syndrome",
              "matching_phenotypes": ["HP:0001250"]}
     second = {"rank": 2, "disease_id": "omim:OMIM:123", "disease_name": "Other disease",
               "matching_phenotypes": []}
-    if kind == "demo/v1":
-        return [first, second]
     first.update(supporting_genes=["SCN1A"], explanation="Because ...",
                  evidence_label="Strong path support",
                  evidence_package={"mode": "direct_path", "summary": "Direct 2-hop path",
@@ -170,13 +151,10 @@ def _candidates(kind, table=True):
                   evidence_label="Analogy-based (no direct KG path)",
                   evidence_package={"mode": "analogy_based", "summary": "Analogy",
                                     "evidence_label": "Analogy-based (no direct KG path)"})
-    if kind == "path_reasoning/v1":
-        first["path_score"], second["path_score"] = 0.9, 0.4
-    else:
-        first.update(served_score=0.72, model_term=0.81,
-                     sp_term=_sp(score=0.55) if table else _sp("NO_TABLE"))
-        second.update(served_score=0.44, model_term=0.5,
-                      sp_term=_sp(score=0.25) if table else _sp("NO_TABLE"))
+    first.update(served_score=0.72, model_term=0.81,
+                 sp_term=_sp(score=0.55) if table else _sp("NO_TABLE"))
+    second.update(served_score=0.44, model_term=0.5,
+                  sp_term=_sp(score=0.25) if table else _sp("NO_TABLE"))
     return [first, second]
 
 
@@ -551,7 +529,6 @@ from tests.fixtures.phenotype_kg import (  # noqa: E402
     DELAY,
     SEIZURE,
     UNKNOWN,
-    build_two_phenotype_kg,
 )
 
 _TOO_MANY = "HPO phenotype entries (repeats included)"
@@ -572,16 +549,16 @@ def _as_requests_response(response):
 
 
 @pytest.fixture
-def served(monkeypatch, status_read):
-    """The panel's API calls reach the real app, which serves a real
-    path-reasoning pipeline. Returns the payloads sent and the pipeline runs."""
+def served(monkeypatch, status_read, disease_pipeline):
+    """The panel's API calls reach the real app, which serves a disease child
+    trained for real (since K7 nothing is served without a model). Returns the
+    payloads sent and the pipeline runs."""
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
 
     from src.api import main as api_main
-    from src.inference.pipeline import DiagnosisPipeline
 
-    pipeline = DiagnosisPipeline(kg=build_two_phenotype_kg())
+    pipeline = disease_pipeline
     record = {"payloads": [], "runs": 0}
     original_run = pipeline.run
 
@@ -807,11 +784,6 @@ _KIND_CSV_COLUMNS = {
         "sp_term_phenotypes_mapped", "sp_term_phenotypes_submitted", "sp_term_mixed_as",
         "evidence_label", "evidence_mode", "evidence_summary", "min_path_length",
         "num_direct_paths", "num_analogies", "supporting_genes", "matching_phenotypes"],
-    "path_reasoning/v1": [
-        "result_kind", "rank", "disease_id", "disease_name", "path_score",
-        "evidence_label", "evidence_mode", "evidence_summary", "min_path_length",
-        "num_direct_paths", "num_analogies", "supporting_genes", "matching_phenotypes"],
-    "demo/v1": ["result_kind", "rank", "disease_id", "disease_name", "matching_phenotypes"],
     # A task kind's own columns, then what the result carries for every row (K6).
     "gene_task/v1": [
         "result_kind", "rank", "gene_id", "gene_name", "score", "embsim", "sp_similarity",
@@ -829,7 +801,7 @@ _SERVED_COLUMNS = [
     "served_dataset_record_state", "served_dataset_origin",
     "served_dataset_record_sha256", "served_device", "served_device_requested",
     "served_eta", "served_max_path_length", "served_path_length_penalty",
-    "served_aggregation_method", "served_max_paths_per_candidate",
+    "served_max_paths_per_candidate",
     "served_direct_path_optimization", "served_phenotype_normalisation_version",
 ]
 _DIGEST_COLUMNS = [
@@ -842,8 +814,7 @@ _CLAIM_BOUNDARY = (
     "person able to edit both files and records could alter."
 )
 _NOT_A_DEVICE = "Not a certified medical device; decision support for a qualified clinician."
-#: The qualifier under the boundary when nothing is marked ✓, in the words the
-#: demo answer has always carried.
+#: The qualifier under the boundary when nothing is marked ✓.
 _NOTHING_CHECKED = (
     "No relation is marked ✓ for this result: nothing in it was checked against a record."
 )
@@ -855,48 +826,23 @@ _NOTHING_CHECKED_LOADED = (
 _CHECKS_NOT_REPORTED = "The response did not say what produced it or what was checked."
 
 
-def _path_reasoning_over_a_verified_workspace():
-    """No checkpoint, over a verified workspace: the graph, its manifest and the
-    dataset record are marked ✓, the checkpoint and the table are absent."""
-    identity = _path_only_identity()
-    identity["graph"] = {"state": "verified", "kg_sha256": KG_SHA,
-                         "split_manifest_sha256": MANIFEST_SHA}
-    identity["dataset_record"] = {"state": "verified", "origin": "files", "sha256": RECORD_SHA}
-    return identity
-
-
 _IDENTITIES = {
     "verified_synthetic": _served_identity,
     "verified_files": lambda: _served_identity(origin="files"),
-    "path_only": _path_only_identity,
     "gnn_only": _gnn_only_identity,
-    "in_memory": _in_memory_identity,
-    "demo": lambda: None,
 }
 
 
 def _result_with(identity):
-    """A result of the kind `identity` produces (`result_kind_for`): the demo
-    answer for none, path reasoning without a model, the mixture with one (its
-    SP records NO_TABLE without a table)."""
+    """A mixture result served with `identity` (`result_kind_for`): its SP
+    records NO_TABLE without a table."""
     result = _sample_result()
     result["served_identity"] = identity
-    mode = identity["scoring_mode"] if identity else None
-    if mode == "gnn_plus_shortest_path":
+    if identity["scoring_mode"] == "gnn_plus_shortest_path":
         return result
-    for key in ("eta", "candidates_reached", "tie_policy"):
-        result.pop(key)
-    if identity is None:
-        result.update(result_kind="demo/v1", phenotype_input=None,
-                      candidates=_candidates("demo/v1"))
-    elif mode == "path_reasoning_fallback":
-        result.update(result_kind="path_reasoning/v1", path_score_aggregation="weighted_sum/v1",
-                      tie_policy="served-stable-discovery-order/v1",
-                      candidates=_candidates("path_reasoning/v1"))
-    else:
-        result.update(eta=identity["settings"]["eta"], candidates_reached=12,
-                      tie_policy="served-stable-discovery-order/v1",
-                      candidates=_candidates("served_mixture/v1", table=False))
+    result.update(eta=identity["settings"]["eta"], candidates_reached=12,
+                  tie_policy="served-stable-discovery-order/v1",
+                  candidates=_candidates("served_mixture/v1", table=False))
     return result
 
 
@@ -947,8 +893,6 @@ def test_every_identity_row_is_filled_and_never_unknown(name):
 
 @pytest.mark.parametrize("name, banner", [
     ("verified_synthetic", "SYNTHETIC WORKSPACE: not a clinical result."),
-    ("path_only", "NO TRAINED MODEL: path-reasoning fallback."),
-    ("demo", "DEMO ANSWER: not computed."),
     ("gnn_only", "NO SHORTEST-PATH TABLE: GNN score alone."),
 ])
 def test_report_banners_state_each_non_normal_state_in_words(name, banner):
@@ -975,18 +919,19 @@ def test_a_response_without_an_identity_is_not_called_a_demo():
     assert all(row[1] == "not\\_reported" for row in _table_rows(section))
 
 
-def test_absent_parts_are_written_as_their_state_and_reason():
+def test_an_absent_table_is_written_as_its_state_and_reason():
+    """The one part a served model may lack is its shortest-path table: the row
+    says so and why, and every other part is the model's, marked ✓ (K7: no
+    absent checkpoint and no unverified graph is served)."""
     rows = {row[0]: row for row in _table_rows(dp._build_results_report_md(
-        _result_with(_path_only_identity())))}
+        _result_with(_gnn_only_identity())))}
 
-    checkpoint = rows["Checkpoint"]
-    assert checkpoint[1] == "absent"
-    assert checkpoint[2].startswith("absent — no trained model is served")
-    assert rows["Workspace manifest (`split_manifest.json`)"][2].startswith("absent — ")
-    assert rows["Knowledge graph (`kg.json`)"][1] == "unverified"
-    assert f"`sha256:{KG_SHA}`" in rows["Knowledge graph (`kg.json`)"][2]
-    assert rows["Device (in effect; requested)"][2].startswith("none — no model is served")
-    assert rows["Mixing weight eta"][2].startswith("none — ")
+    table = rows["Shortest-path table"]
+    assert table[1] == "absent"
+    assert table[2].startswith("absent — no table is served; the GNN score is used alone")
+    assert rows["Checkpoint"][1] == "✓ verified"
+    assert rows["Knowledge graph (`kg.json`)"][1] == "✓ verified"
+    assert rows["Mixing weight eta"][2].startswith("1.0 — no shortest-path table")
 
 
 def test_verified_states_carry_the_mark_the_claim_boundary_refers_to():
@@ -1000,9 +945,8 @@ def test_verified_states_carry_the_mark_the_claim_boundary_refers_to():
     assert dp.IDENTITY_NOTHING_CHECKED not in dp._build_results_report_md(_sample_result())
 
 
-@pytest.mark.parametrize("name", ["path_only", "in_memory", "demo"])
-def test_with_nothing_marked_the_report_says_nothing_was_checked(name):
-    section = _report_section(dp._build_results_report_md(_result_with(_IDENTITIES[name]())))
+def test_with_nothing_marked_the_report_says_nothing_was_checked():
+    section = _report_section(dp._build_results_report_md(_result_with(_parts_left_out())))
 
     assert "✓" not in "".join(row[1] for row in _table_rows(section))
     assert dp.IDENTITY_NOTHING_CHECKED in section
@@ -1034,7 +978,7 @@ def test_a_response_without_an_identity_does_not_say_nothing_was_checked(how):
 def test_values_from_the_api_cannot_break_the_table():
     identity = _served_identity()
     identity["shortest_paths"]["build_id"] = "a|b`c*d<script>"
-    identity["settings"]["aggregation_method"] = "x|y\nz"
+    identity["settings"]["device_requested"] = "x|y\nz"
 
     rows = _table_rows(_report_section(dp._build_results_report_md(_result_with(identity))))
 
@@ -1073,7 +1017,6 @@ def test_csv_keeps_one_header_and_appends_the_identity_after_the_candidates():
         "served_eta": "0.7",
         "served_max_path_length": "4",
         "served_path_length_penalty": "0.9",
-        "served_aggregation_method": "weighted_sum",
         "served_max_paths_per_candidate": "10",
         "served_direct_path_optimization": "true",
         "served_phenotype_normalisation_version": "1",
@@ -1089,20 +1032,19 @@ def test_no_identity_cell_is_empty(name):
             assert record[column], f"{name}: {column} is empty"
         for column in _DIGEST_COLUMNS:
             value = record[column]
-            assert _re.fullmatch(r"sha256:[0-9a-f]{64}", value) or value in (
-                "absent", "none", "demo"), f"{name}: {column} = {value!r}"
+            assert _re.fullmatch(r"sha256:[0-9a-f]{64}", value), f"{name}: {column} = {value!r}"
         assert "unknown" not in ",".join(record.values()).lower()
 
 
-def test_the_demo_answer_says_demo_in_every_identity_column():
-    _, records, _ = _csv_records(dp._build_results_csv(_result_with(None)))
-
-    assert {record[c] for record in records for c in _SERVED_COLUMNS} == {"demo"}
-
-
-def test_a_response_without_an_identity_says_not_reported_in_every_column():
+@pytest.mark.parametrize("how", ["missing", "null"])
+def test_a_response_without_an_identity_says_not_reported_in_every_column(how):
+    """A null identity is not a demo answer (K7, DEMO1: there is none): it is
+    a response that did not say what produced it."""
     result = _sample_result()
-    del result["served_identity"]
+    if how == "missing":
+        del result["served_identity"]
+    else:
+        result["served_identity"] = None
 
     _, records, _ = _csv_records(dp._build_results_csv(result))
 
@@ -1110,41 +1052,35 @@ def test_a_response_without_an_identity_says_not_reported_in_every_column():
 
 
 def test_absent_and_inapplicable_values_are_words():
-    _, (path_only, _), _ = _csv_records(dp._build_results_csv(_result_with(_path_only_identity())))
-    assert path_only["served_checkpoint_state"] == "absent"
-    assert path_only["served_checkpoint_sha256"] == "absent"
-    assert path_only["served_kg_state"] == "unverified"
-    assert path_only["served_kg_sha256"] == f"sha256:{KG_SHA}"
-    assert path_only["served_split_manifest_sha256"] == "absent"
-    assert path_only["served_sp_build_id"] == "absent"
-    assert path_only["served_dataset_origin"] == "absent"
-    assert path_only["served_device"] == "none"
-    assert path_only["served_eta"] == "none"
+    _, (gnn_only, _), _ = _csv_records(dp._build_results_csv(_result_with(_gnn_only_identity())))
+    assert gnn_only["served_sp_state"] == "absent"
+    assert gnn_only["served_sp_build_id"] == "absent"
+    assert gnn_only["served_sp_max_hops"] == "absent"
+    assert gnn_only["served_checkpoint_sha256"] == f"sha256:{CHECKPOINT_SHA}"
 
-    _, (in_memory, _), _ = _csv_records(dp._build_results_csv(_result_with(_in_memory_identity())))
-    assert in_memory["served_checkpoint_sha256"] == "none"
-    assert in_memory["served_kg_sha256"] == "none"
-    assert in_memory["served_device"] == "not_stated"
-    assert in_memory["served_device_requested"] == "none"
+    disease = _result_with(_gnn_only_identity())
+    disease["served_identity"]["settings"]["eta"] = None
+    _, (no_eta, _), _ = _csv_records(dp._build_results_csv(disease))
+    assert no_eta["served_eta"] == "none"
 
 
 def test_a_text_cell_a_spreadsheet_would_run_is_defused():
     result = _sample_result()
     result["candidates"][0]["disease_name"] = '=HYPERLINK("http://x")'
     result["candidates"][0]["served_score"] = -0.25
-    result["served_identity"]["settings"]["aggregation_method"] = "@sum"
+    result["served_identity"]["shortest_paths"]["build_id"] = "@sum"
 
     _, (first, _), _ = _csv_records(dp._build_results_csv(result))
 
     assert first["disease_name"] == '\'=HYPERLINK("http://x")'
-    assert first["served_aggregation_method"] == "'@sum"
+    assert first["served_sp_build_id"] == "'@sum"
     assert first["served_score"] == "-0.2500"  # numbers are not text cells
 
 
-def test_export_names_carry_synthetic_and_demo():
+def test_export_names_carry_synthetic():
     assert dp._export_basename(_sample_result()) == "diagnosis_SYNTHETIC_pt_01_sess_abc"
-    assert dp._export_basename(_result_with(None)) == "diagnosis_DEMO_pt_01_sess_abc"
-    assert dp._export_basename(_result_with(_path_only_identity())) == "diagnosis_pt_01_sess_abc"
+    assert dp._export_basename(_result_with(_gnn_only_identity())) == "diagnosis_pt_01_sess_abc"
+    assert dp._export_basename(_without_an_identity("missing")) == "diagnosis_pt_01_sess_abc"
 
 
 # ------------------------------------------------------------------- the page
@@ -1169,17 +1105,6 @@ def test_the_page_shows_what_produced_the_result(monkeypatch, status_read):
         assert f'data-copy="{digest}"' in digests
 
 
-def test_the_page_marks_the_demo_answer(monkeypatch, status_read):
-    monkeypatch.setattr(dp, "_call_diagnose", lambda **kw: _result_with(None))
-
-    out = _run("HP:0001250")
-
-    assert "DEMO ANSWER: not computed." in out["results_body"]
-    assert "shep-dx-banner-red" in out["results_body"]
-    assert "This is the demo answer" in out["badge"]
-    assert "Produced by the model in use" not in out["badge"]
-
-
 def test_the_page_does_not_say_nothing_was_checked_without_an_identity(monkeypatch, status_read):
     """Like the report, "This result" says the response did not say, under the
     same claim boundary."""
@@ -1193,10 +1118,10 @@ def test_the_page_does_not_say_nothing_was_checked_without_an_identity(monkeypat
     assert "did not say what produced it" in out["badge"]
 
 
-def test_the_demo_answer_still_says_nothing_was_checked(monkeypatch, status_read):
-    monkeypatch.setattr(dp, "_call_diagnose", lambda **kw: _result_with(None))
+def test_a_result_with_nothing_marked_says_nothing_was_checked(monkeypatch, status_read):
+    monkeypatch.setattr(dp, "_call_diagnose", lambda **kw: _result_with(_parts_left_out()))
 
-    report = _report_section(dp._build_results_report_md(_result_with(None)))
+    report = _report_section(dp._build_results_report_md(_result_with(_parts_left_out())))
     out = _run("HP:0001250")
     shown = dp.result_identity_md(out["results_state"], out["card_state"])
 
@@ -1207,20 +1132,23 @@ def test_the_demo_answer_still_says_nothing_was_checked(monkeypatch, status_read
 
 
 def test_the_page_shows_the_served_pipelines_own_identity(served):
-    """End to end through the real route: a path-reasoning pipeline over an
-    in-memory graph says so beside its result, and in its export."""
+    """End to end through the real route: a disease child read from its
+    checkpoint says so beside its result, and in its export, part by part."""
     out = _run(f"{SEIZURE}\n{DELAY}")
 
-    identity = out["results_state"]["served_identity"]
-    assert identity["scoring_mode"] == "path_reasoning_fallback"
-    assert identity["checkpoint"] == {"state": "absent", "sha256": None}
-    assert "NO TRAINED MODEL: path-reasoning fallback." in out["results_body"]
-    shown = dp.result_identity_md(out["results_state"], out["card_state"])
-    assert "absent — no trained model is served" in shown
-    assert "none — the graph was supplied in memory" in shown
-    _, records, _ = _csv_records(dp._build_results_csv(out["results_state"]))
-    assert {r["served_checkpoint_state"] for r in records} == {"absent"}
-    assert {r["served_kg_state"] for r in records} == {"in_memory"}
+    result = out["results_state"]
+    identity = result["served_identity"]
+    assert result["result_kind"] == "disease_task/v1"
+    assert identity["scoring_mode"] == "disease_task"
+    assert identity["checkpoint"]["state"] == "verified"
+    shown = dp.result_identity_md(result, out["card_state"])
+    assert f"{identity['checkpoint']['sha256'][:12]}…" in shown
+    assert "a model finetuned for the disease task" in shown
+    _, records, _ = _csv_records(dp._build_results_csv(result))
+    assert {r["served_checkpoint_state"] for r in records} == {"verified"}
+    assert {r["served_kg_state"] for r in records} == {"verified"}
+    assert {r["served_checkpoint_sha256"] for r in records} == {
+        f"sha256:{identity['checkpoint']['sha256']}"}
 
 
 # -------------------------------------------------- the badge: the result against what is served
@@ -1309,9 +1237,9 @@ def test_run_is_greyed_with_a_bubble_and_a_reason_when_no_model_is_loaded():
     assert "dx-run-no-model" in dp.TOPIC_HELP
 
 
-def test_run_stays_on_for_path_reasoning_and_an_unreadable_status_but_not_a_model_change():
-    graph = _status_serving(_path_only_identity(), gnn_ready=False)
-    assert dp.run_controls(_card(graph), "idle")["run_btn"]["interactive"] is True
+def test_run_stays_on_for_a_served_model_and_an_unreadable_status_but_not_a_model_change():
+    served = _status_serving(_served_identity())
+    assert dp.run_controls(_card(served), "idle")["run_btn"]["interactive"] is True
     assert dp.run_controls(_card(None, "timed out (5 s)"), "idle")["run_cover"] == ""
     change = dp.run_controls(_card(_status_serving(_served_identity())), "confirming")
     assert change["run_btn"]["interactive"] is False
@@ -1568,60 +1496,6 @@ def test_an_sp_status_with_no_number_reads_its_words_on_every_surface():
     assert records[0]["sp_term_phenotypes_submitted"] == "2"
 
 
-def test_the_demo_answer_has_no_score_anywhere():
-    """demo/v1 carries no score of any kind (Spec 1 §2.1): the page, the details,
-    the report and the CSV show none and add no Score note."""
-    result = _result_with(None)
-    body = dp.results_body_html(result, 1)
-    assert "Demo answer: no pipeline is configured; not a diagnosis" in body
-    assert "Score" not in body.split("<table")[1] and "Evidence" not in body.split("<table")[1]
-    details = dp.details_header_html(result["candidates"][0], "demo/v1")
-    assert "Score" not in details
-    report = dp._build_results_report_md(result)
-    table = report.split("## Ranked candidates")[1].split("## Per-candidate detail")[0]
-    assert "| Rank | Disease |" in table and "Score" not in table
-    assert dp.SCORE_NOTE not in report and "· score" not in report
-    # It never carries evidence, whatever include_explanations said.
-    assert "The demo answer carries no evidence or explanation." in report
-    assert "include_explanations" not in report and "**Evidence**" not in report
-    header, records, _ = _csv_records(dp._build_results_csv(result))
-    assert header[:5] == _KIND_CSV_COLUMNS["demo/v1"]
-    assert {r["result_kind"] for r in records} == {"demo/v1"}
-
-
-def test_the_demo_answers_details_never_read_an_empty_list_as_a_finding():
-    """The reviewer's case on ce1ce1d: no query ran for a demo candidate, so its
-    empty matching list is not "none annotated". Its details say so and offer
-    no segment; a served candidate with an empty list still says it plainly."""
-    demo = _result_with(None)
-    demo["candidates"][0]["matching_phenotypes"] = []
-    for segment in ("evidence", "phenotypes", "paths", "explanation"):
-        out = dp.details_outputs(demo, 1, segment)
-        assert dp.DEMO_DETAILS in out["details_html"]["value"]
-        assert "annotated directly" not in out["details_html"]["value"]
-        assert dp.VIEW_OFF in out["details_seg"]["elem_classes"]
-    served = _sample_result()
-    served["candidates"][0]["matching_phenotypes"] = []
-    out = dp.details_outputs(served, 1, "phenotypes")
-    assert "None of the query's phenotypes is annotated directly" in out["details_html"]["value"]
-    assert dp.DEMO_DETAILS not in out["details_html"]["value"]
-
-
-def test_a_path_reasoning_result_has_no_model_term():
-    """path_reasoning/v1: the path score, the kind's label, and no GNN or SP
-    column, value or 0.000 anywhere (the fallback used to show GNN 0.000)."""
-    result = _result_with(_path_only_identity())
-    body = dp.results_body_html(result, 1)
-    assert "No model loaded: ranked by path reasoning, not by a model" in body
-    assert ">0.900</td>" in body
-    assert "Model term" not in body and ">SP</th>" not in body and "0.000" not in body
-    report = dp._build_results_report_md(result)
-    assert "| Rank | Disease | Score | Evidence |" in report and "0.000" not in report
-    header, _, _ = _csv_records(dp._build_results_csv(result))
-    width = len(_KIND_CSV_COLUMNS["path_reasoning/v1"])
-    assert header[:width] == _KIND_CSV_COLUMNS["path_reasoning/v1"]
-
-
 def test_the_kinds_label_takes_eta_from_the_results_identity():
     """η is the result's own, read from its served identity, never a constant."""
     result = _sample_result()
@@ -1649,12 +1523,14 @@ def test_a_response_that_does_not_name_its_kind_shows_no_candidates(monkeypatch,
     assert out["export_report"] is dp._DOWNLOAD_DISABLED
 
 
-def test_a_kind_the_page_does_not_know_shows_no_candidates():
-    """A kind this page does not know (a newer API) is treated like an absent
-    kind on every surface: the notice, no table, no CSV row; the report keeps
-    the raw value it was given."""
+@pytest.mark.parametrize("kind", ["gnn_ranking/v1", "path_reasoning/v1", "demo/v1"])
+def test_a_kind_the_page_does_not_know_shows_no_candidates(kind):
+    """A kind this page does not know (a newer API, or one retired in K7 that
+    an old server may still send) is treated like an absent kind on every
+    surface: the notice, no table, no CSV row; the report keeps the raw value
+    it was given."""
     result = _sample_result()
-    result["result_kind"] = "gnn_ranking/v1"
+    result["result_kind"] = kind
     body = dp.results_body_html(result, 1)
     assert dp.KIND_NOT_REPORTED in body and "<table" not in body
     assert dp.kind_label(result) == dp.KIND_NOT_REPORTED
@@ -1790,17 +1666,13 @@ def test_the_model_in_use_shows_the_boundary_for_what_is_loaded():
     assert _NOTHING_CHECKED_LOADED not in html and "SYNTHETIC WORKSPACE" in html
 
 
-@pytest.mark.parametrize("name", ["path_only", "in_memory"])
-def test_a_model_in_use_with_nothing_marked_says_nothing_was_checked(name):
-    html = dp.model_identity_html(_card(_status_serving(_IDENTITIES[name]())))
+def test_a_model_in_use_with_nothing_marked_says_nothing_was_checked():
+    html = dp.model_identity_html(_card(_status_serving(_parts_left_out())))
     assert html.index(_CLAIM_BOUNDARY) < html.index(_NOTHING_CHECKED_LOADED)
     assert _NOTHING_CHECKED not in html and _CHECKS_NOT_REPORTED not in html
 
 
-_STATUS_IDENTITIES = {
-    **{name: make for name, make in _IDENTITIES.items() if name != "demo"},
-    "path_reasoning_verified_workspace": _path_reasoning_over_a_verified_workspace,
-}
+_STATUS_IDENTITIES = {**_IDENTITIES, "parts_left_out": _parts_left_out}
 
 
 @pytest.mark.parametrize("name", sorted(_STATUS_IDENTITIES))

@@ -6,8 +6,8 @@ Diagnosis: the "Model in use" card and its Details (M5-2, UI-B).
 - **one status read with a 5 s limit**, through the dashboard's one reader; a
   read that does not answer in time is "timed out (5 s)", one that fails says
   why; nothing raises;
-- **what is served**, as the card names it: no model loaded, a graph without
-  a trained model, a model supplied in memory, a checkpoint;
+- **what is served**, as the card names it: no model loaded, or a model read
+  from its checkpoint (K7: nothing else is served);
 - **the served checkpoint's place** in the serving workspace's runs, from the
   status's served paths, found again in the server's list, **no file opened**;
 - **trained on: the checkpoint's own record**, never the served workspace's
@@ -116,7 +116,7 @@ def _status(root, served="model-05.pt", run=RUN, **extra):
             "dataset_record": {"state": "verified", "origin": "synthetic", "sha256": "e" * 64},
             "settings": {"device": "cpu", "device_requested": "cpu", "eta": 1.0,
                          "max_path_length": 4, "path_length_penalty": 0.5,
-                         "aggregation_method": "max", "max_paths_per_candidate": 10,
+                         "max_paths_per_candidate": 10,
                          "use_direct_path_optimization": True,
                          "phenotype_normalisation_version": 1},
         },
@@ -176,12 +176,12 @@ def test_what_is_served_is_named_by_its_kind(root):
     assert card.served_kind({"initialized": False}) == "no_model"
     assert card.served_kind(None) == "unknown"
     assert card.served_kind(_status(root)) == "model"
-    absent = _status(root)
-    absent["served_identity"]["checkpoint"] = {"state": "absent", "sha256": None}
-    assert card.served_kind(absent) == "no_trained"
-    memory = _status(root)
-    memory["served_identity"]["checkpoint"] = {"state": "supplied_in_memory", "sha256": None}
-    assert card.served_kind(memory) == "in_memory"
+    # K7: a served pipeline is always a model read from its checkpoint; a
+    # status naming a retired state is not read as any kind of model.
+    for retired in ("absent", "supplied_in_memory"):
+        status = _status(root)
+        status["served_identity"]["checkpoint"] = {"state": retired, "sha256": None}
+        assert card.served_kind(status) == "unknown"
 
 
 def test_the_served_checkpoint_is_found_in_the_runs_without_opening_it(root, no_checkpoint_opened):
@@ -515,16 +515,20 @@ def test_no_model_loaded_turns_run_off_and_offers_a_load(root):
     assert not card.details_visible(state)
 
 
-def test_a_graph_without_a_trained_model_keeps_run_on(root):
+def test_a_status_naming_no_trained_model_is_not_shown_as_one(root):
+    """K7 (PATH1): no graph is served without a model, so the card has no
+    "no trained model" state. A status from a server that still names one says
+    only that it did not say what is served; Run stays on, and the service
+    answers or refuses with its reason."""
     status = _status(root)
     status["served_identity"]["checkpoint"] = {"state": "absent", "sha256": None}
     status["gnn_ready"] = False
     state = _state(root, status=status)
     assert not card.run_blocked(state)
     body = card.body_html(state)
-    assert "No trained model" in body and "path reasoning only" in body
-    assert "graph from workspace <b>demo</b>" in body and "no trained model</span>" in body
-    assert "GNN not loaded" not in body and "no SP table" not in body
+    assert "The status did not say what is served." in body
+    assert "No trained model" not in body and "path reasoning" not in body
+    assert "no trained model" not in body
 
 
 def test_names_are_escaped(root, tmp_path, monkeypatch):

@@ -404,8 +404,6 @@ class PatientPhenotypes:
 # their labels, and `src.reasoning` cannot import `src.inference`.
 RESULT_SCHEMA_VERSION = 2
 SERVED_MIXTURE = "served_mixture/v1"
-PATH_REASONING = "path_reasoning/v1"
-DEMO = "demo/v1"
 #: A finetuned model bundle's disease task (docs/working/scorer-retraining
 #: README §3, K3): every disease of the model's graph view, ranked by the
 #: disease head's score; path discovery only explains the rows shown.
@@ -416,10 +414,9 @@ GENE_TASK = "gene_task/v1"
 #: A finetuned patients-like-me model (README A9; PLAN_TEST_RESULTS §8.4): the
 #: patients of a registered reference cohort version, ranked by similarity.
 PATIENTS_LIKE_ME = "patients_like_me/v1"
-RESULT_KINDS = (SERVED_MIXTURE, PATH_REASONING, DEMO, DISEASE_TASK, GENE_TASK,
-                PATIENTS_LIKE_ME)
-#: Today's two served kinds rank by a stable sort, so equal scores keep the
-#: order path discovery reached the diseases in.
+RESULT_KINDS = (SERVED_MIXTURE, DISEASE_TASK, GENE_TASK, PATIENTS_LIKE_ME)
+#: The mixture ranks by a stable sort, so equal scores keep the order path
+#: discovery reached the diseases in.
 SERVED_TIE_POLICY = "served-stable-discovery-order/v1"
 #: The disease task orders equal scores by the disease's graph-view id, so a
 #: tie is shown in a fixed order (README E3: the screen may order ties by a
@@ -429,9 +426,6 @@ DISEASE_TASK_TIE_POLICY = "score-desc-then-view-id-asc/v1"
 GENE_TASK_TIE_POLICY = DISEASE_TASK_TIE_POLICY
 #: Patients-like-me orders equal similarities by the reference case id.
 PATIENTS_LIKE_ME_TIE_POLICY = "similarity-desc-then-case-id-asc/v1"
-#: The path aggregations `DiagnosisPipeline` applies, by `aggregation_method`;
-#: any other value is aggregated as `max`, and named so.
-PATH_SCORE_AGGREGATIONS = ("weighted_sum", "max", "mean", "sum")
 
 #: Spec 1 §3.3's statuses. **Predicates use these explicit sets**: `status !=
 #: "COMPUTED"` is not a test for unavailability, since it also catches the
@@ -564,8 +558,8 @@ class _CandidateBase:
 
 @dataclass(frozen=True)
 class _ServedEvidence:
-    """The evidence today's two served kinds build eagerly from the discovery
-    paths ("as today", Spec 1 §2.1). None of it changes a score or the order."""
+    """The evidence a disease row carries from the discovery paths (Spec 1
+    §2.1). None of it changes a score or the order."""
 
     supporting_genes: List[str] = field(default_factory=list)
     reasoning_paths: List[List[NodeID]] = field(default_factory=list)
@@ -603,18 +597,6 @@ class ServedMixtureCandidate(_ServedEvidence, _CandidateBase):
         _require_finite(self.model_term, "model_term")
         if not isinstance(self.sp_term, SPAnalysisRecord):
             raise ValueError("a served_mixture candidate carries an SP record (sp_term)")
-
-
-@dataclass(frozen=True, kw_only=True)
-class PathReasoningCandidate(_ServedEvidence, _CandidateBase):
-    """A candidate of `path_reasoning/v1`: no model is loaded, so it is ranked
-    by its paths alone and carries no model or SP value of any kind."""
-
-    #: The path aggregate (`path_score_aggregation` on the result).
-    path_score: float
-
-    def __post_init__(self) -> None:
-        _require_finite(self.path_score, "path_score")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -673,14 +655,12 @@ class PatientCandidate:
         _require_finite(self.similarity, "similarity")
 
 
-#: A candidate of any kind the pipeline produces. `demo/v1` is the API's own
-#: answer when no pipeline was ever configured, and never reaches here.
-Candidate = Union[ServedMixtureCandidate, PathReasoningCandidate, DiseaseTaskCandidate,
-                  GeneTaskCandidate, PatientCandidate]
+#: A candidate of any kind the pipeline produces.
+Candidate = Union[ServedMixtureCandidate, DiseaseTaskCandidate, GeneTaskCandidate,
+                  PatientCandidate]
 
 #: Each kind's candidate type.
 CANDIDATE_TYPES = {SERVED_MIXTURE: ServedMixtureCandidate,
-                   PATH_REASONING: PathReasoningCandidate,
                    DISEASE_TASK: DiseaseTaskCandidate,
                    GENE_TASK: GeneTaskCandidate,
                    PATIENTS_LIKE_ME: PatientCandidate}
@@ -692,9 +672,7 @@ def candidate_score(candidate: Candidate) -> float:
         return candidate.served_score
     if isinstance(candidate, (DiseaseTaskCandidate, GeneTaskCandidate)):
         return candidate.score
-    if isinstance(candidate, PatientCandidate):
-        return candidate.similarity
-    return candidate.path_score
+    return candidate.similarity
 
 
 @dataclass(frozen=True)
@@ -724,16 +702,19 @@ class PhenotypeInputAccount:
 # =============================================================================
 #: The states each part of a served identity can be in. Every part says which
 #: one it is in words, so an absence is stated and never left as a blank or an
-#: "unknown" for a reader to interpret.
-SERVED_CHECKPOINT_STATES = ("verified", "supplied_in_memory", "absent")
-SERVED_GRAPH_STATES = ("verified", "unverified", "in_memory")
+#: "unknown" for a reader to interpret. **A served model is always read from a
+#: checkpoint over a workspace verified with its dataset record**, so those
+#: three parts have one state; only the shortest-path term can be computed or
+#: absent.
+SERVED_CHECKPOINT_STATES = ("verified",)
+SERVED_GRAPH_STATES = ("verified",)
 SERVED_SHORTEST_PATHS_STATES = ("verified", "computed", "absent")
-SERVED_DATASET_RECORD_STATES = ("verified", "absent")
+SERVED_DATASET_RECORD_STATES = ("verified",)
 #: The dataset record's origins (`src.kg.provenance.ORIGINS`, which this layer
 #: cannot import; `tests/unit/test_served_identity.py` pins the two equal).
 SERVED_DATASET_ORIGINS = ("files", "synthetic")
-SERVED_SCORING_MODES = ("gnn_plus_shortest_path", "gnn_only", "path_reasoning_fallback",
-                        "disease_task", "gene_task", "patients_like_me")
+SERVED_SCORING_MODES = ("gnn_plus_shortest_path", "gnn_only", "disease_task", "gene_task",
+                        "patients_like_me")
 #: **The one table of the scoring mode each finetuned task is served under**
 #: (README §1: switching task means loading another model), and its inverse.
 #: The pipeline names the mode of the model it serves from it, and every
@@ -750,9 +731,8 @@ SCORING_MODE_TASKS: Dict[str, str] = {mode: task for task, mode in TASK_SCORING_
 #: for the GNN with its SP term; the gene task's exact hop distances computed
 #: from the model's own graph view; no table for every other mode.
 SCORING_MODE_SP_STATES: Dict[str, str] = {
-    "gnn_plus_shortest_path": "verified", "gnn_only": "absent",
-    "path_reasoning_fallback": "absent", "disease_task": "absent", "gene_task": "computed",
-    "patients_like_me": "absent"}
+    "gnn_plus_shortest_path": "verified", "gnn_only": "absent", "disease_task": "absent",
+    "gene_task": "computed", "patients_like_me": "absent"}
 
 _HEX = frozenset("0123456789abcdef")
 
@@ -769,22 +749,17 @@ def _require_state(state: Any, allowed: Tuple[str, ...], what: str) -> None:
 
 @dataclass(frozen=True)
 class ServedCheckpoint:
-    """The model's checkpoint, or the stated absence of one."""
+    """The model's checkpoint."""
 
     #: "verified": the model was built from one read of a checkpoint whose
     #: record matched the served workspace's graph (contract M2.4); `sha256` is
-    #: that read's digest. "supplied_in_memory": a model object was handed to
-    #: the pipeline, so no checkpoint bytes were read and none is identified.
-    #: "absent": no model; candidates are ranked by path reasoning.
+    #: that read's digest.
     state: str
-    sha256: Optional[str] = None
+    sha256: str
 
     def __post_init__(self) -> None:
         _require_state(self.state, SERVED_CHECKPOINT_STATES, "checkpoint")
-        if self.state == "verified":
-            _require_sha256(self.sha256, "a verified checkpoint's sha256")
-        elif self.sha256 is not None:
-            raise ValueError(f"a checkpoint in state {self.state!r} carries no sha256")
+        _require_sha256(self.sha256, "a verified checkpoint's sha256")
 
 
 @dataclass(frozen=True)
@@ -793,29 +768,15 @@ class ServedGraph:
 
     #: "verified": `kg.json` and `split_manifest.json` were each read once and
     #: the graph's digest matched the manifest's binding; both digests are of
-    #: those reads. "unverified": the graph was read from a file whose digest is
-    #: stated, and no workspace manifest was read to check it (path reasoning
-    #: only, BACKLOG 19.20). "in_memory": the graph was supplied in memory, with
-    #: no file and no digest.
+    #: those reads.
     state: str
-    kg_sha256: Optional[str] = None
-    split_manifest_sha256: Optional[str] = None
+    kg_sha256: str
+    split_manifest_sha256: str
 
     def __post_init__(self) -> None:
         _require_state(self.state, SERVED_GRAPH_STATES, "graph")
-        if self.state == "in_memory":
-            if self.kg_sha256 is not None:
-                raise ValueError("a graph supplied in memory carries no kg_sha256")
-        else:
-            _require_sha256(self.kg_sha256, f"a {self.state} graph's kg_sha256")
-        if self.state == "verified":
-            _require_sha256(
-                self.split_manifest_sha256, "a verified graph's split_manifest_sha256"
-            )
-        elif self.split_manifest_sha256 is not None:
-            raise ValueError(
-                f"a graph in state {self.state!r} was checked against no manifest"
-            )
+        _require_sha256(self.kg_sha256, "a verified graph's kg_sha256")
+        _require_sha256(self.split_manifest_sha256, "a verified graph's split_manifest_sha256")
 
 
 @dataclass(frozen=True)
@@ -845,23 +806,19 @@ class ServedShortestPaths:
 
 @dataclass(frozen=True)
 class ServedDatasetRecord:
-    """The served workspace's dataset record (contract M3b), or its absence."""
+    """The served workspace's dataset record (contract M3b)."""
 
     #: "verified": the record bound by the workspace manifest, naming the graph
-    #: served; `origin` is "files" or "synthetic". "absent": no workspace was
-    #: verified, so no record was read.
+    #: served; `origin` is "files" or "synthetic".
     state: str
-    origin: Optional[str] = None
-    sha256: Optional[str] = None
+    origin: str
+    sha256: str
 
     def __post_init__(self) -> None:
         _require_state(self.state, SERVED_DATASET_RECORD_STATES, "dataset_record")
-        if self.state == "verified":
-            if self.origin not in SERVED_DATASET_ORIGINS:
-                raise ValueError(f"a verified dataset record's origin is {self.origin!r}")
-            _require_sha256(self.sha256, "a verified dataset record's sha256")
-        elif self.origin is not None or self.sha256 is not None:
-            raise ValueError("an absent dataset record carries no origin or sha256")
+        if self.origin not in SERVED_DATASET_ORIGINS:
+            raise ValueError(f"a verified dataset record's origin is {self.origin!r}")
+        _require_sha256(self.sha256, "a verified dataset record's sha256")
 
 
 @dataclass(frozen=True)
@@ -869,23 +826,21 @@ class ServedSettings:
     """The serving settings that change scores, as in effect."""
 
     #: Where the model ran: torch's name for the device its parameters are on
-    #: ("cuda:0", "cpu"). None when no model is served, or when a model supplied
-    #: in memory does not say.
-    device: Optional[str]
+    #: ("cuda:0", "cpu").
+    device: str
     #: What was asked for: "auto" (CUDA, refused without it), "cuda", "cuda:N"
-    #: or "cpu"; "auto" when a checkpoint was loaded with none named. None when
-    #: no model is served, or when a model supplied in memory was given none.
-    device_requested: Optional[str]
+    #: or "cpu"; "auto" when a checkpoint was loaded with none named.
+    device_requested: str
     #: The mixing weight in effect between the model and shortest-path terms:
     #: 1.0 with no table; the gene task's η (EMBSIM against SPLSIM, from its
     #: spec); None for the disease and patients-like-me tasks, which mix
-    #: nothing, and when no model is served (neither term exists).
+    #: nothing.
     eta: Optional[float]
-    #: Candidate discovery and path scoring, in effect in every mode: the
-    #: diseases ranked are those reached by these paths.
+    #: Path discovery and path scoring: the diseases the mixture ranks are
+    #: those reached by these paths, and a disease row's evidence paths are
+    #: found with them.
     max_path_length: int
     path_length_penalty: float
-    aggregation_method: str
     max_paths_per_candidate: int
     use_direct_path_optimization: bool
     #: The phenotype-list rule applied before scoring
@@ -916,31 +871,11 @@ class ServedIdentity:
 
     def __post_init__(self) -> None:
         _require_state(self.scoring_mode, SERVED_SCORING_MODES, "scoring_mode")
-        has_model = self.checkpoint.state != "absent"
-        if has_model == (self.scoring_mode == "path_reasoning_fallback"):
-            raise ValueError(
-                f"scoring_mode {self.scoring_mode!r} contradicts a checkpoint "
-                f"in state {self.checkpoint.state!r}"
-            )
         if self.shortest_paths.state != SCORING_MODE_SP_STATES[self.scoring_mode]:
             raise ValueError(
                 f"scoring_mode {self.scoring_mode!r} contradicts a shortest-path "
                 f"table in state {self.shortest_paths.state!r}"
             )
-        if (self.dataset_record.state == "verified") != (self.graph.state == "verified"):
-            raise ValueError(
-                "a dataset record is verified exactly when the workspace graph is"
-            )
-        # A checkpoint is loaded, and a table bound, only over a graph verified
-        # from a workspace (contract M2.4, M2.5).
-        for part, state in (
-            ("checkpoint", self.checkpoint.state),
-            ("shortest-path table", self.shortest_paths.state),
-        ):
-            if state == "verified" and self.graph.state != "verified":
-                raise ValueError(
-                    f"a verified {part} is served only over a verified workspace graph"
-                )
 
     def to_dict(self) -> Dict[str, Any]:
         """JSON primitives only, nested by part."""
@@ -949,18 +884,13 @@ class ServedIdentity:
         return asdict(self)
 
 
-def result_kind_for(scoring_mode: Optional[str]) -> str:
+def result_kind_for(scoring_mode: str) -> str:
     """**The one mapping from what produced a result to its kind** (Spec 1 §2.1).
 
-    `scoring_mode` is the served identity's (`ServedIdentity.scoring_mode`);
-    None means no pipeline was ever configured (the API's demo answer, which has
-    no identity). A caller never chooses a kind: it is read off the producer."""
-    if scoring_mode is None:
-        return DEMO
+    `scoring_mode` is the served identity's (`ServedIdentity.scoring_mode`). A
+    caller never chooses a kind: it is read off the producer."""
     if scoring_mode in ("gnn_plus_shortest_path", "gnn_only"):
         return SERVED_MIXTURE
-    if scoring_mode == "path_reasoning_fallback":
-        return PATH_REASONING
     if scoring_mode == "disease_task":
         return DISEASE_TASK
     if scoring_mode == "gene_task":
@@ -984,10 +914,6 @@ def result_label(result_kind: str, scoring_mode: Optional[str] = None,
         if eta is None:
             raise ValueError("a mixture's label names its η, and none was given")
         return head + f"scored as η × model term + (1 − η) × SP, η = {float(eta):g}"
-    if result_kind == PATH_REASONING:
-        return "No model loaded: ranked by path reasoning, not by a model"
-    if result_kind == DEMO:
-        return "Demo answer: no pipeline is configured; not a diagnosis"
     if result_kind == DISEASE_TASK:
         return ("Disease task model: every disease of the model's graph ranked by its "
                 "Score (uncalibrated); paths only explain the rows shown")
@@ -1007,9 +933,8 @@ class InferenceResult:
     **The kind is read off what produced the result**, never passed in:
     `result_kind` follows `served_identity.scoring_mode` (`result_kind_for`), so
     a caller cannot attach one kind's label to another's numbers. The kind's
-    result-level fields are derived the same way (`eta`, `tie_policy`,
-    `path_score_aggregation`), except `candidates_reached`, which only the
-    ranking knows.
+    result-level fields are derived the same way (`eta`, `tie_policy`), except
+    `candidates_reached`, which only the ranking knows.
 
     **Its invariants are checked when it is built** (`__post_init__`): every
     candidate of the kind's type, ranks exactly 1..N, every score finite, the
@@ -1116,15 +1041,6 @@ class InferenceResult:
         return {DISEASE_TASK: DISEASE_TASK_TIE_POLICY, GENE_TASK: GENE_TASK_TIE_POLICY,
                 PATIENTS_LIKE_ME: PATIENTS_LIKE_ME_TIE_POLICY}.get(self.result_kind,
                                                                    SERVED_TIE_POLICY)
-
-    @property
-    def path_score_aggregation(self) -> Optional[str]:
-        """`path_reasoning/v1`: the aggregation the path scores were combined by,
-        as configured (`ServedSettings.aggregation_method`). None otherwise."""
-        if self.result_kind != PATH_REASONING:
-            return None
-        method = self.served_identity.settings.aggregation_method
-        return f"{method if method in PATH_SCORE_AGGREGATIONS else 'max'}/v1"
 
     @property
     def label(self) -> str:

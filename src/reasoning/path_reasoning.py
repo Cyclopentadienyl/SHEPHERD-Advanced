@@ -14,13 +14,13 @@
 #   - Knowledge Graph with phenotype-gene-disease relationships
 #
 # Output:
-#   - Ranked paths from phenotypes to diseases
-#   - Aggregated disease scores with evidence
+#   - Scored paths from phenotypes to diseases: the evidence a served disease
+#     row is explained by (and, for the legacy mixture, the diseases it ranks).
+#     Paths never rank a disease themselves.
 #
 # Design Notes:
 #   - Uses BFS for path enumeration (efficient for bounded lengths)
 #   - Path scoring considers edge weights and path length
-#   - Supports multiple path aggregation strategies (max, mean, weighted)
 #   - Ortholog paths handled separately for interpretability
 #
 # Key Paths for Rare Disease Diagnosis:
@@ -37,7 +37,6 @@ from __future__ import annotations
 
 import logging
 import math
-from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, TYPE_CHECKING
 
@@ -109,14 +108,6 @@ class PathReasoningConfig:
     length_penalty: float = 0.9  # Multiply score by this for each hop
     edge_weight_power: float = 1.0  # Power to raise edge weights
 
-    # Aggregation method: "max", "mean", "sum", "weighted_sum"
-    aggregation_method: str = "weighted_sum"
-
-    # Path type weights (for weighted aggregation)
-    direct_path_weight: float = 1.0
-    pathway_path_weight: float = 0.8
-    ortholog_path_weight: float = 0.6
-
     # Edge type preferences (higher = preferred)
     edge_type_weights: Dict[str, float] = field(default_factory=lambda: {
         # Direct associations (strongest)
@@ -144,13 +135,13 @@ class PathReasoner:
     Multi-hop path reasoning for disease diagnosis.
 
     Finds and scores paths from patient phenotypes to candidate diseases
-    through the knowledge graph.
+    through the knowledge graph: the evidence a disease row is explained by.
+    A path score orders a disease's evidence paths; it ranks no disease.
 
     Usage:
         reasoner = PathReasoner(config)
         paths = reasoner.find_paths(phenotype_ids, NodeType.DISEASE, kg)
         scored_paths = reasoner.score_paths(paths, kg)
-        disease_scores = reasoner.aggregate_path_scores(scored_paths)
     """
 
     def __init__(self, config: Optional[PathReasoningConfig] = None):
@@ -329,134 +320,6 @@ class PathReasoner:
         paths.sort(key=lambda p: p.score, reverse=True)
 
         return paths
-
-    def aggregate_path_scores(
-        self,
-        scored_paths: List[ReasoningPath],
-        target_ids: Optional[List[NodeID]] = None,
-    ) -> Dict[NodeID, float]:
-        """
-        Aggregate scores for paths leading to the same target.
-
-        Args:
-            scored_paths: Paths with scores
-            target_ids: Optional filter for specific targets
-
-        Returns:
-            {target_id: aggregated_score}
-        """
-        # Group paths by target
-        target_paths: Dict[str, List[ReasoningPath]] = defaultdict(list)
-
-        for path in scored_paths:
-            target_key = str(path.target)
-            if target_ids is None or path.target in target_ids:
-                target_paths[target_key].append(path)
-
-        # Aggregate scores
-        target_scores: Dict[NodeID, float] = {}
-
-        for target_key, paths in target_paths.items():
-            if not paths:
-                continue
-
-            target_id = paths[0].target
-            scores = [p.score for p in paths]
-
-            if self.config.aggregation_method == "max":
-                agg_score = max(scores)
-            elif self.config.aggregation_method == "mean":
-                agg_score = sum(scores) / len(scores)
-            elif self.config.aggregation_method == "sum":
-                agg_score = sum(scores)
-            elif self.config.aggregation_method == "weighted_sum":
-                # Weight by path type
-                weighted_scores = []
-                for p in paths:
-                    weight = self._get_path_type_weight(p)
-                    weighted_scores.append(p.score * weight)
-                agg_score = sum(weighted_scores)
-            else:
-                agg_score = max(scores)
-
-            target_scores[target_id] = agg_score
-
-        return target_scores
-
-    def _get_path_type_weight(self, path: ReasoningPath) -> float:
-        """
-        Determine path type and return corresponding weight.
-
-        Path types:
-        - Direct: Phenotype → Gene → Disease
-        - Pathway: Contains pathway nodes
-        - Ortholog: Contains ortholog edges (P1 feature)
-        """
-        edge_types_set = set(e.value for e in path.edges)
-
-        # Check for ortholog edges
-        ortholog_edges = {
-            EdgeType.ORTHOLOG_OF.value,
-            EdgeType.HUMAN_MOUSE_ORTHOLOG.value,
-            EdgeType.HUMAN_ZEBRAFISH_ORTHOLOG.value,
-            EdgeType.MOUSE_GENE_HAS_PHENOTYPE.value,
-        }
-        if edge_types_set & ortholog_edges:
-            return self.config.ortholog_path_weight
-
-        # Check for pathway edges
-        pathway_edges = {
-            EdgeType.GENE_IN_PATHWAY.value,
-            EdgeType.PATHWAY_INVOLVES_GENE.value,
-        }
-        if edge_types_set & pathway_edges:
-            return self.config.pathway_path_weight
-
-        # Default: direct path
-        return self.config.direct_path_weight
-
-    def get_top_candidates(
-        self,
-        source_ids: List[NodeID],
-        kg: "KnowledgeGraph",
-        target_type: NodeType = NodeType.DISEASE,
-        top_k: int = 10,
-    ) -> List[Tuple[NodeID, float, List[ReasoningPath]]]:
-        """
-        Get top disease candidates with supporting paths.
-
-        Convenience method combining find_paths, score_paths, and aggregation.
-
-        Args:
-            source_ids: Patient phenotypes
-            kg: Knowledge graph
-            target_type: Target type (usually DISEASE)
-            top_k: Number of top candidates to return
-
-        Returns:
-            List of (disease_id, score, supporting_paths)
-        """
-        # Find and score paths
-        paths = self.find_paths(source_ids, target_type, kg)
-        scored_paths = self.score_paths(paths, kg)
-
-        # Aggregate by target
-        target_scores = self.aggregate_path_scores(scored_paths)
-
-        # Sort by score
-        sorted_targets = sorted(
-            target_scores.items(),
-            key=lambda x: x[1],
-            reverse=True
-        )[:top_k]
-
-        # Collect supporting paths for each target
-        results = []
-        for target_id, score in sorted_targets:
-            supporting = [p for p in scored_paths if p.target == target_id]
-            results.append((target_id, score, supporting[:10]))  # Top 10 paths per disease
-
-        return results
 
 
 # ==============================================================================
