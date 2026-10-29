@@ -9,7 +9,7 @@ the served behaviour beside it.
 | Mode | Encoder | Candidates | Scorer | Status |
 |---|---|---|---|---|
 | **C** | full graph | every disease in the KG | raw cosine | implemented: `scripts/measure_scorer.py`, `run_mode_c`. The formal Test's measurement (`../PLAN_TEST_RESULTS.md` D3) until K6; since K6 the Test page measures a model by its task, and Mode C is a command-line run on a checkpoint without a model spec until K8 (`../scorer-retraining/README.md` §7) |
-| **D** | full graph | production's path-reachable construction | the served score: η mixture with the SP term, or the model term alone | B-0.5, **removed in K7 (2026-10-29)**: `src/evaluation/mode_d.py` is deleted and `--mode D` refused; kept reports and records stay readable, and none is registered again. Was implemented (Batch 3, 2026-10-26; reviewed, its short GB10 run passed 2026-10-27): `scripts/measure_scorer.py --mode D`, `src/evaluation/mode_d.py` ([`PLAN_B05.md`](PLAN_B05.md), §11 as built); it resolves `PLAN_B03.md` §4's problem. Not the approved policy: it measures what the Diagnosis page serves today |
+| **D** | full graph | production's path-reachable construction | the served score: η mixture with the SP term, or the model term alone | B-0.5, **removed in K7 (2026-10-29)**: `src/evaluation/mode_d.py` is deleted and `--mode D` refused; kept reports and records stay readable, and none is registered again. Was implemented (Batch 3, 2026-10-26; reviewed, its short GB10 run passed 2026-10-27): `scripts/measure_scorer.py --mode D`, `src/evaluation/mode_d.py` ([`PLAN_B05.md`](PLAN_B05.md), §11 as built); it resolves `PLAN_B03.md` §4's problem. Not the approved policy: it measured what the Diagnosis page served in October 2026 |
 
 **Deleted at K7 (2026-10-29):** `scripts/benchmark_sp_lookup.py` and its integration test (it only
 timed the retiring shortest-path index); its B-0.4 evidence (`EVIDENCE_B04_*.json`, `time_*.txt`)
@@ -69,11 +69,12 @@ python scripts/measure_scorer.py --checkpoint <ckpt> --data-dir <data> \
     --split val --output reports/measurement.json
 ```
 
-The CLI measures Mode C by default. `--mode D` measures the served ranking on a
-registered cohort version only (`--cohort LABEL --registry DIR`; refused with
-`--split`), sharing the checks, the GPU lock, publication and registration
-([`PLAN_B05.md`](PLAN_B05.md) §6). In either mode it reads each input once,
-verifies the workspace from those reads and records them (contract M2.1, S7),
+Without `--mode` the CLI measures Mode C, the run for a checkpoint without a model
+spec (a history file), until K8. `--mode <task>` (`disease`, `gene` or
+`patients_like_me`) measures a task model by its own task; the Test page always
+passes it. `--mode D`, the served ranking, was removed in K7 (2026-10-29): the CLI
+refuses it, and its kept reports and records stay readable. In every mode it reads
+each input once, verifies the workspace from those reads and records them (contract M2.1, S7),
 then writes two files: the report at `--output` (manifest, authoritative metrics,
 counts) and the per-sample ground-truth ranks beside it, `<output stem>_ranks.json`.
 

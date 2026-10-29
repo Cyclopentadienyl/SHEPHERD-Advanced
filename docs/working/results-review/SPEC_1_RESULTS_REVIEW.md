@@ -233,7 +233,9 @@ retraining README §1, §3; policy rev 11). It replaces the `gnn_ranking/v1` row
 **Not decided here:**
 - the B-1 switch's default (the owner's call, policy §7);
 - whether serving with no model needs an opt-in (the owner's call, B-2). Until that is decided,
-  `path_reasoning/v1` is served when no model source is configured, as today.
+  `path_reasoning/v1` is served when no model source is configured, as today. *(2026-10-29, K7:
+  settled by the owner's decision: nothing is served without a model, and with no model
+  `/api/v1/diagnose` and `/ready` answer 503; policy rev 13.)*
 
 **Assumed:** no client outside this repository reads `/api/v1/diagnose`. If one does, the owner names it
 before batch 4.

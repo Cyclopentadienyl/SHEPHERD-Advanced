@@ -113,7 +113,8 @@ Ontology files (HPO, MONDO `.obo`) are **auto-downloaded** by `OntologyLoader`
 No task model reads a shortest-path table: a disease model ranks every disease of its graph view,
 and a gene model computes the exact hop distances it uses from that view in process. So nothing
 here builds `shortest_paths.pt`. **Until K8** the GB10 acceptance probe still needs the table
-with its bound sidecar in a workspace it accepts (its R1, M4 and R6 checks); how to build the
+with its bound sidecar in a workspace it accepts (its R1 and R6 checks; M4 builds its own pair on
+a copy of the demo workspace); how to build the
 pair for a new workspace, and why R1 is never skipped, is in the
 [deployment guide](../deployment-guide.en.md) §4.3, "Until K8: the acceptance probe still needs
 the table".

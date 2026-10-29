@@ -338,7 +338,8 @@ model spec (versioned, self-describing)
 - **One module, one builder.** Every trainable parameter (task head and relation vectors included)
   is a submodule of one `nn.Module`. One builder in `src.models` builds it from the spec.
 - **Every consumer goes through it:** the Trainer's optimizer, the checkpoint writer and reader,
-  serving, measurement, `scripts/setup_demo.py` and `scripts/build_index.py`.
+  serving, measurement and `scripts/setup_demo.py`. `scripts/build_index.py` does not: since K7
+  (TM10) it builds no model and reads exported embeddings (`--embeddings`) only.
 - **What it replaces:** `build_shepherd_model` (`src/models/gnn/shepherd_gnn.py:506`),
   `create_model_from_config` (`scripts/train_model.py:928`) and `build_index.py`'s own construction
   (`:169`). After the switch there is no second builder and no structural guess from weight names.
@@ -614,7 +615,7 @@ owner's authorisation; the K7 record in §8).
 | Mode C's masked-mean raw-cosine recipe | `src/evaluation/measurement.py`; `scripts/measure_scorer.py` (`--mode` default C) | Task measurement through the same entry, with task, metric and scoring semantics (K3, K4). Shared ranking, metrics, readers, registry, report store, ledger and GPU lock are kept. Command line only; probe M3, M7, M11, T2–T4, R5 and RT2 still run it. Its registration gate goes in `register_report` with them | K8 |
 | Structural inference and old-checkpoint execution (`build_shepherd_model`, `resolve_arch_params`, `create_model_from_config`) | `src/models/gnn/shepherd_gnn.py`; `scripts/train_model.py` | The one builder and the model spec. The probe chain and the API's reload of a history file still use them (`create_model` was removed in K7) | K8 |
 | `OrthologGate`, the edge-type split, `use_ortholog_gate`, `ortholog_gate_type` | `src/models/gnn/layers.py`; `src/models/gnn/shepherd_gnn.py` | S1–S3 (§3.3). Its weights are in every ShepherdGNN checkpoint the probe trains | K8 |
-| Positional encoder | `src/models/encoders/position_encoder.py`; built in `shepherd_gnn.py` | Unfed (no caller passes `pos_encoding_dict`), but its state is in every ShepherdGNN checkpoint. Its orphaned producer was removed in K7 (next row but one) | K8 |
+| Positional encoder | `src/models/encoders/position_encoder.py`; built in `shepherd_gnn.py` | Unfed (no caller passes `pos_encoding_dict`), but its state is in every ShepherdGNN checkpoint. Its orphaned producer was removed in K7 (the positional-encoding preprocessing row below) | K8 |
 | Ortholog consistency loss | `src/training/loss_functions.py` | No data reaches it (BACKLOG 57). The weight slider went with the ShepherdGNN form (K6) | K8 |
 | The disease objective CE + hinge + InfoNCE on raw cosine over a masked mean; `LinkPredictionLoss`; `MultiTaskLoss` uncertainty weighting | `loss_functions.py`; `src/training/trainer.py` | The disease head's NCA; the LP head's hinge; the two named loss weights | K8 |
 | The decoders package: `DiagnosisHead`, `LinkPredictionHead`, `NodeClassificationHead`, `ExplanationHead` | `src/models/decoders/` (deleted) | Unwired, not paper parts: the LP head is `bundle/lp_head.py`, the task heads `models/tasks/heads.py` | **removed in K7** |
@@ -877,8 +878,9 @@ were adopted:
   (rewritten as "the script is retired and no shipped text points to it") and the whole old
   preprocessing group in `tests/unit/test_kg.py`.
 - **The K8 shortest-path transition**: documents for task models say no table is needed, and one
-  note says that until K8 the GB10 acceptance probe's real phase (R1, M4, R6) still needs
-  `shortest_paths.pt` with its bound sidecar, how to build them, and that R1 is never skipped.
+  note says that until K8 the GB10 acceptance probe still needs `shortest_paths.pt` with its bound
+  sidecar in the workspace it accepts (R1 and R6; M4 builds its own on a copy of the demo
+  workspace), how to build them, and that R1 is never skipped; K8 moves R1, M4 and R6 together.
 
 It was a review of the plan and a partial simulation on a copy, not a pass of the K7
 implementation, and not an authorisation.
@@ -913,14 +915,14 @@ path (item 8):
   their task-generic pins moved.
 - **G4 `f316bea`** (base start, index builder, demo training, next steps): TM11, TM10, TM3 and D8's
   code half.
-- **G5, this documents commit**: D1, D2, D3, D5, D6, D8's guide lines, D10, D11, X17, X18, the
+- **G5 `cee4f26`** (documents): D1, D2, D3, D5, D6, D8's guide lines, D10, D11, X17, X18, the
   Docs column of the rows above, the K8 transition note (README.md's build section, both
   deployment guides §4.3, the playbook) and these records.
 
 Rows left to K8, unchanged by K7 except where a delete row changed a shared line:
 - the 55 keep_until_K8 rows (the mixture and SP chain, ShepherdGNN serving and training, Mode C,
   the probe chain and its fixtures; §7's table and its "Listed at K6" bullets say which);
-- four owner_decision rows decided at K8, with the list's options recorded: **SP3**
+- five owner_decision rows (four decisions) decided at K8, with the list's options recorded: **SP3**
   (`scripts/audit_sp_reachability.py`; the list's reading: delete it with SP1 at K8, its evidence
   kept readable, since inlining its imports would be a parallel copy), **M1**
   (`scripts/measure_served_pipeline.py`: re-point its readiness at a task model's served identity,
@@ -934,10 +936,22 @@ Rows left to K8, unchanged by K7 except where a delete row changed a shared line
   `../BACKLOG.md` 63 stays open;
 - the 11 keep_readable_history rows stay; the 8 already_gone rows needed no change.
 
+**The K7 review round (2026-10-29).** Three read-only lenses, with a verifier for each finding,
+and a browser smoke at 1850x960 found no P1 or P2. The confirmed P3s were fixed in `56c8508`
+(code) and this commit (documents): stale documents; the Test page's Register offered for a kept
+Mode D report; `contest_html`'s Mode C default; the no-model refusal naming the wrong control; an
+unreachable SP-loader branch; the Load confirmation's From side with nothing served; test
+leftovers. The smoke: with nothing loaded, `/health` 200, `/ready` 503, diagnose 503, and Run off
+with its reason; `scripts/setup_demo.py --train-model --device cpu` trained a base and a disease
+child in about 11 s, which loaded and ranked; the exports carry no path or demo columns; the strict
+base start refused ShepherdGNN and finetune bodies with 422 and started nothing; the kept C and D
+reports read under their own modes.
+
 Not verified in K7: GPU paths and the GB10 (the acceptance probe was not run, and in particular
-not on a newly built workspace with the K8 transition note's preparation step); no browser session
-of the changed Diagnosis states (no model loaded, the removed banners and chips) is recorded in
-K7's commits; the deployment
+not on a newly built workspace with the K8 transition note's preparation step); in the browser,
+only the review round's smoke ran (nothing loaded and a demo disease child), not the rest of
+DEMO1's matrix (a failed start, a bad reload, a read-only viewer), the gene and patients-like-me
+children or narrow layouts; the deployment
 guides' prose beyond the checks that read documents (`tests/unit/test_entry_documents.py`,
 `tests/unit/test_docs_index.py` and the guide checks in the settings, SP-binding and Datasets
 tests).

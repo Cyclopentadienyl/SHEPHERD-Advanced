@@ -347,7 +347,9 @@ separate open decision (§7).
 scoring mode (M3c); the path-reasoning fallback is its own kind, `path_reasoning/v1`, whose
 candidates carry `path_score` and no model term (Batch 4, accepted 2026-10-27; before it the result carried
 `gnn_score = 0.0`, shown as a number). Missing: whether serving with no model needs an explicit
-opt-in (provenance contract §8, question 2), which stays the owner's decision.
+opt-in (provenance contract §8, question 2), which stays the owner's decision. *(Rev 13: settled
+at K7 (2026-10-29) by the owner's decision: nothing is served without a model, and with no model
+`/diagnose` and `/ready` answer 503.)*
 
 **Gate 1's evidence.** Mode C is built and has run on synthetic and demo cohorts (M4 acceptance,
 `2c94a4e`; M5 close-out, `773dc4a`). Mode D (the served ranking measured on the same cohort,
@@ -376,7 +378,7 @@ institutional run and no report exist (BACKLOG 7b, 8a, 8b).
   consumes; and, with the author, the B-0.5 institutional run (BACKLOG 8b).
 - The owner: whether a proposed revision of gate 1 is put to the institution (without one, the gate
   stands and needs no new approval); the configuration switch's default (§7); whether B-2's
-  no-model serving needs an opt-in.
+  no-model serving needs an opt-in. *(Rev 13: the last one is settled, as B-2 above says.)*
 
 ---
 

@@ -556,11 +556,11 @@ The designs are:
 
 **What each piece does:**
 - **Mode C** measures the approved policy: raw cosine over every disease.
-- **Mode D** measures what the Diagnosis page serves today, through serving's own method, and sets it
-  beside Mode C in the same run.
+- **Mode D** measured what the Diagnosis page served in October 2026, through serving's own method,
+  and set it beside Mode C in the same run (removed in K7, below).
 - **B-1** makes the Diagnosis page serve the approved policy, behind a switch.
 
-Mode C and Mode D change no served value. B-1 does.
+Mode C changes no served value, and Mode D changed none. B-1 does.
 
 **Superseded in part, 2026-10-27.** Batch 5's changes below (B-1 with raw cosine) are not built.
 **Mode D (steps 2, 3 and 8) was removed in K7** with its executor; its rows stay as the design

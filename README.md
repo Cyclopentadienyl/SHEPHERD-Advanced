@@ -92,7 +92,8 @@ There is no shortest-path step: no task model reads `shortest_paths.pt`.
 > **Until K8: the GB10 acceptance still needs the shortest-path table.** The acceptance probe
 > (`scripts/probe_deployment.py`, its `--m2-acceptance` run) has not moved to the task models
 > yet: its real phase verifies the workspace with `shortest_paths.pt` and its bound sidecar (R1)
-> and serves with them (M4, R6). The current GB10 workspace has the pair. To accept a newly built workspace before
+> and serves with them (R6); M4 builds its own pair on a copy of the demo workspace. The current
+> GB10 workspace has the pair. To accept a newly built workspace before
 > K8, build the pair with the probe's own preparation step,
 > `scripts/compute_shortest_paths.py --kg-path <workspace>/kg.json --output-dir <workspace> --max-hops 5`
 > (deployment guide §4.3). R1 is never skipped or passed without the pair. K8 moves R1, M4 and R6
