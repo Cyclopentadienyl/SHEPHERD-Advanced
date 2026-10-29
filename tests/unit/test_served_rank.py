@@ -89,13 +89,12 @@ def _patient(phenotypes, patient_id="p"):
 def _row(candidate):
     """A candidate as the golden records it, each of the mixture's fields in the
     slot of the value it replaced (Spec 1 §2.1): [disease, rank, the ranked
-    score, the model term, the SP record, the path score]. The path score went
-    with the path-reasoning fallback (K7), so its slot is None."""
+    score, the model term, the SP record]."""
     from src.core.types import ServedMixtureCandidate
 
     assert isinstance(candidate, ServedMixtureCandidate), type(candidate).__name__
     return [str(candidate.disease_id), candidate.rank, candidate.served_score,
-            candidate.model_term, candidate.sp_term, None]
+            candidate.model_term, candidate.sp_term]
 
 
 def _matches_capture(name, row, want):
@@ -108,14 +107,12 @@ def _matches_capture(name, row, want):
     and its float32 differs by an ulp between supported CPUs (aarch64 against
     this x86 capture, the reviewer's run of ce1ce1d). Bit-for-bit equality
     holds between the versions in one environment, which is how it was shown."""
-    conf, gnn, sp, reasoning = (float(v) for v in want[2:])
-    score, model_term, record, path_score = row[2:]
+    conf, gnn, sp = (float(v) for v in want[2:])
+    score, model_term, record = row[2:]
 
     def close(value, captured):
         return value == pytest.approx(captured, abs=SCORE_TOLERANCE)
 
-    if path_score is not None:
-        return False
     if record is None or not close(score, conf) or not close(model_term, gnn):
         return False
     if name == "gnn_plus_sp":
@@ -132,14 +129,14 @@ def _ties(scores):
 def test_the_capture_comparison_allows_an_ulp_and_nothing_else():
     """The reviewer's run of ce1ce1d on aarch64 (gnn_only, case 0): the model's
     float32 came out an ulp from the x86 capture. That is the same ranking; a
-    real change of value, a wrong status or a field of another kind is not."""
+    real change of value or a wrong status is not."""
     from src.core.types import SPAnalysisRecord
 
     no_table = SPAnalysisRecord(status="NO_TABLE", phenotypes_submitted=1, phenotypes_mapped=1)
-    want = ["mondo:MONDO:0010730", 2, "0.5461347103118896", "0.5461347103118896", "0.0", "1.0"]
+    want = ["mondo:MONDO:0010730", 2, "0.5461347103118896", "0.5461347103118896", "0.0"]
 
     def row(score, record=no_table):
-        return ["mondo:MONDO:0010730", 2, score, score, record, None]
+        return ["mondo:MONDO:0010730", 2, score, score, record]
 
     assert _matches_capture("gnn_only", row(0.5461346507072449), want)
     assert not _matches_capture("gnn_only", row(0.5461347103118896 + 1e-3), want)
@@ -148,9 +145,6 @@ def test_the_capture_comparison_allows_an_ulp_and_nothing_else():
                                 unreachable_pair_count=0,
                                 denominator_policy="MAPPED_ONLY_DENOMINATOR")
     assert not _matches_capture("gnn_only", row(0.5461346507072449, computed), want)
-    with_path_score = row(0.5461346507072449)
-    with_path_score[5] = 1.0
-    assert not _matches_capture("gnn_only", with_path_score, want)
     assert _ties([1.0, 1.0, 0.5]) == [True, False]
 
 

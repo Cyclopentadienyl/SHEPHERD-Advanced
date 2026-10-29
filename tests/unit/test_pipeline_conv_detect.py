@@ -3,7 +3,8 @@ Unit tests for checkpoint architecture inference in the diagnosis pipeline.
 
 Regression guard for the bug where an HGT checkpoint whose config lacked
 ``conv_type`` was silently rebuilt as the GAT default, failing the state_dict
-load and dropping the pipeline to path_reasoning_fallback.
+load (at the time the pipeline then dropped to path reasoning, a fallback K7
+removed).
 
 The key sets below are taken verbatim from a real HGT checkpoint's load error
 (HGT params) and the GAT model it was mistakenly rebuilt as (expected params).

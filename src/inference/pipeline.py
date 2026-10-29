@@ -311,8 +311,8 @@ def require_model_source(checkpoint_path: Optional[Union[str, Path]],
         raise PipelineBuildError(
             "No model is configured: a diagnosis is answered only by a trained model, "
             "and no checkpoint was named (SHEPHERD_CHECKPOINT_PATH, on the service). "
-            "Load one (Change model… on the Diagnosis page, or POST "
-            "/api/v1/pipeline/reload); a graph is never served without a model."
+            "An operator loads one with “Load a model…” on the Diagnosis page or POST "
+            "/api/v1/pipeline/reload; a graph is never served without a model."
         )
     if not data_dir:
         raise PipelineBuildError(
@@ -901,16 +901,6 @@ class DiagnosisPipeline:
         binding_state = kg_binding_state(
             binding, self._graph_kg_digest, source=str(sp_path)
         )
-        if binding_state == "unverifiable":
-            raise SPArtifactError(
-                f"{sp_path} records the graph it was computed from, and this "
-                "pipeline cannot check it: its graph was supplied in memory, so "
-                "no verified workspace digest exists to compare against. The "
-                "shortest-path term is part of the ranking, so an unverifiable "
-                "binding is refused rather than assumed. Build the pipeline from "
-                "a workspace; a table published without a binding is refused "
-                "too (contract M2.5)."
-            )
         if binding_state == "unrecorded":
             # **Refused, no longer served with a warning** (contract M2.5,
             # decision 2). A table that predates the pairing protocol never
@@ -2526,7 +2516,6 @@ class DiagnosisPipeline:
             # and its origin apart, so a synthetic workspace is never shown as
             # plainly verified. None when no workspace was verified.
             "dataset_record": self._dataset_record.summary(),
-            "path_reasoner_role": "explanation_only",
             "include_explanations": self.config.include_explanations,
             "include_ortholog_evidence": self.config.include_ortholog_evidence,
             "include_literature_evidence": self.config.include_literature_evidence,

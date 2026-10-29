@@ -785,10 +785,13 @@ def test_a_kept_mode_d_report_is_shown_under_its_own_mode_and_its_register_is_re
     """A kept Mode D report beside a Mode C one (K7 removed Mode D, not its
     reports): the Result names its own mode and case sets, with its served
     scoring, Mode D's tiles and the reached-cases coverage, and no Mode C; each
-    report row says its mode; the help is Mode D's note. Register is refused by
-    the registration itself, saying why: nothing is written, and the report
-    reads as before (kept, its record mode D, its key uncontested)."""
+    report row says its mode; the help is Mode D's note. Register is off, with
+    the registration's own reason beside it, and the Mode C report's is not; a
+    click that reaches the registration anyway is refused by it, saying why:
+    nothing is written, and the report reads as before (kept, its record mode
+    D, its key uncontested)."""
     from src.evaluation.caveats import MODE_C_RESULT_LABEL, MODE_D_NOTE, PRE_B1_NOTE, mode_label
+    from src.evaluation.registration import mode_d_refusal
 
     d_run = _keep_mode_d_report(site)
     reports = tp.read_reports(LABEL)
@@ -813,6 +816,10 @@ def test_a_kept_mode_d_report_is_shown_under_its_own_mode_and_its_register_is_re
     assert MODE_C_RESULT_LABEL in c_result and "Mode D" not in c_result
 
     page, request = _page(monkeypatch)
+    off, why = tp.register_state(page, reports, d_run)
+    assert off is False and why == f"Disabled: this is {mode_d_refusal(record)}"
+    assert "a Mode D report (the served ranking)" in why and "no new record" in why
+    assert tp.register_state(page, reports, site.run_id) == (True, None)
     models = tp.read_models("demo", request)
     usage = _usage_lines(site)
     done, said = tp.register_selected(page, reports, models, "demo", d_run, request)

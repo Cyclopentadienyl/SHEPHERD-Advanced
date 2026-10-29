@@ -735,11 +735,11 @@ def _contested_value(name: str, value: Any) -> str:
     return fmt_metric(name, value)
 
 
-def contest_html(state: Optional[Mapping[str, Any]], *, ordered_out: bool = False,
-                 mode: str = "C") -> str:
+def contest_html(state: Optional[Mapping[str, Any]], *, mode: Optional[str],
+                 ordered_out: bool = False) -> str:
     """A record's D5 state beside it: contested (with what the runs disagree on,
-    each metric named in the record's `mode`) or "cannot be checked"; nothing for
-    an uncontested key."""
+    each metric named in the record's `mode`, which every caller gives: no mode
+    is assumed) or "cannot be checked"; nothing for an uncontested key."""
     if state is None:
         return ('<div class="shep-mp-delta shep-muted">contested status cannot be checked: it was '
                 'not read</div>')

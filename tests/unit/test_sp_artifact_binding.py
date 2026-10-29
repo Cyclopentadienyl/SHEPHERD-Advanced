@@ -323,8 +323,8 @@ class TestTheGraphItNames:
             kg_binding_state(self._binding(), DIGEST_B)
 
     def test_no_comparable_graph_is_returned_not_raised(self):
-        """Not a verdict on the artifact: a consumer that ranks refuses, and a
-        tool reading only the integer ids may proceed and must label it."""
+        """Not a verdict on the artifact: a tool reading only the integer ids
+        (the reachability audit) may proceed and must label it."""
         assert kg_binding_state(self._binding(), None) == "unverifiable"
 
     def test_a_legacy_pair_is_unrecorded(self):
@@ -484,21 +484,6 @@ class TestTheLoaderEnforcesTheBinding:
 
         assert pipeline._sp_ready is False
         assert pipeline._sp_lookup is None
-
-    def test_a_binding_that_cannot_be_checked_is_refused_not_waved_through(
-        self, tmp_path
-    ):
-        """**The row the first draft got backwards.** A caller supplying its
-        graph in memory skips file-backed verification by design and still loads
-        SP from `data_dir`; treating "cannot check" as unknown would let the
-        binding be bypassed by deleting `kg.json`."""
-        publish(tmp_path, kg_digest=DIGEST_A)
-        pipeline = loader_pipeline(tmp_path, graph_digest=None)
-
-        with pytest.raises(ValueError, match="supplied in memory"):
-            pipeline._load_shortest_paths(Path(tmp_path))
-
-        assert pipeline._sp_ready is False
 
     def test_a_mixed_pair_is_refused_and_nothing_is_published(self, tmp_path):
         publish(tmp_path, kg_digest=DIGEST_A)

@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import time
 from pathlib import Path
@@ -336,6 +337,21 @@ def _changed_rows(html):
     return [row.split('<th scope="row">')[1].split("<")[0] for row in rows]
 
 
+def _from_cells(html):
+    """The confirmation's "From — in use now" column as a person reads it: each
+    row's label and its first cell, tags dropped and entities decoded."""
+    import html as html_lib
+
+    cells = {}
+    for row in html.split("<tr")[1:]:
+        if '<th scope="row">' not in row:
+            continue
+        label = row.split('<th scope="row">')[1].split("<")[0]
+        cell = row.split("<td>")[1].split("</td>")[0]
+        cells[label] = html_lib.unescape(re.sub(r"<[^>]+>", "", cell)).strip()
+    return cells
+
+
 def test_load_shows_one_confirmation_from_to_with_the_changed_rows_marked(
         root, serving, monkeypatch):
     listing = _listing(root, monkeypatch)
@@ -363,6 +379,20 @@ def test_load_shows_one_confirmation_from_to_with_the_changed_rows_marked(
     assert _changed_rows(html) == ["Model", "Model fingerprint", "Task and scoring", "SP table"]
     assert "Gene (<code>gene_task</code>)" in html
     assert "computed from the model's graph view" in html
+    # Nothing served (no model loaded, the first screen since K7): the From
+    # rows that describe what is served say "not applicable", never words that
+    # describe something served (unlisted, absent, files).
+    serving["value"] = {"initialized": False}
+    plan, html = ml.request_load(_listing(root, monkeypatch), key, None,
+                                 operator_request(monkeypatch))
+    frm = _from_cells(html)
+    assert plan["from"]["served"] is False and frm["Model"] == "no model loaded"
+    for row in ("Trained on", "Serving workspace", "SP table", "Data"):
+        assert frm[row] == "not applicable", row
+    shown = " ".join(frm.values())
+    for word in ("not in this workspace's list", "not a listed workspace", "absent", "files"):
+        assert word not in shown, word
+    assert ">same<" not in html and "same dataset" not in html
 
 
 def test_an_unloadable_item_cannot_be_loaded(root, serving, monkeypatch):

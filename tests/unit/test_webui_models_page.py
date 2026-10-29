@@ -549,7 +549,7 @@ def test_a_disagreeing_value_that_is_not_a_finite_number_leaves_the_record_conte
 
     operator = contest_states([record], CohortVersions.listed())[key_text(record_key(record))]
     assert operator["state"] == "contested"
-    operator_html = mp.contest_html(operator)
+    operator_html = mp.contest_html(operator, mode=record["scoring"]["mode"])
     assert "runs disagree — investigate" in operator_html and f"{shown} (run" in operator_html
     assert "nan" not in operator_html.lower().replace("not a finite number", "")
 
@@ -557,7 +557,8 @@ def test_a_disagreeing_value_that_is_not_a_finite_number_leaves_the_record_conte
     data = mp.read_readonly()
     (view,) = data["answer"]["records"]
     assert view["contest"]["state"] == "contested"
-    readonly_html = mp.contest_html(data["contest"][key_text(record_key(record))])
+    readonly_html = mp.contest_html(data["contest"][key_text(record_key(record))],
+                                    mode=mp.record_mode(view))
     assert "runs disagree — investigate" in readonly_html
     assert "not a finite number (run" in readonly_html
     assert "contested #" in mp.readonly_parts(data)["records"]
@@ -661,6 +662,7 @@ def test_a_record_of_another_or_no_mode_is_never_shown_as_mode_c(world, monkeypa
     for bad in (None, "", 7):
         shown = _text(mp.usage_entry_html({**entry, "mode": bad}))
         assert "Measurement mode not recorded" in shown and "Mode C" not in shown
+
 
 def _kept_c_and_d_records():
     """A Mode C record and a kept Mode D record of one checkpoint and version, as

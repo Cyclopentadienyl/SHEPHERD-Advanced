@@ -817,7 +817,8 @@ def _from_side(status: Optional[Mapping[str, Any]], listing: Mapping[str, Any]) 
 
     `listing` gives the checkpoints to name the served one by (``items``), the
     listed workspaces (``workspaces``) and the serving workspace's name
-    (``serving``)."""
+    (``serving``). ``served`` is False when no model is loaded: then nothing is
+    served, and the rows that describe what is served do not apply (`_cell`)."""
     identity = (status or {}).get("served_identity") or {}
     sha = served_checkpoint_sha(status)
     item = next((i for i in listing.get("items") or [] if sha and i.get("sha256") == sha), None)
@@ -831,6 +832,7 @@ def _from_side(status: Optional[Mapping[str, Any]], listing: Mapping[str, Any]) 
     sp = identity.get("shortest_paths") or {}
     record = identity.get("dataset_record") or {}
     return {
+        "served": bool((status or {}).get("initialized")),
         "model": model,
         "sha256": sha,
         "trained_on": item.get("dataset_fingerprint") if item else None,
@@ -913,8 +915,16 @@ def _target_now(item: Mapping[str, Any], workspace: Any, *,
         + (f" ({listed.problem})" if listed.problem else ""))
 
 
+#: The From rows that describe what is served: with no model loaded nothing is
+#: served, so they say "not applicable" (their own word, never "absent" or
+#: "files", which would describe something served).
+_SERVED_ROWS = ("trained", "workspace", "sp", "data")
+
+
 def _cell(side: Mapping[str, Any], row: str, workspaces: Sequence[Any], *, to: bool,
           other: Optional[Mapping[str, Any]] = None) -> str:
+    if side.get("served") is False and row in _SERVED_ROWS:
+        return '<span class="shep-muted">not applicable</span>'
     if row == "model":
         return r.e(side["model"])
     if row == "sha":
@@ -928,7 +938,8 @@ def _cell(side: Mapping[str, Any], row: str, workspaces: Sequence[Any], *, to: b
             html_ += ' <span class="shep-muted">same dataset</span>'
         return html_
     if row == "workspace":
-        if to and other is not None and other.get("workspace") == side["workspace"] and \
+        if to and other is not None and other.get("served") is not False and \
+                other.get("workspace") == side["workspace"] and \
                 other.get("graph") == side["graph"]:
             return "same"
         name = f"<b>{r.e(side['workspace'])}</b>" if side["workspace"] else \

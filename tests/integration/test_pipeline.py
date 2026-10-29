@@ -133,12 +133,12 @@ def gnn_model_and_data(medium_kg):
     CRITICAL: This fixture mirrors the production training path
     (scripts/train_model.py:create_model_from_config) which derives metadata
     from graph_data["edge_index_dict"].keys() — INCLUDING reverse rev_* edges
-    for bidirectional message passing. Do NOT switch to kg.metadata() (forward
-    edges only) — that would diverge from the trainer and let checkpoint
-    round-trip bugs slip through CI.
+    for bidirectional message passing. Metadata built from the graph's forward
+    edges only would diverge from the trainer and let checkpoint round-trip
+    bugs slip through CI.
 
-    The matching change is in pipeline._load_model_from_checkpoint, which
-    must also derive metadata from graph_data, not kg.metadata().
+    pipeline._load_model_from_checkpoint derives its metadata from graph_data
+    the same way.
     """
     hidden_dim = 32
 

@@ -125,18 +125,21 @@ class AppState:
         service is never called ready while every diagnosis is refused. Every
         answer comes from a model: no illustrative candidates are invented.
         `/health` stays 200, so the launcher starts the service and the
-        dashboard's Load entry can load a model.
+        dashboard's Load entry can load a model. Both reasons name that entry
+        as the Diagnosis page shows it in this state ("Load a model…"), and
+        that loading is an operator control.
         """
         if self.pipeline is not None:
             return None
         if self.real_pipeline_requested:
             return ("A pipeline is configured for this deployment but none is being "
                     "served: it could not be initialized (the service logs name the "
-                    "condition that stopped it). Load a model (POST "
-                    "/api/v1/pipeline/reload) or restart the service to try again.")
-        return ("No model is loaded, so no diagnosis can be produced. Load one (POST "
-                "/api/v1/pipeline/reload, or Change model… on the Diagnosis page), or "
-                "start the service with SHEPHERD_KG_PATH, SHEPHERD_DATA_DIR and "
+                    "condition that stopped it). An operator loads a model with “Load a "
+                    "model…” on the Diagnosis page or POST /api/v1/pipeline/reload, or "
+                    "restarts the service to try again.")
+        return ("No model is loaded, so no diagnosis can be produced. An operator loads one "
+                "with “Load a model…” on the Diagnosis page or POST /api/v1/pipeline/reload, "
+                "or starts the service with SHEPHERD_KG_PATH, SHEPHERD_DATA_DIR and "
                 "SHEPHERD_CHECKPOINT_PATH naming a workspace and a model trained on it.")
 
 

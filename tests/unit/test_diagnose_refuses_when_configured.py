@@ -162,6 +162,33 @@ def test_an_unconfigured_deployment_is_refused_with_its_reason():
     assert "candidates" not in body and "result_kind" not in body
 
 
+def test_every_no_model_reason_names_the_load_entry_the_page_shows(monkeypatch):
+    """Both reasons a 503 carries, and the build's refusal when no checkpoint is
+    named, name the Diagnosis page's entry as the page labels it with no model
+    loaded (`diagnosis_card.change_button`), say that loading is an operator
+    control, and name the reload route. Compared here, so the API never imports
+    the WebUI and the two cannot drift apart."""
+    pytest.importorskip("gradio")
+    from src.api import main as api_main
+    from src.inference.pipeline import PipelineBuildError, require_model_source
+    from src.webui.components import diagnosis_card as card
+
+    label = card.change_button({"ok": True, "status": {"initialized": False},
+                                "operator": True})["value"]
+    entry = label.removeprefix("🔒").strip()
+    assert entry and entry != label
+    reasons = []
+    for requested in (False, True):
+        monkeypatch.setattr(api_main.app_state, "real_pipeline_requested", requested)
+        reasons.append(api_main.app_state.no_pipeline_reason)
+    with pytest.raises(PipelineBuildError) as refused:
+        require_model_source(None, None)
+    reasons.append(str(refused.value))
+    for reason in reasons:
+        assert f"“{entry}” on the Diagnosis page" in reason
+        assert "An operator loads" in reason and "POST /api/v1/pipeline/reload" in reason
+
+
 def test_a_served_pipeline_is_unaffected_by_a_refused_reload(monkeypatch, tmp_path):
     """The other control: recording the request must not disturb a pipeline that
     is already serving. A refused candidate leaves the live one in place."""

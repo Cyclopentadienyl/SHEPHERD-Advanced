@@ -48,7 +48,8 @@ docstring. Three panels, as the mockup draws them (``test-wide.png``,
   registration function (`register_report`, the ledger beside the listed
   checkpoint holding the weights it measured, found by digest in the server's
   checkpoint list, never the report's recorded path; it refuses a kept Mode D
-  report, which stays readable here, and says why); while runs under its key
+  report, which stays readable here, so the button is off beside the
+  registration's own reason, `mode_d_refusal`); while runs under its key
   disagree, the block is shown and the button is off, and investigation notes
   (who, when, what) are listed and added (gated) **without lifting the block**;
   on a wide screen the note form stays at the panel's foot above Register,
@@ -1825,6 +1826,12 @@ def register_state(page: Mapping[str, Any], reports: Mapping[str, Any],
         return False, "Disabled: no report was kept in this run."
     if state.get("registered") == "registered":
         return False, "Already registered."
+    # The writer's own rule and words (`register_report` refuses the click the same way).
+    from src.evaluation.registration import mode_d_refusal
+
+    mode_d = None if run.get("record") is None else mode_d_refusal(run["record"])
+    if mode_d is not None:
+        return False, f"Disabled: this is {mode_d}"
     contest = (run.get("contest") or {}).get("state")
     if contest == "contested":
         return False, ("Disabled: runs disagree — investigate. Registering one would be choosing "

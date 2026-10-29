@@ -198,7 +198,7 @@ def finetune_parent_problem(record: ModelRecord, payload: Mapping[str, Any]) -> 
 #: reload) still runs such a file, until K8 retires that path (README §7).
 LISTED_WITHOUT_SPEC = ("no model spec (a ShepherdGNN checkpoint): listed as history and never "
                        "run from the WebUI; only the ShepherdGNN path outside it (command line, "
-                       "API reload) still runs it, until K8 retires that path")
+                       "API reload) still runs it, until that path is retired (K8)")
 
 #: What a model list shows of a checkpoint's record (`listed_record`).
 LISTED_RECORD_FIELDS = ("record", "record_problem", "learning_stage", "task", "operation",

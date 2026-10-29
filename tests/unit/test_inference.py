@@ -334,8 +334,6 @@ class TestGNNInference:
         assert config["gnn_ready"] is True
         assert config["has_model"] is True
         assert config["scoring_mode"] == "disease_task"
-        # Evidence is decoupled from scoring
-        assert config["path_reasoner_role"] == "explanation_only"
 
     def test_path_reasoner_still_runs(self, pipeline, patient_phenotypes):
         """Path reasoning provides explanation paths for the rows shown."""

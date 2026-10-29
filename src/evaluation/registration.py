@@ -259,6 +259,22 @@ def corroboration_note(result: RegistrationResult, report_path: Path) -> Optiona
     )
 
 
+def mode_d_refusal(record: Mapping[str, Any]) -> Optional[str]:
+    """Why a report with this record is never registered because it is a Mode D
+    report, as the words after "<the report> is" / "this is"; `None` for any
+    other mode.
+
+    **No new Mode D record** (K7): Mode D, the served ranking's measurement,
+    was removed with its executor. `register_report` refuses with these words
+    (it is the authority), and the Test page's Register asks the same rule to
+    stay off beside them, so the rule and its words are in this one place.
+    """
+    if (record.get("scoring") or {}).get("mode") != "D":
+        return None
+    return ("a Mode D report (the served ranking), and Mode D was removed in K7. Its kept "
+            "reports and existing records stay readable; no new record of one is made.")
+
+
 def _ledger_beside(checkpoint: Path) -> Path:
     """The ledger of the checkpoint at this path: ``evaluations.json`` in the
     directory of its resolved path (M4 decision 15), the rule the read-only view
@@ -478,16 +494,13 @@ def register_report(
         raise refused(f"{report_path}: {exc}") from exc
     except RecursionError:  # nested deeper than a report is, from a hand edit
         raise refused(f"{report_path} nests too deeply to be read as a report.") from None
-    # **No new Mode D record** (K7): Mode D, the served ranking's measurement,
-    # was removed with its executor. Refused here, in the writer, and never in
-    # `build_record`, which the report store reads every kept report with: a
-    # kept Mode D report and the records already made of one stay readable.
-    if record["scoring"].get("mode") == "D":
-        raise refused(
-            f"{report_path} is a Mode D report (the served ranking), and Mode D was removed "
-            "in K7: its kept reports and existing records stay readable, and no new record "
-            "of one is made."
-        )
+    # **No new Mode D record** (K7, `mode_d_refusal`). Refused here, in the
+    # writer, and never in `build_record`, which the report store reads every
+    # kept report with: a kept Mode D report and the records already made of
+    # one stay readable.
+    mode_d = mode_d_refusal(record)
+    if mode_d is not None:
+        raise refused(f"{report_path} is {mode_d}")
 
     # **The report names the version it is kept under, exactly**: the block the
     # measurement writes from a version (`cohort_version_block`), compared with
@@ -848,4 +861,5 @@ def report_state(
 __all__ = ["DisagreementNotChecked", "KEPT_STATES", "MeasuredRun",
            "NotFromTheDeploymentRegistry", "REGISTERED_STATES", "RegistrationRefused",
            "RegistrationResult", "ReportNotAsPublished", "ReportState", "RunsDisagree",
-           "corroboration_note", "key_refusal", "register_report", "report_state"]
+           "corroboration_note", "key_refusal", "mode_d_refusal", "register_report",
+           "report_state"]

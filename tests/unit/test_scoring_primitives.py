@@ -781,7 +781,6 @@ def _ranking_stub(lookup, monkeypatch, embeddings, records, scoring_mode):
     stub._calculate_gnn_score = lambda patient, disease_id: embeddings[disease_id]
     stub._served_score = lambda term, record: DiagnosisPipeline._served_score(
         stub, term, record)
-    stub._calculate_reasoning_score = lambda paths: 0.0
     stub._extract_supporting_genes = lambda paths: []
     stub._determine_evidence_sources = lambda paths: []
     return stub

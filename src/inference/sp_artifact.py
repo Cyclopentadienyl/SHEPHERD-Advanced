@@ -325,19 +325,18 @@ def kg_binding_state(
     """Which graph this was computed from, against the graph being consumed.
 
     **The comparison is to the graph that supplies the node mapping**, never to
-    whatever `kg.json` happens to sit beside the artifact. A caller that builds
-    a pipeline from an in-memory graph skips the file-backed verification by
-    design; binding to a file next to the table would let the check be bypassed
-    by deleting one.
+    whatever `kg.json` happens to sit beside the artifact: binding to a file
+    next to the table would let the check be bypassed by deleting one. The
+    pipeline compares with its verified workspace's digest, which it always has.
 
     Returns:
         ``"unrecorded"`` — legacy pair, nothing to compare.
         ``"verified"`` — declared and equal to the consumed graph.
         ``"unverifiable"`` — declared, and no trustworthy digest was supplied
         for the consumed graph. **Not a verdict on the artifact**, which is why
-        it is returned rather than raised: a consumer whose ranking depends on
-        this table must refuse, and a tool reading only the integer ids inside
-        the tensor may proceed and must label the limitation.
+        it is returned rather than raised: a tool reading only the integer ids
+        inside the tensor (`scripts/audit_sp_reachability.py`) may proceed and
+        must label the limitation.
 
     Raises:
         SPArtifactError: both are known and they differ.
