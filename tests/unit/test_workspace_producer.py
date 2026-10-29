@@ -391,11 +391,16 @@ class TestAGraphOnlyBuildSaysWhatItIs:
     """`--generate-samples` is optional, and the output of omitting it is not.
 
     A graph export is a real mode — `compute_shortest_paths.py` reads `kg.json`
-    and `build_index.py` reads the tensors — but it is not trainable and not
-    servable (since K7 nothing is served without a model trained on a
-    workspace), because nothing records which export those tensors are. The build used to print
-    `train_model.py` as the next step regardless, so an operator learned that at
-    the end of a thirty-minute build rather than at the start.
+    — but it is not trainable and not servable (since K7 nothing is served
+    without a model trained on a workspace), because nothing records which
+    export those tensors are. The build used to print `train_model.py` as the
+    next step regardless, so an operator learned that at the end of a
+    thirty-minute build rather than at the start.
+
+    Neither build offers the shortest-path step since K7 (D8): no task model
+    trains on or serves from a shortest-path table, so precomputing one is not
+    a step of building a model. A complete build teaches the two stages, a
+    base and then its task models fine-tuned from it.
 
     Cohorts also cannot be added afterwards: only the writer that exported the
     tensors can vouch for their digests, so completing one means rebuilding.
@@ -423,18 +428,30 @@ class TestAGraphOnlyBuildSaysWhatItIs:
         assert "train_model.py" not in out, "offered training on an unusable workspace"
         assert "CANNOT be trained on" in out
         assert "--generate-samples" in out, "did not say how to complete it"
-        assert "compute_shortest_paths.py" in out, "withheld a step that does work"
+        assert "compute_shortest_paths.py" not in out, "offered the retired SP step (D8)"
 
     def test_a_complete_build_still_offers_one(self, monkeypatch, tmp_path, capsys):
         """Otherwise the test above would pass against a build that never
-        mentions training at all."""
+        mentions training at all. The training it offers is a base, then its
+        task models fine-tuned from it (K7, D8): never a stage-less run, and
+        no shortest-path step."""
         out = self._build(
             monkeypatch, tmp_path, capsys,
             generate_samples=True, num_train=60, num_val=20,
         )
 
-        assert "train_model.py" in out
         assert "CANNOT be trained on" not in out
+        steps = [line.strip() for line in out.splitlines()
+                 if line.strip().startswith("python scripts/train_model.py")]
+        workspace = tmp_path / "ws"
+        assert steps == [
+            f"python scripts/train_model.py --data-dir {workspace} --stage base",
+            f"python scripts/train_model.py --data-dir {workspace} --stage finetune \\",
+        ], out
+        assert "--task disease --finetune-from <base run>/checkpoints/last.pt" in out
+        assert "Fine-tune" in out
+        assert "compute_shortest_paths.py" not in out, "offered the retired SP step (D8)"
+        assert "--epochs" not in out, "the stage's reference recipe sets the epochs"
 
 
 class TestTheRefusalOrderHasNoHookInIt:

@@ -17,7 +17,8 @@ Usage:
     # Workspace only (nothing to serve until a model is trained on it):
     python scripts/setup_demo.py
 
-    # Workspace + a small trained model (full GNN-primary mode):
+    # Workspace + a small base and its disease model, which the printed
+    # command serves:
     python scripts/setup_demo.py --train-model
 
     # Custom output directory:
@@ -31,14 +32,23 @@ Output files:
     <output_dir>/train_samples.json   - Training cohort
     <output_dir>/val_samples.json     - Validation cohort (disease-disjoint)
     <output_dir>/split_manifest.json  - Binds all six to one production event
-    <output_dir>/runs/gat/<run>/      - The demo run (if --train-model)
+    <output_dir>/runs/gatv2/<..._demo-base_...>/     - The base run (if --train-model)
+    <output_dir>/runs/gatv2/<..._demo-disease_...>/  - Its disease child (if --train-model)
+
+**`--train-model` trains the two stages a task model is made of** (K7, TM3):
+a base (KG link prediction) and one disease child fine-tuned from it, each by
+the production trainer (`scripts/train_model.py`'s `train`, the model bundle
+path), at the stage's reference recipe with the demo graph's sizes
+(`demo_task_training`, at which the deployment probe trains its demo disease
+model too). It used to train a ShepherdGNN of its own configuration, which
+nothing serves any more.
 
 With `--train-model`, the command to start the API is printed on completion,
-with the checkpoint the run actually selected and the device it was trained on:
-serving refuses `auto` without CUDA (contract M3c), so the command names the
-device. Without a model nothing is served, so no command is printed. It has no
-`--reload`: uvicorn's reloader restarts the server on every saved source file,
-and the server's shutdown stops the GPU job it runs.
+with the disease child's checkpoint (its run's `last.pt`) and the device it was
+trained on: serving refuses `auto` without CUDA (contract M3c), so the command
+names the device. Without a model nothing is served, so no command is printed.
+It has no `--reload`: uvicorn's reloader restarts the server on every saved
+source file, and the server's shutdown stops the GPU job it runs.
 
 **`--train-model` takes the deployment's GPU lock** (M5; review of 8242b47,
 P2-4), as `scripts/train_model.py` does: the demo trains through the real
@@ -53,6 +63,7 @@ import argparse
 import logging
 import sys
 from pathlib import Path
+from typing import Any, Dict
 
 # Add project root to path
 project_root = Path(__file__).resolve().parent.parent
@@ -252,59 +263,83 @@ def build_demo_kg() -> KnowledgeGraph:
 # =============================================================================
 # Model training
 # =============================================================================
+#: Epochs of each stage `--train-model` trains, the base and its disease child:
+#: the demo graph is learnt in that, and the point is the path, not the score.
+DEMO_EPOCHS = 2
+
+
+def demo_task_training() -> Dict[str, Dict[str, Any]]:
+    """The demo graph's training sizes, by stage ("base", "disease"): the
+    reference base spec shrunk (input 8, two layers of width 4 with 2 heads)
+    and small batches, hops and samples, so the base and its disease child each
+    train in seconds on CPU. Every other setting is the stage's reference
+    recipe (`src.config.recipe`), which the trainer fills and records.
+
+    **The one statement of the demo's sizes**: `train_demo_model` trains at
+    them, and the deployment probe trains its demo disease model at them
+    (`scripts/probe_deployment.py`, `_train_disease_child`)."""
+    import dataclasses
+
+    from src.models.bundle import reference_spec
+    from src.models.bundle.spec import InputSpec
+
+    spec = reference_spec("base")
+    small = dataclasses.replace(
+        spec, input=InputSpec(dim=8),
+        encoder=dataclasses.replace(spec.encoder, layers=2, hidden=4, output=4, heads=2),
+    ).validate()
+    return {
+        "base": {"model_spec": small.to_dict(), "batch_size": 32, "num_neighbors": [4, 4]},
+        "disease": {"batch_size": 8, "num_neighbors": [3, 3], "candidate_sample_size": 8,
+                    "sparse_sample_size": 8},
+    }
+
+
 def train_demo_model(workspace: Path, num_epochs: int, device: str = "auto") -> Path:
-    """Train a small model on the demo workspace **through the real trainer**.
+    """Train a base and one disease child of it on the demo workspace
+    **through the real trainer**, and return the child's checkpoint.
 
-    This script used to carry its own: it read the exported tensors, built a
-    GAT by hand, ran a loop and saved a checkpoint of its own shape. That
-    checkpoint never passed the training preflight, so nothing ever checked that
-    the workspace it came from was internally consistent — and the workspace it
-    came from was not, because the samples beside it were split by patient.
-
-    Calling `train` costs a few more seconds and buys the thing the demo is for:
-    if this returns a checkpoint, the production path works end to end on this
-    machine. The configuration is small because the demo graph is small; it is
-    not a different pipeline.
+    Both runs are `scripts/train_model.py`'s `train` on the model bundle path,
+    as `tests/fixtures/trained_children.py` and the probe's
+    `_train_disease_child` train them: `learning_stage` "base", then
+    "finetune" with task "disease" and `finetune_from` the base's `last.pt`,
+    each filed under the workspace's runs (contract M3a-2) and given every
+    setting here as the operator's (the stage's recipe fills the rest). If
+    this returns, the production path works end to end on this machine; the
+    sizes are small because the demo graph is small, not a different pipeline.
 
     Returns:
-        The checkpoint the API should serve.
+        The disease child's ``last.pt``, the checkpoint the API should serve.
     """
     from scripts.train_model import TrainConfig, train
-    from src.utils.checkpoint_paths import (
-        propose_run_dir, run_checkpoint_dir, select_checkpoint_in_dir,
-    )
+    from src.models.bundle.spec import ModelSpec
+    from src.utils.checkpoint_paths import propose_run_dir, run_checkpoint_dir
 
-    # The run's own directory under the workspace's runs (contract M3a-2),
-    # named here so the checkpoint served is this run's.
-    run_dir = propose_run_dir(workspace, "gat", "demo")
-    config = TrainConfig(
-        data_dir=str(workspace),
-        run_dir=str(run_dir),
-        conv_type="gat",
-        hidden_dim=DEMO_FEATURE_DIM,
-        num_layers=2,
-        num_heads=4,
-        num_epochs=num_epochs,
-        batch_size=8,
-        warmup_steps=0,
-        # `auto` refuses without CUDA (contract M3a); a CPU-only development
-        # host passes --device cpu.
-        device=device,
-    )
-    if not train(config):
-        raise SystemExit(
-            "Demo training produced no metrics; see the log above. The workspace "
-            "itself was written and is valid — re-run training with "
-            f"scripts/train_model.py --data-dir {workspace}, in a shell where the GPU lock "
-            "is configured (SHEPHERD_WORKSPACES_ROOT, deployment guide §4.11)"
-        )
+    sizes = demo_task_training()
+    # A bundle run is filed under its spec's encoder kind (K2).
+    encoder = ModelSpec.from_dict(sizes["base"]["model_spec"]).encoder.kind
 
-    ckpt_dir = run_checkpoint_dir(run_dir)
-    selected = select_checkpoint_in_dir(ckpt_dir)
-    if selected is None:
-        raise SystemExit(f"Training wrote no checkpoint under {ckpt_dir}.")
-    logger.info("Demo checkpoint: %s", selected)
-    return selected
+    def run(stage: str, name: str, **fields: Any) -> Path:
+        run_dir = propose_run_dir(workspace, encoder, name)
+        fields = {**sizes[stage], **fields, "num_epochs": num_epochs,
+                  # `auto` refuses without CUDA (contract M3a); a CPU-only
+                  # development host passes --device cpu.
+                  "device": device}
+        train(TrainConfig(data_dir=str(workspace), run_dir=str(run_dir), **fields), set(fields))
+        last = run_checkpoint_dir(run_dir) / "last.pt"
+        if not last.is_file():
+            raise SystemExit(
+                f"Demo training wrote no checkpoint under {last.parent}; see the log above. "
+                "The workspace itself was written and is valid: train on it with "
+                f"scripts/train_model.py --data-dir {workspace} --stage base, in a shell where "
+                "the GPU lock is configured (SHEPHERD_WORKSPACES_ROOT, deployment guide §4.11)")
+        return last
+
+    base = run("base", "demo-base", learning_stage="base")
+    child = run("disease", "demo-disease", learning_stage="finetune", task="disease",
+                finetune_from=str(base))
+    logger.info("Demo disease model: %s (base %s)", child, base)
+    return child
 
 
 def serving_device(training_device: str) -> str:
@@ -336,13 +371,15 @@ def main():
     parser.add_argument(
         "--train-model",
         action="store_true",
-        help="Also train a small model, so the API can start in GNN mode",
+        help="Also train a small base and its disease model, which the printed command "
+             "serves",
     )
     parser.add_argument(
         "--epochs",
         type=int,
-        default=20,
-        help="Training epochs when --train-model is given (default: 20)",
+        default=DEMO_EPOCHS,
+        help="With --train-model: epochs of each stage, the base and its disease model "
+             f"(default: {DEMO_EPOCHS})",
     )
     parser.add_argument(
         "--device",
@@ -413,7 +450,7 @@ def _setup(args: argparse.Namespace, output_dir: Path) -> int:
 
     if checkpoint_path is not None:
         print(f"""
-Start the API with GNN scoring (full mode):
+Start the API serving the demo's disease model:
 
   SHEPHERD_KG_PATH={kg_path} \\
   SHEPHERD_CHECKPOINT_PATH={checkpoint_path} \\
@@ -432,9 +469,12 @@ refuses without it; deployment guide §4.11), for example with the workspaces
 root the service is given:
   export SHEPHERD_WORKSPACES_ROOT={output_dir.resolve().parent}
   python scripts/setup_demo.py --train-model
-  # or, equivalently, the production entry point:
-  python scripts/train_model.py --data-dir {output_dir} --epochs 20
-  # on a host without CUDA, add --device cpu to either: auto refuses there
+  # or the production entry point at the reference recipe's full size: a base,
+  # then its disease model fine-tuned from the base run's checkpoint
+  python scripts/train_model.py --data-dir {output_dir} --stage base
+  python scripts/train_model.py --data-dir {output_dir} --stage finetune \\
+      --task disease --finetune-from <base run>/checkpoints/last.pt
+  # on a host without CUDA, add --device cpu to each: auto refuses there
 """)
     return 0
 

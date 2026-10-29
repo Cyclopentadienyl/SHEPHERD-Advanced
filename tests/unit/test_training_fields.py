@@ -208,20 +208,58 @@ def _api_model():
     return TrainingStartRequest
 
 
+#: The base start's required fields (K7, TM11): the workspace and the stage.
+API_REQUIRED = {"data_dir", "learning_stage"}
+#: The base start's run and continuation keys, beside the recipe's base settings.
+API_RUN_KEYS = {"data_dir", "learning_stage", "run_name", "device", "resume_from",
+                "extend_epochs"}
+
+
+def _base(**fields):
+    """A valid base start with `fields` over it."""
+    return _api_model()(**{"data_dir": "data/workspaces/x", "learning_stage": "base", **fields})
+
+
+def test_api_fields_are_the_base_start_s():
+    """K7 (TM11): POST /training/start is a strict base start: the run and
+    continuation keys and exactly the reference recipe's base settings
+    (`recipe.BASE`, the WebUI base form's), no ShepherdGNN field; the
+    workspace and the stage are required."""
+    from src.config.recipe import BASE
+
+    mf = _api_model().model_fields
+    assert set(mf) == API_RUN_KEYS | set(BASE)
+    assert {name for name, field in mf.items() if field.is_required()} == API_REQUIRED
+
+
 def test_api_defaults_match_spec():
+    """A recipe setting is unset by default: the training process fills the
+    recipe's value and records it as the recipe's, never a default of the
+    request. The other fields' defaults are the spec's; the required ones have
+    none."""
+    from src.config.recipe import BASE
+
     mf = _api_model().model_fields
     for f in tf.FIELDS:
         if f.current_api is None:
             assert f.name not in mf, f"{f.name} should not be an API field"
             continue
         assert f.name in mf, f"{f.name} missing from TrainingStartRequest"
-        assert _api_default(mf[f.name]) == _spec_default(f), (
-            f"{f.name} default drift: API {_api_default(mf[f.name])} != spec {_spec_default(f)}"
+        if f.name in API_REQUIRED:
+            assert mf[f.name].is_required(), f"{f.name} should be required"
+            continue
+        expected = None if f.name in BASE else _spec_default(f)
+        assert _api_default(mf[f.name]) == expected, (
+            f"{f.name} default drift: API {_api_default(mf[f.name])} != {expected}"
         )
 
 
 def test_api_constraints_match_spec():
-    """Mechanical: the spec's current_api dict must equal the live Pydantic ge/gt/le/lt."""
+    """Mechanical: the spec's current_api dict must equal the live Pydantic
+    ge/gt/le/lt, and for a recipe setting it is the field's target policy
+    (`valid`), which the job runner's one check applies again (`value_problem`)."""
+    from src.config.recipe import BASE
+
     mf = _api_model().model_fields
     for f in tf.FIELDS:
         if f.current_api is None:
@@ -230,6 +268,8 @@ def test_api_constraints_match_spec():
         assert actual == f.current_api, (
             f"{f.name} API constraint drift: model {actual} != spec current_api {f.current_api}"
         )
+        if f.name in BASE and f.valid is not None:
+            assert f.current_api == f.valid, f"{f.name}: the API's bounds are not the policy's"
 
 
 def test_spec_covers_every_api_field():
@@ -244,86 +284,97 @@ def _validation_error():
     return ValidationError
 
 
+def _literal_values(annotation) -> set:
+    """The values of the Literal in `annotation`, an Optional one included."""
+    from typing import Literal, get_args, get_origin
+
+    if get_origin(annotation) is Literal:
+        return set(get_args(annotation))
+    return set().union(*(_literal_values(a) for a in get_args(annotation)
+                         if a is not type(None)))
+
+
 def test_api_enforces_declared_choices():
     """Every field declaring current_api_choices must reject a value outside the enum."""
-    Model, VE = _api_model(), _validation_error()
+    VE = _validation_error()
     enforced = [f for f in tf.FIELDS if f.current_api_choices]
-    assert {f.name for f in enforced} == {"conv_type", "scheduler_type", "amp_dtype"}
+    assert {f.name for f in enforced} == {"learning_stage", "scheduler_type"}
     for f in enforced:
         for good in f.current_api_choices:
-            Model(**{f.name: good})                       # every declared choice is accepted
+            _base(**{f.name: good})                       # every declared choice is accepted
         with pytest.raises(VE):
-            Model(**{f.name: "definitely-not-a-valid-choice"})
+            _base(**{f.name: "definitely-not-a-valid-choice"})
 
 
 def test_api_enum_sets_exactly_equal_the_spec():
     """guard-not-derive: the live Literal must be exactly current_api_choices — not merely a
     superset that happens to accept the declared values."""
-    from typing import get_args
-
     mf = _api_model().model_fields
     for f in tf.FIELDS:
         if not f.current_api_choices:
             continue
-        live = get_args(mf[f.name].annotation)
+        live = _literal_values(mf[f.name].annotation)
         assert live, f"{f.name}: API annotation is not a Literal enum"
-        assert set(live) == set(f.current_api_choices), (
+        assert live == set(f.current_api_choices), (
             f"{f.name} enum drift: API {sorted(live)} != spec {sorted(f.current_api_choices)}"
         )
 
 
 def test_api_enforces_device_grammar_and_keeps_multi_gpu():
     """device is a PyTorch grammar, not a 3-value enum: cuda:N must stay available."""
-    Model, VE = _api_model(), _validation_error()
+    VE = _validation_error()
     spec = tf.by_name("device")
     assert spec.current_api_pattern == spec.valid_pattern
     for good in DEVICE_ACCEPTS:
-        assert Model(device=good).device == good
+        assert _base(device=good).device == good
     for bad in DEVICE_REJECTS:
         with pytest.raises(VE):
-            Model(device=bad)
+            _base(device=bad)
 
 
-def test_api_head_divisibility_is_conditional_on_conv_type():
-    """hgt/gat require hidden_dim % num_heads == 0; sage must remain exempt."""
-    Model, VE = _api_model(), _validation_error()
-    for conv in ("hgt", "gat"):
-        with pytest.raises(VE):
-            Model(conv_type=conv, hidden_dim=100, num_heads=8)
-        Model(conv_type=conv, hidden_dim=256, num_heads=8)      # divisible -> fine
-    # SAGEConv takes no heads, so a non-divisible pair is legitimate:
-    assert Model(conv_type="sage", hidden_dim=100, num_heads=8).hidden_dim == 100
+@pytest.mark.parametrize("field, value", [
+    ("learning_stage", "finetune"), ("learning_stage", None),
+    ("conv_type", "gat"), ("hidden_dim", 64), ("num_heads", 4), ("num_layers", 2),
+    ("num_workers", 0), ("min_lr_ratio", 0.1), ("amp_dtype", "bfloat16"),
+    ("diagnosis_weight", 1.0), ("task", "disease"), ("finetune_from", "base.pt"),
+    ("model_spec", {}), ("run_dir", "/elsewhere"), ("compile", True), ("split_seed", 1),
+    ("candidate_sample_size", 8), ("unknown_setting", 1),
+])
+def test_the_api_takes_a_base_start_only(field, value):
+    """K7 (TM11): a stage other than base, a ShepherdGNN field, a finetune's
+    or a run key the API does not offer, and an unknown field are refused by
+    the request itself, never dropped."""
+    VE = _validation_error()
+    with pytest.raises(VE):
+        _base(**{field: value})
+    with pytest.raises(VE):
+        _api_model()(data_dir="data/workspaces/x")      # the stage is required
 
 
 def test_api_enforces_num_neighbors_policy():
-    Model, VE = _api_model(), _validation_error()
+    VE = _validation_error()
     spec = tf.by_name("num_neighbors")
     assert spec.current_api_item == spec.item_valid
     assert spec.current_api_min_length == spec.min_length
-    assert Model(num_neighbors=[15, 10, 5]).num_neighbors == [15, 10, 5]
+    assert _base(num_neighbors=[15, 10, 5]).num_neighbors == [15, 10, 5]
     with pytest.raises(VE):
-        Model(num_neighbors=[])          # min_length
+        _base(num_neighbors=[])          # min_length
     with pytest.raises(VE):
-        Model(num_neighbors=[15, 0])     # element >= 1
+        _base(num_neighbors=[15, 0])     # element >= 1
     with pytest.raises(VE):
-        Model(num_neighbors=[-1])
-
-
-def test_api_onecycle_rule_still_enforced():
-    """The pre-existing cross-field rule must survive the PR-4c changes."""
-    Model, VE = _api_model(), _validation_error()
-    with pytest.raises(VE):
-        Model(scheduler_type="onecycle", min_lr_ratio=0.0)
-    Model(scheduler_type="cosine", min_lr_ratio=0.0)             # decay-to-zero stays legal
-    Model(scheduler_type="onecycle", min_lr_ratio=0.01)
+        _base(num_neighbors=[-1])
 
 
 def test_cross_field_rules_report_where_they_are_enforced():
-    """After PR-4c no rule may still be marked as merely planned."""
+    """After PR-4c no rule may still be marked as merely planned: each is
+    enforced now, or says since when nothing does (the head rule, whose only
+    enforcement was the API's ShepherdGNN request, gone in K7)."""
     for rule in tf.CROSS_FIELD_RULES:
-        assert rule.enforced_in.startswith("current"), (
+        assert rule.enforced_in.startswith(("current", "none since K7")), (
             f"{rule.name}: still marked '{rule.enforced_in}' — PR-4c should have enforced it"
         )
+    assert [r.name for r in tf.CROSS_FIELD_RULES if not r.enforced_in.startswith("current")] == [
+        "hidden_dim_divisible_by_num_heads"]
 
 
 def test_cli_device_accepts_pytorch_grammar():

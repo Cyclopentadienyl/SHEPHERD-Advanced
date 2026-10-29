@@ -9,22 +9,18 @@ The KG is written by ``src/kg/builder.py`` as files under
 ``data/workspaces/<kg>/`` (``kg.json``, ``node_features.pt``,
 ``edge_indices.pt``, ``num_nodes.json``).
 
-**Reading them is currently duplicated.** ``src/kg/data_loader.py`` does *not*
-read these files — it receives an already-loaded ``graph_data`` dictionary. The
-files are loaded by each consumer that needs them, and then handed to the
-dataloader. Measurement, serving and training read them through
-``file_storage``, and ``scripts/setup_demo.py`` reads them through training;
-``scripts/build_index.py`` still loads them independently. Every copy depends
-on the same filenames and the same serialisation format, so a format change
-breaks all of them at once.
+**Reading them is no longer duplicated.** ``src/kg/data_loader.py`` does *not*
+read these files — it receives an already-loaded ``graph_data`` dictionary.
+Measurement, serving and training read them through ``file_storage``, and
+``scripts/setup_demo.py`` reads them through training; the last independent
+copy, ``scripts/build_index.py``'s, went with its ``--checkpoint`` (K7).
 
 Modules:
   - ``file_storage.py`` — the shared reader. **Started, not finished.** Its
     callers so far are `scripts/measure_scorer.py` (through
     `read_measurement_inputs`, contract M2.1, S7), serving,
     `src/inference/pipeline.py`, and training, `scripts/train_model.py` (S6 and
-    S8); the two listed above still have their own
-    copies, and collapsing them is the rest of P1.
+    S8).
   - ``graph_db.py``     — reserved, empty: a graph-database backend
 
 **Scope guardrail for whoever implements ``file_storage.py`` (P1).** Its first

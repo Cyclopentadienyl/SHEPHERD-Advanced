@@ -63,9 +63,10 @@ PRECONDITION FOR REUSE — define the similarity contract first.
 WHAT IS REUSABLE, AND WHAT IS NOT.
     The backends and the factory here are general vector-index mechanics and are
     reusable as they stand. ``scripts/build_index.py`` is **not** a ready-made text
-    pipeline — its CLI is ``--checkpoint / --data-dir / --embeddings / --node-types``,
-    i.e. it builds an index from GNN node embeddings. A text-retrieval integration
-    needs its own encoder, entity universe, metadata and compatibility contract.
+    pipeline — its CLI is ``--embeddings / --node-types``, i.e. it builds an index
+    from node embeddings exported beforehand, and builds no model (K7 removed its
+    ``--checkpoint``). A text-retrieval integration needs its own encoder, entity
+    universe, metadata and compatibility contract.
 
 Operator entry point: ``make vector-index ARGS="..."``.
 Background and the decision record: ``docs/RETRIEVAL_AND_CANDIDATE_DISCOVERY_FINDINGS.md``.

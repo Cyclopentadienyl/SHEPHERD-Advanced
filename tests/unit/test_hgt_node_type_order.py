@@ -226,11 +226,10 @@ def test_ten_node_types_take_the_grouped_branch_by_default_and_agree_with_the_lo
 def test_the_formal_build_paths_agree_across_branches(grouped, tmp_path):
     """The formal paths: the model `train_model` builds over a workspace, on a
     batch from the loader training uses, whose type order differs from the
-    model's; its checkpoint, as the Trainer writes it, rebuilt by serving's
-    `build_shepherd_model` over the full graph; and the same checkpoint through
-    `build_index`."""
+    model's; and its checkpoint, as the Trainer writes it, rebuilt by serving's
+    `build_shepherd_model` over the full graph. (`build_index` rebuilt the same
+    checkpoint by its own builder until K7 removed its `--checkpoint`, TM10.)"""
     import scripts.train_model as train_model
-    from scripts.build_index import extract_embeddings_from_checkpoint
     from src.kg.data_loader import DataLoaderConfig, create_diagnosis_dataloader
     from src.kg.storage.file_storage import read_graph_artifacts, read_samples
     from src.models.gnn.shepherd_gnn import build_shepherd_model
@@ -271,12 +270,6 @@ def test_the_formal_build_paths_agree_across_branches(grouped, tmp_path):
         "serving, full graph": lambda: served(
             graph_data["x_dict"], graph_data["edge_index_dict"]
         ),
-        "build_index": lambda: {
-            node_type: torch.from_numpy(value)
-            for node_type, value in extract_embeddings_from_checkpoint(
-                str(checkpoint_path), str(data_dir), device="cpu"
-            )[0].items()
-        },
     }
     for path, embed in paths.items():
         set_flag(False)

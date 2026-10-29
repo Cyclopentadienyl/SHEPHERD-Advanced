@@ -357,6 +357,7 @@ def test_the_real_phase_passes_and_leaves_the_workspace_as_it_was(
         operator = tmp_path_factory.mktemp("operator")
         _operator_shell(monkeypatch, operator)
     probe = _probe()
+    from scripts.setup_demo import demo_task_training
     from src.kg.workspace import write_workspace
     from src.utils.checkpoint_io import read_checkpoint
 
@@ -394,7 +395,7 @@ def test_the_real_phase_passes_and_leaves_the_workspace_as_it_was(
     # demo's ShepherdGNN settings: the deployment's run trains it by the
     # reference recipe, whose checkpoints are hundreds of megabytes.
     probe.phase_m2_real(report, work, real, config, reference, root, device="cpu",
-                        task_sizes=probe._demo_task_training())
+                        task_sizes=demo_task_training())
 
     phase = _statuses(report, "R")
     assert set(phase) == set(probe.M2_REAL_REQUIRED)

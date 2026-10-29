@@ -148,10 +148,10 @@ def write_workspace(
         samples: when given, cut an allocation and generate cohorts with a
             `split_manifest.json`. When omitted, only the graph is written.
             That is a real mode, not a broken one — `compute_shortest_paths.py`
-            reads `kg.json`, `build_index.py` reads the tensors, and the API
-            serves path-reasoning from `kg.json` alone — but it is **not a
-            trainable or GNN-servable workspace**, because nothing records which
-            export those tensors are. Completing it means running this function
+            reads `kg.json` — but it is **not a trainable or servable
+            workspace**, because nothing records which export those tensors
+            are (and since K7 nothing is served without a model trained on a
+            workspace). Completing it means running this function
             again with budgets, not adding a manifest to what is already there:
             only the writer that exported the tensors can vouch for their
             digests.

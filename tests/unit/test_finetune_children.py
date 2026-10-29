@@ -524,9 +524,11 @@ def test_the_api_is_strict_and_gated(base, monkeypatch):
     from src.api.services import training_manager as service
     from tests.fixtures.operator_access import OPERATOR_BASE_URL, operator_mode
 
-    seen = []
+    seen, based = [], []
     monkeypatch.setattr(service.training_manager, "start_finetune",
                         lambda inputs, **kw: seen.append(inputs) or {"success": True})
+    monkeypatch.setattr(service.training_manager, "start_training",
+                        lambda config, **kw: based.append(config) or {"success": True})
     body = {"data_dir": str(base[0]), "finetune_from": str(base[1]), "tasks": ["disease"]}
     assert TestClient(app, base_url="http://192.0.2.10").post(
         "/api/v1/training/finetune", json=body).status_code == 403
@@ -537,8 +539,14 @@ def test_the_api_is_strict_and_gated(base, monkeypatch):
     for extra in ({"task": "disease"}, {"learning_stage": "finetune"}):
         assert client.post("/api/v1/training/finetune",
                            json={**body, **extra}).status_code == 422
+    # The training start is a base start (K7, TM11): a finetune there is
+    # refused by the request; a base reaches the runner as the WebUI's does.
     assert client.post("/api/v1/training/start",
-                       json={"data_dir": "x", "learning_stage": "base"}).status_code == 422
+                       json={"data_dir": "x", "learning_stage": "finetune",
+                             "finetune_from": str(base[1])}).status_code == 422
+    assert client.post("/api/v1/training/start",
+                       json={"data_dir": "x", "learning_stage": "base"}).status_code == 200
+    assert based == [{"data_dir": "x", "learning_stage": "base"}]
     assert len(seen) == 1
     # It reads the whole base: FastAPI runs a plain def in its threadpool.
     import inspect

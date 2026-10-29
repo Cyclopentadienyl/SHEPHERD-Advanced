@@ -27,9 +27,10 @@ refusal from them, with the action for where the fingerprint was shown):
 
 Through the real runner, the real training process, the real route and the
 console's handlers. The runner's and the process's tests continue ShepherdGNN
-runs, which the API and the CLI still continue until K7; the console's
-continue model bundle bases, since the dashboard offers model records only
-(K6 decision 1).
+runs, which the CLI and the runner's stage-less start still continue until
+K8; the route's and the console's continue model bundle bases, since the API
+is a strict base start (K7) and the dashboard offers model records only (K6
+decision 1).
 
 Module: tests/unit/test_training_parent_expected.py
 """
@@ -310,15 +311,18 @@ def _client(monkeypatch):
     return TestClient(app, base_url=OPERATOR_BASE_URL), training_routes
 
 
-def test_an_api_start_is_bound_to_the_parent_with_or_without_the_parameter(case, monkeypatch):
+def test_an_api_start_is_bound_to_the_parent_with_or_without_the_parameter(bundle_case,
+                                                                            monkeypatch):
     """The route's optional ``expected_parent_sha256``: a different parent is
     refused (409) by the runner's preview; without it, a parent replaced after
-    the preview is refused by the process."""
+    the preview is refused by the process. The route continues a base (K7,
+    TM11: a strict base start), so the parents are paused model bundle bases."""
+    case = bundle_case
     client, routes = _client(monkeypatch)
     fresh = tm.TrainingManager()
     monkeypatch.setattr(routes, "training_manager", fresh)
     shown = _sha(case["parents"]["a"])
-    body = {"data_dir": str(case["ws"]), "device": "cpu", "num_workers": 0,
+    body = {"data_dir": str(case["ws"]), "learning_stage": "base", "device": "cpu",
             "resume_from": str(case["parents"]["a"])}
 
     with patch.object(tm.subprocess, "Popen") as popen:
@@ -353,9 +357,10 @@ def test_the_route_passes_the_parent_digest_to_the_service(monkeypatch):
         return {"success": True}
 
     monkeypatch.setattr(routes.training_manager, "start_training", start)
-    assert client.post("/api/v1/training/start", json={}).status_code == 200
+    body = {"data_dir": "data/workspaces/x", "learning_stage": "base"}
+    assert client.post("/api/v1/training/start", json=body).status_code == 200
     assert seen["expected_parent_sha256"] is None
-    client.post(f"/api/v1/training/start?expected_parent_sha256={'b' * 64}", json={})
+    client.post(f"/api/v1/training/start?expected_parent_sha256={'b' * 64}", json=body)
     assert seen["expected_parent_sha256"] == "b" * 64
 
 

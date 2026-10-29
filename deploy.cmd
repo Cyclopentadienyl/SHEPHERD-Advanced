@@ -247,10 +247,11 @@ echo   3. Real data pipeline (manual HPO download required first;
 echo      see data\external\README.md for the required annotation files).
 echo      --generate-samples is not optional: without it the workspace has
 echo      no split manifest, and training and serving both refuse it. Train in a
-echo      window where SHEPHERD_WORKSPACES_ROOT is set as in step 2.
+echo      window where SHEPHERD_WORKSPACES_ROOT is set as in step 2: a base first,
+echo      then its task models on the dashboard's Fine-tune page (Research, Prepare)
+echo      or with train_model.py --stage finetune --task TASK --finetune-from BASE.
 echo      .venv\Scripts\python.exe scripts\build_knowledge_graph.py --workspace data\workspaces\main --external-dir data\external --generate-samples --num-train 200000 --num-val 40000
-echo      .venv\Scripts\python.exe scripts\compute_shortest_paths.py --kg-path data\workspaces\main\kg.json --output-dir data\workspaces\main
-echo      .venv\Scripts\python.exe scripts\train_model.py --data-dir data\workspaces\main --epochs 50
+echo      .venv\Scripts\python.exe scripts\train_model.py --data-dir data\workspaces\main --stage base
 echo.
 echo   4. Launch the system:
 echo      launch_shepherd.cmd

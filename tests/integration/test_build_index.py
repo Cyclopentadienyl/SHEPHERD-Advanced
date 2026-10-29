@@ -16,9 +16,12 @@ embedding loading, ID mapping, node-type selection, or artifact naming.
 This exercises the script the way an operator does: a subprocess, real
 arguments, real files on disk, then load the artifacts back and search them.
 
-The `--embeddings` (pre-exported NPZ) path is used rather than `--checkpoint`
-because `build_index.py` imports torch lazily inside a function, so this path
-needs neither torch nor PyG and runs wherever numpy and the backend are present.
+`--embeddings` (a pre-exported NPZ) is the builder's only input: since K7
+(TM10) it builds no model, so `--checkpoint`, which rebuilt a ShepherdGNN by
+guessing its structure from key names, is refused like any unknown argument,
+and an embeddings file it cannot index (unreadable, an array that is not 2-D,
+arrays of two widths) is refused with nothing written. It needs neither torch
+nor PyG and runs wherever numpy and the backend are present.
 `--backend voyager` is explicit: `auto` would resolve differently per platform
 and turn this into a test of the resolver rather than of the builder.
 """
@@ -169,6 +172,67 @@ def test_builder_requires_a_source():
     """
     result = _run_builder("--config", "configs/deployment.yaml")
     assert result.returncode != 0
-    assert "--checkpoint" in result.stderr and "--embeddings" in result.stderr, (
-        f"expected a message naming the required source arguments, got:\n{result.stderr}"
+    assert "--embeddings" in result.stderr, (
+        f"expected a message naming the required source argument, got:\n{result.stderr}"
     )
+
+
+def test_a_checkpoint_is_not_an_input(npz_embeddings, tmp_path):
+    """K7 (TM10): the builder no longer rebuilds a model from a checkpoint, and
+    nothing guesses a task model's vectors in its place: `--checkpoint` (and
+    its `--data-dir`) are refused before anything is read or written."""
+    npz_path, _, _ = npz_embeddings
+    out_base = tmp_path / "vector_index"
+    alone = _run_builder("--checkpoint", tmp_path / "model.pt", "--data-dir", tmp_path,
+                         "--output", out_base, "--backend", "voyager")
+    assert alone.returncode != 0, alone.stdout
+    assert "required: --embeddings" in alone.stderr, alone.stderr
+    beside = _run_builder("--checkpoint", tmp_path / "model.pt", "--embeddings", npz_path,
+                          "--output", out_base, "--backend", "voyager")
+    assert beside.returncode != 0, beside.stdout
+    assert "unrecognized arguments: --checkpoint" in beside.stderr, beside.stderr
+    assert list(tmp_path.glob("vector_index*")) == []
+
+
+def _refused(tmp_path, path, says):
+    out_base = tmp_path / "vector_index"
+    result = _run_builder("--embeddings", path, "--output", out_base,
+                          "--node-types", "disease", "phenotype", "--backend", "voyager")
+    said = result.stdout + result.stderr
+    assert result.returncode != 0, said
+    assert "Refused:" in said and says in said and "Nothing was written." in said, said
+    assert "Traceback" not in said, said
+    assert list(tmp_path.glob("vector_index*")) == [], "a refused file left an artifact"
+
+
+@pytest.mark.parametrize("arrays, says", [
+    ({"disease": np.zeros((4, 16), np.float32), "phenotype": np.zeros((4, 8), np.float32)},
+     "the arrays differ in width"),
+    ({"disease": np.zeros(16, np.float32)}, "'disease' has shape (16,)"),
+    ({"disease": np.zeros((4, 2, 8), np.float32)}, "'disease' has shape (4, 2, 8)"),
+    ({"disease": np.zeros((0, 16), np.float32)}, "'disease' has shape (0, 16)"),
+], ids=["two-widths", "one-dimensional", "three-dimensional", "no-rows"])
+def test_an_array_of_the_wrong_dimension_is_refused(tmp_path, arrays, says):
+    """One index dimension needs one width, and a vector per row: the width
+    used to be the last array's, so another type's vectors went into an index
+    of the wrong dimension."""
+    path = tmp_path / "embeddings.npz"
+    np.savez(path, **arrays)
+    _refused(tmp_path, path, says)
+
+
+@pytest.mark.parametrize("write, says", [
+    (lambda p: p.write_bytes(b"not an archive"), "cannot be read as an embeddings file"),
+    (lambda p: p.write_bytes(b"PK\x03\x04truncated"), "cannot be read as an embeddings file"),
+    (lambda p: p.write_bytes(b""), "cannot be read as an embeddings file"),
+    (lambda p: np.save(p.with_suffix(".npy"), np.zeros((4, 16))) or
+     p.with_suffix(".npy").rename(p), "it holds one array, not one per node type"),
+    (lambda p: np.savez(p, disease=np.array([{"a": 1}], dtype=object)),
+     "cannot be read as an embeddings file"),
+], ids=["text", "broken-zip", "empty", "single-array", "pickled-objects"])
+def test_a_bad_file_is_refused_and_never_unpickled(tmp_path, write, says):
+    """A file the builder cannot read as node-type arrays is refused in its
+    words, not a traceback; an object array is refused, never unpickled."""
+    path = tmp_path / "embeddings.npz"
+    write(path)
+    _refused(tmp_path, path, says)

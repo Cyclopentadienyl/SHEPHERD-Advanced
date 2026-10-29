@@ -1,11 +1,15 @@
-"""The demo setup's printed serving command, under contract M3c's device rule.
+"""The demo setup's model and printed steps.
 
-Serving refuses `auto` without CUDA, as training does, so the command
-`scripts/setup_demo.py` prints after `--train-model` names the device the demo
-was trained on. These tests hold the command to that, and run it the way the
+`--train-model` trains a base and one disease child of it through the
+production trainer (K7, TM3: it used to train a ShepherdGNN of its own), and
+the command it prints serves that child. Serving refuses `auto` without CUDA,
+as training does (contract M3c), so the command names the device the demo was
+trained on. These tests hold the command to that, and run it the way the
 service would: a demo trained on the CPU here must be served by the very
-environment the command sets, on this host without CUDA. Without a model no
-serving command is printed: since K7 nothing is served without one.
+environment the command sets, on this host without CUDA, and answer a disease
+query. Without a model no serving command is printed: since K7 nothing is
+served without one, and the training it teaches is the two stages (a base,
+then its disease model), never a stage-less run or a shortest-path step (D8).
 
 Module: tests/unit/test_setup_demo.py
 """
@@ -51,7 +55,7 @@ def test_the_command_names_the_device_the_demo_trained_on(trained_on, named):
 @pytest.mark.parametrize("device, named", [("cpu", "cpu"), ("auto", "cuda")])
 def test_the_printed_command_carries_shepherd_device(monkeypatch, capsys, tmp_path, device,
                                                      named):
-    checkpoint = tmp_path / "demo" / "runs" / "gat" / "demo" / "checkpoints" / "best.pt"
+    checkpoint = tmp_path / "demo" / "runs" / "gatv2" / "demo-disease" / "checkpoints" / "last.pt"
     seen = {}
 
     def _trained(workspace, num_epochs, device):
@@ -73,39 +77,79 @@ def test_the_printed_command_carries_shepherd_device(monkeypatch, capsys, tmp_pa
 def test_without_a_model_no_serving_command_is_printed(monkeypatch, capsys, tmp_path):
     """K7 (PATH1): a graph is never served without a model, so a workspace
     with no model gets no command to start the API, only the reason and how
-    to train one; the hint says what a host without CUDA must add."""
-    printed, _ = _printed(monkeypatch, capsys, tmp_path)
+    to train one; the hint says what a host without CUDA must add. The
+    training it teaches is a base, then its disease model fine-tuned from it
+    (K7, D8): no stage-less run and no shortest-path step."""
+    printed, output = _printed(monkeypatch, capsys, tmp_path)
     assert _environment(printed) == {}
     assert "uvicorn" not in printed and "path-reasoning" not in printed
     assert "this workspace has nothing to serve yet" in printed
     assert "refuses them (503) until one\nis loaded" in printed
     assert "add --device cpu" in printed
+    trains = [line.strip() for line in printed.splitlines() if "train_model.py" in line]
+    assert trains == [
+        f"python scripts/train_model.py --data-dir {output} --stage base",
+        f"python scripts/train_model.py --data-dir {output} --stage finetune \\",
+    ]
+    assert "--task disease --finetune-from <base run>/checkpoints/last.pt" in printed
+    assert "compute_shortest_paths" not in printed and "--epochs" not in printed
 
 
-def test_a_demo_trained_on_the_cpu_is_served_by_the_printed_environment(
+def test_a_demo_trained_on_the_cpu_is_a_disease_child_the_printed_environment_serves(
         monkeypatch, capsys, tmp_path):
-    """The command a CPU-only host is given serves here, with no CUDA: the
-    service reads the environment it sets and identifies what it serves."""
+    """K7 (TM3): `--train-model --device cpu` trains a base and one disease
+    child of it through the production trainer, and the command printed
+    names the child: a finetuned disease model with a model spec, whose
+    parent is the base this run trained, and no ShepherdGNN run. The service
+    builds it from the environment the command sets (`build_pipeline`, the
+    serving builder), on this host without CUDA, and answers a disease query
+    with it."""
     pytest.importorskip("torch")
     import torch
 
     if torch.cuda.is_available():
         pytest.skip("shows the CPU-only host's case; this host has CUDA")
-    printed, _ = _printed(monkeypatch, capsys, tmp_path, "--train-model", "--device", "cpu",
-                          "--epochs", "1")
+    printed, output = _printed(monkeypatch, capsys, tmp_path, "--train-model", "--device", "cpu",
+                               "--epochs", "1")
     environment = _environment(printed)
     assert environment["SHEPHERD_DEVICE"] == "cpu"
+
+    from src.models.bundle.record import has_model_spec
+    from src.utils.checkpoint_io import read_checkpoint
+
+    child = Path(environment["SHEPHERD_CHECKPOINT_PATH"])
+    (base,) = (output / "runs" / "gatv2").glob("*_demo-base_*/checkpoints/last.pt")
+    assert child.parent.parent.parent == base.parent.parent.parent
+    assert child.parent.parent.name.split("_")[1] == "demo-disease" and child.name == "last.pt"
+    records = {name: read_checkpoint(path, map_location="cpu", weights_only=True)
+               for name, path in (("base", base), ("child", child))}
+    child_record = records["child"].checkpoint
+    assert has_model_spec(child_record) and has_model_spec(records["base"].checkpoint)
+    assert (child_record["learning_stage"], child_record["task"]) == ("finetune", "disease")
+    assert records["base"].checkpoint["learning_stage"] == "base"
+    assert child_record["parent"]["sha256"] == records["base"].identity.sha256
+    assert sorted(p.name for p in (output / "runs").iterdir()) == ["gatv2"], "no ShepherdGNN run"
+
     for name, value in environment.items():
         monkeypatch.setenv(name, value)
 
     import src.api.main as api
+    from src.core.types import DISEASE_TASK, NodeType, PatientPhenotypes
 
     bundle = api.build_pipeline()
     identity = bundle.config["served_identity"]
     assert bundle.config["gnn_ready"]
     assert identity["checkpoint"]["state"] == "verified"
+    assert identity["checkpoint"]["sha256"] == records["child"].identity.sha256
     assert (identity["settings"]["device"], identity["settings"]["device_requested"]) == (
         "cpu", "cpu")
+    result = bundle.pipeline.run(
+        patient_input=PatientPhenotypes(patient_id="demo", phenotypes=["HP:0001250",
+                                                                        "HP:0001263"]),
+        top_k=3, include_explanations=False)
+    diseases = {node.id for node in bundle.kg.get_nodes_by_type(NodeType.DISEASE)}
+    assert result.result_kind == DISEASE_TASK and len(result.candidates) == 3
+    assert {candidate.disease_id for candidate in result.candidates} <= diseases
 
     # The same command without the device is what serving refuses here.
     from src.inference.pipeline import ServingDeviceUnavailable
@@ -122,7 +166,7 @@ def test_the_printed_commands_do_not_reload(monkeypatch, capsys, tmp_path):
     2026-10-22), so the printed command has no --reload (without a model none is
     printed). The training hint says the lock must be configured, since
     training refuses without it."""
-    checkpoint = tmp_path / "demo" / "runs" / "gat" / "demo" / "checkpoints" / "best.pt"
+    checkpoint = tmp_path / "demo" / "runs" / "gatv2" / "demo-disease" / "checkpoints" / "last.pt"
     monkeypatch.setattr(setup_demo, "train_demo_model", lambda *a: checkpoint)
     trained, _ = _printed(monkeypatch, capsys, tmp_path, "--train-model")
     plain, output = _printed(monkeypatch, capsys, tmp_path / "plain")

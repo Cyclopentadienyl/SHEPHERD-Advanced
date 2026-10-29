@@ -2303,31 +2303,6 @@ def _train_run(
     return run_checkpoint_dir(run)
 
 
-def _demo_task_training() -> Dict[str, Dict[str, Any]]:
-    """The demo's sizes for the probe's disease task model
-    (`_train_disease_child`), by stage, as `_DEMO_TRAINING` is the demo's
-    ShepherdGNN settings: the reference base spec shrunk (input 8, two layers
-    of width 4 with 2 heads) and small batches, hops and samples, so the base
-    and the child each train in seconds on CPU. Every other setting is the
-    stage's reference recipe (`src.config.recipe`), which the trainer fills
-    and records. The real phase passes none: the reference recipe itself."""
-    import dataclasses
-
-    from src.models.bundle import reference_spec
-    from src.models.bundle.spec import InputSpec
-
-    spec = reference_spec("base")
-    small = dataclasses.replace(
-        spec, input=InputSpec(dim=8),
-        encoder=dataclasses.replace(spec.encoder, layers=2, hidden=4, output=4, heads=2),
-    ).validate()
-    return {
-        "base": {"model_spec": small.to_dict(), "batch_size": 32, "num_neighbors": [4, 4]},
-        "disease": {"batch_size": 8, "num_neighbors": [3, 3], "candidate_sample_size": 8,
-                    "sparse_sample_size": 8},
-    }
-
-
 def _train_disease_child(
     data_dir: Path, base_run: Path, child_run: Path, device: str, *,
     sizes: Optional[Mapping[str, Mapping[str, Any]]] = None,
@@ -2343,7 +2318,9 @@ def _train_disease_child(
 
     The stage's reference recipe fills every setting not given here and
     records which it filled (`apply_stage_recipe`); `sizes` (by "base" and
-    "disease") replaces some for a smaller run (`_demo_task_training`), and
+    "disease") replaces some for a smaller run (the demo graph's,
+    `scripts/setup_demo.demo_task_training`, which `setup_demo.py
+    --train-model` trains at), and
     with none the runs are the reference recipe's, the epochs aside. Every
     setting given counts as the operator's, as a configuration file's keys
     do. Each run writes only into its run directory (contract M3a-2)."""
@@ -3097,7 +3074,7 @@ M5_CHECKPOINT = "last.pt"
 #: of the runs' directory in the workspace.
 _M5_ARCHITECTURE = "gat"
 #: The encoder kind of the reference model spec (`EncoderSpec.kind`), which
-#: the demo's shrunk spec keeps (`_demo_task_training`): the directory the
+#: the demo's shrunk spec keeps (`setup_demo.demo_task_training`): the directory the
 #: disease task model's runs are filed under (K2: a bundle run is filed under
 #: its encoder kind).
 _M5_TASK_ARCHITECTURE = "gatv2"
@@ -4575,9 +4552,11 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
                 "why)")
             state["task_child_tried"] = True
             runs = state["workspace"] / RUNS_DIRNAME / _M5_TASK_ARCHITECTURE
+            from scripts.setup_demo import demo_task_training
+
             path, seconds = _train_disease_child(
                 state["workspace"], runs / M5_TASK_BASE_RUN, runs / M5_TASK_RUN, device,
-                sizes=_demo_task_training())
+                sizes=demo_task_training())
             state["task_child"] = {"path": path, "sha256": _read_run_checkpoint(path)["sha256"],
                                    "training_seconds": seconds}
         return state["task_child"]
@@ -5750,7 +5729,7 @@ def phase_m2_real(
 
     RW2 measures a disease child the probe trains on the workspace by the
     reference recipe, one epoch each for the base and the child; `task_sizes`
-    replaces some of its sizes (`_demo_task_training`), as the CPU test does
+    replaces some of its sizes (`setup_demo.demo_task_training`), as the CPU test does
     for a workspace of the demo's size. The deployment's run passes none."""
     print("\nR. Contract M2 on real data, with M4's flow")
     from src.utils.fingerprint import file_sha256

@@ -46,6 +46,10 @@ def workspace(built, tmp_path):
     return ws
 
 
+#: The smallest base start the route takes (K7, TM11: its workspace and stage).
+BASE_START = {"data_dir": "data/workspaces/x", "learning_stage": "base"}
+
+
 def _fingerprint(ws: Path) -> str:
     from src.kg.artifacts import read_split_manifest
 
@@ -185,7 +189,7 @@ def test_the_route_takes_the_same_check_through_the_one_start_path(workspace, mo
     shown = _fingerprint(workspace)
     with patch("subprocess.Popen", return_value=FakeProcess(pid=9)) as popen:
         ok = client.post(f"/api/v1/training/start?expected_dataset_fingerprint={shown}",
-                         json={"data_dir": str(workspace)})
+                         json={"data_dir": str(workspace), "learning_stage": "base"})
         assert ok.status_code == 200, ok.text
         written = Path(ok.json()["config_path"]).read_text()
         # The process gets it as an argument it checks on its own manifest read
@@ -196,7 +200,7 @@ def test_the_route_takes_the_same_check_through_the_one_start_path(workspace, mo
         fresh._last["training"].done.wait(5)
         _rewrite_manifest(workspace)
         refused = client.post(f"/api/v1/training/start?expected_dataset_fingerprint={shown}",
-                              json={"data_dir": str(workspace)})
+                              json={"data_dir": str(workspace), "learning_stage": "base"})
     assert refused.status_code == 409
     assert "The dataset changed since it was shown; select it again." in refused.text
     assert popen.call_count == 1
@@ -206,7 +210,8 @@ def test_the_route_refuses_a_malformed_fingerprint_before_the_service(monkeypatc
     client, routes = _client(monkeypatch)
     monkeypatch.setattr(routes.training_manager, "start_training",
                         lambda *a, **k: pytest.fail("the service was reached"))
-    response = client.post("/api/v1/training/start?expected_dataset_fingerprint=abc", json={})
+    response = client.post("/api/v1/training/start?expected_dataset_fingerprint=abc",
+                           json=BASE_START)
     assert response.status_code == 422
 
 
@@ -219,9 +224,10 @@ def test_the_route_passes_the_fingerprint_to_the_service(monkeypatch):
         return {"success": True}
 
     monkeypatch.setattr(routes.training_manager, "start_training", start)
-    assert client.post("/api/v1/training/start", json={}).status_code == 200
+    assert client.post("/api/v1/training/start", json=BASE_START).status_code == 200
     assert seen["expected_dataset_fingerprint"] is None
-    client.post(f"/api/v1/training/start?expected_dataset_fingerprint={'b' * 64}", json={})
+    client.post(f"/api/v1/training/start?expected_dataset_fingerprint={'b' * 64}",
+                json=BASE_START)
     assert seen["expected_dataset_fingerprint"] == "b" * 64
 
 

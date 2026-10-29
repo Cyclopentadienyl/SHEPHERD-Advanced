@@ -76,6 +76,14 @@ def sample_config():
 
 
 @pytest.fixture
+def base_body(tmp_dirs):
+    """A base start as POST /training/start takes it (K7, TM11): the WebUI
+    base form's call, over HTTP."""
+    return {"data_dir": tmp_dirs["data_dir"], "learning_stage": "base", "device": "cpu",
+            "num_epochs": 10}
+
+
+@pytest.fixture
 def sample_metrics_log(tmp_dirs):
     """Write a sample metrics log file."""
     log_dir = Path(tmp_dirs["log_dir"])
@@ -427,46 +435,51 @@ class TestTrainingAPIEndpoints:
         assert response.status_code == 200
         assert [c["filename"] for c in response.json()] == ["last.pt"]
 
-    def test_start_training(self, sample_config):
+    def test_start_training(self, base_body):
         mock_proc = FakeProcess(pid=99999)
 
         with patch("subprocess.Popen", return_value=mock_proc):
-            resp = self.client.post("/api/v1/training/start", json=sample_config)
+            resp = self.client.post("/api/v1/training/start", json=base_body)
 
         assert resp.status_code == 200
         data = resp.json()
         assert data["success"] is True
         assert data["status"] == "running"
+        assert "/runs/gatv2/" in data["run_dir"], "filed under the reference spec's encoder"
 
     def test_stop_training_not_running(self):
         resp = self.client.post("/api/v1/training/stop")
         assert resp.status_code == 409
 
-    def test_a_retired_location_is_refused_by_the_api(self, sample_config):
+    def test_a_retired_location_is_refused_by_the_api(self, base_body):
         with patch("subprocess.Popen") as popen:
             resp = self.client.post("/api/v1/training/start",
-                                    json={**sample_config, "checkpoint_dir": "elsewhere"})
+                                    json={**base_body, "checkpoint_dir": "elsewhere"})
         assert resp.status_code == 422
         assert "checkpoint_dir" in resp.text
         popen.assert_not_called()
 
-    def test_only_the_fields_the_caller_set_reach_the_training_process(self):
-        """Defaults are the training script's own; a continued run inherits
-        what the caller did not set (contract M3a-3)."""
+    def test_only_the_fields_the_caller_set_reach_the_training_process(self, tmp_dirs):
+        """The reference recipe fills every base setting not set, and the
+        training process records which (contract M3a-3): the configuration
+        written is the caller's fields, the stage and the run directory, as
+        the WebUI base form's start writes it."""
         import yaml
         mock_proc = FakeProcess(pid=4)
         with patch("subprocess.Popen", return_value=mock_proc):
-            resp = self.client.post("/api/v1/training/start",
-                                    json={"num_epochs": 3, "device": "cpu"})
+            resp = self.client.post("/api/v1/training/start", json={
+                "data_dir": tmp_dirs["data_dir"], "learning_stage": "base", "num_epochs": 3,
+                "device": "cpu"})
         written = yaml.safe_load(Path(resp.json()["config_path"]).read_text())
-        assert set(written) == {"num_epochs", "device", "run_dir"}
+        assert written == {"data_dir": tmp_dirs["data_dir"], "learning_stage": "base",
+                           "num_epochs": 3, "device": "cpu", "run_dir": resp.json()["run_dir"]}
 
-    def test_a_retired_location_is_refused_even_empty(self, sample_config):
+    def test_a_retired_location_is_refused_even_empty(self, base_body):
         """The request is strict (BACKLOG 54): a field it does not define, a
         retired location among them, is refused, empty or not, never dropped."""
         with patch("subprocess.Popen") as popen:
             resp = self.client.post("/api/v1/training/start",
-                                    json={**sample_config, "checkpoint_dir": ""})
+                                    json={**base_body, "checkpoint_dir": ""})
         assert resp.status_code == 422 and "checkpoint_dir" in resp.text
         popen.assert_not_called()
 
@@ -477,7 +490,7 @@ class TestTrainingRoutesAreGated:
     opened, unless the deployment is in mode M1 and the request arrived on
     loopback. Status and metrics stay open."""
 
-    GATED = [("post", "/api/v1/training/start", {"num_epochs": 1, "device": "cpu"}),
+    GATED = [("post", "/api/v1/training/start", {"data_dir": "x", "learning_stage": "base"}),
              ("post", "/api/v1/training/stop", None),
              ("get", "/api/v1/training/checkpoints", None)]
 
@@ -560,32 +573,54 @@ class TestSystemAPIEndpoint:
         assert "ram" in data
 
 
-class TestTrainingRequestValidation:
-    """TrainingStartRequest field + cross-field validation."""
+class TestTheBaseStartRequest:
+    """TrainingStartRequest (K7, TM11): a strict base start, its fields'
+    bounds the field spec's."""
 
     def _req(self, **overrides):
         from src.api.routes.training import TrainingStartRequest
 
-        return TrainingStartRequest(**overrides)
+        return TrainingStartRequest(**{"data_dir": "data/workspaces/x", "learning_stage": "base",
+                                       **overrides})
 
-    # -- WS1b: onecycle requires min_lr_ratio > 0; cosine/linear allow 0 --------
-    def test_onecycle_zero_min_lr_ratio_rejected(self):
+    def test_a_base_start_needs_its_workspace_and_its_stage(self):
+        from pydantic import ValidationError
+
+        from src.api.routes.training import TrainingStartRequest
+
+        for missing in ({"data_dir": "x"}, {"learning_stage": "base"}, {}):
+            with pytest.raises(ValidationError):
+                TrainingStartRequest(**missing)
+        assert self._req().learning_stage == "base"
+
+    @pytest.mark.parametrize("stage", ["finetune", "pretrain", None, ""])
+    def test_another_stage_is_refused(self, stage):
         from pydantic import ValidationError
 
         with pytest.raises(ValidationError):
-            self._req(scheduler_type="onecycle", min_lr_ratio=0.0)
+            self._req(learning_stage=stage)
 
-    def test_cosine_zero_min_lr_ratio_allowed(self):
-        req = self._req(scheduler_type="cosine", min_lr_ratio=0.0)
-        assert req.min_lr_ratio == 0.0
+    @pytest.mark.parametrize("field, value", [
+        ("conv_type", "gat"), ("hidden_dim", 256), ("num_heads", 8), ("num_workers", 0),
+        ("min_lr_ratio", 0.01), ("diagnosis_weight", 1.0), ("use_ortholog_gate", True),
+        ("task", "disease"), ("finetune_from", "base.pt"), ("model_spec", {}),
+        ("run_dir", "/r"), ("unknown", 1),
+    ])
+    def test_a_shepherdgnn_or_unknown_field_is_refused(self, field, value):
+        from pydantic import ValidationError
 
-    def test_linear_zero_min_lr_ratio_allowed(self):
-        req = self._req(scheduler_type="linear", min_lr_ratio=0.0)
-        assert req.min_lr_ratio == 0.0
+        with pytest.raises(ValidationError):
+            self._req(**{field: value})
 
-    def test_onecycle_positive_min_lr_ratio_ok(self):
-        req = self._req(scheduler_type="onecycle", min_lr_ratio=0.01)
-        assert req.scheduler_type == "onecycle"
+    def test_a_setting_left_unset_is_the_recipes_not_the_requests(self):
+        """Nothing the caller did not set is sent: every base setting
+        defaults to unset, and the recipe fills it."""
+        from src.config.recipe import BASE
+
+        sent = self._req(num_epochs=5).model_dump(exclude_unset=True, exclude_none=True)
+        assert sent == {"data_dir": "data/workspaces/x", "learning_stage": "base",
+                        "num_epochs": 5}
+        assert {name: getattr(self._req(), name) for name in BASE} == dict.fromkeys(BASE)
 
     # -- WS3: batch_size upper bound raised to 2048 ----------------------------
     def test_batch_size_2048_accepted(self):
@@ -608,19 +643,43 @@ class TestTrainingRequestValidation:
         with pytest.raises(ValidationError):
             self._req(seed=2**32)
 
+    def test_extend_needs_a_parent(self):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError, match="extend_epochs continues a parent"):
+            self._req(extend_epochs=2)
+
 
 # ==============================================================================
-# A continued run's rules are checked on the settings it will use
-# (contract M3a review of 094b90d, P2-3)
+# The base start through the real route and job runner (K7, TM11)
 # ==============================================================================
 @pytest.fixture(scope="module")
-def heads3_parent(tmp_path_factory):
-    """A real paused parent with hidden_dim=18 and num_heads=3: valid for gat,
-    and invalid against the new-training default hidden_dim of 256."""
+def paused_base(tmp_path_factory):
+    """A real paused base (a small spec, one of its two epochs) on a base
+    workspace: a parent POST /training/start continues."""
+    import sys
+
+    scripts = str(Path(__file__).resolve().parents[2] / "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    import train_model
+    from tests.fixtures.base_workspace import write_base_workspace
+    from tests.unit.test_train_base_stage import _config
+
+    ws = write_base_workspace(tmp_path_factory.mktemp("paused-base"))
+    run = ws / "runs" / "gatv2" / "20261001-000000_base_aaaaaa"
+    train_model.train(*_config(ws, run, pause_after_epoch=1))
+    return ws, run / "checkpoints" / "last.pt"
+
+
+@pytest.fixture(scope="module")
+def shepherd_parent(tmp_path_factory):
+    """A real paused ShepherdGNN parent (a checkpoint with no model spec):
+    not a base, so the base start does not continue it."""
     import scripts.train_model as train_model
     from tests.fixtures.trainable_workspace import write_trainable_workspace
 
-    root = tmp_path_factory.mktemp("heads3")
+    root = tmp_path_factory.mktemp("shepherd-parent")
     ws = write_trainable_workspace(root / "ws")
     train_model.train(train_model.TrainConfig(
         data_dir=str(ws), run_dir=str(root / "parent"), device="cpu", hidden_dim=18,
@@ -643,66 +702,106 @@ def real_client(monkeypatch):
     app.include_router(router, prefix="/api/v1")
     process = FakeProcess(pid=11)
     with patch("subprocess.Popen", return_value=process) as popen:
-        yield TestClient(app, base_url=OPERATOR_BASE_URL), popen
+        yield TestClient(app, base_url=OPERATOR_BASE_URL), popen, manager
     process.finish(0)
 
 
-class TestContinuationRulesOnResolvedSettings:
-    def test_a_partial_request_inherits_before_its_rules_are_checked(self, heads3_parent,
-                                                                     real_client):
+def _nothing_started(manager, popen, *workspaces):
+    """A refused start started no process, claimed no GPU slot and named no
+    run directory (none exists under the workspaces)."""
+    popen.assert_not_called()
+    assert manager.active_job() is None and manager.run_dir is None
+    assert manager.get_status()["status"] == "idle"
+    for workspace in workspaces:
+        assert not (Path(workspace) / "runs" / "gat").exists()
+        assert not list(Path(workspace).glob("runs/*/*_run_*"))
+
+
+class TestTheBaseStartThroughTheRunner:
+    def test_a_refused_request_reaches_no_service(self, monkeypatch, tmp_path):
+        """Refused by the request itself (422): the service is never called."""
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from src.api.routes.training import router
+
+        class Untouchable:
+            def __getattr__(self, name):
+                pytest.fail(f"a refused request reached the service ({name})")
+
+        monkeypatch.setattr("src.api.routes.training.training_manager", Untouchable())
+        operator_mode(monkeypatch)
+        app = FastAPI()
+        app.include_router(router, prefix="/api/v1")
+        client = TestClient(app, base_url=OPERATOR_BASE_URL)
+        base = {"data_dir": str(tmp_path), "learning_stage": "base"}
+        for body in ({"data_dir": str(tmp_path)}, {**base, "learning_stage": "finetune"},
+                     {**base, "conv_type": "gat"}, {**base, "hidden_dim": 64},
+                     {**base, "task": "disease"}, {**base, "unknown": 1}, {},
+                     {**base, "num_epochs": 0}, {**base, "extend_epochs": 2}):
+            assert client.post("/api/v1/training/start", json=body).status_code == 422, body
+
+    @pytest.mark.parametrize("settings, fragment", [
+        ({"num_neighbors": [15, 10]}, "num_neighbors needs 3 numbers, one hop per encoder "
+                                      "layer, not 2"),
+        ({"num_neighbors": [15, 10, 5, 5]}, "not 4"),
+    ])
+    def test_a_setting_the_runner_refuses_starts_nothing(self, real_client, tmp_path, settings,
+                                                         fragment):
+        """The runner's one check (`_new_bundle_run`) refuses what the recipe or
+        the reference spec does not take (422), before the slot or a run
+        directory is claimed."""
+        client, popen, manager = real_client
+        resp = client.post("/api/v1/training/start", json={
+            "data_dir": str(tmp_path / "ws"), "learning_stage": "base", "device": "cpu",
+            **settings})
+        assert resp.status_code == 422, resp.text
+        assert fragment in resp.text and "Nothing was started." in resp.text
+        _nothing_started(manager, popen, tmp_path / "ws")
+
+    def test_a_base_continues_with_its_settings(self, paused_base, real_client):
+        """resume_from a paused base: started, every learning setting
+        inherited (none is written), the stage the parent's."""
         import yaml
 
-        ws, parent = heads3_parent
-        client, popen = real_client
+        ws, parent = paused_base
+        client, popen, manager = real_client
         resp = client.post("/api/v1/training/start", json={
-            "data_dir": str(ws), "resume_from": str(parent), "device": "cpu", "num_heads": 3})
-
+            "data_dir": str(ws), "learning_stage": "base", "resume_from": str(parent),
+            "device": "cpu"})
         assert resp.status_code == 200, resp.text
         popen.assert_called_once()
         written = yaml.safe_load(Path(resp.json()["config_path"]).read_text())
-        assert "hidden_dim" not in written, "hidden_dim is the parent's (18), inherited"
+        assert written["learning_stage"] == "base" and written["resume_from"] == str(parent)
+        assert not {"num_epochs", "batch_size", "model_spec"} & set(written), written
+        assert "/runs/gatv2/" in resp.json()["run_dir"]
 
-    def test_an_explicit_value_other_than_the_parents_is_still_refused(self, heads3_parent,
-                                                                       real_client):
-        ws, parent = heads3_parent
-        client, popen = real_client
-        for heads in (6, 4):     # 18 % 6 == 0; 18 % 4 != 0: refused as a conflict either way
-            resp = client.post("/api/v1/training/start", json={
-                "data_dir": str(ws), "resume_from": str(parent), "device": "cpu",
-                "num_heads": heads})
-            assert resp.status_code == 409 and "num_heads: the parent's 3" in resp.text
-        popen.assert_not_called()
-
-    def test_resolved_settings_that_break_a_rule_are_refused_with_422(self, heads3_parent,
-                                                                      real_client, tmp_path):
-        """A parent whose recorded settings break the rule (here edited; one
-        trained through the CLI, which does not apply the API's rules, could
-        record such a pair) is refused on the settings the run would use."""
-        ws, parent = heads3_parent
-        client, popen = real_client
-        record = torch_load(parent)
-        record["config"]["requested"]["num_heads"] = 4
-        edited = tmp_path / "edited.pt"
-        import torch
-        torch.save(record, edited)
-
+    def test_a_setting_other_than_the_parents_is_refused(self, paused_base, real_client):
+        ws, parent = paused_base
+        client, popen, manager = real_client
         resp = client.post("/api/v1/training/start", json={
-            "data_dir": str(ws), "resume_from": str(edited), "device": "cpu"})
-        assert resp.status_code == 422
-        assert "hidden_dim (18) must be divisible by num_heads (4)" in resp.text
-        popen.assert_not_called()
+            "data_dir": str(ws), "learning_stage": "base", "resume_from": str(parent),
+            "device": "cpu", "batch_size": 64})
+        assert resp.status_code == 409 and "batch_size: the parent's 16" in resp.text
+        _nothing_started(manager, popen, ws)
 
-    def test_a_new_run_still_validates_its_defaults(self, real_client):
-        client, popen = real_client
-        for body, fragment in (
-            ({"num_heads": 3}, "hidden_dim (256) must be divisible by num_heads (3)"),
-            ({"hidden_dim": 100, "num_heads": 8}, "hidden_dim (100) must be divisible"),
-            ({"scheduler_type": "onecycle", "min_lr_ratio": 0.0}, "onecycle"),
-            ({"extend_epochs": 2}, "extend_epochs continues a parent; give resume_from"),
-        ):
-            resp = client.post("/api/v1/training/start", json=body)
-            assert resp.status_code == 422 and fragment in resp.text, (body, resp.text)
-        popen.assert_not_called()
+    def test_a_parent_that_is_not_a_base_is_refused(self, shepherd_parent,
+                                                     trained_disease_child, real_client):
+        """A finetune child (here continued by extending it) and a checkpoint
+        with no model spec are not bases: the runner's preview of the parent
+        refuses the stage asked for, on its one read, before anything starts."""
+        client, popen, manager = real_client
+        for ws, parent, extra, said in (
+                (trained_disease_child["data_dir"], trained_disease_child["disease"],
+                 {"extend_epochs": 1}, "learning_stage: the parent's 'finetune', requested "
+                                       "'base'"),
+                (*shepherd_parent, {}, "learning_stage: the parent's None, requested "
+                                       "'base'")):
+            resp = client.post("/api/v1/training/start", json={
+                "data_dir": str(ws), "learning_stage": "base", "resume_from": str(parent),
+                "device": "cpu", **extra})
+            assert resp.status_code == 409 and said in resp.text, resp.text
+            _nothing_started(manager, popen, ws)
 
 
 def test_the_services_422_does_not_use_the_name_starlette_deprecated(monkeypatch):
@@ -725,12 +824,7 @@ def test_the_services_422_does_not_use_the_name_starlette_deprecated(monkeypatch
     client = TestClient(app, base_url=OPERATOR_BASE_URL)
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        resp = client.post("/api/v1/training/start", json={})
+        resp = client.post("/api/v1/training/start",
+                           json={"data_dir": "x", "learning_stage": "base"})
     assert resp.status_code == 422 and "refused by the service" in resp.text
     assert not [w for w in caught if "HTTP_422" in str(w.message)], [str(w.message) for w in caught]
-
-
-def torch_load(path):
-    import torch
-
-    return torch.load(path, map_location="cpu", weights_only=True)

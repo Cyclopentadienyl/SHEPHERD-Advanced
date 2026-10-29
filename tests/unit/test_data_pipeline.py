@@ -1526,7 +1526,7 @@ class TestBuildPathOrdering:
                 val_disease_fraction=0.15, sample_seed=42,
             )
             out = capsys.readouterr().out
-            step = out[out.index("# Train model"):]
+            step = out[out.index("# Train a base"):]
             return " ".join(line.strip().lstrip("#").strip() for line in
                             step[:step.index("scripts/train_model.py")].splitlines())
 

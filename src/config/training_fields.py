@@ -5,7 +5,8 @@ B-lite (config-authority decision, docs/CONFIG_AUTHORITY.md). This module is the
 declarative description of the ~30 user-facing training-start parameters that today live,
 hand-maintained and drifting, across three surfaces:
 
-    - the API request model   (src/api/routes/training.py :: TrainingStartRequest)
+    - the API request model   (src/api/routes/training.py :: TrainingStartRequest; since K7 a
+                                strict base start: the reference recipe's base settings)
     - the WebUI form           (src/webui/components/training_console.py; since K6 the base
                                 form of the reference recipe's base settings, see below)
     - the CLI + projection hub (scripts/train_model.py :: TrainConfig -> downstream configs)
@@ -102,8 +103,10 @@ CROSS_FIELD_RULES: Tuple[CrossFieldRule, ...] = (
         subject="hidden_dim",
         operand="num_heads",
         when={"conv_type": ("hgt", "gat")},
-        enforced_in="current (API _validate_head_divisibility; a continued run's on the settings "
-                    "the run plan resolves, routes/training.cross_field_errors)",
+        enforced_in="none since K7: the API's ShepherdGNN request, its only enforcement, is "
+                    "gone (POST /training/start is a strict base start, which takes neither "
+                    "field), and a CLI ShepherdGNN run never checked it; it retires with the "
+                    "ShepherdGNN fields (K8)",
         description=(
             "hidden_dim % num_heads == 0. Required for hgt (HGTConv splits out_channels across "
             "heads) and gat (GATConv uses hidden_dim // num_heads with concat=True, so a "
@@ -117,8 +120,8 @@ CROSS_FIELD_RULES: Tuple[CrossFieldRule, ...] = (
         subject="min_lr_ratio",
         threshold=0.0,
         when={"scheduler_type": ("onecycle",)},
-        enforced_in="current (API _validate_onecycle_min_lr, and a continued run's on the "
-                    "resolved settings; trainer _validate_min_lr_ratio)",
+        enforced_in="current (trainer _validate_min_lr_ratio; the API took min_lr_ratio "
+                    "until K7, when its start became a strict base start)",
         description=(
             "onecycle computes final_div_factor = 1 / min_lr_ratio, so it needs a strictly "
             "positive value; cosine/linear legitimately allow 0 (decay to zero)."
@@ -185,7 +188,10 @@ class FieldSpec:
 
 
 # =============================================================================================
-# The spec. current_api transcribed from src/api/routes/training.py::TrainingStartRequest;
+# The spec. current_api transcribed from src/api/routes/training.py::TrainingStartRequest, since
+# K7 the strict base start: the run keys, the continuation keys and the reference recipe's base
+# settings (src.config.recipe.BASE), each setting unset by default (the recipe's value, never the
+# request's); every ShepherdGNN field is current_api=None.
 # scope/projects_to from the scripts/train_model.py projection into the downstream configs.
 # =============================================================================================
 FIELDS: Tuple[FieldSpec, ...] = (
@@ -212,15 +218,15 @@ FIELDS: Tuple[FieldSpec, ...] = (
               description="Checkpoint path to resume from."),
 
     # ---- the model bundle path (docs/working/scorer-retraining/README.md §3-§4) -------------
-    # CLI only in this phase: the API and the WebUI gain them with the functional UI (K6),
-    # through this spec.
+    # Each field's divergence note says which surface takes it: the CLI, the WebUI (K6), and
+    # the API's two starts, a base (POST /training/start, K7) and the Fine-tune children.
     FieldSpec("learning_stage", "str", None, "trainer", projects_to="TrainConfig.learning_stage",
-              choices=("base", "finetune"), current_api=None,
+              choices=("base", "finetune"), current_api={}, current_api_choices=("base",),
               known_divergence=True,
-              divergence_note="CLI (--stage); the WebUI's Training base form sends "
-                              "learning_stage='base' and its Fine-tune page starts finetunes "
-                              "(POST /training/finetune's start); POST /training/start does not "
-                              "take it.",
+              divergence_note="CLI (--stage); the WebUI's Training base form and POST "
+                              "/training/start send learning_stage='base' (required there, and "
+                              "only 'base', K7); the Fine-tune page and POST /training/finetune "
+                              "start finetunes.",
               description="Model bundle stage: base (KG link prediction) or finetune. Unset is "
                           "the ShepherdGNN path, which retires with the switch."),
     FieldSpec("model_spec", "dict", None, "model", projects_to="TrainConfig.model_spec",
@@ -280,27 +286,27 @@ FIELDS: Tuple[FieldSpec, ...] = (
     # ---- model (ShepherdGNNConfig) ----------------------------------------------------------
     FieldSpec("conv_type", "str", "gat", "model", projects_to="ShepherdGNNConfig.conv_type",
               choices=("gat", "hgt", "sage"),
-              current_api={}, current_api_choices=("gat", "hgt", "sage"),
+              current_api=None,
               description="GNN convolution type."),
     FieldSpec("hidden_dim", "int", 256, "model", projects_to="ShepherdGNNConfig.hidden_dim",
               valid={"ge": 32},
-              current_api={"ge": 32},
+              current_api=None,
               description="Hidden dimension size (see "
                           "CROSS_FIELD_RULES.hidden_dim_divisible_by_num_heads)."),
     FieldSpec("num_layers", "int", 4, "model", projects_to="ShepherdGNNConfig.num_layers",
               valid={"ge": 1, "le": 16},
-              current_api={"ge": 1, "le": 16},
+              current_api=None,
               description="Number of GNN layers."),
     FieldSpec("num_heads", "int", 8, "model", projects_to="ShepherdGNNConfig.num_heads",
               valid={"ge": 1},
-              current_api={"ge": 1},
+              current_api=None,
               description="Number of attention heads; used only when conv_type is hgt or gat."),
     FieldSpec("dropout", "float", 0.1, "model", projects_to="ShepherdGNNConfig.dropout",
               valid={"ge": 0.0, "le": 0.9},
-              current_api={"ge": 0.0, "le": 0.9},
+              current_api=None,
               description="Dropout rate."),
     FieldSpec("use_ortholog_gate", "bool", True, "model", projects_to="ShepherdGNNConfig.use_ortholog_gate",
-              current_api={},
+              current_api=None,
               description="Use the cross-species ortholog gate."),
 
     # ---- dataloader (DataLoaderConfig) ------------------------------------------------------
@@ -318,13 +324,13 @@ FIELDS: Tuple[FieldSpec, ...] = (
               description="Neighbor fan-out per sampling hop."),
     FieldSpec("max_subgraph_nodes", "int", 5000, "dataloader", projects_to="DataLoaderConfig.max_subgraph_nodes",
               valid={"ge": 100},
-              current_api={"ge": 100},
+              current_api=None,
               description="Max nodes per sampled subgraph."),
     FieldSpec("num_workers", "int", 4, "dataloader", projects_to="DataLoaderConfig.num_workers",
-              valid={"ge": 0}, current_api={"ge": 0},
+              valid={"ge": 0}, current_api=None,
               description="DataLoader worker processes."),
     FieldSpec("num_negative_samples", "int", 5, "dataloader", projects_to="DataLoaderConfig.num_negative_samples",
-              valid={"ge": 1}, current_api={"ge": 1},
+              valid={"ge": 1}, current_api=None,
               description="Negative samples per positive (train loader only)."),
 
     # ---- trainer (TrainerConfig) ------------------------------------------------------------
@@ -350,13 +356,13 @@ FIELDS: Tuple[FieldSpec, ...] = (
               description="Scheduler warmup steps."),
     FieldSpec("min_lr_ratio", "float", 0.01, "trainer", projects_to="TrainerConfig.min_lr_ratio",
               valid={"ge": 0.0, "le": 1.0},
-              current_api={"ge": 0.0, "le": 1.0},
+              current_api=None,
               description="Final LR as a fraction of peak; 0 decays to zero, which onecycle "
                           "cannot (see CROSS_FIELD_RULES)."),
     FieldSpec("gradient_accumulation_steps", "int", 1, "trainer",
               projects_to="TrainerConfig.gradient_accumulation_steps",
               valid={"ge": 1},
-              current_api={"ge": 1},
+              current_api=None,
               description="Micro-batches accumulated per optimizer step."),
     FieldSpec("max_grad_norm", "float", 1.0, "trainer", projects_to="TrainerConfig.max_grad_norm",
               valid={"gt": 0},
@@ -367,17 +373,17 @@ FIELDS: Tuple[FieldSpec, ...] = (
               description="Enable automatic mixed precision."),
     FieldSpec("amp_dtype", "str", "float16", "trainer", projects_to="TrainerConfig.amp_dtype",
               choices=("float16", "bfloat16"),
-              current_api={}, current_api_choices=("float16", "bfloat16"),
+              current_api=None,
               description="AMP compute dtype."),
     FieldSpec("eval_every_n_epochs", "int", 1, "trainer", projects_to="TrainerConfig.eval_every_n_epochs",
-              valid={"ge": 1}, current_api={"ge": 1},
+              valid={"ge": 1}, current_api=None,
               description="Run validation every N epochs."),
     FieldSpec("early_stopping_patience", "int", 10, "trainer", projects_to="TrainerConfig.early_stopping_patience",
               valid={"ge": 1},
               current_api={"ge": 1},
               description="Epochs without improvement before stopping."),
     FieldSpec("save_top_k", "int", 3, "trainer", projects_to="TrainerConfig.save_top_k",
-              valid={"ge": 1}, current_api={"ge": 1},
+              valid={"ge": 1}, current_api=None,
               description="Keep the best K checkpoints."),
     FieldSpec("device", "str", "auto", "trainer", projects_to="TrainerConfig.device",
               valid_pattern=r"^(auto|cpu|mps|cuda(:\d+)?)$",
@@ -395,33 +401,33 @@ FIELDS: Tuple[FieldSpec, ...] = (
     # ---- loss weights (LossConfig — projected) ---------------------------------------------
     FieldSpec("diagnosis_weight", "float", 1.0, "loss", projects_to="LossConfig.diagnosis_weight",
               valid={"ge": 0.0},
-              current_api={"ge": 0.0},
+              current_api=None,
               description="Diagnosis-task loss weight."),
     FieldSpec("link_prediction_weight", "float", 0.5, "loss", projects_to="LossConfig.link_prediction_weight",
               valid={"ge": 0.0},
-              current_api={"ge": 0.0},
+              current_api=None,
               description="Link-prediction loss weight."),
     FieldSpec("contrastive_weight", "float", 0.3, "loss", projects_to="LossConfig.contrastive_weight",
               valid={"ge": 0.0},
-              current_api={"ge": 0.0},
+              current_api=None,
               description="Contrastive loss weight."),
     FieldSpec("ortholog_weight", "float", 0.2, "loss", projects_to="LossConfig.ortholog_weight",
               valid={"ge": 0.0},
-              current_api={"ge": 0.0},
+              current_api=None,
               description="Ortholog loss weight."),
 
     # ---- loss shape knobs (wired through TrainConfig -> LossConfig in PR-4b) -----------------
     FieldSpec("temperature", "float", 0.07, "loss", projects_to="LossConfig.temperature",
               valid={"gt": 0},
-              current_api={"gt": 0.0},
+              current_api=None,
               description="Contrastive temperature."),
     FieldSpec("label_smoothing", "float", 0.1, "loss", projects_to="LossConfig.label_smoothing",
               valid={"ge": 0.0, "le": 1.0},
-              current_api={"ge": 0.0, "le": 1.0},
+              current_api=None,
               description="Diagnosis-loss label smoothing."),
     FieldSpec("margin", "float", 1.0, "loss", projects_to="LossConfig.margin",
               valid={"gt": 0},
-              current_api={"gt": 0.0},
+              current_api=None,
               description="Ranking-loss margin."),
 
     # ---- continuing from a parent (contract M3a-3, M3a-4) -----------------------------------

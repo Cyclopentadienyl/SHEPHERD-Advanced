@@ -972,7 +972,6 @@ class TrainingManager:
     def start_training(
         self,
         config: Dict[str, Any],
-        effective_rules: Optional[Callable[[Dict[str, Any]], List[str]]] = None,
         *,
         expected_dataset_fingerprint: Optional[str] = None,
         expected_parent_sha256: Optional[str] = None,
@@ -982,9 +981,6 @@ class TrainingManager:
 
         Args:
             config: Training configuration dict (mirrors TrainConfig fields).
-            effective_rules: for a run continued from a parent, rules checked on
-                the settings the run plan resolves (the API's cross-field
-                rules); a violation is refused with `invalid_settings`.
             expected_dataset_fingerprint: the full dataset fingerprint (the
                 SHA-256 of the workspace's ``split_manifest.json``) the caller
                 showed when the run was asked for (M5-2: the Training run bar
@@ -1007,16 +1003,20 @@ class TrainingManager:
                 given, the training process is bound to the parent this start
                 decided on** (`--expect-resume-sha256` with the digest of that
                 preview's read, root-cause round P22-S1): the run's placement
-                under the parent's architecture, the cross-field verdict and the
-                extend mode come from that read, and a file replaced after it is
-                refused by the process before it is loaded.
+                under the parent's architecture and the extend mode come from
+                that read, and a file replaced after it is refused by the
+                process before it is loaded.
 
         **A new model bundle run** (`learning_stage` set, no `resume_from`) is
         a base: its configuration is checked whole first (`_new_bundle_run`:
         only the recipe's base settings and the run keys, each value its field
         spec takes; a finetune is refused here, since it starts through
         `start_finetune`), and it is filed under its model spec's encoder kind.
-        A ShepherdGNN start and every continued run are decided as before.
+        A ShepherdGNN start and every continued run are decided as before; a
+        continued run's request that states a learning stage (the API's base
+        start states ``base``) is refused by the preview unless the parent's
+        record holds that stage, as any explicit setting other than the
+        parent's is.
 
         Returns:
             Status dict with success/error info. Refused while any GPU job is
@@ -1062,12 +1062,6 @@ class TrainingManager:
                         "parent_changed": preview.get("changed", False),
                         "status": self.get_job_status_word("training")}
             parent_sha256 = preview["sha256"]
-            errors = effective_rules(preview["learning_settings"]) if effective_rules else []
-            if errors:
-                return {"success": False, "invalid_settings": True,
-                        "status": self.get_job_status_word("training"),
-                        "error": "The settings this run would use, its parent's with this "
-                                 "request's: " + " ".join(errors)}
             architecture = preview.get("architecture") or architecture
             if preview.get("learning_stage"):
                 # A model bundle parent: the process runs the bundle path only
@@ -2192,7 +2186,7 @@ class TrainingManager:
         `start_training` binds it to this preview's read.
         """
         from src.models.bundle.record import MODEL_RECORD_VERSION, has_model_spec
-        from src.utils.run_plan import OPERATIONAL_FIELDS, RunPlanRefused, plan_continuation
+        from src.utils.run_plan import RunPlanRefused, plan_continuation
         from src.utils.checkpoint_io import (
             CHECKPOINT_RECORD_VERSION, CheckpointChanged, read_checkpoint,
         )
@@ -2266,14 +2260,7 @@ class TrainingManager:
             return {**facts, "ok": False, "reason": str(exc)}
         return {**facts, "ok": True, "mode": plan.mode, "action": plan.action,
                 "inherited": plan.inherited, "start_epoch": plan.start_epoch,
-                "end_epoch": plan.end_epoch, "stage": plan.stage,
-                # The learning settings the run would use (the parent's, with
-                # the request's explicit values), for checks that need them
-                # complete: the API's cross-field rules. Operational fields are
-                # left out: the process takes them from the request or its own
-                # defaults, which this preview does not know.
-                "learning_settings": {k: v for k, v in plan.settings.items()
-                                      if k not in OPERATIONAL_FIELDS}}
+                "end_epoch": plan.end_epoch, "stage": plan.stage}
 
     # =========================================================================
     # Checkpoint Management
