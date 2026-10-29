@@ -117,33 +117,34 @@ COHORT_ARGUMENT_HELP = (
 #: policy. Shown with every recorded number so it cannot be quoted as another.
 MODE_C_RESULT_LABEL = "Disease ranking by the model, approved scorer policy (Mode C)"
 
-#: Why a recorded Mode C number is not the Diagnosis tab's performance yet.
-#:
-#: **Until B-1 the tab does not rank by Mode C.** The served scorer still mixes
-#: the GNN score with the shortest-path term behind the path gate
-#: (`docs/DISEASE_SCORER_POLICY.md`), so a Mode C number describes the model,
-#: not what the tab shows a user. Removed when B-1 lands, not reworded.
+#: Why a recorded Mode C number is not the Diagnosis page's performance, as
+#: dated history (owner decision 4, K7). Mode C has been the formal test since
+#: M4 (2026-10-16). B-1, which was to make the page rank by Mode C, was
+#: superseded by the task models (served since K3, 2026-10-27), so the page
+#: never ranked by it. The name is the B-1 plan's, which the note was written for.
 PRE_B1_NOTE = (
-    "This is the model's own Mode C disease ranking. Until B-1 ships, the Diagnosis "
-    "tab ranks by the legacy GNN+SP mixture behind the path gate, so this number "
-    "does not describe the tab's current ranking."
+    "Mode C (October 2026, before the task models) ranks every disease by the model's raw "
+    "cosine; its figures are over the cases ranked. The Diagnosis page never ranked by Mode C, "
+    "so this number does not describe the current diagnosis model."
 )
 
 #: Mode D's label for a recorded result (`docs/working/scorer-measurement/
-#: PLAN_B05.md` §5): what the Diagnosis page serves today, which is not the
-#: approved policy. `mode_label` adds the record's scoring mode and mixing
-#: weight from its `score_semantics`.
-_MODE_D_LABEL_HEAD = ("Served ranking today (Mode D): diseases reached by path discovery, "
-                      "scored as the Diagnosis page scores them")
+#: PLAN_B05.md` §5), as dated history: what the Diagnosis page served when
+#: Batch 3 measured it (October 2026), which was not the approved policy. Mode D
+#: was removed in K7; its kept records are still shown under this label.
+#: `mode_label` adds the record's scoring mode and mixing weight from its
+#: `score_semantics`.
+_MODE_D_LABEL_HEAD = ("Served ranking of October 2026 (Mode D): diseases reached by path "
+                      "discovery, scored as the Diagnosis page then scored them")
 _MODE_D_LABEL_TAIL = "; not the approved scorer policy"
 MODE_D_RESULT_LABEL = _MODE_D_LABEL_HEAD + _MODE_D_LABEL_TAIL
 
 #: Shown beside a Mode D record, as `PRE_B1_NOTE` is beside a Mode C one.
 MODE_D_NOTE = (
-    "Mode D measures what the Diagnosis page serves today, over the cohort's import-eligible "
-    "cases. Its report sets Mode C beside it on the same embeddings; a Mode C record shown "
-    "here is a separate run. A Mode D number is not the model's approved ranking, and the "
-    "cases excluded at import are counted beside it, not in it."
+    "Mode D measured the Diagnosis page's October 2026 ranking over import-eligible cases; "
+    "cases excluded at import are counted beside it, not in it. Its report set Mode C beside "
+    "it on the same embeddings; a Mode C record shown here is a separate run. A Mode D number "
+    "is not the model's approved ranking and does not describe the current diagnosis model."
 )
 
 #: **Each finetuned task's name, the one every surface shows** (K6 decision 6):
@@ -151,8 +152,8 @@ MODE_D_NOTE = (
 #: Fine-tune page's options and the Diagnosis card's name line read it, and
 #: `src.webui.components.renderers.record_kind_text` builds on it. Keyed by
 #: the model spec's tasks (`src.models.bundle.spec.TASKS`, which this
-#: standard-library-only module does not import; `tests/unit/test_mode_d.py`
-#: pins the two equal).
+#: standard-library-only module does not import;
+#: `tests/unit/test_webui_renderers.py` pins the two equal).
 TASK_NAMES = {"disease": "Disease", "gene": "Gene", "patients_like_me": "Patients-like-me"}
 
 

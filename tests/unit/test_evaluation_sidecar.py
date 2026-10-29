@@ -203,6 +203,44 @@ def generated_report():
     return report
 
 
+#: A kept Mode D report's semantic values, as Batch 3's measurement wrote them
+#: (its GB10 run of 2026-10-27, `docs/working/batch3-acceptance-2026-10-27/`).
+#: Mode D no longer runs (K7), so the readers of its kept reports are tested on
+#: reports built here.
+MODE_D_SEMANTICS = {
+    "mode": "D",
+    "metric_schema_version": 2,
+    "batch_size": 1,
+    "candidate_construction": "served-path-discovery/v1:settings=5451e2f8486b",
+    "score_semantics": "served:gnn_only:eta=1.0:sp=none",
+    "canonical_tie_policy_version": "served-stable-discovery-order/v1",
+}
+
+
+def mode_d_report(n_ranked=56, n_eligible=80, **manifest_overrides):
+    """A kept Mode D report of a registered cohort version, in the shape Batch
+    3 kept: Mode D's semantic values on Mode C's manifest fields, its metric
+    families over `n_eligible` import-eligible cases (`post_import_*`,
+    `coverage`) and over the `n_ranked` reached ones (`reached_*`), and the
+    blocks `build_record` ignores."""
+    metrics = {"post_import_mrr": 0.35, "post_import_hits@1": 0.2,
+               "post_import_hits@10": n_ranked / n_eligible * 0.9,
+               "coverage": n_ranked / n_eligible, "reached_mrr": 0.5,
+               "reached_mean_rank": 2.43, "reached_hits@1": 0.29, "reached_hits@10": 0.9}
+    report = registered_report(metrics, n_ranked,
+                               **{"n_samples": n_eligible, **MODE_D_SEMANTICS,
+                                  **manifest_overrides})
+    del report["n_ground_truth_absent"], report["sampler_evidence"]
+    report.update(
+        outcomes={"ranked": n_ranked, "not_reached": n_eligible - n_ranked, "refused": 0,
+                  "no_candidates": 0, "n_import_eligible": n_eligible},
+        import_counts={"ranked_eligible": n_eligible},
+        served={"scoring_mode": "gnn_only"},
+        comparison={"statement": "Mode C and Mode D are different ranking policies."},
+    )
+    return report
+
+
 def _registered(report=None, digest=REPORT_A, ledger=None):
     """A ledger holding the record of `report`, registered once."""
     record = build_record(report or registered_report(), digest)

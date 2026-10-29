@@ -271,20 +271,27 @@ class RecordView(_Strict):
     cohort: RecordCohort
     counts: RecordCounts
     mode: _Text = Field(
-        ..., description="the record's measurement mode (`scoring.mode`): C, the model's own "
-        "ranking over every disease; D, what the Diagnosis page serves today. A surface labels "
-        "each record by its own mode")
+        ..., description="the record's measurement mode (`scoring.mode`): disease, gene or "
+        "patients_like_me, a finetuned model measured by its own task (what the Test page "
+        "runs). C and D are earlier modes, kept as history: C, the model's own ranking over "
+        "every disease by raw cosine; D, the served ranking as Batch 3 measured it (removed in "
+        "K7). A surface labels each record by its own mode")
     score_semantics: _Text = Field(
-        ..., description="the record's `scoring.score_semantics`; for Mode D, "
+        ..., description="the record's `scoring.score_semantics`: what its score is, as its "
+        "measurement named it (a task record: the task head's score); for a Mode D record, "
         "`served:<scoring mode>:eta=<eta>:sp=<build id or none>`")
     metrics: Dict[str, _Metric] = Field(
-        ..., description="the metrics of the record's mode. Mode C: over n_ranked ranked "
-        "cases; `untruncated_mrr` is not the trainer's top-20 `val_mrr`. Mode D: `post_import_*` "
-        "and `coverage` over the version's import-eligible cases (`counts.ranked_eligible`, 0 "
-        "for a case not reached), `reached_*` over the n_ranked reached cases")
+        ..., description="the metrics of the record's mode. A task mode: `pooled_mrr`, "
+        "`pooled_top<k>`, `macro_recall@<k>`, `macro_precision@<k>`, `macro_mrr`, "
+        "`best_positive_mrr` and `conservative_pooled_mrr` (each left out when it has no "
+        "case to average), and `coverage`, the share of the cases measured that were ranked. "
+        "Mode C: over n_ranked ranked cases; `untruncated_mrr` is not the trainer's top-20 "
+        "`val_mrr`. Mode D: `post_import_*` and `coverage` over the version's import-eligible "
+        "cases (`counts.ranked_eligible`, 0 for a case not reached), `reached_*` over the "
+        "n_ranked reached cases")
     n_ranked: _Count = Field(
-        ..., description="Mode C: the cases ranked; Mode D: the import-eligible cases the "
-        "served pipeline reached")
+        ..., description="A task mode or Mode C: the cases ranked; Mode D: the "
+        "import-eligible cases the served pipeline reached")
     relations: Dict[str, Literal["verified", "not_applicable"]]
     r10: R10View
     environment_class: str

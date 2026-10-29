@@ -21,14 +21,13 @@ Dependencies: torch.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 import torch
 from torch import Tensor
 
-# Since Batch 3 these live in `src.utils.run_environment`, so the served pipeline
-# observes its own embedding forward with the same code (Mode D, PLAN_B05 §3);
-# imported here, where Mode C's callers have always found them.
+# These live in `src.utils.run_environment`, which the task measurement reads
+# too; imported here, where Mode C's callers have always found them.
 from src.utils.run_environment import AutocastRegime, observe_autocast_regime
 
 __all__ = [
@@ -691,7 +690,6 @@ def run_mode_c(
     manifest: MeasurementManifest,
     device: Optional[Any] = None,
     batch_size: int = 32,
-    on_scores: Optional[Callable[[int, List[str], Tensor], None]] = None,
 ) -> ModeResult:
     """Score every patient against **every disease in the graph**.
 
@@ -721,15 +719,6 @@ def run_mode_c(
     node in the graph — a plausible patient, a plausible rank, and a wrong one.
     Padding uses a safe value under a `False` mask; **real values are never
     clamped, dropped or substituted.**
-
-    **`on_scores`, optional and read-only** (Batch 3, Mode D): called once per
-    chunk with the chunk's first position in `samples`, its sample ids and its
-    `(chunk, diseases)` score matrix, after the scores are computed and before
-    they are ranked. Mode D reads the scores this formal run computed for its
-    derived readings instead of computing them a second way
-    (`docs/working/scorer-measurement/PLAN_B05.md` §5). An observer must not
-    change the tensor, and keeps only what it needs; `None`, as every Mode C
-    run passes, changes nothing.
     """
     import torch as _torch
     import torch.nn.functional as _F
@@ -779,8 +768,6 @@ def run_mode_c(
             patients = masked_mean_pool(patient_phenotypes, mask)
             scores = cosine_score_matrix(patients, disease_emb)
             candidate_counts.append(int(scores.size(1)))
-            if on_scores is not None:
-                on_scores(start, [s.patient_id for s in chunk], scores)
 
             truth = _torch.tensor([s.disease_id for s in chunk], dtype=_torch.long, device=device)
             ranked = canonical_ranking(scores, all_disease_ids)

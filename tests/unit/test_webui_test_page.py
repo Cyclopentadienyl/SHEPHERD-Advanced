@@ -756,6 +756,75 @@ def _usage_lines(site):
     return usage.read_bytes() if usage.exists() else b""
 
 
+def _shown(markup: str) -> str:
+    """Rendered HTML as a person reads it: tags dropped, entities decoded."""
+    import html as html_lib
+
+    return html_lib.unescape(re.sub(r"<[^>]+>", "", markup))
+
+
+def _keep_mode_d_report(site) -> str:
+    """A kept Mode D report beside the site's Mode C one, as Batch 3 kept them
+    in a version's store: Mode D no longer runs (K7), so it is written from the
+    C report's manifest with Mode D's values (`mode_d_report`). Its run id."""
+    from src.evaluation.cohort_registry import resolve_version
+    from tests.fixtures.report_store import store_bytes
+    from tests.unit.test_evaluation_sidecar import MODE_D_SEMANTICS, mode_d_report
+
+    c_report = json.loads((site.reports / site.run_id / "report.json").read_text())
+    manifest = {k: v for k, v in c_report["manifest"].items() if k not in MODE_D_SEMANTICS}
+    eligible = manifest["cohort_version"]["counts"]["ranked_eligible"]
+    report = mode_d_report(n_ranked=eligible - 1, n_eligible=eligible, **manifest)
+    path = store_bytes(site.registry, json.dumps(report, indent=2).encode("utf-8"),
+                       version=resolve_version(site.registry, LABEL), checkpoint_sha256=site.sha)
+    return path.parent.name
+
+
+def test_a_kept_mode_d_report_is_shown_under_its_own_mode_and_its_register_is_refused(
+        site, monkeypatch):
+    """A kept Mode D report beside a Mode C one (K7 removed Mode D, not its
+    reports): the Result names its own mode and case sets, with its served
+    scoring, Mode D's tiles and the reached-cases coverage, and no Mode C; each
+    report row says its mode; the help is Mode D's note. Register is refused by
+    the registration itself, saying why: nothing is written, and the report
+    reads as before (kept, its record mode D, its key uncontested)."""
+    from src.evaluation.caveats import MODE_C_RESULT_LABEL, MODE_D_NOTE, PRE_B1_NOTE, mode_label
+
+    d_run = _keep_mode_d_report(site)
+    reports = tp.read_reports(LABEL)
+    runs = {run["run_id"]: run for run in reports["runs"]}
+    record = runs[d_run]["record"]
+    assert record["scoring"]["mode"] == "D"
+    eligible = record["cohort"]["counts"]["ranked_eligible"]
+    result = _shown(tp.result_html(reports, d_run, []))
+    assert mode_label("D", record["scoring"]["score_semantics"]) in result
+    assert ("scored as the Diagnosis page then scored them (gnn_only, η = 1.0); not the "
+            "approved scorer policy") in result
+    assert "Mode D MRR (import-eligible)" in result and "Mode D coverage" in result
+    assert (f"{eligible - 1} of {eligible} import-eligible cases reached by the served "
+            "pipeline") in result
+    assert "Mode C" not in result and PRE_B1_NOTE not in result
+    assert tp.TOPIC_HELP["test-mode-d"] == ("Mode D result", MODE_D_NOTE)
+    assert "a Mode C record shown here is a separate run" in MODE_D_NOTE
+    rows = _shown(tp.reports_html(reports, None))
+    assert "served ranking (Mode D): report kept" in rows
+    assert "model ranking (Mode C): report kept" in rows
+    c_result = _shown(tp.result_html(reports, site.run_id, []))
+    assert MODE_C_RESULT_LABEL in c_result and "Mode D" not in c_result
+
+    page, request = _page(monkeypatch)
+    models = tp.read_models("demo", request)
+    usage = _usage_lines(site)
+    done, said = tp.register_selected(page, reports, models, "demo", d_run, request)
+    assert done is False
+    assert "is a Mode D report" in said and "Nothing was written" in said
+    assert not (site.checkpoint.parent / "evaluations.json").exists()
+    assert _usage_lines(site) == usage
+    again = {run["run_id"]: run for run in tp.read_reports(LABEL)["runs"]}[d_run]
+    assert again["state"]["kept"] == "kept" and again["record"] == record
+    assert again["contest"]["state"] == runs[d_run]["contest"]["state"] == "uncontested"
+
+
 def _swap(path, replacement: bytes, how: str):
     """Replace a report's bytes in place or by an atomic rename."""
     import os

@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 r"""
-Measure a model on a cohort — by its task; Mode C and Mode D from here only.
-===========================================================================
+Measure a model on a cohort — by its task; Mode C from here only.
+=================================================================
 **The task modes** (`--mode disease`, `gene`, `patients_like_me`): a finetuned
 model bundle measured by its own task (`src/evaluation/task_measurement.py`,
 `docs/working/PLAN_TEST_RESULTS.md` §8), its model record checked for that
@@ -14,18 +14,15 @@ in a cohort scored against every disease in the knowledge graph, with the model
 the deployed pipeline builds and raw cosine; the formal Test's measurement
 before the tasks (`docs/working/PLAN_TEST_RESULTS.md`, "This is Mode C").
 
-**Mode D** (`--mode D`, a registered cohort version only; command line only
-until K7): what the Diagnosis page serves today, each import-eligible case
-ranked through the served pipeline's own `rank()`, with Mode C run beside it
-on the same embeddings (`docs/working/scorer-measurement/PLAN_B05.md`;
-`src/evaluation/mode_d.py`). It is policy gate 1's comparison, not the
-approved policy.
+**Mode D** (Batch 3's measurement of the served ranking) was removed in K7: it
+no longer runs, its kept reports and records stay readable on the Test and
+Models pages, and a new registration of one is refused.
 
 **A thin CLI.** Argument parsing, one read of each input, manifest assembly, one
-call into the task's run (`task_measurement.TASK_RUNS`),
-`src.evaluation.measurement.run_mode_c` or `mode_d.run_mode_d`, and publishing
-what it returns. No measurement logic lives here, so the harness stays
-testable without a subprocess.
+call into the task's run (`task_measurement.TASK_RUNS`) or
+`src.evaluation.measurement.run_mode_c`, and publishing what it returns. No
+measurement logic lives here, so the harness stays testable without a
+subprocess.
 
 **Two kinds of cohort, named by the argument that names them** (contract M4,
 decision 8): exactly one of `--split` and `--cohort`.
@@ -39,13 +36,6 @@ decision 8): exactly one of `--split` and `--cohort`.
         --cohort mygene2-2026-10 --registry /srv/shepherd/registry \
         [--training-evidence DIR ...] [--record] [--deterministic] \
         [--expect-checkpoint-sha256 HEX] [--expect-version-sha256 HEX] [--outcome FILE]
-
-    # Mode D on the same version: the served ranking, with the same checks,
-    # GPU lock, report store and registration; refused with --split.
-    python scripts/measure_scorer.py --mode D \
-        --checkpoint <workspace>/runs/<arch>/<run>/checkpoints/best.pt \
-        --data-dir <workspace> \
-        --cohort mygene2-2026-10 --registry /srv/shepherd/registry [--record]
 
     # A generated split. --split val is the checkpoint-selection split, not
     # held-out data, and its report is not registrable (decision 9).
@@ -209,9 +199,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: The measurement modes this program runs: Mode C, and Mode D beside it
-#: (`docs/working/scorer-measurement/PLAN_B05.md`).
-MODES = ("C", "D", "disease", "gene", "patients_like_me")
+#: The measurement modes this program runs: Mode C and the task modes.
+MODES = ("C", "disease", "gene", "patients_like_me")
 #: The finetuned-bundle task measurements among them (README K3, K4).
 TASK_MODES = ("disease", "gene", "patients_like_me")
 #: Task modes whose cases carry genes; a generated split is then the
@@ -309,11 +298,6 @@ class MeasurementInputs(NamedTuple):
     cohort version) is set. The other generated split, read for its binding and
     the disjointness check, is not kept: it is checked, not consumed, and no
     role records it; nor are R10's evidence files, which are reduced to counts.
-
-    **A Mode D run reads the workspace through the served pipeline** (Batch 3,
-    `_measure_mode_d`): `manifest` and `graph` are then `None`, `checkpoint`
-    holds the identity of the pipeline's one read and no payload, and `bound`,
-    `dataset_record` and R10 come from that build (`bound_inputs`).
     """
 
     #: The generated split, resolved; `None` for a registered version.
@@ -324,8 +308,8 @@ class MeasurementInputs(NamedTuple):
     #: The version as its report records it (`cohort_version_block`), built from
     #: that one read; `None` for a generated split.
     cohort_version: Optional[Dict[str, Any]]
-    manifest: Optional[ManifestRead]
-    graph: Optional[GraphArtifactsRead]
+    manifest: ManifestRead
+    graph: GraphArtifactsRead
     samples: SamplesRead
     checkpoint: CheckpointRead
     #: The digest the run's one manifest reading binds for each of the four
@@ -715,8 +699,7 @@ def _read_checkpoint(checkpoint: Path, device: torch.device, *,
 
 def _r10(recorded: Any, samples: SamplesRead, candidates: Sequence[Path]) -> Dict[str, Any]:
     """R10 from the checkpoint's own record of its training inputs, taken from
-    its one read (`training_input_digests`: Mode C's read, or for Mode D the
-    served pipeline's, `bound_inputs`), and the candidates.
+    its one read (`training_input_digests`), and the candidates.
 
     Recorded, never enforced (contract §5.4). A candidate that cannot be read
     for a reason other than its absence refuses the run rather than reading as
@@ -759,18 +742,10 @@ def measurement_input_digests(inputs: MeasurementInputs) -> Dict[str, str]:
 
     Nothing globs the directory, so an unrelated file beside these does not
     change the record of a run that never read it.
-
-    **A Mode D run's tensors were read by the served pipeline** (`inputs.graph`
-    is None): its workspace check compared each tensor read with the manifest's
-    digest and bound that digest, so the bound digest is the digest of the bytes
-    it parsed (`DiagnosisPipeline.bound_inputs`). Nothing is read again for it.
     """
     from src.kg.artifacts import GRAPH_TENSOR_ROLES
 
-    if inputs.graph is not None:
-        tensors = {role: inputs.graph.reads.get(role) for role in GRAPH_TENSOR_ROLES}
-    else:
-        tensors = {role: inputs.bound.get(role) for role in GRAPH_TENSOR_ROLES}
+    tensors = {role: inputs.graph.reads.get(role) for role in GRAPH_TENSOR_ROLES}
     reads: Dict[str, Any] = {
         "checkpoint": inputs.checkpoint.identity,
         "samples": inputs.samples.identity,
@@ -787,8 +762,7 @@ def measurement_input_digests(inputs: MeasurementInputs) -> Dict[str, str]:
             f"no read of {', '.join(missing)}, so there is no digest to record; a "
             "measurement record names only bytes a reader parsed"
         )
-    digests = {role: read if isinstance(read, str) else read.sha256
-               for role, read in reads.items()}
+    digests = {role: read.sha256 for role, read in reads.items()}
     digests["kg"] = inputs.bound["kg"]
     return digests
 
@@ -919,7 +893,7 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
                    cuda_executed: Optional[bool] = None,
                    model: Any = None,
                    semantics: Optional[Mapping[str, Any]] = None) -> Any:
-    """Build the manifest of one Mode C run, or of a Mode D run (`semantics`).
+    """Build the manifest of one Mode C run, or of a task run (`semantics`).
 
     `digests` is the record of what the run read, from
     `measurement_input_digests` (contract M2.1, S7); nothing here hashes a file.
@@ -952,12 +926,11 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
     Without one it is the generated split `args.split`, with no R10. The
     manifest refuses any other combination when it is built.
 
-    **Mode D gives the same fields its own values** (`semantics`, from
-    `mode_d.served_semantics`: mode, metric schema, candidate construction, batch
-    size, score semantics, tie policy) and adds no field
-    (`docs/working/scorer-measurement/PLAN_B05.md` §6). Everything else, the
-    regime, the digests, the relations, R10 and the environment, is built here
-    the same way for both.
+    **A task run gives the same fields its own values** (`semantics`, from
+    `task_measurement.task_semantics`: mode, metric schema, candidate
+    construction, batch size, score semantics, tie policy, model construction)
+    and adds no field. Everything else, the regime, the digests, the relations,
+    R10 and the environment, is built here the same way for every mode.
     """
     from src.evaluation.measurement import (
         METRIC_SCHEMA_VERSION,
@@ -1027,18 +1000,14 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Measure a model on a cohort: a finetuned model by its own task (what the "
-                    "Test page runs), or Mode C and Mode D (command line only until K7)"
+                    "Test page runs), or Mode C (command line only until K7)"
     )
     parser.add_argument("--mode", choices=MODES, default="C",
                         help="disease, gene, patients_like_me: a finetuned model bundle "
                              "measured by its own task, average ranks "
                              "(docs/working/PLAN_TEST_RESULTS.md §8); the Test page runs these. "
-                             "C and D are command-line only until K7. C (default): the "
-                             "approved scorer, raw cosine over every disease. D: the served "
-                             "ranking (path discovery and the served score), measured through "
-                             "the served pipeline's own rank(), with Mode C run on the same "
-                             "embeddings beside it. D needs --cohort; --batch-size is the C "
-                             "side's chunk.")
+                             "C is command-line only until K7. C (default): the approved "
+                             "scorer, raw cosine over every disease.")
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--data-dir", type=Path, required=True)
     cohort = parser.add_mutually_exclusive_group(required=True)
@@ -1068,9 +1037,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
                              "Required with --split; refused with --cohort, whose report "
                              "the registry's report store keeps")
     parser.add_argument("--batch-size", type=_positive_int, default=32,
-                        help="Patients scored per chunk (a positive integer; with --mode "
-                             "D, the Mode C side's). Recorded on the manifest: it can move "
-                             "the numbers at floating-point level")
+                        help="Patients scored per chunk (a positive integer). Recorded on "
+                             "the manifest: it can move the numbers at floating-point level")
     parser.add_argument("--device", default="auto", choices=["auto", "cuda", "cpu"],
                         help="auto requires CUDA and fails without it. Explicit cpu "
                              "is permitted for development and records "
@@ -1105,7 +1073,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
 def _positive_int(value: str) -> int:
     """A positive integer: refused at the command line, before the GPU lock or
-    any read, rather than after Mode D's served pass has ranked every case."""
+    any read."""
     try:
         number = int(value)
     except ValueError:
@@ -1127,12 +1095,6 @@ def _refuse_mixed_arguments(parser: argparse.ArgumentParser, args: argparse.Name
     """Refuse an argument that belongs to the other kind of cohort (M4 decision
     8), before the device is resolved or anything is read. `parser.error` exits
     with status 2 and one message."""
-    if args.mode == "D" and args.split is not None:
-        parser.error(
-            "--mode D measures a registered cohort version (--cohort LABEL --registry DIR) "
-            "only: its comparison with Mode C is reported on a version's import-eligible "
-            "cases, the form policy gate 1's report needs. Nothing was read or written."
-        )
     if args.split is not None:
         given = [flag for flag, value in (("--registry", args.registry),
                                           ("--training-evidence", args.training_evidence),
@@ -1601,15 +1563,8 @@ def _print_registered_summary(inputs: MeasurementInputs, result: ModeResult, run
     excluded = ", ".join(f"{name} {n}" for name, n in counts["excluded"].items())
     print(f"\nCohort version {block['label']} (role {block['role']}), manifest sha256 "
           f"{block['manifest_sha256'][:12]}...")
-    if result.manifest.mode == "D":
-        # Mode D's three case sets, never merged under one name (PLAN_B05 §4).
-        print(f"  {result.n_ranked} reached by the served ranking of "
-              f"{counts['ranked_eligible']} import-eligible cases; {counts['source_cases']} "
-              f"source cases, {counts['n_excluded']} excluded at import ({excluded}), counted "
-              "beside the figures, not in them")
-    else:
-        print(f"  coverage: {result.n_ranked} ranked of {counts['source_cases']} source cases; "
-              f"{counts['n_excluded']} excluded ({excluded})")
+    print(f"  coverage: {result.n_ranked} ranked of {counts['source_cases']} source cases; "
+          f"{counts['n_excluded']} excluded ({excluded})")
     print("\nR10, against the inputs this checkpoint records:")
     for scope, _ in R10_SCOPES:
         entry = inputs.r10[scope]
@@ -1693,9 +1648,7 @@ def _run(args: argparse.Namespace, *, registry: Optional[Path]) -> int:
         )
 
     try:
-        if args.mode == "D":
-            inputs, result = _measure_mode_d(args, registry, device, cuda_executed)
-        elif args.mode in TASK_MODES:
+        if args.mode in TASK_MODES:
             inputs, result = _measure_task(args, registry, device, cuda_executed)
         else:
             inputs, result = _measure_mode_c(args, registry, device, cuda_executed)
@@ -1911,101 +1864,11 @@ def _measure_task(args: argparse.Namespace, registry: Optional[Path], device: to
     return inputs, result
 
 
-def _measure_mode_d(args: argparse.Namespace, registry: Optional[Path], device: torch.device,
-                    cuda_executed: bool) -> Tuple[MeasurementInputs, Any]:
-    """Mode D's inputs and result (`docs/working/scorer-measurement/PLAN_B05.md`).
-
-    **The pipeline is built as the service builds it** (`build_served_pipeline`),
-    and the workspace is read by it, once: the graph, the tensors, the manifest,
-    the dataset record, the checkpoint and the shortest-path table, each verified
-    as serving verifies them (R1, R5 and R3 among them). This run reads only
-    what serving does not: the cohort version, resolved first as for Mode C, and
-    its samples. Then the version's graph and dataset record must be the ones
-    the pipeline bound (`cohort_graph`), R10 is computed from the checkpoint's
-    record in the pipeline's one read, and both manifests are built from those
-    reads: Mode D's with its own semantic values, and the C side's as any Mode C
-    run's, for the device and `--batch-size` it runs with.
-    """
-    from src.evaluation.mode_d import (
-        ModeDRefused,
-        kept_mode_c_reports,
-        run_mode_d,
-        served_semantics,
-    )
-    from src.inference.pipeline import PipelineBuildError, build_served_pipeline
-    from src.utils.checkpoint_io import CheckpointChanged, CheckpointRead
-
-    version, cohort_version, candidates = _resolve_registered(
-        args.data_dir, args.cohort, registry, args.training_evidence,
-        expected_sha256=args.expect_version_sha256,
-    )
-    try:
-        pipeline = build_served_pipeline(
-            Path(args.data_dir) / "kg.json", checkpoint_path=str(args.checkpoint),
-            data_dir=str(args.data_dir), device=str(device),
-            expected_checkpoint_sha256=args.expect_checkpoint_sha256,
-        )
-    except CheckpointChanged as exc:
-        resolved = Path(args.checkpoint).resolve()
-        raise _changed_since_chosen(f"the checkpoint {args.checkpoint} (read at {resolved})",
-                                    exc.found, exc.expected) from None
-    except PipelineBuildError as exc:
-        raise ModeDRefused(
-            f"the served pipeline could not be built over {args.data_dir} with "
-            f"{args.checkpoint}: {exc}"
-        ) from exc
-    semantics = served_semantics(pipeline.served_identity())
-    samples = _read_version_samples(version)
-    bound = pipeline.bound_inputs()
-    _verify_version_binding(version, bound.graph, bound.dataset_record)
-    r10 = _r10(bound.checkpoint_training_inputs, samples, candidates)
-    inputs = MeasurementInputs(
-        cohort=None, version=version, cohort_version=cohort_version, manifest=None,
-        graph=None, samples=samples,
-        checkpoint=CheckpointRead(checkpoint=None, identity=bound.checkpoint),
-        bound=dict(bound.graph), dataset_record=bound.dataset_record, r10=r10,
-    )
-    logger.info(
-        "Mode D over cohort version %s: %d cases; served %s; checkpoint sha256 %s",
-        cohort_version["label"], len(samples.samples),
-        pipeline.served_identity().scoring_mode, bound.checkpoint.sha256[:12],
-    )
-    common = dict(
-        digests=measurement_input_digests(inputs),
-        dataset_record=bound.dataset_record.summary(),
-        cohort_version=cohort_version, r10=r10, cuda_executed=cuda_executed,
-        model=pipeline.model, regime=pipeline.embedding_regime,
-    )
-    n = len(samples.samples)
-    result, _mode_c = run_mode_d(
-        pipeline, samples.samples,
-        build_manifest(args, bound.graph_data, n, device, semantics=semantics, **common),
-        build_manifest(args, bound.graph_data, n, device, **common),
-        device=device, batch_size=args.batch_size, cohort_version=cohort_version,
-        kept_mode_c=lambda c_ranks: kept_mode_c_reports(version, bound.checkpoint.sha256,
-                                                        c_ranks),
-    )
-    return inputs, result
-
-
 def _print_result(result: Any) -> None:
     """The run's figures on the console, by its mode, each under its label."""
     from src.evaluation.caveats import mode_label
 
     print(f"\n{mode_label(result.manifest.mode, result.manifest.score_semantics)}")
-    if result.manifest.mode == "D":
-        outcomes = result.outcomes
-        print(f"  {outcomes['ranked']} ranked, {outcomes['not_reached']} not reached "
-              f"({outcomes['no_candidates']} with no candidates), {outcomes['refused']} "
-              f"refused, of {outcomes['n_import_eligible']} import-eligible cases")
-        for name, value in result.authoritative_metrics.items():
-            print(f"  {name:38s} {value:.6f}")
-        c_side = result.comparison["mode_c"]
-        print(f"\n{result.comparison['statement']}")
-        print(f"{mode_label('C')}, on the same embeddings:")
-        for name, value in c_side["authoritative_metrics"].items():
-            print(f"  {name:38s} {value:.6f}")
-        return
     print(f"  {result.n_ranked} ranked, {result.n_ground_truth_absent} absent")
     for name, value in result.authoritative_metrics.items():
         print(f"  {name:38s} {value:.6f}")

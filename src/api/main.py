@@ -857,10 +857,8 @@ def build_pipeline(
             logger.error(f"KG file not found: {kg_file}")
             return None
 
-        # **The build itself is the shared one** (`build_served_pipeline`, Batch
-        # 3): this function resolves the paths and records the request, and a
-        # measurement of the served ranking (Mode D) builds through the same
-        # code, so it measures what this service serves.
+        # **The build itself is the shared one** (`build_served_pipeline`): this
+        # function resolves the paths and records the request.
         pipeline = build_served_pipeline(
             kg_file,
             checkpoint_path=checkpoint_path,

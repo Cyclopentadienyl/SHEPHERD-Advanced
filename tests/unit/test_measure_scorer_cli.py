@@ -12,6 +12,8 @@ measurement itself:
 - the device gate: `auto` refuses to fall back to CPU, and an explicit `cpu`
   run is permitted but recorded as not CUDA;
 - that the `file_sha256` re-export is gone (contract M2.1, S9);
+- a `--batch-size` that is not a positive integer, and `--mode D` (Mode D was
+  removed in K7), each refused at the command line;
 - `--split`, which has no default, and the missing-split error;
 - which arguments go with which kind of cohort (contract M4, decision 8):
   exactly one of `--split` and `--cohort`; `--output` with `--split` only;
@@ -221,16 +223,36 @@ def test_the_cli_has_no_option_mode_c_would_ignore(retired):
                     "--output", "o.json", *retired])
 
 
-@pytest.mark.parametrize("value", ["0", "-1", "1.5"])
-def test_a_batch_size_that_is_not_a_positive_integer_is_refused_at_the_command_line(value):
-    """Exit 2 before the GPU lock or any read (Batch 3's internal review, cli-5:
-    the same check Mode D needs before its served pass)."""
+@pytest.mark.parametrize("cohort", [
+    ["--split", "val", "--output", "o.json"],
+    ["--cohort", "label", "--registry", "/r"],
+], ids=["split", "cohort"])
+@pytest.mark.parametrize("value", ["0", "-1", "1.5", "two"])
+def test_a_batch_size_that_is_not_a_positive_integer_is_refused_at_the_command_line(
+        value, cohort):
+    """Exit 2 before the GPU lock or any read (Batch 3's internal review, cli-5),
+    for either kind of cohort."""
     from scripts.measure_scorer import parse_args
 
     with pytest.raises(SystemExit) as raised:
-        parse_args(["--checkpoint", "c.pt", "--data-dir", "d", "--split", "val",
-                    "--output", "o.json", "--batch-size", value])
+        parse_args(["--checkpoint", "c.pt", "--data-dir", "d", *cohort, "--batch-size", value])
     assert raised.value.code == 2
+
+
+@pytest.mark.parametrize("cohort", [
+    ["--split", "val", "--output", "o.json"],
+    ["--cohort", "label", "--registry", "/r"],
+], ids=["split", "cohort"])
+def test_mode_d_is_not_a_mode_the_cli_runs(cohort, capsys):
+    """Mode D was removed in K7: `--mode D` is refused at the command line
+    (exit 2), with no alias, for either kind of cohort."""
+    from scripts.measure_scorer import MODES, parse_args
+
+    assert "D" not in MODES
+    with pytest.raises(SystemExit) as raised:
+        parse_args(["--mode", "D", "--checkpoint", "c.pt", "--data-dir", "d", *cohort])
+    assert raised.value.code == 2
+    assert "invalid choice: 'D'" in capsys.readouterr().err
 
 
 # ==============================================================================

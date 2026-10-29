@@ -39,7 +39,6 @@
 """
 from __future__ import annotations
 
-import copy
 import logging
 import math
 import time
@@ -104,7 +103,6 @@ from src.reasoning import (
     find_matching_phenotypes,
 )
 from src.utils.checkpoint_paths import RANKING_SCORE_KEYS
-from src.utils.run_environment import observe_autocast_regime
 
 # Optional torch dependency for GNN inference
 try:
@@ -229,20 +227,14 @@ class ServedRanking:
     **Everything `run` does up to and including its sort, nothing after it**
     (`docs/working/scorer-measurement/PLAN_B05.md` §2). `run` cuts it at
     `top_k` and builds matching phenotypes, explanations and the summary on what
-    it keeps; Mode D reads it whole. `top_k` never changes the order, only where
-    the list is cut, so a served rank `r` is what a clinician sees whenever the
-    page's Top-K is at least `r`.
+    it keeps. `top_k` never changes the order, only where the list is cut, so a
+    served rank `r` is what a clinician sees whenever the page's Top-K is at
+    least `r`.
 
     `outcome` says which of `run`'s three returns this is: ``"refused"`` (the
     input validation refused it), ``"no_candidates"`` (nothing mapped to a graph
     node, or discovery reached no disease) or ``"ranked"``. `warnings` is the
     list `run` returns with it, as `run` would return it.
-
-    **`discovery_ordinals[i]` is `candidates[i]`'s 0-based position in the list
-    `_find_all_paths` built, before the served-score sort.** It is recorded where
-    the sort happens, in the same candidate construction, because once the served
-    score has sorted the list the discovery order cannot be recovered from it.
-    Internal metadata: not a field of the API or of the result.
     """
 
     outcome: str
@@ -252,7 +244,6 @@ class ServedRanking:
     #: Every served candidate in the served order, ranked 1..N, of the kind the
     #: pipeline serves.
     candidates: List[Candidate] = field(default_factory=list)
-    discovery_ordinals: List[int] = field(default_factory=list)
     source_ids: List[NodeID] = field(default_factory=list)
     all_paths: Dict[str, List[ReasoningPath]] = field(default_factory=dict)
 
@@ -274,24 +265,18 @@ class ReferenceCohort:
 
 @dataclass(frozen=True)
 class BoundInputs:
-    """What a pipeline built over a verified workspace read and bound, for a caller
-    that measures the served pipeline without reading those files again
-    (Mode D, `docs/working/scorer-measurement/PLAN_B05.md` §3).
+    """What a pipeline built over a verified workspace bound, for a caller that
+    must not read those files again: the patients-like-me reference cohort's
+    binding (`src/api/routes/diagnose.py`).
 
     Each value is the pipeline's own: the four graph digests its workspace check
-    verified (`kg`, `node_features`, `edge_indices`, `num_nodes`), the dataset
-    record it verified with them, the identity of the checkpoint bytes its model
-    was built from and that checkpoint's recorded training inputs (for R10), the
-    workspace manifest's digest, and the graph data it encoded. Read-only: a copy
-    of the digests, and references the caller must not change.
+    verified (`kg`, `node_features`, `edge_indices`, `num_nodes`) and the
+    dataset record it verified with them. Read-only: a copy of the digests, and
+    a reference the caller must not change.
     """
 
     graph: Dict[str, str]
     dataset_record: Any
-    checkpoint: Optional["ReadIdentity"]
-    checkpoint_training_inputs: Any
-    manifest_sha256: Optional[str]
-    graph_data: Optional[Dict[str, Any]]
 
 
 class PipelineBuildError(RuntimeError):
@@ -553,12 +538,6 @@ class DiagnosisPipeline:
         self._dataset_record: Optional[Any] = None
         #: The identity of the checkpoint bytes the model was built from.
         self._checkpoint_identity: Optional["ReadIdentity"] = None
-        #: That checkpoint's recorded training inputs (`training_input_digests`),
-        #: from the same one read, for a measurement's R10 (`bound_inputs`).
-        self._checkpoint_training_inputs: Any = None
-        #: The autocast regime the embedding forward ran under, observed at that
-        #: computation (`observe_autocast_regime`); None until embeddings exist.
-        self._embedding_regime: Optional[Any] = None
         #: SHA-256 of the one `split_manifest.json` read the workspace was
         #: verified against (contract M3c).
         self._manifest_sha256: Optional[str] = None
@@ -1233,11 +1212,6 @@ class DiagnosisPipeline:
 
         # Kept for M2.4 and M3c; set only once the model it describes is built.
         self._checkpoint_identity = checkpoint_read.identity
-        # Kept from the same read for a measurement's R10 (Mode D): the model
-        # served and the inputs it records cannot come from two reads.
-        self._checkpoint_training_inputs = copy.deepcopy(
-            checkpoint.get("training_input_digests")
-        )
         num_params = self._checkpoint_meta["params"]
         logger.info(
             f"GNN model loaded: {num_params:,} parameters, device={device}"
@@ -1302,10 +1276,8 @@ class DiagnosisPipeline:
             # only its patient.
             from src.models.tasks.scoring import full_view_vectors
 
-            regime = observe_autocast_regime(device)
             view = self._bundle_view
             self._bundle_z = full_view_vectors(self.model, view.edge_index(), view.rel, device)
-            self._embedding_regime = regime
             task = self.model.task
             if task == "disease":
                 self._bundle_diseases = view.type_nodes("disease")
@@ -1332,13 +1304,9 @@ class DiagnosisPipeline:
             for k, v in self._graph_data["edge_index_dict"].items()
         }
 
-        # Forward pass (no gradient needed for inference). The regime is observed
-        # here, at the computation, as Mode C observes its own: a caller's
-        # autocast context is what these embeddings were computed under.
-        regime = observe_autocast_regime(device)
+        # Forward pass (no gradient needed for inference).
         with torch.no_grad():
             embeddings = self.model(x_dict, edge_index_dict)
-        self._embedding_regime = regime
 
         # Move embeddings to CPU for memory efficiency
         self._node_embeddings = {
@@ -1360,9 +1328,8 @@ class DiagnosisPipeline:
         Validation and normalisation, the node mapping, path discovery, scoring
         and the stable sort by the served score, exactly as `run` does them; `run`
         is this followed by its cut at `top_k` and what it builds on the rows it
-        keeps. **One implementation**: a caller that needs the untruncated served
-        order (Mode D, `docs/working/scorer-measurement/PLAN_B05.md` §2) calls
-        this, and nothing constructs candidates a second way.
+        keeps. **One implementation**: `run` calls this, and nothing constructs
+        candidates a second way.
         """
         if include_ortholog_evidence is None:
             include_ortholog_evidence = self.config.include_ortholog_evidence
@@ -1423,7 +1390,7 @@ class DiagnosisPipeline:
 
         # Step 4: Score and rank every candidate
         logger.debug("Scoring candidates...")
-        candidates, ordinals = self._score_and_rank_candidates(
+        candidates = self._score_and_rank_candidates(
             all_paths=all_paths,
             source_ids=source_ids,
             patient_input=patient_input,
@@ -1438,7 +1405,6 @@ class DiagnosisPipeline:
             patient_input=patient_input,
             phenotype_input=validation.phenotype_input,
             candidates=candidates,
-            discovery_ordinals=ordinals,
             source_ids=source_ids,
             all_paths=all_paths,
         )
@@ -1479,7 +1445,7 @@ class DiagnosisPipeline:
         return ServedRanking(
             outcome="ranked", warnings=warnings, patient_input=patient_input,
             phenotype_input=validation.phenotype_input, candidates=candidates,
-            discovery_ordinals=order, source_ids=source_ids, all_paths={})
+            source_ids=source_ids, all_paths={})
 
     def _bundle_phenotypes(self, validation: "ValidationResult", warnings: List[str]
                            ) -> Tuple[Any, List[str]]:
@@ -1568,7 +1534,7 @@ class DiagnosisPipeline:
         return ServedRanking(
             outcome="ranked", warnings=warnings, patient_input=patient_input,
             phenotype_input=validation.phenotype_input, candidates=candidates,
-            discovery_ordinals=order, source_ids=source_ids, all_paths={})
+            source_ids=source_ids, all_paths={})
 
     def _rank_patients_like_me(self, patient_input: PatientPhenotypes,
                                validation: "ValidationResult", warnings: List[str],
@@ -1628,7 +1594,7 @@ class DiagnosisPipeline:
         return ServedRanking(
             outcome="ranked", warnings=warnings, patient_input=patient_input,
             phenotype_input=validation.phenotype_input, candidates=candidates,
-            discovery_ordinals=order, source_ids=source_ids, all_paths={})
+            source_ids=source_ids, all_paths={})
 
     def _patient_candidate(self, rank: int, case_id: str, similarity: float,
                            row: Any) -> PatientCandidate:
@@ -2090,7 +2056,7 @@ class DiagnosisPipeline:
         include_ortholog_evidence: bool,
         rows: Optional[List[int]] = None,
         unmapped_ids: Sequence[str] = (),
-    ) -> Tuple[List[Candidate], List[int]]:
+    ) -> List[Candidate]:
         """
         Score every disease candidate and rank them all: `served_mixture/v1`,
         a ShepherdGNN checkpoint's ranking.
@@ -2113,10 +2079,9 @@ class DiagnosisPipeline:
             unmapped_ids: The request's ids no node was found for
 
         Returns:
-            Every candidate sorted by its kind's score, ranked 1..N, and beside
-            each its discovery ordinal: its position in the list built in
-            `all_paths` order, before the sort (`ServedRanking`). Nothing is cut
-            here; `run` cuts at `top_k`.
+            Every candidate sorted by its kind's score, ranked 1..N, ties in
+            the order `all_paths` reached them. Nothing is cut here; `run` cuts
+            at `top_k`.
         """
         from src.inference.sp_index import sp_analysis_records
 
@@ -2159,8 +2124,7 @@ class DiagnosisPipeline:
                     "not ranked")
 
         # Sorted by the served score. **Stable**, so equal scores keep discovery
-        # order; the order is sorted by position so each candidate's discovery
-        # ordinal travels with it, which the sorted list alone cannot give back.
+        # order.
         order = sorted(range(len(entries)), key=lambda i: scores[i], reverse=True)
         ranked: List[Candidate] = []
         for rank, i in enumerate(order, start=1):
@@ -2173,7 +2137,7 @@ class DiagnosisPipeline:
                 reasoning_paths=[list(p.nodes) for p in paths[:5]],
                 evidence_sources=self._determine_evidence_sources(paths),
                 served_score=scores[i], model_term=model_terms[i], sp_term=records[i]))
-        return ranked, order
+        return ranked
 
     def _served_score(self, model_term: float, record: SPAnalysisRecord) -> float:
         """`served_mixture/v1`'s value with a table: η × model term + (1 − η) × SP,
@@ -2443,38 +2407,16 @@ class DiagnosisPipeline:
         scoring_mode, eta = self._scoring_mode()
         return result_label(result_kind_for(scoring_mode), scoring_mode, eta)
 
-    @property
-    def embedding_regime(self) -> Optional[Any]:
-        """The autocast regime (`AutocastRegime`) the cached embeddings were
-        computed under, observed at that forward; None before any embeddings.
-
-        A measurement that scores these embeddings records it, and Mode C's own
-        check (`assert_manifest_describes_regime`) compares it with the manifest
-        (Mode D, `docs/working/scorer-measurement/PLAN_B05.md` §3)."""
-        return self._embedding_regime
-
-    @property
-    def node_embeddings(self) -> Optional[Dict[str, Any]]:
-        """The cached embeddings by node type, as the forward produced them and
-        moved them to the CPU; None without a model. Read-only: scoring reads
-        the same tensors, so a caller must not change them."""
-        return self._node_embeddings
-
     def bound_inputs(self) -> BoundInputs:
-        """What this pipeline read and bound from its verified workspace
-        (`BoundInputs`), for a caller that must not read those files again: the
-        patients-like-me reference cohort's binding (the graph and the dataset
-        record) and a measurement of the served pipeline (Mode D). Every
+        """What this pipeline bound from its verified workspace (`BoundInputs`),
+        for a caller that must not read those files again: the patients-like-me
+        reference cohort's binding (the graph and the dataset record). Every
         pipeline has them: none is built without its workspace verified and its
         model read from a checkpoint.
         """
         return BoundInputs(
             graph=dict(self._bound_digests),
             dataset_record=self._dataset_record,
-            checkpoint=self._checkpoint_identity,
-            checkpoint_training_inputs=copy.deepcopy(self._checkpoint_training_inputs),
-            manifest_sha256=self._manifest_sha256,
-            graph_data=self._graph_data,
         )
 
     def _scoring_mode(self) -> Tuple[str, Optional[float]]:
@@ -2613,10 +2555,8 @@ def build_served_pipeline(
 
     **The service's own build, in one place** (Batch 3). `src/api/main.py`'s
     `build_pipeline` resolves its paths from the request or the environment,
-    records what was requested and then calls this; a measurement of the served
-    ranking (Mode D) calls it too, so it measures a pipeline built from the same
-    files by the same code, never a second construction. It sits here because
-    `src.evaluation` may import `src.inference` and not `src.api`.
+    records what was requested and then calls this, so the service's pipeline is
+    built in one place, never by a second construction.
 
     **No checkpoint, no pipeline** (`require_model_source`), refused before the
     graph is read: a graph is never served without a trained model. The device

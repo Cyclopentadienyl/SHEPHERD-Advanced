@@ -340,6 +340,9 @@ def register_report(
     ``registered_at`` is the time the registration is made, now in UTC unless a
     caller passes one.
 
+    **A Mode D report is refused** (K7), after it is read and before anything
+    is written: Mode D was removed, and its kept reports stay readable.
+
     Returns the outcome — ``registered``, ``already_registered`` (nothing written)
     or ``corroborated`` — the record as the ledger now holds it, for a
     corroboration the fields not compared on which this report differs, and,
@@ -475,6 +478,16 @@ def register_report(
         raise refused(f"{report_path}: {exc}") from exc
     except RecursionError:  # nested deeper than a report is, from a hand edit
         raise refused(f"{report_path} nests too deeply to be read as a report.") from None
+    # **No new Mode D record** (K7): Mode D, the served ranking's measurement,
+    # was removed with its executor. Refused here, in the writer, and never in
+    # `build_record`, which the report store reads every kept report with: a
+    # kept Mode D report and the records already made of one stay readable.
+    if record["scoring"].get("mode") == "D":
+        raise refused(
+            f"{report_path} is a Mode D report (the served ranking), and Mode D was removed "
+            "in K7: its kept reports and existing records stay readable, and no new record "
+            "of one is made."
+        )
 
     # **The report names the version it is kept under, exactly**: the block the
     # measurement writes from a version (`cohort_version_block`), compared with

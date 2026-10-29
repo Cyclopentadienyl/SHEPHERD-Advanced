@@ -83,7 +83,7 @@ def _statuses(report, prefix):
             if p.probe_id.startswith(prefix)}
 
 
-M4_DEMO_PROBES = ["T1", "T2", "T3", "T4", "T5", "T6", "T7"]
+M4_DEMO_PROBES = ["T1", "T2", "T3", "T4", "T5", "T6"]
 M4_REAL_PROBES = ["RT1", "RT2", "RT3"]
 
 
@@ -139,6 +139,8 @@ def test_the_probes_reload_is_bound_to_the_digest_it_expects(tmp_path, served_st
 def test_the_m4_probes_are_required_in_both_parts():
     probe = _probe()
     assert set(M4_DEMO_PROBES) <= set(probe.M2_DEMO_REQUIRED)
+    # Mode D's probe (T7) went with Mode D (K7): required, it could never pass.
+    assert "T7" not in probe.M2_DEMO_REQUIRED
     assert set(M4_REAL_PROBES) <= set(probe.M2_REAL_REQUIRED)
     assert len(set(probe.M2_DEMO_REQUIRED)) == len(probe.M2_DEMO_REQUIRED)
     assert len(set(probe.M2_REAL_REQUIRED)) == len(probe.M2_REAL_REQUIRED)
@@ -193,7 +195,7 @@ def test_the_demo_phase_passes_and_every_required_probe_runs(tmp_path, served_st
         "cpu", "cpu")
     assert str(tmp_path) not in json.dumps(identity)
 
-    # ---- Contract M4's flow (T1-T6) and Mode D (T7), after M11, every probe passed.
+    # ---- Contract M4's flow (T1-T6), after M11, every probe passed.
     m4 = _statuses(report, "T")
     assert list(m4) == M4_DEMO_PROBES
     assert {k: v[0] for k, v in m4.items()} == dict.fromkeys(m4, "passed"), (
@@ -210,19 +212,18 @@ def test_the_demo_phase_passes_and_every_required_probe_runs(tmp_path, served_st
     assert facts["T1"]["counts"] == probe.M4_DEMO_COUNTS
     assert facts["T1"]["manifest_sha256"] == hashlib.sha256(
         (version / "cohort.json").read_bytes()).hexdigest()
-    # T2: the one Mode C report kept for D1's weights is what the first record
+    # T2: the one Mode C report kept for D1's weights is what the record
     # names, beside the copy of D1's checkpoint (the bytes D1 trained), and
-    # R10's evidence was found. (T7 keeps D1's Mode D report beside it and W8's
-    # run another, for the probe's disease child; a run directory is named for
-    # the checkpoint it measured.)
+    # R10's evidence was found. (W8's run keeps another, for the probe's disease
+    # child; a run directory is named for the checkpoint it measured.)
     d1_sha = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
     d1_reports = {json.loads(path.read_text())["manifest"]["mode"]: path
                   for path in (version / "reports").glob("*/report.json")
                   if f"-{d1_sha[:12]}-" in path.parent.name}
-    assert sorted(d1_reports) == ["C", "D"]
+    assert sorted(d1_reports) == ["C"]
     kept = d1_reports["C"]
     checkpoints = tmp_path / "m4" / "checkpoints"
-    record, d_record = _ledger_records(checkpoints)
+    (record,) = _ledger_records(checkpoints)
     assert record["source_artifact_digest"] == facts["T2"]["report_sha256"] == hashlib.sha256(
         kept.read_bytes()).hexdigest()
     assert record["checkpoint_digest"] == hashlib.sha256(checkpoint.read_bytes()).hexdigest()
@@ -230,11 +231,10 @@ def test_the_demo_phase_passes_and_every_required_probe_runs(tmp_path, served_st
     for scope in ("training", "validation"):
         assert facts["T2"]["r10"][scope]["evidence"] == "found"
         assert facts["T2"]["r10"][scope]["disease_overlap"]["k"] is not None
-    # T3 and T4 wrote nothing: T2's record and T7's after it only, and no
-    # report for the version mapped against M1's graph (its import itself is on
-    # disk).
+    # T3 and T4 wrote nothing: T2's record only, and no report for the version
+    # mapped against M1's graph (its import itself is on disk).
     assert facts["T3"]["same_report_again"] == "already_registered"
-    assert len(_ledger_records(checkpoints)) == 2
+    assert len(_ledger_records(checkpoints)) == 1
     assert (registry / "versions" / probe.M4_OTHER_GRAPH_LABEL / "cohort.json").is_file()
     assert not (registry / "versions" / probe.M4_OTHER_GRAPH_LABEL / "reports").exists()
     assert "kg" in facts["T4"]["differing_roles"]
@@ -252,21 +252,6 @@ def test_the_demo_phase_passes_and_every_required_probe_runs(tmp_path, served_st
     assert facts["T6"]["cohort_version"]["manifest_sha256"] == facts["T1"]["manifest_sha256"]
     training = facts["T2"]["r10"]["training"]["disease_overlap"]
     assert facts["T6"]["overlap"] == f"{training['k']} of {training['n']}"
-    # T7: Mode D's record, second, from its kept report's bytes, in its own
-    # scoring group; its outcomes add up over the import-eligible cases, and
-    # the cross-check read T2's report.
-    assert (record["scoring"]["mode"], d_record["scoring"]["mode"]) == ("C", "D")
-    assert d_record["source_artifact_digest"] == facts["T7"]["report_sha256"] == hashlib.sha256(
-        d1_reports["D"].read_bytes()).hexdigest()
-    assert d_record["registration"]["sequence"] == facts["T7"]["record_sequence"] == 2
-    outcomes = facts["T7"]["outcomes"]
-    assert outcomes["n_import_eligible"] == probe.M4_DEMO_COUNTS["ranked_eligible"] == sum(
-        outcomes[name] for name in ("ranked", "not_reached", "refused"))
-    # T1's workspace holds no shortest-path table (M4 computes one in a copy),
-    # so the service serves the model term alone there, and Mode D measures that.
-    assert facts["T7"]["score_semantics"] == "served:gnn_only:eta=1.0:sp=none"
-    assert [entry["run_id"] for entry in facts["T7"]["kept_mode_c_cross_check"]] == [
-        kept.parent.name]
 
     # ---- M5's acceptance (W1-W11), after T6, every probe passed, and its
     # evidence holds no path.
@@ -318,7 +303,7 @@ def test_the_demo_phase_passes_and_every_required_probe_runs(tmp_path, served_st
     # beside the child's checkpoint, in its run, is built from those bytes and
     # scored as that task; the usage history holds the run and its
     # registration. Nothing is registered beside W1's listed ShepherdGNN run.
-    # W10 left no fourth report (T2's, T7's and W8's are the three).
+    # W10 left no third report (T2's and W8's are the two).
     task_runs = workspace / "runs" / "gatv2"
     assert sorted(path.name for path in task_runs.iterdir()) == sorted(
         [probe.M5_TASK_BASE_RUN, probe.M5_TASK_RUN])
@@ -328,7 +313,7 @@ def test_the_demo_phase_passes_and_every_required_probe_runs(tmp_path, served_st
     assert facts["W8"]["measured"]["task"] == "disease"
     assert set(facts["W8"]["measured"]["training_seconds"]) == {"base", "disease"}
     reports = sorted((version / "reports").glob("*/report.json"))
-    assert len(reports) == 3
+    assert len(reports) == 2
     (w8_report,) = [path for path in reports if f"-{task_sha[:12]}-" in path.parent.name]
     assert hashlib.sha256(w8_report.read_bytes()).hexdigest() == facts["W8"]["report_sha256"]
     assert json.loads(w8_report.read_text())["manifest"]["mode"] == "disease"
@@ -344,32 +329,6 @@ def test_the_demo_phase_passes_and_every_required_probe_runs(tmp_path, served_st
     # W11: stopped, never completed; the lock is the probe's, under its root.
     assert facts["W11"]["stop"]["status"] == "stopped"
     assert (tmp_path / "m5" / "workspaces" / ".shepherd-gpu.lock").is_file()
-
-
-def test_a_mode_d_failure_is_t7s_alone(tmp_path, served_state, monkeypatch):
-    """The internal review of Batch 3 (cli-2): when Mode D refuses (exit 1,
-    nothing written), T7 fails and M5's W1-W11 still pass: W1 lists exactly the
-    runs M4's flow published, and keeps what the later probes need before its
-    own checks."""
-    probe = _probe()
-    real = probe._measure_cohort
-
-    def measure(checkpoint, data_dir, registry, label, device, *extra):
-        if "--mode" in extra:
-            return 1
-        return real(checkpoint, data_dir, registry, label, device, *extra)
-
-    monkeypatch.setattr(probe, "_measure_cohort", measure)
-    report = probe.Report()
-    sound = probe.phase_writer(report, tmp_path)
-    checkpoint = probe.phase_training(report, tmp_path, sound, device="cpu", epochs=1)
-    probe.phase_m2_demo(report, tmp_path, sound, checkpoint, device="cpu")
-
-    statuses = {p.probe_id: (p.status, p.detail) for p in report.probes}
-    assert statuses["T7"][0] == "failed" and "exited 1" in statuses["T7"][1]
-    m5 = {probe_id: statuses[probe_id] for probe_id in probe.M5_DEMO_PROBES}
-    assert {k: v[0] for k, v in m5.items()} == dict.fromkeys(m5, "passed"), (
-        {k: v[1] for k, v in m5.items() if v[0] != "passed"})
 
 
 def _operator_shell(monkeypatch, base):

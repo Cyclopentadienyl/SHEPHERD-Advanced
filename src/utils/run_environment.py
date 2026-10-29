@@ -233,9 +233,8 @@ class AutocastRegime:
     `dtype` is `None` exactly when `enabled` is false, so a reader never has to
     decide whether a dtype beside a disabled regime means anything.
 
-    **One home for both readers** (Batch 3): Mode C's `encode_full_graph` and the
-    served pipeline's embedding forward each observe their own computation with
-    `observe_autocast_regime`, so Mode D can compare the two by value.
+    **One home for its readers**: Mode C's `encode_full_graph` and the task
+    measurement each observe their own computation with `observe_autocast_regime`.
     """
 
     enabled: bool

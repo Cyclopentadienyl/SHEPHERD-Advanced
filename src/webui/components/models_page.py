@@ -379,8 +379,9 @@ def fmt_metric(name: str, value: Any) -> str:
     return f"{value:.2f}" if str(name).endswith("mean_rank") else f"{value:.4f}"
 
 
-def metric_label(name: Any, mode: str = "C") -> str:
-    """A metric of a record of `mode` as named on this page (`caveats.metric_text`)."""
+def metric_label(name: Any, mode: str) -> str:
+    """A metric of a record of `mode` as named on this page (`caveats.metric_text`):
+    the mode is always named, never assumed."""
     return metric_text(mode, str(name))
 
 
@@ -957,7 +958,7 @@ def records_block_html(views: Sequence[Mapping[str, Any]], contest: Mapping[str,
                        not_shown: int = 0,
                        picks: Optional[Mapping[str, Mapping[str, Any]]] = None,
                        roles: Optional[Mapping[str, str]] = None) -> str:
-    """Each shown mode's label and note once (the pre-B-1 note beside Mode C
+    """Each shown mode's label and note once (the Mode C note beside Mode C
     records only), the dataset line, the table, the count of records not shown,
     and the R10 definitions behind a ⓘ."""
     parts = []
@@ -1265,7 +1266,7 @@ def shape(listing: Mapping[str, Any], data: Mapping[str, Any], ctl: Mapping[str,
         return {**newest, "refused": ranked["why"]}, None
     entry = ctl["version_entry"]
     metric = ctl["metric"]
-    label = metric_label(metric)
+    label = metric_label(metric, "C")
     from src.evaluation.ordering import LOWER_IS_BETTER
 
     order_of = {ml.item_key(i): n for n, i in enumerate(ranked["items"])}
@@ -1337,7 +1338,7 @@ def picks_for(item: Mapping[str, Any], ranked: Optional[Mapping[str, Any]],
         value = _get(other, "metrics", metric)
         parts = []
         if _number(value) and _number(base):
-            parts.append(f"Δ {metric_label(metric)} {value - base:+.4f} vs #{sequence}")
+            parts.append(f"Δ {metric_label(metric, 'C')} {value - base:+.4f} vs #{sequence}")
         flag = _get(other, "regime", "deterministic_algorithms")
         if flag != _get(chosen, "regime", "deterministic_algorithms") and type(flag) is bool:
             parts.append("deterministic " + ("on" if flag else "off"))
@@ -1623,7 +1624,7 @@ def usage_entry_html(entry: Mapping[str, Any]) -> str:
         loaded = entry.get("loaded")
         result = ("loaded" if loaded is True else
                   f"not loaded: {entry.get('why') or 'no reason recorded'}")
-        detail = (f"ordered by {metric_label(entry.get('metric'))} · scoring semantics "
+        detail = (f"ordered by {metric_label(entry.get('metric'), 'C')} · scoring semantics "
                   f"{r.short_hex(entry.get('scoring_semantics_digest'))}")
     else:
         what, result, detail = str(kind or "entry"), "", ""

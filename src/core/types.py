@@ -941,8 +941,7 @@ class InferenceResult:
     order non-increasing by the kind's score, and the kind's fields present and
     the others absent. Ties keep discovery order by construction (the stable
     sort of `DiagnosisPipeline._score_and_rank_candidates`); the order a tie came
-    in is internal metadata (`ServedRanking.discovery_ordinals`), not on the
-    result, so only the non-increasing order is checked here.
+    in is not on the result, so only the non-increasing order is checked here.
     """
     patient_id: str
     timestamp: datetime

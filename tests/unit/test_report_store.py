@@ -41,6 +41,7 @@ from src.evaluation.report_store import (
     CONTEST_STATES,
     USAGE_KINDS,
     add_investigation_note,
+    entry_mode,
     read_investigation_notes,
     read_usage_history,
     record_model_load,
@@ -364,7 +365,7 @@ def test_the_usage_history_appends_each_kind_in_order(tmp_path):
     run = record_test_run(version, run_id=first.parent.name, report_sha256="e" * 64,
                           checkpoint_sha256="c" * 64, metrics={"untruncated_mrr": 0.5},
                           n_ranked=80, deterministic=True, device="cuda",
-                          record_requested=False, at=WHEN)
+                          record_requested=False, mode="C", at=WHEN)
     registered = record_registration(version, run_id=first.parent.name,
                                      report_sha256="e" * 64, checkpoint_sha256="c" * 64,
                                      outcome="registered", sequence=1, at=WHEN)
@@ -379,11 +380,38 @@ def test_the_usage_history_appends_each_kind_in_order(tmp_path):
     assert len(lines) == 3 and all(json.loads(line) for line in lines)
 
 
+def test_a_test_run_names_its_mode_and_an_entry_from_before_the_key_reads_as_mode_c(tmp_path):
+    """`record_test_run` requires the run's mode (K7: no writer default records
+    "C" for a mode it was not told; a call without one is a TypeError and
+    writes nothing), and `entry_mode` reads it back. An entry written before
+    the key existed (Batch 3's M4/M5 registries, every one Mode C) reads as Mode
+    C; a key that is present but empty or not a string is no mode, never C."""
+    first = _stored(tmp_path)
+    version = version_of(first)
+    run = dict(run_id=first.parent.name, report_sha256="e" * 64, checkpoint_sha256="c" * 64,
+               metrics={"pooled_mrr": 0.25}, n_ranked=8, deterministic=True, device="cpu",
+               record_requested=False, at=WHEN)
+
+    with pytest.raises(TypeError, match="mode"):
+        record_test_run(version, **run)
+    assert read_usage_history(version) == ([], [])
+    for mode in ("disease", "C", "D"):
+        record_test_run(version, mode=mode, **run)
+
+    entries, problems = read_usage_history(version)
+    assert [entry_mode(entry) for entry in entries] == ["disease", "C", "D"] and not problems
+    before_the_key = {name: value for name, value in entries[0].items() if name != "mode"}
+    assert entry_mode(before_the_key) == "C"
+    for damaged in (None, "", " ", 7):
+        assert entry_mode({**entries[2], "mode": damaged}) is None
+
+
 def test_the_usage_history_holds_aggregates_only(tmp_path):
     first = _stored(tmp_path)
     record_test_run(version_of(first), run_id=first.parent.name, report_sha256="e" * 64,
                     checkpoint_sha256="c" * 64, metrics={"hits@1": 0.25}, n_ranked=80,
-                    deterministic=False, device="cpu", record_requested=True, at=WHEN)
+                    deterministic=False, device="cpu", record_requested=True, mode="C",
+                    at=WHEN)
 
     text = (first.parents[1] / "usage.jsonl").read_text()
 
@@ -418,7 +446,8 @@ def test_an_entry_after_an_interrupted_append_starts_its_own_line(tmp_path):
     version = version_of(first)
     record_test_run(version, run_id=first.parent.name, report_sha256="e" * 64,
                     checkpoint_sha256="c" * 64, metrics={"hits@1": 0.25}, n_ranked=80,
-                    deterministic=False, device="cpu", record_requested=False, at=WHEN)
+                    deterministic=False, device="cpu", record_requested=False, mode="C",
+                    at=WHEN)
     path = first.parents[1] / "usage.jsonl"
     with open(path, "ab") as handle:
         handle.write(b'{"kind":"test_run","at":"2026')

@@ -114,10 +114,7 @@ entry point, and the registry, the kept reports and the ledgers are all under
     it), the measured checkpoint's record shown by the read-only view for the
     digest the status reports, uncontested in its version's report store (D5),
     and none for M2's checkpoint served beside the same ledger (T5); the overlap
-    audit in registered mode (T6); Mode D, the served ranking, measured on that
-    version with --record: one more report with Mode C's manifest fields and
-    Mode D's values, outcomes adding up over the import-eligible cases, a second
-    record keyed apart from T2's, the cross-check with T2's report recorded (T7).
+    audit in registered mode (T6).
     Phase R, after R7: N of the real workspace's val cases written back as a
     source through the real graph's ids, imported with no exclusions (RT1);
     the checkpoint R4 trained measured on it with --record, training disease
@@ -125,7 +122,7 @@ entry point, and the registry, the kept reports and the ledgers are all under
     constructed (RT2); that record shown for that checkpoint served,
     uncontested (RT3).
     The probe's registry is the deployment's (`SHEPHERD_REGISTRY`) for each
-    flow as a whole, set once around T1-T7 and RT1-RT3 whatever the operator's
+    flow as a whole, set once around T1-T6 and RT1-RT3 whatever the operator's
     shell names, and put back after (`_registry_setting`; root-cause round,
     INT-1).
 
@@ -184,7 +181,7 @@ on the console, never hidden, and said again beside the acceptance's verdict.
     each, into --work-dir) (RW2); a training job on it started and stopped,
     other jobs refused while it runs (RW3).
     **The rest of the probe chain still trains and measures ShepherdGNN
-    checkpoints** (D1, M2-M11, T1-T7, R3-R7, RT1-RT3, W1's listed run, W7's
+    checkpoints** (D1, M2-M11, T1-T6, R3-R7, RT1-RT3, W1's listed run, W7's
     refused training starts and W11's and RW3's held training job): moving it
     to the model bundle path is K8's (the scorer-retraining README, §10).
     **W11's and RW3's training job holds the GPU by configuration**, applied
@@ -2144,9 +2141,6 @@ M2_DEMO_REQUIRED: Tuple[str, ...] = (
     # graph (T4); the read-only view for the served checkpoint and another (T5);
     # the overlap audit on the registered version (T6).
     "T1", "T2", "T3", "T4", "T5", "T6",
-    # Mode D (Batch 3, PLAN_B05 §8): the served ranking measured on T1's version
-    # with --record, kept and registered apart from T2's Mode C record (T7).
-    "T7",
     # M5's acceptance (M5-3): the environment against the lock (A5);
     # the server's lists (W1); D8 on the running service, CORS, the route
     # guard, read-only without M1 (W2-W5) and off loopback (W6); the GPU lock
@@ -4157,11 +4151,9 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
     `registry`). W7-W11's test runs measure a disease task model the probe
     trains on the same workspace copy, the graph T1's version is bound to
     (`_task_child`): a test run measures a finetuned model by its task (K6).
-    `m4_runs` are the run ids M4's flow published in that version's store,
-    T2's first, then T7's (Mode D) when it published one: W1 lists exactly
-    those, so a Mode D failure is T7's alone and never W1's. `m4_registered`
-    are those of them whose probe passed, so registered: W1 checks each is
-    listed as registered.
+    `m4_runs` are the run ids M4's flow published in that version's store
+    (T2's): W1 lists exactly those. `m4_registered` are those of them whose
+    probe passed, so registered: W1 checks each is listed as registered.
 
     Functional only: what M5 adds to serving and evaluation (the server's
     lists, D8 on every operator control, no cross-origin access, the route
@@ -4274,19 +4266,19 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
                      fingerprint=fingerprint, link_made=link_made)
         # The store's run directories (its own files, the usage history and
         # the notes, are not runs): exactly the runs M4's flow published, each
-        # kept, and each whose probe passed (T2's, T7's) listed as registered.
+        # kept, and each whose probe passed (T2's) listed as registered.
         assert m4_runs, "T2's run (M4) is not available"
         listed_runs = {run.run_id: run.state or {} for run in demo.reports
                        if is_run_id(run.run_id)}
         assert sorted(listed_runs) == sorted(m4_runs), (
             f"the store lists {len(listed_runs)} runs, not the {len(m4_runs)} M4's flow "
-            "published (T2's, and T7's when it published one)")
+            "published (T2's)")
         not_kept = [run for run in m4_runs if listed_runs[run].get("kept") != "kept"]
         assert not not_kept, f"M4's runs {not_kept} are not listed as kept"
         unregistered = [run for run in m4_registered
                         if listed_runs[run].get("registered") != "registered"]
         assert not unregistered, (
-            f"M4's runs {unregistered} registered by their probes (T2, T7) are not listed as "
+            f"M4's runs {unregistered} registered by their probes (T2) are not listed as "
             "registered")
         return "listed by name and digest, resolved only from the lists, no server path", {
             "workspaces": [{"name": item.name, "dataset_fingerprint": item.dataset_fingerprint,
@@ -5670,88 +5662,6 @@ def phase_m2_demo(
             "counts": audited["counts"], "overlap": audited["overlap"]["as_written"],
         }
 
-    def _served_ranking_measured() -> Tuple[str, Dict[str, Any]]:
-        """Mode D on the deployment (PLAN_B05 §8): the measured checkpoint served
-        as the Diagnosis page serves it, over T1's version, with --record. One
-        new report with Mode C's manifest fields and Mode D's values, outcomes
-        adding up over the import-eligible cases, a ranks row per case, a second
-        record keyed and grouped apart from T2's, and the usage history's mode.
-        The cross-check with T2's kept report is recorded, never required to
-        agree (another batch size, possibly another regime)."""
-        from scripts.measure_scorer import RANKS_FILE, REPORT_FILE
-        from src.evaluation.mode_d import COMPARISON_STATEMENT, METRIC_SCHEMA_VERSION
-        from src.evaluation.report_store import entry_mode, read_usage_history
-        from src.evaluation.sidecar import LEDGER_FILENAME, read_ledger
-        from src.kg.storage.file_storage import SamplesDigestMismatch, _read_json
-
-        assert "record" in m4, "the measurement (T2) is not available"
-        version = m4["version"]
-        store = registry / "versions" / M4_DEMO_LABEL / "reports"
-        before = {path.parent.name for path in store.glob(f"*/{REPORT_FILE}")}
-        code = _measure_cohort(measured, sound, registry, M4_DEMO_LABEL, device,
-                               "--mode", "D", "--record")
-        created = [path for path in store.glob(f"*/{REPORT_FILE}")
-                   if path.parent.name not in before]
-        if len(created) == 1:
-            # Whatever T7 concludes, W1 lists exactly what M4's flow published.
-            m4["mode_d_run"] = created[0].parent.name
-        assert code == 0, f"the Mode D measurement with --record exited {code}"
-        assert len(created) == 1, f"the Mode D run left {len(created)} reports, not one"
-        report_d, identity = _read_json(created[0])
-        manifest, c_manifest = report_d["manifest"], _read_json(m4["report"])[0]["manifest"]
-        assert set(manifest) == set(c_manifest), "Mode D's manifest fields are not Mode C's"
-        assert (manifest["mode"], manifest["metric_schema_version"], manifest["batch_size"]) == (
-            "D", METRIC_SCHEMA_VERSION, 1), "the manifest does not carry Mode D's values"
-        assert manifest["score_semantics"].startswith("served:"), (
-            f"the score semantics are {manifest['score_semantics']!r}")
-        assert manifest["artifact_digests"]["checkpoint"] == m4["checkpoint_sha256"], (
-            "the report does not name the checkpoint it was given")
-        eligible = M4_DEMO_COUNTS["ranked_eligible"]
-        outcomes = report_d["outcomes"]
-        assert outcomes["n_import_eligible"] == eligible and sum(
-            outcomes[name] for name in ("ranked", "not_reached", "refused")) == eligible, (
-            f"the outcomes {outcomes} do not add up to the {eligible} import-eligible cases")
-        assert report_d["n_ranked"] == outcomes["ranked"]
-        assert report_d["import_counts"]["source_cases"] == M4_DEMO_COUNTS["source_cases"]
-        assert report_d["comparison"]["statement"] == COMPARISON_STATEMENT
-        try:
-            rows, _ = _read_json(created[0].parent / RANKS_FILE,
-                                 expected_sha256=frozenset({report_d["ranks"]["sha256"]}))
-        except SamplesDigestMismatch:
-            raise AssertionError("the ranks are not the bytes the report names") from None
-        assert len(rows) == eligible, f"the ranks hold {len(rows)} rows, not {eligible}"
-        ledger, ledger_sha256 = read_ledger(measured.parent / LEDGER_FILENAME)
-        c_record, d_record = ledger["records"]
-        assert (c_record["scoring"]["mode"], d_record["scoring"]["mode"]) == ("C", "D")
-        assert d_record["source_artifact_digest"] == identity.sha256, (
-            "the Mode D record was not built from the kept report's bytes")
-        assert d_record["registration"]["sequence"] == 2
-        assert d_record["scoring_semantics_digest"] != c_record["scoring_semantics_digest"], (
-            "the Mode D record is in Mode C's scoring group")
-        runs = [entry for entry in read_usage_history(version)[0]
-                if entry.get("kind") == "test_run"]
-        assert entry_mode(runs[-1]) == "D", "the usage history does not say Mode D"
-        kept = report_d["comparison"]["kept_mode_c_reports"]
-        assert m4["report"].parent.name in [entry.get("run_id") for entry in kept], (
-            "the cross-check does not read T2's kept Mode C report")
-        m4["mode_d_registered"] = True      # W1 then checks the run is listed as registered
-        metrics = report_d["authoritative_metrics"]
-        return "the served ranking measured over the import-eligible cases, kept and " \
-               "registered apart from Mode C's", {
-            "exit_code": code, "report_sha256": identity.sha256,
-            "score_semantics": manifest["score_semantics"],
-            "candidate_construction": manifest["candidate_construction"],
-            "outcomes": outcomes, "post_import_mrr": metrics.get("post_import_mrr"),
-            "coverage": metrics.get("coverage"),
-            "mode_c_same_embeddings_mrr":
-                report_d["comparison"]["mode_c"]["authoritative_metrics"].get("untruncated_mrr"),
-            "kept_mode_c_cross_check": [
-                {key: entry.get(key) for key in ("run_id", "n_compared", "n_equal", "unreadable")}
-                for entry in kept],
-            "ledger_sha256": ledger_sha256, "record_sequence": 2,
-            "cuda_executed": manifest.get("cuda_executed"),
-        }
-
     # **The probe's registry is the deployment's for the whole flow** (root-cause
     # round, INT-1), set once here as phases M and R set their GPU lock, so every
     # step that reads SHEPHERD_REGISTRY inherits it: measure_scorer --cohort,
@@ -5776,19 +5686,13 @@ def phase_m2_demo(
         report.run("T6", "m2",
                    "M4: the overlap audit runs on the registered version and records it",
                    _overlap_audit)
-        report.run("T7", "m2",
-                   "Mode D: the served ranking measured on the registered version with "
-                   "--record, kept and registered apart from Mode C's", _served_ranking_measured)
 
     # ---- M5's acceptance on the same workspace: M2's resumed checkpoint, T1's
     # version and registry, the probe's own deployment under <work>/m5.
     _m5_demo(report, work, sound, checkpoint, device, state.get("child"), registry,
              m4.get("version"),
-             [run for run in (m4["report"].parent.name if m4.get("report") else None,
-                              m4.get("mode_d_run")) if run],
-             [run for run in (m4["report"].parent.name if m4.get("record") else None,
-                              m4.get("mode_d_run") if m4.get("mode_d_registered") else None)
-              if run])
+             [m4["report"].parent.name] if m4.get("report") else [],
+             [m4["report"].parent.name] if m4.get("record") else [])
 
 
 # =============================================================================

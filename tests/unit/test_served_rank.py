@@ -12,11 +12,9 @@ the rows it keeps. These tests pin that:
   K7), exact ties included, over the fields promised not to change (no
   timestamps);
 - **`run` is `rank()` cut at `top_k`**, for every case and several cuts;
-- **each candidate's discovery ordinal** is its position before the sort, so
-  ties keep discovery order and the order can be read back without inferring it
-  from the served one;
-- `bound_inputs()`, `embedding_regime` and `build_served_pipeline` give a
-  measurement what the build read, with no second read.
+- `bound_inputs()` gives the reference cohort's binding the graph and dataset
+  record the build verified, and the service builds through
+  `build_served_pipeline`.
 
 The workspace and checkpoint are the registered-cohort fixture's (CPU,
 deterministic); the shortest-path table is made by the production producer.
@@ -250,66 +248,24 @@ def test_the_three_outcomes_are_the_three_returns_of_run(served):
     assert scores == sorted(scores, reverse=True)
 
 
-def test_each_candidate_carries_its_discovery_ordinal(served):
-    """The ordinals are a permutation of the positions before the sort: sorted
-    by ordinal, the candidates are in `all_paths` order. Equal scores keep
-    ordinal order (the stable sort). Catches an ordinal read from the served
-    order, which equals discovery order only when nothing was reordered."""
-    reordered = 0
-    for name, pipeline in served["pipelines"].items():
-        for phenotypes in served["patients"]:
-            ranking = pipeline.rank(_patient(phenotypes))
-            if ranking.outcome != "ranked":
-                continue
-            ordinals = ranking.discovery_ordinals
-            assert sorted(ordinals) == list(range(len(ranking.candidates))), name
-            by_ordinal = [c for _, c in sorted(zip(ordinals, ranking.candidates),
-                                               key=lambda pair: pair[0])]
-            discovered = [key for key, paths in ranking.all_paths.items() if paths]
-            assert [str(c.disease_id) for c in by_ordinal] == discovered, name
-            for (first, a), (second, b) in zip(zip(ordinals, ranking.candidates),
-                                               zip(ordinals[1:], ranking.candidates[1:])):
-                if _row(a)[2] == _row(b)[2]:
-                    assert first < second, name
-            reordered += ordinals != sorted(ordinals)
-    assert reordered, "no case reordered its candidates, so nothing above was tested"
-
-
 def test_bound_inputs_are_the_reads_the_build_took(served):
-    """Against an independent account of the files: the four graph digests, the
-    checkpoint's bytes, its recorded training inputs and the dataset record."""
+    """Against an independent account of the files: the four graph digests and
+    the dataset record, which the reference cohort's binding reads (K7: the
+    fields only Mode D read are gone)."""
+    from dataclasses import fields
+
+    from src.inference.pipeline import BoundInputs
     from src.kg.artifacts import GRAPH_TENSOR_ROLES
     from src.kg.provenance import PROVENANCE_FILENAME
 
     cohort = served["cohort"]
     bound = served["pipelines"]["gnn_only"].bound_inputs()
+    assert [field.name for field in fields(BoundInputs)] == ["graph", "dataset_record"]
     assert bound.graph["kg"] == _sha(cohort.data_dir / "kg.json")
     for role in GRAPH_TENSOR_ROLES:
         files = [p for p in cohort.data_dir.iterdir() if p.stem == role]
         assert len(files) == 1 and bound.graph[role] == _sha(files[0]), role
-    assert bound.checkpoint.sha256 == _sha(cohort.checkpoint) == cohort.checkpoint_sha256
-    recorded = torch.load(cohort.checkpoint, weights_only=True)["training_input_digests"]
-    assert bound.checkpoint_training_inputs == recorded
     assert bound.dataset_record.identity.sha256 == _sha(cohort.data_dir / PROVENANCE_FILENAME)
-    assert bound.manifest_sha256 == _sha(cohort.data_dir / "split_manifest.json")
-    assert bound.graph_data is not None
-
-
-def test_the_embedding_regime_is_observed_at_the_forward(served):
-    """Off on a plain CPU build; on, with its dtype, when the build runs inside an
-    autocast context, which is what the embeddings were computed under."""
-    from src.inference.pipeline import DiagnosisPipeline
-    from src.kg.graph import KnowledgeGraph
-    from src.utils.run_environment import AutocastRegime
-
-    assert served["pipelines"]["gnn_only"].embedding_regime == AutocastRegime(False, None)
-    cohort = served["cohort"]
-    with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
-        under = DiagnosisPipeline(
-            graph=KnowledgeGraph.read_json(cohort.data_dir / "kg.json"),
-            data_dir=str(cohort.data_dir), checkpoint_path=str(cohort.checkpoint), device="cpu",
-        )
-    assert under.embedding_regime == AutocastRegime(True, "torch.bfloat16")
 
 
 def test_the_service_and_build_served_pipeline_build_the_same_pipeline(served):

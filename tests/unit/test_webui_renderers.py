@@ -18,7 +18,9 @@ items to escaped HTML. What these pin:
   line), Data, Evidence ("selection metric on val, not an independent test";
   recorded tests as states) and Warnings, always open;
 - **one vocabulary** (K6 decisions 6 and 8): a listed checkpoint's kind word
-  (`record_kind_text`, on `caveats.TASK_NAMES`), "GATv2" for a model bundle's
+  (`record_kind_text`, on `caveats.TASK_NAMES`, the model spec's tasks), a
+  recorded metric named by its task and never as a mode (`caveats.metric_text`;
+  Mode C's and Mode D's history names unchanged), "GATv2" for a model bundle's
   encoder, the Trainer's validation figures of a base and of a task model by
   name, and Model Facts' Task and Configuration rows;
 - **everything escaped**: a workspace or run name may hold markup.
@@ -366,6 +368,33 @@ def test_a_listed_checkpoint_leads_with_its_kind_word():
     # A record never read keeps its own word (skill §6), apart from a refused one.
     assert r.record_kind_text({**checkpoint(problem="torn"), "record": None}) == (
         "Record not read")
+
+
+def test_a_task_metric_is_named_by_its_task_never_as_a_mode():
+    """K6 decision 6: one vocabulary. A task measurement's metric reads "Gene
+    pooled MRR", never "Mode gene pooled_mrr"; Mode C's and the kept Mode D
+    records' names are unchanged; the task names are the model spec's tasks."""
+    from src.evaluation.caveats import TASK_NAMES, metric_text, task_list_text
+    from src.models.bundle.spec import TASKS
+
+    assert tuple(TASK_NAMES) == TASKS
+    # One way to name a set of tasks (the runner's refusals, the Fine-tune page).
+    assert [task_list_text(TASK_NAMES[t] for t in TASKS[:n]) for n in (1, 2, 3)] == [
+        "Disease", "Disease and Gene", "Disease, Gene and Patients-like-me"]
+    assert metric_text("gene", "pooled_mrr") == "Gene pooled MRR"
+    assert [metric_text("disease", name) for name in (
+        "pooled_top10", "macro_recall@5", "macro_precision@20", "macro_mrr",
+        "best_positive_mrr", "conservative_pooled_mrr", "coverage")] == [
+        "Disease pooled top-10", "Disease macro recall@5", "Disease macro precision@20",
+        "Disease macro MRR", "Disease best-positive MRR", "Disease conservative pooled MRR",
+        "Disease coverage"]
+    assert metric_text("patients_like_me", "macro_recall@10") == (
+        "Patients-like-me macro recall@10")
+    assert (metric_text("C", "untruncated_mrr"), metric_text("C", "hits@10"),
+            metric_text("D", "post_import_mrr"), metric_text("D", "coverage"),
+            metric_text("D", "reached_mean_rank"), metric_text(None, "pooled_mrr")) == (
+        "Mode C MRR (untruncated)", "Mode C Hits@10", "Mode D MRR (import-eligible)",
+        "Mode D coverage", "Mode D mean rank (reached only)", "pooled MRR (mode not recorded)")
 
 
 def test_a_bundle_run_reads_gatv2_and_a_shepherdgnn_run_its_upper_case():

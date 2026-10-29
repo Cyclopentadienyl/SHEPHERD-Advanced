@@ -65,6 +65,7 @@ from src.evaluation.sidecar import empty_ledger, read_ledger, write_ledger
 from tests.fixtures.report_store import store_bytes, store_report, version_of
 from tests.unit.test_evaluation_sidecar import (
     generated_report,
+    mode_d_report,
     r10_block,
     registered_manifest,
     registered_report,
@@ -1129,15 +1130,18 @@ def test_the_r10_states_say_neither_zero_nor_no_leakage():
     assert "not evidence about data outside them" in R10_STATE_TEXT["none"]
 
 
-def test_the_result_label_the_pre_b1_note_and_the_absence_sentence():
+def test_the_result_label_the_mode_c_note_and_the_absence_sentence():
+    """The Mode C note is dated history (owner decision 4, K7): its figures'
+    denominator, and that the number does not describe the current diagnosis
+    model; no claim of what the page serves today."""
     from src.evaluation.caveats import MODE_C_RESULT_LABEL, PRE_B1_NOTE, RECORD_ABSENCE
 
     assert MODE_C_RESULT_LABEL == (
         "Disease ranking by the model, approved scorer policy (Mode C)")
     assert PRE_B1_NOTE == (
-        "This is the model's own Mode C disease ranking. Until B-1 ships, the Diagnosis "
-        "tab ranks by the legacy GNN+SP mixture behind the path gate, so this number "
-        "does not describe the tab's current ranking.")
+        "Mode C (October 2026, before the task models) ranks every disease by the model's raw "
+        "cosine; its figures are over the cases ranked. The Diagnosis page never ranked by "
+        "Mode C, so this number does not describe the current diagnosis model.")
     assert RECORD_ABSENCE == (
         "This ledger holds no result for these weights; that does not mean they were "
         "never evaluated.")
@@ -1396,6 +1400,80 @@ def test_report_state_says_cannot_be_checked_rather_than_no(tmp_path, checkpoint
     copy.write_bytes(report.read_bytes())
     outside = report_state(copy, checkpoint=checkpoints / "best.pt")
     assert outside.kept == "not_kept" and "not in a registry's report store" in outside.why_kept
+
+
+# ---------------------------------------------------------------------------
+# A kept Mode D report: readable, never registered (K7)
+# ---------------------------------------------------------------------------
+def _mode_d(tmp_path) -> Path:
+    """A kept Mode D report measuring `WEIGHTS`, in the version's report store:
+    Mode D no longer runs (K7), so it is built (`mode_d_report`)."""
+    report = mode_d_report()
+    report["manifest"]["artifact_digests"]["checkpoint"] = DIGEST
+    return store_report(tmp_path / "registry", report)
+
+
+@pytest.mark.parametrize("entry", ["measured", "checkpoint_dir", "checkpoint", "place"])
+def test_a_kept_mode_d_report_is_refused_and_still_reads_as_it_did(tmp_path, checkpoints,
+                                                                   entry):
+    """K7: `register_report`, the one writer behind `--record`,
+    `record_evaluation` and the Test page's Register, refuses a Mode D report
+    after reading it and before anything is written: no ledger beside the
+    checkpoint, and every file of the registry as it was (no usage-history
+    line). The gate is the writer's, never `build_record`'s: the store still
+    reads the report under its own key, mode D, uncontested, and it is still
+    kept and not registered."""
+    from src.evaluation.registration import report_state
+    from src.evaluation.report_store import scan_report_store
+
+    report = _mode_d(tmp_path)
+    registry = tmp_path / "registry"
+
+    def files():
+        return {path: path.read_bytes() for path in sorted(registry.rglob("*"))
+                if path.is_file()}
+
+    before_scan = scan_report_store(version_of(report))
+    (key,) = before_scan.reports
+    before, beside = files(), _listing(checkpoints)
+    how = {"measured": {"measured": _measured(report, checkpoints)},
+           "checkpoint_dir": {"checkpoint_dir": checkpoints},
+           "checkpoint": {"checkpoint": checkpoints / "best.pt"},
+           "place": {"place": lambda manifest: checkpoints / "best.pt",
+                     "expected_report_sha256": _sha(report)}}[entry]
+
+    with pytest.raises(RegistrationRefused, match="is a Mode D report") as refused:
+        register_report(report, registered_at=WHEN, **how)
+
+    assert "Mode D was removed" in str(refused.value)
+    assert "Nothing was written" in str(refused.value)
+    assert files() == before and _listing(checkpoints) == beside
+    after_scan = scan_report_store(version_of(report))
+    assert after_scan.reports == before_scan.reports
+    ((_run_id, record),) = after_scan.reports[key].values()
+    assert record["scoring"]["mode"] == "D" and after_scan.state(key) == "uncontested"
+    state = report_state(report, checkpoint=checkpoints / "best.pt")
+    assert (state.kept, state.registered) == ("kept", "not_registered")
+
+
+def test_a_mode_d_record_already_in_a_ledger_stays_and_a_task_report_still_registers(
+        tmp_path, checkpoints):
+    """The refusal makes no new Mode D record; one a ledger already holds (Batch
+    3's) stays, is read with it, and does not stop the next registration."""
+    from src.evaluation.sidecar import LEDGER_FILENAME, append_record, build_record
+
+    kept = _mode_d(tmp_path)
+    ledger_path = checkpoints / LEDGER_FILENAME
+    old = build_record(json.loads(kept.read_text()), _sha(kept))
+    write_ledger(ledger_path, append_record(empty_ledger(), old, registered_at=WHEN)[1], None)
+
+    with pytest.raises(RegistrationRefused, match="is a Mode D report"):
+        _register(kept, checkpoints, beside=True)
+    result = _register(_report(tmp_path), checkpoints, beside=True)
+
+    assert result.outcome == "registered"
+    ledger, _digest = read_ledger(ledger_path)
+    assert [r["scoring"]["mode"] for r in ledger["records"]] == ["D", "C"]
 
 
 # ---------------------------------------------------------------------------

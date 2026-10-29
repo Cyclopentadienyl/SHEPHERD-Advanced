@@ -33,8 +33,8 @@ docstring. Three panels, as the mockup draws them (``test-wide.png``,
   and for the start itself): a base, a history file (no model spec), a record
   refused or not read, and a gene or patients-like-me model on a version that
   lists no causal (or candidate) genes are refused with their reason; the
-  runner never launches Mode C or D, which only the command line runs until
-  K7; then the job: its state, elapsed time, inputs,
+  runner never launches Mode C, which only the command line runs until K7, and
+  Mode D was removed in K7; then the job: its state, elapsed time, inputs,
   output tail, "🔒 Cancel" (the runner's stop for test runs only), and once it
   has ended, **what it left, from the runner** (its outcome file, kept and
   registered read from disk by WP4's helper; "no report was published" when
@@ -47,7 +47,8 @@ docstring. Three panels, as the mockup draws them (``test-wide.png``,
   origin, whether it is kept and registered; "🔒 Register this report" through the one
   registration function (`register_report`, the ledger beside the listed
   checkpoint holding the weights it measured, found by digest in the server's
-  checkpoint list, never the report's recorded path); while runs under its key
+  checkpoint list, never the report's recorded path; it refuses a kept Mode D
+  report, which stays readable here, and says why); while runs under its key
   disagree, the block is shown and the button is off, and investigation notes
   (who, when, what) are listed and added (gated) **without lifting the block**;
   on a wide screen the note form stays at the panel's foot above Register,

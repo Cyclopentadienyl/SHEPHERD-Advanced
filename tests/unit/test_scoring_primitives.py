@@ -817,7 +817,7 @@ def test_ranking_path_keeps_a_sub_float32_distinction(lookup, monkeypatch):
     records = {str(d): _record(0.3) for d in embeddings}
     stub = _ranking_stub(lookup, monkeypatch, embeddings, records, "gnn_plus_shortest_path")
 
-    ranked, _ = DiagnosisPipeline._score_and_rank_candidates(
+    ranked = DiagnosisPipeline._score_and_rank_candidates(
         stub, _paths_to(phenotype, embeddings), [phenotype], None,
         include_ortholog_evidence=False, rows=[0],
     )
@@ -846,7 +846,7 @@ def test_a_mixed_status_ranks_as_the_legacy_zero_did_and_says_so(lookup, monkeyp
     stub = _ranking_stub(lookup, monkeypatch, {a: 0.6, b: 0.8}, records,
                          "gnn_plus_shortest_path")
 
-    ranked, _ = DiagnosisPipeline._score_and_rank_candidates(
+    ranked = DiagnosisPipeline._score_and_rank_candidates(
         stub, _paths_to(phenotype, [a, b]), [phenotype], None,
         include_ortholog_evidence=False, rows=[0])
     by_id = {c.disease_id: c for c in ranked}
@@ -894,7 +894,7 @@ def test_without_a_table_the_model_term_ranks_alone(lookup, monkeypatch):
     stub = _ranking_stub(lookup, monkeypatch, {disease: 0.8}, {str(disease): no_table},
                          "gnn_only")
 
-    [candidate], _ = DiagnosisPipeline._score_and_rank_candidates(
+    [candidate] = DiagnosisPipeline._score_and_rank_candidates(
         stub, _paths_to(phenotype, [disease]), [phenotype], None,
         include_ortholog_evidence=False, rows=[0])
 

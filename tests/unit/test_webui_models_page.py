@@ -662,6 +662,70 @@ def test_a_record_of_another_or_no_mode_is_never_shown_as_mode_c(world, monkeypa
         shown = _text(mp.usage_entry_html({**entry, "mode": bad}))
         assert "Measurement mode not recorded" in shown and "Mode C" not in shown
 
+def _kept_c_and_d_records():
+    """A Mode C record and a kept Mode D record of one checkpoint and version, as
+    a ledger holds them (Batch 3 registered both; Mode D no longer runs, K7)."""
+    from src.evaluation.sidecar import append_record, build_record, empty_ledger
+    from tests.unit.test_evaluation_sidecar import mode_d_report, registered_report
+
+    ledger = empty_ledger()
+    for report, digest in ((registered_report(), "c" * 64), (mode_d_report(), "d" * 64)):
+        ledger = append_record(ledger, build_record(report, digest),
+                               registered_at="2026-10-27T12:00:00Z")[1]
+    return ledger["records"]
+
+
+def test_kept_mode_d_records_are_shown_under_their_own_mode_and_never_ordered():
+    """Kept Mode D records are history (K7 removed Mode D, not its records):
+    each mode's label and note once, directly above its own table, each table
+    named for its mode, its columns named in full with the mode and the case
+    set; one served setting shown goes in the label, two go on each record's
+    line; the usage history names a Mode D run's figure by its case set; a Mode
+    D scoring group is never offered for ordering."""
+    from src.evaluation.caveats import MODE_D_NOTE, mode_label
+
+    records = _kept_c_and_d_records()
+    views = [mp.record_view(record) for record in records]
+    assert [view["mode"] for view in views] == ["C", "D"]
+    raw = mp.records_block_html(views, {})
+    block = _text(raw)
+    assert block.count(PRE_B1_NOTE) == 1 and block.count(MODE_D_NOTE) == 1
+    assert 'aria-label="Recorded test results, model ranking (Mode C)"' in raw
+    assert 'aria-label="Recorded test results, served ranking (Mode D)"' in raw
+    d_label = mode_label("D", views[1]["score_semantics"])
+    order = [MODE_C_RESULT_LABEL, "Mode C MRR (untruncated)", "Mode C Hits@10", d_label,
+             "Mode D MRR (import-eligible)", "Mode D Hits@10 (import-eligible)"]
+    assert [block.index(text) for text in order] == sorted(block.index(text) for text in order)
+    assert ("scored as the Diagnosis page then scored them (gnn_only, η = 1.0); not the "
+            "approved scorer policy") in block
+    assert "served scoring" not in block and "56 of 80 import-eligible cases reached" in block
+    # Two served settings: the label without them, each record's line its own.
+    other = {**views[1], "score_semantics": "served:gnn_plus_shortest_path:eta=0.7:sp=abc"}
+    two = _text(mp.records_block_html([views[1], other], {}))
+    assert f"{mode_label('D')}." in two
+    assert "served scoring gnn_only, η = 1.0" in two
+    assert "served scoring gnn_plus_shortest_path, η = 0.7" in two
+    d_only = _text(mp.records_block_html(views[1:], {}))
+    assert "Mode D MRR (import-eligible)" in d_only and "Mode D Hits@10 (import-eligible)" in d_only
+    assert MODE_C_RESULT_LABEL not in d_only and PRE_B1_NOTE not in d_only
+    assert "Mode C MRR" not in d_only and "Mode C metrics" not in d_only
+
+    entry = {"kind": "test_run", "at": "2026-10-27T12:00:00Z", "version": "v", "run_id": "r",
+             "mode": "D", "metrics": {"post_import_mrr": 0.35}, "n_ranked": 56,
+             "device": "cuda", "deterministic": True, "record_requested": True}
+    assert "Mode D MRR (import-eligible) 0.3500 · 56 cases reached" in _text(
+        mp.usage_entry_html(entry))
+
+    c_record, d_record = records
+    sha, version = c_record["checkpoint_digest"], c_record["cohort_digest"]
+    listing = {"items": [{"architecture": "a", "run": "r", "filename": "m.pt", "sha256": sha}]}
+    data = {"ledgers": {"a/r/m.pt": {"state": "records", "records": records,
+                                     "ledger": "evaluations.json"}}}
+    assert mp.scoring_groups(listing, data, version, None) == [
+        (c_record["scoring_semantics_digest"], 1)]
+    assert d_record["scoring_semantics_digest"] != c_record["scoring_semantics_digest"]
+
+
 # --------------------------------------------------------------------------- the detail
 def test_the_detail_keeps_validation_and_mode_c_apart(world, monkeypatch):
     listing, data, ctl, _view, _ordering = _ordered(world, monkeypatch)
@@ -739,7 +803,7 @@ def test_the_usage_history_segment_lists_this_checkpoints_entries_newest_first(w
     record_test_run(version, run_id="20261017T152000Z-aaaaaaaaaaaa-11111111",
                     report_sha256="f" * 64, checkpoint_sha256=sha, metrics=_metrics(0.2310),
                     n_ranked=80, deterministic=True, device="cuda", record_requested=True,
-                    at=datetime(2026, 10, 17, 15, 20, tzinfo=timezone.utc))
+                    mode="C", at=datetime(2026, 10, 17, 15, 20, tzinfo=timezone.utc))
     record_model_load(version, checkpoint_sha256=sha, metric="untruncated_mrr",
                       scoring_semantics_digest="d" * 64, loaded=False, why="refused",
                       at=datetime(2026, 10, 18, 8, 0, tzinfo=timezone.utc))

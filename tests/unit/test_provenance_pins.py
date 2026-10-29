@@ -254,10 +254,6 @@ ALLOWED = {
         (1, _PROBE + "A5 (BACKLOG 59): an installed distribution's direct_url.json, read to "
             "tell this checkout's editable install; the environment's description, not an "
             "input"),
-    # --- Mode D (Batch 3, docs/working/scorer-measurement/PLAN_B05.md) ---
-    ("src/evaluation/mode_d.py", "served_semantics", "hashlib.sha256"):
-        (1, _IN_MEMORY.format(what="the served settings (device left out), named in Mode D's "
-                                   "candidate_construction (PLAN_B05 §6)")),
 }
 
 _MODULES = ("hashlib", "json", "torch")
