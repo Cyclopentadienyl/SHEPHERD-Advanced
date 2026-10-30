@@ -899,8 +899,25 @@ owner_decision rows as recommended, with the reviewer's technical conditions:
   denominators, coverage and the caveat that the record does not describe the current diagnosis
   model; no report, ledger, evidence or hash is rewritten.
 
-**K7 delivery (2026-10-29): the retirement check, done in the container, awaiting external
-review.** The authorised list was executed in five sequential commits on
+**K7 delivery (2026-10-29): the retirement check, done in the container; external review passed
+(2026-10-30).**
+- **The reviewer's independent review of `a7d0171..c260fc5` (2026-10-30):** passed, nothing to
+  send back; K8 may start. On a CPU copy with synthetic data it reran 1,975 tests of the touched
+  and neighbouring areas (5 skipped: four CUDA or low-precision tests and one socket test that
+  needs Python 3.13), not the full suite. It trained a base and one child per task through the
+  real training entry and ran the same saved models and inputs on both ends of the range: 36
+  cases (3 tasks, 4 phenotype inputs, 3 Top-K values) gave identical candidates, scores, order,
+  evidence, input records and warnings, apart from timestamps, timings and the removed
+  aggregation fields. C and D reports produced and registered by `a7d0171`'s measurement entry
+  read as kept and registered at `c260fc5`, a new D registration was refused, and no file of the
+  history changed. The default CPU deployment probe gave 49 passed, 2 skipped (no GPU), without
+  `--m2-acceptance`, so it is not the M2/M4/M5 or GB10 acceptance. In the browser it walked the
+  no-model state, a gene child with candidate genes and a patients-like-me child with its
+  reference cohort, at 1850x960 and 1024x768. `lint-imports` 5 kept; diff check clean. Not run by
+  the reviewer: the full suite, the other window sizes, axe, a read-only browser, GPU or the GB10.
+  The pyflakes F821 findings left in the touched files were already there at `a7d0171` (38 there,
+  34 here, none new). The delivery's line count (+4857) was taken before the last commit; the range
+  is +4862 / -13076. The authorised list was executed in five sequential commits on
 `claude/paper-aligned-two-stage` from `a7d0171`, with no adapter, alias, legacy switch or degraded
 path (item 8):
 - **G1 `3d7d40a`** (dead code and whole files): S3, SP2, TM14, TM24, TM25, TM29, TM30, TM31, TM33,
