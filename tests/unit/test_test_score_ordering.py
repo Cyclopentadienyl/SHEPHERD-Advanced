@@ -17,12 +17,7 @@ reports `MeasurementManifest` builds:
   that cannot be checked is not ordered either;
 - direction (mean rank lower is better), ties sharing a position, two ledgers
   for one digest (and one ledger named twice with other records refused), the
-  regime mark;
-- **automatic selection never reads test results**: a ledger beside the
-  checkpoints that favours another file does not change what
-  `select_auto_run_checkpoint` or `select_run_checkpoint` choose (the
-  import-linter contract `selection-ignores-test-results` keeps the modules
-  apart).
+  regime mark.
 
 Module: tests/unit/test_test_score_ordering.py
 """
@@ -293,49 +288,6 @@ def test_with_no_single_most_common_regime_every_ordered_row_differs():
                    _c(C, _record(C, mrr=0.4, device="cpu", cuda_executed=False)),
                    _c(D, _record(D, mrr=0.3, device="cpu", cuda_executed=False))])
     assert all(r.regime_differs for r in four.rows)
-
-
-# ---------------------------------------------------------------------------
-# Automatic selection never reads test results
-# ---------------------------------------------------------------------------
-def test_a_ledger_does_not_change_what_automatic_selection_chooses(tmp_path):
-    """Two checkpoints of one run, the validation metric favouring `best.pt`; a
-    ledger beside them whose test result favours `other.pt`. Both selection
-    functions choose `best.pt`, with or without the ledger."""
-    import os
-
-    from src.evaluation.sidecar import LEDGER_FILENAME, empty_ledger, write_ledger
-    from src.utils.checkpoint_io import read_checkpoint, write_checkpoint
-    from src.utils.checkpoint_paths import (
-        ranking_score_detail,
-        select_auto_run_checkpoint,
-        select_run_checkpoint,
-    )
-
-    checkpoints = tmp_path / "runs" / "hgt" / "20261020-090000" / "checkpoints"
-    best = checkpoints / "best.pt"
-    other = checkpoints / "other.pt"
-    best_digest = write_checkpoint({"state_dict": {}, "logs": {"val_mrr": 0.6}}, best)
-    other_digest = write_checkpoint({"state_dict": {}, "logs": {"val_mrr": 0.2}}, other)
-    os.utime(best, (1, 1))  # older, so recency would not favour it
-
-    def score(path):
-        logs = read_checkpoint(path, map_location="cpu", weights_only=True).checkpoint["logs"]
-        return ranking_score_detail(logs)[1]
-
-    def chosen():
-        return (select_auto_run_checkpoint(tmp_path, score_fn=score)[0],
-                select_run_checkpoint(tmp_path, "hgt", score_fn=score)[0])
-
-    without = chosen()
-    ledger = empty_ledger()
-    ledger["records"] = [
-        {**_record(other_digest, mrr=0.99), "checkpoint_digest": other_digest},
-        {**_record(best_digest, sequence=2, mrr=0.01), "checkpoint_digest": best_digest},
-    ]
-    write_ledger(checkpoints / LEDGER_FILENAME, ledger, None)
-
-    assert without == chosen() == (best, best)
 
 
 def test_the_ordering_and_the_deployment_settings_ask_one_rule(monkeypatch):

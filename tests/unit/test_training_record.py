@@ -13,6 +13,11 @@ and resume compares a parent with its run (M2.3). Shown here:
   workspace, and one from before the contract, before any model is built; the
   control, the checkpoint over its own workspace, is accepted by both.
 
+Serving is shown with a trained task model (K8-2a): the session's disease child
+(`trained_disease_child`) over its own workspace, a same-shaped other demo
+workspace, and the child with its record removed. Measurement is shown with the
+synthetic workspace's checkpoint.
+
 Module: tests/unit/test_training_record.py
 """
 from __future__ import annotations
@@ -31,6 +36,7 @@ from src.utils.fingerprint import (  # noqa: E402
 )
 from tests.fixtures.generated_workspace import write_generated_workspace  # noqa: E402
 from tests.fixtures.synthetic_workspace import N_DISEASES, build_workspace  # noqa: E402
+from tests.unit import test_serving_reads_once as reads_once  # noqa: E402
 
 GRAPH_ROLES = ("kg", "node_features", "edge_indices", "num_nodes")
 CURRENT = {role: f"{role}-digest" for role in GRAPH_ROLES}
@@ -109,6 +115,21 @@ def _pre_contract(checkpoint, path):
     return path
 
 
+def _same_shaped_demo(root):
+    """Workspace B for the disease child: the demo graph its workspace holds,
+    with other bytes in `kg.json` (one node described) and `node_features.pt`
+    (another feature seed), the same shapes, bound by its own manifest."""
+    from scripts.setup_demo import build_demo_kg
+    from src.kg.graph import DEFAULT_FEATURE_SEED
+    from src.kg.workspace import SampleBudget, write_workspace
+
+    kg = build_demo_kg()
+    next(kg.iter_nodes()).description = "workspace b"
+    write_workspace(kg, root, feature_dim=8, feature_seed=DEFAULT_FEATURE_SEED + 1,
+                    samples=SampleBudget(num_train=20, num_val=5, val_disease_fraction=0.2))
+    return root
+
+
 def _serve(data_dir, checkpoint):
     return DiagnosisPipeline(
         graph=KnowledgeGraph.read_json(data_dir / "kg.json"),
@@ -123,17 +144,23 @@ def a(tmp_path):
     return build_workspace(tmp_path / "a")
 
 
-def test_serving_accepts_a_checkpoint_over_its_own_workspace(a):
-    data_dir, checkpoint = a
+#: The disease child and its workspace, ``(data_dir, checkpoint)``. Read-only:
+#: what a test writes goes to `tmp_path`. Shared with `test_serving_reads_once.py`.
+child = reads_once.child
+
+
+def test_serving_accepts_a_checkpoint_over_its_own_workspace(child):
+    data_dir, checkpoint = child
     assert _serve(data_dir, checkpoint).get_pipeline_config()["gnn_ready"] is True
 
 
-def test_serving_refuses_a_checkpoint_from_a_same_shaped_other_workspace(a, tmp_path, monkeypatch):
-    _, checkpoint = a
-    other = _same_shaped_other(tmp_path / "b")
-    import src.models.gnn.shepherd_gnn as builder
+def test_serving_refuses_a_checkpoint_from_a_same_shaped_other_workspace(child, tmp_path,
+                                                                        monkeypatch):
+    _, checkpoint = child
+    other = _same_shaped_demo(tmp_path / "b")
+    import src.models.bundle.record as builder
 
-    monkeypatch.setattr(builder, "build_shepherd_model",
+    monkeypatch.setattr(builder, "load_bundle",
                         lambda *a, **k: pytest.fail("a model was built"))
     with pytest.raises(PipelineBuildError, match="does not match this workspace's graph") as refused:
         _serve(other, checkpoint)
@@ -142,8 +169,8 @@ def test_serving_refuses_a_checkpoint_from_a_same_shaped_other_workspace(a, tmp_
     assert isinstance(refused.value.__cause__, TrainingRecordMismatch)
 
 
-def test_serving_refuses_a_checkpoint_from_before_the_contract(a, tmp_path):
-    data_dir, checkpoint = a
+def test_serving_refuses_a_checkpoint_from_before_the_contract(child, tmp_path):
+    data_dir, checkpoint = child
     old = _pre_contract(checkpoint, tmp_path / "old.pt")
     with pytest.raises(PipelineBuildError, match="records no training_input_digests"):
         _serve(data_dir, old)

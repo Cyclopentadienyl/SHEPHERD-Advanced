@@ -6,7 +6,9 @@ The pipeline built as the service builds it serves a gene child: the request's
 candidate genes ranked, unmapped ones counted; and a patients-like-me child:
 a reference cohort version's patients ranked, the query's own case id left
 out, the version named on the result. A patients-like-me model without a
-reference, or a reference given to another model, is refused.
+reference, or a reference given to another model, is refused. Its pipeline's
+bound inputs, which the reference cohort's binding reads, are the reads its
+build took (served on this child since K8-2a; `test_served_rank`'s before).
 
 Module: tests/unit/test_task_serving.py
 """
@@ -119,6 +121,31 @@ def test_a_reference_is_required_by_patients_like_me_and_refused_elsewhere(train
         _pipeline(trained, "gene").run(
             PatientPhenotypes(patient_id="q", phenotypes=["HP:0001250"], candidate_genes=["SCN1A"]),
             reference_cohort=_reference(trained))
+
+
+def test_bound_inputs_are_the_reads_the_build_took(trained):
+    """Against an independent account of the files: the four graph digests and
+    the dataset record, which the reference cohort's binding reads (K7: the
+    fields only Mode D read are gone), of the patients-like-me child, the model
+    that binding serves (`_reference_cohort`)."""
+    import hashlib
+    from dataclasses import fields
+
+    from src.inference.pipeline import BoundInputs
+    from src.kg.artifacts import GRAPH_TENSOR_ROLES
+    from src.kg.provenance import PROVENANCE_FILENAME
+
+    def sha(path):
+        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+    data_dir = trained["data_dir"]
+    bound = _pipeline(trained, "patients_like_me").bound_inputs()
+    assert [field.name for field in fields(BoundInputs)] == ["graph", "dataset_record"]
+    assert bound.graph["kg"] == sha(data_dir / "kg.json")
+    for role in GRAPH_TENSOR_ROLES:
+        files = [p for p in data_dir.iterdir() if p.stem == role]
+        assert len(files) == 1 and bound.graph[role] == sha(files[0]), role
+    assert bound.dataset_record.identity.sha256 == sha(data_dir / PROVENANCE_FILENAME)
 
 
 def _registry_with_genes(trained, tmp_path):

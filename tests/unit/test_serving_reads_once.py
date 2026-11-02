@@ -22,6 +22,11 @@ acceptance shown here:
   does not is refused; a refused reload keeps what is serving;
 - the model is built from the final checkpoint read, never from a selection.
 
+Every build that reaches a model serves the session's trained disease child
+(`child`; `child_copy` where a test changes a file), K8-2a: a checkpoint without
+a model spec is not what serving is shown with. The synthetic `workspace` stays
+where the build is refused before a model is built.
+
 Module: tests/unit/test_serving_reads_once.py
 """
 from __future__ import annotations
@@ -70,6 +75,24 @@ def workspace(tmp_path):
     return build_workspace(tmp_path / "a")
 
 
+@pytest.fixture
+def child(trained_disease_child):
+    """The session's trained disease child, ``(data_dir, checkpoint)`` as
+    `workspace` gives them. Read-only: a test that changes a file takes
+    `child_copy`."""
+    return trained_disease_child["data_dir"], trained_disease_child["disease"]
+
+
+@pytest.fixture
+def child_copy(trained_disease_child, tmp_path):
+    """`child` copied into this test's directory (``a/data``, ``a/checkpoint.pt``),
+    for a test that replaces, removes or adds a file."""
+    data_dir, checkpoint = tmp_path / "a" / "data", tmp_path / "a" / "checkpoint.pt"
+    shutil.copytree(trained_disease_child["data_dir"], data_dir)
+    shutil.copyfile(trained_disease_child["disease"], checkpoint)
+    return data_dir, checkpoint
+
+
 def _other_checkpoint(checkpoint, path):
     """The same architecture with shifted weights and another epoch."""
     contents = torch.load(checkpoint, map_location="cpu", weights_only=False)
@@ -95,14 +118,15 @@ def _build(api, data_dir, checkpoint, kg_path=None):
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("how", HOWS)
 def test_kg_json_replaced_after_the_api_read_serves_and_records_what_was_read(
-    api, workspace, tmp_path, monkeypatch, how
+    api, child_copy, tmp_path, monkeypatch, how
 ):
     from src.core.types import DataSource, NodeType
     from src.kg.graph import Node, NodeID
 
-    data_dir, checkpoint = workspace
+    data_dir, checkpoint = child_copy
     kg_file = data_dir / "kg.json"
     read = _sha(kg_file)
+    nodes = KnowledgeGraph.read_json(kg_file).kg.total_nodes
     other = KnowledgeGraph()
     other.add_node(Node(id=NodeID(source=DataSource.MONDO, local_id="MONDO:9"),
                         node_type=NodeType.DISEASE, name="other"))
@@ -113,7 +137,8 @@ def test_kg_json_replaced_after_the_api_read_serves_and_records_what_was_read(
     pipeline = _build(api, data_dir, checkpoint).pipeline
 
     assert record.fired == 1
-    assert pipeline.kg.total_nodes == 0, "the graph served is the one read, not B"
+    assert pipeline.kg.total_nodes == nodes != other.total_nodes, (
+        "the graph served is the one read, not B")
     assert pipeline._graph_identity.sha256 == read
     assert pipeline._graph_kg_digest == read
     assert pipeline._bound_digests["kg"] == read
@@ -137,9 +162,9 @@ def test_kg_json_republished_after_its_read_is_refused(api, workspace, monkeypat
 
 @pytest.mark.parametrize("how", HOWS)
 def test_a_tensor_replaced_after_its_read_serves_and_records_what_was_read(
-    api, workspace, tmp_path, monkeypatch, how
+    api, child_copy, tmp_path, monkeypatch, how
 ):
-    data_dir, checkpoint = workspace
+    data_dir, checkpoint = child_copy
     other, _ = build_workspace(tmp_path / "b", n_diseases=5)
     target = data_dir / "node_features.pt"
     read = _sha(target)
@@ -175,11 +200,12 @@ def test_a_tensor_replaced_after_the_manifest_read_is_refused_naming_it(
 
 @pytest.mark.parametrize("how", HOWS)
 def test_the_checkpoint_replaced_after_its_read_builds_the_model_read(
-    api, workspace, tmp_path, monkeypatch, how
+    api, child_copy, tmp_path, monkeypatch, how
 ):
-    data_dir, checkpoint = workspace
+    data_dir, checkpoint = child_copy
     read = _sha(checkpoint)
-    state = torch.load(checkpoint, weights_only=False)["state_dict"]
+    contents = torch.load(checkpoint, weights_only=False)
+    state = contents["state_dict"]
     _other_checkpoint(checkpoint, tmp_path / "b.pt")
     record = replace_after_read(monkeypatch, after=checkpoint, target=checkpoint,
                                 data=(tmp_path / "b.pt").read_bytes(), how=how)
@@ -191,7 +217,8 @@ def test_the_checkpoint_replaced_after_its_read_builds_the_model_read(
     served = bundle.pipeline.model.state_dict()
     for name, value in state.items():
         assert torch.equal(served[name].cpu(), value)
-    assert bundle.config["checkpoint_meta"]["epoch"] == 1, "the metadata is A's too"
+    assert bundle.config["checkpoint_meta"]["epoch"] == contents["epoch"] != 9, (
+        "the metadata is A's too")
 
 
 def test_a_tensor_file_that_does_not_parse_is_refused_naming_it(api, workspace):
@@ -210,8 +237,8 @@ def test_a_tensor_file_that_does_not_parse_is_refused_naming_it(api, workspace):
 # ---------------------------------------------------------------------------
 # One read each; nothing hashed by path; load options
 # ---------------------------------------------------------------------------
-def test_each_input_is_opened_once(api, workspace):
-    data_dir, checkpoint = workspace
+def test_each_input_is_opened_once(api, child):
+    data_dir, checkpoint = child
 
     with count_opens() as opens:
         _build(api, data_dir, checkpoint)
@@ -221,13 +248,13 @@ def test_each_input_is_opened_once(api, workspace):
     assert opens.opens(checkpoint) == 1
 
 
-def test_no_path_digest_is_kept(api, workspace, monkeypatch):
+def test_no_path_digest_is_kept(api, child, monkeypatch):
     """S9's dynamic pin for serving: every path hash is poisoned, with no
     exception (serving parses `kg.json`, so nothing here is identified by path),
     and the build still succeeds with the true digests of the bytes it read."""
     from tests.fixtures.path_forms import POISON, poison_path_forms
 
-    data_dir, checkpoint = workspace
+    data_dir, checkpoint = child
     poison_path_forms(monkeypatch)
 
     pipeline = _build(api, data_dir, checkpoint).pipeline
@@ -242,11 +269,11 @@ def test_no_path_digest_is_kept(api, workspace, monkeypatch):
 
 
 def test_graph_tensors_and_the_checkpoint_load_on_cpu_and_safely(
-    api, workspace, monkeypatch
+    api, child, monkeypatch
 ):
     import sys
 
-    data_dir, checkpoint = workspace
+    data_dir, checkpoint = child
     real_load = torch.load
     calls = []
 
@@ -270,10 +297,10 @@ def test_graph_tensors_and_the_checkpoint_load_on_cpu_and_safely(
 # ---------------------------------------------------------------------------
 # The graph and its identity travel together
 # ---------------------------------------------------------------------------
-def test_the_graph_read_arrives_whole(api, workspace, monkeypatch):
+def test_the_graph_read_arrives_whole(api, child, monkeypatch):
     import src.inference.pipeline as pipeline_module
 
-    data_dir, checkpoint = workspace
+    data_dir, checkpoint = child
     real_read = KnowledgeGraph.read_json.__func__
     returned = []
 
@@ -343,11 +370,11 @@ def test_a_workspace_build_without_the_graph_read_is_refused(workspace, monkeypa
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("beside_the_tensors", ["absent", "different"])
 def test_an_external_kg_json_decides_startup_and_a_refused_reload_keeps_serving(
-    api, workspace, tmp_path, monkeypatch, beside_the_tensors
+    api, child_copy, tmp_path, monkeypatch, beside_the_tensors
 ):
     from fastapi.testclient import TestClient
 
-    data_dir, checkpoint = workspace
+    data_dir, checkpoint = child_copy
     external = tmp_path / "mounted" / "kg.json"
     external.parent.mkdir()
     shutil.copyfile(data_dir / "kg.json", external)
@@ -395,13 +422,14 @@ def test_an_external_kg_json_that_does_not_match_is_refused(api, workspace, tmp_
 # The model comes from the final read (decision 4)
 # ---------------------------------------------------------------------------
 def test_the_model_is_built_from_the_final_read_not_from_the_selection(
-    api, workspace, tmp_path, monkeypatch
+    api, child_copy, tmp_path, monkeypatch
 ):
-    """The reload route selects a checkpoint by reading candidates. The file is
+    """The reload route selects a checkpoint by reading candidates (a task's
+    selection: the disease child, filed under its encoder kind). The file is
     replaced after that selection; what is served, and what is kept as its
     identity, is what the build read."""
-    data_dir, checkpoint = workspace
-    architecture = data_dir / "runs" / "hgt" / "20261015-000000_run_aaaaaa" / "checkpoints"
+    data_dir, checkpoint = child_copy
+    architecture = data_dir / "runs" / "gatv2" / "20261015-000000_run_aaaaaa" / "checkpoints"
     architecture.mkdir(parents=True)
     shutil.copyfile(checkpoint, architecture / "model.pt")
     _other_checkpoint(checkpoint, tmp_path / "b.pt")
@@ -415,7 +443,8 @@ def test_the_model_is_built_from_the_final_read_not_from_the_selection(
     monkeypatch.setattr(api, "build_pipeline", replace_then_build)
     from src.api.routes.pipeline import PipelineReloadRequest, reload_pipeline
 
-    result = asyncio.run(reload_pipeline(PipelineReloadRequest(data_dir=str(data_dir))))
+    result = asyncio.run(reload_pipeline(PipelineReloadRequest(data_dir=str(data_dir),
+                                                               task="disease")))
 
     assert result.success, result.message
     assert api.app_state.pipeline._checkpoint_identity.sha256 == replacement

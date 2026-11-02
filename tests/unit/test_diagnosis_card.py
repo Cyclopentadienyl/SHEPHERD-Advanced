@@ -7,7 +7,11 @@ Diagnosis: the "Model in use" card and its Details (M5-2, UI-B).
   read that does not answer in time is "timed out (5 s)", one that fails says
   why; nothing raises;
 - **what is served**, as the card names it: no model loaded, or a model read
-  from its checkpoint (K7: nothing else is served);
+  from its checkpoint (K7: nothing else is served). The served status is the
+  one a disease child gives (`_status`: scoring mode ``disease_task``, its run
+  under ``runs/gatv2``, no SP table, eta None); a ShepherdGNN file's
+  (``gnn_only``, `_gnn_status`) only where that file is the subject (K8-4
+  retires its serving);
 - **the served checkpoint's place** in the serving workspace's runs, from the
   status's served paths, found again in the server's list, **no file opened**;
 - **trained on: the checkpoint's own record**, never the served workspace's
@@ -71,9 +75,10 @@ def demo_workspace(tmp_path_factory):
 
 @pytest.fixture
 def root(demo_workspace, tmp_path, monkeypatch):
-    """A workspaces root: ``demo`` with two hgt runs; the older run's
-    checkpoint records a dataset fingerprint that is NOT the workspace's
-    (an in-place rebuild since), so the two can be told apart."""
+    """A workspaces root: ``demo`` with two disease child runs, filed under
+    ``gatv2`` as training files them; the older run's checkpoint records a
+    dataset fingerprint that is NOT the workspace's (an in-place rebuild
+    since), so the two can be told apart."""
     from src.utils.checkpoint_io import write_checkpoint
 
     root = tmp_path / "root"
@@ -84,7 +89,7 @@ def root(demo_workspace, tmp_path, monkeypatch):
     now = time.time()
     for index, (run, name, epoch, fp) in enumerate([(NEWER, "model-12.pt", 12, fingerprint),
                                                      (RUN, "model-05.pt", 5, recorded)]):
-        directory = workspace / "runs" / "hgt" / run / "checkpoints"
+        directory = workspace / "runs" / "gatv2" / run / "checkpoints"
         directory.mkdir(parents=True)
         shas[name] = write_checkpoint({"checkpoint_kind": "weights", "epoch": epoch,
                                        "logs": {"val_pooled_mrr": 0.24},
@@ -98,23 +103,26 @@ def root(demo_workspace, tmp_path, monkeypatch):
 
 
 def _status(root, served="model-05.pt", run=RUN, **extra):
+    """The status a disease child's pipeline gives (`get_pipeline_config`), in
+    the parts the card reads: scoring mode ``disease_task``, no SP table, eta
+    None."""
     sha = root["shas"].get(served)
     kg = json.loads((root["workspace"] / "split_manifest.json").read_text())["artifacts"]["kg"]
     status = {
         "initialized": True, "gnn_ready": True,
         "current_data_dir": str(root["workspace"]),
-        "current_checkpoint_path": str(root["workspace"] / "runs" / "hgt" / run / "checkpoints"
+        "current_checkpoint_path": str(root["workspace"] / "runs" / "gatv2" / run / "checkpoints"
                                        / served),
         "checkpoint_meta": {"epoch": 5, "params": 6569, "val_pooled_mrr": 0.241},
         "fingerprint_warnings": [],
         "served_identity": {
-            "scoring_mode": "gnn_only",
+            "scoring_mode": "disease_task",
             "checkpoint": {"state": "verified", "sha256": sha},
             "graph": {"state": "verified", "kg_sha256": kg,
                       "split_manifest_sha256": root["fingerprint"]},
             "shortest_paths": {"state": "absent", "build_id": None, "max_hops": None},
             "dataset_record": {"state": "verified", "origin": "synthetic", "sha256": "e" * 64},
-            "settings": {"device": "cpu", "device_requested": "cpu", "eta": 1.0,
+            "settings": {"device": "cpu", "device_requested": "cpu", "eta": None,
                          "max_path_length": 4, "path_length_penalty": 0.5,
                          "max_paths_per_candidate": 10,
                          "use_direct_path_optimization": True,
@@ -122,6 +130,20 @@ def _status(root, served="model-05.pt", run=RUN, **extra):
         },
     }
     status.update(extra)
+    return status
+
+
+def _gnn_status(root):
+    """The status a ShepherdGNN file served without an SP table gave
+    (``gnn_only``, eta 1.0): the older run's weights under ``runs/hgt``. Only
+    for the tests whose subject that file is (K8-4 retires its serving)."""
+    directory = root["workspace"] / "runs" / "hgt" / RUN / "checkpoints"
+    directory.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(root["workspace"] / "runs" / "gatv2" / RUN / "checkpoints" / "model-05.pt",
+                 directory / "model-05.pt")
+    status = _status(root, current_checkpoint_path=str(directory / "model-05.pt"))
+    status["served_identity"]["scoring_mode"] = "gnn_only"
+    status["served_identity"]["settings"]["eta"] = 1.0
     return status
 
 
@@ -187,7 +209,7 @@ def test_what_is_served_is_named_by_its_kind(root):
 def test_the_served_checkpoint_is_found_in_the_runs_without_opening_it(root, no_checkpoint_opened):
     item, why = card.served_item(_status(root), "demo")
     assert why is None
-    assert (item["architecture"], item["run"], item["filename"]) == ("hgt", RUN, "model-05.pt")
+    assert (item["architecture"], item["run"], item["filename"]) == ("gatv2", RUN, "model-05.pt")
     assert item["sha256"] == root["shas"]["model-05.pt"] and item["epoch"] == 5
     assert item["validation"] == {"metric": "val_pooled_mrr", "value": 0.241}
 
@@ -197,7 +219,7 @@ def test_a_checkpoint_outside_the_runs_or_unlisted_is_said_to_be(root, tmp_path)
     assert card.served_item(outside, "demo") == (
         None, "the checkpoint in use is not in the serving workspace's runs")
     missing = _status(root, current_checkpoint_path=str(
-        root["workspace"] / "runs" / "hgt" / RUN / "checkpoints" / "gone.pt"))
+        root["workspace"] / "runs" / "gatv2" / RUN / "checkpoints" / "gone.pt"))
     assert card.served_item(missing, "demo")[1] == (
         "the checkpoint in use is not in the serving workspace's list")
     assert card.served_item(_status(root), None)[1] == (
@@ -267,7 +289,7 @@ def test_the_timer_never_opens_a_checkpoint(root, no_checkpoint_opened):
 def test_a_file_rewritten_since_it_was_loaded_is_not_read_as_the_models(root):
     from src.utils.checkpoint_io import write_checkpoint
 
-    path = root["workspace"] / "runs" / "hgt" / RUN / "checkpoints" / "model-05.pt"
+    path = root["workspace"] / "runs" / "gatv2" / RUN / "checkpoints" / "model-05.pt"
     status = _status(root)
     write_checkpoint({"checkpoint_kind": "weights", "epoch": 6,
                       "training_input_digests": {"split_manifest": root["fingerprint"]}}, path)
@@ -298,7 +320,7 @@ def test_other_bytes_at_the_served_file_are_said_not_the_model_loaded_before_tor
     control = _state(root, status=status)["facts"]["trained"]
     assert control == {"state": "read", "fingerprint": root["recorded"], "problem": None}
 
-    path = root["workspace"] / "runs" / "hgt" / RUN / "checkpoints" / "model-05.pt"
+    path = root["workspace"] / "runs" / "gatv2" / RUN / "checkpoints" / "model-05.pt"
     data = path.read_bytes()
     if bytes_now == "another checkpoint":
         buffer = io.BytesIO()
@@ -405,11 +427,10 @@ def test_another_served_identity_sets_the_change_notice(root):
     assert later["change"] == {"at": "10:31 UTC", "was": old, "now": new, "same_model": False}
     assert f"Model changed at 10:31 UTC</b> — was {old}, now {new}" in card.body_html(later)
     assert card.dismiss_change(later)["change"] is None
-    # Another part of what is served (the SP table), same model: said so.
-    sp = _status(root)
-    sp["served_identity"]["shortest_paths"] = {"state": "verified", "build_id": "b1",
-                                               "max_hops": 3}
-    other = card.advance(first, sp, None, now=NOW, operator=True, d8_short=None,
+    # Another part of what is served (the device it runs on), same model: said so.
+    moved = _status(root)
+    moved["served_identity"]["settings"].update(device="cuda", device_requested="cuda")
+    other = card.advance(first, moved, None, now=NOW, operator=True, d8_short=None,
                          open_checkpoints=False)
     assert other["change"]["same_model"] is True
     assert "same model" in card.body_html(other)
@@ -460,7 +481,7 @@ def test_a_queued_refresh_reads_the_recorded_tests_again_without_opening_the_che
 
     first = _state(root)
     assert "Recorded tests: no ledger" in card.body_html(first)
-    ledger = root["workspace"] / "runs" / "hgt" / RUN / "checkpoints" / "evaluations.json"
+    ledger = root["workspace"] / "runs" / "gatv2" / RUN / "checkpoints" / "evaluations.json"
     ledger.write_text("{not json")
 
     def refuse(*args, **kwargs):
@@ -487,21 +508,27 @@ def test_a_queued_refresh_reads_the_recorded_tests_again_without_opening_the_che
 # --------------------------------------------------------------------------- the card's states
 def test_the_normal_card_names_the_model_its_fingerprint_and_its_states(root):
     body = card.body_html(_state(root))
-    assert "HGT · run 2026-10-17 09:15 · epoch 5" in body
+    assert ('<p class="shep-dx-name">Disease task model</p><p class="shep-dx-line shep-dx-sub">'
+            "GATv2 · run 2026-10-17 09:15 · epoch 5</p>") in body
     assert f'>{root["shas"]["model-05.pt"][:12]}</code>' in body and "verified</span>" in body
-    assert "synthetic data" in body and "no SP table" in body
+    # A disease model uses no SP table, so it is not missing one.
+    assert "synthetic data" in body and "no SP table" not in body
     assert "no trained model" not in body and "unverified" not in body
     assert "Recorded tests: no ledger" in body
 
 
 def test_mode_chips_appear_only_when_true(root):
-    files = _status(root)
+    files = _gnn_status(root)
     files["served_identity"]["dataset_record"]["origin"] = "files"
     files["served_identity"]["scoring_mode"] = "gnn_plus_shortest_path"
     files["served_identity"]["shortest_paths"] = {"state": "verified", "build_id": "b",
                                                   "max_hops": 3}
     body = card.body_html(_state(root, status=files))
     assert "synthetic data" not in body and "no SP table" not in body
+    # The same for a task model: a dataset of origin "files" gets no chip.
+    task = _status(root)
+    task["served_identity"]["dataset_record"]["origin"] = "files"
+    assert "synthetic data" not in card.body_html(_state(root, status=task))
     no_gnn = _status(root, gnn_ready=False)
     assert "GNN not loaded" in card.body_html(_state(root, status=no_gnn))
 
@@ -554,7 +581,9 @@ def test_details_add_what_a_served_model_has_to_model_facts(root):
     assert 'data-key="models">Full records: Research › Models ›' in html
     assert "Graph structural fingerprint: no warnings · GNN loaded" in html
     warnings = html[html.index('data-sec="warnings"'):]
-    assert "SYNTHETIC WORKSPACE" in warnings and "NO SHORTEST-PATH TABLE" in warnings
+    # A disease model uses no SP table: no warning that it lacks one.
+    assert "SYNTHETIC WORKSPACE" in warnings and "NO SHORTEST-PATH TABLE" not in warnings
+    assert "SP not used by this task" in html
     assert "TRAINED ON A DATASET NO LISTED WORKSPACE HOLDS" in warnings
 
 
@@ -593,7 +622,7 @@ def test_details_say_not_recorded_when_the_checkpoint_records_no_dataset(root):
     from src.utils.checkpoint_io import write_checkpoint
 
     run = "20261019-080000_run_0d0d0d"
-    directory = root["workspace"] / "runs" / "hgt" / run / "checkpoints"
+    directory = root["workspace"] / "runs" / "gatv2" / run / "checkpoints"
     directory.mkdir(parents=True)
     root["shas"]["model-01.pt"] = write_checkpoint({"checkpoint_kind": "weights", "epoch": 1},
                                                    directory / "model-01.pt")
@@ -716,9 +745,9 @@ def test_a_task_model_is_named_by_its_task_once(root, mode, name):
 
 
 def test_a_shepherdgnn_file_keeps_its_name_line_and_no_task(root):
-    assert card.served_task(_status(root)) is None
+    assert card.served_task(_gnn_status(root)) is None
     assert card.served_task({"initialized": False}) is None
-    body = card.body_html(_state(root))
+    body = card.body_html(_state(root, status=_gnn_status(root)))
     assert '<p class="shep-dx-name">HGT · run 2026-10-17 09:15 · epoch 5</p>' in body
     assert "task model" not in body
 
@@ -734,9 +763,10 @@ def test_a_task_model_misses_no_sp_table(root, mode):
     note = "SP from the graph view" if mode == "gene_task" else "SP not used by this task"
     assert note in details and "no SP table" not in details
     # The ShepherdGNN file served without its table keeps both.
-    legacy = _state(root)
+    legacy = _state(root, status=_gnn_status(root))
     assert "no SP table" in card.body_html(legacy)
     assert "no SP table" in card.served_facts_html(legacy)
+    assert "NO SHORTEST-PATH TABLE" in card.served_facts_html(legacy)
     assert "its task" in card.CARD_HELP[1]
 
 

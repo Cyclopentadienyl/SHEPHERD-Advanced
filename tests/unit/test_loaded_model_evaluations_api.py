@@ -3,8 +3,9 @@ The loaded model's recorded results, read-only (M4; PLAN_TEST_RESULTS D8).
 ===========================================================================
 `GET /api/v1/evaluations/loaded-model` reads the ledger beside the checkpoint the
 loaded model was built from and shows that ledger's records for the model's
-digest. What is pinned here, on the real application and real served pipelines,
-over ledgers written by the real registration (`register_report`):
+digest. What is pinned here, on the real application and real served pipelines
+(the session's trained disease child, copied into each test's directory), over
+ledgers written by the real registration (`register_report`):
 
 - every state: no pipeline, no ledger, a ledger that is not read (schema 2,
   damaged, unopenable, with no server directory in its problem whatever the
@@ -62,11 +63,11 @@ from tests.unit.test_evaluation_sidecar import (  # noqa: E402
     registered_report,
 )
 from tests.unit.test_served_identity import (  # noqa: E402, F401 (fixtures found by name)
-    _checkpoint_for,
     _client,
     _full_pipeline,
+    _with_val_pooled_mrr,
     app,
-    served_workspace,
+    served_child,
 )
 
 ROUTE = "/api/v1/evaluations/loaded-model"
@@ -161,10 +162,11 @@ def _get(app):
 
 
 @pytest.fixture
-def served(app, monkeypatch, served_workspace):
-    """A real pipeline over a generated workspace, built from one checkpoint and
-    published. Returns ``(pipeline, data_dir, checkpoint)``."""
-    data_dir, checkpoint = served_workspace
+def served(app, monkeypatch, served_child):
+    """A real pipeline of the trained disease child, copied into this test's
+    directory, built from its one checkpoint and published. Returns
+    ``(pipeline, data_dir, checkpoint)``."""
+    data_dir, checkpoint = served_child
     pipeline = _full_pipeline(data_dir, checkpoint)
     monkeypatch.setattr(app.app_state, "pipeline", pipeline)
     return pipeline, data_dir, checkpoint
@@ -442,12 +444,12 @@ def test_a_ledger_that_cannot_be_opened_is_not_read(app, served):
 @pytest.mark.parametrize("directory", ["back\\slash", "new\nline", "tab\tdir"],
                          ids=["backslash", "newline", "tab"])
 def test_an_unopenable_ledger_names_no_directory_whatever_its_name(
-    app, served_workspace, tmp_path, monkeypatch, directory
+    app, served_child, tmp_path, monkeypatch, directory
 ):
     """`str(OSError)` quotes the filename with ``repr``, which escapes these
     characters, so replacing the path in it left the server's directory in the
     answer. Catches a problem built from `str(exc)`."""
-    data_dir, checkpoint = served_workspace
+    data_dir, checkpoint = served_child
     base = tmp_path / directory
     base.mkdir()
     shutil.copy2(checkpoint, base / "best.pt")
@@ -670,7 +672,8 @@ def test_a_new_model_never_shows_the_previous_models_records(app, served, tmp_pa
     """Both checkpoints beside one ledger; only A's report is registered. After B
     is published, nothing of A's is shown."""
     pipeline_a, data_dir, checkpoint_a = served
-    checkpoint_b = _checkpoint_for(data_dir, checkpoint_a.parent / "other.pt", val_pooled_mrr=0.25)
+    checkpoint_b = _with_val_pooled_mrr(checkpoint_a, checkpoint_a.parent / "other.pt", 0.25,
+                                        shift=1.0)
     assert _sha(checkpoint_b) != _sha(checkpoint_a)
     result = _register(_report_for(_sha(checkpoint_a)), checkpoint_a.parent,
                        tmp_path / "reports")
@@ -724,11 +727,11 @@ def test_the_ledger_is_the_one_beside_the_served_read_not_a_path_in_app_state(
     assert body["state"] == "no_ledger"
 
 
-def test_a_symlinked_checkpoint_reads_the_ledger_beside_its_target(app, served_workspace,
+def test_a_symlinked_checkpoint_reads_the_ledger_beside_its_target(app, served_child,
                                                                    tmp_path, monkeypatch):
     """`Path(checkpoint).resolve().parent` on both sides (spec §0.15):
     registration resolves the directory it writes into, and so does this."""
-    data_dir, checkpoint = served_workspace
+    data_dir, checkpoint = served_child
     _register(_report_for(_sha(checkpoint)), checkpoint.parent, tmp_path / "reports")
     links = tmp_path / "links"
     links.mkdir()
@@ -741,17 +744,17 @@ def test_a_symlinked_checkpoint_reads_the_ledger_beside_its_target(app, served_w
 
 
 def test_a_link_retargeted_without_a_reload_still_finds_the_served_models_ledger(
-    app, served_workspace, tmp_path, monkeypatch
+    app, served_child, tmp_path, monkeypatch
 ):
     """The directory is settled when the checkpoint is read. The model is served
     through `current.pt -> run A`, then the link is pointed at run B to prepare
     the next reload, and nothing is reloaded: A is still served, so A's ledger
     is still the one read. Catches a lookup that resolves the link again on each
     request, which would answer `no_ledger` for A's intact records."""
-    data_dir, checkpoint_a = served_workspace
+    data_dir, checkpoint_a = served_child
     run_b = tmp_path / "run_b"
     run_b.mkdir()
-    checkpoint_b = _checkpoint_for(data_dir, run_b / "best.pt", val_pooled_mrr=0.25)
+    checkpoint_b = _with_val_pooled_mrr(checkpoint_a, run_b / "best.pt", 0.25, shift=1.0)
     assert _sha(checkpoint_b) != _sha(checkpoint_a)
     _register(_report_for(_sha(checkpoint_a)), checkpoint_a.parent, tmp_path / "reports")
     current = tmp_path / "models" / "current.pt"
@@ -779,7 +782,7 @@ def test_a_reload_landing_mid_request_cannot_mix_two_models(app, served, tmp_pat
     checkpoint with A's lookup, or the reverse."""
     pipeline_a, data_dir, checkpoint_a = served
     (tmp_path / "b").mkdir()
-    checkpoint_b = _checkpoint_for(data_dir, tmp_path / "b" / "b.pt", val_pooled_mrr=0.25)
+    checkpoint_b = _with_val_pooled_mrr(checkpoint_a, tmp_path / "b" / "b.pt", 0.25, shift=1.0)
     pipeline_b = _full_pipeline(data_dir, checkpoint_b)
     _register(_report_for(_sha(checkpoint_a)), checkpoint_a.parent, tmp_path / "reports")
     original = pipeline_a.served_checkpoint_read

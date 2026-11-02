@@ -1,20 +1,21 @@
 """
-`DiagnosisPipeline.rank()`: the served ranking, whole, and `run` as its cut.
+`DiagnosisPipeline.rank()`: the served mixture's ranking, whole, and `run` as its cut.
 =========================================================================
 Batch 3 split `run` at its truncation point (`docs/working/scorer-measurement/
 PLAN_B05.md` §2): `rank()` does everything `run` did up to and including the
 sort, and `run` is `rank()` followed by the cut at `top_k` and what it builds on
-the rows it keeps. These tests pin that:
+the rows it keeps. These tests pin that **serving did not change**: `run`
+reproduces the output captured before the split
+(`tests/fixtures/served_rank_golden.json`), in both of the mixture's scoring
+modes (the path-reasoning fallback's capture went with the fallback, K7), exact
+ties included, over the fields promised not to change (no timestamps).
 
-- **serving did not change**: `run` reproduces the output captured before the
-  split (`tests/fixtures/served_rank_golden.json`), in both of the mixture's
-  scoring modes (the path-reasoning fallback's capture went with the fallback,
-  K7), exact ties included, over the fields promised not to change (no
-  timestamps);
-- **`run` is `rank()` cut at `top_k`**, for every case and several cuts;
-- `bound_inputs()` gives the reference cohort's binding the graph and dataset
-  record the build verified, and the service builds through
-  `build_served_pipeline`.
+The task-generic contracts this file held serve a trained task model since
+K8-2a: `run` is `rank()` cut at `top_k`, the outcomes of `run` and the service
+building through `build_served_pipeline` in `tests/unit/test_disease_serving.py`
+(a disease child), and `bound_inputs()` in `tests/unit/test_task_serving.py` (a
+patients-like-me child, whose reference cohort binding reads it). What is left
+is the mixture's own golden.
 
 The workspace and checkpoint are the registered-cohort fixture's (CPU,
 deterministic); the shortest-path table is made by the production producer.
@@ -210,69 +211,3 @@ def test_run_reproduces_the_output_captured_before_the_split(served):
                     name, index, row, want)
             assert _ties([r[2] for r in rows]) == _ties([float(w[2]) for w in captured]), (
                 name, index)
-
-
-@pytest.mark.parametrize("top_k", [1, 2, 5, 1000])
-def test_run_is_rank_cut_at_top_k(served, top_k):
-    """Field for field, the candidates `run` returns are `rank()`'s first
-    `top_k`; the warnings and the phenotype account are the same."""
-    for name, pipeline in served["pipelines"].items():
-        for phenotypes in served["patients"]:
-            ranking = pipeline.rank(_patient(phenotypes))
-            result = pipeline.run(_patient(phenotypes), top_k=top_k, include_explanations=False)
-            assert [_row(c) for c in result.candidates] == \
-                [_row(c) for c in ranking.candidates[:top_k]], name
-            assert result.warnings == ranking.warnings
-            assert result.phenotype_input == ranking.phenotype_input
-
-
-def test_the_three_outcomes_are_the_three_returns_of_run(served):
-    """`refused` is a refused validation (no candidates, its errors as the
-    warnings); `no_candidates` is an input that maps but reaches nothing, or
-    nothing at all; `ranked` holds every candidate, ranked 1..N."""
-    pipeline = served["pipelines"]["gnn_plus_sp"]
-    refused = pipeline.rank(_patient(["HP:9999999"]))
-    assert refused.outcome == "refused" and refused.candidates == []
-    assert refused.warnings == ["No valid phenotypes after validation"]
-
-    ranked = pipeline.rank(_patient(served["patients"][0]))
-    assert ranked.outcome == "ranked"
-    assert [c.rank for c in ranked.candidates] == list(range(1, len(ranked.candidates) + 1))
-    scores = [c.served_score for c in ranked.candidates]
-    assert scores == sorted(scores, reverse=True)
-
-
-def test_bound_inputs_are_the_reads_the_build_took(served):
-    """Against an independent account of the files: the four graph digests and
-    the dataset record, which the reference cohort's binding reads (K7: the
-    fields only Mode D read are gone)."""
-    from dataclasses import fields
-
-    from src.inference.pipeline import BoundInputs
-    from src.kg.artifacts import GRAPH_TENSOR_ROLES
-    from src.kg.provenance import PROVENANCE_FILENAME
-
-    cohort = served["cohort"]
-    bound = served["pipelines"]["gnn_only"].bound_inputs()
-    assert [field.name for field in fields(BoundInputs)] == ["graph", "dataset_record"]
-    assert bound.graph["kg"] == _sha(cohort.data_dir / "kg.json")
-    for role in GRAPH_TENSOR_ROLES:
-        files = [p for p in cohort.data_dir.iterdir() if p.stem == role]
-        assert len(files) == 1 and bound.graph[role] == _sha(files[0]), role
-    assert bound.dataset_record.identity.sha256 == _sha(cohort.data_dir / PROVENANCE_FILENAME)
-
-
-def test_the_service_and_build_served_pipeline_build_the_same_pipeline(served):
-    """The API's `build_pipeline` builds through `build_served_pipeline`, so both
-    serve the same identity from the same files."""
-    from src.api import main as api
-    from src.inference.pipeline import build_served_pipeline
-
-    workspace = served["with_table"]
-    checkpoint = str(served["cohort"].checkpoint)
-    direct = build_served_pipeline(workspace / "kg.json", checkpoint_path=checkpoint,
-                                   data_dir=str(workspace), device="cpu")
-    bundle = api.build_pipeline(kg_path=str(workspace / "kg.json"), checkpoint_path=checkpoint,
-                                data_dir=str(workspace), device="cpu")
-    assert direct.served_identity() == bundle.pipeline.served_identity()
-    assert direct.served_identity().scoring_mode == "gnn_plus_shortest_path"

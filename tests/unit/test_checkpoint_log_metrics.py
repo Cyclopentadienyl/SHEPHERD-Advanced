@@ -154,10 +154,13 @@ def test_the_ranking_keys_are_not_listed_a_second_time():
     assert pipeline.RANKING_SCORE_KEYS is checkpoint_paths.RANKING_SCORE_KEYS
 
 
-def test_a_current_trainer_checkpoint_shows_its_ranking_metrics(tmp_path):
+def test_a_current_trainer_checkpoint_shows_its_ranking_metrics(trained_disease_child,
+                                                                 disease_pipeline):
     """End to end: logs as the trainer writes them, loaded by the pipeline,
     returned by the status route's model, shown by the Diagnosis page (the
-    card and Model Facts)."""
+    card and Model Facts). The checkpoint is a trained task model (K8-2a): the
+    session's disease child, whose `logs` the real Trainer wrote in its run; a
+    task model's ranking metric is `val_pooled_mrr`."""
     torch = pytest.importorskip("torch")
     pytest.importorskip("gradio")
     from datetime import datetime
@@ -165,33 +168,22 @@ def test_a_current_trainer_checkpoint_shows_its_ranking_metrics(tmp_path):
     from fastapi.encoders import jsonable_encoder
 
     from src.api.routes.pipeline import _status_of
-    from src.inference.pipeline import DiagnosisPipeline
-    from src.kg.graph import KnowledgeGraph
     from src.webui.components import diagnosis_card as card
     from src.webui.components import diagnosis_panel as panel
-    from tests.fixtures.synthetic_workspace import build_workspace
 
-    logs = _current_trainer_logs()
-    data_dir, checkpoint_path = build_workspace(tmp_path)
-    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-    checkpoint["logs"] = logs
-    torch.save(checkpoint, checkpoint_path)
+    logs = torch.load(trained_disease_child["disease"], map_location="cpu",
+                      weights_only=False)["logs"]
 
-    # From the workspace, as the service builds it: a checkpoint is loaded only
-    # over a graph verified from one (contract M2.4).
-    pipeline = DiagnosisPipeline(
-        graph=KnowledgeGraph.read_json(data_dir / "kg.json"),
-        data_dir=str(data_dir),
-        checkpoint_path=str(checkpoint_path),
-        device="cpu",
-    )
+    # From the workspace, as the service builds it (`disease_pipeline`): a
+    # checkpoint is loaded only over a graph verified from one (contract M2.4).
+    pipeline = disease_pipeline
 
     meta = pipeline.get_pipeline_config()["checkpoint_meta"]
-    for key in ("val_mrr", "val_hits@1", "val_hits@10"):
-        assert meta[key] == pytest.approx(logs[key])
-    # Copied by choice, not wholesale: ndcg, epoch time and the learning rate
-    # are in the logs and are not status-line material.
-    assert "val_ndcg@1" not in meta and "learning_rate" not in meta
+    assert meta["val_pooled_mrr"] == pytest.approx(logs["val_pooled_mrr"])
+    # Copied by choice, not wholesale: the ranking report's other figures, epoch
+    # time and the learning rate are in the logs and are not status-line material.
+    descriptive = {"val_pooled_top1", "val_macro_mrr", "epoch_time", "learning_rate"}
+    assert descriptive <= set(logs) and not descriptive & set(meta)
 
     status = jsonable_encoder(_status_of(pipeline.get_pipeline_config(), None, None))
     state = card.advance(None, status, None, now=datetime(2026, 10, 20, 10, 0), operator=True,
@@ -199,8 +191,8 @@ def test_a_current_trainer_checkpoint_shows_its_ranking_metrics(tmp_path):
     details = panel.model_identity_html(state)
 
     # Model Facts' Evidence: the Trainer's selection metric, named as such.
-    assert (f"Validation MRR (Trainer, top-20) {logs['val_mrr']:.4f} — selection metric on "
-            "val, not an independent test") in details
+    assert (f"Validation pooled MRR (Trainer) {logs['val_pooled_mrr']:.4f} — selection metric "
+            "on val, not an independent test") in details
 
     # The same status names what the loaded pipeline serves (contract M3c),
     # taken from the pipeline's own served identity: the digest of the

@@ -10,7 +10,10 @@ a model bundle, not even one filed under a ShepherdGNN conv type's directory
 (an encoder kind may share it: ``hgt``, ``sage``). The run listing carries each
 file's record from its one read; the lists show it through the one reader of
 records (`listed_record`), and a bundle run resolves by the key it is listed
-under (``gatv2``).
+under (``gatv2``). Automatic selection never reads test results (D4): a ledger
+beside a task child's checkpoints that favours another file does not change
+what the reload or `select_auto_run_checkpoint` choose (the import-linter
+contract `selection-ignores-test-results` keeps the modules apart).
 
 Module: tests/unit/test_task_first_selection.py
 """
@@ -528,3 +531,70 @@ def test_the_lists_show_a_bundle_run_and_resolve_it_by_its_key(tmp_path):
     assert (by_manager["gatv2"]["task"], by_manager["gatv2"]["parent_sha256"]) == (
         "disease", "a" * 64)
     assert by_manager["hgt"]["record"] == "history"
+
+
+# ---------------------------------------------------------------------------
+# Automatic selection never reads test results (D4)
+# ---------------------------------------------------------------------------
+def test_a_ledger_does_not_change_what_automatic_selection_chooses(service):
+    """Two checkpoints of one disease child run, the validation metric
+    (``val_pooled_mrr``) favouring `best.pt`; a ledger beside them whose
+    test result (a registered disease task record) favours `other.pt`. The
+    reload's task-first selection and `select_auto_run_checkpoint` choose
+    `best.pt`, with or without the ledger (the import-linter contract
+    `selection-ignores-test-results` keeps the modules apart). Moved from
+    `test_test_score_ordering` at K8-2a, from a ShepherdGNN run's history
+    files to a task child's."""
+    import hashlib
+    import json
+
+    from src.evaluation.sidecar import (
+        LEDGER_FILENAME,
+        append_record,
+        build_record,
+        empty_ledger,
+        read_ledger,
+        write_ledger,
+    )
+    from src.evaluation.task_measurement import disease_semantics
+    from src.utils.checkpoint_io import read_checkpoint
+    from src.utils.checkpoint_paths import (
+        RUN_LAYOUT_KEYS,
+        ranking_score_detail,
+        select_auto_run_checkpoint,
+    )
+    from tests.unit.test_evaluation_sidecar import registered_report
+
+    run = "20261002-000000_disease_bbbbbb"
+    # `best.pt` older, so recency would not favour it.
+    best = _put(service.data_dir, "gatv2", run,
+                _record_payload("disease", logs={"val_pooled_mrr": 0.6}), 1, name="best.pt")
+    other = _put(service.data_dir, "gatv2", run,
+                 _record_payload("disease", logs={"val_pooled_mrr": 0.2}), 900, name="other.pt")
+
+    def score(path):
+        logs = read_checkpoint(path, map_location="cpu", weights_only=True).checkpoint["logs"]
+        return ranking_score_detail(logs)[1]
+
+    def chosen():
+        reload = _reload(service, task="disease")
+        assert reload.success, reload.message
+        assert "best val_pooled_mrr=0.6000" in reload.selection_reason
+        return (select_auto_run_checkpoint(service.data_dir, score_fn=score,
+                                           keys=RUN_LAYOUT_KEYS)[0],
+                Path(reload.checkpoint_path))
+
+    without = chosen()
+    ledger = empty_ledger()
+    for path, pooled_mrr in ((other, 0.99), (best, 0.01)):
+        report = registered_report(metrics={"pooled_mrr": pooled_mrr}, **disease_semantics(32))
+        report["manifest"]["artifact_digests"]["checkpoint"] = file_sha256(path)
+        digest = hashlib.sha256(json.dumps(report, sort_keys=True).encode()).hexdigest()
+        ledger = append_record(ledger, build_record(report, digest),
+                               registered_at="2026-10-20T09:00:00Z")[1]
+    write_ledger(best.parent / LEDGER_FILENAME, ledger, None)
+    tested = {record["checkpoint_digest"]: record["metrics"]["pooled_mrr"]
+              for record in read_ledger(best.parent / LEDGER_FILENAME)[0]["records"]}
+    assert tested == {file_sha256(other): 0.99, file_sha256(best): 0.01}
+
+    assert without == chosen() == (best, best)

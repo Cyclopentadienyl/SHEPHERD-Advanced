@@ -48,9 +48,12 @@ from tests.unit import test_serving_reads_once as reads_once  # noqa: E402
 #: Shared with `test_serving_reads_once.py` rather than copied: `api` is the app
 #: state of a fresh process (with SHEPHERD_DEVICE=cpu, which
 #: `no_device_configured` removes), `workspace` a synthetic data directory and a
-#: checkpoint trained on its graph.
+#: checkpoint trained on its graph, for the refusals that come before any model
+#: is built; `child` the session's trained disease child and its workspace, the
+#: model every test here that builds one serves (K8-2a).
 api = reads_once.api
 workspace = reads_once.workspace
+child = reads_once.child
 
 #: How `test_pipeline_fails_closed.py` starts the app through its lifespan with
 #: a workspace configured, and what each surface answers; reused, not copied.
@@ -214,12 +217,12 @@ def test_no_model_is_refused_for_that_before_any_device_is_asked_about(
 
 
 def test_the_identity_keeps_the_request_apart_from_the_device_in_effect(
-    no_cuda, workspace, cpu_allowed
+    no_cuda, child, cpu_allowed
 ):
     """A checkpoint loaded with no device named is an `auto` request, and the
     device in effect is read from the model. With the rule allowing it here,
     the two differ: catches an identity that records one as the other."""
-    data_dir, checkpoint = workspace
+    data_dir, checkpoint = child
 
     pipeline = _workspace_pipeline(data_dir, checkpoint, device=None)
 
@@ -230,13 +233,13 @@ def test_the_identity_keeps_the_request_apart_from_the_device_in_effect(
     assert pipeline.get_pipeline_config()["checkpoint_meta"]["device"] == "cpu"
 
 
-def test_the_device_in_effect_is_read_from_the_model_not_the_request(no_cuda, workspace):
+def test_the_device_in_effect_is_read_from_the_model_not_the_request(no_cuda, child):
     """Torch names where a model's parameters are itself: a `cuda` request
     serves on `cuda:0`. Here `cpu:0` splits the same way, a request the rule
     passes through and torch accepts, on parameters torch names `cpu`. Catches
     the resolved request recorded as the device in effect, which on a CUDA host
     says `cuda` for `cuda:0`, and claims CUDA for a model left where it was."""
-    data_dir, checkpoint = workspace
+    data_dir, checkpoint = child
     assert str(torch.zeros(1, device="cpu:0").device) == "cpu", (
         "the split this test relies on: torch names a CPU tensor without an index"
     )
@@ -248,8 +251,8 @@ def test_the_device_in_effect_is_read_from_the_model_not_the_request(no_cuda, wo
     assert settings.device == str(next(pipeline.model.parameters()).device) == "cpu"
 
 
-def test_an_explicit_cpu_request_is_recorded_as_asked(no_cuda, workspace):
-    data_dir, checkpoint = workspace
+def test_an_explicit_cpu_request_is_recorded_as_asked(no_cuda, child):
+    data_dir, checkpoint = child
 
     settings = _workspace_pipeline(data_dir, checkpoint, device="cpu").served_identity().settings
 
@@ -394,13 +397,13 @@ def test_a_named_request_wins_over_the_deployments_setting(no_device_configured,
 
 
 def test_the_service_build_passes_the_request_on_as_given(
-    no_device_configured, cpu_allowed, workspace
+    no_device_configured, cpu_allowed, child
 ):
     """`build_pipeline` settles the device only to refuse early; the pipeline is
     handed the request, so a deployment that names no device is recorded as
     `auto`. Catches the resolved device passed on instead, which on a CUDA host
     records `cuda` for a deployment that asked for `auto`."""
-    data_dir, checkpoint = workspace
+    data_dir, checkpoint = child
 
     bundle = no_device_configured.build_pipeline(kg_path=str(data_dir / "kg.json"),
                                                  checkpoint_path=str(checkpoint),
@@ -412,10 +415,10 @@ def test_the_service_build_passes_the_request_on_as_given(
 
 
 def test_the_service_build_on_the_cpu_is_asked_for_explicitly(
-    no_cuda, no_device_configured, workspace, monkeypatch
+    no_cuda, no_device_configured, child, monkeypatch
 ):
     api = no_device_configured
-    data_dir, checkpoint = workspace
+    data_dir, checkpoint = child
     monkeypatch.setenv("SHEPHERD_DEVICE", "cpu")
     before = _served_fields(api)
 
@@ -481,10 +484,10 @@ def test_a_reload_that_asks_for_cuda_without_it_is_refused_and_keeps_serving(
 
 
 def test_a_reload_on_the_cpu_succeeds_and_records_the_request(
-    no_cuda, no_device_configured, serving, workspace
+    no_cuda, no_device_configured, serving, child
 ):
     api = no_device_configured
-    data_dir, checkpoint = workspace
+    data_dir, checkpoint = child
 
     result = _reload(data_dir, checkpoint, "cpu")
 
@@ -496,12 +499,12 @@ def test_a_reload_on_the_cpu_succeeds_and_records_the_request(
 
 @pytest.mark.parametrize("device", [None, "", "  "])
 def test_a_reload_with_no_device_falls_back_to_the_deployments_setting(
-    no_cuda, no_device_configured, serving, workspace, monkeypatch, device
+    no_cuda, no_device_configured, serving, child, monkeypatch, device
 ):
     """Null defers to SHEPHERD_DEVICE, as the request's field says, and a blank
     device is null: catches `"  "` read as a request for `auto`, refused here
     while `""` served on the CPU."""
-    data_dir, checkpoint = workspace
+    data_dir, checkpoint = child
     monkeypatch.setenv("SHEPHERD_DEVICE", "cpu")
 
     result = _reload(data_dir, checkpoint, device)
@@ -511,13 +514,13 @@ def test_a_reload_with_no_device_falls_back_to_the_deployments_setting(
 
 
 def test_a_reload_passes_the_request_on_as_given(
-    no_device_configured, cpu_allowed, serving, workspace
+    no_device_configured, cpu_allowed, serving, child
 ):
     """The route settles the device only to refuse before its scan, as
     `build_pipeline` does: a reload that names no device, on a deployment that
     names none, is recorded as `auto`. Catches the resolved device passed on by
     either, which on a CUDA host records `cuda` for an `auto` request."""
-    data_dir, checkpoint = workspace
+    data_dir, checkpoint = child
 
     result = _reload(data_dir, checkpoint, None)
 

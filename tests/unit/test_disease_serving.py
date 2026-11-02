@@ -5,7 +5,10 @@ The pipeline built as the service builds it serves a disease child: every
 disease of the model's graph view ranked by the disease head, ties by view id,
 paths only explaining the rows shown; the served identity says
 `disease_task`, no mixing weight and no shortest-path table; the API's response
-validates. A base is refused: it serves no diagnosis.
+validates. A base is refused: it serves no diagnosis. `run` is `rank()` cut at
+`top_k`, its outcomes are `rank()`'s, and the service builds through
+`build_served_pipeline` (served on a disease child since K8-2a; they were
+`test_served_rank`'s, on the mixture).
 
 Module: tests/unit/test_disease_serving.py
 """
@@ -143,3 +146,79 @@ def test_a_phenotype_outside_the_view_is_reported_unknown_not_used(trained):
     assert term in result.phenotype_input.unknown
     assert term not in result.phenotype_input.used
     assert any("outside the model's graph view" in w for w in result.warnings)
+
+
+@pytest.fixture(scope="module")
+def served(trained):
+    """The disease child served once, for the tests that only read it, and the
+    patients they rank: the graph's own cases (`graph_source_cases`), an id
+    the graph lacks alone, one with a case and a repeat, and 150 ids."""
+    from tests.fixtures.registered_cohort import graph_source_cases
+
+    cases = [case["phenotypes"] for case in graph_source_cases(trained["data_dir"])]
+    patients = cases + [["HP:9999999"], ["HP:9999999"] + cases[0] + cases[0][:1],
+                        [f"HP:{i:07d}" for i in range(150)]]
+    return {"pipeline": _pipeline(trained, trained["child"]), "patients": patients}
+
+
+def _patient(phenotypes, patient_id="p"):
+    return PatientPhenotypes(patient_id=patient_id, phenotypes=list(phenotypes))
+
+
+def _row(candidate):
+    """A candidate as `rank()` makes it: [disease, rank, name, the head's
+    score]. The evidence fields are `run`'s, built on the rows it keeps after
+    the cut (paths explain, they never rank)."""
+    assert isinstance(candidate, DiseaseTaskCandidate), type(candidate).__name__
+    return [str(candidate.disease_id), candidate.rank, candidate.disease_name, candidate.score]
+
+
+@pytest.mark.parametrize("top_k", [1, 2, 5, 1000])
+def test_run_is_rank_cut_at_top_k(served, top_k):
+    """Field for field, the candidates `run` returns are `rank()`'s first
+    `top_k`; the warnings and the phenotype account are the same."""
+    pipeline = served["pipeline"]
+    ranked = 0
+    for phenotypes in served["patients"]:
+        ranking = pipeline.rank(_patient(phenotypes))
+        result = pipeline.run(_patient(phenotypes), top_k=top_k, include_explanations=False)
+        assert [_row(c) for c in result.candidates] == \
+            [_row(c) for c in ranking.candidates[:top_k]]
+        assert result.warnings == ranking.warnings
+        assert result.phenotype_input == ranking.phenotype_input
+        ranked += ranking.outcome == "ranked"
+    assert ranked, "no patient was ranked: the cut was never taken"
+
+
+def test_the_three_outcomes_are_the_three_returns_of_run(served):
+    """`refused` is a refused validation (no candidates, its errors as the
+    warnings); `ranked` holds every candidate, ranked 1..N. A disease child
+    has no `no_candidates`: once anything maps, its head ranks every disease
+    of the view (`test_a_disease_child_ranks_every_disease`)."""
+    pipeline = served["pipeline"]
+    refused = pipeline.rank(_patient(["HP:9999999"]))
+    assert refused.outcome == "refused" and refused.candidates == []
+    assert refused.warnings == ["No valid phenotypes after validation"]
+
+    ranked = pipeline.rank(_patient(served["patients"][0]))
+    assert ranked.outcome == "ranked" and ranked.candidates
+    assert [c.rank for c in ranked.candidates] == list(range(1, len(ranked.candidates) + 1))
+    scores = [c.score for c in ranked.candidates]
+    assert scores == sorted(scores, reverse=True)
+
+
+def test_the_service_and_build_served_pipeline_build_the_same_pipeline(trained):
+    """The API's `build_pipeline` builds through `build_served_pipeline`, so both
+    serve the same identity from the same files: the disease child's, scored by
+    its task."""
+    from src.api import main as api
+    from src.inference.pipeline import build_served_pipeline
+
+    workspace = trained["data_dir"]
+    checkpoint = str(trained["child"])
+    direct = build_served_pipeline(workspace / "kg.json", checkpoint_path=checkpoint,
+                                   data_dir=str(workspace), device="cpu")
+    bundle = api.build_pipeline(kg_path=str(workspace / "kg.json"), checkpoint_path=checkpoint,
+                                data_dir=str(workspace), device="cpu")
+    assert direct.served_identity() == bundle.pipeline.served_identity()
+    assert direct.served_identity().scoring_mode == "disease_task"

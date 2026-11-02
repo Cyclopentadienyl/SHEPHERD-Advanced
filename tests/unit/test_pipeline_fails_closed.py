@@ -26,12 +26,18 @@ on every request.
 **No model source at all is the same refusal since K7** (PATH1, G3): a graph
 is never served by path reasoning, and no model is handed over in memory.
 
+**What is served is a trained task model** (K8-2a): every test here whose build
+reaches the model serves the session's disease child (`child`), and "another
+graph" is that child with its graph view record naming another view. The
+synthetic workspace stays only where the build is refused before a model is
+built, or where the subject is the shortest-path table.
+
 Module: tests/unit/test_pipeline_fails_closed.py
 """
 from __future__ import annotations
 
 import asyncio
-import json
+import hashlib
 
 import pytest
 
@@ -44,51 +50,24 @@ from src.inference.pipeline import (  # noqa: E402
     PipelineConfig,
 )
 from src.kg.graph import KnowledgeGraph  # noqa: E402
-from tests.fixtures.generated_workspace import graph_record  # noqa: E402
-from tests.fixtures.synthetic_workspace import (  # noqa: E402
-    FEATURE_DIM,
-    HIDDEN_DIM,
-    build_workspace,
-)
+from tests.fixtures.synthetic_workspace import build_workspace  # noqa: E402
+from tests.unit import test_serving_reads_once as reads_once  # noqa: E402
 
 
-def _graph_data(data_dir):
-    return {
-        "x_dict": torch.load(data_dir / "node_features.pt", weights_only=False),
-        "edge_index_dict": torch.load(data_dir / "edge_indices.pt", weights_only=False),
-        "num_nodes_dict": json.loads((data_dir / "num_nodes.json").read_text()),
-    }
+def _checkpoint_for_another_graph(checkpoint, path):
+    """A sound task model, built on another graph's view.
 
-
-def _checkpoint_for_another_graph(data_dir, path):
-    """A sound checkpoint, trained over a graph whose features are twice as wide.
-
-    Everything about it is well formed: it loads, its configuration matches its
-    weights, and it would serve its own graph. It does not build over this one.
-    It records this workspace's graph roles, so the build is what refuses it, not
-    the training record (M2.4, whose refusals `test_training_record.py` shows).
+    `checkpoint` (the disease child) with its graph view record naming a view of
+    the same shape over another graph. Everything about it is well formed: it
+    loads, its model spec matches its weights, and it would serve the graph whose
+    view it records. It does not build over this one. It records this
+    workspace's graph roles, so the build is what refuses it, not the training
+    record (M2.4, whose refusals `test_training_record.py` shows).
     """
-    from src.models.gnn.shepherd_gnn import ShepherdGNN, ShepherdGNNConfig
-
-    graph = _graph_data(data_dir)
-    metadata = (list(graph["num_nodes_dict"]), list(graph["edge_index_dict"]))
-    in_channels = dict.fromkeys(graph["num_nodes_dict"], FEATURE_DIM * 2)
-    model = ShepherdGNN(
-        metadata=metadata,
-        in_channels_dict=in_channels,
-        config=ShepherdGNNConfig(hidden_dim=HIDDEN_DIM, num_layers=2, num_heads=2),
-    )
-    torch.save(
-        {
-            "state_dict": model.state_dict(),
-            "config": {"hidden_dim": HIDDEN_DIM, "num_layers": 2, "num_heads": 2},
-            "metadata": metadata,
-            "in_channels_dict": in_channels,
-            "epoch": 1,
-            "training_input_digests": graph_record(data_dir),
-        },
-        path,
-    )
+    contents = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    contents["graph_view"] = {**contents["graph_view"],
+                              "digest": hashlib.sha256(b"another graph").hexdigest()}
+    torch.save(contents, path)
     return path
 
 
@@ -97,14 +76,20 @@ def workspace(tmp_path):
     return build_workspace(tmp_path)
 
 
+#: The session's trained disease child, ``(data_dir, checkpoint)``: the model
+#: every build here that reaches one serves. Read-only; what a test writes goes
+#: to `tmp_path`. Shared with `test_serving_reads_once.py` rather than copied.
+child = reads_once.child
+
+
 # ==============================================================================
 # The pipeline: a requested model is built, or the build raises
 # ==============================================================================
 class TestARequestedModelIsBuiltOrRefused:
-    def test_a_sound_checkpoint_builds_its_model(self, workspace):
+    def test_a_sound_checkpoint_builds_its_model(self, child):
         """The control. Without it, every refusal below could be a harness that
-        never builds anything."""
-        data_dir, checkpoint = workspace
+        never builds anything. A disease child scores as its task does."""
+        data_dir, checkpoint = child
 
         pipeline = DiagnosisPipeline(
             graph=KnowledgeGraph.read_json(data_dir / "kg.json"), data_dir=str(data_dir),
@@ -113,7 +98,7 @@ class TestARequestedModelIsBuiltOrRefused:
 
         config = pipeline.get_pipeline_config()
         assert config["gnn_ready"] is True
-        assert config["scoring_mode"] == "gnn_only"
+        assert config["scoring_mode"] == "disease_task"
 
     def test_a_missing_checkpoint_is_refused(self, workspace, tmp_path):
         data_dir, _ = workspace
@@ -139,11 +124,11 @@ class TestARequestedModelIsBuiltOrRefused:
         assert str(corrupt) in str(refused.value)
         assert refused.value.__cause__ is not None, "the reader's own error is kept"
 
-    def test_a_checkpoint_for_another_graph_is_refused(self, workspace, tmp_path):
-        data_dir, _ = workspace
-        other = _checkpoint_for_another_graph(data_dir, tmp_path / "other.pt")
+    def test_a_checkpoint_for_another_graph_is_refused(self, child, tmp_path):
+        data_dir, checkpoint = child
+        other = _checkpoint_for_another_graph(checkpoint, tmp_path / "other.pt")
 
-        with pytest.raises(PipelineBuildError, match="does not build a model"):
+        with pytest.raises(PipelineBuildError, match="built on graph view"):
             DiagnosisPipeline(
                 graph=KnowledgeGraph.read_json(data_dir / "kg.json"), data_dir=str(data_dir),
                 checkpoint_path=str(other), device="cpu",
@@ -168,22 +153,22 @@ class TestARequestedModelIsBuiltOrRefused:
             )
 
     def test_embeddings_without_a_node_type_scoring_reads_cannot_mark_it_ready(
-        self, monkeypatch, workspace
+        self, monkeypatch, child
     ):
-        """An embedding table with no disease rows scores every GNN term as zero,
-        as surely as no table at all."""
-        data_dir, checkpoint = workspace
+        """Vectors computed without what scoring reads (a task model's view
+        vectors) leave no candidate scoreable, as surely as no vectors at all."""
+        data_dir, checkpoint = child
         real = DiagnosisPipeline._precompute_node_embeddings
 
-        def _without_diseases(self, device=None):
+        def _without_the_view(self, device=None):
             real(self, device)
-            self._node_embeddings.pop("disease")
+            self._bundle_z = None
 
         monkeypatch.setattr(
-            DiagnosisPipeline, "_precompute_node_embeddings", _without_diseases
+            DiagnosisPipeline, "_precompute_node_embeddings", _without_the_view
         )
 
-        with pytest.raises(PipelineBuildError, match="disease"):
+        with pytest.raises(PipelineBuildError, match="no node embeddings for \\['the view'\\]"):
             DiagnosisPipeline(
                 graph=KnowledgeGraph.read_json(data_dir / "kg.json"), data_dir=str(data_dir),
                 checkpoint_path=str(checkpoint), device="cpu",
@@ -202,14 +187,14 @@ class TestARequestedModelIsBuiltOrRefused:
                 checkpoint_path=str(not_a_checkpoint), device="cpu",
             )
 
-    def test_a_checkpoint_without_weights_is_named_as_such(self, workspace, tmp_path):
+    def test_a_checkpoint_without_weights_is_named_as_such(self, child, tmp_path):
         """A format problem, not a graph mismatch, and the message says which."""
-        data_dir, checkpoint = workspace
+        data_dir, checkpoint = child
         stripped = torch.load(checkpoint, map_location="cpu", weights_only=False)
         del stripped["state_dict"]
         torch.save(stripped, tmp_path / "stripped.pt")
 
-        with pytest.raises(PipelineBuildError, match="carries no model weights"):
+        with pytest.raises(PipelineBuildError, match="holds no model weights"):
             DiagnosisPipeline(
                 graph=KnowledgeGraph.read_json(data_dir / "kg.json"), data_dir=str(data_dir),
                 checkpoint_path=str(tmp_path / "stripped.pt"), device="cpu",
@@ -294,11 +279,11 @@ def api(monkeypatch):
     return api_main
 
 
-def _bad_checkpoint(kind, data_dir, tmp_path):
+def _bad_checkpoint(kind, checkpoint, tmp_path):
     if kind == "missing":
         return tmp_path / "absent.pt"
     if kind == "built for another graph":
-        return _checkpoint_for_another_graph(data_dir, tmp_path / "other.pt")
+        return _checkpoint_for_another_graph(checkpoint, tmp_path / "other.pt")
     corrupt = tmp_path / "corrupt.pt"
     corrupt.write_bytes(b"not a checkpoint")
     return corrupt
@@ -326,10 +311,10 @@ class TestStartupPublishesNothing:
         return TestClient(api.app)
 
     def test_a_sound_checkpoint_is_published_at_startup(
-        self, api, monkeypatch, workspace
+        self, api, monkeypatch, child
     ):
         """The control for the case below: the same startup, a good checkpoint."""
-        data_dir, checkpoint = workspace
+        data_dir, checkpoint = child
 
         with self._start(api, monkeypatch, data_dir, checkpoint):
             assert api.app_state.pipeline is not None
@@ -337,13 +322,13 @@ class TestStartupPublishesNothing:
 
     @pytest.mark.parametrize("kind", ["missing", "built for another graph", "unreadable"])
     def test_a_checkpoint_that_cannot_load_leaves_diagnose_at_503(
-        self, api, monkeypatch, workspace, tmp_path, kind
+        self, api, monkeypatch, child, tmp_path, kind
     ):
         """The first two were the old fallback: startup published a pipeline
         scoring by path reasoning, and `/diagnose` answered 200. An unreadable
         checkpoint already failed startup; it is here so it stays that way."""
-        data_dir, _ = workspace
-        checkpoint = _bad_checkpoint(kind, data_dir, tmp_path)
+        data_dir, sound = child
+        checkpoint = _bad_checkpoint(kind, sound, tmp_path)
 
         with self._start(api, monkeypatch, data_dir, checkpoint) as client:
             assert api.app_state.pipeline is None, "startup published a pipeline"
@@ -442,8 +427,8 @@ class TestAReloadKeepsWhatIsServing:
             == before["served_identity"]
         ), "a refused reload changed what is served"
 
-    def test_a_checkpoint_that_cannot_be_read_is_refused(self, api, workspace, tmp_path):
-        data_dir, checkpoint = workspace
+    def test_a_checkpoint_that_cannot_be_read_is_refused(self, api, child, tmp_path):
+        data_dir, checkpoint = child
         before = self._served(api, data_dir, checkpoint)
         corrupt = tmp_path / "corrupt.pt"
         corrupt.write_bytes(b"not a checkpoint")
@@ -456,15 +441,15 @@ class TestAReloadKeepsWhatIsServing:
         assert ".." not in result.message
         self._assert_still_serving(api, before)
 
-    def test_a_checkpoint_for_another_graph_is_refused(self, api, workspace, tmp_path):
-        data_dir, checkpoint = workspace
+    def test_a_checkpoint_for_another_graph_is_refused(self, api, child, tmp_path):
+        data_dir, checkpoint = child
         before = self._served(api, data_dir, checkpoint)
-        other = _checkpoint_for_another_graph(data_dir, tmp_path / "other.pt")
+        other = _checkpoint_for_another_graph(checkpoint, tmp_path / "other.pt")
 
         result = _reload(data_dir=str(data_dir), checkpoint_path=str(other))
 
         assert result.success is False
-        assert "does not build a model" in result.message
+        assert "built on graph view" in result.message
         self._assert_still_serving(api, before)
 
 
@@ -535,23 +520,24 @@ class TestReadinessFollowsWhatIsServed:
             )
 
     def test_a_refused_reload_after_it_stays_not_ready(
-        self, api, monkeypatch, workspace, tmp_path
+        self, api, monkeypatch, child, tmp_path
     ):
-        data_dir, _ = workspace
-        other = _checkpoint_for_another_graph(data_dir, tmp_path / "other.pt")
+        data_dir, checkpoint = child
+        other = _checkpoint_for_another_graph(checkpoint, tmp_path / "other.pt")
 
         with self._start(api, monkeypatch, data_dir, tmp_path / "absent.pt") as client:
             result = self._reload(client, data_dir, other)
 
             assert result["success"] is False
+            assert "built on graph view" in result["message"]
             assert self._answers(client) == self.NOT_SERVING
 
     def test_a_successful_reload_after_it_restores_all_of_them(
-        self, api, monkeypatch, workspace, tmp_path
+        self, api, monkeypatch, child, tmp_path
     ):
         """And only once the candidate is published: readiness is not set when
         the reload starts building."""
-        data_dir, checkpoint = workspace
+        data_dir, checkpoint = child
         ready_while_building = []
         real_build = api.build_pipeline
 
@@ -569,9 +555,9 @@ class TestReadinessFollowsWhatIsServed:
             assert client.get("/ready").json()["pipeline_loaded"] is True
 
     def test_a_refused_reload_on_a_healthy_service_keeps_all_of_it(
-        self, api, monkeypatch, workspace, tmp_path
+        self, api, monkeypatch, child, tmp_path
     ):
-        data_dir, checkpoint = workspace
+        data_dir, checkpoint = child
         corrupt = tmp_path / "corrupt.pt"
         corrupt.write_bytes(b"not a checkpoint")
         fields = ("pipeline", "kg",
@@ -596,12 +582,12 @@ class TestReadinessFollowsWhatIsServed:
             )
             assert self._answers(client) == self.SERVING
 
-    def test_the_whole_way_back_in_one_lifetime(self, api, monkeypatch, workspace, tmp_path):
+    def test_the_whole_way_back_in_one_lifetime(self, api, monkeypatch, child, tmp_path):
         """The acceptance as one chain, in one service: a refusal must leave
         nothing behind that stops a later reload from restoring the service,
         and the restored service must survive a later refusal."""
-        data_dir, checkpoint = workspace
-        other = _checkpoint_for_another_graph(data_dir, tmp_path / "other.pt")
+        data_dir, checkpoint = child
+        other = _checkpoint_for_another_graph(checkpoint, tmp_path / "other.pt")
         fields = ("pipeline", "kg",
                   "_current_data_dir", "_current_checkpoint_path", "is_ready")
 
@@ -609,7 +595,8 @@ class TestReadinessFollowsWhatIsServed:
             assert self._answers(client) == self.NOT_SERVING
             assert self._served_identity(client) is None
 
-            assert self._reload(client, data_dir, other)["success"] is False
+            refused = self._reload(client, data_dir, other)
+            assert refused["success"] is False and "built on graph view" in refused["message"]
             assert self._answers(client) == self.NOT_SERVING
             assert self._served_identity(client) is None
 
@@ -619,7 +606,8 @@ class TestReadinessFollowsWhatIsServed:
             identity = self._served_identity(client)
             assert identity["checkpoint"]["state"] == "verified"
 
-            assert self._reload(client, data_dir, other)["success"] is False
+            refused = self._reload(client, data_dir, other)
+            assert refused["success"] is False and "built on graph view" in refused["message"]
             assert self._answers(client) == self.SERVING
             for field, value in restored.items():
                 assert getattr(api.app_state, field) is value, (

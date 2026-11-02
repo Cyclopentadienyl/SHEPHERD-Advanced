@@ -685,22 +685,26 @@ class TestNothingLeavesThisEndpointUnencodable:
         jsonable_encoder(result)
 
 
-def test_a_checkpoint_whose_metrics_are_tensors_still_loads_and_serves(tmp_path):
+def test_a_checkpoint_whose_metrics_are_tensors_still_loads_and_serves(
+    tmp_path, trained_disease_child
+):
     """The point of normalising at the source is that such a checkpoint *works*.
 
     The encoder before publication would refuse it, which keeps the service
     safe and makes every reload of a perfectly good checkpoint fail. A metric
     written as `loss.detach()` is a training-side slip, not a reason to decline
-    to serve a trained model.
+    to serve a trained model. The checkpoint is a trained task model (K8-2a):
+    the session's disease child, copied with its epoch and metrics as tensors.
     """
     torch = pytest.importorskip("torch")
 
     from src.inference.pipeline import DiagnosisPipeline
     from src.kg.graph import KnowledgeGraph
-    from tests.fixtures.synthetic_workspace import build_workspace
 
-    data_dir, checkpoint_path = build_workspace(tmp_path)
-    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    data_dir = trained_disease_child["data_dir"]
+    checkpoint_path = tmp_path / "checkpoint.pt"
+    checkpoint = torch.load(trained_disease_child["disease"], map_location="cpu",
+                            weights_only=False)
     checkpoint["epoch"] = torch.tensor(3)
     checkpoint["logs"] = {"val_loss": torch.tensor(0.25), "val_pooled_mrr": torch.tensor(0.5)}
     torch.save(checkpoint, checkpoint_path)

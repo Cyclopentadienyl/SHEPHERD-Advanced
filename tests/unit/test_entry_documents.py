@@ -311,13 +311,18 @@ def _safety_net() -> str:
     return " ".join(body.split())
 
 
-def test_the_playbook_s_safety_net_is_the_load_s_refusal_in_the_code_s_words(tmp_path):
+def test_the_playbook_s_safety_net_is_the_load_s_refusal_in_the_code_s_words(
+        tmp_path, trained_disease_child):
     """Since contract M2.4 a load refuses, before any model is built, a
     checkpoint whose record names another graph or none; the structural
     fingerprint is a diagnostic beside that refusal. The playbook said the
     fingerprint's warnings were the safety net and that old checkpoints "will
     warn" after a rebuild. What it quotes now is what the real load raises for
-    both cases, and what the Diagnosis page's drawer shows for the fingerprint."""
+    both cases, and what the Diagnosis page's drawer shows for the fingerprint.
+    "Another graph" serves the session's disease child over a same-shaped other
+    demo workspace (K8-2a). "No record" keeps a pre-contract file written before
+    the model spec: `verify_training_record` refuses it first, the order the
+    serving deletion keeps (K8-4)."""
     pytest.importorskip("torch")
     from src.api import main as service
     from src.inference.pipeline import PipelineBuildError
@@ -327,11 +332,12 @@ def test_the_playbook_s_safety_net_is_the_load_s_refusal_in_the_code_s_words(tmp
     from tests.unit import test_training_record as record
 
     text = _safety_net()
-    data_dir, checkpoint = record.build_workspace(tmp_path / "a")
+    child = trained_disease_child["disease"]
+    old_dir, old_checkpoint = record.build_workspace(tmp_path / "a")
     refused = {}
     for case, workspace, served in (
-            ("another graph", record._same_shaped_other(tmp_path / "b"), checkpoint),
-            ("no record", data_dir, record._pre_contract(checkpoint, tmp_path / "old.pt"))):
+            ("another graph", record._same_shaped_demo(tmp_path / "b"), child),
+            ("no record", old_dir, record._pre_contract(old_checkpoint, tmp_path / "old.pt"))):
         with pytest.raises(PipelineBuildError) as refusal:
             record._serve(workspace, served)
         refused[case] = str(refusal.value)

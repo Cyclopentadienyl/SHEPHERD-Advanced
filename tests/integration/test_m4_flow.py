@@ -11,7 +11,10 @@ records.
 
 The module imports one version through the CLI's preview and commit; each test
 works on its own copy of that tree (`copy_registered_cohort`), so no test sees
-another's reports or ledger.
+another's reports or ledger. The one case that serves the model it measured
+(`test_a_report_registered_through_a_link_is_shown_for_the_model_served_through_it`)
+measures and serves the session's trained disease child instead, by its task
+(K8-2a): a checkpoint without a model spec is not what the service serves.
 
 > **Nothing here is an acceptance result about the scorer.** The checkpoint is
 > untrained and the graph synthetic; what is accepted is the flow: what is
@@ -669,26 +672,31 @@ def test_the_printed_command_run_as_printed_registers_the_measured_file(
 
 @pytest.mark.parametrize("flag", ["--checkpoint-dir", "--checkpoint"])
 def test_a_report_registered_through_a_link_is_shown_for_the_model_served_through_it(
-    cohort, tmp_path, monkeypatch, flag
+    cohort, trained_disease_child, tmp_path, monkeypatch, flag
 ):
     """Findings 0/2/13/24/25: the deployment serves `served/best.pt`, a link to
     the run's checkpoint. Registering the kept report through the link's
     directory or the link itself files the ledger beside the file the link
     names -- where the service looks -- so the model status shows the record;
-    no second ledger is made beside the link."""
-    assert _measure(cohort) == 0
+    no second ledger is made beside the link. The run's checkpoint is the
+    trained disease child, measured by its task on the cohort's workspace (the
+    demo workspace it was trained on, written again byte for byte)."""
+    child = tmp_path / "run" / "checkpoints" / "best.pt"
+    child.parent.mkdir(parents=True)
+    shutil.copyfile(trained_disease_child["disease"], child)
+    assert _measure(cohort, "--mode", "disease", checkpoint=child) == 0
     served = tmp_path / "served"
     served.mkdir()
-    (served / "best.pt").symlink_to(cohort.checkpoint)
+    (served / "best.pt").symlink_to(child)
 
     assert _record_through(_only_report(cohort), flag,
                            served if flag == "--checkpoint-dir" else served / "best.pt") == 0
 
-    assert len(_records(cohort)) == 1
+    assert len(json.loads((child.parent / LEDGER).read_text())["records"]) == 1
     assert not (served / LEDGER).exists()
     view = _served_view(monkeypatch, cohort, served / "best.pt")
     assert view["state"] == "records"
-    assert view["checkpoint_sha256"] == cohort.checkpoint_sha256
+    assert view["checkpoint_sha256"] == _sha(child)
     assert len(view["records"]) == 1
 
 

@@ -30,6 +30,11 @@ pinned here:
   (19.1); a reload given the model fingerprint its caller was shown serves
   those bytes or nothing (EB-1).
 
+Every case whose subject holds for any served model serves the session's
+trained disease child (K8-2a); the cases that serve `served_workspace`'s
+checkpoint, an untrained one without a model spec, with or without a bound
+shortest-path table, are the served mixture's and the table's own.
+
 The device rule itself (`resolve_serving_device`) is in
 `test_serving_device.py`.
 
@@ -77,10 +82,8 @@ from tests.unit.test_serving_reads_once import _sha  # noqa: E402
 from tests.unit.test_sp_artifact_binding import publish  # noqa: E402
 
 #: Shared with `test_serving_reads_once.py` rather than copied: `api` is the app
-#: state of a fresh process with SHEPHERD_DEVICE=cpu, `workspace` the synthetic
-#: data directory and checkpoint its reload recipe uses.
+#: state of a fresh process with SHEPHERD_DEVICE=cpu.
 api = reads_once.api
-workspace = reads_once.workspace
 
 SHA_A, SHA_B, SHA_C, SHA_D = ("a" * 64, "b" * 64, "c" * 64, "d" * 64)
 BUILD_ID = "0123456789abcdef0123456789abcdef"
@@ -138,6 +141,12 @@ def served_workspace(tmp_path):
     """
     data_dir, _ = write_generated_workspace(tmp_path / WS, train_ids=[0, 1], val_ids=[2])
     return data_dir, _checkpoint_for(data_dir, tmp_path / "checkpoint.pt")
+
+
+#: The session's trained disease child copied into this test's directory,
+#: ``(data_dir, checkpoint)``, for a test that adds, replaces or removes a file
+#: (the session's own are read-only). Shared with `test_serving_reads_once.py`.
+served_child = reads_once.child_copy
 
 
 def _with_table(data_dir, *, max_hops=4):
@@ -852,19 +861,27 @@ def test_a_diagnosis_carries_the_identity_of_the_pipeline_that_answered(app, mon
     assert "model_version" not in body
 
 
-def test_a_diagnosis_from_a_full_pipeline_carries_every_digest(app, monkeypatch, served_workspace):
+def test_a_diagnosis_from_a_full_pipeline_carries_every_digest(app, monkeypatch, disease_pipeline,
+                                                              trained_disease_child):
     """The nested values survive the response model and the encoder: catches a
-    field the schema drops or a value it coerces."""
-    data_dir, checkpoint = served_workspace
-    _with_table(data_dir)
-    pipeline = _full_pipeline(data_dir, checkpoint)
+    field the schema drops or a value it coerces. Each digest against `hashlib`
+    over the file the trained disease child is served from."""
+    from src.kg.provenance import PROVENANCE_FILENAME
+
+    data_dir, checkpoint = trained_disease_child["data_dir"], trained_disease_child["disease"]
+    pipeline = disease_pipeline
     monkeypatch.setattr(app.app_state, "pipeline", pipeline)
 
-    body = _client(app).post("/api/v1/diagnose", json={"phenotypes": [PHENOTYPE]}).json()
+    body = _client(app).post("/api/v1/diagnose", json={"phenotypes": [SEIZURE, DELAY]}).json()
 
     assert body["candidates"]
     assert body["served_identity"] == pipeline.served_identity().to_dict()
     assert body["served_identity"]["checkpoint"]["sha256"] == _sha(checkpoint)
+    assert body["served_identity"]["graph"]["kg_sha256"] == _sha(data_dir / "kg.json")
+    assert body["served_identity"]["graph"]["split_manifest_sha256"] == _sha(
+        data_dir / "split_manifest.json")
+    assert body["served_identity"]["dataset_record"]["sha256"] == _sha(
+        data_dir / PROVENANCE_FILENAME)
 
 
 def test_with_nothing_served_no_answer_is_given(app):
@@ -904,10 +921,8 @@ def test_the_identity_is_the_results_even_when_a_reload_lands_mid_request(
     assert body["served_identity"] == answering.served_identity().to_dict()
 
 
-def test_the_status_carries_the_live_pipelines_identity(app, monkeypatch, served_workspace):
-    data_dir, checkpoint = served_workspace
-    _with_table(data_dir)
-    pipeline = _full_pipeline(data_dir, checkpoint)
+def test_the_status_carries_the_live_pipelines_identity(app, monkeypatch, disease_pipeline):
+    pipeline = disease_pipeline
     monkeypatch.setattr(app.app_state, "pipeline", pipeline)
 
     body = _client(app).get("/api/v1/pipeline/status").json()
@@ -915,7 +930,7 @@ def test_the_status_carries_the_live_pipelines_identity(app, monkeypatch, served
     assert body["initialized"] is True
     assert body["served_identity"] == pipeline.get_pipeline_config()["served_identity"]
     # The top-level fields stay beside it.
-    assert body["scoring_mode"] == body["served_identity"]["scoring_mode"]
+    assert body["scoring_mode"] == body["served_identity"]["scoring_mode"] == "disease_task"
     assert body["checkpoint_meta"]["device"] == "cpu"
 
 
@@ -974,12 +989,14 @@ def _with_val_pooled_mrr(source, target, val_pooled_mrr, *, shift=0.0):
 
 
 def _run_checkpoint(data_dir):
-    return (data_dir / "runs" / "hgt" / "20261015-000000_run_aaaaaa" / "checkpoints"
+    """A run's checkpoint where a task's selection finds it: a model bundle is
+    filed under its encoder kind."""
+    return (data_dir / "runs" / "gatv2" / "20261015-000000_run_aaaaaa" / "checkpoints"
             / "model.pt")
 
 
 def test_the_reported_metric_is_the_loaded_files_when_the_selection_was_replaced(
-    api, workspace, tmp_path, monkeypatch
+    api, served_child, tmp_path, monkeypatch
 ):
     """Chose A, reported B, served C is gone: the metric shown comes from the
     build's own read, labelled as the loaded file's and not as the best (those
@@ -989,7 +1006,7 @@ def test_the_reported_metric_is_the_loaded_files_when_the_selection_was_replaced
     best."""
     from src.api.routes.pipeline import PipelineReloadRequest, reload_pipeline
 
-    data_dir, checkpoint = workspace
+    data_dir, checkpoint = served_child
     selected = _with_val_pooled_mrr(checkpoint, _run_checkpoint(data_dir), 0.25)
     scored = _sha(selected)
     replacement = _with_val_pooled_mrr(checkpoint, tmp_path / "b.pt", 0.8123, shift=1.0)
@@ -1002,7 +1019,8 @@ def test_the_reported_metric_is_the_loaded_files_when_the_selection_was_replaced
 
     monkeypatch.setattr(api, "build_pipeline", replace_then_build)
 
-    result = asyncio.run(reload_pipeline(PipelineReloadRequest(data_dir=str(data_dir))))
+    result = asyncio.run(reload_pipeline(PipelineReloadRequest(data_dir=str(data_dir),
+                                                               task="disease")))
 
     assert result.success, result.message
     assert "; loaded file val_pooled_mrr=0.8123" in result.selection_reason
@@ -1017,7 +1035,7 @@ def test_the_reported_metric_is_the_loaded_files_when_the_selection_was_replaced
 
 
 def test_a_replacement_without_a_metric_is_not_said_to_show_one(
-    api, workspace, tmp_path, monkeypatch
+    api, served_child, tmp_path, monkeypatch
 ):
     """The same replacement, with loaded bytes that carry no ranking metric:
     nothing is shown, so the note does not say what the metric shown is, and
@@ -1025,7 +1043,7 @@ def test_a_replacement_without_a_metric_is_not_said_to_show_one(
     file's. Catches the clause appended whether or not a metric was."""
     from src.api.routes.pipeline import PipelineReloadRequest, reload_pipeline
 
-    data_dir, checkpoint = workspace
+    data_dir, checkpoint = served_child
     selected = _with_val_pooled_mrr(checkpoint, _run_checkpoint(data_dir), 0.25)
     scored = _sha(selected)
     replacement = _with_val_pooled_mrr(checkpoint, tmp_path / "b.pt", None, shift=1.0)
@@ -1037,7 +1055,8 @@ def test_a_replacement_without_a_metric_is_not_said_to_show_one(
 
     monkeypatch.setattr(api, "build_pipeline", replace_then_build)
 
-    result = asyncio.run(reload_pipeline(PipelineReloadRequest(data_dir=str(data_dir))))
+    result = asyncio.run(reload_pipeline(PipelineReloadRequest(data_dir=str(data_dir),
+                                                               task="disease")))
 
     assert result.success, result.message
     assert result.checkpoint_path == str(selected)
@@ -1068,7 +1087,7 @@ SELECTIONS = {
 
 
 @pytest.mark.parametrize("case", sorted(SELECTIONS))
-def test_best_is_said_only_of_a_file_ranked_by_its_metric(api, workspace, case):
+def test_best_is_said_only_of_a_file_ranked_by_its_metric(api, served_child, case):
     """BACKLOG 19.2: the reason states how the file was chosen. When no
     candidate is ranked, selection falls back to `last.pt`, and the loaded
     file's metric, which its metadata may still have, is shown as that file's,
@@ -1077,13 +1096,14 @@ def test_best_is_said_only_of_a_file_ranked_by_its_metric(api, workspace, case):
     and a ranked pick that loses "best"."""
     from src.api.routes.pipeline import PipelineReloadRequest, reload_pipeline
 
-    data_dir, checkpoint = workspace
+    data_dir, checkpoint = served_child
     first, last, served, ending = SELECTIONS[case]
     run_dir = _run_checkpoint(data_dir).parent
     _with_val_pooled_mrr(checkpoint, run_dir / "model-a.pt", first, shift=1.0)
     _with_val_pooled_mrr(checkpoint, run_dir / "last.pt", last)
 
-    result = asyncio.run(reload_pipeline(PipelineReloadRequest(data_dir=str(data_dir))))
+    result = asyncio.run(reload_pipeline(PipelineReloadRequest(data_dir=str(data_dir),
+                                                               task="disease")))
 
     assert result.success, result.message
     assert result.checkpoint_path == str(run_dir / served)
@@ -1093,16 +1113,17 @@ def test_best_is_said_only_of_a_file_ranked_by_its_metric(api, workspace, case):
     assert "replaced" not in result.selection_reason
 
 
-def test_an_unreplaced_selection_reports_its_metric_and_no_replacement(api, workspace):
+def test_an_unreplaced_selection_reports_its_metric_and_no_replacement(api, served_child):
     """The file chosen is the file served: no note, and the metric costs no
     third read (the scan's read and the build's are the only two)."""
     from src.api.routes.pipeline import PipelineReloadRequest, reload_pipeline
 
-    data_dir, checkpoint = workspace
+    data_dir, checkpoint = served_child
     selected = _with_val_pooled_mrr(checkpoint, _run_checkpoint(data_dir), 0.25)
 
     with count_opens() as opens:
-        result = asyncio.run(reload_pipeline(PipelineReloadRequest(data_dir=str(data_dir))))
+        result = asyncio.run(reload_pipeline(PipelineReloadRequest(data_dir=str(data_dir),
+                                                                   task="disease")))
 
     assert result.success, result.message
     assert result.checkpoint_path == str(selected)
@@ -1113,7 +1134,7 @@ def test_an_unreplaced_selection_reports_its_metric_and_no_replacement(api, work
 
 
 def test_a_reload_bound_to_the_fingerprint_shown_serves_those_bytes_or_nothing(
-    api, workspace, tmp_path, monkeypatch
+    api, served_child, tmp_path, monkeypatch
 ):
     """EB-1, the API's half: ``POST /pipeline/reload`` takes the model
     fingerprint its caller was shown (`expected_checkpoint_sha256`) and compares
@@ -1129,7 +1150,7 @@ def test_a_reload_bound_to_the_fingerprint_shown_serves_those_bytes_or_nothing(
     from tests.fixtures.operator_access import OPERATOR_BASE_URL, operator_mode
     from tests.fixtures.replacement import replace_after_read
 
-    data_dir, checkpoint = workspace
+    data_dir, checkpoint = served_child
     shown = _sha(checkpoint)
     operator_mode(monkeypatch)
     client = TestClient(api.app, base_url=OPERATOR_BASE_URL)
@@ -1216,19 +1237,22 @@ def change_after_the_graph_read(monkeypatch, data_dir, target, data):
 def never_parsed_or_built(monkeypatch):
     """Fail the test if torch is handed a checkpoint's bytes (the reader's
     `BytesIO`; the graph's tensor files are parsed elsewhere, before it) or a
-    model is built."""
+    model is built, a task's model bundle or a ShepherdGNN."""
+    import src.models.bundle.record as bundle_record
     import src.models.gnn.shepherd_gnn as shepherd_gnn
     import src.utils.checkpoint_io as checkpoint_io
 
     monkeypatch.setattr(checkpoint_io, "BytesIO",
                         lambda *a, **k: pytest.fail("torch was handed the checkpoint's bytes"))
+    monkeypatch.setattr(bundle_record, "load_bundle",
+                        lambda *a, **k: pytest.fail("a model was built from them"))
     monkeypatch.setattr(shepherd_gnn, "build_shepherd_model",
                         lambda *a, **k: pytest.fail("a model was built from them"))
 
 
 @pytest.mark.parametrize("bytes_now", NOT_THE_SHOWN_BYTES)
 def test_a_bound_reload_refuses_any_other_bytes_as_not_the_model_shown_before_parsing_them(
-    api, workspace, monkeypatch, bytes_now
+    api, served_child, monkeypatch, bytes_now
 ):
     """Root-cause round 3 (INT-R1): the reload's expectation is compared on the
     build's one checkpoint read before torch parses the bytes
@@ -1243,7 +1267,7 @@ def test_a_bound_reload_refuses_any_other_bytes_as_not_the_model_shown_before_pa
 
     from tests.fixtures.operator_access import OPERATOR_BASE_URL, operator_mode
 
-    data_dir, checkpoint = workspace
+    data_dir, checkpoint = served_child
     shown = _sha(checkpoint)
     operator_mode(monkeypatch)
     client = TestClient(api.app, base_url=OPERATOR_BASE_URL)
