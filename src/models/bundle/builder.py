@@ -13,7 +13,7 @@ Module: src/models/bundle/builder.py
 """
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 import torch
 import torch.nn as nn
@@ -47,6 +47,24 @@ class ModelBundle(nn.Module):
     def width(self) -> int:
         return self.encoder.width
 
+    def load_state_dict(self, state_dict: Mapping[str, Any], strict: bool = True,
+                        assign: bool = False):
+        """`nn.Module.load_state_dict`, after **one check every load of a
+        bundle's weights passes** (serving and measurement through
+        `load_bundle`, a finetune's or a branch's parent weights, a resume's
+        restore): weights the spec makes one set are one set in the file.
+
+        A spec that shares parameters (`encoder.share_weights`: a GATv2
+        layer's source and target transforms are one module) names each
+        shared tensor under several keys. torch copies every key into the
+        one tensor, the last copy winning, so a file holding two different
+        values under those keys used to load as whichever came last (the
+        reviewer's K8-1 recheck). Such a file is not this model: refused, as
+        torch refuses a state that does not fit, with a `RuntimeError` naming
+        the keys, before anything is copied."""
+        _refuse_contradictory_shared_weights(self, state_dict)
+        return super().load_state_dict(state_dict, strict=strict, assign=assign)
+
     @property
     def task(self) -> Optional[str]:
         return self.spec.task
@@ -71,6 +89,27 @@ class ModelBundle(nn.Module):
         x = self.input(ids, node_type)
         return self.encoder.forward_full(x, edge_index, edge_type=edge_type, node_type=node_type,
                                          chunk_size=chunk_size)
+
+
+def _refuse_contradictory_shared_weights(module: nn.Module, state: Mapping[str, Any]) -> None:
+    """Refuse `state` when two of its keys that name one tensor of `module`
+    (a shared parameter or buffer) hold different values. A key the state
+    lacks, or a value that is not a tensor, is left to the load itself."""
+    keys_by_tensor: Dict[int, List[str]] = {}
+    for key, tensor in module.state_dict(keep_vars=True).items():
+        keys_by_tensor.setdefault(id(tensor), []).append(key)
+    for keys in keys_by_tensor.values():
+        given = [key for key in keys if isinstance(state.get(key), Tensor)]
+        for other in given[1:]:
+            first, second = state[given[0]], state[other]
+            same = (first.shape == second.shape and first.dtype == second.dtype
+                    and (torch.allclose(first, second, rtol=0.0, atol=0.0, equal_nan=True)
+                         if first.is_floating_point() else torch.equal(first, second)))
+            if not same:
+                raise RuntimeError(
+                    f"the weights hold two different values for one shared parameter "
+                    f"({given[0]} and {other}): the model spec makes them one set, so this "
+                    "state is not a model it describes")
 
 
 def _build_encoder(spec: ModelSpec, view: ViewShape) -> GraphEncoder:

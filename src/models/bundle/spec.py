@@ -10,7 +10,8 @@ no state-dict shape and no training flag decides what is built.
 booleans, `None` and nested dicts/lists only, so a checkpoint carrying it still
 loads with `weights_only=True`. `ModelSpec.from_dict()` refuses a record of
 another version, an unknown key at any level and a missing required section:
-a spec it cannot read completely is never half-read.
+a spec it cannot read completely is never half-read. A field declared `bool`
+holds `true` or `false`, never a string or a number (`_require_booleans`).
 
 **Provisional defaults carry their source** (README §0.3). `REFERENCE_SOURCES`
 names where each value of the reference recipe comes from; a spec built from
@@ -21,7 +22,7 @@ Module: src/models/bundle/spec.py
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
 #: Bumped when a field's meaning changes or a field is removed. A reader never
@@ -84,6 +85,21 @@ def _from(cls, section: str, data: Mapping[str, Any]):
     return cls(**{name: data[name] for name in names})
 
 
+def _require_booleans(section: Any, prefix: str = "") -> None:
+    """**Every field a spec declares `bool` holds `true` or `false`**, in
+    every section and every nested one (`ModelSpec.validate`, the one gate
+    every spec passes, read or built). Nothing else is read as a flag: the
+    string "false" is truthy and 0 and 1 are numbers, so read as one either
+    would build a model its record does not describe (the reviewer's K8-1
+    recheck: `encoder.add_self_loops: "false"` trained with self-loops)."""
+    for f in fields(section):
+        name, value = f"{prefix}{f.name}", getattr(section, f.name)
+        if f.type in ("bool", bool) and not isinstance(value, bool):
+            raise SpecError(f"{name} must be a boolean (true or false), not {value!r}")
+        if is_dataclass(value):
+            _require_booleans(value, f"{name}.")
+
+
 @dataclass(frozen=True)
 class GraphViewSpec:
     """The reference graph view's rule (README G1, G5).
@@ -101,9 +117,6 @@ class GraphViewSpec:
     def validate(self) -> None:
         if self.rule != "reference/v1":
             raise SpecError(f"unknown graph view rule {self.rule!r}")
-        for flag in ("drop_native_self_loops", "deduplicate", "largest_component"):
-            if not isinstance(getattr(self, flag), bool):
-                raise SpecError(f"graph_view.{flag} must be a boolean")
         if any(not isinstance(r, str) or r.count("|") != 2 for r in self.exclude_relations):
             raise SpecError("graph_view.exclude_relations holds 'src|rel|dst' keys")
 
@@ -124,8 +137,6 @@ class InputSpec:
         if self.init != "normal":
             raise SpecError(f"unknown input init {self.init!r}")
         _positive_int("input.dim", self.dim)
-        if not isinstance(self.type_embedding, bool):
-            raise SpecError("input.type_embedding must be a boolean")
 
 
 @dataclass(frozen=True)
@@ -294,6 +305,7 @@ class ModelSpec:
         return self.task_head.task if self.task_head is not None else None
 
     def validate(self) -> "ModelSpec":
+        _require_booleans(self)
         if self.learning_stage not in LEARNING_STAGES:
             raise SpecError(f"unknown learning stage {self.learning_stage!r}")
         self.graph_view.validate()

@@ -9,7 +9,13 @@
   and the sampled rule equals the full rule when the sample is the whole graph
   (regression 4);
 - save and reload through the builder: same names, same outputs, strict load
-  (regression 6).
+  (regression 6);
+- a field the spec declares `bool` holds true or false, never "false", "true",
+  1 or 0 (the reviewer's K8-1 recheck: "false" built as true);
+- weights the spec shares (`encoder.share_weights`) are one set: a state whose
+  shared keys agree loads, one holding two different values is refused by
+  every load (serving's and measurement's `load_bundle`, a finetune's parent
+  transfer, a resume's restore).
 
 Module: tests/unit/test_model_bundle.py
 """
@@ -254,3 +260,163 @@ def test_spec_encoder_defaults_are_the_reference():
     enc = EncoderSpec()
     assert (enc.layers, enc.hidden, enc.output, enc.heads, enc.dropout) == (3, 256, 128, 4, 0.3)
     assert enc.width == 512
+
+
+# --------------------------------------------------------------------------- booleans
+#: Every field the spec declares `bool`, by section, with the value each must
+#: hold here (`encoder.concat` is refused false by its own rule, README C1).
+BOOLEAN_FIELDS = [
+    ("graph_view", "drop_native_self_loops", (True, False)),
+    ("graph_view", "deduplicate", (True, False)),
+    ("graph_view", "largest_component", (True, False)),
+    ("input", "type_embedding", (True, False)),
+    ("encoder", "add_self_loops", (True, False)),
+    ("encoder", "share_weights", (True, False)),
+    ("encoder", "concat", (True,)),
+    ("encoder", "residual", (True, False)),
+    ("task_head.gene", "augmentation", (True, False)),
+]
+
+
+def _spec_data(section):
+    """A gene child's spec as plain data (it has every section), and the
+    mapping that holds `section`'s fields."""
+    data = finetune_spec_from_parent(_small(), "gene").to_dict()
+    holder = data
+    for part in section.split("."):
+        holder = holder[part]
+    return data, holder
+
+
+def test_every_declared_boolean_is_listed():
+    """The list above is every `bool` field of every section, so the checks
+    below cover each one."""
+    from dataclasses import fields, is_dataclass
+
+    def declared(cls, prefix):
+        for f in fields(cls):
+            if f.type == "bool":
+                yield prefix, f.name
+            kind = {"Optional[GeneScoringSpec]": GeneScoringSpec}.get(f.type)
+            if kind is not None:
+                yield from declared(kind, f"{prefix}.{f.name}")
+
+    spec = finetune_spec_from_parent(_small(), "gene")
+    found = set()
+    for f in fields(spec):
+        value = getattr(spec, f.name)
+        if is_dataclass(value):
+            found.update(declared(type(value), f.name))
+    assert found == {(section, name) for section, name, _ in BOOLEAN_FIELDS}
+
+
+@pytest.mark.parametrize("section, name, values", BOOLEAN_FIELDS,
+                         ids=[f"{s}.{n}" for s, n, _ in BOOLEAN_FIELDS])
+def test_a_boolean_setting_takes_true_and_false(section, name, values):
+    for value in values:
+        data, holder = _spec_data(section)
+        holder[name] = value
+        spec = ModelSpec.from_dict(data)
+        assert spec.to_dict() == data
+
+
+@pytest.mark.parametrize("value", ["false", "true", 1, 0, None],
+                         ids=["str-false", "str-true", "one", "zero", "null"])
+@pytest.mark.parametrize("section, name, values", BOOLEAN_FIELDS,
+                         ids=[f"{s}.{n}" for s, n, _ in BOOLEAN_FIELDS])
+def test_a_boolean_setting_refuses_anything_else(section, name, values, value):
+    """The regression: before the fix only graph_view's flags and
+    input.type_embedding were checked, so encoder.add_self_loops "false"
+    built a layer with self-loops, encoder.residual "false" one with a
+    residual, and task_head.gene.augmentation "false" augmented."""
+    data, holder = _spec_data(section)
+    holder[name] = value
+    with pytest.raises(SpecError, match=rf"{section}\.{name} must be a boolean"):
+        ModelSpec.from_dict(data)
+
+
+def test_a_spec_built_in_code_is_held_to_the_same_rule():
+    """A spec built with `dataclasses.replace`, not read from a dict, passes
+    the same gate (`ModelSpec.validate`), which the builder calls."""
+    spec = _small()
+    built = dataclasses.replace(spec, encoder=dataclasses.replace(spec.encoder,
+                                                                   residual="false"))
+    with pytest.raises(SpecError, match="encoder.residual must be a boolean"):
+        build_bundle(built, VIEW)
+
+
+# --------------------------------------------------------------------------- shared weights
+def _shared_child():
+    """A disease child whose GATv2 layers share their source and target
+    transforms, and its model record as a checkpoint carries it."""
+    from src.models.bundle.record import MODEL_RECORD_VERSION, ModelRecord
+
+    spec = finetune_spec_from_parent(_small(output=4, share_weights=True), "disease")
+    bundle = build_bundle(spec, VIEW)
+    record = ModelRecord(model_spec=spec, graph_view=bundle.view,
+                         data_roles={"kg": "k" * 64}, graph_exposure={}, loss_identity={},
+                         operation="finetune", family_id="r",
+                         parent={"sha256": "a" * 64, "run": "r"})
+    return bundle, {"record_version": MODEL_RECORD_VERSION, **record.to_payload()}
+
+
+def _contradicted(state):
+    """`state` with the first layer's two shared transforms set apart."""
+    state = {key: value.clone() for key, value in state.items()}
+    state["encoder.convs.0.lin_l.weight"].fill_(1.0)
+    state["encoder.convs.0.lin_r.weight"].fill_(2.0)
+    return state
+
+
+def test_consistent_shared_weights_load(tmp_path):
+    """A state as training writes it (both keys name the one tensor, saved and
+    read back) loads, through every load."""
+    from src.models.bundle.record import load_bundle
+
+    bundle, record = _shared_child()
+    conv = bundle.encoder.convs[0]
+    assert conv.lin_l is conv.lin_r
+    path = tmp_path / "child.pt"
+    torch.save({**record, "state_dict": bundle.state_dict()}, path)
+    payload = torch.load(path, weights_only=True)
+    loaded, _ = load_bundle(payload, learning_stage="finetune", task="disease")
+    assert torch.equal(loaded.encoder.convs[0].lin_l.weight, conv.lin_l.weight)
+    # Shared values that agree, NaN included, are one set.
+    state = {key: value.clone() for key, value in payload["state_dict"].items()}
+    for key in ("encoder.convs.0.lin_l.weight", "encoder.convs.0.lin_r.weight"):
+        state[key][0, 0] = float("nan")
+    build_bundle(bundle.spec, VIEW).load_state_dict(state, strict=True)
+
+
+def test_contradictory_shared_weights_are_refused_before_serving_or_finetune():
+    """The regression: before the fix every load took whichever of the two
+    values came last. Now serving and measurement (`load_bundle`), a
+    finetune's or a branch's parent transfer and a resume's restore refuse,
+    before anything is copied."""
+    import sys
+    from pathlib import Path
+
+    from src.models.bundle.record import ModelRecordError, load_bundle
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    from train_model import _transfer_parent_weights
+
+    bundle, record = _shared_child()
+    state = _contradicted(bundle.state_dict())
+    message = ("two different values for one shared parameter "
+               r"\(encoder.convs.0.lin_l.weight and encoder.convs.0.lin_r.weight\)")
+
+    with pytest.raises(ModelRecordError, match=message):
+        load_bundle({**record, "state_dict": state}, learning_stage="finetune", task="disease")
+    # A finetune of a base whose shared weights disagree: the child's graph
+    # side is loaded from the parent.
+    base_state = {k: v for k, v in state.items()
+                  if not k.startswith(("patient_encoder.", "task_head."))}
+    child = build_bundle(bundle.spec, VIEW)
+    before = {k: v.clone() for k, v in child.state_dict().items()}
+    with pytest.raises(RuntimeError, match=message):
+        _transfer_parent_weights(child, base_state, new_parts=("patient_encoder", "task_head"))
+    assert all(torch.equal(before[k], v) for k, v in child.state_dict().items())
+    # A resume's restore loads the parent's state into the built bundle.
+    with pytest.raises(RuntimeError, match=message):
+        build_bundle(bundle.spec, VIEW).load_state_dict(state)
