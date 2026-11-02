@@ -3,6 +3,35 @@
 **Status:** Accepted (2026-08) by the deploying institution. **Not yet implemented** — see the
 status table in §2. Implementation is work item B-1, which remains gated (§6).
 
+**Revision: rev 14 (2026-11-02). A factual update, no normative change; the gate text and the
+institution's disease SP-context decision (§1, §1.2) are unchanged.** K8 on
+`claude/paper-aligned-two-stage`, by the owner's decisions of 2026-11-02:
+- **Two different things have been called "SP".** The served disease mixture
+  (`served_mixture/v1`: η × the model term + (1 − η) × SP, its SP term read from the precomputed
+  table `shortest_paths.pt` that `scripts/compute_shortest_paths.py` makes) serves only a
+  checkpoint without a model spec. It retires in K8: the mixture and its SP term with the serving
+  deletion (K8-4), then the table's producer and its remaining readers (K8-5). The **exact graph
+  distances** a gene task model computes in process from its own graph view (`src/kg/graph_view.py`
+  `exact_distances`, `src/models/tasks/gene.py` `distance_table`) are a different thing: they are
+  part of the gene task's score, where the paper places KG-distance fusion, and they stay, with η
+  as the gene task's mixing weight. A disease task model (`disease_task/v1`) has no SP term. §1.2,
+  §4 and §5 carry notes.
+- **The B-0 comparison modes are archived in code as well:** Mode D's executor went in K7, Mode C's
+  goes in K8. Gate 1 as written stays reproducible only from a revision before K7 (`a7d0171` or
+  earlier).
+- **Kept Mode C and Mode D reports and records are no longer read from K8-6e** (the owner's
+  decision: the system has never been deployed, and those files are local tests and experiments).
+  From the commit that retires their readers (K8-6e), a kept C or D report is refused by its
+  reader, with the reason, and is not registered; a kept C or D ledger record is not shown and is
+  counted as not readable by this build, with the reason. The files are neither deleted nor
+  rewritten, and a ledger that holds such records keeps serving, comparing and appending its task
+  records. Rev 13's "stay readable" for Mode D ends there, and its "never registered again" then
+  holds for Mode C as well. A Mode C or D experiment, if wanted again, is redone on the new
+  pipeline.
+- **Rev 13's "Still until K8" ends** with the serving deletion (K8-4) and Mode C's removal (K8-6a,
+  K8-6b): after them nothing serves or measures a checkpoint without a model spec. (The GB10
+  acceptance probe's use already ended in K8-1: it now measures by task.)
+
 **Revision: rev 13 (2026-10-29). A factual update, no normative change; the gate text is
 unchanged.** The retirement check K7 on `claude/paper-aligned-two-stage`, by the owner's
 authorisation of 2026-10-29:
@@ -224,6 +253,12 @@ Eager SP has a consequence worth stating: **it makes C7 and C8 true by construct
 careful implementation, and it removes any need for request identity, stale-response rejection or
 cache invalidation on the SP path. The clinician waits once, at inference, and then browses, sorts
 and filters with no further computation.
+
+*(Rev 14: the decision is unchanged, and SP context for a disease list stays permitted and unbuilt.
+The precomputed table it was first written against (`shortest_paths.pt`) is no longer produced or
+read after K8 (K8-5), so an implementation would compute the distances it needs, as the gene task
+already computes exact hop distances from its model's graph view (`src/kg/graph_view.py`
+`exact_distances`).)*
 
 ### 1.3 Three limits, previously conflated as `top_k`
 
@@ -506,7 +541,7 @@ unexamined default.
 | **Keep η in ranking, applied to the full universe** | Requires SP over the whole disease universe — ~27,990 when this table was written, 29,866 on the audited deployment workspace. The degeneracy this row relied on is **no longer an established reason**: §3.5's premise was measured and refuted, and what remains of the concern is unsettled rather than supported. Min–max normalisation over that set is *mathematically* well defined; the objections are that its clinical and task meaning is unvalidated, and that min–max is set by the two extreme candidates, so extreme candidates may compress much of the remaining distribution into a narrow band. No paper support for the disease task. |
 | **Keep η in ranking, applied to a GNN top-N cut** | Reintroduces a candidate gate — softer than BFS, but still able to hide a candidate the GNN ranked highly. Adds an N-selection problem (recall, top-k set and rank preservation, latency) that pure cosine does not have. |
 | **Cascade: use SP only to break ties among candidates the GNN cannot separate** | The most defensible of the alternatives, because it applies SP to a bounded set of already-plausible candidates. Deferred rather than rejected: it needs an operational definition of "cannot separate", which is an uncalibrated threshold; and it is a deviation from the paper requiring its own evidence — the resemblance to the paper's short-list setting is limited to list size and does not carry the paper's validation across (see §5). It does not require a new scoring mode. It can be evaluated without a second institutional inference run only if B-0.5 records an approved bounded per-candidate component artifact, or computes the predeclared analysis during the B-0.5 run. **The currently implemented B-0 artifacts do not contain those components.** |
-| **Remove the SP subsystem entirely** | Rejected. B-0's comparison modes need it; the paper places KG-distance fusion in candidate-gene scoring, which is unbuilt future work; and clinicians may legitimately want SP context on a short list. Demoted, not deleted. |
+| **Remove the SP subsystem entirely** | Rejected. B-0's comparison modes need it; the paper places KG-distance fusion in candidate-gene scoring, which is unbuilt future work; and clinicians may legitimately want SP context on a short list. Demoted, not deleted. *(Rev 14: two of the three reasons have changed. B-0's comparison modes are archived (Mode D's executor removed in K7, Mode C's in K8), and the served mixture and its precomputed table retire in K8. The paper's KG-distance fusion in candidate-gene scoring is built: the gene task model computes exact graph distances in process, and K8 keeps them. Disease SP context on a short list stays permitted and unbuilt (§1.2). What K8 removes is the disease mixture's SP machinery, not SP as a concept.)* |
 
 ---
 
@@ -516,7 +551,11 @@ unexamined default.
   `scripts/compute_shortest_paths.py` are demoted, not removed.** They remain required for B-0's
   comparison modes and for the optional contextual analysis. *(Rev 9: since Batch 4 the mixture
   is `_served_score` and SP's one caller is `sp_analysis_records`; the two per-candidate helpers
-  named here are gone, the capability is not.)*
+  named here are gone, the capability is not.)* *(Rev 14: K8 removes what is left of them: the
+  mixture, its SP term and η's disease use with the serving deletion (K8-4); the producer of
+  `shortest_paths.pt` and its remaining readers with the SP files (K8-5). η stays as the gene
+  task's mixing weight, and the gene task's SP similarity comes from exact hop distances, not from
+  the table. The contextual analysis stays permitted and unbuilt.)*
 - **This is a behaviour change on a live clinical system.** η = 0.7 is what runs today. The change
   must be visible to the institution, not silent, and is gated accordingly (§6).
 - **The candidate list a clinician sees will change**: composition, ordering, and which candidates

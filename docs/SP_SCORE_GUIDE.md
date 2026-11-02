@@ -32,6 +32,11 @@ exists so that anyone who sees an SP number knows precisely what it does and doe
 > graph view, into the score of your candidate genes. The two rows above describe a checkpoint
 > without a model spec (a history file), served only outside the dashboard until K8.
 >
+> **K8 (2026-11) removes the two rows above.** The served mixture (`served_mixture/v1`) and the
+> shortest-path table retire with the serving deletion (K8-4) and the SP files (K8-5); after them
+> every answer comes from a task model, as described above. Until then, the two rows still apply to
+> a checkpoint without a model spec (policy rev 14).
+>
 > **Which row applies is stated with each result.** Every result says which artifacts produced it
 > (its *served identity*) and its kind: the Diagnosis tab's kind label and "Produced by" line, the
 > downloadable report's "What produced this result" section and the CSV's `result_kind` and
