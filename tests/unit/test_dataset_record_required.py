@@ -7,6 +7,8 @@ before it writes anything, builds a model or reads a checkpoint. A synthetic
 workspace is fully bound, passes, and is shown as synthetic: in the training log,
 on serving's published configuration and status, in the measurement manifest, and
 in the inventory, where the binding state and the origin are separate fields.
+Measurement is the disease task's (`--mode disease`) on the session's trained
+disease child (`trained_disease_child`) over its demo workspace.
 
 The writers' half: the manifest is not written without the record's binding, the
 digests every writer binds are of the bytes it wrote, and the builder stops
@@ -151,11 +153,13 @@ def test_the_training_record_names_the_manifest_that_binds_the_dataset_record(tm
 # Measurement
 # ---------------------------------------------------------------------------
 def _measure(data_dir, checkpoint, output, *, cohort=None):
-    """`--split val` with `--output`, or, with `cohort` (a `RegisteredCohort`),
-    `--cohort` in its registry, whose report store decides where it goes."""
+    """The disease task, `--split val` with `--output`, or, with `cohort` (a
+    `RegisteredCohort`), `--cohort` in its registry, whose report store decides
+    where it goes."""
     import scripts.measure_scorer as cli
 
-    argv = ["--checkpoint", str(checkpoint), "--data-dir", str(data_dir), "--device", "cpu"]
+    argv = ["--mode", "disease", "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
+            "--device", "cpu"]
     if cohort is None:
         argv += ["--split", "val", "--output", str(output)]
     else:
@@ -164,29 +168,41 @@ def _measure(data_dir, checkpoint, output, *, cohort=None):
 
 
 @pytest.fixture(scope="module")
-def registered_base(tmp_path_factory):
-    from tests.fixtures.registered_cohort import build_registered_cohort
+def registered_base(trained_disease_child, tmp_path_factory):
+    """The session's trained disease child as a registered-cohort tree: its
+    workspace and its checkpoint copied (the session's files stay read-only),
+    the graph source written and a version of it committed. Each test tampers
+    with its own copy (`copy_registered_cohort`)."""
+    from tests.fixtures.registered_cohort import registered_cohort_from_child
 
-    return build_registered_cohort(tmp_path_factory.mktemp("registered_base"))
+    return registered_cohort_from_child(trained_disease_child,
+                                        tmp_path_factory.mktemp("registered_base"))
+
+
+def _child_copy(trained, root):
+    """The session child's workspace copied under `root` (a test that tampers
+    with it changes only its copy), with the child's checkpoint, read in place."""
+    import shutil
+
+    return Path(shutil.copytree(trained["data_dir"], root)), trained["disease"]
 
 
 @pytest.mark.parametrize("kind", ["generated", "registered"])
 @pytest.mark.parametrize("case", sorted(FAILURES))
 def test_measurement_refuses_before_a_checkpoint_or_model(
-    tmp_path, monkeypatch, registered_base, case, kind
+    tmp_path, monkeypatch, trained_disease_child, registered_base, case, kind
 ):
     """For a registered cohort version too: it is scored against a workspace's
     graph, and that graph's record is required as for a generated split."""
-    import src.models.gnn.shepherd_gnn as shepherd_gnn
+    import src.models.bundle.record as bundle_record
     import src.utils.checkpoint_io as checkpoint_io
     from src.kg.artifacts import DatasetRecordRefused
     from tests.fixtures.registered_cohort import copy_registered_cohort
-    from tests.fixtures.synthetic_workspace import build_workspace
 
     tamper, binding, fragment = FAILURES[case]
     cohort = None
     if kind == "generated":
-        data_dir, checkpoint = build_workspace(tmp_path / "ws")
+        data_dir, checkpoint = _child_copy(trained_disease_child, tmp_path / "ws")
     else:
         cohort = copy_registered_cohort(registered_base, tmp_path / "root")
         data_dir, checkpoint = cohort.data_dir, cohort.checkpoint
@@ -197,7 +213,7 @@ def test_measurement_refuses_before_a_checkpoint_or_model(
     def forbidden(*args, **kwargs):
         raise AssertionError("reached after the workspace was refused")
 
-    monkeypatch.setattr(shepherd_gnn, "build_shepherd_model", forbidden)
+    monkeypatch.setattr(bundle_record, "load_bundle", forbidden)
     monkeypatch.setattr(checkpoint_io, "read_checkpoint", forbidden)
     output = tmp_path / "out" / "measurement.json"
 
@@ -210,12 +226,11 @@ def test_measurement_refuses_before_a_checkpoint_or_model(
         assert not (cohort.version.directory / "reports").exists()
 
 
-def test_a_measurement_records_its_dataset_record_with_the_origin_apart(tmp_path):
+def test_a_measurement_records_its_dataset_record_with_the_origin_apart(
+        tmp_path, trained_disease_child):
     """A number over a synthetic workspace says so in its manifest; the binding
     state and the origin are separate fields."""
-    from tests.fixtures.synthetic_workspace import build_workspace
-
-    data_dir, checkpoint = build_workspace(tmp_path / "ws")
+    data_dir, checkpoint = trained_disease_child["data_dir"], trained_disease_child["disease"]
     output = tmp_path / "out" / "measurement.json"
 
     assert _measure(data_dir, checkpoint, output) == 0
@@ -226,11 +241,10 @@ def test_a_measurement_records_its_dataset_record_with_the_origin_apart(tmp_path
     assert recorded["incomplete_by_design"], "what the record does not establish is shown"
 
 
-def test_the_measurement_console_says_what_its_graph_was_built_from(tmp_path, capsys):
+def test_the_measurement_console_says_what_its_graph_was_built_from(
+        tmp_path, capsys, trained_disease_child):
     """Where an operator reads the number, as in the manifest."""
-    from tests.fixtures.synthetic_workspace import build_workspace
-
-    data_dir, checkpoint = build_workspace(tmp_path / "ws")
+    data_dir, checkpoint = trained_disease_child["data_dir"], trained_disease_child["disease"]
     assert _measure(data_dir, checkpoint, tmp_path / "out" / "measurement.json") == 0
 
     out = capsys.readouterr().out

@@ -21,7 +21,8 @@ Contract M4 (§0.1-§0.7, §2 of the design). What is pinned here:
   **compared with a run's graph** (§0.7);
 - the **registered-cohort fixture**: its checkpoint loads safely, matches the
   workspace's graph, carries a pipeline-shaped record, and Mode C ranks the
-  version's samples against it.
+  version's samples against it; its checkpoint without a model spec records
+  what a training run over the workspace records, or nothing.
 
 Module: tests/unit/test_cohort_registry.py
 """
@@ -73,6 +74,7 @@ from tests.fixtures.registered_cohort import (
     build_registered_cohort,
     import_version,
     val_source_cases,
+    write_checkpoint_without_model_spec,
     write_fixture_checkpoint,
     write_source,
 )
@@ -1214,6 +1216,28 @@ def test_the_fixture_record_options(option, roles, registered, tmp_path):
     read = read_checkpoint(path, map_location="cpu", weights_only=True)
     assert read.identity.sha256 == digest
     assert set(read.checkpoint["training_input_digests"]) == roles
+
+
+@pytest.mark.parametrize("recorded", [True, False])
+def test_the_checkpoint_without_a_model_spec(recorded, registered, tmp_path):
+    """`write_checkpoint_without_model_spec`, written without any model class:
+    the safe loader reads it, it has no model spec, and with a workspace its
+    record is the one training writes over that workspace (`train_model`'s own
+    reads and digests), so measurement, which compares the record first,
+    refuses it for its missing spec alone (serving refuses it for having no
+    weights until K8-4). Without a workspace it records nothing."""
+    from scripts.train_model import read_training_inputs, training_input_digests
+    from src.utils.checkpoint_io import read_checkpoint
+
+    path = tmp_path / "ck" / "old.pt"
+    digest = write_checkpoint_without_model_spec(
+        path, data_dir=registered.data_dir if recorded else None)
+    read = read_checkpoint(path, map_location="cpu", weights_only=True)
+    assert read.identity.sha256 == digest
+    assert "model_spec" not in read.checkpoint
+    expected = (training_input_digests(read_training_inputs(registered.data_dir))
+                if recorded else None)
+    assert read.checkpoint.get("training_input_digests") == expected
 
 
 def test_a_source_from_the_val_cases_overlaps_validation_in_every_case(registered, registry,

@@ -29,6 +29,11 @@ the tests and the deployment probe that call it in process; the script's entry
 
 Subprocess runs pin the `__main__` wiring, the closed console and the cancel.
 
+Every run measures with `--mode disease` the session's trained disease child
+(`trained_disease_child`, tests/conftest.py): on its workspace's generated `val`
+split, read in place, or on a version of the graph source registered beside a
+copy of the child and its workspace, built once per module and copied per test.
+
 Module: tests/unit/test_measure_scorer_program.py
 """
 from __future__ import annotations
@@ -50,10 +55,9 @@ import pytest
 torch = pytest.importorskip("torch")
 
 from tests.fixtures.registered_cohort import (  # noqa: E402
-    build_registered_cohort,
     copy_registered_cohort,
+    registered_cohort_from_child,
 )
-from tests.fixtures.synthetic_workspace import build_workspace  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 REFUSED = "measure_scorer: refused: "
@@ -70,13 +74,19 @@ def cli():
 
 
 @pytest.fixture
-def workspace(tmp_path):
-    return build_workspace(tmp_path / "ws")
+def workspace(trained_disease_child):
+    """The session's trained disease child, ``(data_dir, checkpoint)``, read in
+    place: a test here writes only under its own directory."""
+    return trained_disease_child["data_dir"], trained_disease_child["disease"]
 
 
 @pytest.fixture(scope="module")
-def base(tmp_path_factory):
-    return build_registered_cohort(tmp_path_factory.mktemp("program_base"))
+def base(trained_disease_child, tmp_path_factory):
+    """The session's trained disease child as a registered-cohort tree: its
+    workspace and its checkpoint copied (the session's files stay read-only),
+    the graph source written and a version of it committed. No training here."""
+    return registered_cohort_from_child(trained_disease_child,
+                                        tmp_path_factory.mktemp("program_base"))
 
 
 @pytest.fixture
@@ -90,12 +100,13 @@ def cohort(base, tmp_path, monkeypatch):
 
 
 def _generated(data_dir, checkpoint, output, device="cpu"):
-    return ["--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
+    return ["--mode", "disease", "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
             "--split", "val", "--output", str(output), "--device", device]
 
 
 def _registered(cohort, *extra, label=None):
-    return ["--checkpoint", str(cohort.checkpoint), "--data-dir", str(cohort.data_dir),
+    return ["--mode", "disease", "--checkpoint", str(cohort.checkpoint),
+            "--data-dir", str(cohort.data_dir),
             "--cohort", label or cohort.version.manifest["label"],
             "--registry", str(cohort.registry), "--device", "cpu", *extra]
 
@@ -114,9 +125,9 @@ def _one_line(err, prefix):
 
 
 def _no_model(monkeypatch):
-    import src.models.gnn.shepherd_gnn as shepherd_gnn
+    import src.models.bundle.record as bundle_record
 
-    monkeypatch.setattr(shepherd_gnn, "build_shepherd_model",
+    monkeypatch.setattr(bundle_record, "load_bundle",
                         lambda *a, **k: pytest.fail("a model was built after a refusal"))
 
 
@@ -205,7 +216,8 @@ def test_a_file_that_cannot_be_read_is_one_message(cli, workspace, tmp_path, cap
 # ---------------------------------------------------------------------------
 def test_a_rejected_command_line_still_exits_2(cli, capsys):
     with pytest.raises(SystemExit) as rejected:
-        cli._run_as_program(["--checkpoint", "c.pt", "--data-dir", "d", "--split", "val"])
+        cli._run_as_program(["--mode", "disease", "--checkpoint", "c.pt", "--data-dir", "d",
+                             "--split", "val"])
 
     assert rejected.value.code == 2
     assert "--split needs --output" in capsys.readouterr().err
@@ -522,7 +534,8 @@ def test_a_cuda_load_on_a_host_without_cuda_is_not_called_unparseable(cli, works
     data_dir, checkpoint = workspace
 
     with pytest.raises(RuntimeError, match="CUDA") as raised:
-        cli.read_measurement_inputs(checkpoint, data_dir, torch.device("cuda"), split="val")
+        cli.read_measurement_inputs(checkpoint, data_dir, torch.device("cuda"), split="val",
+                                    task="disease")
     assert not isinstance(raised.value, ValueError)
 
 
@@ -546,7 +559,8 @@ def test_run_as_a_program_a_refusal_prints_no_traceback(tmp_path):
     output = tmp_path / "out" / "measurement.json"
     completed = subprocess.run(
         [sys.executable, str(REPO_ROOT / "scripts" / "measure_scorer.py"),
-         "--checkpoint", str(tmp_path / "c.pt"), "--data-dir", str(tmp_path / "ws"),
+         "--mode", "disease", "--checkpoint", str(tmp_path / "c.pt"),
+         "--data-dir", str(tmp_path / "ws"),
          "--split", "test", "--output", str(output), "--device", "cpu"],
         cwd=str(REPO_ROOT), capture_output=True, text=True, timeout=300,
     )

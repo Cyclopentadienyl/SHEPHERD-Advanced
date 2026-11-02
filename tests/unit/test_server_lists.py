@@ -330,19 +330,20 @@ def _run(workspace: Path, architecture: str, name: str) -> Path:
 
 @pytest.fixture(scope="module")
 def checkpoint_root(demo_workspace, tmp_path_factory):
-    """A root with one workspace holding: a checkpoint trained on it, one
+    """A root with one workspace holding: a checkpoint trained on it (a file
+    without a model spec, recording this workspace's training inputs), one
     recording another dataset, one with no validation figure, one torch's safe
     loader refuses, and one that is not a checkpoint at all."""
     import torch
 
     from src.utils.checkpoint_io import write_checkpoint
-    from tests.fixtures.registered_cohort import write_fixture_checkpoint
+    from tests.fixtures.registered_cohort import write_checkpoint_without_model_spec
 
     root = tmp_path_factory.mktemp("ckroot")
     ws = _copy(demo_workspace, root / "demo")
     digests = {}
     newest = _run(ws, "hgt", "20261020-120000_new_aaaaaa")
-    digests["trained"] = write_fixture_checkpoint(ws, newest / "best.pt")
+    digests["trained"] = write_checkpoint_without_model_spec(newest / "best.pt", data_dir=ws)
     digests["other"] = write_checkpoint(
         {"checkpoint_kind": "training_state", "epoch": 7,
          "logs": {"val_loss": 0.1, "val_pooled_mrr": 0.4},

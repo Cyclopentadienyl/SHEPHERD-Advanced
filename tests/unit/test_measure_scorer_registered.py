@@ -2,9 +2,11 @@
 Measuring a registered cohort version: order, refusals, report store, --record.
 ==============================================================================
 Contract M4 §6 (decisions 8, 15, 16) at `scripts/measure_scorer.py`'s entry
-point, on the registered-cohort fixture (`tests/fixtures/registered_cohort.py`:
-the demo graph, a checkpoint over it, a version committed through the production
-importer), built once per module and copied per test:
+point, measured with `--mode disease`: the session's trained disease child
+(`trained_disease_child`, tests/conftest.py) and a copy of its demo workspace,
+with a version of the graph source committed through the production importer
+(`tests/fixtures/registered_cohort.py`), assembled once per module and copied
+per test:
 
 - the reads and checks run in the specified order, and **nothing is written --
   no run directory, no ledger -- until every one of them has passed**, R10's
@@ -14,7 +16,9 @@ importer), built once per module and copied per test:
   missing samples, an R10 candidate that cannot be read;
 - the manifest records the version as an aggregate block (no case id), the
   relation states a registered run earns, and the R10 block `compute_r10` gives
-  for the same inputs; R10's states for each kind of training record;
+  for the same inputs; R10's states for the record a disease child writes (the
+  record kinds no measured checkpoint can carry are at unit level,
+  tests/unit/test_r10.py);
 - the report store's commit order; `--record` registers through
   `register_report` into the ledger beside the checkpoint read, without hashing
   the directory again; a refused registration exits 3 and keeps the report
@@ -39,8 +43,9 @@ torch = pytest.importorskip("torch")
 
 from tests.fixtures.opens import count_opens  # noqa: E402
 from tests.fixtures.registered_cohort import (  # noqa: E402
-    build_registered_cohort,
     copy_registered_cohort,
+    registered_cohort_from_child,
+    write_demo_workspace,
 )
 
 LEDGER = "evaluations.json"
@@ -51,8 +56,12 @@ def _sha(path) -> str:
 
 
 @pytest.fixture(scope="module")
-def base(tmp_path_factory):
-    return build_registered_cohort(tmp_path_factory.mktemp("registered_base"))
+def base(trained_disease_child, tmp_path_factory):
+    """The session's trained disease child as a registered-cohort tree: its
+    workspace and its checkpoint copied (the session's files stay read-only),
+    the graph source written and a version of it committed. No training here."""
+    return registered_cohort_from_child(trained_disease_child,
+                                        tmp_path_factory.mktemp("registered_base"))
 
 
 @pytest.fixture
@@ -73,7 +82,8 @@ def cli():
 
 
 def _argv(cohort, *extra, label=None):
-    return ["--checkpoint", str(cohort.checkpoint), "--data-dir", str(cohort.data_dir),
+    return ["--mode", "disease", "--checkpoint", str(cohort.checkpoint),
+            "--data-dir", str(cohort.data_dir),
             "--cohort", label or cohort.version.manifest["label"],
             "--registry", str(cohort.registry), "--device", "cpu", *extra]
 
@@ -207,7 +217,7 @@ def test_each_refusal_writes_nothing(cli, cohort, monkeypatch, case):
     one `ValueError` each, naming what is wrong, and no run directory and no
     ledger, because nothing is written before every check passes -- R10, the last
     check, included."""
-    import src.models.gnn.shepherd_gnn as shepherd_gnn
+    import src.models.bundle.record as bundle_record
 
     if case == "unreadable_candidate":
         message = _unreadable_candidate(cohort, monkeypatch)
@@ -216,7 +226,7 @@ def test_each_refusal_writes_nothing(cli, cohort, monkeypatch, case):
                    "samples_removed": _samples_removed,
                    "samples_not_the_count": _samples_not_the_count,
                    "pre_contract": _pre_contract_checkpoint}[case](cohort)
-    monkeypatch.setattr(shepherd_gnn, "build_shepherd_model",
+    monkeypatch.setattr(bundle_record, "load_bundle",
                         lambda *a, **k: pytest.fail("a model was built after a refusal"))
 
     with pytest.raises(ValueError, match=message) as refused:
@@ -291,55 +301,53 @@ def test_the_r10_block_is_compute_r10_over_the_checkpoints_record(cli, cohort):
     assert _report(cohort)[1]["manifest"]["r10"] == expected
 
 
-@pytest.mark.parametrize("record, training, validation, val_opens", [
-    ("pipeline", "found", "found", 1),
-    ("no_validation", "found", "not_recorded", 0),
-    ("graph_only", "not_recorded", "not_recorded", 0),
-])
-def test_r10_states_follow_what_the_checkpoint_records(
-    cli, tmp_path, monkeypatch, record, training, validation, val_opens
-):
-    """A pipeline record finds both scopes in the workspace; with no validation
-    recorded, validation is `no_validation_inputs_recorded` and `val` is never
-    read; a graph-only record is not the pipeline's, so both scopes are
-    unverifiable and no candidate is read. Never a count without evidence."""
-    cohort = build_registered_cohort(tmp_path / "root", training_record=record)
-    monkeypatch.setenv("SHEPHERD_REGISTRY", str(cohort.registry))
-
+# R10's other record kinds have no end-to-end case here, since a task
+# measurement reads a finetune child only, and no child carries them; each is
+# pinned at unit level, over `compute_r10`, in tests/unit/test_r10.py:
+# - a graph-only record (no training file recorded) can no longer come from a
+#   measurement: the files that carry one, a base (its record names the graph
+#   and the manifest only) and a file without a model spec, are refused right
+#   after the checkpoint read (`read_measurement_inputs(task=)`), before any
+#   model is built or anything written; so
+#   `test_neither_file_recorded_leaves_both_scopes_unverifiable_and_reads_nothing`;
+# - no validation recorded: a disease child cannot be trained without a
+#   validation case (`DiseaseTask` refuses "no bound validation case; the
+#   disease task cannot be validated and selected"), so no child records none;
+#   so `test_no_recorded_validation_file_is_no_validation_inputs_recorded`.
+def test_r10_states_follow_what_the_checkpoint_records(cli, cohort):
+    """The record a disease child writes (both sample files) finds both scopes
+    in the workspace, and `val` is read once, as R10's candidate. Never a count
+    without evidence."""
     with count_opens() as opens:
         assert cli.main(_argv(cohort)) == 0
 
     r10 = _report(cohort)[1]["manifest"]["r10"]
-    assert r10["training"]["evidence"]["state"] == training
-    assert r10["validation"]["evidence"]["state"] == validation
-    assert opens.opens(cohort.data_dir / "val_samples.json") == val_opens
-    if record == "no_validation":
-        assert r10["validation"]["disease_overlap"]["state"] == "no_validation_inputs_recorded"
-        assert r10["validation"]["disease_overlap"]["k"] is None
-    if record == "graph_only":
-        assert opens.opens(cohort.data_dir / "train_samples.json") == 0
-        for scope in ("training", "validation"):
-            assert r10[scope]["phenotype_set_overlap"] == {
-                "state": "unverifiable", "k": None, "n": r10[scope]["phenotype_set_overlap"]["n"]}
+    assert r10["training"]["evidence"]["state"] == "found"
+    assert r10["validation"]["evidence"]["state"] == "found"
+    assert opens.opens(cohort.data_dir / "val_samples.json") == 1
 
 
 def test_build_manifest_takes_the_kind_from_the_version_and_requires_r10(cli, cohort):
-    """With a version block the manifest is a registered cohort's whatever
+    """With a version block the manifest of a disease run (its semantics, as
+    `--mode disease` passes them) is a registered cohort's whatever
     `args.split` says; without R10 beside a version it is refused, so no report
     of a registered version can lack its overlap."""
     import argparse
 
     from src.evaluation.measurement import AutocastRegime
+    from src.evaluation.task_measurement import disease_semantics
 
     args = argparse.Namespace(split=None, batch_size=4, checkpoint=cohort.checkpoint,
                               data_dir=cohort.data_dir)
     block = cli.cohort_version_block(cohort.version)
     common = {"digests": {"checkpoint": "a" * 64}, "dataset_record": {"origin": "synthetic"},
-              "regime": AutocastRegime(enabled=False, dtype=None)}
+              "regime": AutocastRegime(enabled=False, dtype=None),
+              "semantics": disease_semantics(4)}
     graph = {"num_nodes_dict": {"disease": 1}}
 
     manifest = cli.build_manifest(args, graph, 1, torch.device("cpu"), cohort_version=block,
                                   r10={"definition_version": 1}, **common)
+    assert manifest.mode == "disease"
     assert (manifest.split, manifest.cohort_kind) == (block["role"], "supplied")
     assert manifest.relations["cohort_graph"] == "verified"
     assert manifest.relations["R2"] == "not_applicable"
@@ -505,30 +513,39 @@ def test_the_register_later_command_quotes_each_path_for_every_shell():
     assert shlex.split(line)[2:] == ["--report", str(report), "--checkpoint", str(checkpoint)]
 
 
-@pytest.mark.parametrize("record", ["pipeline", "graph_only"])
+@pytest.mark.parametrize("evidence_state", ["found", "not_found"])
 def test_the_console_gives_each_r10_label_in_the_caveats_words_and_the_definitions_once(
-    cli, tmp_path, monkeypatch, capsys, record
+    cli, cohort, tmp_path, capsys, evidence_state
 ):
     """Finding 9: each label's state is rendered through `R10_STATE_TEXT`, an
     unverifiable one through its scope's `R10_UNVERIFIABLE_REASON`, with no
     number where there is no count; the four definitions are printed once, so
     the console says that phenotype-set overlap ignores order and repetition and
     that "none" is not evidence about data outside the recorded inputs. The
-    report keeps the raw states and no prose."""
+    report keeps the raw states and no prose.
+
+    Unverifiable labels come from the child measured on its workspace
+    re-sampled after it was trained (the same graph and dataset record, other
+    train and val cohorts), so neither file it records is found. They used to
+    come from a graph-only record, which no measured checkpoint carries now
+    (see `test_r10_states_follow_what_the_checkpoint_records`)."""
     from src.evaluation.caveats import (
         R10_LABEL_TEXT,
         R10_STATE_TEXT,
         R10_UNVERIFIABLE_REASON,
     )
 
-    cohort = build_registered_cohort(tmp_path / "root", training_record=record)
-    monkeypatch.setenv("SHEPHERD_REGISTRY", str(cohort.registry))
+    argv = _argv(cohort)
+    if evidence_state == "not_found":
+        resampled = write_demo_workspace(tmp_path / "resampled", sample_seed=7)
+        argv[argv.index(str(cohort.data_dir))] = str(resampled)
 
-    assert cli.main(_argv(cohort)) == 0
+    assert cli.main(argv) == 0
 
     out = capsys.readouterr().out
     path, report = _report(cohort)
     r10 = report["manifest"]["r10"]
+    assert [r10[scope]["evidence"]["state"] for scope in R10_LABEL_TEXT] == [evidence_state] * 2
     lines = out.splitlines()
     for scope, labels in R10_LABEL_TEXT.items():
         evidence = r10[scope]["evidence"]["state"]
@@ -590,11 +607,11 @@ def test_a_read_that_is_not_the_chosen_one_is_refused_before_anything_is_measure
     the workspace is; the checkpoint right after its read, before R3. Nothing
     is built or written, and the message names both digests."""
     import src.kg.artifacts as artifacts
-    import src.models.gnn.shepherd_gnn as shepherd_gnn
+    import src.models.bundle.record as bundle_record
     import src.utils.fingerprint as fingerprint
 
     other = "f" * 64
-    monkeypatch.setattr(shepherd_gnn, "build_shepherd_model",
+    monkeypatch.setattr(bundle_record, "load_bundle",
                         lambda *a, **k: pytest.fail("a model was built after a refusal"))
     if which == "version":
         monkeypatch.setattr(artifacts, "read_split_manifest",
@@ -949,7 +966,8 @@ def test_a_disagreeing_run_is_kept_and_not_registered_without_a_later_command(
     assert cli.main(_argv(cohort, "--record")) == 0
     (first,) = _reports(cohort)
     edited = json.loads(first.read_text())
-    edited["authoritative_metrics"]["hits@1"] = 0.5 + edited["authoritative_metrics"]["hits@1"] / 2
+    edited["authoritative_metrics"]["pooled_top1"] = (
+        0.5 + edited["authoritative_metrics"]["pooled_top1"] / 2)
     stamp, checkpoint, _ = first.parent.name.split("-")
     other = first.parents[1] / f"{stamp}-{checkpoint}-{secrets.token_hex(4)}"
     other.mkdir()
@@ -959,20 +977,21 @@ def test_a_disagreeing_run_is_kept_and_not_registered_without_a_later_command(
     assert cli.main(_argv(cohort, "--record")) == 3
 
     err = capsys.readouterr().err
-    assert "runs disagree — investigate" in err and "hits@1" in err
+    assert "runs disagree — investigate" in err and "disagree on: pooled_top1 (" in err
     assert "where the investigation can read it" in err
     assert "Register it later with" not in err
     assert len(_reports(cohort)) == 3
 
 
 def _disagreeing_report(cohort):
-    """A second report under the key of the store's one report, its hits@1
-    another number: the store now holds runs that disagree."""
+    """A second report under the key of the store's one report, its
+    pooled_top1 another number: the store now holds runs that disagree."""
     import secrets
 
     (first,) = _reports(cohort)
     edited = json.loads(first.read_text())
-    edited["authoritative_metrics"]["hits@1"] = 0.5 + edited["authoritative_metrics"]["hits@1"] / 2
+    edited["authoritative_metrics"]["pooled_top1"] = (
+        0.5 + edited["authoritative_metrics"]["pooled_top1"] / 2)
     stamp, checkpoint, _ = first.parent.name.split("-")
     other = first.parents[1] / f"{stamp}-{checkpoint}-{secrets.token_hex(4)}"
     other.mkdir()
@@ -995,7 +1014,8 @@ def test_without_record_a_disagreeing_run_offers_no_register_later_command(
 
     printed = capsys.readouterr().out
     assert "Not registered (no --record), and runs disagree — investigate" in printed
-    assert "hits@1" in printed and "No register-later command is offered" in printed
+    assert "disagree on: pooled_top1 (" in printed
+    assert "No register-later command is offered" in printed
     assert "Register it with" not in printed and "record_evaluation.py" not in printed
     registration = _outcome(out)["registration"]
     assert (registration["registered"], registration["outcome"]) == (False, "not_requested")
@@ -1088,9 +1108,9 @@ def test_deterministic_runs_are_recorded_so_and_the_settings_are_put_back(
     process's settings are as they were."""
     import os
 
-    import src.evaluation.measurement as measurement
-    from src.evaluation.measurement import run_mode_c as real_run_mode_c
+    from src.evaluation.task_measurement import TASK_RUNS
 
+    real_run = TASK_RUNS["disease"]
     monkeypatch.delenv("CUBLAS_WORKSPACE_CONFIG", raising=False)
     seen = []
 
@@ -1099,9 +1119,9 @@ def test_deterministic_runs_are_recorded_so_and_the_settings_are_put_back(
                      torch.is_deterministic_algorithms_warn_only_enabled(),
                      torch.backends.cudnn.deterministic, torch.backends.cudnn.benchmark,
                      os.environ.get("CUBLAS_WORKSPACE_CONFIG")))
-        return real_run_mode_c(**kwargs)
+        return real_run(**kwargs)
 
-    monkeypatch.setattr(measurement, "run_mode_c", observing)
+    monkeypatch.setitem(TASK_RUNS, "disease", observing)
     before = (torch.are_deterministic_algorithms_enabled(), torch.backends.cudnn.deterministic,
               torch.backends.cudnn.benchmark)
 
@@ -1125,7 +1145,7 @@ def test_an_operation_without_a_deterministic_implementation_refuses_the_run(
     """No fallback: torch's refusal becomes one refusal saying the run did not
     complete as requested, nothing written, and the settings are put back.
     Without --deterministic the same error is not reworded."""
-    import src.evaluation.measurement as measurement
+    from src.evaluation.task_measurement import TASK_RUNS
 
     error = RuntimeError("scatter_reduce_cuda does not have a deterministic implementation, "
                          "but you set 'torch.use_deterministic_algorithms(True)'.")
@@ -1133,7 +1153,7 @@ def test_an_operation_without_a_deterministic_implementation_refuses_the_run(
     def refuse(**kwargs):
         raise error
 
-    monkeypatch.setattr(measurement, "run_mode_c", refuse)
+    monkeypatch.setitem(TASK_RUNS, "disease", refuse)
 
     with pytest.raises(cli.DeterministicExecutionUnsupported) as refused:
         cli.main(_argv(cohort, "--deterministic", "--record"))
@@ -1261,7 +1281,8 @@ def test_a_cohort_run_in_a_copy_of_the_registry_is_refused_before_the_lock_and_a
     shutil.copytree(cohort.registry, copy, symlinks=True)
     before = _tree(copy)
     _nothing_before_the_lock(cli, monkeypatch)
-    argv = ["--checkpoint", str(cohort.checkpoint), "--data-dir", str(cohort.data_dir),
+    argv = ["--mode", "disease", "--checkpoint", str(cohort.checkpoint),
+            "--data-dir", str(cohort.data_dir),
             "--cohort", cohort.version.manifest["label"], "--registry", str(copy),
             "--device", "cpu", *(["--record"] if record else [])]
 
@@ -1306,7 +1327,8 @@ def test_a_registry_named_through_a_link_to_the_deployments_is_measured(
     deployment's registry is that registry, and its report registers."""
     alias = tmp_path / "registry-link"
     alias.symlink_to(cohort.registry, target_is_directory=True)
-    argv = ["--checkpoint", str(cohort.checkpoint), "--data-dir", str(cohort.data_dir),
+    argv = ["--mode", "disease", "--checkpoint", str(cohort.checkpoint),
+            "--data-dir", str(cohort.data_dir),
             "--cohort", cohort.version.manifest["label"], "--registry", str(alias),
             "--device", "cpu", "--record"]
 
@@ -1363,7 +1385,8 @@ def test_a_registry_link_retargeted_after_the_check_does_not_move_the_run(
             return resolve(*args, **kwargs)
 
         monkeypatch.setattr(cli, "_resolve_device", retarget_then_resolve)
-    argv = ["--checkpoint", str(cohort.checkpoint), "--data-dir", str(cohort.data_dir),
+    argv = ["--mode", "disease", "--checkpoint", str(cohort.checkpoint),
+            "--data-dir", str(cohort.data_dir),
             "--cohort", cohort.version.manifest["label"], "--registry", str(alias),
             "--device", "cpu", *(["--record"] if record else [])]
 

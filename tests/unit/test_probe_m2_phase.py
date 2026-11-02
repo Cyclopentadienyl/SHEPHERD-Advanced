@@ -379,19 +379,6 @@ def _operator_shell(monkeypatch, base):
     monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(base / "workspaces"))
 
 
-def _history_file(path):
-    """A history file: a checkpoint without a model spec or a training record,
-    written as plain tensors and data, without any model class, as the
-    deployment's older models are to this build (the probe reads nothing from
-    it to configure a run; R2 and R7 refuse it, R8 checks it unchanged)."""
-    import torch
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save({"epoch": 2, "state_dict": {"encoder.weight": torch.zeros(4, 4)},
-                "config": {"model_config": {"conv_type": "hgt"}}}, path)
-    return path
-
-
 @pytest.mark.parametrize("shell, history", [("fresh", False), ("operator", True)])
 def test_the_real_phase_passes_and_leaves_the_workspace_as_it_was(
         tmp_path, served_state, monkeypatch, tmp_path_factory, shell, history):
@@ -414,6 +401,7 @@ def test_the_real_phase_passes_and_leaves_the_workspace_as_it_was(
     from scripts.setup_demo import demo_task_training
     from src.kg.workspace import write_workspace
     from src.utils.checkpoint_io import TRAINING_RULES_VERSION, read_checkpoint
+    from tests.fixtures.registered_cohort import write_checkpoint_without_model_spec
 
     root = tmp_path / "workspaces"
     real = root / "ws"
@@ -424,7 +412,12 @@ def test_the_real_phase_passes_and_leaves_the_workspace_as_it_was(
     assert not (real / "shortest_paths.pt").exists()
     reference = None
     if history:
-        reference = _history_file(real / "checkpoints" / "hgt" / "model-ref.pt")
+        # A history file: a checkpoint without a model spec or a training
+        # record, written without any model class, as the deployment's older
+        # models are to this build (the probe reads nothing from it to
+        # configure a run; R2 and R7 refuse it, R8 checks it unchanged).
+        reference = real / "checkpoints" / "hgt" / "model-ref.pt"
+        write_checkpoint_without_model_spec(reference)
         (real / "shortest_paths.pt").write_bytes(b"a leftover table: never read")
         (real / "shortest_paths.meta.json").write_text(json.dumps(
             {"schema_version": 1, "build_id": "c" * 32, "kg_digest": "d" * 64,

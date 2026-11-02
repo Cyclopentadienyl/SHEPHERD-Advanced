@@ -1,15 +1,17 @@
 """
-Mode C's command line, run end to end.
-======================================
-`scripts/measure_scorer.py` is run as an operator runs it, as a subprocess, on a
-registered test cohort version (`tests/fixtures/registered_cohort.py`: the demo
-graph, a checkpoint over it and a version imported through the production
-importer) with `--record`, and the assertions read **the files it writes**
-rather than an in-memory object. The parts a direct call to `run_mode_c` skips
-are therefore exercised: argument parsing, artifact identity, the device gate,
-the production model build, the full-graph encode, the report store, the
+The measurement command line, run end to end.
+=============================================
+`scripts/measure_scorer.py --mode disease` is run as an operator runs it, as a
+subprocess, on a registered test cohort version of the session's trained
+disease child (`trained_disease_child` in tests/conftest.py: its demo workspace
+and checkpoint copied, and a version of the graph source imported through the
+production importer, `tests/fixtures/registered_cohort.py`) with `--record`,
+and the assertions read **the files it writes** rather than an in-memory
+object. The parts a direct call to `run_disease_measurement` skips are
+therefore exercised: argument parsing, artifact identity, the device gate, the
+bundle build from its model spec, the graph view, the report store, the
 registration and the console. A generated split, `--split val`, is run in
-process on the synthetic workspace.
+process on the child's workspace.
 
 Reading the written files matters more than it sounds. A result object can carry
 a field that `to_dict()` never emits, and an in-memory check would still pass
@@ -17,14 +19,18 @@ while the artifact a reviewer actually receives is missing it.
 
 > **Nothing here is an acceptance result, and nothing here may be reported as
 > one.** It shows the command runs and writes complete, self-describing
-> artifacts on a synthetic graph in this container, on CPU, with an untrained
-> checkpoint.
+> artifacts on a synthetic graph in this container, on CPU, with a checkpoint
+> trained for one epoch.
+
+One test's subject is Mode C itself (its metric family): it measures Mode C's
+command the same way on the untrained fixture checkpoint
+(`build_registered_cohort`, `measured_mode_c`), and goes at K8-6a (EV2): that
+command has no `--mode`, so it exits 2 once `--mode` is required.
 
 Module: tests/integration/test_measure_scorer_run.py
 """
 import hashlib
 import json
-import math
 import os
 import re
 import subprocess
@@ -36,8 +42,11 @@ import pytest
 torch = pytest.importorskip("torch")
 
 from tests.fixtures.registered_cohort import (  # noqa: E402
+    GRAPH_SOURCE_BINDING,
     GRAPH_SOURCE_COUNTS,
+    GRAPH_SOURCE_UNRANKED,
     build_registered_cohort,
+    registered_cohort_from_child,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -52,20 +61,18 @@ def _sha(path: Path) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-@pytest.fixture(scope="module")
-def measured(tmp_path_factory):
-    """Run Mode C's command once on a registered version, with `--record`, and
-    hand back what it wrote.
+def _measure_once(cohort, *mode):
+    """Run the command once on a registered version, with `--record`, and hand
+    back what it wrote.
 
     sys.executable rather than "python": a bare name resolves against PATH,
     which is only this environment when a venv happens to be active.
     """
-    cohort = build_registered_cohort(tmp_path_factory.mktemp("mode_c_cli") / "root")
     label = cohort.version.manifest["label"]
 
     completed = subprocess.run(
         [
-            sys.executable, str(MEASURE_SCORER),
+            sys.executable, str(MEASURE_SCORER), *mode,
             "--checkpoint", str(cohort.checkpoint),
             "--data-dir", str(cohort.data_dir),
             "--cohort", label, "--registry", str(cohort.registry),
@@ -105,8 +112,25 @@ def measured(tmp_path_factory):
     }
 
 
+@pytest.fixture(scope="module")
+def measured(trained_disease_child, tmp_path_factory):
+    """The disease task's measurement, run once on a registered version of the
+    session's trained disease child."""
+    root = tmp_path_factory.mktemp("measure_cli") / "root"
+    return _measure_once(registered_cohort_from_child(trained_disease_child, root),
+                         "--mode", "disease")
+
+
+@pytest.fixture(scope="module")
+def measured_mode_c(tmp_path_factory):
+    """Mode C's command (no `--mode`), run once on a registered version of the
+    untrained fixture checkpoint, for the test whose subject is Mode C's metric
+    family; both go at K8-6a (EV2), when `--mode` becomes required."""
+    return _measure_once(build_registered_cohort(tmp_path_factory.mktemp("mode_c_cli") / "root"))
+
+
 # ---------------------------------------------------------------------------
-# What Mode C's command writes, and where
+# What the command writes, and where
 # ---------------------------------------------------------------------------
 def test_the_report_is_kept_in_a_new_run_directory_of_the_report_store(measured):
     """`<registry>/versions/<label>/reports/<run id>/` holds the ranks and the
@@ -153,28 +177,44 @@ def test_registry_files_are_written_as_every_registry_file_is(measured):
         assert data == encode_json(json.loads(data)), name
 
 
-def test_the_report_is_mode_c_scored_against_every_disease(measured):
-    """Every batch is scored against every disease the workspace's graph has."""
+def test_the_report_is_scored_against_every_disease(measured):
+    """Every case is scored against every disease of the model's graph view,
+    which keeps every disease the workspace's graph has, and every case of the
+    cohort is a unit of the report. The manifest says so in the disease task's
+    words (`task_measurement.DISEASE_SEMANTICS`)."""
     measurement = measured["measurement"]
     manifest = measurement["manifest"]
     data_dir = measured["cohort"].data_dir
     n_diseases = json.loads((data_dir / "num_nodes.json").read_text())["disease"]
 
-    assert manifest["mode"] == "C"
-    assert manifest["candidate_construction"] == "every disease in the knowledge graph"
-    assert manifest["model_construction"].startswith("production")
+    assert manifest["mode"] == "disease"
+    assert manifest["candidate_construction"] == "every disease of the model's graph view"
+    assert manifest["model_construction"].startswith("model bundle")
 
     columns = measurement["sampler_evidence"]["candidate_columns"]
     assert (columns["min"], columns["max"]) == (n_diseases, n_diseases)
-    n_batches = measurement["sampler_evidence"]["n_batches"]
-    assert n_batches == math.ceil(manifest["n_samples"] / BATCH_SIZE)
+    # A task report counts the cases it considered, not batches; that
+    # `--batch-size` is the chunk the ranking scores in is shown in process
+    # (`test_an_in_process_generated_run_writes_its_report_at_output`).
+    assert measurement["sampler_evidence"]["units"] == manifest["n_samples"]
 
 
-def test_the_report_carries_only_the_untruncated_metric_family(measured):
+def test_the_report_carries_only_its_summary_fields(measured):
+    """The report carries exactly its summary fields and the ranks' name and
+    digest, so a second metric family, or the per-sample rows, cannot ride
+    along in it."""
+    assert set(measured["measurement"]) == {
+        "manifest", "authoritative_metrics", "n_ranked", "n_ground_truth_absent",
+        "sampler_evidence", "ranks",
+    }
+
+
+def test_the_report_carries_only_the_untruncated_metric_family(measured_mode_c):
     """Mode C reports the untruncated metrics and nothing truncated. The report
     carries exactly its summary fields and the ranks' name and digest, so a
-    second metric family, or the per-sample rows, cannot ride along in it."""
-    measurement = measured["measurement"]
+    second metric family, or the per-sample rows, cannot ride along in it.
+    Mode C's own metrics: this goes at K8-6a (EV2), with `measured_mode_c`."""
+    measurement = measured_mode_c["measurement"]
 
     assert set(measurement) == {
         "manifest", "authoritative_metrics", "n_ranked", "n_ground_truth_absent",
@@ -212,8 +252,9 @@ def test_every_consumed_file_is_identified_by_content(measured):
 
 
 def test_the_kg_role_is_the_manifest_bound_source_graph_and_no_allocation_is_recorded(measured):
-    """Mode C never parses `kg.json`, so its `kg` role is the digest the
-    workspace's manifest binds (contract M2.1 decision 2). A registered version
+    """Measurement never parses `kg.json` (the task's graph view is built from
+    the graph tensors), so its `kg` role is the digest the workspace's manifest
+    binds (contract M2.1 decision 2). A registered version
     was cut by no allocation of this workspace, so `split_manifest` is no role;
     the version's own manifest is identified in `cohort_version`."""
     digests = measured["measurement"]["manifest"]["artifact_digests"]
@@ -250,15 +291,26 @@ def test_the_manifest_describes_the_registered_version_scored(measured):
 
 def test_the_cohort_is_whole_and_ranked_in_the_order_given(measured):
     """No absences, no shrinkage, no reordering. The ranks file is compared with
-    the version's samples file the command read."""
+    the version's samples file the command read: one row per case, in its
+    order. A case none of whose phenotypes is in the model's graph view is kept
+    with a null rank and no ground truth (the disease task's binding), so the
+    cases ranked are the version's less those, the two the demo graph's view
+    leaves unbound (`GRAPH_SOURCE_BINDING`, pinned apart from any run); every
+    other row is ranked against its own disease."""
     measurement = measured["measurement"]
     samples = json.loads(measured["cohort"].version.samples_path.read_text())
+    rows = measured["ranks"]
 
     assert measurement["n_ground_truth_absent"] == 0
-    assert measurement["n_ranked"] == measurement["manifest"]["n_samples"] == len(samples)
-    assert [(row["sample_id"], row["ground_truth"]) for row in measured["ranks"]] == [
-        (sample["patient_id"], sample["disease_id"]) for sample in samples
-    ]
+    assert measurement["sampler_evidence"]["binding"] == GRAPH_SOURCE_BINDING
+    assert measurement["manifest"]["n_samples"] == len(samples) == len(rows)
+    assert [row["sample_id"] for row in rows] == [sample["patient_id"] for sample in samples]
+    ranked = [(row["ground_truth"], sample["disease_id"])
+              for row, sample in zip(rows, samples, strict=True) if row["rank"] is not None]
+    assert len(ranked) == measurement["n_ranked"] == GRAPH_SOURCE_BINDING["bound"]
+    assert all(truth == disease for truth, disease in ranked)
+    assert {row["sample_id"] for row in rows if row["rank"] is None} == GRAPH_SOURCE_UNRANKED
+    assert all(row["ground_truth"] is None for row in rows if row["rank"] is None)
 
 
 def test_the_report_is_registered_beside_the_checkpoint(measured):
@@ -285,8 +337,10 @@ def test_the_console_names_the_report_the_run_coverage_r10_and_the_registration(
 
     assert f"Report: {report}" in out
     assert f"Run id: {measured['run_dir'].name}" in out
-    assert (f"coverage: {counts['ranked_eligible']} ranked of {counts['source_cases']} "
-            f"source cases; {counts['n_excluded']} excluded") in out
+    # The cases the report ranked: the version's eligible cases less those the
+    # model's graph view cannot bind (`GRAPH_SOURCE_BINDING`, the test above).
+    assert (f"coverage: {GRAPH_SOURCE_BINDING['bound']} ranked of "
+            f"{counts['source_cases']} source cases; {counts['n_excluded']} excluded") in out
     assert "ground_truth_absent 2, phenotype_unmappable 1" in out
     for name in ("Training disease overlap", "Training phenotype-set overlap",
                  "Validation disease overlap", "Validation phenotype-set overlap"):
@@ -309,49 +363,64 @@ def test_this_run_records_that_it_is_not_a_cuda_run(measured):
 
 
 # ---------------------------------------------------------------------------
-# In process, a generated split, on a checkpoint in the training writer's shape
+# In process, a generated split, on the trained child
 # ---------------------------------------------------------------------------
-def test_an_in_process_generated_run_writes_mode_c_at_output(tmp_path):
-    """`main` called directly, as the unit tests call it, on the synthetic
-    workspace's generated `val` and its checkpoint, which carries only what the
-    training writer writes: the model is built the way production builds it,
-    and Mode C's report is at `--output` beside its ranks, with nothing else
-    written. A generated report keeps its shape: no cohort version, no R10, and
-    no ranks block, since its rank file is named by `--output`."""
+def test_an_in_process_generated_run_writes_its_report_at_output(trained_disease_child,
+                                                                 tmp_path, monkeypatch):
+    """`main` called directly, as the unit tests call it, with `--mode disease`
+    on the session's trained disease child and its workspace's generated `val`,
+    both read in place: the bundle is built from its model spec, `--batch-size`
+    is the chunk the disease ranking scores cases in (`rank_cases`'
+    `case_chunk`), and the report is at `--output` beside its ranks, with
+    nothing else written. A generated report keeps its shape: no cohort
+    version, no R10, and no ranks block, since its rank file is named by
+    `--output`."""
     import scripts.measure_scorer as cli
-    from tests.fixtures.synthetic_workspace import build_workspace
+    import src.models.tasks.scoring as scoring
 
-    data_dir, checkpoint = build_workspace(tmp_path / "ws")
+    chunks = []
+    real_rank_cases = scoring.rank_cases
+
+    def rank_cases(*args, **kwargs):
+        chunks.append(kwargs.get("case_chunk"))
+        return real_rank_cases(*args, **kwargs)
+
+    # The measurement imports it inside the function, so the patch lands on
+    # the source module.
+    monkeypatch.setattr(scoring, "rank_cases", rank_cases)
+    data_dir, checkpoint = trained_disease_child["data_dir"], trained_disease_child["disease"]
 
     output = tmp_path / "run" / "measurement.json"
     assert cli.main([
-        "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
+        "--mode", "disease", "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
         "--split", "val", "--output", str(output),
         "--batch-size", str(BATCH_SIZE), "--device", "cpu",
     ]) == 0
 
+    assert chunks == [BATCH_SIZE]
     written = json.loads(output.read_text())
-    assert written["manifest"]["mode"] == "C"
+    assert written["manifest"]["mode"] == "disease"
     assert written["manifest"]["split"] == "val"
     assert written["manifest"]["cohort_kind"] == "generated"
     assert written["manifest"]["cohort_version"] is None and written["manifest"]["r10"] is None
     assert "ranks" not in written
     ranks = json.loads((output.parent / "measurement_ranks.json").read_text())
-    assert len(ranks) == written["n_ranked"] == 4
+    # The demo workspace's five val cases, one row each, each bound in the
+    # child's graph view.
+    assert len(ranks) == written["manifest"]["n_samples"] == written["n_ranked"] == 5
     assert sorted(p.name for p in output.parent.iterdir()) == [
         "measurement.json", "measurement_ranks.json",
     ]
 
 
-def test_an_existing_output_is_replaced_staged(tmp_path, monkeypatch):
+def test_an_existing_output_is_replaced_staged(trained_disease_child, tmp_path, monkeypatch):
     """The generated path kept its overwrite of an existing `--output`, now
     through `publish_bytes`: staged beside the target and renamed into place, so
     no staging file is left and the old bytes are gone."""
     import scripts.measure_scorer as cli
     import src.utils.file_modes as file_modes
-    from tests.fixtures.synthetic_workspace import build_workspace
 
-    data_dir, checkpoint = build_workspace(tmp_path / "ws")
+    data_dir, checkpoint = trained_disease_child["data_dir"], trained_disease_child["disease"]
     output = tmp_path / "run" / "measurement.json"
     output.parent.mkdir()
     output.write_text("an earlier report")
@@ -362,12 +431,12 @@ def test_an_existing_output_is_replaced_staged(tmp_path, monkeypatch):
                         or real(target, data))
 
     assert cli.main([
-        "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
+        "--mode", "disease", "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
         "--split", "val", "--output", str(output), "--device", "cpu",
     ]) == 0
 
     assert published == ["measurement_ranks.json", "measurement.json"], "the report is last"
-    assert json.loads(output.read_text())["manifest"]["mode"] == "C"
+    assert json.loads(output.read_text())["manifest"]["mode"] == "disease"
     assert sorted(p.name for p in output.parent.iterdir()) == [
         "measurement.json", "measurement_ranks.json",
     ]

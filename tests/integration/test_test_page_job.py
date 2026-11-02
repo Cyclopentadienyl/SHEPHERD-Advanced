@@ -4,8 +4,8 @@ The Test page's start, outcome and registration with a real test run (M5-2, UI-D
 `src/webui/components/test_page.py` over the real job runner and the real
 `scripts/measure_scorer.py` (CPU, the fixture cohort, a base and a disease
 child trained for one epoch by `tests/fixtures/trained_children.train_children`
-into the workspace's `runs/gatv2`, beside a ShepherdGNN checkpoint kept as
-history): the page's Start hands the runner the inputs from the server's lists,
+into the workspace's `runs/gatv2`, beside a checkpoint without a model spec
+kept as history): the page's Start hands the runner the inputs from the server's lists,
 the digests shown and the task the listing's model record names; once the run
 has ended, the job card says what the runner read from disk (kept, not
 registered without "Register the result") and which task it measured, the
@@ -22,7 +22,6 @@ Module: tests/integration/test_test_page_job.py
 from __future__ import annotations
 
 import json
-import shutil
 
 import pytest
 
@@ -32,7 +31,8 @@ pytest.importorskip("gradio")
 from tests.fixtures.operator_access import operator_request  # noqa: E402
 from tests.fixtures.trained_children import BASE_RUN, CHILD_RUNS  # noqa: E402
 
-#: The ShepherdGNN run kept beside the bundles: listed as history, never run.
+#: The run of a checkpoint without a model spec, kept beside the bundles:
+#: listed as history, never run.
 HISTORY_RUN = "20261017-091500_run_3fa9c1"
 LABEL = "demo-test-1"
 
@@ -40,23 +40,30 @@ LABEL = "demo-test-1"
 @pytest.fixture
 def site(tmp_path, monkeypatch):
     from src.webui.components import served_status
-    from tests.fixtures.registered_cohort import build_registered_cohort
+    from tests.fixtures.registered_cohort import (
+        graph_source_cases,
+        import_version,
+        write_checkpoint_without_model_spec,
+        write_demo_workspace,
+        write_source,
+    )
     from tests.fixtures.trained_children import train_children
 
-    cohort = build_registered_cohort(tmp_path / "c")
     workspaces = tmp_path / "ws"
     workspaces.mkdir()
-    demo = workspaces / "demo"
-    shutil.move(str(cohort.data_dir), demo)
-    history = demo / "runs" / "hgt" / HISTORY_RUN / "checkpoints"
-    history.mkdir(parents=True)
-    shutil.copy2(cohort.checkpoint, history / "best.pt")
+    demo = write_demo_workspace(workspaces / "demo")
+    registry = tmp_path / "registry"
+    registry.mkdir()
+    import_version(registry, demo, write_source(tmp_path / "cases.json",
+                                                graph_source_cases(demo)))
+    write_checkpoint_without_model_spec(
+        demo / "runs" / "hgt" / HISTORY_RUN / "checkpoints" / "best.pt", data_dir=demo)
     trained = train_children(demo, ("disease",))
     monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(workspaces))
-    monkeypatch.setenv("SHEPHERD_REGISTRY", str(cohort.registry))
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(registry))
     monkeypatch.setenv("SHEPHERD_DEVICE", "cpu")
     monkeypatch.setattr(served_status, "read_status", lambda: (None, "not read"))
-    return cohort, demo, trained["disease"]
+    return registry, demo, trained["disease"]
 
 
 def _key(models, architecture, run, filename="last.pt"):
@@ -72,7 +79,7 @@ def test_a_run_started_from_the_page_is_kept_shown_and_registered(site, monkeypa
     from src.utils.fingerprint import file_sha256
     from src.webui.components import test_page as tp
 
-    cohort, demo, child = site
+    registry, demo, child = site
     request = operator_request(monkeypatch)
     page = tp.read_page(request)
     models = tp.read_models("demo", request)
@@ -93,7 +100,7 @@ def test_a_run_started_from_the_page_is_kept_shown_and_registered(site, monkeypa
     card = tp.job_html(job, tp.path_roots(), ("none", "GPU jobs: none"))
     assert 'data-status="completed"' in card and "Report kept" in card
     assert "Disease task" in card
-    assert "Not registered" in card and str(cohort.registry) not in card
+    assert "Not registered" in card and str(registry) not in card
 
     reports = tp.read_reports(LABEL)
     (run,) = reports["runs"]
@@ -136,12 +143,12 @@ def test_a_run_started_from_the_page_is_kept_shown_and_registered(site, monkeypa
 
 def test_a_base_and_a_history_file_are_listed_and_never_started(site, monkeypatch):
     """K6 decision 13 on the records the production path wrote: the base and
-    the ShepherdGNN checkpoint are listed, led by what they are, and Start
+    the checkpoint without a model spec are listed, led by what they are, and Start
     says why it does not measure them; the start itself refuses them before
     the runner is asked."""
     from src.webui.components import test_page as tp
 
-    _cohort, demo, _child = site
+    _registry, demo, _child = site
     request = operator_request(monkeypatch)
     page = tp.read_page(request)
     models = tp.read_models("demo", request)

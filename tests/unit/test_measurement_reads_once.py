@@ -1,6 +1,6 @@
 """
-Measurement reads each recorded input once, and records those reads — Mode C.
-=============================================================================
+Measurement reads each recorded input once, and records those reads.
+=====================================================================
 Contract M2.1, S7, and M4 §6. Before any model is built or output written,
 `main` reads the manifest, the graph tensors, the cohort's samples and the
 checkpoint once each (`read_measurement_inputs`), and verifies from those reads
@@ -11,15 +11,20 @@ is read once against the digest that manifest binds, and the workspace's own
 `train_samples.json` and `val_samples.json` are read only as R10 candidates.
 The manifest's `artifact_digests` are built only from those reads
 (`measurement_input_digests`); its `kg` role is the manifest-bound source graph
-(decision 2). The acceptance shown here, at the real entry point (`main`, with
-Mode C's real scoring), for a generated split (`--split val` on the synthetic
-workspace) and a registered version (`--cohort` on the demo workspace,
-`tests/fixtures/registered_cohort.py`):
+(decision 2). The acceptance shown here, at the real entry point (`main
+--mode disease`, with the disease task's real scoring of the session's trained
+disease child, `trained_disease_child` in tests/conftest.py), for a generated
+split (`--split val` on a copy of the child's demo workspace) and a registered
+version (`--cohort`, the graph source committed beside a copy of the child and
+its workspace, `tests/fixtures/registered_cohort.py`):
 
 - each input is opened once, and the record equals the digests of the files;
 - a graph tensor, the cohort's sample file or the checkpoint replaced after its
-  read, by atomic rename or in-place rewrite, is the one encoded, scored or
-  built and the one recorded; a graph file (`kg.json` included) or a generated
+  read, by atomic rename or in-place rewrite, is the one used (the edge indices
+  the graph view is formed from and the bundle encodes, the node features
+  handed with them, which the disease model never reads; the samples scored;
+  the checkpoint the bundle is built from) and the one recorded; a graph file
+  (`kg.json` included) or a generated
   split replaced after the manifest read is refused, the refusal names it and the
   manifest, and no model is built, no checkpoint read and nothing written; a
   version's samples replaced after its `cohort.json` was read are refused by
@@ -45,6 +50,7 @@ import hashlib
 import inspect
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -56,8 +62,9 @@ torch = pytest.importorskip("torch")
 from tests.fixtures.opens import count_opens  # noqa: E402
 from tests.fixtures.path_forms import POISON, poison_path_forms  # noqa: E402
 from tests.fixtures.registered_cohort import (  # noqa: E402
-    build_registered_cohort,
     copy_registered_cohort,
+    registered_cohort_from_child,
+    write_demo_workspace,
 )
 from tests.fixtures.replacement import (  # noqa: E402
     HOWS,
@@ -78,13 +85,25 @@ def _sha(path):
 
 
 @pytest.fixture(scope="module")
-def registered_base(tmp_path_factory):
-    """Built once per module; each test measures its own copy."""
-    return build_registered_cohort(tmp_path_factory.mktemp("registered_base"))
+def registered_base(trained_disease_child, tmp_path_factory):
+    """The session's trained disease child as a registered-cohort tree: its
+    workspace and its checkpoint copied (the session's files stay read-only),
+    the graph source written and a version of it committed. Assembled once per
+    module, no training here; each test measures its own copy."""
+    return registered_cohort_from_child(trained_disease_child,
+                                        tmp_path_factory.mktemp("registered_base"))
 
 
-def _generated(root):
-    data_dir, checkpoint = build_workspace(root)
+def _generated(trained, root):
+    """A copy of the session child's workspace and checkpoint under `root`.
+
+    The copy also holds a loose `test_samples.json`, as a workspace from before
+    M4 holds the supplied cohort `test` beside its generated splits: a samples
+    file no run of a generated split reads, there to be seen unopened."""
+    data_dir, checkpoint = root / "data", root / "checkpoint.pt"
+    shutil.copytree(trained["data_dir"], data_dir)
+    shutil.copyfile(trained["disease"], checkpoint)
+    (data_dir / "test_samples.json").write_bytes((data_dir / "val_samples.json").read_bytes())
     return SimpleNamespace(kind="generated", data_dir=data_dir, checkpoint=checkpoint,
                            cohort_samples=data_dir / "val_samples.json",
                            output=root / "out" / "measurement.json")
@@ -110,15 +129,15 @@ def cli():
 
 
 @pytest.fixture(params=KINDS)
-def ws(request, tmp_path, registered_base, monkeypatch):
+def ws(request, tmp_path, trained_disease_child, registered_base, monkeypatch):
     if request.param == "generated":
-        return _generated(tmp_path / "a")
+        return _generated(trained_disease_child, tmp_path / "a")
     return _registered(registered_base, tmp_path / "a", monkeypatch)
 
 
 @pytest.fixture
-def generated(tmp_path):
-    return _generated(tmp_path / "a")
+def generated(tmp_path, trained_disease_child):
+    return _generated(trained_disease_child, tmp_path / "a")
 
 
 @pytest.fixture
@@ -129,16 +148,17 @@ def registered(tmp_path, registered_base, monkeypatch):
 @pytest.fixture
 def other(tmp_path):
     """Another workspace: the same layout, different bytes in every graph file
-    (five diseases instead of four). Its files are what a replacement writes;
-    they parse, so a refusal is the binding's, not a parse. Its `test` file is
-    the replacement for a samples file: its generated cut is the same as this
-    workspace's, so its `train` and `val` would be no replacement at all."""
+    (the synthetic five-disease graph, not the demo graph). Its files are what
+    a replacement writes; they parse, so a refusal is the binding's, not a
+    parse. Its `test` file is the replacement for a samples file. Only its
+    files are used, never its checkpoint: none of them is scored, since each is
+    either refused or lands after the run's read."""
     data_dir, checkpoint = build_workspace(tmp_path / "b", n_diseases=5)
     return data_dir
 
 
 def _other_checkpoint(checkpoint, path):
-    """The same architecture with shifted weights and another epoch."""
+    """The same model spec with shifted weights and another epoch."""
     contents = torch.load(checkpoint, map_location="cpu", weights_only=True)
     contents["state_dict"] = {
         name: value + 1.0 if value.is_floating_point() else value
@@ -150,8 +170,8 @@ def _other_checkpoint(checkpoint, path):
 
 
 def _argv(ws, *, split=None, cohort=None, registry=None, extra=()):
-    common = ["--checkpoint", str(ws.checkpoint), "--data-dir", str(ws.data_dir),
-              "--batch-size", str(BATCH_SIZE), "--device", "cpu"]
+    common = ["--mode", "disease", "--checkpoint", str(ws.checkpoint),
+              "--data-dir", str(ws.data_dir), "--batch-size", str(BATCH_SIZE), "--device", "cpu"]
     if ws.kind == "generated":
         return [*common, "--split", split or "val", "--output", str(ws.output), *extra]
     return [*common, "--cohort", cohort or ws.label, "--registry", str(registry or ws.registry),
@@ -198,38 +218,42 @@ def _expected(ws):
 
 @pytest.fixture
 def seen(monkeypatch):
-    """What the model was built from and what was encoded. `main` imports both
-    inside the function, so the patches land on the source modules."""
-    import src.evaluation.measurement as measurement
-    import src.models.gnn.shepherd_gnn as shepherd_gnn
+    """What the bundle was built from and the graph data its view was formed
+    from: the view keeps its edges, which the bundle encodes; the node features
+    ride along in the same mapping, and the disease model never reads them.
+    `main` imports both inside the function, so the patches land on the source
+    modules."""
+    import src.kg.graph_view as graph_view
+    import src.models.bundle.record as bundle_record
 
     seen = {}
-    real_build, real_encode = shepherd_gnn.build_shepherd_model, measurement.encode_full_graph
+    real_load, real_view = bundle_record.load_bundle, graph_view.build_graph_view
 
-    def build(checkpoint, graph_data, device=None):
-        seen["checkpoint"] = checkpoint
-        return real_build(checkpoint, graph_data, device)
+    def load(payload, **kwargs):
+        seen["checkpoint"] = payload
+        return real_load(payload, **kwargs)
 
-    def encode(model, graph_data, device):
+    def view(graph_data, **kwargs):
         seen["graph_data"] = graph_data
-        return real_encode(model, graph_data, device)
+        return real_view(graph_data, **kwargs)
 
-    monkeypatch.setattr(shepherd_gnn, "build_shepherd_model", build)
-    monkeypatch.setattr(measurement, "encode_full_graph", encode)
+    monkeypatch.setattr(bundle_record, "load_bundle", load)
+    monkeypatch.setattr(graph_view, "build_graph_view", view)
     return seen
 
 
 @pytest.fixture
 def no_model(monkeypatch):
-    """Building or encoding a model fails if it is reached."""
-    import src.evaluation.measurement as measurement
-    import src.models.gnn.shepherd_gnn as shepherd_gnn
+    """Building a bundle or forming the graph view it encodes fails if it is
+    reached."""
+    import src.kg.graph_view as graph_view
+    import src.models.bundle.record as bundle_record
 
     def reached(*args, **kwargs):
         raise AssertionError("a model was built or encoded after a refusal")
 
-    monkeypatch.setattr(shepherd_gnn, "build_shepherd_model", reached)
-    monkeypatch.setattr(measurement, "encode_full_graph", reached)
+    monkeypatch.setattr(bundle_record, "load_bundle", reached)
+    monkeypatch.setattr(graph_view, "build_graph_view", reached)
 
 
 def _nothing_written(ws):
@@ -247,9 +271,8 @@ def test_each_input_is_opened_once(cli, ws, tmp_path):
     """Both kinds: every workspace file the run reads, once, and the checkpoint
     once. A generated split reads its sibling for R2. A registered version reads
     its `cohort.json` and `samples.json` once each, and the workspace's `train`
-    and `val` only as R10 candidates, once each; the fixture checkpoint records
-    both, so once both are matched no candidate in an evidence directory is
-    opened at all."""
+    and `val` only as R10 candidates, once each; the child records both, so once
+    both are matched no candidate in an evidence directory is opened at all."""
     extra = ()
     evidence = tmp_path / "evidence"
     if ws.kind == "registered":
@@ -304,21 +327,27 @@ def test_nothing_else_in_the_directory_is_opened_or_becomes_a_role(cli, ws):
 # Replacements: used and recorded, or refused
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("how", HOWS)
+@pytest.mark.parametrize("role, key", [("edge_indices", "edge_index_dict"),
+                                       ("node_features", "x_dict")])
 def test_a_graph_tensor_replaced_after_its_read_is_encoded_and_recorded(
-    cli, ws, other, seen, monkeypatch, how
+    cli, ws, other, seen, monkeypatch, role, key, how
 ):
-    target = ws.data_dir / "node_features.pt"
+    """The edge indices are what the disease model encodes (the view is formed
+    from them); the node features it never reads, but they are recorded, so
+    the tensors handed on must be the ones read too."""
+    target = ws.data_dir / GRAPH_FILES[role]
     read = _sha(target)
     tensors = torch.load(target, weights_only=True)
     record = replace_after_read(monkeypatch, after=target, target=target,
-                                data=(other / "node_features.pt").read_bytes(), how=how)
+                                data=(other / GRAPH_FILES[role]).read_bytes(), how=how)
 
     assert _main(cli, ws) == 0
 
     assert record.fired == 1
-    assert _recorded(ws)["node_features"] == read != _sha(target)
-    for node_type, features in tensors.items():
-        assert torch.equal(seen["graph_data"]["x_dict"][node_type], features)
+    assert _recorded(ws)[role] == read != _sha(target)
+    assert set(seen["graph_data"][key]) == set(tensors)
+    for name, tensor in tensors.items():
+        assert torch.equal(seen["graph_data"][key][name], tensor)
 
 
 @pytest.mark.parametrize("how", HOWS)
@@ -344,7 +373,8 @@ def test_the_checkpoint_replaced_after_its_read_builds_the_model_read(
     cli, ws, seen, monkeypatch, tmp_path, how
 ):
     read = _sha(ws.checkpoint)
-    state = torch.load(ws.checkpoint, weights_only=True)["state_dict"]
+    contents = torch.load(ws.checkpoint, weights_only=True)
+    state = contents["state_dict"]
     _other_checkpoint(ws.checkpoint, tmp_path / "b.pt")
     record = replace_after_read(monkeypatch, after=ws.checkpoint, target=ws.checkpoint,
                                 data=(tmp_path / "b.pt").read_bytes(), how=how)
@@ -353,7 +383,9 @@ def test_the_checkpoint_replaced_after_its_read_builds_the_model_read(
 
     assert record.fired == 1
     assert _recorded(ws)["checkpoint"] == read != _sha(ws.checkpoint)
-    assert seen["checkpoint"]["epoch"] == 1, "the checkpoint built is A, not B"
+    # A's epoch, the child's own (a one-epoch run records 0), not B's 9.
+    assert seen["checkpoint"]["epoch"] == contents["epoch"] != 9, (
+        "the checkpoint built is A, not B")
     for name, value in state.items():
         assert torch.equal(seen["checkpoint"]["state_dict"][name], value)
 
@@ -484,13 +516,21 @@ def _republish_node_features_before_the_run(ws, data):
     torch.save(contents, ws.checkpoint)
 
 
-def test_a_republication_before_the_run_is_read_and_recorded(cli, generated, other):
+def test_a_republication_before_the_run_is_read_and_recorded(cli, generated, tmp_path):
     """Fired before either read, the run reads and records B.
 
     The checkpoint is one trained on the republished graph: a checkpoint that
     records A's tensors is refused against B (M2.4), which is not this test's
-    subject."""
-    data = (other / "node_features.pt").read_bytes()
+    subject. B is this graph exported again under another feature seed
+    (`write_demo_workspace(feature_seed=)`): the same edges with other node
+    features, which the disease model does not read, so the run completes
+    over B; what this shows is that B is read and recorded, not that it moves
+    a score."""
+    from src.kg.graph import DEFAULT_FEATURE_SEED
+
+    republished = write_demo_workspace(tmp_path / "republished",
+                                       feature_seed=DEFAULT_FEATURE_SEED + 1)
+    data = (republished / "node_features.pt").read_bytes()
     _republish_node_features_before_the_run(generated, data)
 
     assert _main(cli, generated) == 0
@@ -771,8 +811,9 @@ def test_graph_tensors_load_on_cpu_and_safely_and_the_checkpoint_keeps_its_optio
 
 
 def test_the_samples_are_read_with_the_default_fields(cli, ws, monkeypatch):
-    """Mode C scores phenotypes against every disease; the two fields only
-    training reads stay unread, for the cohort and for R10's evidence alike.
+    """The disease task scores phenotypes against every disease of the model's
+    graph view; the two fields only training reads stay unread, for the cohort
+    and for R10's evidence alike.
     Every samples read goes through `read_samples_file`, the one parser."""
     import src.evaluation.r10 as r10
     import src.kg.storage.file_storage as file_storage

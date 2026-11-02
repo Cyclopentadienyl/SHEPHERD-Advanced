@@ -31,11 +31,26 @@ For tests that change files, `copy_registered_cohort` copies a built tree, so a
 module builds once and each test works on its own copy; `write_demo_workspace`
 with another `sample_seed` gives a re-sampled workspace over the same graph.
 
+`registered_cohort_from_child` lays out a trained disease child the same way
+(`trained_disease_child` in tests/conftest.py; `tests/fixtures/trained_children.py`
+trains it, nothing here does): its workspace and checkpoint copied, the graph
+source written and a version of it imported. What the disease task's binding
+makes of that version in the demo graph's view is `GRAPH_SOURCE_BINDING`.
+
+`write_checkpoint_without_model_spec` writes the other kind of file a test
+needs: a checkpoint without a model spec, which the lists show as history and
+every runner refuses. It is written without any model class and holds no
+weights: only its `epoch` and `logs`, which the lists show, and, with a
+workspace, its record. Measurement and training's run plan refuse it for its
+missing spec; serving refuses it for having no weights until K8-4.
+
 Module: tests/fixtures/registered_cohort.py
 """
 from __future__ import annotations
 
+import hashlib
 import json
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, NamedTuple, Optional
@@ -78,6 +93,21 @@ GRAPH_SOURCE_COUNTS: Dict[str, Dict[str, Any]] = {
     },
 }
 GRAPH_SOURCE_UNMAPPABLE_TERMS = {UNKNOWN_HPO_2: 1, UNKNOWN_HPO: 2}
+
+#: What the disease task's binding (`bind_disease_cases`, a report's
+#: `sampler_evidence.binding`) makes of the graph source's version under
+#: "keep", in the demo graph's view. Written out, not read back from a run: the
+#: demo graph gives two phenotypes, HP:0002311 and HP:0001290, no edge at all
+#: (`scripts/setup_demo.build_demo_kg`), so the view's largest-component rule
+#: leaves both out. case-03 lists only those two, and case-10 only HP:0002311
+#: once its unknown term is dropped, so neither binds; case-06 loses
+#: HP:0001290 and binds on HP:0000486: four phenotypes dropped, two cases
+#: unranked. The model's weights play no part.
+GRAPH_SOURCE_BINDING: Dict[str, int] = {
+    "cases": 10, "bound": 8, "excluded": 2, "phenotypes_outside_view": 4,
+    "excluded_no_phenotype_in_view": 2,
+}
+GRAPH_SOURCE_UNRANKED = frozenset({"case-03", "case-10"})
 
 
 class RegisteredCohort(NamedTuple):
@@ -212,6 +242,41 @@ def write_fixture_checkpoint(data_dir: Path, path: Path, *,
     )
 
 
+def write_checkpoint_without_model_spec(path: Path, *,
+                                        data_dir: Optional[Path] = None) -> str:
+    """A checkpoint without a model spec, written without any model class;
+    returns the digest written.
+
+    It holds no weights: only its `epoch` and `logs` (`val_mrr` 0.0, as
+    `write_fixture_checkpoint` records) and, with `data_dir`, its record. The
+    lists read whether a `model_spec` is there (none, so the file is listed as
+    history), its `epoch` and `logs` and its record's `split_manifest`.
+    Measurement and serving compare the record's graph roles first; then
+    measurement refuses the file for its missing spec, and serving, until K8-4,
+    for having no weights. Training's run plan refuses it as written before the
+    model spec.
+
+    With `data_dir`, the record is the one a training run over that workspace
+    writes (`training_input_digests`: both sample files, the four graph roles
+    and the manifest), each digest the one that workspace's manifest binds, so
+    measurement refuses the file for its missing spec and for nothing else.
+    Without `data_dir` it records nothing, as a model from before the
+    provenance contract.
+    """
+    from src.kg.artifacts import GRAPH_ARTIFACTS, read_split_manifest
+    from src.utils.checkpoint_io import write_checkpoint
+
+    payload: Dict[str, Any] = {"epoch": 1, "logs": {"val_mrr": 0.0}}
+    if data_dir is not None:
+        manifest = read_split_manifest(data_dir)
+        bound = manifest.manifest["artifacts"]
+        payload["training_input_digests"] = {
+            **{role: bound[role] for role in ("train_samples", "val_samples", *GRAPH_ARTIFACTS)},
+            "split_manifest": manifest.identity.sha256,
+        }
+    return write_checkpoint(payload, path)
+
+
 def import_version(registry: Path, data_dir: Path, source: Path, *, label: str = LABEL,
                    role: str = ROLE, partial_phenotypes: str = "keep") -> Any:
     """Preview, then commit under the preview's own id: the importer's two steps."""
@@ -284,9 +349,45 @@ def copy_registered_cohort(cohort: RegisteredCohort, root: Path) -> RegisteredCo
     )
 
 
+def registered_cohort_from_child(trained: Mapping[str, Path], root: Path, *,
+                                 commit: bool = True) -> RegisteredCohort:
+    """A trained disease child as a registered-cohort tree under `root`, laid
+    out as `build_registered_cohort` lays out its own; **nothing is trained
+    here**.
+
+    `trained` is `train_children`'s mapping (the session's
+    `trained_disease_child`): its ``"data_dir"`` workspace and ``"disease"``
+    checkpoint are copied, so the trained files stay read-only; the graph
+    source is written and a version of it imported (`import_version`). With
+    `commit=False` nothing is imported: the registry is left empty and
+    `version` is None, for a test that imports through the command line
+    itself. `root` must be outside the repository; it is created.
+    """
+    import shutil
+
+    from src.evaluation.cohort_registry import REPO_ROOT
+
+    root = Path(root).resolve()
+    if root == REPO_ROOT or REPO_ROOT in root.parents:
+        raise ValueError(f"{root} is inside the repository; copy the child to a tmp dir")
+    data_dir = Path(shutil.copytree(trained["data_dir"], root / "workspace"))
+    checkpoint = root / "checkpoints" / "best.pt"
+    checkpoint.parent.mkdir()
+    shutil.copyfile(trained["disease"], checkpoint)
+    source = write_source(root / SOURCE_FILENAME, graph_source_cases(data_dir))
+    registry = root / "registry"
+    registry.mkdir()
+    version = import_version(registry, data_dir, source) if commit else None
+    return RegisteredCohort(data_dir, checkpoint,
+                            hashlib.sha256(checkpoint.read_bytes()).hexdigest(), registry,
+                            source, version)
+
+
 __all__ = [
+    "GRAPH_SOURCE_BINDING",
     "GRAPH_SOURCE_COUNTS",
     "GRAPH_SOURCE_UNMAPPABLE_TERMS",
+    "GRAPH_SOURCE_UNRANKED",
     "IMPORTED_AT",
     "LABEL",
     "ROLE",
@@ -300,7 +401,9 @@ __all__ = [
     "copy_registered_cohort",
     "graph_source_cases",
     "import_version",
+    "registered_cohort_from_child",
     "val_source_cases",
+    "write_checkpoint_without_model_spec",
     "write_demo_workspace",
     "write_fixture_checkpoint",
     "write_source",

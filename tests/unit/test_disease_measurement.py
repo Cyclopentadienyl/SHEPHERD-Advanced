@@ -29,8 +29,8 @@ from tests.fixtures.registered_cohort import (  # noqa: E402
     LABEL,
     graph_source_cases,
     import_version,
+    write_checkpoint_without_model_spec,
     write_demo_workspace,
-    write_fixture_checkpoint,
     write_source,
 )
 from tests.fixtures.trained_children import train_children  # noqa: E402
@@ -108,7 +108,7 @@ def test_a_checkpoint_without_a_spec_is_history(trained, tmp_path):
     import measure_scorer
 
     old = tmp_path / "old.pt"
-    write_fixture_checkpoint(trained["data_dir"], old)
+    write_checkpoint_without_model_spec(old, data_dir=trained["data_dir"])
     out = tmp_path / "old.json"
     with pytest.raises(ValueError, match="written before the model spec"):
         measure_scorer.main(["--mode", "disease", "--checkpoint", str(old),

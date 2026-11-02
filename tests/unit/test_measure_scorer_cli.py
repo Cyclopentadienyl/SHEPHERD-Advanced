@@ -213,14 +213,15 @@ def test_the_file_sha256_reexport_is_gone():
     ["--predictions-output", "p.json"],
 ], ids=lambda argv: argv[0])
 def test_the_cli_has_no_option_mode_c_would_ignore(retired):
-    """Mode C is the only mode, has no dataloader, draws nothing and writes no
-    predictions rows. An option kept for any of those would be accepted and
-    change nothing, which reads as a setting that took effect."""
+    """Options retired when Mode C was the only mode, which had no dataloader,
+    drew nothing and wrote no predictions rows, stay refused, asked with a task
+    mode so the refusal is the option's. An option kept for any of those would
+    be accepted and change nothing, which reads as a setting that took effect."""
     from scripts.measure_scorer import parse_args
 
     with pytest.raises(SystemExit):
-        parse_args(["--checkpoint", "c.pt", "--data-dir", "d", "--split", "val",
-                    "--output", "o.json", *retired])
+        parse_args(["--mode", "disease", "--checkpoint", "c.pt", "--data-dir", "d",
+                    "--split", "val", "--output", "o.json", *retired])
 
 
 @pytest.mark.parametrize("cohort", [
@@ -235,7 +236,8 @@ def test_a_batch_size_that_is_not_a_positive_integer_is_refused_at_the_command_l
     from scripts.measure_scorer import parse_args
 
     with pytest.raises(SystemExit) as raised:
-        parse_args(["--checkpoint", "c.pt", "--data-dir", "d", *cohort, "--batch-size", value])
+        parse_args(["--mode", "disease", "--checkpoint", "c.pt", "--data-dir", "d", *cohort,
+                    "--batch-size", value])
     assert raised.value.code == 2
 
 
@@ -270,7 +272,8 @@ def test_split_has_no_default_on_the_measurement_entry_point():
     import scripts.measure_scorer as measure
 
     with pytest.raises(SystemExit):
-        measure.parse_args(["--checkpoint", "c.pt", "--data-dir", "d", "--output", "o.json"])
+        measure.parse_args(["--mode", "disease", "--checkpoint", "c.pt", "--data-dir", "d",
+                            "--output", "o.json"])
 
 
 def test_missing_split_error_lists_what_the_workspace_actually_has(tmp_path):
@@ -293,7 +296,7 @@ def test_missing_split_error_when_nothing_is_there(tmp_path):
 # ==============================================================================
 # Which arguments go with which kind of cohort (contract M4, decision 8)
 # ==============================================================================
-_BASE = ["--checkpoint", "c.pt", "--data-dir", "d", "--device", "cpu"]
+_BASE = ["--mode", "disease", "--checkpoint", "c.pt", "--data-dir", "d", "--device", "cpu"]
 
 
 @pytest.mark.parametrize("extra, fragment", [

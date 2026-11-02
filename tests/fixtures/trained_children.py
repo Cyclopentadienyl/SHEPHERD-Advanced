@@ -8,6 +8,12 @@ wrote, not a payload a test assembled. A gene or patients-like-me child trains
 on the gene task's functional fixture, derived first through
 `scripts/derive_task_fixture.py` when the workspace has none.
 
+The base's spec and sizes and the disease child's sizes are the demo's, read
+from `scripts/setup_demo.py`'s `demo_task_training` (the one statement of the
+demo's sizes), so a test's child is trained at the demo's sizes; the gene and
+patients-like-me children's sizes, which the demo does not train, are this
+helper's own.
+
 The runs are filed where the server's list finds them by default
 (``<workspace>/runs/gatv2/<run>``, named by a start time so the listing's
 order is base first, children after, in the order asked); a test that keeps
@@ -17,7 +23,6 @@ Module: tests/fixtures/trained_children.py
 """
 from __future__ import annotations
 
-import dataclasses
 import sys
 from pathlib import Path
 from typing import Any, Dict, Optional, Sequence
@@ -30,27 +35,28 @@ CHILD_RUNS = {"disease": "20261002-000000_disease_bbbbbb",
               "gene": "20261003-000000_gene_cccccc",
               "patients_like_me": "20261004-000000_patients_like_me_dddddd"}
 
-#: Each task's settings for a 1-epoch CPU child on the demo workspace; the
-#: task's recipe fills the rest.
+#: The gene and patients-like-me tasks' settings for a 1-epoch CPU child on
+#: the demo workspace; the task's recipe fills the rest. The disease child's
+#: are the demo's (`demo_task_training`).
 _CHILD_SETTINGS: Dict[str, Dict[str, Any]] = {
-    "disease": {"batch_size": 8, "num_neighbors": [3, 3], "candidate_sample_size": 8,
-                "sparse_sample_size": 8},
     "gene": {"batch_size": 4, "num_neighbors": [3, 3], "sparse_sample_size": 4},
     "patients_like_me": {"batch_size": 4, "num_neighbors": [3, 3], "sparse_sample_size": 4},
 }
 
 
-def small_base_spec() -> Any:
-    """The reference base spec, shrunk to train in seconds on CPU (input 8,
-    two layers of width 4 with 2 heads); every other field the reference's."""
-    from src.models.bundle import reference_spec
-    from src.models.bundle.spec import InputSpec
+def _demo_training() -> Dict[str, Dict[str, Any]]:
+    from scripts.setup_demo import demo_task_training
 
-    spec = reference_spec("base")
-    return dataclasses.replace(
-        spec, input=InputSpec(dim=8),
-        encoder=dataclasses.replace(spec.encoder, layers=2, hidden=4, output=4, heads=2)
-    ).validate()
+    return demo_task_training()
+
+
+def small_base_spec() -> Any:
+    """The demo's base spec, `demo_task_training()["base"]["model_spec"]`: the
+    reference base spec shrunk to train in seconds on CPU, its sizes stated
+    there only; every other field the reference's."""
+    from src.models.bundle.spec import ModelSpec
+
+    return ModelSpec.from_dict(_demo_training()["base"]["model_spec"]).validate()
 
 
 def _train(**settings: Any) -> None:
@@ -71,10 +77,11 @@ def train_children(data_dir: Path, tasks: Sequence[str] = ("disease",), *,
     ``checkpoints/last.pt`` by ``"base"`` and by task, beside ``"data_dir"``."""
     data_dir = Path(data_dir)
     runs = Path(runs) if runs is not None else data_dir / "runs" / "gatv2"
+    demo = _demo_training()
+    child_settings = {**_CHILD_SETTINGS, "disease": demo["disease"]}
     base_run = runs / BASE_RUN
     _train(data_dir=str(data_dir), run_dir=str(base_run), learning_stage="base",
-           model_spec=small_base_spec().to_dict(), num_epochs=1, batch_size=32,
-           num_neighbors=[4, 4], device="cpu", save_top_k=1)
+           num_epochs=1, device="cpu", save_top_k=1, **demo["base"])
     base = base_run / "checkpoints" / "last.pt"
     out: Dict[str, Path] = {"data_dir": data_dir, "base": base}
     for task in tasks:
@@ -89,7 +96,7 @@ def train_children(data_dir: Path, tasks: Sequence[str] = ("disease",), *,
         child_run = runs / CHILD_RUNS[task]
         _train(data_dir=str(data_dir), run_dir=str(child_run), learning_stage="finetune",
                task=task, finetune_from=str(base), num_epochs=1, device="cpu", save_top_k=1,
-               **_CHILD_SETTINGS[task])
+               **child_settings[task])
         out[task] = child_run / "checkpoints" / "last.pt"
     return out
 

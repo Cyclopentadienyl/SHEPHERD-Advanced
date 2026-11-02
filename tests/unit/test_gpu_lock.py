@@ -720,8 +720,9 @@ def test_the_program_entries_take_the_lock_and_the_module_names_each_one():
 
 # --------------------------------------------------------------------------- the CLIs
 def _measure_argv(root: Path, workspace: str = "ws_b"):
-    return ["--checkpoint", str(root / workspace / "best.pt"), "--data-dir",
-            str(root / workspace), "--cohort", "c1", "--registry", str(root / "registry")]
+    return ["--mode", "disease", "--checkpoint", str(root / workspace / "best.pt"),
+            "--data-dir", str(root / workspace), "--cohort", "c1",
+            "--registry", str(root / "registry")]
 
 
 def _deployment_registry(root: Path, monkeypatch) -> None:

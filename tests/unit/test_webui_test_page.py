@@ -62,6 +62,7 @@ from tests.fixtures.operator_access import (  # noqa: E402
     operator_request,
 )
 from tests.fixtures.served_page import ServedSession, served  # noqa: E402
+from tests.fixtures.trained_children import CHILD_RUNS  # noqa: E402
 
 RUN = "20261017-091500_run_3fa9c1"
 LABEL = "demo-test-1"
@@ -69,35 +70,49 @@ LABEL = "demo-test-1"
 
 # --------------------------------------------------------------------------- fixtures
 @pytest.fixture(scope="module")
-def built(tmp_path_factory):
-    """A workspaces root with the demo workspace and its checkpoint in a run, a
+def built(trained_disease_child, tmp_path_factory):
+    """A workspaces root with the demo workspace holding two runs: the
+    session's trained disease child (`trained_disease_child`, copied) and a
+    checkpoint without a model spec, which the listing reads as history; a
     registry with one version holding one kept, unregistered report (the real
-    measurement, on CPU: an untrained model, so no number here is a result),
-    and an intake directory with one source."""
+    disease task measurement of the child, on CPU: a 1-epoch model, so no
+    number here is a result); and an intake directory with one source."""
     import scripts.measure_scorer as measure_scorer
-    from tests.fixtures.registered_cohort import build_registered_cohort
+    from src.utils.fingerprint import file_sha256
+    from tests.fixtures.registered_cohort import (
+        graph_source_cases,
+        import_version,
+        write_checkpoint_without_model_spec,
+        write_source,
+    )
 
     base = tmp_path_factory.mktemp("testpage")
-    cohort = build_registered_cohort(base / "c")
     workspaces = base / "ws"
     workspaces.mkdir()
     demo = workspaces / "demo"
-    shutil.move(str(cohort.data_dir), demo)
-    checkpoints = demo / "runs" / "hgt" / RUN / "checkpoints"
-    checkpoints.mkdir(parents=True)
-    shutil.copy2(cohort.checkpoint, checkpoints / "best.pt")
+    shutil.copytree(trained_disease_child["data_dir"], demo)
+    child = demo / "runs" / "gatv2" / CHILD_RUNS["disease"] / "checkpoints" / "last.pt"
+    child.parent.mkdir(parents=True)
+    shutil.copy2(trained_disease_child["disease"], child)
+    history = demo / "runs" / "hgt" / RUN / "checkpoints" / "best.pt"
+    history.parent.mkdir(parents=True)
+    write_checkpoint_without_model_spec(history, data_dir=demo)
+    registry = base / "c" / "registry"
+    registry.mkdir(parents=True)
+    source = write_source(base / "c" / "cases.json", graph_source_cases(demo))
+    version = import_version(registry, demo, source)
     intake = base / "intake"
     intake.mkdir()
-    shutil.copy2(cohort.source, intake / "cases.json")
+    shutil.copy2(source, intake / "cases.json")
     # The registry is the deployment's while the run measures (BACKLOG 37).
     with pytest.MonkeyPatch.context() as patch:
-        patch.setenv("SHEPHERD_REGISTRY", str(cohort.registry))
-        code = measure_scorer.main(["--checkpoint", str(checkpoints / "best.pt"),
+        patch.setenv("SHEPHERD_REGISTRY", str(registry))
+        code = measure_scorer.main(["--mode", "disease", "--checkpoint", str(child),
                                     "--data-dir", str(demo), "--cohort", LABEL, "--registry",
-                                    str(cohort.registry), "--device", "cpu"])
+                                    str(registry), "--device", "cpu"])
     assert code == 0
-    return SimpleNamespace(base=base, sha=cohort.checkpoint_sha256,
-                           version_sha=cohort.version.identity.sha256)
+    return SimpleNamespace(base=base, sha=file_sha256(child), history_sha=file_sha256(history),
+                           version_sha=version.identity.sha256)
 
 
 @pytest.fixture
@@ -122,8 +137,10 @@ def site(built, tmp_path, monkeypatch):
         root=root, ws=root / "ws", demo=root / "ws" / "demo", registry=registry,
         intake=root / "intake", reports=reports, run_id=run_dir.name, sha=built.sha,
         version_sha=built.version_sha,
-        checkpoint=root / "ws" / "demo" / "runs" / "hgt" / RUN / "checkpoints" / "best.pt",
-        key=f"hgt/{RUN}/best.pt")
+        checkpoint=(root / "ws" / "demo" / "runs" / "gatv2" / CHILD_RUNS["disease"]
+                    / "checkpoints" / "last.pt"),
+        key=f"gatv2/{CHILD_RUNS['disease']}/last.pt",
+        history_key=f"hgt/{RUN}/best.pt", history_sha=built.history_sha)
 
 
 def _readonly():
@@ -139,8 +156,8 @@ def _models(page, request):
     return tp.read_models("demo", request)
 
 
-#: Synthetic bundle runs filed beside the fixture's ShepherdGNN run (which the
-#: listing reads as history, K6 decision 1).
+#: Synthetic bundle runs filed beside the fixture's trained child and its file
+#: without a model spec (which the listing reads as history, K6 decision 1).
 CHILD_RUN = "20261020-000000_disease_bbbbbb"
 BUNDLE_BASE_RUN = "20261019-000000_base_aaaaaa"
 
@@ -193,7 +210,7 @@ def _disagreeing_copy(site, delta=0.0004):
     copy = site.reports / f"20261020T180000Z-{site.sha[:12]}-0badc0de"
     shutil.copytree(source, copy)
     report = json.loads((copy / "report.json").read_text())
-    report["authoritative_metrics"]["untruncated_mrr"] += delta
+    report["authoritative_metrics"]["pooled_mrr"] += delta
     (copy / "report.json").write_text(json.dumps(report, indent=2, sort_keys=True))
     return copy.name
 
@@ -339,12 +356,18 @@ def test_a_read_only_request_sees_the_versions_and_reports_and_no_checkpoint(sit
 def test_an_operator_lists_the_workspaces_checkpoints(site, monkeypatch):
     page, request = _page(monkeypatch)
     models = tp.read_models("demo", request)
-    assert [tp.item_key(i) for i in models["items"]] == [site.key]
-    assert models["items"][0]["sha256"] == site.sha
-    (label, key), = tp.model_choices(models)
-    assert key == site.key and f"model fingerprint {site.sha[:12]}" in label
-    # The fixture's ShepherdGNN checkpoint is listed, led by what it is.
-    assert label.startswith("History · never run · epoch ")
+    # Latest run first (by its newest file): the history file is written after
+    # the child is copied with its training time kept.
+    assert [tp.item_key(i) for i in models["items"]] == [site.history_key, site.key]
+    assert [i["sha256"] for i in models["items"]] == [site.history_sha, site.sha]
+    (history, history_key), (child, child_key) = tp.model_choices(models)
+    assert (history_key, child_key) == (site.history_key, site.key)
+    assert f"model fingerprint {site.history_sha[:12]}" in history
+    assert f"model fingerprint {site.sha[:12]}" in child
+    # Each is listed led by what it is: the fixture's file without a model
+    # spec as history, its trained child by its task.
+    assert history.startswith("History · never run · epoch ")
+    assert child.startswith("Disease · epoch ")
 
 
 def test_the_reports_of_a_version_with_their_state_and_record(site):
@@ -365,7 +388,7 @@ def test_the_selected_reports_registration_is_asked_beside_the_listed_checkpoint
     refined = tp.refine_registration(page, reports, site.run_id, models)
     (run,) = refined["runs"]
     assert run["state"]["registered"] == "not_registered"
-    assert run["state"]["checked_beside"] == f"hgt/{RUN}/best.pt"
+    assert run["state"]["checked_beside"] == site.key
     readonly = tp.read_page(_readonly())
     assert tp.refine_registration(readonly, reports, site.run_id, models) is reports
     # A ledger that cannot be read again leaves the list's answer, never a page error.
@@ -384,7 +407,7 @@ def test_a_disagreeing_key_is_shown_runs_disagree_and_cannot_be_registered(site,
     reports = tp.read_reports(LABEL)
     runs = {r["run_id"]: r for r in reports["runs"]}
     assert runs[other]["contest"]["state"] == "contested"
-    assert "untruncated_mrr" in runs[other]["contest"]["differing"]
+    assert "pooled_mrr" in runs[other]["contest"]["differing"]
     html = tp.reports_html(reports, other)
     assert "runs disagree — investigate" in html
     allowed, why = tp.register_state(page, reports, site.run_id)
@@ -473,7 +496,7 @@ def test_the_cohort_route_and_the_test_page_give_each_run_the_same_d5_state(
         assert bool(shown["problems"]) == (expected == "cannot_be_checked")
     assert str(site.root) not in json.dumps([run["contest"] for run in route.values()])
     if case == "contested":
-        assert "untruncated_mrr" in route[added]["contest"]["differing"]
+        assert "pooled_mrr" in route[added]["contest"]["differing"]
         assert sorted(route[added]["contest"]["disagreeing_runs"]) == sorted(with_report)
     if case == "a report whose key cannot be told":
         assert page[added]["key"] is None and "could not be read" in page[added]["unbuilt"]
@@ -509,7 +532,7 @@ def test_a_report_replaced_between_the_scan_and_its_state_is_never_shown_unconte
         replaced = b"not a report"
     else:
         changed = json.loads(original)
-        changed["authoritative_metrics"]["untruncated_mrr"] += 0.0004
+        changed["authoritative_metrics"]["pooled_mrr"] += 0.0004
         replaced = json.dumps(changed, indent=2, sort_keys=True).encode()
     real = report_store.scan_report_store
 
@@ -571,10 +594,15 @@ def test_a_store_that_cannot_be_scanned_reads_the_same_for_its_records_and_its_r
 def test_the_result_shows_aggregates_and_states_never_a_case_or_a_path(site):
     reports = tp.read_reports(LABEL)
     html = tp.result_html(reports, site.run_id, tp.path_roots())
-    assert "Mode C MRR (untruncated)" in html and "over 10 ranked" in html
-    assert "10 of 13</b> source cases ranked" in html
-    assert "ground truth absent 2 · phenotype unmappable 1" in html
-    assert "Validation MRR" not in html, "Trainer validation and Mode C never share a place"
+    # A disease task report: its tiles, and its coverage over the version's
+    # import-eligible cases, of which it ranks those whose truth is in the
+    # model's graph view (the report's `n_ranked`).
+    ranked = json.loads((site.reports / site.run_id / "report.json").read_text())["n_ranked"]
+    assert 0 < ranked <= 10
+    assert "Disease pooled MRR" in html and "Disease coverage" in html
+    assert (f"<b>{ranked} of 10</b> import-eligible cases ranked by the model · 13 source "
+            "cases; 3 excluded at import: ground truth absent 2 · phenotype unmappable 1") in html
+    assert "Validation MRR" not in html, "Trainer validation and a test result never share a place"
     assert "case-" not in html and str(site.root) not in html
     assert "synthetic</b> — a generated stand-in" in html
     assert "R1 graph files match the workspace manifest" in html
@@ -634,8 +662,8 @@ def test_start_waits_for_every_choice_and_says_why(site, monkeypatch):
     another = dict(binding, graph={**binding["graph"], "kg": "0" * 64})
     allowed, why = tp.start_state(page, models, "demo", LABEL, child, another, ("none", ""))
     assert allowed is False and "mapped against another graph" in why
-    # The fixture's ShepherdGNN checkpoint is history: listed, never measured.
-    assert state("demo", LABEL, site.key) == (
+    # The fixture's file without a model spec is history: listed, never measured.
+    assert state("demo", LABEL, site.history_key) == (
         False, "Disabled: History · never run (no model spec: a ShepherdGNN checkpoint): not "
                "measured here. Choose a model finetuned for a task.")
 
@@ -777,15 +805,15 @@ def _keep_mode_c_report(site) -> str:
     """A kept Mode C report of the site's checkpoint on its version, built
     (`mode_c_report`) on the site report's other manifest fields, whatever mode
     that report was measured in: the subject of the Mode C readers here until
-    K8-6e. At batch size 16, a measurement of its own, so it never contests the
-    site's report. Its run id."""
+    K8-6e. Its mode is part of its key, so it never contests the site's disease
+    report. Its run id."""
     from src.evaluation.cohort_registry import resolve_version
     from tests.fixtures.report_store import store_bytes
     from tests.unit.test_evaluation_sidecar import mode_c_report
 
     manifest = _site_manifest(site)
     eligible = manifest["cohort_version"]["counts"]["ranked_eligible"]
-    report = mode_c_report(n_ranked=eligible, **manifest, batch_size=16)
+    report = mode_c_report(n_ranked=eligible, **manifest)
     path = store_bytes(site.registry, json.dumps(report, indent=2).encode("utf-8"),
                        version=resolve_version(site.registry, LABEL), checkpoint_sha256=site.sha)
     return path.parent.name
@@ -841,8 +869,14 @@ def test_a_kept_mode_d_report_is_shown_under_its_own_mode_and_its_register_is_re
     rows = _shown(tp.reports_html(reports, None))
     assert "served ranking (Mode D): report kept" in rows
     assert "model ranking (Mode C): report kept" in rows
-    c_result = _shown(tp.result_html(reports, c_run, []))
+    c_html = tp.result_html(reports, c_run, [])
+    c_result = _shown(c_html)
     assert MODE_C_RESULT_LABEL in c_result and "Mode D" not in c_result
+    # The kept C report's Result label carries Mode C's help (EV8 keeps it
+    # until K8-6e), not the R10 help.
+    c_label = c_html[c_html.index('class="shep-test-label"'):]
+    c_label = c_label[:c_label.index("</div>")]
+    assert "Help: Mode C result" in c_label and "Help: R10 labels" not in c_label
 
     page, request = _page(monkeypatch)
     off, why = tp.register_state(page, reports, d_run)
@@ -877,7 +911,7 @@ def _another_valid_report(path) -> bytes:
     """The reviewer's counter-example (P2-1): another valid report of the same
     checkpoint and version, its MRR moved by 0.0004."""
     replacement = json.loads(path.read_bytes())
-    replacement["authoritative_metrics"]["untruncated_mrr"] += 0.0004
+    replacement["authoritative_metrics"]["pooled_mrr"] += 0.0004
     return json.dumps(replacement, indent=2, sort_keys=True).encode()
 
 
@@ -1951,7 +1985,7 @@ def test_register_from_a_copy_files_beside_the_checkpoint_the_run_read(site, mon
                                      request=request)
     state = tp.find(refined["runs"], "run_id", site.run_id)["state"]
     assert state["registered"] == "not_registered"
-    assert state["checked_beside"] == f"hgt/{RUN}/best.pt in workspace demo"
+    assert state["checked_beside"] == f"{site.key} in workspace demo"
     done, said = tp.register_selected(page, refined, models_copy, "copy", site.run_id, request)
     assert done is True and said.startswith("Registered as record 1.")
     assert demo_ledger.exists() and not copy_ledger.exists()
@@ -1975,8 +2009,7 @@ def test_a_report_changed_since_the_list_is_never_placed_from_its_new_bytes(site
         "cannot_be_checked"
     control = tp.refine_registration(page, reports, site.run_id, models, request=request)
     state = tp.find(control["runs"], "run_id", site.run_id)["state"]
-    assert state["registered"] == "not_registered" and state["checked_beside"] == \
-        f"hgt/{RUN}/best.pt"
+    assert state["registered"] == "not_registered" and state["checked_beside"] == site.key
 
     path = site.reports / site.run_id / "report.json"
     _swap(path, _another_valid_report(path), "rename")
@@ -2007,7 +2040,7 @@ def test_the_registered_answer_reads_the_report_once_the_registrations_read(site
 
     state = tp.find(refined["runs"], "run_id", site.run_id)["state"]
     assert state["registered"] == "not_registered"
-    assert state["checked_beside"] == f"hgt/{RUN}/best.pt"
+    assert state["checked_beside"] == site.key
     assert len(reads) == 1, reads
 
 
@@ -2029,7 +2062,7 @@ def test_every_row_says_not_registered_for_an_operator_and_keeps_it(site, monkey
     reports = tp.read_reports(LABEL)
     rows = tp.refine_rows(page, reports, models)
     state = tp.find(rows["runs"], "run_id", site.run_id)["state"]
-    assert state["registered"] == "not_registered" and state["checked_beside"] == f"hgt/{RUN}/best.pt"
+    assert state["registered"] == "not_registered" and state["checked_beside"] == site.key
     html = tp.reports_html(rows, None, models=models)
     assert "report kept · not registered" in html and "cannot be checked from the list" not in html
     from_copy = tp.refine_rows(page, reports, models_copy)
@@ -2151,7 +2184,7 @@ def test_the_r10_help_sits_beside_the_r10_lines(site):
     html = tp.result_html(reports, site.run_id, [])
     label = html[html.index('class="shep-test-label"'):]
     label = label[:label.index("</div>")]
-    assert "Help: R10 labels" not in label and "Help: Mode C result" in label
+    assert "Help: R10 labels" not in label and "Help: Disease task result" in label
     r10 = html[html.index(">R10, training"):]
     assert r10.index("Help: R10 labels") < r10.index('class="shep-v"')
 
@@ -2334,7 +2367,9 @@ def test_the_ledger_order_is_the_file_then_the_workspace_the_run_read(site, monk
     manifest = json.loads((site.reports / site.run_id / "report.json").read_text())["manifest"]
     newer = site.demo / "runs" / "hgt" / "20261019-080000_run_aaaaaa" / "checkpoints"
     newer.mkdir(parents=True)
-    shutil.copy2(site.checkpoint, newer / "best.pt")
+    # Written now, so its run is the most recently trained (`list_runs` orders
+    # runs by their newest file): it lists before the fixture's history file too.
+    shutil.copy(site.checkpoint, newer / "best.pt")
     page, request = _page(monkeypatch)
     models = tp.read_models("demo", request)
     assert models["items"][0]["run"] == "20261019-080000_run_aaaaaa", "the newer copy lists first"
@@ -2527,7 +2562,7 @@ def test_start_and_its_reason_refuse_what_is_not_measured_with_one_rule(site, mo
         f"gatv2/{BUNDLE_BASE_RUN}/last.pt": "this checkpoint is a base",
         "gatv2/20261021-000000_refused_cccccc/last.pt":
             "Record not readable (checkpoint record version 999",
-        site.key: "History · never run (no model spec",
+        site.history_key: "History · never run (no model spec",
         "gatv2/20261022-000000_gene_dddddd/last.pt": "this cohort version lists no causal genes",
     }
     for key, says in cases.items():
@@ -2582,8 +2617,9 @@ def test_every_checkpoint_is_listed_led_by_what_it_is(site, monkeypatch):
     for (label, _key), item in zip(choices, models["items"], strict=True):
         assert label.startswith(r.record_kind_text(item) + " · epoch "), label
     leads = sorted(label.split(" · epoch ")[0] for label in labels)
-    assert leads == sorted(["Base", "Disease", "Gene", "Patients-like-me", "History · never run",
-                            "Record not readable"])
+    # Two disease children: the fixture's trained one and the one put here.
+    assert leads == sorted(["Base", "Disease", "Disease", "Gene", "Patients-like-me",
+                            "History · never run", "Record not readable"])
 
 
 def _task_record(mode, **metrics):
