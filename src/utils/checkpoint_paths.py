@@ -299,6 +299,9 @@ def run_dir_outside(run_dir: PathLike, data_dir: PathLike) -> Optional[str]:
     outside = _outside(path, within)
     if outside is None:
         return None
+    if not outside.startswith("resolves outside"):
+        return (f"the run directory {path} {outside}, so it is not written: a link on its "
+                "path loops or is broken; fix that link, or give another run_dir.")
     return (f"the run directory {path} {outside}, so it is not written: the listing and "
             "automatic selection read only runs inside the workspace and would never choose "
             "it. Keep the workspace's runs/ and its layout directories inside the workspace "

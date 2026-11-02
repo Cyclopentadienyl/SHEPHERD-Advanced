@@ -298,7 +298,7 @@ def test_selection_finds_nothing_outside_the_run_layout(tmp_path):
 
 class TestSelectionKeepsTheListingsBoundary:
     """Automatic selection reads only inside the workspace, as the listing does
-    (`_not_read`, the reviewer's K8-1 recheck): before the fix the listing
+    (`checkpoint_not_read`, the reviewer's K8-1 recheck): before the fix the listing
     refused a checkpoint that resolves outside the workspace while selection
     judged, read and chose it. A run directory or a layout directory linked
     out of the workspace is no candidate, its files are never handed to
@@ -501,6 +501,20 @@ class TestWritingKeepsTheWorkspaceBoundary:
         assert claim_run_dir(propose_run_dir(tmp_path / "current", "gatv2"),
                              data_dir=tmp_path / "current").is_dir()
         assert run_dir_outside(workspace / "runs" / "gatv2" / "x", workspace) is None
+
+    def test_a_run_directory_behind_a_link_loop_is_refused_with_the_loop_named(self, tmp_path):
+        """A loop on the run's path is a broken link, not a runs/ placed on
+        another disk: the reason says so and gives the advice that fits."""
+        from src.utils.checkpoint_paths import run_dir_outside
+
+        workspace = tmp_path / "ws"
+        (workspace / "runs").mkdir(parents=True)
+        loop = workspace / "runs" / "gatv2"
+        loop.symlink_to(loop, target_is_directory=True)
+        reason = run_dir_outside(loop / "child", workspace)
+        assert reason is not None and "cannot be resolved" in reason
+        assert "is not written" in reason and "loops or is broken" in reason
+        assert "layout directories inside the workspace" not in reason
 
     def test_an_explicit_run_directory_outside_the_workspace_is_as_before(self, tmp_path):
         """Not in the layout: nothing selects from it automatically, and its

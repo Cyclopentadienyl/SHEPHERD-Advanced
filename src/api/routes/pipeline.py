@@ -531,13 +531,17 @@ def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
         if request.checkpoint_path:
             hint = f"{request.checkpoint_path} does not exist."
         elif selected is None and not_read:
-            # Nothing chosen, and runs behind a link out of the workspace:
-            # training refuses to write there too (`run_dir_outside`), so
-            # training another run is no answer.
+            # Nothing chosen, and some runs behind a link out of the workspace.
+            # Whether a new run can be trained here depends on where the link
+            # is (`run_dir_outside` refuses only a run that would land outside),
+            # so the boundary is stated and the task's own hint follows it.
             hint = (f"{len(not_read)} checkpoint file(s) of the workspace's runs resolve "
-                    "outside the workspace, so automatic selection does not read them. Keep "
+                    "outside the workspace, so automatic selection does not read them; keep "
                     "the runs inside the workspace (runs/ and its layout directories not "
                     "links out of it), or pass an explicit checkpoint_path.")
+            if request.task is not None:
+                hint += (f" No run inside the workspace holds a model finetuned for the "
+                         f"{request.task} task.")
         elif request.task is not None:
             hint = (f"No run holds a model finetuned for the {request.task} task; a base, "
                     "another task's model and a checkpoint without a model spec are not "

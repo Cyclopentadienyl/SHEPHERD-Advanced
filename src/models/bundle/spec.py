@@ -136,7 +136,11 @@ def _require_type(name: str, value: Any, declared: Any) -> None:
     if origin is Union or origin is types.UnionType:
         if value is None and type(None) in args:
             return
-        (declared,) = [arg for arg in args if arg is not type(None)]
+        members = [arg for arg in args if arg is not type(None)]
+        if len(members) != 1:
+            raise SpecError(f"model spec field {name!r} is declared as {declared!r}; the type "
+                            "rule reads one type, optionally None")
+        declared = members[0]
         origin, args = get_origin(declared), get_args(declared)
     if declared is bool:
         if not isinstance(value, bool):

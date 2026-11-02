@@ -570,3 +570,17 @@ def test_contradictory_shared_weights_are_refused_before_serving_or_finetune():
     # A resume's restore loads the parent's state into the built bundle.
     with pytest.raises(RuntimeError, match=message):
         build_bundle(bundle.spec, VIEW).load_state_dict(state)
+
+
+def test_a_union_of_two_types_is_not_read_as_one():
+    """The type rule reads one declared type, optionally None. A field
+    declared as a union of two types gets a SpecError naming it, never a bare
+    unpacking error."""
+    from typing import Optional, Union
+
+    from src.models.bundle.spec import SpecError, _require_type
+
+    _require_type("x", None, Optional[int])
+    _require_type("x", 3, Optional[int])
+    with pytest.raises(SpecError, match="declared as"):
+        _require_type("x", 3, Union[int, float])
