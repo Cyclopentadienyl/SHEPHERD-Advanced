@@ -163,7 +163,7 @@ def family(service):
     the disease child oldest, beside a ShepherdGNN run newer than all of them."""
     d = service.data_dir
     return {
-        "gnn": _put(d, "gat", "20261009-000000_gnn_eeeeee", GNN_PAYLOAD, 900),
+        "gnn": _put(d, "hgt", "20261009-000000_gnn_eeeeee", GNN_PAYLOAD, 900),
         "base": _put(d, "gatv2", BASE_RUN, _record_payload(logs={"val_lp_accuracy": 0.7}), 800),
         "gene": _put(d, "gatv2", "20261003-000000_gene_cccccc",
                      _record_payload("gene", logs={"val_pooled_mrr": 0.2}), 700),
@@ -254,8 +254,8 @@ def test_a_reload_without_a_task_skips_what_it_cannot_read_and_no_bundle_directo
     import src.utils.checkpoint_io as checkpoint_io
 
     d = service.data_dir
-    gnn = _put(d, "gat", "20261001-000000_gnn_aaaaaa", GNN_PAYLOAD, 100)
-    torn = d / "runs" / "gat" / "20261005-000000_torn_bbbbbb" / "checkpoints" / "last.pt"
+    gnn = _put(d, "hgt", "20261001-000000_gnn_aaaaaa", GNN_PAYLOAD, 100)
+    torn = d / "runs" / "hgt" / "20261005-000000_torn_bbbbbb" / "checkpoints" / "last.pt"
     torn.parent.mkdir(parents=True)
     torn.write_bytes(b"not a checkpoint")
     os.utime(torn, (900, 900))
@@ -466,7 +466,7 @@ def test_the_listing_carries_the_record_from_its_one_read(tmp_path, monkeypatch)
     monkeypatch.setattr(cp, "SETTLED_NS", 0)
     payload = _record_payload("gene", logs={"val_pooled_mrr": 0.25})
     _put(tmp_path, "gatv2", "20261002-000000_gene_bbbbbb", payload, 200)
-    _put(tmp_path, "gat", "20261001-000000_gnn_aaaaaa", GNN_PAYLOAD, 100)
+    _put(tmp_path, "hgt", "20261001-000000_gnn_aaaaaa", GNN_PAYLOAD, 100)
     child, gnn = cp.read_run_checkpoints(tmp_path, within=tmp_path)
     assert child.model_record == _listed_form(payload) and "state_dict" not in child.model_record
     assert child.validation == ("val_pooled_mrr", 0.25)
@@ -507,7 +507,7 @@ def test_the_lists_show_a_bundle_run_and_resolve_it_by_its_key(tmp_path):
     ws = root / "ws"
     payload = _record_payload("disease", logs={"val_pooled_mrr": 0.3})
     child = _put(ws, "gatv2", "20261002-000000_disease_bbbbbb", payload, 200)
-    _put(ws, "gat", "20261001-000000_gnn_aaaaaa", GNN_PAYLOAD, 100)
+    _put(ws, "hgt", "20261001-000000_gnn_aaaaaa", GNN_PAYLOAD, 100)
     environ = {ss.ENV_WORKSPACES_ROOT: str(root)}
     for architecture in (None, "gatv2"):
         listing = sl.list_checkpoints("ws", architecture, environ=environ)
@@ -520,11 +520,11 @@ def test_the_lists_show_a_bundle_run_and_resolve_it_by_its_key(tmp_path):
             "model", "finetune", "disease", "finetune", BASE_RUN, "a" * 64, BASE_RUN,
             "gatv2", False)
         assert item.validation == {"metric": "val_pooled_mrr", "value": 0.3}
-    gnn_item = sl.list_checkpoints("ws", "gat", environ=environ).items[0]
+    gnn_item = sl.list_checkpoints("ws", "hgt", environ=environ).items[0]
     assert (gnn_item.record, gnn_item.record_problem) == ("history", LISTED_WITHOUT_SPEC)
     assert sl.resolve_checkpoint("ws", "gatv2", "20261002-000000_disease_bbbbbb", "last.pt",
                                  environ=environ) == child
     by_manager = {c["architecture"]: c for c in training_manager.get_checkpoints(str(ws))}
     assert (by_manager["gatv2"]["task"], by_manager["gatv2"]["parent_sha256"]) == (
         "disease", "a" * 64)
-    assert by_manager["gat"]["record"] == "history"
+    assert by_manager["hgt"]["record"] == "history"

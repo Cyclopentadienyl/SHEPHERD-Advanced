@@ -83,7 +83,7 @@ def built(tmp_path_factory):
     workspaces.mkdir()
     demo = workspaces / "demo"
     shutil.move(str(cohort.data_dir), demo)
-    checkpoints = demo / "runs" / "gat" / RUN / "checkpoints"
+    checkpoints = demo / "runs" / "hgt" / RUN / "checkpoints"
     checkpoints.mkdir(parents=True)
     shutil.copy2(cohort.checkpoint, checkpoints / "best.pt")
     intake = base / "intake"
@@ -122,8 +122,8 @@ def site(built, tmp_path, monkeypatch):
         root=root, ws=root / "ws", demo=root / "ws" / "demo", registry=registry,
         intake=root / "intake", reports=reports, run_id=run_dir.name, sha=built.sha,
         version_sha=built.version_sha,
-        checkpoint=root / "ws" / "demo" / "runs" / "gat" / RUN / "checkpoints" / "best.pt",
-        key=f"gat/{RUN}/best.pt")
+        checkpoint=root / "ws" / "demo" / "runs" / "hgt" / RUN / "checkpoints" / "best.pt",
+        key=f"hgt/{RUN}/best.pt")
 
 
 def _readonly():
@@ -202,11 +202,11 @@ def _disagreeing_copy(site, delta=0.0004):
 def test_no_absolute_path_is_shown():
     roots = [("/srv/registry", "<registry>"), ("/srv/ws", "<workspaces>")]
     text = ("A report was kept at /srv/registry/versions/x/reports/r1; ledger /srv/ws/demo/"
-            "runs/gat/r/checkpoints/evaluations.json; other /etc/passwd and C:\\Users\\x; "
+            "runs/gatv2/r/checkpoints/evaluations.json; other /etc/passwd and C:\\Users\\x; "
             "/srv/ws2/elsewhere stays out; 'at /srv/registry'.")
     out = tp.redact(text, sorted(roots, key=lambda p: -len(p[0])))
     assert "<registry>/versions/x/reports/r1" in out
-    assert "<workspaces>/demo/runs/gat/r/checkpoints/evaluations.json" in out
+    assert "<workspaces>/demo/runs/gatv2/r/checkpoints/evaluations.json" in out
     assert "/etc" not in out and "C:\\" not in out and "/srv/ws2" not in out
     assert out.count(tp.SERVER_PATH) == 3 and "'at <registry>'" in out
 
@@ -365,7 +365,7 @@ def test_the_selected_reports_registration_is_asked_beside_the_listed_checkpoint
     refined = tp.refine_registration(page, reports, site.run_id, models)
     (run,) = refined["runs"]
     assert run["state"]["registered"] == "not_registered"
-    assert run["state"]["checked_beside"] == f"gat/{RUN}/best.pt"
+    assert run["state"]["checked_beside"] == f"hgt/{RUN}/best.pt"
     readonly = tp.read_page(_readonly())
     assert tp.refine_registration(readonly, reports, site.run_id, models) is reports
     # A ledger that cannot be read again leaves the list's answer, never a page error.
@@ -1922,7 +1922,7 @@ def test_register_from_a_copy_files_beside_the_checkpoint_the_run_read(site, mon
                                      request=request)
     state = tp.find(refined["runs"], "run_id", site.run_id)["state"]
     assert state["registered"] == "not_registered"
-    assert state["checked_beside"] == f"gat/{RUN}/best.pt in workspace demo"
+    assert state["checked_beside"] == f"hgt/{RUN}/best.pt in workspace demo"
     done, said = tp.register_selected(page, refined, models_copy, "copy", site.run_id, request)
     assert done is True and said.startswith("Registered as record 1.")
     assert demo_ledger.exists() and not copy_ledger.exists()
@@ -1947,7 +1947,7 @@ def test_a_report_changed_since_the_list_is_never_placed_from_its_new_bytes(site
     control = tp.refine_registration(page, reports, site.run_id, models, request=request)
     state = tp.find(control["runs"], "run_id", site.run_id)["state"]
     assert state["registered"] == "not_registered" and state["checked_beside"] == \
-        f"gat/{RUN}/best.pt"
+        f"hgt/{RUN}/best.pt"
 
     path = site.reports / site.run_id / "report.json"
     _swap(path, _another_valid_report(path), "rename")
@@ -1978,7 +1978,7 @@ def test_the_registered_answer_reads_the_report_once_the_registrations_read(site
 
     state = tp.find(refined["runs"], "run_id", site.run_id)["state"]
     assert state["registered"] == "not_registered"
-    assert state["checked_beside"] == f"gat/{RUN}/best.pt"
+    assert state["checked_beside"] == f"hgt/{RUN}/best.pt"
     assert len(reads) == 1, reads
 
 
@@ -2000,7 +2000,7 @@ def test_every_row_says_not_registered_for_an_operator_and_keeps_it(site, monkey
     reports = tp.read_reports(LABEL)
     rows = tp.refine_rows(page, reports, models)
     state = tp.find(rows["runs"], "run_id", site.run_id)["state"]
-    assert state["registered"] == "not_registered" and state["checked_beside"] == f"gat/{RUN}/best.pt"
+    assert state["registered"] == "not_registered" and state["checked_beside"] == f"hgt/{RUN}/best.pt"
     html = tp.reports_html(rows, None, models=models)
     assert "report kept · not registered" in html and "cannot be checked from the list" not in html
     from_copy = tp.refine_rows(page, reports, models_copy)
@@ -2219,9 +2219,9 @@ def test_a_long_choice_ends_in_an_ellipsis_with_its_whole_text_as_title():
     assert 'input[role="combobox"]' in shell.SHELL_HEAD
     assert not by_id["shep-test-cohort-hd"].js_on_load
     (label, _key), = tp.model_choices({"items": [{
-        "architecture": "gat", "run": RUN, "filename": "best.pt", "epoch": 12, "sha256": "c" * 64}]})
+        "architecture": "gatv2", "run": RUN, "filename": "best.pt", "epoch": 12, "sha256": "c" * 64}]})
     # The kind word leads (K6 decision 13); a record never read says so.
-    assert label.startswith("Record not read · epoch 12 · GAT · run 2026-10-17 09:15")
+    assert label.startswith("Record not read · epoch 12 · GATv2 · run 2026-10-17 09:15")
     assert label.endswith("· best.pt")
 
 
@@ -2303,7 +2303,7 @@ def test_the_ledger_order_is_the_file_then_the_workspace_the_run_read(site, monk
     the workspace the run measured, before (3) the workspace the page shows."""
     _point_report_at_site(site)
     manifest = json.loads((site.reports / site.run_id / "report.json").read_text())["manifest"]
-    newer = site.demo / "runs" / "gat" / "20261019-080000_run_aaaaaa" / "checkpoints"
+    newer = site.demo / "runs" / "hgt" / "20261019-080000_run_aaaaaa" / "checkpoints"
     newer.mkdir(parents=True)
     shutil.copy2(site.checkpoint, newer / "best.pt")
     page, request = _page(monkeypatch)

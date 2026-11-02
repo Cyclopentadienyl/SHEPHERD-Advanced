@@ -178,7 +178,7 @@ def test_both_writers_carry_the_record(tmp_path):
     by_trainer, by_callback = tmp_path / "t.pt", tmp_path / "c.pt"
     trainer.save_checkpoint(by_trainer)
     ModelCheckpoint(ModelCheckpointConfig(dirpath=str(tmp_path)))._save_checkpoint(
-        trainer, by_callback, epoch=0, logs={"val_mrr": 0.1})
+        trainer, by_callback, epoch=0, logs={"val_pooled_mrr": 0.1})
     for path in (by_trainer, by_callback):
         payload = torch.load(path, map_location="cpu", weights_only=True)
         assert payload["record_version"] == MODEL_RECORD_VERSION

@@ -71,7 +71,7 @@ def demo_workspace(tmp_path_factory):
 
 @pytest.fixture
 def root(demo_workspace, tmp_path, monkeypatch):
-    """A workspaces root: ``demo`` with two gat runs; the older run's
+    """A workspaces root: ``demo`` with two hgt runs; the older run's
     checkpoint records a dataset fingerprint that is NOT the workspace's
     (an in-place rebuild since), so the two can be told apart."""
     from src.utils.checkpoint_io import write_checkpoint
@@ -84,10 +84,10 @@ def root(demo_workspace, tmp_path, monkeypatch):
     now = time.time()
     for index, (run, name, epoch, fp) in enumerate([(NEWER, "model-12.pt", 12, fingerprint),
                                                      (RUN, "model-05.pt", 5, recorded)]):
-        directory = workspace / "runs" / "gat" / run / "checkpoints"
+        directory = workspace / "runs" / "hgt" / run / "checkpoints"
         directory.mkdir(parents=True)
         shas[name] = write_checkpoint({"checkpoint_kind": "weights", "epoch": epoch,
-                                       "logs": {"val_mrr": 0.24},
+                                       "logs": {"val_pooled_mrr": 0.24},
                                        "training_input_digests": {"split_manifest": fp}},
                                       directory / name)
         os.utime(directory / name, (now - index * 3600, now - index * 3600))
@@ -103,9 +103,9 @@ def _status(root, served="model-05.pt", run=RUN, **extra):
     status = {
         "initialized": True, "gnn_ready": True,
         "current_data_dir": str(root["workspace"]),
-        "current_checkpoint_path": str(root["workspace"] / "runs" / "gat" / run / "checkpoints"
+        "current_checkpoint_path": str(root["workspace"] / "runs" / "hgt" / run / "checkpoints"
                                        / served),
-        "checkpoint_meta": {"epoch": 5, "params": 6569, "val_mrr": 0.241},
+        "checkpoint_meta": {"epoch": 5, "params": 6569, "val_pooled_mrr": 0.241},
         "fingerprint_warnings": [],
         "served_identity": {
             "scoring_mode": "gnn_only",
@@ -187,9 +187,9 @@ def test_what_is_served_is_named_by_its_kind(root):
 def test_the_served_checkpoint_is_found_in_the_runs_without_opening_it(root, no_checkpoint_opened):
     item, why = card.served_item(_status(root), "demo")
     assert why is None
-    assert (item["architecture"], item["run"], item["filename"]) == ("gat", RUN, "model-05.pt")
+    assert (item["architecture"], item["run"], item["filename"]) == ("hgt", RUN, "model-05.pt")
     assert item["sha256"] == root["shas"]["model-05.pt"] and item["epoch"] == 5
-    assert item["validation"] == {"metric": "val_mrr", "value": 0.241}
+    assert item["validation"] == {"metric": "val_pooled_mrr", "value": 0.241}
 
 
 def test_a_checkpoint_outside_the_runs_or_unlisted_is_said_to_be(root, tmp_path):
@@ -197,7 +197,7 @@ def test_a_checkpoint_outside_the_runs_or_unlisted_is_said_to_be(root, tmp_path)
     assert card.served_item(outside, "demo") == (
         None, "the checkpoint in use is not in the serving workspace's runs")
     missing = _status(root, current_checkpoint_path=str(
-        root["workspace"] / "runs" / "gat" / RUN / "checkpoints" / "gone.pt"))
+        root["workspace"] / "runs" / "hgt" / RUN / "checkpoints" / "gone.pt"))
     assert card.served_item(missing, "demo")[1] == (
         "the checkpoint in use is not in the serving workspace's list")
     assert card.served_item(_status(root), None)[1] == (
@@ -267,7 +267,7 @@ def test_the_timer_never_opens_a_checkpoint(root, no_checkpoint_opened):
 def test_a_file_rewritten_since_it_was_loaded_is_not_read_as_the_models(root):
     from src.utils.checkpoint_io import write_checkpoint
 
-    path = root["workspace"] / "runs" / "gat" / RUN / "checkpoints" / "model-05.pt"
+    path = root["workspace"] / "runs" / "hgt" / RUN / "checkpoints" / "model-05.pt"
     status = _status(root)
     write_checkpoint({"checkpoint_kind": "weights", "epoch": 6,
                       "training_input_digests": {"split_manifest": root["fingerprint"]}}, path)
@@ -298,7 +298,7 @@ def test_other_bytes_at_the_served_file_are_said_not_the_model_loaded_before_tor
     control = _state(root, status=status)["facts"]["trained"]
     assert control == {"state": "read", "fingerprint": root["recorded"], "problem": None}
 
-    path = root["workspace"] / "runs" / "gat" / RUN / "checkpoints" / "model-05.pt"
+    path = root["workspace"] / "runs" / "hgt" / RUN / "checkpoints" / "model-05.pt"
     data = path.read_bytes()
     if bytes_now == "another checkpoint":
         buffer = io.BytesIO()
@@ -460,7 +460,7 @@ def test_a_queued_refresh_reads_the_recorded_tests_again_without_opening_the_che
 
     first = _state(root)
     assert "Recorded tests: no ledger" in card.body_html(first)
-    ledger = root["workspace"] / "runs" / "gat" / RUN / "checkpoints" / "evaluations.json"
+    ledger = root["workspace"] / "runs" / "hgt" / RUN / "checkpoints" / "evaluations.json"
     ledger.write_text("{not json")
 
     def refuse(*args, **kwargs):
@@ -487,7 +487,7 @@ def test_a_queued_refresh_reads_the_recorded_tests_again_without_opening_the_che
 # --------------------------------------------------------------------------- the card's states
 def test_the_normal_card_names_the_model_its_fingerprint_and_its_states(root):
     body = card.body_html(_state(root))
-    assert "GAT · run 2026-10-17 09:15 · epoch 5" in body
+    assert "HGT · run 2026-10-17 09:15 · epoch 5" in body
     assert f'>{root["shas"]["model-05.pt"][:12]}</code>' in body and "verified</span>" in body
     assert "synthetic data" in body and "no SP table" in body
     assert "no trained model" not in body and "unverified" not in body
@@ -546,7 +546,7 @@ def test_details_add_what_a_served_model_has_to_model_facts(root):
     for text in ("Knowledge graph served (kg.json)", "Dataset record served (kg.provenance.json)",
                  "origin synthetic", "6,569 params", root["recorded"]):
         assert text in identity
-    assert "Validation MRR (Trainer, top-20) 0.2410" in html
+    assert "Validation pooled MRR (Trainer) 0.2410" in html
     # The card reads no model record: no Task or Configuration row claims one
     # is unreadable (K6 decision 4 names the task in the name line instead).
     assert "Record not" not in html and 'class="shep-k">Task<' not in identity
@@ -593,7 +593,7 @@ def test_details_say_not_recorded_when_the_checkpoint_records_no_dataset(root):
     from src.utils.checkpoint_io import write_checkpoint
 
     run = "20261019-080000_run_0d0d0d"
-    directory = root["workspace"] / "runs" / "gat" / run / "checkpoints"
+    directory = root["workspace"] / "runs" / "hgt" / run / "checkpoints"
     directory.mkdir(parents=True)
     root["shas"]["model-01.pt"] = write_checkpoint({"checkpoint_kind": "weights", "epoch": 1},
                                                    directory / "model-01.pt")
@@ -719,7 +719,7 @@ def test_a_shepherdgnn_file_keeps_its_name_line_and_no_task(root):
     assert card.served_task(_status(root)) is None
     assert card.served_task({"initialized": False}) is None
     body = card.body_html(_state(root))
-    assert '<p class="shep-dx-name">GAT · run 2026-10-17 09:15 · epoch 5</p>' in body
+    assert '<p class="shep-dx-name">HGT · run 2026-10-17 09:15 · epoch 5</p>' in body
     assert "task model" not in body
 
 

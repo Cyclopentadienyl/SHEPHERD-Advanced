@@ -341,11 +341,11 @@ def checkpoint_root(demo_workspace, tmp_path_factory):
     root = tmp_path_factory.mktemp("ckroot")
     ws = _copy(demo_workspace, root / "demo")
     digests = {}
-    newest = _run(ws, "gat", "20261020-120000_new_aaaaaa")
+    newest = _run(ws, "hgt", "20261020-120000_new_aaaaaa")
     digests["trained"] = write_fixture_checkpoint(ws, newest / "best.pt")
     digests["other"] = write_checkpoint(
         {"checkpoint_kind": "training_state", "epoch": 7,
-         "logs": {"val_loss": 0.1, "val_hits@10": 0.4},
+         "logs": {"val_loss": 0.1, "val_pooled_mrr": 0.4},
          "training_input_digests": {"split_manifest": "9" * 64},
          "progress": {"completed_epochs": 8, "end": "paused"}}, newest / "other.pt")
     older = _run(ws, "sage", "20261019-120000_old_bbbbbb")
@@ -373,9 +373,9 @@ class TestCheckpoints:
         _, ws, digests = checkpoint_root
         item = self._items(checkpoint_root)["best.pt"]
         assert item.sha256 == digests["trained"] == file_sha256(
-            ws / "runs/gat/20261020-120000_new_aaaaaa/checkpoints/best.pt")
+            ws / "runs/hgt/20261020-120000_new_aaaaaa/checkpoints/best.pt")
         assert (item.workspace, item.architecture, item.run) == (
-            "demo", "gat", "20261020-120000_new_aaaaaa")
+            "demo", "hgt", "20261020-120000_new_aaaaaa")
         assert item.validation == {"metric": "val_mrr", "value": 0.0}
         assert item.epoch == 1
         assert item.dataset_fingerprint == file_sha256(ws / "split_manifest.json")
@@ -386,7 +386,7 @@ class TestCheckpoints:
         item = self._items(checkpoint_root)["other.pt"]
         assert item.dataset_fingerprint == "9" * 64
         assert item.trained_on_this_dataset is False
-        assert item.validation == {"metric": "val_hits@10", "value": 0.4}
+        assert item.validation == {"metric": "val_pooled_mrr", "value": 0.4}
         assert item.checkpoint_kind == "training_state" and item.epoch == 7
 
     def test_the_progress_record_is_the_files_own_never_derived(self, checkpoint_root):
@@ -414,7 +414,7 @@ class TestCheckpoints:
         assert "\n" not in item.problem and len(item.problem) < 400
 
     def test_one_architecture(self, checkpoint_root):
-        assert set(self._items(checkpoint_root, "gat")) == {"best.pt", "other.pt"}
+        assert set(self._items(checkpoint_root, "hgt")) == {"best.pt", "other.pt"}
 
     def test_the_listing_order_is_kept(self, checkpoint_root):
         """The one listing's order (latest run first, newest file first)."""
@@ -540,14 +540,14 @@ class TestResolveCheckpoint:
 
     def test_a_listed_checkpoint_resolves(self, checkpoint_root):
         root, ws, _ = checkpoint_root
-        path = sl.resolve_checkpoint("demo", "gat", "20261020-120000_new_aaaaaa", "best.pt",
+        path = sl.resolve_checkpoint("demo", "hgt", "20261020-120000_new_aaaaaa", "best.pt",
                                      environ=_roots(root))
-        assert path == ws / "runs/gat/20261020-120000_new_aaaaaa/checkpoints/best.pt"
+        assert path == ws / "runs/hgt/20261020-120000_new_aaaaaa/checkpoints/best.pt"
 
     @pytest.mark.parametrize("architecture, run, filename, fragment", [
-        ("gat", "20261020-120000_new_aaaaaa", "missing.pt", "is listed"),
+        ("hgt", "20261020-120000_new_aaaaaa", "missing.pt", "is listed"),
         ("sage", "20261020-120000_new_aaaaaa", "best.pt", "is listed"),
-        ("gat", "../sage/20261019-120000_old_bbbbbb", "weights.pt", "is listed"),
+        ("hgt", "../sage/20261019-120000_old_bbbbbb", "weights.pt", "is listed"),
         ("", "20261020-120000_new_aaaaaa", "best.pt", "is not an architecture"),
         (None, "20261020-120000_new_aaaaaa", "best.pt", "is not an architecture"),
         ("gatv9", "20261020-120000_new_aaaaaa", "best.pt", "Unsupported run layout key"),
@@ -566,12 +566,12 @@ class TestResolveCheckpoint:
         outside = tmp_path / "outside" / "checkpoints"
         outside.mkdir(parents=True)
         write_checkpoint({"epoch": 1}, outside / "x.pt")
-        (ws / "runs" / "gat").mkdir(parents=True)
-        (ws / "runs" / "gat" / "20261020-000000_far_cccccc").symlink_to(outside.parent)
+        (ws / "runs" / "gatv2").mkdir(parents=True)
+        (ws / "runs" / "gatv2" / "20261020-000000_far_cccccc").symlink_to(outside.parent)
         with pytest.raises(sl.ServerListRefused, match=(
                 "in the workspace 'demo', 20261020-000000_far_cccccc/x.pt resolves outside the "
                 "workspace, so it is not read")):
-            sl.resolve_checkpoint("demo", "gat", "20261020-000000_far_cccccc", "x.pt",
+            sl.resolve_checkpoint("demo", "gatv2", "20261020-000000_far_cccccc", "x.pt",
                                   environ=_roots(root))
         (item,) = sl.list_checkpoints("demo", environ=_roots(root)).items
         assert "outside the workspace" in item.problem
@@ -590,9 +590,9 @@ class TestCheckpointsInAndOut:
         ws = _copy(demo_workspace, root / "demo")
         secret = tmp_path / "outside" / "secret.pt"
         secret.parent.mkdir()
-        write_checkpoint({"epoch": 9, "logs": {"val_mrr": 0.9},
+        write_checkpoint({"epoch": 9, "logs": {"val_pooled_mrr": 0.9},
                           "training_input_digests": {"split_manifest": "1" * 64}}, secret)
-        run = _run(ws, "gat", "20261020-000000_x_aaaaaa")
+        run = _run(ws, "gatv2", "20261020-000000_x_aaaaaa")
         write_checkpoint({"epoch": 1}, run / "inside.pt")
         (run / "link.pt").symlink_to(secret)
 
@@ -619,7 +619,7 @@ class TestCheckpointsInAndOut:
 
         root = tmp_path / "root"
         ws = _copy(demo_workspace, root / "demo")
-        run = _run(ws, "gat", "20261020-000000_x_aaaaaa")
+        run = _run(ws, "gatv2", "20261020-000000_x_aaaaaa")
         write_checkpoint({"epoch": 1}, run / "last.pt")
         (run / "gone.pt").symlink_to(run / "removed.pt")
         listing = sl.list_checkpoints("demo", environ=_roots(root))
@@ -637,7 +637,7 @@ class TestCheckpointsInAndOut:
         root = tmp_path / "root"
         ws = _copy(demo_workspace, root / "builds" / "2026-10-20")
         (root / "current").symlink_to(ws)
-        run = _run(ws, "gat", "20261020-000000_x_aaaaaa")
+        run = _run(ws, "gatv2", "20261020-000000_x_aaaaaa")
         write_checkpoint({"epoch": 1}, run / "last.pt")
 
         (item,) = sl.list_checkpoints("current", environ=_roots(root)).items
@@ -645,7 +645,7 @@ class TestCheckpointsInAndOut:
         assert sl.resolve_checkpoint(item.workspace, item.architecture, item.run,
                                      item.filename, environ=_roots(root)) == run / "last.pt"
         with pytest.raises(sl.ServerListRefused, match="in the workspace 'current'"):
-            sl.resolve_checkpoint("current", "gat", item.run, "missing.pt",
+            sl.resolve_checkpoint("current", "gatv2", item.run, "missing.pt",
                                   environ=_roots(root))
 
     def test_runs_that_cannot_be_listed_say_why(self, demo_workspace, tmp_path, monkeypatch):
@@ -655,7 +655,7 @@ class TestCheckpointsInAndOut:
         _copy(demo_workspace, root / "demo")
 
         def refusing(*args, **kwargs):
-            raise PermissionError(13, "Permission denied", "runs/gat")
+            raise PermissionError(13, "Permission denied", "runs/gatv2")
 
         monkeypatch.setattr(checkpoint_paths, "list_runs", refusing)
         listing = sl.list_checkpoints("demo", environ=_roots(root))
@@ -663,7 +663,7 @@ class TestCheckpointsInAndOut:
         assert listing.problem == ("the runs of the workspace 'demo' cannot be listed "
                                    "(PermissionError: Permission denied)")
         with pytest.raises(sl.ServerListRefused, match="cannot be listed"):
-            sl.resolve_checkpoint("demo", "gat", "r", "x.pt", environ=_roots(root))
+            sl.resolve_checkpoint("demo", "gatv2", "r", "x.pt", environ=_roots(root))
 
 
 # ---------------------------------------------------------------------------
@@ -1005,7 +1005,7 @@ class TestRoutes:
         root, _, digests = checkpoint_root
         monkeypatch.setenv(ss.ENV_WORKSPACES_ROOT, str(root))
         body = operator_client.get("/api/v1/workspaces/demo/checkpoints",
-                                   params={"architecture": "gat"}).json()
+                                   params={"architecture": "hgt"}).json()
         assert body["problem"] is None
         assert {c["filename"]: c["sha256"] for c in body["checkpoints"]} == {
             "best.pt": digests["trained"], "other.pt": digests["other"]}
@@ -1015,7 +1015,7 @@ class TestRoutes:
 
         root, _, digests = checkpoint_root
         monkeypatch.setenv(ss.ENV_WORKSPACES_ROOT, str(root))
-        listed = lists.get_workspace_checkpoints("demo", "gat")
+        listed = lists.get_workspace_checkpoints("demo", "hgt")
         assert listed["problem"] is None
         assert {c["filename"]: c["sha256"] for c in listed["checkpoints"]} == {
             "best.pt": digests["trained"], "other.pt": digests["other"]}

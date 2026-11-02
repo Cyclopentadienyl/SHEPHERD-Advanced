@@ -670,7 +670,7 @@ def test_a_new_model_never_shows_the_previous_models_records(app, served, tmp_pa
     """Both checkpoints beside one ledger; only A's report is registered. After B
     is published, nothing of A's is shown."""
     pipeline_a, data_dir, checkpoint_a = served
-    checkpoint_b = _checkpoint_for(data_dir, checkpoint_a.parent / "other.pt", val_mrr=0.25)
+    checkpoint_b = _checkpoint_for(data_dir, checkpoint_a.parent / "other.pt", val_pooled_mrr=0.25)
     assert _sha(checkpoint_b) != _sha(checkpoint_a)
     result = _register(_report_for(_sha(checkpoint_a)), checkpoint_a.parent,
                        tmp_path / "reports")
@@ -751,7 +751,7 @@ def test_a_link_retargeted_without_a_reload_still_finds_the_served_models_ledger
     data_dir, checkpoint_a = served_workspace
     run_b = tmp_path / "run_b"
     run_b.mkdir()
-    checkpoint_b = _checkpoint_for(data_dir, run_b / "best.pt", val_mrr=0.25)
+    checkpoint_b = _checkpoint_for(data_dir, run_b / "best.pt", val_pooled_mrr=0.25)
     assert _sha(checkpoint_b) != _sha(checkpoint_a)
     _register(_report_for(_sha(checkpoint_a)), checkpoint_a.parent, tmp_path / "reports")
     current = tmp_path / "models" / "current.pt"
@@ -779,7 +779,7 @@ def test_a_reload_landing_mid_request_cannot_mix_two_models(app, served, tmp_pat
     checkpoint with A's lookup, or the reverse."""
     pipeline_a, data_dir, checkpoint_a = served
     (tmp_path / "b").mkdir()
-    checkpoint_b = _checkpoint_for(data_dir, tmp_path / "b" / "b.pt", val_mrr=0.25)
+    checkpoint_b = _checkpoint_for(data_dir, tmp_path / "b" / "b.pt", val_pooled_mrr=0.25)
     pipeline_b = _full_pipeline(data_dir, checkpoint_b)
     _register(_report_for(_sha(checkpoint_a)), checkpoint_a.parent, tmp_path / "reports")
     original = pipeline_a.served_checkpoint_read

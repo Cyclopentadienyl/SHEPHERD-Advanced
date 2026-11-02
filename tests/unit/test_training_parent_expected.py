@@ -70,7 +70,7 @@ TINY = {"device": "cpu", "hidden_dim": 16, "num_heads": 2, "num_layers": 1, "num
         "use_amp": False, "batch_size": 4, "num_epochs": 2, "warmup_steps": 1,
         "pause_after_epoch": 1}
 #: Three paused runs on one workspace: two of the same architecture, one not.
-RUNS = {"a": ("gat", 1), "same": ("gat", 2), "other": ("sage", 3)}
+RUNS = {"a": ("hgt", 1), "same": ("hgt", 2), "other": ("sage", 3)}
 
 
 def _sha(path: Path) -> str:
@@ -153,7 +153,7 @@ def test_positive_control_the_parent_shown_is_continued_and_recorded(case, monke
     job, log = _wait(manager)
     assert job.status == "completed", log[-3000:]
     run = Path(started["run_dir"])
-    assert run.parent.name == "gat"
+    assert run.parent.name == "hgt"
     record = torch.load(run / "checkpoints" / "last.pt", weights_only=True, map_location="cpu")
     assert record["training_input_digests"]["resume_checkpoint"] == shown
     # A precondition, not a setting: never in what the run records.
@@ -166,7 +166,7 @@ def test_a_parent_replaced_after_the_runners_preview_is_refused_by_the_process(
         case, monkeypatch, swapped):
     """The finder's and the skeptic's cases: another paused run's last.pt
     (``same``: the same architecture; ``other``: SAGE where the runner placed
-    the run under GAT) put at the parent's path when the process starts. It
+    the run under HGT) put at the parent's path when the process starts. It
     used to complete and record the other parent; it is refused before it is
     loaded, exit 1, no traceback, and no run directory under either
     architecture."""

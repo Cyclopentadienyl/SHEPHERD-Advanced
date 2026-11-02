@@ -73,7 +73,7 @@ BASE_RUN = "20261001-000000_base_aaaaaa"
 #: (architecture, run, files, kind) newest run first, as the listing orders
 #: them: model bundles filed under ``gatv2`` (a base and its disease, gene and
 #: patients-like-me children), a file without a model spec (history) under
-#: ``gat`` and one that cannot be read under ``sage``.
+#: ``hgt`` and one that cannot be read under ``sage``.
 RUNS = [
     ("gatv2", "20261018-091200_disease_8c2e7a", ("model-12.pt", "model-08.pt"), "disease"),
     ("gatv2", "20261017-091500_disease_3fa9c1", ("model-05.pt",), "disease"),
@@ -81,7 +81,7 @@ RUNS = [
     ("gatv2", "20261015-080000_gene_aaaaaa", ("model-03.pt",), "gene"),
     ("gatv2", "20261014-080000_patients_like_me_bbbbbb", ("model-02.pt",), "patients_like_me"),
     ("gatv2", "20261013-080000_disease_cccccc", ("model-01.pt",), "disease"),
-    ("gat", "20261012-080000_run_dddddd", ("model-07.pt",), "history"),
+    ("hgt", "20261012-080000_run_dddddd", ("model-07.pt",), "history"),
     ("gatv2", BASE_RUN, ("base.pt",), "base"),
 ]
 

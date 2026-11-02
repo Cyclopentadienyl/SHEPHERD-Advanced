@@ -53,10 +53,10 @@ def workspace(name="demo", fingerprint=FP_A, origin="synthetic", binding="verifi
 
 def checkpoint(fingerprint=FP_A, sha=SHA, problem=None, epoch=5, run="20261017-091500_run_3fa9c1",
                validation=0.3180):
-    return {"workspace": "demo", "architecture": "gat", "run": run,
+    return {"workspace": "demo", "architecture": "gatv2", "run": run,
             "filename": "model-05-0.2410.pt", "sha256": sha, "size_bytes": 10,
             "checkpoint_kind": "weights", "epoch": epoch,
-            "validation": {"metric": "val_mrr", "value": validation} if validation else None,
+            "validation": {"metric": "val_pooled_mrr", "value": validation} if validation else None,
             "dataset_fingerprint": fingerprint, "trained_on_this_dataset": True,
             "problem": problem}
 
@@ -119,13 +119,13 @@ def test_a_name_with_markup_is_escaped():
 
 # --------------------------------------------------------------------------- the model row
 def test_the_name_line_comes_from_the_run_id_and_the_epoch():
-    assert r.model_name_line(checkpoint()) == "GAT · run 2026-10-17 09:15 · epoch 5"
-    assert r.model_name_line(checkpoint(epoch=None, run="odd")) == "GAT · run odd · epoch —"
+    assert r.model_name_line(checkpoint()) == "GATv2 · run 2026-10-17 09:15 · epoch 5"
+    assert r.model_name_line(checkpoint(epoch=None, run="odd")) == "GATv2 · run odd · epoch —"
 
 
 def test_trained_on_every_listed_workspace_with_the_full_digest():
     listed = [workspace("demo"), workspace("demo_copy"), workspace("other", FP_B)]
-    html = r.model_row_html(checkpoint(), listed, key="gat/r/f")
+    html = r.model_row_html(checkpoint(), listed, key="gatv2/r/f")
     plain = text_of(html)
     assert "trained on demo, demo_copy · dataset fingerprint 2be1f04c9a83" in plain
     assert "model fingerprint 15f098277b54" in plain and 'shep-tag-amber">synthetic' in html
@@ -173,12 +173,12 @@ def test_model_facts_has_its_five_sections_and_warnings_always_open():
     plain = text_of(html)
     assert ("Not a certified medical device; decision support for a qualified clinician. "
             "Synthetic workspaces are for testing only.") in plain
-    assert ("Validation MRR (Trainer, top-20) 0.3180 — selection metric on val, not an "
+    assert ("Validation pooled MRR (Trainer) 0.3180 — selection metric on val, not an "
             "independent test") in plain
     assert "Recorded tests: none in ledger" in plain
     assert "SYNTHETIC WORKSPACE: not a clinical result." in plain
     assert "serving reads workspace demo: the same dataset" in plain
-    assert "runs/gat/20261017-091500_run_3fa9c1/checkpoints/model-05-0.2410.pt" in plain
+    assert "runs/gatv2/20261017-091500_run_3fa9c1/checkpoints/model-05-0.2410.pt" in plain
     assert SHA in plain and FP_A in plain           # Identity: the full digests, with Copy
 
 
@@ -242,17 +242,17 @@ def test_not_trainable_tells_an_absent_manifest_from_an_unreadable_one():
 def test_the_research_table_row_has_its_columns_and_escapes():
     row = r.model_table_row_html(checkpoint(run="20261017-091500_<b>x"), [workspace()],
                                  recorded=r.RecordedTests("records", 3, 1), in_use=True,
-                                 key="gat/r/f.pt", in_use_label="In use (Diagnosis)",
+                                 key="gatv2/r/f.pt", in_use_label="In use (Diagnosis)",
                                  extra="<span>regime</span>")
-    assert row.startswith('<tr class="" data-key="gat/r/f.pt" tabindex="0" aria-selected="false"')
+    assert row.startswith('<tr class="" data-key="gatv2/r/f.pt" tabindex="0" aria-selected="false"')
     cells = re.findall(r"<td[^>]*>(.*?)</td>", row)
     assert len(cells) == 5
-    assert 'GAT · <span class="shep-nowrap">run 2026-10-17 09:15</span>' in cells[0]
+    assert 'GATv2 · <span class="shep-nowrap">run 2026-10-17 09:15</span>' in cells[0]
     assert "epoch 5 · &lt;b&gt;x" in cells[0]
     assert "In use (Diagnosis)" in cells[0] and "<b>x" not in row
     assert f'model <code class="shep-fpv" title="{SHA}">{SHA[:12]}</code>' in cells[1]
     assert "dataset <b>demo</b>" in cells[1] and "synthetic" in cells[1]
-    assert cells[2] == '0.3180<div class="shep-sub">Validation MRR (Trainer, top-20)</div>'
+    assert cells[2] == '0.3180<div class="shep-sub">Validation pooled MRR (Trainer)</div>'
     assert cells[3] == "<span>regime</span>"
     assert cells[4] == "3 · 1 contested"
     unmatched = r.model_table_row_html(checkpoint(fingerprint=FP_B), [workspace()])
@@ -329,8 +329,8 @@ def test_model_facts_digest_rows_take_a_line_over_their_full_value():
     digest's label takes its own line, its full value and an icon-only Copy
     the line under it; the trained-on workspaces follow the label."""
     facts = r.ModelFacts(
-        name_line="GAT · run 2026-10-21 18:03 · epoch 2", run="gat/r", checkpoint_file="runs/x.pt",
-        workspace="demo", model_fingerprint="a" * 64, trained_on_fingerprint="b" * 64,
+        name_line="GATv2 · run 2026-10-21 18:03 · epoch 2", run="gatv2/r",
+        checkpoint_file="runs/x.pt", workspace="demo", model_fingerprint="a" * 64, trained_on_fingerprint="b" * 64,
         trained_on_names=("demo",), synthetic=True, sources="", validation=None, recorded=None,
         warnings=())
     html_ = r.model_facts_html(facts)

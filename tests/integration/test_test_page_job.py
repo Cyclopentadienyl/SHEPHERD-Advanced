@@ -48,7 +48,7 @@ def site(tmp_path, monkeypatch):
     workspaces.mkdir()
     demo = workspaces / "demo"
     shutil.move(str(cohort.data_dir), demo)
-    history = demo / "runs" / "gat" / HISTORY_RUN / "checkpoints"
+    history = demo / "runs" / "hgt" / HISTORY_RUN / "checkpoints"
     history.mkdir(parents=True)
     shutil.copy2(cohort.checkpoint, history / "best.pt")
     trained = train_children(demo, ("disease",))
@@ -148,7 +148,7 @@ def test_a_base_and_a_history_file_are_listed_and_never_started(site, monkeypatc
     binding = tp.workspace_binding(demo, tp.find(page["workspaces"], "name", "demo"))
     labels = dict((key, label) for label, key in tp.model_choices(models))
     base = _key(models, "gatv2", BASE_RUN)
-    history = _key(models, "gat", HISTORY_RUN, "best.pt")
+    history = _key(models, "hgt", HISTORY_RUN, "best.pt")
     child = _key(models, "gatv2", CHILD_RUNS["disease"])
     assert labels[base].startswith("Base · ") and labels[child].startswith("Disease · ")
     assert labels[history].startswith("History · never run · ")

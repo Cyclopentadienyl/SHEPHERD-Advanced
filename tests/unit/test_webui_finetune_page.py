@@ -66,7 +66,7 @@ def root(built, tmp_path, monkeypatch):
          name="model-03-0.8300.pt")
     _put(ws, "gatv2", OLD_BASE_RUN, _record_payload(), 100)
     _put(ws, "gatv2", "20261002-000000_disease_cccccc", _record_payload("disease"), 400)
-    _put(ws, "gat", "20261003-000000_hist_dddddd", GNN_PAYLOAD, 500)
+    _put(ws, "hgt", "20261003-000000_hist_dddddd", GNN_PAYLOAD, 500)
     torn = ws / "runs" / "gatv2" / "20261004-000000_torn_eeeeee" / "checkpoints" / "last.pt"
     torn.parent.mkdir(parents=True)
     torn.write_text("not a checkpoint")

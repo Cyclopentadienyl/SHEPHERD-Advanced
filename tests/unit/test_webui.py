@@ -149,8 +149,8 @@ class TestTrainingConsoleHelpers:
             {"epoch": 1, "total": 2.0},
         ]
         val_data = [
-            {"epoch": 0, "val_loss": 3.0},
-            {"epoch": 1, "val_loss": 2.5},
+            {"epoch": 0, "val_lp_loss": 3.0},
+            {"epoch": 1, "val_lp_loss": 2.5},
         ]
         loss = training_charts({"train": train_data, "validation": val_data})[0]
         assert [s["label"] for s in loss["series"]] == ["train", "validation"]
@@ -278,9 +278,9 @@ class TestErrorBanner:
         tail = "\n".join(f"line {i}" for i in range(30))
         html, _key = _build_error_banner_payload(
             {"error_message": f"Process exited with code 1\n\n--- Last output ---\n{tail}",
-             "current_epoch": 7, "total_epochs": 60}, None, run="gat/20261019-081500_run_7b10e4")
+             "current_epoch": 7, "total_epochs": 60}, None, run="gatv2/20261019-081500_run_7b10e4")
         assert "Training failed at epoch 7 of 60: Process exited with code 1" in html
-        assert "run <code>gat/20261019-081500_run_7b10e4</code>" in html
+        assert "run <code>gatv2/20261019-081500_run_7b10e4</code>" in html
         assert "line 29" in html and f"line {29 - BANNER_TAIL_LINES}" not in html
         assert 'data-act="dismiss"' in html
 

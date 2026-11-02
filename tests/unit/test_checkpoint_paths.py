@@ -53,8 +53,8 @@ def test_ranking_score_key_priority():
 
 def test_ranking_score_ignores_invalid():
     assert ranking_score_detail({"val_loss": 8.6}) is None  # loss is not a ranking metric
-    assert ranking_score_detail({"val_mrr": float("nan")}) is None  # NaN ignored
-    assert ranking_score_detail({"val_mrr": True}) is None  # bool is not a numeric score
+    assert ranking_score_detail({"val_pooled_mrr": float("nan")}) is None  # NaN ignored
+    assert ranking_score_detail({"val_pooled_mrr": True}) is None  # bool is not a numeric score
     assert ranking_score_detail({}) is None
     assert ranking_score_detail(None) is None
 
@@ -208,15 +208,15 @@ def test_a_colliding_run_id_is_drawn_again_never_reused(tmp_path, monkeypatch):
     monkeypatch.setattr(cp.secrets, "token_hex", lambda n: next(ids))
     when = datetime(2026, 10, 15, 9, 30, 0)
 
-    a = cp.claim_run_dir(cp.propose_run_dir(tmp_path, "gat", "x", now=when), data_dir=tmp_path)
-    b = cp.propose_run_dir(tmp_path, "gat", "x", now=when)
+    a = cp.claim_run_dir(cp.propose_run_dir(tmp_path, "gatv2", "x", now=when), data_dir=tmp_path)
+    b = cp.propose_run_dir(tmp_path, "gatv2", "x", now=when)
 
     assert a.name.endswith("_aaaaaa") and b.name.endswith("_bbbbbb")
 
 
 def test_runs_list_most_recently_trained_first(tmp_path):
     root = tmp_path / "runs"
-    _touch(root / "gat" / "20261001-000000_a_111111" / "checkpoints" / "last.pt", 100)
+    _touch(root / "gatv2" / "20261001-000000_a_111111" / "checkpoints" / "last.pt", 100)
     _touch(root / "hgt" / "20261002-000000_b_222222" / "checkpoints" / "last.pt", 300)
     _touch(root / "hgt" / "20261003-000000_c_333333" / "checkpoints" / "last.pt", 200)
     (root / "sage" / "20261004-000000_empty_444444").mkdir(parents=True)
@@ -262,7 +262,7 @@ def test_with_accept_the_record_decides_and_later_runs_are_never_judged(tmp_path
     )
 
     root = tmp_path / "runs"
-    _touch(root / "gat" / "20261004-000000_new_444444" / "checkpoints" / "last.pt", 400)
+    _touch(root / "hgt" / "20261004-000000_new_444444" / "checkpoints" / "last.pt", 400)
     child = _touch(root / "gatv2" / "20261003-000000_mid_333333" / "checkpoints" / "ok.pt", 300)
     _touch(root / "sage" / "20261002-000000_sage_222222" / "checkpoints" / "ok.pt", 200)
     _touch(root / "gatv2" / "20261001-000000_old_111111" / "checkpoints" / "ok.pt", 100)
@@ -279,11 +279,11 @@ def test_with_accept_the_record_decides_and_later_runs_are_never_judged(tmp_path
     # The conv types only (the ShepherdGNN reload): a gatv2 run is never read.
     assert select_auto_run_checkpoint(tmp_path, accept=accept)[1] == "sage"
     assert set(judged) == {"20261004-000000_new_444444", "20261002-000000_sage_222222"}
-    assert select_auto_run_checkpoint(tmp_path)[1] == "gat", "without accept: the newest run"
+    assert select_auto_run_checkpoint(tmp_path)[1] == "hgt", "without accept: the newest run"
     assert select_run_checkpoint(tmp_path, "sage", accept=accept)[0].parent.parent.name == (
         "20261002-000000_sage_222222")
-    assert select_run_checkpoint(tmp_path, "gat", accept=accept) == (
-        None, "no run of 'gat' has a checkpoint")
+    assert select_run_checkpoint(tmp_path, "hgt", accept=accept) == (
+        None, "no run of 'hgt' has a checkpoint")
     assert select_auto_run_checkpoint(tmp_path, accept=lambda p: False)[0] is None
 
 
@@ -324,18 +324,18 @@ class TestSelectionKeepsTheListingsBoundary:
         )
 
         workspace = tmp_path / "ws"
-        inside = _touch(workspace / "runs" / "gat" / "20261001-000000_in_111111"
+        inside = _touch(workspace / "runs" / "hgt" / "20261001-000000_in_111111"
                         / "checkpoints" / "inside.pt", 100)
         _touch(tmp_path / "elsewhere" / "far_run" / "checkpoints" / "far.pt", 900)
-        link = workspace / "runs" / "gat" / "20261009-000000_far_999999"
+        link = workspace / "runs" / "hgt" / "20261009-000000_far_999999"
         link.symlink_to(tmp_path / "elsewhere" / "far_run", target_is_directory=True)
         judged, accept = self._accept()
 
         path, key, reason = select_auto_run_checkpoint(workspace, accept=accept,
                                                        keys=RUN_LAYOUT_KEYS)
-        assert (path, key) == (inside, "gat") and judged == ["inside.pt"]
+        assert (path, key) == (inside, "hgt") and judged == ["inside.pt"]
         assert f"not read: 20261009-000000_far_999999/far.pt {self.REASON}" in reason
-        path, reason = select_run_checkpoint(workspace, "gat")
+        path, reason = select_run_checkpoint(workspace, "hgt")
         assert path == inside and f"far.pt {self.REASON}" in reason
 
     def test_a_layout_directory_linked_outside_is_no_candidate(self, tmp_path):
@@ -369,7 +369,7 @@ class TestSelectionKeepsTheListingsBoundary:
         workspace = tmp_path / "ws"
         workspace.mkdir()
         for index in range(NOT_READ_NAMED + 4):
-            _touch(tmp_path / "elsewhere" / "gat" / f"2026100{index}-000000_r_00000{index}"
+            _touch(tmp_path / "elsewhere" / "hgt" / f"2026100{index}-000000_r_00000{index}"
                    / "checkpoints" / "last.pt", 100 + index)
         (workspace / "runs").symlink_to(tmp_path / "elsewhere", target_is_directory=True)
 
@@ -380,42 +380,43 @@ class TestSelectionKeepsTheListingsBoundary:
         assert reason.count(self.REASON) == NOT_READ_NAMED
         assert reason.endswith("; and 4 more file(s) not read")
         listed = []
-        assert select_run_checkpoint(workspace, "gat", not_read=listed)[0] is None
+        assert select_run_checkpoint(workspace, "hgt", not_read=listed)[0] is None
         assert listed == not_read
 
     def test_the_listing_and_the_selection_give_one_reason(self, tmp_path):
         from src.utils.checkpoint_paths import read_run_checkpoints, select_run_checkpoint
 
         workspace = tmp_path / "ws"
-        run = workspace / "runs" / "gat" / "20261001-000000_a_111111" / "checkpoints"
+        run = workspace / "runs" / "hgt" / "20261001-000000_a_111111" / "checkpoints"
         run.mkdir(parents=True)
         _write_checkpoint(tmp_path / "elsewhere.pt", {"epoch": 1})
         (run / "link.pt").symlink_to(tmp_path / "elsewhere.pt")
 
         (entry,) = read_run_checkpoints(workspace, within=workspace)
-        path, reason = select_run_checkpoint(workspace, "gat")
+        path, reason = select_run_checkpoint(workspace, "hgt")
         assert path is None
-        assert reason == f"no run of 'gat' has a checkpoint; not read: {entry.problem}"
+        assert reason == f"no run of 'hgt' has a checkpoint; not read: {entry.problem}"
 
 
 def test_equal_recency_is_ordered_by_name_not_by_the_filesystem(tmp_path):
     """The order is a total key (newest checkpoint, then the run's name), so
     which run is selected never depends on `iterdir()`'s order, which ext4
     gives by directory hash."""
-    from src.utils.checkpoint_paths import list_runs, select_auto_run_checkpoint
+    from src.utils.checkpoint_paths import RUN_LAYOUT_KEYS, list_runs, select_auto_run_checkpoint
 
     root = tmp_path / "runs"
     for arch, name in (("sage", "20261001-000000_a_111111"),
-                       ("gat", "20261003-000000_c_333333"),
+                       ("gatv2", "20261003-000000_c_333333"),
                        ("hgt", "20261002-000000_b_222222")):
         _touch(root / arch / name / "checkpoints" / "last.pt", 1_700_000_000)
 
     assert [r.name for r in list_runs(tmp_path)] == [
         "20261003-000000_c_333333", "20261002-000000_b_222222", "20261001-000000_a_111111"]
-    assert select_auto_run_checkpoint(tmp_path)[1] == "gat"
+    assert select_auto_run_checkpoint(tmp_path, keys=RUN_LAYOUT_KEYS)[1] == "gatv2"
     _touch(root / "sage" / "20261001-000000_a_111111" / "checkpoints" / "last.pt",
            1_700_000_900)
-    assert select_auto_run_checkpoint(tmp_path)[1] == "sage", "newer training wins over the name"
+    assert select_auto_run_checkpoint(tmp_path, keys=RUN_LAYOUT_KEYS)[1] == "sage", (
+        "newer training wins over the name")
 
 
 def test_an_explicit_run_directory_must_be_free(tmp_path):
@@ -549,7 +550,7 @@ def test_the_listing_is_by_run_then_newest_file(tmp_path):
     from src.utils.checkpoint_paths import list_run_checkpoints
 
     root = tmp_path / "runs"
-    old = root / "gat" / "20261001-000000_a_111111"
+    old = root / "gatv2" / "20261001-000000_a_111111"
     new = root / "hgt" / "20261002-000000_b_222222"
     _touch(old / "checkpoints" / "last.pt", 100)
     _touch(new / "checkpoints" / "model-1.pt", 200)
@@ -558,7 +559,7 @@ def test_the_listing_is_by_run_then_newest_file(tmp_path):
 
     assert [(r.name, p.name) for r, p in list_run_checkpoints(tmp_path)] == [
         (new.name, "last.pt"), (new.name, "model-1.pt"), (old.name, "last.pt")]
-    assert [p.name for _, p in list_run_checkpoints(tmp_path, "gat")] == ["last.pt"]
+    assert [p.name for _, p in list_run_checkpoints(tmp_path, "gatv2")] == ["last.pt"]
 
 
 # ---------------------------------------------------------------------------
@@ -579,11 +580,11 @@ def test_the_read_listing_keeps_the_order_and_each_reads_digest(tmp_path):
     from src.utils.checkpoint_paths import list_run_checkpoints, read_run_checkpoints
     from src.utils.fingerprint import file_sha256
 
-    old = tmp_path / "runs" / "gat" / "20261001-000000_a_111111" / "checkpoints"
+    old = tmp_path / "runs" / "gatv2" / "20261001-000000_a_111111" / "checkpoints"
     new = tmp_path / "runs" / "hgt" / "20261002-000000_b_222222" / "checkpoints"
     digest = _write_checkpoint(new / "last.pt", {
         "checkpoint_kind": "training_state", "epoch": 4,
-        "logs": {"val_loss": 0.3, "val_mrr": 0.25},
+        "logs": {"val_loss": 0.3, "val_pooled_mrr": 0.25},
         "training_input_digests": {"split_manifest": "1" * 64, "kg": "2" * 64}})
     _write_checkpoint(old / "last.pt", {"checkpoint_kind": "weights", "epoch": 1})
     os.utime(old / "last.pt", (100, 100))
@@ -595,8 +596,8 @@ def test_the_read_listing_keeps_the_order_and_each_reads_digest(tmp_path):
     assert first.path == new / "last.pt"
     assert first.sha256 == digest == file_sha256(new / "last.pt")
     assert (first.checkpoint_kind, first.epoch) == ("training_state", 4)
-    assert first.logs == {"val_loss": 0.3, "val_mrr": 0.25}
-    assert first.validation == ("val_mrr", 0.25)
+    assert first.logs == {"val_loss": 0.3, "val_pooled_mrr": 0.25}
+    assert first.validation == ("val_pooled_mrr", 0.25)
     assert first.dataset_fingerprint == "1" * 64 and first.problem is None
     # A weights file records no logs and no validation: none, never zero.
     assert second.logs == {} and second.validation is None
@@ -608,7 +609,7 @@ def test_a_file_the_read_refuses_is_listed_with_its_reason(tmp_path):
 
     from src.utils.checkpoint_paths import read_run_checkpoints
 
-    run = tmp_path / "runs" / "gat" / "20261001-000000_a_111111" / "checkpoints"
+    run = tmp_path / "runs" / "gatv2" / "20261001-000000_a_111111" / "checkpoints"
     run.mkdir(parents=True)
     (run / "garbage.pt").write_bytes(b"not a checkpoint")
     torch.save({"model": _Pickled()}, run / "pickled.pt")
@@ -671,22 +672,22 @@ def test_a_second_listing_of_unchanged_files_opens_none_of_them(tmp_path, monkey
 
     monkeypatch.setattr(cp, "_READS", OrderedDict())
     monkeypatch.setattr(cp, "SETTLED_NS", 0)  # these files were written just now
-    run = tmp_path / "runs" / "gat" / "20261001-000000_a_111111" / "checkpoints"
-    _write_checkpoint(run / "a.pt", {"epoch": 1, "logs": {"val_mrr": 0.2}})
+    run = tmp_path / "runs" / "gatv2" / "20261001-000000_a_111111" / "checkpoints"
+    _write_checkpoint(run / "a.pt", {"epoch": 1, "logs": {"val_pooled_mrr": 0.2}})
     _write_checkpoint(run / "b.pt", {"epoch": 2})
     seen = _counted_reads(monkeypatch)
 
     first = cp.read_run_checkpoints(tmp_path, within=tmp_path)
     assert sorted(seen) == ["a.pt", "b.pt"]
     first_a = next(e for e in first if e.path.name == "a.pt")
-    first_a.logs["val_mrr"] = 99.0  # a caller's change never reaches the kept read
+    first_a.logs["val_pooled_mrr"] = 99.0  # a caller's change never reaches the kept read
     again = cp.read_run_checkpoints(tmp_path, within=tmp_path)
     assert sorted(seen) == ["a.pt", "b.pt"], "an unchanged file was opened again"
     assert [(e.path, e.sha256, e.epoch, e.size_bytes) for e in again] == [
         (e.path, e.sha256, e.epoch, e.size_bytes) for e in first]
-    assert next(e for e in again if e.path.name == "a.pt").logs == {"val_mrr": 0.2}
+    assert next(e for e in again if e.path.name == "a.pt").logs == {"val_pooled_mrr": 0.2}
 
-    _write_checkpoint(run / "a.pt", {"epoch": 3, "logs": {"val_mrr": 0.3, "val_loss": 1.0}})
+    _write_checkpoint(run / "a.pt", {"epoch": 3, "logs": {"val_pooled_mrr": 0.3, "val_loss": 1.0}})
     changed = {e.path.name: e for e in cp.read_run_checkpoints(tmp_path, within=tmp_path)}
     assert sorted(seen) == ["a.pt", "a.pt", "b.pt"]
     assert changed["a.pt"].epoch == 3 and changed["a.pt"].sha256 == file_sha256(run / "a.pt")
@@ -701,7 +702,7 @@ def test_a_file_changed_just_before_its_read_is_read_again_every_time(tmp_path, 
     import src.utils.checkpoint_paths as cp
 
     monkeypatch.setattr(cp, "_READS", OrderedDict())
-    run = tmp_path / "runs" / "gat" / "20261001-000000_a_111111" / "checkpoints"
+    run = tmp_path / "runs" / "gatv2" / "20261001-000000_a_111111" / "checkpoints"
     _write_checkpoint(run / "a.pt", {"epoch": 1})
     seen = _counted_reads(monkeypatch)
     cp.read_run_checkpoints(tmp_path)
@@ -717,7 +718,7 @@ def test_the_kept_reads_are_bounded_and_an_outside_file_is_never_kept(tmp_path, 
     monkeypatch.setattr(cp, "_READS", OrderedDict())
     monkeypatch.setattr(cp, "SETTLED_NS", 0)
     monkeypatch.setattr(cp, "READS_KEPT", 2)
-    run = tmp_path / "ws" / "runs" / "gat" / "20261001-000000_a_111111" / "checkpoints"
+    run = tmp_path / "ws" / "runs" / "gatv2" / "20261001-000000_a_111111" / "checkpoints"
     for name in ("a.pt", "b.pt", "c.pt"):
         _write_checkpoint(run / name, {"epoch": 1})
     outside = tmp_path / "elsewhere.pt"
@@ -750,7 +751,7 @@ def test_a_link_whose_target_is_gone_is_listed_not_fatal(tmp_path):
         read_run_checkpoints,
     )
 
-    run = tmp_path / "runs" / "gat" / "20261001-000000_a_111111"
+    run = tmp_path / "runs" / "gatv2" / "20261001-000000_a_111111"
     _write_checkpoint(run / "checkpoints" / "last.pt", {"epoch": 1})
     (run / "checkpoints" / "gone.pt").symlink_to(run / "checkpoints" / "removed.pt")
 
@@ -765,7 +766,7 @@ def test_a_link_whose_target_is_gone_is_listed_not_fatal(tmp_path):
 def test_the_size_is_the_listed_files(tmp_path):
     from src.utils.checkpoint_paths import read_run_checkpoints
 
-    path = tmp_path / "runs" / "gat" / "20261001-000000_a_111111" / "checkpoints" / "last.pt"
+    path = tmp_path / "runs" / "gatv2" / "20261001-000000_a_111111" / "checkpoints" / "last.pt"
     _write_checkpoint(path, {"epoch": 1})
     (entry,) = read_run_checkpoints(tmp_path)
     assert entry.size_bytes == path.stat().st_size > 0
@@ -777,11 +778,11 @@ class TestWithinBoundsWhatIsRead:
 
     def _layout(self, tmp_path):
         workspace = tmp_path / "ws"
-        run = workspace / "runs" / "gat" / "20261001-000000_a_111111" / "checkpoints"
+        run = workspace / "runs" / "gatv2" / "20261001-000000_a_111111" / "checkpoints"
         _write_checkpoint(run / "inside.pt", {"epoch": 1})
         elsewhere = tmp_path / "elsewhere"
         _write_checkpoint(elsewhere / "secret.pt", {
-            "epoch": 9, "logs": {"val_mrr": 0.9},
+            "epoch": 9, "logs": {"val_pooled_mrr": 0.9},
             "training_input_digests": {"split_manifest": "1" * 64}})
         (run / "link.pt").symlink_to(elsewhere / "secret.pt")
         far = workspace / "runs" / "sage" / "20261002-000000_b_222222"

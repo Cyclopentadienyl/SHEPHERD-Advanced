@@ -171,9 +171,10 @@ def test_every_renderer_help_key_is_registered(built):
     workspace = {"name": "w", "dataset_fingerprint": "a" * 64, "trainable": True,
                  "dataset_record": {"binding": "verified", "origin": "files"},
                  "build": {"state": "not_recorded"}, "declared_releases": ()}
-    item = {"workspace": "w", "architecture": "gat", "run": "20261017-091500_run_x",
+    item = {"workspace": "w", "architecture": "gatv2", "run": "20261017-091500_run_x",
             "filename": "best.pt", "sha256": "b" * 64, "epoch": 3,
-            "validation": {"metric": "val_mrr", "value": 0.3}, "dataset_fingerprint": "a" * 64,
+            "validation": {"metric": "val_pooled_mrr", "value": 0.3},
+            "dataset_fingerprint": "a" * 64,
             "problem": None}
     rendered = (r.dataset_identity_html(workspace)
                 + r.model_facts_html(r.facts_from_checkpoint(item, [workspace]))

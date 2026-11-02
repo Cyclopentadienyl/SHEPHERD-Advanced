@@ -98,7 +98,7 @@ SEIZURE, DELAY, UNKNOWN = "HP:0001250", "HP:0001263", "HP:9999999"
 # ---------------------------------------------------------------------------
 # Builders
 # ---------------------------------------------------------------------------
-def _checkpoint_for(data_dir, path, *, val_mrr=0.5):
+def _checkpoint_for(data_dir, path, *, val_pooled_mrr=0.5):
     """A checkpoint of an untrained model over `data_dir`'s graph, recording
     that graph as training does (M2.2), so serving accepts it (M2.4).
 
@@ -121,7 +121,7 @@ def _checkpoint_for(data_dir, path, *, val_mrr=0.5):
             "state_dict": model.state_dict(),
             "config": {"hidden_dim": 8, "num_layers": 2, "num_heads": 2},
             "epoch": 3,
-            "logs": {"val_mrr": val_mrr},
+            "logs": {"val_pooled_mrr": val_pooled_mrr},
             "training_input_digests": graph_record(data_dir),
         },
         path,
@@ -959,10 +959,10 @@ def test_a_diagnose_response_without_the_identity_is_refused():
 # ---------------------------------------------------------------------------
 # 6. The reload route reports what it served (BACKLOG 19.1, 19.2)
 # ---------------------------------------------------------------------------
-def _with_val_mrr(source, target, val_mrr, *, shift=0.0):
+def _with_val_pooled_mrr(source, target, val_pooled_mrr, *, shift=0.0):
     """`source` with another metric in its logs and, with `shift`, other weights."""
     contents = torch.load(source, map_location="cpu", weights_only=False)
-    contents["logs"] = {"val_mrr": val_mrr}
+    contents["logs"] = {"val_pooled_mrr": val_pooled_mrr}
     if shift:
         contents["state_dict"] = {
             name: value + shift if value.is_floating_point() else value
@@ -974,7 +974,7 @@ def _with_val_mrr(source, target, val_mrr, *, shift=0.0):
 
 
 def _run_checkpoint(data_dir):
-    return (data_dir / "runs" / "gat" / "20261015-000000_run_aaaaaa" / "checkpoints"
+    return (data_dir / "runs" / "hgt" / "20261015-000000_run_aaaaaa" / "checkpoints"
             / "model.pt")
 
 
@@ -990,9 +990,9 @@ def test_the_reported_metric_is_the_loaded_files_when_the_selection_was_replaced
     from src.api.routes.pipeline import PipelineReloadRequest, reload_pipeline
 
     data_dir, checkpoint = workspace
-    selected = _with_val_mrr(checkpoint, _run_checkpoint(data_dir), 0.25)
+    selected = _with_val_pooled_mrr(checkpoint, _run_checkpoint(data_dir), 0.25)
     scored = _sha(selected)
-    replacement = _with_val_mrr(checkpoint, tmp_path / "b.pt", 0.8123, shift=1.0)
+    replacement = _with_val_pooled_mrr(checkpoint, tmp_path / "b.pt", 0.8123, shift=1.0)
     loaded = _sha(replacement)
     real_build = api.build_pipeline
 
@@ -1005,7 +1005,7 @@ def test_the_reported_metric_is_the_loaded_files_when_the_selection_was_replaced
     result = asyncio.run(reload_pipeline(PipelineReloadRequest(data_dir=str(data_dir))))
 
     assert result.success, result.message
-    assert "; loaded file val_mrr=0.8123" in result.selection_reason
+    assert "; loaded file val_pooled_mrr=0.8123" in result.selection_reason
     assert "best" not in result.selection_reason
     assert "0.2500" not in result.selection_reason
     assert f"(scored sha256 {scored}, loaded sha256 {loaded})" in result.selection_reason
@@ -1013,7 +1013,7 @@ def test_the_reported_metric_is_the_loaded_files_when_the_selection_was_replaced
         "the choice was made on the earlier bytes, and the metric shown is the loaded file's"
     )
     assert result.status.served_identity.checkpoint.sha256 == loaded
-    assert result.status.checkpoint_meta["val_mrr"] == pytest.approx(0.8123)
+    assert result.status.checkpoint_meta["val_pooled_mrr"] == pytest.approx(0.8123)
 
 
 def test_a_replacement_without_a_metric_is_not_said_to_show_one(
@@ -1026,9 +1026,9 @@ def test_a_replacement_without_a_metric_is_not_said_to_show_one(
     from src.api.routes.pipeline import PipelineReloadRequest, reload_pipeline
 
     data_dir, checkpoint = workspace
-    selected = _with_val_mrr(checkpoint, _run_checkpoint(data_dir), 0.25)
+    selected = _with_val_pooled_mrr(checkpoint, _run_checkpoint(data_dir), 0.25)
     scored = _sha(selected)
-    replacement = _with_val_mrr(checkpoint, tmp_path / "b.pt", None, shift=1.0)
+    replacement = _with_val_pooled_mrr(checkpoint, tmp_path / "b.pt", None, shift=1.0)
     real_build = api.build_pipeline
 
     def replace_then_build(**kwargs):
@@ -1046,8 +1046,8 @@ def test_a_replacement_without_a_metric_is_not_said_to_show_one(
         "the choice was made on the earlier bytes"
     )
     assert "metric shown" not in result.selection_reason
-    assert "val_mrr" not in result.selection_reason
-    assert "val_mrr" not in result.status.checkpoint_meta
+    assert "val_pooled_mrr" not in result.selection_reason
+    assert "val_pooled_mrr" not in result.status.checkpoint_meta
 
 
 #: Two candidates in one run, `model-a.pt` and `last.pt`, with these metrics in
@@ -1055,11 +1055,11 @@ def test_a_replacement_without_a_metric_is_not_said_to_show_one(
 #: A 0-dim tensor is a metric the scan does not rank (it ranks Python numbers),
 #: and the build's metadata turns it into a float.
 SELECTIONS = {
-    "ranked by a float metric": (0.9, 0.1, "model-a.pt", "; best val_mrr=0.9000"),
+    "ranked by a float metric": (0.9, 0.1, "model-a.pt", "; best val_pooled_mrr=0.9000"),
     "tensor metrics the scan does not rank": (
         torch.tensor(0.9), torch.tensor(0.1), "last.pt",
         "; not ranked by metric (no candidate carries one): last.pt, else the newest "
-        "file; loaded file val_mrr=0.1000"),
+        "file; loaded file val_pooled_mrr=0.1000"),
     "no metric at all": (
         None, None, "last.pt",
         "; not ranked by metric (no candidate carries one): last.pt, else the newest "
@@ -1080,8 +1080,8 @@ def test_best_is_said_only_of_a_file_ranked_by_its_metric(api, workspace, case):
     data_dir, checkpoint = workspace
     first, last, served, ending = SELECTIONS[case]
     run_dir = _run_checkpoint(data_dir).parent
-    _with_val_mrr(checkpoint, run_dir / "model-a.pt", first, shift=1.0)
-    _with_val_mrr(checkpoint, run_dir / "last.pt", last)
+    _with_val_pooled_mrr(checkpoint, run_dir / "model-a.pt", first, shift=1.0)
+    _with_val_pooled_mrr(checkpoint, run_dir / "last.pt", last)
 
     result = asyncio.run(reload_pipeline(PipelineReloadRequest(data_dir=str(data_dir))))
 
@@ -1099,14 +1099,14 @@ def test_an_unreplaced_selection_reports_its_metric_and_no_replacement(api, work
     from src.api.routes.pipeline import PipelineReloadRequest, reload_pipeline
 
     data_dir, checkpoint = workspace
-    selected = _with_val_mrr(checkpoint, _run_checkpoint(data_dir), 0.25)
+    selected = _with_val_pooled_mrr(checkpoint, _run_checkpoint(data_dir), 0.25)
 
     with count_opens() as opens:
         result = asyncio.run(reload_pipeline(PipelineReloadRequest(data_dir=str(data_dir))))
 
     assert result.success, result.message
     assert result.checkpoint_path == str(selected)
-    assert "best val_mrr=0.2500" in result.selection_reason
+    assert "best val_pooled_mrr=0.2500" in result.selection_reason
     assert "replaced" not in result.selection_reason
     assert result.status.served_identity.checkpoint.sha256 == _sha(selected)
     assert opens.opens(selected) == 2
@@ -1145,7 +1145,7 @@ def test_a_reload_bound_to_the_fingerprint_shown_serves_those_bytes_or_nothing(
     serving = api.app_state.pipeline
     assert serving.served_identity().checkpoint.sha256 == shown
 
-    replacement = _with_val_mrr(checkpoint, tmp_path / "b.pt", 0.5, shift=1.0)
+    replacement = _with_val_pooled_mrr(checkpoint, tmp_path / "b.pt", 0.5, shift=1.0)
     swap = replace_after_read(monkeypatch, after=data_dir / "kg.json", target=checkpoint,
                               data=replacement.read_bytes(), how="rename")
     refused = client.post("/api/v1/pipeline/reload",

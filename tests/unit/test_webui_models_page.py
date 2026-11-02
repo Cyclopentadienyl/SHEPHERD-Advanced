@@ -83,16 +83,16 @@ MYGENE = "mygene2-2026-09"
 INST = "inst-accept-2026-08"
 EXPLORE = "explore-2026-07"
 
-#: (architecture, run, file, epoch, val_mrr), newest first as the listing orders them.
+#: (architecture, run, file, epoch, val_pooled_mrr), newest first as the listing orders them.
 CHECKPOINTS = [
-    ("gat", "20261018-091200_run_8c2e7a", "model-12.pt", 12, 0.318),
-    ("gat", "20261018-091200_run_8c2e7a", "model-08.pt", 8, 0.297),
-    ("gat", "20261017-091500_run_3fa9c1", "model-05.pt", 5, 0.241),
-    ("gat", "20261017-091500_run_3fa9c1", "model-03.pt", 3, 0.196),
+    ("hgt", "20261018-091200_run_8c2e7a", "model-12.pt", 12, 0.318),
+    ("hgt", "20261018-091200_run_8c2e7a", "model-08.pt", 8, 0.297),
+    ("hgt", "20261017-091500_run_3fa9c1", "model-05.pt", 5, 0.241),
+    ("hgt", "20261017-091500_run_3fa9c1", "model-03.pt", 3, 0.196),
     ("hgt", "20261016-221000_run_b71d04", "model-40.pt", 40, 0.352),
     ("sage", "20261015-083000_run_e4c2a9", "model-30.pt", 30, 0.205),
     ("sage", "20261015-083000_run_e4c2a9", "broken.pt", None, None),
-    ("gat", "20261012-081500_run_51f0d3", "model-20.pt", 20, 0.224),
+    ("hgt", "20261012-081500_run_51f0d3", "model-20.pt", 20, 0.224),
 ]
 
 
@@ -135,7 +135,7 @@ def world(demo_workspace, tmp_path, monkeypatch):
             path.write_bytes(b"not a checkpoint")
         else:
             shas[name] = write_checkpoint(
-                {"checkpoint_kind": "weights", "epoch": epoch, "logs": {"val_mrr": val},
+                {"checkpoint_kind": "weights", "epoch": epoch, "logs": {"val_pooled_mrr": val},
                  "training_input_digests": {"split_manifest": fingerprint}}, path)
         stamp = now - index * 3600
         os.utime(path, (stamp, stamp))
@@ -405,7 +405,7 @@ def test_the_task_filter_orders_only_what_is_shown(world, monkeypatch):
     assert [g["title"] for g in view["groups"]] == [mp.GROUP_NOT_TESTED]
     assert view["groups"][0]["keys"] == [bundle_key("disease")]
     assert ordering is not None                   # a Load from it is still a Load from the order
-    assert mp.controls(listing, _data, mp.BY_SCORE, MYGENE, None, None, "gat")["task"] == "all"
+    assert mp.controls(listing, _data, mp.BY_SCORE, MYGENE, None, None, "gatv2")["task"] == "all"
 
 
 def test_a_second_scoring_semantics_is_a_choice_never_interleaved(world, monkeypatch):
@@ -741,8 +741,9 @@ def test_the_detail_keeps_validation_and_mode_c_apart(world, monkeypatch):
     assert world["shas"]["model-12.pt"][:12] in detail["header"]
     top, records = detail["top"], detail["records"]
     assert world["shas"]["model-05.pt"] in top                  # the full fingerprint, Copy
-    assert "Validation MRR (Trainer, top-20) 0.2410" in top and "Mode C" not in top
-    assert "Validation MRR" not in records and "top-20" not in records and "0.2410" not in records
+    assert "Validation pooled MRR (Trainer) 0.2410" in top and "Mode C" not in top
+    assert ("Validation pooled MRR" not in records and "(Trainer)" not in records
+            and "0.2410" not in records)
     assert MODE_C_RESULT_LABEL in records and "Mode C MRR (untruncated)" in records
     # D4's pick first, the other record of its group with its difference
     assert records.index("registered #3") < records.index("registered #2")
@@ -864,7 +865,7 @@ def test_markup_in_a_run_name_is_escaped(world, monkeypatch):
 
     # One run named by its start time, one not (its whole name is then the title).
     for name in ("20261019-090000_run_<i>x", "<i>y_run"):
-        run = world["workspace"] / "runs" / "gat" / name / "checkpoints"
+        run = world["workspace"] / "runs" / "gatv2" / name / "checkpoints"
         run.mkdir(parents=True)
         write_checkpoint({"checkpoint_kind": "weights", "epoch": 2, "logs": {}}, run / "best.pt")
     listing, data = _read(world, monkeypatch)

@@ -559,7 +559,7 @@ def test_a_reload_refused_for_its_device_reads_no_candidate_checkpoint(
 
     api = no_device_configured
     data_dir, checkpoint = workspace
-    run = data_dir / "runs" / "gat" / "20261015-000000_run_aaaaaa" / "checkpoints"
+    run = data_dir / "runs" / "hgt" / "20261015-000000_run_aaaaaa" / "checkpoints"
     run.mkdir(parents=True)
     candidate = run / "model.pt"
     shutil.copyfile(checkpoint, candidate)

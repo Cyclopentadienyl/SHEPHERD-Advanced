@@ -41,7 +41,7 @@ def tmp_dirs(tmp_path):
     """A workspace with one run directory (contract M3a-2): its logs and
     checkpoints are inside it."""
     data_dir = tmp_path / "ws"
-    run_dir = data_dir / "runs" / "gat" / "20260223-100000_run_aaaaaa"
+    run_dir = data_dir / "runs" / "gatv2" / "20260223-100000_run_aaaaaa"
     log_dir = run_dir / "logs"
     checkpoint_dir = run_dir / "checkpoints"
     log_dir.mkdir(parents=True)
@@ -95,9 +95,12 @@ def sample_metrics_log(tmp_dirs):
             {"epoch": 2, "total": 1.5, "lr_group_0": 9e-5, "timestamp": "2026-02-23T10:02:00"},
         ],
         "validation": [
-            {"epoch": 0, "val_loss": 3.0, "val_mrr": 0.1, "val_hits@1": 0.05, "val_hits@10": 0.2},
-            {"epoch": 1, "val_loss": 2.5, "val_mrr": 0.15, "val_hits@1": 0.08, "val_hits@10": 0.25},
-            {"epoch": 2, "val_loss": 2.0, "val_mrr": 0.2, "val_hits@1": 0.1, "val_hits@10": 0.3},
+            {"epoch": 0, "val_loss": 3.0, "val_pooled_mrr": 0.1, "val_pooled_top1": 0.05,
+             "val_pooled_top10": 0.2},
+            {"epoch": 1, "val_loss": 2.5, "val_pooled_mrr": 0.15, "val_pooled_top1": 0.08,
+             "val_pooled_top10": 0.25},
+            {"epoch": 2, "val_loss": 2.0, "val_pooled_mrr": 0.2, "val_pooled_top1": 0.1,
+             "val_pooled_top10": 0.3},
         ],
     }
     with open(log_file, "w") as f:
@@ -263,7 +266,7 @@ class TestTrainingManagerMetrics:
         assert len(metrics["train"]) == 3
         assert len(metrics["validation"]) == 3
         assert metrics["train"][0]["total"] == 2.5
-        assert metrics["validation"][2]["val_mrr"] == 0.2
+        assert metrics["validation"][2]["val_pooled_mrr"] == 0.2
 
     def test_get_metrics_no_logs(self, manager):
         metrics = manager.get_metrics_history()
@@ -304,7 +307,7 @@ class TestTrainingManagerCheckpoints:
         checkpoints = manager.get_checkpoints(tmp_dirs["data_dir"])
         assert len(checkpoints) == 2
         assert {c["run"] for c in checkpoints} == {"20260223-100000_run_aaaaaa"}
-        assert {c["architecture"] for c in checkpoints} == {"gat"}
+        assert {c["architecture"] for c in checkpoints} == {"gatv2"}
         filenames = [c["filename"] for c in checkpoints]
         assert "last.pt" in filenames
         assert "model-01-0.5000.pt" in filenames
@@ -324,17 +327,17 @@ class TestTrainingManagerCheckpoints:
         ckpt_dir = Path(tmp_dirs["checkpoint_dir"])
         digest = write_checkpoint(
             {"checkpoint_kind": "training_state", "epoch": 3,
-             "logs": {"val_mrr": 0.4, "val_loss": 0.2},
+             "logs": {"val_pooled_mrr": 0.4, "val_loss": 0.2},
              "training_input_digests": {"split_manifest": "5" * 64}},
             ckpt_dir / "last.pt")
 
         (entry,) = manager.get_checkpoints(tmp_dirs["data_dir"])
         assert entry["sha256"] == digest
-        assert entry["validation"] == {"metric": "val_mrr", "value": 0.4}
+        assert entry["validation"] == {"metric": "val_pooled_mrr", "value": 0.4}
         assert entry["dataset_fingerprint"] == "5" * 64
         assert entry["metadata_problem"] is None
         assert (entry["epoch"], entry["checkpoint_kind"]) == (3, "training_state")
-        assert entry["metrics"] == {"val_mrr": 0.4, "val_loss": 0.2}
+        assert entry["metrics"] == {"val_pooled_mrr": 0.4, "val_loss": 0.2}
 
     def test_the_manager_no_longer_loads_a_file_itself(self):
         """The one read is `read_checkpoint`'s, inside the listing."""
@@ -427,7 +430,7 @@ class TestTrainingAPIEndpoints:
         from src.utils.checkpoint_io import write_checkpoint
 
         digest = write_checkpoint(
-            {"epoch": 2, "logs": {"val_hits@1": 0.1},
+            {"epoch": 2, "logs": {"val_pooled_mrr": 0.1},
              "training_input_digests": {"split_manifest": "6" * 64}},
             Path(tmp_dirs["checkpoint_dir"]) / "last.pt")
         (Path(tmp_dirs["checkpoint_dir"]) / "broken.pt").write_bytes(b"x")
@@ -436,7 +439,7 @@ class TestTrainingAPIEndpoints:
         listed = {c["filename"]: c for c in self.client.get(
             "/api/v1/training/checkpoints").json()}
         assert listed["last.pt"]["sha256"] == digest
-        assert listed["last.pt"]["validation"] == {"metric": "val_hits@1", "value": 0.1}
+        assert listed["last.pt"]["validation"] == {"metric": "val_pooled_mrr", "value": 0.1}
         assert listed["last.pt"]["dataset_fingerprint"] == "6" * 64
         assert listed["last.pt"]["metadata_problem"] is None
         assert listed["broken.pt"]["sha256"] is None and listed["broken.pt"]["metadata_problem"]

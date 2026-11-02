@@ -181,7 +181,7 @@ def test_a_parent_in_another_listed_workspace_is_found_by_its_run_and_bytes(tmp_
     parent = {"sha256": file_sha256(base), "run": BASE_RUN}
     _put(root / "b", "gatv2", "20261002-000000_disease_bbbbbb",
          _record_payload("disease", parent=parent), 200)
-    _put(root / "b", "gat", "20261001-000000_gnn_aaaaaa", GNN_PAYLOAD, 50)
+    _put(root / "b", "hgt", "20261001-000000_gnn_aaaaaa", GNN_PAYLOAD, 50)
     environ = {ss.ENV_WORKSPACES_ROOT: str(root)}
 
     listing = sl.list_family("b", environ=environ)
@@ -189,7 +189,7 @@ def test_a_parent_in_another_listed_workspace_is_found_by_its_run_and_bytes(tmp_
     first, history = listing.items
     assert (first.item.filename, first.parent_state, first.parent_workspace) == (
         "last.pt", "elsewhere", "a")
-    assert (history.group, history.item.architecture) == ("history", "gat")
+    assert (history.group, history.item.architecture) == ("history", "hgt")
 
     _put(root / "a", "gatv2", BASE_RUN, _record_payload(logs={"val_lp_accuracy": 0.9}), 300)
     rewritten = sl.list_family("b", environ=environ).items[0]
@@ -249,7 +249,7 @@ def test_one_run_is_listed_alone(tmp_path, bundles):
     from src.utils.checkpoint_paths import list_run_checkpoints, read_run_checkpoints
 
     a = bundles._put(tmp_path, "gatv2", BASE_RUN, bundles._record_payload(), 100)
-    bundles._put(tmp_path, "gat", "20261001-000000_gnn_aaaaaa", bundles.GNN_PAYLOAD, 200)
+    bundles._put(tmp_path, "hgt", "20261001-000000_gnn_aaaaaa", bundles.GNN_PAYLOAD, 200)
     assert [p for _, p in list_run_checkpoints(tmp_path, run=BASE_RUN)] == [a]
     (entry,) = read_run_checkpoints(tmp_path, within=tmp_path, run=BASE_RUN)
     assert entry.path == a and entry.model_record["learning_stage"] == "base"

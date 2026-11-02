@@ -85,7 +85,8 @@ def _task_validation_logs():
             callbacks=SimpleNamespace(on_validation_begin=lambda trainer: None,
                                       on_validation_end=lambda trainer, metrics: None),
             task=SimpleNamespace(validate=lambda model, device, report=report: dict(report)),
-            config=SimpleNamespace(early_stopping_monitor="val_mrr", early_stopping_mode="max"),
+            config=SimpleNamespace(early_stopping_monitor="val_pooled_mrr",
+                                   early_stopping_mode="max"),
             state=SimpleNamespace(best_metric=None, best_epoch=None, val_metric_history=[]),
         )
         stub._is_best_metric = lambda value, stub=stub: Trainer._is_best_metric(stub, value)
@@ -223,9 +224,10 @@ def _no_listing(status, **kwargs):
 
 @pytest.mark.parametrize("meta, shown", [
     ({"epoch": 3, "params": 1000, "device": "cpu", "val_loss": 0.25, "train_loss": 0.5,
-      "val_mrr": 0.5, "val_hits@10": 0.75, "val_hits@1": 0.25, "flag": True,
-      "note": "not a number"}, "Validation MRR (Trainer, top-20) 0.5000"),
-    ({"epoch": 3, "val_hits@10": 0.75, "val_hits@1": 0.25}, "Validation Hits@10 (Trainer) 0.7500"),
+      "val_pooled_mrr": 0.5, "val_lp_accuracy": 0.75, "val_pooled_top1": 0.25, "flag": True,
+      "note": "not a number"}, "Validation pooled MRR (Trainer) 0.5000"),
+    ({"epoch": 3, "val_lp_accuracy": 0.75, "val_pooled_top1": 0.25},
+     "Validation LP accuracy (Trainer) 0.7500"),
     ({"epoch": 3, "val_loss": 0.25}, "Validation (Trainer): not recorded in this checkpoint"),
 ])
 def test_details_show_the_selection_metric_by_the_ranking_keys(meta, shown):

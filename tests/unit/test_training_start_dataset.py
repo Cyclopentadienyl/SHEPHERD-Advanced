@@ -264,7 +264,7 @@ def test_the_run_bars_start_sends_what_it_showed_and_the_runner_refuses_a_rebuil
 
 # --------------------------------------------------------------------------- the run view's reads
 def test_the_metrics_of_a_given_run_are_read_from_its_own_log(tmp_path):
-    run = tmp_path / "runs" / "gat" / "20261018-142000_run_d41f8b"
+    run = tmp_path / "runs" / "gatv2" / "20261018-142000_run_d41f8b"
     (run / "logs").mkdir(parents=True)
     (run / "logs" / "train_20261018_142000.json").write_text(
         json.dumps({"train": [{"epoch": 0, "total": 1.5}], "validation": []}))
@@ -279,7 +279,7 @@ def test_the_metrics_of_a_given_run_are_read_from_its_own_log(tmp_path):
 def test_a_snapshot_and_a_preview_name_the_dataset_the_checkpoint_records(tmp_path):
     from src.utils.checkpoint_io import write_checkpoint
 
-    run = tmp_path / "runs" / "gat" / "r"
+    run = tmp_path / "runs" / "gatv2" / "r"
     (run / "checkpoints").mkdir(parents=True)
     last = run / "checkpoints" / "last.pt"
     write_checkpoint({"checkpoint_kind": "training_state", "epoch": 0,

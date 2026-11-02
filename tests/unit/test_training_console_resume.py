@@ -62,8 +62,8 @@ def test_the_parent_list_is_the_run_bars_workspaces_model_records_only(tmp_path,
     base = _put(ws, "gatv2", "20261001-000000_a_111111", _record_payload(), 100)
     child = _put(ws, "gatv2", "20261002-000000_b_222222", _record_payload("gene"), 200,
                  name="model-01-0.4000.pt")
-    _put(ws, "gat", "20261003-000000_hist_333333", GNN_PAYLOAD, 300)
-    _run_file(ws, "gat", "20261004-000000_torn_444444", "model-1-0.9.pt")
+    _put(ws, "hgt", "20261003-000000_hist_333333", GNN_PAYLOAD, 300)
+    _run_file(ws, "gatv2", "20261004-000000_torn_444444", "model-1-0.9.pt")
     _put(other, "gatv2", "20261005-000000_c_555555", _record_payload(), 400)
     monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(root))
 
@@ -86,7 +86,7 @@ def test_the_parent_list_is_the_run_bars_workspaces_model_records_only(tmp_path,
 
     # A workspace whose files hold no model record offers none, and says why.
     only_history = _manifest(root / "old")
-    _put(only_history, "gat", "20261006-000000_hist_666666", GNN_PAYLOAD, 500)
+    _put(only_history, "hgt", "20261006-000000_hist_666666", GNN_PAYLOAD, 500)
     parents, runs, update, note = tc._refresh_checkpoints(OP, {"name": "old"}, {}, None)
     assert parents == {} and update["choices"] == [] and runs["choices"] == []
     assert "holds a model record" in note and "never continued here" in note
@@ -109,13 +109,13 @@ def test_the_manager_lists_every_architecture_with_its_run(tmp_path):
     import os
 
     newer = _run_file(ws, "hgt", "20261001-000000_a_111111", "last.pt")
-    older = _run_file(ws, "gat", "20261002-000000_b_222222", "last.pt")
+    older = _run_file(ws, "gatv2", "20261002-000000_b_222222", "last.pt")
     os.utime(newer, (2_000, 2_000))
     os.utime(older, (1_000, 1_000))
 
     listed = training_manager.get_checkpoints(str(ws))
     assert [(c["architecture"], c["run"]) for c in listed] == [
-        ("hgt", "20261001-000000_a_111111"), ("gat", "20261002-000000_b_222222")]
+        ("hgt", "20261001-000000_a_111111"), ("gatv2", "20261002-000000_b_222222")]
 
 
 # --------------------------------------------------------------- docstring
@@ -151,7 +151,7 @@ def trained(tmp_path_factory):
     runs = ws / "runs" / "gatv2"
     train_model.train(*_config(ws, runs / PAUSED_RUN, pause_after_epoch=1))
     train_model.train(*_config(ws, runs / DONE_RUN))
-    history = _put(ws, "gat", HISTORY_RUN, GNN_PAYLOAD, 1_000)
+    history = _put(ws, "hgt", HISTORY_RUN, GNN_PAYLOAD, 1_000)
     return {"root": root, "ws": ws,
             "paused": runs / PAUSED_RUN / "checkpoints" / "last.pt",
             "finished": runs / DONE_RUN / "checkpoints" / "last.pt", "history": history}
