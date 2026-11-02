@@ -21,7 +21,7 @@ Dependencies: torch.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 import torch
 from torch import Tensor
@@ -37,7 +37,10 @@ __all__ = [
     "ModeResult",
     "RELATION_NAMES",
     "RELATION_STATES",
+    "RANKS_PROBLEMS",
+    "RanksRowsRefused",
     "canonical_ranking",
+    "check_ranks_rows",
     "expected_relations",
     "ranks_of_truth",
     "encode_full_graph",
@@ -563,13 +566,92 @@ class ModeResult:
         }
 
     def to_ranks(self) -> List[Dict[str, Any]]:
-        """Per-sample ranks, one row per patient in the cohort's order."""
-        return [
+        """Per-sample ranks, one row per patient in the cohort's order, held
+        to the ranks rule before anyone writes them (`check_ranks_rows`)."""
+        rows = [
             {"sample_id": sample_id, "ground_truth": truth, "rank": rank}
             for sample_id, truth, rank in zip(
                 self.sample_ids, self.truth_global_ids, self.canonical_ranks
             )
         ]
+        check_ranks_rows(rows, self.sample_ids)
+        return rows
+
+
+#: The parts of the ranks rule a row can break (`RanksRowsRefused.problem`):
+#: rows that are not a list, a row that is not a mapping with a string
+#: `sample_id` and a rank that is null or at least 1, a row naming no case of
+#: the cohort, a case named again, a case with no row, and the cohort's cases
+#: in another order.
+RANKS_PROBLEMS = ("not_a_list", "malformed", "foreign", "duplicate", "missing", "misordered")
+
+
+class RanksRowsRefused(ValueError):
+    """Ranks rows that break the ranks rule (`check_ranks_rows`). `problem` is
+    the part they break, one of `RANKS_PROBLEMS`, and `position` where it was
+    found: the row's index, or for a case with no row its index in the cohort.
+    A caller can say what failed by these two without repeating an identifier."""
+
+    def __init__(self, problem: str, position: int, message: str):
+        super().__init__(message)
+        self.problem = problem
+        self.position = position
+
+
+def check_ranks_rows(rows: Any, sample_ids: Sequence[str]) -> List[str]:
+    """**The ranks rule**, stated once: a ranks file holds one row per case of
+    the cohort it measured, in the cohort's order (`sample_ids`), each with
+    its `sample_id` and its `rank`, null for a case the model could not rank
+    (a task model's case its graph view does not bind), so no case is dropped,
+    repeated, replaced or moved. `ModeResult.to_ranks` holds what it writes to
+    it; a reader of a kept ranks file checks the file against the sample ids
+    its cohort binds by calling it. Returns the sample ids of the rows with a
+    rank, in the cohort's order.
+
+    Raises:
+        RanksRowsRefused: naming the first part broken, row by row (a row that
+            is malformed, foreign or a repeat), then a case with no row, then
+            the order.
+    """
+    import math
+    from collections import Counter
+
+    if not isinstance(rows, list):
+        raise RanksRowsRefused("not_a_list", 0, f"ranks rows are {type(rows).__name__}, "
+                                                "not a list of rows")
+    for index, row in enumerate(rows):
+        rank = row.get("rank", ...) if isinstance(row, dict) else ...
+        ranked = (isinstance(rank, (int, float)) and not isinstance(rank, bool)
+                  and math.isfinite(rank) and rank >= 1)
+        if not (isinstance(row, dict) and isinstance(row.get("sample_id"), str)
+                and (rank is None or ranked)):
+            raise RanksRowsRefused("malformed", index, (
+                f"ranks row {index} is not a row with a sample_id and a rank (null, or a "
+                "number of at least 1)"))
+    ids = [row["sample_id"] for row in rows]
+    expected = list(sample_ids)
+    if ids != expected:
+        cohort, seen = Counter(expected), Counter()
+        for index, sample_id in enumerate(ids):
+            seen[sample_id] += 1
+            if sample_id not in cohort:
+                raise RanksRowsRefused("foreign", index, (
+                    f"ranks row {index} names {sample_id!r}, which is not a case of the "
+                    "cohort"))
+            if seen[sample_id] > cohort[sample_id]:
+                raise RanksRowsRefused("duplicate", index, (
+                    f"ranks row {index} names {sample_id!r} again; each case has one row"))
+        for index, sample_id in enumerate(expected):
+            if seen[sample_id] < cohort[sample_id]:
+                raise RanksRowsRefused("missing", index, (
+                    f"case {index} of the cohort, {sample_id!r}, has no ranks row; an "
+                    "unrankable case keeps its row, with a null rank"))
+        index = next(i for i, (got, want) in enumerate(zip(ids, expected, strict=True))
+                     if got != want)
+        raise RanksRowsRefused("misordered", index, (
+            f"ranks row {index} names {ids[index]!r} where the cohort's order has "
+            f"{expected[index]!r}; the rows follow the cohort's order"))
+    return [row["sample_id"] for row in rows if row["rank"] is not None]
 
 
 def _authoritative(ranks: List[int]) -> Dict[str, float]:

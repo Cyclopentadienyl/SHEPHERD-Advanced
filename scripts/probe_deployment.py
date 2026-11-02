@@ -97,7 +97,8 @@ M3a's checks:
     (R4.finetune); a file without a model spec refused by a finetune and a
     resume before anything is written, a stripped copy of that child and the
     history file when one is given (R2); measurement of the child by its task
-    (R5) and disease-task serving, with a diagnosis (R6); the inventory passes
+    (R5) and disease-task serving, with a diagnosis of a query from the
+    workspace's own validation cases (R6); the inventory passes
     the child, and refuses the history file when one is given (R7); the
     workspace and the history file are unchanged by listing, size and
     modification time, not by content digest (R8), checked after every other
@@ -124,8 +125,10 @@ entry point, and the registry, the kept reports and the ledgers are all under
     written) and committed by the printed preview id, its graph the
     workspace's and its counts as built (T1); a copy of the child measured by
     its task on that version with --record: the report kept with its ranks
-    digest, its binding counts the ones the probe computes itself from the
-    child's graph view and the version's cases (`_own_binding`), R10 recorded
+    digest, its ranks one row per case of the version in its order
+    (`check_ranks_rows`), its binding counts and ranked cases the ones the
+    probe computes itself from the child's graph view and the version's cases
+    (`_own_binding`), R10 recorded
     with both scopes' evidence found in the workspace, one record built from
     the report's bytes (T2); the same report registered again
     is already registered and a damaged copy is refused, the ledger unchanged
@@ -2051,7 +2054,7 @@ def phase_serving(
 
     def _diagnose() -> Tuple[str, Dict[str, Any]]:
         pipeline = state["bundle"].pipeline
-        result, scores = _disease_diagnosis(pipeline)
+        result, scores = _disease_diagnosis(pipeline, DEMO_QUERY)
         # **The result says what produced it** (contract M3c): the identity it
         # carries, built when it was produced, is the one E1 verified.
         assert result.served_identity.to_dict() == state["bundle"].config["served_identity"], (
@@ -2796,20 +2799,25 @@ def _measurement_facts(output: Path, checkpoint_sha: str, kg_digest: str,
     }
 
 
-def _disease_diagnosis(pipeline: Any, top_k: int = 5) -> Tuple[Any, List[float]]:
-    """One diagnosis through a pipeline serving a disease child: a
-    `disease_task/v1` result whose candidates are the first `top_k` of every
-    disease of the model's graph view (fewer when the view holds fewer),
-    ranked by finite scores in descending order (`candidate_score`). Returns
-    the result and its scores."""
+#: The demo graph's two phenotypes E7 diagnoses on: the demo phase's fixed
+#: query. A check that judges a workspace takes its query from that
+#: workspace's own data (`_workspace_query`), never from here.
+DEMO_QUERY = ("HP:0001250", "HP:0001263")
+
+
+def _disease_diagnosis(pipeline: Any, phenotypes: Sequence[str],
+                       top_k: int = 5) -> Tuple[Any, List[float]]:
+    """One diagnosis of `phenotypes` (HPO terms) through a pipeline serving a
+    disease child: a `disease_task/v1` result whose candidates are the first
+    `top_k` of every disease of the model's graph view (fewer when the view
+    holds fewer), ranked by finite scores in descending order
+    (`candidate_score`). Returns the result and its scores."""
     import math as _math
 
     from src.core.types import DISEASE_TASK, PatientPhenotypes, candidate_score
 
     result = pipeline.run(
-        patient_input=PatientPhenotypes(
-            patient_id="probe", phenotypes=["HP:0001250", "HP:0001263"],
-        ),
+        patient_input=PatientPhenotypes(patient_id="probe", phenotypes=list(phenotypes)),
         top_k=top_k, include_explanations=False,
     )
     assert result.result_kind == DISEASE_TASK, (
@@ -2828,13 +2836,77 @@ def _disease_diagnosis(pipeline: Any, top_k: int = 5) -> Tuple[Any, List[float]]
     return result, scores
 
 
+def _child_view(checkpoint: Path, workspace: Path) -> Any:
+    """A disease child's own graph view, as the probe computes it apart from
+    serving and measurement: rebuilt from the workspace's graph by the rule
+    the child's model record names, and required to be the view its record
+    holds (by digest)."""
+    from src.kg.graph_view import build_graph_view
+    from src.kg.storage.file_storage import read_graph_artifacts
+    from src.models.bundle.record import read_model_record
+    from src.utils.checkpoint_io import read_checkpoint
+
+    record = read_model_record(read_checkpoint(checkpoint, map_location="cpu",
+                                               weights_only=True).checkpoint)
+    graph = read_graph_artifacts(workspace, map_location="cpu").graph_data
+    view = build_graph_view(graph, rule=record.data_roles["graph_view"]["rule"])
+    assert view.digest == record.graph_view.digest, (
+        "the child's graph view, rebuilt from the workspace by its recorded rule, is not the "
+        "view its record names")
+    return view
+
+
+def _workspace_query(checkpoint: Path, workspace: Path,
+                     workspace_digests: Mapping[str, str]) -> Tuple[List[str], Dict[str, Any]]:
+    """A diagnosis query from the workspace being judged, never a constant (the
+    reviewer's P2-1 of the K8-1 recheck: R6 asked about the demo graph's two
+    phenotypes, so a deployment whose graph lacks them failed). It is the
+    first case of the workspace's generated `val` split that the child's
+    graph view binds (`_child_view`, by the one binder,
+    `bind_disease_cases`) and whose phenotypes the query names as terms
+    (`_node_term`, the importer's rule inverted, which serving's term to node
+    mapping maps back to the same nodes). The split is read against the
+    digest the caller's workspace check took; the graph that names its
+    phenotypes is the one serving's identity must then name by that check's
+    digest (`_assert_served_identity`). Returns the query's
+    terms and, as evidence, where it came from (a position and counts, no
+    identifier). A workspace none of whose validation cases gives a query
+    fails, saying so: the check has nothing of that workspace's to ask."""
+    from src.evaluation.cohort import resolve_cohort
+    from src.kg.artifacts import GRAPH_ARTIFACTS
+    from src.kg.graph import KnowledgeGraph
+    from src.kg.storage.file_storage import read_samples_file
+    from src.models.tasks.scoring import bind_disease_cases
+
+    path = resolve_cohort(workspace, "val").samples
+    samples = read_samples_file(path, expected_sha256=workspace_digests[path.name]).samples
+    binding = bind_disease_cases(_child_view(checkpoint, workspace), samples)
+    bound = {case.case_id for case in binding.cases}
+    phenotypes = (KnowledgeGraph.read_json(workspace / GRAPH_ARTIFACTS["kg"]).kg
+                  .get_reverse_node_mapping()["phenotype"])
+    for position, sample in enumerate(samples):
+        if sample.patient_id not in bound:
+            continue
+        terms = [_node_term(phenotypes[i], "phenotype") for i in sample.phenotype_ids]
+        if None not in terms:
+            return terms, {"split": "val", "case_position": position,
+                           "phenotypes": len(terms), "cases": binding.counts["cases"],
+                           "cases_bound": binding.counts["bound"]}
+    counts = binding.counts
+    raise AssertionError(
+        f"the workspace gives no diagnosis query: none of its {counts['cases']} validation "
+        f"cases both binds in the child's graph view and has phenotypes a query can name as "
+        f"HPO terms ({counts['bound']} bind, {counts['excluded']} do not)")
+
+
 def _serve_and_diagnose(
     kg_path: Path, checkpoint: Path, data_dir: Path, device: str, record: Any,
     workspace_digests: Dict[str, str],
 ) -> Dict[str, Any]:
     """The disease-task serving check: the production serving build
     (`build_pipeline`) of a disease child, and one diagnosis through the built
-    pipeline. No table is read: a task model reads none.
+    pipeline, of a query from the served workspace's own data
+    (`_workspace_query`). No table is read: a task model reads none.
 
     `record` and `workspace_digests` are the dataset record and the per-file
     digests the caller's workspace check (`verify_workspace`) took; the
@@ -2843,6 +2915,7 @@ def _serve_and_diagnose(
     """
     import src.api.main as api
 
+    query, asked = _workspace_query(checkpoint, data_dir, workspace_digests)
     bundle = api.build_pipeline(
         kg_path=str(kg_path), checkpoint_path=str(checkpoint),
         data_dir=str(data_dir), device=device,
@@ -2858,7 +2931,7 @@ def _serve_and_diagnose(
     )
     devices = {str(p.device).split(":")[0] for p in bundle.pipeline.model.parameters()}
     assert devices == {device}, f"the model's parameters are on {sorted(devices)}"
-    result, scores = _disease_diagnosis(bundle.pipeline)
+    result, scores = _disease_diagnosis(bundle.pipeline, query)
     # **The diagnosis names what produced it** (contract M3c): the child this
     # probe trained, by the digest of its own read; the graph and manifest the
     # workspace check verified; the dataset record; the disease task's scoring
@@ -2881,6 +2954,7 @@ def _serve_and_diagnose(
         "dataset_record": {"binding": published["binding"], "origin": published["origin"],
                            "sha256": published["sha256"], "sources": len(published["sources"])},
         "parameter_devices": sorted(devices),
+        "query": asked,
         "candidates": len(scores),
         "served_identity": identity,
     }
@@ -3057,20 +3131,38 @@ def _measure_cohort(checkpoint: Path, data_dir: Path, registry: Path, label: str
     ])
 
 
-def _kept_report(registry: Path, label: str) -> Tuple[Path, Dict[str, Any], Any, int]:
+def _cohort_samples(version: Any) -> List[Any]:
+    """A cohort version's samples, read against the digest its `cohort.json`
+    binds: the cases T2 and RT2 judge a report by, in the version's order."""
+    from src.kg.storage.file_storage import read_samples_file
+
+    samples = read_samples_file(version.samples_path,
+                                expected_sha256=version.manifest["samples"]["sha256"]).samples
+    assert len(samples) == version.manifest["samples"]["n"], (
+        f"the version's samples hold {len(samples)} cases, not the "
+        f"{version.manifest['samples']['n']} its cohort.json counts")
+    return samples
+
+
+def _kept_report(registry: Path, label: str,
+                 sample_ids: Sequence[str]) -> Tuple[Path, Dict[str, Any], Any, List[str]]:
     """The one report the version's report store keeps, parsed and identified
-    from one read, and the number of rows of the ranks it names.
+    from one read, and the cases its ranks rank.
 
     **Through the shared reader** (`_read_json`): the report's content and its
     digest come from the same bytes, as registration takes them, and the ranks
-    are compared with the digest the report names before they are parsed. A
-    task report's ranks hold one row per case of the cohort, its rank null
-    when the model's graph view cannot rank it (`ModeResult.to_ranks`), so
-    the rows with a rank are the cases the report counts as ranked. Returns
-    the report's path, its content, the identity of the bytes parsed and the
-    ranks' row count.
+    are compared with the digest the report names before they are parsed.
+    Then **the ranks rule** (`check_ranks_rows`, beside the writer): one row
+    per case of the version, `sample_ids` as its `cohort.json` binds them, in
+    their order, a case the model's graph view cannot rank kept with a null
+    rank (the reviewer's P2-2 of the K8-1 recheck: a repeated, missing,
+    foreign or moved case passed the digest and the counts). The rows with a
+    rank are the cases the report counts as ranked. Returns the report's path,
+    its content, the identity of the bytes parsed and the sample ids of the
+    ranked rows, in the version's order.
     """
     from scripts.measure_scorer import RANKS_FILE, REPORT_FILE
+    from src.evaluation.measurement import RanksRowsRefused, check_ranks_rows
     from src.kg.storage.file_storage import SamplesDigestMismatch, _read_json
 
     kept = sorted((registry / "versions" / label / "reports").glob(f"*/{REPORT_FILE}"))
@@ -3084,57 +3176,53 @@ def _kept_report(registry: Path, label: str) -> Tuple[Path, Dict[str, Any], Any,
                              expected_sha256=frozenset({ranks["sha256"]}))
     except SamplesDigestMismatch:
         raise AssertionError("the kept ranks are not the bytes the report names") from None
-    ranked = sum(1 for row in rows if row.get("rank") is not None)
-    assert ranked == report.get("n_ranked"), (
-        f"the kept ranks rank {ranked} cases, not the {report.get('n_ranked')} the report counts")
-    return kept[0], report, identity, len(rows)
+    try:
+        ranked = check_ranks_rows(rows, sample_ids)
+    except RanksRowsRefused as refused:
+        raise ProbeFailure(
+            f"the kept ranks are not one row per case of the version, in its order "
+            f"({refused.problem}, at position {refused.position})",
+            {"ranks_rule": refused.problem, "position": refused.position}) from None
+    assert len(ranked) == report.get("n_ranked"), (
+        f"the kept ranks rank {len(ranked)} cases, not the {report.get('n_ranked')} the report "
+        "counts")
+    return kept[0], report, identity, ranked
 
 
-def _own_binding(checkpoint: Path, workspace: Path, version: Any) -> Dict[str, int]:
+def _own_binding(checkpoint: Path, workspace: Path, samples: Sequence[Any]) -> Any:
     """The binding of a cohort version's cases that the probe computes itself,
-    apart from the measurement it checks: the disease child's own graph view,
-    rebuilt from the workspace's graph by the rule its model record names and
-    required to be the view its record holds (by digest), and the version's
-    samples, read against the digest its `cohort.json` binds, bound by the one
-    binder (`src.models.tasks.scoring.bind_disease_cases`). Returns the
-    binding's counts, the form a task report's `binding` takes."""
-    from src.kg.graph_view import build_graph_view
-    from src.kg.storage.file_storage import read_graph_artifacts, read_samples_file
-    from src.models.bundle.record import read_model_record
+    apart from the measurement it checks: the disease child's own graph view
+    (`_child_view`) and the version's samples (`_cohort_samples`), bound by
+    the one binder (`src.models.tasks.scoring.bind_disease_cases`). Returns
+    the binding: its counts, the form a task report's `binding` takes, and
+    its bound cases, in the version's order."""
     from src.models.tasks.scoring import bind_disease_cases
-    from src.utils.checkpoint_io import read_checkpoint
 
-    record = read_model_record(read_checkpoint(checkpoint, map_location="cpu",
-                                               weights_only=True).checkpoint)
-    graph = read_graph_artifacts(workspace, map_location="cpu").graph_data
-    view = build_graph_view(graph, rule=record.data_roles["graph_view"]["rule"])
-    assert view.digest == record.graph_view.digest, (
-        "the child's graph view, rebuilt from the workspace by its recorded rule, is not the "
-        "view its record names")
-    samples = read_samples_file(version.samples_path,
-                                expected_sha256=version.manifest["samples"]["sha256"]).samples
-    return dict(bind_disease_cases(view, samples).counts)
+    return bind_disease_cases(_child_view(checkpoint, workspace), samples)
 
 
-def _ranked_cases(kept: Mapping[str, Any], rows: int, cases: int,
-                  own: Mapping[str, int]) -> Dict[str, Any]:
-    """A task report's ranks against its cohort version's `cases`: one row per
-    case, and as many ranked as the cases the model's graph view binds (the
-    report's binding counts; a case whose phenotypes are all outside the view
-    is counted, never ranked). **The binding is the probe's own** (`own`,
-    `_own_binding`): the report's counts must be the ones the probe computed
-    from the child's graph view and the version's cases, so a view or binding
-    regression that leaves few cases ranked fails here, not only a report
-    that disagrees with itself. Returns the binding counts, as evidence."""
-    assert rows == cases, f"the kept ranks hold {rows} rows, not one per case of the {cases}"
+def _ranked_cases(kept: Mapping[str, Any], ranked: Sequence[str], own: Any) -> Dict[str, Any]:
+    """A task report against its cohort version's cases, whose ranks rows
+    `_kept_report` held to the ranks rule: as many ranked as the cases the
+    model's graph view binds (the report's binding counts; a case whose
+    phenotypes are all outside the view is counted, never ranked), and the
+    ranked rows are those very cases. **The binding is the probe's own**
+    (`own`, `_own_binding`): the report's counts must be the ones the probe
+    computed from the child's graph view and the version's cases, so a view
+    or binding regression that leaves few cases ranked fails here, not only a
+    report that disagrees with itself. Returns the binding counts, as
+    evidence."""
+    counts = dict(own.counts)
     binding = (kept.get("sampler_evidence") or {}).get("binding") or {}
-    assert binding.get("cases") == cases and kept["n_ranked"] == binding.get("bound"), (
+    assert binding.get("cases") == counts["cases"] and kept["n_ranked"] == binding.get("bound"), (
         f"the report ranks {kept['n_ranked']} of {binding.get('cases')} cases; the view binds "
         f"{binding.get('bound')}")
-    assert binding == dict(own), (
+    assert binding == counts, (
         f"the report binds {binding.get('bound')} and excludes {binding.get('excluded')} of "
         f"{binding.get('cases')} cases ({binding}); the child's graph view binds "
-        f"{own.get('bound')} and excludes {own.get('excluded')} ({dict(own)})")
+        f"{counts.get('bound')} and excludes {counts.get('excluded')} ({counts})")
+    assert list(ranked) == [case.case_id for case in own.cases], (
+        "the ranks rank other cases than the ones the child's graph view binds")
     assert kept["n_ranked"] > 0, "the report ranked no case"
     return dict(binding)
 
@@ -5742,7 +5830,9 @@ def phase_m2_demo(
         code = _measure_cohort(measured, sound, registry, M4_DEMO_LABEL, device, "--record",
                                task="disease")
         assert code == 0, f"the measurement with --record exited {code}"
-        path, kept, identity, rows = _kept_report(registry, M4_DEMO_LABEL)
+        samples = _cohort_samples(version)
+        path, kept, identity, ranked = _kept_report(registry, M4_DEMO_LABEL,
+                                                    [s.patient_id for s in samples])
         manifest = kept["manifest"]
         assert manifest["artifact_digests"]["checkpoint"] == sha256, (
             "the report does not name the checkpoint it was given")
@@ -5750,8 +5840,7 @@ def phase_m2_demo(
             "the report names another cohort version")
         assert manifest["relations"] == REGISTERED_RELATIONS, (
             f"the report's relation states are {manifest['relations']}")
-        binding = _ranked_cases(kept, rows, version.manifest["samples"]["n"],
-                                _own_binding(measured, sound, version))
+        binding = _ranked_cases(kept, ranked, _own_binding(measured, sound, samples))
         assert version.manifest["samples"]["n"] == M4_DEMO_COUNTS["ranked_eligible"]
         r10 = manifest["r10"]
         # D1's child trained on this workspace, so the inputs it records
@@ -5764,7 +5853,7 @@ def phase_m2_demo(
         return "measured, the report kept, R10 recorded, one record from the report's bytes", {
             "exit_code": code, "checkpoint_sha256": sha256,
             "report_sha256": identity.sha256, "ranks_sha256": kept["ranks"]["sha256"],
-            "ranks_rows": rows, "n_ranked": kept["n_ranked"], "binding": binding,
+            "ranks_rows": len(samples), "n_ranked": kept["n_ranked"], "binding": binding,
             "cohort_manifest_sha256": version.identity.sha256,
             "relations": manifest["relations"], "r10": _r10_facts(r10),
             "r10_evidence_in_the_workspace": True,
@@ -6262,10 +6351,12 @@ def phase_m2_real(
         code = _measure_cohort(state["child"], real, registry, M4_REAL_LABEL, device, "--record",
                                task="disease")
         assert code == 0, f"the measurement with --record exited {code}"
-        _, kept, identity, rows = _kept_report(registry, M4_REAL_LABEL)
+        samples = _cohort_samples(version)
+        _, kept, identity, ranked = _kept_report(registry, M4_REAL_LABEL,
+                                                 [s.patient_id for s in samples])
         assert kept["manifest"]["artifact_digests"]["checkpoint"] == sha256, (
             "the report does not name the checkpoint it was given")
-        binding = _ranked_cases(kept, rows, n, _own_binding(state["child"], real, version))
+        binding = _ranked_cases(kept, ranked, _own_binding(state["child"], real, samples))
         r10 = kept["manifest"]["r10"]
         # **As constructed**: the generated split is disease-disjoint, and the
         # cohort is the validation cases themselves.
@@ -6283,7 +6374,7 @@ def phase_m2_real(
         state["m4"].update(record=record, ledger_sha256=ledger_sha256, checkpoint_sha256=sha256)
         return "measured and recorded; R10 says what the construction makes true", {
             "exit_code": code, "checkpoint_sha256": sha256, "report_sha256": identity.sha256,
-            "ranks_rows": rows, "n_ranked": kept["n_ranked"], "binding": binding,
+            "ranks_rows": len(samples), "n_ranked": kept["n_ranked"], "binding": binding,
             "r10": _r10_facts(r10),
             "r10_evidence_in_the_workspace": True, "ledger_sha256": ledger_sha256,
             "record": {"sequence": record["registration"]["sequence"],

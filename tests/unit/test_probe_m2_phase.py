@@ -509,6 +509,8 @@ def test_the_real_phase_passes_and_leaves_the_workspace_as_it_was(
     assert identity["dataset_record"] == {
         "state": "verified", "origin": "files",
         "sha256": facts["R1"]["dataset_record"]["sha256"]}
+    # R6 asked a query from the workspace's own validation cases.
+    assert facts["R6"]["query"]["split"] == "val" and facts["R6"]["query"]["phenotypes"] > 0
     assert facts["R7"]["reference_refusal"] == ("no record" if history else "not given")
     assert facts["R8"]["history_file"] == ("unchanged" if history else "not given")
 
@@ -846,7 +848,7 @@ def test_the_m4_evidence_checks_fire(tmp_path):
     (run / "report.json").write_text(json.dumps(
         {"n_ranked": 1, "ranks": {"file": "ranks.json", "sha256": "0" * 64}}))
     with pytest.raises(AssertionError, match="not the bytes the report names"):
-        probe._kept_report(tmp_path / "registry", "v")
+        probe._kept_report(tmp_path / "registry", "v", ["a"])
 
     record = {"checkpoint_digest": "c", "cohort_digest": "v", "source_artifact_digest": "r",
               "corroborating_reports": [], "registration": {"sequence": 1},
@@ -894,34 +896,94 @@ def test_the_m4_evidence_checks_fire(tmp_path):
             probe._the_view_shows(broken, record, "L", ("validation",))
 
 
+def _binding(counts, bound):
+    """A binding as `_own_binding` returns it: its counts and its bound cases."""
+    from types import SimpleNamespace
+
+    return SimpleNamespace(counts=dict(counts),
+                           cases=[SimpleNamespace(case_id=case) for case in bound])
+
+
 def test_t2_and_rt2_rank_the_cases_the_probe_binds_itself():
     """T2's and RT2's coverage is checked against a binding the probe computes
     itself (`_own_binding`, the child's graph view and the version's cases),
     not only against the report's own numbers: a report whose binding and
     ranked count shrank together (a view or binding regression that ranks 1 of
     10 cases) agrees with itself, and before the review fix it passed; now it
-    fails, as does a report that excludes for another reason."""
+    fails, as does a report that excludes for another reason, and ranks that
+    rank other cases than the view binds, in the same number."""
     probe = _probe()
-    own = {"cases": 10, "bound": 8, "excluded": 2, "phenotypes_outside_view": 5,
-           "excluded_no_phenotype_in_view": 2}
+    cases = [f"c{i}" for i in range(10)]
+    own_counts = {"cases": 10, "bound": 8, "excluded": 2, "phenotypes_outside_view": 5,
+                  "excluded_no_phenotype_in_view": 2}
+    own = _binding(own_counts, cases[:8])
 
     def kept(binding):
         return {"n_ranked": binding["bound"], "sampler_evidence": {"binding": binding}}
 
-    assert probe._ranked_cases(kept(dict(own)), 10, 10, own) == own
-    altered = dict(own, bound=1, excluded=9, excluded_no_phenotype_in_view=9)
+    assert probe._ranked_cases(kept(dict(own_counts)), cases[:8], own) == own_counts
+    altered = dict(own_counts, bound=1, excluded=9, excluded_no_phenotype_in_view=9)
     with pytest.raises(AssertionError, match="the child's graph view binds 8 and excludes 2"):
-        probe._ranked_cases(kept(altered), 10, 10, own)
-    other_reason = {**{k: v for k, v in own.items() if k != "excluded_no_phenotype_in_view"},
+        probe._ranked_cases(kept(altered), cases[:1], own)
+    other_reason = {**{k: v for k, v in own_counts.items()
+                       if k != "excluded_no_phenotype_in_view"},
                     "excluded_truth_outside_view": 2}
     with pytest.raises(AssertionError, match="the child's graph view binds"):
-        probe._ranked_cases(kept(other_reason), 10, 10, own)
-    # The checks on the report alone stay: one row per case, and the ranked
-    # count is the report's bound count.
-    with pytest.raises(AssertionError, match="not one per case"):
-        probe._ranked_cases(kept(dict(own)), 9, 10, own)
+        probe._ranked_cases(kept(other_reason), cases[:8], own)
+    # The ranked count is the report's bound count.
     with pytest.raises(AssertionError, match="the view binds 8"):
-        probe._ranked_cases(dict(kept(dict(own)), n_ranked=7), 10, 10, own)
+        probe._ranked_cases(dict(kept(dict(own_counts)), n_ranked=7), cases[:8], own)
+    # Eight ranked, as the view binds, but not the eight it binds: a case it
+    # cannot rank holds a rank, and one it binds holds none.
+    with pytest.raises(AssertionError, match="other cases than the ones"):
+        probe._ranked_cases(kept(dict(own_counts)), cases[1:9], own)
+
+
+def _kept_store(tmp_path, rows, n_ranked):
+    """A version's report store keeping one report, whose ranks are `rows`
+    and named by their digest, as `_publish_to_store` names them."""
+    import json
+
+    run = tmp_path / "registry" / "versions" / "v" / "reports" / "run"
+    run.mkdir(parents=True)
+    ranks = json.dumps(rows).encode()
+    (run / "ranks.json").write_bytes(ranks)
+    (run / "report.json").write_text(json.dumps(
+        {"n_ranked": n_ranked,
+         "ranks": {"file": "ranks.json", "sha256": hashlib.sha256(ranks).hexdigest()}}))
+    return tmp_path / "registry"
+
+
+COHORT = ["probe-val-001", "probe-val-002", "probe-val-003", "probe-val-004"]
+
+
+@pytest.mark.parametrize("ids, problem", [
+    (COHORT, None),
+    # The reviewer's P2-2 repro: the second case's id replaced by the first's,
+    # the ranks kept and the digest recomputed: 4 rows, 3 cases.
+    (["probe-val-001", "probe-val-001", "probe-val-003", "probe-val-004"], "duplicate"),
+    (["probe-val-001", "probe-val-003", "probe-val-004"], "missing"),
+    (["probe-val-001", "probe-val-002", "someone-else", "probe-val-004"], "foreign"),
+    (["probe-val-001", "probe-val-003", "probe-val-002", "probe-val-004"], "misordered"),
+], ids=["normal", "duplicate", "missing", "foreign", "misordered"])
+def test_t2_and_rt2_hold_the_kept_ranks_to_the_version_s_cases(tmp_path, ids, problem):
+    """T2's and RT2's kept ranks are checked row by row against the sample ids
+    the version's `cohort.json` binds (`check_ranks_rows`): before the fix
+    only their digest, row count and ranked count were, so each altered file
+    below, its digest recomputed, passed. An unrankable case keeps its row
+    with a null rank."""
+    probe = _probe()
+    ranks = [1.0, None, 2.5, 4.0]
+    rows = [{"sample_id": i, "ground_truth": 3, "rank": r} for i, r in zip(ids, ranks)]
+    registry = _kept_store(tmp_path, rows, sum(r is not None for r in ranks[:len(ids)]))
+
+    if problem is None:
+        _, _, _, ranked = probe._kept_report(registry, "v", COHORT)
+        assert ranked == ["probe-val-001", "probe-val-003", "probe-val-004"]
+        return
+    with pytest.raises(AssertionError, match="not one row per case of the version") as failed:
+        probe._kept_report(registry, "v", COHORT)
+    assert failed.value.facts["ranks_rule"] == problem
 
 
 def test_a_checkpoint_read_is_observed_and_the_reader_put_back(tmp_path):

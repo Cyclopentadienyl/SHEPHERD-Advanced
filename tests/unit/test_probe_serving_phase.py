@@ -13,7 +13,11 @@ disease-task serving check, which requires a diagnosis to name what the
 caller's workspace check read and to carry the identity serving reports; it
 runs here over the demo workspace itself, as M4 serves it: no table is read.
 Each of those checks is also shown to fire: a probe that cannot fail proves
-nothing.
+nothing. Its diagnosis asks a query from the served workspace's own
+validation cases (`_workspace_query`): a workspace without the demo graph's
+two phenotypes serves and diagnoses (the reviewer's P2-1 of the K8-1
+recheck), and one none of whose validation cases binds in the child's graph
+view fails, naming that data condition.
 
 Module: tests/unit/test_probe_serving_phase.py
 """
@@ -392,3 +396,90 @@ def test_serve_and_diagnose_fails_when_the_diagnosis_carries_another_identity(
 
     with pytest.raises(AssertionError, match=fragment):
         _serve(probe, reads)
+
+
+# ------------------------- R6's query: from the workspace it judges
+@pytest.fixture(scope="module")
+def renamed(tmp_path_factory):
+    """The reviewer's P2-1 workspace: the demo graph with its two phenotypes
+    the demo query names (HP:0001250, HP:0001263) renamed to terms it lacks,
+    topology, counts and diseases unchanged, its record from four files (as a
+    real build's), and a disease child the production trainer finetuned on it."""
+    from src.kg.graph import KnowledgeGraph
+    from src.kg.workspace import write_workspace
+    from tests.unit.test_probe_m2_phase import _four_sources
+
+    probe = _probe()
+    work = tmp_path_factory.mktemp("renamed")
+    source = work / "renamed_kg.json"
+    probe._demo_kg().save_json(str(source))
+    source.write_text(source.read_text().replace("HP:0001250", "HP:0001251")
+                                        .replace("HP:0001263", "HP:0001264"))
+    workspace = work / "workspace"
+    write_workspace(KnowledgeGraph.load_json(str(source)), workspace,
+                    feature_dim=probe.FEATURE_DIM, samples=probe._budget(),
+                    sources=_four_sources(work / "inputs"))
+    report = probe.Report()
+    models = probe.phase_training(report, work, workspace, device="cpu", epochs=1)
+    assert models is not None, [p.detail for p in report.probes if p.status != "passed"]
+    return workspace, models.child
+
+
+def test_r6_serves_a_workspace_without_the_demo_phenotypes(renamed, served_state):
+    """The regression: before the fix R6 asked about HP:0001250 and HP:0001263
+    whatever the workspace, so this healthy deployment (verified, from files,
+    the model ready) failed with "the pipeline ranked nothing". Its query now
+    comes from the workspace's own validation cases, bound in the child's
+    graph view."""
+    import json as _json
+
+    probe = _probe()
+    workspace, child = renamed
+    graph = (workspace / "kg.json").read_text()
+    assert "HP:0001250" not in graph and "HP:0001263" not in graph
+    _, _, read, record = probe.verify_workspace(workspace)
+    assert (record.binding, record.origin) == ("verified", "files")
+
+    facts = probe._serve_and_diagnose(workspace / "kg.json", child, workspace, "cpu",
+                                      record, read)
+
+    assert facts["candidates"] > 0 and facts["result_kind"] == "disease_task/v1"
+    query = facts["query"]
+    assert query["split"] == "val" and query["phenotypes"] > 0
+    assert 0 < query["cases_bound"] <= query["cases"]
+    assert str(workspace) not in _json.dumps(facts)
+
+
+def test_r6_fails_naming_the_data_when_no_validation_case_gives_a_query(
+        reads, served_state, tmp_path):
+    """A workspace none of whose validation cases binds in the child's graph
+    view has nothing of its own to ask: R6 fails, saying so, before serving
+    builds anything. Before the fix it asked the demo query and passed. The
+    copy's `val_samples.json` holds only phenotypes the view leaves out, and
+    the caller's reads name its digest."""
+    import torch
+
+    from src.kg.graph_view import build_graph_view
+    from src.kg.storage.file_storage import read_graph_artifacts
+    from src.models.bundle.record import read_model_record
+    from src.utils.checkpoint_io import read_checkpoint
+
+    probe = _probe()
+    sound, checkpoint, read, record = reads
+    copy = probe._workspace_copy(sound, tmp_path / "copy")
+    graph = read_graph_artifacts(copy, map_location="cpu").graph_data
+    child = read_model_record(read_checkpoint(checkpoint, map_location="cpu",
+                                              weights_only=True).checkpoint)
+    view = build_graph_view(graph, rule=child.data_roles["graph_view"]["rule"])
+    phenotypes = int(graph["x_dict"]["phenotype"].size(0))
+    rows = view.view_ids("phenotype", torch.arange(phenotypes))
+    outside = [i for i in range(phenotypes) if int(rows[i]) < 0]
+    assert outside, "the demo child's graph view leaves no phenotype out"
+    val = copy / "val_samples.json"
+    cases = json.loads(val.read_text())
+    val.write_text(json.dumps([dict(case, phenotype_ids=outside[:1]) for case in cases]))
+    digests = {**read, "val_samples.json": hashlib.sha256(val.read_bytes()).hexdigest()}
+
+    with pytest.raises(AssertionError, match="the workspace gives no diagnosis query: none of "
+                                             f"its {len(cases)} validation cases"):
+        probe._serve_and_diagnose(copy / "kg.json", checkpoint, copy, "cpu", record, digests)
