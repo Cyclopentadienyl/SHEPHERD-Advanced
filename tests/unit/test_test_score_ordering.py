@@ -37,21 +37,18 @@ from src.evaluation.ordering import (
     ordering_offered,
 )
 from src.evaluation.sidecar import build_record, record_key, scoring_semantics_digest
-from tests.unit.test_evaluation_sidecar import (
-    cohort_version,
-    registered_manifest,
-    registered_report,
-)
+from tests.unit.test_evaluation_sidecar import cohort_version, mode_c_report
 
 ROLE = "mygene2"
 COHORT = "a" * 64
-SCORING = scoring_semantics_digest(registered_manifest())
+SCORING = scoring_semantics_digest(mode_c_report()["manifest"])
 
 
 def _record(checkpoint: str, *, sequence: int = 1, mrr: float = 0.5, mean_rank: float = 3.0,
             deterministic: bool = True, cohort: str = COHORT, **overrides):
-    """A ledger record of `checkpoint`, as `append_record` leaves it."""
-    report = registered_report(
+    """A Mode C ledger record of `checkpoint`, as `append_record` leaves it: the
+    rule orders Mode C groups only (`order_by_test_score`), until K8-6d."""
+    report = mode_c_report(
         metrics={"untruncated_mrr": mrr, "mean_rank": mean_rank, "hits@1": 0.25,
                  "hits@10": 0.75},
         cohort_version=cohort_version(manifest_sha256=cohort),

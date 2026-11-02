@@ -252,7 +252,7 @@ def test_the_loaded_checkpoints_records_are_shown(app, served, tmp_path, monkeyp
     # Each record carries its own mode, so a surface labels it by that mode.
     assert (view["mode"], view["score_semantics"]) == (
         record["scoring"]["mode"], record["scoring"]["score_semantics"])
-    assert view["mode"] == "C"
+    assert view["mode"] == "disease"
     assert view["cohort"] == {
         "label": "mygene2-2026-10", "role": "mygene2", "kind": "supplied",
         "samples_sha256": "5" * 64, "source_sha256": "b" * 64,
@@ -502,8 +502,8 @@ MALFORMED = {
     "ranked and excluded miss a case": _set(("cohort", "counts", "source_cases"), 101),
     "a negative count": _set(("cohort", "counts", "excluded", "ground_truth_absent"), -1),
     "a count as a bool": _set(("n_ranked",), True),
-    "a metric as text": _set(("metrics", "untruncated_mrr"), "0.5"),
-    "a metric that is not finite": _set(("metrics", "mean_rank"), float("nan")),
+    "a metric as text": _set(("metrics", "pooled_mrr"), "0.5"),
+    "a metric that is not finite": _set(("metrics", "pooled_top10"), float("nan")),
     "metrics a list": _set(("metrics",), [0.5]),
     "R2 verified": _set(("relations", "R2"), "verified"),
     "a relation missing": _delete("relations", "cohort_graph"),
@@ -979,7 +979,7 @@ def _disagreeing(kept: Path, value) -> Path:
     from tests.fixtures.report_store import store_bytes, version_of
 
     report = json.loads(kept.read_bytes())
-    report["authoritative_metrics"]["untruncated_mrr"] = value
+    report["authoritative_metrics"]["pooled_mrr"] = value
     data = json.dumps(report, indent=2, sort_keys=True, allow_nan=True).encode()
     return store_bytes(kept.parents[4], data, version=version_of(kept),
                        checkpoint_sha256=report["manifest"]["artifact_digests"]["checkpoint"])
@@ -1037,10 +1037,10 @@ def test_a_contested_record_is_marked_with_what_differs_and_names_no_path(
 
     (view,) = body["records"]
     assert view["contest"]["state"] == "contested"
-    assert view["contest"]["differing"] == ["untruncated_mrr"]
+    assert view["contest"]["differing"] == ["pooled_mrr"]
     runs = {run["run"]: run["values"] for run in view["contest"]["runs"]}
-    assert runs == {kept.parent.name: {"untruncated_mrr": record["metrics"]["untruncated_mrr"]},
-                    other.parent.name: {"untruncated_mrr": 0.4321}}
+    assert runs == {kept.parent.name: {"pooled_mrr": record["metrics"]["pooled_mrr"]},
+                    other.parent.name: {"pooled_mrr": 0.4321}}
     assert str(tmp_path) not in json.dumps(body)
     operator = _operator_state(record)
     assert {k: operator[k] for k in ("state", "differing", "runs")} == view["contest"]
@@ -1064,7 +1064,7 @@ def test_a_contested_state_is_never_downgraded_by_a_value_it_cannot_show(
     assert _operator_state(record)["state"] == "contested"
     assert view["contest"]["state"] == "contested"
     runs = {run["run"]: run["values"] for run in view["contest"]["runs"]}
-    assert runs[other.parent.name] == {"untruncated_mrr": None}
+    assert runs[other.parent.name] == {"pooled_mrr": None}
 
 
 @pytest.mark.parametrize("break_run", [

@@ -132,20 +132,22 @@ def environment_block(driver="560.35"):
 
 def registered_manifest(**overrides):
     """A registered cohort version's manifest, as `MeasurementManifest` builds it
-    and `ModeResult.to_dict` writes it (`dataclasses.asdict`)."""
+    and `ModeResult.to_dict` writes it (`dataclasses.asdict`).
+
+    **By default a disease task measurement's** (`--mode disease`): the task's
+    values are `task_measurement.disease_semantics` at the default
+    `--batch-size` (32), as `scripts/measure_scorer.build_manifest(...,
+    semantics=)` takes them; every other field is built there the same way for
+    every mode. A Mode C manifest is `mode_c_report`'s, a Mode D one
+    `mode_d_report`'s."""
     from src.evaluation.measurement import MeasurementManifest, expected_relations
+    from src.evaluation.task_measurement import disease_semantics
 
     fields = dict(
-        mode="C",
+        **disease_semantics(32),
         split="mygene2",
-        metric_schema_version=1,
         cohort_kind="supplied",
         n_samples=80,
-        candidate_construction="every disease in the knowledge graph",
-        batch_size=32,
-        score_semantics="raw cosine, no eta mixture and no shortest-path term",
-        model_construction="production (build_shepherd_model)",
-        canonical_tie_policy_version="score-desc-then-global-id-asc/v1",
         checkpoint_path="/srv/ws/runs/shepherd/r1/checkpoints/best.pt",
         data_dir="/srv/ws",
         graph_fingerprint={"num_nodes": {"disease": 4}},
@@ -175,14 +177,34 @@ def registered_manifest(**overrides):
     return asdict(MeasurementManifest(**fields))
 
 
+#: Pooled top-k of the default disease report over `task_measurement.TASK_KS`.
+_DISEASE_TOP_K = {1: 0.25, 3: 0.5, 5: 0.75, 10: 0.75, 20: 1.0, 50: 1.0, 100: 1.0}
+
+#: A disease task report's metrics: the names `ranking_report` writes over
+#: `TASK_KS`, in its order, as `task_measurement._mode_result` keeps them (the
+#: numbers only). Its 80 cases are all ranked, each with one truth (20 each at
+#: ranks 1, 2, 4 and 20), so macro recall is pooled top-k and every MRR is the
+#: same (0.45).
+DISEASE_METRICS = {
+    "coverage": 1.0,
+    "pooled_mrr": 0.45,
+    **{f"pooled_top{k}": v for k, v in _DISEASE_TOP_K.items()},
+    **{name: value for k, v in _DISEASE_TOP_K.items()
+       for name, value in ((f"macro_recall@{k}", v), (f"macro_precision@{k}", v / k))},
+    "macro_mrr": 0.45,
+    "best_positive_mrr": 0.45,
+    "conservative_pooled_mrr": 0.45,
+}
+
+
 def registered_report(metrics=None, n_ranked=80, **manifest_overrides):
     """A registered cohort version's measurement report, as the measurement
-    writes it: the manifest and the result fields of `ModeResult.to_dict`."""
+    writes it: the manifest and the result fields of `ModeResult.to_dict`.
+    By default a disease task measurement's (`registered_manifest`,
+    `DISEASE_METRICS`)."""
     return {
         "manifest": registered_manifest(**manifest_overrides),
-        "authoritative_metrics": dict(metrics or {
-            "untruncated_mrr": 0.5, "mean_rank": 3.0, "hits@1": 0.25, "hits@10": 0.75,
-        }),
+        "authoritative_metrics": dict(metrics or DISEASE_METRICS),
         "n_ranked": n_ranked,
         "n_ground_truth_absent": 0,
         "sampler_evidence": {"candidate_columns": {"min": 4, "max": 4}},
@@ -201,6 +223,36 @@ def generated_report():
                           "split_manifest": "6" * 64},
     )
     return report
+
+
+#: A kept Mode C report's semantic values, as `scripts/measure_scorer.py --mode C`
+#: wrote them (metric schema 1, `build_shepherd_model`, raw cosine).
+MODE_C_SEMANTICS = {
+    "mode": "C",
+    "metric_schema_version": 1,
+    "candidate_construction": "every disease in the knowledge graph",
+    "batch_size": 32,
+    "score_semantics": "raw cosine, no eta mixture and no shortest-path term",
+    "model_construction": "production (build_shepherd_model)",
+    "canonical_tie_policy_version": "score-desc-then-global-id-asc/v1",
+}
+
+#: A Mode C report's metrics (metric schema 1).
+MODE_C_METRICS = {"untruncated_mrr": 0.5, "mean_rank": 3.0, "hits@1": 0.25, "hits@10": 0.75}
+
+
+def mode_c_report(metrics=None, n_ranked=80, **manifest_overrides):
+    """A Mode C report of a registered cohort version: Mode C's semantic values
+    on the default manifest's other fields, and its metric schema 1 names.
+
+    **The explicit builder for a test whose subject is a Mode C report or
+    record** (its caveat label, its words, By test score, which orders Mode C
+    groups only): every other test reads the disease default of
+    `registered_report`, so retiring Mode C does not reach it by accident. K8-6e
+    makes this report the subject of the generic refusal of a report or record
+    this build does not read."""
+    return registered_report(metrics or MODE_C_METRICS, n_ranked,
+                             **{**MODE_C_SEMANTICS, **manifest_overrides})
 
 
 #: A kept Mode D report's semantic values, as Batch 3's measurement wrote them
@@ -227,9 +279,8 @@ def mode_d_report(n_ranked=56, n_eligible=80, **manifest_overrides):
                "post_import_hits@10": n_ranked / n_eligible * 0.9,
                "coverage": n_ranked / n_eligible, "reached_mrr": 0.5,
                "reached_mean_rank": 2.43, "reached_hits@1": 0.29, "reached_hits@10": 0.9}
-    report = registered_report(metrics, n_ranked,
-                               **{"n_samples": n_eligible, **MODE_D_SEMANTICS,
-                                  **manifest_overrides})
+    report = mode_c_report(metrics, n_ranked,
+                           **{"n_samples": n_eligible, **MODE_D_SEMANTICS, **manifest_overrides})
     del report["n_ground_truth_absent"], report["sampler_evidence"]
     report.update(
         outcomes={"ranked": n_ranked, "not_reached": n_eligible - n_ranked, "refused": 0,
@@ -544,7 +595,7 @@ def test_a_regime_field_changes_the_measurement_but_not_the_scoring(field):
         {"amp_enabled": True, "amp_dtype": "torch.bfloat16"},
         {"software_revision": "8" * 40},
         {"device": "cpu", "cuda_executed": False},
-        {"metric_schema_version": 2},
+        {"metric_schema_version": 3},
         {"canonical_tie_policy_version": "v2"},
         {"candidate_construction": "path-reachable diseases"},
     ],
@@ -555,9 +606,9 @@ def test_runs_differing_in_anything_score_affecting_are_separate_records(differi
 
     The earlier key was (checkpoint, cohort, mode, tie policy), and every case
     here except the first collided under it and was refused as a contradiction.
-    `batch_size` is the sharpest: it is Mode C's chunk size, which can move scores
-    at floating-point level, so two honest runs at different sizes are two
-    measurements.
+    `batch_size` is the sharpest: it is the measurement's chunk size (the cases
+    ranked per chunk), which can move scores at floating-point level, so two
+    honest runs at different sizes are two measurements.
     """
     second = build_record(registered_report(**differing), REPORT_B)
 
@@ -707,7 +758,8 @@ def test_the_record_keeps_no_run_paths_no_prose_and_no_case_ids():
     assert report["manifest"]["data_dir"] not in text
     assert "manifest" not in record
     assert "why_this_is_here" not in text
-    standing = [caveats.MODE_C_RESULT_LABEL, caveats.PRE_B1_NOTE, caveats.RECORD_ABSENCE,
+    standing = [caveats.DISEASE_TASK_RESULT_LABEL, caveats.DISEASE_TASK_NOTE,
+                caveats.MODE_C_RESULT_LABEL, caveats.PRE_B1_NOTE, caveats.RECORD_ABSENCE,
                 *caveats.R10_STATE_TEXT.values(), *caveats.R10_UNVERIFIABLE_REASON.values(),
                 *(label["definition"] for labels in caveats.R10_LABEL_TEXT.values()
                   for label in labels.values())]
@@ -730,7 +782,7 @@ def test_build_record_neither_changes_nor_aliases_the_report():
     record = build_record(report, REPORT_A)
     record["cohort"]["counts"]["source_cases"] = -1
     record["r10"]["training"]["evidence"]["state"] = "edited"
-    record["metrics"]["hits@1"] = -1.0
+    record["metrics"]["pooled_top1"] = -1.0
 
     assert report == before
 
@@ -906,14 +958,13 @@ def test_differing_fields_is_the_compared_list_in_order():
 
     first = build_record(registered_report(), REPORT_A)
     other = build_record(registered_report(
-        n_ranked=79, metrics={"untruncated_mrr": 0.9, "mean_rank": 3.0, "hits@1": 0.25,
-                              "hits@10": 0.75},
+        n_ranked=79, metrics={**DISEASE_METRICS, "pooled_mrr": 0.9},
         r10=r10_block(training_state="overlap"), environment=environment_block("999.0")),
         REPORT_B)
 
     assert differing_fields(first, first) == []
     assert differing_fields(first, other) == ["metrics", "n_ranked"]
-    assert difference_names(first, other, ["metrics"]) == ["untruncated_mrr"]
+    assert difference_names(first, other, ["metrics"]) == ["pooled_mrr"]
     assert difference_names(first, other, ["metrics", "n_ranked"]) == ["metrics", "n_ranked"]
     lacking = {k: v for k, v in first.items() if k != "dataset_record"}
     assert differing_fields(first, lacking) == ["dataset_record"]
@@ -962,11 +1013,9 @@ def test_one_key_with_two_results_is_refused_naming_the_metrics():
     ledger = _registered()
     before = copy.deepcopy(ledger)
     contradicting = build_record(
-        registered_report(metrics={"untruncated_mrr": 0.9, "mean_rank": 3.0,
-                                   "hits@1": 0.25, "hits@10": 0.75}),
-        REPORT_B)
+        registered_report(metrics={**DISEASE_METRICS, "pooled_mrr": 0.9}), REPORT_B)
 
-    with pytest.raises(ValueError, match=r"disagrees on: untruncated_mrr\. "):
+    with pytest.raises(ValueError, match=r"disagrees on: pooled_mrr\. "):
         append_record(ledger, contradicting, registered_at=WHEN)
     assert ledger == before
 

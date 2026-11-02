@@ -588,8 +588,9 @@ def test_a_result_of_another_or_no_mode_is_never_shown_as_mode_c(site):
     model's own task, never Mode C (K6 decision 13)."""
     import html as html_lib
 
+    c_run = _keep_mode_c_report(site)
     reports = tp.read_reports(LABEL)
-    run = {r["run_id"]: r for r in reports["runs"]}[site.run_id]
+    run = {r["run_id"]: r for r in reports["runs"]}[c_run]
     record = run["record"]
     for mode, label in (("E", "Mode E (a measurement mode this version does not describe)"),
                         (None, "Measurement mode not recorded")):
@@ -763,16 +764,43 @@ def _shown(markup: str) -> str:
     return html_lib.unescape(re.sub(r"<[^>]+>", "", markup))
 
 
-def _keep_mode_d_report(site) -> str:
-    """A kept Mode D report beside the site's Mode C one, as Batch 3 kept them
-    in a version's store: Mode D no longer runs (K7), so it is written from the
-    C report's manifest with Mode D's values (`mode_d_report`). Its run id."""
+def _site_manifest(site):
+    """The site report's manifest less the fields a Mode C report sets
+    (`MODE_C_SEMANTICS`): its paths, digests, cohort block and environment."""
+    from tests.unit.test_evaluation_sidecar import MODE_C_SEMANTICS
+
+    report = json.loads((site.reports / site.run_id / "report.json").read_text())
+    return {k: v for k, v in report["manifest"].items() if k not in MODE_C_SEMANTICS}
+
+
+def _keep_mode_c_report(site) -> str:
+    """A kept Mode C report of the site's checkpoint on its version, built
+    (`mode_c_report`) on the site report's other manifest fields, whatever mode
+    that report was measured in: the subject of the Mode C readers here until
+    K8-6e. At batch size 16, a measurement of its own, so it never contests the
+    site's report. Its run id."""
     from src.evaluation.cohort_registry import resolve_version
     from tests.fixtures.report_store import store_bytes
-    from tests.unit.test_evaluation_sidecar import MODE_D_SEMANTICS, mode_d_report
+    from tests.unit.test_evaluation_sidecar import mode_c_report
 
-    c_report = json.loads((site.reports / site.run_id / "report.json").read_text())
-    manifest = {k: v for k, v in c_report["manifest"].items() if k not in MODE_D_SEMANTICS}
+    manifest = _site_manifest(site)
+    eligible = manifest["cohort_version"]["counts"]["ranked_eligible"]
+    report = mode_c_report(n_ranked=eligible, **manifest, batch_size=16)
+    path = store_bytes(site.registry, json.dumps(report, indent=2).encode("utf-8"),
+                       version=resolve_version(site.registry, LABEL), checkpoint_sha256=site.sha)
+    return path.parent.name
+
+
+def _keep_mode_d_report(site) -> str:
+    """A kept Mode D report of the site's checkpoint on its version, as Batch 3
+    kept them in a version's store: Mode D no longer runs (K7), so it is written
+    from the site report's manifest with Mode D's values on Mode C's
+    (`mode_d_report`). Its run id."""
+    from src.evaluation.cohort_registry import resolve_version
+    from tests.fixtures.report_store import store_bytes
+    from tests.unit.test_evaluation_sidecar import mode_d_report
+
+    manifest = _site_manifest(site)
     eligible = manifest["cohort_version"]["counts"]["ranked_eligible"]
     report = mode_d_report(n_ranked=eligible - 1, n_eligible=eligible, **manifest)
     path = store_bytes(site.registry, json.dumps(report, indent=2).encode("utf-8"),
@@ -793,6 +821,7 @@ def test_a_kept_mode_d_report_is_shown_under_its_own_mode_and_its_register_is_re
     from src.evaluation.caveats import MODE_C_RESULT_LABEL, MODE_D_NOTE, PRE_B1_NOTE, mode_label
     from src.evaluation.registration import mode_d_refusal
 
+    c_run = _keep_mode_c_report(site)
     d_run = _keep_mode_d_report(site)
     reports = tp.read_reports(LABEL)
     runs = {run["run_id"]: run for run in reports["runs"]}
@@ -812,14 +841,14 @@ def test_a_kept_mode_d_report_is_shown_under_its_own_mode_and_its_register_is_re
     rows = _shown(tp.reports_html(reports, None))
     assert "served ranking (Mode D): report kept" in rows
     assert "model ranking (Mode C): report kept" in rows
-    c_result = _shown(tp.result_html(reports, site.run_id, []))
+    c_result = _shown(tp.result_html(reports, c_run, []))
     assert MODE_C_RESULT_LABEL in c_result and "Mode D" not in c_result
 
     page, request = _page(monkeypatch)
     off, why = tp.register_state(page, reports, d_run)
     assert off is False and why == f"Disabled: this is {mode_d_refusal(record)}"
     assert "a Mode D report (the served ranking)" in why and "no new record" in why
-    assert tp.register_state(page, reports, site.run_id) == (True, None)
+    assert tp.register_state(page, reports, c_run) == (True, None)
     models = tp.read_models("demo", request)
     usage = _usage_lines(site)
     done, said = tp.register_selected(page, reports, models, "demo", d_run, request)

@@ -51,10 +51,15 @@ from src.evaluation.report_store import (
 )
 from src.evaluation.sidecar import build_record, record_key
 from tests.fixtures.report_store import new_run_id, store_bytes, store_report, version_of
-from tests.unit.test_evaluation_sidecar import environment_block, r10_block, registered_report
+from tests.unit.test_evaluation_sidecar import (
+    DISEASE_METRICS,
+    environment_block,
+    r10_block,
+    registered_report,
+)
 
 WHEN = datetime(2026, 10, 20, 9, 0, 0, tzinfo=timezone.utc)
-OTHER_METRICS = {"untruncated_mrr": 0.9, "mean_rank": 1.5, "hits@1": 0.25, "hits@10": 0.75}
+OTHER_METRICS = {**DISEASE_METRICS, "pooled_mrr": 0.9, "pooled_top1": 0.5}
 
 
 def _stored(tmp_path, **overrides) -> Path:
@@ -101,7 +106,7 @@ def test_reports_that_differ_on_a_compared_field_are_contested_and_named(tmp_pat
     status = scan.status(_key(first))
 
     assert status.state == scan.state(_key(first)) == "contested"
-    assert status.differing == ("mean_rank", "untruncated_mrr")
+    assert status.differing == ("pooled_mrr", "pooled_top1")
     assert status.disagreeing_runs == tuple(sorted([first.parent.name, second.parent.name]))
     assert scan.state(_key(other_key)) == "uncontested", "another batch size is another key"
 

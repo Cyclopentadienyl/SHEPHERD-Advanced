@@ -7,7 +7,8 @@ each record's key. This puts both where the production code writes them, with
 the production functions:
 
 - a report is built as the measurement writes one
-  (`tests/unit/test_evaluation_sidecar.registered_report`) for a cohort version
+  (`tests/unit/test_evaluation_sidecar.registered_report`, a disease task
+  measurement's, or `mode_c_report` with ``mode_c``) for a cohort version
   block of a given label and role, naming the checkpoint's digest, and kept in
   the registry's report store (`tests/fixtures/report_store.store_report`,
   which writes the version too);
@@ -45,11 +46,15 @@ def version_block(label: str, role: str, **overrides: Any) -> Dict[str, Any]:
 
 def report_for(checkpoint_sha256: str, block: Dict[str, Any], *,
                metrics: Optional[Dict[str, float]] = None, deterministic: bool = True,
-               device: str = "cuda", **overrides: Any) -> Dict[str, Any]:
-    """A measurement report of this checkpoint on the version ``block`` names."""
-    from tests.unit.test_evaluation_sidecar import registered_report
+               device: str = "cuda", mode_c: bool = False, **overrides: Any) -> Dict[str, Any]:
+    """A measurement report of this checkpoint on the version ``block`` names:
+    a disease task measurement's (`registered_report`), or with ``mode_c`` a
+    Mode C report (`mode_c_report`), for a test whose subject is a Mode C
+    record (By test score orders Mode C groups only)."""
+    from tests.unit.test_evaluation_sidecar import mode_c_report, registered_report
 
-    report = registered_report(
+    build = mode_c_report if mode_c else registered_report
+    report = build(
         metrics=metrics, split=block["role"], cohort_version=copy.deepcopy(block),
         deterministic_algorithms=deterministic, cudnn_deterministic=deterministic,
         device=device, cuda_executed=device.startswith("cuda"),

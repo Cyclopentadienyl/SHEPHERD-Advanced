@@ -112,7 +112,8 @@ def demo_workspace(tmp_path_factory):
 def world(demo_workspace, tmp_path, monkeypatch):
     """A workspaces root with one workspace and its runs, a registry with three
     versions (research_selection, institutional_acceptance, exploration), and
-    records beside the checkpoints:
+    Mode C records beside the checkpoints (`report_for(mode_c=True)`: By test
+    score orders Mode C groups only, until K8-6d):
 
     - model-05: inst #1 (contested in the store), mygene #2 (non-deterministic,
       0.2307), mygene #3 (deterministic, 0.2310): D4 picks #3;
@@ -144,26 +145,30 @@ def world(demo_workspace, tmp_path, monkeypatch):
     mygene, inst, explore = (version_block(MYGENE, RESEARCH_ROLE),
                              version_block(INST, ACCEPTANCE_ROLE),
                              version_block(EXPLORE, "exploration"))
+    # Mode C reports: By test score orders Mode C groups only (until K8-6d).
     inst_report = report_for(shas["model-05.pt"], inst, metrics=_metrics(0.2051, rank=41.2),
-                             deterministic=False)
+                             deterministic=False, mode_c=True)
     register(registry, paths["model-05.pt"], inst_report, registered_at="2026-10-17T13:02:00Z")
     disagree(registry, inst_report, _metrics(0.2077, rank=41.0))
     register(registry, paths["model-05.pt"],
-             report_for(shas["model-05.pt"], mygene, metrics=_metrics(0.2307), deterministic=False),
+             report_for(shas["model-05.pt"], mygene, metrics=_metrics(0.2307),
+                        deterministic=False, mode_c=True),
              registered_at="2026-10-17T14:12:00Z")
     det_path, det = register(registry, paths["model-05.pt"],
-                             report_for(shas["model-05.pt"], mygene, metrics=_metrics(0.2310)),
+                             report_for(shas["model-05.pt"], mygene, metrics=_metrics(0.2310),
+                                        mode_c=True),
                              registered_at="2026-10-17T15:31:00Z")
     register(registry, paths["model-08.pt"],
-             report_for(shas["model-08.pt"], mygene, metrics=_metrics(0.2250, rank=60.1)))
+             report_for(shas["model-08.pt"], mygene, metrics=_metrics(0.2250, rank=60.1),
+                        mode_c=True))
     register(registry, paths["model-20.pt"],
              report_for(shas["model-20.pt"], mygene, metrics=_metrics(0.2195, rank=55.0),
-                        device="cpu"))
-    hgt = report_for(shas["model-40.pt"], mygene, metrics=_metrics(0.3402))
+                        device="cpu", mode_c=True))
+    hgt = report_for(shas["model-40.pt"], mygene, metrics=_metrics(0.3402), mode_c=True)
     register(registry, paths["model-40.pt"], hgt)
     disagree(registry, hgt, _metrics(0.3398))
     register(registry, paths["model-03.pt"],
-             report_for(shas["model-03.pt"], explore, metrics=_metrics(0.18)))
+             report_for(shas["model-03.pt"], explore, metrics=_metrics(0.18), mode_c=True))
     monkeypatch.setenv("SHEPHERD_WORKSPACES_ROOT", str(root))
     monkeypatch.setenv("SHEPHERD_REGISTRY", str(registry))
     monkeypatch.setenv("SHEPHERD_ORDERING_ROLES", f"{RESEARCH_ROLE},{ACCEPTANCE_ROLE}")
@@ -410,7 +415,7 @@ def test_the_task_filter_orders_only_what_is_shown(world, monkeypatch):
 
 def test_a_second_scoring_semantics_is_a_choice_never_interleaved(world, monkeypatch):
     other = report_for(world["shas"]["model-12.pt"], world["mygene_block"],
-                       metrics=_metrics(0.9), score_semantics="another scoring")
+                       metrics=_metrics(0.9), score_semantics="another scoring", mode_c=True)
     register(world["registry"], world["paths"]["model-12.pt"], other)
     listing, data, ctl, view, _ordering = _ordered(world, monkeypatch)
     assert [n for _d, n in ctl["scoring_groups"]] == [4, 1]     # most checkpoints first
@@ -668,10 +673,10 @@ def _kept_c_and_d_records():
     """A Mode C record and a kept Mode D record of one checkpoint and version, as
     a ledger holds them (Batch 3 registered both; Mode D no longer runs, K7)."""
     from src.evaluation.sidecar import append_record, build_record, empty_ledger
-    from tests.unit.test_evaluation_sidecar import mode_d_report, registered_report
+    from tests.unit.test_evaluation_sidecar import mode_c_report, mode_d_report
 
     ledger = empty_ledger()
-    for report, digest in ((registered_report(), "c" * 64), (mode_d_report(), "d" * 64)):
+    for report, digest in ((mode_c_report(), "c" * 64), (mode_d_report(), "d" * 64)):
         ledger = append_record(ledger, build_record(report, digest),
                                registered_at="2026-10-27T12:00:00Z")[1]
     return ledger["records"]
@@ -770,7 +775,7 @@ def test_d4s_pick_comes_first_in_the_detail_before_a_newer_record(world, monkeyp
     sha = world["shas"]["model-08.pt"]
     _path, newer = register(world["registry"], world["paths"]["model-08.pt"],
                             report_for(sha, world["mygene_block"], deterministic=False,
-                                       metrics=_metrics(0.2262, rank=59.0)),
+                                       metrics=_metrics(0.2262, rank=59.0), mode_c=True),
                             registered_at="2026-10-19T10:00:00Z")
     listing, data, ctl, view, _ordering = _ordered(world, monkeypatch)
     key = _key(world, "model-08.pt")

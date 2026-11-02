@@ -64,6 +64,7 @@ from src.utils.fingerprint import ReadIdentity
 from src.evaluation.sidecar import empty_ledger, read_ledger, write_ledger
 from tests.fixtures.report_store import store_bytes, store_report, version_of
 from tests.unit.test_evaluation_sidecar import (
+    DISEASE_METRICS,
     generated_report,
     mode_d_report,
     r10_block,
@@ -103,7 +104,8 @@ def _report(tmp_path, **overrides) -> Path:
     """A report of a registered cohort version, measuring `WEIGHTS`, kept in a
     new run directory of its version's report store under ``tmp_path/registry``
     (`tests/fixtures/report_store.py`): since M5-1 only a report the store holds
-    is registered."""
+    is registered. A disease task measurement's by default (mode ``disease``,
+    metric schema 2: `registered_report`)."""
     report = registered_report(**overrides)
     report["manifest"]["artifact_digests"]["checkpoint"] = DIGEST
     return store_report(tmp_path / "registry", report)
@@ -269,14 +271,14 @@ def test_the_ledger_refuses_a_contradiction_the_store_no_longer_shows(
     first = _register(first_report, checkpoints)
     before = first.ledger_path.read_bytes()
     first_report.unlink()
-    edited = _report(tmp_path, metrics={
-        "untruncated_mrr": 0.9, "mean_rank": 1.5, "hits@1": 0.25, "hits@10": 0.75})
+    edited = _report(tmp_path, metrics={**DISEASE_METRICS, "pooled_mrr": 0.9,
+                                        "pooled_top1": 0.5})
 
     with pytest.raises(RegistrationRefused) as refused:
         _register(edited, checkpoints)
 
     message = str(refused.value)
-    assert "disagrees on: mean_rank, untruncated_mrr" in message
+    assert "disagrees on: pooled_mrr, pooled_top1" in message
     assert message.endswith(f"Nothing was written to {first.ledger_path}.")
     assert first.ledger_path.read_bytes() == before
 
@@ -284,7 +286,7 @@ def test_the_ledger_refuses_a_contradiction_the_store_no_longer_shows(
 # ---------------------------------------------------------------------------
 # D5: runs that disagree under one key block every registration under it
 # ---------------------------------------------------------------------------
-_OTHER_METRICS = {"untruncated_mrr": 0.9, "mean_rank": 1.5, "hits@1": 0.25, "hits@10": 0.75}
+_OTHER_METRICS = {**DISEASE_METRICS, "pooled_mrr": 0.9, "pooled_top1": 0.5}
 
 
 def test_runs_that_disagree_block_every_registration_under_their_key(tmp_path, checkpoints):
@@ -305,7 +307,7 @@ def test_runs_that_disagree_block_every_registration_under_their_key(tmp_path, c
             _register(report, checkpoints, beside=beside)
         message = str(refused.value)
         assert message.startswith("runs disagree — investigate.")
-        assert "disagree on: mean_rank, untruncated_mrr" in message
+        assert "disagree on: pooled_mrr, pooled_top1" in message
         assert first_report.parent.name in message and edited.parent.name in message
         # Refused before the checkpoint is looked for, so a directory search
         # has not named the ledger yet.
@@ -701,8 +703,8 @@ def test_a_report_replaced_after_its_read_is_recorded_as_the_bytes_read(
 
     report = _report(tmp_path)
     bytes_a = report.read_bytes()
-    b = registered_report(metrics={"untruncated_mrr": 0.1, "mean_rank": 9.0,
-                                   "hits@1": 0.0, "hits@10": 0.1})
+    b = registered_report(metrics={**DISEASE_METRICS, "pooled_mrr": 0.1, "pooled_top1": 0.0,
+                                   "pooled_top10": 0.1})
     b["manifest"]["artifact_digests"]["checkpoint"] = DIGEST
     # B names the version it is kept under, as a measurement's report would.
     b["manifest"]["cohort_version"]["manifest_sha256"] = version_of(report).identity.sha256
@@ -996,7 +998,7 @@ def test_the_cli_records_and_then_reads_back(tmp_path, checkpoints, capsys):
     shown = json.loads(capsys.readouterr().out)
     assert len(shown) == 1
     assert shown[0]["cohort"]["label"] == "mygene2-2026-10"
-    assert shown[0]["scoring"]["mode"] == "C"
+    assert shown[0]["scoring"]["mode"] == "disease"
 
 
 def test_the_cli_show_reads_the_ledger_once(tmp_path, checkpoints, capsys):
@@ -1158,8 +1160,8 @@ def test_a_run_registers_only_the_report_bytes_it_published(tmp_path, checkpoint
     published = _report(tmp_path)
     measured = _measured(published, checkpoints)
     replacement = json.loads(published.read_text())
-    replacement["authoritative_metrics"]["hits@1"] = (
-        replacement["authoritative_metrics"]["hits@1"] / 2 + 0.25)
+    replacement["authoritative_metrics"]["pooled_top1"] = (
+        replacement["authoritative_metrics"]["pooled_top1"] / 2 + 0.25)
     published.write_text(json.dumps(replacement, indent=1))
     assert _sha(published) != measured.report_sha256
 
@@ -1473,7 +1475,7 @@ def test_a_mode_d_record_already_in_a_ledger_stays_and_a_task_report_still_regis
 
     assert result.outcome == "registered"
     ledger, _digest = read_ledger(ledger_path)
-    assert [r["scoring"]["mode"] for r in ledger["records"]] == ["D", "C"]
+    assert [r["scoring"]["mode"] for r in ledger["records"]] == ["D", "disease"]
 
 
 # ---------------------------------------------------------------------------
