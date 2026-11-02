@@ -1398,7 +1398,7 @@ def train_bundle(config: TrainConfig, explicit: Optional[Collection[str]] = None
                 + f"; device {device} (requested: {config.device})")
     data_dir = Path(config.data_dir)
     if config.run_dir:
-        check_run_dir_free(config.run_dir)
+        check_run_dir_free(config.run_dir, data_dir=config.data_dir)
 
     inputs = read_training_inputs(data_dir, expected_manifest_sha256=expected_dataset_sha256,
                                   with_samples=(stage == "finetune"))
@@ -1622,7 +1622,7 @@ def train_bundle(config: TrainConfig, explicit: Optional[Collection[str]] = None
                     f"(sha256 {parent.identity.sha256[:12]})")
     del best_weights
 
-    claim_run_dir(run_dir)
+    claim_run_dir(run_dir, data_dir=config.data_dir)
     logger.info(f"Run directory: {run_dir}")
     with open(run_dir / "config.yaml", "w") as f:
         yaml.dump({**asdict(config), "run_dir": str(run_dir)}, f)
@@ -1878,7 +1878,7 @@ def train(config: TrainConfig, explicit: Optional[Collection[str]] = None, *,
     )
 
     if config.run_dir:
-        check_run_dir_free(config.run_dir)
+        check_run_dir_free(config.run_dir, data_dir=config.data_dir)
 
     inputs = read_training_inputs(data_dir, expected_manifest_sha256=expected_dataset_sha256)
     parent = read_resume_parent(config.resume_from, inputs, device,
@@ -2031,7 +2031,7 @@ def train(config: TrainConfig, explicit: Optional[Collection[str]] = None, *,
     del best_weights
 
     # Claimed after the last refusal: the run's first artifact.
-    claim_run_dir(run_dir)
+    claim_run_dir(run_dir, data_dir=config.data_dir)
     logger.info(f"Run directory: {run_dir}")
 
     # Save configuration: the settings in effect, with the directory the run

@@ -1088,12 +1088,11 @@ class TrainingManager:
 
             try:
                 refuse_retired_locations(config, source="This training request")
+                workspace = self.workspace_path(config.get("data_dir", ""))
                 if config.get("run_dir"):
-                    run_dir = check_run_dir_free(config["run_dir"])
+                    run_dir = check_run_dir_free(config["run_dir"], data_dir=workspace)
                 else:
-                    run_dir = propose_run_dir(
-                        self.workspace_path(config.get("data_dir", "")),
-                        architecture, config.get("run_name"))
+                    run_dir = propose_run_dir(workspace, architecture, config.get("run_name"))
             except (ValueError, OSError) as e:
                 return {"success": False, "error": str(e),
                         "status": self._status_locked("training")}

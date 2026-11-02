@@ -189,12 +189,13 @@ def test_a_run_directory_is_new_named_and_claimed(tmp_path, monkeypatch):
     from src.utils import checkpoint_paths as cp
 
     first = cp.claim_run_dir(cp.propose_run_dir(tmp_path, "HGT", "Temp Cosine / Pilot!",
-                                                now=datetime(2026, 10, 15, 9, 30, 0)))
+                                                now=datetime(2026, 10, 15, 9, 30, 0)),
+                             data_dir=tmp_path)
     assert first.parent == tmp_path / "runs" / "hgt"
     assert first.name.startswith("20261015-093000_temp-cosine-pilot_")
     assert sorted(p.name for p in first.iterdir()) == ["checkpoints", "logs"]
 
-    second = cp.claim_run_dir(cp.propose_run_dir(tmp_path, "hgt"))
+    second = cp.claim_run_dir(cp.propose_run_dir(tmp_path, "hgt"), data_dir=tmp_path)
     assert second != first and "_run_" in second.name
 
 
@@ -207,7 +208,7 @@ def test_a_colliding_run_id_is_drawn_again_never_reused(tmp_path, monkeypatch):
     monkeypatch.setattr(cp.secrets, "token_hex", lambda n: next(ids))
     when = datetime(2026, 10, 15, 9, 30, 0)
 
-    a = cp.claim_run_dir(cp.propose_run_dir(tmp_path, "gat", "x", now=when))
+    a = cp.claim_run_dir(cp.propose_run_dir(tmp_path, "gat", "x", now=when), data_dir=tmp_path)
     b = cp.propose_run_dir(tmp_path, "gat", "x", now=when)
 
     assert a.name.endswith("_aaaaaa") and b.name.endswith("_bbbbbb")
@@ -354,6 +355,34 @@ class TestSelectionKeepsTheListingsBoundary:
         assert reason == (f"no run has a checkpoint; not read: "
                           f"20261009-000000_far_999999/last.pt {self.REASON}")
 
+    def test_a_reason_names_a_few_files_and_counts_the_rest(self, tmp_path):
+        """A runs directory linked out of the workspace with many runs gives a
+        reason of bounded length: the first `NOT_READ_NAMED` files, then how
+        many more; a list given as `not_read` holds every one."""
+        from src.utils.checkpoint_paths import (
+            NOT_READ_NAMED,
+            RUN_LAYOUT_KEYS,
+            select_auto_run_checkpoint,
+            select_run_checkpoint,
+        )
+
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+        for index in range(NOT_READ_NAMED + 4):
+            _touch(tmp_path / "elsewhere" / "gat" / f"2026100{index}-000000_r_00000{index}"
+                   / "checkpoints" / "last.pt", 100 + index)
+        (workspace / "runs").symlink_to(tmp_path / "elsewhere", target_is_directory=True)
+
+        not_read = []
+        path, key, reason = select_auto_run_checkpoint(workspace, keys=RUN_LAYOUT_KEYS,
+                                                       not_read=not_read)
+        assert (path, key) == (None, None) and len(not_read) == NOT_READ_NAMED + 4
+        assert reason.count(self.REASON) == NOT_READ_NAMED
+        assert reason.endswith("; and 4 more file(s) not read")
+        listed = []
+        assert select_run_checkpoint(workspace, "gat", not_read=listed)[0] is None
+        assert listed == not_read
+
     def test_the_listing_and_the_selection_give_one_reason(self, tmp_path):
         from src.utils.checkpoint_paths import read_run_checkpoints, select_run_checkpoint
 
@@ -392,22 +421,94 @@ def test_equal_recency_is_ordered_by_name_not_by_the_filesystem(tmp_path):
 def test_an_explicit_run_directory_must_be_free(tmp_path):
     from src.utils.checkpoint_paths import RunDirectoryTaken, check_run_dir_free, claim_run_dir
 
-    assert check_run_dir_free(tmp_path / "absent") == tmp_path / "absent"
+    workspace = tmp_path / "ws"
+    assert check_run_dir_free(tmp_path / "absent", data_dir=workspace) == tmp_path / "absent"
     (tmp_path / "empty").mkdir()
-    assert claim_run_dir(tmp_path / "empty") == tmp_path / "empty"
+    assert claim_run_dir(tmp_path / "empty", data_dir=workspace) == tmp_path / "empty"
     assert (tmp_path / "empty" / "checkpoints").is_dir()
 
     used = tmp_path / "used"
     _touch(used / "config.yaml", 100)
     with pytest.raises(RunDirectoryTaken, match="already holds files"):
-        check_run_dir_free(used)
+        check_run_dir_free(used, data_dir=workspace)
     with pytest.raises(RunDirectoryTaken):
-        claim_run_dir(used)
+        claim_run_dir(used, data_dir=workspace)
     assert sorted(p.name for p in used.iterdir()) == ["config.yaml"], "a refusal created files"
 
     _touch(tmp_path / "a-file", 100)
     with pytest.raises(RunDirectoryTaken, match="not a directory"):
-        check_run_dir_free(tmp_path / "a-file")
+        check_run_dir_free(tmp_path / "a-file", data_dir=workspace)
+
+
+class TestWritingKeepsTheWorkspaceBoundary:
+    """A run directory placed in the workspace must resolve inside it, the
+    boundary the listing and automatic selection read by (the reviewer's K8-1
+    recheck: since bf7cd22 selection skipped a run behind a link out of the
+    workspace, while `propose_run_dir` and `claim_run_dir` still created one
+    there, so a finetune wrote a run the reload never chose). Refused before
+    anything is written, saying why and what to do; a run inside the
+    workspace, and an explicit run directory outside it, are as before."""
+
+    REASON = "resolves outside the workspace, so it is not written"
+
+    def _linked(self, tmp_path, linked):
+        workspace = tmp_path / "ws"
+        elsewhere = tmp_path / "elsewhere"
+        if linked == "runs":
+            workspace.mkdir()
+            (elsewhere / "runs").mkdir(parents=True)
+            (workspace / "runs").symlink_to(elsewhere / "runs", target_is_directory=True)
+        else:
+            (workspace / "runs").mkdir(parents=True)
+            (elsewhere / "gatv2").mkdir(parents=True)
+            (workspace / "runs" / "gatv2").symlink_to(elsewhere / "gatv2",
+                                                      target_is_directory=True)
+        return workspace, elsewhere
+
+    @pytest.mark.parametrize("linked", ["runs", "layout"])
+    def test_a_run_behind_a_link_out_of_the_workspace_is_refused(self, tmp_path, linked):
+        from src.utils.checkpoint_paths import (
+            check_run_dir_free,
+            claim_run_dir,
+            propose_run_dir,
+            runs_root,
+        )
+
+        workspace, elsewhere = self._linked(tmp_path, linked)
+        before = sorted(elsewhere.rglob("*"))
+        with pytest.raises(ValueError, match=self.REASON) as refused:
+            propose_run_dir(workspace, "gatv2", "child")
+        assert "Keep the workspace's runs/ and its layout directories inside the workspace" \
+            in str(refused.value)
+        assert "explicit checkpoint_path" in str(refused.value)
+        # An explicit run directory under the linked layout: refused at the
+        # start's check and at the claim, before anything is created.
+        named = runs_root(workspace, "gatv2") / "20261101-000000_child_abcdef"
+        with pytest.raises(ValueError, match=self.REASON):
+            check_run_dir_free(named, data_dir=workspace)
+        with pytest.raises(ValueError, match=self.REASON):
+            claim_run_dir(named, data_dir=workspace)
+        assert sorted(elsewhere.rglob("*")) == before, "a refused claim wrote outside"
+
+    def test_a_run_inside_the_workspace_is_claimed_as_before(self, tmp_path):
+        from src.utils.checkpoint_paths import claim_run_dir, propose_run_dir, run_dir_outside
+
+        workspace = tmp_path / "ws"
+        run = claim_run_dir(propose_run_dir(workspace, "gatv2", "child"), data_dir=workspace)
+        assert run.parent == workspace / "runs" / "gatv2" and (run / "checkpoints").is_dir()
+        # A workspace reached through a link of its own is inside itself.
+        (tmp_path / "current").symlink_to(workspace, target_is_directory=True)
+        assert claim_run_dir(propose_run_dir(tmp_path / "current", "gatv2"),
+                             data_dir=tmp_path / "current").is_dir()
+        assert run_dir_outside(workspace / "runs" / "gatv2" / "x", workspace) is None
+
+    def test_an_explicit_run_directory_outside_the_workspace_is_as_before(self, tmp_path):
+        """Not in the layout: nothing selects from it automatically, and its
+        checkpoints are served by an explicit path, as before."""
+        from src.utils.checkpoint_paths import claim_run_dir
+
+        assert claim_run_dir(tmp_path / "runs-elsewhere" / "r",
+                             data_dir=tmp_path / "ws").is_dir()
 
 
 def test_of_two_claims_on_one_free_directory_only_one_wins(tmp_path, monkeypatch):
@@ -419,15 +520,15 @@ def test_of_two_claims_on_one_free_directory_only_one_wins(tmp_path, monkeypatch
     target = tmp_path / "shared"
     real_check = cp.check_run_dir_free
 
-    def check_then_lose_the_race(run_dir):
-        path = real_check(run_dir)
+    def check_then_lose_the_race(run_dir, **kwargs):
+        path = real_check(run_dir, **kwargs)
         path.mkdir(parents=True, exist_ok=True)
         (path / "checkpoints").mkdir(exist_ok=True)   # the other run claims it here
         return path
 
     monkeypatch.setattr(cp, "check_run_dir_free", check_then_lose_the_race)
     with pytest.raises(cp.RunDirectoryTaken, match="claimed by another run"):
-        cp.claim_run_dir(target)
+        cp.claim_run_dir(target, data_dir=tmp_path)
 
 
 def test_the_listing_is_by_run_then_newest_file(tmp_path):

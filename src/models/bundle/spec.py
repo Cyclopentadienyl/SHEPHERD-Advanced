@@ -10,8 +10,10 @@ no state-dict shape and no training flag decides what is built.
 booleans, `None` and nested dicts/lists only, so a checkpoint carrying it still
 loads with `weights_only=True`. `ModelSpec.from_dict()` refuses a record of
 another version, an unknown key at any level and a missing required section:
-a spec it cannot read completely is never half-read. A field declared `bool`
-holds `true` or `false`, never a string or a number (`_require_booleans`).
+a spec it cannot read completely is never half-read. **Every field holds the
+type its dataclass declares** (`_require_declared_types`): a flag is `true` or
+`false`, an integer is not a boolean or a float, a number is a finite number,
+never a string or a boolean, a text is a string; nothing is cast into its type.
 
 **Provisional defaults carry their source** (README §0.3). `REFERENCE_SOURCES`
 names where each value of the reference recipe comes from; a spec built from
@@ -22,8 +24,12 @@ Module: src/models/bundle/spec.py
 """
 from __future__ import annotations
 
+import math
+import types
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
-from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
+from functools import lru_cache
+from typing import (Any, Dict, Mapping, Optional, Sequence, Tuple, Union, get_args, get_origin,
+                    get_type_hints)
 
 #: Bumped when a field's meaning changes or a field is removed. A reader never
 #: guesses a field an older or newer version may have meant.
@@ -85,19 +91,104 @@ def _from(cls, section: str, data: Mapping[str, Any]):
     return cls(**{name: data[name] for name in names})
 
 
-def _require_booleans(section: Any, prefix: str = "") -> None:
-    """**Every field a spec declares `bool` holds `true` or `false`**, in
-    every section and every nested one (`ModelSpec.validate`, the one gate
-    every spec passes, read or built). Nothing else is read as a flag: the
-    string "false" is truthy and 0 and 1 are numbers, so read as one either
-    would build a model its record does not describe (the reviewer's K8-1
-    recheck: `encoder.add_self_loops: "false"` trained with self-loops)."""
-    for f in fields(section):
-        name, value = f"{prefix}{f.name}", getattr(section, f.name)
-        if f.type in ("bool", bool) and not isinstance(value, bool):
-            raise SpecError(f"{name} must be a boolean (true or false), not {value!r}")
-        if is_dataclass(value):
-            _require_booleans(value, f"{name}.")
+#: How much of a refused value a reason shows.
+_SHOWN_LIMIT = 60
+
+
+def _shown(value: Any) -> str:
+    text = repr(value)
+    return text if len(text) <= _SHOWN_LIMIT else text[:_SHOWN_LIMIT - 3] + "..."
+
+
+@lru_cache(maxsize=None)
+def _declared(cls: type) -> Tuple[Tuple[str, Any], ...]:
+    """`cls`'s fields with their declared types, resolved."""
+    hints = get_type_hints(cls)
+    return tuple((f.name, hints[f.name]) for f in fields(cls))
+
+
+def _require_declared_types(section: Any, prefix: str = "") -> None:
+    """**Every field of a spec holds the type its dataclass declares**, in
+    every section and every nested one: the one type rule, run first by
+    `ModelSpec.validate`, the gate every spec passes (read from a record or
+    a configuration by `from_dict`, or built in code). The section rules that
+    follow check ranges and allowed values only.
+
+    A `bool` field takes `true` or `false`; an `int` field an integer that is
+    not a boolean; a `float` field a finite number (an integer or a float)
+    that is not a boolean; a `str` field a string; a `Tuple` field a tuple (a
+    record's list, which `from_dict` makes one) whose elements each pass
+    their declared type, and as many as declared when the length is fixed; a
+    `Dict` field a mapping whose keys and values pass theirs; a section field
+    that section; `Optional[X]` also takes None. Nothing is cast: the string
+    "false" is truthy, "0.1" is not a number and `true` is the integer 1, so
+    read as one any of them would build a model its record does not describe
+    (the reviewer's K8-1 recheck: `encoder.add_self_loops: "false"` trained
+    with self-loops, `encoder.attention_slope: "0.2"` failed in the run's
+    first step, `patient_encoder.transformer_layers: true` built one layer)."""
+    for name, declared in _declared(type(section)):
+        _require_type(f"{prefix}{name}", getattr(section, name), declared)
+
+
+def _require_type(name: str, value: Any, declared: Any) -> None:
+    """Refuse `value` of the field `name` unless it holds `declared`."""
+    origin, args = get_origin(declared), get_args(declared)
+    if origin is Union or origin is types.UnionType:
+        if value is None and type(None) in args:
+            return
+        (declared,) = [arg for arg in args if arg is not type(None)]
+        origin, args = get_origin(declared), get_args(declared)
+    if declared is bool:
+        if not isinstance(value, bool):
+            raise SpecError(f"{name} must be a boolean (true or false), not {_shown(value)}")
+    elif declared is int:
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise SpecError(f"{name} must be an integer, not {_shown(value)}")
+    elif declared is float:
+        if not _finite_number(value):
+            raise SpecError(f"{name} must be a finite number, not {_shown(value)}")
+    elif declared is str:
+        if not isinstance(value, str):
+            raise SpecError(f"{name} must be a string, not {_shown(value)}")
+    elif origin is tuple:
+        if not isinstance(value, tuple):
+            raise SpecError(f"{name} must be a list (a tuple in a spec built in code), "
+                            f"not {_shown(value)}")
+        if len(args) == 2 and args[1] is Ellipsis:
+            args = (args[0],) * len(value)
+        elif len(value) != len(args):
+            raise SpecError(f"{name} must hold {len(args)} values, not {len(value)}")
+        for index, (element, kind) in enumerate(zip(value, args)):
+            _require_type(f"{name}[{index}]", element, kind)
+    elif origin is dict:
+        if not isinstance(value, dict):
+            raise SpecError(f"{name} must be a mapping, not {_shown(value)}")
+        key_kind, value_kind = args
+        for key, element in value.items():
+            _require_type(f"{name} key {_shown(key)}", key, key_kind)
+            _require_type(f"{name}[{_shown(key)}]", element, value_kind)
+    elif is_dataclass(declared):
+        if not isinstance(value, declared):
+            raise SpecError(f"{name} must be a {declared.__name__} section, not {_shown(value)}")
+        _require_declared_types(value, f"{name}.")
+    else:
+        raise SpecError(f"{name} declares {declared!r}, which the spec's type rule does not "
+                        "know")
+
+
+def _finite_number(value: Any) -> bool:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:  # an integer too large for a float
+        return False
+
+
+def _record_tuple(value: Any) -> Any:
+    """A record's list as the tuple its field declares; anything else as it
+    is, for the type rule to refuse (a string or a mapping is no list)."""
+    return tuple(value) if isinstance(value, list) else value
 
 
 @dataclass(frozen=True)
@@ -117,7 +208,7 @@ class GraphViewSpec:
     def validate(self) -> None:
         if self.rule != "reference/v1":
             raise SpecError(f"unknown graph view rule {self.rule!r}")
-        if any(not isinstance(r, str) or r.count("|") != 2 for r in self.exclude_relations):
+        if any(r.count("|") != 2 for r in self.exclude_relations):
             raise SpecError("graph_view.exclude_relations holds 'src|rel|dst' keys")
 
 
@@ -171,7 +262,7 @@ class EncoderSpec:
 
     @property
     def width(self) -> int:
-        return int(self.output) * int(self.heads)
+        return self.output * self.heads
 
     def validate(self) -> None:
         if self.kind not in ENCODER_KINDS:
@@ -179,8 +270,7 @@ class EncoderSpec:
         for name in ("layers", "hidden", "output", "heads", "first_hidden_multiplier"):
             _positive_int(f"encoder.{name}", getattr(self, name))
         for name in ("dropout", "attention_dropout"):
-            value = getattr(self, name)
-            if not isinstance(value, (int, float)) or isinstance(value, bool) or not 0 <= value < 1:
+            if not 0 <= getattr(self, name) < 1:
                 raise SpecError(f"encoder.{name} must be a number in [0, 1)")
         if self.norm != "graph_layer_norm+batch_norm":
             raise SpecError(f"unknown encoder norm {self.norm!r}")
@@ -205,7 +295,7 @@ class LPHeadSpec:
             raise SpecError(f"unknown LP head {self.kind!r}")
         if self.relation_init != "xavier_uniform_leaky_relu":
             raise SpecError(f"unknown relation init {self.relation_init!r}")
-        if not isinstance(self.margin, (int, float)) or self.margin <= 0:
+        if self.margin <= 0:
             raise SpecError("lp_head.margin must be positive")
 
 
@@ -220,11 +310,11 @@ class PatientEncoderSpec:
     dropout: float = 0.1
 
     def validate(self) -> None:
-        if not isinstance(self.transformer_layers, int) or self.transformer_layers < 0:
+        if self.transformer_layers < 0:
             raise SpecError("patient_encoder.transformer_layers must be a non-negative integer")
         _positive_int("patient_encoder.transformer_heads", self.transformer_heads)
         _positive_int("patient_encoder.feedforward", self.feedforward)
-        if not 0 <= float(self.dropout) < 1:
+        if not 0 <= self.dropout < 1:
             raise SpecError("patient_encoder.dropout must be in [0, 1)")
 
 
@@ -241,13 +331,6 @@ class GeneScoringSpec:
     augmentation_omega: float = 0.7
 
     def validate(self) -> None:
-        import math
-
-        for name in ("eta", "sp_lower", "sp_upper", "augmentation_omega"):
-            value = getattr(self, name)
-            if not isinstance(value, (int, float)) or isinstance(value, bool) \
-                    or not math.isfinite(float(value)):
-                raise SpecError(f"task_head.gene.{name} must be a finite number")
         if not 0 <= self.eta <= 1:
             raise SpecError("task_head.gene.eta must be in [0, 1]")
         if not self.sp_upper > self.sp_lower:
@@ -262,7 +345,8 @@ class GeneScoringSpec:
 
 @dataclass(frozen=True)
 class TaskHeadSpec:
-    """The task head of a finetuned bundle (README A7–A9, C5, C8, C9, U13)."""
+    """The task head of a finetuned bundle (README A7–A9, C5, C8, C9, U13).
+    `multi_similarity` holds the loss's alpha, beta, gamma and margin."""
 
     task: str = "disease"
     projection_slope: float = 0.1
@@ -278,8 +362,6 @@ class TaskHeadSpec:
             raise SpecError("task_head.gene is required for the gene task and only for it")
         if self.gene is not None:
             self.gene.validate()
-        if len(self.multi_similarity) != 4:
-            raise SpecError("task_head.multi_similarity holds alpha, beta, gamma, margin")
 
 
 @dataclass(frozen=True)
@@ -305,7 +387,7 @@ class ModelSpec:
         return self.task_head.task if self.task_head is not None else None
 
     def validate(self) -> "ModelSpec":
-        _require_booleans(self)
+        _require_declared_types(self)
         if self.learning_stage not in LEARNING_STAGES:
             raise SpecError(f"unknown learning stage {self.learning_stage!r}")
         self.graph_view.validate()
@@ -320,8 +402,6 @@ class ModelSpec:
                 raise SpecError("a finetune spec needs a patient encoder and a task head")
             self.patient_encoder.validate()
             self.task_head.validate()
-        if not all(isinstance(k, str) and isinstance(v, str) for k, v in self.sources.items()):
-            raise SpecError("sources maps field names to source strings")
         return self
 
     def differences_from_reference(self) -> Dict[str, Tuple[Any, Any]]:
@@ -361,13 +441,13 @@ class ModelSpec:
             raise SpecError(f"model spec version {data['spec_version']!r} is not {SPEC_VERSION}; "
                             "this build reads only its own version")
         view = dict(data["graph_view"])
-        view["exclude_relations"] = tuple(view.get("exclude_relations", ()))
+        view["exclude_relations"] = _record_tuple(view.get("exclude_relations", ()))
         head = None
         if data["task_head"] is not None:
             head_data = dict(data["task_head"])
             gene = head_data.get("gene")
             head_data["gene"] = _from(GeneScoringSpec, "task_head.gene", gene) if gene is not None else None
-            head_data["multi_similarity"] = tuple(head_data.get("multi_similarity", ()))
+            head_data["multi_similarity"] = _record_tuple(head_data.get("multi_similarity", ()))
             head = _from(TaskHeadSpec, "task_head", head_data)
         spec = cls(
             learning_stage=data["learning_stage"],
@@ -378,7 +458,8 @@ class ModelSpec:
             patient_encoder=(_from(PatientEncoderSpec, "patient_encoder", data["patient_encoder"])
                              if data["patient_encoder"] is not None else None),
             task_head=head,
-            sources=dict(data["sources"]),
+            sources=(dict(data["sources"]) if isinstance(data["sources"], Mapping)
+                     else data["sources"]),
         )
         return spec.validate()
 
@@ -408,8 +489,9 @@ class ViewShape:
                 "node_types": list(self.node_types), "relations": list(self.relations)}
 
 
-def _positive_int(name: str, value: Any) -> None:
-    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+def _positive_int(name: str, value: int) -> None:
+    """An integer field's range (the type rule held it to an integer)."""
+    if value <= 0:
         raise SpecError(f"{name} must be a positive integer (got {value!r})")
 
 

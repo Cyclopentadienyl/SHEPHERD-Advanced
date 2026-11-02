@@ -567,11 +567,26 @@ class ModeResult:
 
     def to_ranks(self) -> List[Dict[str, Any]]:
         """Per-sample ranks, one row per patient in the cohort's order, held
-        to the ranks rule before anyone writes them (`check_ranks_rows`)."""
+        to the ranks rule before anyone writes them (`check_ranks_rows`).
+
+        **Each case has exactly one ground truth and one rank**: the three
+        lists are the same length, checked before any row is built, so none is
+        cut to the shortest (a rank or truth list longer, or shorter, than the
+        cohort used to be truncated silently by `zip`).
+
+        Raises:
+            ValueError: the lists differ in length, naming each length.
+        """
+        lengths = (len(self.sample_ids), len(self.truth_global_ids), len(self.canonical_ranks))
+        if len(set(lengths)) != 1:
+            raise ValueError(
+                f"the result's lists differ in length (sample ids {lengths[0]}, ground truths "
+                f"{lengths[1]}, ranks {lengths[2]}); each case has exactly one of each, so no "
+                "ranks row is written")
         rows = [
             {"sample_id": sample_id, "ground_truth": truth, "rank": rank}
             for sample_id, truth, rank in zip(
-                self.sample_ids, self.truth_global_ids, self.canonical_ranks
+                self.sample_ids, self.truth_global_ids, self.canonical_ranks, strict=True
             )
         ]
         check_ranks_rows(rows, self.sample_ids)

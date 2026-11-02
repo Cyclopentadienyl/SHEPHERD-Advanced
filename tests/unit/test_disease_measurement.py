@@ -166,15 +166,33 @@ def test_rows_without_a_sample_id_and_a_rank_are_refused(rows, position):
     assert refused.value.position == position
 
 
-def test_the_writer_holds_what_it_writes_to_the_rule():
-    """`ModeResult.to_ranks` refuses rows its own fields would write short: a
-    rank list shorter than the cohort used to be cut silently by `zip`."""
+def _result(sample_ids, truths, ranks):
     from src.evaluation.measurement import ModeResult
 
-    result = ModeResult(manifest=None, authoritative_metrics={}, n_ranked=1,
-                        n_ground_truth_absent=0, sampler_evidence={},
-                        sample_ids=["case-a", "case-b"], truth_global_ids=[1, 2],
-                        canonical_ranks=[1.0])
-    # `RanksRowsRefused` is a ValueError, as every refusal of a row is.
-    with pytest.raises(ValueError, match="case 1 of the cohort, 'case-b', has no ranks row"):
-        result.to_ranks()
+    return ModeResult(manifest=None, authoritative_metrics={}, n_ranked=1,
+                      n_ground_truth_absent=0, sampler_evidence={}, sample_ids=sample_ids,
+                      truth_global_ids=truths, canonical_ranks=ranks)
+
+
+@pytest.mark.parametrize("truths, ranks, lengths", [
+    ([1, 2], [1.0], "sample ids 2, ground truths 2, ranks 1"),
+    ([1, 2], [1.0, None, 3.0], "sample ids 2, ground truths 2, ranks 3"),
+    ([1, 2, 3], [1.0, None], "sample ids 2, ground truths 3, ranks 2"),
+    ([1], [1.0, None], "sample ids 2, ground truths 1, ranks 2"),
+], ids=["ranks-short", "ranks-long", "truths-long", "truths-short"])
+def test_the_writer_refuses_lists_of_other_lengths(truths, ranks, lengths):
+    """`ModeResult.to_ranks` builds no row unless every case has exactly one
+    ground truth and one rank. The regression: a rank or truth list longer
+    than the cohort was cut silently by `zip` and the rows passed the rule
+    (65cb3dd caught only the shorter rank list, through the rule)."""
+    with pytest.raises(ValueError, match=rf"the result's lists differ in length \({lengths}\); "
+                                         "each case has exactly one of each"):
+        _result(["case-a", "case-b"], truths, ranks).to_ranks()
+
+
+def test_the_writer_holds_what_it_writes_to_the_rule():
+    """Lists of one length are written one row per case, an unrankable case
+    with a null rank, and held to the rule."""
+    rows = _result(["case-a", "case-b"], [1, 2], [1.0, None]).to_ranks()
+    assert rows == [{"sample_id": "case-a", "ground_truth": 1, "rank": 1.0},
+                    {"sample_id": "case-b", "ground_truth": 2, "rank": None}]

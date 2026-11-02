@@ -2883,10 +2883,19 @@ def _workspace_query(checkpoint: Path, workspace: Path,
     binding = bind_disease_cases(_child_view(checkpoint, workspace), samples)
     bound = {case.case_id for case in binding.cases}
     phenotypes = (KnowledgeGraph.read_json(workspace / GRAPH_ARTIFACTS["kg"]).kg
-                  .get_reverse_node_mapping()["phenotype"])
+                  .get_reverse_node_mapping().get("phenotype", {}))
     for position, sample in enumerate(samples):
         if sample.patient_id not in bound:
             continue
+        # A bound case's phenotype the graph does not name is the workspace's
+        # split and graph disagreeing: that data condition, said as such.
+        unnamed = [i for i in sample.phenotype_ids if i not in phenotypes]
+        if unnamed:
+            raise AssertionError(
+                f"validation case {position} of the workspace names phenotype id "
+                f"{unnamed[0]}, which the workspace's graph ({GRAPH_ARTIFACTS['kg']}) does not "
+                f"hold among its {len(phenotypes)} phenotypes: the split and the graph disagree, "
+                "so no query is asked of them")
         terms = [_node_term(phenotypes[i], "phenotype") for i in sample.phenotype_ids]
         if None not in terms:
             return terms, {"split": "val", "case_position": position,

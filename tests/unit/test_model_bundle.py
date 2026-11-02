@@ -10,8 +10,14 @@
   (regression 4);
 - save and reload through the builder: same names, same outputs, strict load
   (regression 6);
-- a field the spec declares `bool` holds true or false, never "false", "true",
-  1 or 0 (the reviewer's K8-1 recheck: "false" built as true);
+- every field holds the type the spec declares for it (one rule, pinned to
+  every declared field): a `bool` true or false, never "false", "true", 1 or 0
+  (the reviewer's K8-1 recheck: "false" built as true); an `int` an integer,
+  never a boolean, a float or a string; a `float` a finite number, an integer
+  included, never a boolean, a string, NaN or infinity; a `str` a string; a
+  tuple a list of its element type, of its fixed length; a mapping of strings;
+  `Optional` also null (the recheck's follow-up: `transformer_layers: true`
+  built one layer and `attention_slope: "0.2"` failed in the first step);
 - weights the spec shares (`encoder.share_weights`) are one set: a state whose
   shared keys agree loads, one holding two different values is refused by
   every load (serving's and measurement's `load_bundle`, a finetune's parent
@@ -23,6 +29,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import re
 
 import pytest
 
@@ -262,6 +269,155 @@ def test_spec_encoder_defaults_are_the_reference():
     assert enc.width == 512
 
 
+# --------------------------------------------------------------------------- declared types
+#: Every field the spec declares, by section ("" for the top level), with its
+#: declared type as written; sections themselves are walked, not listed.
+DECLARED_FIELDS = {
+    ("", "learning_stage"): "str",
+    ("", "sources"): "Dict[str, str]",
+    ("graph_view", "rule"): "str",
+    ("graph_view", "drop_native_self_loops"): "bool",
+    ("graph_view", "deduplicate"): "bool",
+    ("graph_view", "largest_component"): "bool",
+    ("graph_view", "exclude_relations"): "Tuple[str, ...]",
+    ("input", "kind"): "str",
+    ("input", "dim"): "int",
+    ("input", "init"): "str",
+    ("input", "type_embedding"): "bool",
+    ("encoder", "kind"): "str",
+    ("encoder", "layers"): "int",
+    ("encoder", "hidden"): "int",
+    ("encoder", "output"): "int",
+    ("encoder", "heads"): "int",
+    ("encoder", "first_hidden_multiplier"): "int",
+    ("encoder", "dropout"): "float",
+    ("encoder", "attention_dropout"): "float",
+    ("encoder", "attention_slope"): "float",
+    ("encoder", "add_self_loops"): "bool",
+    ("encoder", "share_weights"): "bool",
+    ("encoder", "concat"): "bool",
+    ("encoder", "residual"): "bool",
+    ("encoder", "norm"): "str",
+    ("encoder", "activation_slope"): "float",
+    ("encoder", "relation_edge_dim"): "Optional[int]",
+    ("lp_head", "kind"): "str",
+    ("lp_head", "margin"): "float",
+    ("lp_head", "relation_init"): "str",
+    ("patient_encoder", "transformer_layers"): "int",
+    ("patient_encoder", "transformer_heads"): "int",
+    ("patient_encoder", "feedforward"): "int",
+    ("patient_encoder", "dropout"): "float",
+    ("task_head", "task"): "str",
+    ("task_head", "projection_slope"): "float",
+    ("task_head", "distance_normalisation_eps"): "float",
+    ("task_head", "softmax_scale"): "float",
+    ("task_head", "multi_similarity"): "Tuple[float, float, float, float]",
+    ("task_head.gene", "eta"): "float",
+    ("task_head.gene", "sp_lower"): "float",
+    ("task_head.gene", "sp_upper"): "float",
+    ("task_head.gene", "sp_aggregation"): "str",
+    ("task_head.gene", "augmentation"): "bool",
+    ("task_head.gene", "augmentation_k"): "int",
+    ("task_head.gene", "augmentation_omega"): "float",
+}
+
+#: Values each declared type refuses (booleans: `test_a_boolean_setting_refuses_anything_else`).
+WRONG_VALUES = {
+    "int": [True, 3.0, "3", None],
+    "Optional[int]": [True, 3.0, "3"],
+    "float": [True, "0.1", None, float("nan"), float("inf"), 10**400],
+    "str": [1, True, None, ["x"]],
+    "Tuple[str, ...]": ["disease|assoc|phenotype", {"disease|assoc|phenotype": 1}, [1], [None]],
+    "Tuple[float, float, float, float]": [
+        "abcd", ["a", "b", "c", "d"], [1.0, 20.0, True, 0.4], [1.0, 20.0, 1.0, "0.4"],
+        [1.0, 20.0, 1.0], [1.0, 20.0, 1.0, 0.4, 1.0]],
+    "Dict[str, str]": [[["encoder.layers", "x"]], {"encoder.layers": 1}, "x"],
+}
+
+#: An integer each `float` field takes within its range (an integer is a number).
+INTEGER_FOR_FLOAT = {("encoder", "dropout"): 0, ("encoder", "attention_dropout"): 0,
+                     ("patient_encoder", "dropout"): 0, ("task_head.gene", "sp_upper"): 7}
+
+
+def _declared_fields():
+    """(section, field, declared type) of every field the spec's dataclasses
+    declare, walking each section field (`Optional[...]` of one too)."""
+    from dataclasses import fields
+
+    from src.models.bundle import spec as spec_module
+
+    def walk(cls, section):
+        for f in fields(cls):
+            inner = f.type[len("Optional["):-1] if f.type.startswith("Optional[") else f.type
+            kind = getattr(spec_module, inner, None)
+            if isinstance(kind, type) and dataclasses.is_dataclass(kind):
+                yield from walk(kind, f"{section}.{f.name}".lstrip("."))
+            else:
+                yield section, f.name, f.type
+
+    return {(section, name): declared for section, name, declared in walk(ModelSpec, "")}
+
+
+def _with(section, name, value):
+    """A gene child's spec as plain data with `section`.`name` set to `value`."""
+    data, holder = _spec_data(section)
+    holder[name] = value
+    return data
+
+
+def _path(section, name):
+    return f"{section}.{name}" if section else name
+
+
+def test_every_declared_field_is_listed():
+    """The table above is every field of every section with its declared type,
+    so the checks below cover each one; a field added or retyped fails here
+    until it is listed."""
+    assert _declared_fields() == DECLARED_FIELDS
+    assert {key for key, kind in DECLARED_FIELDS.items() if kind == "bool"} == {
+        (section, name) for section, name, _ in BOOLEAN_FIELDS}
+
+
+@pytest.mark.parametrize("section, name", [key for key, kind in DECLARED_FIELDS.items()
+                                           if kind != "bool"],
+                         ids=[_path(*key) for key, kind in DECLARED_FIELDS.items()
+                              if kind != "bool"])
+def test_a_field_takes_its_declared_type(section, name):
+    """Each declared type's own values pass and read back as written: an int
+    field an integer, a float field an integer or a float, a string field its
+    string, a tuple a list of its elements, an optional one null too, the
+    sources a mapping of strings."""
+    kind = DECLARED_FIELDS[(section, name)]
+    current = _spec_data(section)[1][name]
+    accepted = {
+        "int": lambda: [current, current + 1],
+        "Optional[int]": lambda: [None, 3],
+        "float": lambda: [float(current), INTEGER_FOR_FLOAT.get((section, name), 1)],
+        "str": lambda: [current],
+        "Tuple[str, ...]": lambda: [[], ["disease|assoc|phenotype"]],
+        "Tuple[float, float, float, float]": lambda: [[1, 20, 1, 0], [1.0, 20.0, 1.0, 0.4]],
+        "Dict[str, str]": lambda: [{}, {"encoder.layers": "operator-set"}],
+    }[kind]()
+    for value in accepted:
+        data = _with(section, name, value)
+        assert ModelSpec.from_dict(data).to_dict() == data, (kind, value)
+
+
+@pytest.mark.parametrize("section, name, value", [
+    (*key, value) for key, kind in DECLARED_FIELDS.items() if kind != "bool"
+    for value in WRONG_VALUES[kind]],
+    ids=[f"{_path(*key)}-{index}" for key, kind in DECLARED_FIELDS.items() if kind != "bool"
+         for index, _ in enumerate(WRONG_VALUES[kind])])
+def test_a_field_refuses_another_type(section, name, value):
+    """The regression: before the rule only some fields were type-checked, so
+    patient_encoder.transformer_layers true built one layer, dropout "0.1",
+    encoder.attention_slope "0.2", lp_head.margin true, task_head.softmax_scale
+    "1.0" and multi_similarity ["a", "b", "c", "d"] were accepted (the slope
+    failing in the run's first step). Now each is refused, naming the field."""
+    with pytest.raises(SpecError, match=rf"^{re.escape(_path(section, name))}(\[[^\]]*\])? must "):
+        ModelSpec.from_dict(_with(section, name, value))
+
+
 # --------------------------------------------------------------------------- booleans
 #: Every field the spec declares `bool`, by section, with the value each must
 #: hold here (`encoder.concat` is refused false by its own rule, README C1).
@@ -280,34 +436,12 @@ BOOLEAN_FIELDS = [
 
 def _spec_data(section):
     """A gene child's spec as plain data (it has every section), and the
-    mapping that holds `section`'s fields."""
+    mapping that holds `section`'s fields (the spec itself for "")."""
     data = finetune_spec_from_parent(_small(), "gene").to_dict()
     holder = data
-    for part in section.split("."):
+    for part in filter(None, section.split(".")):
         holder = holder[part]
     return data, holder
-
-
-def test_every_declared_boolean_is_listed():
-    """The list above is every `bool` field of every section, so the checks
-    below cover each one."""
-    from dataclasses import fields, is_dataclass
-
-    def declared(cls, prefix):
-        for f in fields(cls):
-            if f.type == "bool":
-                yield prefix, f.name
-            kind = {"Optional[GeneScoringSpec]": GeneScoringSpec}.get(f.type)
-            if kind is not None:
-                yield from declared(kind, f"{prefix}.{f.name}")
-
-    spec = finetune_spec_from_parent(_small(), "gene")
-    found = set()
-    for f in fields(spec):
-        value = getattr(spec, f.name)
-        if is_dataclass(value):
-            found.update(declared(type(value), f.name))
-    assert found == {(section, name) for section, name, _ in BOOLEAN_FIELDS}
 
 
 @pytest.mark.parametrize("section, name, values", BOOLEAN_FIELDS,
@@ -337,12 +471,28 @@ def test_a_boolean_setting_refuses_anything_else(section, name, values, value):
 
 def test_a_spec_built_in_code_is_held_to_the_same_rule():
     """A spec built with `dataclasses.replace`, not read from a dict, passes
-    the same gate (`ModelSpec.validate`), which the builder calls."""
+    the same gate (`ModelSpec.validate`), which the builder calls: a value of
+    another type, a list where a tuple is declared and a mapping in place of a
+    section are refused."""
     spec = _small()
-    built = dataclasses.replace(spec, encoder=dataclasses.replace(spec.encoder,
-                                                                   residual="false"))
-    with pytest.raises(SpecError, match="encoder.residual must be a boolean"):
-        build_bundle(built, VIEW)
+    child = finetune_spec_from_parent(spec, "disease")
+    for built, message in [
+        (dataclasses.replace(spec, encoder=dataclasses.replace(spec.encoder, residual="false")),
+         "encoder.residual must be a boolean"),
+        (dataclasses.replace(spec, encoder=dataclasses.replace(spec.encoder,
+                                                               attention_slope="0.2")),
+         "encoder.attention_slope must be a finite number"),
+        (dataclasses.replace(child, patient_encoder=dataclasses.replace(
+            child.patient_encoder, transformer_layers=True)),
+         "patient_encoder.transformer_layers must be an integer"),
+        (dataclasses.replace(child, task_head=dataclasses.replace(
+            child.task_head, multi_similarity=[1.0, 20.0, 1.0, 0.4])),
+         r"task_head.multi_similarity must be a list \(a tuple in a spec built in code\)"),
+        (dataclasses.replace(spec, lp_head=spec.lp_head.__dict__),
+         "lp_head must be a LPHeadSpec section"),
+    ]:
+        with pytest.raises(SpecError, match=message):
+            build_bundle(built, VIEW)
 
 
 # --------------------------------------------------------------------------- shared weights

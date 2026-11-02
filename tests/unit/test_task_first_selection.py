@@ -297,9 +297,10 @@ def test_a_task_child_linked_outside_the_workspace_is_never_chosen_or_read(
     workspace's own child. Now selection keeps the listing's boundary: a
     disease child in a run directory (or a layout directory) linked out of
     the workspace is never read or chosen, the workspace's own disease child
-    is served, and the reason names the file in the listing's words. An
-    explicit `checkpoint_path` stays as it is: operator-only (D8), read by its
-    bytes."""
+    is served, and the reason names the file in the listing's words; with
+    nothing left inside, the hint says the runs resolve outside the workspace
+    instead of suggesting a finetune. An explicit `checkpoint_path` stays as it
+    is: operator-only (D8), read by its bytes."""
     elsewhere = tmp_path / "elsewhere"
     outside = _put(elsewhere, "gatv2", "20261010-000000_far_ffffff",
                    _record_payload("disease", logs={"val_pooled_mrr": 0.9}), 1000)
@@ -325,9 +326,16 @@ def test_a_task_child_linked_outside_the_workspace_is_never_chosen_or_read(
         assert result.success and result.checkpoint_path == str(family["disease"])
         assert service.built == [str(family["disease"])]
     else:
-        # Nothing of the workspace's own is left under the linked key.
+        # Nothing of the workspace's own is left under the linked key. The
+        # hint names the boundary, not a finetune: training refuses to write
+        # a run behind that link too (`run_dir_outside`), so "Finetune one"
+        # (the hint before this fix) could never be followed.
         assert not result.success and service.built == [] and service.published == []
-        assert "No run holds a model finetuned for the disease task" in result.message
+        assert ("checkpoint file(s) of the workspace's runs resolve outside the workspace, so "
+                "automatic selection does not read them. Keep the runs inside the workspace"
+                in result.message)
+        assert "or pass an explicit checkpoint_path" in result.message
+        assert "Finetune one" not in result.message and "No run holds" not in result.message
     assert reason in result.selection_reason
     # The explicit path is unchanged: named, it is read by its bytes.
     explicit = _reload(service, task="disease", checkpoint_path=str(outside))

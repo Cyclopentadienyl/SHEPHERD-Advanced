@@ -177,6 +177,29 @@ class TestTrainingManagerStartStop:
         assert result["success"] is False and "already holds files" in result["error"]
         popen.assert_not_called()
 
+    @pytest.mark.parametrize("explicit", [False, True], ids=["allocated", "explicit"])
+    def test_a_run_directory_behind_a_link_out_of_the_workspace_is_refused(self, tmp_path,
+                                                                          explicit):
+        """The workspace's runs/ is a link to another disk: a run named there
+        would land where the reload's automatic selection never reads (the
+        reviewer's K8-1 recheck), so the start is refused before a process is
+        started or anything is written, saying why and what to do."""
+        workspace, elsewhere = tmp_path / "ws", tmp_path / "elsewhere"
+        workspace.mkdir()
+        elsewhere.mkdir()
+        (workspace / "runs").symlink_to(elsewhere, target_is_directory=True)
+        config = {"data_dir": str(workspace), "conv_type": "hgt"}
+        if explicit:
+            config["run_dir"] = str(workspace / "runs" / "hgt" / "mine")
+        manager = TrainingManager()
+        with patch("subprocess.Popen") as popen:
+            result = manager.start_training(config)
+        assert result["success"] is False
+        assert "resolves outside the workspace, so it is not written" in result["error"]
+        assert "explicit checkpoint_path" in result["error"]
+        popen.assert_not_called()
+        assert list(elsewhere.iterdir()) == []
+
     def test_start_training_already_running(self, manager, sample_config):
         """Cannot start training when already running."""
         mock_proc = FakeProcess(pid=12345)

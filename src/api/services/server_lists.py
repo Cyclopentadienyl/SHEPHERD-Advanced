@@ -290,6 +290,11 @@ def _echo(value: Any) -> str:
 
 
 def _inside(path: Path, root: Path) -> bool:
+    """Whether the resolved `path` lies under `root`: the bound of the server's
+    namespaces, a workspace under the workspaces root and an intake file under
+    the intake directory. A checkpoint's bound is the run layout's own
+    (`checkpoint_paths.checkpoint_not_read`), which listing, selection and
+    resolution share."""
     return path != root and root in path.parents
 
 
@@ -909,7 +914,11 @@ def resolve_checkpoint(
         ServerListRefused: the workspace or the checkpoint is not listed, or the
             file resolves outside the workspace.
     """
-    from src.utils.checkpoint_paths import list_run_checkpoints, normalize_run_layout_key
+    from src.utils.checkpoint_paths import (
+        checkpoint_not_read,
+        list_run_checkpoints,
+        normalize_run_layout_key,
+    )
 
     name, path = _find_workspace(workspace, environ)
     # An empty name would be read as the default architecture; a request names one.
@@ -929,16 +938,10 @@ def resolve_checkpoint(
             f"({type(exc).__name__}: {exc.strerror or exc})") from None
     for run_dir, checkpoint in listed:
         if run_dir.name == run and checkpoint.name == filename:
-            try:
-                resolved = checkpoint.resolve()
-            except (OSError, RuntimeError) as exc:  # a link loop: RuntimeError before 3.13
-                raise ServerListRefused(
-                    f"{run_dir.name}/{checkpoint.name} cannot be resolved "
-                    f"({type(exc).__name__}), so it is not offered") from None
-            if not _inside(resolved, path):
-                raise ServerListRefused(
-                    f"{run_dir.name}/{checkpoint.name} resolves outside the workspace "
-                    f"{name!r}, so it is not offered")
+            # The run layout's one boundary, as the listing refused it.
+            problem = checkpoint_not_read(run_dir, checkpoint, path)
+            if problem is not None:
+                raise ServerListRefused(f"in the workspace {name!r}, {problem}")
             return checkpoint
     raise ServerListRefused(
         f"no checkpoint {_echo(filename)} in run {_echo(run)} of {conv_type} is listed in "
@@ -960,7 +963,11 @@ def locate_checkpoint(
             lists is that file (an unlisted file is never opened). The reason
             does not repeat the typed path.
     """
-    from src.utils.checkpoint_paths import list_run_checkpoints, run_architecture
+    from src.utils.checkpoint_paths import (
+        checkpoint_not_read,
+        list_run_checkpoints,
+        run_architecture,
+    )
 
     name, path = _find_workspace(workspace, environ)
     text = typed.strip() if isinstance(typed, str) else ""
@@ -974,11 +981,15 @@ def locate_checkpoint(
             f"the typed path or the runs of the workspace {name!r} cannot be resolved "
             f"({type(exc).__name__})") from None
     for run_dir, checkpoint in listed:
+        # Outside the run layout's one boundary, or not resolvable: not a
+        # file the list offers.
+        if checkpoint_not_read(run_dir, checkpoint, path) is not None:
+            continue
         try:
             found = checkpoint.resolve()
-        except (OSError, RuntimeError):
+        except (OSError, RuntimeError):  # changed since: a link loop before 3.13
             continue
-        if found == wanted and _inside(found, path):
+        if found == wanted:
             return run_architecture(run_dir), run_dir.name, checkpoint.name
     raise ServerListRefused(
         f"the typed path is not a checkpoint the server lists in the workspace {name!r}: a "

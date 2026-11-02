@@ -480,6 +480,9 @@ def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
     requested_conv = (request.conv_type or "auto").strip().lower()
     #: The file automatic selection chose; None for an explicit path.
     selected: Optional[Path] = None
+    #: The files automatic selection did not read for the workspace boundary,
+    #: in the listing's words (all of them; the reason names the first few).
+    not_read: List[str] = []
 
     if checkpoint_path:
         selection_reason = "explicit checkpoint_path"
@@ -493,7 +496,8 @@ def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
             # Every run-layout key: a model bundle is filed under its encoder
             # kind, and the record, never the directory, says what it is.
             selected, architecture, selection_reason = select_auto_run_checkpoint(
-                data_dir, score_fn=_checkpoint_score, accept=_accept, keys=RUN_LAYOUT_KEYS)
+                data_dir, score_fn=_checkpoint_score, accept=_accept, keys=RUN_LAYOUT_KEYS,
+                not_read=not_read)
             selection_reason = f"task {request.task}: {selection_reason}"
         elif requested_conv and requested_conv != "auto":
             try:
@@ -503,11 +507,12 @@ def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
                     str(exc), files, selection_reason="invalid conv_type"
                 )
             selected, selection_reason = select_run_checkpoint(
-                data_dir, architecture, score_fn=_checkpoint_score, accept=_accept
+                data_dir, architecture, score_fn=_checkpoint_score, accept=_accept,
+                not_read=not_read
             )
         else:
             selected, architecture, selection_reason = select_auto_run_checkpoint(
-                data_dir, score_fn=_checkpoint_score, accept=_accept
+                data_dir, score_fn=_checkpoint_score, accept=_accept, not_read=not_read
             )
         # What automatic selection could choose for this request, so the file
         # report and the reason never disagree.
@@ -525,6 +530,14 @@ def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
         # user rather than contradict files_found.
         if request.checkpoint_path:
             hint = f"{request.checkpoint_path} does not exist."
+        elif selected is None and not_read:
+            # Nothing chosen, and runs behind a link out of the workspace:
+            # training refuses to write there too (`run_dir_outside`), so
+            # training another run is no answer.
+            hint = (f"{len(not_read)} checkpoint file(s) of the workspace's runs resolve "
+                    "outside the workspace, so automatic selection does not read them. Keep "
+                    "the runs inside the workspace (runs/ and its layout directories not "
+                    "links out of it), or pass an explicit checkpoint_path.")
         elif request.task is not None:
             hint = (f"No run holds a model finetuned for the {request.task} task; a base, "
                     "another task's model and a checkpoint without a model spec are not "

@@ -568,7 +568,9 @@ class TestResolveCheckpoint:
         write_checkpoint({"epoch": 1}, outside / "x.pt")
         (ws / "runs" / "gat").mkdir(parents=True)
         (ws / "runs" / "gat" / "20261020-000000_far_cccccc").symlink_to(outside.parent)
-        with pytest.raises(sl.ServerListRefused, match="outside the workspace 'demo'"):
+        with pytest.raises(sl.ServerListRefused, match=(
+                "in the workspace 'demo', 20261020-000000_far_cccccc/x.pt resolves outside the "
+                "workspace, so it is not read")):
             sl.resolve_checkpoint("demo", "gat", "20261020-000000_far_cccccc", "x.pt",
                                   environ=_roots(root))
         (item,) = sl.list_checkpoints("demo", environ=_roots(root)).items

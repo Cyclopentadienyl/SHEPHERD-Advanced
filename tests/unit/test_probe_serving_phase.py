@@ -16,8 +16,9 @@ Each of those checks is also shown to fire: a probe that cannot fail proves
 nothing. Its diagnosis asks a query from the served workspace's own
 validation cases (`_workspace_query`): a workspace without the demo graph's
 two phenotypes serves and diagnoses (the reviewer's P2-1 of the K8-1
-recheck), and one none of whose validation cases binds in the child's graph
-view fails, naming that data condition.
+recheck), one none of whose validation cases binds in the child's graph
+view fails, naming that data condition, and so does one whose bound case
+names a phenotype id its graph does not hold.
 
 Module: tests/unit/test_probe_serving_phase.py
 """
@@ -483,3 +484,35 @@ def test_r6_fails_naming_the_data_when_no_validation_case_gives_a_query(
     with pytest.raises(AssertionError, match="the workspace gives no diagnosis query: none of "
                                              f"its {len(cases)} validation cases"):
         probe._serve_and_diagnose(copy / "kg.json", checkpoint, copy, "cpu", record, digests)
+
+
+def test_r6_fails_naming_the_data_when_a_case_names_a_phenotype_the_graph_lacks(
+        reads, monkeypatch):
+    """A validation case that binds in the child's view but names a phenotype
+    id the workspace's graph (kg.json) does not hold is the split and the
+    graph disagreeing: R6 fails saying that, naming the case's position and
+    the id. Before the fix the graph's phenotype mapping was indexed directly
+    and R6 failed with a bare KeyError."""
+    from src.evaluation.cohort import resolve_cohort
+    from src.kg.graph import KnowledgeGraph
+    from src.kg.storage.file_storage import read_samples_file
+
+    probe = _probe()
+    sound, checkpoint, read, _ = reads
+    _, asked = probe._workspace_query(checkpoint, sound, read)
+    position = asked["case_position"]
+    samples = read_samples_file(resolve_cohort(sound, "val").samples).samples
+    dropped = samples[position].phenotype_ids[0]
+    names = KnowledgeGraph.get_reverse_node_mapping
+
+    def without_one_phenotype(graph):
+        mapping = names(graph)
+        return {**mapping, "phenotype": {index: node for index, node in mapping["phenotype"].items()
+                                         if index != dropped}}
+
+    monkeypatch.setattr(KnowledgeGraph, "get_reverse_node_mapping", without_one_phenotype)
+    with pytest.raises(AssertionError, match=(
+            rf"validation case {position} of the workspace names phenotype id {dropped}, which "
+            r"the workspace's graph \(kg\.json\) does not hold among its \d+ phenotypes: the "
+            "split and the graph disagree")):
+        probe._workspace_query(checkpoint, sound, read)
