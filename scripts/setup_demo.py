@@ -276,8 +276,9 @@ def demo_task_training() -> Dict[str, Dict[str, Any]]:
     recipe (`src.config.recipe`), which the trainer fills and records.
 
     **The one statement of the demo's sizes**: `train_demo_model` trains at
-    them, and the deployment probe trains its demo disease model at them
-    (`scripts/probe_deployment.py`, `_train_disease_child`)."""
+    them, and the deployment probe trains and starts every demo model at them
+    (`scripts/probe_deployment.py`: D1's base and child, M2's finetune, the
+    base starts of M11, W7 and W11)."""
     import dataclasses
 
     from src.models.bundle import reference_spec

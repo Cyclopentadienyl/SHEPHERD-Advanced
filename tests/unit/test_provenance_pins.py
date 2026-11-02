@@ -234,9 +234,6 @@ ALLOWED = {
         (2, _PROBE + "Reads back the two inventory reports this probe had the audit write"),
     ("scripts/probe_deployment.py", "phase_m2_real._inventory", "file_sha256"):
         (2, _PROBE + "The digests of those two reports, as evidence"),
-    ("scripts/probe_deployment.py", "_training_settings", "read_once"):
-        (1, _PROBE + "Phase R's training settings, parsed from the bytes of one read whose "
-            "digest the report gives"),
     # --- The deployment probe's M5 acceptance (M5-3): the lock and HTTP answers ---
     ("scripts/probe_deployment.py", "installed_against_lock", "read_once"):
         (1, _PROBE + "A5: the committed uv.lock, parsed from the bytes of one read whose "

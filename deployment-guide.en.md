@@ -337,8 +337,8 @@ by hand.
    `--stage finetune --task <task> --finetune-from <base run>/checkpoints/last.pt`
 3. Launch: `./launch_shepherd.sh`
 
-There is no shortest-path step: a task model never reads `shortest_paths.pt`. Until K8 the GB10
-acceptance probe still needs it (§4.3, "Until K8: the acceptance probe still needs the table").
+There is no shortest-path step: a task model never reads `shortest_paths.pt`, and neither does
+the GB10 acceptance probe.
 
 **Things to know**:
 - FlashAttention-2 is unavailable on ARM; the downgrade is automatic
@@ -469,29 +469,10 @@ shortest-path step. What follows describes the one path that still reads the tab
 checkpoint without a model spec (a ShepherdGNN history file), which the WebUI never runs but the
 command line and the API's model reload can still serve, through the mixture, until K8.
 
-### Until K8: the acceptance probe still needs the table
-
-The GB10 acceptance (`scripts/probe_deployment.py --m2-acceptance`) has not moved yet. Its real
-phase verifies the real workspace **with** `shortest_paths.pt` and its bound sidecar (R1), and
-its M4 and R6 checks serve with a verified table. So, until K8:
-
-- A workspace accepted before K8 must hold the pair. The current GB10 workspace has it; **to
-  accept a newly built workspace, build the pair first with the probe's own preparation step**
-  (the command M4 runs):
-
-  ```bash
-  python scripts/compute_shortest_paths.py --kg-path <workspace>/kg.json \
-      --output-dir <workspace> --max-hops 5
-  ```
-
-  It publishes `shortest_paths.pt` and `shortest_paths.meta.json` together, bound to that
-  workspace's graph. On a full graph it is heavy: the Milestone 4 graph's table was about
-  8.9 GB on disk and peaked near 12 GB of memory to load.
-- R1 is never skipped or passed without the pair: a workspace without it fails R1, and the
-  acceptance stays incomplete. Passing R1 alone would not help anyway, since R6 still serves
-  through the mixture with the table.
-- K8 moves R1, M4 and R6 to the task models together, drops the table from the acceptance and
-  removes this note.
+The GB10 acceptance (`scripts/probe_deployment.py --m2-acceptance`) reads no table either: its
+real phase verifies the workspace (R1) and trains, measures and serves task models on it, so a
+workspace is accepted as it is built. A pair already in a workspace is read by nothing there and
+is still covered by the check that the workspace is left unchanged (R8).
 
 ### Why the sidecar cannot be skipped
 

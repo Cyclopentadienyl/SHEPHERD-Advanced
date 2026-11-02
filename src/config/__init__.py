@@ -9,7 +9,7 @@ Config authority (decision record: docs/CONFIG_AUTHORITY.md):
     and, for model architecture, the model spec (ModelSpec, src/models/bundle/spec.py),
     with the reference recipe (recipe.py) for lifecycle defaults. ShepherdGNNConfig
     (src/models/gnn/shepherd_gnn.py) describes only the ShepherdGNN path for history
-    files and the acceptance probe, until K8. There is intentionally NO
+    files, until K8. There is intentionally NO
     central HyperparameterManager: a single global config object would couple the
     training, inference, model, API and UI layers together. The one genuinely shared
     config concern — training-parameter metadata shared by the API request model and

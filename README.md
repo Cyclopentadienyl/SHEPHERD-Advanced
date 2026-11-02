@@ -87,17 +87,9 @@ Two steps, in order. Full walkthrough with data sources and expected artifacts:
 | 1. Knowledge graph | `scripts/build_knowledge_graph.py` | `kg.json`, `node_features.pt`, `edge_indices.pt` |
 | 2. Train | a base on the dashboard's Research › Prepare › Training, then its task models on Research › Prepare › Fine-tune; or `scripts/train_model.py --data-dir <workspace> --stage base` in a shell given the service's `SHEPHERD_WORKSPACES_ROOT` (deployment guide §4.11), then `--stage finetune` with `--task` and `--finetune-from` the base's checkpoint | `runs/<arch>/<run>/checkpoints/*.pt` |
 
-There is no shortest-path step: no task model reads `shortest_paths.pt`.
-
-> **Until K8: the GB10 acceptance still needs the shortest-path table.** The acceptance probe
-> (`scripts/probe_deployment.py`, its `--m2-acceptance` run) has not moved to the task models
-> yet: its real phase verifies the workspace with `shortest_paths.pt` and its bound sidecar (R1)
-> and serves with them (R6); M4 builds its own pair on a copy of the demo workspace. The current
-> GB10 workspace has the pair. To accept a newly built workspace before
-> K8, build the pair with the probe's own preparation step,
-> `scripts/compute_shortest_paths.py --kg-path <workspace>/kg.json --output-dir <workspace> --max-hops 5`
-> (deployment guide §4.3). R1 is never skipped or passed without the pair. K8 moves R1, M4 and R6
-> together and removes this note.
+There is no shortest-path step: no task model reads `shortest_paths.pt`, and neither does the
+GB10 acceptance probe (`scripts/probe_deployment.py`, its `--m2-acceptance` run), which trains,
+serves and measures task models on a workspace as it is built.
 
 Artifacts live under `data/workspaces/<kg>/`, keeping each knowledge graph's outputs separate from
 the KG-independent models in `models/pretrained/`. See

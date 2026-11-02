@@ -112,12 +112,7 @@ Ontology files (HPO, MONDO `.obo`) are **auto-downloaded** by `OntologyLoader`
 
 No task model reads a shortest-path table: a disease model ranks every disease of its graph view,
 and a gene model computes the exact hop distances it uses from that view in process. So nothing
-here builds `shortest_paths.pt`. **Until K8** the GB10 acceptance probe still needs the table
-with its bound sidecar in a workspace it accepts (its R1 and R6 checks; M4 builds its own pair on
-a copy of the demo workspace); how to build the
-pair for a new workspace, and why R1 is never skipped, is in the
-[deployment guide](../deployment-guide.en.md) §4.3, "Until K8: the acceptance probe still needs
-the table".
+here builds `shortest_paths.pt`, and the GB10 acceptance probe accepts a workspace without one.
 
 ---
 
@@ -292,4 +287,4 @@ records no fingerprint.
 | A model will not load after a rebuild ("does not match this workspace's graph") | Expected: the checkpoint was trained on the old build (see the safety net above); retrain on the rebuilt workspace |
 | Inference rankings look wrong | The Diagnosis page's **Details ›** drawer: which workspace is served and whether the model was trained on it ("the same dataset ✓" or "another dataset"), and the structural fingerprint's warnings |
 | `No paths found` beside a disease, or no result at inference | Check, in order: a model is loaded (with none, nothing is served and a diagnosis is refused with the reason); the pipeline is pointed at the intended `$WS`; the submitted HPO ids exist in the KG (unknown ids are dropped before scoring and listed in `phenotype_input.unknown`; with none known the request is refused). Ranking is not path-gated: a disease task model ranks every disease of its graph view, and paths are looked for only to explain the rows shown, so a disease with no path is still ranked |
-| Build, or the acceptance probe's shortest-path table (until K8), killed (OOM) | Expected only on small-RAM machines; Spark's 128 GB is fine. See `docs/MILESTONE_REPORT.md` SP memory section |
+| Build killed (OOM) | Expected only on small-RAM machines; Spark's 128 GB is fine. See `docs/MILESTONE_REPORT.md` SP memory section |

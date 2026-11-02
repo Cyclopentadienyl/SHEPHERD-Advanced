@@ -39,7 +39,7 @@ data/workspaces/{name}/
 ├── node_features.pt         # Node feature vectors (GNN input)
 ├── edge_indices.pt          # Edge connectivity (with reverse edges)
 ├── num_nodes.json           # Node counts per type
-├── shortest_paths.pt        # Until K8: the GB10 acceptance probe and history-file serving (below)
+├── shortest_paths.pt        # Until K8: history-file serving only (below)
 ├── shortest_paths.meta.json # its bound sidecar, the same pair
 ├── runs/                    # Training runs on THIS KG, one folder per run (M3a-2)
 │   └── {conv_type}/
@@ -79,18 +79,17 @@ new folder and records its parent by SHA-256.
 | `node_features.pt` | Data prep (once) | No | GNN input features |
 | `edge_indices.pt` | Data prep (once) | No | Graph connectivity |
 | `num_nodes.json` | Data prep (once) | No | Node count statistics |
-| `shortest_paths.pt` + `shortest_paths.meta.json` | Until K8, to accept a workspace with the GB10 probe | No | The pair the acceptance probe needs; a history file served outside the WebUI also reads it |
+| `shortest_paths.pt` + `shortest_paths.meta.json` | Not built for task models; an older workspace may hold the pair | No | Read only by a history file served outside the WebUI, until K8 |
 | `runs/{conv}/{run}/checkpoints/*.pt` | Every training epoch | **Yes** (new runs) | Learned GNN weights |
 
 The first 4 files are **static** — shared by all training runs within the
 workspace. Only run folders accumulate over time.
 
 No task model reads `shortest_paths.pt`, so preparing a workspace builds no
-shortest-path table (K7, 2026-10-29). Until K8 the GB10 acceptance probe still
-needs the table with its bound sidecar in a workspace it accepts, and serving a
-history file (no model spec) outside the WebUI still reads it; how to build
-the pair is the [deployment guide](../deployment-guide.en.md) §4.3, "Until K8:
-the acceptance probe still needs the table". K8 removes these rows (SP1).
+shortest-path table (K7, 2026-10-29), and the GB10 acceptance probe accepts a
+workspace without one (K8). Until K8 serving a history file (no model spec)
+outside the WebUI still reads it; the pair is described in the
+[deployment guide](../deployment-guide.en.md) §4.3. K8 removes these rows (SP1).
 
 ### KG Version Compatibility
 

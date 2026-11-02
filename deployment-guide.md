@@ -773,7 +773,7 @@ echo -e "  - Vector Index 已自診斷管線剝離，不影響診斷；保留供
 echo -e "  - 已針對128GB記憶體優化配置"
 ```
 
-沒有最短路徑步驟：任務模型從不讀 `shortest_paths.pt`。K8 之前 GB10 驗收 probe 仍需要它（§4.3「K8 之前：驗收 probe 仍需要這張表」）。
+沒有最短路徑步驟：任務模型從不讀 `shortest_paths.pt`，GB10 驗收 probe 也不讀。
 
 ### 手動排查步驟（如果腳本失敗）
 
@@ -979,26 +979,9 @@ nvidia-smi  # GPU利用率應該>80%
 checkpoint（ShepherdGNN 歷史檔），WebUI 從不執行它，但命令列與 API 的模型 reload 在 K8
 之前仍可經由 mixture 服務它。
 
-### K8 之前：驗收 probe 仍需要這張表
-
-GB10 驗收（`scripts/probe_deployment.py --m2-acceptance`）尚未遷移。它的真實資料階段會連同
-`shortest_paths.pt` 與其綁定的 sidecar 一起驗證真實工作區（R1），而 M4 與 R6 會帶著已驗證的
-距離表服務。因此在 K8 之前：
-
-- K8 之前要驗收的工作區必須有這一對。目前的 GB10 工作區已有；**要驗收新建的工作區，先用
-  probe 自己的準備步驟建出這一對**（M4 執行的同一條命令）：
-
-  ```bash
-  python scripts/compute_shortest_paths.py --kg-path <workspace>/kg.json \
-      --output-dir <workspace> --max-hops 5
-  ```
-
-  它把 `shortest_paths.pt` 與 `shortest_paths.meta.json` 一起發佈，並綁定到該工作區的圖。
-  在完整的圖上這一步很重：Milestone 4 那張圖的表在磁碟上約 8.9 GB，載入時記憶體峰值接近
-  12 GB。
-- R1 從不被略過，也不會在沒有這一對時通過：沒有它的工作區 R1 失敗，驗收維持不完整。單獨
-  放行 R1 也沒有用，因為 R6 仍經由 mixture 帶著距離表服務。
-- K8 會把 R1、M4 與 R6 一起遷移到任務模型，從驗收中拿掉距離表，並移除這段說明。
+GB10 驗收（`scripts/probe_deployment.py --m2-acceptance`）同樣不讀這張表：它的真實資料階段
+驗證工作區（R1），並在其上訓練、測量與服務任務模型，所以工作區建好即可驗收。工作區裡已有
+的這一對，驗收不會讀它，但仍在「工作區未被改動」的檢查（R8）涵蓋之內。
 
 ### 為什麼 sidecar 不能省
 
