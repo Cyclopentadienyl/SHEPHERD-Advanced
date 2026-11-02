@@ -17,7 +17,7 @@
 > **K7 (2026-10-29, on `claude/paper-aligned-two-stage`):** the path-reasoning fallback, the demo
 > answer, the in-memory model and graph seams and Mode D are removed; with no model loaded nothing
 > is served (503). The served mixture, Mode C and the ShepherdGNN path stay only for checkpoints
-> without a model spec (history files) and the GB10 acceptance probe, until K8 moves the probe.
+> without a model spec (history files), until K8; the GB10 acceptance probe left them in K8-1.
 > The §1 "Running" block and the rows marked K7 below say what runs on the branch; the rest of
 > this file still describes `416a242` where it says so.
 

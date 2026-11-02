@@ -57,8 +57,10 @@ Usage:
         --work-dir <empty directory outside the repository> \
         --report <that directory>/m2_report.json \
         --real-workspace data/workspaces/<workspace>
-    # optionally also --real-reference-checkpoint <a history file in the
-    # workspace root: a checkpoint without a model spec, which R2 and R7 refuse>
+    # optionally also --real-reference-checkpoint <a history file inside
+    # --workspaces-root: a checkpoint without a model spec and without a
+    # training record of its graph (no training_input_digests, or none for
+    # kg), such as the deployment's model-02, which R2 and R7 refuse>
 
     A relative path is taken from the directory the probe is started in: every
     path argument is made absolute once, before any check or phase reads it
@@ -70,7 +72,10 @@ base and one disease child finetuned from it, through the production trainer
 filed under its encoder kind. Phase D trains them on the demo workspace (D1,
 `--epochs` each) and checks the child's training and model records (D2); phase
 E serves the child, and phase M takes the child and the base from there. No
-shortest-path table is read anywhere: a task model never reads one.
+shortest-path table is loaded anywhere: a task model never reads one. Until
+K8-5 removes its shortest-path check, the inventory (M8, R7) still reads the
+sidecar of a pair left in a workspace and reports a verdict on it; the table
+itself stays unread.
 
 Contract M2's acceptance (`--m2-acceptance`), which also carries contract
 M3a's checks:
@@ -119,8 +124,10 @@ entry point, and the registry, the kept reports and the ledgers are all under
     written) and committed by the printed preview id, its graph the
     workspace's and its counts as built (T1); a copy of the child measured by
     its task on that version with --record: the report kept with its ranks
-    digest, R10 recorded with both scopes' evidence found in the workspace, one
-    record built from the report's bytes (T2); the same report registered again
+    digest, its binding counts the ones the probe computes itself from the
+    child's graph view and the version's cases (`_own_binding`), R10 recorded
+    with both scopes' evidence found in the workspace, one record built from
+    the report's bytes (T2); the same report registered again
     is already registered and a damaged copy is refused, the ledger unchanged
     (T3); the version imported against M1's same-shaped workspace is refused by
     the measurement before the checkpoint is read (T4); served through the
@@ -132,8 +139,9 @@ entry point, and the registry, the kept reports and the ledgers are all under
     Phase R, after R7: N of the real workspace's val cases written back as a
     source through the real graph's ids, imported with no exclusions (RT1);
     the child R4.finetune trained measured on it by its task with --record,
-    training disease overlap none and validation phenotype-set overlap N of N,
-    both as constructed (RT2); that record shown for that child served,
+    its binding the probe's own as in T2, training disease overlap none and
+    validation phenotype-set overlap N of N, both as constructed (RT2); that
+    record shown for that child served,
     uncontested (RT3).
     The probe's registry is the deployment's (`SHEPHERD_REGISTRY`) for each
     flow as a whole, set once around T1-T6 and RT1-RT3 whatever the operator's
@@ -1721,15 +1729,14 @@ def phase_training(
 
     def _train() -> Tuple[str, Dict[str, Any]]:
         from scripts.setup_demo import demo_task_training
-        from src.models.bundle.spec import ModelSpec
         from src.utils.checkpoint_paths import propose_run_dir
 
         # **Named, not found afterwards**: each run's directory under the
         # workspace's runs (contract M3a-2), filed under its model spec's
-        # encoder kind as `setup_demo.train_demo_model` files the demo's, so
-        # the checkpoints read below are these runs' and no other's.
+        # encoder kind (`_demo_encoder_kind`), so the checkpoints read below
+        # are these runs' and no other's.
         sizes = demo_task_training()
-        encoder = ModelSpec.from_dict(sizes["base"]["model_spec"]).encoder.kind
+        encoder = _demo_encoder_kind()
         base_run = propose_run_dir(sound, encoder, "probe-base")
         models = _train_disease_child(
             sound, propose_run_dir(sound, encoder, "probe-disease"), device,
@@ -2093,6 +2100,13 @@ def phase_serving(
 #: resume and M9's extension inherit it, and the three are judged against it
 #: (`_scaler_restore_facts`), as `m2_acceptance`'s scope says.
 M2_PRECISION: Dict[str, Any] = {"use_amp": True, "amp_dtype": "float16"}
+#: The mixed precision R3's paused base states beside the reference recipe:
+#: none, so the base recipe's (Q13 (b): the real part keeps the reference
+#: recipe's fp32); an empty mapping means the recipe's. R3 is given it, its
+#: resume (R4) inherits it, R4 is judged against the request built from it
+#: (`_scaler_restore_facts`), and `m2_acceptance`'s scope says it
+#: (`_precision_scope`).
+R3_PRECISION: Dict[str, Any] = {}
 
 #: Every probe contract M2's acceptance requires, by part (the plan's "Acceptance
 #: for M2"). A required probe that is missing from the report, skipped or not
@@ -2167,7 +2181,8 @@ def m2_acceptance(report: Report, real_requested: bool) -> Dict[str, Any]:
             "task. The real-data models are short trainings by the reference "
             "recipe that show the pipeline and its checks work; they are not "
             "models of serving quality, which is chosen by the established "
-            "training and evaluation. " + _precision_scope() + " The run "
+            "training and evaluation. " + _architecture_scope() + " "
+            + _precision_scope() + " The run "
             "also carries contract M4's flow (T1-T6, RT1-RT3): a synthetic "
             "supplied cohort imported, measured, kept, registered and read back "
             "through the read-only view. That is a functional check of the flow "
@@ -2183,13 +2198,42 @@ def m2_acceptance(report: Report, real_requested: bool) -> Dict[str, Any]:
     }
 
 
+def _demo_encoder_kind() -> str:
+    """The encoder kind of the demo's model spec (`setup_demo.demo_task_training`),
+    which D1's base and child and every child finetuned from that base (M2's,
+    and W1's copy of it) are built with: the run-layout key their runs are
+    filed under, as `setup_demo.train_demo_model` files the demo's (K2: a
+    bundle run is filed under its encoder kind)."""
+    from scripts.setup_demo import demo_task_training
+    from src.models.bundle.spec import ModelSpec
+
+    return ModelSpec.from_dict(demo_task_training()["base"]["model_spec"]).encoder.kind
+
+
+def _architecture_scope() -> str:
+    """The encoder kind the acceptance covers, in words, read from the specs the
+    probe trains (never a literal): the demo part's from the demo's model spec
+    (`_demo_encoder_kind`), the real part's from the reference recipe's base
+    spec, which R3 trains as it states no model spec (Q13 (b): other
+    architectures prove their own devices and precisions in the
+    multi-architecture milestone)."""
+    from src.models.bundle.spec import reference_spec
+
+    demo, real = _demo_encoder_kind(), reference_spec("base").encoder.kind
+    return (f"Architecture, as the runs are built: the demo part trains the {demo} encoder "
+            f"(the demo's model spec) and the real part the {real} encoder (the reference "
+            "recipe's base spec, which R3 trains). Other encoder kinds are refused by the "
+            "model-bundle builder and are outside this acceptance, their devices and "
+            "precisions included, until the multi-architecture milestone.")
+
+
 def _precision_scope() -> str:
     """The precision the acceptance promises, in words, from the requests the
     probe makes (never a second statement of them): the demo part's from M2's
-    (`M2_PRECISION`), the real part's from R3's, which states none and so asks
-    for the base recipe's. The acceptance runs on CUDA."""
+    (`M2_PRECISION`), the real part's from R3's (`R3_PRECISION`), which states
+    none and so asks for the base recipe's. The acceptance runs on CUDA."""
     demo = _precision_request(M2_PRECISION, "cuda", "finetune", "disease")
-    real = _precision_request({}, "cuda", "base", None)
+    real = _precision_request(R3_PRECISION, "cuda", "base", None)
 
     def said(request: Mapping[str, Any]) -> str:
         if request["use_amp"] and request["amp_dtype"] == "float16":
@@ -3046,16 +3090,51 @@ def _kept_report(registry: Path, label: str) -> Tuple[Path, Dict[str, Any], Any,
     return kept[0], report, identity, len(rows)
 
 
-def _ranked_cases(kept: Mapping[str, Any], rows: int, cases: int) -> Dict[str, Any]:
+def _own_binding(checkpoint: Path, workspace: Path, version: Any) -> Dict[str, int]:
+    """The binding of a cohort version's cases that the probe computes itself,
+    apart from the measurement it checks: the disease child's own graph view,
+    rebuilt from the workspace's graph by the rule its model record names and
+    required to be the view its record holds (by digest), and the version's
+    samples, read against the digest its `cohort.json` binds, bound by the one
+    binder (`src.models.tasks.scoring.bind_disease_cases`). Returns the
+    binding's counts, the form a task report's `binding` takes."""
+    from src.kg.graph_view import build_graph_view
+    from src.kg.storage.file_storage import read_graph_artifacts, read_samples_file
+    from src.models.bundle.record import read_model_record
+    from src.models.tasks.scoring import bind_disease_cases
+    from src.utils.checkpoint_io import read_checkpoint
+
+    record = read_model_record(read_checkpoint(checkpoint, map_location="cpu",
+                                               weights_only=True).checkpoint)
+    graph = read_graph_artifacts(workspace, map_location="cpu").graph_data
+    view = build_graph_view(graph, rule=record.data_roles["graph_view"]["rule"])
+    assert view.digest == record.graph_view.digest, (
+        "the child's graph view, rebuilt from the workspace by its recorded rule, is not the "
+        "view its record names")
+    samples = read_samples_file(version.samples_path,
+                                expected_sha256=version.manifest["samples"]["sha256"]).samples
+    return dict(bind_disease_cases(view, samples).counts)
+
+
+def _ranked_cases(kept: Mapping[str, Any], rows: int, cases: int,
+                  own: Mapping[str, int]) -> Dict[str, Any]:
     """A task report's ranks against its cohort version's `cases`: one row per
     case, and as many ranked as the cases the model's graph view binds (the
     report's binding counts; a case whose phenotypes are all outside the view
-    is counted, never ranked). Returns the binding counts, as evidence."""
+    is counted, never ranked). **The binding is the probe's own** (`own`,
+    `_own_binding`): the report's counts must be the ones the probe computed
+    from the child's graph view and the version's cases, so a view or binding
+    regression that leaves few cases ranked fails here, not only a report
+    that disagrees with itself. Returns the binding counts, as evidence."""
     assert rows == cases, f"the kept ranks hold {rows} rows, not one per case of the {cases}"
     binding = (kept.get("sampler_evidence") or {}).get("binding") or {}
     assert binding.get("cases") == cases and kept["n_ranked"] == binding.get("bound"), (
         f"the report ranks {kept['n_ranked']} of {binding.get('cases')} cases; the view binds "
         f"{binding.get('bound')}")
+    assert binding == dict(own), (
+        f"the report binds {binding.get('bound')} and excludes {binding.get('excluded')} of "
+        f"{binding.get('cases')} cases ({binding}); the child's graph view binds "
+        f"{own.get('bound')} and excludes {own.get('excluded')} ({dict(own)})")
     assert kept["n_ranked"] > 0, "the report ranked no case"
     return dict(binding)
 
@@ -3255,11 +3334,6 @@ M5_WORKSPACE = "probe-demo"
 M5_LISTED_RUN = "probe-m5-listed"
 M5_LINKED_RUN = "probe-m5-link-out"
 M5_CHECKPOINT = "last.pt"
-#: The encoder kind of the reference model spec (`EncoderSpec.kind`), which
-#: the demo's shrunk spec keeps (`setup_demo.demo_task_training`): the directory the
-#: listed runs are filed under (K2: a bundle run is filed under its encoder
-#: kind).
-_M5_TASK_ARCHITECTURE = "gatv2"
 #: D8's operator routes (`src/api/operator_access.py`: every state-changing
 #: route and the checkpoint lists), each with the status it answers when D8
 #: allows the probe's request. **Nothing runs either way**: a POST carries
@@ -4357,7 +4431,10 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
         assert child is not None, "the resumed checkpoint (M2) is not available"
         assert version is not None, "the cohort version (T1) is not available"
         workspace = _workspace_copy(sound, root / M5_WORKSPACE)
-        runs = workspace / RUNS_DIRNAME / _M5_TASK_ARCHITECTURE
+        # The listed runs are filed under the encoder kind of the child they
+        # hold, M2's child of D1's base (`_demo_encoder_kind`, as D1 files it).
+        architecture = _demo_encoder_kind()
+        runs = workspace / RUNS_DIRNAME / architecture
         listed = run_checkpoint_dir(runs / M5_LISTED_RUN) / M5_CHECKPOINT
         listed.parent.mkdir(parents=True)
         shutil.copyfile(child, listed)
@@ -4388,7 +4465,7 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
         mine = by_run.get(M5_LISTED_RUN)
         assert mine is not None, "the listed run's checkpoint is not in the list"
         assert (mine.architecture, mine.filename, mine.sha256, mine.trained_on_this_dataset,
-                mine.problem) == (_M5_TASK_ARCHITECTURE, M5_CHECKPOINT, listed_sha, True,
+                mine.problem) == (architecture, M5_CHECKPOINT, listed_sha, True,
                                   None), (
             "the listed checkpoint is not named by its run, file and digest as read")
         if link_made:
@@ -4403,17 +4480,17 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
         assert str(root.resolve()) not in shown and str(work.resolve()) not in shown, (
             "a listed item carries a server path")
         assert server_lists.resolve_checkpoint(
-            M5_WORKSPACE, _M5_TASK_ARCHITECTURE, M5_LISTED_RUN, M5_CHECKPOINT) == listed
+            M5_WORKSPACE, architecture, M5_LISTED_RUN, M5_CHECKPOINT) == listed
         refused = [
             refuses(lambda: server_lists.resolve_checkpoint(
-                M5_WORKSPACE, _M5_TASK_ARCHITECTURE, M5_LISTED_RUN, "../" + M5_CHECKPOINT),
+                M5_WORKSPACE, architecture, M5_LISTED_RUN, "../" + M5_CHECKPOINT),
                 server_lists.ServerListRefused, "is listed in the workspace"),
             refuses(lambda: server_lists.resolve_workspace("../m4"),
                     server_lists.ServerListRefused, "is not a workspace the server lists"),
         ]
         if link_made:
             refused.append(refuses(lambda: server_lists.resolve_checkpoint(
-                M5_WORKSPACE, _M5_TASK_ARCHITECTURE, M5_LINKED_RUN, M5_CHECKPOINT),
+                M5_WORKSPACE, architecture, M5_LINKED_RUN, M5_CHECKPOINT),
                 server_lists.ServerListRefused, "resolves outside the workspace"))
         versions = server_lists.list_cohort_versions(
             report_state=server_lists.stored_report_state)
@@ -5673,7 +5750,8 @@ def phase_m2_demo(
             "the report names another cohort version")
         assert manifest["relations"] == REGISTERED_RELATIONS, (
             f"the report's relation states are {manifest['relations']}")
-        binding = _ranked_cases(kept, rows, version.manifest["samples"]["n"])
+        binding = _ranked_cases(kept, rows, version.manifest["samples"]["n"],
+                                _own_binding(measured, sound, version))
         assert version.manifest["samples"]["n"] == M4_DEMO_COUNTS["ranked_eligible"]
         r10 = manifest["r10"]
         # D1's child trained on this workspace, so the inputs it records
@@ -5861,14 +5939,19 @@ def phase_m2_demo(
 # =============================================================================
 # Phase R — contract M2's acceptance on real data (--real-workspace)
 # =============================================================================
+def _size_and_mtime(path: Path) -> Tuple[int, int]:
+    """A file by size and modification time, without reading a byte."""
+    status = path.stat()
+    return status.st_size, status.st_mtime_ns
+
+
 def _stat_tree(directory: Path) -> Dict[str, Tuple[int, int]]:
     """Every file and directory under `directory` by size and modification time,
     without reading a byte: a workspace's tables can be gigabytes."""
     taken: Dict[str, Tuple[int, int]] = {}
     for path in sorted(directory.rglob("*")):
-        status = path.stat()
         key = str(path.relative_to(directory)) + ("/" if path.is_dir() else "")
-        taken[key] = (0, 0) if path.is_dir() else (status.st_size, status.st_mtime_ns)
+        taken[key] = (0, 0) if path.is_dir() else _size_and_mtime(path)
     return taken
 
 
@@ -5889,22 +5972,26 @@ def phase_m2_real(
     that resumed base, and RW2's, one epoch each. `task_sizes` replaces some
     of their sizes (`setup_demo.demo_task_training`), as the CPU test does for
     a workspace of the demo's size; the deployment's run passes none.
-    `reference`, when given, is a history file (a checkpoint without a model
-    spec) in the workspaces root: R2 and R7 refuse it, R8 checks it unchanged,
-    and nothing is read from it to configure a run."""
+    `reference`, when given, is a history file inside the workspaces root: a
+    checkpoint without a model spec and without a training record of its
+    graph (no `training_input_digests`, or none for `kg`), such as the
+    deployment's model-02. R2 refuses it for its missing model spec and R7's
+    inventory for its missing record: until K8-4 the inventory judges a
+    checkpoint by its training record alone, so a file without a model spec
+    that records its graph is not one R7 passes. R8 checks it unchanged, and
+    nothing is read from it to configure a run."""
     print("\nR. Contract M2 on real data, with M4's flow")
     from src.utils.fingerprint import file_sha256
 
     runs = work / "real"
     runs.mkdir(parents=True, exist_ok=True)
     state: Dict[str, Any] = {"before": _stat_tree(real)}
-    reference_before = ((reference.stat().st_size, reference.stat().st_mtime_ns)
-                        if reference is not None else None)
+    reference_before = _size_and_mtime(reference) if reference is not None else None
     sizes = task_sizes or {}
-    # R3's request: no precision stated, so the base recipe's, which R4's
-    # resume inherits and is judged against.
-    r3_settings = dict(sizes.get("base") or {})
-    r3_precision = _precision_request(r3_settings, device, "base", None)
+    # R3's request, from R3_PRECISION alone, as the acceptance's scope states
+    # it: R4's resume inherits it and is judged against it.
+    r3_settings = {**(sizes.get("base") or {}), **R3_PRECISION}
+    r3_precision = _precision_request(R3_PRECISION, device, "base", None)
 
     def _workspace() -> Tuple[str, Dict[str, Any]]:
         digests, cohorts, read, record = verify_workspace(real)
@@ -6010,13 +6097,18 @@ def phase_m2_real(
         history = runs / "history"
         # **A subject this run always has**: R4.finetune's child with its model
         # spec removed; the deployment's own history file beside it when given.
-        subjects = {"stripped copy of R4.finetune's child": _without_model_spec(
-            state["child"], history / "no_model_spec.pt")}
+        stripped = _without_model_spec(state["child"], history / "no_model_spec.pt")
+        subjects = {"stripped copy of R4.finetune's child": stripped}
         if reference is not None:
             subjects["history file given"] = reference
         seen: Dict[str, Any] = {}
         for index, (subject, path) in enumerate(subjects.items()):
-            before = snapshot(path.parent)
+            # What R2 claims to leave as it was, and no more: the stripped
+            # copy's directory under --work-dir, by content; the history file
+            # itself, by size and modification time as R8 compares it, never
+            # the directory it is in, which can be the real workspace or the
+            # workspaces root (R8 covers those, without reading a byte).
+            before = snapshot(history) if path == stripped else _size_and_mtime(path)
             refused: Dict[str, str] = {}
             for use, fields in (("finetune", {"epochs": 1, "finetune_from": path}),
                                 ("resume", {"resume_from": path})):
@@ -6026,7 +6118,11 @@ def phase_m2_real(
                     RunPlanRefused, "written before the model spec")
                 assert not run.exists(), f"a refused {use} created its run directory"
                 refused[use] = "refused before anything was written"
-            assert_untouched(before, path.parent, "a refused finetune or resume")
+            if path == stripped:
+                assert_untouched(before, history, "a refused finetune or resume")
+            else:
+                assert _size_and_mtime(path) == before, (
+                    "a refused finetune or resume changed the history file")
             seen[subject] = refused
         if reference is None:
             seen["history file"] = "not given"
@@ -6169,7 +6265,7 @@ def phase_m2_real(
         _, kept, identity, rows = _kept_report(registry, M4_REAL_LABEL)
         assert kept["manifest"]["artifact_digests"]["checkpoint"] == sha256, (
             "the report does not name the checkpoint it was given")
-        binding = _ranked_cases(kept, rows, n)
+        binding = _ranked_cases(kept, rows, n, _own_binding(state["child"], real, version))
         r10 = kept["manifest"]["r10"]
         # **As constructed**: the generated split is disease-disjoint, and the
         # cohort is the validation cases themselves.
@@ -6236,9 +6332,7 @@ def phase_m2_real(
             f"{len(changed)} changed"
         )
         if reference is not None:
-            assert (reference.stat().st_size,
-                    reference.stat().st_mtime_ns) == reference_before, (
-                "the history file changed")
+            assert _size_and_mtime(reference) == reference_before, "the history file changed"
         return "the same files and directories, sizes and modification times", {
             "entries_checked": len(after),
             "history_file": "unchanged" if reference is not None else "not given",
@@ -6695,8 +6789,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--real-reference-checkpoint", type=Path, default=None,
         help="Optional: a history file inside --workspaces-root, a checkpoint without a "
-             "model spec (an older model of the deployment), which R2 and the inventory "
-             "must refuse. Never read to configure a run, and not modified.",
+             "model spec and without a training record of its graph (no "
+             "training_input_digests, or none for kg), such as the deployment's model-02, "
+             "which R2 refuses for its missing model spec and the inventory (R7) for its "
+             "missing record. Never read to configure a run, and not modified.",
     )
     parser.add_argument(
         "--workspaces-root", type=Path, default=None,

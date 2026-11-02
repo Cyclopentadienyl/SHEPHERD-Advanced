@@ -402,8 +402,9 @@ def test_the_real_phase_passes_and_leaves_the_workspace_as_it_was(
     record uncontested, and the deployment's directories are not touched
     (root-cause round, INT-1). R1 needs no shortest-path table: the fresh
     run's workspace holds none, and the operator's holds a leftover pair, of
-    another graph and with a tensor no reader could parse, which nothing in
-    the phase reads (R8 covers it unchanged)."""
+    another graph and with a tensor no reader could parse: nothing in the
+    phase loads the table, R7's inventory still reads the sidecar and reports
+    it refused until K8-5, and R8 covers the pair unchanged."""
     import json
 
     if shell == "operator":
@@ -435,6 +436,15 @@ def test_the_real_phase_passes_and_leaves_the_workspace_as_it_was(
     # deployment's run trains them by the reference recipe, whose checkpoints
     # are hundreds of megabytes.
     sizes = demo_task_training()
+    # Every directory the phase reads by content (`snapshot` digests each file
+    # under it) is under the work directory: R2 checks the history file by
+    # size and modification time, never by digesting the directory it is in,
+    # which can be the real workspace or the root (before the review fix it
+    # digested workspaces/ws/checkpoints/hgt here, twice).
+    digested = []
+    snapshot = probe.snapshot
+    monkeypatch.setattr(probe, "snapshot", lambda directory, **kwargs: (
+        digested.append(Path(directory)), snapshot(directory, **kwargs))[1])
     probe.phase_m2_real(report, work, real, reference, root, device="cpu", task_sizes=sizes)
 
     phase = _statuses(report, "R")
@@ -486,6 +496,8 @@ def test_the_real_phase_passes_and_leaves_the_workspace_as_it_was(
     else:
         assert subjects["history file"] == "not given"
     assert not (work / "real" / "history" / "refused").exists()
+    assert digested and all(path.is_relative_to(work) for path in digested), (
+        f"the phase read by content outside the work directory: {digested}")
     # R5 and R6: the child measured by its task and served for it.
     assert facts["R5"]["mode"] == "disease" and facts["R5"]["checkpoint_sha256"] == child_sha
     # Contract M3c: R6's diagnosis names the child R4.finetune trained and the
@@ -882,6 +894,36 @@ def test_the_m4_evidence_checks_fire(tmp_path):
             probe._the_view_shows(broken, record, "L", ("validation",))
 
 
+def test_t2_and_rt2_rank_the_cases_the_probe_binds_itself():
+    """T2's and RT2's coverage is checked against a binding the probe computes
+    itself (`_own_binding`, the child's graph view and the version's cases),
+    not only against the report's own numbers: a report whose binding and
+    ranked count shrank together (a view or binding regression that ranks 1 of
+    10 cases) agrees with itself, and before the review fix it passed; now it
+    fails, as does a report that excludes for another reason."""
+    probe = _probe()
+    own = {"cases": 10, "bound": 8, "excluded": 2, "phenotypes_outside_view": 5,
+           "excluded_no_phenotype_in_view": 2}
+
+    def kept(binding):
+        return {"n_ranked": binding["bound"], "sampler_evidence": {"binding": binding}}
+
+    assert probe._ranked_cases(kept(dict(own)), 10, 10, own) == own
+    altered = dict(own, bound=1, excluded=9, excluded_no_phenotype_in_view=9)
+    with pytest.raises(AssertionError, match="the child's graph view binds 8 and excludes 2"):
+        probe._ranked_cases(kept(altered), 10, 10, own)
+    other_reason = {**{k: v for k, v in own.items() if k != "excluded_no_phenotype_in_view"},
+                    "excluded_truth_outside_view": 2}
+    with pytest.raises(AssertionError, match="the child's graph view binds"):
+        probe._ranked_cases(kept(other_reason), 10, 10, own)
+    # The checks on the report alone stay: one row per case, and the ranked
+    # count is the report's bound count.
+    with pytest.raises(AssertionError, match="not one per case"):
+        probe._ranked_cases(kept(dict(own)), 9, 10, own)
+    with pytest.raises(AssertionError, match="the view binds 8"):
+        probe._ranked_cases(dict(kept(dict(own)), n_ranked=7), 10, 10, own)
+
+
 def test_a_checkpoint_read_is_observed_and_the_reader_put_back(tmp_path):
     """T4's observation: a read through the one checkpoint reader, imported when
     it runs as the measurement imports it, is noted; afterwards the reader is
@@ -1194,10 +1236,36 @@ def test_a_stated_precision_is_the_request_and_an_unstated_one_the_recipe_s():
     assert (recipe["amp_dtype"], recipe["source"]) == (None, "base recipe")
     with pytest.raises(AssertionError, match="states its dtype"):
         probe._precision_request({"use_amp": True}, "cuda", "base", None)
-    # The acceptance's scope says the precision it promises, from M2's request.
+    # The acceptance's scope says the precision it promises, from M2's request
+    # and R3's (`R3_PRECISION`, the one statement R3 is given and R4 judged by).
     scope = probe.m2_acceptance(probe.Report(), False)["scope"]
     assert "M2 and M9 run in mixed precision float16" in scope
     assert "R3 and R4 run in fp32, as the base recipe asks" in scope
+    assert probe.R3_PRECISION == {}
+    stated = {"use_amp": True, "amp_dtype": "bfloat16"}
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(probe, "R3_PRECISION", stated)
+        assert "R3 and R4 run in mixed precision bfloat16, as stated" in (
+            probe.m2_acceptance(probe.Report(), False)["scope"])
+
+
+def test_the_scope_names_the_encoder_kind_the_runs_train():
+    """The acceptance's scope names the encoder kind it covers, read from the
+    specs the probe trains (the demo's and the reference recipe's base), and
+    says other kinds are refused by the builder and outside the acceptance
+    until the multi-architecture milestone (Q13 (b), X10 (b))."""
+    from scripts.setup_demo import demo_task_training
+    from src.models.bundle.spec import ModelSpec, reference_spec
+
+    probe = _probe()
+    demo = ModelSpec.from_dict(demo_task_training()["base"]["model_spec"]).encoder.kind
+    assert probe._demo_encoder_kind() == demo
+    scope = probe.m2_acceptance(probe.Report(), False)["scope"]
+    assert f"the demo part trains the {demo} encoder" in scope
+    assert f"the real part the {reference_spec('base').encoder.kind} encoder" in scope
+    assert ("Other encoder kinds are refused by the model-bundle builder and are outside this "
+            "acceptance") in scope
+    assert "until the multi-architecture milestone" in scope
 
 
 def _base_settings(**extra):

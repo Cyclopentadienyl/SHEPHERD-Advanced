@@ -471,8 +471,11 @@ command line and the API's model reload can still serve, through the mixture, un
 
 The GB10 acceptance (`scripts/probe_deployment.py --m2-acceptance`) reads no table either: its
 real phase verifies the workspace (R1) and trains, measures and serves task models on it, so a
-workspace is accepted as it is built. A pair already in a workspace is read by nothing there and
-is still covered by the check that the workspace is left unchanged (R8).
+workspace is accepted as it is built. A pair already in a workspace is never loaded: its table
+stays unread, but until K8-5 removes the inventory's shortest-path check, R7's inventory still
+reads its sidecar and reports a verdict on it (one that does not bind is reported as refused,
+which does not fail R7). The pair is covered by the check that the workspace is left unchanged
+(R8).
 
 ### Why the sidecar cannot be skipped
 
