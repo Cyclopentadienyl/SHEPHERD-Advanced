@@ -399,7 +399,10 @@ def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
     #      best/last/newest
     #   3. auto -> the latest-trained run of any architecture, its best
     # Runs are not ranked against each other by metric. Checkpoints in an older
-    # layout are NOT scanned here (see checkpoint_paths).
+    # layout are NOT scanned here (see checkpoint_paths), and neither is a file
+    # that resolves outside the workspace: 2 and 3 keep the listing's boundary
+    # and never read one. 1 is an operator's explicit choice (D8), read by its
+    # bytes wherever it is.
     from src.models.bundle.record import has_model_spec, listed_record
     from src.utils.checkpoint_io import read_checkpoint
     from src.utils.checkpoint_paths import (

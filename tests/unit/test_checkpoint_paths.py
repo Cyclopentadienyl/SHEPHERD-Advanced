@@ -295,6 +295,80 @@ def test_selection_finds_nothing_outside_the_run_layout(tmp_path):
     assert select_run_checkpoint(tmp_path, "hgt")[0] is None
 
 
+class TestSelectionKeepsTheListingsBoundary:
+    """Automatic selection reads only inside the workspace, as the listing does
+    (`_not_read`, the reviewer's K8-1 recheck): before the fix the listing
+    refused a checkpoint that resolves outside the workspace while selection
+    judged, read and chose it. A run directory or a layout directory linked
+    out of the workspace is no candidate, its files are never handed to
+    `accept` (which reads them) and the reason names each in the listing's
+    words; a run inside is chosen as before."""
+
+    REASON = "resolves outside the workspace, so it is not read"
+
+    def _accept(self):
+        judged = []
+
+        def accept(path):
+            judged.append(path.name)
+            return True
+
+        return judged, accept
+
+    def test_a_run_linked_outside_is_no_candidate(self, tmp_path):
+        from src.utils.checkpoint_paths import (
+            RUN_LAYOUT_KEYS,
+            select_auto_run_checkpoint,
+            select_run_checkpoint,
+        )
+
+        workspace = tmp_path / "ws"
+        inside = _touch(workspace / "runs" / "gat" / "20261001-000000_in_111111"
+                        / "checkpoints" / "inside.pt", 100)
+        _touch(tmp_path / "elsewhere" / "far_run" / "checkpoints" / "far.pt", 900)
+        link = workspace / "runs" / "gat" / "20261009-000000_far_999999"
+        link.symlink_to(tmp_path / "elsewhere" / "far_run", target_is_directory=True)
+        judged, accept = self._accept()
+
+        path, key, reason = select_auto_run_checkpoint(workspace, accept=accept,
+                                                       keys=RUN_LAYOUT_KEYS)
+        assert (path, key) == (inside, "gat") and judged == ["inside.pt"]
+        assert f"not read: 20261009-000000_far_999999/far.pt {self.REASON}" in reason
+        path, reason = select_run_checkpoint(workspace, "gat")
+        assert path == inside and f"far.pt {self.REASON}" in reason
+
+    def test_a_layout_directory_linked_outside_is_no_candidate(self, tmp_path):
+        from src.utils.checkpoint_paths import RUN_LAYOUT_KEYS, select_auto_run_checkpoint
+
+        workspace = tmp_path / "ws"
+        (workspace / "runs").mkdir(parents=True)
+        _touch(tmp_path / "elsewhere" / "gatv2" / "20261009-000000_far_999999"
+               / "checkpoints" / "last.pt", 900)
+        (workspace / "runs" / "gatv2").symlink_to(tmp_path / "elsewhere" / "gatv2",
+                                                  target_is_directory=True)
+        judged, accept = self._accept()
+
+        path, key, reason = select_auto_run_checkpoint(workspace, accept=accept,
+                                                       keys=RUN_LAYOUT_KEYS)
+        assert (path, key) == (None, None) and judged == []
+        assert reason == (f"no run has a checkpoint; not read: "
+                          f"20261009-000000_far_999999/last.pt {self.REASON}")
+
+    def test_the_listing_and_the_selection_give_one_reason(self, tmp_path):
+        from src.utils.checkpoint_paths import read_run_checkpoints, select_run_checkpoint
+
+        workspace = tmp_path / "ws"
+        run = workspace / "runs" / "gat" / "20261001-000000_a_111111" / "checkpoints"
+        run.mkdir(parents=True)
+        _write_checkpoint(tmp_path / "elsewhere.pt", {"epoch": 1})
+        (run / "link.pt").symlink_to(tmp_path / "elsewhere.pt")
+
+        (entry,) = read_run_checkpoints(workspace, within=workspace)
+        path, reason = select_run_checkpoint(workspace, "gat")
+        assert path is None
+        assert reason == f"no run of 'gat' has a checkpoint; not read: {entry.problem}"
+
+
 def test_equal_recency_is_ordered_by_name_not_by_the_filesystem(tmp_path):
     """The order is a total key (newest checkpoint, then the run's name), so
     which run is selected never depends on `iterdir()`'s order, which ext4

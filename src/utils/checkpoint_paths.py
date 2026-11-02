@@ -135,7 +135,12 @@ def select_checkpoint_in_dir(
     d = Path(ckpt_dir)
     if not d.is_dir():
         return None
-    pts = [p for p in d.glob("*.pt") if _accepted(accept, p)]
+    return _select_among([p for p in d.glob("*.pt") if _accepted(accept, p)], d, score_fn)
+
+
+def _select_among(pts: List[Path], d: Path, score_fn: Optional[ScoreFn]) -> Optional[Path]:
+    """The in-run ordering `select_checkpoint_in_dir` states, over `pts`, the
+    candidates of the checkpoint directory `d`."""
     if not pts:
         return None
 
@@ -445,6 +450,21 @@ def _outside(path: Path, within: Path) -> Optional[str]:
     return None
 
 
+def _not_read(run_dir: Path, path: Path, within: Path) -> Optional[str]:
+    """The reason a run's checkpoint `path` is not read under `within` (the
+    workspace, resolved), as a listing shows it, or `None` for a file that
+    resolves inside it.
+
+    **The one workspace boundary of the run layout**: the listing
+    (`read_run_checkpoints`' `within`), every filter over it, and automatic
+    selection (`select_run_checkpoint`, `select_auto_run_checkpoint`) ask it of
+    each file before anything reads the file's content. The file's resolved
+    path decides, so a run directory or a layout directory that is a link out
+    of the workspace leaves every file under it outside."""
+    outside = _outside(path, within)
+    return None if outside is None else f"{run_dir.name}/{path.name} {outside}"
+
+
 def _size(path: Path) -> Optional[int]:
     try:
         return path.stat().st_size
@@ -579,7 +599,8 @@ def read_run_checkpoints(
     workspace) is listed with that reason and **never opened**, so nothing of
     a file elsewhere is read or shown. The check runs before the read (and
     before a kept read is used); the server's list passes its workspace
-    (`server_lists.list_checkpoints`).
+    (`server_lists.list_checkpoints`). It is the boundary automatic selection
+    applies too (`_not_read`), so a file the list refuses is never chosen.
 
     torch is imported only here, when a file is read, so this module stays
     importable without it.
@@ -587,10 +608,9 @@ def read_run_checkpoints(
     bound = Path(within).resolve() if within is not None else None
     entries: List[ListedCheckpoint] = []
     for run_dir, path in list_run_checkpoints(data_dir, conv_type, run=run):
-        outside = _outside(path, bound) if bound is not None else None
-        if outside is not None:
-            entries.append(ListedCheckpoint(
-                run_dir, path, problem=f"{run_dir.name}/{path.name} {outside}"))
+        problem = _not_read(run_dir, path, bound) if bound is not None else None
+        if problem is not None:
+            entries.append(ListedCheckpoint(run_dir, path, problem=problem))
             continue
         identity = _identity(path)
         kept = _recalled(path, identity)
@@ -604,12 +624,34 @@ def read_run_checkpoints(
     return entries
 
 
-def _first_run_holding(runs: List[Path], accept: Optional[AcceptFn]) -> Optional[Path]:
-    """The first of `runs` holding a candidate (`accept`'s, or any file). The
-    runs after it are never judged: `accept` may read every file it is asked
-    about."""
-    return next((run for run in runs
-                 if any(_accepted(accept, p) for p in run_checkpoints(run))), None)
+def _first_run_holding(runs: List[Path], accept: Optional[AcceptFn], within: Path
+                       ) -> Tuple[Optional[Path], List[Path], List[str]]:
+    """The first of `runs` holding a candidate: a checkpoint inside the
+    workspace `within` (`_not_read`) that `accept` takes (any, without one).
+    Returns that run, its candidates, and the listing's reason for each file
+    of the runs judged that resolves outside. **The boundary comes before
+    `accept`**, which may read every file it is asked about, so a file outside
+    the workspace is never opened; the runs after the one found are never
+    judged."""
+    outside: List[str] = []
+    for run in runs:
+        inside = []
+        for path in run_checkpoints(run):
+            problem = _not_read(run, path, within)
+            if problem is None:
+                inside.append(path)
+            else:
+                outside.append(problem)
+        candidates = [path for path in inside if _accepted(accept, path)]
+        if candidates:
+            return run, candidates, outside
+    return None, [], outside
+
+
+def _with_outside(reason: str, outside: List[str]) -> str:
+    """A selection's reason, with the files it did not read for the boundary,
+    in the listing's words."""
+    return f"{reason}; not read: {'; '.join(outside)}" if outside else reason
 
 
 def select_run_checkpoint(
@@ -617,16 +659,17 @@ def select_run_checkpoint(
     accept: Optional[AcceptFn] = None,
 ) -> Tuple[Optional[Path], str]:
     """One architecture's selection: its latest run holding a candidate
-    (`accept`'s, or any file), then the existing in-run ordering
+    (`accept`'s, or any file, inside the workspace `data_dir`: the listing's
+    boundary, `_not_read`), then the existing in-run ordering
     (`select_checkpoint_in_dir`). Runs are not ranked against each other by
     their metrics: they may differ in every setting."""
     architecture = normalize_conv_type(conv_type)
-    run = _first_run_holding(list_runs(data_dir, architecture), accept)
+    run, candidates, outside = _first_run_holding(
+        list_runs(data_dir, architecture), accept, Path(data_dir).resolve())
     if run is None:
-        return None, f"no run of '{architecture}' has a checkpoint"
-    return (select_checkpoint_in_dir(run_checkpoint_dir(run), score_fn=score_fn,
-                                     accept=accept),
-            f"latest run '{run.name}' of '{architecture}'")
+        return None, _with_outside(f"no run of '{architecture}' has a checkpoint", outside)
+    return (_select_among(candidates, run_checkpoint_dir(run), score_fn),
+            _with_outside(f"latest run '{run.name}' of '{architecture}'", outside))
 
 
 def select_auto_run_checkpoint(
@@ -639,20 +682,25 @@ def select_auto_run_checkpoint(
     ``(checkpoint_path, run layout key, reason)``. Only the run layout is
     searched; checkpoints elsewhere are reached by an explicit path.
 
+    **Inside the workspace only** (the reviewer's K8-1 recheck): a file that
+    resolves outside `data_dir`, a run or layout directory linked out of it
+    included, is no candidate and is never read, as the listing refuses it
+    (`_not_read`); the reason names it in the listing's words.
+
     **With ``accept``, the record decides, never the directory** (provenance
     §9.3, hazard 3): a run counts only when it holds a file ``accept`` takes
     (the reload's rule: a model bundle finetuned for the task asked for, over
     every run-layout key; for the ShepherdGNN reload, a file without a model
     spec, which a bundle filed under a shared conv type, ``hgt`` or ``sage``,
     is not)."""
-    run = _first_run_holding(
-        [r for r in list_runs(data_dir) if run_architecture(r) in keys], accept)
+    run, candidates, outside = _first_run_holding(
+        [r for r in list_runs(data_dir) if run_architecture(r) in keys], accept,
+        Path(data_dir).resolve())
     if run is None:
-        return None, None, "no run has a checkpoint"
+        return None, None, _with_outside("no run has a checkpoint", outside)
     architecture = run_architecture(run)
-    return (select_checkpoint_in_dir(run_checkpoint_dir(run), score_fn=score_fn,
-                                     accept=accept),
-            architecture, f"auto: latest run '{run.name}' ({architecture})")
+    return (_select_among(candidates, run_checkpoint_dir(run), score_fn), architecture,
+            _with_outside(f"auto: latest run '{run.name}' ({architecture})", outside))
 
 
 __all__ = [

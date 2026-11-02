@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import dataclasses
 import os
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -270,6 +271,67 @@ def test_a_reload_without_a_task_skips_what_it_cannot_read_and_no_bundle_directo
     assert result.success, result.message
     assert result.checkpoint_path == str(gnn) and service.built == [str(gnn)]
     assert read == [str(torn), str(gnn)], "a gatv2 run is never read without a task"
+
+
+def _observed_reads(monkeypatch):
+    """The paths the reload's scan reads (`read_checkpoint`, imported where it
+    runs)."""
+    import src.utils.checkpoint_io as checkpoint_io
+
+    original, reads = checkpoint_io.read_checkpoint, []
+
+    def observing(path, *args, **kwargs):
+        reads.append(str(path))
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(checkpoint_io, "read_checkpoint", observing)
+    return reads
+
+
+@pytest.mark.parametrize("linked", ["run", "layout"])
+def test_a_task_child_linked_outside_the_workspace_is_never_chosen_or_read(
+        service, family, monkeypatch, tmp_path, linked):
+    """The reviewer's K8-1 recheck (directory_sim): the listing refuses a
+    checkpoint that resolves outside the workspace, and before the fix the
+    task's automatic selection read, chose and published it, newer than the
+    workspace's own child. Now selection keeps the listing's boundary: a
+    disease child in a run directory (or a layout directory) linked out of
+    the workspace is never read or chosen, the workspace's own disease child
+    is served, and the reason names the file in the listing's words. An
+    explicit `checkpoint_path` stays as it is: operator-only (D8), read by its
+    bytes."""
+    elsewhere = tmp_path / "elsewhere"
+    outside = _put(elsewhere, "gatv2", "20261010-000000_far_ffffff",
+                   _record_payload("disease", logs={"val_pooled_mrr": 0.9}), 1000)
+    run = outside.parent.parent
+    if linked == "run":
+        (service.data_dir / "runs" / "gatv2" / run.name).symlink_to(
+            run, target_is_directory=True)
+    else:
+        # Every bundle run of the workspace moves out behind its layout key.
+        workspace_gatv2 = service.data_dir / "runs" / "gatv2"
+        for child in workspace_gatv2.iterdir():
+            child.rename(elsewhere / "runs" / "gatv2" / child.name)
+        workspace_gatv2.rmdir()
+        workspace_gatv2.symlink_to(elsewhere / "runs" / "gatv2", target_is_directory=True)
+    reads = _observed_reads(monkeypatch)
+
+    result = _reload(service, task="disease")
+
+    home = service.data_dir.resolve()
+    assert reads and all(Path(read).resolve().is_relative_to(home) for read in reads)
+    reason = f"{run.name}/last.pt resolves outside the workspace, so it is not read"
+    if linked == "run":
+        assert result.success and result.checkpoint_path == str(family["disease"])
+        assert service.built == [str(family["disease"])]
+    else:
+        # Nothing of the workspace's own is left under the linked key.
+        assert not result.success and service.built == [] and service.published == []
+        assert "No run holds a model finetuned for the disease task" in result.message
+    assert reason in result.selection_reason
+    # The explicit path is unchanged: named, it is read by its bytes.
+    explicit = _reload(service, task="disease", checkpoint_path=str(outside))
+    assert explicit.success and explicit.selection_reason == "explicit checkpoint_path"
 
 
 def test_an_explicit_path_that_is_missing_is_named_with_a_task_too(service, family):
