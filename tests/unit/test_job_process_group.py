@@ -13,11 +13,14 @@ test_cancel_tree.py).
 Everything here goes through the runner's real entry points (`_spawn_locked`,
 `stop_training`, `start_training`, the monitor) with real children: a script
 whose real torch DataLoader worker (fork) is blocked in `__getitem__`, and the
-real `scripts/train_model.py`, whose forked workers a start-up hook holds in
-their first sample (`HOLD`). A member of a group counts as left only while it
-is not a zombie (`/proc/<pid>/stat`, read by the tests' one reader in
-tests/fixtures/job_processes.py): a zombie holds no descriptor. Every child a
-test starts is stopped by its pid in `finally`.
+real `scripts/train_model.py` on a new base run (a new run is a base, K8:
+TM12), from which a start-up hook forks two children once its first epoch
+begins, each held until it is killed (`HOLD`): they stand for any child a
+training run may fork (the stage-less run's DataLoader workers were such
+children; a base run forks none of its own). A member of a group counts as
+left only while it is not a zombie (`/proc/<pid>/stat`, read by the tests' one
+reader in tests/fixtures/job_processes.py): a zombie holds no descriptor.
+Every child a test starts is stopped by its pid in `finally`.
 
 Module: tests/unit/test_job_process_group.py
 """
@@ -213,7 +216,7 @@ def test_a_job_that_ends_by_itself_leaves_no_worker_and_keeps_the_slot_until_the
 
     def observed(job_):
         seen["active"] = manager.active_job()
-        seen["start"] = manager.start_training({"data_dir": str(tmp)})
+        seen["start"] = manager.start_training({"data_dir": str(tmp), "learning_stage": "base"})
         real_end_group(job_)
 
     monkeypatch.setattr(tm.TrainingManager, "_end_group", staticmethod(observed))
@@ -405,7 +408,8 @@ def test_a_stand_in_process_is_never_signalled_as_a_group(monkeypatch, tmp_path,
     fake = FakeProcess(pid=pid, ignore_sigint=True, ignore_terminate=True)
     manager = tm.TrainingManager()
     with patch("subprocess.Popen", return_value=fake):
-        assert manager.start_training({"data_dir": str(tmp_path)})["success"]
+        assert manager.start_training({"data_dir": str(tmp_path),
+                                       "learning_stage": "base"})["success"]
     assert manager._last["training"].group is None
     answer = manager.stop_training()
     assert fake.signals == ["SIGINT", "SIGTERM", "SIGKILL"] and answer["status"] == "stopped"
@@ -453,33 +457,67 @@ def test_a_real_job_leads_its_own_group_and_a_test_run_is_never_reached(blocked)
 
 # --------------------------------------------------------------------------- the real trainer
 #: Loaded at start-up by the real trainer's job (`sitecustomize`, from the
-#: PYTHONPATH the job inherits from the runner): each DataLoader worker the
-#: trainer forks writes its pid into $SHEPHERD_TEST_HOLD_DIR and holds in its
-#: first sample, so it cannot end by itself before the stop. Left alone, a tiny
-#: cohort's epoch ends its workers within moments, between two scans of /proc
-#: (review of 2887506). With $SHEPHERD_TEST_IGNORE_SIGINT the trainer ignores
-#: SIGINT, so the stop must escalate however soon the trainer would have
-#: ended. Nothing else changes: the trainer, its DataLoader and the workers it
-#: forks are the real ones.
-HOLD = r'''import os, signal, sys, time
+#: PYTHONPATH the job inherits from the runner): when the trainer begins its
+#: first epoch (`Trainer._train_epoch`, wrapped as `src.training.trainer` is
+#: imported), it forks `HELD_CHILDREN` children; each writes its pid into
+#: $SHEPHERD_TEST_HOLD_DIR and blocks until it is killed, so it cannot end by
+#: itself before the stop. They stand for any child a training run may fork
+#: (the stage-less run's DataLoader workers were such children; a base run
+#: forks none of its own): forked from the training process after it took the
+#: GPU lock, they share the lock's open file and sit in the job's process group
+#: as the workers did, and they ignore SIGINT when the trainer does. With
+#: $SHEPHERD_TEST_IGNORE_SIGINT the trainer ignores SIGINT, so the stop must
+#: escalate however soon the trainer would have ended. Nothing else changes:
+#: the trainer and its epochs are the real ones.
+HELD_CHILDREN = 2
+HOLD = rf'''import importlib.abc, importlib.machinery, os, signal, sys, time
 from pathlib import Path
 
 held = os.environ["SHEPHERD_TEST_HOLD_DIR"]
 
 
-def hold_in_first_sample():
-    loader = sys.modules.get("src.kg.data_loader")
-    if loader is None:          # a fork before the trainer's DataLoader exists
-        return
-
-    def held_sample(self, index):
+def hold_forever():
+    try:
         Path(held, str(os.getpid())).touch()
-        time.sleep(600)
+        while True:
+            time.sleep(600)
+    finally:
+        os._exit(0)             # never back into the trainer's code
 
-    loader.DiagnosisDataset.__getitem__ = held_sample
+
+def fork_children_at_the_first_epoch(trainer_class):
+    real_epoch = trainer_class._train_epoch
+    forked = []
+
+    def first_epoch_forks(self, epoch):
+        if not forked:
+            for _ in range({HELD_CHILDREN}):
+                pid = os.fork()
+                if pid == 0:
+                    hold_forever()
+                forked.append(pid)
+        return real_epoch(self, epoch)
+
+    trainer_class._train_epoch = first_epoch_forks
 
 
-os.register_at_fork(after_in_child=hold_in_first_sample)
+class TrainerImported(importlib.abc.MetaPathFinder):
+    def find_spec(self, name, path=None, target=None):
+        if name != "src.training.trainer":
+            return None
+        sys.meta_path.remove(self)
+        spec = importlib.machinery.PathFinder.find_spec(name, path)
+        real_exec = spec.loader.exec_module
+
+        def exec_module(module):
+            real_exec(module)
+            fork_children_at_the_first_epoch(module.Trainer)
+
+        spec.loader.exec_module = exec_module
+        return spec
+
+
+sys.meta_path.insert(0, TrainerImported())
 if os.environ.get("SHEPHERD_TEST_IGNORE_SIGINT"):
     signal.signal(signal.SIGINT, signal.SIG_IGN)
 '''
@@ -492,17 +530,23 @@ if os.environ.get("SHEPHERD_TEST_IGNORE_SIGINT"):
 ], ids=["graceful", "escalated"])
 def test_the_real_training_cli_with_forked_workers_leaves_nothing_after_a_stop(
         tmp_path, monkeypatch, sigint, stop_grace, last):
-    """scripts/train_model.py through `start_training`, num_workers=2 (fork),
-    both workers held alive in a sample (`HOLD`) when the stop comes: a
-    graceful stop (SIGINT) and, the trainer ignoring SIGINT, one escalated to
-    SIGTERM to the whole group both end every process of the job and free the
-    lock before the stop answers. The workers' pids are their own record, not
-    a scan of /proc, and held they cannot end by themselves, so how fast the
-    machine is decides neither whether the workers are there nor which signal
-    ends the job."""
-    from tests.fixtures.trainable_workspace import write_trainable_workspace
+    """scripts/train_model.py through `start_training` on a new base run
+    (`learning_stage` "base", the demo's base sizes, K8: TM12), with two
+    children the training process forked at its first epoch held alive
+    (`HOLD`) when the stop comes: a graceful stop (SIGINT) and, the trainer
+    ignoring SIGINT, one escalated to SIGTERM to the whole group both end every
+    process of the job and free the lock before the stop answers. The held
+    children stand for any child a training run may fork: the stage-less run's
+    two DataLoader workers (num_workers=2, fork) were the children this test
+    held; a base run forks none, so the hook forks them, and the stop must
+    still reach real processes, never an empty set. The children's pids are
+    their own record, not a scan of /proc, and held they cannot end by
+    themselves, so how fast the machine is decides neither whether they are
+    there nor which signal ends the job."""
+    from scripts.setup_demo import demo_task_training
+    from tests.fixtures.base_workspace import write_base_workspace
 
-    data = write_trainable_workspace(tmp_path / "case")
+    data = write_base_workspace(tmp_path / "case")
     lock = tmp_path / LOCK_FILE_NAME
     hook, held = tmp_path / "hook", tmp_path / "held"
     hook.mkdir()
@@ -515,25 +559,26 @@ def test_the_real_training_cli_with_forked_workers_leaves_nothing_after_a_stop(
     monkeypatch.setenv(WORKSPACES_ROOT_ENV, str(tmp_path))
     monkeypatch.setattr(tm, "STOP_GRACE_SECONDS", stop_grace)
     manager = tm.TrainingManager()
-    started = manager.start_training(dict(
-        data_dir=str(data), run_dir=str(tmp_path / "run"), device="cpu", num_epochs=100000,
-        early_stopping_patience=100000, hidden_dim=16, num_heads=2, num_layers=1,
-        conv_type="gat", batch_size=2, num_workers=2, use_amp=False))
+    # The most epochs a base run takes, so the run is still training when the
+    # stop comes; the recipe's base keeps early stopping off.
+    started = manager.start_training({
+        **demo_task_training()["base"], "learning_stage": "base", "data_dir": str(data),
+        "run_dir": str(tmp_path / "run"), "device": "cpu", "num_epochs": 10000})
     assert started["success"], started
     job = manager._last["training"]
     try:
         deadline = time.monotonic() + 180
-        while len(list(held.iterdir())) < 2 and time.monotonic() < deadline:
+        while len(list(held.iterdir())) < HELD_CHILDREN and time.monotonic() < deadline:
             assert job.process.poll() is None, job.tail(30)
             time.sleep(0.2)
-        workers = sorted(int(entry.name) for entry in held.iterdir())
-        assert len(workers) == 2, job.tail(30)
-        assert set(workers) <= set(group_members(job.group)), "a held worker is not in the group"
+        children = sorted(int(entry.name) for entry in held.iterdir())
+        assert len(children) == HELD_CHILDREN, job.tail(30)
+        assert set(children) <= set(group_members(job.group)), "a held child is not in the group"
         assert f"pid {job.process.pid}" in (probe(lock) or "")
         answer = manager.stop_training()
         assert answer["success"] is True and answer["status"] == "stopped", answer
         assert job.stop_signal == last
-        assert not any(live(pid) for pid in workers), "a forked worker outlived the stop"
+        assert not any(live(pid) for pid in children), "a forked child outlived the stop"
         assert group_members(job.group) == [] and probe(lock) is None
         assert manager.active_job() is None
     finally:

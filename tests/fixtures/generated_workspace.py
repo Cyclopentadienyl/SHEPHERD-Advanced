@@ -240,6 +240,25 @@ def write_generated_workspace(
     return root, manifest
 
 
+def recut_cohorts(root: Path, **rows: list[dict[str, Any]]) -> Path:
+    """`root`'s cohorts rewritten (`train`, `val`: the rows; the others kept),
+    with a manifest and dataset record bound to them over the graph files
+    already there (`write_generated_workspace`), each disease's profile the
+    first row's of it."""
+    kept = {split: json.loads((root / f"{split}_samples.json").read_text(encoding="utf-8"))
+            for split in ("train", "val")}
+    kept.update(rows)
+    profiles: dict[int, dict[str, Any]] = {}
+    for row in kept["train"] + kept["val"]:
+        profiles.setdefault(int(row["disease_id"]), {"phenotype_ids": row["phenotype_ids"],
+                                                     "gene_ids": row.get("gene_ids", [])})
+    write_generated_workspace(
+        root, train_ids=sorted({int(r["disease_id"]) for r in kept["train"]}),
+        val_ids=sorted({int(r["disease_id"]) for r in kept["val"]}), profiles=profiles,
+        train_samples=kept["train"], val_samples=kept["val"])
+    return root
+
+
 def graph_record(root: Path) -> Dict[str, str]:
     """The four graph roles a checkpoint trained on this workspace records.
 

@@ -19,13 +19,22 @@ The runs are filed where the server's list finds them by default
 order is base first, children after, in the order asked); a test that keeps
 them elsewhere passes `runs`.
 
+A test that runs `train` itself on the demo workspace (with the Trainer
+stubbed, or a reader patched) takes the module's `demo` and `workspace`
+fixtures (the demo workspace and a base `train_children` trained on it, and a
+copy of both per test) and `finetune_demo_base`, the configuration and call
+of a disease finetune of that base at the demo's sizes.
+
 Module: tests/fixtures/trained_children.py
 """
 from __future__ import annotations
 
+import shutil
 import sys
 from pathlib import Path
 from typing import Any, Dict, Optional, Sequence
+
+import pytest
 
 _SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 
@@ -101,6 +110,44 @@ def train_children(data_dir: Path, tasks: Sequence[str] = ("disease",), *,
     return out
 
 
+def finetune_demo_base(train_model: Any, data_dir: Path, run: Path, **overrides: Any) -> Any:
+    """Train into `run` a disease finetune of the base `train_children`
+    trained on `data_dir`, at the demo's disease sizes (`demo_task_training`),
+    or, with `resume_from` in `overrides`, a resume of that finetune parent,
+    which brings its own stage settings; `overrides` set on top. Through the
+    caller's `train_model` module (`scripts.train_model`, the one its patches
+    are on), which is told that exactly the fields set here are the
+    operator's (contract TM1: the explicit set is stated, never inferred).
+    Returns what `train` returns."""
+    data_dir = Path(data_dir)
+    fields: dict[str, Any] = {"data_dir": str(data_dir), "run_dir": str(run),
+                              "learning_stage": "finetune", "task": "disease",
+                              "device": "cpu"}
+    if "resume_from" not in overrides:
+        base = data_dir / "runs" / "gatv2" / BASE_RUN / "checkpoints" / "last.pt"
+        fields.update(finetune_from=str(base), num_epochs=1, **_demo_training()["disease"])
+    fields.update(overrides)
+    return train_model.train(train_model.TrainConfig(**fields), set(fields))
+
+
+@pytest.fixture(scope="module", name="demo")
+def demo_fixture(tmp_path_factory: Any) -> Path:
+    """The demo workspace and a 1-epoch base trained on it by `train_children`
+    (no child). Shared by a module's tests, and only read: a test works on its
+    own copy (`workspace`)."""
+    from tests.fixtures.registered_cohort import write_demo_workspace
+
+    data_dir = write_demo_workspace(tmp_path_factory.mktemp("demo") / "data")
+    train_children(data_dir, tasks=())
+    return data_dir
+
+
+@pytest.fixture(name="workspace")
+def workspace_fixture(demo: Path, tmp_path: Path) -> Path:
+    """A copy of `demo`, its base included, for one test."""
+    return Path(shutil.copytree(demo, tmp_path / "ws"))
+
+
 def serve(trained: Dict[str, Path], task: str = "disease", **kwargs: Any) -> Any:
     """The pipeline the service builds for ``trained[task]`` over its workspace
     (`build_served_pipeline`, on the CPU): every served pipeline is a model
@@ -112,4 +159,5 @@ def serve(trained: Dict[str, Path], task: str = "disease", **kwargs: Any) -> Any
                                  data_dir=str(data_dir), **{"device": "cpu", **kwargs})
 
 
-__all__ = ["BASE_RUN", "CHILD_RUNS", "serve", "small_base_spec", "train_children"]
+__all__ = ["BASE_RUN", "CHILD_RUNS", "demo_fixture", "finetune_demo_base", "serve",
+           "small_base_spec", "train_children", "workspace_fixture"]

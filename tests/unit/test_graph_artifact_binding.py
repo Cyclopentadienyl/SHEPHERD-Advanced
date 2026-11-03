@@ -88,7 +88,9 @@ class TestTrainingRefusesBeforeItActs:
 
     Since contract M2.1's S8 the files are read once (`read_training_inputs`):
     those reads parse the graph tensors and the samples, and the check compares
-    them before the dataloaders, the model, the Trainer and any run artifact.
+    them before the parents are read, the task data is bound, the Trainer is
+    built and any run artifact exists. Shown on a disease finetune, the run that
+    reads the samples as well as the graph (a base reads the graph alone).
     """
 
     @staticmethod
@@ -103,15 +105,17 @@ class TestTrainingRefusesBeforeItActs:
             monkeypatch.setattr(train_model, name, _sentinel)
         return train_model
 
-    def _config(self, train_model, root, tmp_path, **overrides):
-        # An explicit device: `auto` refuses on a host without CUDA (M3a)
-        # before any of the checks these tests are about.
-        overrides.setdefault("device", "cpu")
-        return train_model.TrainConfig(
-            data_dir=str(root),
-            run_dir=str(tmp_path / "run"),
-            **overrides,
-        )
+    @staticmethod
+    def _train(train_model, root, tmp_path):
+        """A disease finetune over `root`, given exactly the fields it sets as
+        the operator's. Its base is named and never read: every case here
+        stops before the parent read. An explicit device: `auto` refuses on a
+        host without CUDA (M3a) before any of the checks these tests are
+        about."""
+        fields = {"data_dir": str(root), "run_dir": str(tmp_path / "run"),
+                  "learning_stage": "finetune", "task": "disease",
+                  "finetune_from": str(tmp_path / "base.pt"), "device": "cpu"}
+        return train_model.train(train_model.TrainConfig(**fields), set(fields))
 
     @pytest.mark.parametrize(
         "break_it,expected",
@@ -142,8 +146,7 @@ class TestTrainingRefusesBeforeItActs:
     ):
         train_model = self._forbid(
             monkeypatch,
-            ["create_dataloaders", "create_model_from_config", "Trainer",
-             "read_resume_parent"],
+            ["read_resume_checkpoint", "read_finetune_parent", "bind_task_data", "Trainer"],
         )
         root = _workspace(tmp_path / "ws")
         other = _workspace(tmp_path / "other")
@@ -151,20 +154,20 @@ class TestTrainingRefusesBeforeItActs:
 
         # A missing file is the readers' `FileNotFoundError`, an `OSError`.
         with pytest.raises((ValueError, OSError), match=expected):
-            train_model.train(self._config(train_model, root, tmp_path))
+            self._train(train_model, root, tmp_path)
 
         assert not (tmp_path / "run").exists(), "run directory was created"
         assert not (root / "runs").exists(), "a run directory was allocated"
 
     def test_a_sound_workspace_reaches_the_next_stage(self, monkeypatch, tmp_path):
         """The refusal must be about the workspace, not about the ordering itself:
-        an unbroken workspace passes the preflight and goes on to build its
-        dataloaders."""
-        train_model = self._forbid(monkeypatch, ["create_dataloaders"])
+        an unbroken workspace passes the preflight and goes on to read its
+        base."""
+        train_model = self._forbid(monkeypatch, ["read_finetune_parent"])
         root = _workspace(tmp_path / "ws")
 
-        with pytest.raises(AssertionError, match="create_dataloaders ran"):
-            train_model.train(self._config(train_model, root, tmp_path))
+        with pytest.raises(AssertionError, match="read_finetune_parent ran"):
+            self._train(train_model, root, tmp_path)
 
 
 class TestTheClinicalPathIsAGraphConsumer:

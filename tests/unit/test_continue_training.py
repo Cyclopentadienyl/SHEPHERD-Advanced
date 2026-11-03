@@ -1,7 +1,10 @@
 """A run continued from a parent checkpoint (contract M3a-3).
 
 On a small controlled input, trained for real on the CPU through the production
-entry point (`scripts/train_model.py::train`):
+entry point (`scripts/train_model.py::train`): a base run (KG link prediction,
+`learning_stage` "base") of a small model spec on `tests/fixtures/base_workspace`,
+each call stating the fields it sets as its explicit set. The contract is the
+stage's, not the task's: a finetune child continues by the same plan and Trainer.
 
 - a run paused after epoch 2 and resumed takes the same learning rate at every
   optimizer update as a run never interrupted, through warmup and into decay,
@@ -29,14 +32,18 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from tests.fixtures.trainable_workspace import write_trainable_workspace  # noqa: E402
+from tests.fixtures.base_workspace import write_base_workspace  # noqa: E402
+from tests.fixtures.trained_children import small_base_spec  # noqa: E402
 
-#: 12 training samples in batches of 5 give 3 batches an epoch; an
-#: accumulation of 2 makes that 2 updates (one of them the tail), 8 over four
-#: epochs. Three warmup steps, then cosine decay.
+#: The base workspace's 48 nodes, each a source once an epoch, in batches of
+#: 16 give 3 batches an epoch; an accumulation of 2 makes that 2 updates (one
+#: of them the tail), 8 over four epochs. Three warmup steps, then cosine
+#: decay. The model is the demo's small base spec (`small_base_spec`, added in
+#: `_run`), two layers, so two hops of 4 neighbours; a patience turns early
+#: stopping on, as the stage's recipe leaves it off.
 SETTINGS = dict(
-    device="cpu", hidden_dim=16, num_layers=1, num_heads=2, num_workers=0,
-    use_amp=False, num_epochs=4, batch_size=5, gradient_accumulation_steps=2,
+    learning_stage="base", num_neighbors=[4, 4], device="cpu",
+    use_amp=False, num_epochs=4, batch_size=16, gradient_accumulation_steps=2,
     scheduler_type="cosine", warmup_steps=3, save_top_k=2, early_stopping_patience=10,
     seed=42,
 )
@@ -51,7 +58,7 @@ def train_model():
 
 @pytest.fixture(scope="module")
 def workspace(tmp_path_factory):
-    return write_trainable_workspace(tmp_path_factory.mktemp("ws"))
+    return write_base_workspace(tmp_path_factory.mktemp("ws"))
 
 
 @pytest.fixture
@@ -71,10 +78,13 @@ def rates(monkeypatch):
 
 
 def _run(train_model, workspace, run, **overrides):
-    config = train_model.TrainConfig(data_dir=str(workspace), run_dir=str(run),
-                                     **{**SETTINGS, **overrides})
-    explicit = {"data_dir", "run_dir", *overrides}
-    return train_model.train(config, explicit)
+    fields = {"data_dir": str(workspace), "run_dir": str(run), **SETTINGS,
+              "model_spec": small_base_spec().to_dict(), **overrides}
+    # The explicit set is every field this call sets, never inferred from
+    # TrainConfig's defaults (plan TM1 rev2); a new base takes the stage's
+    # recipe for the rest. A continued run states the same values as its
+    # parent's, which is not a conflict, and inherits the rest.
+    return train_model.train(train_model.TrainConfig(**fields), set(fields))
 
 
 def _read(path):
@@ -235,9 +245,13 @@ def parent(train_model, workspace, tmp_path_factory):
 
 
 def _plan(record, path, request, explicit=(), device="cpu"):
+    from src.models.bundle.record import MODEL_RECORD_VERSION
     from src.utils.run_plan import plan_continuation
 
-    return plan_continuation(record, Path(path), request, set(explicit), device=device)
+    # The record version a bundle run continues with, as `train()` passes it
+    # (`plan_from_parent(..., record_version=MODEL_RECORD_VERSION)`).
+    return plan_continuation(record, Path(path), request, set(explicit), device=device,
+                             record_version=MODEL_RECORD_VERSION)
 
 
 def _request(record, **changes):
@@ -252,7 +266,7 @@ def test_an_unfinished_parent_is_resumed_with_its_settings_inherited(parent):
     assert plan.mode == "resume" and plan.start_epoch == 1 and plan.end_epoch == 4
     assert plan.action == "Resume the original training (1/4 done, 3 left)"
     assert plan.settings["learning_rate"] == record["config"]["requested"]["learning_rate"]
-    assert plan.inherited["batch_size"] == 5
+    assert plan.inherited["batch_size"] == SETTINGS["batch_size"] == 16
     assert "device" not in plan.inherited, "an operational field is never inherited"
 
 
@@ -270,7 +284,10 @@ def test_an_explicit_learning_setting_that_differs_is_refused_not_ignored(parent
     (lambda r: r["progress"].update(end="finished"), "nothing left to resume"),
     (lambda r: r["progress"].update(end="stopped_early", stop_reason="early stopping: x"),
      "stopped early"),
-    (lambda r: r.pop("record_version"), "before contract M3a"),
+    # A record without its version: a bundle run continues record version 2
+    # only, so the bundle's refusal names the model spec it cannot know
+    # (`_check_record_version`), where the ShepherdGNN path named contract M3a.
+    (lambda r: r.pop("record_version"), "written before the model spec"),
     (lambda r: r.update(checkpoint_kind="weights", weights_from={"kind": "best", "epoch": 0}),
      "holds weights only"),
     (lambda r: r["config"].update(requested=None), "does not record the settings"),
@@ -319,6 +336,7 @@ def test_a_missing_or_replaced_best_weights_file_is_refused(parent, tmp_path, tr
     import shutil
 
     import src.utils.run_plan as run_plan
+    from src.models.bundle.record import MODEL_RECORD_VERSION
     from src.utils.run_plan import RunPlanRefused
     from src.utils.checkpoint_io import read_checkpoint
 
@@ -338,7 +356,8 @@ def test_a_missing_or_replaced_best_weights_file_is_refused(parent, tmp_path, tr
     with monkeypatch.context() as patched:
         patched.setattr(torch, "load", lambda *a, **k: pytest.fail("loaded before compared"))
         with pytest.raises(RunPlanRefused, match=f"the file there now has {_sha(moved / 'last.pt')}"):
-            train_model.plan_from_parent(edited, config, set(), "cpu")
+            train_model.plan_from_parent(edited, config, set(), "cpu",
+                                         record_version=MODEL_RECORD_VERSION)
 
     planned = run_plan.plan_continuation
 
@@ -349,7 +368,8 @@ def test_a_missing_or_replaced_best_weights_file_is_refused(parent, tmp_path, tr
 
     monkeypatch.setattr(run_plan, "plan_continuation", plan_then_remove)
     with pytest.raises(RunPlanRefused, match="there is no file there now"):
-        train_model.plan_from_parent(edited, config, set(), "cpu")
+        train_model.plan_from_parent(edited, config, set(), "cpu",
+                                     record_version=MODEL_RECORD_VERSION)
 
 
 def test_best_weights_named_without_their_digest_are_refused(parent, tmp_path):
@@ -544,7 +564,10 @@ def never_improving(monkeypatch):
     from src.training.trainer import Trainer
 
     values = [0.9, 0.8, 0.7, 0.6]
-    monkeypatch.setattr(Trainer, "_validate", lambda self, epoch: {"val_mrr": values[epoch]})
+    # The base stage's monitor (`BASE_SELECTION_METRIC`), which early stopping
+    # and best-k rank by.
+    monkeypatch.setattr(Trainer, "_validate",
+                        lambda self, epoch: {"val_lp_accuracy": values[epoch]})
     finished = []
     original = Trainer.train
 
@@ -633,6 +656,7 @@ def test_best_weights_the_record_cannot_locate_are_refused(parent):
 def test_a_self_best_parent_cannot_be_named_without_its_reads_digest(parent):
     import copy
 
+    from src.models.bundle.record import MODEL_RECORD_VERSION
     from src.utils.run_plan import RunPlanRefused, plan_continuation
 
     path, record = parent
@@ -642,5 +666,5 @@ def test_a_self_best_parent_cannot_be_named_without_its_reads_digest(parent):
     with pytest.raises(RunPlanRefused, match="digest of its read"):
         _plan(record, path, _request(record))
     plan = plan_continuation(record, Path(path), _request(record), set(), device="cpu",
-                             parent_sha256="a" * 64)
+                             parent_sha256="a" * 64, record_version=MODEL_RECORD_VERSION)
     assert plan.best_k[-1]["path"] == Path(path) and plan.best_k[-1]["sha256"] == "a" * 64

@@ -64,12 +64,13 @@ def manager(tmp_dirs):
 
 @pytest.fixture
 def sample_config():
-    """Minimal training config for testing."""
+    """Minimal training config for testing: a base start (TM12: a new run is
+    a base), on the reference spec, with a few of the recipe's settings."""
     return {
+        "learning_stage": "base",
         "num_epochs": 10,
         "learning_rate": 1e-4,
         "batch_size": 16,
-        "conv_type": "gat",
         "device": "cpu",
         "seed": 42,
     }
@@ -143,16 +144,19 @@ class TestTrainingManagerStartStop:
 
     def test_start_names_a_new_run_directory_and_creates_nothing(self, tmp_path):
         """The directory is named here and claimed by the training process
-        after its refusals (contract M3a-2), so a refused run leaves nothing."""
+        after its refusals (contract M3a-2), so a refused run leaves nothing.
+        A base is filed under its model spec's encoder kind (the reference
+        spec's gatv2 here)."""
         manager = TrainingManager()
         mock_proc = FakeProcess(pid=1)
-        config = {"data_dir": str(tmp_path / "ws"), "conv_type": "hgt", "run_name": "Pilot A"}
+        config = {"data_dir": str(tmp_path / "ws"), "learning_stage": "base",
+                  "run_name": "Pilot A"}
 
         with patch("subprocess.Popen", return_value=mock_proc) as popen:
             result = manager.start_training(config)
 
         run_dir = Path(result["run_dir"])
-        assert run_dir.parent == tmp_path / "ws" / "runs" / "hgt"
+        assert run_dir.parent == tmp_path / "ws" / "runs" / "gatv2"
         assert "_pilot-a_" in run_dir.name
         assert not run_dir.exists()
         assert manager.run_dir == run_dir and manager.get_status()["run_dir"] == str(run_dir)
@@ -162,12 +166,46 @@ class TestTrainingManagerStartStop:
         assert popen.call_args[0][0][-1] == result["config_path"]
         assert "run_dir" not in config, "the caller's dict was changed"
 
+    @pytest.mark.parametrize("start", ["base", "continuation"])
     @pytest.mark.parametrize("retired", ["output_dir", "checkpoint_dir", "log_dir"])
-    def test_a_retired_location_is_refused_not_ignored(self, retired, tmp_path):
+    def test_a_retired_location_is_refused_not_ignored(self, retired, start, tmp_path,
+                                                       request):
+        """A new run (a base) is refused by its whole-configuration check, a
+        retired location being no setting a base takes; a continuation of a
+        real paused base, whose settings are the parent's, by the preview of
+        that parent, which records no such setting to inherit. Nothing is
+        spawned either way."""
         manager = TrainingManager()
+        if start == "base":
+            config = {"data_dir": str(tmp_path), "learning_stage": "base", retired: "x"}
+            said = f"{retired} is not a setting a base run takes"
+        else:
+            ws, parent = request.getfixturevalue("paused_base")
+            config = {"data_dir": str(ws), "resume_from": str(parent), "device": "cpu",
+                      retired: "x"}
+            said = f"does not record {retired}, so the run cannot inherit them"
         with patch("subprocess.Popen") as popen:
-            result = manager.start_training({"data_dir": str(tmp_path), retired: "x"})
-        assert result["success"] is False and retired in result["error"]
+            result = manager.start_training(config)
+        assert result["success"] is False and said in result["error"], result
+        popen.assert_not_called()
+
+    @pytest.mark.parametrize("retired", ["output_dir", "checkpoint_dir", "log_dir"])
+    def test_the_retired_location_guard_refuses_a_continuation_the_preview_passed(
+            self, retired, tmp_path):
+        """The run layout's retired-location guard alone
+        (`refuse_retired_locations`, which `start_training` calls once a
+        continuation's preview passes), with the preview stubbed to pass: no
+        real continuation reaches the guard today, since the preview of a real
+        parent refuses a retired location first (the case above)."""
+        manager = TrainingManager()
+        config = {"data_dir": str(tmp_path), "resume_from": "p.pt", retired: "x"}
+        preview = {"ok": True, "architecture": "gatv2", "sha256": "c" * 64,
+                   "learning_stage": "base"}
+        with patch.object(manager, "preview_continuation", return_value=preview), \
+                patch("subprocess.Popen") as popen:
+            result = manager.start_training(config)
+        assert result["success"] is False, result
+        assert f"sets {retired}, which no longer exist" in result["error"], result
         popen.assert_not_called()
 
     def test_an_explicit_run_directory_that_holds_files_is_refused(self, tmp_path):
@@ -176,7 +214,7 @@ class TestTrainingManagerStartStop:
         (used / "config.yaml").write_text("x")
         manager = TrainingManager()
         with patch("subprocess.Popen") as popen:
-            result = manager.start_training({"run_dir": str(used)})
+            result = manager.start_training({"learning_stage": "base", "run_dir": str(used)})
         assert result["success"] is False and "already holds files" in result["error"]
         popen.assert_not_called()
 
@@ -191,9 +229,9 @@ class TestTrainingManagerStartStop:
         workspace.mkdir()
         elsewhere.mkdir()
         (workspace / "runs").symlink_to(elsewhere, target_is_directory=True)
-        config = {"data_dir": str(workspace), "conv_type": "hgt"}
+        config = {"data_dir": str(workspace), "learning_stage": "base"}
         if explicit:
-            config["run_dir"] = str(workspace / "runs" / "hgt" / "mine")
+            config["run_dir"] = str(workspace / "runs" / "gatv2" / "mine")
         manager = TrainingManager()
         with patch("subprocess.Popen") as popen:
             result = manager.start_training(config)
@@ -226,7 +264,7 @@ class TestTrainingManagerStartStop:
         manager = TrainingManager()
         process = FakeProcess(pid=7, on_sigint=0)
         with patch("subprocess.Popen", return_value=process):
-            manager.start_training({"data_dir": str(tmp_path / "ws")})
+            manager.start_training({"data_dir": str(tmp_path / "ws"), "learning_stage": "base"})
 
         result = manager.stop_training()
 
@@ -699,19 +737,26 @@ def paused_base(tmp_path_factory):
 
 
 @pytest.fixture(scope="module")
-def shepherd_parent(tmp_path_factory):
-    """A real paused ShepherdGNN parent (a checkpoint with no model spec):
-    not a base, so the base start does not continue it."""
-    import scripts.train_model as train_model
-    from tests.fixtures.trainable_workspace import write_trainable_workspace
+def specless_parent(paused_base, tmp_path_factory):
+    """A paused training-state checkpoint with no model spec, its record as a
+    ShepherdGNN run wrote one (record version 1, no stage requested): the
+    paused base's file with its model record taken out, as
+    test_train_base_stage.py builds a parent written before the model spec.
+    Not a base, so the base start does not continue it."""
+    import torch
 
-    root = tmp_path_factory.mktemp("shepherd-parent")
-    ws = write_trainable_workspace(root / "ws")
-    train_model.train(train_model.TrainConfig(
-        data_dir=str(ws), run_dir=str(root / "parent"), device="cpu", hidden_dim=18,
-        num_layers=1, num_heads=3, num_workers=0, use_amp=False, num_epochs=2,
-        batch_size=5, warmup_steps=1, pause_after_epoch=1))
-    return ws, root / "parent" / "checkpoints" / "last.pt"
+    from src.config.model_types import MODEL_RECORD_KEYS
+
+    ws, parent = paused_base
+    payload = torch.load(parent, map_location="cpu", weights_only=True)
+    for key in MODEL_RECORD_KEYS:
+        payload.pop(key, None)
+    payload["record_version"] = 1
+    payload["config"] = {**payload["config"],
+                         "requested": {**payload["config"]["requested"], "learning_stage": None}}
+    path = tmp_path_factory.mktemp("specless-parent") / "last.pt"
+    torch.save(payload, path)
+    return ws, path
 
 
 @pytest.fixture
@@ -811,7 +856,7 @@ class TestTheBaseStartThroughTheRunner:
         assert resp.status_code == 409 and "batch_size: the parent's 16" in resp.text
         _nothing_started(manager, popen, ws)
 
-    def test_a_parent_that_is_not_a_base_is_refused(self, shepherd_parent,
+    def test_a_parent_that_is_not_a_base_is_refused(self, specless_parent,
                                                      trained_disease_child, real_client):
         """A finetune child (here continued by extending it) and a checkpoint
         with no model spec are not bases: the runner's preview of the parent
@@ -821,7 +866,7 @@ class TestTheBaseStartThroughTheRunner:
                 (trained_disease_child["data_dir"], trained_disease_child["disease"],
                  {"extend_epochs": 1}, "learning_stage: the parent's 'finetune', requested "
                                        "'base'"),
-                (*shepherd_parent, {}, "learning_stage: the parent's None, requested "
+                (*specless_parent, {}, "learning_stage: the parent's None, requested "
                                        "'base'")):
             resp = client.post("/api/v1/training/start", json={
                 "data_dir": str(ws), "learning_stage": "base", "resume_from": str(parent),

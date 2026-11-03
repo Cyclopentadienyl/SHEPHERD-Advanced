@@ -66,6 +66,15 @@ def _end_real_job(manager: TrainingManager, job_type: str = "training") -> None:
     job.done.wait(30)
 
 
+def base_start(workspace: Path, **settings) -> dict:
+    """A training start as the runner takes a new run: a base (K8, TM12: a new
+    run is a base; a finetune is a Fine-tune start's). The workspace and the
+    stage, the recipe filling the rest, pass the start's own check of its
+    settings (`_new_bundle_run`), so each test reaches the slot, the lock or
+    the stop it checks."""
+    return {"data_dir": str(workspace), "learning_stage": "base", **settings}
+
+
 class Popens:
     """`subprocess.Popen` replaced: each call takes the next fake process."""
 
@@ -176,13 +185,13 @@ def test_a_start_while_a_stop_is_still_waiting_is_refused(tmp_path, popen, monke
     first = FakeProcess(pid=1, ignore_sigint=True)
     calls = popen(first, FakeProcess(pid=2))
     manager = TrainingManager()
-    assert manager.start_training({"data_dir": str(tmp_path / "ws")})["success"]
+    assert manager.start_training(base_start(tmp_path / "ws"))["success"]
 
     stopper = threading.Thread(target=manager.stop_training)
     stopper.start()
     wait_for(lambda: manager.get_status()["status"] == "stopping")
 
-    again = manager.start_training({"data_dir": str(tmp_path / "ws")})
+    again = manager.start_training(base_start(tmp_path / "ws"))
     assert again["success"] is False and "Training is still stopping" in again["error"]
     test = manager.start_test(inputs)
     assert test["success"] is False and "Training is still stopping" in test["error"]
@@ -198,7 +207,7 @@ def test_one_gpu_job_at_a_time_across_types(tmp_path, popen, inputs):
     training, test = FakeProcess(pid=1), FakeProcess(pid=2)
     calls = popen(training, test)
     manager = TrainingManager()
-    assert manager.start_training({"data_dir": str(tmp_path / "ws")})["success"]
+    assert manager.start_training(base_start(tmp_path / "ws"))["success"]
 
     refused = manager.start_test(inputs)
     assert refused["success"] is False
@@ -208,7 +217,7 @@ def test_one_gpu_job_at_a_time_across_types(tmp_path, popen, inputs):
     training.finish(0)
     ended(manager, "training")
     assert manager.start_test(inputs)["success"]
-    refused = manager.start_training({"data_dir": str(tmp_path / "ws")})
+    refused = manager.start_training(base_start(tmp_path / "ws"))
     assert refused["success"] is False
     assert refused["error"].startswith("A test run is already running")
     assert len(calls.calls) == 2
@@ -219,7 +228,7 @@ def test_a_stop_never_crosses_job_types(tmp_path, popen, inputs):
     training, test = FakeProcess(pid=1), FakeProcess(pid=2)
     popen(training, test)
     manager = TrainingManager()
-    manager.start_training({"data_dir": str(tmp_path / "ws")})
+    manager.start_training(base_start(tmp_path / "ws"))
 
     refused = manager.cancel_test()
     assert refused["success"] is False
@@ -259,7 +268,7 @@ def test_a_start_is_refused_while_another_process_holds_the_gpu_lock(tmp_path, p
     calls = popen()
     manager = TrainingManager()
     with GpuLock(root / LOCK_FILE_NAME, job_type="training", command="train_model.py").acquire():
-        for result in (manager.start_training({"data_dir": str(root / "ws")}),
+        for result in (manager.start_training(base_start(root / "ws")),
                        manager.start_test(inputs)):
             assert result["success"] is False
             assert "is held by a training job (train_model.py" in result["error"]
@@ -271,7 +280,7 @@ def test_a_start_is_refused_while_another_process_holds_the_gpu_lock(tmp_path, p
 def test_an_unusable_lock_setting_refuses_every_start(tmp_path, popen, monkeypatch):
     monkeypatch.setenv(WORKSPACES_ROOT_ENV, "relative")
     calls = popen()
-    result = TrainingManager().start_training({"data_dir": str(tmp_path / "ws")})
+    result = TrainingManager().start_training(base_start(tmp_path / "ws"))
     assert result["success"] is False and "The GPU lock cannot be used" in result["error"]
     assert calls.calls == []
 
@@ -285,8 +294,8 @@ def test_a_lock_not_configured_refuses_every_start_before_anything(tmp_path, pop
     monkeypatch.delenv(WORKSPACES_ROOT_ENV, raising=False)
     calls = popen()
     manager = TrainingManager()
-    for result in (manager.start_training({"data_dir": str(tmp_path / "ws"),
-                                           "run_dir": str(tmp_path / "run")}),
+    for result in (manager.start_training(base_start(tmp_path / "ws",
+                                                     run_dir=str(tmp_path / "run"))),
                    manager.start_test(inputs)):
         assert result["success"] is False
         assert result["error"].startswith("The GPU lock cannot be used: "
@@ -305,7 +314,7 @@ def test_a_stop_escalates_sigint_sigterm_sigkill(tmp_path, popen, monkeypatch):
     stubborn = FakeProcess(pid=3, ignore_sigint=True, ignore_terminate=True)
     popen(stubborn)
     manager = TrainingManager()
-    manager.start_training({"data_dir": str(tmp_path / "ws")})
+    manager.start_training(base_start(tmp_path / "ws"))
     result = manager.stop_training()
     assert stubborn.signals == ["SIGINT", "SIGTERM", "SIGKILL"]
     assert result["success"] is True and result["status"] == "stopped"
@@ -388,7 +397,7 @@ def test_a_training_stop_after_the_process_ended_on_its_own_is_refused(tmp_path,
     process.stdout = HeldOutput()
     popen(process)
     manager = TrainingManager()
-    manager.start_training({"data_dir": str(tmp_path / "ws")})
+    manager.start_training(base_start(tmp_path / "ws"))
     process.finish(1)
     threading.Timer(0.2, process.stdout.released.set).start()
 
@@ -457,11 +466,11 @@ def test_a_training_stop_reads_the_snapshot_of_the_run_it_stopped(tmp_path, pope
     class Interleaved(TrainingManager):
         def _stop(self, job_type):
             result = super()._stop(job_type)
-            assert self.start_training({"data_dir": str(workspace)})["success"]
+            assert self.start_training(base_start(workspace))["success"]
             return result
 
     manager = Interleaved()
-    run_dir = Path(manager.start_training({"data_dir": str(workspace)})["run_dir"])
+    run_dir = Path(manager.start_training(base_start(workspace))["run_dir"])
     snapshot = run_checkpoint_dir(run_dir) / "last.pt"
     snapshot.parent.mkdir(parents=True)
     snapshot.write_bytes(b"not a checkpoint")
@@ -799,7 +808,7 @@ def test_each_job_keeps_its_own_output_tail(tmp_path, popen, inputs):
     test = FakeProcess(pid=2, output="INFO Device: cpu\nReport: x\n")
     popen(training, test)
     manager = TrainingManager()
-    manager.start_training({"data_dir": str(tmp_path / "ws")})
+    manager.start_training(base_start(tmp_path / "ws"))
     training.finish(0)
     ended(manager, "training")
     manager.start_test(inputs)
@@ -813,7 +822,7 @@ def test_a_failure_names_the_signal_that_ended_it(tmp_path, popen):
     process = FakeProcess(pid=1, output="CUDA out of memory\n")
     popen(process)
     manager = TrainingManager()
-    manager.start_training({"data_dir": str(tmp_path / "ws")})
+    manager.start_training(base_start(tmp_path / "ws"))
     process.finish(-9)
     ended(manager, "training")
     status = manager.get_status()
@@ -860,7 +869,7 @@ def test_a_real_child_holds_the_lock_and_releases_it_when_stopped(
     manager = TrainingManager()
     try:
         with patch("subprocess.Popen", launch):
-            assert manager.start_training({"data_dir": str(root / "ws")})["success"]
+            assert manager.start_training(base_start(root / "ws"))["success"]
         wait_for(lambda: "HELD" in manager.get_log("training")["lines"], 30)
         pid = manager.get_status()["pid"]
         assert f"pid {pid}" in probe(root / LOCK_FILE_NAME)
@@ -890,7 +899,7 @@ def test_a_child_killed_outside_the_runner_frees_the_slot_and_the_lock(tmp_path,
     manager = TrainingManager()
     try:
         with patch("subprocess.Popen", launch):
-            manager.start_training({"data_dir": str(root / "ws")})
+            manager.start_training(base_start(root / "ws"))
         wait_for(lambda: "HELD" in manager.get_log("training")["lines"], 30)
         os.kill(manager.get_status()["pid"], signal.SIGKILL)  # the OOM killer, say
         ended(manager, "training")

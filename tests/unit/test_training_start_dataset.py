@@ -50,6 +50,12 @@ def workspace(built, tmp_path):
 BASE_START = {"data_dir": "data/workspaces/x", "learning_stage": "base"}
 
 
+def _base(ws: Path) -> dict:
+    """The smallest base start on `ws` (TM12: a new run the runner starts is a
+    base)."""
+    return {"data_dir": str(ws), "learning_stage": "base"}
+
+
 def _fingerprint(ws: Path) -> str:
     from src.kg.artifacts import read_split_manifest
 
@@ -74,7 +80,7 @@ def _nothing_happened(manager: TrainingManager, popen, ws: Path, before: set) ->
 def test_the_dataset_shown_is_still_the_workspaces_one_so_the_run_starts(workspace):
     manager = TrainingManager()
     with patch("subprocess.Popen", return_value=FakeProcess(pid=7)) as popen:
-        result = manager.start_training({"data_dir": str(workspace)},
+        result = manager.start_training(_base(workspace),
                                         expected_dataset_fingerprint=_fingerprint(workspace))
     assert result["success"] is True and popen.call_count == 1
     assert Path(result["run_dir"]).parent.parent.parent == workspace
@@ -88,7 +94,7 @@ def test_a_dataset_that_changed_since_it_was_shown_is_refused_before_anything_ha
     manager = TrainingManager()
     with patch("subprocess.Popen") as popen, \
             patch("tempfile.mkstemp", side_effect=AssertionError("a config was written")):
-        result = manager.start_training({"data_dir": str(workspace)},
+        result = manager.start_training(_base(workspace),
                                         expected_dataset_fingerprint=shown)
     assert result["success"] is False and result["dataset_changed"] is True
     now = _fingerprint(workspace)
@@ -117,7 +123,7 @@ def test_a_continued_run_on_a_changed_dataset_is_refused_before_its_parent_is_re
 def test_a_value_that_is_not_a_full_digest_is_refused(workspace, expected):
     manager = TrainingManager()
     with patch("subprocess.Popen") as popen:
-        result = manager.start_training({"data_dir": str(workspace)},
+        result = manager.start_training(_base(workspace),
                                         expected_dataset_fingerprint=expected)
     assert result["success"] is False and "not a full SHA-256" in result["error"]
     popen.assert_not_called()
@@ -130,7 +136,7 @@ def test_a_manifest_that_is_gone_is_a_changed_dataset(workspace):
     (workspace / "split_manifest.json").unlink()
     manager = TrainingManager()
     with patch("subprocess.Popen") as popen:
-        result = manager.start_training({"data_dir": str(workspace)},
+        result = manager.start_training(_base(workspace),
                                         expected_dataset_fingerprint=shown)
     assert result["success"] is False
     assert result["error"] == ("The dataset changed since it was shown; select it again. "
@@ -151,7 +157,7 @@ def test_the_manifest_shown_that_cannot_be_read_is_refused_as_unreadable(workspa
 
     shown = hashlib.sha256(path.read_bytes()).hexdigest()
     with patch("subprocess.Popen") as popen:
-        result = TrainingManager().start_training({"data_dir": str(workspace)},
+        result = TrainingManager().start_training(_base(workspace),
                                                   expected_dataset_fingerprint=shown)
     assert result["success"] is False
     assert result["error"] == ("The dataset's split_manifest.json cannot be read now "
@@ -165,7 +171,7 @@ def test_without_an_expected_fingerprint_nothing_is_checked(workspace):
     fingerprint) starts as before."""
     _rewrite_manifest(workspace)
     with patch("subprocess.Popen", return_value=FakeProcess(pid=8)):
-        result = TrainingManager().start_training({"data_dir": str(workspace)})
+        result = TrainingManager().start_training(_base(workspace))
     assert result["success"] is True
 
 

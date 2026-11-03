@@ -45,7 +45,8 @@ def test_auto_means_cuda_where_cuda_exists(monkeypatch):
 
 
 def test_train_refuses_before_reading_or_writing_anything(no_cuda, tmp_path, monkeypatch):
-    """The refusal comes first: no workspace read, no directory created."""
+    """The refusal comes first: no workspace read, no directory created. A base
+    run, given exactly the fields it sets as the operator's."""
     from scripts import train_model
 
     def _must_not_run(*args, **kwargs):
@@ -54,14 +55,11 @@ def test_train_refuses_before_reading_or_writing_anything(no_cuda, tmp_path, mon
     monkeypatch.setattr(train_model, "read_training_inputs", _must_not_run)
     workspace = tmp_path / "ws"
     workspace.mkdir()
-    config = train_model.TrainConfig(
-        data_dir=str(workspace),
-        run_dir=str(tmp_path / "run"),
-        device="auto",
-    )
+    fields = {"data_dir": str(workspace), "run_dir": str(tmp_path / "run"),
+              "learning_stage": "base", "device": "auto"}
 
-    with pytest.raises(train_model.TrainingDeviceUnavailable):
-        train_model.train(config)
+    with pytest.raises(train_model.TrainingDeviceUnavailable, match="requires CUDA"):
+        train_model.train(train_model.TrainConfig(**fields), set(fields))
 
     assert sorted(p.name for p in tmp_path.iterdir()) == ["ws"]
 

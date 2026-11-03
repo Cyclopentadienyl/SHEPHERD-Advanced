@@ -99,22 +99,26 @@ FAILURES = {
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("case", sorted(FAILURES))
 def test_training_refuses_before_anything_is_written(tmp_path, monkeypatch, case):
-    """At the top of the run: no run directory, no model, nothing restored."""
+    """At the top of the run (a base): no run directory, no graph view, no
+    model, nothing restored."""
     import scripts.train_model as train_model
+    import src.kg.graph_view as graph_view
+    import src.models.bundle as bundle
     from src.kg.artifacts import DatasetRecordRefused
 
     tamper, binding, fragment = FAILURES[case]
     workspace = write_generated_workspace(tmp_path / "ws", training_fields=True, **IDS)[0]
     tamper(workspace)
-    for name in ("create_dataloaders", "create_model_from_config", "Trainer",
-                 "read_resume_parent"):
-        monkeypatch.setattr(train_model, name, lambda *a, _n=name, **k: (_ for _ in ()).throw(
+    for module, name in ((train_model, "Trainer"), (train_model, "read_resume_checkpoint"),
+                         (graph_view, "build_graph_view"), (bundle, "build_bundle")):
+        monkeypatch.setattr(module, name, lambda *a, _n=name, **k: (_ for _ in ()).throw(
             AssertionError(f"{_n} ran after a refusal")))
     run = tmp_path / "run"
 
     with pytest.raises(DatasetRecordRefused, match=fragment) as refused:
         train_model.train(train_model.TrainConfig(
-            data_dir=str(workspace), run_dir=str(run), device="cpu", num_workers=0))
+            data_dir=str(workspace), run_dir=str(run), learning_stage="base", device="cpu"),
+            {"learning_stage", "device"})
 
     assert refused.value.binding == binding
     assert not run.exists(), "a run artifact was written before the refusal"
