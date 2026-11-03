@@ -56,7 +56,6 @@ from src.reasoning.evidence_panel import (
     EvidencePackage,
     EvidenceMode,
     ConfidenceLabel,
-    AnalogyMatch,
     create_evidence_panel,
 )
 
@@ -78,6 +77,5 @@ __all__ = [
     "EvidencePackage",
     "EvidenceMode",
     "ConfidenceLabel",
-    "AnalogyMatch",
     "create_evidence_panel",
 ]

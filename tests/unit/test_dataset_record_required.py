@@ -290,15 +290,18 @@ STUB_CHECKPOINT_SHA256 = "c" * 64
 
 
 def _built(self, checkpoint_path, device, *, expected_sha256=None):
-    """Stands for a model built from one checkpoint read: it keeps the read's
-    identity, as `_load_model_from_checkpoint` does, so the served identity names
-    the verified checkpoint. A module with parameters, so the device in effect
-    is read from it as from any served model."""
+    """Stands for a disease task model built from one checkpoint read: it keeps
+    the read's identity, as `_load_model_from_checkpoint` does, so the served
+    identity names the verified checkpoint. A module with parameters, so the
+    device in effect is read from it as from any served model, and the task
+    every served model names (the scoring mode is read from it)."""
     from src.utils.fingerprint import ReadIdentity
 
     self._checkpoint_identity = ReadIdentity(
         path=Path(checkpoint_path), sha256=STUB_CHECKPOINT_SHA256)
-    return torch.nn.Linear(1, 1)
+    model = torch.nn.Linear(1, 1)
+    model.task = "disease"
+    return model
 
 
 def _pipeline(monkeypatch, workspace, checkpoint_path, load=None):
@@ -316,9 +319,7 @@ def _pipeline(monkeypatch, workspace, checkpoint_path, load=None):
     )
     monkeypatch.setattr(
         pipeline.DiagnosisPipeline, "_precompute_node_embeddings",
-        lambda self, device=None: setattr(
-            self, "_node_embeddings", {"phenotype": object(), "disease": object()}
-        ),
+        lambda self, device=None: setattr(self, "_bundle_z", object()),
     )
     return pipeline.DiagnosisPipeline(
         graph=KnowledgeGraph.read_json(workspace / "kg.json"),
@@ -375,11 +376,15 @@ def test_a_pipeline_over_no_workspace_is_refused(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# The inventory and the one-time move
+# The inventory
 # ---------------------------------------------------------------------------
 def test_the_inventory_shows_the_record_and_judges_no_checkpoint_over_a_refused_one(tmp_path):
+    """Over the accepted record the checkpoint is judged (a file without a model
+    spec, refused in the model record's own words); over the refused record it
+    is not judged at all."""
     import scripts.audit_checkpoint_family as audit
     from scripts.train_model import read_training_inputs, training_input_digests
+    from src.models.bundle.record import HISTORY_ONLY
 
     root = tmp_path / "workspaces"
     sound = write_generated_workspace(root / "a", training_fields=True, **IDS)[0]
@@ -399,8 +404,8 @@ def test_the_inventory_shows_the_record_and_judges_no_checkpoint_over_a_refused_
     assert a["dataset_record"]["verdict"] == "accepted"
     assert (a["dataset_record"]["binding"], a["dataset_record"]["origin"]) == (
         "verified", "synthetic")
-    assert a["checkpoints"]["a/checkpoints/hgt/good.pt"]["m2_contract"][
-        "serve_and_measure"]["verdict"] == "accepted"
+    judged = a["checkpoints"]["a/checkpoints/hgt/good.pt"]["m2_contract"]["serve_and_measure"]
+    assert judged["verdict"] == "refused" and HISTORY_ONLY in judged["reason"]
 
     assert b["graph"]["verdict"] == "accepted"
     assert (b["dataset_record"]["verdict"], b["dataset_record"]["binding"]) == (
@@ -436,25 +441,6 @@ def test_one_unreadable_record_does_not_stop_the_inventory(tmp_path, monkeypatch
     b = report["workspaces"]["b"]["dataset_record"]
     assert (b["verdict"], b["binding"]) == ("refused", None)
     assert "the disk said no" in b["reason"]
-
-
-def test_the_move_leaves_a_refused_workspaces_files_in_place(tmp_path):
-    """Serving would refuse every file in it, so none is judged importable."""
-    import scripts.migrate_checkpoints as tool
-    from scripts.train_model import read_training_inputs, training_input_digests
-
-    workspace = write_generated_workspace(tmp_path / "ws", training_fields=True, **IDS)[0]
-    record = training_input_digests(read_training_inputs(workspace))
-    path = workspace / "checkpoints" / "hgt" / "good.pt"
-    path.parent.mkdir(parents=True)
-    torch.save({"state_dict": {"w": torch.zeros(2)}, "training_input_digests": record,
-                "config": {"model_config": {"conv_type": "hgt"}}}, path)
-    _missing(workspace)
-
-    [entry] = tool.classify(workspace)
-    assert entry["kind"] == "unverifiable"
-    assert "the workspace is refused" in entry["reason"]
-    assert "DatasetRecordRefused" in entry["reason"]
 
 
 # ---------------------------------------------------------------------------

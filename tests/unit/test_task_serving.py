@@ -8,7 +8,10 @@ a reference cohort version's patients ranked, the query's own case id left
 out, the version named on the result. A patients-like-me model without a
 reference, or a reference given to another model, is refused. Its pipeline's
 bound inputs, which the reference cohort's binding reads, are the reads its
-build took (served on this child since K8-2a; `test_served_rank`'s before).
+build took (`test_bound_inputs_are_the_reads_the_build_took`, served on this
+child since K8-2a). Each task's served identity and status validate against the
+API's schemas, the gene model's η its own and the others' null (K8-4, API1,
+API2).
 
 Module: tests/unit/test_task_serving.py
 """
@@ -26,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 from src.core.types import (  # noqa: E402
     GENE_TASK,
     PATIENTS_LIKE_ME,
+    TASK_SCORING_MODES,
     GeneTaskCandidate,
     NodeID,
     PatientCandidate,
@@ -208,6 +212,56 @@ def _gene_response(trained):
     result = _pipeline(trained, "gene").run(PatientPhenotypes(
         patient_id="g3", phenotypes=["HP:0001250"], candidate_genes=["SCN1A", "PTEN"]))
     return _response(result, "g3", sp_bounds=list(result.sp_bounds))
+
+
+#: The status fields that left with the served mixture and the shortest-path
+#: table (K8-4, API2): absent from the status and the pipeline's configuration.
+RETIRED_STATUS_FIELDS = {"sp_ready", "eta_configured", "sp_max_hops", "sp_hop_bound_source",
+                         "sp_kg_binding", "fingerprint_warnings"}
+
+
+@pytest.mark.parametrize("task", ["disease", "gene", "patients_like_me"])
+def test_each_tasks_identity_and_status_validate_with_its_own_eta(
+        trained, trained_disease_child, tmp_path, monkeypatch, task):
+    """API1, API2 (K8-4): each task's child, built as the service builds it.
+    Its served identity validates against the API's mirror and inside the
+    response to one of its results; its status validates as
+    `PipelineStatusResponse` and carries none of the retired fields. The
+    identity's `settings.eta` is the gene spec's own η for a gene model (0.5 in
+    the demo) and null for a disease or patients-like-me model, which mix
+    nothing; the status's `scoring_mode` and `eta_effective` are the
+    identity's."""
+    from src.api.routes.diagnose import ServedIdentity
+    from src.api.routes.pipeline import PipelineStatusResponse, _status_of
+
+    children = trained_disease_child if task == "disease" else trained
+    pipeline = _pipeline(children, task)
+    identity = pipeline.served_identity().to_dict()
+    config = pipeline.get_pipeline_config()
+    status = _status_of(config, str(children["data_dir"]), str(children[task]))
+
+    eta = pipeline.model.task_head.spec.gene.eta if task == "gene" else None
+    assert (task != "gene") or eta == 0.5
+    assert identity["settings"]["eta"] == eta
+    assert identity["shortest_paths"] == {
+        "state": "computed" if task == "gene" else "absent"}
+    assert ServedIdentity.model_validate(identity).model_dump() == identity
+    if task == "gene":
+        response = _gene_response(trained)
+    elif task == "patients_like_me":
+        response = _patients_response(trained, tmp_path, monkeypatch)
+    else:
+        result = pipeline.run(PatientPhenotypes(patient_id="d1",
+                                                phenotypes=["HP:0001250", "HP:0001263"]),
+                              top_k=3, include_explanations=False)
+        response = _response(result, "d1")
+    assert response.root.served_identity.model_dump() == identity
+    as_json = status.model_dump(mode="json")
+    assert PipelineStatusResponse.model_validate(as_json).model_dump(mode="json") == as_json
+    assert status.scoring_mode == identity["scoring_mode"] == TASK_SCORING_MODES[task]
+    assert status.eta_effective == identity["settings"]["eta"]
+    assert not RETIRED_STATUS_FIELDS & set(as_json)
+    assert not RETIRED_STATUS_FIELDS & set(config)
 
 
 def test_the_api_resolves_a_reference_cohort_and_validates_the_response(trained, tmp_path,

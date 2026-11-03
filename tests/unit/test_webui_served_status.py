@@ -54,12 +54,12 @@ def test_no_root_means_no_serving_workspace(tmp_path, monkeypatch):
 BASE = {
     "current_data_dir": "/srv/ws/demo",
     "served_identity": {
-        "scoring_mode": "gnn_only",
+        "scoring_mode": "disease_task",
         "checkpoint": {"state": "verified", "sha256": "a" * 64},
         "graph": {"state": "verified", "kg_sha256": "b" * 64, "split_manifest_sha256": "c" * 64},
-        "shortest_paths": {"state": "absent", "build_id": None, "max_hops": None},
+        "shortest_paths": {"state": "absent"},
         "dataset_record": {"state": "verified", "origin": "synthetic", "sha256": "d" * 64},
-        "settings": {"eta": 1.0, "device": "cpu"},
+        "settings": {"eta": None, "device": "cpu"},
     },
 }
 
@@ -68,9 +68,9 @@ BASE = {
     (("current_data_dir",), "/srv/ws/demo_copy"),
     (("served_identity", "checkpoint", "sha256"), "e" * 64),
     (("served_identity", "graph", "kg_sha256"), "f" * 64),
-    (("served_identity", "shortest_paths", "build_id"), "build-2"),
-    (("served_identity", "scoring_mode"), "gnn_plus_shortest_path"),
-    (("served_identity", "settings", "eta"), 0.7),
+    (("served_identity", "shortest_paths", "state"), "computed"),
+    (("served_identity", "scoring_mode"), "gene_task"),
+    (("served_identity", "settings", "eta"), 0.5),
     (("served_identity", "dataset_record", "origin"), "files"),
 ])
 def test_served_key_sees_every_part_of_what_is_served(path, value):

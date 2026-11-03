@@ -9,7 +9,6 @@ from pathlib import Path
 import pytest
 
 from src.utils.checkpoint_paths import (
-    normalize_conv_type,
     ranking_score_detail,
     select_checkpoint_in_dir,
 )
@@ -20,24 +19,6 @@ def _touch(path: Path, mtime: float) -> Path:
     path.write_text("x", encoding="utf-8")
     os.utime(path, (mtime, mtime))
     return path
-
-
-# --------------------------------------------------------------- normalize
-def test_normalize_conv_type_valid_and_missing():
-    assert normalize_conv_type("HGT") == "hgt"
-    assert normalize_conv_type("  gat ") == "gat"
-    assert normalize_conv_type("sage") == "sage"
-    # missing/empty -> default is fine
-    assert normalize_conv_type(None) == "gat"
-    assert normalize_conv_type("") == "gat"
-    assert normalize_conv_type("   ") == "gat"
-
-
-@pytest.mark.parametrize("bad", ["bogus", "gatv2", "gps", "hg", "GATT"])
-def test_normalize_conv_type_explicit_invalid_raises(bad):
-    # An explicit but unsupported value must fail loud, not silently become GAT.
-    with pytest.raises(ValueError, match="Unsupported conv_type"):
-        normalize_conv_type(bad)
 
 
 # --------------------------------------------------------------- resolve dir
@@ -233,7 +214,7 @@ def test_runs_list_most_recently_trained_first(tmp_path):
 def test_selection_is_the_latest_run_then_the_existing_in_run_order(tmp_path):
     """Runs are not ranked against each other by metric: an older run's higher
     score does not win."""
-    from src.utils.checkpoint_paths import select_auto_run_checkpoint, select_run_checkpoint
+    from src.utils.checkpoint_paths import select_auto_run_checkpoint
 
     root = tmp_path / "runs"
     _touch(root / "hgt" / "20261001-000000_old_111111" / "checkpoints" / "model-40-hi.pt", 100)
@@ -242,24 +223,18 @@ def test_selection_is_the_latest_run_then_the_existing_in_run_order(tmp_path):
     _touch(newer / "model-20-hi.pt", 501)
     fn = _score_map({"model-40-hi.pt": 0.95, "model-05-lo.pt": 0.30, "model-20-hi.pt": 0.85})
 
-    path, reason = select_run_checkpoint(tmp_path, "hgt", score_fn=fn)
-    assert path == newer / "model-20-hi.pt"
-    assert "20261002-000000_new_222222" in reason
-
-    path, architecture, _ = select_auto_run_checkpoint(tmp_path, score_fn=fn)
+    path, architecture, reason = select_auto_run_checkpoint(tmp_path, score_fn=fn)
     assert (path, architecture) == (newer / "model-20-hi.pt", "hgt")
+    assert "20261002-000000_new_222222" in reason
 
 
 def test_with_accept_the_record_decides_and_later_runs_are_never_judged(tmp_path):
-    """The latest run holding an accepted file wins among the layout keys
-    searched (the ShepherdGNN conv types unless told: a task's search names
-    every run-layout key); the runs after it are not judged (`accept` may read
-    every file it is asked about)."""
-    from src.utils.checkpoint_paths import (
-        RUN_LAYOUT_KEYS,
-        select_auto_run_checkpoint,
-        select_run_checkpoint,
-    )
+    """The latest run holding an accepted file wins among every run-layout
+    key; the runs after it are not judged (`accept` may read every file it is
+    asked about). The default searches every key (K8-4 retired the ShepherdGNN
+    conv-type default), so the accepted `gatv2` child is chosen over an older
+    accepted `sage` run."""
+    from src.utils.checkpoint_paths import select_auto_run_checkpoint
 
     root = tmp_path / "runs"
     _touch(root / "hgt" / "20261004-000000_new_444444" / "checkpoints" / "last.pt", 400)
@@ -272,28 +247,19 @@ def test_with_accept_the_record_decides_and_later_runs_are_never_judged(tmp_path
         judged.append(path.parent.parent.name)
         return path.name == "ok.pt"
 
-    path, key, reason = select_auto_run_checkpoint(tmp_path, accept=accept, keys=RUN_LAYOUT_KEYS)
+    path, key, reason = select_auto_run_checkpoint(tmp_path, accept=accept)
     assert (path, key) == (child, "gatv2") and "20261003-000000_mid_333333" in reason
     assert set(judged) == {"20261004-000000_new_444444", "20261003-000000_mid_333333"}
-    judged.clear()
-    # The conv types only (the ShepherdGNN reload): a gatv2 run is never read.
-    assert select_auto_run_checkpoint(tmp_path, accept=accept)[1] == "sage"
-    assert set(judged) == {"20261004-000000_new_444444", "20261002-000000_sage_222222"}
     assert select_auto_run_checkpoint(tmp_path)[1] == "hgt", "without accept: the newest run"
-    assert select_run_checkpoint(tmp_path, "sage", accept=accept)[0].parent.parent.name == (
-        "20261002-000000_sage_222222")
-    assert select_run_checkpoint(tmp_path, "hgt", accept=accept) == (
-        None, "no run of 'hgt' has a checkpoint")
     assert select_auto_run_checkpoint(tmp_path, accept=lambda p: False)[0] is None
 
 
 def test_selection_finds_nothing_outside_the_run_layout(tmp_path):
-    from src.utils.checkpoint_paths import select_auto_run_checkpoint, select_run_checkpoint
+    from src.utils.checkpoint_paths import select_auto_run_checkpoint
 
     _touch(tmp_path / "checkpoints" / "hgt" / "last.pt", 100)
 
     assert select_auto_run_checkpoint(tmp_path)[0] is None
-    assert select_run_checkpoint(tmp_path, "hgt")[0] is None
 
 
 class TestSelectionKeepsTheListingsBoundary:
@@ -317,11 +283,7 @@ class TestSelectionKeepsTheListingsBoundary:
         return judged, accept
 
     def test_a_run_linked_outside_is_no_candidate(self, tmp_path):
-        from src.utils.checkpoint_paths import (
-            RUN_LAYOUT_KEYS,
-            select_auto_run_checkpoint,
-            select_run_checkpoint,
-        )
+        from src.utils.checkpoint_paths import select_auto_run_checkpoint
 
         workspace = tmp_path / "ws"
         inside = _touch(workspace / "runs" / "hgt" / "20261001-000000_in_111111"
@@ -331,15 +293,12 @@ class TestSelectionKeepsTheListingsBoundary:
         link.symlink_to(tmp_path / "elsewhere" / "far_run", target_is_directory=True)
         judged, accept = self._accept()
 
-        path, key, reason = select_auto_run_checkpoint(workspace, accept=accept,
-                                                       keys=RUN_LAYOUT_KEYS)
+        path, key, reason = select_auto_run_checkpoint(workspace, accept=accept)
         assert (path, key) == (inside, "hgt") and judged == ["inside.pt"]
         assert f"not read: 20261009-000000_far_999999/far.pt {self.REASON}" in reason
-        path, reason = select_run_checkpoint(workspace, "hgt")
-        assert path == inside and f"far.pt {self.REASON}" in reason
 
     def test_a_layout_directory_linked_outside_is_no_candidate(self, tmp_path):
-        from src.utils.checkpoint_paths import RUN_LAYOUT_KEYS, select_auto_run_checkpoint
+        from src.utils.checkpoint_paths import select_auto_run_checkpoint
 
         workspace = tmp_path / "ws"
         (workspace / "runs").mkdir(parents=True)
@@ -349,8 +308,7 @@ class TestSelectionKeepsTheListingsBoundary:
                                                   target_is_directory=True)
         judged, accept = self._accept()
 
-        path, key, reason = select_auto_run_checkpoint(workspace, accept=accept,
-                                                       keys=RUN_LAYOUT_KEYS)
+        path, key, reason = select_auto_run_checkpoint(workspace, accept=accept)
         assert (path, key) == (None, None) and judged == []
         assert reason == (f"no run has a checkpoint; not read: "
                           f"20261009-000000_far_999999/last.pt {self.REASON}")
@@ -359,12 +317,7 @@ class TestSelectionKeepsTheListingsBoundary:
         """A runs directory linked out of the workspace with many runs gives a
         reason of bounded length: the first `NOT_READ_NAMED` files, then how
         many more; a list given as `not_read` holds every one."""
-        from src.utils.checkpoint_paths import (
-            NOT_READ_NAMED,
-            RUN_LAYOUT_KEYS,
-            select_auto_run_checkpoint,
-            select_run_checkpoint,
-        )
+        from src.utils.checkpoint_paths import NOT_READ_NAMED, select_auto_run_checkpoint
 
         workspace = tmp_path / "ws"
         workspace.mkdir()
@@ -374,17 +327,13 @@ class TestSelectionKeepsTheListingsBoundary:
         (workspace / "runs").symlink_to(tmp_path / "elsewhere", target_is_directory=True)
 
         not_read = []
-        path, key, reason = select_auto_run_checkpoint(workspace, keys=RUN_LAYOUT_KEYS,
-                                                       not_read=not_read)
+        path, key, reason = select_auto_run_checkpoint(workspace, not_read=not_read)
         assert (path, key) == (None, None) and len(not_read) == NOT_READ_NAMED + 4
         assert reason.count(self.REASON) == NOT_READ_NAMED
         assert reason.endswith("; and 4 more file(s) not read")
-        listed = []
-        assert select_run_checkpoint(workspace, "hgt", not_read=listed)[0] is None
-        assert listed == not_read
 
     def test_the_listing_and_the_selection_give_one_reason(self, tmp_path):
-        from src.utils.checkpoint_paths import read_run_checkpoints, select_run_checkpoint
+        from src.utils.checkpoint_paths import read_run_checkpoints, select_auto_run_checkpoint
 
         workspace = tmp_path / "ws"
         run = workspace / "runs" / "hgt" / "20261001-000000_a_111111" / "checkpoints"
@@ -393,16 +342,16 @@ class TestSelectionKeepsTheListingsBoundary:
         (run / "link.pt").symlink_to(tmp_path / "elsewhere.pt")
 
         (entry,) = read_run_checkpoints(workspace, within=workspace)
-        path, reason = select_run_checkpoint(workspace, "hgt")
+        path, _, reason = select_auto_run_checkpoint(workspace)
         assert path is None
-        assert reason == f"no run of 'hgt' has a checkpoint; not read: {entry.problem}"
+        assert reason == f"no run has a checkpoint; not read: {entry.problem}"
 
 
 def test_equal_recency_is_ordered_by_name_not_by_the_filesystem(tmp_path):
     """The order is a total key (newest checkpoint, then the run's name), so
     which run is selected never depends on `iterdir()`'s order, which ext4
     gives by directory hash."""
-    from src.utils.checkpoint_paths import RUN_LAYOUT_KEYS, list_runs, select_auto_run_checkpoint
+    from src.utils.checkpoint_paths import list_runs, select_auto_run_checkpoint
 
     root = tmp_path / "runs"
     for arch, name in (("sage", "20261001-000000_a_111111"),
@@ -412,10 +361,10 @@ def test_equal_recency_is_ordered_by_name_not_by_the_filesystem(tmp_path):
 
     assert [r.name for r in list_runs(tmp_path)] == [
         "20261003-000000_c_333333", "20261002-000000_b_222222", "20261001-000000_a_111111"]
-    assert select_auto_run_checkpoint(tmp_path, keys=RUN_LAYOUT_KEYS)[1] == "gatv2"
+    assert select_auto_run_checkpoint(tmp_path)[1] == "gatv2"
     _touch(root / "sage" / "20261001-000000_a_111111" / "checkpoints" / "last.pt",
            1_700_000_900)
-    assert select_auto_run_checkpoint(tmp_path, keys=RUN_LAYOUT_KEYS)[1] == "sage", (
+    assert select_auto_run_checkpoint(tmp_path)[1] == "sage", (
         "newer training wins over the name")
 
 

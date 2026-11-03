@@ -119,7 +119,7 @@ def test_the_serving_phase_passes_and_identifies_what_it_serves(trained, served_
         "sha256": digest(sound / "kg.provenance.json")}
     # A disease child is served with no shortest-path term: stated, not left
     # blank.
-    assert identity["shortest_paths"] == {"state": "absent", "build_id": None, "max_hops": None}
+    assert identity["shortest_paths"] == {"state": "absent"}
     assert identity["scoring_mode"] == "disease_task"
     assert probes["E1"].facts["scoring_mode"] == "disease_task"
     assert "sp_ready" not in probes["E1"].facts
@@ -270,13 +270,10 @@ def _changed(identity, part, **values):
     ("dataset_record", {"origin": "files"}, "not the record the workspace check verified"),
     ("dataset_record", {"sha256": "4" * 64}, "not the record the workspace check verified"),
     # The disease task is served with no shortest-path term (the task table):
-    # a verified table, or the gene task's computed distances, is another.
-    ("shortest_paths", {"state": "verified", "build_id": "a" * 32, "max_hops": 5},
-     "not the absent term the disease task is served with"),
+    # the gene task's computed distances are another.
     ("shortest_paths", {"state": "computed"},
      "not the absent term the disease task is served with"),
     (None, {"scoring_mode": "gene_task"}, "scoring mode"),
-    (None, {"scoring_mode": "gnn_only"}, "scoring mode"),
     ("settings", {"device": "cuda:0"}, "not the requested cpu"),
     ("settings", {"device_requested": "auto"}, "not the requested cpu"),
 ])

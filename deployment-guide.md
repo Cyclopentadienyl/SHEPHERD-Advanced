@@ -975,9 +975,10 @@ nvidia-smi  # GPU利用率應該>80%
 
 **任務模型從不讀這張表。** 疾病模型對其圖視圖中的每個疾病排序，基因模型則在程序內從
 視圖算出它所用的精確跳數距離（`src/kg/graph_view.py` 的 `exact_distances`），所以為任務
-模型建工作區時沒有最短路徑步驟。以下描述的是仍會讀這張表的唯一路徑：沒有 model spec 的
-checkpoint（ShepherdGNN 歷史檔），WebUI 從不執行它，但命令列與 API 的模型 reload 在 K8
-之前仍可經由 mixture 服務它。
+模型建工作區時沒有最短路徑步驟。**自 K8-4 起不再有任何服務讀這張表**：過去唯一會讀它的模型——
+沒有 model spec 的 checkpoint（ShepherdGNN 歷史檔）——在載入時、建出任何模型之前就被拒絕
+（§4.7），服務它所用的 mixture 也已移除。以下描述的是 `scripts/compute_shortest_paths.py` 發佈、
+盤點所檢查的這一對檔案，直到 K8-5 讓這些檔案退役為止。
 
 GB10 驗收（`scripts/probe_deployment.py --m2-acceptance`）同樣不讀這張表：它的真實資料階段
 驗證工作區（R1），並在其上訓練、測量與服務任務模型，所以工作區建好即可驗收。工作區裡已有
@@ -1003,18 +1004,18 @@ GB10 驗收（`scripts/probe_deployment.py --m2-acceptance`）同樣不讀這張
 
 ### 優先順序
 
-**距離表只會連同發佈時的 sidecar 一起上線。** 自 contract M2.5 起（2026-10-13），
+**距離表只會連同發佈時的 sidecar 一起被接受。** 自 contract M2.5 起（2026-10-13），
 sidecar 必須帶有這張表的來源綁定（`schema_version`、`build_id`、`kg_digest`），而
 它的 `max_hops` 是 hop bound 唯一的來源。沒有 sidecar、或 sidecar 寫於配對協定之前
-的距離表，會在載入時被拒絕。
+的距離表，會被拒絕。
 
 1. **優先找回與距離表一起發佈的 sidecar**，之後兩個檔案一起保存、搬移。
 2. **否則為這個工作區重建這一對**：執行 `scripts/compute_shortest_paths.py`，它會把
    距離表與 sidecar 一起發佈，並綁定到這個工作區的圖。**不要手寫 sidecar，也不要用
    表內最大距離回推 `max_hops`**——那個數字證明不了天花板。
-3. 在那之前，要嘛保留正在服務的部署，要嘛改以不含最短路徑的方式服務：把
-   `shortest_paths.pt` **與** `shortest_paths.meta.json` 成對移出工作區並保留，再重新
-   載入。只留下 sidecar 會被當成「一對中的一邊」而拒絕。評分模式會因此改變。
+3. 或者把這一對移出工作區：把 `shortest_paths.pt` **與** `shortest_paths.meta.json`
+   成對移出並保留。只留下 sidecar 會被當成「一對中的一邊」而拒絕。無論哪種做法，服務都不受
+   影響（沒有任務模型讀這張表）。
 
 原本用來替缺 sidecar 的表補上 bound 的 `SHEPHERD_SP_HOP_BOUND`，已隨 M2.5 **退役**：
 這類表在讀取任何 bound 之前就會被拒絕，因此這個變數不再被讀取。請從服務環境中移除它。
@@ -1033,53 +1034,32 @@ sidecar 必須帶有這張表的來源綁定（`schema_version`、`build_id`、`
 
 **在這個機制之前建的表會被拒絕**（自 contract M2.5 起，2026-10-13；以前會帶著警告
 載入並回報為 `unrecorded`）。它沒有綁定資訊，沒有任何紀錄說明它的節點索引屬於哪個
-圖。請用 `scripts/compute_shortest_paths.py` 重新建置，或移除它、改以不含最短路徑的
-方式服務。
-
-`GET /api/v1/pipeline/status` 會回報 `sp_kg_binding`：表確實指向正在服務的那個圖
-時為 `verified`。**只要最短路徑是開啟的，它就不會是空的。**
-
-**管線一律從工作區建立**（自 K7 起不再服務以記憶體交入的圖或模型），所以綁定一律對照
-工作區自己的圖檢查。
+圖。請用 `scripts/compute_shortest_paths.py` 重新建置，或連同 sidecar 一起移出；服務不讀它。
 
 
 ### 缺少、未綁定或不合法的 sidecar
 
-距離表存在，而它的 sidecar **缺少、未帶綁定、或不合法**（不是 JSON 物件、`max_hops`
-不是整數或超出 1..127、或低於表內距離）時，候選 pipeline 會被**拒絕**，而不是退回
-猜測：
-
-- 服務**尚無**可用 pipeline（冷啟動）→ `/api/v1/diagnose` 回 **503**，不會回傳任何
-  候選疾病。
-- 服務**已有**正在運行的 pipeline → 該次 reload 被拒絕，**舊 pipeline 繼續服務**。
+距離表存在，而它的 sidecar **缺少、未帶綁定、或不是可讀的 JSON 物件**時，這一對會被**拒絕**，
+而不是用猜測補齊。自 K8-4 起這不會改變任何服務（沒有服務中的模型讀這張表）：這個拒絕是盤點
+對這一對的判定（`scripts/audit_checkpoint_family.py --inventory`，K8-5 之前）。為這個工作區
+重建這一對、或把它們成對移出，就會消除它。
 
 ### 完全沒有距離表時
 
-沒有 `shortest_paths.pt`（也沒有 sidecar）時，在預設配置（GNN 已載入、
-`sp_optional=True`）下**服務不會停止**，而是改為純 GNN 評分：`sp_ready=False`、
-`scoring_mode=gnn_only`、eta 實際為 1.0。**分數與排序會與啟用最短路徑時不同。** 每個
-結果的 served identity（§4.7）也會如實標明：最短路徑 `absent`、評分模式 `gnn_only`、eta
-`1.0`；Diagnosis 分頁與其報告會顯示 `NO SHORTEST-PATH TABLE: GNN score alone.` 橫幅。
-
-> **例外：** 若部署刻意設定了 `sp_optional=False`，SP 不可用時**不會建出 pipeline**：
-> 建置被拒絕（`PipelineBuildError`），啟動時不發布任何 pipeline、`/diagnose` 回 503；
-> reload 則被拒絕，原本的 pipeline 繼續服務。這不是「一律退回純 GNN」。目前 API 的
-> 建置路徑使用預設值 `sp_optional=True`。
+不會有任何改變：沒有任務模型讀這張表，所以沒有這一對的工作區，訓練、測量與服務都與有這一對時
+完全相同。（K8-4 之前，沒有距離表時服務的 ShepherdGNN 檔只以 GNN 分數排序，即 `gnn_only`；這個
+模式已隨 mixture 移除。）
 
 ### 狀態檢查
 
-```bash
-curl -s http://localhost:8000/api/v1/pipeline/status
-```
+自 K8-4 起 `GET /api/v1/pipeline/status` 不再回報任何關於距離表的事：它的 `sp_ready`、
+`sp_max_hops`、`sp_hop_bound_source`、`sp_kg_binding` 與 `eta_configured` 欄位已隨 mixture
+移除。它回報的是所服務模型自己的事實：
 
 | 欄位 | 預期 |
 |---|---|
-| `sp_ready` | 啟用時 `true`；沒有距離表時 `false` |
-| `sp_max_hops` | 實際生效的天花板，讀自 sidecar |
-| `sp_hop_bound_source` | `sidecar`（設定值退役後唯一的來源） |
-| `sp_kg_binding` | `verified` |
-| `scoring_mode` | 啟用時 `gnn_plus_shortest_path`；SP 關閉且 GNN 正常時 `gnn_only` |
-| `served_identity` | 目前載入的 pipeline 服務的是什麼（§4.7）。啟用時：`shortest_paths.state` 為 `verified`，帶 sidecar 的 `build_id` 與 `max_hops`，`scoring_mode` 為 `gnn_plus_shortest_path`。沒有距離表時：`shortest_paths.state` 為 `absent`、`gnn_only`、`settings.eta` 為 `1.0` |
+| `scoring_mode` | 所服務模型的任務：`disease_task`、`gene_task` 或 `patients_like_me`；距離表從不改變它 |
+| `served_identity` | 目前載入的 pipeline 服務的是什麼（§4.7）：基因模型的 `shortest_paths.state` 為 `computed`（從其圖視圖算出的精確跳數距離，沒有距離表），另外兩種為 `absent`；`settings.eta` 為基因模型的 η，另外兩種為 null |
 
 ---
 
@@ -1329,7 +1309,7 @@ BACKLOG 49）。
 ## 4.7 診斷結果是由什麼產生的：served identity（自 contract M3c 起）
 
 自 contract M3c 起（2026-10-16），每一個診斷結果都帶有 **served identity**：產生它的
-checkpoint、圖、workspace manifest、最短路徑表與 dataset record，以 digest 或識別碼標明，
+checkpoint、圖、workspace manifest、最短路徑項與 dataset record，以 digest 或識別碼標明，
 再加上評分模式與實際生效的 serving 設定——**每個部分都用文字寫出自己的狀態**。pipeline
 是從建置時實際讀取的內容組出這份身分，產生結果時不會重新雜湊任何檔案，也不會用
 「unknown」填空。
@@ -1361,25 +1341,17 @@ checkpoint、圖、workspace manifest、最短路徑表與 dataset record，以 
 | `disease_task/v1` | 服務的是為疾病任務 finetune 的模型 | `score`，疾病 head 的分數（在 [−4, 0]，未校準），涵蓋模型圖視圖中的每個疾病；證據欄位只解釋該列，不改變分數或順序 | `tie_policy` |
 | `gene_task/v1` | 服務的是基因任務模型；它排序請求的 `candidate_genes` | `score` = η × `embsim` + (1 − η) × `sp_similarity`；`embsim`；`sp_similarity`；`mean_distance`，從模型圖視圖算出的精確平均跳數距離 | `sp_bounds`、`tie_policy`（η 為 served identity 的 `settings.eta`） |
 | `patients_like_me/v1` | 服務的是 patients-like-me 模型，並指定參考 cohort 版本 | `similarity`（在 [−4, 0]，未校準）；`case_id`、紀錄的 `phenotypes`、診斷與 `causal_genes` | `reference_cohort`、`tie_policy` |
-| `served_mixture/v1` | 服務的是沒有 model spec 的 checkpoint（ShepherdGNN 歷史檔）——WebUI 從不如此；命令列與 API 的 reload，K8 之前 | `served_score`，排名所依的值：有最短路徑表時為 η × `model_term` + (1 − η) × SP，沒有時就是 `model_term`；`model_term`，即 (cos + 1) / 2；`sp_term`，SP 紀錄 | `eta`、`candidates_reached`（截斷前 discovery 到達的疾病數）、`tie_policy` |
 
 路徑推理的回答（`path_reasoning/v1`，沒有模型而只服務圖）與 demo 回答（`demo/v1`）自 K7 起
-已移除：沒有模型就沒有回答（503，見上）。
+已移除：沒有模型就沒有回答（503，見上）。沒有 model spec 的 checkpoint 過去所用的 mixture
+回答（`served_mixture/v1`：`served_score`、`model_term`、`sp_term`、`eta`、
+`candidates_reached`）自 K8-4 起已移除：這類檔案在載入時就被拒絕（見下「沒有模型就沒有回答」）。
 
 - **已移除，沒有別名：** `confidence_score`、`gnn_score`、`sp_score`、`reasoning_score` 與
   `confidence_label`（改為 `evidence_label`，`evidence_package` 內也一樣）。原本讀取這些欄位
-  的用戶端，改讀該類型自己的欄位。以下各點描述 mixture 的 `sp_term` 與拒絕條件。
-- **`sp_term` 不會把缺少的值寫成 0。** 它的 `status` 為 `COMPUTED`、`COMPUTED_PARTIAL`
-  （部分送出的表型未能對應；`phenotypes_mapped` / `phenotypes_submitted` 寫明數量）、
-  `NO_TABLE`、`TARGET_UNMAPPED` 或 `NO_PHENOTYPE_MAPPED`。`mean_hop_distance` 與 `score`
-  （1 / (1 + d)）只在前兩種狀態出現。實際服務的結果中，只有 `NO_TABLE`（在 `gnn_only`
-  下，不做混合）沒有數值：圖的節點對應中缺少的疾病或表型，會先以「無法計算的模型分數」
-  被拒絕（見下）。若真有沒有數值的狀態被混合，混合分數會以 0 計入，紀錄上也會寫明
-  （`mixed_as: 0.0`）。
-- **合法輸入的排名不變**：數值、順序與平手都相同（`served_score` 就是原本的
-  `confidence_score`）。
-- **新增的拒絕條件。** 服務無法計算的模型分數（沒有 embedding、沒有表、某個節點沒有對應列，
-  或對應列超出表的範圍——過去會被截到最後一列）或不是有限值的分數，會拒絕整個結果：HTTP 500，
+  的用戶端，改讀該類型自己的欄位。
+- **拒絕條件。** 服務無法計算的模型分數（圖中有、但節點對應中沒有對應列的表型）或不是有限值的
+  分數，會拒絕整個結果：HTTP 500，
   `error` 以代碼開頭（`MODEL_TERM_UNAVAILABLE: …`、`NON_FINITE_SCORE: …`）。在已驗證的
   workspace 上不應出現這些狀態。圖中沒有任何表型的輸入照舊被拒絕（`No valid phenotypes after
   validation`）。未知的 id 一律列在 `phenotype_input.unknown`；請求有回答時也會以警告
@@ -1395,7 +1367,7 @@ checkpoint、圖、workspace manifest、最短路徑表與 dataset record，以 
   "checkpoint": {"state": "verified", "sha256": "<所讀 checkpoint 的 SHA-256>"},
   "graph": {"state": "verified", "kg_sha256": "<kg.json 的 SHA-256>",
             "split_manifest_sha256": "<split_manifest.json 的 SHA-256>"},
-  "shortest_paths": {"state": "absent", "build_id": null, "max_hops": null},
+  "shortest_paths": {"state": "absent"},
   "dataset_record": {"state": "verified", "origin": "files",
                      "sha256": "<kg.provenance.json 的 SHA-256>"},
   "settings": {"device": "cuda:0", "device_requested": "auto", "eta": null,
@@ -1413,40 +1385,41 @@ checkpoint、圖、workspace manifest、最短路徑表與 dataset record，以 
 |---|---|---|---|
 | `checkpoint` | `verified` | 模型由一次讀取的 checkpoint 建成，且其紀錄與正在服務的圖相符（contract M2.4） | `sha256`：那次讀取的 digest |
 | `graph` | `verified` | `kg.json` 與 `split_manifest.json` 各讀一次，且圖的 digest 與 manifest 相符 | `kg_sha256`、`split_manifest_sha256` |
-| `shortest_paths` | `computed` | 基因任務的精確跳數距離，在程序內從模型的圖視圖算出（沒有距離表） | 兩者皆為 null |
-| | `verified` | 僅 mixture：距離表與其 sidecar 共用同一個 `build_id`，並指向正在服務的圖（§4.3） | `build_id`；`max_hops`（取自 sidecar） |
-| | `absent` | 沒有最短路徑項參與評分 | 兩者皆為 null |
+| `shortest_paths` | `computed` | 基因任務的精確跳數距離，在程序內從模型的圖視圖算出（沒有距離表） | 無 |
+| | `absent` | 沒有最短路徑項參與評分（疾病與 patients-like-me 任務） | 無 |
 | `dataset_record` | `verified` | manifest 綁定、且指向正在服務之圖的紀錄（§4.4） | `origin`（`files` 或 `synthetic`）；`kg.provenance.json` 的 `sha256` |
-| `scoring_mode` | — | 任務模型為 `disease_task`、`gene_task` 或 `patients_like_me`；經由 mixture 服務的歷史檔為 `gnn_plus_shortest_path` 或 `gnn_only`（K8 之前） | |
+| `scoring_mode` | — | `disease_task`、`gene_task` 或 `patients_like_me`：所服務模型的任務 | |
 | `settings` | — | 會改變分數的 serving 設定，以實際生效者為準 | 見下 |
 
 checkpoint 的 `supplied_in_memory` 與 `absent` 狀態、圖的 `unverified` 與 `in_memory` 狀態，
 以及 `absent` 的 dataset record，自 K7 起已隨記憶體交入的介面與產生它們的路徑推理回答一起
-移除。
+移除。最短路徑的 `verified` 狀態及其 `build_id` 與 `max_hops`，以及評分模式
+`gnn_plus_shortest_path` 與 `gnn_only`，自 K8-4 起已隨產生它們的 mixture 一起移除。
 
 `settings`：
 
 - `device`：模型實際在哪裡執行——torch 對其參數所在裝置的名稱（`cuda:0`、`cpu`）。
 - `device_requested`：要求的是什麼——沒有指定時為 `auto`，或 `cuda`、`cuda:N`、`cpu`
   （§4.8）。
-- `eta`：實際生效的混合權重——基因任務的 η（取自其 model spec）；mixture 有距離表時為設定值，
-  沒有時為 `1.0`；疾病與 patients-like-me 任務不做混合，為 null。
+- `eta`：實際生效的混合權重——基因任務的 η（取自其 model spec）；疾病與 patients-like-me
+  任務不做混合，為 null。
 - `max_path_length`、`path_length_penalty`、`max_paths_per_candidate`、
-  `use_direct_path_optimization`：路徑探索與路徑評分——疾病列所顯示的證據路徑（以及
-  mixture 所排序的疾病）。路徑彙總設定（`aggregation_method`）自 K7 起已移除：不再有任何
+  `use_direct_path_optimization`：路徑探索與路徑評分——疾病列所顯示的證據路徑。路徑彙總設定（`aggregation_method`）自 K7 起已移除：不再有任何
   東西依路徑分數的彙總排序。
 - `phenotype_normalisation_version`：評分前套用於表型清單的規則版本（目前為 `1`）。
 
-各部分不能互相矛盾：每種評分模式恰有一種最短路徑狀態（`gene_task` 為 `computed`、
-`gnn_plus_shortest_path` 為 `verified`，其餘為 `absent`），與此不符的身分在建立時就被拒絕。
+各部分不能互相矛盾：每種評分模式恰有一種最短路徑狀態（`gene_task` 為 `computed`，其餘為
+`absent`），與此不符的身分在建立時就被拒絕。
 
 ### pipeline 狀態裡的同一個欄位
 
-`GET /api/v1/pipeline/status` 會針對目前載入的 pipeline 帶出 `served_identity`，與既有
-欄位並列，既有欄位不變（`scoring_mode`、`sp_kg_binding`、`dataset_record`、含 `device` 的
-`checkpoint_meta` 等）。沒有載入任何東西時為 null。**狀態描述的是現在載入的東西，reload
-會換掉它。** 要知道某個結果是由什麼產生的，請讀那個結果自己的 `served_identity`，或它的
-報告與 CSV，而不是狀態。
+`GET /api/v1/pipeline/status` 會針對目前載入的 pipeline 帶出 `served_identity`，與其他
+欄位並列（`scoring_mode` 與 `eta_effective`，分別等於身分的評分模式與 `settings.eta`；
+`dataset_record`；含 `device` 的 `checkpoint_meta` 等）。沒有載入任何東西時為 null。距離表與
+mixture 的欄位（`sp_ready`、`eta_configured`、`sp_max_hops`、`sp_hop_bound_source`、
+`sp_kg_binding`）以及 `fingerprint_warnings` 自 K8-4 起已移除。**狀態描述的是現在載入的
+東西，reload 會換掉它。** 要知道某個結果是由什麼產生的，請讀那個結果自己的
+`served_identity`，或它的報告與 CSV，而不是狀態。
 
 ### 怎麼讀
 
@@ -1454,11 +1427,9 @@ checkpoint 的 `supplied_in_memory` 與 `absent` 狀態、圖的 `unverified` �
   來源為 `files`、任務的評分模式（`disease_task`、`gene_task` 或 `patients_like_me`）及其
   最短路徑狀態、裝置 `cuda:0`，要求的是 `auto` 或 `cuda`。
 - **把 digest 與你部署的檔案比對**：checkpoint、`kg.json`、`split_manifest.json` 與
-  `kg.provenance.json` 的 SHA-256 應與身分中的 digest 相同（mixture 時，距離表的 `build_id`
-  應與 `shortest_paths.meta.json` 裡的一致）。
+  `kg.provenance.json` 的 SHA-256 應與身分中的 digest 相同。
 - **其他情況都會明寫，不會隱藏**：來源 `synthetic` 表示這是產生出來的 workspace，不是臨床
-  資料（§4.4）；`gnn_plus_shortest_path` 或 `gnn_only` 表示在 WebUI 之外經由 mixture 服務的
-  ShepherdGNN 歷史檔（§4.3）；裝置 `cpu` 是明確要求的（§4.8）。
+  資料（§4.4）；裝置 `cpu` 是明確要求的（§4.8）。
 - **它不證明什麼**，以 contract 的宣稱界線顯示在身分下方（原文照錄）："Checked: these
   files are the ones their records name, and the records agree on the relations marked ✓.
   Not checked: who changed them, or anything a person able to edit both files and records
@@ -1472,14 +1443,21 @@ checkpoint 的 `supplied_in_memory` 與 `absent` 狀態、圖的 `unverified` �
 `/api/v1/diagnose` 與 `/ready` 回 503 並附上原因，`/health` 回 200，Diagnosis 頁面提供
 「Load a model…」。reload 失敗時，使用中的模型與其就緒狀態維持不變。
 
+**沒有 model spec 的 checkpoint（ShepherdGNN 歷史檔）在載入時就被拒絕**（自 K8-4 起）：啟動時，
+以及帶或不帶任務的 reload，都在建出任何模型之前拒絕，原因為 "written before the model spec:
+listed as history and never run by this build; start a new run"。provenance contract 之前的
+檔案連訓練輸入也沒有紀錄，會先因此被拒絕（"records no training_input_digests"）。被拒絕的
+啟動不發布任何東西（503，見上）；被拒絕的 reload 讓使用中的模型繼續服務。這些檔案仍留在磁碟上、
+以歷史檔列出；過去服務它們的 mixture 已移除。
+
 ### Diagnosis 分頁與其匯出
 
 WebUI 顯示的是**結果自己的身分**，絕不是狀態的：
 
 - **結果上方的橫幅**，每個不可漏看的狀態一條：`SYNTHETIC WORKSPACE: not a clinical
-  result.`、`NO SHORTEST-PATH TABLE: GNN score alone.`（經由 mixture 服務、但沒有距離表的
-  歷史檔），以及回應沒有這個欄位時（M3c 之前的伺服器）的 `WHAT PRODUCED THIS RESULT WAS NOT
-  REPORTED.`。沒有訓練模型與 demo 的橫幅自 K7 起已隨它們描述的回答一起移除。
+  result.`，以及回應沒有這個欄位時（M3c 之前的伺服器）的 `WHAT PRODUCED THIS RESULT WAS NOT
+  REPORTED.`。沒有訓練模型與 demo 的橫幅自 K7 起、沒有最短路徑表的橫幅自 K8-4 起，已隨它們
+  描述的回答一起移除。
 - **結果上方的標記（badge）**（自 M5-2 起）把結果的整個身分逐項與「Model in use」卡片最近一次
   讀到的使用中模型比對："Produced by the model in use"、"Produced by an earlier model or
   pipeline — N parts differ ›"，或附一個原因的 "Cannot check against the model in use yet"。
@@ -1499,11 +1477,8 @@ WebUI 顯示的是**結果自己的身分**，絕不是狀態的：
   "Gene task model: your candidate genes ranked by their Score (uncalibrated), the model's
   similarity mixed with shortest-path proximity"、"Patients-like-me model: the reference
   cohort's patients ranked by Similarity (uncalibrated); a shared causal gene is not
-  implied"，或經由 mixture 服務的歷史檔的 "Served ranking today: diseases reached by path
-  discovery, scored as η × model term + (1 − η) × SP, η = 0.7"，η 取自結果本身（沒有表時為
-  "…scored by the model term alone"）。欄位依類型而定：疾病任務有 Score；基因任務有 Score、
-  模型相似度與 SP 相似度；patients-like-me 有 Similarity；混合排名有 Score 與 Model term，有
-  服務最短路徑表時旁邊再加 SP（沒有數值的狀態以文字顯示，絕不寫 0.000）。
+  implied"。欄位依類型而定：疾病任務有 Score；基因任務有 Score、模型相似度與 SP 相似度；
+  patients-like-me 有 Similarity。
 - **被拒絕的結果**（`MODEL_TERM_UNAVAILABLE`、`NON_FINITE_SCORE`）以一句話顯示代碼與節點，
   不會排出任何結果。
 - **CSV** 以欄位帶出身分（見下）。
@@ -1520,33 +1495,30 @@ WebUI 顯示的是**結果自己的身分**，絕不是狀態的：
 | `disease_task/v1` | `result_kind`、`rank`、`disease_id`、`disease_name`、`score`，接著是證據欄位 |
 | `gene_task/v1` | `result_kind`、`rank`、`gene_id`、`gene_name`、`score`、`embsim`、`sp_similarity`、`mean_distance`、`sp_bounds_lower`、`sp_bounds_upper` |
 | `patients_like_me/v1` | `result_kind`、`rank`、`case_id`、`similarity`、`disease_id`、`disease_name`、`causal_genes`、`phenotypes`、`reference_cohort_label`、`reference_cohort_version_sha256`、`reference_cohort_samples_sha256`、`reference_cohort_patients` |
-| `served_mixture/v1` | `result_kind`、`rank`、`disease_id`、`disease_name`、`served_score`、`model_term`、`sp_term_status`、`sp_term_score`、`sp_term_mean_hop_distance`、`sp_term_phenotypes_mapped`、`sp_term_phenotypes_submitted`、`sp_term_mixed_as`，接著是證據欄位 |
 
-`path_reasoning/v1`（`path_score`）與 `demo/v1` 兩列自 K7 起已移除。
+`path_reasoning/v1`（`path_score`）與 `demo/v1` 兩列自 K7 起已移除，`served_mixture/v1` 列
+（`served_score`、`model_term`、`sp_term_` 各欄）自 K8-4 起已移除。
 
 證據欄位為 `evidence_label`、`evidence_mode`、`evidence_summary`、`min_path_length`、
-`num_direct_paths`、`num_analogies`、`supporting_genes` 與 `matching_phenotypes`。
-`sp_term_status` 放在 SP 數值旁：狀態沒有數值時，數值欄留空，絕不寫 0；混合分數仍以 0 計入時，
-`sp_term_mixed_as` 為 `0.0000`。沒有建立證據包時（說明關閉），路徑數留空。`score` 與
-`served_score` 是候選欄位，不屬於下方的身分欄位。基因結果的 SP 上下界與 patients-like-me
+`num_direct_paths`、`supporting_genes` 與 `matching_phenotypes`（`num_analogies` 自 K8-4 起已隨
+類比證據移除）。沒有建立證據包時（說明關閉），路徑數留空。`score` 與 `similarity` 是候選欄位，
+不屬於下方的身分欄位。基因結果的 SP 上下界與 patients-like-me
 結果的參考 cohort 版本，每一列都相同。
 
 ### CSV 的身分欄位
 
-CSV 仍然**只有一列標題**、沒有前言。結果類型的候選欄位在前（見上）；其後接 20 個
+CSV 仍然**只有一列標題**、沒有前言。結果類型的候選欄位在前（見上）；其後接 18 個
 欄位，每欄存放身分的一個部分，**每一列都相同**：
 
 | 欄位 | 內容 | 身分中為 null 時 |
 |---|---|---|
-| `served_scoring_mode` | `disease_task`、`gene_task`、`patients_like_me`、`gnn_plus_shortest_path` 或 `gnn_only` | — |
+| `served_scoring_mode` | `disease_task`、`gene_task` 或 `patients_like_me` | — |
 | `served_checkpoint_state` | `verified` | — |
 | `served_checkpoint_sha256` | 所讀 checkpoint 的 `sha256:<hex>` | — |
 | `served_kg_state` | `verified` | — |
 | `served_kg_sha256` | 所讀 `kg.json` 的 `sha256:<hex>` | — |
 | `served_split_manifest_sha256` | 所讀 `split_manifest.json` 的 `sha256:<hex>` | — |
-| `served_sp_state` | `computed`、`verified` 或 `absent` | — |
-| `served_sp_build_id` | 距離表與其 sidecar 共用的 `build_id` | `absent` |
-| `served_sp_max_hops` | sidecar 的 `max_hops` | `absent` |
+| `served_sp_state` | `computed` 或 `absent` | — |
 | `served_dataset_record_state` | `verified` | — |
 | `served_dataset_origin` | `files` 或 `synthetic` | — |
 | `served_dataset_record_sha256` | 所讀 `kg.provenance.json` 的 `sha256:<hex>` | — |
@@ -1567,12 +1539,13 @@ CSV 仍然**只有一列標題**、沒有前言。結果類型的候選欄位在
 
 | 字 | 何時寫出 |
 |---|---|
-| `absent` | 沒有最短路徑表：它的 build id 與 hop bound |
 | `none` | 不適用：不做混合的模型沒有 η |
 | `not_reported` | 回應沒有帶 `served_identity` 時的每一個 `served_` 欄位，或回應漏掉的某個值 |
 
 記憶體中提供的模型或圖所用的字（`none` digest、`not_stated`）、沒有模型與 demo 回答所用的字
-（`demo`），以及 `served_aggregation_method` 欄位，自 K7 起已移除。
+（`demo`），以及 `served_aggregation_method` 欄位，自 K7 起已移除。`served_sp_build_id` 與
+`served_sp_max_hops` 欄位，以及寫入它們時所用的字 `absent`，自 K8-4 起已移除（距離表的 build id
+與 hop bound 已離開身分），所以 `served_sp_state` 之後的欄位比之前寫出的檔案提前兩欄。
 
 - 試算表會當成公式執行的文字儲存格——以 `=`、`+`、`-`、`@`、tab 或 carriage return
   開頭者——會在前面加上 `'`。這也適用於自由文字的候選欄位；數值欄位不受影響。
@@ -1593,7 +1566,8 @@ CSV 仍然**只有一列標題**、沒有前言。結果類型的候選欄位在
 
 - **啟動時**：服務環境中的 `SHEPHERD_DEVICE`。
 - **reload 時**：請求的 `device`（`POST /api/v1/pipeline/reload`）。null 或空白時先退回
-  `SHEPHERD_DEVICE`，再退回 `auto`；空白的環境變數也視為未設定。
+  `SHEPHERD_DEVICE`，再退回 `auto`；空白的環境變數也視為未設定。請求的五個欄位，以及任何其他
+  欄位回 422 的規則，見 §4.14（「重新載入請求」）。
 
 **何時檢查**：只要要服務 checkpoint，就在讀取任何東西之前檢查——服務在解析 `kg.json`
 之前先確定裝置（reload 則在檔案檢查之後、自動選擇讀取任何候選 checkpoint 之前），pipeline
@@ -2569,7 +2543,7 @@ launcher 與 `python -m src.api.main` 會把它們綁定的主機以 `SHEPHERD_B
   shepherd` 會顯示原因）。這時操作者
   控制項只能在本機上或經由 SSH forward 使用；
 - 透過 HTTP 重新載入 pipeline 的腳本需要服務處於 M1 模式，並且必須呼叫
-  `http://127.0.0.1:<port>`。`scripts/measure_served_pipeline.py` 因此在它自己啟動的服務中設定
+  `http://127.0.0.1:<port>`；為此自行啟動服務的腳本，要在其環境中設定
   `SHEPHERD_DEPLOYMENT_MODE=M1`。
 
 ### CORS：沒有跨來源的瀏覽器存取
@@ -2680,9 +2654,8 @@ Matching phenotypes · Paths）。選取一列（點擊，或在聚焦的列上�
   checkpoint 檔，屬於操作者控制項（§4.13）：唯讀的瀏覽器看到 "not shown · reading the checkpoint
   is an operator control"。若另一個瀏覽器更換了模型，這張卡片會顯示 "not read yet · read it"，
   直到頁面再次打開或按下 "read it"（每 5 秒的讀取絕不打開 checkpoint）；
-- 只在成立時出現的標籤：`synthetic data`（琥珀色）、`no SP table`（經由 mixture 服務、但沒有
-  距離表的歷史檔）、`GNN not loaded`（紅色）。`no trained model` 與 `unverified` 標籤已隨路徑
-  推理狀態移除（K7）；
+- 只在成立時出現的標籤：`synthetic data`（琥珀色）。`no trained model` 與 `unverified` 標籤
+  已隨路徑推理狀態移除（K7），`no SP table` 與 `GNN not loaded` 已隨 mixture 移除（K8-4）；
 - "Recorded tests: <狀態>"（§4.9），它的 › 會打開 Details 的 Evidence；"Details ›"；
   "🔒 Change model…"。紀錄的測試與 workspace 名稱會在每次顯示 Diagnosis、每次診斷後、更換模型後
   以及按下 ↻ 時重新讀取（每 5 秒的讀取只讀目前服務的內容）：在 Research › Test 記錄的測試，回到
@@ -2702,9 +2675,9 @@ use"。不論標記怎麼說，CSV 與報告都保留結果自己的身分。"No
 support for a qualified clinician." 位於結果的底部。
 
 **身分抽屜**蓋在細節面板上，有兩個檢視。"Model in use" 是所服務模型的資料，分五節（Identity，
-附完整 digest 與 Copy；Uses；Data；Evidence；Warnings，永遠展開）、結構 fingerprint 那一行（列出
-並計數不同之處；checkpoint 沒有記錄結構 fingerprint 時為 "not compared"），以及通往 Research ›
-Models 完整紀錄的連結。"This result" 只顯示結果本身帶有的內容，每一項與目前使用中的對照。
+附完整 digest 與 Copy；Uses；Data；Evidence；Warnings，永遠展開），以及通往 Research › Models
+完整紀錄的連結（結構 fingerprint 那一行自 K8-4 起已移除：checkpoint 的紀錄以 digest 綁定它的圖，
+在載入時檢查）。"This result" 只顯示結果本身帶有的內容，每一項與目前使用中的對照。
 "Details ›" 與 "Recorded tests ›" 打開前者，標記打開後者；更換模型進行中（確認畫面打開，或正在
 重新載入）時，它們不會蓋掉 Change model 抽屜。
 
@@ -2729,6 +2702,19 @@ Close 或 × 會立即關閉抽屜，重新載入照常進行（無法中止）�
 回應後，卡片顯示當時使用中的模型，結果不會再顯示；期間按 "Change model…" 會重新打開抽屜，顯示
 重新載入的狀態。在 Research › Models 中，Close 也以同樣方式關閉確認畫面。
 從 Research › Models 做的 Load 也會更新這張卡片。同一時間只會打開一個抽屜。
+
+**重新載入請求**（`POST /api/v1/pipeline/reload`，儀表板 Load 背後的 API）宣告五個欄位：
+`data_dir`、`checkpoint_path`、`task`、`device` 與 `expected_checkpoint_sha256`。它要指定一個
+任務或一個 `checkpoint_path`，或兩者都指定：只有任務時，服務最新一個含有為該任務 finetune 之
+模型的 run；有路徑時服務那個檔案（同時指定任務時，模型必須屬於該任務）；兩者都沒有的請求會被
+拒絕，並指出缺少的任務或路徑，而且在讀取任何 checkpoint 之前（自 K8-4 起）。**任何其他欄位都
+回 422**（`extra_forbidden`，指出該欄位），在讀取或選擇任何東西之前，所以服務沒有宣告的欄位
+絕不會被丟掉、其餘照常服務。*舊腳本*（自 K8-4 起）：`conv_type` 已移除，因為架構是從
+checkpoint 的 model spec 讀出的。不論它的值為何，都要從指定路徑、任務或兩者的請求中拿掉。
+帶 `conv_type` `"hgt"` 的任務請求，要求的是現在沒有任何欄位能指定的架構：待多架構移植讓
+HGT 可以服務之後，請改以 `checkpoint_path`（以及 `expected_checkpoint_sha256`）指定一個
+model spec 確認為 HGT 的 checkpoint；在那之前，本版不服務任何 HGT 模型。並請正確拼寫 `expected_checkpoint_sha256`：拼錯的 `expected_checkpoint_sha` 過去
+會被丟掉、讓重新載入不受綁定，現在會被拒絕。
 
 ### Research › Prepare › Datasets
 

@@ -10,9 +10,9 @@ production model and raw cosine (`measurement.run_mode_c`). It records each run
 on a manifest and puts results in a ledger beside the checkpoints
 (`sidecar`).
 
-**This package measures. It does not correct.** The served scorer still differs
-from Mode C by design until B-1 (`docs/DISEASE_SCORER_POLICY.md`): candidates
-discovered by path reachability, the eta mixture, and insertion-order ties.
+**This package measures. It does not correct.** Mode C measures a checkpoint
+without a model spec, which serving no longer runs (K8-4); the served scorer is
+the task model's own, measured by the task modes. Mode C goes in K8-6.
 
 Layering: `.import-linter.ini` places `src.evaluation` **above** `src.inference`,
 so this package may import the served scoring primitives while production

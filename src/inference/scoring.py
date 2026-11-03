@@ -47,9 +47,9 @@ range is spent on the first two steps.
 Availability is a mask, not a sentinel — and a narrow one. It separates only
 "there was nothing to measure from" (no phenotypes, or no candidates) from "a
 distance was produced". **The typed status** (`COMPUTED` / `COMPUTED_PARTIAL` /
-`NO_TABLE` / `TARGET_UNMAPPED` / `NO_PHENOTYPE_MAPPED`, Spec 1 §3.3) is the
-analysis record's, built by `sp_index.sp_analysis_records`, the one SP caller;
-no caller should read this Boolean as though it carried those semantics, and
+`NO_TABLE` / `TARGET_UNMAPPED` / `NO_PHENOTYPE_MAPPED`, Spec 1 §3.3) was the
+served mixture's per-candidate analysis record, retired with it (K8-4); no
+caller should read this Boolean as though it carried those semantics, and
 nothing collapses an unavailable value to `0.0` any more.
 
 Dependencies: torch. Import this module lazily from anywhere that must remain

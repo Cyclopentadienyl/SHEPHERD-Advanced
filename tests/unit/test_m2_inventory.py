@@ -1,16 +1,23 @@
 """
 The inventory before a deployment: what contract M2 refuses, and why (M2.6).
 ===========================================================================
-`audit_checkpoint_family.py --inventory` over a directory of workspaces. Shown:
+`audit_checkpoint_family.py --inventory` over a directory of workspaces. The
+checkpoints are the session's trained disease child (`trained_disease_child`)
+over a copy of its own workspace, and copies of it with one part removed.
+Shown:
 
 - a sound workspace's graph and training inputs are accepted, its table's source
   binding is accepted while whether the table would be served stays not judged
-  (the tensor is not loaded; a sidecar whose `max_hops` the loader refuses shows
-  why), and its recorded checkpoint passes M2's record checks for serving and
-  measurement and for a resume, with the digest of the one read;
-- a checkpoint from before the contract, one from a same-shaped other
-  workspace, and one that records only the graph roles (so serves but cannot be
-  resumed) are each refused for what M2 refuses them for;
+  (the tensor is not loaded; a sidecar whose `max_hops` the retired service
+  loader refused shows why), and the child passes M2's record checks for serving
+  and measurement and for a resume, and carries the model record this build
+  reads, with the digest of the one read;
+- a copy from before the contract, the child over a same-shaped other workspace,
+  and a copy that records only the graph roles (so serves but cannot be resumed)
+  are each refused for what M2 refuses them for;
+- a copy without a model spec is refused for both uses, by the model record's
+  own reason (`read_model_record`), as serving, the task measurements and
+  training refuse it;
 - an unbound table and a workspace without a manifest are refused, and that
   workspace's checkpoints are not judged;
 - it is read-only: every file under the inventoried directory has the same bytes
@@ -44,12 +51,21 @@ def _record(workspace):
     return training_input_digests(read_training_inputs(workspace))
 
 
-def _checkpoint(path, record):
+def _child_copy(child, path, change):
+    """The disease child `child`, read with the safe loader, `change` applied to
+    its payload, written to `path`."""
+    from src.utils.checkpoint_io import read_checkpoint
+
+    contents = read_checkpoint(child, map_location="cpu", weights_only=True).checkpoint
+    change(contents)
     path.parent.mkdir(parents=True, exist_ok=True)
-    contents = {"state_dict": {"w": torch.zeros(2)}, "epoch": 1}
-    if record is not None:
-        contents["training_input_digests"] = record
     torch.save(contents, path)
+
+
+def _graph_roles_only(contents):
+    recorded = contents["training_input_digests"]
+    contents["training_input_digests"] = {
+        role: recorded[role] for role in ("kg", "node_features", "edge_indices", "num_nodes")}
 
 
 def _bound_table(workspace, kg_digest, max_hops=5):
@@ -69,15 +85,19 @@ def _bound_table(workspace, kg_digest, max_hops=5):
 
 
 @pytest.fixture
-def inventory(tmp_path):
+def inventory(tmp_path, trained_disease_child):
     root = tmp_path / "workspaces"
-    a = write_generated_workspace(root / "a", training_fields=True, **IDS)[0]
+    # The child's own workspace, which holds no run directory (its runs are
+    # beside it), so each copy below holds the four checkpoints placed here.
+    a = root / "a"
+    shutil.copytree(trained_disease_child["data_dir"], a)
+    child, placed = trained_disease_child["disease"], a / "checkpoints" / "m2"
+    placed.mkdir(parents=True)
+    shutil.copy2(child, placed / "good.pt")
+    _child_copy(child, placed / "old.pt", lambda c: c.pop("training_input_digests"))
+    _child_copy(child, placed / "graph_only.pt", _graph_roles_only)
+    _child_copy(child, placed / "no_model_spec.pt", lambda c: c.pop("model_spec"))
     record = _record(a)
-    _checkpoint(a / "checkpoints" / "hgt" / "good.pt", record)
-    _checkpoint(a / "checkpoints" / "hgt" / "old.pt", None)
-    graph_only = {role: record[role] for role in ("kg", "node_features", "edge_indices",
-                                                  "num_nodes")}
-    _checkpoint(a / "checkpoints" / "hgt" / "graph_only.pt", graph_only)
     _bound_table(a, record["kg"])
 
     b = root / "b"
@@ -119,47 +139,48 @@ def test_a_sound_workspace_and_its_recorded_checkpoint_are_accepted(inventory):
     assert a["shortest_paths"]["source_binding"]["verdict"] == "accepted"
     assert a["shortest_paths"]["served"]["verdict"] == "not judged"
     assert a["shortest_paths"]["tensor_checked"] is False
-    assert _verdicts(a, "a/checkpoints/hgt/good.pt") == {
+    assert _verdicts(a, "a/checkpoints/m2/good.pt") == {
         "serve_and_measure": "accepted", "resume": "accepted"}
-    assert a["checkpoints"]["a/checkpoints/hgt/good.pt"]["sha256"] == _sha(
-        root / "a/checkpoints/hgt/good.pt")
+    assert a["checkpoints"]["a/checkpoints/m2/good.pt"]["sha256"] == _sha(
+        root / "a/checkpoints/m2/good.pt")
 
 
 def test_a_bound_sidecar_is_not_a_servable_table(inventory):
-    """The review's P2-3. `max_hops=0` is refused by the service's loader; the
-    inventory, which reads only the sidecar's binding, must not report the table
-    as accepted. The binding passes; whether it would be served is not judged."""
-    from src.inference.pipeline import DiagnosisPipeline, PipelineConfig
-
-    root, report, _ = inventory
+    """The review's P2-3. The inventory reads only the sidecar's binding, so it
+    must not report a table as accepted: `max_hops=0` is a sidecar the service's
+    loader refused (that loader and its tests left in K8-4). The binding passes;
+    whether it would be served is not judged."""
+    _, report, _ = inventory
     d = report["workspaces"]["d"]["shortest_paths"]
     assert d["source_binding"]["verdict"] == "accepted"
     assert d["served"]["verdict"] == "not judged"
     assert "not loaded" in d["served"]["reason"]
 
-    loader = DiagnosisPipeline.__new__(DiagnosisPipeline)
-    loader.config = PipelineConfig()
-    loader._sp_ready, loader._sp_lookup, loader._sp_max_hops = False, None, 5
-    loader._sp_hop_bound_source = loader._sp_kg_binding = None
-    loader._graph_kg_digest = _record(root / "d")["kg"]
-    with pytest.raises(ValueError, match="max_hops"):
-        loader._load_shortest_paths(root / "d")
-
 
 def test_what_m2_refuses_is_listed_with_its_reason(inventory):
+    from src.models.bundle.record import HISTORY_ONLY
+
     _, report, _ = inventory
     a, b = report["workspaces"]["a"], report["workspaces"]["b"]
 
-    old = a["checkpoints"]["a/checkpoints/hgt/old.pt"]["m2_contract"]
+    old = a["checkpoints"]["a/checkpoints/m2/old.pt"]["m2_contract"]
     assert {v["verdict"] for v in old.values()} == {"refused"}
     assert "records no training_input_digests" in old["serve_and_measure"]["reason"]
 
-    graph_only = a["checkpoints"]["a/checkpoints/hgt/graph_only.pt"]["m2_contract"]
+    graph_only = a["checkpoints"]["a/checkpoints/m2/graph_only.pt"]["m2_contract"]
     assert graph_only["serve_and_measure"]["verdict"] == "accepted"
     assert graph_only["resume"]["verdict"] == "refused"
     assert "train_samples is not recorded" in graph_only["resume"]["reason"]
 
-    crossed = b["checkpoints"]["b/checkpoints/hgt/good.pt"]["m2_contract"]
+    # A file without a model spec records this workspace's graph and inputs,
+    # so only its missing model spec refuses it, for both uses, in the model
+    # record's own words.
+    specless = a["checkpoints"]["a/checkpoints/m2/no_model_spec.pt"]["m2_contract"]
+    for use, verdict in specless.items():
+        assert verdict["verdict"] == "refused", use
+        assert verdict["reason"] == f"ModelRecordError: {HISTORY_ONLY}", use
+
+    crossed = b["checkpoints"]["b/checkpoints/m2/good.pt"]["m2_contract"]
     assert crossed["serve_and_measure"]["verdict"] == "refused"
     assert "kg differs" in crossed["serve_and_measure"]["reason"]
     table = b["shortest_paths"]
@@ -172,13 +193,14 @@ def test_a_refused_workspace_leaves_its_checkpoints_unjudged(inventory):
     c = report["workspaces"]["c"]
     assert c["graph"]["verdict"] == c["training"]["verdict"] == "refused"
     assert c["shortest_paths"]["source_binding"]["verdict"] == "not judged"
-    assert set(_verdicts(c, "c/checkpoints/hgt/good.pt").values()) == {"not judged"}
+    assert set(_verdicts(c, "c/checkpoints/m2/good.pt").values()) == {"not judged"}
 
 
 def test_the_report_states_its_scope_and_names_nothing_outside(inventory, tmp_path):
     root, report, text = inventory
     assert str(tmp_path) not in text and str(root.resolve()) not in text
     assert "source-contract" in report["checkpoint_verdicts_cover"]
+    assert "model spec" in report["checkpoint_verdicts_cover"]
     counts = report["counts"]
     assert counts["checkpoint m2_contract resume:accepted"] == 2      # a and d
     assert counts["shortest_paths served:not judged"] == 3              # a, c, d

@@ -58,12 +58,6 @@ IDENTITY_BANNERS = {
         "generated stand-in, not a clinical knowledge graph. Results are for "
         "testing only.",
     ),
-    "no_sp": (
-        "NO SHORTEST-PATH TABLE: GNN score alone.",
-        "A trained model is served without a shortest-path table, so each score is "
-        "the GNN's alone (scoring mode gnn_only, mixing weight eta 1.0) and differs "
-        "from one computed with the table.",
-    ),
 }
 
 #: The help texts the renderers' ⓘ name; the shell registers them.

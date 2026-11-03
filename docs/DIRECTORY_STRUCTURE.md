@@ -39,7 +39,7 @@ data/workspaces/{name}/
 ├── node_features.pt         # Node feature vectors (GNN input)
 ├── edge_indices.pt          # Edge connectivity (with reverse edges)
 ├── num_nodes.json           # Node counts per type
-├── shortest_paths.pt        # Until K8: history-file serving only (below)
+├── shortest_paths.pt        # Served by nothing since K8-4; until K8-5 (below)
 ├── shortest_paths.meta.json # its bound sidecar, the same pair
 ├── runs/                    # Training runs on THIS KG, one folder per run (M3a-2)
 │   └── {conv_type}/
@@ -49,8 +49,8 @@ data/workspaces/{name}/
 │           ├── final_metrics.json   # written when the run ends (not when stopped)
 │           ├── checkpoints/         # last.pt (every epoch), model-<epoch>-<metric>.pt
 │           └── logs/                # train_*.json, progress.json
-└── archive/                 # Old checkpoints contract M2 refuses, moved once by
-                             # scripts/migrate_checkpoints.py
+└── archive/                 # Old checkpoints contract M2 refuses, where an
+                             # earlier move put them (kept as written)
 ```
 
 No run writes into another run's folder, a continued run included: it gets a
@@ -79,7 +79,7 @@ new folder and records its parent by SHA-256.
 | `node_features.pt` | Data prep (once) | No | GNN input features |
 | `edge_indices.pt` | Data prep (once) | No | Graph connectivity |
 | `num_nodes.json` | Data prep (once) | No | Node count statistics |
-| `shortest_paths.pt` + `shortest_paths.meta.json` | Not built for task models; an older workspace may hold the pair | No | Read only by a history file served outside the WebUI, until K8 |
+| `shortest_paths.pt` + `shortest_paths.meta.json` | Not built for task models; an older workspace may hold the pair | No | Served by nothing since K8-4; the inventory's table check reads the sidecar until K8-5 |
 | `runs/{conv}/{run}/checkpoints/*.pt` | Every training epoch | **Yes** (new runs) | Learned GNN weights |
 
 The first 4 files are **static** — shared by all training runs within the
@@ -87,18 +87,19 @@ workspace. Only run folders accumulate over time.
 
 No task model reads `shortest_paths.pt`, so preparing a workspace builds no
 shortest-path table (K7, 2026-10-29), and the GB10 acceptance probe accepts a
-workspace without one (K8). Until K8 serving a history file (no model spec)
-outside the WebUI still reads it; the pair is described in the
-[deployment guide](../deployment-guide.en.md) §4.3. K8 removes these rows (SP1).
+workspace without one (K8). Since K8-4 nothing serves from it: a history file
+(no model spec), the one kind that read it, is refused at load. Until K8-5 the
+inventory's table check still reads its sidecar; the pair is described in the
+[deployment guide](../deployment-guide.en.md) §4.3. K8-5 removes these rows (SP1).
 
 ### KG Version Compatibility
 
-Each checkpoint embeds a **data fingerprint** (node types, counts, edge types).
-At inference load time, the fingerprint is compared against the current
-workspace data. Mismatches produce a warning:
-
-> KG/data version mismatch detected between checkpoint and current data.
-> Inference results may be incorrect.
+Each checkpoint embeds a **data fingerprint** (node types, counts, edge types),
+a structural summary of the graph the run read; nothing compares it at load
+(since K8-4). What binds a checkpoint to its workspace is its training record
+(`training_input_digests`): unless it names this workspace's graph files by
+digest, the load is refused before any model is built (contract M2.4; the
+[playbook](TRAINING_PIPELINE_PLAYBOOK.md)'s safety net).
 
 ---
 
@@ -208,6 +209,6 @@ mv models/checkpoints/*.pt data/workspaces/legacy/checkpoints/
 ```
 
 Checkpoints in a workspace's older `checkpoints/` folder are not selected
-automatically (no runtime fallback, decision 9); they stay reachable by explicit
-path. Move them once into the run layout with
-`scripts/migrate_checkpoints.py <workspace>` (it prints a plan) and `--apply`.
+automatically (no runtime fallback, decision 9); they stay on disk, reachable by
+explicit path. One without a model spec (every file written before the model
+bundles) is refused at load, before any model is built.

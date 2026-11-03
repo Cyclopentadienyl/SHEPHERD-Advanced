@@ -1,22 +1,22 @@
 """
-Integration Tests: GNN Pipeline + Vector Index
-===============================================
+Integration Tests: the graph export and the evidence panel
+==========================================================
 End-to-end tests that verify:
-  1. GNN model → precompute embeddings → score candidates
-  2. Build vector index from embeddings → save → load → ANN search
-  3. Full pipeline: BFS paths + GNN scoring + ANN candidate discovery
+  1. the graph export a workspace is built from matches the graph;
+  2. the evidence panel explains a served disease child's rows (Mode A, a
+     direct path, or insufficient evidence) without changing its ranking.
 
-These tests use small synthetic data and run on CPU in seconds.
-No GPU or large datasets required.
+The served model is a disease child trained for real on CPU
+(`tests/fixtures/trained_children`). The ShepherdGNN checkpoint round trip and
+the shortest-path mixture these tests once served retired with serving them
+(K8-4); a checkpoint without a model spec is refused at load
+(`tests/unit/test_pipeline_fails_closed.py`).
 
 Module: tests/integration/test_pipeline.py
 """
 from __future__ import annotations
 
-import json
 import pytest
-from pathlib import Path
-from typing import Dict
 
 torch = pytest.importorskip("torch")
 pytest.importorskip("torch_geometric")
@@ -31,8 +31,6 @@ from src.core.types import (
     PatientPhenotypes,
 )
 from src.kg import KnowledgeGraph
-from src.inference import DiagnosisPipeline, PipelineConfig
-from src.models.gnn import ShepherdGNN, ShepherdGNNConfig
 
 
 # =============================================================================
@@ -125,239 +123,8 @@ def medium_kg():
     return kg
 
 
-@pytest.fixture
-def gnn_model_and_data(medium_kg):
-    """
-    Build a small GNN model + graph data matching medium_kg.
-
-    CRITICAL: This fixture mirrors the production training path
-    (scripts/train_model.py:create_model_from_config) which derives metadata
-    from graph_data["edge_index_dict"].keys() — INCLUDING reverse rev_* edges
-    for bidirectional message passing. Metadata built from the graph's forward
-    edges only would diverge from the trainer and let checkpoint round-trip
-    bugs slip through CI.
-
-    pipeline._load_model_from_checkpoint derives its metadata from graph_data
-    the same way.
-    """
-    hidden_dim = 32
-
-    # Build graph data using the same code path the production pipeline uses
-    torch.manual_seed(42)
-    graph_data = medium_kg.export_graph_data(
-        output_dir=None, feature_dim=hidden_dim
-    )
-
-    # Build model metadata from graph_data — matches scripts/train_model.py
-    node_types = list(graph_data["num_nodes_dict"].keys())
-    edge_types = list(graph_data["edge_index_dict"].keys())
-    metadata = (node_types, edge_types)
-    in_channels_dict = {
-        k: v.shape[1] for k, v in graph_data["x_dict"].items()
-    }
-
-    config = ShepherdGNNConfig(
-        hidden_dim=hidden_dim,
-        num_layers=2,
-        num_heads=4,
-        conv_type="gat",
-        dropout=0.0,
-    )
-    model = ShepherdGNN(
-        metadata=metadata,
-        in_channels_dict=in_channels_dict,
-        config=config,
-    )
-    model.eval()
-
-    return model, graph_data
-
-
-def bind_workspace(kg, graph_data, data_dir, feature_dim: int = 32) -> Path:
-    """Write these exact tensors into a workspace whose manifest binds them.
-
-    These tests deliberately overwrite the export with the fixture's own tensors,
-    because those are the bytes the model was trained on and the precomputed
-    embeddings have to match. That leaves a directory holding graph artifacts
-    that nothing records — which the pipeline now refuses, correctly: a
-    same-shaped tensor file from another workspace is indistinguishable from
-    this one by structure alone.
-
-    So the manifest is built *after* the overwrite, over the bytes that are
-    actually there. Returns `kg.json`'s path. The caller reads it with
-    `KnowledgeGraph.read_json` and passes the result whole, so the pipeline can
-    check that the graph it serves and the workspace are one composition.
-    """
-    from tests.fixtures.generated_workspace import write_generated_workspace
-
-    data_dir.mkdir(parents=True, exist_ok=True)
-    kg.export_graph_data(output_dir=data_dir, feature_dim=feature_dim)
-    torch.save(graph_data["x_dict"], data_dir / "node_features.pt")
-    torch.save(graph_data["edge_index_dict"], data_dir / "edge_indices.pt")
-    kg.save_json(str(data_dir / "kg.json"))
-    write_generated_workspace(data_dir, train_ids=[0, 1], val_ids=[2])
-    return data_dir / "kg.json"
-
-
-def record_training_graph(ckpt_path: Path, data_dir: Path) -> None:
-    """Give a hand-written checkpoint the graph roles training records (M2.2).
-
-    These checkpoints are trained in the test over the tensors `bind_workspace`
-    then writes, so they are this workspace's; serving refuses any checkpoint
-    whose record does not name the workspace's graph (M2.4).
-    """
-    from tests.fixtures.generated_workspace import graph_record
-
-    contents = torch.load(ckpt_path, map_location="cpu", weights_only=False)
-    contents["training_input_digests"] = graph_record(data_dir)
-    torch.save(contents, ckpt_path)
-
-
 class TestCheckpointBridge:
-    """Verify the train → save checkpoint → load → inference chain."""
-
-    def test_checkpoint_roundtrip(self, medium_kg, gnn_model_and_data, tmp_path):
-        """
-        Train model -> save checkpoint -> load fresh pipeline from disk paths,
-        verify GNN scoring works end-to-end (the actual production path).
-        """
-        import torch.nn.functional as F
-
-        model, graph_data = gnn_model_and_data
-
-        # --- Train a few steps so weights diverge from random init ---
-        model.train()
-        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-        for _ in range(5):
-            optimizer.zero_grad()
-            emb = model(graph_data["x_dict"], graph_data["edge_index_dict"])
-            p_emb = emb.get("phenotype")
-            d_emb = emb.get("disease")
-            if p_emb is None or d_emb is None:
-                pytest.skip("Model did not produce phenotype/disease embeddings")
-            p = F.normalize(p_emb, dim=-1)
-            d = F.normalize(d_emb, dim=-1)
-            n = min(p.size(0), d.size(0))
-            loss = F.cross_entropy(torch.mm(p[:n], d[:n].t()), torch.arange(n))
-            loss.backward()
-            optimizer.step()
-        model.eval()
-
-        # --- Save checkpoint (Trainer.save_checkpoint format) ---
-        ckpt_path = tmp_path / "checkpoint.pt"
-        torch.save({
-            "epoch": 5,
-            "model_state_dict": model.state_dict(),
-            "config": {
-                "hidden_dim": 32,
-                "num_layers": 2,
-                "num_heads": 4,
-                "conv_type": "gat",
-                "dropout": 0.0,
-            },
-        }, ckpt_path)
-
-        # --- Save graph data files ---
-        # The SAME features+edges the model was trained on, so the precomputed
-        # embeddings match training; see `bind_workspace`.
-        data_dir = tmp_path / "graph_data"
-        kg_path = bind_workspace(medium_kg, graph_data, data_dir)
-
-        # --- Load fresh pipeline from disk (production path) ---
-        record_training_graph(ckpt_path, data_dir)
-        pipeline = DiagnosisPipeline(
-            graph=KnowledgeGraph.read_json(kg_path),
-            checkpoint_path=str(ckpt_path),
-            data_dir=str(data_dir),
-            device="cpu",
-        )
-
-        # GNN must be ready after loading
-        assert pipeline._gnn_ready, (
-            "GNN should be ready after loading checkpoint + graph data from disk"
-        )
-        assert pipeline._node_embeddings is not None
-        assert "phenotype" in pipeline._node_embeddings
-        assert "disease" in pipeline._node_embeddings
-
-        # --- Run inference and verify GNN-primary scoring ---
-        patient = PatientPhenotypes(
-            patient_id="bridge_test",
-            phenotypes=["HP:0000001", "HP:0000002"],
-        )
-
-        result = pipeline.run(patient, top_k=5, include_explanations=False)
-        assert len(result.candidates) > 0, "Pipeline should produce candidates"
-
-        for c in result.candidates:
-            # No SP table: the served score is the model term itself
-            assert c.served_score == c.model_term, (
-                f"served_score ({c.served_score}) should equal the model term "
-                f"({c.model_term}) with no SP table"
-            )
-            # Scores should be in valid range
-            assert 0.0 <= c.model_term <= 1.0
-
-        # At least one candidate should have non-zero GNN score (model is trained)
-        assert any(c.model_term > 0.0 for c in result.candidates), (
-            "Trained model should produce non-zero GNN scores"
-        )
-
-        # --- Reproducibility: same input → same scores ---
-        result2 = pipeline.run(patient, top_k=5, include_explanations=False)
-        scores1 = [(c.disease_id, c.model_term) for c in result.candidates]
-        scores2 = [(c.disease_id, c.model_term) for c in result2.candidates]
-        assert scores1 == scores2, "Same input should produce identical scores"
-
-    def test_offline_full_graph_encode_matches_what_the_pipeline_caches(
-        self, medium_kg, gnn_model_and_data, tmp_path
-    ):
-        """`encode_full_graph` must be the pipeline's own forward, not a lookalike.
-
-        Measurement's Mode C encodes offline rather than by constructing a
-        `DiagnosisPipeline`, which would drag in the knowledge-graph object, the
-        shortest-path table and the path-finding and explanation machinery they do
-        not use. That saving is only safe while the two really are the same three
-        operations, so the claim is checked against a pipeline built the
-        production way rather than left as a comment.
-
-        The pipeline moves its cache to CPU for memory; that is storage, not
-        computation, so the comparison is made on CPU.
-        """
-        from src.evaluation.measurement import encode_full_graph
-
-        model, graph_data = gnn_model_and_data
-        model.eval()
-
-        ckpt_path = tmp_path / "encode_checkpoint.pt"
-        torch.save({
-            "epoch": 1,
-            "model_state_dict": model.state_dict(),
-            "config": {"hidden_dim": 32, "num_layers": 2, "num_heads": 4,
-                       "conv_type": "gat", "dropout": 0.0},
-        }, ckpt_path)
-
-        data_dir = tmp_path / "encode_graph_data"
-        kg_path = bind_workspace(medium_kg, graph_data, data_dir)
-
-        record_training_graph(ckpt_path, data_dir)
-        pipeline = DiagnosisPipeline(
-            graph=KnowledgeGraph.read_json(kg_path),
-            checkpoint_path=str(ckpt_path),
-            data_dir=str(data_dir),
-            device="cpu",
-        )
-        cached = pipeline._node_embeddings
-        if not cached:
-            pytest.skip("pipeline did not precompute embeddings in this environment")
-
-        offline = encode_full_graph(
-            pipeline.model, pipeline._graph_data, torch.device("cpu")
-        ).embeddings
-
-        assert set(offline) == set(cached)
-        for node_type, tensor in cached.items():
-            assert torch.equal(offline[node_type].cpu(), tensor), node_type
+    """The graph export a workspace's tensors are written from."""
 
     def test_export_graph_data_matches_kg_structure(self, medium_kg, tmp_path):
         """KG.export_graph_data() should produce files matching KG node/edge counts."""
@@ -386,356 +153,13 @@ class TestCheckpointBridge:
 
 
 # =============================================================================
-# Test: Shortest Path Integration (Step B)
-# =============================================================================
-class TestShortestPathIntegration:
-    """
-    Verify the original SHEPHERD scoring formula:
-        confidence = eta * embedding_sim + (1 - eta) * SP_sim
-
-    The shortest path lookup table is generated by running the BFS pre-compute
-    logic from scripts/compute_shortest_paths.py against medium_kg.
-    """
-
-    def _build_sp_lookup(self, medium_kg, data_dir, max_hops=5):
-        """Generate shortest_paths.pt for medium_kg via the production script."""
-        # Import the precompute logic from the script
-        import importlib.util
-        spec = importlib.util.spec_from_file_location(
-            "compute_shortest_paths",
-            Path(__file__).parent.parent.parent / "scripts" / "compute_shortest_paths.py",
-        )
-        sp_module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(sp_module)
-
-        sp_data = sp_module.compute_shortest_paths(medium_kg, max_hops=max_hops)
-        meta = {
-            "max_hops": max_hops,
-            "num_pairs": int(sp_data["distance"].numel()),
-        }
-        # **Bound to the workspace's own `kg.json`.** `bind_workspace` wrote
-        # it and the pipeline verifies it, so this is the digest the loader will
-        # compare against — which makes these fixtures exercise the shape that
-        # ships rather than a legacy one.
-        from src.utils.fingerprint import file_sha256
-
-        sp_module.save_shortest_paths(
-            sp_data,
-            data_dir / "shortest_paths.pt",
-            meta,
-            kg_digest=file_sha256(data_dir / "kg.json"),
-        )
-
-    def test_a_table_bound_to_another_graph_stops_the_pipeline_being_built(
-        self, medium_kg, gnn_model_and_data, tmp_path
-    ):
-        """**The refusal reaches the thing that publishes, which is the point.**
-
-        `_load_shortest_paths` raises and `_init_gnn_inference` does not catch
-        it, so `_gnn_ready` is never set and a candidate pipeline is never
-        completed — which is what leaves a running service in place on reload
-        and answers 503 at cold start. Asserted here rather than inferred from
-        the loader's unit tests, because "the check exists" and "the check is
-        reached from the path that publishes" are two claims.
-        """
-        import importlib.util
-
-        model, graph_data = gnn_model_and_data
-        data_dir = tmp_path / "data"
-        kg_path = bind_workspace(medium_kg, graph_data, data_dir)
-        ckpt_path = tmp_path / "ckpt.pt"
-        torch.save({
-            "epoch": 1,
-            "model_state_dict": model.state_dict(),
-            "config": {"hidden_dim": 32, "num_layers": 2, "num_heads": 4, "conv_type": "gat"},
-        }, ckpt_path)
-        record_training_graph(ckpt_path, data_dir)
-
-        spec = importlib.util.spec_from_file_location(
-            "compute_shortest_paths",
-            Path(__file__).parent.parent.parent / "scripts" / "compute_shortest_paths.py",
-        )
-        sp_module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(sp_module)
-        sp_data = sp_module.compute_shortest_paths(medium_kg, max_hops=5)
-        sp_module.save_shortest_paths(
-            sp_data,
-            data_dir / "shortest_paths.pt",
-            {"max_hops": 5, "num_pairs": int(sp_data["distance"].numel())},
-            kg_digest="b" * 64,      # a graph this workspace was not built from
-        )
-
-        with pytest.raises(ValueError, match="different graph"):
-            DiagnosisPipeline(
-                graph=KnowledgeGraph.read_json(kg_path),
-                checkpoint_path=str(ckpt_path),
-                data_dir=str(data_dir),
-                device="cpu",
-            )
-
-    def test_sp_table_loads_when_present(
-        self, medium_kg, gnn_model_and_data, tmp_path
-    ):
-        """Pipeline should detect and load shortest_paths.pt automatically."""
-        model, graph_data = gnn_model_and_data
-
-        # Set up data_dir with both graph data and SP table
-        data_dir = tmp_path / "data"
-        kg_path = bind_workspace(medium_kg, graph_data, data_dir)
-        self._build_sp_lookup(medium_kg, data_dir, max_hops=5)
-
-        # Save checkpoint and load via disk path so _load_shortest_paths runs
-        ckpt_path = tmp_path / "ckpt.pt"
-        torch.save({
-            "epoch": 1,
-            "model_state_dict": model.state_dict(),
-            "config": {"hidden_dim": 32, "num_layers": 2, "num_heads": 4, "conv_type": "gat"},
-        }, ckpt_path)
-
-        record_training_graph(ckpt_path, data_dir)
-        pipeline = DiagnosisPipeline(
-            graph=KnowledgeGraph.read_json(kg_path),
-            checkpoint_path=str(ckpt_path),
-            data_dir=str(data_dir),
-            device="cpu",
-        )
-        assert pipeline._gnn_ready
-        assert pipeline._sp_ready
-        # **Asserted through what the lookup does, not through its fields.** The
-        # previous version reached for `_sp_offsets` and `_sp_di`, which were the
-        # CSR layout's internals; 5a replaced that layout with a composite key
-        # and the assertions broke without anything about the pipeline's
-        # behaviour changing. What this test is for is that the table loaded and
-        # can be queried.
-        lookup = pipeline._sp_lookup
-        assert lookup is not None and lookup.n_rows > 0
-        assert lookup.max_hops == pipeline._sp_max_hops
-
-        from src.inference.sp_index import sp_mean_distances
-
-        distances, available, _unreachable = sp_mean_distances(lookup, [0], [0, 1], 1)
-        assert distances.dtype == torch.float64
-        assert available.tolist() == [True, True]
-
-    def test_sp_optional_fallback_when_missing(
-        self, medium_kg, gnn_model_and_data, tmp_path
-    ):
-        """When shortest_paths.pt is absent and sp_optional=True, pipeline
-        falls back to pure GNN scoring (effective eta=1.0)."""
-        model, graph_data = gnn_model_and_data
-
-        data_dir = tmp_path / "data"
-        kg_path = bind_workspace(medium_kg, graph_data, data_dir)
-        # Note: NO shortest_paths.pt
-
-        ckpt_path = tmp_path / "ckpt.pt"
-        torch.save({
-            "epoch": 1,
-            "model_state_dict": model.state_dict(),
-            "config": {"hidden_dim": 32, "num_layers": 2, "num_heads": 4, "conv_type": "gat"},
-        }, ckpt_path)
-
-        record_training_graph(ckpt_path, data_dir)
-        pipeline = DiagnosisPipeline(
-            graph=KnowledgeGraph.read_json(kg_path),
-            checkpoint_path=str(ckpt_path),
-            data_dir=str(data_dir),
-            device="cpu",
-        )
-        assert pipeline._gnn_ready
-        assert not pipeline._sp_ready
-
-        cfg = pipeline.get_pipeline_config()
-        assert cfg["scoring_mode"] == "gnn_only"
-        assert cfg["eta_effective"] == 1.0
-
-    def test_combined_score_matches_formula(
-        self, medium_kg, gnn_model_and_data, tmp_path
-    ):
-        """Verify served_score = eta * model_term + (1-eta) * the SP record's score
-        when both signals are available."""
-        model, graph_data = gnn_model_and_data
-
-        data_dir = tmp_path / "data"
-        kg_path = bind_workspace(medium_kg, graph_data, data_dir)
-        self._build_sp_lookup(medium_kg, data_dir, max_hops=5)
-
-        ckpt_path = tmp_path / "ckpt.pt"
-        torch.save({
-            "epoch": 1,
-            "model_state_dict": model.state_dict(),
-            "config": {"hidden_dim": 32, "num_layers": 2, "num_heads": 4, "conv_type": "gat"},
-        }, ckpt_path)
-
-        eta_value = 0.6
-        config = PipelineConfig(eta=eta_value)
-        record_training_graph(ckpt_path, data_dir)
-        pipeline = DiagnosisPipeline(
-            graph=KnowledgeGraph.read_json(kg_path),
-            checkpoint_path=str(ckpt_path),
-            data_dir=str(data_dir),
-            config=config,
-            device="cpu",
-        )
-        assert pipeline._sp_ready
-
-        patient = PatientPhenotypes(
-            patient_id="sp_test",
-            phenotypes=["HP:0000001", "HP:0000002"],
-        )
-        result = pipeline.run(patient, top_k=5, include_explanations=False)
-        assert len(result.candidates) > 0
-
-        for c in result.candidates:
-            assert c.sp_term.numeric and c.sp_term.mixed_as is None
-            expected = eta_value * c.model_term + (1.0 - eta_value) * c.sp_term.score
-            assert abs(c.served_score - expected) < 1e-5, (
-                f"served {c.served_score:.6f} != "
-                f"eta*gnn + (1-eta)*sp = {expected:.6f} "
-                f"(model={c.model_term}, sp={c.sp_term.score}, eta={eta_value})"
-            )
-
-    def test_eta_one_equals_pure_gnn(
-        self, medium_kg, gnn_model_and_data, tmp_path
-    ):
-        """eta=1.0 with SP loaded should give a served score equal to the model term."""
-        model, graph_data = gnn_model_and_data
-
-        data_dir = tmp_path / "data"
-        kg_path = bind_workspace(medium_kg, graph_data, data_dir)
-        self._build_sp_lookup(medium_kg, data_dir, max_hops=5)
-
-        ckpt_path = tmp_path / "ckpt.pt"
-        torch.save({
-            "epoch": 1,
-            "model_state_dict": model.state_dict(),
-            "config": {"hidden_dim": 32, "num_layers": 2, "num_heads": 4, "conv_type": "gat"},
-        }, ckpt_path)
-
-        record_training_graph(ckpt_path, data_dir)
-        pipeline = DiagnosisPipeline(
-            graph=KnowledgeGraph.read_json(kg_path),
-            checkpoint_path=str(ckpt_path),
-            data_dir=str(data_dir),
-            config=PipelineConfig(eta=1.0),
-            device="cpu",
-        )
-
-        patient = PatientPhenotypes(
-            patient_id="pure_gnn",
-            phenotypes=["HP:0000001", "HP:0000002"],
-        )
-        result = pipeline.run(patient, top_k=5, include_explanations=False)
-
-        for c in result.candidates:
-            assert abs(c.served_score - c.model_term) < 1e-5
-
-    def test_eta_zero_equals_pure_sp(
-        self, medium_kg, gnn_model_and_data, tmp_path
-    ):
-        """eta=0.0 with SP loaded should give a served score equal to the SP score."""
-        model, graph_data = gnn_model_and_data
-
-        data_dir = tmp_path / "data"
-        kg_path = bind_workspace(medium_kg, graph_data, data_dir)
-        self._build_sp_lookup(medium_kg, data_dir, max_hops=5)
-
-        ckpt_path = tmp_path / "ckpt.pt"
-        torch.save({
-            "epoch": 1,
-            "model_state_dict": model.state_dict(),
-            "config": {"hidden_dim": 32, "num_layers": 2, "num_heads": 4, "conv_type": "gat"},
-        }, ckpt_path)
-
-        record_training_graph(ckpt_path, data_dir)
-        pipeline = DiagnosisPipeline(
-            graph=KnowledgeGraph.read_json(kg_path),
-            checkpoint_path=str(ckpt_path),
-            data_dir=str(data_dir),
-            config=PipelineConfig(eta=0.0),
-            device="cpu",
-        )
-
-        patient = PatientPhenotypes(
-            patient_id="pure_sp",
-            phenotypes=["HP:0000001", "HP:0000002"],
-        )
-        result = pipeline.run(patient, top_k=5, include_explanations=False)
-
-        for c in result.candidates:
-            assert c.sp_term.numeric
-            assert abs(c.served_score - c.sp_term.score) < 1e-5
-            # SP score should be in [0, 1]
-            assert 0.0 <= c.sp_term.score <= 1.0
-
-    def test_sp_score_higher_for_closer_phenotypes(
-        self, medium_kg, gnn_model_and_data, tmp_path
-    ):
-        """Direct test of the one SP caller, `sp_analysis_records`: a closer
-        disease has the smaller mean hop distance and the higher SP score.
-
-        The table is built with the production script and loaded through the
-        pipeline's OWN loader, over a workspace it binds. Hand-building the lookup
-        state here is what let this test rot when the table moved from a per-pair
-        dict to a CSR layout, and again when 5a replaced that with a composite
-        key; going through `_load_shortest_paths` keeps it honest against the next
-        change to that structure, and there is only one builder it could go
-        through. A pipeline is built from a checkpoint since K7 (none is served
-        without a model), so the model is the one other tests here save."""
-        model, graph_data = gnn_model_and_data
-        data_dir = tmp_path / "data"
-        kg_path = bind_workspace(medium_kg, graph_data, data_dir)
-        self._build_sp_lookup(medium_kg, data_dir, max_hops=5)
-        ckpt_path = tmp_path / "ckpt.pt"
-        torch.save({
-            "epoch": 1,
-            "model_state_dict": model.state_dict(),
-            "config": {"hidden_dim": 32, "num_layers": 2, "num_heads": 4, "conv_type": "gat"},
-        }, ckpt_path)
-        record_training_graph(ckpt_path, data_dir)
-        pipeline = DiagnosisPipeline(
-            graph=KnowledgeGraph.read_json(kg_path),
-            checkpoint_path=str(ckpt_path),
-            data_dir=str(data_dir),
-            device="cpu",
-        )
-        assert pipeline._sp_ready, "SP table should have loaded from the workspace"
-
-        # Patient with phenotypes directly connected to GeneA→Disease1
-        from src.core.types import NodeID, DataSource
-
-        ph_a1 = NodeID(source=DataSource.HPO, local_id="HP:0000001")
-        ph_a2 = NodeID(source=DataSource.HPO, local_id="HP:0000002")
-        disease1 = NodeID(source=DataSource.MONDO, local_id="MONDO:0000001")
-        disease5 = NodeID(source=DataSource.MONDO, local_id="MONDO:0000005")
-
-        from src.inference.sp_index import sp_analysis_records
-
-        close, far = sp_analysis_records(
-            pipeline._sp_lookup, pipeline._node_id_to_idx, [str(ph_a1), str(ph_a2)],
-            [str(disease1), str(disease5)], 1)
-        assert close.status == far.status == "COMPUTED"
-        assert close.mean_hop_distance < far.mean_hop_distance
-        sp_close, sp_far = close.score, far.score
-
-        # disease1 is the canonical target for HP:0000001/2 (via GeneA)
-        # disease5 is on the other side of the graph (via GeneE)
-        assert sp_close > sp_far, (
-            f"Closer disease should have higher SP score: "
-            f"close={sp_close:.4f}, far={sp_far:.4f}"
-        )
-        assert 0.0 <= sp_close <= 1.0
-        assert 0.0 <= sp_far <= 1.0
-
-
-# =============================================================================
 # Test: Evidence Panel (Step C)
 # =============================================================================
 class TestEvidencePanel:
     """
     Verify Step C: PathReasoner is decoupled from scoring; evidence is
-    presented as Mode A (direct path) or Mode B (analogy-based) with
-    evidence labels. Served by a disease child trained for real
+    presented as Mode A (direct path) or as insufficient, with evidence
+    labels. Served by a disease child trained for real
     (`tests/fixtures/trained_children`): since K7 a pipeline is always a model
     read from its checkpoint, and paths only explain the rows it ranked.
     """
@@ -758,8 +182,7 @@ class TestEvidencePanel:
         top = result.candidates[0]
         assert top.evidence_package is not None
         assert top.evidence_package["mode"] in (
-            EvidenceMode.DIRECT_PATH.value, EvidenceMode.ANALOGY_BASED.value,
-            EvidenceMode.INSUFFICIENT.value,
+            EvidenceMode.DIRECT_PATH.value, EvidenceMode.INSUFFICIENT.value,
         )
 
         # At least one candidate should be Mode A with STRONG label (a disease
@@ -805,7 +228,6 @@ class TestEvidencePanel:
             assert c.evidence_label in (
                 "Strong path support",
                 "Weak path support",
-                "Analogy-based (no direct KG path)",
                 "Insufficient evidence",
             )
 
@@ -843,6 +265,22 @@ class TestEvidencePanel:
             assert abs(c_no.score - c_yes.score) < 1e-9, (
                 "Evidence panel changed the scores"
             )
+
+    def test_there_is_no_analogy_mode(self):
+        """X20 (K8-4): Mode B, the analogy over the ShepherdGNN embeddings the
+        specless serving supplied, retired with it. A direct path and
+        insufficient evidence are the only modes and labels, with no alias."""
+        import inspect
+
+        import src.reasoning as reasoning
+        from src.reasoning import ConfidenceLabel, EvidenceMode, EvidencePanel
+
+        assert {mode.name for mode in EvidenceMode} == {"DIRECT_PATH", "INSUFFICIENT"}
+        assert {label.name for label in ConfidenceLabel} == {
+            "STRONG_PATH", "WEAK_PATH", "INSUFFICIENT"}
+        assert not hasattr(reasoning, "AnalogyMatch")
+        assert not {"node_embeddings", "node_id_to_idx"} & set(
+            inspect.signature(EvidencePanel.build_evidence).parameters)
 
     def test_evidence_panel_direct_unit_test(self, medium_kg):
         """Direct unit test of EvidencePanel without going through pipeline."""
@@ -882,8 +320,8 @@ class TestEvidencePanel:
             existing_paths=None,  # force fresh path search
         )
 
-        # Without GNN embeddings, Mode B is unavailable. Result must be
-        # either DIRECT_PATH (if KG has a path) or INSUFFICIENT.
+        # Either DIRECT_PATH (if KG has a path) or INSUFFICIENT: there is no
+        # other mode.
         assert package.mode in (
             EvidenceMode.DIRECT_PATH, EvidenceMode.INSUFFICIENT,
         )
@@ -897,7 +335,7 @@ class TestEvidencePanel:
     def test_evidence_panel_insufficient_when_no_paths_no_embeddings(
         self, medium_kg
     ):
-        """When neither paths nor embeddings are available → INSUFFICIENT."""
+        """When no path reaches the disease → INSUFFICIENT."""
         from src.core.types import DataSource, DiseaseTaskCandidate, Node, NodeID, NodeType
         from src.reasoning import ConfidenceLabel, EvidenceMode, EvidencePanel
 
@@ -931,8 +369,6 @@ class TestEvidencePanel:
             patient_input=patient,
             source_ids=source_ids,
             existing_paths=None,
-            node_embeddings=None,  # no GNN → no Mode B
-            node_id_to_idx=None,
         )
 
         assert package.mode == EvidenceMode.INSUFFICIENT

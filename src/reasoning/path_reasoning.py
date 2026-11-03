@@ -15,8 +15,7 @@
 #
 # Output:
 #   - Scored paths from phenotypes to diseases: the evidence a served disease
-#     row is explained by (and, for the legacy mixture, the diseases it ranks).
-#     Paths never rank a disease themselves.
+#     row is explained by. Paths never rank a disease themselves.
 #
 # Design Notes:
 #   - Uses BFS for path enumeration (efficient for bounded lengths)

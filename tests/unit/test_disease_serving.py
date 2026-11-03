@@ -6,9 +6,11 @@ disease of the model's graph view ranked by the disease head, ties by view id,
 paths only explaining the rows shown; the served identity says
 `disease_task`, no mixing weight and no shortest-path table; the API's response
 validates. A base is refused: it serves no diagnosis. `run` is `rank()` cut at
-`top_k`, its outcomes are `rank()`'s, and the service builds through
-`build_served_pipeline` (served on a disease child since K8-2a; they were
-`test_served_rank`'s, on the mixture).
+`top_k` (`test_run_is_rank_cut_at_top_k`), its outcomes are `rank()`'s
+(`test_the_three_outcomes_are_the_three_returns_of_run`), and the service
+builds through `build_served_pipeline`
+(`test_the_service_and_build_served_pipeline_build_the_same_pipeline`); these
+three are served on a disease child since K8-2a, and were the mixture's before.
 
 Module: tests/unit/test_disease_serving.py
 """

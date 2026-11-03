@@ -166,6 +166,43 @@ def test_the_m4_probes_are_required_in_both_parts():
     assert "M4" in probe.m2_acceptance(report, False)["scope"]
 
 
+def test_r2s_serving_half_refuses_before_a_model_is_built(trained_disease_child, served_state,
+                                                         tmp_path):
+    """R2's serving half, through its own entrance (`build_pipeline`) and its
+    own observer (`_observing_builds`). The observer is not vacuous: around the
+    disease child it notes the one build serving makes, and puts the builder
+    back. Around the child's stripped copy it notes none, the refusal is
+    `read_model_record`'s, and nothing is published -- so a refusal that came
+    after the build would fail R2."""
+    import src.models.bundle.builder as builder
+    from src.inference.pipeline import PipelineBuildError
+    from src.models.bundle.record import HISTORY_ONLY
+
+    probe = _probe()
+    api = served_state
+    data_dir, child = trained_disease_child["data_dir"], trained_disease_child["disease"]
+    original = builder.build_bundle
+
+    def build(checkpoint):
+        return api.build_pipeline(kg_path=str(data_dir / "kg.json"),
+                                  checkpoint_path=str(checkpoint),
+                                  data_dir=str(data_dir), device="cpu")
+
+    built = []
+    with probe._observing_builds(built):
+        assert build(child).pipeline.model is not None
+    assert built == ["disease"]
+    assert builder.build_bundle is original
+
+    stripped = probe._without_model_spec(child, tmp_path / "no_model_spec.pt")
+    served, refused = api.app_state.pipeline, []
+    with probe._observing_builds(refused):
+        probe.refuses(lambda: build(stripped), PipelineBuildError, HISTORY_ONLY)
+    assert refused == []
+    assert api.app_state.pipeline is served
+    assert builder.build_bundle is original
+
+
 def test_the_demo_phase_passes_and_every_required_probe_runs(tmp_path, served_state):
     probe = _probe()
     report = probe.Report()
@@ -480,10 +517,14 @@ def test_the_real_phase_passes_and_leaves_the_workspace_as_it_was(
                                                                              "disease")
     # R2: a file without a model spec refused by a finetune and a resume: a
     # stripped copy of R4.finetune's child always, the history file when given.
+    # Serving is checked on the stripped copy, which records its graph, so
+    # serving refuses it for its missing model spec before any model is built
+    # (the history file records none, which serving refuses first; R7).
     refused = {"finetune": "refused before anything was written",
                "resume": "refused before anything was written"}
     subjects = facts["R2"]["subjects"]
-    assert subjects["stripped copy of R4.finetune's child"] == refused
+    assert subjects["stripped copy of R4.finetune's child"] == {
+        **refused, "serving": "refused at load before any model was built"}
     if history:
         assert subjects["history file given"] == refused
     else:

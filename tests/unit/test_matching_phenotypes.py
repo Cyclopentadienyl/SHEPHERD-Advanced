@@ -277,12 +277,9 @@ def test_the_api_carries_the_matches(client, include_explanations):
 
 def test_the_field_states_its_definition():
     pytest.importorskip("fastapi")
-    from src.api.routes.diagnose import DiseaseTaskCandidate, ServedMixtureCandidate
+    from src.api.routes.diagnose import DiseaseTaskCandidate
 
-    descriptions = {kind.model_fields["matching_phenotypes"].description
-                    for kind in (ServedMixtureCandidate, DiseaseTaskCandidate)}
-    assert len(descriptions) == 1, "every kind's candidate states one definition"
-    (description,) = descriptions
+    description = DiseaseTaskCandidate.model_fields["matching_phenotypes"].description
     assert "directly" in description and "exact term" in description
     assert "not ontology ancestors or descendants, not gene-mediated" in description
     assert "An empty list does not mean no clinical overlap." in description

@@ -89,14 +89,16 @@ M3a's checks:
     D1's child, each leaving no run directory and nothing changed (M5, the
     last a parent without a model spec); serving (M6) and measurement (M7)
     refusing D1's child over the same-shaped workspace; the inventory's
-    verdicts (M8); the finished child extended by one epoch at a fixed rate
-    (M9); resuming that finished child refused before anything exists (M10).
+    verdicts, a file without a model spec refused for both uses (M8); the
+    finished child extended by one epoch at a fixed rate (M9); resuming that
+    finished child refused before anything exists (M10).
     Phase R, on the real workspace: it verifies (R1); a base trained by the
     reference recipe, one epoch of two, paused (R3), and its remaining epoch
     resumed (R4); a disease child finetuned from that resumed base
     (R4.finetune); a file without a model spec refused by a finetune and a
     resume before anything is written, a stripped copy of that child and the
-    history file when one is given (R2); measurement of the child by its task
+    history file when one is given, and the stripped copy also by serving
+    before any model is built (R2); measurement of the child by its task
     (R5) and disease-task serving, with a diagnosis of a query from the
     workspace's own validation cases (R6); the inventory passes
     the child, and refuses the history file when one is given (R7); the
@@ -3328,6 +3330,32 @@ def _observing_checkpoint_reads(observed: List[str]):
         checkpoint_io.read_checkpoint = original
 
 
+@contextlib.contextmanager
+def _observing_builds(observed: List[str]):
+    """While this is open, each model built through the one builder
+    (`src.models.bundle.builder.build_bundle`) is noted by its task, then built
+    as asked.
+
+    **Observed, not inferred from the refusal's words**, as
+    `_observing_checkpoint_reads` observes the reads: a refusal that must come
+    before any model is built is shown to. `load_bundle` imports the builder
+    when it runs, so serving reaches this wrapper.
+    """
+    import src.models.bundle.builder as builder
+
+    original = builder.build_bundle
+
+    def observing(spec, *args, **kwargs):
+        observed.append(str(getattr(spec, "task", None)))
+        return original(spec, *args, **kwargs)
+
+    builder.build_bundle = observing
+    try:
+        yield
+    finally:
+        builder.build_bundle = original
+
+
 def _serve_and_view(data_dir: Path, checkpoint: Path, expected_sha256: str,
                     device: str) -> Tuple[str, Dict[str, Any]]:
     """`checkpoint`, a disease child, served through the production reload,
@@ -5675,12 +5703,18 @@ def phase_m2_demo(
 
     def _inventory() -> Tuple[str, Dict[str, Any]]:
         import scripts.audit_checkpoint_family as audit
+        from src.models.bundle.record import HISTORY_ONLY
 
         assert "other" in state, "the same-shaped workspace (M1) is not available"
         root = m2 / "inventory_root"
         placed = {
             "a/checkpoints/m2/fresh.pt": checkpoint,
             "a/checkpoints/m2/pre_contract.pt": _pre_contract(),
+            # D1's child with its model spec removed (the one stripping
+            # helper): it records this workspace's graph and inputs, so only
+            # its missing model spec can refuse it.
+            "a/checkpoints/m2/no_model_spec.pt": _without_model_spec(
+                checkpoint, m2 / "parents" / "inventory_no_model_spec.pt"),
             "b/checkpoints/m2/fresh.pt": checkpoint,
         }
         _workspace_copy(sound, root / "a")
@@ -5702,12 +5736,18 @@ def phase_m2_demo(
         assert old["verdict"] == "refused" and "records no training_input_digests" in old["reason"]
         crossed = verdicts("b", "b/checkpoints/m2/fresh.pt")["serve_and_measure"]
         assert crossed["verdict"] == "refused" and "kg differs" in crossed["reason"]
-        return "the inventory lists what M2 accepts and refuses", {
+        specless = verdicts("a", "a/checkpoints/m2/no_model_spec.pt")
+        for use, verdict in specless.items():
+            assert verdict["verdict"] == "refused" and HISTORY_ONLY in (verdict["reason"] or ""), (
+                f"a file without a model spec reads {verdict['verdict']} for {use}")
+        return ("the inventory lists what M2 accepts and refuses, and refuses a file without "
+                "a model spec for both uses"), {
             "report_sha256": file_sha256(output),
             "counts": inventory["counts"],
         }
 
-    report.run("M8", "m2", "the inventory lists the demo checkpoints' M2 verdicts", _inventory)
+    report.run("M8", "m2", "the inventory lists the demo checkpoints' M2 verdicts, and refuses "
+               "a file without a model spec for both uses", _inventory)
 
     def _extended() -> Tuple[str, Dict[str, Any]]:
         assert "child" in state, "the resumed checkpoint (M2) is not available"
@@ -6073,11 +6113,12 @@ def phase_m2_real(
     `reference`, when given, is a history file inside the workspaces root: a
     checkpoint without a model spec and without a training record of its
     graph (no `training_input_digests`, or none for `kg`), such as the
-    deployment's model-02. R2 refuses it for its missing model spec and R7's
-    inventory for its missing record: until K8-4 the inventory judges a
-    checkpoint by its training record alone, so a file without a model spec
-    that records its graph is not one R7 passes. R8 checks it unchanged, and
-    nothing is read from it to configure a run."""
+    deployment's model-02. R2's finetune and resume refuse it for its missing
+    model spec (serving is checked on R2's stripped copy, which records its
+    graph, so serving's refusal is the model spec's and not the record's); R7's
+    inventory refuses it for its missing record, checked first, or for its
+    missing model spec. R8 checks it unchanged, and nothing is read from it to
+    configure a run."""
     print("\nR. Contract M2 on real data, with M4's flow")
     from src.utils.fingerprint import file_sha256
 
@@ -6189,6 +6230,9 @@ def phase_m2_real(
                _finetuned)
 
     def _history_refused() -> Tuple[str, Dict[str, Any]]:
+        import src.api.main as api
+        from src.inference.pipeline import PipelineBuildError
+        from src.models.bundle.record import HISTORY_ONLY
         from src.utils.run_plan import RunPlanRefused
 
         assert "child" in state, "R4.finetune did not pass"
@@ -6217,20 +6261,34 @@ def phase_m2_real(
                 assert not run.exists(), f"a refused {use} created its run directory"
                 refused[use] = "refused before anything was written"
             if path == stripped:
-                assert_untouched(before, history, "a refused finetune or resume")
+                # **Serving, on the copy that records its graph**: the
+                # production build over the real workspace, refused at load
+                # by the model record (`read_model_record`) before any model
+                # is built, observed at the one builder, and nothing published.
+                # The given file is not served: serving would refuse it for its
+                # missing training record first, which R7 covers.
+                served, builds = api.app_state.pipeline, []
+                with _observing_builds(builds):
+                    refuses(lambda: api.build_pipeline(
+                        kg_path=str(real / "kg.json"), checkpoint_path=str(stripped),
+                        data_dir=str(real), device=device,
+                    ), PipelineBuildError, HISTORY_ONLY)
+                assert builds == [], "a model was built from a file without a model spec"
+                assert api.app_state.pipeline is served, "the served pipeline changed"
+                refused["serving"] = "refused at load before any model was built"
+                assert_untouched(before, history, "a refused finetune, resume or serving build")
             else:
                 assert _size_and_mtime(path) == before, (
                     "a refused finetune or resume changed the history file")
             seen[subject] = refused
         if reference is None:
             seen["history file"] = "not given"
-        return "a file without a model spec is refused by a finetune and a resume", {
-            "subjects": seen,
-            "serving": "refused at load from the serving deletion (K8-4), not checked here",
-        }
+        return ("a file without a model spec is refused by a finetune and a resume, and the "
+                "stripped copy also by serving before any model is built"), {"subjects": seen}
 
-    report.run("R2", "real", "a file without a model spec is refused by a finetune and a resume "
-               "on the real workspace, before anything is written", _history_refused)
+    report.run("R2", "real", "a file without a model spec is refused by a finetune and a resume, "
+               "and the stripped copy also by serving before any model is built, on the real "
+               "workspace, before anything is written", _history_refused)
 
     def _measured() -> Tuple[str, Dict[str, Any]]:
         assert "child" in state, "R4.finetune did not pass"
@@ -6254,11 +6312,14 @@ def phase_m2_real(
 
     def _inventory() -> Tuple[str, Dict[str, Any]]:
         import scripts.audit_checkpoint_family as audit
+        from src.models.bundle.record import HISTORY_ONLY
 
         assert "child" in state, "R4.finetune did not pass"
         facts: Dict[str, Any] = {}
         if reference is not None:
-            # The deployment's inventory, which must refuse the history file.
+            # The deployment's inventory, which must refuse the history file:
+            # for its missing training record (checked first), or else for its
+            # missing model spec (`read_model_record`'s reason).
             deployment = runs / "inventory_deployment.json"
             assert audit.main(["--inventory", str(workspaces_root),
                                "--output", str(deployment)]) == 0
@@ -6269,15 +6330,18 @@ def phase_m2_real(
             reason = old["serve_and_measure"]["reason"] or ""
             assert old["serve_and_measure"]["verdict"] == "refused", (
                 "the history file was accepted")
-            assert ("records no training_input_digests" in reason
-                    or "kg is not recorded" in reason), (
-                "the history file was refused for something other than its missing kg record"
+            refusal = next((fact for fragment, fact in (
+                ("records no training_input_digests", "no record"),
+                ("kg is not recorded", "no kg role"),
+                (HISTORY_ONLY, "no model spec"),
+            ) if fragment in reason), None)
+            assert refusal is not None, (
+                "the history file was refused for something other than its missing kg "
+                "record or its missing model spec"
             )
             facts.update(deployment_report_sha256=file_sha256(deployment),
                          deployment_counts=listing["counts"],
-                         reference_refusal=("no record"
-                                            if "records no training_input_digests" in reason
-                                            else "no kg role"))
+                         reference_refusal=refusal)
         else:
             facts["reference_refusal"] = "not given"
         # The new child lives outside the workspace, so it is listed through a
@@ -6297,7 +6361,7 @@ def phase_m2_real(
         )
         facts["new_model_report_sha256"] = file_sha256(new_report)
         return ("the new child passes"
-                + ("; the history file is refused for its missing record"
+                + ("; the history file is refused for its missing record or model spec"
                    if reference is not None else "; no history file given")), facts
 
     report.run("R7", "real",

@@ -83,12 +83,8 @@ import requests
 from src.core.types import (
     DISEASE_TASK,
     GENE_TASK,
-    MIXED_AS_WORDS,
     PATIENTS_LIKE_ME,
     RESULT_KINDS,
-    SERVED_MIXTURE,
-    SP_NUMERIC_STATUSES,
-    SP_STATUS_WORDS,
     result_label,
 )
 from src.evaluation.caveats import TASK_NAMES
@@ -175,8 +171,8 @@ def _parse_gene_list(text: str) -> List[str]:
 
 
 #: What a candidate's score is, said under the report's table and in the
-#: Score column's help: the value its result kind ranks by (`served_score` or
-#: `score`, Spec 1 §2.1); the words shown say what the number is.
+#: Score column's help: the value its result kind ranks by (`score` or
+#: `similarity`, Spec 1 §2.1); the words shown say what the number is.
 SCORE_NOTE = ("Score ranks the candidates of this result. It is not a calibrated "
               "disease probability.")
 #: The same for a gene task model's candidate genes (the report's note and the
@@ -196,7 +192,6 @@ REFERENCE_CONTEXT_NOTE = ("Recorded by the reference cohort: context, never an i
 LABEL_STYLES = {
     "Strong path support": ("🟢", "#22c55e"),
     "Weak path support": ("🟡", "#eab308"),
-    "Analogy-based (no direct KG path)": ("🔵", "#3b82f6"),
     "Insufficient evidence": ("⚪", "#9ca3af"),
 }
 
@@ -377,23 +372,11 @@ def _refusal_line(entry: Dict[str, Any]) -> Optional[str]:
 # =============================================================================
 # The result's kind (Spec 1 §2.1), as every surface below reads it
 # =============================================================================
-def _label_of(kind: str, result: Mapping[str, Any]) -> Optional[str]:
-    """The kind's fixed label (`src.core.types.result_label`), η read from the
-    result's own served identity; None where the identity cannot give it."""
-    identity = result.get("served_identity")
-    identity = identity if isinstance(identity, Mapping) else {}
-    settings = identity.get("settings") if isinstance(identity.get("settings"), Mapping) else {}
-    try:
-        return result_label(kind, identity.get("scoring_mode"), settings.get("eta"))
-    except (TypeError, ValueError):
-        return None
-
-
 #: The kinds this page draws: every kind of the result union. Disease rows for
-#: the mixture and the disease task; a gene task
-#: model's candidate genes and a patients-like-me model's reference patients in
-#: their own columns, details and exports (K6 decision 15). A kind not listed
-#: (a newer API) is said, never drawn as another kind's rows.
+#: the disease task; a gene task model's candidate genes and a patients-like-me
+#: model's reference patients in their own columns, details and exports (K6
+#: decision 15). A kind not listed (a newer API) is said, never drawn as
+#: another kind's rows.
 PAGE_KINDS = RESULT_KINDS
 #: The task kinds whose rows are not diseases: no evidence, explanation or path
 #: is discovered for them, so their details are one key-value list.
@@ -407,37 +390,23 @@ def _result_kind(result: Any) -> Optional[str]:
     return kind if kind in PAGE_KINDS else None
 
 
-def _shows_sp(result: Any) -> bool:
-    """Whether the result has an SP column: a mixture served with a table. Without
-    one every record is "No SP table", which the kind's label already says."""
-    identity = result.get("served_identity") if isinstance(result, Mapping) else None
-    return (_result_kind(result) == SERVED_MIXTURE and isinstance(identity, Mapping)
-            and identity.get("scoring_mode") == "gnn_plus_shortest_path")
-
-
 #: Said where a response names no kind this page knows (absent, or a newer
 #: kind): nothing is drawn from it.
 KIND_NOT_REPORTED = ("The response does not name a result kind this page can read "
                      "(result_kind), so its candidates are not shown.")
-#: A mixture whose identity does not give its η (only a malformed response):
-#: its candidates are shown, and the label says what is missing, never a constant.
-MIXTURE_ETA_NOT_REPORTED = ("Served ranking today: diseases reached by path discovery, "
-                            "scored by the mixture; the response does not report its η")
 
 
 def kind_label(result: Any) -> str:
-    """The kind's fixed label, η read from the result's own served identity,
-    never a constant; KIND_NOT_REPORTED where the kind is not one this page knows."""
+    """The kind's fixed label (`src.core.types.result_label`); KIND_NOT_REPORTED
+    where the kind is not one this page knows."""
     kind = _result_kind(result)
     if kind is None:
         return KIND_NOT_REPORTED
-    return _label_of(kind, result) or MIXTURE_ETA_NOT_REPORTED
+    return result_label(kind)
 
 
 def _score(candidate: Mapping[str, Any], kind: Optional[str]) -> Any:
     """The value the kind ranks by; None for a kind this page does not know."""
-    if kind == SERVED_MIXTURE:
-        return candidate.get("served_score")
     if kind in (DISEASE_TASK, GENE_TASK):
         return candidate.get("score")
     if kind == PATIENTS_LIKE_ME:
@@ -445,36 +414,12 @@ def _score(candidate: Mapping[str, Any], kind: Optional[str]) -> Any:
     return None
 
 
-def sp_text(sp_term: Any, compact: bool = False) -> str:
-    """A candidate's SP record in words: the score for a numeric status (with
-    the coverage for a partial one), else the status's own words, and "mixed as
-    0 (legacy)" where the mixture still mixed it. Never 0 for a missing value.
-    `compact` shortens the coverage to "(3/4)" for a table cell, which the Score
-    help explains; the details and the report say "(3/4 phenotypes)"."""
-    if not isinstance(sp_term, Mapping):
-        return "not reported"
-    status = sp_term.get("status")
-    if status in SP_NUMERIC_STATUSES:
-        text = _num(sp_term.get("score"))
-        if status == "COMPUTED_PARTIAL":
-            text += (f" ({sp_term.get('phenotypes_mapped')}/"
-                     f"{sp_term.get('phenotypes_submitted')}"
-                     f"{'' if compact else ' phenotypes'})")
-        return text
-    words = SP_STATUS_WORDS.get(status, "not reported")
-    if sp_term.get("mixed_as") is not None:
-        words += f", {MIXED_AS_WORDS}"
-    return words
-
-
 # =============================================================================
 # Formatting helpers — diagnosis results
 # =============================================================================
-def _format_results_table(candidates: List[Dict], kind: Optional[str] = None,
-                          shows_sp: bool = False) -> str:
+def _format_results_table(candidates: List[Dict], kind: Optional[str] = None) -> str:
     """Format candidates as a Markdown table (the exported report), its columns
-    the kind's: the score and model term of a mixture (SP beside them when a
-    table is served), the task head's score for a disease task model."""
+    the kind's: the task head's score for a disease task model."""
     if kind is None:
         return f"*{KIND_NOT_REPORTED}*"
     if not candidates:
@@ -482,17 +427,10 @@ def _format_results_table(candidates: List[Dict], kind: Optional[str] = None,
     if kind in TASK_ROW_KINDS:
         return _format_task_table(candidates, kind)
 
-    columns = ["Rank", "Disease", "Score"]
-    if kind == SERVED_MIXTURE:
-        columns += ["Model term"] + (["SP"] if shows_sp else [])
-    columns += ["Evidence"]
+    columns = ["Rank", "Disease", "Score", "Evidence"]
     rows = []
     for c in candidates:
         cells = [str(c.get("rank")), f"**{c.get('disease_name')}**", _num(_score(c, kind))]
-        if kind == SERVED_MIXTURE:
-            cells.append(_num(c.get("model_term")))
-            if shows_sp:
-                cells.append(sp_text(c.get("sp_term")))
         label = c.get("evidence_label") or "—"
         emoji, _ = LABEL_STYLES.get(label, ("", "#888"))
         cells.append(f"{emoji} {label}".strip())
@@ -571,26 +509,6 @@ def _format_evidence_detail(candidate: Dict) -> str:
                 _node_display_name(n) for n in path
             )
             parts.append(f"{i}. `{path_str}`")
-
-    elif mode == "analogy_based":
-        analogies = pkg.get("analogies", [])
-        parts.append("**Mode B — Analogy-Based Evidence**")
-        parts.append("")
-        for a in analogies[:3]:
-            sim = a.get("embedding_similarity")
-            name = a.get("similar_gene_name") or "?"
-            shared = a.get("shared_features", [])
-            known_paths = a.get("known_paths", [])
-            # A similarity that is not there is left out, never printed as 0.
-            parts.append(
-                f"- **{name}**"
-                + (f" (similarity: {sim:.2f})" if isinstance(sim, (int, float)) else "")
-            )
-            if shared:
-                parts.append(f"  - Shared: {', '.join(shared)}")
-            for kp in known_paths[:2]:
-                kp_str = " → ".join(_node_display_name(n) for n in kp)
-                parts.append(f"  - Path: `{kp_str}`")
 
     elif mode == "insufficient":
         parts.append("**No usable evidence found.** This candidate should be validated via independent clinical judgment.")
@@ -694,8 +612,6 @@ _NO_IDENTITY_REASON = {
     IDENTITY_NO_MODEL: "no model is loaded on this server now; nothing is served",
 }
 _SCORING_MODE_WORDS = {
-    "gnn_plus_shortest_path": "the GNN score combined with the shortest-path table",
-    "gnn_only": "the GNN score alone",
     "disease_task": "a model finetuned for the disease task, over its graph view",
     "gene_task": "a model finetuned for the gene task: its similarity mixed with "
                  "shortest-path proximity",
@@ -711,7 +627,7 @@ _PATH_SETTING_KEYS = (
 #: meaning; the tab adds an icon, the report a blockquote, neither relies on it.
 #: Defined once in the shared renderers (Model Facts' warnings say the same).
 _IDENTITY_BANNERS = IDENTITY_BANNERS
-assert set(_IDENTITY_BANNERS) >= {IDENTITY_NOT_REPORTED, "synthetic", "no_sp"}
+assert set(_IDENTITY_BANNERS) >= {IDENTITY_NOT_REPORTED, "synthetic"}
 
 
 def _identity_of(container: Dict[str, Any]) -> Tuple[str, Optional[Dict[str, Any]]]:
@@ -830,17 +746,11 @@ def _manifest_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
 def _shortest_path_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
     part = _field(identity, "shortest_paths")
     state = _field(part, "state")
-    if state == "verified":
-        build_id, max_hops = _field(part, "build_id"), _field(part, "max_hops")
-        return (f"{_VERIFIED_MARK} verified",
-                f"build\\_id {_md_setting(build_id)} · max\\_hops {_md_setting(max_hops)}")
     if state == "computed":
         return ("computed", "computed — exact hop distances from the model's graph view; "
                 "no table is read")
     if state == "absent":
-        if _field(identity, "scoring_mode") == "gnn_only":
-            reason = "the GNN score is used alone (gnn\\_only, eta 1.0)"
-        elif _field(identity, "scoring_mode") == "disease_task":
+        if _field(identity, "scoring_mode") == "disease_task":
             reason = "a disease task model scores without one"
         elif _field(identity, "scoring_mode") == "patients_like_me":
             reason = "a patients-like-me model scores without one"
@@ -898,9 +808,7 @@ def _eta_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
     if eta is None:
         return _NOT_REPORTED_CELLS
     mode = _field(identity, "scoring_mode")
-    note = (" — no shortest-path table, so the GNN score is used alone"
-            if mode == "gnn_only" else
-            " — the gene model's own: its similarity against shortest-path proximity"
+    note = (" — the gene model's own: its similarity against shortest-path proximity"
             if mode == "gene_task" else "")
     return "in effect", f"{_md_text(eta)}{note}"
 
@@ -912,7 +820,7 @@ _NO_PATHS = {"gene_task": "a gene task model discovers no paths",
 
 
 def _path_settings_cells(identity: Dict[str, Any]) -> Tuple[str, str]:
-    # In effect in every disease mode: paths reach or explain the diseases.
+    # In effect for a disease task model: paths explain the diseases shown.
     settings = _field(identity, "settings")
     if not isinstance(settings, dict):
         return _NOT_REPORTED_CELLS
@@ -988,8 +896,6 @@ def _identity_banners(kind: str, identity: Optional[Dict[str, Any]]) -> List[Tup
     banners = []
     if _is_synthetic(identity):
         banners.append(_IDENTITY_BANNERS["synthetic"])
-    if _field(identity, "scoring_mode") == "gnn_only":
-        banners.append(_IDENTITY_BANNERS["no_sp"])
     return banners
 
 
@@ -997,21 +903,16 @@ def _identity_banners(kind: str, identity: Optional[Dict[str, Any]]) -> List[Tup
 # Export helpers — write ALL candidates (not just the previewed one) to a file
 # =============================================================================
 #: **The candidate columns follow the result's kind** (Spec 1 §2.1): every row
-#: names it (`result_kind`), and a kind's file holds only its own values. The SP
-#: record's status sits beside its value, and the value cell is empty where the
-#: status has no number (the candidate-column convention: an empty cell means
-#: no value, never 0). An evidence count is empty when no evidence package was
-#: built (explanations off), never 0.
+#: names it (`result_kind`), and a kind's file holds only its own values (the
+#: candidate-column convention: an empty cell means no value, never 0). An
+#: evidence count is empty when no evidence package was built (explanations
+#: off), never 0.
 _CSV_BASE_COLUMNS = ["result_kind", "rank", "disease_id", "disease_name"]
 _CSV_SCORE_COLUMNS = {
-    SERVED_MIXTURE: ["served_score", "model_term", "sp_term_status", "sp_term_score",
-                     "sp_term_mean_hop_distance", "sp_term_phenotypes_mapped",
-                     "sp_term_phenotypes_submitted", "sp_term_mixed_as"],
     DISEASE_TASK: ["score"],
 }
 _CSV_EVIDENCE_COLUMNS = ["evidence_label", "evidence_mode", "evidence_summary",
-                         "min_path_length", "num_direct_paths", "num_analogies",
-                         "supporting_genes"]
+                         "min_path_length", "num_direct_paths", "supporting_genes"]
 #: **The task kinds' own columns** (K6 decision 15): a gene's or a reference
 #: patient's values, then what the whole result carries that its rows need to
 #: be read (a gene task model's fixed SP bounds; the reference cohort version a
@@ -1063,8 +964,6 @@ def _result_csv_values(result: Mapping[str, Any]) -> Dict[str, Any]:
 # Digests are written in full as "sha256:<hex>" -- the prefix names the
 # algorithm and stops a spreadsheet reading an all-digit digest as a number. A
 # value the identity holds as null is written as a word, never an empty cell:
-#   absent        the part is absent: no shortest-path table (its build id and
-#                 hop bound)
 #   none          nothing applies: no eta for a model that mixes nothing
 #   not_reported  every column of a response with no `served_identity`, or a
 #                 value one left out
@@ -1072,7 +971,7 @@ _SERVED_CSV_COLUMNS = [
     "served_scoring_mode",
     "served_checkpoint_state", "served_checkpoint_sha256",
     "served_kg_state", "served_kg_sha256", "served_split_manifest_sha256",
-    "served_sp_state", "served_sp_build_id", "served_sp_max_hops",
+    "served_sp_state",
     "served_dataset_record_state", "served_dataset_origin",
     "served_dataset_record_sha256",
     "served_device", "served_device_requested", "served_eta",
@@ -1143,8 +1042,6 @@ def _served_csv_values(result: Dict[str, Any]) -> Dict[str, str]:
             _field(graph, "split_manifest_sha256"), missing
         ),
         "served_sp_state": _csv_value(_field(shortest_paths, "state"), missing),
-        "served_sp_build_id": _csv_value(_field(shortest_paths, "build_id"), "absent"),
-        "served_sp_max_hops": _csv_value(_field(shortest_paths, "max_hops"), "absent"),
         "served_dataset_record_state": _csv_value(_field(record, "state"), missing),
         "served_dataset_origin": _csv_value(_field(record, "origin"), missing),
         "served_dataset_record_sha256": _csv_digest(_field(record, "sha256"), missing),
@@ -1209,7 +1106,6 @@ def _build_results_csv(result: Dict[str, Any]) -> str:
     writer.writeheader()
     for c in result.get("candidates", []) if kind is not None else []:
         pkg = c.get("evidence_package")
-        sp = c.get("sp_term") if isinstance(c.get("sp_term"), Mapping) else {}
         writer.writerow({
             "result_kind": kind,
             "rank": c.get("rank"),
@@ -1225,14 +1121,6 @@ def _build_results_csv(result: Dict[str, Any]) -> str:
             "causal_genes": _csv_text("; ".join(map(str, c.get("causal_genes") or []))),
             "phenotypes": _csv_text("; ".join(map(str, c.get("phenotypes") or []))),
             **whole,
-            "served_score": _fmt_num(c.get("served_score")),
-            "model_term": _fmt_num(c.get("model_term")),
-            "sp_term_status": _csv_text(sp.get("status") or ""),
-            "sp_term_score": _fmt_num(sp.get("score")),
-            "sp_term_mean_hop_distance": _fmt_num(sp.get("mean_hop_distance")),
-            "sp_term_phenotypes_mapped": sp.get("phenotypes_mapped", ""),
-            "sp_term_phenotypes_submitted": sp.get("phenotypes_submitted", ""),
-            "sp_term_mixed_as": _fmt_num(sp.get("mixed_as")),
             "score": _fmt_num(c.get("score")),
             "evidence_label": _csv_text(c.get("evidence_label") or ""),
             "evidence_mode": _csv_text((pkg or {}).get("mode") or ""),
@@ -1240,7 +1128,6 @@ def _build_results_csv(result: Dict[str, Any]) -> str:
                                           .replace("\n", " ").strip()),
             "min_path_length": (pkg or {}).get("min_path_length", ""),
             "num_direct_paths": len(pkg.get("direct_paths") or []) if pkg else "",
-            "num_analogies": len(pkg.get("analogies") or []) if pkg else "",
             "matching_phenotypes": _csv_text("; ".join(c.get("matching_phenotypes") or [])),
             "supporting_genes": _csv_text("; ".join(c.get("supporting_genes") or [])),
             **served,
@@ -1291,7 +1178,7 @@ def _build_results_report_md(result: Dict[str, Any]) -> str:
     lines += ["", "## Ranked candidates", ""]
     if result_kind is not None:     # else the table line below says why
         lines += [f"*{kind_label(result).rstrip('.')}.*", ""]
-    lines += [_format_results_table(candidates, result_kind, _shows_sp(result))]
+    lines += [_format_results_table(candidates, result_kind)]
     if result_kind == GENE_TASK:     # the table holds every value of a gene
         return "\n".join(lines)
     lines += ["", "## Per-candidate detail"]
@@ -1463,11 +1350,9 @@ TOPIC_HELP = {
     ),
     "dx-score": (
         "Score",
-        SCORE_NOTE + " 0.72 does not mean a 72% chance of the disease.\n\n"
-        "The kind above the table names it. Mixture: η × model term + "
-        "(1 − η) × SP, or the model term alone without an SP table. Disease task "
-        "model: its head's score, 0 or below.\n\n"
-        "SP 0.273 (3/4): from 3 of the 4 phenotypes submitted. SP in words: no number.",
+        SCORE_NOTE + "\n\n"
+        "The kind above the table names the model. A disease task model's Score is its "
+        "head's score, 0 or below: the closest to 0 ranks first.",
     ),
     "dx-gene-score": (
         "Score",
@@ -1567,7 +1452,6 @@ MATCHING_NOTE = (
 _DOT_CLASS = {
     "Strong path support": "strong",
     "Weak path support": "weak",
-    "Analogy-based (no direct KG path)": "analogy",
     "Insufficient evidence": "none",
 }
 _CHECK_SVG = ('<svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" focusable="false">'
@@ -1703,12 +1587,11 @@ def banners_html(result: Mapping[str, Any]) -> str:
 
 
 def candidates_table_html(candidates: List[Mapping[str, Any]], selected: Any,
-                          kind: Optional[str], shows_sp: bool = False) -> str:
+                          kind: Optional[str]) -> str:
     """The ranked candidates in the kind's columns; a row is selected by click,
     or by Enter or Space when focused. Every value is escaped; a long name is
-    clamped to two lines with the full name in its title. A mixture shows its
-    score and model term, and its SP record in words when a table is served
-    (`shows_sp`); a disease task model its head's score."""
+    clamped to two lines with the full name in its title. A disease task model
+    shows its head's score."""
     if kind is None:
         return f'<div class="shep-reason">{_e(KIND_NOT_REPORTED)}</div>'
     if not candidates:
@@ -1724,27 +1607,14 @@ def candidates_table_html(candidates: List[Mapping[str, Any]], selected: Any,
         cells = (f'<td class="shep-num">{_e(rank)}</td><td class="shep-dx-dis">'
                  f'<span class="shep-dx-clamp" title="{name}">{name}</span></td>'
                  f'<td class="shep-num">{_num(_score(c, kind))}</td>')
-        if kind == SERVED_MIXTURE:
-            cells += f'<td class="shep-num">{_num(c.get("model_term"))}</td>'
-            if shows_sp:
-                # A number stays on one line; a status in words may wrap.
-                sp_term = c.get("sp_term")
-                words = not (isinstance(sp_term, Mapping)
-                             and sp_term.get("status") in SP_NUMERIC_STATUSES)
-                cells += (f'<td class="shep-num{" shep-dx-sp" if words else ""}">'
-                          f'{_e(sp_text(sp_term, compact=True))}</td>')
         label = c.get("evidence_label") or "—"
         cells += (f'<td><span class="shep-dx-dot shep-dx-dot-{_DOT_CLASS.get(label, "none")}"'
                   f' aria-hidden="true"></span>{_e(label)}</td>')
         rows.append(f'<tr data-key="{_e(rank)}" tabindex="0" aria-selected='
                     f'"{"true" if on else "false"}"{selected_class if on else ""}>{cells}</tr>')
     head = ('<th scope="col" class="shep-num">Rank</th><th scope="col">Disease</th>'
-            f'<th scope="col" class="shep-num">Score{help_button("dx-score", "Score")}</th>')
-    if kind == SERVED_MIXTURE:
-        head += '<th scope="col" class="shep-num">Model term</th>'
-        if shows_sp:
-            head += '<th scope="col" class="shep-num">SP</th>'
-    head += '<th scope="col">Evidence</th>'
+            f'<th scope="col" class="shep-num">Score{help_button("dx-score", "Score")}</th>'
+            '<th scope="col">Evidence</th>')
     return ('<div class="shep-tbl-wrap shep-dx-tbl-wrap"><table class="shep-tbl shep-dx-tbl" '
             f'aria-label="Ranked candidates"><thead><tr>{head}</tr></thead><tbody>'
             f'{"".join(rows)}</tbody></table></div>')
@@ -1828,7 +1698,7 @@ def results_body_html(result: Mapping[str, Any], selected: Any) -> str:
     label = (f'<p class="shep-dx-kind">{_e(kind_label(result))}</p>'
              if kind is not None else "")
     return banners_html(result) + note + label + reference_line_html(result) + \
-        candidates_table_html(result.get("candidates") or [], selected, kind, _shows_sp(result))
+        candidates_table_html(result.get("candidates") or [], selected, kind)
 
 
 # ----------------------------------------------------------------- details
@@ -1840,10 +1710,7 @@ def _candidate(result: Optional[Mapping[str, Any]], rank: Any) -> Optional[Mappi
 
 def _paths(candidate: Mapping[str, Any]) -> List[List[str]]:
     pkg = candidate.get("evidence_package") or {}
-    paths = [p for p in pkg.get("direct_paths") or [] if isinstance(p, list)]
-    for analogy in pkg.get("analogies") or []:
-        paths += [p for p in (analogy or {}).get("known_paths") or [] if isinstance(p, list)]
-    return paths
+    return [p for p in pkg.get("direct_paths") or [] if isinstance(p, list)]
 
 
 def segment_choices(candidate: Optional[Mapping[str, Any]]) -> List[Tuple[str, str]]:
@@ -1856,11 +1723,10 @@ def segment_choices(candidate: Optional[Mapping[str, Any]]) -> List[Tuple[str, s
             for label, value in SEGMENTS]
 
 
-def details_header_html(candidate: Optional[Mapping[str, Any]], kind: Optional[str] = None,
-                        shows_sp: bool = False) -> str:
-    """The selected candidate's name, id and its kind's values: the score and
-    model term of a mixture (its SP record on a line of its own when a table is
-    served), the score alone for a disease task model."""
+def details_header_html(candidate: Optional[Mapping[str, Any]],
+                        kind: Optional[str] = None) -> str:
+    """The selected candidate's name, id and its kind's values: the score
+    alone for a disease task model."""
     if candidate is None:
         return '<div class="shep-panel-hd"><h2>Candidate details</h2></div>'
     if kind == GENE_TASK:
@@ -1876,14 +1742,10 @@ def details_header_html(candidate: Optional[Mapping[str, Any]], kind: Optional[s
     values = ""
     if kind is not None:
         values = f" Score <b>{_num(_score(candidate, kind))}</b>"
-    if kind == SERVED_MIXTURE:
-        values += f" · Model term {_num(candidate.get('model_term'))}"
-    sp_line = (f'<p class="shep-dx-det-sub">SP {_e(sp_text(candidate.get("sp_term")))}</p>'
-               if kind == SERVED_MIXTURE and shows_sp else "")
     return (f'<div class="shep-panel-hd shep-dx-det-hd"><h2><span class="shep-dx-rank">'
             f'#{_e(candidate.get("rank"))}</span> {_e(candidate.get("disease_name"))}</h2>'
             f'<p class="shep-dx-det-sub"><code>{_e(_clean_disease_id(candidate.get("disease_id")))}'
-            f'</code>{values}</p>{sp_line}</div>')
+            f'</code>{values}</p></div>')
 
 
 def details_empty_html() -> str:
@@ -1893,7 +1755,7 @@ def details_empty_html() -> str:
 
 def evidence_html(candidate: Mapping[str, Any], explanations: bool = True) -> str:
     """The candidate's evidence package, escaped: its label and summary, the
-    path or analogy evidence, and the supporting genes."""
+    path evidence (or that there is none usable), and the supporting genes."""
     pkg = candidate.get("evidence_package")
     if not pkg:
         why = ("Explanations were off for this run (Options), so no evidence package was asked "
@@ -1914,18 +1776,6 @@ def evidence_html(candidate: Mapping[str, Any], explanations: bool = True) -> st
                      f'<p>Shortest: {_e(hop_text)} · {n} direct path{"s" if n != 1 else ""}, '
                      'listed under <button type="button" class="shep-dx-link" data-key="seg:paths">'
                      'Paths ›</button></p>')
-    elif mode == "analogy_based":
-        items = []
-        for analogy in pkg.get("analogies") or []:
-            analogy = analogy or {}
-            similarity = analogy.get("embedding_similarity")
-            sim = f" (similarity {similarity:.2f})" if isinstance(similarity, (int, float)) else ""
-            shared = analogy.get("shared_features") or []
-            items.append(f'<li><b>{_e(analogy.get("similar_gene_name") or "?")}</b>{_e(sim)}'
-                         + (f'<br><span class="shep-sub">Shared: {_e(", ".join(map(str, shared)))}'
-                            '</span>' if shared else "") + "</li>")
-        parts.append('<h3 class="shep-dx-h">Mode B — Analogy-based evidence</h3>'
-                     f'<ul class="shep-dx-list">{"".join(items)}</ul>')
     elif mode == "insufficient":
         parts.append('<p><b>No usable evidence found.</b> This candidate should be validated via '
                      'independent clinical judgment.</p>')
@@ -2054,7 +1904,7 @@ def details_outputs(result: Optional[Mapping[str, Any]], rank: Any,
                else "Explanations were off for this run (Options).")
         html_ = f'<p class="shep-muted">{why}</p>'
     return {
-        "details_hd": details_header_html(candidate, _result_kind(result), _shows_sp(result)),
+        "details_hd": details_header_html(candidate, _result_kind(result)),
         "details_seg": view_update(True, "shep-seg", value=segment,
                                    choices=segment_choices(candidate)),
         "details_html": view_update(html_ is not None, *_HTML_VIEW, value=html_),
@@ -3293,7 +3143,6 @@ PAGE_CSS = f"""
 {_TAB} .shep-dx-tbl-wrap {{ margin: 0; }}
 {_TAB} .shep-dx-tbl td, {_TAB} .shep-dx-tbl th {{ white-space: nowrap; }}
 {_TAB} .shep-dx-tbl td.shep-dx-dis {{ white-space: normal; width: 100%; min-width: 9em; }}
-{_TAB} .shep-dx-tbl td.shep-dx-sp {{ white-space: normal; min-width: 5em; }}
 {_TAB} .shep-dx-tbl td.shep-dx-wrap {{ white-space: normal; min-width: 7em; overflow-wrap: anywhere; }}
 {_TAB} .shep-dx-ref code {{ font-family: var(--shep-mono); }}
 {_TAB} .shep-dx-task-box {{ gap: 0 !important; }}
@@ -3305,7 +3154,6 @@ PAGE_CSS = f"""
 {_TAB} .shep-dx-dot {{ display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 7px; vertical-align: 1px; }}
 {_TAB} .shep-dx-dot-strong {{ background: #1f9d55; }}
 {_TAB} .shep-dx-dot-weak {{ background: #d69e00; }}
-{_TAB} .shep-dx-dot-analogy {{ background: #3b6fe0; }}
 {_TAB} .shep-dx-dot-none {{ background: #8a909b; }}
 {_TAB} .shep-dx-empty {{ margin: auto; max-width: 440px; text-align: center; color: var(--shep-text-2); padding: 24px 8px; }}
 {_TAB} .shep-dx-empty p {{ margin: 4px 0; }}

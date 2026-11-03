@@ -840,7 +840,6 @@ def _from_side(status: Optional[Mapping[str, Any]], listing: Mapping[str, Any]) 
         "workspace": listing.get("serving"),
         "graph": (identity.get("graph") or {}).get("kg_sha256"),
         "sp": sp.get("state"),
-        "sp_build": sp.get("build_id"),
         "mode": identity.get("scoring_mode"),
         "synthetic": record.get("origin") == "synthetic",
     }
@@ -865,7 +864,6 @@ def _to_side(item: Mapping[str, Any], workspace: str, workspace_dir: Path,
         "workspace": workspace,
         "graph": _graph_digest(workspace_dir),
         "sp": SCORING_MODE_SP_STATES.get(mode, "absent"),
-        "sp_build": None,
         "mode": mode,
         "synthetic": origin == "synthetic",
     }
@@ -917,8 +915,10 @@ def _target_now(item: Mapping[str, Any], workspace: Any, *,
 
 #: The From rows that describe what is served: with no model loaded nothing is
 #: served, so they say "not applicable" (their own word, never "absent" or
-#: "files", which would describe something served).
-_SERVED_ROWS = ("trained", "workspace", "sp", "data")
+#: "files", which would describe something served). Otherwise every side names
+#: a task: a served model's scoring mode is a task's, and only a model
+#: finetuned for a task is loaded (`load_refusal`).
+_SERVED_ROWS = ("trained", "workspace", "mode", "sp", "data")
 
 
 def _cell(side: Mapping[str, Any], row: str, workspaces: Sequence[Any], *, to: bool,
@@ -946,18 +946,11 @@ def _cell(side: Mapping[str, Any], row: str, workspaces: Sequence[Any], *, to: b
             '<span class="shep-muted">not a listed workspace</span>'
         return f'{name} · graph <code>{r.e(r.short_hex(side["graph"]))}</code>'
     if row == "sp":
-        state = side.get("sp")
-        if state == "verified":
-            build = f": build <code>{r.e(side['sp_build'])}</code>" if side.get("sp_build") else ""
-            return f"present{build}"
-        if state == "computed":
-            return "computed from the model's graph view"
-        return "not used by this task" if side.get("mode") in SCORING_MODE_TASKS else "absent"
+        return ("computed from the model's graph view" if side.get("sp") == "computed"
+                else "not used by this task")
     if row == "mode":
-        mode = side.get("mode")
-        task = SCORING_MODE_TASKS.get(mode)
-        code = f'<code>{r.e(mode or "—")}</code>'
-        return f"{r.e(TASK_NAMES[task])} ({code})" if task else code
+        mode = side["mode"]
+        return f"{r.e(TASK_NAMES[SCORING_MODE_TASKS[mode]])} (<code>{r.e(mode)}</code>)"
     if row == "data":
         return r.chip("synthetic", "amber") if side["synthetic"] else "files"
     return ""
@@ -967,7 +960,7 @@ _ROWS = (("model", "Model"), ("sha", "Model fingerprint"), ("trained", "Trained 
          ("workspace", "Serving workspace"), ("mode", "Task and scoring"), ("sp", "SP table"),
          ("data", "Data"))
 _COMPARED = {"model": ("sha256",), "sha": ("sha256",), "trained": ("trained_on",),
-             "workspace": ("workspace", "graph"), "sp": ("sp", "sp_build"),
+             "workspace": ("workspace", "graph"), "sp": ("sp",),
              "mode": ("mode",), "data": ("synthetic",)}
 
 

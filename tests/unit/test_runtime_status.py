@@ -217,20 +217,20 @@ def test_runtime_endpoint_returns_the_report():
 # ---------------------------------------------------------------------------
 # The WebUI surfaces
 # ---------------------------------------------------------------------------
-def _status(gnn_ready: bool) -> dict:
-    """A model read from its checkpoint; `gnn_ready=False` is one reported
-    without its GNN (defensive: such a pipeline is refused at its build)."""
+def _status() -> dict:
+    """A disease task model read from its checkpoint (a pipeline without its
+    model is refused at its build, so none is ever reported)."""
     return {
         "initialized": True,
-        "gnn_ready": gnn_ready,
-        "sp_ready": True,
-        "scoring_mode": "gnn_plus_shortest_path",
+        "gnn_ready": True,
+        "scoring_mode": "disease_task",
         "kg_nodes": 100,
         "kg_edges": 200,
-        "served_identity": {"checkpoint": {"state": "verified", "sha256": "a" * 64},
+        "served_identity": {"scoring_mode": "disease_task",
+                            "checkpoint": {"state": "verified", "sha256": "a" * 64},
                             "graph": {"state": "verified", "kg_sha256": "b" * 64,
                                       "split_manifest_sha256": "c" * 64},
-                            "shortest_paths": {"state": "verified"},
+                            "shortest_paths": {"state": "absent"},
                             "dataset_record": {"state": "verified", "origin": "files"}},
     }
 
@@ -248,20 +248,18 @@ def _card(status):
 
 
 def test_the_card_says_no_model_serves_for_as_long_as_it_is_true():
-    """No model loaded, or a model reported without its GNN: the Diagnosis card
-    says so every time it is read (it is not a toast that is seen once), and
-    not otherwise. There is no path-reasoning state to say (K7)."""
+    """No model loaded: the Diagnosis card says so every time it is read (it
+    is not a toast that is seen once), and not otherwise. There is no
+    path-reasoning state to say (K7), and no model is served without its
+    network (refused at its build), so the card has no such state either."""
     pytest.importorskip("gradio")
     from src.webui.components import diagnosis_card as card
 
     without = card.body_html(_card({"initialized": False}))
-    with_gnn = card.body_html(_card(_status(True)))
-    broken = card.body_html(_card(_status(False)))
+    served = card.body_html(_card(_status()))
 
     assert "No model loaded" in without and "path reasoning" not in without
-    assert "No model loaded" not in with_gnn and "shep-tag-red" not in with_gnn
-    # A model reported without its GNN (defensive): red.
-    assert "GNN not loaded" in broken and "shep-tag-red" in broken
+    assert "No model loaded" not in served and "shep-tag-red" not in served
 
 
 def test_reading_the_card_raises_no_toast(monkeypatch):
@@ -276,8 +274,8 @@ def test_reading_the_card_raises_no_toast(monkeypatch):
     import gradio as gr
 
     monkeypatch.setattr(gr, "Warning", lambda msg, **kw: warnings.append(msg))
-    card.body_html(_card(_status(False)))
-    card.served_facts_html(_card(_status(False)))
+    card.body_html(_card(_status()))
+    card.served_facts_html(_card(_status()))
 
     assert warnings == []
 

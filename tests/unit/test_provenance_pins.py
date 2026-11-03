@@ -104,9 +104,6 @@ ALLOWED = {
     ("src/kg/artifacts.py", "check_unparsed_kg_json", "file_sha256"):
         (1, "M2.1 decision 1: identifies kg.json before a run that does not parse it, "
             "against the run's one manifest reading; records nothing"),
-    ("src/inference/pipeline.py", "DiagnosisPipeline._load_shortest_paths", "torch.load"):
-        (1, "M2.1 stated exception: the SP table at serving; its identity is the build_id "
-            "inside the loaded tensor, checked against the sidecar"),
     ("src/inference/sp_artifact.py", "read_sidecar", "json.loads"):
         (1, "M2.1 stated exception: the SP sidecar's single read, parsed from the bytes it keeps"),
     ("scripts/compute_shortest_paths.py", "main", "file_sha256"):

@@ -74,12 +74,11 @@ CHECKPOINT_SHA = _digest("checkpoint.pt")
 KG_SHA = _digest("kg.json")
 MANIFEST_SHA = _digest("split_manifest.json")
 RECORD_SHA = _digest("kg.provenance.json")
-BUILD_ID = "0123456789abcdef0123456789abcdef"
 
 
 def _settings(**overrides):
     settings = {
-        "device": "cuda:0", "device_requested": "auto", "eta": 0.7,
+        "device": "cuda:0", "device_requested": "auto", "eta": None,
         "max_path_length": 4, "path_length_penalty": 0.9,
         "max_paths_per_candidate": 10,
         "use_direct_path_optimization": True, "phenotype_normalisation_version": 1,
@@ -89,26 +88,18 @@ def _settings(**overrides):
 
 
 def _served_identity(origin="synthetic"):
-    """What the API sends for a checkpoint served over a verified workspace with
-    a verified shortest-path table (contract M3c), from a synthetic workspace by
-    default."""
+    """What the API sends for a disease task model served over a verified
+    workspace (contract M3c), from a synthetic workspace by default: no
+    shortest-path term, no mixing weight."""
     return {
-        "scoring_mode": "gnn_plus_shortest_path",
+        "scoring_mode": "disease_task",
         "checkpoint": {"state": "verified", "sha256": CHECKPOINT_SHA},
         "graph": {"state": "verified", "kg_sha256": KG_SHA,
                   "split_manifest_sha256": MANIFEST_SHA},
-        "shortest_paths": {"state": "verified", "build_id": BUILD_ID, "max_hops": 5},
+        "shortest_paths": {"state": "absent"},
         "dataset_record": {"state": "verified", "origin": origin, "sha256": RECORD_SHA},
         "settings": _settings(),
     }
-
-
-def _gnn_only_identity():
-    identity = _served_identity(origin="files")
-    identity["scoring_mode"] = "gnn_only"
-    identity["shortest_paths"] = {"state": "absent", "build_id": None, "max_hops": None}
-    identity["settings"] = _settings(eta=1.0)
-    return identity
 
 
 def _parts_left_out():
@@ -116,52 +107,34 @@ def _parts_left_out():
     (the checkpoint, graph, table and dataset record): no part is marked ✓.
     Since K7 every result comes from a model read from its checkpoint, so only
     a malformed reply has nothing marked."""
-    return {"scoring_mode": "gnn_only", "settings": _settings(eta=1.0)}
+    return {"scoring_mode": "disease_task", "settings": _settings()}
 
 
-def _sp(status="COMPUTED", score=0.55, mapped=2, submitted=2, mixed=False):
-    """An SP record as the API sends it (Spec 1 §3.3)."""
-    numeric = status in ("COMPUTED", "COMPUTED_PARTIAL")
-    return {"status": status, "phenotypes_submitted": submitted,
-            "phenotypes_mapped": mapped,
-            "unmapped_ids": ["HP:9999999"] * (submitted - mapped),
-            "max_hops": None if status == "NO_TABLE" else 5,
-            "mean_hop_distance": 1 / score - 1 if numeric else None,
-            "score": score if numeric else None,
-            "unreachable_pair_count": 0 if numeric else None,
-            "denominator_policy": "MAPPED_ONLY_DENOMINATOR" if numeric else None,
-            "mixed_as": 0.0 if mixed else None}
-
-
-def _candidates(kind, table=True):
-    """Two candidates of `kind` (Spec 1 §2.1): a mixture's served score, model
-    term and SP record (NO_TABLE without a table)."""
+def _candidates():
+    """Two candidates of `disease_task/v1` (Spec 1 §2.1), ranked by the disease
+    head's score: the first with a direct path, the second with no usable
+    evidence."""
     first = {"rank": 1, "disease_id": "mondo:MONDO:0011073", "disease_name": "Dravet syndrome",
-             "matching_phenotypes": ["HP:0001250"]}
+             "matching_phenotypes": ["HP:0001250"], "score": -0.28}
     second = {"rank": 2, "disease_id": "omim:OMIM:123", "disease_name": "Other disease",
-              "matching_phenotypes": []}
+              "matching_phenotypes": [], "score": -0.56}
     first.update(supporting_genes=["SCN1A"], explanation="Because ...",
                  evidence_label="Strong path support",
                  evidence_package={"mode": "direct_path", "summary": "Direct 2-hop path",
                                    "evidence_label": "Strong path support",
                                    "min_path_length": 2,
-                                   "direct_paths": [["hp:HP:0001250", "mondo:MONDO:0011073"]],
-                                   "analogies": []})
+                                   "direct_paths": [["hp:HP:0001250", "mondo:MONDO:0011073"]]})
     second.update(supporting_genes=[], explanation=None,
-                  evidence_label="Analogy-based (no direct KG path)",
-                  evidence_package={"mode": "analogy_based", "summary": "Analogy",
-                                    "evidence_label": "Analogy-based (no direct KG path)"})
-    first.update(served_score=0.72, model_term=0.81,
-                 sp_term=_sp(score=0.55) if table else _sp("NO_TABLE"))
-    second.update(served_score=0.44, model_term=0.5,
-                  sp_term=_sp(score=0.25) if table else _sp("NO_TABLE"))
+                  evidence_label="Insufficient evidence",
+                  evidence_package={"mode": "insufficient", "summary": "No usable evidence",
+                                    "evidence_label": "Insufficient evidence"})
     return [first, second]
 
 
 def _sample_result():
-    """A `served_mixture/v1` result served with a table (gnn_plus_shortest_path)."""
+    """A `disease_task/v1` result of a disease task model."""
     return {
-        "result_kind": "served_mixture/v1",
+        "result_kind": "disease_task/v1",
         "result_schema_version": 2,
         "session_id": "sess_abc",
         "patient_id": "pt_01",
@@ -169,20 +142,18 @@ def _sample_result():
         "served_identity": _served_identity(),
         "phenotype_input": {"received": 2, "unknown": [], "repeats_removed": 0,
                             "used": ["HP:0001250", "HP:0001263"]},
-        "eta": 0.7,
-        "candidates_reached": 12,
-        "tie_policy": "served-stable-discovery-order/v1",
+        "tie_policy": "score-desc-then-view-id-asc/v1",
         "inference_time_ms": 123.4,
         "warnings": ["low phenotype count"],
         "_query_phenotypes": ["HP:0001250", "HP:0001263"],
-        "candidates": _candidates("served_mixture/v1"),
+        "candidates": _candidates(),
     }
 
 
 def test_csv_has_row_per_candidate_with_cleaned_ids():
     csv_text = dp._build_results_csv(_sample_result())
     lines = csv_text.strip().splitlines()
-    assert lines[0].startswith("result_kind,rank,disease_id,disease_name,served_score")
+    assert lines[0].startswith("result_kind,rank,disease_id,disease_name,score")
     assert len(lines) - 1 == 2  # header + 2 candidates
     assert "Dravet syndrome" in csv_text
     assert "MONDO:0011073" in csv_text and "mondo:MONDO" not in csv_text  # cleaned id
@@ -200,23 +171,24 @@ def test_report_includes_meta_and_all_candidates_with_cleaned_ids():
 
 
 def test_the_score_is_named_for_what_it_is_and_the_csv_names_the_kinds_fields():
-    """The served score is a ranking score, not a calibrated probability: the
-    page and the report say "Score" and say so; the CSV names each kind's own
-    fields (Spec 1 §2.1), never the removed confidence_score."""
+    """The disease head's score is a ranking score, not a calibrated
+    probability: the page and the report say "Score" and say so; the CSV names
+    each kind's own fields (Spec 1 §2.1), never the removed confidence_score
+    or the retired mixture's terms."""
     result = _sample_result()
     md = dp._build_results_report_md(result)
     table = md.split("## Ranked candidates")[1].split("## Per-candidate detail")[0]
-    assert "| Rank | Disease | Score | Model term | SP | Evidence |" in table
+    assert "| Rank | Disease | Score | Evidence |" in table
     assert dp.SCORE_NOTE in table and "not a calibrated disease probability" in dp.SCORE_NOTE
-    assert "· score 0.720" in md and "· confidence" not in md
+    assert "· score -0.280" in md and "· confidence" not in md
     page = dp.results_body_html(result, 1) + dp.details_header_html(
-        result["candidates"][0], "served_mixture/v1", True)
-    assert "Confidence" not in page and "> Score <b>0.720</b>" in page
+        result["candidates"][0], "disease_task/v1")
+    assert "Confidence" not in page and "> Score <b>-0.280</b>" in page
     assert 'data-help="dx-score"' in page and "dx-score" in dp.TOPIC_HELP
     header = dp._build_results_csv(result).splitlines()[0]
-    assert header.startswith("result_kind,rank,disease_id,disease_name,served_score,model_term,"
-                             "sp_term_status,sp_term_score")
+    assert header.startswith("result_kind,rank,disease_id,disease_name,score,evidence_label")
     assert "confidence" not in header and "gnn_score" not in header
+    assert "served_score" not in header and "sp_term" not in header
 
 def test_write_exports_reuses_single_dir():
     p1, _ = dp._write_exports(_sample_result())
@@ -237,8 +209,8 @@ def _no_model_status():
 def _loaded_status(**extra):
     """A status serving `_served_identity()` (the records tests use it too)."""
     status = {
-        "initialized": True, "gnn_ready": True, "sp_ready": True,
-        "scoring_mode": "gnn_plus_shortest_path", "kg_nodes": 10, "kg_edges": 20,
+        "initialized": True, "gnn_ready": True,
+        "scoring_mode": "disease_task", "kg_nodes": 10, "kg_edges": 20,
         "served_identity": _served_identity(),
     }
     status.update(extra)
@@ -247,7 +219,7 @@ def _loaded_status(**extra):
 
 def _status_serving(identity, **extra):
     status = {"initialized": True, "gnn_ready": True, "served_identity": identity,
-              "checkpoint_meta": {"epoch": 5}, "fingerprint_warnings": []}
+              "checkpoint_meta": {"epoch": 5}}
     status.update(extra)
     return status
 
@@ -778,12 +750,10 @@ import re as _re  # noqa: E402
 #: The candidate columns of each kind (Spec 1 §2.1), in order; the identity is
 #: appended after them.
 _KIND_CSV_COLUMNS = {
-    "served_mixture/v1": [
-        "result_kind", "rank", "disease_id", "disease_name", "served_score", "model_term",
-        "sp_term_status", "sp_term_score", "sp_term_mean_hop_distance",
-        "sp_term_phenotypes_mapped", "sp_term_phenotypes_submitted", "sp_term_mixed_as",
+    "disease_task/v1": [
+        "result_kind", "rank", "disease_id", "disease_name", "score",
         "evidence_label", "evidence_mode", "evidence_summary", "min_path_length",
-        "num_direct_paths", "num_analogies", "supporting_genes", "matching_phenotypes"],
+        "num_direct_paths", "supporting_genes", "matching_phenotypes"],
     # A task kind's own columns, then what the result carries for every row (K6).
     "gene_task/v1": [
         "result_kind", "rank", "gene_id", "gene_name", "score", "embsim", "sp_similarity",
@@ -797,7 +767,7 @@ _KIND_CSV_COLUMNS = {
 _SERVED_COLUMNS = [
     "served_scoring_mode", "served_checkpoint_state", "served_checkpoint_sha256",
     "served_kg_state", "served_kg_sha256", "served_split_manifest_sha256",
-    "served_sp_state", "served_sp_build_id", "served_sp_max_hops",
+    "served_sp_state",
     "served_dataset_record_state", "served_dataset_origin",
     "served_dataset_record_sha256", "served_device", "served_device_requested",
     "served_eta", "served_max_path_length", "served_path_length_penalty",
@@ -829,20 +799,15 @@ _CHECKS_NOT_REPORTED = "The response did not say what produced it or what was ch
 _IDENTITIES = {
     "verified_synthetic": _served_identity,
     "verified_files": lambda: _served_identity(origin="files"),
-    "gnn_only": _gnn_only_identity,
+    "gene_task": lambda: _task_identity("gene_task"),
 }
 
 
 def _result_with(identity):
-    """A mixture result served with `identity` (`result_kind_for`): its SP
-    records NO_TABLE without a table."""
-    result = _sample_result()
+    """A result served with `identity`, of the kind its scoring mode names
+    (`result_kind_for`): a gene task model's genes, a disease result otherwise."""
+    result = _gene_result() if identity.get("scoring_mode") == "gene_task" else _sample_result()
     result["served_identity"] = identity
-    if identity["scoring_mode"] == "gnn_plus_shortest_path":
-        return result
-    result.update(eta=identity["settings"]["eta"], candidates_reached=12,
-                  tie_policy="served-stable-discovery-order/v1",
-                  candidates=_candidates("served_mixture/v1", table=False))
     return result
 
 
@@ -872,7 +837,7 @@ def test_report_says_what_produced_the_result_before_the_candidates():
     section = _report_section(md)
     for digest in (CHECKPOINT_SHA, KG_SHA, MANIFEST_SHA, RECORD_SHA):
         assert f"`sha256:{digest}`" in section  # in full, never shortened
-    assert f"`{BUILD_ID}`" in section and "max\\_hops 5" in section
+    assert "absent — no table is served; a disease task model scores without one" in section
     assert "`cuda:0` in effect; requested: `auto`" in section
     assert dp.IDENTITY_CLAIM_BOUNDARY == _CLAIM_BOUNDARY  # the plan's line, verbatim
     assert _CLAIM_BOUNDARY in section and _NOT_A_DEVICE in section
@@ -893,7 +858,6 @@ def test_every_identity_row_is_filled_and_never_unknown(name):
 
 @pytest.mark.parametrize("name, banner", [
     ("verified_synthetic", "SYNTHETIC WORKSPACE: not a clinical result."),
-    ("gnn_only", "NO SHORTEST-PATH TABLE: GNN score alone."),
 ])
 def test_report_banners_state_each_non_normal_state_in_words(name, banner):
     section = _report_section(dp._build_results_report_md(_result_with(_IDENTITIES[name]())))
@@ -920,18 +884,19 @@ def test_a_response_without_an_identity_is_not_called_a_demo():
 
 
 def test_an_absent_table_is_written_as_its_state_and_reason():
-    """The one part a served model may lack is its shortest-path table: the row
-    says so and why, and every other part is the model's, marked ✓ (K7: no
+    """A disease task model uses no shortest-path term and mixes nothing: the
+    rows say so and why, and every other part is the model's, marked ✓ (K7: no
     absent checkpoint and no unverified graph is served)."""
     rows = {row[0]: row for row in _table_rows(dp._build_results_report_md(
-        _result_with(_gnn_only_identity())))}
+        _result_with(_served_identity("files"))))}
 
     table = rows["Shortest-path table"]
     assert table[1] == "absent"
-    assert table[2].startswith("absent — no table is served; the GNN score is used alone")
+    assert table[2] == "absent — no table is served; a disease task model scores without one"
     assert rows["Checkpoint"][1] == "✓ verified"
     assert rows["Knowledge graph (`kg.json`)"][1] == "✓ verified"
-    assert rows["Mixing weight eta"][2].startswith("1.0 — no shortest-path table")
+    assert rows["Mixing weight eta"][1:] == [
+        "none", "none — a disease task model has no terms to mix"]
 
 
 def test_verified_states_carry_the_mark_the_claim_boundary_refers_to():
@@ -939,7 +904,7 @@ def test_verified_states_carry_the_mark_the_claim_boundary_refers_to():
     states = {row[0]: row[1] for row in rows}
 
     assert states["Checkpoint"] == "✓ verified"
-    assert states["Shortest-path table"] == "✓ verified"
+    assert states["Shortest-path table"] == "absent"
     # Never "verified" alone for a synthetic record (contract M3b).
     assert states["Dataset record (`kg.provenance.json`)"] == "✓ verified · synthetic"
     assert dp.IDENTITY_NOTHING_CHECKED not in dp._build_results_report_md(_sample_result())
@@ -977,44 +942,42 @@ def test_a_response_without_an_identity_does_not_say_nothing_was_checked(how):
 
 def test_values_from_the_api_cannot_break_the_table():
     identity = _served_identity()
-    identity["shortest_paths"]["build_id"] = "a|b`c*d<script>"
+    identity["scoring_mode"] = "a|b`c*d<script>"
     identity["settings"]["device_requested"] = "x|y\nz"
 
     rows = _table_rows(_report_section(dp._build_results_report_md(_result_with(identity))))
 
     assert len(rows) == len(dp._IDENTITY_PARTS)
     assert all(len(row) == 3 for row in rows)
-    assert "``a\\|b`c*d<script>``" in rows[3][2]
+    assert "``a\\|b`c*d<script>``" in rows[5][2]
 
 
 # ------------------------------------------------------------------- the CSV
 def test_csv_keeps_one_header_and_appends_the_identity_after_the_candidates():
     header, records, rows = _csv_records(dp._build_results_csv(_sample_result()))
 
-    width = len(_KIND_CSV_COLUMNS["served_mixture/v1"])
-    assert header[:width] == _KIND_CSV_COLUMNS["served_mixture/v1"]
+    width = len(_KIND_CSV_COLUMNS["disease_task/v1"])
+    assert header[:width] == _KIND_CSV_COLUMNS["disease_task/v1"]
     assert header[width:] == _SERVED_COLUMNS
     assert len(records) == 2 and all(len(row) == len(header) for row in rows)
     assert header not in rows[1:]  # exactly one header row, no preamble
-    # The identity block by its own names: `served_score` is a candidate column.
+    # The identity block by its own names: `score` is a candidate column.
     served = [{k: r[k] for k in _SERVED_COLUMNS} for r in records]
     assert served[0] == served[1]  # the same identity on every row
     assert served[0] == {
-        "served_scoring_mode": "gnn_plus_shortest_path",
+        "served_scoring_mode": "disease_task",
         "served_checkpoint_state": "verified",
         "served_checkpoint_sha256": f"sha256:{CHECKPOINT_SHA}",
         "served_kg_state": "verified",
         "served_kg_sha256": f"sha256:{KG_SHA}",
         "served_split_manifest_sha256": f"sha256:{MANIFEST_SHA}",
-        "served_sp_state": "verified",
-        "served_sp_build_id": BUILD_ID,
-        "served_sp_max_hops": "5",
+        "served_sp_state": "absent",
         "served_dataset_record_state": "verified",
         "served_dataset_origin": "synthetic",
         "served_dataset_record_sha256": f"sha256:{RECORD_SHA}",
         "served_device": "cuda:0",
         "served_device_requested": "auto",
-        "served_eta": "0.7",
+        "served_eta": "none",
         "served_max_path_length": "4",
         "served_path_length_penalty": "0.9",
         "served_max_paths_per_candidate": "10",
@@ -1052,34 +1015,30 @@ def test_a_response_without_an_identity_says_not_reported_in_every_column(how):
 
 
 def test_absent_and_inapplicable_values_are_words():
-    _, (gnn_only, _), _ = _csv_records(dp._build_results_csv(_result_with(_gnn_only_identity())))
-    assert gnn_only["served_sp_state"] == "absent"
-    assert gnn_only["served_sp_build_id"] == "absent"
-    assert gnn_only["served_sp_max_hops"] == "absent"
-    assert gnn_only["served_checkpoint_sha256"] == f"sha256:{CHECKPOINT_SHA}"
-
-    disease = _result_with(_gnn_only_identity())
-    disease["served_identity"]["settings"]["eta"] = None
-    _, (no_eta, _), _ = _csv_records(dp._build_results_csv(disease))
-    assert no_eta["served_eta"] == "none"
+    _, (disease, _), _ = _csv_records(dp._build_results_csv(
+        _result_with(_served_identity("files"))))
+    assert disease["served_sp_state"] == "absent"
+    assert disease["served_eta"] == "none"
+    assert disease["served_checkpoint_sha256"] == f"sha256:{CHECKPOINT_SHA}"
 
 
 def test_a_text_cell_a_spreadsheet_would_run_is_defused():
     result = _sample_result()
     result["candidates"][0]["disease_name"] = '=HYPERLINK("http://x")'
-    result["candidates"][0]["served_score"] = -0.25
-    result["served_identity"]["shortest_paths"]["build_id"] = "@sum"
+    result["candidates"][0]["score"] = -0.25
+    result["served_identity"]["settings"]["device_requested"] = "@sum"
 
     _, (first, _), _ = _csv_records(dp._build_results_csv(result))
 
     assert first["disease_name"] == '\'=HYPERLINK("http://x")'
-    assert first["served_sp_build_id"] == "'@sum"
-    assert first["served_score"] == "-0.2500"  # numbers are not text cells
+    assert first["served_device_requested"] == "'@sum"
+    assert first["score"] == "-0.2500"  # numbers are not text cells
 
 
 def test_export_names_carry_synthetic():
     assert dp._export_basename(_sample_result()) == "diagnosis_SYNTHETIC_pt_01_sess_abc"
-    assert dp._export_basename(_result_with(_gnn_only_identity())) == "diagnosis_pt_01_sess_abc"
+    assert dp._export_basename(_result_with(_served_identity("files"))) == (
+        "diagnosis_pt_01_sess_abc")
     assert dp._export_basename(_without_an_identity("missing")) == "diagnosis_pt_01_sess_abc"
 
 
@@ -1176,16 +1135,17 @@ def test_the_badge_says_equal_only_for_the_whole_identity_read_after_the_result(
     state = _card(_status_serving(_served_identity()))
     assert dp.compare_with_served(_produced(), state)["state"] == "equal"
     assert "shep-dx-badge-ok" in dp.badge_html(_produced(), state)
-    # One part of the served identity differs (the SP table): never equal.
+    # Parts of the served identity differ (another task's model): never equal.
     other = _served_identity()
-    other["shortest_paths"] = {"state": "absent", "build_id": None, "max_hops": None}
-    other["scoring_mode"] = "gnn_only"
-    other["settings"] = _settings(eta=1.0)
+    other["shortest_paths"] = {"state": "computed"}
+    other["scoring_mode"] = "gene_task"
+    other["settings"] = _settings(eta=0.5)
     compared = dp.compare_with_served(_produced(), _card(_status_serving(other)))
     assert compared["state"] == "differs"
-    assert compared["differ"] == ["Shortest-path table", "Scoring mode", "Mixing weight eta"]
+    assert compared["differ"] == ["Shortest-path table", "Scoring mode", "Mixing weight eta",
+                                  "Path settings"]
     badge = dp.badge_html(_produced(), _card(_status_serving(other)))
-    assert "Produced by an earlier model or pipeline" in badge and "3 parts differ" in badge
+    assert "Produced by an earlier model or pipeline" in badge and "4 parts differ" in badge
 
 
 def test_a_stale_or_unreadable_status_never_leaves_equal_showing():
@@ -1435,75 +1395,10 @@ def test_values_from_the_api_are_escaped_in_the_table_and_the_details():
                                    matching_phenotypes=[evil])
     result["candidates"][0]["evidence_package"].update(summary=evil, direct_paths=[[evil, "b"]])
     html = (dp.results_body_html(result, 1)
-            + dp.details_header_html(result["candidates"][0], "served_mixture/v1", True)
+            + dp.details_header_html(result["candidates"][0], "disease_task/v1")
             + dp.evidence_html(result["candidates"][0]) + dp.paths_html(result["candidates"][0])
             + dp.phenotypes_html(result["candidates"][0]))
     assert "<img" not in html and "&lt;img src=x onerror=alert(1)&gt;" in html
-
-
-def test_without_a_table_there_is_no_sp_column_and_no_zero():
-    """gnn_only: every SP record is NO_TABLE, so the page draws no SP column and
-    the kind's label says the model term ranks alone; no cell reads 0.000."""
-    result = _result_with(_gnn_only_identity())
-    body = dp.results_body_html(result, 1)
-    assert ">SP</th>" not in body and ">Model term</th>" in body
-    assert "scored by the model term alone" in body
-    assert ">0.000</td>" not in body
-    header = dp.details_header_html(result["candidates"][0], "served_mixture/v1", False)
-    assert "> Score <b>0.720</b> · Model term 0.810" in header and ">SP " not in header
-    assert ">0.550</td>" in dp.results_body_html(_sample_result(), 1)
-
-
-def _with_statuses():
-    """A mixture over a table whose records have no number (forced: unexpected on
-    a verified workspace) or cover part of the phenotypes."""
-    result = _sample_result()
-    first, second = result["candidates"]
-    first["sp_term"] = _sp("COMPUTED_PARTIAL", score=0.5, mapped=1, submitted=2)
-    second["sp_term"] = _sp("TARGET_UNMAPPED", mixed=True)
-    third = {**second, "rank": 3, "disease_id": "omim:OMIM:456", "disease_name": "Third",
-             "served_score": 0.3, "sp_term": _sp("NO_PHENOTYPE_MAPPED", mixed=True)}
-    result["candidates"].append(third)
-    return result
-
-
-def test_an_sp_status_with_no_number_reads_its_words_on_every_surface():
-    """Unavailable is never zero (Spec 1 §2.1, C9): each status shows its own
-    words, "mixed as 0 (legacy)" where the mixture still mixed it, and a partial
-    record its coverage, on the page, in the details, in the report and in the
-    CSV (status beside an empty value)."""
-    result = _with_statuses()
-    body = dp.results_body_html(result, 1)
-    report = dp._build_results_report_md(result)
-    # The table cell: a number compact and on one line, words free to wrap.
-    assert '<td class="shep-num">0.500 (1/2)</td>' in body
-    assert '<td class="shep-num shep-dx-sp">Disease not mapped' in body
-    assert "0.500 (1/2 phenotypes)" in report
-    for surface in (body, report):
-        assert "Disease not mapped, mixed as 0 (legacy)" in surface
-        assert "No phenotype mapped, mixed as 0 (legacy)" in surface
-        assert "0.000" not in surface
-    details = dp.details_header_html(result["candidates"][1], "served_mixture/v1", True)
-    assert "SP Disease not mapped, mixed as 0 (legacy)" in details
-    assert "SP 0.500 (1/2 phenotypes)" in dp.details_header_html(
-        result["candidates"][0], "served_mixture/v1", True)
-    _, records, _ = _csv_records(dp._build_results_csv(result))
-    assert [r["sp_term_status"] for r in records] == [
-        "COMPUTED_PARTIAL", "TARGET_UNMAPPED", "NO_PHENOTYPE_MAPPED"]
-    assert [r["sp_term_score"] for r in records] == ["0.5000", "", ""]
-    assert [r["sp_term_mixed_as"] for r in records] == ["", "0.0000", "0.0000"]
-    assert records[0]["sp_term_phenotypes_mapped"] == "1"
-    assert records[0]["sp_term_phenotypes_submitted"] == "2"
-
-
-def test_the_kinds_label_takes_eta_from_the_results_identity():
-    """η is the result's own, read from its served identity, never a constant."""
-    result = _sample_result()
-    result["served_identity"]["settings"]["eta"] = 0.55
-    label = dp.kind_label(result)
-    assert label.endswith("η = 0.55") and "0.7" not in label
-    assert label in dp.results_body_html(result, 1)
-    assert f"*{label}.*" in dp._build_results_report_md(result)
 
 
 def test_a_response_that_does_not_name_its_kind_shows_no_candidates(monkeypatch, status_read):
@@ -1541,23 +1436,11 @@ def test_a_kind_the_page_does_not_know_shows_no_candidates(kind):
     assert f"`{result['result_kind']}` (not readable here)" in report
 
 
-def test_a_mixture_whose_identity_gives_no_eta_says_so_above_its_candidates():
-    """Only a malformed response: the candidates are shown, and the label says
-    the η is not reported, never "not shown" above a table and never 0.7."""
-    result = _sample_result()
-    result["served_identity"]["settings"]["eta"] = None
-    body = dp.results_body_html(result, 1)
-    assert dp.MIXTURE_ETA_NOT_REPORTED in body and "<table" in body
-    assert dp.KIND_NOT_REPORTED not in body and "0.7" not in dp.kind_label(result)
-    assert f"*{dp.MIXTURE_ETA_NOT_REPORTED}.*" in dp._build_results_report_md(result)
-
-
 def test_the_score_help_stays_within_its_budget():
     """The skill's §7 budget (about 60-80 words) and §5's sentence limit."""
     text = dp.TOPIC_HELP["dx-score"][1]
     assert len(text.split()) <= 80
     assert max(len(s.split()) for s in re.split(r"(?<=[.!?])\s+", text)) <= 25
-    assert "(3/4)" in text
 
 
 def test_a_missing_count_or_time_is_never_written_as_zero():
@@ -1568,7 +1451,7 @@ def test_a_missing_count_or_time_is_never_written_as_zero():
         candidate["evidence_package"] = None
     del result["inference_time_ms"]
     _, records, _ = _csv_records(dp._build_results_csv(result))
-    assert {(r["num_direct_paths"], r["num_analogies"]) for r in records} == {("", "")}
+    assert {r["num_direct_paths"] for r in records} == {""}
     assert "Inference time" not in dp._build_results_report_md(result)
 
 def test_a_selected_row_shows_its_details_with_its_counts():
@@ -1731,8 +1614,7 @@ def _task_identity(mode):
     model's distances computed from its view), the gene model's own η."""
     identity = _served_identity(origin="files")
     identity["scoring_mode"] = mode
-    identity["shortest_paths"] = {"state": "computed" if mode == "gene_task" else "absent",
-                                  "build_id": None, "max_hops": None}
+    identity["shortest_paths"] = {"state": "computed" if mode == "gene_task" else "absent"}
     identity["settings"] = _settings(eta=0.5 if mode == "gene_task" else None)
     return identity
 
@@ -1812,7 +1694,7 @@ def _patients_result():
 
 @pytest.mark.parametrize("mode, genes, cohort", [
     ("gene_task", True, False), ("patients_like_me", False, True),
-    ("disease_task", False, False), ("gnn_plus_shortest_path", False, False)])
+    ("disease_task", False, False)])
 def test_the_inputs_follow_the_served_task(mode, genes, cohort):
     """1: Candidate genes for a gene task model, Reference cohort for a
     patients-like-me model, neither otherwise; each shown by its container's

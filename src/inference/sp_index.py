@@ -58,7 +58,7 @@ without it.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Sequence, Tuple
 
 import torch
 from torch import Tensor
@@ -69,7 +69,6 @@ __all__ = [
     "SPLookup",
     "SP_TARGET_TYPES",
     "build_sp_index",
-    "sp_analysis_records",
     "sp_mean_distances",
     "validate_sp_artifact",
     "validate_sp_columns",
@@ -549,85 +548,3 @@ def sp_mean_distances(
         torch.ones(n_candidates, dtype=torch.bool),
         (~hit).sum(dim=0).to(torch.int64),
     )
-
-
-def sp_analysis_records(
-    lookup: Optional[SPLookup],
-    node_mapping: Optional[Mapping[str, Mapping[str, int]]],
-    phenotype_ids: Sequence[str],
-    target_ids: Sequence[str],
-    target_type_idx: int,
-    unmapped_ids: Sequence[str] = (),
-) -> List[Any]:
-    """**The one SP caller** (Spec 1 §2.2): one `SPAnalysisRecord` per target, in
-    target order, from one call of the primitive over every mapped target.
-
-    `phenotype_ids` are the phenotypes as used, as graph node ids
-    (``str(NodeID)``), distinct and in the order used; `unmapped_ids` are the
-    distinct request ids that never reached a node (the request's unknown
-    ids). `target_ids` are graph node ids of type `target_type_idx` (0 gene,
-    1 disease). `node_mapping` is the model's node index by type, the mapping
-    the tensors were built with.
-
-    The status, per target (§3.3), never a number standing in for a reason:
-    - ``NO_TABLE``: no table is loaded (`lookup` is None);
-    - ``TARGET_UNMAPPED``: the target is not in the node mapping;
-    - ``NO_PHENOTYPE_MAPPED``: no phenotype is in it;
-    - otherwise ``COMPUTED``, or ``COMPUTED_PARTIAL`` when some submitted
-      phenotype is unmapped. Then the mean hop distance, its SP score
-      ``1 / (1 + d)``, the unreachable pairs and the coverage are carried, over
-      the mapped phenotypes only (``MAPPED_ONLY_DENOMINATOR``, §3.4).
-
-    A phenotype that is used but missing from the node mapping counts as
-    unmapped, by its node id. The distances are sums of small integers, so a
-    target's values are exactly what a call for that target alone would give.
-    """
-    from src.core.types import (
-        MAPPED_ONLY_DENOMINATOR,
-        NodeType,
-        SPAnalysisRecord,
-    )
-    from src.inference.scoring import sp_scores_from_distances
-
-    mapping = node_mapping or {}
-    phenotype_index = mapping.get(NodeType.PHENOTYPE.value, {})
-    mapped: List[int] = []
-    unmapped: List[str] = list(dict.fromkeys(str(i) for i in unmapped_ids))
-    for node in phenotype_ids:
-        row = phenotype_index.get(str(node))
-        if row is None:
-            unmapped.append(str(node))
-        else:
-            mapped.append(int(row))
-    coverage = dict(
-        phenotypes_submitted=len(mapped) + len(unmapped),
-        phenotypes_mapped=len(mapped),
-        unmapped_ids=tuple(unmapped),
-    )
-    if lookup is None:
-        return [SPAnalysisRecord(status="NO_TABLE", **coverage) for _ in target_ids]
-
-    target_type = (NodeType.GENE if target_type_idx == 0 else NodeType.DISEASE).value
-    target_index = mapping.get(target_type, {})
-    rows = [target_index.get(str(target)) for target in target_ids]
-    present = [i for i, row in enumerate(rows) if row is not None]
-    records: List[Any] = [None] * len(rows)
-    for i, row in enumerate(rows):
-        if row is None:
-            records[i] = SPAnalysisRecord(status="TARGET_UNMAPPED",
-                                          max_hops=lookup.max_hops, **coverage)
-        elif not mapped:
-            records[i] = SPAnalysisRecord(status="NO_PHENOTYPE_MAPPED",
-                                          max_hops=lookup.max_hops, **coverage)
-    if mapped and present:
-        distances, _available, unreachable = sp_mean_distances(
-            lookup, mapped, [rows[i] for i in present], target_type_idx)
-        scores = sp_scores_from_distances(distances)
-        status = "COMPUTED_PARTIAL" if unmapped else "COMPUTED"
-        for j, i in enumerate(present):
-            records[i] = SPAnalysisRecord(
-                status=status, max_hops=lookup.max_hops,
-                mean_hop_distance=float(distances[j]), score=float(scores[j]),
-                unreachable_pair_count=int(unreachable[j]),
-                denominator_policy=MAPPED_ONLY_DENOMINATOR, **coverage)
-    return records

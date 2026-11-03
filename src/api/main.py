@@ -911,8 +911,7 @@ def publish_pipeline(bundle: PipelineBundle) -> None:
     # prevent. Built here, the same failure happens before anything changed.
     announcement = (
         f"Pipeline published: scoring_mode={bundle.config.get('scoring_mode')}, "
-        f"gnn_ready={bundle.config.get('gnn_ready')}, "
-        f"sp_ready={bundle.config.get('sp_ready')}"
+        f"gnn_ready={bundle.config.get('gnn_ready')}"
     )
 
     app_state.kg = bundle.kg

@@ -34,19 +34,21 @@ from src.api.routes.pipeline import (  # noqa: E402
     _live_status,
     reload_pipeline,
 )
+from src.core.types import TASK_SCORING_MODES  # noqa: E402
 from tests.unit.test_graph_artifact_binding import (  # noqa: E402
     TestTheClinicalPathIsAGraphConsumer,
     _workspace,
 )
 
 
-def _served_identity(digit: str, *, with_sp: bool) -> dict:
+def _served_identity(digit: str, *, gene: bool) -> dict:
     """A coherent served identity (contract M3c) whose digests are `digit`s.
 
     Built through `src.core.types.ServedIdentity`, so its cross-part invariants
-    hold, and given as the JSON form a pipeline's configuration reports. The two
-    pipelines below differ in every digest, so a check that compares them cannot
-    pass by accident.
+    hold, and given as the JSON form a pipeline's configuration reports: a gene
+    task model's (its distances computed, its own η) or a disease task model's.
+    The two pipelines below differ in every digest, so a check that compares
+    them cannot pass by accident.
     """
     from src.core.types import (
         ServedCheckpoint,
@@ -58,18 +60,15 @@ def _served_identity(digit: str, *, with_sp: bool) -> dict:
     )
 
     return ServedIdentity(
-        scoring_mode="gnn_plus_shortest_path" if with_sp else "gnn_only",
+        scoring_mode="gene_task" if gene else "disease_task",
         checkpoint=ServedCheckpoint(state="verified", sha256=digit * 64),
         graph=ServedGraph(state="verified", kg_sha256=(digit + "1") * 32,
                           split_manifest_sha256=(digit + "2") * 32),
-        shortest_paths=(
-            ServedShortestPaths(state="verified", build_id=f"build-{digit}", max_hops=3)
-            if with_sp else ServedShortestPaths(state="absent")
-        ),
+        shortest_paths=ServedShortestPaths(state="computed" if gene else "absent"),
         dataset_record=ServedDatasetRecord(state="verified", origin="synthetic",
                                            sha256=(digit + "3") * 32),
         settings=ServedSettings(
-            device="cpu", device_requested="cpu", eta=0.7 if with_sp else 1.0,
+            device="cpu", device_requested="cpu", eta=0.5 if gene else None,
             max_path_length=4, path_length_penalty=0.9,
             max_paths_per_candidate=10,
             use_direct_path_optimization=True, phenotype_normalisation_version=1,
@@ -81,19 +80,17 @@ def _served_identity(digit: str, *, with_sp: bool) -> dict:
 # M3c): the version string these configurations carried, and the copy of it
 # app state kept, are gone. Each carries a served identity instead.
 SERVED_CONFIG = {
-    "served_identity": _served_identity("a", with_sp=True),
+    "served_identity": _served_identity("a", gene=True),
     "scoring_mode": "served-mode",
     "gnn_ready": True,
-    "sp_ready": True,
     "kg_nodes": 11,
     "kg_edges": 22,
     "has_model": True,
 }
 CANDIDATE_CONFIG = {
-    "served_identity": _served_identity("b", with_sp=False),
+    "served_identity": _served_identity("b", gene=False),
     "scoring_mode": "candidate-mode",
     "gnn_ready": True,
-    "sp_ready": False,
     "kg_nodes": 33,
     "kg_edges": 44,
     "has_model": True,
@@ -327,7 +324,8 @@ class TestAFailedReloadReportsWhatIsStillServing:
         "case,expect",
         [
             ("missing_files", "Missing required files"),
-            ("bad_conv_type", "conv_type"),
+            ("neither_task_nor_path",
+             f"Name a task ({', '.join(TASK_SCORING_MODES)}) or a checkpoint_path"),
             ("no_checkpoint", "No checkpoint found"),
         ],
     )
@@ -346,7 +344,8 @@ class TestAFailedReloadReportsWhatIsStillServing:
         else:
             root, _ = _candidate_workspace(monkeypatch, tmp_path)
             kwargs["data_dir"] = str(root)
-            kwargs["conv_type"] = "nonsense" if case == "bad_conv_type" else "auto"
+            if case == "no_checkpoint":
+                kwargs["task"] = "disease"
 
         result = _reload(**kwargs)
 
@@ -627,7 +626,7 @@ class TestNothingLeavesThisEndpointUnencodable:
 
     @pytest.mark.parametrize(
         "case",
-        ["missing_files", "bad_conv_type", "no_checkpoint", "bad_workspace"],
+        ["missing_files", "neither_task_nor_path", "no_checkpoint", "bad_workspace"],
     )
     def test_every_refusal_crosses_the_encoder_before_it_is_returned(
         self, monkeypatch, tmp_path, case
@@ -645,8 +644,8 @@ class TestNothingLeavesThisEndpointUnencodable:
         else:
             root, _ = _candidate_workspace(monkeypatch, tmp_path)
             kwargs["data_dir"] = str(root)
-            if case == "bad_conv_type":
-                kwargs["conv_type"] = "nonsense"
+            if case == "no_checkpoint":
+                kwargs["task"] = "disease"
             elif case == "bad_workspace":
                 other, _ = _candidate_workspace(monkeypatch, tmp_path, "other")
                 (root / "node_features.pt").write_bytes((other / "node_features.pt").read_bytes())

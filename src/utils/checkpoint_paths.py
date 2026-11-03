@@ -21,11 +21,10 @@ No torch / PyG imports — safe to import from training scripts and API services
 Old layouts:
     Checkpoints written before this layout (``{data_dir}/checkpoints/{conv}/``
     and the older flat ``{data_dir}/checkpoints/*.pt``) are intentionally NOT
-    found by a runtime fallback here. Nothing writes there any more; such a file
-    is reached by an explicit checkpoint path, which every reader accepts and
-    checks by its bytes, or moved once, by the owner, with
-    ``scripts/migrate_checkpoints.py`` (decision 9). Not being listed does not
-    make a file invalid.
+    found by a runtime fallback here (decision 9). Nothing writes there any more;
+    such a file is reached by an explicit checkpoint path, which every reader
+    accepts and checks by its bytes. Not being listed does not make a file
+    invalid.
 
 Module: src/utils/checkpoint_paths.py
 """
@@ -41,7 +40,7 @@ import time
 from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, NamedTuple, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple, Union
 
 ScoreFn = Callable[[Path], Optional[float]]
 #: Whether a candidate file may be selected (automatic selection's record rule).
@@ -85,24 +84,6 @@ def ranking_score_detail(logs) -> Optional[Tuple[str, float]]:
         if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
             return key, float(value)
     return None
-
-
-def normalize_conv_type(conv_type: Optional[str]) -> str:
-    """Lower-case a conv type.
-
-    Empty/missing falls back to the default, but an explicit unsupported value
-    (e.g. ``"gatv2"``, ``"bad"``) raises rather than silently degrading to GAT —
-    a mislabelled checkpoint dir or a wrong-architecture load is worse than a
-    loud error.
-    """
-    ct = str(conv_type or "").strip().lower()
-    if not ct:
-        return DEFAULT_CONV_TYPE
-    if ct not in SUPPORTED_CONV_TYPES:
-        raise ValueError(
-            f"Unsupported conv_type {conv_type!r}; supported: {SUPPORTED_CONV_TYPES}"
-        )
-    return ct
 
 
 def _accepted(accept: Optional[AcceptFn], path: Path) -> bool:
@@ -197,9 +178,8 @@ RUN_LAYOUT_KEYS = tuple(dict.fromkeys(SUPPORTED_CONV_TYPES + ENCODER_KINDS))
 
 
 def normalize_run_layout_key(key: Optional[str]) -> str:
-    """A run-layout key, lower case: a conv type or an encoder kind. Unlike
-    `normalize_conv_type`, which gates the ShepherdGNN factory, this accepts
-    the bundle's kinds (``gatv2`` among them); anything else raises."""
+    """A run-layout key, lower case: a conv type or an encoder kind (``gatv2``
+    among them); anything else raises."""
     k = str(key or "").strip().lower()
     if not k:
         return DEFAULT_CONV_TYPE
@@ -519,8 +499,7 @@ def checkpoint_not_read(run_dir: Path, path: Path, within: Path) -> Optional[str
 
     **The one workspace boundary of the run layout**: the listing
     (`read_run_checkpoints`' `within`), every filter over it, automatic
-    selection (`select_run_checkpoint`, `select_auto_run_checkpoint`) and the
-    server's resolution of a listed checkpoint (`server_lists.resolve_checkpoint`,
+    selection (`select_auto_run_checkpoint`) and the server's resolution of a listed checkpoint (`server_lists.resolve_checkpoint`,
     `locate_checkpoint`) ask it of each file before anything reads the file's
     content; the writer keeps it too (`run_dir_outside`). The file's resolved
     path decides, so a run directory or a layout directory that is a link out
@@ -729,37 +708,13 @@ def _with_outside(reason: str, outside: List[str]) -> str:
             + (f"; and {more} more file(s) not read" if more > 0 else ""))
 
 
-def select_run_checkpoint(
-    data_dir: PathLike, conv_type: Optional[str], score_fn: Optional[ScoreFn] = None,
-    accept: Optional[AcceptFn] = None, not_read: Optional[List[str]] = None,
-) -> Tuple[Optional[Path], str]:
-    """One architecture's selection: its latest run holding a candidate
-    (`accept`'s, or any file, inside the workspace `data_dir`: the listing's
-    boundary, `checkpoint_not_read`), then the existing in-run ordering
-    (`select_checkpoint_in_dir`). Runs are not ranked against each other by
-    their metrics: they may differ in every setting. A list given as
-    `not_read` is extended with the listing's reason for every file the
-    selection did not read for the boundary (all of them; the returned reason
-    names the first few)."""
-    architecture = normalize_conv_type(conv_type)
-    run, candidates, outside = _first_run_holding(
-        list_runs(data_dir, architecture), accept, Path(data_dir).resolve())
-    if not_read is not None:
-        not_read.extend(outside)
-    if run is None:
-        return None, _with_outside(f"no run of '{architecture}' has a checkpoint", outside)
-    return (_select_among(candidates, run_checkpoint_dir(run), score_fn),
-            _with_outside(f"latest run '{run.name}' of '{architecture}'", outside))
-
-
 def select_auto_run_checkpoint(
     data_dir: PathLike, score_fn: Optional[ScoreFn] = None,
-    accept: Optional[AcceptFn] = None, keys: Sequence[str] = SUPPORTED_CONV_TYPES,
-    not_read: Optional[List[str]] = None,
+    accept: Optional[AcceptFn] = None, not_read: Optional[List[str]] = None,
 ) -> Tuple[Optional[Path], Optional[str], str]:
     """Auto selection over runs: the most recently trained run, filed under
-    one of `keys` (the ShepherdGNN conv types unless told), holding a
-    candidate, then the existing in-run ordering. Returns
+    any run-layout key (`RUN_LAYOUT_KEYS`), holding a candidate, then the
+    existing in-run ordering. Returns
     ``(checkpoint_path, run layout key, reason)``. Only the run layout is
     searched; checkpoints elsewhere are reached by an explicit path.
 
@@ -772,13 +727,9 @@ def select_auto_run_checkpoint(
 
     **With ``accept``, the record decides, never the directory** (provenance
     §9.3, hazard 3): a run counts only when it holds a file ``accept`` takes
-    (the reload's rule: a model bundle finetuned for the task asked for, over
-    every run-layout key; for the ShepherdGNN reload, a file without a model
-    spec, which a bundle filed under a shared conv type, ``hgt`` or ``sage``,
-    is not)."""
+    (the reload's rule: a model bundle finetuned for the task asked for)."""
     run, candidates, outside = _first_run_holding(
-        [r for r in list_runs(data_dir) if run_architecture(r) in keys], accept,
-        Path(data_dir).resolve())
+        list_runs(data_dir), accept, Path(data_dir).resolve())
     if not_read is not None:
         not_read.extend(outside)
     if run is None:
@@ -813,10 +764,8 @@ __all__ = [
     "run_log_dir",
     "runs_root",
     "select_auto_run_checkpoint",
-    "select_run_checkpoint",
     "slugify_run_name",
     "ranking_score_detail",
-    "normalize_conv_type",
     "normalize_run_layout_key",
     "select_checkpoint_in_dir",
 ]

@@ -20,8 +20,8 @@ it requires. What these pin, through the code itself:
   guide's sections cited hold them;
 - **the playbook's safety net is the load's refusal** (contract M2.4): the
   refusals it quotes are what serving raises for a checkpoint of another graph
-  and for one with no record, and the structural fingerprint is the drawer's
-  diagnostic beside them, not the safety net it used to be called.
+  and for one with no record; the structural fingerprint, which it used to call
+  the safety net, is compared by nothing at load (K8-4).
 
 Module: tests/unit/test_entry_documents.py
 """
@@ -314,21 +314,19 @@ def _safety_net() -> str:
 def test_the_playbook_s_safety_net_is_the_load_s_refusal_in_the_code_s_words(
         tmp_path, trained_disease_child):
     """Since contract M2.4 a load refuses, before any model is built, a
-    checkpoint whose record names another graph or none; the structural
-    fingerprint is a diagnostic beside that refusal. The playbook said the
-    fingerprint's warnings were the safety net and that old checkpoints "will
-    warn" after a rebuild. What it quotes now is what the real load raises for
-    both cases, and what the Diagnosis page's drawer shows for the fingerprint.
-    "Another graph" serves the session's disease child over a same-shaped other
-    demo workspace (K8-2a). "No record" keeps a pre-contract file written before
-    the model spec: `verify_training_record` refuses it first, the order the
-    serving deletion keeps (K8-4)."""
+    checkpoint whose record names another graph or none. The playbook said the
+    structural fingerprint's warnings were the safety net and that old
+    checkpoints "will warn" after a rebuild; the fingerprint is compared by
+    nothing at load since K8-4. What it quotes now is what the real load raises
+    for both cases. "Another graph" serves the session's disease child over a
+    same-shaped other demo workspace (K8-2a). "No record" keeps a pre-contract
+    file written before the model spec: `verify_training_record` refuses it
+    first, before the model spec is read."""
     pytest.importorskip("torch")
     from src.api import main as service
     from src.inference.pipeline import PipelineBuildError
     from src.kg.artifacts import GRAPH_ARTIFACTS
-    from src.utils.fingerprint import verify_fingerprint
-    from src.webui.components import diagnosis_card, model_list
+    from src.webui.components import model_list
     from tests.unit import test_training_record as record
 
     text = _safety_net()
@@ -351,16 +349,6 @@ def test_the_playbook_s_safety_net_is_the_load_s_refusal_in_the_code_s_words(
     assert "Startup failed" in inspect.getsource(service.lifespan)
     assert "Not reloaded; the model in use is unchanged." in text
     assert "Not reloaded; the model in use is unchanged." in inspect.getsource(model_list)
-
-    # The fingerprint: never a refusal; its two lines as the drawer writes them.
-    differs = verify_fingerprint({"data_fingerprint": {"node_types": ["gone"]}}, {})
-    legacy = verify_fingerprint({}, {})
-    for warnings, line in ((differs, "Graph structure differs from the checkpoint's structural "
-                                     "fingerprint"),
-                           (legacy, "Graph structure not compared")):
-        assert line in diagnosis_card._structure_line({"fingerprint_warnings": warnings}), line
-        assert f'"{line}"' in text, line
-    assert "never stops a load" in text
 
     # Troubleshooting sends a rebuild's old checkpoint to that refusal, not to
     # the fingerprint's warnings.

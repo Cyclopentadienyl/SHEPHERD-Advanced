@@ -553,9 +553,10 @@ def test_a_reload_refused_for_its_device_reads_no_candidate_checkpoint(
     no_cuda, no_device_configured, serving, workspace, device
 ):
     """Automatic selection reads every candidate in the run layout to choose
-    one. A device this host cannot provide refuses the reload whatever is
-    chosen, so the refusal comes first: catches the check left inside
-    `build_pipeline` alone, after the scan has read each checkpoint."""
+    one (the reload names a task, so a scan would otherwise run). A device
+    this host cannot provide refuses the reload whatever is chosen, so the
+    refusal comes first: catches the check left inside `build_pipeline`
+    alone, after the scan has read each checkpoint."""
     import shutil
 
     from src.api.routes.pipeline import PipelineReloadRequest, reload_pipeline
@@ -569,7 +570,7 @@ def test_a_reload_refused_for_its_device_reads_no_candidate_checkpoint(
 
     with count_opens() as opens:
         result = asyncio.run(reload_pipeline(PipelineReloadRequest(
-            data_dir=str(data_dir), device=device,
+            data_dir=str(data_dir), device=device, task="disease",
         )))
 
     assert result.success is False

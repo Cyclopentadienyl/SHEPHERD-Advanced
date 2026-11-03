@@ -687,16 +687,11 @@ def _authoritative(ranks: List[int]) -> Dict[str, float]:
 
 
 def encode_full_graph(model: Any, graph_data: Dict[str, Any], device: Any) -> EncodedGraph:
-    """Embed every node once, the way the deployed pipeline does.
+    """Embed every node once for Mode C: move the tensors to the device, one
+    forward pass of the ShepherdGNN model under `no_grad`, keep the result.
 
-    `src/inference/pipeline.py:_precompute_node_embeddings` is the same three
-    operations — move the tensors to the device, one forward under `no_grad`,
-    keep the result. It is not called directly because reaching it means
-    constructing a `DiagnosisPipeline`, which loads a knowledge-graph object, a
-    shortest-path table and the path-finding and explanation machinery that
-    Mode C does not use. An integration test asserts that this produces what the
-    pipeline caches, so "the same three operations" is checked rather than
-    asserted in a comment.
+    Since K8-4 the deployed pipeline serves task models only, so nothing here is
+    shared with serving; this encoding goes with Mode C (K8-6b).
     """
     import torch as _torch
 

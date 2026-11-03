@@ -608,7 +608,7 @@ owner's authorisation; the K7 record in §8).
 
 | Part | Where | Replaced by / why | Node |
 |---|---|---|---|
-| The served disease mixture (`served_mixture/v1`, `_served_score`, path-gated candidate discovery as a ranking gate, SP mixed into the disease score) | `src/inference/pipeline.py`; `src/core/types.py` | The disease head over every disease of the view (K3). SP stays as the gene task's feature. Reached only for a checkpoint without a model spec, which probe E1–E8, M4 and R6 still serve | K8 |
+| The served disease mixture (`served_mixture/v1`, `_served_score`, path-gated candidate discovery as a ranking gate, SP mixed into the disease score) | `src/inference/pipeline.py`; `src/core/types.py` | The disease head over every disease of the view (K3). SP stays as the gene task's feature. Reached only for a checkpoint without a model spec until K8-1 moved the probe to task models; **removed in K8-4** | K8-4 |
 | The path-reasoning fallback ranking (`path_reasoning/v1`), with its scoring mode, the "absent" checkpoint and "unverified" graph states, PathReasoner's path-score ranking (`aggregate_path_scores`, `get_top_candidates`, `aggregation_method`), the no-model `create_diagnosis_pipeline` and the WebUI's no-trained-model state | `src/inference/pipeline.py`; `src/core/types.py`; `src/reasoning/path_reasoning.py`; the API and the Diagnosis page | Refusal when a graph has no model (owner decision): `/diagnose` and `/ready` answer 503. PathReasoner's `find_paths` and `score_paths` stay as evidence | **removed in K7** |
 | The demo answer (`demo/v1`) and the in-memory model and graph seams (`DiagnosisPipeline(model=, graph_data=)`, the `supplied_in_memory` / `in_memory` states) | `src/api/routes/diagnose.py`; `src/inference/pipeline.py`; `src/core/types.py`; the Diagnosis page | Owner decision (DEMO1): with no pipeline `/diagnose` and `/ready` answer 503 from one predicate, `/health` stays 200. A served model is always read from a checkpoint over a verified workspace | **removed in K7** |
 | Mode D (`run_mode_d`, the `run_mode_c` observer, `--mode D`, the serving hooks only it read, probe T7) | `src/evaluation/mode_d.py` (deleted); `scripts/measure_scorer.py`; `src/inference/pipeline.py`; `scripts/probe_deployment.py` | Archived (owner decision); kept reports and records stay readable; a new registration of a kept D report is refused in `register_report`, never in `build_record` (the report store's reader) | **removed in K7** |
@@ -639,13 +639,15 @@ had to stay readable (item 8: read, never run); each is deleted, not adapted, wh
   (`learning_stage` must be `base`; ShepherdGNN and unknown fields refused; owner decision 2).
   Until K8: `scripts/train_model.py`'s ShepherdGNN path (`SHEPHERD_ONLY_FIELDS`),
   `TrainingManager.start_training`'s stage-less start (probe W7, W11, RW3) and the API reload of a
-  history file, as `src/models/bundle/record.py` `LISTED_WITHOUT_SPEC` says.
+  history file, as `src/models/bundle/record.py` `LISTED_WITHOUT_SPEC` said. K8-4: the API reload
+  and startup refuse a history file before any model is built.
 - **ShepherdGNN serving and its words.** K7: the path-reasoning-only state and its words are gone
   (`path_reasoning_fallback`, `served_kind`'s `no_trained`, `IDENTITY_BANNERS["no_model"]`, the
   path-reasoning columns, cells and CSV words), with the demo answer's. Until K8: the mixture's
   `gnn_plus_shortest_path` and `gnn_only` and their WebUI branches (`SERVED_MIXTURE` in
   `diagnosis_panel.py`, the "no SP table" chip and `no_sp` banner, the Load confirmation's
-  ShepherdGNN From cells), because a history file can still be served.
+  ShepherdGNN From cells), because a history file can still be served. K8-4: removed with
+  ShepherdGNN serving; a file without a model spec is refused at load.
 - **Readers of listed history files.** Unchanged: they retire only if K8 stops listing history
   files.
 - **Mode C and Mode D.** K7: Mode D removed (`_measure_mode_d`, `--mode D`, T7); a kept D report is

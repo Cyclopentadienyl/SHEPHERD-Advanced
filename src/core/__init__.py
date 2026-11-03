@@ -30,8 +30,6 @@ from src.core.types import (
     LiteratureEvidence,
     PatientPhenotypes,
     Candidate,
-    ServedMixtureCandidate,
-    SPAnalysisRecord,
     ResultRefused,
     InferenceResult,
     # Utilities
@@ -115,8 +113,6 @@ __all__ = [
     "LiteratureEvidence",
     "PatientPhenotypes",
     "Candidate",
-    "ServedMixtureCandidate",
-    "SPAnalysisRecord",
     "ResultRefused",
     "InferenceResult",
     # === Utilities ===

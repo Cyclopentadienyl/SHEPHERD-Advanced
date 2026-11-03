@@ -23,9 +23,9 @@ Input:
 Output:
     - DiagnoseResponse: one kind of the result union (Spec 1 §2.1), discriminated
       by `result_kind` (`disease_task/v1`, `gene_task/v1`,
-      `patients_like_me/v1`, `served_mixture/v1`), each with its own candidate
-      fields and no other kind's. Every answer comes from a model: with no
-      pipeline served the request is refused (503, with the reason)
+      `patients_like_me/v1`), each with its own candidate fields and no other
+      kind's. Every answer comes from a model: with no pipeline served the
+      request is refused (503, with the reason)
 
 Version: 1.0.0
 """
@@ -186,10 +186,9 @@ class DiagnoseRequest(BaseModel):
 # The served identity (contract M3c, R8)
 # -----------------------------------------------------------------------------
 # The response's form of `src.core.types.ServedIdentity`, defined here rather
-# than imported: this module is loaded by file, without the application, by
-# `scripts/measure_served_pipeline.py`, which validates every response it counts
-# against it. `tests/unit/test_served_identity.py` pins the two to one shape and
-# one set of states. Every key is required, and its value may be null where the
+# than imported, so the response schema is this module's own, and
+# `tests/unit/test_served_identity.py` pins the two to one shape and one set of
+# states. Every key is required, and its value may be null where the
 # state says there is nothing to identify; an unknown key is refused, so the two
 # definitions cannot drift apart unnoticed.
 _SHA256 = r"^[0-9a-f]{64}$"
@@ -224,16 +223,11 @@ class ServedGraph(_Strict):
 
 
 class ServedShortestPaths(_Strict):
-    """The shortest-path table, or the stated absence of one."""
+    """The shortest-path term, or the stated absence of one."""
 
-    state: Literal["verified", "computed", "absent"] = Field(
-        ..., description="verified: the table names the served graph; computed: a gene "
-        "task model's exact hop distances, computed from its graph view, no table; "
-        "absent: no shortest-path term contributes to the score")
-    build_id: Optional[str] = Field(
-        ..., description="The build_id the table and its sidecar share; null unless verified")
-    max_hops: Optional[int] = Field(
-        ..., description="The sidecar's hop bound; null unless verified")
+    state: Literal["computed", "absent"] = Field(
+        ..., description="computed: a gene task model's exact hop distances, computed "
+        "from its graph view; absent: no shortest-path term contributes to the score")
 
 
 class ServedDatasetRecord(_Strict):
@@ -258,9 +252,8 @@ class ServedSettings(_Strict):
         ..., description="What was asked for: auto (CUDA, refused without it), cuda, "
         "cuda:N or cpu")
     eta: Optional[float] = Field(
-        ..., description="Mixing weight in effect between the model and shortest-path "
-        "terms (1.0 with no table; a gene task model's own eta); null for the disease and "
-        "patients-like-me tasks, which mix nothing")
+        ..., description="The gene task model's own eta (EMBSIM against SPLSIM); null for "
+        "the disease and patients-like-me tasks, which mix nothing")
     max_path_length: int
     path_length_penalty: float
     max_paths_per_candidate: int
@@ -271,8 +264,7 @@ class ServedSettings(_Strict):
 class ServedIdentity(_Strict):
     """What produced a result, part by part (contract M3c)."""
 
-    scoring_mode: Literal["gnn_plus_shortest_path", "gnn_only", "disease_task", "gene_task",
-                          "patients_like_me"]
+    scoring_mode: Literal["disease_task", "gene_task", "patients_like_me"]
     checkpoint: ServedCheckpoint
     graph: ServedGraph
     shortest_paths: ServedShortestPaths
@@ -284,16 +276,12 @@ class ServedIdentity(_Strict):
 # The result union (Spec 1 §2.1, Batch 4)
 # -----------------------------------------------------------------------------
 # The response's form of `src.core.types`' result union, defined here for the
-# same reason as the identity above: this module is loaded by file, without the
-# application. `tests/unit/test_served_identity.py` pins each mirror to its core
-# type (field names, the kinds, the SP statuses). **Every kind refuses another
-# kind's fields** (`_Strict`), so a removed field cannot come back unnoticed, and
-# a number is never written where its kind has none.
-RESULT_KINDS = ("served_mixture/v1", "disease_task/v1", "gene_task/v1",
-                "patients_like_me/v1")
-SP_NUMERIC_STATUSES = ("COMPUTED", "COMPUTED_PARTIAL")
-SP_NON_NUMERIC_STATUSES = ("NO_TABLE", "TARGET_UNMAPPED", "NO_PHENOTYPE_MAPPED")
-SERVED_TIE_POLICY = "served-stable-discovery-order/v1"
+# same reason as the identity above: the response schema is this module's own.
+# `tests/unit/test_served_identity.py` pins each mirror to its core type (field
+# names, the kinds). **Every kind refuses another kind's fields** (`_Strict`),
+# so a removed field cannot come back unnoticed, and a number is never written
+# where its kind has none.
+RESULT_KINDS = ("disease_task/v1", "gene_task/v1", "patients_like_me/v1")
 DISEASE_TASK_TIE_POLICY = "score-desc-then-view-id-asc/v1"
 GENE_TASK_TIE_POLICY = DISEASE_TASK_TIE_POLICY
 PATIENTS_LIKE_ME_TIE_POLICY = "similarity-desc-then-case-id-asc/v1"
@@ -310,53 +298,6 @@ _MATCHING_PHENOTYPES_DESCRIPTION = (
     "gene-mediated. An empty list does not mean no clinical overlap. "
     "Filled whether or not explanations are requested."
 )
-
-
-class SPTerm(_Strict):
-    """A candidate's shortest-path record (Spec 1 §3.3–§3.4): its status, and
-    numbers only on a numeric status. Every key is required; a value is null
-    where the status says there is no number."""
-
-    status: Literal["COMPUTED", "COMPUTED_PARTIAL", "NO_TABLE", "TARGET_UNMAPPED",
-                    "NO_PHENOTYPE_MAPPED"]
-    phenotypes_submitted: int = Field(..., ge=0)
-    phenotypes_mapped: int = Field(..., ge=0)
-    unmapped_ids: List[str]
-    max_hops: Optional[int] = Field(
-        ..., description="The loaded table's hop bound; null when no table is loaded")
-    mean_hop_distance: Optional[_Finite] = Field(
-        ..., description="Mean over the mapped phenotypes of the hop distance to the "
-        "candidate, an unreachable pair counting max_hops + 1; numeric statuses only")
-    score: Optional[_Finite] = Field(
-        ..., description="1 / (1 + mean_hop_distance); numeric statuses only")
-    unreachable_pair_count: Optional[int] = Field(..., ge=0)
-    denominator_policy: Optional[Literal["MAPPED_ONLY_DENOMINATOR"]]
-    mixed_as: Optional[float] = Field(
-        ..., description="0.0 where a non-numeric status still entered the legacy "
-        "mixture as 0, so its ranking did not change; null otherwise")
-
-    @model_validator(mode="after")
-    def _numbers_follow_the_status(self) -> "SPTerm":
-        numbers = (self.mean_hop_distance, self.score, self.unreachable_pair_count,
-                   self.denominator_policy)
-        if self.status in SP_NUMERIC_STATUSES:
-            if any(value is None for value in numbers) or self.max_hops is None:
-                raise ValueError(f"a {self.status} record carries its numbers")
-            if self.mixed_as is not None:
-                raise ValueError("a numeric record is mixed as its own value")
-            if (self.status == "COMPUTED_PARTIAL") != bool(self.unmapped_ids):
-                raise ValueError("COMPUTED_PARTIAL means some submitted phenotypes "
-                                 "were not mapped")
-        else:
-            if any(value is not None for value in numbers):
-                raise ValueError(f"a {self.status} record has no number")
-            if (self.status == "NO_TABLE") != (self.max_hops is None):
-                raise ValueError("max_hops is null exactly when no table is loaded")
-            if self.mixed_as is not None and self.mixed_as != 0.0:
-                raise ValueError("a non-numeric status is mixed as 0.0")
-        if self.phenotypes_submitted != self.phenotypes_mapped + len(self.unmapped_ids):
-            raise ValueError("the submitted phenotypes are the mapped ones and the unmapped ids")
-        return self
 
 
 class PhenotypeInput(_Strict):
@@ -390,25 +331,11 @@ class _ServedCandidate(_Candidate):
     reasoning_paths: Optional[List[List[str]]] = Field(
         None, description="Reasoning paths through KG")
     evidence_package: Optional[Dict[str, Any]] = Field(
-        None, description="Step C evidence: mode (direct_path/analogy_based/"
-        "insufficient), evidence_label, paths or analogies")
+        None, description="Step C evidence: mode (direct_path/insufficient), "
+        "evidence_label, paths")
     evidence_label: Optional[str] = Field(
         None, description="Grades the evidence, not a confidence in the diagnosis: "
-        "Strong path support / Weak path support / Analogy-based / Insufficient evidence")
-
-
-class ServedMixtureCandidate(_ServedCandidate):
-    """A disease reached by path discovery, ranked by the legacy mixture."""
-
-    served_score: _Finite = Field(
-        ..., description="The value ranked by: eta * model_term + (1 - eta) * SP, or "
-        "model_term alone with no shortest-path table")
-    # No [0, 1] bound: the cosine is float32 and can round an ulp past +-1 for
-    # a patient parallel or anti-parallel to a disease, so a valid term can sit
-    # just outside.
-    model_term: _Finite = Field(..., description="(cos + 1) / 2, computed in float32; "
-                                "it can lie an ulp outside [0, 1]")
-    sp_term: SPTerm
+        "Strong path support / Weak path support / Insufficient evidence")
 
 
 class DiseaseTaskCandidate(_ServedCandidate):
@@ -486,44 +413,10 @@ def _ranked(candidates: List[Any], score: str) -> None:
 
 _IDENTITY_DESCRIPTION = (
     "What produced this result: the checkpoint, graph, workspace manifest, "
-    "shortest-path table and dataset record by digest or identifier, the scoring "
+    "shortest-path term and dataset record by digest or identifier, the scoring "
     "mode and the settings in effect, each part stating its state (contract M3c). "
     "Taken from the result this response answers with."
 )
-
-
-class ServedMixtureResponse(_Response):
-    """`served_mixture/v1`: today's served ranking with a model."""
-
-    result_kind: Literal["served_mixture/v1"]
-    served_identity: ServedIdentity = Field(..., description=_IDENTITY_DESCRIPTION)
-    candidates: List[ServedMixtureCandidate]
-    eta: _Finite = Field(..., description="The mixing weight in effect, the served "
-                         "identity's (1.0 with no table, where nothing is mixed)")
-    candidates_reached: int = Field(
-        ..., ge=0, description="How many diseases discovery reached before the cut")
-    tie_policy: Literal["served-stable-discovery-order/v1"]
-
-    @model_validator(mode="after")
-    def _a_mixture(self) -> "ServedMixtureResponse":
-        _ranked(self.candidates, "served_score")
-        mode = self.served_identity.scoring_mode
-        if mode not in ("gnn_plus_shortest_path", "gnn_only"):
-            raise ValueError(f"a served_mixture result is not produced in {mode!r}")
-        if self.eta != self.served_identity.settings.eta:
-            raise ValueError("eta is the served identity's")
-        if self.candidates_reached < len(self.candidates):
-            raise ValueError("candidates_reached counts at least the candidates shown")
-        mixes = mode == "gnn_plus_shortest_path"
-        for candidate in self.candidates:
-            record = candidate.sp_term
-            if (record.status == "NO_TABLE") == mixes:
-                raise ValueError("an SP record is NO_TABLE exactly when no table is served")
-            numeric = record.status in SP_NUMERIC_STATUSES
-            if (mixes and not numeric) != (record.mixed_as is not None):
-                raise ValueError("mixed_as is 0.0 exactly on a non-numeric status the "
-                                 "mixture mixed")
-        return self
 
 
 class DiseaseTaskResponse(_Response):
@@ -582,21 +475,18 @@ class PatientsLikeMeResponse(_Response):
 
 
 class DiagnoseResponse(RootModel[Annotated[
-        Union[ServedMixtureResponse, DiseaseTaskResponse, GeneTaskResponse,
-              PatientsLikeMeResponse],
+        Union[DiseaseTaskResponse, GeneTaskResponse, PatientsLikeMeResponse],
         Field(discriminator="result_kind")]]):
     """Diagnosis response: one kind of the result union, chosen by `result_kind`."""
 
     model_config = {"json_schema_extra": {
         "example": {
-            "result_kind": "served_mixture/v1",
+            "result_kind": "disease_task/v1",
             "result_schema_version": 2,
             "session_id": "sess_a1b2c3d4e5f6",
             "patient_id": "patient_001",
             "timestamp": "2026-04-28T10:30:00Z",
-            "eta": 0.7,
-            "candidates_reached": 42,
-            "tie_policy": "served-stable-discovery-order/v1",
+            "tie_policy": "score-desc-then-view-id-asc/v1",
             "phenotype_input": {"received": 2, "unknown": [], "repeats_removed": 0,
                                 "used": ["HP:0001250", "HP:0001263"]},
             "candidates": [
@@ -604,31 +494,22 @@ class DiagnoseResponse(RootModel[Annotated[
                     "rank": 1,
                     "disease_id": "mondo:MONDO:0011073",
                     "disease_name": "Dravet syndrome",
-                    "served_score": 0.605,
-                    "model_term": 0.65,
-                    "sp_term": {"status": "COMPUTED", "phenotypes_submitted": 2,
-                                "phenotypes_mapped": 2, "unmapped_ids": [],
-                                "max_hops": 5, "mean_hop_distance": 1.0,
-                                "score": 0.5, "unreachable_pair_count": 0,
-                                "denominator_policy": "MAPPED_ONLY_DENOMINATOR",
-                                "mixed_as": None},
+                    "score": -0.42,
                     "evidence_label": "Strong path support",
                     "explanation": "Direct KG path: Seizure → SCN1A → Dravet syndrome",
                 }
             ],
             "inference_time_ms": 2.5,
             "served_identity": {
-                "scoring_mode": "gnn_plus_shortest_path",
+                "scoring_mode": "disease_task",
                 "checkpoint": {"state": "verified", "sha256": "4f80" + "0" * 60},
                 "graph": {"state": "verified", "kg_sha256": "9a1c" + "0" * 60,
                           "split_manifest_sha256": "131c" + "0" * 60},
-                "shortest_paths": {"state": "verified",
-                                   "build_id": "0123456789abcdef0123456789abcdef",
-                                   "max_hops": 5},
+                "shortest_paths": {"state": "absent"},
                 "dataset_record": {"state": "verified", "origin": "files",
                                    "sha256": "2c7a" + "0" * 60},
                 "settings": {"device": "cuda:0", "device_requested": "auto",
-                             "eta": 0.7, "max_path_length": 4,
+                             "eta": None, "max_path_length": 4,
                              "path_length_penalty": 0.9,
                              "max_paths_per_candidate": 10,
                              "use_direct_path_optimization": True,
@@ -641,12 +522,9 @@ class DiagnoseResponse(RootModel[Annotated[
 def _candidate_body(candidate: Any, include_explanations: bool,
                     include_paths: bool) -> Dict[str, Any]:
     """A pipeline candidate as its kind's response candidate: the kind's own
-    fields copied, nothing coerced (an SP record keeps its nulls)."""
-    from dataclasses import asdict
-
+    fields copied, nothing coerced."""
     from src.core.types import GeneTaskCandidate as CoreGeneCandidate
     from src.core.types import PatientCandidate as CorePatientCandidate
-    from src.core.types import ServedMixtureCandidate as CoreMixtureCandidate
 
     if isinstance(candidate, CoreGeneCandidate):
         return {"rank": candidate.rank, "gene_id": str(candidate.gene_id),
@@ -672,12 +550,8 @@ def _candidate_body(candidate: Any, include_explanations: bool,
         ),
         "evidence_package": candidate.evidence_package if include_explanations else None,
         "evidence_label": candidate.evidence_label if include_explanations else None,
+        "score": candidate.score,
     }
-    if isinstance(candidate, CoreMixtureCandidate):
-        body.update(served_score=candidate.served_score, model_term=candidate.model_term,
-                    sp_term=asdict(candidate.sp_term))
-    else:
-        body["score"] = candidate.score
     return body
 
 
@@ -794,9 +668,8 @@ async def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
     from src.core.types import ResultRefused
 
     warnings = []
-    # **Everything kind-specific comes from the result** (`result_kind`, η,
-    # `candidates_reached`, the identity), never from shared state a reload
-    # could swap.
+    # **Everything kind-specific comes from the result** (`result_kind`, the
+    # identity), never from shared state a reload could swap.
     account = None
 
     # `candidate_genes` is used by a gene task model only; every other answer
@@ -870,10 +743,7 @@ async def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
                 for c in result.candidates
             ],
         }
-        if result.result_kind == "served_mixture/v1":
-            body.update(eta=result.eta, candidates_reached=result.candidates_reached,
-                        tie_policy=result.tie_policy)
-        elif result.result_kind == "disease_task/v1":
+        if result.result_kind == "disease_task/v1":
             body.update(tie_policy=result.tie_policy)
         elif result.result_kind == "gene_task/v1":
             body.update(tie_policy=result.tie_policy, sp_bounds=list(result.sp_bounds))

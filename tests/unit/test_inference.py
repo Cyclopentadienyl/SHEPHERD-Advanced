@@ -246,8 +246,6 @@ class TestPipelineConfig:
         config = PipelineConfig()
 
         assert config.max_path_length == 4
-        assert config.eta == 0.7  # Default 70% GNN, 30% shortest path
-        assert config.sp_optional is True
         assert config.include_explanations is True
         assert config.include_ortholog_evidence is True
 
@@ -255,32 +253,23 @@ class TestPipelineConfig:
         """Test custom configuration"""
         config = PipelineConfig(
             max_path_length=3,
-            eta=0.5,
-            sp_optional=False,
             include_explanations=False,
             include_ortholog_evidence=False,
         )
 
         assert config.max_path_length == 3
-        assert config.eta == 0.5
-        assert config.sp_optional is False
         assert config.include_explanations is False
         assert config.include_ortholog_evidence is False
 
-    def test_eta_extreme_values(self):
-        """eta=1.0 = pure GNN; eta=0.0 = pure shortest path"""
-        config_pure_gnn = PipelineConfig(eta=1.0)
-        assert config_pure_gnn.eta == 1.0
-
-        config_pure_sp = PipelineConfig(eta=0.0)
-        assert config_pure_sp.eta == 0.0
-
     @pytest.mark.parametrize(
-        "retired", ["ortholog_weight", "custom_scorers", "post_process_callbacks"]
+        "retired", ["ortholog_weight", "custom_scorers", "post_process_callbacks",
+                    "eta", "sp_optional"]
     )
     def test_retired_no_op_fields_are_gone(self, retired):
         """K7 (S3): fields nothing read are not configuration. A caller that
-        still passes one is refused, never silently ignored."""
+        still passes one is refused, never silently ignored. K8-4: the mixture's
+        `eta` and `sp_optional` left with the mixture (a gene model's η is its
+        own spec's)."""
         import dataclasses
 
         assert retired not in {f.name for f in dataclasses.fields(PipelineConfig)}

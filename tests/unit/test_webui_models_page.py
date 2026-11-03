@@ -183,16 +183,16 @@ def world(demo_workspace, tmp_path, monkeypatch):
 def _status(workspace, sha):
     kg = json.loads((workspace / "split_manifest.json").read_text())["artifacts"]["kg"]
     return {
-        "initialized": True, "current_data_dir": str(workspace), "eta_configured": 0.7,
+        "initialized": True, "current_data_dir": str(workspace),
         "checkpoint_meta": {"epoch": 12},
         "served_identity": {
-            "scoring_mode": "gnn_only",
+            "scoring_mode": "disease_task",
             "checkpoint": {"state": "verified" if sha else "absent", "sha256": sha},
             "graph": {"state": "verified", "kg_sha256": kg,
                       "split_manifest_sha256": file_sha256(workspace / "split_manifest.json")},
-            "shortest_paths": {"state": "absent", "build_id": None, "max_hops": None},
+            "shortest_paths": {"state": "absent"},
             "dataset_record": {"state": "verified", "origin": "synthetic", "sha256": "e" * 64},
-            "settings": {"device": "cpu", "device_requested": "cpu", "eta": 1.0,
+            "settings": {"device": "cpu", "device_requested": "cpu", "eta": None,
                          "max_path_length": 4, "path_length_penalty": 0.5,
                          "max_paths_per_candidate": 10,
                          "use_direct_path_optimization": True,

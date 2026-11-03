@@ -5,9 +5,11 @@ A reload that names a task serves the latest run holding a model finetuned for
 it, judged by each file's model record, never by its directory: a newer base,
 another task's child and a checkpoint without a model spec are passed over;
 with none it is refused naming the task, and an explicit checkpoint of another
-task is refused with nothing published. A reload without a task never chooses
-a model bundle, not even one filed under a ShepherdGNN conv type's directory
-(an encoder kind may share it: ``hgt``, ``sage``). The run listing carries each
+task, or one without a model spec, is refused with nothing published. A reload
+that names neither a task nor a checkpoint is refused before anything is read
+(SG2), and a field the request does not declare (the retired ``conv_type``, a
+misspelt ``expected_checkpoint_sha``) is refused with HTTP 422 before any
+candidate is selected (Q17 (b)). The run listing carries each
 file's record from its one read; the lists show it through the one reader of
 records (`listed_record`), and a bundle run resolves by the key it is listed
 under (``gatv2``). Automatic selection never reads test results (D4): a ledger
@@ -40,6 +42,7 @@ from src.core.types import (  # noqa: E402
 )
 from src.models.bundle import build_bundle, finetune_spec_from_parent, reference_spec  # noqa: E402
 from src.models.bundle.record import (  # noqa: E402
+    HISTORY_ONLY,
     LISTED_WITHOUT_SPEC,
     LISTED_RECORD_FIELDS,
     MODEL_RECORD_VERSION,
@@ -123,8 +126,9 @@ def _identity(mode, sha256):
 @pytest.fixture
 def service(tmp_path, monkeypatch):
     """A workspace the reload accepts as far as the build, and a build that
-    serves what the chosen file's own record says (a base is not served), with
-    publication recorded instead of performed."""
+    serves what the chosen file's own record says (a base is not served, and a
+    file without a model spec is refused by its model record, as the real
+    build refuses it), with publication recorded instead of performed."""
     import src.api.main as api
 
     data_dir = tmp_path / "ws"
@@ -138,8 +142,10 @@ def service(tmp_path, monkeypatch):
         built.append(path)
         payload = torch.load(path, map_location="cpu", weights_only=True)
         if "model_spec" not in payload:
-            mode = "gnn_only"
-        elif payload.get("task") is None:
+            from src.models.bundle.record import read_model_record
+
+            read_model_record(payload)       # refuses it: HISTORY_ONLY (SG1)
+        if payload.get("task") is None:
             raise RuntimeError("a base model is not served")
         else:
             mode = TASK_SCORING_MODES[payload["task"]]
@@ -199,12 +205,6 @@ def test_a_task_no_run_holds_is_refused_naming_it(service, family):
     assert result.files_found["checkpoint"] is False
 
 
-def test_a_task_names_no_conv_type(service, family):
-    result = _reload(service, task="disease", conv_type="gat")
-    assert not result.success and service.built == []
-    assert "conv_type names a ShepherdGNN architecture" in result.message
-
-
 def test_a_file_the_record_does_not_place_is_never_a_task_candidate(service, family):
     """A newer unreadable file in the child's run is not a candidate, nor is
     a run holding nothing else."""
@@ -224,56 +224,9 @@ def test_an_explicit_checkpoint_of_another_task_publishes_nothing(service, famil
             "Nothing was published.") in refused.message
     gnn = _reload(service, task="disease", checkpoint_path=str(family["gnn"]))
     assert not gnn.success and service.published == []
-    assert "serves scoring mode 'gnn_only', not the disease task" in gnn.message
+    assert HISTORY_ONLY in gnn.message
     served = _reload(service, task="gene", checkpoint_path=str(family["gene"]))
     assert served.success and len(service.published) == 1
-
-
-def test_a_reload_without_a_task_never_chooses_a_bundle(service):
-    """Hazard 3: a disease child filed under a conv type's directory, newer
-    than the ShepherdGNN run beside it, is passed over by the record; with no
-    ShepherdGNN file left, nothing is chosen."""
-    d = service.data_dir
-    gnn = _put(d, "sage", "20261001-000000_gnn_aaaaaa", GNN_PAYLOAD, 100)
-    _put(d, "sage", "20261002-000000_child_bbbbbb", _record_payload("disease"), 900)
-    _put(d, "gatv2", "20261003-000000_child_cccccc", _record_payload("disease"), 950)
-    auto = _reload(service)
-    assert auto.success and auto.checkpoint_path == str(gnn) and auto.architecture == "sage"
-    named = _reload(service, conv_type="sage")
-    assert named.success and named.checkpoint_path == str(gnn)
-    gnn.unlink()
-    refused = _reload(service)
-    assert not refused.success and refused.files_found["checkpoint"] is False
-    assert "a model bundle is selected by its task (task)" in refused.message
-    assert service.built == [str(gnn), str(gnn)]
-
-
-def test_a_reload_without_a_task_skips_what_it_cannot_read_and_no_bundle_directory(
-        service, monkeypatch):
-    """A file the scan could not read is judged by nothing: never a candidate,
-    so a newer torn file does not hide the readable ShepherdGNN run. Without
-    a task only the conv-type directories are searched, so a bundle-only
-    directory (``gatv2``) is never read."""
-    import src.utils.checkpoint_io as checkpoint_io
-
-    d = service.data_dir
-    gnn = _put(d, "hgt", "20261001-000000_gnn_aaaaaa", GNN_PAYLOAD, 100)
-    torn = d / "runs" / "hgt" / "20261005-000000_torn_bbbbbb" / "checkpoints" / "last.pt"
-    torn.parent.mkdir(parents=True)
-    torn.write_bytes(b"not a checkpoint")
-    os.utime(torn, (900, 900))
-    _put(d, "gatv2", "20261006-000000_child_cccccc", _record_payload("disease"), 950)
-    read, real_read = [], checkpoint_io.read_checkpoint
-
-    def counted(path, *args, **kwargs):
-        read.append(str(path))
-        return real_read(path, *args, **kwargs)
-
-    monkeypatch.setattr(checkpoint_io, "read_checkpoint", counted)
-    result = _reload(service)
-    assert result.success, result.message
-    assert result.checkpoint_path == str(gnn) and service.built == [str(gnn)]
-    assert read == [str(torn), str(gnn)], "a gatv2 run is never read without a task"
 
 
 def _observed_reads(monkeypatch):
@@ -289,6 +242,27 @@ def _observed_reads(monkeypatch):
 
     monkeypatch.setattr(checkpoint_io, "read_checkpoint", observing)
     return reads
+
+
+def test_a_reload_naming_neither_a_task_nor_a_path_is_refused_and_reads_nothing(
+        service, family, monkeypatch):
+    """SG2: automatic selection serves the latest model finetuned for the task
+    named; with neither a task nor a path nothing is chosen. Refused after the
+    file check (the file report stays) and before the scan: though the
+    workspace holds a disease child and a newer file without a model spec, no
+    candidate is read, built or published."""
+    reads = _observed_reads(monkeypatch)
+
+    result = _reload(service)
+
+    assert not result.success
+    assert result.message.startswith(
+        f"Name a task ({', '.join(TASK_SCORING_MODES)}) or a checkpoint_path: automatic "
+        "selection serves the latest model finetuned for the task named, and nothing is "
+        "chosen without one.")
+    assert result.selection_reason == "neither task nor checkpoint_path"
+    assert all(result.files_found[name] for name in REQUIRED_DATA_FILES)
+    assert reads == [] and service.built == [] and service.published == []
 
 
 @pytest.mark.parametrize("linked", ["run", "layout"])
@@ -558,11 +532,7 @@ def test_a_ledger_does_not_change_what_automatic_selection_chooses(service):
     )
     from src.evaluation.task_measurement import disease_semantics
     from src.utils.checkpoint_io import read_checkpoint
-    from src.utils.checkpoint_paths import (
-        RUN_LAYOUT_KEYS,
-        ranking_score_detail,
-        select_auto_run_checkpoint,
-    )
+    from src.utils.checkpoint_paths import ranking_score_detail, select_auto_run_checkpoint
     from tests.unit.test_evaluation_sidecar import registered_report
 
     run = "20261002-000000_disease_bbbbbb"
@@ -580,8 +550,7 @@ def test_a_ledger_does_not_change_what_automatic_selection_chooses(service):
         reload = _reload(service, task="disease")
         assert reload.success, reload.message
         assert "best val_pooled_mrr=0.6000" in reload.selection_reason
-        return (select_auto_run_checkpoint(service.data_dir, score_fn=score,
-                                           keys=RUN_LAYOUT_KEYS)[0],
+        return (select_auto_run_checkpoint(service.data_dir, score_fn=score)[0],
                 Path(reload.checkpoint_path))
 
     without = chosen()
@@ -598,3 +567,116 @@ def test_a_ledger_does_not_change_what_automatic_selection_chooses(service):
     assert tested == {file_sha256(other): 0.99, file_sha256(best): 0.01}
 
     assert without == chosen() == (best, best)
+
+
+# ---------------------------------------------------------------------------
+# The request declares five fields; any other is refused before anything is
+# read (Q17 (b))
+# ---------------------------------------------------------------------------
+@pytest.fixture
+def client(service, monkeypatch):
+    """The real route over `service`, as an operator (D8 passes, so a refusal
+    below is the request's own), with a pipeline served (a sentinel) and every
+    checkpoint read observed, where the scan reads (`checkpoint_io`) and where
+    the build reads (`src.inference.pipeline`)."""
+    from fastapi.testclient import TestClient
+
+    import src.api.main as api
+    import src.inference.pipeline as served_pipeline
+    import src.utils.checkpoint_io as checkpoint_io
+    from tests.fixtures.operator_access import OPERATOR_BASE_URL, operator_mode
+
+    operator_mode(monkeypatch)
+    sentinel = object()
+    monkeypatch.setattr(api.app_state, "pipeline", sentinel, raising=False)
+    reads = []
+    for module in (checkpoint_io, served_pipeline):
+        def observing(path, *args, _read=module.read_checkpoint, **kwargs):
+            reads.append(str(path))
+            return _read(path, *args, **kwargs)
+
+        monkeypatch.setattr(module, "read_checkpoint", observing)
+    return SimpleNamespace(http=TestClient(api.app, base_url=OPERATOR_BASE_URL), api=api,
+                           sentinel=sentinel, reads=reads)
+
+
+#: The bodies the retired scripts sent (cases 1-4 of the guides' old-scripts
+#: note) and a `conv_type` alone, each with the one field the request does not
+#: declare: (case, body without `data_dir`, that field).
+OLD_SCRIPT_BODIES = [
+    ("1: an explicit path with conv_type auto", {"checkpoint_path": "disease",
+                                                 "conv_type": "auto"}, "conv_type"),
+    ("1: an explicit path with conv_type hgt", {"checkpoint_path": "disease",
+                                                "conv_type": "hgt"}, "conv_type"),
+    ("2: a task with conv_type auto", {"task": "disease", "conv_type": "auto"}, "conv_type"),
+    ("2: a task with conv_type null", {"task": "disease", "conv_type": None}, "conv_type"),
+    ("3: a task with conv_type hgt", {"task": "disease", "conv_type": "hgt"}, "conv_type"),
+    ("4: the digest misspelt", {"checkpoint_path": "disease",
+                                "expected_checkpoint_sha": "digest"},
+     "expected_checkpoint_sha"),
+    ("neither task nor path, conv_type hgt", {"conv_type": "hgt"}, "conv_type"),
+]
+
+
+def _body(service, family, body):
+    """`body` with the workspace and the disease child's path and digest
+    filled in."""
+    filled = {"data_dir": str(service.data_dir)}
+    for key, value in body.items():
+        if key == "checkpoint_path":
+            value = str(family["disease"])
+        elif value == "digest":
+            value = file_sha256(family["disease"])
+        filled[key] = value
+    return filled
+
+
+@pytest.mark.parametrize("case, body, field", OLD_SCRIPT_BODIES,
+                         ids=[case for case, _, _ in OLD_SCRIPT_BODIES])
+def test_an_old_scripts_request_is_refused_with_422_before_anything_is_read(
+        client, service, family, case, body, field):
+    """Each request an old script sends carries a field this service does not
+    declare: the architecture is read from the checkpoint's own model spec,
+    never from the request, and a misspelt digest is one the reload would
+    otherwise not check. Refused by request validation (422, the field named),
+    before any candidate is selected: nothing read, built or published, and
+    the pipeline served stays. Before K8-4 cases 1, 2 and 4 and the last were
+    served, and case 3 refused with a 200."""
+    response = client.http.post("/api/v1/pipeline/reload", json=_body(service, family, body))
+
+    assert response.status_code == 422, response.text
+    (detail,) = response.json()["detail"]
+    assert detail["type"] == "extra_forbidden" and detail["loc"] == ["body", field]
+    assert client.reads == [] and service.built == [] and service.published == []
+    assert client.api.app_state.pipeline is client.sentinel
+
+
+@pytest.mark.parametrize("body, served", [
+    ({"checkpoint_path": "disease"}, "an explicit path"),
+    ({"task": "disease"}, "the disease child, selected by its task"),
+    ({"checkpoint_path": "disease", "expected_checkpoint_sha256": "digest"}, "the bound path"),
+], ids=["1", "2", "4"])
+def test_the_same_requests_without_the_undeclared_field_are_served(
+        client, service, family, body, served):
+    """The positive control, through the same client: cases 1, 2 and 4
+    without the field (4 with `expected_checkpoint_sha256` spelt exactly)
+    answer 200 and publish the disease child once."""
+    response = client.http.post("/api/v1/pipeline/reload", json=_body(service, family, body))
+
+    assert response.status_code == 200, response.text
+    answer = response.json()
+    assert answer["success"] is True, (served, answer["message"])
+    assert answer["checkpoint_path"] == str(family["disease"])
+    assert service.built == [str(family["disease"])] and len(service.published) == 1
+
+
+def test_a_request_with_an_undeclared_field_cannot_be_built_in_process():
+    """The same refusal for a caller in process (the dashboard's shared Load):
+    the request model refuses the field, with the type the route answers."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError) as refused:
+        PipelineReloadRequest(data_dir="/ws", task="disease", conv_type="auto")
+    assert refused.value.errors()[0]["type"] == "extra_forbidden"
+    assert set(PipelineReloadRequest.model_fields) == {
+        "data_dir", "checkpoint_path", "task", "device", "expected_checkpoint_sha256"}

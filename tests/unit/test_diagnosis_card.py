@@ -9,9 +9,8 @@ Diagnosis: the "Model in use" card and its Details (M5-2, UI-B).
 - **what is served**, as the card names it: no model loaded, or a model read
   from its checkpoint (K7: nothing else is served). The served status is the
   one a disease child gives (`_status`: scoring mode ``disease_task``, its run
-  under ``runs/gatv2``, no SP table, eta None); a ShepherdGNN file's
-  (``gnn_only``, `_gnn_status`) only where that file is the subject (K8-4
-  retires its serving);
+  under ``runs/gatv2``, no SP table, eta None); every served model is a
+  finetuned task's (K8-4);
 - **the served checkpoint's place** in the serving workspace's runs, from the
   status's served paths, found again in the server's list, **no file opened**;
 - **trained on: the checkpoint's own record**, never the served workspace's
@@ -114,13 +113,12 @@ def _status(root, served="model-05.pt", run=RUN, **extra):
         "current_checkpoint_path": str(root["workspace"] / "runs" / "gatv2" / run / "checkpoints"
                                        / served),
         "checkpoint_meta": {"epoch": 5, "params": 6569, "val_pooled_mrr": 0.241},
-        "fingerprint_warnings": [],
         "served_identity": {
             "scoring_mode": "disease_task",
             "checkpoint": {"state": "verified", "sha256": sha},
             "graph": {"state": "verified", "kg_sha256": kg,
                       "split_manifest_sha256": root["fingerprint"]},
-            "shortest_paths": {"state": "absent", "build_id": None, "max_hops": None},
+            "shortest_paths": {"state": "absent"},
             "dataset_record": {"state": "verified", "origin": "synthetic", "sha256": "e" * 64},
             "settings": {"device": "cpu", "device_requested": "cpu", "eta": None,
                          "max_path_length": 4, "path_length_penalty": 0.5,
@@ -130,20 +128,6 @@ def _status(root, served="model-05.pt", run=RUN, **extra):
         },
     }
     status.update(extra)
-    return status
-
-
-def _gnn_status(root):
-    """The status a ShepherdGNN file served without an SP table gave
-    (``gnn_only``, eta 1.0): the older run's weights under ``runs/hgt``. Only
-    for the tests whose subject that file is (K8-4 retires its serving)."""
-    directory = root["workspace"] / "runs" / "hgt" / RUN / "checkpoints"
-    directory.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(root["workspace"] / "runs" / "gatv2" / RUN / "checkpoints" / "model-05.pt",
-                 directory / "model-05.pt")
-    status = _status(root, current_checkpoint_path=str(directory / "model-05.pt"))
-    status["served_identity"]["scoring_mode"] = "gnn_only"
-    status["served_identity"]["settings"]["eta"] = 1.0
     return status
 
 
@@ -518,19 +502,10 @@ def test_the_normal_card_names_the_model_its_fingerprint_and_its_states(root):
 
 
 def test_mode_chips_appear_only_when_true(root):
-    files = _gnn_status(root)
-    files["served_identity"]["dataset_record"]["origin"] = "files"
-    files["served_identity"]["scoring_mode"] = "gnn_plus_shortest_path"
-    files["served_identity"]["shortest_paths"] = {"state": "verified", "build_id": "b",
-                                                  "max_hops": 3}
-    body = card.body_html(_state(root, status=files))
-    assert "synthetic data" not in body and "no SP table" not in body
-    # The same for a task model: a dataset of origin "files" gets no chip.
+    # A dataset of origin "files" gets no chip.
     task = _status(root)
     task["served_identity"]["dataset_record"]["origin"] = "files"
     assert "synthetic data" not in card.body_html(_state(root, status=task))
-    no_gnn = _status(root, gnn_ready=False)
-    assert "GNN not loaded" in card.body_html(_state(root, status=no_gnn))
 
 
 def test_no_model_loaded_turns_run_off_and_offers_a_load(root):
@@ -579,7 +554,8 @@ def test_details_add_what_a_served_model_has_to_model_facts(root):
     assert "Record not" not in html and 'class="shep-k">Task<' not in identity
     assert 'class="shep-k">Configuration<' not in identity
     assert 'data-key="models">Full records: Research › Models ›' in html
-    assert "Graph structural fingerprint: no warnings · GNN loaded" in html
+    # The structural fingerprint is compared by nothing at load (K8-4): no line.
+    assert "structural fingerprint" not in html
     warnings = html[html.index('data-sec="warnings"'):]
     # A disease model uses no SP table: no warning that it lacks one.
     assert "SYNTHETIC WORKSPACE" in warnings and "NO SHORTEST-PATH TABLE" not in warnings
@@ -633,41 +609,6 @@ def test_details_say_not_recorded_when_the_checkpoint_records_no_dataset(root):
     assert "DATASET NOT RECORDED" in html
 
 
-def test_structural_warnings_are_named_for_what_they_compare(root):
-    status = _status(root, fingerprint_warnings=["Node count mismatch for 'gene': 3 vs 4"])
-    html = card.served_facts_html(_state(root, status=status))
-    assert "structural fingerprint</b> (1; node types and counts" in html
-    assert "not the graph's identity" in html and "Node count mismatch" in html
-    assert "KG version mismatch" not in html
-    # The list takes the page's list class (its markers inside the amber box).
-    assert '<ul class="shep-dx-list"><li>Node count mismatch' in html
-
-
-def test_the_structural_line_counts_differences_and_says_when_nothing_was_compared(root):
-    """With the comparator's own answers (`verify_fingerprint`): its headline
-    is not counted or listed as a difference, and a checkpoint with no
-    structural fingerprint (seen in the demo workspace) is "not compared",
-    never "differs"."""
-    from src.utils.fingerprint import verify_fingerprint
-
-    differs = verify_fingerprint(
-        {"data_fingerprint": {"node_types": [], "node_counts": {"gene": 3}, "num_edge_types": 0,
-                              "feature_dims": {}}},
-        {"num_nodes_dict": {"gene": 4}})
-    assert len(differs) == 2                      # the headline and one difference
-    line = card._structure_line(_status(root, fingerprint_warnings=differs))
-    assert "structural fingerprint</b> (1; node types" in line
-    assert line.count("<li>") == 1 and "Node count mismatch for &#x27;gene&#x27;" in line
-    legacy = verify_fingerprint({}, {})
-    line = card._structure_line(_status(root, fingerprint_warnings=legacy))
-    assert "Graph structure not compared</b> (the checkpoint records no structural fingerprint" in line
-    assert "differs" not in line and "compared, not" not in line
-    many = [differs[0]] + [f"Node count mismatch for 't{i}': checkpoint expects 1, current data has 2"
-                           for i in range(5)]
-    line = card._structure_line(_status(root, fingerprint_warnings=many))
-    assert "(5; " in line and line.count("<li>") == 3 and "and 2 more" in line
-
-
 def test_details_open_at_the_section_asked_for(root):
     html = card.served_facts_html(_state(root), open_section="evidence")
     assert 'data-sec="evidence" open' in html and 'data-sec="identity" open' not in html
@@ -717,8 +658,7 @@ def _bundle_status(root, mode, *, served=True):
     identity = status["served_identity"]
     identity["scoring_mode"] = mode
     identity["checkpoint"]["sha256"] = sha
-    identity["shortest_paths"] = {"state": "computed" if mode == "gene_task" else "absent",
-                                  "build_id": None, "max_hops": None}
+    identity["shortest_paths"] = {"state": "computed" if mode == "gene_task" else "absent"}
     identity["settings"]["eta"] = 0.5 if mode == "gene_task" else None
     return status
 
@@ -733,6 +673,7 @@ def test_a_task_model_is_named_by_its_task_once(root, mode, name):
 
     status = _bundle_status(root, mode)
     assert card.served_task(status) == SCORING_MODE_TASKS[mode]
+    assert card.served_task({"initialized": False}) is None
     body = card.body_html(_state(root, status=status))
     assert (f'<p class="shep-dx-name">{name}</p><p class="shep-dx-line shep-dx-sub">GATv2 · '
             f"run 2026-10-21 09:00 · epoch 5</p>") in body
@@ -744,29 +685,16 @@ def test_a_task_model_is_named_by_its_task_once(root, mode, name):
             "runs</p>") in lost
 
 
-def test_a_shepherdgnn_file_keeps_its_name_line_and_no_task(root):
-    assert card.served_task(_gnn_status(root)) is None
-    assert card.served_task({"initialized": False}) is None
-    body = card.body_html(_state(root, status=_gnn_status(root)))
-    assert '<p class="shep-dx-name">HGT · run 2026-10-17 09:15 · epoch 5</p>' in body
-    assert "task model" not in body
-
-
 @pytest.mark.parametrize("mode", ["disease_task", "gene_task", "patients_like_me"])
 def test_a_task_model_misses_no_sp_table(root, mode):
     """A task model is not missing a table it never uses: no "no SP table" chip
-    or warning (only `gnn_only` has them); the serving note says what it uses."""
+    or warning; the serving note says what it uses."""
     state = _state(root, status=_bundle_status(root, mode))
     body = card.body_html(state)
     details = card.served_facts_html(state)
     assert "no SP table" not in body and "NO SHORTEST-PATH TABLE" not in details
     note = "SP from the graph view" if mode == "gene_task" else "SP not used by this task"
     assert note in details and "no SP table" not in details
-    # The ShepherdGNN file served without its table keeps both.
-    legacy = _state(root, status=_gnn_status(root))
-    assert "no SP table" in card.body_html(legacy)
-    assert "no SP table" in card.served_facts_html(legacy)
-    assert "NO SHORTEST-PATH TABLE" in card.served_facts_html(legacy)
     assert "its task" in card.CARD_HELP[1]
 
 

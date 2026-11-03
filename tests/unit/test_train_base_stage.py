@@ -215,8 +215,11 @@ def test_a_parent_of_these_rules_resumes_with_its_early_stopping_and_validation(
         parent["config"]["effective"]["loaders"]["val"])
 
 
-def test_bundle_runs_are_listed_but_not_auto_served(tmp_path):
-    from src.utils.checkpoint_paths import list_runs, select_auto_run_checkpoint
+def test_bundle_runs_are_listed(tmp_path):
+    """Every run-layout key's runs are listed. Which one serves is the record's
+    call (task-first selection), pinned where selection lives
+    (test_checkpoint_paths.py, test_task_first_selection.py)."""
+    from src.utils.checkpoint_paths import list_runs
 
     for arch, run in (("gat", "20261001-000000_old_aaaaaa"), ("gatv2", "20261027-000000_base_bbbbbb")):
         ckpt = tmp_path / "runs" / arch / run / "checkpoints"
@@ -224,5 +227,3 @@ def test_bundle_runs_are_listed_but_not_auto_served(tmp_path):
         (ckpt / "last.pt").write_bytes(b"x")
     names = {r.name for r in list_runs(tmp_path)}
     assert names == {"20261001-000000_old_aaaaaa", "20261027-000000_base_bbbbbb"}
-    path, arch, _ = select_auto_run_checkpoint(tmp_path)
-    assert arch == "gat" and "old" in str(path)

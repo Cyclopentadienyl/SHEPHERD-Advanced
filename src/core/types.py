@@ -403,7 +403,6 @@ class PatientPhenotypes:
 # (`src.reasoning`), the API, the page and the exports all name the kinds and
 # their labels, and `src.reasoning` cannot import `src.inference`.
 RESULT_SCHEMA_VERSION = 2
-SERVED_MIXTURE = "served_mixture/v1"
 #: A finetuned model bundle's disease task (docs/working/scorer-retraining
 #: README §3, K3): every disease of the model's graph view, ranked by the
 #: disease head's score; path discovery only explains the rows shown.
@@ -414,10 +413,7 @@ GENE_TASK = "gene_task/v1"
 #: A finetuned patients-like-me model (README A9; PLAN_TEST_RESULTS §8.4): the
 #: patients of a registered reference cohort version, ranked by similarity.
 PATIENTS_LIKE_ME = "patients_like_me/v1"
-RESULT_KINDS = (SERVED_MIXTURE, DISEASE_TASK, GENE_TASK, PATIENTS_LIKE_ME)
-#: The mixture ranks by a stable sort, so equal scores keep the order path
-#: discovery reached the diseases in.
-SERVED_TIE_POLICY = "served-stable-discovery-order/v1"
+RESULT_KINDS = (DISEASE_TASK, GENE_TASK, PATIENTS_LIKE_ME)
 #: The disease task orders equal scores by the disease's graph-view id, so a
 #: tie is shown in a fixed order (README E3: the screen may order ties by a
 #: stable id; a metric uses average ranks).
@@ -427,27 +423,6 @@ GENE_TASK_TIE_POLICY = DISEASE_TASK_TIE_POLICY
 #: Patients-like-me orders equal similarities by the reference case id.
 PATIENTS_LIKE_ME_TIE_POLICY = "similarity-desc-then-case-id-asc/v1"
 
-#: Spec 1 §3.3's statuses. **Predicates use these explicit sets**: `status !=
-#: "COMPUTED"` is not a test for unavailability, since it also catches the
-#: numeric `COMPUTED_PARTIAL`.
-SP_NUMERIC_STATUSES = ("COMPUTED", "COMPUTED_PARTIAL")
-SP_NON_NUMERIC_STATUSES = ("NO_TABLE", "TARGET_UNMAPPED", "NO_PHENOTYPE_MAPPED")
-SP_STATUSES = SP_NUMERIC_STATUSES + SP_NON_NUMERIC_STATUSES
-#: Unmapped phenotypes never enter the mean, so it divides by the mapped count
-#: (Spec 1 §3.4): structural today, not a choice.
-MAPPED_ONLY_DENOMINATOR = "MAPPED_ONLY_DENOMINATOR"
-#: Each status in words, for a surface that shows one. A numeric status shows
-#: its number instead (and a partial one its coverage beside it).
-SP_STATUS_WORDS = {
-    "COMPUTED": "Computed",
-    "COMPUTED_PARTIAL": "Computed on part of the phenotypes",
-    "NO_TABLE": "No SP table",
-    "TARGET_UNMAPPED": "Disease not mapped",
-    "NO_PHENOTYPE_MAPPED": "No phenotype mapped",
-}
-#: How a surface says that a non-numeric SP status still entered the legacy
-#: mixture as 0 (Spec 1 §2.1), so the ranking it shows did not change.
-MIXED_AS_WORDS = "mixed as 0 (legacy)"
 
 
 class ResultRefused(RuntimeError):
@@ -476,74 +451,6 @@ def _require_finite(value: Any, what: str) -> float:
     if value != value or value in (float("inf"), float("-inf")):
         raise ValueError(f"{what} is not finite: {value!r}")
     return value
-
-
-@dataclass(frozen=True)
-class SPAnalysisRecord:
-    """One candidate's shortest-path quantities, or the reason there are none
-    (Spec 1 §3.1–§3.4), built by `src.inference.sp_index.sp_analysis_records`.
-
-    **An absent number and a zero cannot be the same thing here**: the numbers
-    are required on the two numeric statuses and forbidden on the other three.
-    `mean_hop_distance` is the mean over the mapped phenotypes of the hop
-    distance to the candidate, an unreachable pair counting `max_hops + 1`;
-    `score` is `1 / (1 + mean_hop_distance)`, shown beside it for continuity.
-
-    `mixed_as` belongs to the legacy mixture alone: 0.0 on a non-numeric status
-    the mixture still mixed as 0, so its ranking did not change (Spec 1 §2.1).
-    It is absent everywhere else, and never set on a numeric status.
-    """
-
-    status: str
-    #: The phenotypes the request carried that the SP side counts: the mapped
-    #: ones and the distinct ids it could not map (`unmapped_ids`).
-    phenotypes_submitted: int
-    phenotypes_mapped: int
-    unmapped_ids: Tuple[str, ...] = ()
-    #: The table's hop bound; None when no table is loaded.
-    max_hops: Optional[int] = None
-    mean_hop_distance: Optional[float] = None
-    score: Optional[float] = None
-    unreachable_pair_count: Optional[int] = None
-    denominator_policy: Optional[str] = None
-    mixed_as: Optional[float] = None
-
-    def __post_init__(self) -> None:
-        if self.status not in SP_STATUSES:
-            raise ValueError(f"sp status {self.status!r} is not one of {SP_STATUSES}")
-        numbers = ("mean_hop_distance", "score", "unreachable_pair_count",
-                   "denominator_policy")
-        if self.numeric:
-            missing = [name for name in numbers if getattr(self, name) is None]
-            if missing or self.max_hops is None:
-                raise ValueError(
-                    f"a {self.status} record needs {', '.join(missing or ['max_hops'])}")
-            _require_finite(self.mean_hop_distance, "mean_hop_distance")
-            _require_finite(self.score, "the SP score")
-            if self.mixed_as is not None:
-                raise ValueError("a numeric SP record is mixed as its own value, "
-                                 "never as a stand-in")
-        else:
-            present = [name for name in numbers if getattr(self, name) is not None]
-            if present:
-                raise ValueError(
-                    f"a {self.status} record has no number, but carries "
-                    f"{', '.join(present)}")
-            if (self.status == "NO_TABLE") != (self.max_hops is None):
-                raise ValueError("max_hops is the loaded table's bound: absent exactly "
-                                 "when there is no table")
-            if self.mixed_as is not None and self.mixed_as != 0.0:
-                raise ValueError(f"a non-numeric status is mixed as 0.0, not {self.mixed_as!r}")
-        if self.numeric and (self.status == "COMPUTED_PARTIAL") != bool(self.unmapped_ids):
-            raise ValueError("COMPUTED_PARTIAL means some submitted phenotypes were "
-                             "not mapped, COMPUTED that every one was")
-        if self.phenotypes_submitted != self.phenotypes_mapped + len(self.unmapped_ids):
-            raise ValueError("the submitted phenotypes are the mapped ones and the "
-                             "unmapped ids")
-
-    @property
-    def numeric(self) -> bool:
-        return self.status in SP_NUMERIC_STATUSES
 
 
 @dataclass(frozen=True)
@@ -576,27 +483,6 @@ class _ServedEvidence:
     #: a confidence in the diagnosis: the field `confidence_label` was, and went.
     evidence_label: Optional[str] = None
     explanation: Optional[str] = None
-
-
-@dataclass(frozen=True, kw_only=True)
-class ServedMixtureCandidate(_ServedEvidence, _CandidateBase):
-    """A candidate of `served_mixture/v1`: today's served ranking, a disease
-    reached by path discovery and scored by the legacy mixture."""
-
-    #: The value it is ranked by: η·model_term + (1−η)·SP in
-    #: `gnn_plus_shortest_path`, `model_term` alone in `gnn_only`.
-    served_score: float
-    #: (cos+1)/2 of the pooled patient phenotypes and the disease, in float32:
-    #: in [0, 1] up to an ulp either side (a patient parallel or anti-parallel
-    #: to a disease rounds the cosine past +-1).
-    model_term: float
-    sp_term: SPAnalysisRecord
-
-    def __post_init__(self) -> None:
-        _require_finite(self.served_score, "served_score")
-        _require_finite(self.model_term, "model_term")
-        if not isinstance(self.sp_term, SPAnalysisRecord):
-            raise ValueError("a served_mixture candidate carries an SP record (sp_term)")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -656,20 +542,16 @@ class PatientCandidate:
 
 
 #: A candidate of any kind the pipeline produces.
-Candidate = Union[ServedMixtureCandidate, DiseaseTaskCandidate, GeneTaskCandidate,
-                  PatientCandidate]
+Candidate = Union[DiseaseTaskCandidate, GeneTaskCandidate, PatientCandidate]
 
 #: Each kind's candidate type.
-CANDIDATE_TYPES = {SERVED_MIXTURE: ServedMixtureCandidate,
-                   DISEASE_TASK: DiseaseTaskCandidate,
+CANDIDATE_TYPES = {DISEASE_TASK: DiseaseTaskCandidate,
                    GENE_TASK: GeneTaskCandidate,
                    PATIENTS_LIKE_ME: PatientCandidate}
 
 
 def candidate_score(candidate: Candidate) -> float:
     """The value `candidate`'s kind ranks by."""
-    if isinstance(candidate, ServedMixtureCandidate):
-        return candidate.served_score
     if isinstance(candidate, (DiseaseTaskCandidate, GeneTaskCandidate)):
         return candidate.score
     return candidate.similarity
@@ -708,13 +590,11 @@ class PhenotypeInputAccount:
 #: absent.
 SERVED_CHECKPOINT_STATES = ("verified",)
 SERVED_GRAPH_STATES = ("verified",)
-SERVED_SHORTEST_PATHS_STATES = ("verified", "computed", "absent")
+SERVED_SHORTEST_PATHS_STATES = ("computed", "absent")
 SERVED_DATASET_RECORD_STATES = ("verified",)
 #: The dataset record's origins (`src.kg.provenance.ORIGINS`, which this layer
 #: cannot import; `tests/unit/test_served_identity.py` pins the two equal).
 SERVED_DATASET_ORIGINS = ("files", "synthetic")
-SERVED_SCORING_MODES = ("gnn_plus_shortest_path", "gnn_only", "disease_task", "gene_task",
-                        "patients_like_me")
 #: **The one table of the scoring mode each finetuned task is served under**
 #: (README §1: switching task means loading another model), and its inverse.
 #: The pipeline names the mode of the model it serves from it, and every
@@ -725,14 +605,16 @@ SERVED_SCORING_MODES = ("gnn_plus_shortest_path", "gnn_only", "disease_task", "g
 TASK_SCORING_MODES: Dict[str, str] = {"disease": "disease_task", "gene": "gene_task",
                                       "patients_like_me": "patients_like_me"}
 SCORING_MODE_TASKS: Dict[str, str] = {mode: task for task, mode in TASK_SCORING_MODES.items()}
+#: Every served model is a finetuned task's, so the scoring modes are the
+#: table's values.
+SERVED_SCORING_MODES = tuple(TASK_SCORING_MODES.values())
 #: **The shortest-path state each scoring mode is served with**, the one rule:
 #: `ServedIdentity` refuses any other, the pipeline builds its identity from it
-#: and the WebUI's reload confirmation says it before a load. A verified table
-#: for the GNN with its SP term; the gene task's exact hop distances computed
-#: from the model's own graph view; no table for every other mode.
+#: and the WebUI's reload confirmation says it before a load. The gene task's
+#: exact hop distances computed from the model's own graph view; no
+#: shortest-path term for the other tasks.
 SCORING_MODE_SP_STATES: Dict[str, str] = {
-    "gnn_plus_shortest_path": "verified", "gnn_only": "absent", "disease_task": "absent",
-    "gene_task": "computed", "patients_like_me": "absent"}
+    "disease_task": "absent", "gene_task": "computed", "patients_like_me": "absent"}
 
 _HEX = frozenset("0123456789abcdef")
 
@@ -781,27 +663,15 @@ class ServedGraph:
 
 @dataclass(frozen=True)
 class ServedShortestPaths:
-    """The shortest-path table, or the stated absence of one."""
+    """The shortest-path term, or the stated absence of one."""
 
-    #: "verified": the table and its sidecar carry one `build_id` and name the
-    #: served graph (contract M2.5); `max_hops` is the sidecar's hop bound.
     #: "computed": the gene task's exact hop distances, computed in process
-    #: from the served graph view (README §6); no table, so no `build_id` or
-    #: `max_hops`. "absent": no shortest-path term contributes to the score.
+    #: from the served graph view (README §6). "absent": no shortest-path term
+    #: contributes to the score.
     state: str
-    build_id: Optional[str] = None
-    max_hops: Optional[int] = None
 
     def __post_init__(self) -> None:
         _require_state(self.state, SERVED_SHORTEST_PATHS_STATES, "shortest_paths")
-        if self.state == "verified":
-            if not (isinstance(self.build_id, str) and self.build_id):
-                raise ValueError("a verified shortest-path table carries its build_id")
-            if not (isinstance(self.max_hops, int) and not isinstance(self.max_hops, bool)):
-                raise ValueError("a verified shortest-path table carries its max_hops")
-        elif self.build_id is not None or self.max_hops is not None:
-            raise ValueError(f"a shortest-path term in state {self.state!r} carries no "
-                             "build_id or max_hops")
 
 
 @dataclass(frozen=True)
@@ -831,13 +701,10 @@ class ServedSettings:
     #: What was asked for: "auto" (CUDA, refused without it), "cuda", "cuda:N"
     #: or "cpu"; "auto" when a checkpoint was loaded with none named.
     device_requested: str
-    #: The mixing weight in effect between the model and shortest-path terms:
-    #: 1.0 with no table; the gene task's η (EMBSIM against SPLSIM, from its
-    #: spec); None for the disease and patients-like-me tasks, which mix
-    #: nothing.
+    #: The gene task's η (EMBSIM against SPLSIM, from its spec); None for the
+    #: disease and patients-like-me tasks, which mix nothing.
     eta: Optional[float]
-    #: Path discovery and path scoring: the diseases the mixture ranks are
-    #: those reached by these paths, and a disease row's evidence paths are
+    #: Path discovery and path scoring: a disease row's evidence paths are
     #: found with them.
     max_path_length: int
     path_length_penalty: float
@@ -889,8 +756,6 @@ def result_kind_for(scoring_mode: str) -> str:
 
     `scoring_mode` is the served identity's (`ServedIdentity.scoring_mode`). A
     caller never chooses a kind: it is read off the producer."""
-    if scoring_mode in ("gnn_plus_shortest_path", "gnn_only"):
-        return SERVED_MIXTURE
     if scoring_mode == "disease_task":
         return DISEASE_TASK
     if scoring_mode == "gene_task":
@@ -900,20 +765,8 @@ def result_kind_for(scoring_mode: str) -> str:
     raise ValueError(f"no result kind for scoring mode {scoring_mode!r}")
 
 
-def result_label(result_kind: str, scoring_mode: Optional[str] = None,
-                 eta: Optional[float] = None) -> str:
-    """The kind's fixed label (Spec 1 §2.1), the one text every surface shows.
-
-    For `served_mixture/v1`, η is the result's own, read from its served
-    identity (`ServedSettings.eta`), never a constant; in `gnn_only` nothing is
-    mixed, and the label says the model term ranks alone."""
-    if result_kind == SERVED_MIXTURE:
-        head = "Served ranking today: diseases reached by path discovery, "
-        if scoring_mode == "gnn_only":
-            return head + "scored by the model term alone"
-        if eta is None:
-            raise ValueError("a mixture's label names its η, and none was given")
-        return head + f"scored as η × model term + (1 − η) × SP, η = {float(eta):g}"
+def result_label(result_kind: str) -> str:
+    """The kind's fixed label (Spec 1 §2.1), the one text every surface shows."""
     if result_kind == DISEASE_TASK:
         return ("Disease task model: every disease of the model's graph ranked by its "
                 "Score (uncalibrated); paths only explain the rows shown")
@@ -933,15 +786,14 @@ class InferenceResult:
     **The kind is read off what produced the result**, never passed in:
     `result_kind` follows `served_identity.scoring_mode` (`result_kind_for`), so
     a caller cannot attach one kind's label to another's numbers. The kind's
-    result-level fields are derived the same way (`eta`, `tie_policy`), except
-    `candidates_reached`, which only the ranking knows.
+    tie policy is derived the same way (`tie_policy`).
 
     **Its invariants are checked when it is built** (`__post_init__`): every
     candidate of the kind's type, ranks exactly 1..N, every score finite, the
     order non-increasing by the kind's score, and the kind's fields present and
-    the others absent. Ties keep discovery order by construction (the stable
-    sort of `DiagnosisPipeline._score_and_rank_candidates`); the order a tie came
-    in is not on the result, so only the non-increasing order is checked here.
+    the others absent. Each task orders its ties by its tie policy (a stable id
+    after the score); the order a tie came in is not on the result, so only the
+    non-increasing order is checked here.
     """
     patient_id: str
     timestamp: datetime
@@ -966,10 +818,6 @@ class InferenceResult:
     # refused before its phenotypes were mapped.
     phenotype_input: Optional[PhenotypeInputAccount] = None
 
-    #: `served_mixture/v1` only: how many diseases discovery reached before the
-    #: cut at `top_k` (0 for a refused or empty result). None for other kinds.
-    candidates_reached: Optional[int] = None
-
     #: `patients_like_me/v1` only: the reference cohort version ranked against
     #: (`label`, `version_sha256`, `samples_sha256`, `patients`). None otherwise.
     reference_cohort: Optional[Dict[str, Any]] = None
@@ -993,25 +841,6 @@ class InferenceResult:
         scores = [candidate_score(candidate) for candidate in self.candidates]
         if any(later > earlier for earlier, later in zip(scores, scores[1:])):
             raise ValueError("candidates are not in non-increasing order of their score")
-        if kind == SERVED_MIXTURE:
-            if isinstance(self.candidates_reached, bool) or not isinstance(
-                    self.candidates_reached, int) or self.candidates_reached < len(ranks):
-                raise ValueError(
-                    "a served_mixture result says how many diseases discovery reached "
-                    f"(at least the {len(ranks)} it holds), got {self.candidates_reached!r}")
-            mixes = self.served_identity.scoring_mode == "gnn_plus_shortest_path"
-            for candidate in self.candidates:
-                record = candidate.sp_term
-                if not mixes and record.status != "NO_TABLE":
-                    raise ValueError("with no SP table served, every SP record is NO_TABLE")
-                if mixes and record.status == "NO_TABLE":
-                    raise ValueError("an SP table is served, so no record can be NO_TABLE")
-                if (mixes and not record.numeric) != (record.mixed_as is not None):
-                    raise ValueError(
-                        "mixed_as is 0.0 exactly on a non-numeric status the mixture "
-                        "mixed, and absent otherwise")
-        elif self.candidates_reached is not None:
-            raise ValueError(f"candidates_reached belongs to {SERVED_MIXTURE} alone")
         if (kind == PATIENTS_LIKE_ME) != (self.reference_cohort is not None):
             raise ValueError(f"a {PATIENTS_LIKE_ME} result names its reference cohort version, "
                              "and only such a result does")
@@ -1028,23 +857,14 @@ class InferenceResult:
         return RESULT_SCHEMA_VERSION
 
     @property
-    def eta(self) -> Optional[float]:
-        """`served_mixture/v1`: the mixing weight in effect, the served
-        identity's (1.0 in `gnn_only`, where nothing is mixed). None otherwise."""
-        if self.result_kind != SERVED_MIXTURE:
-            return None
-        return self.served_identity.settings.eta
-
-    @property
     def tie_policy(self) -> str:
         return {DISEASE_TASK: DISEASE_TASK_TIE_POLICY, GENE_TASK: GENE_TASK_TIE_POLICY,
-                PATIENTS_LIKE_ME: PATIENTS_LIKE_ME_TIE_POLICY}.get(self.result_kind,
-                                                                   SERVED_TIE_POLICY)
+                PATIENTS_LIKE_ME: PATIENTS_LIKE_ME_TIE_POLICY}[self.result_kind]
 
     @property
     def label(self) -> str:
-        """The kind's fixed label, with this result's own η (`result_label`)."""
-        return result_label(self.result_kind, self.served_identity.scoring_mode, self.eta)
+        """The kind's fixed label (`result_label`)."""
+        return result_label(self.result_kind)
 
 
 # =============================================================================

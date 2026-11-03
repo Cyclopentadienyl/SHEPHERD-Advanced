@@ -233,11 +233,11 @@ def test_details_show_the_selection_metric_by_the_ranking_keys(meta, shown):
 
     status = {"initialized": True, "gnn_ready": True, "checkpoint_meta": meta,
               "served_identity": {
-                  "scoring_mode": "gnn_only",
+                  "scoring_mode": "disease_task",
                   "checkpoint": {"state": "verified", "sha256": "a" * 64},
                   "graph": {"state": "verified", "kg_sha256": "b" * 64,
                             "split_manifest_sha256": "c" * 64},
-                  "shortest_paths": {"state": "absent", "build_id": None, "max_hops": None},
+                  "shortest_paths": {"state": "absent"},
                   "dataset_record": {"state": "verified", "origin": "files", "sha256": "d" * 64},
                   "settings": {}}}
     state = card.advance(None, status, None, now=datetime(2026, 10, 20), operator=True,

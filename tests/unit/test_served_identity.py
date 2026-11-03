@@ -4,22 +4,21 @@ What is served is identified, part by part (contract M3c, R8).
 Every diagnosis result, `get_pipeline_config()`, `/diagnose` and
 `/pipeline/status` carry one structured value naming what produced the answer:
 the checkpoint, the graph and the workspace manifest by the digest of the bytes
-read, the shortest-path table by its `build_id`, the dataset record by origin
-and digest, the scoring mode, and the settings in effect. It replaces the two
+read, the shortest-path term by its state, the dataset record by origin and
+digest, the scoring mode, and the settings in effect. It replaces the two
 version strings a result used to carry, a class constant and "unknown". What is
 pinned here:
 
 - each part refuses a state outside its vocabulary (the no-model and in-memory
-  states are gone since K7), a stated part without its digest or identifier,
-  a digest that is not lowercase hexadecimal, and an absent shortest-path term
-  carrying a value; the whole refuses a mode served with another
+  states are gone since K7, the verified table and the mixture's modes since
+  K8-4), a stated part without its digest or identifier and a digest that is
+  not lowercase hexadecimal; the whole refuses a mode served with another
   shortest-path state;
 - the API's Pydantic mirror and the dataclasses have one shape and one set of
   states, and the mirror refuses an unknown key and a missing one;
 - the identity a pipeline reports is built from its own reads: digests equal to
-  `hashlib` over the files, the table's `build_id` and hop bound from its
-  sidecar, the record's origin from the record, the device asked for and the one
-  in effect;
+  `hashlib` over the files, the record's origin from the record, the device
+  asked for and the one in effect;
 - every result, valid, empty or refused, carries the pipeline's identity, and
   the API copies it from the result it answers with, never from shared state a
   reload could swap; with nothing served a diagnosis is refused, and no answer
@@ -30,10 +29,9 @@ pinned here:
   (19.1); a reload given the model fingerprint its caller was shown serves
   those bytes or nothing (EB-1).
 
-Every case whose subject holds for any served model serves the session's
-trained disease child (K8-2a); the cases that serve `served_workspace`'s
-checkpoint, an untrained one without a model spec, with or without a bound
-shortest-path table, are the served mixture's and the table's own.
+Every case that serves a model serves the session's trained disease child
+(K8-2a); `served_workspace` is a workspace with no model, for the build that
+is refused without a checkpoint.
 
 The device rule itself (`resolve_serving_device`) is in
 `test_serving_device.py`.
@@ -72,27 +70,20 @@ from src.core.types import (  # noqa: E402
     ServedShortestPaths,
 )
 from src.kg.graph import KnowledgeGraph  # noqa: E402
-from tests.fixtures.generated_workspace import (  # noqa: E402
-    graph_record,
-    write_generated_workspace,
-)
+from tests.fixtures.generated_workspace import write_generated_workspace  # noqa: E402
 from tests.fixtures.opens import count_opens  # noqa: E402
 from tests.unit import test_serving_reads_once as reads_once  # noqa: E402
 from tests.unit.test_serving_reads_once import _sha  # noqa: E402
-from tests.unit.test_sp_artifact_binding import publish  # noqa: E402
 
 #: Shared with `test_serving_reads_once.py` rather than copied: `api` is the app
 #: state of a fresh process with SHEPHERD_DEVICE=cpu.
 api = reads_once.api
 
 SHA_A, SHA_B, SHA_C, SHA_D = ("a" * 64, "b" * 64, "c" * 64, "d" * 64)
-BUILD_ID = "0123456789abcdef0123456789abcdef"
 
 #: The workspace directory's name, which `write_graph_export` puts in every node
 #: identifier it writes.
 WS = "ws"
-#: A phenotype of that workspace's graph, with an edge to a disease.
-PHENOTYPE = f"phenotype-0-of-{WS}"
 #: Phenotypes of the demo graph the trained disease child serves, and one in
 #: no graph.
 SEIZURE, DELAY, UNKNOWN = "HP:0001250", "HP:0001263", "HP:9999999"
@@ -101,46 +92,11 @@ SEIZURE, DELAY, UNKNOWN = "HP:0001250", "HP:0001263", "HP:9999999"
 # ---------------------------------------------------------------------------
 # Builders
 # ---------------------------------------------------------------------------
-def _checkpoint_for(data_dir, path, *, val_pooled_mrr=0.5):
-    """A checkpoint of an untrained model over `data_dir`'s graph, recording
-    that graph as training does (M2.2), so serving accepts it (M2.4).
-
-    The model is built from the workspace's own tensors, so its metadata is the
-    one `build_shepherd_model` derives from them; weights are seeded, not trained.
-    """
-    from src.kg.storage.file_storage import read_graph_artifacts
-    from src.models.gnn.shepherd_gnn import ShepherdGNN, ShepherdGNNConfig
-
-    graph_data = read_graph_artifacts(data_dir, map_location="cpu").graph_data
-    x_dict, edge_index_dict = graph_data["x_dict"], graph_data["edge_index_dict"]
-    torch.manual_seed(20261016)
-    model = ShepherdGNN(
-        metadata=(list(x_dict), list(edge_index_dict)),
-        in_channels_dict={name: x.shape[1] for name, x in x_dict.items()},
-        config=ShepherdGNNConfig(hidden_dim=8, num_layers=2, num_heads=2),
-    )
-    torch.save(
-        {
-            "state_dict": model.state_dict(),
-            "config": {"hidden_dim": 8, "num_layers": 2, "num_heads": 2},
-            "epoch": 3,
-            "logs": {"val_pooled_mrr": val_pooled_mrr},
-            "training_input_digests": graph_record(data_dir),
-        },
-        path,
-    )
-    return path
-
-
 @pytest.fixture
 def served_workspace(tmp_path):
-    """A generated workspace with a real graph, and a checkpoint trained on it.
-
-    Returns ``(data_dir, checkpoint)``. No shortest-path table; `_with_table`
-    publishes one.
-    """
+    """A generated workspace with a real graph and no model: its directory."""
     data_dir, _ = write_generated_workspace(tmp_path / WS, train_ids=[0, 1], val_ids=[2])
-    return data_dir, _checkpoint_for(data_dir, tmp_path / "checkpoint.pt")
+    return data_dir
 
 
 #: The session's trained disease child copied into this test's directory,
@@ -149,17 +105,9 @@ def served_workspace(tmp_path):
 served_child = reads_once.child_copy
 
 
-def _with_table(data_dir, *, max_hops=4):
-    """Publish a table bound to `data_dir`'s graph through the producer's own
-    entry point; returns its sidecar as written."""
-    from src.inference.sp_artifact import sidecar_path
-
-    path = publish(data_dir, kg_digest=_sha(data_dir / "kg.json"),
-                   extra={"max_hops": max_hops})
-    return json.loads(sidecar_path(path).read_text())
-
-
 def _full_pipeline(data_dir, checkpoint, config=None):
+    """A pipeline of the test's own over `checkpoint` in `data_dir` (shared with
+    `test_loaded_model_evaluations_api.py`)."""
     from src.inference.pipeline import DiagnosisPipeline
 
     return DiagnosisPipeline(
@@ -190,7 +138,7 @@ def _patient(phenotypes, confidences=None):
 # 1. The dataclasses refuse what no pipeline can serve
 # ---------------------------------------------------------------------------
 SETTINGS_WITH_MODEL = ServedSettings(
-    device="cpu", device_requested="cpu", eta=0.7, max_path_length=4,
+    device="cpu", device_requested="cpu", eta=0.5, max_path_length=4,
     path_length_penalty=0.9, max_paths_per_candidate=10,
     use_direct_path_optimization=True, phenotype_normalisation_version=1,
 )
@@ -203,7 +151,6 @@ GRAPHS = {
     "verified": ServedGraph(state="verified", kg_sha256=SHA_B, split_manifest_sha256=SHA_C),
 }
 TABLES = {
-    "verified": ServedShortestPaths(state="verified", build_id=BUILD_ID, max_hops=5),
     "computed": ServedShortestPaths(state="computed"),
     "absent": ServedShortestPaths(state="absent"),
 }
@@ -228,10 +175,6 @@ def _identity(mode, checkpoint, graph, table, record):
 #: Since K7 every one is a model read from a checkpoint over a verified
 #: workspace; only the scoring mode and its shortest-path term vary.
 LEGAL = {
-    "gnn and table over a workspace": (
-        "gnn_plus_shortest_path", "verified", "verified", "verified", "verified"),
-    "gnn alone over a workspace": (
-        "gnn_only", "verified", "verified", "absent", "verified"),
     "a disease task model over a workspace": (
         "disease_task", "verified", "verified", "absent", "verified"),
     "a gene task model over a workspace": (
@@ -281,21 +224,9 @@ PART_REFUSALS = {
                             split_manifest_sha256="z" * 64), "lowercase"),
     "table state outside its vocabulary": (
         lambda: ServedShortestPaths(state="unrecorded"), "is not one of"),
-    "verified table without its build_id": (
-        lambda: ServedShortestPaths(state="verified", max_hops=5), "build_id"),
-    "verified table with an empty build_id": (
-        lambda: ServedShortestPaths(state="verified", build_id="", max_hops=5), "build_id"),
-    "verified table without its hop bound": (
-        lambda: ServedShortestPaths(state="verified", build_id=BUILD_ID), "max_hops"),
-    "verified table with a boolean hop bound": (
-        lambda: ServedShortestPaths(state="verified", build_id=BUILD_ID, max_hops=True),
-        "max_hops"),
-    "absent table carrying a build_id": (
-        lambda: ServedShortestPaths(state="absent", build_id=BUILD_ID), "carries no build_id"),
-    "absent table carrying a hop bound": (
-        lambda: ServedShortestPaths(state="absent", max_hops=5), "carries no build_id"),
-    "computed distances carrying a build_id": (
-        lambda: ServedShortestPaths(state="computed", build_id=BUILD_ID), "carries no build_id"),
+    # K8-4: no shortest-path table is served (the mixture retired).
+    "the retired verified table": (
+        lambda: ServedShortestPaths(state="verified"), "is not one of"),
     "record state outside its vocabulary": (
         lambda: ServedDatasetRecord(state="mismatch", origin="files", sha256=SHA_D),
         "is not one of"),
@@ -318,14 +249,8 @@ PART_REFUSALS = {
 #: Each combination of valid parts that contradict one another, built so only
 #: the rule named fails: (mode, checkpoint, graph, table, record), fragment.
 CONTRADICTIONS = {
-    "shortest-path scoring with no table": (
-        ("gnn_plus_shortest_path", "verified", "verified", "absent", "verified"),
-        "contradicts a shortest-path table"),
-    "a verified table that GNN-only scoring leaves out": (
-        ("gnn_only", "verified", "verified", "verified", "verified"),
-        "contradicts a shortest-path table"),
-    "a disease task model with a table": (
-        ("disease_task", "verified", "verified", "verified", "verified"),
+    "a disease task model with computed distances": (
+        ("disease_task", "verified", "verified", "computed", "verified"),
         "contradicts a shortest-path table"),
     "a gene task model with no distances": (
         ("gene_task", "verified", "verified", "absent", "verified"),
@@ -355,10 +280,13 @@ def test_the_identity_refuses_parts_that_contradict_each_other(case):
         _identity(*combination)
 
 
-def test_the_identity_refuses_a_scoring_mode_outside_its_vocabulary():
+@pytest.mark.parametrize("mode", ["gnn", "gnn_only", "gnn_plus_shortest_path"])
+def test_the_identity_refuses_a_scoring_mode_outside_its_vocabulary(mode):
+    """Every served model is a finetuned task's: the mixture's two modes are
+    outside the vocabulary since K8-4, as an unknown one is."""
     with pytest.raises(ValueError, match="is not one of"):
-        dataclasses.replace(_identity(*LEGAL["gnn alone over a workspace"]),
-                            scoring_mode="gnn")
+        dataclasses.replace(_identity(*LEGAL["a disease task model over a workspace"]),
+                            scoring_mode=mode)
 
 
 def test_each_scoring_mode_is_served_with_exactly_the_sp_state_its_one_table_names():
@@ -401,7 +329,7 @@ def test_every_combination_a_pipeline_builds_is_accepted_and_round_trips(case):
     assert json.loads(json.dumps(as_dict)) == as_dict
     assert ResponseIdentity.model_validate(as_dict).model_dump() == as_dict
     with pytest.raises(dataclasses.FrozenInstanceError):
-        identity.scoring_mode = "gnn_only"
+        identity.scoring_mode = "gene_task"
 
 
 def test_a_result_cannot_be_built_without_an_identity():
@@ -444,9 +372,9 @@ def _literal_values(annotation):
 
 
 def test_each_part_has_the_same_fields_in_both_definitions():
-    """The API defines its own mirror, because `scripts/measure_served_pipeline.py`
-    loads diagnose.py without the application. Catches a field added, renamed or
-    dropped on one side only."""
+    """The API defines its own mirror, so the response schema is that module's
+    own, pinned here to the core one. Catches a field added, renamed or dropped
+    on one side only."""
     for part, model in _response_models().items():
         assert {field.name for field in dataclasses.fields(part)} == set(
             model.model_fields
@@ -454,16 +382,14 @@ def test_each_part_has_the_same_fields_in_both_definitions():
 
 
 def test_the_result_unions_mirrors_have_the_core_types_fields():
-    """The same for the result union (Spec 1 §2.1): the SP record, the phenotype
-    account and each kind's candidate. A candidate's `evidence_sources` stays in
-    the pipeline (the response never carried it); nothing else differs."""
+    """The same for the result union (Spec 1 §2.1): the phenotype account and
+    each kind's candidate. A candidate's `evidence_sources` stays in the
+    pipeline (the response never carried it); nothing else differs."""
     from src.api.routes import diagnose
     from src.core import types
 
     pairs = [
-        (types.SPAnalysisRecord, diagnose.SPTerm, set()),
         (types.PhenotypeInputAccount, diagnose.PhenotypeInput, set()),
-        (types.ServedMixtureCandidate, diagnose.ServedMixtureCandidate, {"evidence_sources"}),
         (types.DiseaseTaskCandidate, diagnose.DiseaseTaskCandidate, {"evidence_sources"}),
         (types.GeneTaskCandidate, diagnose.GeneTaskCandidate, set()),
         (types.PatientCandidate, diagnose.PatientCandidate, set()),
@@ -472,28 +398,25 @@ def test_the_result_unions_mirrors_have_the_core_types_fields():
         assert {f.name for f in dataclasses.fields(core)} - kept_back == set(model.model_fields), (
             core.__name__)
     # K7 (PATH1, DEMO1): the path-reasoning and demo kinds are gone from both
-    # definitions, with no alias.
+    # definitions, with no alias; K8-4 (S1): the served mixture's kind and its
+    # SP record too.
     for retired in ("PathReasoningCandidate", "PathReasoningResponse", "DemoCandidate",
-                    "DemoResponse", "_generate_mock_candidates"):
+                    "DemoResponse", "_generate_mock_candidates", "ServedMixtureCandidate",
+                    "ServedMixtureResponse", "SPTerm", "SPAnalysisRecord"):
         assert not hasattr(diagnose, retired) and not hasattr(types, retired), retired
 
 
 def test_the_result_unions_vocabularies_are_the_core_ones():
-    """The kinds, the SP statuses and their numeric set, the tie policies: one
-    vocabulary each, in the dataclasses and the API."""
+    """The kinds and the tie policies: one vocabulary each, in the dataclasses
+    and the API."""
     from src.api.routes import diagnose
     from src.core import types
 
     assert set(diagnose.RESULT_KINDS) == set(types.RESULT_KINDS)
     kinds = {model.model_fields["result_kind"].annotation for model in (
-        diagnose.ServedMixtureResponse, diagnose.DiseaseTaskResponse, diagnose.GeneTaskResponse,
+        diagnose.DiseaseTaskResponse, diagnose.GeneTaskResponse,
         diagnose.PatientsLikeMeResponse)}
     assert {value for kind in kinds for value in _literal_values(kind)} == set(types.RESULT_KINDS)
-    assert _literal_values(diagnose.SPTerm.model_fields["status"].annotation) == set(
-        types.SP_STATUSES)
-    assert diagnose.SP_NUMERIC_STATUSES == types.SP_NUMERIC_STATUSES
-    assert diagnose.SP_NON_NUMERIC_STATUSES == types.SP_NON_NUMERIC_STATUSES
-    assert diagnose.SERVED_TIE_POLICY == types.SERVED_TIE_POLICY
     assert diagnose.DISEASE_TASK_TIE_POLICY == types.DISEASE_TASK_TIE_POLICY
     assert diagnose.GENE_TASK_TIE_POLICY == types.GENE_TASK_TIE_POLICY
     assert diagnose.PATIENTS_LIKE_ME_TIE_POLICY == types.PATIENTS_LIKE_ME_TIE_POLICY
@@ -565,7 +488,7 @@ def test_the_response_schema_refuses_an_unknown_key_at_every_level():
 
     from src.api.routes.diagnose import ServedIdentity as ResponseIdentity
 
-    identity = _identity(*LEGAL["gnn and table over a workspace"]).to_dict()
+    identity = _identity(*LEGAL["a gene task model over a workspace"]).to_dict()
     for path, _ in list(_nested_dicts(identity)):
         tampered = json.loads(json.dumps(identity))
         _at(tampered, path)["not_in_the_contract"] = 1
@@ -613,17 +536,16 @@ BAD_DIGESTS = {
 @pytest.mark.parametrize("value", sorted(BAD_DIGESTS))
 @pytest.mark.parametrize("digest", sorted(DIGEST_PATHS))
 def test_the_response_schema_refuses_a_digest_the_dataclass_refuses(digest, value):
-    """`scripts/measure_served_pipeline.py` checks a live service's identity
-    with this mirror before citing it as the readings' subject, so the digest
-    rule holds on every digest, as it does in the dataclass. Catches the pattern
-    dropped or loosened on any one field, which would let an uppercase,
-    truncated or non-hexadecimal digest through."""
+    """The mirror is the response schema, so the digest rule holds on every
+    digest, as it does in the dataclass. Catches the pattern dropped or
+    loosened on any one field, which would let an uppercase, truncated or
+    non-hexadecimal digest through."""
     from pydantic import ValidationError
 
     from src.api.routes.diagnose import ServedIdentity as ResponseIdentity
 
     path, part = DIGEST_PATHS[digest]
-    identity = _identity(*LEGAL["gnn and table over a workspace"]).to_dict()
+    identity = _identity(*LEGAL["a disease task model over a workspace"]).to_dict()
     _at(identity, path[:-1])[path[-1]] = BAD_DIGESTS[value]
 
     with pytest.raises(ValueError, match="lowercase"):
@@ -691,7 +613,7 @@ def test_the_service_build_without_a_checkpoint_is_refused(api, served_workspace
     read, and nothing is published; it is never served by path reasoning."""
     from src.inference.pipeline import PipelineBuildError
 
-    data_dir, _ = served_workspace
+    data_dir = served_workspace
     served = api.app_state.pipeline
 
     with count_opens() as opens, pytest.raises(PipelineBuildError, match="No model is configured"):
@@ -702,61 +624,13 @@ def test_the_service_build_without_a_checkpoint_is_refused(api, served_workspace
     assert api.app_state.pipeline is served
 
 
-def test_a_full_workspace_with_a_bound_table_is_verified_in_every_part(served_workspace):
-    """Each value against an independent account of the files: `hashlib` over
-    their bytes, the sidecar as written, the record as written. Catches any
-    part filled from somewhere other than the read the pipeline served from."""
-    from src.inference.pipeline import PipelineConfig
-    from src.kg.provenance import PROVENANCE_FILENAME
-
-    data_dir, checkpoint = served_workspace
-    sidecar = _with_table(data_dir, max_hops=4)
-    config = PipelineConfig(eta=0.55)
-
-    pipeline = _full_pipeline(data_dir, checkpoint, config)
-    identity = pipeline.served_identity()
-
-    assert identity.scoring_mode == "gnn_plus_shortest_path"
-    assert identity.checkpoint == ServedCheckpoint(state="verified", sha256=_sha(checkpoint))
-    assert identity.graph == ServedGraph(
-        state="verified", kg_sha256=_sha(data_dir / "kg.json"),
-        split_manifest_sha256=_sha(data_dir / "split_manifest.json"),
-    )
-    assert identity.shortest_paths == ServedShortestPaths(
-        state="verified", build_id=sidecar["build_id"], max_hops=4
-    )
-    record = json.loads((data_dir / PROVENANCE_FILENAME).read_text())
-    assert identity.dataset_record == ServedDatasetRecord(
-        state="verified", origin=record["origin"], sha256=_sha(data_dir / PROVENANCE_FILENAME)
-    )
-    assert identity.settings == _settings_of(config, device="cpu", device_requested="cpu",
-                                             eta=0.55)
-    assert pipeline.get_pipeline_config()["served_identity"] == identity.to_dict()
-
-
-def test_a_full_workspace_without_a_table_serves_the_gnn_alone(served_workspace):
-    """The mixing weight in effect is 1.0, not the configured one: catches an
-    identity that reports the configuration rather than what scores."""
-    from src.inference.pipeline import PipelineConfig
-
-    data_dir, checkpoint = served_workspace
-
-    identity = _full_pipeline(data_dir, checkpoint, PipelineConfig(eta=0.55)).served_identity()
-
-    assert identity.scoring_mode == "gnn_only"
-    assert identity.shortest_paths == ServedShortestPaths(state="absent")
-    assert identity.settings.eta == 1.0
-    assert identity.checkpoint.sha256 == _sha(checkpoint)
-    assert identity.graph.state == identity.dataset_record.state == "verified"
-
-
 # ---------------------------------------------------------------------------
 # 4. Every result carries the identity of what produced it
 # ---------------------------------------------------------------------------
 #: (phenotypes, confidences, kind, warning fragment). An input with no phenotype
 #: in the graph is refused by validation (Batch 4 removed the switch that sent it
 #: to the empty result instead). A disease task model ranks every disease, so
-#: it has no empty result; the mixture's is below.
+#: it has no empty result.
 RESULT_PATHS = {
     "scored": ([SEIZURE, DELAY], None, "scored", None),
     "refused, no valid phenotype": (
@@ -788,42 +662,6 @@ def test_every_result_path_carries_the_pipelines_identity(trained_disease_child,
     assert result.served_identity.settings != _settings_of(
         PipelineConfig(), device="cpu", device_requested="cpu", eta=None
     ), "the path settings in effect are the defaults; this case cannot tell them apart"
-
-
-#: The same places over the full pipeline: (phenotypes, kind, warning fragment).
-FULL_RESULT_PATHS = {
-    "scored": ([PHENOTYPE], "scored", None),
-    "empty, no path": ([PHENOTYPE], "no path", "No paths found"),
-    "refused, no valid phenotype": (
-        ["HP:9999999"], "empty", "No valid phenotypes after validation"),
-}
-
-
-@pytest.mark.parametrize("case", sorted(FULL_RESULT_PATHS))
-def test_a_full_pipelines_results_carry_its_full_identity(served_workspace, case, monkeypatch):
-    """The same over a checkpoint and a bound table, where every part has a
-    value to lose on the way to the result. An answer that found nothing to rank
-    was still produced by the model and table served: catches an empty result
-    that says no model or table produced it, an identity legal over a verified
-    workspace, so no invariant refuses it."""
-    from src.inference.pipeline import PipelineConfig
-
-    phenotypes, kind, warning = FULL_RESULT_PATHS[case]
-    data_dir, checkpoint = served_workspace
-    _with_table(data_dir)
-    pipeline = _full_pipeline(data_dir, checkpoint, PipelineConfig())
-    if kind == "no path":
-        # Discovery reaches no disease: the mixture's empty result.
-        monkeypatch.setattr(pipeline, "_find_all_paths", lambda *args, **kwargs: {})
-
-    result = pipeline.run(_patient(phenotypes), top_k=5)
-
-    assert bool(result.candidates) == (kind == "scored"), result.warnings
-    if warning:
-        assert any(warning in line for line in result.warnings), result.warnings
-    assert result.served_identity == pipeline.served_identity()
-    assert result.served_identity.scoring_mode == "gnn_plus_shortest_path"
-    assert result.served_identity.to_dict() == pipeline.get_pipeline_config()["served_identity"]
 
 
 # ---------------------------------------------------------------------------
@@ -945,7 +783,7 @@ def test_a_diagnose_response_without_the_identity_is_refused():
     """Required and never null: every answer comes from a model (K7), so a
     response that leaves the identity out, or answers it with null, is
     refused, whatever its kind (Spec 1 §2.1). The retired kinds are refused
-    too."""
+    too (the served mixture's since K8-4)."""
     from pydantic import ValidationError
 
     from src.api.routes.diagnose import DiagnoseResponse
@@ -959,13 +797,9 @@ def test_a_diagnose_response_without_the_identity_is_refused():
     assert DiagnoseResponse.model_validate({**response, "served_identity": identity})
     with pytest.raises(ValidationError, match="served_identity"):
         DiagnoseResponse.model_validate(response)
-    for kind, extra in (("disease_task/v1", {}),
-                        ("served_mixture/v1", {"eta": 1.0, "candidates_reached": 0,
-                                               "tie_policy": "served-stable-discovery-order/v1"})):
-        with pytest.raises(ValidationError, match="served_identity"):
-            DiagnoseResponse.model_validate(
-                {**response, **extra, "result_kind": kind, "served_identity": None})
-    for retired in ("demo/v1", "path_reasoning/v1"):
+    with pytest.raises(ValidationError, match="served_identity"):
+        DiagnoseResponse.model_validate({**response, "served_identity": None})
+    for retired in ("demo/v1", "path_reasoning/v1", "served_mixture/v1"):
         with pytest.raises(ValidationError):
             DiagnoseResponse.model_validate({**response, "result_kind": retired,
                                              "served_identity": None})

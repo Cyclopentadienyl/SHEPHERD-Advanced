@@ -6,7 +6,7 @@
 #
 # Dependencies:
 #   - External: torch (optional, for GNN inference)
-#   - Internal: src.core.types, src.kg, src.reasoning, src.models.gnn
+#   - Internal: src.core.types, src.kg, src.reasoning, src.models.bundle
 #
 # Input:
 #   - PatientPhenotypes: Patient's phenotype data (HPO IDs)
@@ -61,7 +61,6 @@ from src.kg.phenotype_normalisation import (
 )
 from src.core.types import (
     SCORING_MODE_SP_STATES,
-    SERVED_MIXTURE,
     TASK_SCORING_MODES,
     Candidate,
     DiseaseTaskCandidate,
@@ -75,8 +74,6 @@ from src.core.types import (
     PatientPhenotypes,
     PhenotypeInputAccount,
     ResultRefused,
-    SPAnalysisRecord,
-    ServedMixtureCandidate,
     ServedCheckpoint,
     ServedDatasetRecord,
     ServedGraph,
@@ -107,14 +104,12 @@ from src.utils.checkpoint_paths import RANKING_SCORE_KEYS
 # Optional torch dependency for GNN inference
 try:
     import torch
-    from torch import Tensor
     HAS_TORCH = True
 except ImportError:
     HAS_TORCH = False
 
 if TYPE_CHECKING:
     from src.kg.graph import GraphRead
-    from src.models.gnn.shepherd_gnn import ShepherdGNN, ShepherdGNNConfig
     from src.utils.fingerprint import ReadIdentity
 
 logger = logging.getLogger(__name__)
@@ -150,30 +145,10 @@ CHECKPOINT_LOG_METRICS: Tuple[str, ...] = ("val_loss", "train_loss", *RANKING_SC
 class PipelineConfig:
     """Configuration for the diagnosis pipeline."""
 
-    # Path discovery and path scoring (the evidence paths)
+    # Path discovery and path scoring (the evidence paths). PathReasoner is
+    # explanation-only and does NOT contribute to scoring.
     max_path_length: int = 4
     path_length_penalty: float = 0.9
-
-    # Scoring architecture (per original SHEPHERD paper):
-    #   final_score = eta * embedding_similarity + (1 - eta) * SP_similarity
-    #
-    # - embedding_similarity: GNN cosine sim between patient and target
-    # - SP_similarity:        derived from pre-computed shortest path lengths
-    #                         (loaded from shortest_paths.pt; computed offline
-    #                         by scripts/compute_shortest_paths.py)
-    # - eta:                  mixing weight (1.0 = pure GNN, 0.0 = pure SP).
-    #                         The paper chooses η by a search per task and does
-    #                         not print the value; 0.7 is this project's default,
-    #                         favouring the GNN's learned signal while letting SP
-    #                         catch sparse-input cases.
-    #
-    # PathReasoner is explanation-only and does NOT contribute to scoring.
-    eta: float = 0.7
-
-    # Fallback when shortest path lookup table is not available.
-    # If True, missing SP table is treated as eta=1.0 (pure GNN).
-    # If False, pipeline raises at init when both signals are not available.
-    sp_optional: bool = True
 
     # Output control
     include_explanations: bool = True
@@ -233,7 +208,7 @@ class ServedRanking:
 
     `outcome` says which of `run`'s three returns this is: ``"refused"`` (the
     input validation refused it), ``"no_candidates"`` (nothing mapped to a graph
-    node, or discovery reached no disease) or ``"ranked"``. `warnings` is the
+    node, or nothing to rank) or ``"ranked"``. `warnings` is the
     list `run` returns with it, as `run` would return it.
     """
 
@@ -245,7 +220,6 @@ class ServedRanking:
     #: pipeline serves.
     candidates: List[Candidate] = field(default_factory=list)
     source_ids: List[NodeID] = field(default_factory=list)
-    all_paths: Dict[str, List[ReasoningPath]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -283,11 +257,11 @@ class PipelineBuildError(RuntimeError):
     """The model this pipeline was asked to serve could not be built.
 
     **Raised, never logged and stepped past.** A missing checkpoint, one that
-    did not build over the graph, a model with no graph, a missing PyTorch and
-    required shortest paths that were not there each used to log and return,
-    leaving a pipeline without its GNN. The service then published that pipeline
-    as a success, and every diagnosis was answered with path-reasoning scores in
-    the model's place (docs/working/PLAN_PROVENANCE_CONTRACT.md, M1). A caller
+    did not build over the graph, a model with no graph and a missing PyTorch
+    each used to log and return, leaving a pipeline without its GNN. The
+    service then published that pipeline as a success, and every diagnosis was
+    answered with path-reasoning scores in the model's place
+    (docs/working/PLAN_PROVENANCE_CONTRACT.md, M1). A caller
     that asks for a model gets one, or gets this. An unreadable checkpoint
     already raised, as torch's own error; it raises this now, naming the file.
 
@@ -434,16 +408,12 @@ class DiagnosisPipeline:
     """
     End-to-end diagnosis inference pipeline.
 
-    **Always a trained model, read from a checkpoint over a verified
-    workspace**; one result kind per model (Spec 1 §2.1):
-    - a model finetuned for a task (a checkpoint with a model spec):
-      `disease_task/v1`, `gene_task/v1` or `patients_like_me/v1`;
-    - a ShepherdGNN checkpoint (no model spec, served until K8):
-      `served_mixture/v1`, each disease path discovery reaches ranked by
-      `served_score`, η × model term + (1 − η) × SP with a shortest-path table,
-      the model term alone without one.
-    No checkpoint, or one that cannot be built, raises `PipelineBuildError`:
-    nothing is served without a model.
+    **Always a model finetuned for a task, read from a checkpoint over a
+    verified workspace**; one result kind per task (Spec 1 §2.1):
+    `disease_task/v1`, `gene_task/v1` or `patients_like_me/v1`. A checkpoint
+    without a model spec is refused at load before anything is built
+    (`_load_task_bundle`). No checkpoint, or one that cannot be built, raises
+    `PipelineBuildError`: nothing is served without a model.
 
     PathReasoner role:
     - Finds the evidence paths (Phenotype → Gene → Disease) that explain a
@@ -524,7 +494,6 @@ class DiagnosisPipeline:
         self.model: Any = None
 
         # GNN inference state (populated by _init_gnn_inference)
-        self._node_embeddings: Optional[Dict[str, Any]] = None
         self._node_id_to_idx: Optional[Dict[str, Dict[str, int]]] = None
         self._graph_data: Optional[Dict[str, Any]] = None
         #: The four digests the manifest binds (`kg`, `node_features`,
@@ -549,37 +518,10 @@ class DiagnosisPipeline:
         )
         self._device_in_effect: Optional[str] = None
         self._gnn_ready = False
-
-        # Shortest path lookup state (populated by _load_shortest_paths).
-        # `_sp_lookup` is the whole of it: a sorted composite key over
-        # (phenotype, target_type, target) beside the distances in that order.
-        # The parallel id columns and the CSR offsets table that used to live
-        # here are gone — the key encodes them and the query searches it, so
-        # keeping them would keep a second shape for a second implementation to
-        # be written against. When `_sp_ready` is False the pipeline degrades to
-        # pure GNN scoring (eta=1.0).
-        self._sp_max_hops: int = 5
-        #: Where `_sp_max_hops` came from: "sidecar", the only source since the
-        #: configured bound was retired (contract M2.5). Published, so a status
-        #: reader can see where the ceiling every SP score uses was read.
-        self._sp_hop_bound_source: Optional[str] = None
         #: SHA-256 of the bytes this pipeline's graph was parsed from, as the
-        #: manifest binds it, once the workspace has been verified.
-        #: The shortest-path artifact is checked against *this*, never against
-        #: whatever `kg.json` happens to sit beside it — otherwise the binding
-        #: could be bypassed by deleting a file.
+        #: manifest binds it, once the workspace has been verified: the served
+        #: identity's graph digest (contract M3c).
         self._graph_kg_digest: Optional[str] = None
-        #: "verified" once a table has been accepted; an unrecorded binding is
-        #: refused (contract M2.5), so nothing else is published.
-        self._sp_kg_binding: Optional[str] = None
-        #: The `build_id` the accepted table and its sidecar share, published
-        #: with `_sp_ready`; part of the served identity (contract M3c).
-        self._sp_build_id: Optional[str] = None
-        self._sp_lookup: Optional[Any] = None  # scoring.SPLookup, built on load
-        self._sp_ready = False
-
-        # Fingerprint verification warnings (populated by _load_model_from_checkpoint)
-        self._fingerprint_warnings: List[str] = []
         self._checkpoint_meta: Dict[str, Any] = {}
 
         # Initialize reasoning components
@@ -621,15 +563,13 @@ class DiagnosisPipeline:
             include_literature_evidence=self.config.include_literature_evidence,
         )
         # Step C: clinician-facing evidence builder. Mode A (direct path)
-        # uses self.path_reasoner; Mode B (analogy) reuses GNN embeddings
-        # which are passed in at build_evidence() call time.
+        # uses self.path_reasoner; without a path the evidence is insufficient.
         self.evidence_panel = create_evidence_panel(
             kg=self.kg,
             path_reasoner=self.path_reasoner,
             config=EvidencePanelConfig(
                 strong_path_max_hops=2,
                 weak_path_max_hops=self.config.max_path_length,
-                analogy_top_k=3,
             ),
         )
 
@@ -648,8 +588,8 @@ class DiagnosisPipeline:
 
         This method handles the full setup chain:
         1. Read and verify the workspace's graph tensors and dataset record
-        2. Load the model from its checkpoint
-        3. Run the model's forward pass to cache the node embeddings
+        2. Load the model bundle from its checkpoint
+        3. Compute the bundle's full-view vectors once
         4. Build NodeID -> index mapping for score lookup
         """
         if not HAS_TORCH:
@@ -696,8 +636,7 @@ class DiagnosisPipeline:
         # before the checkpoint is read.
         dataset_record = verify_dataset_record(manifest, bound["kg"])
         # **All four are kept**, the opening for M2.4's comparison with the
-        # checkpoint. The shortest-path binding reads `kg` from them, so it
-        # binds to the graph that was verified, not to a file hashed again.
+        # checkpoint.
         self._bound_digests = dict(bound)
         self._graph_kg_digest = bound["kg"]
         self._dataset_record = dataset_record
@@ -714,44 +653,18 @@ class DiagnosisPipeline:
             checkpoint_path, device, expected_sha256=expected_checkpoint_sha256
         )
 
-        # Step 3: Precompute node embeddings
+        # Step 3: the model bundle's full-view vectors
         self._precompute_node_embeddings(device)
 
         # Step 4: Build NodeID -> index mapping from KG
         self._node_id_to_idx = self.kg.get_node_id_mapping()
 
-        # Step 5: Load shortest path lookup table (optional). A task model
-        # ranks without it (README §6: SP is the gene task's feature, computed
-        # from its own graph view).
-        if self._bundle_view is None:
-            self._load_shortest_paths(workspace)
-
-        if not self._sp_ready and not self.config.sp_optional and self._bundle_view is None:
-            # **Names the state, not a guess at its cause.** This used to say
-            # "no shortest_paths.pt found", which is false whenever the table is
-            # present and something else about it is unusable — an unknown hop
-            # bound, for one. The loader logs the specific reason at the point it
-            # establishes it; this says what the configuration then does about it.
-            #
-            # **A refusal, which is what `sp_optional=False` documents.**
-            raise PipelineBuildError(
-                "Shortest path lookup required (sp_optional=False) but it is "
-                "not available; see the shortest-path load messages above for "
-                "which condition stopped it. No pipeline is built."
-            )
-
         # **`_gnn_ready` means built, not requested.** Every loader above raises
         # rather than returning empty, so this is unreachable today; it is here so
         # a loader that one day returns None again cannot leave a pipeline that
-        # reports a GNN it cannot score with. The two node types are the two
-        # `_calculate_gnn_score` and `_patient_embedding` read; without either, a
-        # request would be refused at scoring time (`MODEL_TERM_UNAVAILABLE`).
-        embeddings = self._node_embeddings or {}
-        missing = [
-            node_type.value
-            for node_type in (NodeType.PHENOTYPE, NodeType.DISEASE)
-            if embeddings.get(node_type.value) is None
-        ] if self._bundle_view is None else ([] if self._bundle_z is not None else ["the view"])
+        # reports a model it cannot score with: every task ranks from the
+        # bundle's full-view vectors.
+        missing = [] if self._bundle_z is not None else ["the view"]
         if self.model is None or missing:
             raise PipelineBuildError(
                 "The GNN was requested and produced no node embeddings for "
@@ -762,264 +675,7 @@ class DiagnosisPipeline:
         self._gnn_ready = True
         logger.info(
             f"GNN inference initialized successfully "
-            f"(sp_ready={self._sp_ready}, eta={self.config.eta}, "
-            f"device={self._device_in_effect})"
-        )
-
-    def _load_shortest_paths(self, data_dir: Path) -> None:
-        """Load the shortest-path table and build the index the scorer reads.
-
-        Expected format (produced by `scripts/compute_shortest_paths.py`):
-            shortest_paths.pt: dict with keys
-                phenotype_idx: int64 tensor (N,)
-                target_idx:    int64 tensor (N,)
-                target_type:   int64 tensor (N,) — 0=gene, 1=disease
-                distance:      int8  tensor (N,)
-            shortest_paths.meta.json: {"max_hops": int, ...}
-
-        **The four columns do not survive this method, and that is the design.**
-        They are validated, handed to `build_sp_index`, and folded into one
-        sorted int64 composite key beside the distances. Nothing reads them
-        back — the query searches the key — so the CSR offsets table and the
-        parallel `_sp_ph` / `_sp_tg` / `_sp_ty` / `_sp_di` attributes this class
-        used to publish are gone. Keeping them would be keeping the copy this
-        design exists to avoid, and would keep alive the shape a second
-        implementation could be written against.
-
-        **Order matters here more than anywhere else in this class.** The hop
-        bound is resolved *before* the table is validated, because the bound is
-        what the distances are checked against; validation runs *before* any
-        narrowing, because a value a narrow type cannot hold wraps rather than
-        raising; and `_sp_ready` is published *after* the index exists, because
-        every step between can refuse.
-
-        A missing file is not a refusal: the pipeline serves without shortest
-        paths, which is the state `DISEASE_SCORER_POLICY.md` §2 blesses. A file
-        that is present and unusable is refused, because absent-by-configuration
-        and present-but-broken are different deployments and only one of them
-        was chosen.
-        """
-        # **Cleared on entry, not assumed clean.** This is re-callable, and a
-        # second call that refuses must not leave `_sp_ready` True from the
-        # first, with a lookup over the previous table's bytes and the previous
-        # ceiling while the observable attributes show the new ones.
-        self._sp_ready = False
-        self._sp_lookup = None
-        self._sp_hop_bound_source = None
-        self._sp_kg_binding = None
-        self._sp_build_id = None
-
-        from src.inference.scoring import validate_hop_bound
-        from src.inference.sp_artifact import (
-            declares_binding,
-            kg_binding_state,
-            read_binding,
-            read_sidecar,
-            require_paired,
-            sidecar_path,
-        )
-        from src.inference.sp_index import (
-            SPArtifactError,
-            build_sp_index,
-            validate_sp_columns,
-            validate_sp_values,
-        )
-
-        sp_path = data_dir / "shortest_paths.pt"
-
-        # **Read once, and before the absent decision.** A sidecar that declares
-        # the pairing protocol beside a table that is not here is one side of a
-        # pair, not an absent artifact — a publication that lost its tensor, or
-        # a tensor deleted from a workspace that still advertises one. Treating
-        # it as absent takes the "serve without shortest paths" path for a
-        # deployment that is broken, and on a reload replaces a healthy service
-        # with one scoring on the GNN alone.
-        sidecar = read_sidecar(sp_path)
-        if not sp_path.exists():
-            if sidecar is not None and declares_binding(sidecar.meta, ()):
-                raise SPArtifactError(
-                    f"{sidecar_path(sp_path)} declares a published pair and "
-                    f"{sp_path} is not here. One side of a pair is not an "
-                    "absent artifact: the table this sidecar describes was "
-                    "either never written or has been removed."
-                )
-            logger.info(
-                f"No shortest_paths.pt found in {data_dir}; "
-                f"scoring will use pure GNN (eta=1.0 effective)"
-            )
-            return
-
-        # **Present and unreadable is a refusal, not a shrug.** This warned and
-        # returned, which made a corrupt table indistinguishable from an absent
-        # one: the operator saw the same "scoring will use pure GNN" they would
-        # have seen with no file at all, and the remedy for each is the
-        # opposite. Removing the file reaches the absent path deliberately.
-        try:
-            sp_data = torch.load(sp_path, map_location="cpu", weights_only=True)
-        except Exception as exc:
-            raise SPArtifactError(
-                f"{sp_path} is present and could not be read "
-                f"({type(exc).__name__}: {exc}). An unreadable table is not an "
-                "absent one; remove the file to serve without shortest paths."
-            ) from exc
-
-        required = ("phenotype_idx", "target_idx", "target_type", "distance")
-        missing = [key for key in required if key not in sp_data]
-        if missing:
-            raise SPArtifactError(
-                f"{sp_path} is missing {missing}. The columns are parallel and "
-                "the index cannot be built from a subset of them."
-            )
-        # **Structure first, and "how many rows" is its answer rather than its
-        # input.** Reading `distance.numel()` directly and branching on it looked
-        # equivalent and was not: it asks one column how long it is and then
-        # skips every check on all four. Four malformed tables reached the
-        # absent path that way — `distance` emptied while the id columns kept a
-        # row, a `(0, 2)` distance column, an empty float column, and an id
-        # column that was a Python list — and on a reload each of them replaced
-        # a healthy SP-ready pipeline with one serving on the GNN alone, while
-        # reporting success.
-        n_pairs = validate_sp_columns(
-            sp_data["phenotype_idx"],
-            sp_data["target_idx"],
-            sp_data["target_type"],
-            sp_data["distance"],
-            source=str(sp_path),
-        )
-
-        # **Before the empty decision, not after it.** These checks used to sit
-        # below the early return, so a mixed publication whose new tensor
-        # happened to be empty reached "no rows, treat as absent" and switched
-        # shortest paths off — and on a reload that replaced a healthy SP-ready
-        # service with one scoring on the GNN alone, reporting success. A pair
-        # that does not claim itself is refused whether it carries a million
-        # rows or none.
-        binding = read_binding(
-            sidecar.meta if sidecar else None, sp_data.keys(), source=str(sp_path)
-        )
-        require_paired(binding, sp_data.get("build_id"), source=str(sp_path))
-        binding_state = kg_binding_state(
-            binding, self._graph_kg_digest, source=str(sp_path)
-        )
-        if binding_state == "unrecorded":
-            # **Refused, no longer served with a warning** (contract M2.5,
-            # decision 2). A table that predates the pairing protocol never
-            # recorded which graph its node indices are positions in, and the
-            # shortest-path term is part of the ranking.
-            raise SPArtifactError(
-                f"{sp_path} carries no source binding: it predates the pairing "
-                "protocol, so which graph it was computed from is unrecorded. "
-                "An unrecorded table is not served. Rebuild it with "
-                "scripts/compute_shortest_paths.py to record one, or remove it "
-                "to serve without shortest paths."
-            )
-
-        # **A table with no rows is the absent case, not a ready one.** D5 took
-        # the weaker of the two defensible readings deliberately: an empty table
-        # makes no false claim, and is indistinguishable in effect from having
-        # no file — which is a state `DISEASE_SCORER_POLICY.md` §2 blesses.
-        #
-        # Publishing it instead is not merely a different object shape. A query
-        # against an empty index returns `unreachable` with `available` True, so
-        # the mixture would take SP in at `1 / (1 + max_hops + 1)`
-        # for every candidate — measured at 1/7 with the default bound, against
-        # the pure-GNN score an absent file produces. Zero rows would change
-        # both what the service reports and the numbers it returns.
-        #
-        # **Taken after the pair has been checked and before the hop bound is
-        # resolved**, and the comment this replaces described the older order.
-        # An empty table now reaches here having had its sidecar read, parsed,
-        # and its schema, pairing and graph binding validated — a corrupt
-        # sidecar beside an empty table is refused rather than ignored, which
-        # is what moving those checks above this return bought.
-        #
-        # What an empty table still skips is exactly `validate_hop_bound`:
-        # `max_hops` missing, zero or non-numeric is not refused here, because
-        # the bound is the sentinel distances are scored against and nothing
-        # will be scored. Measured, so the gap is stated rather than assumed —
-        # each of those three publishes an empty table with SP off, while a
-        # sidecar that is not readable JSON refuses.
-        if n_pairs == 0:
-            logger.warning(
-                "%s carries no rows. An empty table binds nothing, so it is "
-                "treated as absent: shortest-path scoring stays off and the "
-                "pipeline serves on the GNN alone (eta=1.0 effective). Rebuild "
-                "it with scripts/compute_shortest_paths.py if this is not "
-                "expected.",
-                sp_path,
-            )
-            return
-
-        # **The ceiling, before the table is checked against it and before any
-        # of the expensive work.** `max_hops` sets the unreachable sentinel every
-        # shortest-path score is measured against, so a wrong one does not merely
-        # mis-score — it reorders candidates. It is resolved first because
-        # `validate_sp_artifact` checks the distances against it, and because a
-        # deployment that cannot establish it should not pay for a sort it is
-        # about to discard.
-        meta_path = sidecar_path(sp_path)
-        # **From the sidecar alone** (contract M2.5). A table that reaches here
-        # has one: without it the table records no binding and was refused
-        # above. The configured bound that once stood in for a missing sidecar
-        # (`sp_hop_bound`, `SHEPHERD_SP_HOP_BOUND`) is retired with it, since it
-        # could no longer reach a served table; nothing measurable on the
-        # tensors can stand in either, as they bound the ceiling from below only.
-        #
-        # **The same parsed object the binding was checked against.** Reading
-        # the file a second time for the bound would let a publication that
-        # completes in between hand this one version and the pairing check
-        # another.
-        max_hops = validate_hop_bound(sidecar.meta.get("max_hops"), str(meta_path))
-        hop_bound_source = "sidecar"
-
-        # **The value rules, which are the half that needed the bound.** The
-        # producer's `target_type` encoding, and distances inside `1 .. max_hops`.
-        # The ceiling is a floor and honest about being one: `max(distance)`
-        # proves the declared bound is not too LOW and can never prove it is not
-        # too high, because a 3-hop table is consistent with a declared 5. That
-        # one direction is the direction a stale sidecar from a smaller run fails
-        # in, and there the sentinel lands *below* distances really in the table,
-        # so an unreachable phenotype outranks a connected one. Both run on the
-        # tensors as loaded, before anything is cast.
-        validate_sp_values(
-            sp_data["target_type"],
-            sp_data["distance"],
-            max_hops,
-            source=str(sp_path),
-        )
-
-        # **`pop`, not `[]`.** The builder reads the columns and never writes
-        # them, but it releases its own reference to each as it folds it into the
-        # key — and that only frees anything if this method is not still holding
-        # one. At hundreds of millions of rows the difference is the whole of the
-        # saving.
-        lookup = build_sp_index(
-            sp_data.pop("phenotype_idx"),
-            sp_data.pop("target_idx"),
-            sp_data.pop("target_type"),
-            sp_data.pop("distance"),
-            max_hops,
-        )
-        del sp_data
-
-        # **Published last.** `_sp_ready` used to be set before the sidecar was
-        # read and before the lookup existed, so a refusal landed on a pipeline
-        # already advertising a usable lookup — and on a second call it was
-        # already True, making "publish only after validation" a no-op. The index
-        # build joins that same fallible tail: it can refuse for duplicate rows
-        # or a domain int64 cannot hold, and those refusals must land before
-        # anything here is set.
-        self._sp_max_hops = max_hops
-        self._sp_hop_bound_source = hop_bound_source
-        self._sp_kg_binding = binding_state
-        self._sp_build_id = binding.build_id
-        self._sp_lookup = lookup
-        self._sp_ready = True
-
-        logger.info(
-            f"Loaded shortest paths: {n_pairs:,} pairs, "
-            f"max_hops={max_hops} ({hop_bound_source}), "
-            f"index {lookup.resident_bytes() / 1e9:.2f} GB resident"
+            f"(device={self._device_in_effect})"
         )
 
     def _load_model_from_checkpoint(
@@ -1030,11 +686,9 @@ class DiagnosisPipeline:
         expected_sha256: Optional[str] = None,
     ) -> Any:
         """
-        Load ShepherdGNN model from a training checkpoint.
-
-        Handles both checkpoint formats:
-        - Trainer format: key "model_state_dict"
-        - ModelCheckpoint callback format: key "state_dict"
+        Read the training checkpoint once and build its model bundle
+        (`_load_task_bundle`). A checkpoint without a model spec is refused
+        before anything is built.
 
         With `expected_sha256` (a bound reload) the one read is compared with it
         before torch parses the bytes, and the reader decides when the file is
@@ -1046,16 +700,14 @@ class DiagnosisPipeline:
                 parsed, so the caller can say the file is not the model shown.
             PipelineBuildError: if the checkpoint is missing, cannot be read, is
                 not a training checkpoint, was not trained on this graph (M2.4),
-                or does not build a model over it. A missing checkpoint and one
-                that did not build used to return None, and the pipeline went on
-                without its model.
+                has no model spec, or does not build a model over it. A missing
+                checkpoint and one that did not build used to return None, and
+                the pipeline went on without its model.
 
         Called once the workspace is verified (`_init_gnn_inference`): the
         checkpoint's record is compared with the digests that check took from
         this build's reads (contract M2.4).
         """
-        from src.models.gnn.shepherd_gnn import build_shepherd_model
-
         ckpt_path = Path(checkpoint_path)
         if expected_sha256 is None and not ckpt_path.exists():
             raise PipelineBuildError(
@@ -1112,10 +764,9 @@ class DiagnosisPipeline:
         # `num_nodes` against the four digests the workspace check verified from
         # this build's reads. A checkpoint from before the contract, one missing
         # a role, or one from a same-shaped other graph is refused before any
-        # model is built; the structural fingerprint below cannot tell them apart.
+        # model is built.
         from src.utils.fingerprint import (
             TrainingRecordMismatch,
-            verify_fingerprint,
             verify_training_record,
         )
         try:
@@ -1129,45 +780,11 @@ class DiagnosisPipeline:
         except TrainingRecordMismatch as exc:
             raise PipelineBuildError(str(exc)) from exc
 
-        # Verify data fingerprint compatibility (KG version check). Pipeline
-        # business, not construction: it decides what an operator is warned
-        # about. A diagnostic beside the comparison above, never identity.
-        fp_warnings = verify_fingerprint(
-            checkpoint,
-            self._graph_data,
-            kg_total_nodes=len(self.kg._nodes) if self.kg else None,
-            kg_total_edges=len(self.kg._edges) if self.kg else None,
-        )
-        if fp_warnings:
-            for w in fp_warnings:
-                logger.warning(f"[Fingerprint] {w}")
-        self._fingerprint_warnings = fp_warnings
-
-        # Construction is shared with the measurement harness
-        # (`src/models/gnn/shepherd_gnn.py:build_shepherd_model`), so measurement's
-        # Mode C cannot encode with semantics that have drifted from the served model.
-        # Metadata derivation from graph_data keys, architecture recovery and
-        # weight loading all live there; what stays here is what only a running
-        # pipeline needs.
-        from src.models.bundle.record import has_model_spec
-
-        if has_model_spec(checkpoint):
-            model = self._load_task_bundle(checkpoint, ckpt_path)
-        else:
-            model = None
-        try:
-            if model is None:
-                model = build_shepherd_model(checkpoint, self._graph_data)
-        except KeyError as exc:
-            # A format question, not a graph one: no weights to build from.
-            raise PipelineBuildError(
-                f"Checkpoint {ckpt_path} carries no model weights: {exc}"
-            ) from exc
-        except (ValueError, RuntimeError) as exc:
-            raise PipelineBuildError(
-                f"Checkpoint {ckpt_path} does not build a model over this graph: "
-                f"{exc}"
-            ) from exc
+        # **The model bundle, or a refusal before anything is built**
+        # (`_load_task_bundle`): its model record is read first, so a
+        # checkpoint without a model spec is refused before the graph view,
+        # the bundle or any vector is computed.
+        model = self._load_task_bundle(checkpoint, ckpt_path)
 
         # Store checkpoint training metadata for UI display.
         #
@@ -1213,7 +830,11 @@ class DiagnosisPipeline:
         stage and task first (provenance §9.3 hazard 3: a base serves no
         diagnosis), the graph view rebuilt from the verified graph by the spec's
         rule and compared with the record, and the bundle built and strictly
-        loaded by the one builder. Nothing is inferred from weight names."""
+        loaded by the one builder. Nothing is inferred from weight names.
+
+        **The model record is read first** (`read_model_record`): a checkpoint
+        without a model spec is refused here, before the graph view, the bundle
+        or any vector is built."""
         from dataclasses import asdict as _asdict
 
         from src.kg.graph_view import build_graph_view
@@ -1246,9 +867,9 @@ class DiagnosisPipeline:
         device: Optional[str] = None,
     ) -> None:
         """
-        Run GNN forward pass on the full graph and cache all node embeddings.
+        Compute the model bundle's full-view vectors once, and what its task
+        reads from them on every request.
 
-        Embeddings are moved to CPU after computation for memory efficiency.
         A loader that returned no model leaves nothing to compute; the build
         refuses that (`_init_gnn_inference`).
         """
@@ -1260,51 +881,26 @@ class DiagnosisPipeline:
         else:
             device = torch.device(device)
 
-        if self._bundle_view is not None:
-            # The full-view rule over the whole view (README §2.8, G4), once;
-            # the diseases' projections are fixed, so each request projects
-            # only its patient.
-            from src.models.tasks.scoring import full_view_vectors
+        # The full-view rule over the whole view (README §2.8, G4), once;
+        # the diseases' projections are fixed, so each request projects
+        # only its patient.
+        from src.models.tasks.scoring import full_view_vectors
 
-            view = self._bundle_view
-            self._bundle_z = full_view_vectors(self.model, view.edge_index(), view.rel, device)
-            task = self.model.task
-            if task == "disease":
-                self._bundle_diseases = view.type_nodes("disease")
-                with torch.no_grad():
-                    self._bundle_candidates = self.model.task_head.project_candidates(
-                        self._bundle_z[self._bundle_diseases.to(self._bundle_z.device)])
-            elif task == "gene" and self.model.task_head.spec.gene.augmentation:
-                from src.models.tasks.gene import neighbour_table
+        view = self._bundle_view
+        self._bundle_z = full_view_vectors(self.model, view.edge_index(), view.rel, device)
+        task = self.model.task
+        if task == "disease":
+            self._bundle_diseases = view.type_nodes("disease")
+            with torch.no_grad():
+                self._bundle_candidates = self.model.task_head.project_candidates(
+                    self._bundle_z[self._bundle_diseases.to(self._bundle_z.device)])
+        elif task == "gene" and self.model.task_head.spec.gene.augmentation:
+            from src.models.tasks.gene import neighbour_table
 
-                self._bundle_neighbours = neighbour_table(
-                    view, self.model.task_head.spec.gene.augmentation_k)
-            logger.info(f"Model bundle vectors computed for the {task} task: "
-                        f"{tuple(self._bundle_z.shape)} over view {view.digest[:12]}")
-            return
-
-        logger.info("Precomputing node embeddings via GNN forward pass...")
-
-        # Move graph data to model device
-        x_dict = {
-            k: v.to(device) for k, v in self._graph_data["x_dict"].items()
-        }
-        edge_index_dict = {
-            k: v.to(device)
-            for k, v in self._graph_data["edge_index_dict"].items()
-        }
-
-        # Forward pass (no gradient needed for inference).
-        with torch.no_grad():
-            embeddings = self.model(x_dict, edge_index_dict)
-
-        # Move embeddings to CPU for memory efficiency
-        self._node_embeddings = {
-            k: v.cpu() for k, v in embeddings.items()
-        }
-
-        emb_info = {k: v.shape for k, v in self._node_embeddings.items()}
-        logger.info(f"Node embeddings cached: {emb_info}")
+            self._bundle_neighbours = neighbour_table(
+                view, self.model.task_head.spec.gene.augmentation_k)
+        logger.info(f"Model bundle vectors computed for the {task} task: "
+                    f"{tuple(self._bundle_z.shape)} over view {view.digest[:12]}")
 
     def rank(
         self,
@@ -1315,10 +911,9 @@ class DiagnosisPipeline:
         """The served ranking of `patient_input`, whole: everything `run` does
         up to and including its sort, and nothing after it.
 
-        Validation and normalisation, the node mapping, path discovery, scoring
-        and the stable sort by the served score, exactly as `run` does them; `run`
-        is this followed by its cut at `top_k` and what it builds on the rows it
-        keeps. **One implementation**: `run` calls this, and nothing constructs
+        Validation and normalisation, the node mapping and the served task's
+        ranking, exactly as `run` does them; `run` is this followed by its cut at
+        `top_k` and what it builds on the rows it keeps. **One implementation**: `run` calls this, and nothing constructs
         candidates a second way.
         """
         if include_ortholog_evidence is None:
@@ -1348,56 +943,18 @@ class DiagnosisPipeline:
         # an input with none, so the list is never empty here.
         source_ids = list(validation.node_ids)
 
-        if self._bundle_view is not None:
-            task = self.model.task
-            if (task == "patients_like_me") != (reference_cohort is not None):
-                raise ValueError(
-                    "a patients-like-me model ranks a registered reference cohort version, "
-                    "which must be chosen" if task == "patients_like_me" else
-                    "a reference cohort is ranked by a patients-like-me model only")
-            if task == "gene":
-                return self._rank_by_gene_task(patient_input, validation, warnings, source_ids)
-            if task == "patients_like_me":
-                return self._rank_patients_like_me(patient_input, validation, warnings,
-                                                   source_ids, reference_cohort)
-            return self._rank_by_disease_task(patient_input, validation, warnings, source_ids)
-        if reference_cohort is not None:
-            raise ValueError("a reference cohort is ranked by a patients-like-me model only")
-
-        # Step 3: Find reasoning paths (BFS-based)
-        logger.debug("Finding reasoning paths...")
-        all_paths = self._find_all_paths(source_ids, include_ortholog_evidence)
-
-        if not all_paths:
-            logger.warning("No paths found from phenotypes to diseases")
-            return ServedRanking(
-                outcome="no_candidates",
-                warnings=warnings + ["No paths found from phenotypes to diseases"],
-                patient_input=patient_input,
-                phenotype_input=validation.phenotype_input,
-                source_ids=source_ids,
-            )
-
-        # Step 4: Score and rank every candidate
-        logger.debug("Scoring candidates...")
-        candidates = self._score_and_rank_candidates(
-            all_paths=all_paths,
-            source_ids=source_ids,
-            patient_input=patient_input,
-            include_ortholog_evidence=include_ortholog_evidence,
-            rows=validation.rows,
-            unmapped_ids=(validation.phenotype_input.unknown
-                          if validation.phenotype_input else ()),
-        )
-        return ServedRanking(
-            outcome="ranked",
-            warnings=warnings,
-            patient_input=patient_input,
-            phenotype_input=validation.phenotype_input,
-            candidates=candidates,
-            source_ids=source_ids,
-            all_paths=all_paths,
-        )
+        task = self.model.task
+        if (task == "patients_like_me") != (reference_cohort is not None):
+            raise ValueError(
+                "a patients-like-me model ranks a registered reference cohort version, "
+                "which must be chosen" if task == "patients_like_me" else
+                "a reference cohort is ranked by a patients-like-me model only")
+        if task == "gene":
+            return self._rank_by_gene_task(patient_input, validation, warnings, source_ids)
+        if task == "patients_like_me":
+            return self._rank_patients_like_me(patient_input, validation, warnings,
+                                               source_ids, reference_cohort)
+        return self._rank_by_disease_task(patient_input, validation, warnings, source_ids)
 
     def _rank_by_disease_task(self, patient_input: PatientPhenotypes,
                               validation: "ValidationResult", warnings: List[str],
@@ -1435,7 +992,7 @@ class DiagnosisPipeline:
         return ServedRanking(
             outcome="ranked", warnings=warnings, patient_input=patient_input,
             phenotype_input=validation.phenotype_input, candidates=candidates,
-            source_ids=source_ids, all_paths={})
+            source_ids=source_ids)
 
     def _bundle_phenotypes(self, validation: "ValidationResult", warnings: List[str]
                            ) -> Tuple[Any, List[str]]:
@@ -1524,7 +1081,7 @@ class DiagnosisPipeline:
         return ServedRanking(
             outcome="ranked", warnings=warnings, patient_input=patient_input,
             phenotype_input=validation.phenotype_input, candidates=candidates,
-            source_ids=source_ids, all_paths={})
+            source_ids=source_ids)
 
     def _rank_patients_like_me(self, patient_input: PatientPhenotypes,
                                validation: "ValidationResult", warnings: List[str],
@@ -1584,7 +1141,7 @@ class DiagnosisPipeline:
         return ServedRanking(
             outcome="ranked", warnings=warnings, patient_input=patient_input,
             phenotype_input=validation.phenotype_input, candidates=candidates,
-            source_ids=source_ids, all_paths={})
+            source_ids=source_ids)
 
     def _patient_candidate(self, rank: int, case_id: str, similarity: float,
                            row: Any) -> PatientCandidate:
@@ -1691,7 +1248,6 @@ class DiagnosisPipeline:
                 warnings=ranking.warnings,
                 inference_time_ms=(time.time() - start_time) * 1000,
                 phenotype_input=ranking.phenotype_input,
-                candidates_reached=self._candidates_reached(0),
                 reference_cohort=reference, sp_bounds=sp_bounds,
             )
         patient_input = ranking.patient_input
@@ -1703,7 +1259,7 @@ class DiagnosisPipeline:
                 ranking.phenotype_input,
                 reference_cohort=reference, sp_bounds=sp_bounds,
             )
-        if self._bundle_view is not None and self.model.task != "disease":
+        if self.model.task != "disease":
             # Gene and reference-patient rows carry their own values; path
             # evidence explains disease rows (README §1) and is not built here.
             return InferenceResult(
@@ -1728,8 +1284,8 @@ class DiagnosisPipeline:
                 candidate.disease_id, patient_input.phenotypes, self.kg))
             for candidate in ranking.candidates[:top_k]
         ]
-        all_paths = ranking.all_paths
-        if self._bundle_view is not None and candidates:
+        all_paths: Dict[str, List[ReasoningPath]] = {}
+        if candidates:
             # **Paths explain, they never rank** (README §1, the PathReasoner
             # extension): discovered for the rows shown, after the model's order.
             all_paths = self._find_all_paths(ranking.source_ids, include_ortholog_evidence)
@@ -1776,7 +1332,6 @@ class DiagnosisPipeline:
             inference_time_ms=inference_time,
             warnings=ranking.warnings,
             phenotype_input=ranking.phenotype_input,
-            candidates_reached=self._candidates_reached(len(ranking.candidates)),
         )
 
     def validate_input(
@@ -1800,11 +1355,11 @@ class DiagnosisPipeline:
            is refused. Nothing is truncated: the previous version kept the first
            100 entries, repeats and unknown ids included, so "100 × A, then B"
            silently scored A alone. An input left with no phenotype is refused.
-        5. **With a model served, each node is mapped to its row** in the
-           phenotype embedding table (Spec 1 §2.2: one mapping step, exact term,
-           graph node, tensor row). A known node with no row, or a row outside
-           the table, is a model–graph mismatch: the result is refused
-           (`ResultRefused`, `MODEL_TERM_UNAVAILABLE`), never scored without it.
+        5. **Each node is mapped to its row** in the graph's phenotype index,
+           which the model's graph view maps (Spec 1 §2.2: one mapping step,
+           exact term, graph node, row). A known node with no row is a
+           model–graph mismatch: the result is refused (`ResultRefused`,
+           `MODEL_TERM_UNAVAILABLE`), never scored without it.
 
         Args:
             patient_input: Patient phenotype data
@@ -1896,9 +1451,7 @@ class DiagnosisPipeline:
 
     def _knows_phenotype(self, node_id: NodeID) -> bool:
         """Whether the served model can score this phenotype: a node of the
-        graph and, with a model bundle served, of the model's graph view."""
-        if self._bundle_view is None:
-            return self.kg.has_node(node_id)
+        graph and of the model's graph view."""
         if getattr(self, "_view_phenotypes", None) is None:
             index = (self._node_id_to_idx or {}).get(NodeType.PHENOTYPE.value, {})
             keys = list(index)
@@ -1909,43 +1462,19 @@ class DiagnosisPipeline:
         return str(node_id) in self._view_phenotypes
 
     def _phenotype_rows(self, node_ids: List[NodeID]) -> List[int]:
-        """Each node's row in the phenotype embedding table, in order.
+        """Each node's row in the graph's phenotype index, in order; the
+        model's graph view maps the rows (`_rank_by_disease_task`).
 
         Raises `ResultRefused` (`MODEL_TERM_UNAVAILABLE`, naming the node) for a
-        node with no row or a row outside the table: a model–graph mismatch is
-        refused, never skipped and never clamped onto a neighbouring row."""
-        if self._bundle_view is not None:
-            # The graph's phenotype rows; the view maps them (`_rank_by_disease_task`).
-            index = (self._node_id_to_idx or {}).get(NodeType.PHENOTYPE.value, {})
-            missing = [str(node) for node in node_ids if index.get(str(node)) is None]
-            if missing:
-                raise ResultRefused(
-                    "MODEL_TERM_UNAVAILABLE",
-                    f"phenotype {missing[0]} is in the graph but has no row in its node "
-                    "mapping")
-            return [int(index[str(node)]) for node in node_ids]
-        table = (self._node_embeddings or {}).get(NodeType.PHENOTYPE.value)
-        if table is None:
+        node with no row: a model–graph mismatch is refused, never skipped."""
+        index = (self._node_id_to_idx or {}).get(NodeType.PHENOTYPE.value, {})
+        missing = [str(node) for node in node_ids if index.get(str(node)) is None]
+        if missing:
             raise ResultRefused(
                 "MODEL_TERM_UNAVAILABLE",
-                "the served model has no phenotype embedding table, so no patient "
-                "representation can be computed")
-        index = (self._node_id_to_idx or {}).get(NodeType.PHENOTYPE.value, {})
-        rows: List[int] = []
-        for node in node_ids:
-            row = index.get(str(node))
-            if row is None:
-                raise ResultRefused(
-                    "MODEL_TERM_UNAVAILABLE",
-                    f"phenotype {node} is in the graph but has no row in the model's "
-                    "node mapping; the model and the graph disagree")
-            if isinstance(row, bool) or not isinstance(row, int) or not 0 <= row < table.size(0):
-                raise ResultRefused(
-                    "MODEL_TERM_UNAVAILABLE",
-                    f"phenotype {node} maps to row {row!r}, outside the phenotype "
-                    f"embedding table's {table.size(0)} rows")
-            rows.append(row)
-        return rows
+                f"phenotype {missing[0]} is in the graph but has no row in its node "
+                "mapping")
+        return [int(index[str(node)]) for node in node_ids]
 
     @staticmethod
     def _as_used(
@@ -2038,197 +1567,6 @@ class DiagnosisPipeline:
 
         return all_paths
 
-    def _score_and_rank_candidates(
-        self,
-        all_paths: Dict[str, List[ReasoningPath]],
-        source_ids: List[NodeID],
-        patient_input: PatientPhenotypes,
-        include_ortholog_evidence: bool,
-        rows: Optional[List[int]] = None,
-        unmapped_ids: Sequence[str] = (),
-    ) -> List[Candidate]:
-        """
-        Score every disease candidate and rank them all: `served_mixture/v1`,
-        a ShepherdGNN checkpoint's ranking.
-
-        `model_term` per candidate from the pooled patient (`rows`,
-        validation's), one `sp_analysis_records` call over every reached
-        candidate for `sp_term`, and `served_score` mixed from the two (in
-        `gnn_only` the model term alone). A non-numeric SP status is still mixed
-        as 0, and says so (`mixed_as`), so the legacy ranking does not change.
-
-        A score that is not finite refuses the result (`ResultRefused`,
-        `NON_FINITE_SCORE`), as does a model term that cannot be computed.
-
-        Args:
-            all_paths: Paths grouped by disease
-            source_ids: Patient phenotype NodeIDs, as used
-            patient_input: Patient phenotype data, as used
-            include_ortholog_evidence: Include ortholog evidence
-            rows: The phenotypes' embedding rows
-            unmapped_ids: The request's ids no node was found for
-
-        Returns:
-            Every candidate sorted by its kind's score, ranked 1..N, ties in
-            the order `all_paths` reached them. Nothing is cut here; `run` cuts
-            at `top_k`.
-        """
-        from src.inference.sp_index import sp_analysis_records
-
-        entries: List[Tuple[NodeID, str, List[ReasoningPath]]] = []
-        for paths in all_paths.values():
-            if not paths:
-                continue
-            disease_id = paths[0].target
-            disease_node = self.kg.get_node(disease_id)
-            entries.append(
-                (disease_id, disease_node.name if disease_node else str(disease_id), paths))
-
-        # The patient is pooled once: the same operation on the same rows for
-        # every candidate. Each candidate's cosine stays a batch of one, since a
-        # taller float32 matrix product can move a value's last bit.
-        patient = self._patient_embedding(rows)
-        model_terms: List[float] = [self._calculate_gnn_score(patient, disease_id)
-                                    for disease_id, _name, _paths in entries]
-        records: List[SPAnalysisRecord] = sp_analysis_records(
-            self._sp_lookup if self._sp_ready else None,
-            self._node_id_to_idx,
-            [str(node) for node in source_ids],
-            [str(disease_id) for disease_id, _name, _paths in entries],
-            1,  # disease
-            unmapped_ids=unmapped_ids,
-        )
-        if self._sp_ready:
-            records = [record if record.numeric else replace(record, mixed_as=0.0)
-                       for record in records]
-            scores = [self._served_score(term, record)
-                      for term, record in zip(model_terms, records)]
-        else:
-            # Nothing is mixed without a table: the model term ranks alone.
-            scores = list(model_terms)
-        for (disease_id, _name, _paths), score in zip(entries, scores):
-            if not math.isfinite(score):
-                raise ResultRefused(
-                    "NON_FINITE_SCORE",
-                    f"disease {disease_id} scored {score!r}; the result was refused, "
-                    "not ranked")
-
-        # Sorted by the served score. **Stable**, so equal scores keep discovery
-        # order.
-        order = sorted(range(len(entries)), key=lambda i: scores[i], reverse=True)
-        ranked: List[Candidate] = []
-        for rank, i in enumerate(order, start=1):
-            disease_id, disease_name, paths = entries[i]
-            ranked.append(ServedMixtureCandidate(
-                rank=rank,
-                disease_id=disease_id,
-                disease_name=disease_name,
-                supporting_genes=self._extract_supporting_genes(paths),
-                reasoning_paths=[list(p.nodes) for p in paths[:5]],
-                evidence_sources=self._determine_evidence_sources(paths),
-                served_score=scores[i], model_term=model_terms[i], sp_term=records[i]))
-        return ranked
-
-    def _served_score(self, model_term: float, record: SPAnalysisRecord) -> float:
-        """`served_mixture/v1`'s value with a table: η × model term + (1 − η) × SP,
-        where a non-numeric SP status enters as its `mixed_as`, 0.0 (legacy).
-
-        float64 is required, not incidental. The scores arriving here are Python
-        doubles; constructing float32 tensors would round them to ~7 significant
-        digits, and two candidates whose true scores differ below that threshold
-        would collapse to an exact tie. A tie is then resolved by sort stability
-        — that is, by input order — which can move a candidate across the top-k
-        boundary a clinician sees. The extraction is only behaviour-preserving in
-        double precision.
-        """
-        from src.inference.scoring import mix_embedding_and_sp_scores
-
-        sp_value = record.score if record.numeric else record.mixed_as
-        return float(
-            mix_embedding_and_sp_scores(
-                torch.tensor([model_term], dtype=torch.float64),
-                torch.tensor([sp_value], dtype=torch.float64),
-                self.config.eta,
-            )[0]
-        )
-
-    def _patient_embedding(self, rows: Optional[List[int]]) -> "Tensor":
-        """The unweighted mean of the patient's phenotype rows, in the order used.
-
-        Raises `ResultRefused` (`MODEL_TERM_UNAVAILABLE`) when there are no
-        embeddings, no phenotype table or no rows; validation has refused a
-        row outside the table, so the pool's clamp cannot move one."""
-        from src.inference.scoring import pool_patient_embeddings
-
-        if not self._gnn_ready or self._node_embeddings is None:
-            raise ResultRefused(
-                "MODEL_TERM_UNAVAILABLE",
-                "the pipeline holds no node embeddings, so no model term can be computed")
-        table = self._node_embeddings.get(NodeType.PHENOTYPE.value)
-        if table is None:
-            raise ResultRefused(
-                "MODEL_TERM_UNAVAILABLE",
-                "the served model has no phenotype embedding table, so no patient "
-                "representation can be computed")
-        if not rows:
-            raise ResultRefused(
-                "MODEL_TERM_UNAVAILABLE",
-                "no phenotype row to pool: the phenotypes as used have no rows in "
-                "the model's node mapping")
-        return pool_patient_embeddings(table, rows)
-
-    def _calculate_gnn_score(self, patient_embedding: "Tensor", disease_id: NodeID) -> float:
-        """
-        The model term of one candidate: (cos + 1) / 2 of the pooled patient and
-        the disease's embedding, from the node embeddings the GNN forward pass
-        cached. This matches the scoring approach used during training (see
-        Trainer._compute_model_outputs).
-
-        **It fails closed** (Spec 1 §2.1). Each state that used to return 0.0
-        refuses the result instead (`ResultRefused`, `MODEL_TERM_UNAVAILABLE`,
-        naming the node): no embeddings, no disease table, a disease with no
-        row, and a row outside the table, which used to be clamped onto the
-        last one. A value that is not finite refuses it too (`NON_FINITE_SCORE`).
-        """
-        from src.inference.scoring import (
-            cosine_scores,
-            normalise_cosine_to_unit_interval,
-        )
-
-        if not self._gnn_ready or self._node_embeddings is None:
-            raise ResultRefused(
-                "MODEL_TERM_UNAVAILABLE",
-                "the pipeline holds no node embeddings, so no model term can be computed")
-        disease_emb = self._node_embeddings.get(NodeType.DISEASE.value)
-        if disease_emb is None:
-            raise ResultRefused(
-                "MODEL_TERM_UNAVAILABLE",
-                "the served model has no disease embedding table, so no disease can "
-                "be scored")
-        disease_idx = (self._node_id_to_idx or {}).get(
-            NodeType.DISEASE.value, {}).get(str(disease_id))
-        if disease_idx is None:
-            raise ResultRefused(
-                "MODEL_TERM_UNAVAILABLE",
-                f"disease {disease_id} was reached in the graph but has no row in the "
-                "model's node mapping; the model and the graph disagree")
-        if isinstance(disease_idx, bool) or not isinstance(disease_idx, int) or \
-                not 0 <= disease_idx < disease_emb.size(0):
-            raise ResultRefused(
-                "MODEL_TERM_UNAVAILABLE",
-                f"disease {disease_id} maps to row {disease_idx!r}, outside the disease "
-                f"embedding table's {disease_emb.size(0)} rows")
-
-        # Cosine similarity, then [-1,1] -> [0,1]. One candidate is a batch of one.
-        cosine = cosine_scores(patient_embedding, disease_emb[disease_idx].unsqueeze(0))
-        value = float(normalise_cosine_to_unit_interval(cosine)[0])
-        if not math.isfinite(value):
-            raise ResultRefused(
-                "NON_FINITE_SCORE",
-                f"disease {disease_id}'s model term is {value!r}; the result was "
-                "refused, not ranked")
-        return value
-
     def _extract_supporting_genes(
         self, paths: List[ReasoningPath]
     ) -> List[str]:
@@ -2276,10 +1614,7 @@ class DiagnosisPipeline:
         For each candidate, the EvidencePanel decides between:
           - Mode A (direct path): use existing paths from BFS, label as
             STRONG/WEAK depending on shortest hop count
-          - Mode B (analogy-based): when no direct path is available, find
-            the K nearest known candidates in GNN embedding space whose
-            paths to the patient phenotypes DO exist, and surface them
-          - INSUFFICIENT: if neither mode succeeds
+          - INSUFFICIENT: when no direct path is available
 
         The explanation names the candidate's score with the kind's label, so
         the text says what the number is (Spec 1 §2.1).
@@ -2300,17 +1635,14 @@ class DiagnosisPipeline:
                 ),
             }
 
-            # Step C: structured evidence package with its evidence label.
-            # Mode B requires GNN embeddings and the index map; both are
-            # passed when available so the panel can attempt analogy search.
+            # Step C: structured evidence package with its evidence label,
+            # from the discovered paths (Mode A) or insufficient without one.
             if source_ids is not None:
                 package: EvidencePackage = self.evidence_panel.build_evidence(
                     candidate=candidate,
                     patient_input=patient_input,
                     source_ids=source_ids,
                     existing_paths=paths if paths else None,
-                    node_embeddings=self._node_embeddings,
-                    node_id_to_idx=self._node_id_to_idx,
                 )
                 changes["evidence_package"] = package.to_dict()
                 changes["evidence_label"] = package.evidence_label.value
@@ -2365,8 +1697,7 @@ class DiagnosisPipeline:
         reference_cohort: Optional[Dict[str, Any]] = None,
         sp_bounds: Optional[Tuple[float, float]] = None,
     ) -> InferenceResult:
-        """A result with no candidates (discovery reached no disease), with
-        its warnings."""
+        """A result with no candidates (nothing to rank), with its warnings."""
         return InferenceResult(
             patient_id=patient_id,
             timestamp=datetime.now(),
@@ -2375,27 +1706,20 @@ class DiagnosisPipeline:
             warnings=warnings,
             inference_time_ms=(time.time() - start_time) * 1000,
             phenotype_input=phenotype_input,
-            candidates_reached=self._candidates_reached(0),
             reference_cohort=reference_cohort, sp_bounds=sp_bounds,
         )
 
     def _sp_bounds(self) -> Optional[Tuple[float, float]]:
         """A gene task model's SP bounds (its spec's), which its results name;
         None for every other model."""
-        if self._bundle_view is None or self.model.task != "gene":
+        if self.model.task != "gene":
             return None
         gene = self.model.task_head.spec.gene
         return (float(gene.sp_lower), float(gene.sp_upper))
 
-    def _candidates_reached(self, reached: int) -> Optional[int]:
-        """`candidates_reached` as the served kind carries it: the count for
-        `served_mixture/v1`, None for the kinds that do not carry it."""
-        return reached if result_kind_for(self._scoring_mode()[0]) == SERVED_MIXTURE else None
-
     def _result_label(self) -> str:
-        """The served kind's label with this pipeline's own η (`result_label`)."""
-        scoring_mode, eta = self._scoring_mode()
-        return result_label(result_kind_for(scoring_mode), scoring_mode, eta)
+        """The served kind's label (`result_label`)."""
+        return result_label(result_kind_for(self._scoring_mode()[0]))
 
     def bound_inputs(self) -> BoundInputs:
         """What this pipeline bound from its verified workspace (`BoundInputs`),
@@ -2413,13 +1737,9 @@ class DiagnosisPipeline:
         """The scoring mode in effect and the mixing weight it reports (the
         gene task's η; None for the disease and patients-like-me tasks, which
         mix nothing)."""
-        if self._bundle_view is not None:
-            task = self.model.task
-            eta = self.model.task_head.spec.gene.eta if task == "gene" else None
-            return TASK_SCORING_MODES[task], eta
-        if self._sp_ready:
-            return "gnn_plus_shortest_path", self.config.eta
-        return "gnn_only", 1.0
+        task = self.model.task
+        eta = self.model.task_head.spec.gene.eta if task == "gene" else None
+        return TASK_SCORING_MODES[task], eta
 
     def served_identity(self) -> ServedIdentity:
         """What this pipeline serves, part by part (contract M3c, R8).
@@ -2427,8 +1747,7 @@ class DiagnosisPipeline:
         **Built from the pipeline's own state, from the reads it took**: the
         checkpoint's digest from the read the model was built from, the graph's
         and the manifest's from the reads the workspace was verified with, the
-        shortest-path table's `build_id` from the tensor accepted, the dataset
-        record's origin from the record verified. Nothing is hashed again here.
+        dataset record's origin from the record verified. Nothing is hashed again here.
         Every result the pipeline returns carries this, built when the result
         is produced, and `get_pipeline_config()` reports it from this same
         method. A part with nothing to identify says so in its `state`.
@@ -2442,14 +1761,7 @@ class DiagnosisPipeline:
             split_manifest_sha256=self._manifest_sha256,
         )
 
-        if self._sp_ready:
-            shortest_paths = ServedShortestPaths(
-                state="verified", build_id=self._sp_build_id, max_hops=self._sp_max_hops
-            )
-        elif SCORING_MODE_SP_STATES[scoring_mode] == "computed":
-            shortest_paths = ServedShortestPaths(state="computed")
-        else:
-            shortest_paths = ServedShortestPaths(state="absent")
+        shortest_paths = ServedShortestPaths(state=SCORING_MODE_SP_STATES[scoring_mode])
 
         record = self._dataset_record
         dataset_record = ServedDatasetRecord(
@@ -2495,7 +1807,8 @@ class DiagnosisPipeline:
 
     def get_pipeline_config(self) -> Dict[str, Any]:
         """Get pipeline configuration as dictionary."""
-        # Effective scoring mode reflects whether SP signal is contributing
+        # The served task's scoring mode and the η it reports (the gene task's;
+        # None for the other tasks), as its served identity states them.
         scoring_mode, effective_eta = self._scoring_mode()
 
         return {
@@ -2505,13 +1818,7 @@ class DiagnosisPipeline:
             "max_path_length": self.config.max_path_length,
             "path_length_penalty": self.config.path_length_penalty,
             "scoring_mode": scoring_mode,
-            "eta_configured": self.config.eta,
             "eta_effective": effective_eta,
-            "sp_max_hops": self._sp_max_hops if self._sp_ready else None,
-            "sp_hop_bound_source": self._sp_hop_bound_source if self._sp_ready else None,
-            # Reported so a surface can show that the table was checked; an
-            # unrecorded binding is refused at load (contract M2.5).
-            "sp_kg_binding": self._sp_kg_binding if self._sp_ready else None,
             # The workspace's dataset record (contract M3b): its binding state
             # and its origin apart, so a synthetic workspace is never shown as
             # plainly verified. None when no workspace was verified.
@@ -2521,8 +1828,6 @@ class DiagnosisPipeline:
             "include_literature_evidence": self.config.include_literature_evidence,
             "has_model": True,
             "gnn_ready": self._gnn_ready,
-            "sp_ready": self._sp_ready,
-            "fingerprint_warnings": getattr(self, "_fingerprint_warnings", []),
             "checkpoint_meta": getattr(self, "_checkpoint_meta", {}),
             "kg_nodes": len(self.kg._nodes) if self.kg else 0,
             "kg_edges": len(self.kg._edges) if self.kg else 0,
@@ -2573,8 +1878,6 @@ def build_served_pipeline(
     # can point them at two different workspaces -- each internally consistent,
     # and together producing embeddings from one graph's tensors read through
     # the other graph's node identifiers. The pipeline refuses that composition.
-    # The hop bound comes from the shortest-path table's sidecar alone (contract
-    # M2.5).
     return create_diagnosis_pipeline(
         graph=graph,
         checkpoint_path=checkpoint_path,

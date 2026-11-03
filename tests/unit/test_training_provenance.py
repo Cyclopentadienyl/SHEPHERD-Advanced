@@ -13,8 +13,8 @@ whenever a byte moved would stop being a compatibility check.
 
 **Scope, and what these tests deliberately do not cover.** Capture only. There is
 no comparison against a current workspace, no registry, no locking and no
-transactional loading — `verify_fingerprint` still checks structure alone and says
-so. Since contract M2.1's S8 every recorded digest is that of the bytes a reader
+transactional loading — the fingerprint is recorded and compared by nothing at
+load (identity is `verify_training_record`'s). Since contract M2.1's S8 every recorded digest is that of the bytes a reader
 parsed (`read_training_inputs`, `read_resume_parent`), so the record and
 the inputs trained on come from the same reads; the entry-point acceptance for
 that is `tests/unit/test_training_reads.py`.
@@ -31,11 +31,7 @@ import pytest
 torch = pytest.importorskip("torch")
 
 from src.training.callbacks import ModelCheckpoint, ModelCheckpointConfig  # noqa: E402
-from src.utils.fingerprint import (  # noqa: E402
-    compute_fingerprint,
-    file_sha256,
-    verify_fingerprint,
-)
+from src.utils.fingerprint import compute_fingerprint, file_sha256  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -451,35 +447,22 @@ def test_a_trainer_carrying_no_digests_writes_a_checkpoint_without_the_key(tmp_p
 
 
 # ---------------------------------------------------------------------------
-# What was deliberately not built
+# What the fingerprint is for
 # ---------------------------------------------------------------------------
-def test_the_structural_verifier_does_not_pretend_to_check_digests():
-    """An empty warning list means "structurally compatible", never "trained on
-    these files". Comparison against a current workspace is deferred, and the
-    docstring says so — this asserts the behaviour rather than trusting the prose.
-    """
-    graph = {
-        "x_dict": {"disease": torch.zeros(2, 4)},
-        "edge_index_dict": {("disease", "x", "disease"): torch.zeros(2, 0, dtype=torch.long)},
-        "num_nodes_dict": {"disease": 2},
-    }
-    checkpoint = {
-        "data_fingerprint": compute_fingerprint(graph),
-        "training_input_digests": {"train_samples": "a digest from another machine"},
-    }
+def test_a_trained_childs_fingerprint_is_its_workspace_graphs_structure(trained_disease_child):
+    """The fingerprint a run records is `compute_fingerprint` of the graph it
+    trained on: a trained child's `data_fingerprint` equals the structure of its
+    workspace's graph, read as serving reads it. Nothing compares it at load
+    (K8-4 retired the structural check); the training record names the inputs."""
+    from src.kg.storage.file_storage import read_graph_artifacts
 
-    assert verify_fingerprint(checkpoint, graph) == []
+    checkpoint = torch.load(trained_disease_child["disease"], map_location="cpu",
+                            weights_only=True)
+    graph = read_graph_artifacts(Path(trained_disease_child["data_dir"]),
+                                 map_location="cpu").graph_data
 
-
-def test_a_checkpoint_predating_the_field_still_verifies_structurally():
-    """Absence of a digest map means "not recorded" and nothing more."""
-    graph = {
-        "x_dict": {"disease": torch.zeros(2, 4)},
-        "edge_index_dict": {("disease", "x", "disease"): torch.zeros(2, 0, dtype=torch.long)},
-        "num_nodes_dict": {"disease": 2},
-    }
-
-    assert verify_fingerprint({"data_fingerprint": compute_fingerprint(graph)}, graph) == []
+    assert checkpoint["data_fingerprint"] == compute_fingerprint(graph)
+    assert "training_input_digests" not in checkpoint["data_fingerprint"]
 
 
 #: Files this gate covers, **repo-relative**; the test resolves them against the

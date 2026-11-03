@@ -33,18 +33,20 @@ directory of workspaces (`data/workspaces`), it lists, for each workspace, wheth
 its graph and its training inputs pass the consumers' checks, whether its
 shortest-path table's source binding does, and for every checkpoint in it whether
 its training record passes M2's check for serving and measurement (M2.4) and for
-a resume (M2.3), each with the refusal's reason. The rules are the consumers' own
-functions, called on reads made here, not restated. **Read-only**: it moves,
-deletes and rewrites nothing; it writes only `--output`. What it lists is
-archived by the owner, not deleted. Only names relative to the inventoried
-directory are recorded.
+a resume (M2.3), and whether it carries the model record this build reads (a file
+without a model spec is refused for both), each with the refusal's reason. The
+rules are the consumers' own functions, called on reads made here, not restated.
+**Read-only**: it moves, deletes and rewrites nothing; it writes only `--output`.
+What it lists is archived by the owner, not deleted. Only names relative to the
+inventoried directory are recorded.
 
 What it does not judge: whether a table would be served (the tensor is not
 loaded, since it can be gigabytes; a refused binding is still reported as a
-refusal), and anything about a checkpoint beyond its training record -- whether
-its weights build a model, or a device has the capacity. Checkpoints are read
-once with `read_checkpoint` and the safe loader, as M1-M3 opens them, where
-serving uses the full one, so one the safe loader cannot open is not judged.
+refusal), and anything about a checkpoint beyond its training record and its
+model record -- its learning stage or task, whether its weights build a model, or
+a device has the capacity. Checkpoints are read once with `read_checkpoint` and
+the safe loader, as M1-M3 opens them, where serving uses the full one, so one the
+safe loader cannot open is not judged.
 
 Usage:
     python scripts/audit_checkpoint_family.py \\
@@ -458,10 +460,16 @@ def _shortest_paths(workspace: Path, kg_digest: Optional[str], root: Path) -> Di
 
 #: What a checkpoint's verdicts cover, stated in the report beside them.
 CHECKPOINT_SCOPE = (
-    "M2's source-contract checks only: whether the checkpoint's training record "
-    "names this workspace's graph (serve_and_measure, M2.4) and this workspace's "
-    "training inputs (resume, M2.3). Not whether its weights build a model over the "
-    "graph, whether a device has the capacity, or whether the service runs."
+    "M2's source-contract checks and the model record this build reads: whether the "
+    "checkpoint's training record names this workspace's graph (serve_and_measure, "
+    "M2.4) and this workspace's training inputs (resume, M2.3), and whether it carries "
+    "a model spec (a file without one is refused for both, as serving, the task "
+    "measurements and training refuse it). The serve_and_measure verdict follows "
+    "serving and the task measurements; Mode C (command line, retiring in K8-6b) is "
+    "not judged. Not its learning stage or task (a base reads accepted for "
+    "serve_and_measure, although serving refuses it), whether its weights build a "
+    "model over the graph, whether a device has the capacity, or whether the service "
+    "runs."
 )
 
 
@@ -470,8 +478,14 @@ def _checkpoint_verdicts(
     workspace_refused: str = "the workspace's graph is refused",
 ) -> Dict[str, Any]:
     """One checkpoint, read once (`read_checkpoint`, the safe loader on CPU, as
-    M1-M3 opens them), judged from that read; its digest is that read's."""
+    M1-M3 opens them), judged from that read; its digest is that read's.
+
+    Each use is judged in its consumer's order: serving checks the training
+    record of the graph, then reads the model record (`read_model_record`); a
+    resume reads the parent's model record, then compares its training inputs.
+    A file without a model spec is refused by `read_model_record`'s own reason."""
     from src.kg.artifacts import GRAPH_ARTIFACTS
+    from src.models.bundle.record import read_model_record
     from src.utils.checkpoint_io import read_checkpoint
     from src.utils.fingerprint import verify_training_record
 
@@ -488,10 +502,10 @@ def _checkpoint_verdicts(
     if bound is None:
         serve = _not_judged(workspace_refused)
     else:
-        serve = _judge(lambda: verify_training_record(
+        serve = _judge(lambda: (verify_training_record(
             checkpoint, bound, tuple(GRAPH_ARTIFACTS),
             recorded_by=f"checkpoint {name}", compared_with="this workspace's graph",
-        ), root)
+        ), read_model_record(checkpoint)), root)
     # A model bundle checkpoint is judged against the read its own stage and
     # task make (`inputs` is then a function of the checkpoint), as training
     # judges it; anything else against the workspace's one read.
@@ -500,14 +514,14 @@ def _checkpoint_verdicts(
         resume = _not_judged("training refuses this workspace")
     elif isinstance(own, Exception):
         resume = _not_judged(f"training refuses this workspace for this checkpoint's stage "
-                             f"and task ({type(own).__name__}: {own})")
+                             f"and task ({type(own).__name__}: {_scrub(str(own), root)})")
     else:
         from scripts.train_model import check_resume_parent
 
-        resume = _judge(lambda: check_resume_parent(
+        resume = _judge(lambda: (read_model_record(checkpoint), check_resume_parent(
             checkpoint, own, recorded_by=f"checkpoint {name}",
             compared_with="a run over this workspace",
-        ), root)
+        )), root)
     return {"sha256": read.identity.sha256,
             "m2_contract": {"serve_and_measure": serve, "resume": resume}}
 
@@ -602,7 +616,8 @@ def build_inventory(root: Path, relationship: str) -> Dict[str, Any]:
         "what_this_shows": (
             "for each workspace, whether contract M2 accepts its graph, its training "
             "inputs, its shortest-path table's source binding and each checkpoint's "
-            "training record, and whether contract M3b accepts its dataset record "
+            "training record, whether each checkpoint carries the model record this "
+            "build reads, and whether contract M3b accepts its dataset record "
             "(binding state and origin apart), and why not"
         ),
         "read_only": (

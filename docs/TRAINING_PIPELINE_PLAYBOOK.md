@@ -182,9 +182,9 @@ from a parent (a branch) is not available from the dashboard yet.
 > `checkpoint_dir` or `log_dir` is refused.
 >
 > Checkpoints from before this layout (`$WS/checkpoints/`) are not listed or
-> selected automatically; they are still served or measured by explicit path.
-> Move them once with `scripts/migrate_checkpoints.py "$WS"` (a plan) and
-> `--apply`; see the script's description.
+> selected automatically; they stay on disk, reached by explicit path only. A
+> checkpoint without a model spec (every file written before the model bundles)
+> is refused at load, before any model is built.
 
 ---
 
@@ -244,12 +244,15 @@ model (its log's "Startup failed" line says why), and **🔒 Change model…** �
 **🔒 Load this model** on the Diagnosis page answers "Not reloaded; the model
 in use is unchanged." with that reason.
 
-The structural fingerprint (`verify_fingerprint`) is then a **diagnostic, not
-the graph's identity**, and never stops a load. Its warnings surface through the
-pipeline API (`fingerprint_warnings`) in the Warnings section of the Diagnosis
-page's **Details ›** drawer: "Graph structure differs from the checkpoint's
-structural fingerprint", or "Graph structure not compared" when the checkpoint
-records no fingerprint.
+A checkpoint whose record matches but which carries no model spec (a
+ShepherdGNN history file) is refused next, still before any model is built:
+"written before the model spec: listed as history and never run by this build;
+start a new run".
+
+The structural fingerprint is **recorded, and compared by nothing at load**
+(since K8-4): the record's digests above are the graph's identity. The pipeline
+API reports no fingerprint warnings, and the Diagnosis page's **Details ›**
+drawer shows no structural line.
 
 **What it means for you:**
 - Keep each dataset version in its own workspace; load a checkpoint against the
@@ -258,9 +261,7 @@ records no fingerprint.
   different `--feature-dim`), **the old checkpoints are refused** on the rebuilt
   workspace. That refusal is correct: retrain for the new data.
 - A checkpoint refused because it "records no training_input_digests" predates
-  the provenance contract: retrain it. `scripts/migrate_checkpoints.py` writes
-  nothing into a checkpoint; it moves one with no record to the workspace's
-  `archive/`.
+  the provenance contract: retrain it.
 
 ---
 

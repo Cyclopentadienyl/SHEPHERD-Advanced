@@ -41,8 +41,8 @@ makes of that version in the demo graph's view is `GRAPH_SOURCE_BINDING`.
 needs: a checkpoint without a model spec, which the lists show as history and
 every runner refuses. It is written without any model class and holds no
 weights: only its `epoch` and `logs`, which the lists show, and, with a
-workspace, its record. Measurement and training's run plan refuse it for its
-missing spec; serving refuses it for having no weights until K8-4.
+workspace, its record. Measurement, training's run plan and serving refuse it
+for its missing spec; serving before any model is built.
 
 Module: tests/fixtures/registered_cohort.py
 """
@@ -251,10 +251,9 @@ def write_checkpoint_without_model_spec(path: Path, *,
     `write_fixture_checkpoint` records) and, with `data_dir`, its record. The
     lists read whether a `model_spec` is there (none, so the file is listed as
     history), its `epoch` and `logs` and its record's `split_manifest`.
-    Measurement and serving compare the record's graph roles first; then
-    measurement refuses the file for its missing spec, and serving, until K8-4,
-    for having no weights. Training's run plan refuses it as written before the
-    model spec.
+    Measurement and serving compare the record's graph roles first; then both
+    refuse the file for its missing model spec, serving before any model is
+    built. Training's run plan refuses it as written before the model spec.
 
     With `data_dir`, the record is the one a training run over that workspace
     writes (`training_input_digests`: both sample files, the four graph roles

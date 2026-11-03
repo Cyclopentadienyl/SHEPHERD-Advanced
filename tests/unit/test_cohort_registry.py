@@ -1224,8 +1224,9 @@ def test_the_checkpoint_without_a_model_spec(recorded, registered, tmp_path):
     the safe loader reads it, it has no model spec, and with a workspace its
     record is the one training writes over that workspace (`train_model`'s own
     reads and digests), so measurement, which compares the record first,
-    refuses it for its missing spec alone (serving refuses it for having no
-    weights until K8-4). Without a workspace it records nothing."""
+    refuses it for its missing spec alone (serving likewise, for its missing
+    model spec, before any model is built). Without a workspace it records
+    nothing."""
     from scripts.train_model import read_training_inputs, training_input_digests
     from src.utils.checkpoint_io import read_checkpoint
 

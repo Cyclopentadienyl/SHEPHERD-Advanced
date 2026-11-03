@@ -16,8 +16,8 @@ exists so that anyone who sees an SP number knows precisely what it does and doe
 
 > ## Status — read this before anything else
 >
-> **Today, the SP score is part of the ranking.** How a candidate is scored depends on which
-> artifacts are loaded, and each answer names its kind (`result_kind`, Batch 4):
+> **Until K8-4, the SP score was part of the disease ranking.** How a candidate was scored
+> depended on which artifacts were loaded, and each answer names its kind (`result_kind`, Batch 4):
 >
 > | Loaded | Kind | Score used for ranking |
 > |---|---|---|
@@ -30,34 +30,34 @@ exists so that anyone who sees an SP number knows precisely what it does and doe
 > (`disease_task/v1`) ranks every disease with no SP term at all; a gene task model
 > (`gene_task/v1`) mixes its own SP similarity, from exact hop distances computed from the model's
 > graph view, into the score of your candidate genes. The two rows above describe a checkpoint
-> without a model spec (a history file), served only outside the dashboard until K8.
+> without a model spec (a history file), served only outside the dashboard until K8-4.
 >
-> **K8 (2026-11) removes the two rows above.** The served mixture (`served_mixture/v1`) and the
-> shortest-path table retire with the serving deletion (K8-4) and the SP files (K8-5); after them
-> every answer comes from a task model, as described above. Until then, the two rows still apply to
-> a checkpoint without a model spec (policy rev 14).
+> **K8-4 (2026-11-03) removed the two rows above:** a checkpoint without a model spec is refused at
+> load, and every answer comes from a task model, as described above. The shortest-path table's
+> files retire in K8-5 (policy rev 14). The table stays here as the record of the retired kind.
 >
-> **Which row applies is stated with each result.** Every result says which artifacts produced it
-> (its *served identity*) and its kind: the Diagnosis tab's kind label and "Produced by" line, the
+> **What produced a result is stated with it.** Every result says which artifacts produced it (its
+> *served identity*) and its kind: the Diagnosis tab's kind label and "Produced by" line, the
 > downloadable report's "What produced this result" section and the CSV's `result_kind` and
-> `served_` columns name the trained model's checkpoint, the shortest-path table and the scoring
-> mode — `gnn_plus_shortest_path` (first row) or `gnn_only` (second), or the task's own mode.
+> `served_` columns name the trained model's checkpoint and the task's own scoring mode. A result
+> written before K8-4 named `gnn_plus_shortest_path` (first row) or `gnn_only` (second).
 >
-> **An SP value that cannot be computed is never written as a number.** Each candidate's `sp_term`
-> has a status: `COMPUTED`, `COMPUTED_PARTIAL` (some submitted phenotypes were not in the graph),
-> `NO_TABLE`, `TARGET_UNMAPPED` or `NO_PHENOTYPE_MAPPED`; only the first two carry a mean distance
-> and a score. On a served result only `NO_TABLE` (no table, nothing mixed) has no number: a
-> disease or phenotype missing from the graph's node mapping is refused first (§3). Were a status
-> with no number mixed, it would count as 0 and the record would say so (`mixed_as: 0.0`).
+> **An SP value that cannot be computed is never written as a number.** In the retired kind each
+> candidate's `sp_term` had a status: `COMPUTED`, `COMPUTED_PARTIAL` (some submitted phenotypes
+> were not in the graph), `NO_TABLE`, `TARGET_UNMAPPED` or `NO_PHENOTYPE_MAPPED`; only the first two
+> carried a mean distance and a score. On a served result only `NO_TABLE` (no table, nothing mixed)
+> had no number: a disease or phenotype missing from the graph's node mapping was refused first
+> (§3). Were a status with no number mixed, it would have counted as 0 and the record said so
+> (`mixed_as: 0.0`).
 >
-> **Also today: candidates are discovered by path search before any scoring happens.** A disease
-> with no qualifying path from the patient's phenotypes is never scored at all, whatever the model
-> would have said about it.
+> **Also until K8-4: that kind discovered candidates by path search before any scoring.** A disease
+> with no qualifying path from the patient's phenotypes was never scored at all, whatever the model
+> would have said about it. A disease task model ranks every disease.
 >
-> **Both of these are being changed.** The approved target is that every disease is scored by the
-> model, that SP is removed from the ranking entirely, and that SP is re-exposed as a separate,
-> opt-in analysis over candidates that have already been ranked. Until that work lands, §2's
-> guidance describes how to *interpret* an SP value, not a switch that exists.
+> **Two parts of the approved target are reached (K8-4):** every disease is scored by the model, and
+> SP is not in the disease ranking. SP re-exposed as a separate, opt-in analysis over candidates
+> that have already been ranked is not built; until it is, §2's guidance describes how to
+> *interpret* an SP value, not a switch that exists.
 >
 > The decision, its evidence and its current implementation status are in
 > [`DISEASE_SCORER_POLICY.md`](DISEASE_SCORER_POLICY.md). Sections §1 and §3 describe the score
@@ -430,8 +430,8 @@ while queue:
 
 Pairs absent from the table mean "no path found within `max_hops`".
 
-Online (`src/inference/sp_index.py:sp_analysis_records`, which calls `sp_mean_distances` once for
-all candidates), per candidate:
+Online, until K8-4 (`src/inference/sp_index.py:sp_analysis_records`, removed in K8-4; it called
+`sp_mean_distances` once for all candidates), per candidate:
 
 ```python
 UNREACHABLE = max_hops + 1                      # 6 with the default max_hops = 5

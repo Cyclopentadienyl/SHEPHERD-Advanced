@@ -49,9 +49,7 @@ it is shown, after each diagnosis, after a Load ("served model changed") and on
   control". Only the served file is opened, on a queued refresh, once per
   served model per session (what it records is kept while the served
   identity is the same); the timer's read never opens a checkpoint;
-- the mode chips, only when true: amber "synthetic data", neutral "no SP
-  table" (a ShepherdGNN file served without one, ``gnn_only``; a task model
-  that uses no table is not missing one), red "GNN not loaded";
+- the mode chip, only when true: amber "synthetic data";
 - "Recorded tests: <state>" from the ledger beside the checkpoint and the
   cohort versions' report stores, by the shared model list's own reader
   (`model_list.recorded_tests_for`): a state, never a number of a result, the
@@ -71,9 +69,8 @@ it is shown, after each diagnosis, after a Load ("served model changed") and on
 **Details** (the identity drawer's "Model in use") is the shared Model Facts
 summary (`renderers.model_facts_html`) of the served checkpoint, with what only
 a served model has added in this module (`served_facts_html`): the served
-graph's and dataset record's digests with Copy, what serving reads, the
-structural fingerprint warnings and the GNN state, and the link to the full
-records in Research › Models.
+graph's and dataset record's digests with Copy, what serving reads, and the
+link to the full records in Research › Models.
 
 Module: src/webui/components/diagnosis_card.py
 """
@@ -123,9 +120,8 @@ CARD_HELP = (
     "Model in use",
     "What every session is served now, read from the server's status for this page: the model "
     "(its task, architecture, run, epoch), its model fingerprint, the dataset it records it was "
-    "trained on, and the states that change results (synthetic data, a model file served "
-    "without its shortest-path table). With no model loaded, diagnoses are refused until one "
-    "is loaded. It is read when the page opens, every 5 s while "
+    "trained on, and the state that changes results (synthetic data). With no model loaded, "
+    "diagnoses are refused until one is loaded. It is read when the page opens, every 5 s while "
     "Diagnosis is shown, after each diagnosis, after a model change and with ↻; the recorded "
     "tests and the dataset names are read again each time Diagnosis is shown, after each "
     "diagnosis, after a model change and with ↻. A read that fails or is older than the result "
@@ -209,9 +205,9 @@ def served_kind(status: Optional[Mapping[str, Any]]) -> str:
 def served_task(status: Optional[Mapping[str, Any]]) -> Optional[str]:
     """**The one reader of the served task** (K6 decision 7): ``"disease"``,
     ``"gene"`` or ``"patients_like_me"``, from the served identity's scoring
-    mode through the core table (`SCORING_MODE_TASKS`); None for no model or
-    a ShepherdGNN file's mode. The card's name line, its chips and serving
-    note, and the page's task inputs, Run gating and request all read it."""
+    mode through the core table (`SCORING_MODE_TASKS`); None for no model.
+    The card's name line, its serving note, and the page's task inputs, Run
+    gating and request all read it."""
     if not isinstance(status, Mapping) or not status.get("initialized"):
         return None
     return SCORING_MODE_TASKS.get(_part(status, "served_identity", "scoring_mode"))
@@ -581,16 +577,9 @@ def _trained_html(facts: Mapping[str, Any]) -> str:
 
 def _chips(status: Mapping[str, Any], *, grey: bool) -> List[str]:
     identity = status.get("served_identity") or {}
-    kind = served_kind(status)
     chips: List[Tuple[str, str]] = []
-    if kind == "model" and not status.get("gnn_ready", True):
-        chips.append(("GNN not loaded", "red"))
     if _part(identity, "dataset_record", "origin") == "synthetic":
         chips.append(("synthetic data", "amber"))
-    # Only a file served without the table it would mix (the test
-    # `served_warnings` uses): a task model that uses none is not missing one.
-    if kind == "model" and _part(identity, "scoring_mode") == "gnn_only":
-        chips.append(("no SP table", "neutral"))
     return [r.chip(text, "grey shep-tag-dashed" if grey else kind_) for text, kind_ in chips]
 
 
@@ -667,14 +656,10 @@ def body_html(state: Mapping[str, Any], produced_at: Any = None) -> str:
             epoch = meta.get("epoch") if isinstance(meta, Mapping) else None
             run = f"Checkpoint · epoch {r.e(epoch if epoch is not None else '—')}"
             why = r.e(facts.get("item_problem") or "")
-        if task is not None:
-            # The task, named once on the card (K6 decision 4); the run under it.
-            name = (f'<p class="shep-dx-name">{r.e(task_model_name(task))}</p>'
-                    f'<p class="shep-dx-line shep-dx-sub">{run}{f" · {why}" if why else ""}</p>')
-        elif item:
-            name = f'<p class="shep-dx-name">{run}</p>'
-        else:
-            name = f'<p class="shep-dx-name">{run}<span class="shep-dx-sub"> · {why}</span></p>'
+        # The task, named once on the card (K6 decision 4); the run under it.
+        # Every served model is a finetuned task's (its scoring mode names one).
+        name = (f'<p class="shep-dx-name">{r.e(task_model_name(task))}</p>'
+                f'<p class="shep-dx-line shep-dx-sub">{run}{f" · {why}" if why else ""}</p>')
         mark = "" if grey else f' <span class="shep-ok-t">{_CHECK} verified</span>'
         lines.append(f'{name}'
                      f'<p class="shep-dx-line">{r.fingerprint_html("model fingerprint", sha, copy=False)}'
@@ -770,44 +755,12 @@ def _full(digest: Any, what: str) -> str:
 
 
 def served_warnings(status: Mapping[str, Any]) -> List[Tuple[str, str]]:
-    """The served state's warnings in the banners' words: synthetic, no
-    shortest-path table."""
+    """The served state's warnings in the banners' words: synthetic data."""
     identity = status.get("served_identity") or {}
     found = []
     if _part(identity, "dataset_record", "origin") == "synthetic":
         found.append(r.IDENTITY_BANNERS["synthetic"])
-    if served_kind(status) == "model" and _part(identity, "scoring_mode") == "gnn_only":
-        found.append(r.IDENTITY_BANNERS["no_sp"])
     return found
-
-
-#: The structural comparator's own words (`src.utils.fingerprint.verify_fingerprint`):
-#: its headline before the differences, and its answer for a checkpoint that
-#: records no structural fingerprint (nothing was compared). The tests run the
-#: comparator itself, so a change of its words is seen.
-_STRUCTURE_HEADLINE = "Graph structure differs from the checkpoint's structural fingerprint"
-_STRUCTURE_LEGACY = "Checkpoint does not contain a data fingerprint"
-
-
-def _structure_line(status: Mapping[str, Any]) -> str:
-    """The structural fingerprint line: no warnings; not compared (the
-    checkpoint records no structural fingerprint); or what differs, counted
-    without the comparator's own headline."""
-    warnings = [str(w) for w in status.get("fingerprint_warnings") or []]
-    gnn = "GNN loaded" if status.get("gnn_ready") else "GNN not loaded"
-    if not warnings:
-        return f'<p class="shep-muted">Graph structural fingerprint: no warnings · {r.e(gnn)}</p>'
-    if len(warnings) == 1 and warnings[0].startswith(_STRUCTURE_LEGACY):
-        return (f'<p class="shep-warn"><b>⚠ Graph structure not compared</b> (the checkpoint records '
-                f'no structural fingerprint: legacy format) · {r.e(gnn)}</p>')
-    differences = [w for w in warnings if not w.startswith(_STRUCTURE_HEADLINE)]
-    items = "".join(f"<li>{r.e(w)}</li>" for w in differences[:3])
-    more = (f'<li class="shep-muted">and {len(differences) - 3} more (the server log lists them)'
-            '</li>' if len(differences) > 3 else "")
-    return (f'<p class="shep-warn"><b>⚠ Graph structure differs from the checkpoint\'s structural '
-            f'fingerprint</b> ({len(differences)}; node types and counts, edge-type count and '
-            f'feature sizes compared, not the graph\'s identity) · {r.e(gnn)}</p>'
-            f'<ul class="shep-dx-list">{items}{more}</ul>')
 
 
 def _serving_note(status: Mapping[str, Any], facts: Mapping[str, Any],
@@ -823,10 +776,7 @@ def _serving_note(status: Mapping[str, Any], facts: Mapping[str, Any],
     graph_state = _part(identity, "graph", "state")
     parts.append("graph ✓" if graph_state == "verified" else f"graph {graph_state or 'not reported'}")
     sp = _part(identity, "shortest_paths", "state")
-    parts.append(f"SP table ✓ build {_part(identity, 'shortest_paths', 'build_id')}"
-                 if sp == "verified" else "SP from the graph view" if sp == "computed"
-                 else "SP not used by this task" if served_task(status) is not None
-                 else "no SP table")
+    parts.append("SP from the graph view" if sp == "computed" else "SP not used by this task")
     origin = _part(identity, "dataset_record", "origin")
     if _part(identity, "dataset_record", "state") == "verified":
         parts.append(f"dataset record ✓ {origin}")
@@ -914,8 +864,6 @@ def served_facts_html(state: Mapping[str, Any], *, open_section: str = "identity
         html_, "evidence",
         ' · <button type="button" class="shep-dx-link" data-key="models">Full records: '
         'Research › Models ›</button>', "</p></div></details>")
-    html_ = _insert_after_section(html_, "warnings", _structure_line(status),
-                                  "</div></section>")
     return note + html_
 
 

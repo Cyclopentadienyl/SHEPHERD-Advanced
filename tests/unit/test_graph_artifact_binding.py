@@ -216,9 +216,7 @@ class TestTheClinicalPathIsAGraphConsumer:
         )
         monkeypatch.setattr(
             pipeline.DiagnosisPipeline, "_precompute_node_embeddings",
-            lambda self, device=None: setattr(
-                self, "_node_embeddings", {"phenotype": object(), "disease": object()}
-            ),
+            lambda self, device=None: setattr(self, "_bundle_z", object()),
         )
         return pipeline
 

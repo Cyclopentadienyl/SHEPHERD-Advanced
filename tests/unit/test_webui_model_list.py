@@ -163,7 +163,7 @@ def _status(root, served="model-05.pt", data_dir=None):
             "checkpoint": {"state": "verified" if sha else "absent", "sha256": sha},
             "graph": {"state": "verified", "kg_sha256": kg,
                       "split_manifest_sha256": root["fingerprint"]},
-            "shortest_paths": {"state": "absent", "build_id": None, "max_hops": None},
+            "shortest_paths": {"state": "absent"},
             "dataset_record": {"state": "verified", "origin": "synthetic", "sha256": "e" * 64},
             "settings": {"device": "cpu", "device_requested": "cpu", "eta": None,
                          "max_path_length": 4, "path_length_penalty": 0.5,
@@ -491,20 +491,19 @@ def test_a_model_in_use_that_changed_since_is_said_never_reloaded_over(root, ser
     assert len(sent) == 1 and "Reloaded." in again.confirm_html
 
 
-@pytest.mark.parametrize("change", ["workspace", "sp_table", "eta"])
+@pytest.mark.parametrize("change", ["workspace", "eta"])
 def test_any_part_of_what_is_served_that_changed_is_said(root, serving, monkeypatch, change,
                                                        tmp_path):
-    """The same checkpoint, served by another session with another workspace,
-    shortest-path table or eta: the Load says so rather than reloading over it."""
+    """The same checkpoint, served by another session with another workspace
+    or eta: the Load says so rather than reloading over it. (The shortest-path
+    state follows the model's task since K8-4, so the same checkpoint cannot be
+    served with another one.)"""
     plan = _plan(root, monkeypatch)
     status = _status(root)
     if change == "workspace":
         other = tmp_path / "elsewhere"
         other.mkdir()
         status["current_data_dir"] = str(other)
-    elif change == "sp_table":
-        status["served_identity"]["shortest_paths"] = {"state": "verified", "build_id": "b1",
-                                                       "max_hops": 4}
     else:
         status["served_identity"]["settings"]["eta"] = 0.5
     serving["value"] = status
