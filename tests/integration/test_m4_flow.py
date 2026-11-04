@@ -953,7 +953,9 @@ def test_r10_evidence_not_in_phenotype_normal_form_is_unverifiable_and_the_run_c
     phenotype twice. The shared reader refuses it as `UnparseableFile`, so R10
     records that scope's evidence *unreadable* and its labels *unverifiable*, and
     the measurement completes rather than being refused. Training refuses such a
-    file, so no run records one; the record is rewritten here by hand."""
+    file, so no run records one; the record is rewritten here by hand, both of
+    its claims about the training cases, as a run on that file would write them
+    (a record that names one input two ways is refused, K8-4 review P2-2)."""
     from src.utils.checkpoint_io import read_checkpoint, write_checkpoint
 
     rows = json.loads((cohort.data_dir / "train_samples.json").read_text())
@@ -964,6 +966,7 @@ def test_r10_evidence_not_in_phenotype_normal_form_is_unverifiable_and_the_run_c
     payload = read_checkpoint(cohort.checkpoint, map_location="cpu",
                               weights_only=True).checkpoint
     payload["training_input_digests"]["train_samples"] = _sha(evidence)
+    payload["data_roles"]["task_data"]["train"]["samples"] = _sha(evidence)
     write_checkpoint(payload, cohort.checkpoint)
 
     assert _measure(cohort, "--training-evidence", str(evidence.parent)) == 0

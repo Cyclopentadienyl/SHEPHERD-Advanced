@@ -39,6 +39,7 @@ from src.api.operator_access import OPERATOR_ONLY
 from src.api.routes.diagnose import ServedIdentity
 from src.core.types import SCORING_MODE_TASKS, TASK_SCORING_MODES
 from src.utils.file_modes import create_staging_file
+from src.utils.fingerprint import ReadOutside
 
 logger = logging.getLogger(__name__)
 
@@ -133,7 +134,10 @@ class PipelineReloadResponse(BaseModel):
     status: PipelineStatusResponse
     files_found: Dict[str, Any] = Field(default_factory=dict)
     checkpoint_path: Optional[str] = None
-    architecture: Optional[str] = None
+    architecture: Optional[str] = Field(
+        None, description="The loaded model spec's encoder kind, for a task or a "
+        "checkpoint_path alike; null when nothing was built. A run directory's name "
+        "only locates the file.")
     selection_reason: Optional[str] = None
 
 
@@ -236,6 +240,14 @@ def _still_serving() -> str:
     if app_state.pipeline is None:
         return ""
     return " The previously loaded pipeline is still being served."
+
+
+def _not_inside(exc: ReadOutside) -> str:
+    """A bounded read's refusal (`ReadOutside`) in the reload's words: the
+    file it opened lies outside the workspace, or it cannot be placed."""
+    if exc.opened is not None:
+        return "was opened outside the workspace"
+    return f"cannot be placed inside the workspace ({exc.why})"
 
 
 def _live_status() -> PipelineStatusResponse:
@@ -393,14 +405,23 @@ def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
     # Runs are not ranked against each other by metric. Checkpoints in an older
     # layout are NOT scanned here (see checkpoint_paths), and neither is a file
     # that resolves outside the workspace: 2 keeps the listing's boundary and
-    # never reads one. 1 is an operator's explicit choice (D8), read by its
-    # bytes wherever it is.
+    # never reads one. **2's reads bind that boundary to the file each one
+    # opens** (`within=workspace`, judged on the open descriptor), the scan's
+    # and the build's alike: a name swapped for a link out of the workspace
+    # after the boundary check is refused before a byte of it is read, never
+    # read, chosen or published. 1 is an operator's explicit choice (D8), read
+    # by its bytes wherever it is.
     from src.models.bundle.record import has_model_spec, listed_record
     from src.utils.checkpoint_io import read_checkpoint
     from src.utils.checkpoint_paths import (
         ranking_score_detail,
         select_auto_run_checkpoint,
+        with_not_read,
     )
+
+    #: The workspace automatic selection reads inside, resolved once: the
+    #: boundary `select_auto_run_checkpoint` checks names against.
+    workspace = Path(data_dir).resolve()
 
     # score_fn reads the ranking metric from a checkpoint's OWN metadata (never
     # the filename, whose number's meaning is config-dependent). Higher is better.
@@ -418,13 +439,22 @@ def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
     #: Each candidate's one read in this scan: its digest, its ranking metric
     #: and its model record's summary; None for a file the read refused.
     inspected: Dict[str, Optional[Dict[str, Any]]] = {}
+    #: The candidates the scan's bounded read refused (opened outside the
+    #: workspace, or not placeable), in the listing's words.
+    opened_outside: List[str] = []
 
     def _inspect(path: Path) -> Optional[Dict[str, Any]]:
         if str(path) not in inspected:
             try:
                 # Tensors and plain data only (contract decision 10): this scan
-                # reads files in a directory a request names.
-                scored = read_checkpoint(path, map_location="cpu", weights_only=True)
+                # reads files in a directory a request names, and only a file
+                # its open finds inside the workspace.
+                scored = read_checkpoint(path, map_location="cpu", weights_only=True,
+                                         within=workspace)
+            except ReadOutside as exc:
+                inspected[str(path)] = None
+                opened_outside.append(
+                    f"{path.parent.parent.name}/{path.name} {_not_inside(exc)}, so it is not read")
             except Exception as exc:  # noqa: BLE001 — skip unreadable, don't fail reload
                 logger.debug("checkpoint score read failed for %s: %s", path, exc)
                 inspected[str(path)] = None
@@ -459,9 +489,9 @@ def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
                 and record["learning_stage"] == "finetune"
                 and record["task"] == request.task)
 
-    # architecture = the real GNN arch when known (None for an explicit path,
-    # where it's only known after load); selection_reason = how it was chosen.
-    architecture: Optional[str] = None
+    # selection_reason = how the file was chosen. The response's architecture
+    # is the built model spec's encoder kind (below), for a path or a task
+    # alike: a run's layout key only locates the file.
     selection_reason: str = ""
     #: The file automatic selection chose; None for an explicit path.
     selected: Optional[Path] = None
@@ -474,8 +504,13 @@ def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
     else:
         # Every run-layout key: a model bundle is filed under its encoder kind,
         # and the record, never the directory, says what it is.
-        selected, architecture, selection_reason = select_auto_run_checkpoint(
+        selected, _layout_key, selection_reason = select_auto_run_checkpoint(
             data_dir, score_fn=_checkpoint_score, accept=_accept, not_read=not_read)
+        # The files the scan's bounded reads refused are not read for the same
+        # boundary: named in the reason, in the listing's words, and counted in
+        # the hint below, whether another file is chosen or none.
+        not_read.extend(opened_outside)
+        selection_reason = with_not_read(selection_reason, opened_outside)
         selection_reason = f"task {request.task}: {selection_reason}"
         # What automatic selection could choose for this request, so the file
         # report and the reason never disagree.
@@ -511,7 +546,7 @@ def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
                     "chosen for it. Finetune one, or pass an explicit checkpoint_path.")
         return _refused(
             f"No checkpoint found ({selection_reason}). {hint}", files,
-            architecture=architecture, selection_reason=selection_reason,
+            selection_reason=selection_reason,
         )
 
     # Derive kg_path from data_dir
@@ -543,6 +578,13 @@ def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
     # from it; there is no "reloaded, but with other bytes" to report afterwards.
     # Without an expectation the reload is unbound, as before: automatic
     # selection serves what the build read (19.1, below).
+    #
+    # **An automatically selected file is read only inside the workspace**
+    # (`checkpoint_within`): the build's one checkpoint read refuses a file its
+    # open finds outside, by the open descriptor and before any byte, so a name
+    # swapped for a link out of the workspace after the selection is never read
+    # or published (`ReadOutside`). Before the expected digest, which that same
+    # read compares next. An explicit checkpoint_path passes no bound.
     try:
         candidate = build_pipeline(
             kg_path=kg_path,
@@ -550,6 +592,7 @@ def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
             data_dir=data_dir,
             device=device,
             expected_checkpoint_sha256=expected,
+            checkpoint_within=workspace if selected is not None else None,
         )
     except CheckpointChanged as exc:
         held = (f"it holds {exc.found[:12]} now, not {exc.expected[:12]}"
@@ -557,6 +600,12 @@ def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
         return _refused(
             f"{checkpoint_path} is not the model that was shown: {held}. Nothing was "
             f"published; read it again to see what it holds.{_still_serving()}", files
+        )
+    except ReadOutside as exc:
+        return _refused(
+            f"{checkpoint_path} {_not_inside(exc)}: automatic selection reads only files "
+            "inside the workspace, so nothing was read from it or published."
+            f"{_still_serving()}", files
         )
     except Exception as e:
         logger.error(f"Pipeline reload failed: {e}")
@@ -647,7 +696,9 @@ def run_reload(request: PipelineReloadRequest) -> PipelineReloadResponse:
             status=_status_of(config, data_dir, checkpoint_path),
             files_found=files,
             checkpoint_path=checkpoint_path,
-            architecture=architecture,
+            # What runs is what the built model's own spec names, never the
+            # directory the file is filed under; read here, before publication.
+            architecture=candidate.pipeline.model.spec.encoder.kind,
             selection_reason=selection_reason,
         )
         # The encoder FastAPI itself runs on the way out, run here for its

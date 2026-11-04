@@ -190,7 +190,8 @@ def _response(result, patient_id, **kind_fields):
         "result_kind": result.result_kind, "served_identity": result.served_identity.to_dict(),
         "phenotype_input": asdict(result.phenotype_input),
         "candidates": [_candidate_body(c, False, False) for c in result.candidates],
-        "tie_policy": result.tie_policy, "result_schema_version": 2, "session_id": "s",
+        "tie_policy": result.tie_policy,
+        "result_schema_version": result.result_schema_version, "session_id": "s",
         "patient_id": patient_id, "timestamp": "2026-10-27T00:00:00", "summary": None,
         "inference_time_ms": 1.0, "warnings": list(result.warnings), **kind_fields})
 

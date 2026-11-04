@@ -356,8 +356,9 @@ effect, each part with its state. `get_pipeline_config()` and `GET /api/v1/pipel
 the same value for the loaded pipeline.
 - **A model requested and not built** — a missing or unreadable checkpoint; one whose record names
   another graph or none (contract M2.4, checked first); **one without a model spec** (since K8-4,
-  refused by `read_model_record` before any model is built, at startup and on every reload); a
-  base; no graph data, no PyTorch, or a device the host cannot provide (contract M3c: `auto` or
+  refused by `read_model_record` before any model is built, at startup and on every reload);
+  **one whose record contradicts itself**, naming one input two ways, such as two KG digests
+  (K8-4 review P2-2, refused by the same reader, provenance contract §9.1); a base; no graph data, no PyTorch, or a device the host cannot provide (contract M3c: `auto` or
   unset without CUDA): the build is refused (`PipelineBuildError`). Startup publishes nothing and
   `/diagnose` answers 503; a reload is refused and the served pipeline stays, as it does when a
   reload that names a task is given another task's model. Never replaced by path reasoning (provenance contract M1),

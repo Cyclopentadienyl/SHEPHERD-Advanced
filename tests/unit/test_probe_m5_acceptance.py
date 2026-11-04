@@ -1136,16 +1136,24 @@ _TEST_RUN = [sys.executable, "-c",
 
 
 class _RunInputs:
-    """A test run's inputs, as far as `start_test` reads them."""
+    """A test run's inputs, as far as `start_test` reads them: its report
+    store, and the status summary of real inputs (`TestRunInputs.summary()`),
+    so the runner finds every key it reads once the run ends, the checkpoint
+    digest among them."""
 
     def __init__(self, reports: Path):
+        from src.api.services.training_manager import TestRunInputs
+
         self.reports = reports
+        self.inputs = TestRunInputs(
+            registry=reports, version_label="v1", version_sha256="a" * 64, workspace=reports,
+            checkpoint=reports / "model.pt", checkpoint_sha256="c" * 64, task="disease")
 
     def reports_dir(self):
         return self.reports
 
     def summary(self):
-        return {}
+        return self.inputs.summary()
 
 
 @pytest.fixture
@@ -1362,11 +1370,15 @@ def test_an_action_that_stops_training_fails_as_reaching_it(probe, held, action,
 
 @WAITID
 def test_a_start_not_refused_while_the_job_holds_fails_and_its_run_is_stopped(
-        probe, held, monkeypatch):
+        probe, held, monkeypatch, tmp_path, caplog):
     """The counter-example the start's check exists for: the job runs and holds
     the lock, and a test start is not refused (the runner's slot check gone).
     It fails as not refused, and the test run it began is stopped before the
-    cancel is tried."""
+    cancel is tried. The stopped run wrote no outcome file, and the runner
+    reads what it left to the end: no report was published, and its monitor
+    logged no failure."""
+    from src.api.services.training_manager import _report_names
+
     manager = held["manager"]
     real = manager._slot_refusal_locked
     monkeypatch.setattr(manager, "_slot_refusal_locked",
@@ -1375,6 +1387,11 @@ def test_a_start_not_refused_while_the_job_holds_fails_and_its_run_is_stopped(
         _exclusion(probe, held)
     assert manager.get_job_status_word("test") == "cancelled"
     assert manager.get_job_status_word("training") == "running"
+    outcome = manager.get_test_status()["outcome"]
+    assert outcome["kept"] is False and outcome["registered"] is False, outcome
+    assert outcome["summary"].startswith("No report was published"), outcome
+    assert not [name for name in _report_names(tmp_path) if f"-{'c' * 12}-" in name]
+    assert not [r for r in caplog.records if "Monitoring test job" in r.getMessage()]
 
 
 @WAITID

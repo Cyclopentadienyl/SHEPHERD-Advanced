@@ -13,6 +13,11 @@ never run, and nothing is guessed from its weight names (§9.3, hazard 1).
 **Task first** (hazard 3): `load_bundle` compares the learning stage and task a
 caller needs with the record before it builds anything.
 
+**One input, one claim**: a record that names one input two ways (its
+`data_roles` and its `training_input_digests`, the view's digest or rule in
+two places) and names it differently is refused by `read_model_record`, so
+every entry that reads it refuses it, whichever copy that entry trusts.
+
 Plain data only, so the payload still loads with `weights_only=True`.
 Reading and checking a record needs no torch; only `load_bundle` builds.
 
@@ -21,7 +26,7 @@ Module: src/models/bundle/record.py
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 from src.config.model_types import MODEL_RECORD_KEYS
 from src.models.bundle.spec import LEARNING_STAGES, TASKS, ModelSpec, SpecError, ViewShape
@@ -124,8 +129,77 @@ def has_model_spec(payload: Mapping[str, Any]) -> bool:
     return isinstance(payload, Mapping) and payload.get("model_spec") is not None
 
 
+def _as_written(value: Any) -> Any:
+    return value
+
+
+def _view_rule(rule: Any) -> Any:
+    """A graph view rule in the form the view stores it: `build_graph_view`
+    (`src/kg/graph_view.py`) keeps `exclude_relations` sorted, while the spec
+    keeps the operator's order, so the two copies are compared in the view's
+    form. Inlined, not imported: that module needs torch, and reading a record
+    does not. A part that is not a rule, or exclusions that are not names, stay
+    as written and are then reported as differing, never raised."""
+    if not isinstance(rule, Mapping):
+        return rule
+    excluded = rule.get("exclude_relations", [])
+    if isinstance(excluded, (list, tuple)) and all(isinstance(r, str) for r in excluded):
+        excluded = sorted(excluded)
+    return {**rule, "exclude_relations": excluded}
+
+
+#: The claims one bundle record makes twice about one input (contract §9.1):
+#: the model record's `data_roles` beside the training record's
+#: `training_input_digests` (M2.1), the graph view's digest in three places and
+#: its rule in two. Entries trust different copies (serving the training record
+#: and the top-level view, training `data_roles`), so the one reader refuses a
+#: record whose copies disagree, whichever copy is wrong. Each pair is
+#: `(claim, claim, the form both are compared in)`.
+_SAME_INPUT = (
+    ("data_roles.kg", "training_input_digests.kg", _as_written),
+    ("graph_view.digest", "data_roles.graph_view.digest", _as_written),
+    ("graph_view.digest", "data_roles.split.view_digest", _as_written),
+    ("data_roles.graph_view.rule", "model_spec.graph_view", _view_rule),
+    ("data_roles.task_fixture.record", "training_input_digests.task_fixture", _as_written),
+    ("parent.sha256", "training_input_digests.resume_checkpoint", _as_written),
+)
+
+
+def _claim(payload: Mapping[str, Any], name: str) -> Any:
+    """The value at a dotted `name`, or None where any part is absent or not a
+    mapping (an absent claim contradicts nothing)."""
+    value: Any = payload
+    for key in name.split("."):
+        if not isinstance(value, Mapping):
+            return None
+        value = value.get(key)
+    return value
+
+
+def _shown_claim(name: str, value: Any) -> str:
+    return f"{name} {value[:12]}..." if isinstance(value, str) else name
+
+
+def _contradictions(payload: Mapping[str, Any]) -> List[str]:
+    """Each pair of this record's claims about one input that disagree, compared
+    only where both are present. The task's case files are a task fixture's
+    when the run read one (`data_roles.task_fixture`), the workspace's samples
+    otherwise, as `train_model` records them."""
+    task = "task_" if _claim(payload, "data_roles.task_fixture") is not None else ""
+    pairs = _SAME_INPUT + tuple(
+        (f"data_roles.task_data.{part}.samples", f"training_input_digests.{task}{part}_samples",
+         _as_written) for part in ("train", "val"))
+    found: List[str] = []
+    for first, second, form in pairs:
+        one, other = _claim(payload, first), _claim(payload, second)
+        if one is not None and other is not None and form(one) != form(other):
+            found.append(f"{_shown_claim(first, one)} differs from {_shown_claim(second, other)}")
+    return found
+
+
 def read_model_record(payload: Mapping[str, Any]) -> ModelRecord:
-    """The model record of a loaded checkpoint, or the reason it has none."""
+    """The model record of a loaded checkpoint, or the reason it has none,
+    a record that contradicts itself among them (`_SAME_INPUT`)."""
     if not has_model_spec(payload):
         raise ModelRecordError(HISTORY_ONLY)
     if payload.get("record_version") != MODEL_RECORD_VERSION:
@@ -149,6 +223,11 @@ def read_model_record(payload: Mapping[str, Any]) -> ModelRecord:
     for key in ("parent", "weight_transfer", "scoring_identity", "selection"):
         if payload[key] is not None and not isinstance(payload[key], dict):
             raise ModelRecordError(f"the record's {key} is neither a mapping nor null")
+    contradictions = _contradictions(payload)
+    if contradictions:
+        raise ModelRecordError(
+            f"the record contradicts itself: {'; '.join(contradictions)}. One file names one "
+            "input two ways, so neither claim is used")
     record = ModelRecord(
         model_spec=spec, graph_view=view, operation=payload["operation"],
         family_id=payload["family_id"], parent=payload["parent"],

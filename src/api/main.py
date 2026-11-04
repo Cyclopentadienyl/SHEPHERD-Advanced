@@ -761,6 +761,7 @@ def build_pipeline(
     data_dir: Optional[str] = None,
     device: Optional[str] = None,
     expected_checkpoint_sha256: Optional[str] = None,
+    checkpoint_within: Optional[Path] = None,
 ) -> Optional[PipelineBundle]:
     """
     Build a diagnosis pipeline without publishing it.
@@ -793,6 +794,11 @@ def build_pipeline(
             (a bound reload); the build's one checkpoint read is compared with
             it before the bytes are parsed, and other bytes, or no file, raise
             `CheckpointChanged` (`DiagnosisPipeline`). None at startup.
+        checkpoint_within: The resolved workspace an automatically selected
+            checkpoint must lie inside (the reload's selection). The build's one
+            checkpoint read refuses a file its open finds outside it, before any
+            byte is read, and raises `ReadOutside` (`read_once(within=)`). None
+            for an explicit path, at startup and everywhere else: no bound.
 
     Returns:
         The built pipeline and the paths it was built from, or None if the
@@ -868,6 +874,7 @@ def build_pipeline(
             data_dir=data_dir,
             device=device,
             expected_checkpoint_sha256=expected_checkpoint_sha256,
+            checkpoint_within=checkpoint_within,
         )
         kg = pipeline.kg
         # Read the configuration back **before returning**, not after publishing.

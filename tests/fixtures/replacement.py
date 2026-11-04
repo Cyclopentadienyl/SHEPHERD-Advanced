@@ -55,13 +55,14 @@ def hook_read_once(
     state = SimpleNamespace(active=False)
     monkeypatch.setattr(state, "active", True)
 
-    def wrapper(path):
+    def wrapper(path, **kwargs):
+        # Keywords (`within=`) reach the wrapped read unchanged.
         if not state.active:
-            return current(path)
+            return current(path, **kwargs)
         path = Path(path)
         if on_entry is not None:
             on_entry(path)
-        result = current(path)
+        result = current(path, **kwargs)
         if on_return is not None:
             on_return(path)
         return result

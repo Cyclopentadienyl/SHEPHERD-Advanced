@@ -52,6 +52,7 @@ from src.config.model_types import (
     MODEL_RECORD_KEYS,
     SUPPORTED_CONV_TYPES,
 )
+from src.utils.fingerprint import lies_within
 
 PathLike = Union[str, Path]
 
@@ -487,7 +488,7 @@ def _outside(path: Path, within: Path) -> Optional[str]:
         resolved = path.resolve()
     except (OSError, RuntimeError) as exc:  # a link loop: RuntimeError before 3.13
         return f"cannot be resolved ({type(exc).__name__})"
-    if resolved == within or within not in resolved.parents:
+    if not lies_within(resolved, within):
         return "resolves outside the workspace"
     return None
 
@@ -503,7 +504,14 @@ def checkpoint_not_read(run_dir: Path, path: Path, within: Path) -> Optional[str
     `locate_checkpoint`) ask it of each file before anything reads the file's
     content; the writer keeps it too (`run_dir_outside`). The file's resolved
     path decides, so a run directory or a layout directory that is a link out
-    of the workspace leaves every file under it outside."""
+    of the workspace leaves every file under it outside.
+
+    **A name is judged here, not the file a later open finds.** A name can
+    point elsewhere at every lookup, so automatic selection's reads that
+    follow (the scan's and the build's) bind the same boundary
+    (`lies_within`) to the file each one opens, by its descriptor
+    (`read_once(within=)`): a file swapped out of the workspace after this
+    check is refused before a byte of it is read."""
     outside = _outside(path, within)
     return None if outside is None else f"{run_dir.name}/{path.name} {outside}, so it is not read"
 
@@ -696,11 +704,12 @@ def _first_run_holding(runs: List[Path], accept: Optional[AcceptFn], within: Pat
 NOT_READ_NAMED = 3
 
 
-def _with_outside(reason: str, outside: List[str]) -> str:
+def with_not_read(reason: str, outside: List[str]) -> str:
     """A selection's reason, with the files it did not read for the boundary,
     in the listing's words: the first `NOT_READ_NAMED`, then how many more, so
     a runs directory linked out of the workspace gives a reason of bounded
-    length."""
+    length. The reload adds the files its scan's bounded reads refused the
+    same way."""
     if not outside:
         return reason
     more = len(outside) - NOT_READ_NAMED
@@ -733,10 +742,12 @@ def select_auto_run_checkpoint(
     if not_read is not None:
         not_read.extend(outside)
     if run is None:
-        return None, None, _with_outside("no run has a checkpoint", outside)
-    architecture = run_architecture(run)
-    return (_select_among(candidates, run_checkpoint_dir(run), score_fn), architecture,
-            _with_outside(f"auto: latest run '{run.name}' ({architecture})", outside))
+        return None, None, with_not_read("no run has a checkpoint", outside)
+    key = run_architecture(run)
+    # The reason names the run by its location (`<layout key>/<run>`, the
+    # lists' label), never as an architecture: what runs is the loaded spec's.
+    return (_select_among(candidates, run_checkpoint_dir(run), score_fn), key,
+            with_not_read(f"auto: latest run '{key}/{run.name}'", outside))
 
 
 __all__ = [
@@ -766,6 +777,7 @@ __all__ = [
     "select_auto_run_checkpoint",
     "slugify_run_name",
     "ranking_score_detail",
+    "with_not_read",
     "normalize_run_layout_key",
     "select_checkpoint_in_dir",
 ]

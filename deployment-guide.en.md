@@ -899,9 +899,13 @@ the API's version, not the identity of what is served.
 ### The diagnose response is one kind of the result union (Batch 4; tasks since K3–K4)
 
 `POST /api/v1/diagnose` answers one kind of result, named by `result_kind`, with
-`result_schema_version` 2 (`docs/working/results-review/SPEC_1_RESULTS_REVIEW.md`
+`result_schema_version` 3 (`docs/working/results-review/SPEC_1_RESULTS_REVIEW.md`
 §2.1). The kind follows the model served; each kind carries its own values and
-refuses another kind's:
+refuses another kind's. The format version changes with the response's shape: 3
+since K8-4r marks K8-4's change, in which the served identity's `shortest_paths`
+kept only its `state` (`build_id` and `max_hops` are gone). A strict client of
+version 2 refuses a version-3 body at that field, beside the keys that differ;
+the Diagnosis page's Markdown report names the version of the response it keeps.
 
 | `result_kind` | Answered when | Each candidate's values | On the result |
 |---|---|---|---|
@@ -1038,6 +1042,14 @@ which records no training inputs either, is refused first for that ("records no
 training_input_digests"). A refused startup publishes nothing (503, above); a
 refused reload leaves the model in use serving. Such files stay on disk and
 listed as history; the mixture that used to serve them is removed.
+
+**A checkpoint whose record names one input two ways is refused the same way**
+(since K8-4r), for example a `data_roles.kg` that differs from its
+`training_input_digests.kg`: "the record contradicts itself: data_roles.kg …
+differs from training_input_digests.kg …". Serving, measurement and training
+(finetune, resume, extend, branch) read the record through one reader, so none
+of them uses such a file, whichever of its two claims is wrong. Two models of
+one graph trained on different cases are not affected: each agrees with itself.
 
 ### In the Diagnosis tab and its exports
 
@@ -2523,7 +2535,15 @@ it, whatever its value, from a request that names a path, a task or both. A task
 port makes HGT servable, name a spec-confirmed HGT checkpoint by `checkpoint_path` (and
 `expected_checkpoint_sha256`); until then this build serves no HGT model. And spell
 `expected_checkpoint_sha256` exactly: a misspelt `expected_checkpoint_sha` used to be dropped,
-leaving the reload unbound, and is now refused.
+leaving the reload unbound, and is now refused. **Automatic selection reads only files inside
+the workspace**, judged on the file each of its reads actually opens (the server asks the open
+file where it lies, not its name), so a selected file replaced by one outside the workspace
+before it is read is refused, nothing is read from it or published and the model in use stays;
+where the server cannot tell where an opened file lies, automatic selection refuses it; an
+explicit `checkpoint_path` is read wherever it is (since K8-4r). The response's
+`architecture` is the loaded model spec's encoder kind, for a task or a path alike; a run
+directory's name only locates the file, and the reason names the run as `<layout key>/<run>`
+(since K8-4r).
 
 ### Research › Prepare › Datasets
 

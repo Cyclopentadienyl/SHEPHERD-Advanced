@@ -49,7 +49,7 @@ from src.models.bundle.record import (  # noqa: E402
     ModelRecord,
     listed_record,
 )
-from src.models.bundle.spec import InputSpec  # noqa: E402
+from src.models.bundle.spec import InputSpec, ModelSpec  # noqa: E402
 from src.utils.checkpoint_io import write_checkpoint  # noqa: E402
 from src.utils.fingerprint import file_sha256  # noqa: E402
 
@@ -151,7 +151,10 @@ def service(tmp_path, monkeypatch):
             mode = TASK_SCORING_MODES[payload["task"]]
         config = {"served_identity": _identity(mode, file_sha256(path)), "scoring_mode": mode,
                   "gnn_ready": True, "has_model": True, "checkpoint_meta": dict(payload["logs"])}
-        return SimpleNamespace(config=config, kg=None, pipeline=object(),
+        # The built model carries the chosen file's own spec, as the real
+        # build's `ModelBundle` does: the reload reports its encoder kind.
+        model = SimpleNamespace(spec=ModelSpec.from_dict(payload["model_spec"]))
+        return SimpleNamespace(config=config, kg=None, pipeline=SimpleNamespace(model=model),
                                data_dir=kwargs["data_dir"])
 
     monkeypatch.setenv("SHEPHERD_DEVICE", "cpu")
@@ -188,7 +191,7 @@ def test_a_task_is_served_by_its_own_child_whatever_is_newer(service, family):
     assert disease.success, disease.message
     assert disease.checkpoint_path == str(family["disease"])
     assert disease.selection_reason.startswith(
-        "task disease: auto: latest run '20261002-000000_disease_bbbbbb' (gatv2)")
+        "task disease: auto: latest run 'gatv2/20261002-000000_disease_bbbbbb'")
     assert "best val_pooled_mrr=0.3000" in disease.selection_reason
     assert disease.architecture == "gatv2"
     gene = _reload(service, task="gene")
@@ -320,6 +323,61 @@ def test_a_task_child_linked_outside_the_workspace_is_never_chosen_or_read(
     # The explicit path is unchanged: named, it is read by its bytes.
     explicit = _reload(service, task="disease", checkpoint_path=str(outside))
     assert explicit.success and explicit.selection_reason == "explicit checkpoint_path"
+
+
+@pytest.mark.parametrize("case", ["the only candidate", "another candidate in the run"])
+def test_a_candidate_swapped_out_of_the_workspace_after_the_boundary_check_is_not_read_or_chosen(
+        service, family, monkeypatch, tmp_path, case):
+    """The reviewer's K8-4 P2-1, at the scan: the disease child's `last.pt` is
+    replaced by a link to a disease child outside the workspace right after the
+    boundary check judged its name (`checkpoint_not_read`) and before the scan
+    reads it. Before the fix the scan read the outside file, accepted it, ranked
+    it first (0.9) and the build built it. Now the scan's read is bound to the
+    file it opens: the outside file is never read, chosen, built or published,
+    and the reason names it in the listing's words, whether another candidate
+    of the run is served or none is left."""
+    import src.utils.checkpoint_paths as checkpoint_paths
+    from tests.fixtures.replacement import hook_read_once
+
+    swapped = family["disease"]
+    outside = _put(tmp_path / "outside", "gatv2", "20261010-000000_far_ffffff",
+                   _record_payload("disease", logs={"val_pooled_mrr": 0.9}), 1000)
+    outside_sha = file_sha256(outside)
+    best = None
+    if case == "another candidate in the run":
+        best = _put(service.data_dir, "gatv2", swapped.parent.parent.name,
+                    _record_payload("disease", logs={"val_pooled_mrr": 0.1}), 600,
+                    name="best.pt")
+    real_check, fired = checkpoint_paths.checkpoint_not_read, []
+
+    def check_then_swap(run_dir, path, within):
+        answer = real_check(run_dir, path, within)
+        if path == swapped and not fired:
+            fired.append(path)
+            os.unlink(swapped)
+            os.symlink(outside, swapped)
+        return answer
+
+    monkeypatch.setattr(checkpoint_paths, "checkpoint_not_read", check_then_swap)
+    returned = []
+    hook_read_once(monkeypatch, on_return=lambda path: returned.append(os.path.realpath(path)))
+
+    result = _reload(service, task="disease")
+
+    assert fired == [swapped], "the swap fell between the boundary check and the scan's read"
+    assert os.path.realpath(outside) not in returned, "the outside file was read"
+    assert all(item.config["served_identity"]["checkpoint"]["sha256"] != outside_sha
+               for item in service.published)
+    words = (f"{swapped.parent.parent.name}/last.pt was opened outside the workspace, "
+             "so it is not read")
+    assert f"not read: {words}" in result.selection_reason
+    if best is None:
+        assert not result.success and service.built == [] and service.published == []
+        assert "1 checkpoint file(s) of the workspace's runs" in result.message
+    else:
+        assert result.success, result.message
+        assert service.built == [str(best)] and result.checkpoint_path == str(best)
+        assert f"not read: {words}" in result.message
 
 
 def test_an_explicit_path_that_is_missing_is_named_with_a_task_too(service, family):

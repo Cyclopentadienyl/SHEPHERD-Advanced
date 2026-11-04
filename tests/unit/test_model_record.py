@@ -3,15 +3,18 @@
 The training payload writes the record beside M3a's and marks it with record
 version 2; the one reader refuses a checkpoint without a model spec (history,
 never run), another version, a record that disagrees with its spec, the wrong
-stage or task (checked first), another graph view, and weights that do not
-match the spec. Both writers carry the record, weights-only files included,
-and everything loads with `weights_only=True`.
+stage or task (checked first), another graph view, weights that do not
+match the spec, and a record that names one input two ways (K8-4 review P2-2).
+Both writers carry the record, weights-only files included, and everything
+loads with `weights_only=True`.
 
 Module: tests/unit/test_model_record.py
 """
 from __future__ import annotations
 
+import copy
 import dataclasses
+import re
 
 import pytest
 
@@ -160,6 +163,120 @@ def test_a_branch_records_its_changes_and_its_weights():
     _, resumed = _record(operation="resume", parent={**parent, "changes": changes})
     with pytest.raises(ModelRecordError, match="only a branch records changed settings"):
         resumed.validate()
+
+
+# --------------------------------------------------------------------------- one input, one claim
+
+
+def _claims_payload(*, fixture=True, cases=("t" * 64, "v" * 64)):
+    """A resumed child's record as `train_model` writes it, naming every input
+    it names twice the same way: a gene child trained on a task fixture
+    (`fixture`), whose task cases are the fixture's, or a disease child, whose
+    task cases are the workspace's samples. The view's rule is stored as the
+    view keeps it (`dict(view.rule)`: exclusions sorted), the spec's as the
+    operator wrote it."""
+    spec = finetune_spec_from_parent(_base_spec(), "gene" if fixture else "disease")
+    train, val = cases
+    data_roles = {
+        "kg": "k" * 64,
+        "graph_view": {"digest": VIEW["digest"], "rule": {
+            **spec.to_dict()["graph_view"],
+            "exclude_relations": sorted(spec.graph_view.exclude_relations)}},
+        "split": {"rule": "facts/80-10-10", "seed": 0, "view_digest": VIEW["digest"],
+                  "digest": "s" * 64, "edges": {"train": 8, "val": 1, "test": 1}},
+        "task_data": {"train": {"samples": train, "binding": {}},
+                      "val": {"samples": val, "binding": {}}},
+    }
+    digests = {"kg": "k" * 64, "node_features": "n" * 64, "edge_indices": "i" * 64,
+               "num_nodes": "u" * 64, "split_manifest": "m" * 64, "train_samples": train,
+               "val_samples": val, "resume_checkpoint": "p" * 64}
+    if fixture:
+        data_roles["task_fixture"] = {"record": "f" * 64, "label": "fixture", "rule": "r",
+                                      "seed": 0}
+        digests.update(train_samples="x" * 64, val_samples="y" * 64, task_fixture="f" * 64,
+                       task_train_samples=train, task_val_samples=val)
+    _, record = _record(spec, operation="resume", parent={"sha256": "p" * 64, "run": "run-b"},
+                        data_roles=data_roles)
+    return {"record_version": MODEL_RECORD_VERSION, **record.to_payload(),
+            "training_input_digests": digests}
+
+
+def _at(payload, name):
+    value = payload
+    for key in name.split("."):
+        value = value[key]
+    return value
+
+
+def _with_changed(payload, name):
+    """`payload` with only the claim at `name` changed: a digest to another
+    digest, a view rule to one that keeps every component."""
+    changed = copy.deepcopy(payload)
+    *parents, leaf = name.split(".")
+    part = _at(changed, ".".join(parents))
+    value = part[leaf]
+    part[leaf] = ({**value, "largest_component": not value["largest_component"]}
+                  if isinstance(value, dict) else "0" * 64)
+    return changed
+
+
+def _named(payload, name):
+    value = _at(payload, name)
+    return f"{name} {value[:12]}..." if isinstance(value, str) else name
+
+
+@pytest.mark.parametrize("first, second, fixture", [
+    ("data_roles.kg", "training_input_digests.kg", True),
+    ("graph_view.digest", "data_roles.graph_view.digest", True),
+    ("graph_view.digest", "data_roles.split.view_digest", True),
+    ("data_roles.graph_view.rule", "model_spec.graph_view", True),
+    ("data_roles.task_data.train.samples", "training_input_digests.task_train_samples", True),
+    ("data_roles.task_data.val.samples", "training_input_digests.task_val_samples", True),
+    ("data_roles.task_data.train.samples", "training_input_digests.train_samples", False),
+    ("data_roles.task_data.val.samples", "training_input_digests.val_samples", False),
+    ("data_roles.task_fixture.record", "training_input_digests.task_fixture", True),
+    ("parent.sha256", "training_input_digests.resume_checkpoint", True),
+])
+def test_a_record_naming_one_input_two_ways_is_refused_in_either_direction(
+        first, second, fixture):
+    """K8-4 review P2-2: serving trusts the training record and the top-level
+    view, training trusts `data_roles`, so a record whose two claims about one
+    input disagree passed whichever check its entry made. The one reader now
+    refuses it, whichever of the two claims was changed, naming both."""
+    payload = _claims_payload(fixture=fixture)
+    read_model_record(payload)
+    for name in (first, second):
+        changed = _with_changed(payload, name)
+        with pytest.raises(ModelRecordError, match="the record contradicts itself") as refused:
+            read_model_record(changed)
+        phrase = f"{_named(changed, first)} differs from {_named(changed, second)}"
+        assert re.search(r"(?:: |; )" + re.escape(phrase), str(refused.value)), str(refused.value)
+
+
+def test_a_record_as_the_trainer_writes_it_reads_with_its_exclusions_in_two_orders():
+    """The view keeps its exclusions sorted (`build_graph_view`), the spec keeps
+    the operator's order, and `train_model` records each from its own source:
+    the two copies of one rule are compared in the view's form, so a valid
+    model whose exclusions were not written sorted is not refused."""
+    payload = _claims_payload()
+    payload["model_spec"]["graph_view"]["exclude_relations"] = [
+        "gene|causes|disease", "disease|onset|phenotype"]
+    payload["data_roles"]["graph_view"]["rule"]["exclude_relations"] = [
+        "disease|onset|phenotype", "gene|causes|disease"]
+    record = read_model_record(payload)
+    assert record.model_spec.graph_view.exclude_relations == (
+        "gene|causes|disease", "disease|onset|phenotype")
+
+
+def test_two_records_on_one_graph_with_different_training_cases_both_read():
+    """The rule concerns one file's own claims: two children of one graph
+    trained on different cases each name their inputs one way, so both read
+    (and keep training, measuring and comparing)."""
+    for fixture in (True, False):
+        one = read_model_record(_claims_payload(fixture=fixture))
+        other = read_model_record(_claims_payload(fixture=fixture, cases=("a" * 64, "b" * 64)))
+        assert one.data_roles["kg"] == other.data_roles["kg"]
+        assert one.data_roles["task_data"] != other.data_roles["task_data"]
 
 
 def _trainer(tmp_path, model):

@@ -82,7 +82,7 @@ class CheckpointChanged(ValueError):
 
 def read_checkpoint(
     path: str | Path, *, map_location: Any, weights_only: bool,
-    expected_sha256: Optional[str] = None,
+    expected_sha256: Optional[str] = None, within: Optional[Path] = None,
 ) -> CheckpointRead:
     """Load a checkpoint from one read of `path`, with that read's identity.
 
@@ -95,8 +95,15 @@ def read_checkpoint(
     and are never unpickled; a missing file raises the same, since the bytes
     expected are no longer there. As `read_split_manifest` and `read_report` do.
 
+    **`within` bounds the read to a directory** (resolved; automatic
+    selection's workspace): the one read refuses a file its open did not find
+    inside it (`read_once(within=)`, judged on the open descriptor), before
+    any byte is read, so before the expected digest and before `torch.load`.
+
     Raises:
         FileNotFoundError: if there is no file at `path` and nothing is expected.
+        ReadOutside: if `within` is given and the file opened does not lie
+            inside it, or cannot be placed; unchanged, like `CheckpointChanged`.
         CheckpointChanged: if `expected_sha256` is given and the read is not it.
         Whatever `torch.load` raises for these bytes and options, unchanged.
     """
@@ -105,7 +112,7 @@ def read_checkpoint(
     from src.utils.fingerprint import read_once
 
     try:
-        read = read_once(path)
+        read = read_once(path, within=within)
     except FileNotFoundError:
         if expected_sha256 is None:
             raise

@@ -289,7 +289,7 @@ def _demo_workspace(root):
 STUB_CHECKPOINT_SHA256 = "c" * 64
 
 
-def _built(self, checkpoint_path, device, *, expected_sha256=None):
+def _built(self, checkpoint_path, device, *, expected_sha256=None, within=None):
     """Stands for a disease task model built from one checkpoint read: it keeps
     the read's identity, as `_load_model_from_checkpoint` does, so the served
     identity names the verified checkpoint. A module with parameters, so the
@@ -337,7 +337,7 @@ def test_serving_refuses_before_the_checkpoint_is_read(tmp_path, monkeypatch, ca
     workspace = _demo_workspace(tmp_path / "ws")
     tamper(workspace)
 
-    def forbidden(self, checkpoint_path, device, *, expected_sha256=None):
+    def forbidden(self, checkpoint_path, device, *, expected_sha256=None, within=None):
         raise AssertionError("the checkpoint was read over a refused workspace")
 
     with pytest.raises(DatasetRecordRefused, match=fragment) as refused:

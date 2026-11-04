@@ -195,21 +195,26 @@ class TestTheClinicalPathIsAGraphConsumer:
         The stand-in keeps a checkpoint read's identity, as the real build does
         (contract M3c), so a pipeline built over it states a verified checkpoint,
         and returns a module with parameters, from which the pipeline reads the
-        device in effect. Callers construct with
-        `device="cpu"` (or set `SHEPHERD_DEVICE=cpu` for the API): with no device
-        named a checkpoint asks for CUDA, and on a host without it that refusal
-        comes before the workspace these tests are about.
+        device in effect, carrying a disease child's spec, as the bundle it
+        stands for does (a reload reports the spec's encoder kind). Callers
+        construct with `device="cpu"` (or set `SHEPHERD_DEVICE=cpu` for the
+        API): with no device named a checkpoint asks for CUDA, and on a host
+        without it that refusal comes before the workspace these tests are
+        about.
         """
         import torch
 
         import src.inference.pipeline as pipeline
+        from src.models.bundle import reference_spec
         from src.utils.fingerprint import ReadIdentity
 
-        def _model_built(self, checkpoint_path, device, *, expected_sha256=None):
+        def _model_built(self, checkpoint_path, device, *, expected_sha256=None, within=None):
             reached.append("model")
             self._checkpoint_identity = ReadIdentity(
                 path=Path(checkpoint_path), sha256="c" * 64)
-            return torch.nn.Linear(1, 1)
+            model = torch.nn.Linear(1, 1)
+            model.spec = reference_spec("finetune", "disease")
+            return model
 
         monkeypatch.setattr(
             pipeline.DiagnosisPipeline, "_load_model_from_checkpoint", _model_built,

@@ -1,6 +1,8 @@
 """The disease finetune: binding, batches, the joint step and validation, and
 `scripts/train_model.py --stage finetune` from a base (README A6, A7, A10,
-C3, F7, U6, U9, G4; contract §9.2; regressions 1, 2, 7, 8).
+C3, F7, U6, U9, G4; contract §9.2; regressions 1, 2, 7, 8). A parent whose
+record names the graph two ways is refused before a run is written (K8-4
+review P2-2).
 
 Module: tests/unit/test_disease_finetune.py
 """
@@ -226,3 +228,62 @@ def test_a_paused_finetune_resumes_with_its_lineage(workspace, tmp_path):
     assert last["progress"]["completed_epochs"] == 2
     view = json.loads((tmp_path / "b" / "graph_view.json").read_text())
     assert view["digest"] == record.graph_view.digest
+
+
+def _contradicting(source, target, part):
+    """`source` written to `target` with only `part`'s ``kg`` claim changed,
+    and the claim it no longer matches."""
+    payload = torch.load(source, map_location="cpu", weights_only=True)
+    other = "training_input_digests" if part == "data_roles" else "data_roles"
+    kept = payload[other]["kg"]
+    assert payload[part]["kg"] == kept
+    payload[part]["kg"] = "0" * 64
+    torch.save(payload, target)
+    return kept
+
+
+def test_a_base_whose_training_record_kg_contradicts_its_data_roles_is_refused_before_the_child_run_is_written(
+        workspace, tmp_path):
+    """The reviewer's K8-4 P2-2, training counterexample (probe.py,
+    ``finetune_conflicting_kg``): a real base whose ``data_roles.kg`` is right
+    and whose ``training_input_digests.kg`` is another digest. The finetune
+    compares only ``data_roles.kg`` with the workspace, so before the fix a
+    child trained and recorded the contradicting parent. Now the shared record
+    reader refuses the parent before the child's run directory is written."""
+    import train_model
+    from src.utils.run_plan import RunPlanRefused
+
+    base = _base_run(workspace, tmp_path / "base")
+    conflicting = tmp_path / "conflicting.pt"
+    kept = _contradicting(base, conflicting, "training_input_digests")
+    config, explicit = _finetune_config(workspace, tmp_path / "child", conflicting, num_epochs=1)
+    with pytest.raises(RunPlanRefused, match="the record contradicts itself") as refused:
+        train_model.train(config, explicit)
+    assert (f"data_roles.kg {kept[:12]}... differs from training_input_digests.kg "
+            f"{'0' * 12}...") in str(refused.value)
+    assert not (tmp_path / "child").exists()
+
+
+def test_a_resume_parent_whose_data_roles_kg_contradicts_its_training_record_is_refused_before_the_run_is_written(
+        workspace, tmp_path):
+    """The other direction, on the resume entry: a paused child whose
+    ``data_roles.kg`` is another digest. Resume compares the training record
+    with the workspace and never read ``data_roles.kg``, so before the fix the
+    run went on from it. Now it is refused before the new run is written."""
+    import train_model
+    from src.utils.run_plan import RunPlanRefused
+
+    parent = _base_run(workspace, tmp_path / "base")
+    config, explicit = _finetune_config(workspace, tmp_path / "a", parent, num_epochs=2,
+                                        pause_after_epoch=1)
+    train_model.train(config, explicit)
+    paused = tmp_path / "a" / "checkpoints" / "last.pt"
+    kept = _contradicting(paused, paused, "data_roles")
+    resumed = train_model.TrainConfig(data_dir=str(workspace), run_dir=str(tmp_path / "b"),
+                                      learning_stage="finetune", task="disease",
+                                      resume_from=str(paused), device="cpu")
+    with pytest.raises(RunPlanRefused, match="the record contradicts itself") as refused:
+        train_model.train(resumed, {"learning_stage", "task", "resume_from", "device"})
+    assert (f"data_roles.kg {'0' * 12}... differs from training_input_digests.kg "
+            f"{kept[:12]}...") in str(refused.value)
+    assert not (tmp_path / "b").exists()

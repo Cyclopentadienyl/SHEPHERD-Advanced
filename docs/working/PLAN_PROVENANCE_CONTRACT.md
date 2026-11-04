@@ -4054,6 +4054,21 @@ These come in addition to `record_version`, `producer`, `environment`, `training
 **`progress.stage` keeps its meaning,** the M3a schedule stage (`original` / `extension`). The new
 learning stage never reuses that name.
 
+**A record that names one input twice names it the same way** (K8-4 review P2-2). The data roles
+and `training_input_digests` both name the KG, a finetune's task cases (the task fixture's cases
+when the run read one, the workspace's samples otherwise) and its task fixture; `parent` and
+`training_input_digests.resume_checkpoint` both name a resumed or extended run's parent; the
+graph view's digest stands at the top level, in the data roles and in the split record, and its
+rule in the data roles and in `model_spec.graph_view`. Entries trust different copies (serving
+the training record and the top-level view, training the data roles), so `read_model_record`
+compares each pair where both are present, the rule in the view's form (`exclude_relations`
+sorted, as `build_graph_view` stores it), and refuses a record whose two claims disagree,
+whichever claim is wrong: "the record contradicts itself: …". Every entry reads through it, so
+the reload publishes nothing and a training run writes no run directory. The check concerns one
+file's own claims, never whether two models were trained on the same data: two children of one
+graph trained on different cases each agree with themselves and keep training, measuring and
+comparing.
+
 ### 9.2 The operations and their parent checks
 
 | Operation | Parent | Learning settings | Data | Architecture | Optimizer state |

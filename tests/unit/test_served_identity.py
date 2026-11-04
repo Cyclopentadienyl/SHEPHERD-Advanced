@@ -788,7 +788,7 @@ def test_a_diagnose_response_without_the_identity_is_refused():
 
     from src.api.routes.diagnose import DiagnoseResponse
 
-    response = {"result_kind": "disease_task/v1", "result_schema_version": 2,
+    response = {"result_kind": "disease_task/v1", "result_schema_version": 3,
                 "session_id": "s", "patient_id": "p", "timestamp": "t", "candidates": [],
                 "inference_time_ms": 0.0, "phenotype_input": None,
                 "tie_policy": "score-desc-then-view-id-asc/v1"}
@@ -803,6 +803,53 @@ def test_a_diagnose_response_without_the_identity_is_refused():
         with pytest.raises(ValidationError):
             DiagnoseResponse.model_validate({**response, "result_kind": retired,
                                              "served_identity": None})
+
+
+def test_a_response_of_the_format_before_k8_4_is_refused_naming_its_version_and_the_values_it_still_carries(  # noqa: E501
+    app, monkeypatch, disease_pipeline
+):
+    """K8-4 left the shortest-path term of the served identity with its state
+    alone (`build_id` and `max_hops` are gone), a change of the response's
+    shape; its format version is 3 since K8-4r (review P3-2). A strict reader
+    of the current format given a body of the format before, the same answer
+    with version 2 and the two null keys, reports the structural difference:
+    the version the body names and the two keys this format does not have.
+    Catches a shape change with the version left as it was (both formats then
+    say 2, and only the keys tell them apart), a mirror or an example whose
+    version drifts from the core constant, and a route that writes a copy of
+    its own."""
+    from pydantic import ValidationError
+
+    from src.api.routes import diagnose
+    from src.core.types import RESULT_SCHEMA_VERSION
+
+    monkeypatch.setattr(app.app_state, "pipeline", disease_pipeline)
+    response = _client(app).post("/api/v1/diagnose", json={"phenotypes": [SEIZURE, DELAY]})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["result_schema_version"] == RESULT_SCHEMA_VERSION
+    assert body["served_identity"]["shortest_paths"] == {"state": "absent"}
+
+    before = json.loads(json.dumps(body))
+    before["result_schema_version"] = 2
+    before["served_identity"]["shortest_paths"].update(build_id=None, max_hops=None)
+    with pytest.raises(ValidationError) as refusal:
+        diagnose.DiagnoseResponse.model_validate(before)
+    assert {(error["loc"], error["type"]) for error in refusal.value.errors()} == {
+        (("disease_task/v1", "result_schema_version"), "literal_error"),
+        (("disease_task/v1", "served_identity", "shortest_paths", "build_id"),
+         "extra_forbidden"),
+        (("disease_task/v1", "served_identity", "shortest_paths", "max_hops"),
+         "extra_forbidden"),
+    }
+
+    # One version: the mirror's and the example's are the core constant's.
+    assert typing.get_args(
+        diagnose._Response.model_fields["result_schema_version"].annotation
+    ) == (RESULT_SCHEMA_VERSION,)
+    example = diagnose.DiagnoseResponse.model_config["json_schema_extra"]["example"]
+    assert example["result_schema_version"] == RESULT_SCHEMA_VERSION
+    assert RESULT_SCHEMA_VERSION == 3
 
 
 # ---------------------------------------------------------------------------

@@ -135,7 +135,7 @@ def _sample_result():
     """A `disease_task/v1` result of a disease task model."""
     return {
         "result_kind": "disease_task/v1",
-        "result_schema_version": 2,
+        "result_schema_version": 3,
         "session_id": "sess_abc",
         "patient_id": "pt_01",
         "timestamp": "2026-07-07T16:00:00Z",
@@ -168,6 +168,29 @@ def test_report_includes_meta_and_all_candidates_with_cleaned_ids():
     assert "Dravet syndrome" in md and "Other disease" in md  # every candidate
     assert "Full explanation" in md
     assert "`MONDO:0011073`" in md and "mondo:MONDO" not in md  # cleaned id
+
+
+def test_the_report_names_the_format_its_response_says_it_has():
+    """The report is the kept copy of a response, so it names the response's
+    format version (K8-4r, review P3-2: K8-4 changed the served identity's
+    shape, and the version now marks it). The value is read as given, by no
+    version rule: a response of the format before still reads, and says so. A
+    response that names no format, or names it with something that is not a
+    number, gets no format line. Catches a report that cannot tell which shape
+    the response it keeps had."""
+    line = "- **Result format**: result_schema_version {}"
+    md = dp._build_results_report_md(_sample_result())
+    assert line.format(3) in md
+    assert md.index("- **Result kind**") < md.index(line.format(3)) < md.index(
+        "- **Candidates**")
+    assert line.format(2) in dp._build_results_report_md(
+        {**_sample_result(), "result_schema_version": 2})
+    for unnamed in (None, True, "3"):
+        assert "Result format" not in dp._build_results_report_md(
+            {**_sample_result(), "result_schema_version": unnamed}), unnamed
+    result = _sample_result()
+    del result["result_schema_version"]
+    assert "Result format" not in dp._build_results_report_md(result)
 
 
 def test_the_score_is_named_for_what_it_is_and_the_csv_names_the_kinds_fields():
@@ -1651,7 +1674,7 @@ def _task_card(mode, cohorts=None, *, operator=True):
 def _gene_result():
     """A `gene_task/v1` result as the API sends it (`GeneTaskResponse`)."""
     return {
-        "result_kind": "gene_task/v1", "result_schema_version": 2, "session_id": "sess_g",
+        "result_kind": "gene_task/v1", "result_schema_version": 3, "session_id": "sess_g",
         "patient_id": "pt_g", "timestamp": "2026-07-07T16:00:00Z",
         "served_identity": _task_identity("gene_task"),
         "phenotype_input": {"received": 1, "unknown": [], "repeats_removed": 0,
@@ -1673,7 +1696,7 @@ def _patients_result():
     """A `patients_like_me/v1` result (`PatientsLikeMeResponse`): a patient
     with a recorded diagnosis and causal gene, and one with neither."""
     return {
-        "result_kind": "patients_like_me/v1", "result_schema_version": 2, "session_id": "sess_p",
+        "result_kind": "patients_like_me/v1", "result_schema_version": 3, "session_id": "sess_p",
         "patient_id": "pt_p", "timestamp": "2026-07-07T16:00:00Z",
         "served_identity": _task_identity("patients_like_me"),
         "phenotype_input": {"received": 1, "unknown": [], "repeats_removed": 0,

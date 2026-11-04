@@ -48,9 +48,11 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, BinaryIO, Callable, Dict, Iterable, List, Mapping, Optional, Union
+from typing import Any, BinaryIO, Callable, Dict, Iterable, List, Mapping, Optional, Tuple, Union
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +86,100 @@ class FileRead:
         return ReadIdentity(path=self.path, sha256=self.sha256)
 
 
-def read_once(path: Union[str, Path]) -> FileRead:
+def lies_within(path: Path, within: Path) -> bool:
+    """Whether `path` lies inside the directory `within`, both already resolved:
+    the one workspace boundary rule, for a name (`checkpoint_paths`) and for an
+    opened file (`read_once(within=)`) alike. `within` itself is not inside."""
+    return path != within and within in path.parents
+
+
+class ReadOutside(ValueError):
+    """A bounded read (`read_once(within=)`) opened a file that does not lie
+    inside `within`, or one it cannot place; raised before a byte is read.
+
+    It carries the facts: ``path`` (the name opened), ``within``, ``opened``
+    (where the open descriptor says the file lies, or None) and ``why`` (set
+    when ``opened`` is None). Its message states only them; each caller words
+    its own refusal."""
+
+    def __init__(self, path: Union[str, Path], within: Path, opened: Optional[Path],
+                 why: Optional[str] = None) -> None:
+        self.path = Path(path)
+        self.within = Path(within)
+        self.opened = opened
+        self.why = why
+        if opened is not None:
+            message = f"{self.path} was opened at {opened}, outside {self.within}."
+        else:
+            message = f"{self.path} cannot be placed inside {self.within}: {why}."
+        super().__init__(message)
+
+
+def _opened_path(fd: int) -> Tuple[Optional[Path], Optional[str]]:
+    """Where the file open on `fd` lies, asked of the descriptor itself: no
+    name is looked up, so a name swapped before or after the open cannot
+    answer for the file. ``(path, None)``, or ``(None, why)`` when there is
+    no location.
+
+    The location is taken first and the link count after it, so a file whose
+    last name went away before or during the query is refused, never placed
+    by the name it used to have. An `OSError` from the query (no `/proc`, say)
+    reaches the caller, which refuses."""
+    if sys.platform.startswith("linux"):
+        opened: Optional[Path] = Path(os.readlink(f"/proc/self/fd/{fd}"))
+    elif sys.platform == "win32":  # pragma: no cover - not exercised on Linux
+        import ctypes
+        import msvcrt
+        from ctypes import wintypes
+
+        final_path = ctypes.WinDLL("kernel32", use_last_error=True).GetFinalPathNameByHandleW
+        final_path.argtypes = (wintypes.HANDLE, wintypes.LPWSTR, wintypes.DWORD,
+                               wintypes.DWORD)
+        final_path.restype = wintypes.DWORD
+        handle, size = msvcrt.get_osfhandle(fd), 1024
+        while True:
+            buffer = ctypes.create_unicode_buffer(size)
+            # FILE_NAME_NORMALIZED | VOLUME_NAME_DOS
+            needed = final_path(handle, buffer, size, 0)
+            if needed == 0:
+                return None, "the descriptor query failed"
+            if needed < size:
+                break
+            size = needed + 1
+        text = buffer.value
+        # As `ntpath.realpath` does, so the result compares with a resolved path.
+        if text.startswith("\\\\?\\UNC\\"):
+            text = "\\\\" + text[len("\\\\?\\UNC\\"):]
+        elif text.startswith("\\\\?\\"):
+            text = text[len("\\\\?\\"):]
+        opened = Path(text)
+    elif sys.platform == "darwin":  # pragma: no cover - not exercised on Linux
+        import fcntl
+
+        raw = fcntl.fcntl(fd, fcntl.F_GETPATH, bytes(1024))
+        opened = Path(os.fsdecode(raw.split(b"\0", 1)[0]))
+    else:  # pragma: no cover - not exercised on Linux
+        return None, "this platform gives no location for an open file"
+    if os.fstat(fd).st_nlink == 0:
+        return None, "the file opened has no name left"
+    return opened, None
+
+
+def _refuse_outside(handle: Any, path: Path, within: Path) -> None:
+    """Raise `ReadOutside` unless the file open on `handle` lies inside
+    `within` (`lies_within`), by its descriptor's location (`_opened_path`).
+    No location, the query failing included, is a refusal."""
+    try:
+        opened, why = _opened_path(handle.fileno())
+    except OSError as exc:
+        opened, why = None, f"the descriptor query failed ({type(exc).__name__})"
+    if opened is None:
+        raise ReadOutside(path, within, None, why)
+    if not lies_within(opened, within):
+        raise ReadOutside(path, within, opened)
+
+
+def read_once(path: Union[str, Path], *, within: Optional[Path] = None) -> FileRead:
     """Read a file once and return its bytes with their SHA-256.
 
     **One open, one full read, and the digest is taken over that same bytes
@@ -97,12 +192,27 @@ def read_once(path: Union[str, Path]) -> FileRead:
     **A missing file raises** (`FileNotFoundError`), unlike `file_sha256`. A file
     deleted between two reads is then refused instead of recorded as absent.
 
+    **`within` bounds the read to a directory** (already resolved): the file
+    this one open opened must lie inside it, or `ReadOutside` is raised before a
+    byte is read. Where it lies is asked of the open descriptor, never of the
+    name (`_opened_path`: `/proc/self/fd` on Linux, `GetFinalPathNameByHandleW`
+    on Windows, `F_GETPATH` on macOS), because a name can point elsewhere at
+    every lookup; a check of the name before or after the open leaves the open
+    itself to land outside. So a file opened outside is refused whatever its
+    name says afterwards, and a file opened inside is read even if its name
+    moves out afterwards: its bytes are inside. Where no location can be had
+    (another platform, no `/proc`, a file with no name left), the bounded read
+    refuses. Without `within` nothing is checked, as before; only automatic
+    selection passes it.
+
     No retry, no fallback. The read is alone on its line: the readers' release
     check (contract M2.1, S2) finds the raw buffer by the allocation that line
     makes, so nothing a reader keeps may be made on it.
     """
     path = Path(path)
     with path.open("rb") as handle:
+        if within is not None:
+            _refuse_outside(handle, path, within)
         data = handle.read()
     sha256 = hashlib.sha256(data).hexdigest()
     return FileRead(path=path, data=data, sha256=sha256)

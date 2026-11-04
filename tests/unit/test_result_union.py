@@ -95,7 +95,7 @@ def test_the_kind_is_read_off_what_produced_the_result():
         result_label("served_mixture/v1")
 
     disease = _result([_disease(1, -0.6)])
-    assert (disease.result_kind, disease.result_schema_version) == ("disease_task/v1", 2)
+    assert (disease.result_kind, disease.result_schema_version) == ("disease_task/v1", 3)
     assert disease.tie_policy == "score-desc-then-view-id-asc/v1"
     assert not hasattr(disease, "eta") and not hasattr(disease, "candidates_reached")
 

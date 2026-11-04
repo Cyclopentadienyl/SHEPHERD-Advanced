@@ -55,6 +55,7 @@ from src.kg.artifacts import (
 )
 from src.kg.storage.file_storage import read_graph_artifacts
 from src.utils.checkpoint_io import CheckpointChanged, read_checkpoint
+from src.utils.fingerprint import ReadOutside
 from src.kg.phenotype_normalisation import (
     PHENOTYPE_NORMALISATION_VERSION,
     normalise_phenotypes,
@@ -446,6 +447,7 @@ class DiagnosisPipeline:
         config: Optional[PipelineConfig] = None,
         device: Optional[str] = None,
         expected_checkpoint_sha256: Optional[str] = None,
+        checkpoint_within: Optional[Path] = None,
     ):
         """
         Initialize the diagnosis pipeline: the workspace verified, the model
@@ -478,6 +480,12 @@ class DiagnosisPipeline:
                 bytes are parsed (`read_checkpoint(expected_sha256=)`): other
                 bytes, a checkpoint or not, or no file raise `CheckpointChanged`
                 unchanged, and nothing about them is built. None reads unbound.
+            checkpoint_within: The resolved directory the checkpoint file must
+                lie inside (an automatically selected checkpoint: the
+                workspace). The one checkpoint read refuses a file its open
+                finds outside it, before any byte is read
+                (`read_checkpoint(within=)`), and `ReadOutside` is raised
+                unchanged. None reads wherever the path leads.
         """
         from src.kg.graph import GraphRead
 
@@ -534,6 +542,7 @@ class DiagnosisPipeline:
             data_dir=data_dir,
             device=device,
             expected_checkpoint_sha256=expected_checkpoint_sha256,
+            checkpoint_within=checkpoint_within,
         )
 
         logger.info(
@@ -582,6 +591,7 @@ class DiagnosisPipeline:
         data_dir: str,
         device: Optional[str],
         expected_checkpoint_sha256: Optional[str] = None,
+        checkpoint_within: Optional[Path] = None,
     ) -> None:
         """
         Verify the workspace, build the model and precompute what it scores with.
@@ -650,7 +660,8 @@ class DiagnosisPipeline:
         # Step 2: Load the model from its checkpoint. A checkpoint that does
         # not load raises out of here (`_load_model_from_checkpoint`).
         self.model = self._load_model_from_checkpoint(
-            checkpoint_path, device, expected_sha256=expected_checkpoint_sha256
+            checkpoint_path, device, expected_sha256=expected_checkpoint_sha256,
+            within=checkpoint_within,
         )
 
         # Step 3: the model bundle's full-view vectors
@@ -684,6 +695,7 @@ class DiagnosisPipeline:
         device: Optional[str],
         *,
         expected_sha256: Optional[str] = None,
+        within: Optional[Path] = None,
     ) -> Any:
         """
         Read the training checkpoint once and build its model bundle
@@ -694,7 +706,15 @@ class DiagnosisPipeline:
         before torch parses the bytes, and the reader decides when the file is
         gone: there is no existence check first.
 
+        With `within` (an automatically selected checkpoint's workspace) the
+        one read refuses a file its open finds outside that directory, judged
+        on the open descriptor, before any byte is read and so before the
+        expected digest.
+
         Raises:
+            ReadOutside: `within` is given and the file opened does not lie
+                inside it, or cannot be placed; raised unchanged, before any
+                byte is read, so the caller can say nothing was read from it.
             CheckpointChanged: `expected_sha256` is given and the read has other
                 bytes, or there is no file; raised unchanged, before anything is
                 parsed, so the caller can say the file is not the model shown.
@@ -739,12 +759,19 @@ class DiagnosisPipeline:
         # rewritten, torn, of another graph or removed since it was shown is
         # `CheckpointChanged`, never parsed, never built and never called
         # unreadable, so it is not reworded below.
+        #
+        # **An automatically selected file is read only inside the workspace**
+        # (`within`). The `resolve()` above is a lookup of the name and decides
+        # nothing: the read itself asks the open descriptor where the file
+        # lies, and refuses one outside before any byte (`ReadOutside`), so a
+        # name swapped out of the workspace after the selection is never read,
+        # built or published. Before the expected digest, on the same read.
         try:
             checkpoint_read = read_checkpoint(
                 ckpt_path.resolve(), map_location="cpu", weights_only=True,
-                expected_sha256=expected_sha256,
+                expected_sha256=expected_sha256, within=within,
             )
-        except CheckpointChanged:
+        except (CheckpointChanged, ReadOutside):
             raise
         except Exception as exc:  # noqa: BLE001 — any unreadable file is the same refusal
             raise PipelineBuildError(
@@ -1843,6 +1870,7 @@ def build_served_pipeline(
     data_dir: Optional[str],
     device: Optional[str] = None,
     expected_checkpoint_sha256: Optional[str] = None,
+    checkpoint_within: Optional[Path] = None,
 ) -> DiagnosisPipeline:
     """Build a pipeline as the service builds it: settle the device, read the
     graph once, and create the pipeline over it with the default configuration.
@@ -1884,6 +1912,7 @@ def build_served_pipeline(
         data_dir=data_dir,
         device=device,
         expected_checkpoint_sha256=expected_checkpoint_sha256,
+        checkpoint_within=checkpoint_within,
     )
 
 
@@ -1895,6 +1924,7 @@ def create_diagnosis_pipeline(
     config: Optional[PipelineConfig] = None,
     device: Optional[str] = None,
     expected_checkpoint_sha256: Optional[str] = None,
+    checkpoint_within: Optional[Path] = None,
 ) -> DiagnosisPipeline:
     """
     Factory function to create a diagnosis pipeline: a trained model read from
@@ -1910,6 +1940,8 @@ def create_diagnosis_pipeline(
         device: Device for the model
         expected_checkpoint_sha256: The SHA-256 the checkpoint read must have
             (`DiagnosisPipeline`)
+        checkpoint_within: The resolved directory the checkpoint file must lie
+            inside (`DiagnosisPipeline`); None for no bound
 
     Returns:
         Configured DiagnosisPipeline instance
@@ -1921,4 +1953,5 @@ def create_diagnosis_pipeline(
         config=config,
         device=device,
         expected_checkpoint_sha256=expected_checkpoint_sha256,
+        checkpoint_within=checkpoint_within,
     )

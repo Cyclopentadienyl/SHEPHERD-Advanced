@@ -124,6 +124,23 @@ def test_a_module_imported_during_the_hook_is_not_left_hooked(monkeypatch, tmp_p
     assert seen == [named]
 
 
+def test_a_keyword_reaches_the_wrapped_read(monkeypatch, tmp_path, two_files):
+    """A bounded read (`read_once(within=)`, automatic selection's) goes through the
+    hook with its keyword: the bound still decides, and the hook still fires."""
+    from tests.fixtures.replacement import hook_read_once
+
+    named, target = two_files
+    seen = []
+    hook_read_once(monkeypatch, on_entry=seen.append)
+
+    read = fingerprint.read_once(named, within=tmp_path.resolve())
+    with pytest.raises(fingerprint.ReadOutside):
+        fingerprint.read_once(named, within=(tmp_path / "elsewhere").resolve())
+
+    assert read.data == b"named file"
+    assert seen == [named, named]
+
+
 def test_an_unknown_way_is_refused(monkeypatch, two_files):
     named, target = two_files
     with pytest.raises(ValueError, match="how must be one of"):

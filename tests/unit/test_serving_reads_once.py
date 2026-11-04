@@ -20,7 +20,11 @@ acceptance shown here:
   identity given apart;
 - an external `kg.json` that matches the manifest decides startup; one that
   does not is refused; a refused reload keeps what is serving;
-- the model is built from the final checkpoint read, never from a selection.
+- the model is built from the final checkpoint read, never from a selection;
+- a reload reports the architecture the loaded spec names, for a task or a
+  path alike, wherever the file is filed (K8-4 review P3-1);
+- a checkpoint whose record names its graph two ways is refused and what is
+  serving stays (K8-4 review P2-2).
 
 Every build that reaches a model serves the session's trained disease child
 (`child`; `child_copy` where a test changes a file), K8-2a: a checkpoint without
@@ -454,6 +458,131 @@ def test_the_model_is_built_from_the_final_read_not_from_the_selection(
     assert result.status.served_identity.checkpoint.sha256 == replacement
     assert "replaced after it was scored" in result.selection_reason
     assert f"loaded sha256 {replacement}" in result.selection_reason
+
+
+def test_an_auto_selected_file_swapped_for_a_link_out_of_the_workspace_is_never_read_or_published(
+    api, child_copy, tmp_path, monkeypatch
+):
+    """The reviewer's K8-4 P2-1 (probe.py, "swap after selection"): a task's
+    selection chooses the workspace's disease child, and between the selection
+    and the build's checkpoint read the chosen ``last.pt`` is replaced by a link
+    to another child outside the workspace. Before the fix the build read the
+    outside file and the reload served its SHA-256. Now the build's one read is
+    bound to the workspace by the file it opened: the reload is refused, not one
+    read of the outside file returns, and the model published before (by the
+    same selection, the positive control) goes on serving."""
+    from src.api.routes.pipeline import PipelineReloadRequest, run_reload
+    from tests.fixtures.replacement import hook_read_once
+
+    data_dir, checkpoint = child_copy
+    run = data_dir / "runs" / "gatv2" / "20261015-000000_run_aaaaaa"
+    selected = run / "checkpoints" / "last.pt"
+    selected.parent.mkdir(parents=True)
+    shutil.copyfile(checkpoint, selected)
+    (tmp_path / "outside").mkdir()
+    outside = _other_checkpoint(checkpoint, tmp_path / "outside" / "b.pt")
+    request = PipelineReloadRequest(data_dir=str(data_dir), task="disease")
+
+    first = run_reload(request)
+    assert first.success, first.message
+    prior = api.app_state.pipeline
+    assert prior.served_checkpoint_read().sha256 == _sha(checkpoint)
+
+    real_build, swaps = api.build_pipeline, []
+
+    def swap_then_build(**kwargs):
+        assert kwargs["checkpoint_path"] == str(selected)
+        swaps.append(kwargs["checkpoint_path"])
+        selected.unlink()
+        selected.symlink_to(outside)
+        return real_build(**kwargs)
+
+    monkeypatch.setattr(api, "build_pipeline", swap_then_build)
+    returned = []
+    hook_read_once(monkeypatch, on_return=lambda path: returned.append(Path(path).resolve()))
+
+    result = run_reload(request)
+
+    assert swaps == [str(selected)]
+    assert result.success is False
+    assert f"{selected} was opened outside the workspace" in result.message
+    assert "nothing was read from it or published" in result.message
+    assert result.message.endswith("The previously loaded pipeline is still being served.")
+    assert api.app_state.pipeline is prior
+    assert prior.served_checkpoint_read().sha256 == _sha(checkpoint)
+    assert outside.resolve() not in returned, "the outside file was read"
+
+
+def test_a_reload_reports_the_architecture_its_loaded_spec_names_wherever_the_file_is_filed(
+    api, child_copy
+):
+    """The reviewer's K8-4 P3-1 (probe.py, ``architecture``): the trained
+    disease child, a GATv2 model, filed under ``runs/hgt/``. Before the fix an
+    automatic reload reported the directory's name (``hgt``) as the
+    architecture, and its reason read "latest run '…' (hgt)", while a reload by
+    the explicit path reported none. The response's ``architecture`` is the
+    loaded model spec's encoder kind, the same for both; the directory only
+    locates the file, so the reason names the run by its location, and the
+    model is served wherever it is filed."""
+    from src.api.routes.pipeline import PipelineReloadRequest, run_reload
+
+    data_dir, checkpoint = child_copy
+    run = "20261015-000000_review_aaaaaa"
+    filed = data_dir / "runs" / "hgt" / run / "checkpoints" / "last.pt"
+    filed.parent.mkdir(parents=True)
+    shutil.copyfile(checkpoint, filed)
+
+    auto = run_reload(PipelineReloadRequest(data_dir=str(data_dir), task="disease"))
+
+    assert auto.success, auto.message
+    assert auto.checkpoint_path == str(filed)
+    assert auto.architecture == "gatv2" == api.app_state.pipeline.model.spec.encoder.kind
+    assert f"task disease: auto: latest run 'hgt/{run}'" in auto.selection_reason
+    assert "(hgt)" not in auto.selection_reason and "(hgt)" not in auto.message
+
+    explicit = run_reload(PipelineReloadRequest(data_dir=str(data_dir),
+                                                checkpoint_path=str(filed)))
+
+    assert explicit.success, explicit.message
+    assert explicit.architecture == "gatv2" == api.app_state.pipeline.model.spec.encoder.kind
+    assert explicit.selection_reason == "explicit checkpoint_path"
+
+
+def test_a_child_whose_data_roles_kg_contradicts_its_training_record_is_refused_and_nothing_is_published(
+    api, child_copy, tmp_path
+):
+    """The reviewer's K8-4 P2-2, inference counterexample (probe.py,
+    ``disease_conflicting_kg``): the trained child with only ``data_roles.kg``
+    changed, loaded by an explicit path with its correct SHA-256. Its
+    ``training_input_digests.kg`` matches the workspace, so the graph
+    comparison passes it; before the fix the reload published it. Now the
+    shared record reader refuses a record that names the graph two ways, and
+    the model published before goes on serving."""
+    from src.api.routes.pipeline import PipelineReloadRequest, run_reload
+
+    data_dir, checkpoint = child_copy
+    first = run_reload(PipelineReloadRequest(data_dir=str(data_dir),
+                                             checkpoint_path=str(checkpoint)))
+    assert first.success, first.message
+    prior = api.app_state.pipeline
+    contents = torch.load(checkpoint, map_location="cpu", weights_only=True)
+    recorded = contents["training_input_digests"]["kg"]
+    assert contents["data_roles"]["kg"] == recorded
+    contents["data_roles"]["kg"] = "0" * 64
+    conflicting = tmp_path / "conflicting.pt"
+    torch.save(contents, conflicting)
+
+    result = run_reload(PipelineReloadRequest(
+        data_dir=str(data_dir), checkpoint_path=str(conflicting),
+        expected_checkpoint_sha256=_sha(conflicting)))
+
+    assert result.success is False
+    assert "the record contradicts itself" in result.message
+    assert (f"data_roles.kg {'0' * 12}... differs from training_input_digests.kg "
+            f"{recorded[:12]}...") in result.message
+    assert result.message.endswith("The previously loaded pipeline is still being served.")
+    assert api.app_state.pipeline is prior
+    assert prior.served_checkpoint_read().sha256 == _sha(checkpoint)
 
 
 def test_a_checkpoint_holding_arbitrary_objects_is_refused(api, workspace, tmp_path):

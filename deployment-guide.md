@@ -1332,9 +1332,12 @@ checkpoint、圖、workspace manifest、最短路徑項與 dataset record，以 
 
 ### 診斷回應是結果聯集中的一種類型（Batch 4；任務類型自 K3–K4 起）
 
-`POST /api/v1/diagnose` 回傳一種結果，由 `result_kind` 標明，`result_schema_version` 為 2
+`POST /api/v1/diagnose` 回傳一種結果，由 `result_kind` 標明，`result_schema_version` 為 3
 （`docs/working/results-review/SPEC_1_RESULTS_REVIEW.md` §2.1）。類型取決於所服務的模型；
-每種類型只帶自己的值，並拒絕其他類型的欄位：
+每種類型只帶自己的值，並拒絕其他類型的欄位。格式版本隨回應外形改變：自 K8-4r 起為 3，標明
+K8-4 的變更，即 served identity 的 `shortest_paths` 只留下 `state`（`build_id` 與 `max_hops`
+已移除）。版本 2 的嚴格用戶端會在這個欄位拒絕版本 3 的回應，並列出不同的鍵；診斷頁的
+Markdown 報告會寫明所保存回應的版本。
 
 | `result_kind` | 何時回傳 | 每個候選的值 | 結果層級欄位 |
 |---|---|---|---|
@@ -1449,6 +1452,12 @@ listed as history and never run by this build; start a new run"。provenance con
 檔案連訓練輸入也沒有紀錄，會先因此被拒絕（"records no training_input_digests"）。被拒絕的
 啟動不發布任何東西（503，見上）；被拒絕的 reload 讓使用中的模型繼續服務。這些檔案仍留在磁碟上、
 以歷史檔列出；過去服務它們的 mixture 已移除。
+
+**紀錄以兩種方式指稱同一份輸入的 checkpoint 也同樣被拒絕**（自 K8-4r 起），例如
+`data_roles.kg` 與其 `training_input_digests.kg` 不同："the record contradicts itself:
+data_roles.kg … differs from training_input_digests.kg …"。服務、量測與訓練（finetune、resume、
+extend、branch）都經由同一個讀取器讀取紀錄，所以不論兩項聲明中哪一項有誤，都不會使用這種檔案。
+同一張圖上以不同病例訓練的兩個模型不受影響：各自的紀錄都前後一致。
 
 ### Diagnosis 分頁與其匯出
 
@@ -2714,7 +2723,13 @@ checkpoint 的 model spec 讀出的。不論它的值為何，都要從指定路
 帶 `conv_type` `"hgt"` 的任務請求，要求的是現在沒有任何欄位能指定的架構：待多架構移植讓
 HGT 可以服務之後，請改以 `checkpoint_path`（以及 `expected_checkpoint_sha256`）指定一個
 model spec 確認為 HGT 的 checkpoint；在那之前，本版不服務任何 HGT 模型。並請正確拼寫 `expected_checkpoint_sha256`：拼錯的 `expected_checkpoint_sha` 過去
-會被丟掉、讓重新載入不受綁定，現在會被拒絕。
+會被丟掉、讓重新載入不受綁定，現在會被拒絕。**自動選擇只讀取 workspace 內的檔案**，依每次讀取
+實際開啟的檔案判斷（伺服器向已開啟的檔案詢問它位於何處，而不是看它的名稱），所以被選中的檔案若
+在讀取前被換成 workspace 外的檔案，會被拒絕，不從中讀取任何內容、也不發布，使用中的模型維持
+不變；伺服器無法判斷已開啟檔案位於何處時，自動選擇會拒絕它；明確指定的 `checkpoint_path` 則不論
+位於何處都會讀取（自 K8-4r 起）。回應中的 `architecture` 是已載入 model spec 的 encoder 種類，
+指定任務或路徑時都一樣；run 目錄的名稱只用來定位檔案，原因則以 `<layout key>/<run>` 指稱該 run
+（自 K8-4r 起）。
 
 ### Research › Prepare › Datasets
 

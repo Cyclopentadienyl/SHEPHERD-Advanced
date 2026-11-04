@@ -1142,6 +1142,10 @@ def _build_results_report_md(result: Dict[str, Any]) -> str:
     candidates = result.get("candidates", [])
     result_kind = _result_kind(result)
     elapsed = result.get("inference_time_ms")
+    # The response's format version, read as given and by no version rule, so
+    # the kept report says which shape its response had (an older one still
+    # reads here); left out unless it is a number.
+    version = result.get("result_schema_version")
     lines = ["# SHEPHERD-Advanced Diagnosis Report", ""]
     for key, value in (
         ("Patient ID", result.get("patient_id")),
@@ -1153,6 +1157,8 @@ def _build_results_report_md(result: Dict[str, Any]) -> str:
         ("Result kind", f"`{result_kind}`" if result_kind else (
             f"`{result.get('result_kind')}` (not readable here)"
             if isinstance(result.get("result_kind"), str) else "not reported")),
+        ("Result format", f"result_schema_version {version}" if isinstance(version, int)
+         and not isinstance(version, bool) else None),
         ("Candidates", len(candidates)),
     ):
         if value not in (None, ""):

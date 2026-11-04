@@ -402,7 +402,13 @@ class PatientPhenotypes:
 # from row to row. Kept here, in the lowest layer, because the explanation text
 # (`src.reasoning`), the API, the page and the exports all name the kinds and
 # their labels, and `src.reasoning` cannot import `src.inference`.
-RESULT_SCHEMA_VERSION = 2
+#
+# The response's format version: it changes only with the response's shape.
+# 3 since K8-4r, marking K8-4's change: the served identity's shortest-path
+# term carries its state alone (`build_id` and `max_hops` are gone), and the
+# mixture's kind and fields are gone. A strict reader of version 2 refuses a
+# version-3 body at this field, and the reverse (review P3-2).
+RESULT_SCHEMA_VERSION = 3
 #: A finetuned model bundle's disease task (docs/working/scorer-retraining
 #: README §3, K3): every disease of the model's graph view, ranked by the
 #: disease head's score; path discovery only explains the rows shown.

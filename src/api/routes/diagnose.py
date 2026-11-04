@@ -395,7 +395,10 @@ class _Response(_Strict):
     summary: Optional[str] = Field(None, description="Summary explanation")
     inference_time_ms: float = Field(..., description="Processing time in milliseconds")
     warnings: List[str] = Field(default_factory=list, description="Any warnings")
-    result_schema_version: Literal[2]
+    # `src.core.types.RESULT_SCHEMA_VERSION`, written as a literal because a
+    # type checker refuses a constant inside `Literal[...]`; pinned equal to it
+    # in `tests/unit/test_served_identity.py`.
+    result_schema_version: Literal[3]
     phenotype_input: Optional[PhenotypeInput] = Field(
         ..., description="The phenotype list as received and as used; null when the "
         "request was refused before its phenotypes were mapped")
@@ -482,7 +485,7 @@ class DiagnoseResponse(RootModel[Annotated[
     model_config = {"json_schema_extra": {
         "example": {
             "result_kind": "disease_task/v1",
-            "result_schema_version": 2,
+            "result_schema_version": 3,
             "session_id": "sess_a1b2c3d4e5f6",
             "patient_id": "patient_001",
             "timestamp": "2026-04-28T10:30:00Z",
@@ -755,7 +758,7 @@ async def diagnose(request: DiagnoseRequest) -> DiagnoseResponse:
             warnings.insert(0, CANDIDATE_GENES_IGNORED_WARNING)
 
         body.update(
-            result_schema_version=2,
+            result_schema_version=result.result_schema_version,
             session_id=session_id,
             patient_id=patient_id,
             timestamp=datetime.now().isoformat(),

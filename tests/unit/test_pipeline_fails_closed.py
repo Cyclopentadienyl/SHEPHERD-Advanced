@@ -61,11 +61,17 @@ def _checkpoint_for_another_graph(checkpoint, path):
     loads, its model spec matches its weights, and it would serve the graph whose
     view it records. It does not build over this one. It records this
     workspace's graph roles, so the build is what refuses it, not the training
-    record (M2.4, whose refusals `test_training_record.py` shows).
+    record (M2.4, whose refusals `test_training_record.py` shows). Its record
+    names that view the same way wherever it names it (the top level, the data
+    roles and the split), as a model trained on it would, so it does not
+    contradict itself (K8-4 review P2-2).
     """
     contents = torch.load(checkpoint, map_location="cpu", weights_only=False)
-    contents["graph_view"] = {**contents["graph_view"],
-                              "digest": hashlib.sha256(b"another graph").hexdigest()}
+    other = hashlib.sha256(b"another graph").hexdigest()
+    roles = contents["data_roles"]
+    contents["graph_view"] = {**contents["graph_view"], "digest": other}
+    roles["graph_view"] = {**roles["graph_view"], "digest": other}
+    roles["split"] = {**roles["split"], "view_digest": other}
     torch.save(contents, path)
     return path
 
@@ -142,7 +148,7 @@ class TestARequestedModelIsBuiltOrRefused:
         data_dir, checkpoint = workspace
         monkeypatch.setattr(
             DiagnosisPipeline, "_load_model_from_checkpoint",
-            lambda self, checkpoint_path, device, *, expected_sha256=None: None,
+            lambda self, checkpoint_path, device, *, expected_sha256=None, within=None: None,
         )
 
         with pytest.raises(PipelineBuildError, match="no node embeddings"):

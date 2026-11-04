@@ -78,7 +78,9 @@ what the numbers in the candidates mean. Under B-1, a deployment with a table se
 with SP beside it, not in it.
 
 **Every kind carries:**
-- **On the result:** `result_kind`, `result_schema_version = 2`, `served_identity`,
+- **On the result:** `result_kind`, `result_schema_version = 3` *(2026-11-04, K8-4r: was 2; 3
+  marks K8-4's change of shape, in which the served identity's `shortest_paths` kept only its
+  `state`)*, `served_identity`,
   `phenotype_input` (the account), `warnings`, and `candidates` in rank order.
 - **On each candidate:** `rank` (exactly 1..N), `disease_id`, `disease_name` and `matching_phenotypes`.
 
