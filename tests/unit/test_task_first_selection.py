@@ -422,12 +422,12 @@ def test_a_malformed_record_is_listed_as_refused_and_no_list_fails(tmp_path):
 # What the lists show of a record
 # ---------------------------------------------------------------------------
 def _listed_form(payload):
-    """The record as the run listing carries it: `record_version` and the
-    record's keys, no weights (`ListedCheckpoint.model_record`)."""
-    from src.config.model_types import MODEL_RECORD_KEYS
+    """The record as the run listing carries it: `record_version` and every
+    other key the reader reads, no weights (`ListedCheckpoint.model_record`)."""
+    from src.config.model_types import MODEL_RECORD_READ_KEYS
 
     return {"record_version": payload["record_version"],
-            **{k: payload[k] for k in MODEL_RECORD_KEYS if k in payload}}
+            **{k: payload[k] for k in MODEL_RECORD_READ_KEYS if k in payload}}
 
 
 def test_the_listed_record_states():

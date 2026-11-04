@@ -95,10 +95,11 @@ def read_checkpoint(
     and are never unpickled; a missing file raises the same, since the bytes
     expected are no longer there. As `read_split_manifest` and `read_report` do.
 
-    **`within` bounds the read to a directory** (resolved; automatic
-    selection's workspace): the one read refuses a file its open did not find
-    inside it (`read_once(within=)`, judged on the open descriptor), before
-    any byte is read, so before the expected digest and before `torch.load`.
+    **`within` bounds the read to a directory** (resolved; the workspace of
+    automatic selection or of the run listing): the one read refuses a file
+    its open did not find inside it (`read_once(within=)`, judged on the open
+    descriptor), before any byte is read, so before the expected digest and
+    before `torch.load`.
 
     Raises:
         FileNotFoundError: if there is no file at `path` and nothing is expected.

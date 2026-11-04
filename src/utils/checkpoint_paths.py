@@ -49,10 +49,10 @@ AcceptFn = Callable[[Path], bool]
 from src.config.model_types import (
     DEFAULT_CONV_TYPE,
     ENCODER_KINDS,
-    MODEL_RECORD_KEYS,
+    MODEL_RECORD_READ_KEYS,
     SUPPORTED_CONV_TYPES,
 )
-from src.utils.fingerprint import lies_within
+from src.utils.fingerprint import ReadOutside, lies_within
 
 PathLike = Union[str, Path]
 
@@ -432,9 +432,9 @@ class ListedCheckpoint(NamedTuple):
     (a format `weights_only=True` refuses, a file gone since it was listed),
     and the digest and record are `None`. A file that loads as something other
     than a checkpoint record keeps its digest and says so in `problem`. A file
-    that resolves outside the directory the caller bounds the listing by is
-    listed with `problem` and is not read at all (`read_run_checkpoints`'
-    `within`).
+    that resolves outside the directory the caller bounds the listing by, or
+    whose open lands outside it, is listed with `problem` and is not read at
+    all (`read_run_checkpoints`' `within`).
 
     `size_bytes` is the file's size as listed (a `stat` beside the read,
     descriptive only); `None` for a file not read because it is outside, or one
@@ -448,10 +448,12 @@ class ListedCheckpoint(NamedTuple):
     from `epoch` in their place.
 
     `model_record` is a model bundle checkpoint's record as the same read found
-    it (`record_version` and the §9.1 keys, plain data), `None` for a file
-    without a model spec. It is not checked here: a caller reads it through
+    it, `None` for a file without a model spec: `record_version` and every
+    other key the one reader of records reads (`MODEL_RECORD_READ_KEYS`: the
+    §9.1 keys and the `training_input_digests` it compares them with), without
+    the weights. It is not checked here: a caller reads it through
     `src.models.bundle.record`, the one reader of records, which this layer
-    cannot import.
+    cannot import, and judges the file as a load of it does.
     """
 
     run_dir: Path
@@ -507,8 +509,8 @@ def checkpoint_not_read(run_dir: Path, path: Path, within: Path) -> Optional[str
     of the workspace leaves every file under it outside.
 
     **A name is judged here, not the file a later open finds.** A name can
-    point elsewhere at every lookup, so automatic selection's reads that
-    follow (the scan's and the build's) bind the same boundary
+    point elsewhere at every lookup, so the reads that follow (the listing's,
+    and automatic selection's scan and build) bind the same boundary
     (`lies_within`) to the file each one opens, by its descriptor
     (`read_once(within=)`): a file swapped out of the workspace after this
     check is refused before a byte of it is read."""
@@ -523,10 +525,15 @@ def _size(path: Path) -> Optional[int]:
         return None
 
 
-#: Each listed file's last read in this process, by its path: the file's
-#: identity as `os.stat` gave it around that read, and what the read found
-#: (`ListedCheckpoint` without its two paths). Least recently listed first.
-_READS: "OrderedDict[str, Tuple[Tuple[int, ...], Dict[str, Any]]]" = OrderedDict()
+#: Each listed file's last read in this process, by its path and the boundary
+#: the read was bound to (`read_run_checkpoints`' `within`, resolved, or None
+#: for an unbounded read): the file's identity as `os.stat` gave it around that
+#: read, and what the read found (`ListedCheckpoint` without its two paths). A
+#: listing recalls only a read made under its own boundary, so what an
+#: unbounded read (or one bound to another workspace) found of a file outside
+#: is never shown by a listing bound to this one. Least recently listed first.
+_READS: "OrderedDict[Tuple[str, Optional[str]], Tuple[Tuple[int, ...], Dict[str, Any]]]" = (
+    OrderedDict())
 _READS_LOCK = threading.Lock()
 #: How many files' reads are kept (a few kilobytes each).
 READS_KEPT = 4096
@@ -547,23 +554,30 @@ def _identity(path: Path) -> Optional[Tuple[int, ...]]:
     return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
 
 
-def _recalled(path: Path, identity: Optional[Tuple[int, ...]]) -> Optional[Dict[str, Any]]:
+def _kept_as(path: Path, within: Optional[Path]) -> Tuple[str, Optional[str]]:
+    """The key of `path`'s read bound to `within` (`_READS`)."""
+    return str(path), (str(within) if within is not None else None)
+
+
+def _recalled(path: Path, identity: Optional[Tuple[int, ...]],
+              within: Optional[Path]) -> Optional[Dict[str, Any]]:
     if identity is None:
         return None
+    key = _kept_as(path, within)
     with _READS_LOCK:
-        kept = _READS.get(str(path))
+        kept = _READS.get(key)
         if kept is None or kept[0] != identity:
             return None
-        _READS.move_to_end(str(path))
+        _READS.move_to_end(key)
         fields = kept[1]
     return {**fields, "logs": copy.deepcopy(fields["logs"]),
             "model_record": copy.deepcopy(fields["model_record"])}
 
 
-def _remember(path: Path, before: Optional[Tuple[int, ...]], started_ns: int,
-              entry: ListedCheckpoint) -> None:
-    """Keep `entry` for `path` when the file did not change during the read
-    and had settled before it (`SETTLED_NS`)."""
+def _remember(path: Path, within: Optional[Path], before: Optional[Tuple[int, ...]],
+              started_ns: int, entry: ListedCheckpoint) -> None:
+    """Keep `entry` for `path`, read bound to `within`, when the file did not
+    change during the read and had settled before it (`SETTLED_NS`)."""
     if before is None or _identity(path) != before:
         return
     if max(before[3], before[4]) > started_ns - SETTLED_NS:
@@ -572,20 +586,34 @@ def _remember(path: Path, before: Optional[Tuple[int, ...]], started_ns: int,
     del fields["run_dir"], fields["path"]
     fields["logs"] = copy.deepcopy(fields["logs"])
     fields["model_record"] = copy.deepcopy(fields["model_record"])
+    key = _kept_as(path, within)
     with _READS_LOCK:
-        _READS[str(path)] = (before, fields)
-        _READS.move_to_end(str(path))
+        _READS[key] = (before, fields)
+        _READS.move_to_end(key)
         while len(_READS) > READS_KEPT:
             _READS.popitem(last=False)
 
 
-def _read_one(run: Path, path: Path) -> ListedCheckpoint:
-    """One file's entry, from one read of its bytes."""
+def _opened_outside(exc: ReadOutside) -> str:
+    """A bounded read's refusal, as the words a reason goes on from: the file
+    its open found lies outside the workspace, or cannot be placed."""
+    if exc.opened is not None:
+        return "was opened outside the workspace"
+    return f"cannot be placed inside the workspace ({exc.why})"
+
+
+def _read_one(run: Path, path: Path, within: Optional[Path]) -> ListedCheckpoint:
+    """One file's entry, from one read of its bytes; a read bounded to
+    `within` (resolved) when the listing is, so a file its open finds outside
+    is listed as not read, with the reason, before a byte of it is read."""
     from src.utils.checkpoint_io import read_checkpoint
 
     size = _size(path)
     try:
-        read = read_checkpoint(path, map_location="cpu", weights_only=True)
+        read = read_checkpoint(path, map_location="cpu", weights_only=True, within=within)
+    except ReadOutside as exc:
+        return ListedCheckpoint(
+            run, path, problem=f"{run.name}/{path.name} {_opened_outside(exc)}, so it is not read")
     except Exception as exc:  # noqa: BLE001 — listed with its reason, never dropped
         return ListedCheckpoint(run, path, problem=_first_line(exc), size_bytes=size)
     meta = read.checkpoint
@@ -601,7 +629,7 @@ def _read_one(run: Path, path: Path) -> ListedCheckpoint:
     progress = meta.get("progress") if isinstance(meta.get("progress"), dict) else {}
     end = progress.get("end")
     record = ({"record_version": meta.get("record_version"),
-               **{k: meta[k] for k in MODEL_RECORD_KEYS if k in meta}}
+               **{k: meta[k] for k in MODEL_RECORD_READ_KEYS if k in meta}}
               if meta.get("model_spec") is not None else None)
     return ListedCheckpoint(
         run, path, sha256=read.identity.sha256,
@@ -636,10 +664,11 @@ def read_run_checkpoints(
     **A file is not read again while it is unchanged** (M5-3 review, UI-2:
     every opening of a model list read every checkpoint of the workspace, so
     the lists slowed with every run). What a read found is kept in this
-    process by the file's path and its identity (`_identity`: device, inode,
-    size, modification and change times, taken before and after the read), and
-    a later listing that finds the same identity shows it without opening the
-    file; any write, replacement or metadata change reads it again, as does a
+    process by the file's path, the boundary the read was bound to (`within`)
+    and the file's identity (`_identity`: device, inode, size, modification and
+    change times, taken before and after the read), and a later listing under
+    the same boundary that finds the same identity shows it without opening
+    the file; any write, replacement or metadata change reads it again, as does a
     file that changed in the `SETTLED_NS` before its read. The bytes are still
     checked where they are used: a load, a start or a measurement re-reads them
     against the digest shown. The kept reads are shown only through the
@@ -649,8 +678,15 @@ def read_run_checkpoints(
     resolves outside it (a run or a checkpoint that is a link out of the
     workspace) is listed with that reason and **never opened**, so nothing of
     a file elsewhere is read or shown. The check runs before the read (and
-    before a kept read is used); the server's list passes its workspace
-    (`server_lists.list_checkpoints`). It is the boundary automatic selection
+    before a kept read is used), and **the read itself is bound to it** by the
+    file it opens (`read_checkpoint(within=)`), as automatic selection's reads
+    are: a name swapped for a link out of the workspace after the check is
+    listed as not read, with the reason, and not a byte of the file it now
+    names is read or shown. A kept read is recalled only by a listing bound as
+    that read was, so what an unbounded listing read of an outside file is
+    never shown by a bounded one. The server's list passes its workspace
+    (`server_lists.list_checkpoints`); a caller that passes none reads every
+    listed file unbounded, as before. It is the boundary automatic selection
     applies too (`checkpoint_not_read`), so a file the list refuses is never chosen.
 
     torch is imported only here, when a file is read, so this module stays
@@ -664,13 +700,13 @@ def read_run_checkpoints(
             entries.append(ListedCheckpoint(run_dir, path, problem=problem))
             continue
         identity = _identity(path)
-        kept = _recalled(path, identity)
+        kept = _recalled(path, identity, bound)
         if kept is not None:
             entries.append(ListedCheckpoint(run_dir, path, **kept))
             continue
         started_ns = time.time_ns()
-        entry = _read_one(run_dir, path)
-        _remember(path, identity, started_ns, entry)
+        entry = _read_one(run_dir, path, bound)
+        _remember(path, bound, identity, started_ns, entry)
         entries.append(entry)
     return entries
 

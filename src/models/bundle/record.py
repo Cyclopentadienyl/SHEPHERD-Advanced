@@ -18,6 +18,10 @@ caller needs with the record before it builds anything.
 two places) and names it differently is refused by `read_model_record`, so
 every entry that reads it refuses it, whichever copy that entry trusts.
 
+**Each value the reader compares is compared as plain data** (`_plain`): by
+its kind as well as its content, so a value that is not plain data (a tensor
+the safe loader also accepts) is refused naming its field, never compared.
+
 Plain data only, so the payload still loads with `weights_only=True`.
 Reading and checking a record needs no torch; only `load_bundle` builds.
 
@@ -25,6 +29,7 @@ Module: src/models/bundle/record.py
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional
 
@@ -129,6 +134,48 @@ def has_model_spec(payload: Mapping[str, Any]) -> bool:
     return isinstance(payload, Mapping) and payload.get("model_spec") is not None
 
 
+def _plain(name: str, value: Any) -> Any:
+    """A value the reader compares (the field `name`), as plain data that
+    states its kind beside its content, or a `ModelRecordError` naming the
+    field.
+
+    A record is plain data, but the safe loader (`weights_only=True`) also
+    accepts tensors, and Python's `==` gives no one answer for anything else
+    (a tensor of several values has no truth value; one of a single value
+    answers as that value) nor across kinds (`True == 1`). So each value is
+    read as the kinds a record holds: null, a boolean, a finite number, a
+    string, a list (or tuple), a mapping with string keys. Two values are
+    the same exactly when their kinds and contents are; a boolean is never a
+    number. Anything else, or a number that is not finite, is refused."""
+    if value is None:
+        return ("null",)
+    if isinstance(value, bool):
+        return ("boolean", value)
+    if isinstance(value, (int, float)):
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ModelRecordError(f"the record's {name} is {value!r}, not a finite number, "
+                                   "so it is not compared")
+        return ("number", value)
+    if isinstance(value, str):
+        return ("string", value)
+    if isinstance(value, (list, tuple)):
+        return ("list", tuple(_plain(f"{name}[{i}]", v) for i, v in enumerate(value)))
+    if isinstance(value, Mapping):
+        for key in value:
+            if not isinstance(key, str):
+                raise ModelRecordError(f"the record's {name} has a key that is not a string "
+                                       f"({type(key).__name__}), so it is not compared")
+        return ("mapping", {k: _plain(f"{name}.{k}", v) for k, v in value.items()})
+    raise ModelRecordError(f"the record's {name} is a {type(value).__name__}, not plain data, "
+                           "so it is not compared")
+
+
+def _differs(name: str, value: Any, expected: Any) -> bool:
+    """Whether the record's field `name` holds other than `expected`, both
+    compared as plain data (`_plain`)."""
+    return _plain(name, value) != _plain(name, expected)
+
+
 def _as_written(value: Any) -> Any:
     return value
 
@@ -139,7 +186,8 @@ def _view_rule(rule: Any) -> Any:
     keeps the operator's order, so the two copies are compared in the view's
     form. Inlined, not imported: that module needs torch, and reading a record
     does not. A part that is not a rule, or exclusions that are not names, stay
-    as written and are then reported as differing, never raised."""
+    as written: as plain data they are then reported as differing, and
+    anything else is refused naming its field (`_plain`)."""
     if not isinstance(rule, Mapping):
         return rule
     excluded = rule.get("exclude_relations", [])
@@ -154,7 +202,8 @@ def _view_rule(rule: Any) -> Any:
 #: its rule in two. Entries trust different copies (serving the training record
 #: and the top-level view, training `data_roles`), so the one reader refuses a
 #: record whose copies disagree, whichever copy is wrong. Each pair is
-#: `(claim, claim, the form both are compared in)`.
+#: `(claim, claim, the form both are compared in)`, each form then compared as
+#: plain data (`_plain`).
 _SAME_INPUT = (
     ("data_roles.kg", "training_input_digests.kg", _as_written),
     ("graph_view.digest", "data_roles.graph_view.digest", _as_written),
@@ -182,7 +231,8 @@ def _shown_claim(name: str, value: Any) -> str:
 
 def _contradictions(payload: Mapping[str, Any]) -> List[str]:
     """Each pair of this record's claims about one input that disagree, compared
-    only where both are present. The task's case files are a task fixture's
+    only where both are present, as plain data (`_plain`, which refuses a
+    claim that is not, naming it). The task's case files are a task fixture's
     when the run read one (`data_roles.task_fixture`), the workspace's samples
     otherwise, as `train_model` records them."""
     task = "task_" if _claim(payload, "data_roles.task_fixture") is not None else ""
@@ -192,7 +242,9 @@ def _contradictions(payload: Mapping[str, Any]) -> List[str]:
     found: List[str] = []
     for first, second, form in pairs:
         one, other = _claim(payload, first), _claim(payload, second)
-        if one is not None and other is not None and form(one) != form(other):
+        if one is None or other is None:
+            continue
+        if _plain(first, form(one)) != _plain(second, form(other)):
             found.append(f"{_shown_claim(first, one)} differs from {_shown_claim(second, other)}")
     return found
 
@@ -202,7 +254,7 @@ def read_model_record(payload: Mapping[str, Any]) -> ModelRecord:
     a record that contradicts itself among them (`_SAME_INPUT`)."""
     if not has_model_spec(payload):
         raise ModelRecordError(HISTORY_ONLY)
-    if payload.get("record_version") != MODEL_RECORD_VERSION:
+    if _differs("record_version", payload.get("record_version"), MODEL_RECORD_VERSION):
         raise ModelRecordError(f"checkpoint record version {payload.get('record_version')!r} "
                                f"is not {MODEL_RECORD_VERSION}; this build reads only its own")
     missing = [k for k in RECORD_KEYS if k not in payload]
@@ -213,7 +265,8 @@ def read_model_record(payload: Mapping[str, Any]) -> ModelRecord:
         view = ViewShape.from_record(payload["graph_view"])
     except (SpecError, TypeError, ValueError, KeyError, AttributeError) as exc:
         raise ModelRecordError(f"the model spec cannot be read: {exc}") from exc
-    if payload["learning_stage"] != spec.learning_stage or payload["task"] != spec.task:
+    if (_differs("learning_stage", payload["learning_stage"], spec.learning_stage)
+            or _differs("task", payload["task"], spec.task)):
         raise ModelRecordError("the record's learning stage or task differs from its model spec")
     # Each part as plain data of its kind, or the record is refused as a whole,
     # never half read (a list shows it as refused, with this reason).

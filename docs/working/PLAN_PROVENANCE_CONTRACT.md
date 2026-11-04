@@ -4064,7 +4064,11 @@ the training record and the top-level view, training the data roles), so `read_m
 compares each pair where both are present, the rule in the view's form (`exclude_relations`
 sorted, as `build_graph_view` stores it), and refuses a record whose two claims disagree,
 whichever claim is wrong: "the record contradicts itself: …". Every entry reads through it, so
-the reload publishes nothing and a training run writes no run directory. The check concerns one
+the reload publishes nothing and a training run writes no run directory. Each value is compared
+as plain data, by kind as well as content, and one that is not (a tensor, which the safe loader
+accepts) refuses that file naming its field; the run listing hands the reader the training
+record with the record, from its one read, so a list judges a file as a load does (K8-4r
+recheck). The check concerns one
 file's own claims, never whether two models were trained on the same data: two children of one
 graph trained on different cases each agree with themselves and keep training, measuring and
 comparing.

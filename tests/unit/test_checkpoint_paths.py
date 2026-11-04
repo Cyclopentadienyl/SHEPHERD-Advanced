@@ -577,7 +577,13 @@ def test_a_file_the_read_refuses_is_listed_with_its_reason(tmp_path):
 
 
 def test_the_read_is_weights_only_through_read_checkpoint(tmp_path, monkeypatch):
+    """Each file through `read_checkpoint`, weights only, on the CPU; bound to
+    the workspace by the file it opens exactly when the listing is (the
+    reviewer's K8-4r recheck, P2-A), unbounded otherwise."""
+    from collections import OrderedDict
+
     import src.utils.checkpoint_io as checkpoint_io
+    import src.utils.checkpoint_paths as cp
     from src.utils.checkpoint_paths import read_run_checkpoints
 
     run = tmp_path / "runs" / "sage" / "20261001-000000_a_111111" / "checkpoints"
@@ -591,9 +597,12 @@ def test_the_read_is_weights_only_through_read_checkpoint(tmp_path, monkeypatch)
         return original(path, **kwargs)
 
     monkeypatch.setattr(checkpoint_io, "read_checkpoint", spy)
-    read_run_checkpoints(tmp_path, "sage")
-    assert sorted(seen) == [("a.pt", {"map_location": "cpu", "weights_only": True}),
-                            ("b.pt", {"map_location": "cpu", "weights_only": True})]
+    for within, bound in ((None, None), (tmp_path, tmp_path.resolve())):
+        monkeypatch.setattr(cp, "_READS", OrderedDict())
+        seen.clear()
+        read_run_checkpoints(tmp_path, "sage", within=within)
+        options = {"map_location": "cpu", "weights_only": True, "within": bound}
+        assert sorted(seen, key=lambda s: s[0]) == [("a.pt", options), ("b.pt", options)]
 
 
 def _counted_reads(monkeypatch):
@@ -675,7 +684,56 @@ def test_the_kept_reads_are_bounded_and_an_outside_file_is_never_kept(tmp_path, 
     (run / "link.pt").symlink_to(outside)
     cp.read_run_checkpoints(tmp_path / "ws", within=tmp_path / "ws")
     assert len(cp._READS) == 2
-    assert all(not key.endswith("link.pt") for key in cp._READS)
+    assert all(not path.endswith("link.pt") for path, _ in cp._READS)
+
+
+def test_a_bounded_listing_never_shows_what_an_unbounded_read_kept_of_an_outside_file(
+        tmp_path, monkeypatch):
+    """The K8-4r2 verifier's cache recall: the training list (unbounded) read
+    a name that was a link to a file outside the workspace and kept that read.
+    The name then became a file inside, so the server's list (bounded) passed
+    its name check; between that check and its `stat` the name was a link to
+    the outside file again, and the list showed the kept read, the outside
+    file's digest with no problem, without opening anything. A kept read is
+    now recalled only by a listing bound as that read was, so the bounded list
+    reads the name itself, bound to the workspace: not read, no digest."""
+    from collections import OrderedDict
+
+    import src.utils.checkpoint_paths as cp
+    from src.utils.fingerprint import file_sha256
+
+    monkeypatch.setattr(cp, "_READS", OrderedDict())
+    monkeypatch.setattr(cp, "SETTLED_NS", 0)  # stands for files settled before their reads
+    ws = tmp_path / "ws"
+    run = "20261001-000000_a_111111"
+    name = ws / "runs" / "gatv2" / run / "checkpoints" / "last.pt"
+    outside = tmp_path / "elsewhere" / "last.pt"
+    _write_checkpoint(outside, {"epoch": 9})
+    outside_sha = file_sha256(outside)
+    name.parent.mkdir(parents=True)
+    name.symlink_to(outside)
+    unbounded = cp.read_run_checkpoints(ws)
+    assert unbounded[0].sha256 == outside_sha, "the unbounded list read the outside file"
+
+    name.unlink()
+    _write_checkpoint(name, {"epoch": 1})
+    real_identity, swapped = cp._identity, []
+
+    def identity_after_swap(path):
+        if path == name and not swapped:
+            swapped.append(path)
+            pending = name.with_suffix(".pending")
+            pending.symlink_to(outside)
+            os.replace(pending, name)
+        return real_identity(path)
+
+    monkeypatch.setattr(cp, "_identity", identity_after_swap)
+    row, = cp.read_run_checkpoints(ws, within=ws)
+
+    assert swapped == [name], "the swap fell between the name check and the stat"
+    assert row.sha256 is None and row.model_record is None and row.size_bytes is None
+    assert row.problem == f"{run}/last.pt was opened outside the workspace, so it is not read"
+    assert outside_sha not in repr(row)
 
 
 def test_importing_the_listing_does_not_import_torch():

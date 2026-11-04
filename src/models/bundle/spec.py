@@ -441,8 +441,11 @@ class ModelSpec:
         top = ("spec_version", "learning_stage", "graph_view", "input", "encoder", "lp_head",
                "patient_encoder", "task_head", "sources")
         _check_keys("spec", data, top, top)
-        if data["spec_version"] != SPEC_VERSION:
-            raise SpecError(f"model spec version {data['spec_version']!r} is not {SPEC_VERSION}; "
+        version = data["spec_version"]
+        # An integer first (the type rule's sense: not a boolean), so a value
+        # with no one answer to `!=` (a tensor) is refused, never compared.
+        if not isinstance(version, int) or isinstance(version, bool) or version != SPEC_VERSION:
+            raise SpecError(f"model spec version {version!r} is not {SPEC_VERSION}; "
                             "this build reads only its own version")
         view = dict(data["graph_view"])
         view["exclude_relations"] = _record_tuple(view.get("exclude_relations", ()))
@@ -479,6 +482,10 @@ class ViewShape:
 
     @classmethod
     def from_record(cls, record: Mapping[str, Any]) -> "ViewShape":
+        # A mapping first, so a value with no one answer to `in` (a tensor the
+        # safe loader accepts) is refused, never asked.
+        if not isinstance(record, Mapping):
+            raise SpecError(f"the graph view record is {type(record).__name__}, not a mapping")
         missing = [k for k in ("digest", "num_nodes", "node_types", "relations") if k not in record]
         if missing:
             raise SpecError(f"the graph view record lacks {missing}")

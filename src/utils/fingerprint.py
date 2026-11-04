@@ -202,8 +202,8 @@ def read_once(path: Union[str, Path], *, within: Optional[Path] = None) -> FileR
     name says afterwards, and a file opened inside is read even if its name
     moves out afterwards: its bytes are inside. Where no location can be had
     (another platform, no `/proc`, a file with no name left), the bounded read
-    refuses. Without `within` nothing is checked, as before; only automatic
-    selection passes it.
+    refuses. Without `within` nothing is checked, as before; automatic
+    selection and the run listing pass it (`read_checkpoint(within=)`).
 
     No retry, no fallback. The read is alone on its line: the readers' release
     check (contract M2.1, S2) finds the raw buffer by the allocation that line

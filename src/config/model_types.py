@@ -42,6 +42,14 @@ MODEL_RECORD_KEYS = ("model_spec", "graph_view", "learning_stage", "task", "oper
                      "parent", "family_id", "weight_transfer", "data_roles",
                      "graph_exposure", "loss_identity", "scoring_identity", "selection")
 
+# Every top-level key the one reader of records (`read_model_record`) reads
+# besides `record_version`: the record's keys and the training record's
+# `training_input_digests`, which names some of the record's inputs a second
+# time and is compared with the record's own claims ("one input, one claim").
+# The run listing carries exactly these from its one read of a file, so a list
+# judges a file as a load of it does.
+MODEL_RECORD_READ_KEYS = MODEL_RECORD_KEYS + ("training_input_digests",)
+
 
 # ==============================================================================
 # Checkpoint architecture inference
@@ -221,4 +229,4 @@ def resolve_arch_params(
 
 
 __all__ = ["SUPPORTED_CONV_TYPES", "DEFAULT_CONV_TYPE", "ENCODER_KINDS", "MODEL_RECORD_KEYS",
-           "resolve_arch_params"]
+           "MODEL_RECORD_READ_KEYS", "resolve_arch_params"]
