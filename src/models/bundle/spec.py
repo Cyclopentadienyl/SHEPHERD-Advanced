@@ -25,6 +25,7 @@ Module: src/models/bundle/spec.py
 from __future__ import annotations
 
 import math
+import reprlib
 import types
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from functools import lru_cache
@@ -72,10 +73,23 @@ class SpecError(ValueError):
     """A spec that cannot be read or built as written."""
 
 
-def _check_keys(section: str, data: Mapping[str, Any], allowed: Tuple[str, ...],
-                required: Tuple[str, ...] = ()) -> None:
+def _section(section: str, data: Any) -> Mapping[str, Any]:
+    """`data`, read as the spec's section `section`: a mapping whose keys are
+    names, or a `SpecError` naming the section. Checked before anything is
+    asked of it, so a value with no one answer to `in`, to sorting or to
+    `dict()` (a tensor, a list, a key of another kind) is refused, never asked."""
     if not isinstance(data, Mapping):
         raise SpecError(f"model spec section {section!r} is {type(data).__name__}, not a mapping")
+    for key in data:
+        if not isinstance(key, str):
+            raise SpecError(f"model spec section {section!r} has a key that is not a name "
+                            f"({type(key).__name__})")
+    return data
+
+
+def _check_keys(section: str, data: Mapping[str, Any], allowed: Tuple[str, ...],
+                required: Tuple[str, ...] = ()) -> None:
+    _section(section, data)
     unknown = sorted(set(data) - set(allowed))
     if unknown:
         raise SpecError(f"model spec section {section!r} has unknown key(s) {unknown}; "
@@ -95,8 +109,34 @@ def _from(cls, section: str, data: Mapping[str, Any]):
 _SHOWN_LIMIT = 60
 
 
+class _Brief(reprlib.Repr):
+    """`reprlib.Repr`, reading a mapping, list, tuple or set of a subclass (an
+    `OrderedDict`, a `torch.Size`) as one, so no container is shown in full."""
+
+    def repr1(self, x: Any, level: int) -> str:
+        for kind in (dict, list, tuple, set, frozenset):
+            if isinstance(x, kind):
+                return getattr(self, f"repr_{kind.__name__}")(x, level)
+        return super().repr1(x, level)
+
+
+#: A container as a reason shows it: a few levels and a few values of each.
+_BRIEF = _Brief(maxlevel=3, maxdict=6, maxlist=6, maxtuple=6, maxset=6, maxfrozenset=6,
+                maxstring=_SHOWN_LIMIT, maxlong=_SHOWN_LIMIT, maxother=_SHOWN_LIMIT)
+
+
 def _shown(value: Any) -> str:
-    text = repr(value)
+    """`value` as a reason shows it, whatever it is. A container is shown a
+    few levels and values deep (`_BRIEF`), since `repr` walks all of one: a
+    list nested past the interpreter's depth, which the safe loader reads,
+    raised `RecursionError`, and one held many times over at each level would
+    be written out for ever. A value whose text cannot be made (an integer
+    longer than Python turns into text) is shown by its kind."""
+    try:
+        text = (_BRIEF.repr(value) if isinstance(value, (dict, list, tuple, set, frozenset))
+                else repr(value))
+    except (RecursionError, ValueError):
+        return f"a {type(value).__name__} too large to show"
     return text if len(text) <= _SHOWN_LIMIT else text[:_SHOWN_LIMIT - 3] + "..."
 
 
@@ -445,13 +485,13 @@ class ModelSpec:
         # An integer first (the type rule's sense: not a boolean), so a value
         # with no one answer to `!=` (a tensor) is refused, never compared.
         if not isinstance(version, int) or isinstance(version, bool) or version != SPEC_VERSION:
-            raise SpecError(f"model spec version {version!r} is not {SPEC_VERSION}; "
+            raise SpecError(f"model spec version {_shown(version)} is not {SPEC_VERSION}; "
                             "this build reads only its own version")
-        view = dict(data["graph_view"])
+        view = dict(_section("graph_view", data["graph_view"]))
         view["exclude_relations"] = _record_tuple(view.get("exclude_relations", ()))
         head = None
         if data["task_head"] is not None:
-            head_data = dict(data["task_head"])
+            head_data = dict(_section("task_head", data["task_head"]))
             gene = head_data.get("gene")
             head_data["gene"] = _from(GeneScoringSpec, "task_head.gene", gene) if gene is not None else None
             head_data["multi_similarity"] = _record_tuple(head_data.get("multi_similarity", ()))
@@ -482,6 +522,16 @@ class ViewShape:
 
     @classmethod
     def from_record(cls, record: Mapping[str, Any]) -> "ViewShape":
+        """The shape of a graph view record (`record()`, `GraphView.record()`).
+
+        **Each field is judged as the kind the view writes before anything is
+        made of it**, nothing cast: the digest a non-empty string, the node
+        count an integer (not a boolean) above zero, the node types and
+        relations lists (or tuples) of names, at least one relation. So a value
+        the safe loader reads but no view writes (an infinite count, which
+        `int()` raised `OverflowError` on, a tensor, a list holding itself) is
+        refused naming its field, never converted (the reviewer's K8-4r2
+        recheck: `num_nodes: inf` made the whole model list answer HTTP 500)."""
         # A mapping first, so a value with no one answer to `in` (a tensor the
         # safe loader accepts) is refused, never asked.
         if not isinstance(record, Mapping):
@@ -489,11 +539,21 @@ class ViewShape:
         missing = [k for k in ("digest", "num_nodes", "node_types", "relations") if k not in record]
         if missing:
             raise SpecError(f"the graph view record lacks {missing}")
-        shape = cls(str(record["digest"]), int(record["num_nodes"]),
-                    tuple(record["node_types"]), tuple(record["relations"]))
-        if shape.num_nodes <= 0 or not shape.relations or not shape.digest:
-            raise SpecError("the graph view record has no nodes, no relations or no digest")
-        return shape
+        digest, num_nodes = record["digest"], record["num_nodes"]
+        if not isinstance(digest, str) or not digest:
+            raise SpecError(f"graph_view.digest must be a non-empty string, not {_shown(digest)}")
+        if isinstance(num_nodes, bool) or not isinstance(num_nodes, int) or num_nodes <= 0:
+            raise SpecError(f"graph_view.num_nodes must be an integer above zero, not "
+                            f"{_shown(num_nodes)}")
+        names = {}
+        for key in ("node_types", "relations"):
+            value = record[key]
+            if not isinstance(value, (list, tuple)) or not all(isinstance(v, str) for v in value):
+                raise SpecError(f"graph_view.{key} must be a list of names, not {_shown(value)}")
+            names[key] = tuple(value)
+        if not names["relations"]:
+            raise SpecError("graph_view.relations names no relation")
+        return cls(digest, num_nodes, names["node_types"], names["relations"])
 
     def record(self) -> Dict[str, Any]:
         return {"digest": self.digest, "num_nodes": self.num_nodes,

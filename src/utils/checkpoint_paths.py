@@ -52,7 +52,7 @@ from src.config.model_types import (
     MODEL_RECORD_READ_KEYS,
     SUPPORTED_CONV_TYPES,
 )
-from src.utils.fingerprint import ReadOutside, lies_within
+from src.utils.fingerprint import ReadOutside, lies_within, stat_identity
 
 PathLike = Union[str, Path]
 
@@ -76,14 +76,21 @@ def ranking_score_detail(logs) -> Optional[Tuple[str, float]]:
     """Return ``(metric_name, value)`` from a checkpoint's logs, or None.
 
     Picks the first available ranking metric (higher is better); ignores
-    missing, non-numeric, and non-finite values.
+    missing, non-numeric, and non-finite values (an integer past a float's
+    range among them, which `math.isfinite` would raise on).
     """
     if not isinstance(logs, dict):
         return None
     for key in RANKING_SCORE_KEYS:
         value = logs.get(key)
-        if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
-            return key, float(value)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        try:
+            score = float(value)
+        except OverflowError:  # an integer too large for a float: no finite figure
+            continue
+        if math.isfinite(score):
+            return key, score
     return None
 
 
@@ -527,8 +534,9 @@ def _size(path: Path) -> Optional[int]:
 
 #: Each listed file's last read in this process, by its path and the boundary
 #: the read was bound to (`read_run_checkpoints`' `within`, resolved, or None
-#: for an unbounded read): the file's identity as `os.stat` gave it around that
-#: read, and what the read found (`ListedCheckpoint` without its two paths). A
+#: for an unbounded read): the file's identity (the one the read's open
+#: descriptor gave, which the name gave before and after the read too), and
+#: what the read found (`ListedCheckpoint` without its two paths). A
 #: listing recalls only a read made under its own boundary, so what an
 #: unbounded read (or one bound to another workspace) found of a file outside
 #: is never shown by a listing bound to this one. Least recently listed first.
@@ -541,17 +549,49 @@ READS_KEPT = 4096
 #: read is read again at every listing: a rewrite within one tick of the file
 #: system's clock could leave its `stat` unchanged.
 SETTLED_NS = 2_000_000_000
+#: How deep the values a read found may nest for the read to be kept: a kept
+#: read is copied in and out (`copy.deepcopy`, which recurses at least once per
+#: level), while the safe loader reads any depth (its unpickler keeps its own
+#: stack). A file holding a value nested deeper is read again at every listing
+#: instead; a record nests a few levels.
+KEPT_DEPTH = 32
 
 
 def _identity(path: Path) -> Optional[Tuple[int, ...]]:
-    """What tells one state of a file from another without reading it: its
-    device, inode, size, and modification and change times (the change time
-    moves with any write or metadata change and cannot be set back)."""
+    """The file `path` names now, as `stat_identity` tells one state of a file
+    from another without reading it, or None where it cannot be had."""
     try:
-        st = path.stat()
+        return stat_identity(path.stat())
     except OSError:
         return None
-    return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+
+
+def _nests_within(value: Any, limit: int) -> bool:
+    """Whether `value` nests at most `limit` levels as `copy.deepcopy` walks
+    it: into lists, tuples, sets, mappings (their keys too) and an object's
+    attributes (a tensor's), each looked into once and in the copy's order, so
+    a value held twice or holding itself costs one look. Walked without
+    recursion, so any depth is measured."""
+    seen = set()
+    stack = [(value, 0)]
+    while stack:
+        item, depth = stack.pop()
+        if item is None or isinstance(item, (str, bytes, bytearray, int, float, complex)):
+            continue
+        if id(item) in seen:
+            continue
+        seen.add(id(item))
+        if isinstance(item, dict):
+            held = [part for pair in item.items() for part in pair]
+        elif isinstance(item, (list, tuple, set, frozenset)):
+            held = list(item)
+        else:
+            attributes = getattr(item, "__dict__", None)
+            held = list(attributes.values()) if isinstance(attributes, dict) else []
+        if held and depth >= limit:
+            return False
+        stack.extend((part, depth + 1) for part in reversed(held))
+    return True
 
 
 def _kept_as(path: Path, within: Optional[Path]) -> Tuple[str, Optional[str]]:
@@ -575,15 +615,29 @@ def _recalled(path: Path, identity: Optional[Tuple[int, ...]],
 
 
 def _remember(path: Path, within: Optional[Path], before: Optional[Tuple[int, ...]],
-              started_ns: int, entry: ListedCheckpoint) -> None:
-    """Keep `entry` for `path`, read bound to `within`, when the file did not
-    change during the read and had settled before it (`SETTLED_NS`)."""
-    if before is None or _identity(path) != before:
+              opened: Optional[Tuple[int, ...]], started_ns: int,
+              entry: ListedCheckpoint) -> None:
+    """Keep `entry` for `path`, read bound to `within`, only when the file the
+    read opened (`opened`, its open descriptor's identity) is the file the name
+    gave before the read (`before`) and still gives after it, and it had
+    settled before the read (`SETTLED_NS`).
+
+    So nothing is kept under a file's identity that a read of another file
+    found (the reviewer's K8-4r2 recheck, P3: a name switched to another file
+    for the open and back gave the same identity before and after, and that
+    file's digest was then shown for the first). A refusal no read made (a
+    file opened outside the workspace or not placed, a read that failed:
+    `opened` is None) is never kept, so the next listing reads the file again
+    rather than repeat a reason the name may no longer earn. Nor is a read
+    whose values nest past `KEPT_DEPTH`, which could not be copied."""
+    if before is None or opened != before or _identity(path) != before:
         return
     if max(before[3], before[4]) > started_ns - SETTLED_NS:
         return
     fields = entry._asdict()
     del fields["run_dir"], fields["path"]
+    if not _nests_within((fields["logs"], fields["model_record"]), KEPT_DEPTH):
+        return
     fields["logs"] = copy.deepcopy(fields["logs"])
     fields["model_record"] = copy.deepcopy(fields["model_record"])
     key = _kept_as(path, within)
@@ -602,10 +656,14 @@ def _opened_outside(exc: ReadOutside) -> str:
     return f"cannot be placed inside the workspace ({exc.why})"
 
 
-def _read_one(run: Path, path: Path, within: Optional[Path]) -> ListedCheckpoint:
-    """One file's entry, from one read of its bytes; a read bounded to
-    `within` (resolved) when the listing is, so a file its open finds outside
-    is listed as not read, with the reason, before a byte of it is read."""
+def _read_one(run: Path, path: Path, within: Optional[Path]
+              ) -> Tuple[ListedCheckpoint, Optional[Tuple[int, ...]]]:
+    """One file's entry, from one read of its bytes, and the identity of the
+    file that read opened (`ReadIdentity.opened`; None where nothing was
+    read); a read bounded to `within` (resolved) when the listing is, so a
+    file its open finds outside is listed as not read, with the reason, before
+    a byte of it is read. The entry holds the values this read loaded, which
+    nothing else holds (`_remember` keeps copies)."""
     from src.utils.checkpoint_io import read_checkpoint
 
     size = _size(path)
@@ -613,16 +671,17 @@ def _read_one(run: Path, path: Path, within: Optional[Path]) -> ListedCheckpoint
         read = read_checkpoint(path, map_location="cpu", weights_only=True, within=within)
     except ReadOutside as exc:
         return ListedCheckpoint(
-            run, path, problem=f"{run.name}/{path.name} {_opened_outside(exc)}, so it is not read")
+            run, path, problem=f"{run.name}/{path.name} {_opened_outside(exc)}, so it is not read"
+        ), None
     except Exception as exc:  # noqa: BLE001 — listed with its reason, never dropped
-        return ListedCheckpoint(run, path, problem=_first_line(exc), size_bytes=size)
-    meta = read.checkpoint
+        return ListedCheckpoint(run, path, problem=_first_line(exc), size_bytes=size), None
+    meta, opened = read.checkpoint, read.identity.opened
     if not isinstance(meta, dict):
         return ListedCheckpoint(
             run, path, sha256=read.identity.sha256,
             problem=(f"it loads as {type(meta).__name__}, not a checkpoint record, so it "
                      "carries no metadata"),
-            size_bytes=size)
+            size_bytes=size), opened
     logs = meta.get("logs") if isinstance(meta.get("logs"), dict) else {}
     digests = meta.get("training_input_digests")
     fingerprint = digests.get("split_manifest") if isinstance(digests, dict) else None
@@ -641,8 +700,8 @@ def _read_one(run: Path, path: Path, within: Optional[Path]) -> ListedCheckpoint
         size_bytes=size,
         completed_epochs=progress.get("completed_epochs"),
         end=end if isinstance(end, str) else None,
-        model_record=copy.deepcopy(record),
-    )
+        model_record=record,
+    ), opened
 
 
 def read_run_checkpoints(
@@ -665,8 +724,10 @@ def read_run_checkpoints(
     every opening of a model list read every checkpoint of the workspace, so
     the lists slowed with every run). What a read found is kept in this
     process by the file's path, the boundary the read was bound to (`within`)
-    and the file's identity (`_identity`: device, inode, size, modification and
-    change times, taken before and after the read), and a later listing under
+    and the file's identity (`stat_identity`: device, inode, size, modification
+    and change times), kept only when the read's open descriptor gave the
+    identity the name gave before and after the read (`_remember`: a read of
+    another file, or a refusal, is never kept), and a later listing under
     the same boundary that finds the same identity shows it without opening
     the file; any write, replacement or metadata change reads it again, as does a
     file that changed in the `SETTLED_NS` before its read. The bytes are still
@@ -705,8 +766,8 @@ def read_run_checkpoints(
             entries.append(ListedCheckpoint(run_dir, path, **kept))
             continue
         started_ns = time.time_ns()
-        entry = _read_one(run_dir, path, bound)
-        _remember(path, bound, identity, started_ns, entry)
+        entry, opened = _read_one(run_dir, path, bound)
+        _remember(path, bound, identity, opened, started_ns, entry)
         entries.append(entry)
     return entries
 

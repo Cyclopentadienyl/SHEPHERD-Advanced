@@ -50,11 +50,18 @@ import hashlib
 import logging
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, BinaryIO, Callable, Dict, Iterable, List, Mapping, Optional, Tuple, Union
 
 logger = logging.getLogger(__name__)
+
+
+def stat_identity(st: os.stat_result) -> Tuple[int, ...]:
+    """What tells one state of a file from another without reading it: its
+    device, inode, size, and modification and change times (the change time
+    moves with any write or metadata change and cannot be set back)."""
+    return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
 
 
 @dataclass(frozen=True)
@@ -62,11 +69,15 @@ class ReadIdentity:
     """Which file was read, and the SHA-256 of the bytes that read returned.
 
     It carries no bytes, so a reader can keep it beside what it parsed and let the
-    raw buffer go.
+    raw buffer go. `opened` is the `stat_identity` of the file the read's one
+    open opened, taken from that open descriptor once the bytes were read (never
+    by looking the name up again), or None where no read made it; it names a
+    state of the file, not the bytes, so two reads compare by path and digest.
     """
 
     path: Path
     sha256: str
+    opened: Optional[Tuple[int, ...]] = field(default=None, compare=False)
 
 
 @dataclass(frozen=True)
@@ -80,10 +91,12 @@ class FileRead:
     path: Path
     data: bytes
     sha256: str
+    #: The file this read opened (`ReadIdentity.opened`).
+    opened: Optional[Tuple[int, ...]] = None
 
     @property
     def identity(self) -> ReadIdentity:
-        return ReadIdentity(path=self.path, sha256=self.sha256)
+        return ReadIdentity(path=self.path, sha256=self.sha256, opened=self.opened)
 
 
 def lies_within(path: Path, within: Path) -> bool:
@@ -205,6 +218,11 @@ def read_once(path: Union[str, Path], *, within: Optional[Path] = None) -> FileR
     refuses. Without `within` nothing is checked, as before; automatic
     selection and the run listing pass it (`read_checkpoint(within=)`).
 
+    **The file read is named by its open descriptor** (`FileRead.opened`, its
+    `stat_identity` from `os.fstat` once the bytes are read), so a caller that
+    keeps what a read found by the file's identity compares the file this read
+    actually opened, never what its name pointed at before or after the open.
+
     No retry, no fallback. The read is alone on its line: the readers' release
     check (contract M2.1, S2) finds the raw buffer by the allocation that line
     makes, so nothing a reader keeps may be made on it.
@@ -214,8 +232,9 @@ def read_once(path: Union[str, Path], *, within: Optional[Path] = None) -> FileR
         if within is not None:
             _refuse_outside(handle, path, within)
         data = handle.read()
+        opened = stat_identity(os.fstat(handle.fileno()))
     sha256 = hashlib.sha256(data).hexdigest()
-    return FileRead(path=path, data=data, sha256=sha256)
+    return FileRead(path=path, data=data, sha256=sha256, opened=opened)
 
 
 def file_sha256(path: Union[str, Path]) -> Optional[str]:

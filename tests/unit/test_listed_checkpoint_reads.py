@@ -15,6 +15,19 @@
   listed as a model while a load refused it. The list now carries every key
   the reader reads (`MODEL_RECORD_READ_KEYS`), from the same one read.
 
+The K8-4r2 recheck:
+
+- P2: a record the safe loader reads but the reader could not convert or walk
+  still made the list answer HTTP 500: a graph view of infinitely many nodes
+  (`int()` raised `OverflowError`), a rule field holding a list that holds
+  itself or one nested a thousand deep (`RecursionError`). Each is now refused
+  on its own row, its field named, and the healthy file still lists.
+- P3: the list kept what a read found under the identity its name gave before
+  and after the read, so a name switched to another file for the open and back
+  kept that file's digest, or a refusal of it, under the first file. A read is
+  now kept only when the file its open descriptor read is the file the name
+  gives, and a refusal never.
+
 Module: tests/unit/test_listed_checkpoint_reads.py
 """
 from __future__ import annotations
@@ -170,6 +183,14 @@ def test_one_file_holding_a_value_that_is_not_plain_data_is_refused_alone_and_th
     a tensor raised from the view's own read the same way. Now it answers 200:
     that file is refused, the reason naming the field, and the healthy one is
     listed as a model."""
+    _refused_alone_over_http(workspace, trained_disease_child, monkeypatch, field, value, named)
+
+
+def _refused_alone_over_http(workspace, trained_disease_child, monkeypatch, field, value, named):
+    """``GET /api/v1/workspaces/ws/checkpoints`` over the disease child (run A)
+    and, beside it, the child with `field` holding `value` (run B), saved and
+    read as a real file: 200, run A a model, run B refused with `named` in
+    its reason."""
     from fastapi.testclient import TestClient
 
     from src.api.main import app
@@ -195,6 +216,44 @@ def test_one_file_holding_a_value_that_is_not_plain_data_is_refused_alone_and_th
     assert rows[RUN_A]["sha256"] == file_sha256(good)
     assert rows[RUN_B]["record"] == "refused" and rows[RUN_B]["sha256"] == file_sha256(bad)
     assert named in rows[RUN_B]["record_problem"], rows[RUN_B]["record_problem"]
+
+
+def _holding_itself():
+    value = []
+    value.append(value)
+    return value
+
+
+def _nested(depth):
+    value = []
+    for _ in range(depth):
+        value = [value]
+    return value
+
+
+@pytest.mark.parametrize("field, make, named", [
+    ("graph_view.num_nodes", lambda: float("inf"),
+     "graph_view.num_nodes must be an integer above zero, not inf"),
+    ("data_roles.graph_view.rule.largest_component", _holding_itself,
+     "the record's data_roles.graph_view.rule.largest_component[0] is a list that contains "
+     "itself"),
+    ("data_roles.graph_view.rule.largest_component", lambda: _nested(1000),
+     "the record's data_roles.graph_view.rule.largest_component" + "[0]" * 15
+     + " nests deeper than 16 levels"),
+], ids=["infinite-node-count", "rule-field-holding-itself", "rule-field-nested-1000-deep"])
+def test_one_file_the_reader_cannot_convert_or_walk_is_refused_alone_and_the_list_answers(
+        workspace, trained_disease_child, monkeypatch, field, make, named):
+    """The reviewer's K8-4r2 recheck, P2 (edges.py, ``infinite_node_count``,
+    ``cyclic_rule``): a disease child whose graph view counts infinitely many
+    nodes, or whose view rule field holds a list that holds itself (or one
+    nested a thousand deep), each a real `torch.save` file the safe loader
+    reads, beside a healthy child. Before the fix the view's read raised
+    `OverflowError` (`int(inf)`), the comparison recursed until
+    `RecursionError` (and the list's copy of a deep record did), and the list
+    answered HTTP 500. Now it answers 200: that file is refused, its reason
+    naming the field and where the walk stopped, and the healthy one is
+    listed as a model."""
+    _refused_alone_over_http(workspace, trained_disease_child, monkeypatch, field, make(), named)
 
 
 # --------------------------------------------------------------------------- P3-C
@@ -237,6 +296,82 @@ def test_a_file_whose_kg_claims_disagree_is_refused_alike_by_the_list_and_the_lo
     assert row.record == "refused" and phrase in row.record_problem, row.record_problem
     assert result.success is False and phrase in result.message, result.message
     assert api.app_state.pipeline is None
+
+
+def _retarget(link, target):
+    pending = link.with_suffix(".pending")
+    pending.symlink_to(target)
+    os.replace(pending, link)
+
+
+@pytest.mark.parametrize("between", ["inside", "outside"])
+def test_a_name_switched_to_another_file_for_the_open_and_back_keeps_nothing_under_the_first(
+        workspace, trained_disease_child, tmp_path, monkeypatch, api, between):
+    """The reviewer's K8-4r2 recheck, P3 (edges.py, ``inside-swap`` and
+    ``outside-swap``): run A's ``last.pt`` is a link to a settled valid model
+    A in the workspace; at the list's open it is switched to another file B
+    (a valid model with another digest inside the workspace, or one outside
+    it) and back to A once the file is open. Both looks at the name, before
+    and after the read, gave A's identity, so the list kept what it found of
+    B (B's digest, or the refusal of the file opened outside) under A, and the
+    next list, the name settled on A, showed it without opening anything.
+    Now a read is kept only when its open descriptor's file is the name's, and
+    a refusal never: the next list opens the name, shows A's digest, reads it
+    as a model, and A loads by that digest."""
+    import src.utils.checkpoint_paths as checkpoint_paths
+
+    monkeypatch.setattr(checkpoint_paths, "SETTLED_NS", 0)  # stands for settled files
+    child = trained_disease_child["disease"]
+    held = workspace / "payloads"
+    held.mkdir()
+    first = held / "A.pt"
+    shutil.copyfile(child, first)
+    other = (held if between == "inside" else tmp_path / "outside") / "B.pt"
+    other.parent.mkdir(exist_ok=True)
+    payload = _payload(child)
+    payload["state_dict"] = {name: value + 1.0 if value.is_floating_point() else value
+                             for name, value in payload["state_dict"].items()}
+    torch.save(payload, other)
+    sha_a, sha_b = file_sha256(first), file_sha256(other)
+    assert sha_a != sha_b
+    alias = _filed(workspace, RUN_A)
+    alias.symlink_to(first)
+
+    real_open, opens = Path.open, []
+
+    def open_switched(path, *args, **kwargs):
+        mode = args[0] if args else kwargs.get("mode", "r")
+        if path == alias and mode == "rb":
+            opens.append(path)
+            if len(opens) == 1:
+                _retarget(alias, other)
+                try:
+                    return real_open(path, *args, **kwargs)
+                finally:
+                    _retarget(alias, first)
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", open_switched)
+    switched = _listed()[RUN_A]
+    settled = _listed()[RUN_A]
+    monkeypatch.setattr(Path, "open", real_open)
+
+    if between == "inside":
+        assert switched.sha256 == sha_b, "the switch fell at the list's open"
+    else:
+        assert switched.problem == (
+            f"{RUN_A}/last.pt was opened outside the workspace, so it is not read")
+    assert alias.resolve() == first.resolve() and file_sha256(alias) == sha_a
+    assert len(opens) == 2, "the second list showed a kept read instead of opening the name"
+    assert settled.sha256 == sha_a and settled.problem is None
+    assert settled.record == "model", settled.record_problem
+
+    from src.api.routes.pipeline import PipelineReloadRequest, run_reload
+
+    loaded = run_reload(PipelineReloadRequest(
+        data_dir=str(workspace), checkpoint_path=str(alias), device="cpu",
+        expected_checkpoint_sha256=settled.sha256))
+    assert loaded.success, loaded.message
 
 
 def test_two_children_trained_on_different_cases_both_list_and_measure(

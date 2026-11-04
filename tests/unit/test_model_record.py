@@ -6,7 +6,10 @@ never run), another version, a record that disagrees with its spec, the wrong
 stage or task (checked first), another graph view, weights that do not
 match the spec, and a record that names one input two ways (K8-4 review P2-2).
 Both writers carry the record, weights-only files included, and everything
-loads with `weights_only=True`.
+loads with `weights_only=True`. The reader is total over what the safe loader
+reads (K8-4r2 recheck, P2): a value it cannot convert or walk (an infinite
+count, a list holding itself, one nested without end or shared past counting)
+is refused naming its field, never raised as another error.
 
 Module: tests/unit/test_model_record.py
 """
@@ -23,12 +26,14 @@ torch = pytest.importorskip("torch")
 from src.models.bundle import build_bundle, finetune_spec_from_parent, reference_spec  # noqa: E402
 from src.models.bundle.record import (  # noqa: E402
     MODEL_RECORD_VERSION,
+    PLAIN_DEPTH,
+    PLAIN_VALUES,
     ModelRecord,
     ModelRecordError,
     load_bundle,
     read_model_record,
 )
-from src.models.bundle.spec import InputSpec  # noqa: E402
+from src.models.bundle.spec import InputSpec, SpecError, ViewShape  # noqa: E402
 from src.training.callbacks import ModelCheckpoint, ModelCheckpointConfig  # noqa: E402
 from src.utils.run_environment import assert_primitive  # noqa: E402
 
@@ -277,6 +282,141 @@ def test_two_records_on_one_graph_with_different_training_cases_both_read():
         other = read_model_record(_claims_payload(fixture=fixture, cases=("a" * 64, "b" * 64)))
         assert one.data_roles["kg"] == other.data_roles["kg"]
         assert one.data_roles["task_data"] != other.data_roles["task_data"]
+
+
+# --------------------------------------------------------------------------- totality
+
+
+def _holding_itself(kind):
+    if kind == "list":
+        value = []
+        value.append(value)
+    else:
+        value = {}
+        value["self"] = value
+    return value
+
+
+def _nested(depth):
+    value = []
+    for _ in range(depth):
+        value = [value]
+    return value
+
+
+def _shared(width, depth):
+    """One list held `width` times at each of `depth` levels: a few objects,
+    `width ** depth` values once walked out."""
+    value = ["x"]
+    for _ in range(depth):
+        value = [value] * width
+    return value
+
+
+@pytest.mark.parametrize("field", ["data_roles.graph_view.rule.largest_component",
+                                   "data_roles.kg"])
+@pytest.mark.parametrize("make, refused", [
+    (lambda: _holding_itself("list"), "{field}[0] is a list that contains itself"),
+    (lambda: _holding_itself("mapping"), "{field}.self is a dict that contains itself"),
+    (lambda: _nested(10_000), "{field}{levels} nests deeper than " + f"{PLAIN_DEPTH} levels"),
+    (lambda: _shared(4, 8), "{whole} holds more than " + f"{PLAIN_VALUES} values"),
+], ids=["list-holding-itself", "mapping-holding-itself", "nested-10000-deep",
+        "one-list-shared-4^8-times"])
+def test_a_compared_value_the_walk_cannot_finish_is_refused_naming_where_it_stopped(
+        field, make, refused):
+    """The reviewer's K8-4r2 recheck, P2 (``cyclic_rule``): the walk that reads a
+    compared value as plain data recursed into a list holding itself until
+    `RecursionError`, which no entry expects, and the whole model list answered
+    HTTP 500; a value nested ten thousand deep did the same, and one list held
+    many times over at each level would be walked out for ever. Now each is
+    refused as the record's error, naming the field and where the walk stopped:
+    on its own path again, `PLAIN_DEPTH` levels down, or past `PLAIN_VALUES`
+    values in all (the compared claim named)."""
+    payload = _claims_payload()
+    *parents, leaf = field.split(".")
+    _at(payload, ".".join(parents))[leaf] = make()
+    whole = "data_roles.graph_view.rule" if "rule" in field else field
+    levels = "[0]" * (PLAIN_DEPTH - field.count(".") + whole.count("."))
+    with pytest.raises(ModelRecordError) as caught:
+        read_model_record(payload)
+    expected = refused.format(field=field, whole=whole, levels=levels)
+    assert f"the record's {expected}" in str(caught.value), str(caught.value)
+
+
+@pytest.mark.parametrize("field, refused", [
+    ("record_version", "checkpoint record version"),
+    ("learning_stage", "the record's learning stage or task differs from its model spec"),
+    ("task", "the record's learning stage or task differs from its model spec"),
+    ("operation", "unknown operation"),
+])
+@pytest.mark.parametrize("make", [lambda: _holding_itself("list"), lambda: _nested(10_000)],
+                         ids=["list-holding-itself", "nested-10000-deep"])
+def test_a_value_judged_against_the_readers_own_is_judged_by_its_kind_without_a_walk(
+        field, refused, make):
+    """A field the reader holds its own value for (the record version, the
+    stage and task its spec names) or a closed list of (the operation) is
+    judged directly by that value's kind: a list differs from a number or a
+    name without being walked, and the reason shows it however deep it nests.
+    Before the fix each raised `RecursionError` from the walk or from the
+    reason's own `repr`."""
+    payload = _claims_payload()
+    payload[field] = make()
+    with pytest.raises(ModelRecordError, match=re.escape(refused)):
+        read_model_record(payload)
+
+
+@pytest.mark.parametrize("field, value", [
+    ("num_nodes", float("inf")), ("num_nodes", float("-inf")), ("num_nodes", float("nan")),
+    ("num_nodes", True), ("num_nodes", 4.0), ("num_nodes", "4"), ("num_nodes", b"4"),
+    ("num_nodes", torch.tensor([4])), ("num_nodes", torch.tensor([4, 4])), ("num_nodes", 0),
+    ("digest", None), ("digest", 7), ("digest", b"e" * 64), ("digest", ""),
+    ("node_types", "gene"), ("node_types", [1]), ("node_types", torch.tensor([1, 2])),
+    ("relations", []), ("relations", ["a|b|c", None]), ("relations", _holding_itself("list")),
+])
+def test_a_graph_view_record_field_is_judged_before_anything_is_made_of_it(field, value):
+    """The reviewer's K8-4r2 recheck, P2 (``infinite_node_count``): the view's
+    read converted before it checked, so `int(inf)` raised `OverflowError` out
+    of the reader, a tensor of two values raised from PyTorch, and a count
+    given as text or a boolean, a digest that is not text, or names given as a
+    string were cast into a view no writer made. Each field is now judged as
+    the kind the view writes, nothing cast, and refused naming it."""
+    record = {**VIEW, field: value}
+    with pytest.raises(SpecError, match=re.escape(f"graph_view.{field}")):
+        ViewShape.from_record(record)
+    bundle, model = _record()
+    with pytest.raises(ModelRecordError, match=re.escape(f"graph_view.{field}")):
+        read_model_record({**_payload(bundle, model), "graph_view": record})
+
+
+@pytest.mark.parametrize("section, value, refused", [
+    ("graph_view", torch.tensor([1, 2]), "model spec section 'graph_view' is Tensor"),
+    ("task_head", 1.5, "model spec section 'task_head' is float"),
+    ("encoder", {torch.tensor([1, 2]): 1, torch.tensor([3, 4]): 2},
+     "model spec section 'encoder' has a key that is not a name (Tensor)"),
+    ("encoder.dropout", _nested(10_000),
+     "encoder.dropout must be a finite number, not [[[[...]]]]"),
+    ("spec_version", _nested(10_000), "model spec version [[[[...]]]] is not 1"),
+    ("graph_view.exclude_relations", [_shared(16, 12)],
+     "graph_view.exclude_relations[0] must be a string, not [[[[...], [...],"),
+])
+def test_a_spec_value_the_reader_cannot_ask_or_show_is_refused_naming_its_field(
+        section, value, refused):
+    """A spec section is read as a mapping of names before anything is asked of
+    it: a tensor or a number given for one made `dict()` raise an error naming
+    no field, and keys that are tensors made sorting the unknown keys raise
+    from PyTorch. A container in a reason is shown a few levels and values
+    deep: one nested past the interpreter's depth made `repr` raise
+    `RecursionError`, and one list held 16 times at each of 12 levels would be
+    written out value by value (16^12, in C, never returning; not run at
+    14fe7a8 for that reason)."""
+    spec = finetune_spec_from_parent(_base_spec(), "disease")
+    bundle, model = _record(spec, operation="finetune", parent={"sha256": "p" * 64, "run": "a"})
+    payload = _payload(bundle, model)
+    *parents, leaf = section.split(".")
+    target = _at(payload["model_spec"], ".".join(parents)) if parents else payload["model_spec"]
+    target[leaf] = value
+    with pytest.raises(ModelRecordError, match=re.escape(refused)):
+        read_model_record(payload)
 
 
 def _trainer(tmp_path, model):

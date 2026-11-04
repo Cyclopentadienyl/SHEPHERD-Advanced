@@ -36,6 +36,10 @@ def test_ranking_score_ignores_invalid():
     assert ranking_score_detail({"val_loss": 8.6}) is None  # loss is not a ranking metric
     assert ranking_score_detail({"val_pooled_mrr": float("nan")}) is None  # NaN ignored
     assert ranking_score_detail({"val_pooled_mrr": True}) is None  # bool is not a numeric score
+    # An integer past a float's range (the safe loader reads one) has no finite
+    # figure; `math.isfinite` raised OverflowError out of the list.
+    assert ranking_score_detail({"val_mrr": 2 ** 2000, "val_pooled_mrr": 2 ** 200}) == (
+        "val_pooled_mrr", float(2 ** 200))
     assert ranking_score_detail({}) is None
     assert ranking_score_detail(None) is None
 
@@ -734,6 +738,36 @@ def test_a_bounded_listing_never_shows_what_an_unbounded_read_kept_of_an_outside
     assert row.sha256 is None and row.model_record is None and row.size_bytes is None
     assert row.problem == f"{run}/last.pt was opened outside the workspace, so it is not read"
     assert outside_sha not in repr(row)
+
+
+def test_a_read_whose_values_nest_past_what_is_copied_is_listed_and_never_kept(
+        tmp_path, monkeypatch):
+    """A kept read is copied in and out, one Python frame or more per level of
+    nesting, while the safe loader reads a value nested any depth. Before the
+    fix the list copied a record and a kept read's logs whole, so a file with
+    a value nested a thousand deep raised `RecursionError` out of the list.
+    Now such a file is listed from its own read, which nothing else holds, and
+    is read again at every listing rather than kept; a shallow one is kept."""
+    from collections import OrderedDict
+
+    import src.utils.checkpoint_paths as cp
+
+    monkeypatch.setattr(cp, "_READS", OrderedDict())
+    monkeypatch.setattr(cp, "SETTLED_NS", 0)
+    nested = []
+    for _ in range(1000):
+        nested = [nested]
+    run = tmp_path / "runs" / "gatv2" / "20261001-000000_a_111111" / "checkpoints"
+    _write_checkpoint(run / "deep.pt", {"epoch": 1, "logs": {"history": nested},
+                                        "model_spec": {}, "data_roles": {"notes": nested}})
+    _write_checkpoint(run / "shallow.pt", {"epoch": 2, "logs": {"val_pooled_mrr": 0.2}})
+    seen = _counted_reads(monkeypatch)
+
+    for _ in range(2):
+        rows = {e.path.name: e for e in cp.read_run_checkpoints(tmp_path, within=tmp_path)}
+        assert rows["deep.pt"].problem is None and rows["deep.pt"].epoch == 1
+        assert rows["deep.pt"].model_record["data_roles"]["notes"] is not None
+    assert sorted(seen) == ["deep.pt", "deep.pt", "shallow.pt"]
 
 
 def test_importing_the_listing_does_not_import_torch():

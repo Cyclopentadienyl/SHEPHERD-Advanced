@@ -21,6 +21,10 @@ every entry that reads it refuses it, whichever copy that entry trusts.
 **Each value the reader compares is compared as plain data** (`_plain`): by
 its kind as well as its content, so a value that is not plain data (a tensor
 the safe loader also accepts) is refused naming its field, never compared.
+The walk is total over what the safe loader reads: a list or mapping that
+holds itself, or one nested or sized past what a record holds, is refused
+naming its field, and a value compared with the reader's own (a version, a
+stage) is judged by that value's kind without being walked (`_differs`).
 
 Plain data only, so the payload still loads with `weights_only=True`.
 Reading and checking a record needs no torch; only `load_bundle` builds.
@@ -31,10 +35,10 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from src.config.model_types import MODEL_RECORD_KEYS
-from src.models.bundle.spec import LEARNING_STAGES, TASKS, ModelSpec, SpecError, ViewShape
+from src.models.bundle.spec import LEARNING_STAGES, TASKS, ModelSpec, SpecError, ViewShape, _shown
 
 #: The checkpoint `record_version` the bundle path writes (M3a's was 1).
 MODEL_RECORD_VERSION = 2
@@ -77,8 +81,10 @@ class ModelRecord:
 
     def validate(self) -> "ModelRecord":
         self.model_spec.validate()
-        if self.operation not in OPERATIONS:
-            raise ModelRecordError(f"unknown operation {self.operation!r}")
+        # A name first, so a value with no one answer to `in` (a tensor) is
+        # refused, never asked.
+        if not isinstance(self.operation, str) or self.operation not in OPERATIONS:
+            raise ModelRecordError(f"unknown operation {_shown(self.operation)}")
         if not isinstance(self.family_id, str) or not self.family_id:
             raise ModelRecordError("a model record names its family (the root run)")
         if (self.operation == "new") != (self.parent is None):
@@ -134,6 +140,15 @@ def has_model_spec(payload: Mapping[str, Any]) -> bool:
     return isinstance(payload, Mapping) and payload.get("model_spec") is not None
 
 
+#: How deep a value the reader compares may nest, and how many values it may
+#: hold in all, to be walked: the deepest part a record compares, a graph view
+#: rule, is a mapping holding a list of names. Past either, the value is
+#: refused naming its field (`_plain`), so the walk is bounded however the
+#: file was written (the safe loader reads any depth and shares values freely).
+PLAIN_DEPTH = 16
+PLAIN_VALUES = 10_000
+
+
 def _plain(name: str, value: Any) -> Any:
     """A value the reader compares (the field `name`), as plain data that
     states its kind beside its content, or a `ModelRecordError` naming the
@@ -146,33 +161,63 @@ def _plain(name: str, value: Any) -> Any:
     read as the kinds a record holds: null, a boolean, a finite number, a
     string, a list (or tuple), a mapping with string keys. Two values are
     the same exactly when their kinds and contents are; a boolean is never a
-    number. Anything else, or a number that is not finite, is refused."""
-    if value is None:
-        return ("null",)
-    if isinstance(value, bool):
-        return ("boolean", value)
-    if isinstance(value, (int, float)):
-        if isinstance(value, float) and not math.isfinite(value):
-            raise ModelRecordError(f"the record's {name} is {value!r}, not a finite number, "
+    number. Anything else, or a number that is not finite, is refused.
+
+    **The walk ends for every value the safe loader reads** (the reviewer's
+    K8-4r2 recheck: a rule field holding a list that holds itself made this
+    walk recurse until `RecursionError`, and the whole model list answered
+    HTTP 500). A scalar is judged where it stands; a list or mapping is
+    walked only while it is not already on the path walked (a value holding
+    itself), lies at most `PLAIN_DEPTH` levels down, and the walk has read
+    at most `PLAIN_VALUES` values (one value held many times over counts
+    each time); otherwise it is refused, naming the path where it stopped."""
+    walked = [0]
+
+    def read(at: str, part: Any, path: Tuple[int, ...]) -> Any:
+        walked[0] += 1
+        if walked[0] > PLAIN_VALUES:
+            raise ModelRecordError(f"the record's {name} holds more than {PLAIN_VALUES} values, "
                                    "so it is not compared")
-        return ("number", value)
-    if isinstance(value, str):
-        return ("string", value)
-    if isinstance(value, (list, tuple)):
-        return ("list", tuple(_plain(f"{name}[{i}]", v) for i, v in enumerate(value)))
-    if isinstance(value, Mapping):
-        for key in value:
-            if not isinstance(key, str):
-                raise ModelRecordError(f"the record's {name} has a key that is not a string "
-                                       f"({type(key).__name__}), so it is not compared")
-        return ("mapping", {k: _plain(f"{name}.{k}", v) for k, v in value.items()})
-    raise ModelRecordError(f"the record's {name} is a {type(value).__name__}, not plain data, "
-                           "so it is not compared")
+        if part is None:
+            return ("null",)
+        if isinstance(part, bool):
+            return ("boolean", part)
+        if isinstance(part, (int, float)):
+            if isinstance(part, float) and not math.isfinite(part):
+                raise ModelRecordError(f"the record's {at} is {part!r}, not a finite number, "
+                                       "so it is not compared")
+            return ("number", part)
+        if isinstance(part, str):
+            return ("string", part)
+        if not isinstance(part, (list, tuple, Mapping)):
+            raise ModelRecordError(f"the record's {at} is a {type(part).__name__}, not plain "
+                                   "data, so it is not compared")
+        if id(part) in path:
+            raise ModelRecordError(f"the record's {at} is a {type(part).__name__} that contains "
+                                   "itself, so it is not compared")
+        if len(path) >= PLAIN_DEPTH:
+            raise ModelRecordError(f"the record's {at} nests deeper than {PLAIN_DEPTH} levels, "
+                                   "so it is not compared")
+        path = path + (id(part),)
+        if isinstance(part, Mapping):
+            for key in part:
+                if not isinstance(key, str):
+                    raise ModelRecordError(f"the record's {at} has a key that is not a string "
+                                           f"({type(key).__name__}), so it is not compared")
+            return ("mapping", {k: read(f"{at}.{k}", v, path) for k, v in part.items()})
+        return ("list", tuple(read(f"{at}[{i}]", v, path) for i, v in enumerate(part)))
+
+    return read(name, value, ())
 
 
 def _differs(name: str, value: Any, expected: Any) -> bool:
-    """Whether the record's field `name` holds other than `expected`, both
-    compared as plain data (`_plain`)."""
+    """Whether the record's field `name` holds other than `expected`, a value
+    the reader itself holds, of a known scalar kind (a version number, a
+    learning stage, a task or none). Judged directly by that kind: a list or
+    a mapping differs without being walked, and any other value is compared
+    as plain data (`_plain`, which refuses one that is not)."""
+    if isinstance(value, (list, tuple, Mapping)):
+        return True
     return _plain(name, value) != _plain(name, expected)
 
 
@@ -255,7 +300,7 @@ def read_model_record(payload: Mapping[str, Any]) -> ModelRecord:
     if not has_model_spec(payload):
         raise ModelRecordError(HISTORY_ONLY)
     if _differs("record_version", payload.get("record_version"), MODEL_RECORD_VERSION):
-        raise ModelRecordError(f"checkpoint record version {payload.get('record_version')!r} "
+        raise ModelRecordError(f"checkpoint record version {_shown(payload.get('record_version'))} "
                                f"is not {MODEL_RECORD_VERSION}; this build reads only its own")
     missing = [k for k in RECORD_KEYS if k not in payload]
     if missing:
