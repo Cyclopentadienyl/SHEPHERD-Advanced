@@ -611,8 +611,7 @@ def list_checkpoints(
             filename=entry.path.name,
             sha256=entry.sha256,
             size_bytes=entry.size_bytes,
-            checkpoint_kind=(entry.checkpoint_kind
-                             if isinstance(entry.checkpoint_kind, str) else None),
+            checkpoint_kind=entry.checkpoint_kind,
             epoch=_count(entry.epoch),
             validation=({"metric": entry.validation[0], "value": entry.validation[1]}
                         if entry.validation else None),

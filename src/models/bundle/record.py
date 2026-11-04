@@ -39,6 +39,7 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from src.config.model_types import MODEL_RECORD_KEYS
 from src.models.bundle.spec import LEARNING_STAGES, TASKS, ModelSpec, SpecError, ViewShape, _shown
+from src.utils.checkpoint_paths import text_problem
 
 #: The checkpoint `record_version` the bundle path writes (M3a's was 1).
 MODEL_RECORD_VERSION = 2
@@ -87,6 +88,10 @@ class ModelRecord:
             raise ModelRecordError(f"unknown operation {_shown(self.operation)}")
         if not isinstance(self.family_id, str) or not self.family_id:
             raise ModelRecordError("a model record names its family (the root run)")
+        # The names a list shows are text an answer can carry (`text_problem`).
+        why = text_problem(self.family_id)
+        if why is not None:
+            raise ModelRecordError(f"the record's family_id {why}")
         if (self.operation == "new") != (self.parent is None):
             raise ModelRecordError("a parent is recorded for every operation but 'new'")
         if self.parent is not None and not (
@@ -95,6 +100,10 @@ class ModelRecord:
                 and self.parent["run"]):
             raise ModelRecordError("a parent is named by the SHA-256 of its checkpoint file "
                                    "and its run")
+        for key in ("sha256", "run") if self.parent is not None else ():
+            why = text_problem(self.parent[key])
+            if why is not None:
+                raise ModelRecordError(f"the record's parent.{key} {why}")
         if self.operation == "finetune" and self.learning_stage != "finetune":
             raise ModelRecordError("a finetune operation produces a finetune spec")
         if self.operation == "new" and self.learning_stage != "base":
@@ -159,9 +168,11 @@ def _plain(name: str, value: Any) -> Any:
     (a tensor of several values has no truth value; one of a single value
     answers as that value) nor across kinds (`True == 1`). So each value is
     read as the kinds a record holds: null, a boolean, a finite number, a
-    string, a list (or tuple), a mapping with string keys. Two values are
-    the same exactly when their kinds and contents are; a boolean is never a
-    number. Anything else, or a number that is not finite, is refused.
+    string that is text (`text_problem`: a lone surrogate is not, and no
+    answer can carry one), a list (or tuple), a mapping keyed by such
+    strings. Two values are the same exactly when their kinds and contents
+    are; a boolean is never a number. Anything else, or a number that is not
+    finite, is refused.
 
     **The walk ends for every value the safe loader reads** (the reviewer's
     K8-4r2 recheck: a rule field holding a list that holds itself made this
@@ -188,6 +199,9 @@ def _plain(name: str, value: Any) -> Any:
                                        "so it is not compared")
             return ("number", part)
         if isinstance(part, str):
+            why = text_problem(part)
+            if why is not None:
+                raise ModelRecordError(f"the record's {at} {why}, so it is not compared")
             return ("string", part)
         if not isinstance(part, (list, tuple, Mapping)):
             raise ModelRecordError(f"the record's {at} is a {type(part).__name__}, not plain "
@@ -204,6 +218,10 @@ def _plain(name: str, value: Any) -> Any:
                 if not isinstance(key, str):
                     raise ModelRecordError(f"the record's {at} has a key that is not a string "
                                            f"({type(key).__name__}), so it is not compared")
+                why = text_problem(key)
+                if why is not None:
+                    raise ModelRecordError(f"the record's {at} has a key that {why}, so it is "
+                                           "not compared")
             return ("mapping", {k: read(f"{at}.{k}", v, path) for k, v in part.items()})
         return ("list", tuple(read(f"{at}[{i}]", v, path) for i, v in enumerate(part)))
 
@@ -271,7 +289,12 @@ def _claim(payload: Mapping[str, Any], name: str) -> Any:
 
 
 def _shown_claim(name: str, value: Any) -> str:
-    return f"{name} {value[:12]}..." if isinstance(value, str) else name
+    """A claim as a contradiction names it: a string by its first characters (a
+    digest's prefix), escaped and bounded (`_shown`) unless each is printable."""
+    if not isinstance(value, str):
+        return name
+    head = value[:12]
+    return f"{name} {head if head.isprintable() else _shown(head)}..."
 
 
 def _contradictions(payload: Mapping[str, Any]) -> List[str]:

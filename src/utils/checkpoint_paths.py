@@ -438,7 +438,10 @@ class ListedCheckpoint(NamedTuple):
     **A file the read refuses is listed, never dropped:** `problem` says why
     (a format `weights_only=True` refuses, a file gone since it was listed),
     and the digest and record are `None`. A file that loads as something other
-    than a checkpoint record keeps its digest and says so in `problem`. A file
+    than a checkpoint record keeps its digest and says so in `problem`, as
+    does one whose metadata a list shows is not of the kind its field says
+    (`_unshown`: the kind a text, the epochs whole numbers, the logs text
+    names of figures, each string text, `text_problem`), with no metadata. A file
     that resolves outside the directory the caller bounds the listing by, or
     whose open lands outside it, is listed with `problem` and is not read at
     all (`read_run_checkpoints`' `within`).
@@ -467,27 +470,104 @@ class ListedCheckpoint(NamedTuple):
     path: Path
     sha256: Optional[str] = None
     checkpoint_kind: Optional[str] = None
-    epoch: Any = None
+    epoch: Optional[int] = None
     logs: Optional[Dict[str, Any]] = None
     validation: Optional[Tuple[str, float]] = None
     dataset_fingerprint: Optional[str] = None
     problem: Optional[str] = None
     size_bytes: Optional[int] = None
-    completed_epochs: Any = None
+    completed_epochs: Optional[int] = None
     end: Optional[str] = None
     model_record: Optional[Dict[str, Any]] = None
 
 
-#: How much of a refusal's text a listing keeps: its first line, bounded, so a
-#: multi-paragraph loader message stays one readable reason.
+#: How much of a refusal's text a reason keeps (`refusal_line`): its first line,
+#: bounded, so a multi-paragraph loader message stays one readable reason.
 _PROBLEM_LIMIT = 300
 
 
-def _first_line(exc: BaseException) -> str:
+def refusal_line(exc: BaseException) -> str:
+    """A refused read of a checkpoint as a reason shows it, the listing's
+    (`_read_one`) and the training status's (`TrainingManager.latest_snapshot`):
+    the exception's kind and the first line of its message, each character
+    that is not printable written as its escape (``\\udc80``, ``\\x00``), then
+    bounded (`_PROBLEM_LIMIT`). The message can carry text from the file
+    itself (torch's legacy loader names the protocol version the file holds),
+    and a lone surrogate there made every list that showed the reason answer
+    HTTP 500; escaped, it is text any answer carries."""
     text = next((line.strip() for line in str(exc).splitlines() if line.strip()), "")
+    if not text.isprintable():
+        text = "".join(c if c.isprintable() else repr(c)[1:-1] for c in text)
     if len(text) > _PROBLEM_LIMIT:
         text = text[:_PROBLEM_LIMIT - 3] + "..."
     return f"{type(exc).__name__}: {text}" if text else type(exc).__name__
+
+
+def text_problem(value: Any) -> Optional[str]:
+    """**The one check of a string read from a checkpoint before an answer
+    shows it**, the record reader's (`src.models.bundle.record`), the
+    listing's (`_read_one`) and the training status's: why `value` is not
+    text, as the words a reason goes on from, or None for a string every
+    character of which encodes as UTF-8. The safe loader reads any string a
+    pickle holds, a lone surrogate ("\\udc80") among them, which no answer
+    can encode: one file holding one in a field a list shows made that whole
+    list answer HTTP 500. The caller names the field; the value itself is
+    never echoed."""
+    if not isinstance(value, str):
+        return f"is a {type(value).__name__}, not text"
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        return f"is not text: character {exc.start} is a lone surrogate"
+    return None
+
+
+def whole_number_problem(value: Any) -> Optional[str]:
+    """Why `value`, an epoch count read from a checkpoint, is not a whole
+    number (a boolean is not one), as the words a reason goes on from, or
+    None; the listing's check (`_unshown`) and the training status's."""
+    if isinstance(value, int) and not isinstance(value, bool):
+        return None
+    return f"is a {type(value).__name__}, not a whole number"
+
+
+def _figure_problem(value: Any) -> Optional[str]:
+    """A logged figure, as the trainer writes `logs` (`{name: figure}`): a
+    number (a non-finite one included), a boolean, null or text."""
+    if value is None or isinstance(value, (bool, int, float)):
+        return None
+    if isinstance(value, str):
+        return text_problem(value)
+    return f"is a {type(value).__name__}, not a number"
+
+
+def _unshown(meta: Dict[str, Any], logs: Dict[str, Any], progress: Dict[str, Any],
+             fingerprint: Any) -> Optional[str]:
+    """Why the metadata a listing shows of a read file cannot be shown as its
+    fields' kinds say (`ListedCheckpoint`), naming the first field that is not
+    (`text_problem`, a whole number, a logged figure), or None. A list puts
+    these values in its answer as they are, so one that is not of its kind,
+    or not text, made the whole list fail (a lone surrogate, an epoch of 1.5,
+    a tensor among the logs); now that file alone is listed with the reason."""
+    for name, value, problem in (
+            ("checkpoint_kind", meta.get("checkpoint_kind"), text_problem),
+            ("epoch", meta.get("epoch"), whole_number_problem),
+            ("progress.completed_epochs", progress.get("completed_epochs"),
+             whole_number_problem),
+            ("progress.end", progress.get("end"), text_problem),
+            ("training_input_digests.split_manifest", fingerprint, text_problem)):
+        why = problem(value) if value is not None else None
+        if why is not None:
+            return f"its {name} {why}"
+    for key, value in logs.items():
+        why = text_problem(key)
+        if why is not None:
+            return f"its logs hold a name that {why}"
+        why = _figure_problem(value)
+        if why is not None:
+            shown = repr(key) if len(key) <= 60 else repr(key[:57]) + "..."
+            return f"its logs entry {shown} {why}"
+    return None
 
 
 def _outside(path: Path, within: Path) -> Optional[str]:
@@ -674,7 +754,7 @@ def _read_one(run: Path, path: Path, within: Optional[Path]
             run, path, problem=f"{run.name}/{path.name} {_opened_outside(exc)}, so it is not read"
         ), None
     except Exception as exc:  # noqa: BLE001 — listed with its reason, never dropped
-        return ListedCheckpoint(run, path, problem=_first_line(exc), size_bytes=size), None
+        return ListedCheckpoint(run, path, problem=refusal_line(exc), size_bytes=size), None
     meta, opened = read.checkpoint, read.identity.opened
     if not isinstance(meta, dict):
         return ListedCheckpoint(
@@ -686,7 +766,11 @@ def _read_one(run: Path, path: Path, within: Optional[Path]
     digests = meta.get("training_input_digests")
     fingerprint = digests.get("split_manifest") if isinstance(digests, dict) else None
     progress = meta.get("progress") if isinstance(meta.get("progress"), dict) else {}
-    end = progress.get("end")
+    unshown = _unshown(meta, logs, progress, fingerprint)
+    if unshown is not None:
+        return ListedCheckpoint(
+            run, path, sha256=read.identity.sha256,
+            problem=f"{unshown}, so none of its metadata is shown", size_bytes=size), opened
     record = ({"record_version": meta.get("record_version"),
                **{k: meta[k] for k in MODEL_RECORD_READ_KEYS if k in meta}}
               if meta.get("model_spec") is not None else None)
@@ -696,10 +780,10 @@ def _read_one(run: Path, path: Path, within: Optional[Path]
         epoch=meta.get("epoch"),
         logs=logs,
         validation=ranking_score_detail(logs),
-        dataset_fingerprint=fingerprint if isinstance(fingerprint, str) else None,
+        dataset_fingerprint=fingerprint,
         size_bytes=size,
         completed_epochs=progress.get("completed_epochs"),
-        end=end if isinstance(end, str) else None,
+        end=progress.get("end"),
         model_record=record,
     ), opened
 
@@ -864,6 +948,7 @@ __all__ = [
     "list_runs",
     "propose_run_dir",
     "read_run_checkpoints",
+    "refusal_line",
     "refuse_retired_locations",
     "run_architecture",
     "run_checkpoint_dir",
@@ -874,6 +959,8 @@ __all__ = [
     "select_auto_run_checkpoint",
     "slugify_run_name",
     "ranking_score_detail",
+    "text_problem",
+    "whole_number_problem",
     "with_not_read",
     "normalize_run_layout_key",
     "select_checkpoint_in_dir",

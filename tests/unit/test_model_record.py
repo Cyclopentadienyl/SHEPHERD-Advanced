@@ -343,6 +343,55 @@ def test_a_compared_value_the_walk_cannot_finish_is_refused_naming_where_it_stop
     assert f"the record's {expected}" in str(caught.value), str(caught.value)
 
 
+@pytest.mark.parametrize("field, make, refused", [
+    ("family_id", lambda old: "\udc80run", "family_id is not text: character 0"),
+    ("parent.run", lambda old: "run-\ud800", "parent.run is not text: character 4"),
+    ("parent.sha256", lambda old: "\udc80" + old[1:], "parent.sha256 is not text: character 0"),
+    ("data_roles.kg", lambda old: "\udc80" + old[1:],
+     "data_roles.kg is not text: character 0 is a lone surrogate, so it is not compared"),
+    ("training_input_digests.kg", lambda old: old[:-1] + "\ud800",
+     "training_input_digests.kg is not text: character 63 is a lone surrogate, so it is not "
+     "compared"),
+    ("data_roles.graph_view.rule.exclude_relations", lambda old: ["\udc80"],
+     "data_roles.graph_view.rule.exclude_relations[0] is not text: character 0"),
+    ("data_roles.graph_view.rule", lambda old: {**old, "\udc80": True},
+     "data_roles.graph_view.rule has a key that is not text: character 0"),
+], ids=["family-id", "parent-run", "parent-sha256", "compared-claim", "other-claim",
+        "compared-list", "compared-key"])
+def test_a_string_the_record_shows_or_compares_that_is_not_text_is_refused_naming_it(
+        field, make, refused):
+    """The K8-4r3 verifier, left open 1: the safe loader reads any string a
+    pickle holds, a lone surrogate among them, which no answer can encode. The
+    reader accepted one in the names a list shows (the family, the parent's
+    run and file) and copied a compared claim holding one into its reason, so
+    one such file made every model list answer HTTP 500. Now the reader
+    refuses each, as it does a value that is not plain data, naming the field
+    and never echoing the value, and its reason is text."""
+    payload = _claims_payload()
+    *parents, leaf = field.split(".")
+    part = _at(payload, ".".join(parents)) if parents else payload
+    part[leaf] = make(part[leaf])
+    with pytest.raises(ModelRecordError) as caught:
+        read_model_record(payload)
+    assert f"the record's {refused}" in str(caught.value), repr(str(caught.value))
+    str(caught.value).encode("utf-8")
+
+
+def test_a_contradiction_shows_a_claim_that_is_not_printable_escaped():
+    """The reader's reason named a contradicting claim by its first twelve
+    characters as written, so a claim of control characters (text, but not
+    printable) went into every list's answer raw. Now such a claim is shown
+    escaped and bounded (`_shown`), and a digest as before."""
+    payload = _claims_payload(fixture=False)
+    payload["data_roles"]["kg"] = "\x00\n" + "0" * 62
+    with pytest.raises(ModelRecordError) as caught:
+        read_model_record(payload)
+    reason = str(caught.value)
+    assert ("data_roles.kg '\\x00\\n0000000000'... differs from training_input_digests.kg "
+            f"{'k' * 12}...") in reason, repr(reason)
+    assert "\x00" not in reason and "\n" not in reason
+
+
 @pytest.mark.parametrize("field, refused", [
     ("record_version", "checkpoint record version"),
     ("learning_stage", "the record's learning stage or task differs from its model spec"),

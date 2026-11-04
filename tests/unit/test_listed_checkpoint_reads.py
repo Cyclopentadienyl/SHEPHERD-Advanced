@@ -28,6 +28,20 @@ The K8-4r2 recheck:
   now kept only when the file its open descriptor read is the file the name
   gives, and a refusal never.
 
+The K8-4r3 verifier (left open 1 and 2): a lone surrogate in a string a list
+shows (a family, a parent, a kind, an end, a dataset fingerprint) or the
+reader's reason copied (a compared claim) made the server's list, the family
+view and the training service's list answer HTTP 500, and the training list
+did so for an epoch of 1.5 or "x", a kind that is not a string or a tensor
+among its logs. Each list now answers 200 with that file refused, or listed
+unread, naming the field.
+
+The K8-4r4 verifier (defect 1): a file torch reads with its legacy loader is
+refused with a message naming the protocol version the file holds, and the
+listing copied that message into every list's reason, so a lone surrogate
+there made the three lists answer HTTP 500 again. The reason is now written
+with each character that is not printable escaped.
+
 Module: tests/unit/test_listed_checkpoint_reads.py
 """
 from __future__ import annotations
@@ -412,3 +426,168 @@ def test_two_children_trained_on_different_cases_both_list_and_measure(
                                     "--data-dir", str(data_dir), "--split", "val",
                                     "--output", str(out), "--device", "cpu"]) == 0
         assert out.exists()
+
+
+# --------------------------------------------------------------------------- K8-4r3 verifier
+#: The lists that show a workspace's checkpoints over HTTP: the server's list,
+#: its family view and the training service's own list.
+ENDPOINTS = {"checkpoints": "/api/v1/workspaces/ws/checkpoints",
+             "family": "/api/v1/workspaces/ws/family",
+             "training": "/api/v1/training/checkpoints"}
+
+
+def _rows_over_http(workspace, monkeypatch, endpoint):
+    """`endpoint`'s answer for the listed workspace, which must be 200, as
+    its rows by run (a family row as its checkpoint with its group); the
+    training service lists the workspace of its last request."""
+    from fastapi.testclient import TestClient
+
+    from src.api.main import app
+    from src.api.routes import training as training_routes
+    from tests.fixtures.operator_access import OPERATOR_BASE_URL, operator_mode
+
+    operator_mode(monkeypatch)
+    monkeypatch.setattr(training_routes.training_manager, "_config",
+                        {"data_dir": str(workspace)})
+    response = TestClient(app, base_url=OPERATOR_BASE_URL, raise_server_exceptions=False).get(
+        ENDPOINTS[endpoint])
+    assert response.status_code == 200, response.text[:300]
+    body = response.json()
+    if endpoint == "checkpoints":
+        return {row["run"]: row for row in body["checkpoints"]}
+    if endpoint == "family":
+        return {row["item"]["run"]: {**row["item"], "group": row["group"],
+                                     "parent_problem": row["parent_problem"]}
+                for row in body["rows"]}
+    return {row["run"]: row for row in body}
+
+
+def _one_bad_beside_one_good(workspace, trained_disease_child, field, value):
+    """The disease child as run A, and beside it the child with `field`
+    holding `value` as run B, saved as a real file; returns both paths."""
+    child = trained_disease_child["disease"]
+    good = _copy(workspace, RUN_A, child)
+    payload = _payload(child)
+    *parents, leaf = field.split(".")
+    part = payload
+    for key in parents:
+        part = part[key]
+    part[leaf] = value
+    return good, _save(workspace, RUN_B, payload)
+
+
+def _listed_alone(rows, endpoint, good, bad, named, by):
+    """Run A is listed as a model, and run B, with its digest, either refused
+    by the record reader (`by` "record") or listed with its metadata unread
+    (`by` "listing"), its reason naming the field (`named`)."""
+    assert rows[RUN_A]["record"] == "model" and rows[RUN_A]["sha256"] == file_sha256(good)
+    row = rows[RUN_B]
+    assert row["sha256"] == file_sha256(bad)
+    if by == "record":
+        assert row["record"] == "refused" and named in row["record_problem"], row
+    else:
+        problem = row["metadata_problem" if endpoint == "training" else "problem"]
+        assert row["record"] is None and named in problem, row
+    if endpoint == "family":
+        assert rows[RUN_A]["group"] == "family" and row["group"] == "refused"
+
+
+@pytest.mark.parametrize("endpoint", list(ENDPOINTS))
+@pytest.mark.parametrize("field, value, named, by", [
+    ("data_roles.kg", "\udc80" + "0" * 63,
+     "the record's data_roles.kg is not text: character 0 is a lone surrogate", "record"),
+    ("family_id", "\udc80run",
+     "the record's family_id is not text: character 0 is a lone surrogate", "record"),
+    ("parent.run", "run\ud800",
+     "the record's parent.run is not text: character 3 is a lone surrogate", "record"),
+    ("parent.sha256", "\udc80" + "0" * 63,
+     "the record's parent.sha256 is not text: character 0 is a lone surrogate", "record"),
+    ("checkpoint_kind", "\udc80",
+     "its checkpoint_kind is not text: character 0 is a lone surrogate", "listing"),
+    ("progress.end", "finished\udc80",
+     "its progress.end is not text: character 8 is a lone surrogate", "listing"),
+    ("training_input_digests.split_manifest", "\ud800" + "0" * 63,
+     "its training_input_digests.split_manifest is not text: character 0 is a lone surrogate",
+     "listing"),
+], ids=["compared-claim", "family-id", "parent-run", "parent-sha256", "checkpoint-kind",
+        "progress-end", "split-manifest"])
+def test_one_file_holding_a_string_that_is_not_text_is_refused_alone_by_every_list(
+        workspace, trained_disease_child, monkeypatch, endpoint, field, value, named, by):
+    """The K8-4r3 verifier, left open 1: one disease child with a lone
+    surrogate (a string the safe loader reads and no answer can encode) in a
+    field a list shows or the reader's reason copied, beside a healthy child.
+    Before the fix the server's list and the family view answered HTTP 500
+    for every one of them, and the training service's list for all but
+    ``progress.end``, which it listed as a model. Now each list answers 200:
+    that file is refused by the record reader, or listed with its metadata
+    unread, the reason naming the field without echoing it, and the healthy
+    one is listed as a model."""
+    good, bad = _one_bad_beside_one_good(workspace, trained_disease_child, field, value)
+
+    rows = _rows_over_http(workspace, monkeypatch, endpoint)
+
+    _listed_alone(rows, endpoint, good, bad, named, by)
+
+
+@pytest.mark.parametrize("field, value, named", [
+    ("epoch", 1.5, "its epoch is a float, not a whole number"),
+    ("epoch", "x", "its epoch is a str, not a whole number"),
+    ("checkpoint_kind", 5, "its checkpoint_kind is a int, not text"),
+    ("logs.val_pooled_mrr", torch.tensor([0.1, 0.2]),
+     "its logs entry 'val_pooled_mrr' is a Tensor, not a number"),
+], ids=["epoch-1.5", "epoch-x", "checkpoint-kind-5", "logs-tensor"])
+def test_one_file_whose_epoch_or_kind_is_not_of_its_kind_is_listed_unread_by_the_training_list(
+        workspace, trained_disease_child, monkeypatch, field, value, named):
+    """The K8-4r3 verifier, left open 2: the training service's own list put
+    a file's epoch and kind in its answer as read, so one file whose epoch is
+    1.5 or "x", or whose kind is not a string, failed the answer's types and
+    ``GET /api/v1/training/checkpoints`` answered HTTP 500; so did a tensor
+    among its logs, which it shows whole. Now the listing reads each value as
+    its field's kind or lists that file unread, saying which field, and the
+    healthy file is listed as a model."""
+    good, bad = _one_bad_beside_one_good(workspace, trained_disease_child, field, value)
+
+    rows = _rows_over_http(workspace, monkeypatch, "training")
+
+    _listed_alone(rows, "training", good, bad, named, "listing")
+    assert rows[RUN_B]["epoch"] is None and rows[RUN_B]["checkpoint_kind"] is None
+
+
+# --------------------------------------------------------------------------- K8-4r4 verifier
+#: The first value of a file torch reads with its legacy (non-zip) loader.
+_LEGACY_MAGIC = 0x1950A86A20F9469CFC6C
+
+
+@pytest.mark.parametrize("endpoint", list(ENDPOINTS))
+def test_a_refused_read_whose_message_holds_a_string_that_is_not_text_is_listed_alone(
+        workspace, trained_disease_child, monkeypatch, endpoint):
+    """The K8-4r4 verifier, defect 1 (``legacy-proto-surrogate``): torch reads
+    a file that is not a zip archive with its legacy loader even under
+    ``weights_only=True``, and refuses one whose protocol version is not its
+    own with ``RuntimeError: Invalid protocol version: <the file's value>``.
+    The listing copied that message into the file's reason, so a file holding
+    a lone surrogate there, in the run the healthy child names as its parent,
+    made the server's list, the family view (the file's row and the child's
+    ``parent_problem``) and the training service's list answer HTTP 500, at
+    the first request and the next. Now each answers 200 at both: that file
+    is listed unread with the message escaped, and the child as a model."""
+    import pickle
+
+    child = trained_disease_child["disease"]
+    good = _copy(workspace, RUN_A, child)
+    parent_run = _payload(child)["parent"]["run"]
+    _filed(workspace, parent_run).write_bytes(
+        pickle.dumps(_LEGACY_MAGIC, protocol=2) + pickle.dumps("\udc80proto", protocol=2))
+    message = "RuntimeError: Invalid protocol version: \\udc80proto"
+
+    for request in ("first", "next"):
+        rows = _rows_over_http(workspace, monkeypatch, endpoint)
+
+        assert rows[RUN_A]["record"] == "model", request
+        assert rows[RUN_A]["sha256"] == file_sha256(good), request
+        row = rows[parent_run]
+        problem = row["metadata_problem" if endpoint == "training" else "problem"]
+        assert row["sha256"] is None and problem == message, (request, row)
+        if endpoint == "family":
+            assert row["group"] == "refused", request
+            assert f"could not be read ({message})" in rows[RUN_A]["parent_problem"], request

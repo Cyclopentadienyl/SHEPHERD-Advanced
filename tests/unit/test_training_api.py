@@ -515,6 +515,55 @@ class TestTrainingAPIEndpoints:
         resp = self.client.post("/api/v1/training/stop")
         assert resp.status_code == 409
 
+    @pytest.mark.parametrize("payload, named", [
+        ({"checkpoint_kind": "training_state", "progress": {"end": "\udc80"}},
+         "its progress.end is not text: character 0 is a lone surrogate"),
+        ({"progress": {"end": "stopped_early", "stop_reason": "patience\ud800"}},
+         "its progress.stop_reason is not text: character 8 is a lone surrogate"),
+        ({"progress": {"completed_epochs": "tensor", "end": None}},
+         "its progress.completed_epochs is a Tensor, not a whole number"),
+        ({"progress": {"stage": {"start_epoch": "x", "target_epochs": 2}}},
+         "its progress.stage.start_epoch is a str, not a whole number"),
+        (b"legacy", "RuntimeError: Invalid protocol version: \\udc80proto"),
+    ], ids=["end-surrogate", "stop-reason-surrogate", "completed-tensor", "start-epoch-text",
+            "legacy-protocol-surrogate"])
+    def test_a_stopped_runs_snapshot_that_cannot_be_shown_as_read_is_not_readable(
+            self, base_body, payload, named):
+        """The K8-4r4 verifier, defect 2: the status put the end, the stop
+        reason, the epoch counts and the loader's message of the job's own
+        ``last.pt`` in its answer as read, so a lone surrogate in one (the
+        legacy loader's message names the file's protocol version) failed the
+        answer's encoding, a tensor its serialisation and a start epoch of
+        "x" the snapshot itself: the stop and every later status failed. Now
+        both answer 200, the snapshot not readable, the reason naming the
+        field (as the listing checks it) or escaping the message."""
+        import pickle
+
+        import torch
+
+        process = FakeProcess(pid=8, on_sigint=0)
+        with patch("subprocess.Popen", return_value=process):
+            run = Path(self.client.post("/api/v1/training/start", json=base_body).json()[
+                "run_dir"])
+        last = run / "checkpoints" / "last.pt"
+        last.parent.mkdir(parents=True, exist_ok=True)
+        if payload == b"legacy":
+            last.write_bytes(pickle.dumps(0x1950A86A20F9469CFC6C, protocol=2)
+                             + pickle.dumps("\udc80proto", protocol=2))
+        else:
+            progress = payload["progress"]
+            if progress.get("completed_epochs") == "tensor":
+                progress["completed_epochs"] = torch.tensor([1, 2])
+            torch.save(payload, last)
+
+        for response in (self.client.post("/api/v1/training/stop"),
+                         self.client.get("/api/v1/training/status")):
+            assert response.status_code == 200, response.text[:300]
+            outcome = response.json()["outcome"]
+            assert outcome["readable"] is False and outcome["checkpoint"] == str(last)
+            assert outcome["reason"].startswith(named), outcome
+            assert "resumable" not in outcome and "end" not in outcome
+
     def test_a_retired_location_is_refused_by_the_api(self, base_body):
         with patch("subprocess.Popen") as popen:
             resp = self.client.post("/api/v1/training/start",

@@ -747,7 +747,9 @@ def test_a_read_whose_values_nest_past_what_is_copied_is_listed_and_never_kept(
     fix the list copied a record and a kept read's logs whole, so a file with
     a value nested a thousand deep raised `RecursionError` out of the list.
     Now such a file is listed from its own read, which nothing else holds, and
-    is read again at every listing rather than kept; a shallow one is kept."""
+    is read again at every listing rather than kept; a shallow one is kept.
+    (Its record nests: logs hold single figures, so deep logs are refused,
+    `test_a_file_whose_listed_metadata_is_not_of_its_kind_is_listed_unread`.)"""
     from collections import OrderedDict
 
     import src.utils.checkpoint_paths as cp
@@ -758,7 +760,7 @@ def test_a_read_whose_values_nest_past_what_is_copied_is_listed_and_never_kept(
     for _ in range(1000):
         nested = [nested]
     run = tmp_path / "runs" / "gatv2" / "20261001-000000_a_111111" / "checkpoints"
-    _write_checkpoint(run / "deep.pt", {"epoch": 1, "logs": {"history": nested},
+    _write_checkpoint(run / "deep.pt", {"epoch": 1, "logs": {"val_pooled_mrr": 0.1},
                                         "model_spec": {}, "data_roles": {"notes": nested}})
     _write_checkpoint(run / "shallow.pt", {"epoch": 2, "logs": {"val_pooled_mrr": 0.2}})
     seen = _counted_reads(monkeypatch)
@@ -768,6 +770,114 @@ def test_a_read_whose_values_nest_past_what_is_copied_is_listed_and_never_kept(
         assert rows["deep.pt"].problem is None and rows["deep.pt"].epoch == 1
         assert rows["deep.pt"].model_record["data_roles"]["notes"] is not None
     assert sorted(seen) == ["deep.pt", "deep.pt", "shallow.pt"]
+
+
+#: A file's metadata as a training state writes it, which the listing shows.
+_LISTED = {"checkpoint_kind": "training_state", "epoch": 3,
+           "logs": {"val_pooled_mrr": 0.2, "val_loss": float("nan"), "steps": 2 ** 200},
+           "progress": {"completed_epochs": 4, "end": "finished"},
+           "training_input_digests": {"split_manifest": "1" * 64}}
+
+
+def _with(field, value):
+    import copy
+
+    meta = copy.deepcopy(_LISTED)
+    *parents, leaf = field.split(".")
+    part = meta
+    for key in parents:
+        part = part[key]
+    part[leaf] = value
+    return meta
+
+
+@pytest.mark.parametrize("field, value, named", [
+    ("checkpoint_kind", "\udc80", "its checkpoint_kind is not text: character 0 is a lone "
+                                   "surrogate"),
+    ("checkpoint_kind", "best\ud800", "its checkpoint_kind is not text: character 4"),
+    ("checkpoint_kind", 5, "its checkpoint_kind is a int, not text"),
+    ("epoch", 1.5, "its epoch is a float, not a whole number"),
+    ("epoch", "x", "its epoch is a str, not a whole number"),
+    ("epoch", True, "its epoch is a bool, not a whole number"),
+    ("progress.completed_epochs", "4", "its progress.completed_epochs is a str, not a whole "
+                                       "number"),
+    ("progress.end", "\udc80", "its progress.end is not text: character 0"),
+    ("progress.end", 1, "its progress.end is a int, not text"),
+    ("training_input_digests.split_manifest", "\udc80" * 64,
+     "its training_input_digests.split_manifest is not text: character 0"),
+    ("logs", {"\udc80": 0.1}, "its logs hold a name that is not text: character 0"),
+    ("logs", {1: 0.1}, "its logs hold a name that is a int, not text"),
+    ("logs.val_pooled_mrr", "\ud800", "its logs entry 'val_pooled_mrr' is not text"),
+    ("logs.val_pooled_mrr", [0.1], "its logs entry 'val_pooled_mrr' is a list, not a number"),
+], ids=["kind-low-surrogate", "kind-high-surrogate", "kind-number", "epoch-fraction",
+        "epoch-text", "epoch-boolean", "completed-text", "end-surrogate", "end-number",
+        "fingerprint-surrogate", "logs-name-surrogate", "logs-name-number",
+        "logs-figure-surrogate", "logs-figure-list"])
+def test_a_file_whose_listed_metadata_is_not_of_its_kind_is_listed_unread(
+        tmp_path, field, value, named):
+    """The K8-4r3 verifier, left open 1 and 2: the listing put a file's kind,
+    epochs, end, logs and dataset fingerprint in every list's answer as it
+    read them, so one string no answer can encode (a lone surrogate, high or
+    low) or one value not of its field's kind (an epoch of 1.5, a kind that is
+    a number) made a whole list answer HTTP 500. Now that file alone is listed
+    with its digest and the reason naming the field (`text_problem` for each
+    string), none of its metadata shown, and the file beside it is listed as
+    it reads; text with a NUL or 200,000 characters, a non-finite or huge
+    figure, are of their kinds and listed."""
+    import torch
+
+    from src.utils.checkpoint_paths import read_run_checkpoints
+    from src.utils.fingerprint import file_sha256
+
+    run = tmp_path / "runs" / "gatv2" / "20261001-000000_a_111111" / "checkpoints"
+    good = _write_checkpoint(run / "good.pt", {**_LISTED, "checkpoint_kind": "a\x00b" * 3,
+                                               "progress": {"end": "x" * 200_000}})
+    run.mkdir(parents=True, exist_ok=True)
+    torch.save(_with(field, value), run / "bad.pt")
+
+    rows = {e.path.name: e for e in read_run_checkpoints(tmp_path, within=tmp_path)}
+
+    bad = rows["bad.pt"]
+    assert bad.sha256 == file_sha256(run / "bad.pt") and bad.problem is not None
+    assert bad.problem.startswith(named), bad.problem
+    assert bad.problem.endswith(", so none of its metadata is shown")
+    assert (bad.checkpoint_kind, bad.epoch, bad.logs, bad.validation, bad.end,
+            bad.dataset_fingerprint, bad.model_record) == (None,) * 7
+    listed = rows["good.pt"]
+    assert listed.problem is None and listed.sha256 == good
+    assert listed.checkpoint_kind == "a\x00b" * 3 and listed.end == "x" * 200_000
+    assert listed.epoch == 3 and listed.logs["steps"] == 2 ** 200
+    assert listed.validation == ("val_pooled_mrr", 0.2)
+
+
+@pytest.mark.parametrize("protocol, shown", [
+    ("\udc80proto", "\\udc80proto"),
+    ("a\x00b\tc", "a\\x00b\\tc"),
+    ("\x00" * 400, "\\x00" * 67 + "\\x0..."),
+], ids=["lone-surrogate", "nul-and-tab", "long"])
+def test_a_refused_read_is_listed_with_its_message_escaped_and_bounded(tmp_path, protocol, shown):
+    """The K8-4r4 verifier, defect 1: torch refuses a legacy (non-zip) file
+    whose protocol version is not its own with a message naming the file's
+    value, and the listing copied that message into the file's reason, so a
+    lone surrogate there made every list answer HTTP 500 and a NUL reached
+    the reason raw. Now each character that is not printable is written as
+    its escape, and the escaped line is bounded (`refusal_line`); the file
+    beside it is listed as it reads."""
+    import pickle
+
+    from src.utils.checkpoint_paths import read_run_checkpoints
+
+    run = tmp_path / "runs" / "gatv2" / "20261001-000000_a_111111" / "checkpoints"
+    good = _write_checkpoint(run / "good.pt", _LISTED)
+    (run / "legacy.pt").write_bytes(pickle.dumps(0x1950A86A20F9469CFC6C, protocol=2)
+                                    + pickle.dumps(protocol, protocol=2))
+
+    rows = {e.path.name: e for e in read_run_checkpoints(tmp_path, within=tmp_path)}
+
+    legacy = rows["legacy.pt"]
+    assert legacy.problem.isprintable() and legacy.sha256 is None   # shown escaped if not
+    assert legacy.problem == f"RuntimeError: Invalid protocol version: {shown}"
+    assert rows["good.pt"].problem is None and rows["good.pt"].sha256 == good
 
 
 def test_importing_the_listing_does_not_import_torch():

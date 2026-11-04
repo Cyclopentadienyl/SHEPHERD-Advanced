@@ -2104,8 +2104,21 @@ class TrainingManager:
         Read whole with the safe loader, so only when asked (the stop
         confirmation, a status after the process ended) and cached by the
         file's size and modification time.
+
+        **What it shows of the file is checked as the listing checks it**
+        (`checkpoint_paths.text_problem`, `whole_number_problem`,
+        `refusal_line`): a lone surrogate in the end, the stop reason or the
+        loader's message failed the stop's and every later status's encoding,
+        a tensor for an epoch count their serialisation, and a start epoch of
+        "x" the read itself. Such a file is shown as not readable, the reason
+        naming the field, or the loader's message escaped.
         """
-        from src.utils.checkpoint_paths import run_checkpoint_dir
+        from src.utils.checkpoint_paths import (
+            refusal_line,
+            run_checkpoint_dir,
+            text_problem,
+            whole_number_problem,
+        )
 
         run_dir = run_dir if run_dir is not None else self.run_dir
         if run_dir is None:
@@ -2123,27 +2136,38 @@ class TrainingManager:
 
             record = read_checkpoint(last, map_location="cpu", weights_only=True).checkpoint
         except Exception as exc:  # noqa: BLE001 - shown, not raised
-            snapshot = {"checkpoint": str(last), "readable": False,
-                        "reason": f"{type(exc).__name__}: {exc}"}
+            snapshot = {"checkpoint": str(last), "readable": False, "reason": refusal_line(exc)}
         else:
-            progress = (record.get("progress") or {}) if isinstance(record, dict) else {}
-            stage = progress.get("stage") or {}
+            progress = record.get("progress") if isinstance(record, dict) else None
+            progress = progress if isinstance(progress, dict) else {}
+            stage = progress.get("stage") if isinstance(progress.get("stage"), dict) else {}
             end = progress.get("end")
-            snapshot = {
-                "checkpoint": str(last),
-                "readable": True,
-                # The dataset the run trained on, as the checkpoint records it
-                # (M5-2: the Training page's run view, for operators).
-                "dataset_fingerprint": _recorded_dataset(record),
-                "completed_epochs": progress.get("completed_epochs"),
-                "target_epochs": (int(stage.get("start_epoch", 0))
-                                  + int(stage.get("target_epochs", 0))) if stage else None,
-                "end": end,
-                "stop_reason": progress.get("stop_reason"),
-                "resumable": (isinstance(record, dict)
-                              and record.get("checkpoint_kind") == "training_state"
-                              and end in (None, "paused")),
-            }
+            unshown = next((f"its progress.{name} {why}" for name, value, check in (
+                ("completed_epochs", progress.get("completed_epochs"), whole_number_problem),
+                ("end", end, text_problem),
+                ("stop_reason", progress.get("stop_reason"), text_problem),
+                ("stage.start_epoch", stage.get("start_epoch"), whole_number_problem),
+                ("stage.target_epochs", stage.get("target_epochs"), whole_number_problem))
+                if value is not None and (why := check(value)) is not None), None)
+            if unshown is not None:
+                snapshot = {"checkpoint": str(last), "readable": False,
+                            "reason": f"{unshown}, so its training state is not shown"}
+            else:
+                snapshot = {
+                    "checkpoint": str(last),
+                    "readable": True,
+                    # The dataset the run trained on, as the checkpoint records it
+                    # (M5-2: the Training page's run view, for operators).
+                    "dataset_fingerprint": _recorded_dataset(record),
+                    "completed_epochs": progress.get("completed_epochs"),
+                    "target_epochs": ((stage.get("start_epoch") or 0)
+                                      + (stage.get("target_epochs") or 0)) if stage else None,
+                    "end": end,
+                    "stop_reason": progress.get("stop_reason"),
+                    "resumable": (isinstance(record, dict)
+                                  and record.get("checkpoint_kind") == "training_state"
+                                  and end in (None, "paused")),
+                }
         self._snapshot_cache = (key, snapshot)
         return snapshot
 
