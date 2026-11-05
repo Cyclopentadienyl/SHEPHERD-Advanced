@@ -15,6 +15,10 @@ the served behaviour beside it.
 timed the retiring shortest-path index); its B-0.4 evidence (`EVIDENCE_B04_*.json`, `time_*.txt`)
 is kept as written.
 
+**Deleted at K8-5:** the shortest-path index `src/inference/sp_index.py`, its oracle
+`scripts/sp_scan_reference.py`, the pair protocol `src/inference/sp_artifact.py` and the producer
+`scripts/compute_shortest_paths.py`; the B-0.4 evidence is kept as written.
+
 **Modes A and B are retired** (the retirement's R2, 2026-10-12;
 [`ASSESSMENT_MODE_AB_RETIREMENT.md`](ASSESSMENT_MODE_AB_RETIREMENT.md) §9). Mode A
 scored each batch's 2-hop subgraph, seeded from the answers, with the subgraph

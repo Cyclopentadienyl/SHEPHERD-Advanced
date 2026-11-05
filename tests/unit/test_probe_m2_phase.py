@@ -427,8 +427,9 @@ def test_the_real_phase_passes_and_leaves_the_workspace_as_it_was(
     (root-cause round, INT-1). R1 needs no shortest-path table: the fresh
     run's workspace holds none, and the operator's holds a leftover pair, of
     another graph and with a tensor no reader could parse: nothing in the
-    phase loads the table, R7's inventory still reads the sidecar and reports
-    it refused until K8-5, and R8 covers the pair unchanged."""
+    phase loads the table, R7's inventory no longer reads the sidecar (its
+    shortest-path check was removed in K8-5), and R8 covers the pair
+    unchanged."""
     import json
 
     if shell == "operator":

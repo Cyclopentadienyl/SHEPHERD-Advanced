@@ -390,12 +390,11 @@ class TestTheWriterCarriesItsOwnCorrectness:
 class TestAGraphOnlyBuildSaysWhatItIs:
     """`--generate-samples` is optional, and the output of omitting it is not.
 
-    A graph export is a real mode — `compute_shortest_paths.py` reads `kg.json`
-    — but it is not trainable and not servable (since K7 nothing is served
-    without a model trained on a workspace), because nothing records which
-    export those tensors are. The build used to print `train_model.py` as the
-    next step regardless, so an operator learned that at the end of a
-    thirty-minute build rather than at the start.
+    A graph export is a real mode, but it is not trainable and not servable
+    (since K7 nothing is served without a model trained on a workspace),
+    because nothing records which export those tensors are. The build used to
+    print `train_model.py` as the next step regardless, so an operator learned
+    that at the end of a thirty-minute build rather than at the start.
 
     Neither build offers the shortest-path step since K7 (D8): no task model
     trains on or serves from a shortest-path table, so precomputing one is not

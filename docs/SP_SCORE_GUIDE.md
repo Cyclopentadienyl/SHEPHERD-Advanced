@@ -34,7 +34,9 @@ exists so that anyone who sees an SP number knows precisely what it does and doe
 >
 > **K8-4 (2026-11-03) removed the two rows above:** a checkpoint without a model spec is refused at
 > load, and every answer comes from a task model, as described above. The shortest-path table's
-> files retire in K8-5 (policy rev 14). The table stays here as the record of the retired kind.
+> code files (its producer, pairing protocol and lookup) were retired in K8-5 (policy rev 14); a
+> `shortest_paths.pt` left in a workspace stays in place and nothing reads it. The table above
+> stays here as the record of the retired kind.
 >
 > **What produced a result is stated with it.** Every result says which artifacts produced it (its
 > *served identity*) and its kind: the Diagnosis tab's kind label and "Produced by" line, the
@@ -400,9 +402,10 @@ gene task sets 0.5, from released code that does not run as committed
 **Of the paper's three tasks, only one uses the SP term — the only one with a candidate short
 list.** Disease ranking, which is what this system performs, uses embedding similarity alone.
 
-## What this implementation actually computes
+## What the retired implementation computed (until K8-5)
 
-Offline (`scripts/compute_shortest_paths.py`), for every phenotype node:
+Offline (`scripts/compute_shortest_paths.py`, removed in K8-5; the last revision with it is
+`e02c0f7`), for every phenotype node:
 
 ```python
 # 1. Flatten the whole KG into an undirected adjacency list.
@@ -457,9 +460,9 @@ refused first, as a model term that cannot be computed (`MODEL_TERM_UNAVAILABLE`
 with no phenotype in the graph. Were a status with no number mixed, the mixture would take it as 0
 and the record would say so (`mixed_as: 0.0`); no surface displays that 0 as a distance.
 
-## Three ways this differs from the paper — all of them material
+## Three ways the retired implementation differed from the paper — all of them material
 
-| | Paper | This implementation | Consequence |
+| | Paper | The retired implementation (served until K8-4; table code until K8-5) | Consequence |
 |---|---|---|---|
 | **Task** | candidate **gene** ranking, with a short list | **disease** ranking, over whatever the path search admits | The condition the paper's rationale depends on — a short candidate list — does not hold |
 | **Transform** | `NORM(mean(−d))`. In the released code an **affine map with fixed bounds** fitted on simulated patients (`1 − 2(d̄ − 1)/5.84` for the mean), not a min–max over the candidate set; unclipped, nominally `[−1, 1]` *(corrected 2026-10-27)* | `1/(1 + mean(d))`, a **non-linear** absolute transform giving `[1/7, 1/2]` | See below |
@@ -499,20 +502,21 @@ The transform difference has two consequences:
 paper's text says only "the minimum number of hops between p and g in the KG". Its released code
 settles the rest (`data_prep/shortest_paths/shortest_paths.py`, which reads only an edge's two
 endpoints).
-- **The same as this implementation:**
-  - the graph is undirected and relation-blind, like `build_undirected_adjacency` above;
+- **The same as the retired implementation:**
+  - the graph is undirected and relation-blind, as it was in `build_undirected_adjacency` above;
   - so §1's caveat about hop types holds for both.
-- **Different from this implementation:**
-  - the search has no hop limit, where this implementation stops at 5;
+- **Different from the retired implementation:**
+  - the search has no hop limit, where the retired implementation stopped at 5;
   - it runs on the KG's largest connected component;
   - it includes the edges the link-prediction split holds out.
 
 ## Cost, and why it does not constrain the design
 
-*(Superseded, 2026-10-27: this described the lookup before B-0.4. Today `sp_mean_distances` folds
-the table into one sorted composite key and looks every candidate up at once with
-`torch.searchsorted`. B-0.4's GB10 benchmark covers up to 500 candidates; Spec 1 §6.2 records
-what is unmeasured beyond. The paragraphs below are kept as the record of the reasoning.)*
+*(Superseded, 2026-10-27: this described the lookup before B-0.4. Until K8-5, `sp_mean_distances`
+folded the table into one sorted composite key and looked every candidate up at once with
+`torch.searchsorted`; K8-5 removed it with `src/inference/sp_index.py`. B-0.4's GB10 benchmark
+covered up to 500 candidates; Spec 1 §6.2 records what was unmeasured beyond. The paragraphs below
+are kept as the record of the reasoning.)*
 
 The lookup is a linear scan of one phenotype's slice per candidate per phenotype. With a few hundred
 candidates this is unnoticeable. Over all ~27,990 diseases and ~10 phenotypes it becomes roughly
@@ -531,4 +535,3 @@ reason to prefer one scoring design over another.
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — the layered design
 - [`RETRIEVAL_AND_CANDIDATE_DISCOVERY_FINDINGS.md`](RETRIEVAL_AND_CANDIDATE_DISCOVERY_FINDINGS.md) —
   open findings on candidate discovery, including the path-gating described in §2
-- [`TRAINING_PIPELINE_PLAYBOOK.md`](TRAINING_PIPELINE_PLAYBOOK.md) — how `shortest_paths.pt` is built

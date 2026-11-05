@@ -72,10 +72,9 @@ base and one disease child finetuned from it, through the production trainer
 filed under its encoder kind. Phase D trains them on the demo workspace (D1,
 `--epochs` each) and checks the child's training and model records (D2); phase
 E serves the child, and phase M takes the child and the base from there. No
-shortest-path table is loaded anywhere: a task model never reads one. Until
-K8-5 removes its shortest-path check, the inventory (M8, R7) still reads the
-sidecar of a pair left in a workspace and reports a verdict on it; the table
-itself stays unread.
+shortest-path table is loaded anywhere: a task model never reads one, and the
+inventory (M8, R7) reads neither file of a pair left in a workspace (its
+shortest-path check was removed in K8-5).
 
 Contract M2's acceptance (`--m2-acceptance`), which also carries contract
 M3a's checks:

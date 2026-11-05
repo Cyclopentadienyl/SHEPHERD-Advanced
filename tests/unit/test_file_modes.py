@@ -2,11 +2,10 @@
 Files published by rename get the mode a plain open() would give them.
 
 The publishers write a staging file and rename it into place. With `tempfile`
-that staging file was 0600, so the SP pair, the split manifest, provenance,
-the evaluation ledger and the UI config all published 0600 -- including over
-files that had been 0644. `create_staging_file` restores open()'s behaviour: a
-new file gets the directory's policy, applied by the kernel; a rewritten file
-keeps its mode.
+that staging file was 0600, so the split manifest, provenance, the evaluation
+ledger and the UI config all published 0600 -- including over files that had
+been 0644. `create_staging_file` restores open()'s behaviour: a new file gets
+the directory's policy, applied by the kernel; a rewritten file keeps its mode.
 
 **The reference for "what open() would do" is open() itself**, run in the same
 directory under the same umask, so the tests hold under whatever policy the
@@ -181,16 +180,6 @@ def test_a_default_acl_decides_as_it_would_for_open(tmp_path):
 
 
 # ------------------------------------------------------------------- publishers
-def _sp_pair(directory):
-    import torch
-
-    from src.inference.sp_artifact import publish_sp_artifact, sidecar_path
-
-    target = directory / "shortest_paths.pt"
-    publish_sp_artifact({"distance": torch.zeros(1, dtype=torch.int8)}, target, {"max_hops": 5})
-    return [target, sidecar_path(target)]
-
-
 def _split_manifest(directory):
     from scripts.setup_demo import build_demo_kg
     from src.kg.artifacts import GRAPH_ARTIFACTS
@@ -247,7 +236,6 @@ def _ui_config(directory):
 
 
 PUBLISHERS = {
-    "sp_pair": _sp_pair,
     "split_manifest": _split_manifest,
     "provenance": _provenance,
     "evaluation_ledger": _evaluation_ledger,

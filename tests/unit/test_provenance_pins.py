@@ -5,14 +5,13 @@ M2.1 makes every recorded input's digest the digest of the bytes a reader parsed
 The dynamic pins run each entry point with every path hash poisoned and check
 that no poison reaches its record (`test_training_reads.py`,
 `test_measurement_reads_once.py`, `test_serving_reads_once.py`,
-`test_sp_artifact_binding.py` for the SP producer, `test_evidence_scripts.py` and
-`test_audit_generator_fidelity.py` for the audits S9 moved). This is the static
-half: it reads the code instead of running it, so it also sees a path hashed in
-a way the poison cannot reach.
+`test_evidence_scripts.py` and `test_audit_generator_fidelity.py` for the
+audits S9 moved). This is the static half: it reads the code instead of running
+it, so it also sees a path hashed in a way the poison cannot reach.
 
 **What it scans.** `src/**`, the entry points (`train_model.py`,
-`measure_scorer.py`, `compute_shortest_paths.py`) and the scripts S9 moved onto
-the readers (`probe_deployment.py`, `audit_split_overlap.py`,
+`measure_scorer.py`) and the scripts S9 moved onto the readers
+(`probe_deployment.py`, `audit_split_overlap.py`,
 `audit_generator_fidelity.py`). Item 19's other scripts and `build_index.py`
 are outside it, by the plan (S9; BACKLOG item 19).
 
@@ -28,8 +27,8 @@ are outside it, by the plan (S9; BACKLOG item 19).
   poison could not reach.
 
 **Not "no path hash anywhere".** Each entry in `ALLOWED` is a named exception
-with its use and its owner: the readers themselves, the three stated exceptions
-and the `kg.json` identification check, item 18's and item 19's deferred sites
+with its use and its owner: the readers themselves, the `kg.json`
+identification check (M2.1 decision 1), item 18's and item 19's deferred sites
 with their homes, and loads of files that are not provenance inputs at all
 (configuration, UI state). Adding a site means adding it here with a reason, in
 review; it is never a line added to make the test pass.
@@ -44,8 +43,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 
-ENTRY_POINTS = ("scripts/train_model.py", "scripts/measure_scorer.py",
-                "scripts/compute_shortest_paths.py")
+ENTRY_POINTS = ("scripts/train_model.py", "scripts/measure_scorer.py")
 MOVED_IN_S9 = ("scripts/probe_deployment.py", "scripts/audit_split_overlap.py",
                "scripts/audit_generator_fidelity.py")
 #: M4's CLIs. They read and hash nothing themselves: the registry, the samples reader
@@ -104,11 +102,6 @@ ALLOWED = {
     ("src/kg/artifacts.py", "check_unparsed_kg_json", "file_sha256"):
         (1, "M2.1 decision 1: identifies kg.json before a run that does not parse it, "
             "against the run's one manifest reading; records nothing"),
-    ("src/inference/sp_artifact.py", "read_sidecar", "json.loads"):
-        (1, "M2.1 stated exception: the SP sidecar's single read, parsed from the bytes it keeps"),
-    ("scripts/compute_shortest_paths.py", "main", "file_sha256"):
-        (1, "S9 allowlist: the SP producer's end-of-run comparison, a warning that records "
-            "nothing; the sidecar records the digest of the bytes traversed"),
     # --- The evaluation ledger and registration (BACKLOG 18 done in M4) ------
     ("src/evaluation/sidecar.py", "checkpoint_matches", "file_sha256"):
         (1, "BACKLOG 19.7: identifies a checkpoint nobody is about to parse (M2.1's own "

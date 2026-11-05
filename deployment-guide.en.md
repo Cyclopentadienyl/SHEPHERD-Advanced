@@ -457,84 +457,26 @@ SDPA was found and that is the problem to fix.
 
 ## 4.3 The shortest-path table and its hop bound
 
-A workspace's `shortest_paths.pt` is a precomputed distance table, and
-`shortest_paths.meta.json` is its **sidecar**, recording the parameters the table
-was generated with — `max_hops` above all. **The two belong to one build and must
-be copied or moved together.**
+A workspace built by an earlier version may still hold `shortest_paths.pt`, a precomputed
+distance table, and `shortest_paths.meta.json`, its sidecar. **This build neither writes,
+reads, refuses nor deletes them.** Serving, training, task measurement and the inventory
+(`scripts/audit_checkpoint_family.py --inventory`) are the same with or without them; the
+inventory does not list the table as a checkpoint. The GB10 acceptance
+(`scripts/probe_deployment.py --m2-acceptance`) reads neither file either: a pair in the
+workspace is covered by its check that the workspace is left unchanged (R8). Keep the two
+files or archive them, as you like.
 
-**A task model never reads this table.** A disease model ranks every disease of its graph
-view, and a gene model computes the exact hop distances it uses from the view in process
-(`src/kg/graph_view.py`, `exact_distances`), so building a workspace for task models has no
-shortest-path step. **Nothing serves from the table since K8-4**: the one kind of model that read
-it, a checkpoint without a model spec (a ShepherdGNN history file), is refused at load before any
-model is built (§4.7), and the mixture it was served with is removed. What follows describes the
-pair as `scripts/compute_shortest_paths.py` publishes it and the inventory checks it, until K8-5
-retires the files.
+No task model needs the table. A disease model ranks every disease of its graph view, and a
+gene model computes the exact hop distances it uses from the view in process
+(`src/kg/graph_view.py`, `exact_distances`), so building a workspace has no shortest-path
+step.
 
-The GB10 acceptance (`scripts/probe_deployment.py --m2-acceptance`) reads no table either: its
-real phase verifies the workspace (R1) and trains, measures and serves task models on it, so a
-workspace is accepted as it is built. A pair already in a workspace is never loaded: its table
-stays unread, but until K8-5 removes the inventory's shortest-path check, R7's inventory still
-reads its sidecar and reports a verdict on it (one that does not bind is reported as refused,
-which does not fail R7). The pair is covered by the check that the workspace is left unchanged
-(R8).
-
-### Why the sidecar cannot be skipped
-
-`max_hops` sets the cost assigned to "unreachable" (`max_hops + 1`). Every
-shortest-path score is measured against that value, and it **cannot be recovered
-from the table itself**: the BFS stops expanding at `max_hops`, so the largest
-distance recorded is only a **lower bound** — a genuine 3-hop table and a table
-built to 5 in which no pair happens to reach 5 are identical at the tensor level.
-
-Scoring against the wrong ceiling does not merely shift numbers. **It changes the
-ranking.** One 3-hop table, two candidates:
-
-| max_hops used | A | B | Order |
-|---|---:|---:|---|
-| the correct 3 | 0.4357142857 | 0.4250000000 | A > B |
-| 5 by mistake | 0.4166666667 | 0.4250000000 | **B > A** |
-
-So the system **does not guess for you**.
-
-### Order of recovery
-
-**A table is accepted only with the sidecar it was published with.** Since contract
-M2.5 (2026-10-13) the sidecar must carry the table's source binding
-(`schema_version`, `build_id`, `kg_digest`), and its `max_hops` is the only source
-of the hop bound. A table without a sidecar, or with one written before the
-pairing protocol, is refused.
-
-1. **Recover the sidecar published with the table**, then keep and move the two
-   files together.
-2. **Otherwise rebuild the pair for this workspace** with
-   `scripts/compute_shortest_paths.py`, which publishes the table and its sidecar
-   together, bound to this workspace's graph. **Do not write a sidecar by hand,
-   and do not infer `max_hops` from the largest distance in the table** — that
-   number cannot establish the ceiling.
-3. Or keep the pair out of the workspace: move `shortest_paths.pt` **and**
-   `shortest_paths.meta.json` out together and keep them. A sidecar left behind
-   alone is refused as one side of a pair. Serving is unaffected either way (no
-   task model reads the table).
-
-`SHEPHERD_SP_HOP_BOUND`, which used to supply the bound for a table without a
-sidecar, is **retired** with M2.5: such a table is refused before any bound is
-read, so the variable is no longer read. Remove it from the service environment.
-
-### A missing, unbound or invalid sidecar
-
-When a table is present and its sidecar is **missing, unbound, or not a readable
-JSON object**, the pair is **refused** rather than completed by a guess. Since K8-4
-this changes nothing served (no served model reads the table): the refusal is the
-inventory's verdict on the pair (`scripts/audit_checkpoint_family.py --inventory`,
-until K8-5). A pair rebuilt for this workspace, or moved out together, clears it.
-
-### No table at all
-
-Nothing changes: no task model reads the table, so a workspace without the pair
-trains, measures and serves exactly as one with it. (Until K8-4 a ShepherdGNN file
-served without a table was ranked by its GNN score alone, `gnn_only`; that mode is
-removed with the mixture.)
+The table's producer, `scripts/compute_shortest_paths.py`, and the reachability audit behind
+evidence M5 (BACKLOG item 10), `scripts/audit_sp_reachability.py`, were removed in K8-5. The
+last commit that has them is `e02c0f7` (`e02c0f7562b166bf6e69677e51b8bc8ee2f0cb1a`), where
+their tests passed before the removal; to rebuild or audit an old table, run them from a
+checkout of that commit. `SHEPHERD_SP_HOP_BOUND` is not read; if the service environment
+still sets it, it has no effect.
 
 ### Checking the result
 
@@ -549,26 +491,6 @@ model's own:
 | `served_identity` | What the loaded pipeline serves (§4.7): `shortest_paths.state` `computed` for a gene model (exact hop distances from its graph view, no table), `absent` for the other two; `settings.eta` the gene model's η, null for the other two |
 
 ---
-
-
-### When the table and its graph do not match
-
-A shortest-path table is published as **a pair** — `shortest_paths.pt` and
-`shortest_paths.meta.json` — and both files record the same `build_id`, plus the
-SHA-256 of the graph the distances were computed from. Three refusals follow
-from that, and all three are deployment problems rather than data problems:
-
-| What the log says | What happened | What to do |
-|---|---|---|
-| *"published by different runs"* | The two files are from different builds. A publication was interrupted between them, or one was copied over the other | Re-run `scripts/compute_shortest_paths.py` for this workspace. Do **not** copy one file from elsewhere to make them match |
-| *"computed from a different graph"* | The table belongs to another workspace's `kg.json`. Its node indices point at different nodes | Use the table built from *this* workspace, or rebuild it here |
-| *"One side of a pair is not a pair"* | One file declares the protocol and the other does not — a table published without its sidecar, or the reverse | Re-run the generator; the pair is published together or not at all |
-
-**A table built before this existed is refused** (since contract M2.5,
-2026-10-13; it used to load with a warning and be reported `unrecorded`). It
-carries no binding, so nothing says which graph its node indices belong to.
-Rebuild it with `scripts/compute_shortest_paths.py`, or move it out with its
-sidecar; serving does not read it.
 
 ## 4.4 The build provenance record (`kg.provenance.json`)
 
@@ -837,9 +759,9 @@ or roots it reports which location and how many files, not their names.
 
 ## 4.6 File permissions of the files a build and the service write
 
-The shortest-path table and its sidecar, the split manifest, `kg.provenance.json`,
-the evaluation ledger, the UI config and the ontology cache are all written to a
-temporary file and renamed into place, so a reader never sees a half-written one.
+The split manifest, `kg.provenance.json`, the evaluation ledger, the UI config and
+the ontology cache are all written to a temporary file and renamed into place, so
+a reader never sees a half-written one.
 They are published with the mode a plain `open()` would give them:
 
 - **a new file** gets the directory's policy — the umask (commonly `022`, which

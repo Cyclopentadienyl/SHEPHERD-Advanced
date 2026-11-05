@@ -158,7 +158,7 @@ PhenoKG 的核心創新不在 GNN 層，而在子圖建構：
 
 **和我們的差異**：我們對所有病患用同一個通用 subgraph sampling（`max_subgraph_nodes=5000`）。PhenoKG 為每個病患建不同的子圖，讓 GNN 只看到相關的局部結構。
 
-**實作難度**：中等（~1 週）。需要改 `DiagnosisDataLoader` 的 subgraph sampling 邏輯。核心算法是 BFS，已有現成（`compute_shortest_paths.py`）。
+**實作難度**：中等（~1 週）。需要改 `DiagnosisDataLoader` 的 subgraph sampling 邏輯。核心算法是 BFS，已有現成（`compute_shortest_paths.py`）。*(Note, K8-5: the BFS this points to, `scripts/compute_shortest_paths.py`, was removed in K8-5; it is at `e02c0f7`.)*
 
 ### Transformer Gene Encoder
 

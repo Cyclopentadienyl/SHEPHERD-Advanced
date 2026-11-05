@@ -31,26 +31,27 @@ shape is therefore not an optimisation to retrofit later, it is the interface.
 
 Separation of concerns, deliberately:
 
-  - **Lookup** (`sp_index.sp_mean_distances`) returns the *measured quantity* —
-    mean hop distance — together with an availability mask. It lives in
-    `src/inference/sp_index.py` with the index it reads, because the lookup and
-    the structure it searches are one design and were briefly two.
-  - **Transform** (`sp_scores_from_distances`) turns that into the score the
-    system has historically used.
+  - **Lookup** returned the *measured quantity* — mean hop distance — together
+    with an availability mask. It read the precomputed distance table and was
+    removed in K8-5 with the code that produced and paired that table (a table
+    left in a workspace stays in place and nothing reads it).
+  - **Transform** (`sp_scores_from_distances`) turns a distance into the score
+    the system has historically used. It has no caller after K8-5 and stays
+    until K8-11, where the plan removes this module.
 
-They are separate because the distance is what the graph actually says, while
+They were separate because the distance is what the graph actually says, while
 `1/(1+d)` is one presentation of it, and because a caller may legitimately want
 the distance: it is the quantity a clinician can reason about ("within three
 steps"), whereas the score compresses the far end so heavily that most of its
 range is spent on the first two steps.
 
-Availability is a mask, not a sentinel — and a narrow one. It separates only
+Availability was a mask, not a sentinel — and a narrow one. It separated only
 "there was nothing to measure from" (no phenotypes, or no candidates) from "a
 distance was produced". **The typed status** (`COMPUTED` / `COMPUTED_PARTIAL` /
 `NO_TABLE` / `TARGET_UNMAPPED` / `NO_PHENOTYPE_MAPPED`, Spec 1 §3.3) was the
-served mixture's per-candidate analysis record, retired with it (K8-4); no
-caller should read this Boolean as though it carried those semantics, and
-nothing collapses an unavailable value to `0.0` any more.
+served mixture's per-candidate analysis record, retired with it (K8-4); that
+Boolean never carried those semantics, and nothing collapses an unavailable
+value to `0.0` any more.
 
 Dependencies: torch. Import this module lazily from anywhere that must remain
 importable without torch.
@@ -75,13 +76,15 @@ __all__ = [
 
 
 # =============================================================================
-# Shortest-path lookup table
+# Shortest-path hop bound
 # =============================================================================
-#: The hop bound the producer validates before it writes anything
-#: (`scripts/compute_shortest_paths.py` refuses outside this range), and the range
-#: `scripts/audit_sp_reachability.py` imports from here to check a sidecar. One
-#: declaration, so the serving path cannot come to accept an artifact the evidence
-#: path refuses — the split-authority failure this constant exists to prevent.
+#: The hop bound the producer of the precomputed distance table validated before
+#: it wrote anything (it refused outside this range), and the range the M5 audit
+#: imported from here to check a table's sidecar. One declaration, so the serving
+#: path could not come to accept an artifact the evidence path refused. The
+#: serving reader was removed in K8-4, the producer and the audit in K8-5. Nothing
+#: outside this module uses the constant, `validate_hop_bound` has no caller, and
+#: both stay until K8-11, where the plan removes this module.
 PRODUCER_HOP_RANGE = (1, 127)
 
 
@@ -257,8 +260,8 @@ def sp_scores_from_distances(mean_distances: Tensor) -> Tensor:
     reason about.
 
     The output dtype follows the input's. Precision is therefore decided where the
-    distance is measured, not here; `sp_index.sp_mean_distances` produces float64
-    for the reason given there.
+    distance is measured, not here; the lookup that measured it until K8-5
+    produced float64.
     """
     return 1.0 / (1.0 + mean_distances)
 

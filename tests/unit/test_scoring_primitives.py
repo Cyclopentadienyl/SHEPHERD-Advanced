@@ -11,7 +11,8 @@ drift, the evaluation stops describing the thing being evaluated.
 `scripts/evaluate_model.py` was never migrated and is deleted (its code is at
 `7dab728`). The measurement harness composes these primitives; the served
 pipeline stopped at K8-4, when the served mixture retired, and its routing
-tests left with it. The cosine is shared; the pool is still two deliberate
+tests left with it. The shortest-path lookup was removed in K8-5, and its
+tests here left with it. The cosine is shared; the pool is still two deliberate
 implementations (`pool_patient_embeddings`, `masked_mean_pool`), bound by
 `test_masked_pool_and_served_pool_agree_on_one_unpadded_patient`.
 
@@ -42,9 +43,7 @@ from src.inference.scoring import (  # noqa: E402
     mix_embedding_and_sp_scores,
     normalise_cosine_to_unit_interval,
     pool_patient_embeddings,
-    sp_scores_from_distances,
 )
-from src.inference.sp_index import build_sp_index, sp_mean_distances  # noqa: E402
 
 # Declared tolerances. Scores feed a ranking and a clinician-facing display;
 # 1e-6 is far below any difference either could act on, and far above the
@@ -57,44 +56,6 @@ RTOL = 1e-6
 def embeddings():
     torch.manual_seed(0)
     return torch.randn(40, 16)
-
-
-#: The rows the `lookup` fixture is built from: a present pair, an absent pair
-#: (no path within max_hops), a target that exists only as a gene, and a
-#: phenotype — 2 — with no rows at all.
-#:
-#: **Held as rows, not read back off the fixture.** The legacy reference below
-#: walks these; a reference that reached into `SPLookup` would be checking the
-#: index against its own internals rather than against an independent
-#: computation.
-SP_ROWS = (
-    # phenotype, target, target_type, distance
-    (0, 5, 1, 2),
-    (0, 7, 1, 4),
-    (0, 9, 0, 1),
-    (1, 5, 1, 3),
-    (1, 8, 1, 5),
-)
-SP_MAX_HOPS = 5
-
-
-@pytest.fixture
-def lookup():
-    """`SP_ROWS`, **built through the one builder** like every other lookup in
-    the repository.
-
-    Assembling the object field by field is the second construction path this
-    refactor removed, and a fixture is where one would come back first: smallest
-    blast radius, least chance of being noticed.
-    """
-    columns = list(zip(*SP_ROWS))
-    return build_sp_index(
-        torch.tensor(columns[0], dtype=torch.int64),
-        torch.tensor(columns[1], dtype=torch.int64),
-        torch.tensor(columns[2], dtype=torch.int64),
-        torch.tensor(columns[3], dtype=torch.int8),
-        max_hops=SP_MAX_HOPS,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -167,99 +128,6 @@ def test_normalisation_preserves_order(embeddings):
 
 
 # ---------------------------------------------------------------------------
-# Shortest-path distance
-# ---------------------------------------------------------------------------
-def _legacy_sp_score(phenotype_indices, target_idx, target_type_idx):
-    """The formula as it was written inline in the pipeline, reimplemented over
-    `SP_ROWS` so this test does not depend on the code under test being right.
-
-    It walks rows in Python and compares exact integers. That is deliberately
-    not how the served primitive works — and it is why this test would have
-    caught the dtype aliasing the old tensor-comparing scan had, where a Python
-    int wider than the column's dtype matched the wrong row.
-    """
-    unreachable = float(SP_MAX_HOPS + 1)
-    total = 0.0
-    for ph in phenotype_indices:
-        hit = next(
-            (d for p, t, y, d in SP_ROWS
-             if p == ph and t == target_idx and y == target_type_idx),
-            None,
-        )
-        total += unreachable if hit is None else float(hit)
-    return 1.0 / (1.0 + total / len(phenotype_indices))
-
-
-@pytest.mark.parametrize("phenotypes", [[0], [0, 1], [0, 1, 2], [2]])
-@pytest.mark.parametrize("target_idx", [5, 7, 8, 99])
-def test_sp_score_matches_the_legacy_formula(lookup, phenotypes, target_idx):
-    distances, available, _unreachable = sp_mean_distances(lookup, phenotypes, [target_idx], 1)
-
-    assert bool(available[0])
-    assert float(sp_scores_from_distances(distances)[0]) == pytest.approx(
-        _legacy_sp_score(phenotypes, target_idx, 1), abs=ATOL, rel=RTOL
-    )
-
-
-def test_target_type_is_part_of_the_match(lookup):
-    """Target 9 exists for phenotype 0 but as a gene, not a disease. Asking for
-    the disease must not find it."""
-    as_disease, _, _unreachable = sp_mean_distances(lookup, [0], [9], 1)
-    as_gene, _, _unreachable = sp_mean_distances(lookup, [0], [9], 0)
-
-    assert float(as_disease[0]) == 6.0   # unreachable: max_hops + 1
-    assert float(as_gene[0]) == 1.0
-
-
-def test_a_phenotype_with_no_slice_counts_as_unreachable(lookup):
-    """Phenotype 2 has no entry in the table at all. It contributes the
-    unreachable distance rather than being silently dropped, which would let a
-    candidate look closer than it is."""
-    with_missing, _, _unreachable = sp_mean_distances(lookup, [0, 2], [5], 1)
-
-    assert float(with_missing[0]) == pytest.approx((2.0 + 6.0) / 2.0)
-
-
-def test_all_unreachable_is_still_a_computed_value(lookup):
-    """The distinction C9 turns on: a candidate every one of whose phenotypes is
-    unreachable has a real value — the largest one — and is NOT the same as a
-    candidate that could not be evaluated."""
-    distances, available, _unreachable = sp_mean_distances(lookup, [0, 1], [12345], 1)
-
-    assert bool(available[0]), "unreachable is a distance, not an absence"
-    assert float(distances[0]) == 6.0
-    assert float(sp_scores_from_distances(distances)[0]) == pytest.approx(1.0 / 7.0)
-
-
-def test_no_phenotypes_is_unavailable_not_zero_distance(lookup):
-    """With nothing to measure from, there is no distance. The mask says so
-    rather than the value pretending to."""
-    _, available, _unreachable = sp_mean_distances(lookup, [], [5], 1)
-
-    assert not bool(available[0])
-
-
-def test_sp_batch_matches_one_at_a_time(lookup):
-    targets = [5, 7, 8, 99]
-
-    batched, _, _unreachable = sp_mean_distances(lookup, [0, 1], targets, 1)
-
-    for position, target in enumerate(targets):
-        single, _, _unreachable = sp_mean_distances(lookup, [0, 1], [target], 1)
-        assert float(single[0]) == pytest.approx(float(batched[position]), abs=ATOL)
-
-
-def test_computed_scores_stay_inside_the_documented_range(lookup):
-    """[1/7, 1/2] at max_hops = 5 — never 0, which is why 0.0 as an
-    unavailable sentinel is indistinguishable from nothing real."""
-    distances, _, _unreachable = sp_mean_distances(lookup, [0, 1], [5, 7, 8, 99], 1)
-    scores = sp_scores_from_distances(distances)
-
-    assert float(scores.min()) >= 1.0 / 7.0 - ATOL
-    assert float(scores.max()) <= 1.0 / 2.0 + ATOL
-
-
-# ---------------------------------------------------------------------------
 # Mixture
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("eta", [0.0, 0.3, 0.7, 1.0])
@@ -285,16 +153,13 @@ def test_eta_one_ignores_the_shortest_path_term():
 # ---------------------------------------------------------------------------
 # Determinism and ranking
 # ---------------------------------------------------------------------------
-def test_scores_are_deterministic(embeddings, lookup):
+def test_scores_are_deterministic(embeddings):
     patient = pool_patient_embeddings(embeddings, [1, 2, 3])
 
     first = cosine_scores(patient, embeddings)
     second = cosine_scores(patient, embeddings)
-    d1, _, _unreachable = sp_mean_distances(lookup, [0, 1], [5, 7], 1)
-    d2, _, _unreachable = sp_mean_distances(lookup, [0, 1], [5, 7], 1)
 
     assert torch.equal(first, second)
-    assert torch.equal(d1, d2)
 
 
 def test_exact_ties_break_by_candidate_order():
@@ -405,35 +270,6 @@ def test_top_k_boundary_is_not_moved_by_the_mixture():
     shown = mixed.argsort(descending=True, stable=True)[:top_k].tolist()
 
     assert shown == [0, 1], "candidate 1 must hold the second slot, not candidate 2"
-
-
-def test_reducing_in_float32_then_widening_loses_the_mean(lookup):
-    """Pins the premise, and names the failure mode the output dtype cannot see.
-
-    A vectorised implementation could sum and divide in float32 and then widen the
-    already-rounded mean into a float64 output tensor. `sp_mean_distances` would
-    still return float64, so `test_sp_mean_distances_are_float64` would pass, and
-    so would every test that only inspects the output type. This shows the value
-    is gone by then — which is why the contract in the docstring covers the whole
-    computation and not just the result.
-    """
-    total, n = 11.0, 3
-
-    in_double = total / n
-    reduced_in_f32_then_widened = float(
-        torch.tensor([total / n], dtype=torch.float32).to(torch.float64)[0]
-    )
-
-    assert reduced_in_f32_then_widened != in_double
-    assert 1.0 / (1.0 + reduced_in_f32_then_widened) != 1.0 / (1.0 + in_double)
-
-
-def test_sp_mean_distances_are_float64(lookup):
-    """The dtype is the mechanism behind the test above; pin it directly so a
-    vectorised reimplementation cannot quietly narrow it for memory."""
-    distances, _, _unreachable = sp_mean_distances(lookup, [0, 1], [5, 7, 99], 1)
-
-    assert distances.dtype == torch.float64
 
 
 # ---------------------------------------------------------------------------

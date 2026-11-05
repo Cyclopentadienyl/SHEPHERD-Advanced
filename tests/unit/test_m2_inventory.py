@@ -6,20 +6,21 @@ checkpoints are the session's trained disease child (`trained_disease_child`)
 over a copy of its own workspace, and copies of it with one part removed.
 Shown:
 
-- a sound workspace's graph and training inputs are accepted, its table's source
-  binding is accepted while whether the table would be served stays not judged
-  (the tensor is not loaded; a sidecar whose `max_hops` the retired service
-  loader refused shows why), and the child passes M2's record checks for serving
-  and measurement and for a resume, and carries the model record this build
-  reads, with the digest of the one read;
+- a sound workspace's graph and training inputs are accepted, and the child
+  passes M2's record checks for serving and measurement and for a resume, and
+  carries the model record this build reads, with the digest of the one read;
+- a shortest-path table and its sidecar left in a workspace by an earlier build
+  are not reported and not listed as a checkpoint: the report has no
+  `shortest_paths` entry and no `shortest_paths` count (the inventory's
+  shortest-path check was removed in K8-5);
 - a copy from before the contract, the child over a same-shaped other workspace,
   and a copy that records only the graph roles (so serves but cannot be resumed)
   are each refused for what M2 refuses them for;
 - a copy without a model spec is refused for both uses, by the model record's
   own reason (`read_model_record`), as serving, the task measurements and
   training refuse it;
-- an unbound table and a workspace without a manifest are refused, and that
-  workspace's checkpoints are not judged;
+- a workspace without a manifest is refused, and its checkpoints are not
+  judged;
 - it is read-only: every file under the inventoried directory has the same bytes
   afterwards and nothing is added or removed; the report carries no absolute path.
 
@@ -69,9 +70,10 @@ def _graph_roles_only(contents):
 
 
 def _bound_table(workspace, kg_digest, max_hops=5):
-    """A one-row table published bound to `kg_digest`, as the producer writes it."""
-    from src.inference.sp_artifact import SP_SCHEMA_VERSION
-
+    """A one-row table and its sidecar bound to `kg_digest`, as the retired
+    producer wrote them: a pair an earlier build left in a workspace. The
+    sidecar's values are literals; the module that defined them was removed in
+    K8-5."""
     build_id = "0123456789abcdef" * 2
     torch.save({"phenotype_idx": torch.zeros(1, dtype=torch.int64),
                 "target_idx": torch.zeros(1, dtype=torch.int64),
@@ -79,7 +81,7 @@ def _bound_table(workspace, kg_digest, max_hops=5):
                 "distance": torch.ones(1, dtype=torch.int8), "build_id": build_id},
                workspace / "shortest_paths.pt")
     (workspace / "shortest_paths.meta.json").write_text(json.dumps({
-        "max_hops": max_hops, "schema_version": SP_SCHEMA_VERSION, "build_id": build_id,
+        "max_hops": max_hops, "schema_version": 1, "build_id": build_id,
         "kg_digest": kg_digest,
     }))
 
@@ -136,25 +138,17 @@ def test_a_sound_workspace_and_its_recorded_checkpoint_are_accepted(inventory):
     root, report, _ = inventory
     a = report["workspaces"]["a"]
     assert a["graph"]["verdict"] == a["training"]["verdict"] == "accepted"
-    assert a["shortest_paths"]["source_binding"]["verdict"] == "accepted"
-    assert a["shortest_paths"]["served"]["verdict"] == "not judged"
-    assert a["shortest_paths"]["tensor_checked"] is False
     assert _verdicts(a, "a/checkpoints/m2/good.pt") == {
         "serve_and_measure": "accepted", "resume": "accepted"}
     assert a["checkpoints"]["a/checkpoints/m2/good.pt"]["sha256"] == _sha(
         root / "a/checkpoints/m2/good.pt")
-
-
-def test_a_bound_sidecar_is_not_a_servable_table(inventory):
-    """The review's P2-3. The inventory reads only the sidecar's binding, so it
-    must not report a table as accepted: `max_hops=0` is a sidecar the service's
-    loader refused (that loader and its tests left in K8-4). The binding passes;
-    whether it would be served is not judged."""
-    _, report, _ = inventory
-    d = report["workspaces"]["d"]["shortest_paths"]
-    assert d["source_binding"]["verdict"] == "accepted"
-    assert d["served"]["verdict"] == "not judged"
-    assert "not loaded" in d["served"]["reason"]
+    # The pair an earlier build left (the fixture puts one in every workspace)
+    # is not reported and not listed as a checkpoint; the fixture's snapshot
+    # shows it unchanged.
+    assert all("shortest_paths" not in entry for entry in report["workspaces"].values())
+    assert not [key for key in report["counts"] if key.startswith("shortest_paths")]
+    assert (root / "a/shortest_paths.pt").is_file()
+    assert "a/shortest_paths.pt" not in a["checkpoints"]
 
 
 def test_what_m2_refuses_is_listed_with_its_reason(inventory):
@@ -183,16 +177,12 @@ def test_what_m2_refuses_is_listed_with_its_reason(inventory):
     crossed = b["checkpoints"]["b/checkpoints/m2/good.pt"]["m2_contract"]
     assert crossed["serve_and_measure"]["verdict"] == "refused"
     assert "kg differs" in crossed["serve_and_measure"]["reason"]
-    table = b["shortest_paths"]
-    assert table["source_binding"]["verdict"] == table["served"]["verdict"] == "refused"
-    assert "unrecorded" in table["source_binding"]["reason"]
 
 
 def test_a_refused_workspace_leaves_its_checkpoints_unjudged(inventory):
     _, report, _ = inventory
     c = report["workspaces"]["c"]
     assert c["graph"]["verdict"] == c["training"]["verdict"] == "refused"
-    assert c["shortest_paths"]["source_binding"]["verdict"] == "not judged"
     assert set(_verdicts(c, "c/checkpoints/m2/good.pt").values()) == {"not judged"}
 
 
@@ -203,5 +193,3 @@ def test_the_report_states_its_scope_and_names_nothing_outside(inventory, tmp_pa
     assert "model spec" in report["checkpoint_verdicts_cover"]
     counts = report["counts"]
     assert counts["checkpoint m2_contract resume:accepted"] == 2      # a and d
-    assert counts["shortest_paths served:not judged"] == 3              # a, c, d
-    assert "shortest_paths served:accepted" not in counts

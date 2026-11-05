@@ -39,8 +39,6 @@ data/workspaces/{name}/
 ├── node_features.pt         # Node feature vectors (GNN input)
 ├── edge_indices.pt          # Edge connectivity (with reverse edges)
 ├── num_nodes.json           # Node counts per type
-├── shortest_paths.pt        # Served by nothing since K8-4; until K8-5 (below)
-├── shortest_paths.meta.json # its bound sidecar, the same pair
 ├── runs/                    # Training runs on THIS KG, one folder per run (M3a-2)
 │   └── {conv_type}/
 │       └── {date-time}_{run name}_{run id}/
@@ -79,18 +77,14 @@ new folder and records its parent by SHA-256.
 | `node_features.pt` | Data prep (once) | No | GNN input features |
 | `edge_indices.pt` | Data prep (once) | No | Graph connectivity |
 | `num_nodes.json` | Data prep (once) | No | Node count statistics |
-| `shortest_paths.pt` + `shortest_paths.meta.json` | Not built for task models; an older workspace may hold the pair | No | Served by nothing since K8-4; the inventory's table check reads the sidecar until K8-5 |
 | `runs/{conv}/{run}/checkpoints/*.pt` | Every training epoch | **Yes** (new runs) | Learned GNN weights |
 
 The first 4 files are **static** — shared by all training runs within the
 workspace. Only run folders accumulate over time.
 
-No task model reads `shortest_paths.pt`, so preparing a workspace builds no
-shortest-path table (K7, 2026-10-29), and the GB10 acceptance probe accepts a
-workspace without one (K8). Since K8-4 nothing serves from it: a history file
-(no model spec), the one kind that read it, is refused at load. Until K8-5 the
-inventory's table check still reads its sidecar; the pair is described in the
-[deployment guide](../deployment-guide.en.md) §4.3. K8-5 removes these rows (SP1).
+An older workspace may still hold `shortest_paths.pt` and
+`shortest_paths.meta.json`; this build leaves the pair in place and reads
+nothing from it ([deployment guide](../deployment-guide.en.md) §4.3).
 
 ### KG Version Compatibility
 

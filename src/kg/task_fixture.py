@@ -18,8 +18,8 @@ binds are never rewritten. The fixture lives in its own directory
 (`derived/gene_fixture/`), its two sample files beside a record that names the
 workspace's split manifest by digest and each file by the digest of the bytes
 written, so a reader refuses a fixture from another workspace build or one
-whose files changed (the SP table's sidecar pattern, with digests in place of
-a build id: the files are small).
+whose files changed. The files are small, so binding them by digest is
+cheap.
 
 **Produced by an explicit CLI** (`scripts/derive_task_fixture.py`), which reads
 and verifies the workspace first; this module holds the rule, the publish and

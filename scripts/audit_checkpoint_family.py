@@ -30,23 +30,20 @@ first unreadable file would destroy the evidence it was run to collect.
 
 **`--inventory`: what contract M2 refuses, before a deployment (M2.6).** Given a
 directory of workspaces (`data/workspaces`), it lists, for each workspace, whether
-its graph and its training inputs pass the consumers' checks, whether its
-shortest-path table's source binding does, and for every checkpoint in it whether
-its training record passes M2's check for serving and measurement (M2.4) and for
-a resume (M2.3), and whether it carries the model record this build reads (a file
-without a model spec is refused for both), each with the refusal's reason. The
-rules are the consumers' own functions, called on reads made here, not restated.
-**Read-only**: it moves, deletes and rewrites nothing; it writes only `--output`.
-What it lists is archived by the owner, not deleted. Only names relative to the
-inventoried directory are recorded.
+its graph and its training inputs pass the consumers' checks, and for every
+checkpoint in it whether its training record passes M2's check for serving and
+measurement (M2.4) and for a resume (M2.3), and whether it carries the model
+record this build reads (a file without a model spec is refused for both), each
+with the refusal's reason. The rules are the consumers' own functions, called on
+reads made here, not restated. **Read-only**: it moves, deletes and rewrites
+nothing; it writes only `--output`. What it lists is archived by the owner, not
+deleted. Only names relative to the inventoried directory are recorded.
 
-What it does not judge: whether a table would be served (the tensor is not
-loaded, since it can be gigabytes; a refused binding is still reported as a
-refusal), and anything about a checkpoint beyond its training record and its
-model record -- its learning stage or task, whether its weights build a model, or
-a device has the capacity. Checkpoints are read once with `read_checkpoint` and
-the safe loader, as M1-M3 opens them, where serving uses the full one, so one the
-safe loader cannot open is not judged.
+What it does not judge: anything about a checkpoint beyond its training record
+and its model record -- its learning stage or task, whether its weights build a
+model, or a device has the capacity. Checkpoints are read once with
+`read_checkpoint` and the safe loader, as M1-M3 opens them, where serving uses
+the full one, so one the safe loader cannot open is not judged.
 
 Usage:
     python scripts/audit_checkpoint_family.py \\
@@ -326,8 +323,10 @@ def build_report(checkpoint_dir: Path, relationship: str) -> Dict[str, Any]:
 # =============================================================================
 # --inventory: what contract M2 refuses (M2.6)
 # =============================================================================
-#: Files at a workspace's root that are graph or shortest-path artifacts, not
-#: checkpoints.
+#: Files at a workspace's root that are not checkpoints: the graph tensors, and
+#: `shortest_paths.pt`, a table an earlier build may have left there. Nothing in
+#: this build reads that table; its name is here only so that a leftover file,
+#: which can be gigabytes, is never read whole and listed as a checkpoint.
 _NOT_CHECKPOINTS = ("node_features.pt", "edge_indices.pt", "shortest_paths.pt")
 #: The split artifact `scripts/train_model.py` writes in each run directory
 #: (F2), beside the run's checkpoints: not a checkpoint.
@@ -401,63 +400,6 @@ def _dataset_record(manifest: Any, kg_digest: str, root: Path) -> Dict[str, Any]
             "incomplete_by_design": summary["incomplete_by_design"]}
 
 
-def _shortest_paths(workspace: Path, kg_digest: Optional[str], root: Path) -> Dict[str, Any]:
-    """The table's source binding, from its sidecar (M2.5), and what that allows
-    to be said about whether it would be served.
-
-    **Two verdicts, because the inventory reads half of the artifact.** The
-    source binding is judged from the sidecar with the loader's own functions.
-    Whether the table would be served also depends on the tensor -- its columns
-    and values, its build id against the sidecar's, and the hop bound, which the
-    loader checks only for a table with rows -- and the tensor is not loaded
-    here (it can be gigabytes). So `served` is `refused` where the binding
-    already refuses it, and otherwise `not judged`; never `accepted`.
-    """
-    from src.inference.sp_artifact import (
-        TENSOR_BUILD_ID_KEY,
-        declares_binding,
-        kg_binding_state,
-        read_binding,
-        read_sidecar,
-        sidecar_path,
-    )
-    from src.inference.sp_index import SPArtifactError
-
-    table = workspace / "shortest_paths.pt"
-    if not table.exists() and not sidecar_path(table).exists():
-        absent = {"verdict": "absent", "reason": "no table: served without shortest paths"}
-        return {"source_binding": absent, "served": dict(absent), "tensor_checked": False}
-    if kg_digest is None:
-        why = "the workspace's graph is refused"
-        return {"source_binding": _not_judged(why), "served": _not_judged(why),
-                "tensor_checked": False}
-
-    def check() -> None:
-        if not table.exists():
-            raise SPArtifactError("the sidecar is here and the table is not")
-        sidecar = read_sidecar(table)
-        meta = sidecar.meta if sidecar else None
-        # Where the sidecar declares a binding, the tensor's build id is taken as
-        # present; whether it is, and matches, is the service loader's check.
-        keys = (TENSOR_BUILD_ID_KEY,) if declares_binding(meta, ()) else ()
-        binding = read_binding(meta, keys, source=table.name)
-        if kg_binding_state(binding, kg_digest, source=table.name) == "unrecorded":
-            raise SPArtifactError(
-                f"{table.name} carries no source binding, so the graph it was "
-                "computed from is unrecorded (contract M2.5)"
-            )
-
-    binding = _judge(check, root)
-    if binding["verdict"] == "refused":
-        served = {"verdict": "refused", "reason": "its source binding is refused"}
-    else:
-        served = _not_judged(
-            "the tensor is not loaded: its columns and values, its build id against "
-            "the sidecar's and the hop bound are the service loader's checks"
-        )
-    return {"source_binding": binding, "served": served, "tensor_checked": False}
-
-
 #: What a checkpoint's verdicts cover, stated in the report beside them.
 CHECKPOINT_SCOPE = (
     "M2's source-contract checks and the model record this build reads: whether the "
@@ -528,7 +470,7 @@ def _checkpoint_verdicts(
 
 def inventory_workspace(workspace: Path, root: Path) -> Dict[str, Any]:
     """One workspace: its graph, its dataset record, its training inputs, its
-    table, its checkpoints."""
+    checkpoints."""
     from scripts.train_model import read_training_inputs
 
     found: Dict[str, Any] = {}
@@ -548,9 +490,6 @@ def inventory_workspace(workspace: Path, root: Path) -> Dict[str, Any]:
         entry["dataset_record"] = _dataset_record(found["manifest"], bound["kg"], root)
     entry["training"] = _judge(training, root)
     inputs = found.get("inputs")
-    entry["shortest_paths"] = _shortest_paths(
-        workspace, bound["kg"] if bound else None, root
-    )
     # Serving and measurement refuse the workspace when either check does
     # (contract M3b), so no checkpoint is judged servable over a refused record.
     served_bound, refused = bound, "the workspace's graph is refused"
@@ -606,8 +545,6 @@ def build_inventory(root: Path, relationship: str) -> Dict[str, Any]:
             counts[f"{part}:{entry[part]['verdict']}"] += 1
         if entry["dataset_record"]["origin"] is not None:
             counts[f"dataset_record origin:{entry['dataset_record']['origin']}"] += 1
-        for part in ("source_binding", "served"):
-            counts[f"shortest_paths {part}:{entry['shortest_paths'][part]['verdict']}"] += 1
         for verdicts in entry["checkpoints"].values():
             for use, verdict in verdicts["m2_contract"].items():
                 counts[f"checkpoint m2_contract {use}:{verdict['verdict']}"] += 1
@@ -615,10 +552,9 @@ def build_inventory(root: Path, relationship: str) -> Dict[str, Any]:
         "fact": "M2.6 inventory",
         "what_this_shows": (
             "for each workspace, whether contract M2 accepts its graph, its training "
-            "inputs, its shortest-path table's source binding and each checkpoint's "
-            "training record, whether each checkpoint carries the model record this "
-            "build reads, and whether contract M3b accepts its dataset record "
-            "(binding state and origin apart), and why not"
+            "inputs and each checkpoint's training record, whether each checkpoint "
+            "carries the model record this build reads, and whether contract M3b "
+            "accepts its dataset record (binding state and origin apart), and why not"
         ),
         "read_only": (
             "nothing was moved, deleted or rewritten; refused artifacts are archived "
@@ -626,8 +562,6 @@ def build_inventory(root: Path, relationship: str) -> Dict[str, Any]:
         ),
         "checkpoint_verdicts_cover": CHECKPOINT_SCOPE,
         "not_checked": [
-            "the shortest-path tensor (not loaded): whether a table with an accepted "
-            "source binding would be served is not judged",
             "checkpoints the safe loader cannot open (listed as not judged)",
         ],
         "counts": dict(sorted(counts.items())),

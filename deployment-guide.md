@@ -969,86 +969,22 @@ nvidia-smi  # GPU利用率應該>80%
 
 ## 4.3 最短路徑表與 hop bound 設定
 
-工作區裡的 `shortest_paths.pt` 是預先計算好的距離表，`shortest_paths.meta.json`
-是它的 **sidecar**，記錄這張表是用什麼參數生成的——其中 `max_hops` 是最關鍵的一
-項。**兩個檔案屬於同一次 build，複製或搬移工作區時必須一起帶走。**
+舊版本建出的工作區裡可能還留著 `shortest_paths.pt`（預先計算好的距離表）與它的 sidecar
+`shortest_paths.meta.json`。**這個版本不寫入、不讀取、不拒絕，也不刪除這兩個檔案。**
+服務、訓練、任務測量與盤點（`scripts/audit_checkpoint_family.py --inventory`）有沒有這兩個
+檔案都一樣；盤點不會把這張表列為 checkpoint。
+GB10 驗收（`scripts/probe_deployment.py --m2-acceptance`）同樣兩個檔案都不讀：工作區裡的這
+一對在「工作區未被改動」的檢查（R8）涵蓋之內。這兩個檔案要保留或封存，由你決定。
 
-**任務模型從不讀這張表。** 疾病模型對其圖視圖中的每個疾病排序，基因模型則在程序內從
-視圖算出它所用的精確跳數距離（`src/kg/graph_view.py` 的 `exact_distances`），所以為任務
-模型建工作區時沒有最短路徑步驟。**自 K8-4 起不再有任何服務讀這張表**：過去唯一會讀它的模型——
-沒有 model spec 的 checkpoint（ShepherdGNN 歷史檔）——在載入時、建出任何模型之前就被拒絕
-（§4.7），服務它所用的 mixture 也已移除。以下描述的是 `scripts/compute_shortest_paths.py` 發佈、
-盤點所檢查的這一對檔案，直到 K8-5 讓這些檔案退役為止。
+任務模型不需要這張表。疾病模型對其圖視圖中的每個疾病排序，基因模型則在程序內從視圖算出
+它所用的精確跳數距離（`src/kg/graph_view.py` 的 `exact_distances`），所以建工作區時沒有
+最短路徑步驟。
 
-GB10 驗收（`scripts/probe_deployment.py --m2-acceptance`）同樣不讀這張表：它的真實資料階段
-驗證工作區（R1），並在其上訓練、測量與服務任務模型，所以工作區建好即可驗收。工作區裡已有
-的這一對從不被載入：表本身不會被讀；但在 K8-5 移除盤點的最短路徑檢查之前，R7 的盤點仍會讀它
-的 sidecar 並對其給出判定（不相符的 sidecar 判為 refused，這不會讓 R7 失敗）。這一對仍在
-「工作區未被改動」的檢查（R8）涵蓋之內。
-
-### 為什麼 sidecar 不能省
-
-`max_hops` 決定「不可達」的代價值（`max_hops + 1`）。所有最短路徑分數都是相對這
-個值計算的，而它**無法從距離表本身還原**：BFS 在 `max_hops` 處停止展開，所以表內
-記錄的最大距離只是 `max_hops` 的**下界**——一張 3-hop 的表與一張「上限 5 但剛好
-沒有任何配對走到 5」的表，在張量層面完全相同。
-
-用錯的天花板評分不只是數字偏移，**它會改變候選排序**。同一張 3-hop 表、兩個候選：
-
-| 使用的 max_hops | A 分數 | B 分數 | 排序 |
-|---|---:|---:|---|
-| 正確的 3 | 0.4357142857 | 0.4250000000 | A > B |
-| 誤用 5 | 0.4166666667 | 0.4250000000 | **B > A** |
-
-因此系統**不會替你猜**。
-
-### 優先順序
-
-**距離表只會連同發佈時的 sidecar 一起被接受。** 自 contract M2.5 起（2026-10-13），
-sidecar 必須帶有這張表的來源綁定（`schema_version`、`build_id`、`kg_digest`），而
-它的 `max_hops` 是 hop bound 唯一的來源。沒有 sidecar、或 sidecar 寫於配對協定之前
-的距離表，會被拒絕。
-
-1. **優先找回與距離表一起發佈的 sidecar**，之後兩個檔案一起保存、搬移。
-2. **否則為這個工作區重建這一對**：執行 `scripts/compute_shortest_paths.py`，它會把
-   距離表與 sidecar 一起發佈，並綁定到這個工作區的圖。**不要手寫 sidecar，也不要用
-   表內最大距離回推 `max_hops`**——那個數字證明不了天花板。
-3. 或者把這一對移出工作區：把 `shortest_paths.pt` **與** `shortest_paths.meta.json`
-   成對移出並保留。只留下 sidecar 會被當成「一對中的一邊」而拒絕。無論哪種做法，服務都不受
-   影響（沒有任務模型讀這張表）。
-
-原本用來替缺 sidecar 的表補上 bound 的 `SHEPHERD_SP_HOP_BOUND`，已隨 M2.5 **退役**：
-這類表在讀取任何 bound 之前就會被拒絕，因此這個變數不再被讀取。請從服務環境中移除它。
-
-### 表與圖對不上的時候
-
-最短路徑表是**成對發布**的——`shortest_paths.pt` 與 `shortest_paths.meta.json`
-兩個檔案記錄同一個 `build_id`，另外還記錄了距離是從哪個圖算出來的 SHA-256。由此
-產生三種拒絕，而且三種都是部署問題，不是資料問題：
-
-| 日誌訊息 | 發生了什麼 | 怎麼處理 |
-|---|---|---|
-| *"published by different runs"* | 兩個檔案來自不同次建置。發布過程中斷，或其中一個被別處的檔案蓋過 | 對這個工作區重跑 `scripts/compute_shortest_paths.py`。**不要**從別處複製其中一個檔案去湊成對 |
-| *"computed from a different graph"* | 這張表屬於另一個工作區的 `kg.json`，它的節點索引指向的是別的節點 | 改用**這個**工作區建出來的表，或在這裡重新建 |
-| *"One side of a pair is not a pair"* | 一個檔案宣告了協定、另一個沒有——表發布了但 sidecar 沒跟上，或反過來 | 重跑生成腳本;這一對要嘛一起發布,要嘛都不發布 |
-
-**在這個機制之前建的表會被拒絕**（自 contract M2.5 起，2026-10-13；以前會帶著警告
-載入並回報為 `unrecorded`）。它沒有綁定資訊，沒有任何紀錄說明它的節點索引屬於哪個
-圖。請用 `scripts/compute_shortest_paths.py` 重新建置，或連同 sidecar 一起移出；服務不讀它。
-
-
-### 缺少、未綁定或不合法的 sidecar
-
-距離表存在，而它的 sidecar **缺少、未帶綁定、或不是可讀的 JSON 物件**時，這一對會被**拒絕**，
-而不是用猜測補齊。自 K8-4 起這不會改變任何服務（沒有服務中的模型讀這張表）：這個拒絕是盤點
-對這一對的判定（`scripts/audit_checkpoint_family.py --inventory`，K8-5 之前）。為這個工作區
-重建這一對、或把它們成對移出，就會消除它。
-
-### 完全沒有距離表時
-
-不會有任何改變：沒有任務模型讀這張表，所以沒有這一對的工作區，訓練、測量與服務都與有這一對時
-完全相同。（K8-4 之前，沒有距離表時服務的 ShepherdGNN 檔只以 GNN 分數排序，即 `gnn_only`；這個
-模式已隨 mixture 移除。）
+產生這張表的 `scripts/compute_shortest_paths.py`，以及證據 M5（BACKLOG 第 10 項）所用的
+可達性稽核 `scripts/audit_sp_reachability.py`，已在 K8-5 移除。仍包含它們的最後一個提交是
+`e02c0f7`（`e02c0f7562b166bf6e69677e51b8bc8ee2f0cb1a`），移除前它們的測試在該提交上通過；
+若要重建或稽核舊的表，請在該提交的 checkout 中執行它們。`SHEPHERD_SP_HOP_BOUND` 不會被讀取；
+服務環境若仍設定它，也不會有任何作用。
 
 ### 狀態檢查
 
@@ -1284,8 +1220,8 @@ BACKLOG 49）。
 
 ## 4.6 建圖與服務寫出的檔案權限
 
-最短路徑表與 sidecar、split manifest、`kg.provenance.json`、evaluation ledger、UI
-設定檔以及本體快取，都是先寫進暫存檔再換名到位，讀取的一方不會看到寫到一半的檔案。
+split manifest、`kg.provenance.json`、evaluation ledger、UI 設定檔以及本體快取，
+都是先寫進暫存檔再換名到位，讀取的一方不會看到寫到一半的檔案。
 它們發布時的權限，與一般 `open()` 寫出時相同：
 
 - **新建的檔案**：依目錄的規則，也就是 umask（常見是 `022`，產生 `0644`）；目錄
