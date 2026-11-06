@@ -68,6 +68,7 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from src.evaluation.measurement import expected_relations
 from src.utils.file_modes import create_staging_file
 
 #: Bumped when a record's shape changes in a way that makes an old file
@@ -95,8 +96,8 @@ LEDGER_FILENAME = "evaluations.json"
 #: anything that could move a metric. An earlier key of
 #: (checkpoint, cohort, mode, tie policy) failed exactly this way: two honest runs
 #: at different batch sizes collided and the second was refused as a
-#: contradiction, although `batch_size` is the chunk Mode C scores at once and can
-#: move its numbers at floating-point level.
+#: contradiction, although `batch_size` is the chunk of cases a run scores at
+#: once and can move its numbers at floating-point level.
 #:
 #: Explicit rather than "every field", so that adding a non-semantic field later
 #: does not churn every key and silence the contradiction check. That claim is
@@ -245,16 +246,8 @@ KEY_FIELDS: Tuple[str, ...] = (
 
 #: The relation states a registered result carries: R1, R3, R5 and the cohort's
 #: binding to the graph verified, and R2, a generated split's relation, not
-#: applicable. Restated from ``expected_relations(registered=True)`` in
-#: `src/evaluation/measurement.py` because this module imports no torch;
-#: `tests/unit/test_evaluation_sidecar.py` fails if the two differ.
-REGISTERED_RELATIONS: Dict[str, str] = {
-    "R1": "verified",
-    "R2": "not_applicable",
-    "R3": "verified",
-    "R5": "verified",
-    "cohort_graph": "verified",
-}
+#: applicable. Taken from `src/evaluation/measurement.py`, which states them once.
+REGISTERED_RELATIONS: Dict[str, str] = expected_relations(registered=True)
 
 #: What a registered report's ``cohort_version`` block holds, exactly. Aggregates
 #: only: a block naming anything else is refused, so a case id cannot ride into a

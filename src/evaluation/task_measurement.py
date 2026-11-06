@@ -32,8 +32,8 @@ import torch
 
 from src.models.bundle.metrics import ranking_report
 
-#: The ranking report's schema for task measurements (E1–E5), apart from Mode
-#: C's metric schema 1 (`src.evaluation.measurement.METRIC_SCHEMA_VERSION`).
+#: The ranking report's schema for task measurements (E1–E5), apart from the
+#: metric schema 1 a kept Mode C report records.
 TASK_METRIC_SCHEMA_VERSION = 2
 TASK_KS = (1, 3, 5, 10, 20, 50, 100)
 

@@ -398,23 +398,20 @@ def redact(text: Any, roots: Sequence[Tuple[str, str]]) -> str:
 #: A string literal as Python's ``repr``/``ascii`` writes one: quoted, its
 #: escapes kept, never a raw newline.
 _PY_STR = r"""(?:'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*")"""
-#: Where the importer's and the measurement's refusals name a case: the
-#: importer's ``cases[3] (case_id 'x'): …`` and ``case_id 'x' is not printable``
-#: (`cohort_registry.parse_source`), the measurement's ``sample 'x' has …``
-#: (`measurement._assert_ids_in_range`).
+#: Where the importer's refusals name a case: ``cases[3] (case_id 'x'): …``
+#: and ``case_id 'x' is not printable`` (`cohort_registry.parse_source`).
 _CASE_IDS = (
     (re.compile(r" \(case_id " + _PY_STR + r"\)"), ""),
     (re.compile(r"\bcase_id " + _PY_STR + r"(?= is not printable)"), "case_id"),
-    (re.compile(r"\bsample " + _PY_STR), "a sample"),
 )
 
 
 def case_free(text: Any) -> str:
-    """`text` with the case ids the importer's and the measurement's refusals
-    name taken out (D7: the per-case detail stays on the machine): ``cases[3]
-    (case_id 'x'): missing …`` reads ``cases[3]: missing …``, ``sample 'x' has
-    …`` reads ``a sample has …``. Nothing else of a refusal names a case: the
-    importer describes a term or a disease by its type, never its value."""
+    """`text` with the case ids the importer's refusals name taken out (D7:
+    the per-case detail stays on the machine): ``cases[3] (case_id 'x'):
+    missing …`` reads ``cases[3]: missing …``. Nothing else of an importer
+    refusal names a case: it describes a term or a disease by its type, never
+    its value."""
     flat = str(text if text is not None else "")
     for pattern, replacement in _CASE_IDS:
         flat = pattern.sub(replacement, flat)

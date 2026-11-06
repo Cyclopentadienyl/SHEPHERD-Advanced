@@ -1,148 +1,38 @@
 """
-Mode C: every patient scored against every disease in the graph.
-=================================================================
+The measurement report: its manifest, its result and the ranks rule.
+====================================================================
 Module: src/evaluation/measurement.py
 
-The formal Test's measurement (`docs/working/PLAN_TEST_RESULTS.md`, "This is
-Mode C"): full-graph embeddings from the production model, a masked mean of each
-patient's phenotypes, raw cosine against every disease, and one ranking.
+The format a measurement report is written in: `MeasurementManifest` (what a
+number needs recorded to mean anything later, with the relation states a run
+earns, `RELATION_NAMES` and `expected_relations`), `ModeResult` (one run: the
+report and its per-case ranks) and the ranks rule its ranks rows are held to
+(`check_ranks_rows`). The task evaluators (`src/evaluation/task_measurement.py`)
+fill them; `observe_torch_compile_wrapper` is an execution fact the manifest
+records.
 
-**The ranking is deterministic.** Scores are ranked descending and ties break by
-ascending global disease id, so the order does not depend on the machine, the
-chunking or the order the candidates arrived in (`canonical_ranking`).
+Mode C's executor, which ranked a ShepherdGNN rebuild by raw cosine against
+every disease, retired in K8-6b: only the old pipeline built its model. A kept
+Mode C report keeps this format.
 
-What the ranking functions below do **not** do: load data, run a model, or decide
-what to do about a ground truth that is absent from the candidate set. They rank.
-Absence is decided in `run_mode_c`, where it is fatal: every disease is a
-candidate, so an absent truth means the ids are wrong.
-
-Dependencies: torch.
+Dependencies: the standard library; torch only where
+`observe_torch_compile_wrapper` looks up its wrapper class.
 """
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, Iterable, List, Optional, Sequence
-
-import torch
-from torch import Tensor
-
-# These live in `src.utils.run_environment`, which the task measurement reads
-# too; imported here, where Mode C's callers have always found them.
-from src.utils.run_environment import AutocastRegime, observe_autocast_regime
+from typing import Any, Dict, List, Optional, Sequence
 
 __all__ = [
-    "AutocastRegime",
-    "EncodedGraph",
     "MeasurementManifest",
     "ModeResult",
     "RELATION_NAMES",
     "RELATION_STATES",
     "RANKS_PROBLEMS",
     "RanksRowsRefused",
-    "canonical_ranking",
     "check_ranks_rows",
     "expected_relations",
-    "ranks_of_truth",
-    "encode_full_graph",
-    "run_mode_c",
 ]
-
-
-def _require_integer_ids(ids: Tensor, name: str) -> None:
-    """Identifiers must be integer tensors, and `bool` is not an integer here.
-
-    ``Tensor.long()`` turns 1.7 into 1 and ``True`` into 1, so a float or boolean
-    tensor wired in by mistake becomes a plausible index rather than an error —
-    the same silent-wrong-answer shape as a float mask reaching `masked_mean_pool`.
-    """
-    if ids.dtype == torch.bool or torch.is_floating_point(ids) or torch.is_complex(ids):
-        raise ValueError(f"{name} must be an integer tensor, not {ids.dtype}")
-
-
-def canonical_ranking(scores: Tensor, global_disease_ids: Tensor) -> Tensor:
-    """Rank by score descending, breaking ties by ascending global disease id.
-
-    ``scores`` is ``(B, D)``, ``global_disease_ids`` is ``(D,)``; returns
-    ``(B, D)`` of global ids, best first.
-
-    Given identical score values and global ids, its order — including its tie
-    rule — is independent of the order the candidates arrived in and of how the
-    cohort was chunked, so two Mode C runs over the same scores rank alike. It is
-    *not* a claim that different hardware produces identical scores; if the
-    scores differ the ranking may differ, and that is a property of the scores,
-    not of this function.
-
-    **Non-finite scores are rejected.** A ``NaN`` sorts unpredictably and would
-    turn an invalid score into a plausible rank, and from there into a plausible
-    mean rank and MRR.
-
-    The tie rule is obtained from PyTorch's own stable sort rather than a custom
-    comparator: order the candidates by global id first, then sort by score with
-    ``stable=True``, and stability preserves ascending-id order inside every
-    equal-score group.
-    """
-    if scores.dim() != 2:
-        raise ValueError(f"scores must be (B, D); got {tuple(scores.shape)}")
-    if global_disease_ids.dim() != 1:
-        raise ValueError(
-            f"global_disease_ids must be (D,); got {tuple(global_disease_ids.shape)}"
-        )
-    if global_disease_ids.numel() != scores.size(1):
-        raise ValueError(
-            f"{global_disease_ids.numel()} global ids for {scores.size(1)} score columns"
-        )
-    if global_disease_ids.unique().numel() != global_disease_ids.numel():
-        raise ValueError("global_disease_ids contains duplicates; the ranking would be ambiguous")
-    _require_integer_ids(global_disease_ids, "global_disease_ids")
-    if not torch.isfinite(scores).all():
-        raise ValueError("scores contain NaN or infinity; the canonical ranking would be meaningless")
-
-    id_order = torch.argsort(global_disease_ids)
-    ordered_ids = global_disease_ids[id_order]
-    ordered_scores = scores[:, id_order.to(scores.device)]
-
-    rank_order = torch.argsort(ordered_scores, dim=-1, descending=True, stable=True)
-    return ordered_ids.to(rank_order.device)[rank_order]
-
-
-def ranks_of_truth(ranked_global_ids: Tensor, truth_global_ids: Tensor) -> List[Optional[int]]:
-    """1-based rank of each row's ground truth, or ``None`` where it is absent.
-
-    ``ranked_global_ids`` is ``(B, D)``; ``truth_global_ids`` is ``(B,)``.
-
-    **``None`` rather than a sentinel rank.** A ground truth outside the candidate
-    set has no rank, and encoding that as a large integer would let it flow into a
-    mean as though it were a measurement. `RankingMetrics.compute_from_ranks`
-    refuses to invent a value for an empty cohort for the same reason; this is the
-    same refusal one level up. What absence *means* is the caller's decision: in
-    Mode C, which ranks every disease, it is impossible and therefore fatal.
-
-    A Python list, not a tensor, because the value is genuinely optional and
-    because the consumer accumulates across batches into a list anyway.
-    """
-    if ranked_global_ids.dim() != 2:
-        raise ValueError(f"ranked_global_ids must be (B, D); got {tuple(ranked_global_ids.shape)}")
-    if truth_global_ids.dim() != 1:
-        raise ValueError(f"truth_global_ids must be (B,); got {tuple(truth_global_ids.shape)}")
-    if truth_global_ids.numel() != ranked_global_ids.size(0):
-        raise ValueError(
-            f"{truth_global_ids.numel()} truths for {ranked_global_ids.size(0)} ranked rows"
-        )
-    _require_integer_ids(ranked_global_ids, "ranked_global_ids")
-    _require_integer_ids(truth_global_ids, "truth_global_ids")
-
-    truth = truth_global_ids.to(ranked_global_ids.device).unsqueeze(-1)
-    matches = ranked_global_ids == truth
-    found = matches.any(dim=-1)
-    # argmax over a boolean row gives the first True, which is the best rank a
-    # duplicated id could hold. Duplicates are rejected upstream, so this is the
-    # only position.
-    positions = matches.to(torch.uint8).argmax(dim=-1)
-
-    return [
-        int(position) + 1 if bool(is_found) else None
-        for position, is_found in zip(positions.tolist(), found.tolist())
-    ]
 
 
 #: Where `torch.compile`'s wrapper class is exported. The package-level name is
@@ -233,86 +123,7 @@ def observe_torch_compile_wrapper(model: Any) -> Optional[bool]:
         return None
 
 
-@dataclass(frozen=True)
-class EncodedGraph:
-    """Full-graph embeddings **and the regime they were computed under**.
-
-    The pair travels together because the second cannot be recovered from the
-    first, and because observing it anywhere other than at the computation gives
-    the wrong answer. Mode C scores from these embeddings but does not produce
-    them, and its manifest is built afterwards — an earlier design observed the
-    regime at manifest construction, which is a different context and would have
-    labelled these embeddings with it.
-
-    A frozen dataclass rather than a bare tuple: callers read its named fields,
-    and `encoded.embeddings` says what a `[0]` does not. It travels **whole** into
-    `run_mode_c`, which is what lets it verify that its manifest
-    describes the regime these embeddings were actually computed under — splitting
-    it at the caller left that association unverifiable.
-    """
-
-    embeddings: Dict[str, Any]
-    regime: AutocastRegime
-
-
-def assert_manifest_describes_regime(
-    manifest: Any, device: Any, encoded: "EncodedGraph"
-) -> None:
-    """Refuse when the manifest's recorded regime is not the one now in force.
-
-    **A consistency check, not an absence check.** The version this replaces
-    refused *any* autocast, because `build_manifest` wrote `amp_enabled=False` as a
-    literal and a run under autocast would have shifted every score while the
-    artifact claimed fp32. That was a real ground — inability to produce an honest
-    artifact — but a removable one: recording what applied removes it, and
-    refusing instead cost the harness a legitimate research question, *"what is
-    this mode's MRR under the AMP setting the deployment actually uses?"*
-
-    What remains refused is narrower and is the case a single field genuinely
-    cannot describe: numbers produced under one regime and recorded under
-    another. For Mode C that includes embeddings computed in one context and
-    scored in a different one — its manifest carries the **embedding** regime,
-    so scoring under a different one is refused rather than averaged into a
-    single claim.
-
-    **Two associations, not one.** `encoded` is the full-graph embeddings Mode C
-    scores from, and its regime is the one they were computed under. Checking
-    only the current scoring context leaves the other half unverified: fp32
-    embeddings scored under bfloat16 would pass, which is precisely the
-    mixed-regime run this function exists to refuse. An earlier version took only
-    the current context — and the Mode C test written for it asserted success on
-    exactly that run, freezing the defect as a specification.
-
-    The cost is one thread-local read. Nothing here touches a tensor or a
-    device.
-    """
-    recorded = AutocastRegime(enabled=manifest.amp_enabled, dtype=manifest.amp_dtype)
-
-    if encoded.regime != recorded:
-        raise RuntimeError(
-            f"the full-graph embeddings were computed under {encoded.regime} while "
-            f"this manifest records {recorded}. Mode C scores numbers these "
-            "embeddings produced, so a manifest describing a different regime "
-            "describes a run that did not happen"
-        )
-
-    observed = observe_autocast_regime(device)
-    if observed != recorded:
-        raise RuntimeError(
-            f"this measurement is running under {observed} while its manifest "
-            f"records {recorded}. The artifact would describe a run that did not "
-            "happen. Build the manifest in the same context the computation runs "
-            "in — for Mode C that is the context the full-graph embeddings were "
-            "computed in, which `EncodedGraph` carries for exactly this reason"
-        )
-
-
-#: Bumped when the metric set or any metric's definition changes: a name added or
-#: removed, a denominator redefined, a `hits@K` membership change, an aggregation
-#: rule change. Lives beside `_authoritative`, which is what it versions.
-METRIC_SCHEMA_VERSION = 1
-
-#: The relations a Mode C run checks on the bytes it read, by the names its
+#: The relations a measurement run checks on the bytes it read, by the names its
 #: manifest records them under (contract §5; `PLAN_TEST_RESULTS.md` §6, phase 1,
 #: step 2): R1 the graph files against the workspace manifest, R2 a generated
 #: split's samples against the same manifest, R3 the checkpoint's recorded graph
@@ -356,7 +167,8 @@ class MeasurementManifest:
     would make two runs incomparable without saying so.
 
     `batch_size` is here as **semantics, not performance**: it is the chunk
-    Mode C scores at once, and it can move the numbers at floating-point level.
+    of cases a run scores at once, and it can move the numbers at
+    floating-point level.
     """
 
     mode: str
@@ -391,8 +203,9 @@ class MeasurementManifest:
     # scoring and ranking
     score_semantics: str
     model_construction: str
-    """Which builder made the scored model: `build_shepherd_model`, the one the
-    deployed pipeline uses. Recorded so a reader does not have to assume it."""
+    """Which builder made the scored model (a task model's bundle builder; a
+    kept Mode C report names `build_shepherd_model`). Recorded so a reader does
+    not have to assume it."""
     canonical_tie_policy_version: str
     # artifacts
     checkpoint_path: str
@@ -449,9 +262,10 @@ class MeasurementManifest:
     and said "no traversal here opens an autocast context, therefore False". No
     traversal here does open one — but a *caller* can, and the literals then
     described a run that did not happen. They now carry what
-    `observe_autocast_regime` read at the computation that produced the
-    numbers: the full-graph embedding call. `assert_manifest_describes_regime`
-    refuses a run whose regime differs from what its manifest records.
+    `observe_autocast_regime` read for the run's device before its evaluator
+    ran (`scripts/measure_scorer.py`), and the task evaluators refuse a run
+    whose regime differs from what its manifest records
+    (`task_measurement._check_regime`).
 
     **A harness-boundary regime.** An autocast context opened inside a model is
     not observable from these boundaries and is not claimed."""
@@ -668,231 +482,3 @@ def check_ranks_rows(rows: Any, sample_ids: Sequence[str]) -> List[str]:
             f"{expected[index]!r}; the rows follow the cohort's order"))
     return [row["sample_id"] for row in rows if row["rank"] is not None]
 
-
-def _authoritative(ranks: List[int]) -> Dict[str, float]:
-    """The metric family a Mode C report carries.
-
-    `mrr` is reported as `untruncated_mrr` so it cannot be read as the Trainer's
-    `val_mrr`, which is computed over a top-20 window: two numbers under one name
-    is how a truncated metric ends up quoted as an untruncated one.
-    """
-    from src.utils.metrics import RankingMetrics
-
-    return {
-        f"untruncated_{name}" if name == "mrr" else name: value
-        for name, value in RankingMetrics()
-        .compute_from_ranks(ranks, k_values=(1, 5, 10, 20, 50, 100))
-        .items()
-    }
-
-
-def encode_full_graph(model: Any, graph_data: Dict[str, Any], device: Any) -> EncodedGraph:
-    """Embed every node once for Mode C: move the tensors to the device, one
-    forward pass of the ShepherdGNN model under `no_grad`, keep the result.
-
-    Since K8-4 the deployed pipeline serves task models only, so nothing here is
-    shared with serving; this encoding goes with Mode C (K8-6b).
-    """
-    import torch as _torch
-
-    x_dict = {k: v.to(device) for k, v in graph_data["x_dict"].items()}
-    edge_index_dict = {k: v.to(device) for k, v in graph_data["edge_index_dict"].items()}
-    model.eval()
-    # Observed **here**, inside the function that performs the forward, so a caller
-    # who wraps this call in an autocast context is described by it. Observing at
-    # the caller — or worse, at manifest construction later — reads a different
-    # context and would label these embeddings with it.
-    regime = observe_autocast_regime(device)
-    with _torch.no_grad():
-        return EncodedGraph(embeddings=model(x_dict, edge_index_dict), regime=regime)
-
-
-def _assert_cohort_is_intact(
-    manifest: MeasurementManifest,
-    n_sample_ids: int,
-    n_canonical_ranks: int,
-    n_absent: int,
-) -> None:
-    """Refuse to report a number computed over a cohort nobody chose.
-
-    Every way a run can quietly measure fewer samples than it claims — a
-    dropped chunk, a duplicated or lost row, a truth outside the candidate set —
-    ends here rather than in a plausible metric. The failures are separated
-    because they have different causes and a single "count mismatch" message
-    would send the reader to the wrong place.
-    """
-    if manifest.n_samples <= 0:
-        raise ValueError(
-            f"manifest claims {manifest.n_samples} samples; there is nothing to "
-            "measure and every metric would be fabricated"
-        )
-    if n_absent:
-        raise ValueError(
-            f"{n_absent} ground truth(s) were absent from the candidate set. "
-            "Mode C ranks every disease, so this is impossible unless the ids or "
-            "the harness are wrong. It is not a property of the model and must "
-            "not be reported as one"
-        )
-    if not (n_sample_ids == n_canonical_ranks == manifest.n_samples):
-        raise ValueError(
-            "cohort shrinkage: the run produced "
-            f"{n_sample_ids} sample ids and {n_canonical_ranks} canonical ranks "
-            f"for {manifest.n_samples} declared samples. A metric over a subset of "
-            "the declared cohort is not the metric the manifest describes"
-        )
-
-
-def _assert_ids_in_range(samples: Any, n_phenotypes: int, n_diseases: int) -> None:
-    """Every id a sample carries must index the graph it is being scored against.
-
-    Out of range is fatal and names the patient and the value. The alternative —
-    clamping, dropping, or substituting — turns a data error into a plausible
-    rank for a patient who was never scored on their own phenotypes, and nothing
-    downstream can tell that apart from a real result.
-
-    A sample with **no** phenotypes is refused for the same reason: pooling over
-    an empty mask yields the zero vector, whose cosine against every disease is
-    zero, whose ranking is then an arbitrary tie-break over the whole graph.
-    """
-    for sample in samples:
-        if not sample.phenotype_ids:
-            raise ValueError(
-                f"sample {sample.patient_id!r} has no phenotypes; it cannot be "
-                "scored, and pooling nothing would rank the whole graph by a "
-                "tie-break"
-            )
-        for phenotype_id in sample.phenotype_ids:
-            if not 0 <= phenotype_id < n_phenotypes:
-                raise ValueError(
-                    f"sample {sample.patient_id!r} has phenotype id {phenotype_id}, "
-                    f"outside the graph's {n_phenotypes} phenotype nodes. Refusing "
-                    "rather than clamping: a clamped id scores a different patient"
-                )
-        if not 0 <= sample.disease_id < n_diseases:
-            raise ValueError(
-                f"sample {sample.patient_id!r} has ground-truth disease id "
-                f"{sample.disease_id}, outside the graph's {n_diseases} disease "
-                "nodes. Its rank would be meaningless"
-            )
-
-
-def run_mode_c(
-    full_graph_embeddings: "EncodedGraph",
-    samples: Iterable[Any],
-    manifest: MeasurementManifest,
-    device: Optional[Any] = None,
-    batch_size: int = 32,
-) -> ModeResult:
-    """Score every patient against **every disease in the graph**.
-
-    Its **candidate universe** is the reference method's — *"we calculate a
-    patient's similarity to all disease nodes in the KG at inference time"* (npj
-    Digital Medicine 8:380, 2025, Methods). The score is not: it is raw cosine,
-    the interim disease score (`docs/DISEASE_SCORER_POLICY.md`), where the paper
-    uses a squared distance.
-
-    **No subgraph sampler and no dataloader.** Mode C's candidate universe is all
-    diseases, so there is nothing for a sampler to select and no reason to pay
-    for it. Patients come straight from the samples, which is where the
-    dataloader gets them too.
-
-    Padding is done here rather than through `diagnosis_collate_fn` for the same
-    reason: that function builds items through `DiagnosisDataset`, which draws
-    negative samples this mode discards. Eight lines of `pad` and `stack` against
-    a dependency that consumes randomness for nothing is not a close call.
-
-    Absence is impossible by construction — the truth is a disease, and every
-    disease is a candidate — so a non-zero absence count means the ids are wrong,
-    and `_assert_cohort_is_intact` treats it as fatal.
-
-    **Every real id is validated before it is used, and out-of-range is fatal.**
-    Every id is a real value from a real patient with `mask=True`, so a clamp
-    would score phenotype `-3` as phenotype 0 and phenotype 999999 as the last
-    node in the graph — a plausible patient, a plausible rank, and a wrong one.
-    Padding uses a safe value under a `False` mask; **real values are never
-    clamped, dropped or substituted.**
-    """
-    import torch as _torch
-    import torch.nn.functional as _F
-
-    from src.inference.scoring import cosine_score_matrix, masked_mean_pool
-
-    device = _torch.device(device) if device is not None else _torch.device("cpu")
-    assert_manifest_describes_regime(manifest, device, full_graph_embeddings)
-    phenotype_emb = full_graph_embeddings.embeddings["phenotype"].to(device)
-    disease_emb = full_graph_embeddings.embeddings["disease"].to(device)
-    all_disease_ids = _torch.arange(disease_emb.size(0), device=device)
-
-    materialised = list(samples)
-    sample_ids: List[str] = []
-    truth_global_ids: List[int] = []
-    canonical_ranks: List[int] = []
-    absent = 0
-    candidate_counts: List[int] = []
-
-    with _torch.no_grad():
-        for start in range(0, len(materialised), batch_size):
-            chunk = materialised[start:start + batch_size]
-            _assert_ids_in_range(chunk, phenotype_emb.size(0), disease_emb.size(0))
-            widest = max(len(sample.phenotype_ids) for sample in chunk)
-            ids, masks = [], []
-            for sample in chunk:
-                row = _torch.tensor(sample.phenotype_ids, dtype=_torch.long)
-                pad = widest - row.numel()
-                # Padding is 0 — a valid row that the mask discards. Real values
-                # reached here already validated, so nothing below alters one.
-                ids.append(_F.pad(row, (0, pad)))
-                masks.append(
-                    _torch.cat([
-                        _torch.ones(row.numel(), dtype=_torch.bool),
-                        _torch.zeros(pad, dtype=_torch.bool),
-                    ])
-                )
-            phenotype_ids = _torch.stack(ids).to(device)
-            mask = _torch.stack(masks).to(device)
-
-            # No clamp: every entry is either a real id already validated above or
-            # a padded 0 the mask removes. A clamp here is the defect this mode was
-            # corrected for — it would score a different patient rather than fail.
-            patient_phenotypes = phenotype_emb[phenotype_ids.reshape(-1)].reshape(
-                phenotype_ids.size(0), phenotype_ids.size(1), -1
-            )
-            patients = masked_mean_pool(patient_phenotypes, mask)
-            scores = cosine_score_matrix(patients, disease_emb)
-            candidate_counts.append(int(scores.size(1)))
-
-            truth = _torch.tensor([s.disease_id for s in chunk], dtype=_torch.long, device=device)
-            ranked = canonical_ranking(scores, all_disease_ids)
-            sample_ids.extend(s.patient_id for s in chunk)
-            truth_global_ids.extend(truth.tolist())
-            for rank in ranks_of_truth(ranked, truth):
-                if rank is None:
-                    absent += 1
-                else:
-                    canonical_ranks.append(rank)
-
-    _assert_cohort_is_intact(
-        manifest=manifest,
-        n_sample_ids=len(sample_ids),
-        n_canonical_ranks=len(canonical_ranks),
-        n_absent=absent,
-    )
-
-    return ModeResult(
-        manifest=manifest,
-        authoritative_metrics=_authoritative(canonical_ranks),
-        n_ranked=len(canonical_ranks),
-        n_ground_truth_absent=absent,
-        sampler_evidence={
-            "n_batches": len(candidate_counts),
-            "candidate_columns": {
-                "min": min(candidate_counts) if candidate_counts else None,
-                "max": max(candidate_counts) if candidate_counts else None,
-                "mean": (sum(candidate_counts) / len(candidate_counts))
-                if candidate_counts else None,
-            },
-        },
-        sample_ids=sample_ids,
-        truth_global_ids=truth_global_ids,
-        canonical_ranks=canonical_ranks,
-    )

@@ -609,7 +609,7 @@ class TestBuildScriptValidation:
 # The disease-truth range invariant, at the boundary that creates the failure
 # =============================================================================
 class TestDiseaseTruthRangeInvariant:
-    """`_assert_disease_truth_in_range` — the first of three boundaries.
+    """`_assert_disease_truth_in_range` — the first of two boundaries.
 
     `_remap_indices` sends each global disease id through a mapping tensor that
     is `-1` at every unsampled position, so this is where a legal global truth
@@ -618,9 +618,9 @@ class TestDiseaseTruthRangeInvariant:
     run after `_move_to_device` and force a host-device synchronisation on every
     valid batch.
 
-    The two downstream boundaries — `DiagnosisLoss` and Mode C's
-    `_assert_ids_in_range` — are covered by their own files and are deliberately
-    independent of this one.
+    The downstream boundary, `DiagnosisLoss`, is covered by its own file and is
+    deliberately independent of this one. (Mode C's `_assert_ids_in_range`, a
+    third, retired with its executor in K8-6b.)
     """
 
     @staticmethod

@@ -560,8 +560,8 @@ def test_build_manifest_takes_the_mode_from_the_protocol(cli):
     the call is refused, and so is a semantics that sets `mode`, lacks one of
     those fields or names another one. `build_manifest` records the name asked;
     judging it is the CLI's choices' and `read_measurement_inputs`' work."""
-    from src.evaluation.measurement import AutocastRegime
     from src.evaluation.task_measurement import disease_semantics
+    from src.utils.run_environment import AutocastRegime
 
     device = torch.device("cpu")
     graph = {"num_nodes_dict": {"disease": 1}}

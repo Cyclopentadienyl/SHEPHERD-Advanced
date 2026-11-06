@@ -25,7 +25,6 @@ Output:
 
 Called by:
     - src/training/trainer.py (the ShepherdGNN validation pass)
-    - src/evaluation/measurement.py (Mode C)
 
 Version: 1.0.0
 """

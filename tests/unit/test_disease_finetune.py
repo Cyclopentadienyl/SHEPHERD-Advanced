@@ -113,7 +113,7 @@ def test_joint_step_weights_task_and_lp_and_reaches_every_part(workspace):
     assert bundle.lp_head.relation_weights.grad.abs().sum() > 0
 
 
-def test_validation_ranks_every_disease_with_average_ranks(workspace):
+def test_validation_ranks_every_disease_with_average_ranks(workspace, monkeypatch):
     view, _, task = _task_setup(workspace)
     bundle = build_bundle(_finetune_spec(), view)
     report = task.validate(bundle, torch.device("cpu"))
@@ -123,6 +123,36 @@ def test_validation_ranks_every_disease_with_average_ranks(workspace):
     assert report["conservative_pooled_mrr"] < report["pooled_mrr"]
     outcomes = task.rank_cases(bundle, task.val_cases, torch.device("cpu"))
     assert all(o.candidates == int(view.type_nodes("disease").numel()) for o in outcomes)
+    # A program-correctness check of chunking and padding, not a requirement that
+    # runs or batch sizes give equal results: cases of one, two and three
+    # phenotypes, padded together in one chunk, score as each does alone within
+    # float rounding (the tolerance below; why `batch_size` is recorded).
+    from src.models.tasks.scoring import full_view_vectors, score_cases
+
+    mixed = bind_disease_cases(view, _samples(("m1", [3], 0), ("m2", [4, 5], 1),
+                                              ("m3", [6, 7, 8], 2))).cases
+    z = full_view_vectors(bundle, view.edge_index(), view.rel, torch.device("cpu"))
+    diseases = view.type_nodes("disease")
+    torch.testing.assert_close(score_cases(bundle, z, mixed, diseases),
+                               score_cases(bundle, z, mixed, diseases, case_chunk=1),
+                               rtol=0, atol=1e-5)
+    # Exact ties share their average rank in the ranker validation and measurement
+    # share (`rank_cases`, E3): the `average-rank/v1` every task manifest records.
+    # With every disease scored alike, each truth ranks (n + 1) / 2 wherever it
+    # stands in the view, never by its place in the candidate order.
+    import src.models.tasks.scoring as scoring
+
+    n = int(view.type_nodes("disease").numel())
+    monkeypatch.setattr(scoring, "score_cases",
+                        lambda bundle, z, cases, candidates, **_: torch.zeros(len(cases), n))
+    tied = task.rank_cases(bundle, task.val_cases, torch.device("cpu"))
+    assert [o.ranks for o in tied] == [[(n + 1) / 2]] * len(task.val_cases)
+    # A higher score ranks first (E3's direction): a truth scored above every
+    # other disease ranks 1 in the same ranker.
+    monkeypatch.setattr(scoring, "score_cases", lambda bundle, z, cases, candidates, **_:
+                        torch.stack([torch.isin(candidates, c.truths).float() for c in cases]))
+    top = task.rank_cases(bundle, task.val_cases, torch.device("cpu"))
+    assert [o.ranks for o in top] == [[1.0]] * len(task.val_cases)
 
 
 # --------------------------------------------------------------------------- the CLI

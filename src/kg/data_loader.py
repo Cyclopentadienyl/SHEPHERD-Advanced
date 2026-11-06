@@ -979,11 +979,11 @@ class DiagnosisDataLoader:
         tensors are still on the host and the cost is a comparison over one
         batch-sized vector.
 
-        Two independent boundaries remain downstream and are deliberate, not
+        One independent boundary remains downstream and is deliberate, not
         redundant: `DiagnosisLoss` refuses a malformed target for any caller that
-        bypasses this loader, and Mode C's `_assert_ids_in_range` refuses a truth
-        outside the graph's diseases at the measurement's own boundary. Three
-        small local checks, no shared validator.
+        bypasses this loader. (Mode C's range check at the measurement's own
+        boundary retired with its executor in K8-6b; the task path's is
+        `GraphView.view_ids`.) Small local checks, no shared validator.
 
         Never clamps. Clamping a ground truth silently scores a different
         disease.

@@ -336,8 +336,8 @@ def test_build_manifest_takes_the_kind_from_the_version_and_requires_r10(cli, co
     no report of a registered version can lack its overlap."""
     import argparse
 
-    from src.evaluation.measurement import AutocastRegime
     from src.evaluation.task_measurement import disease_semantics
+    from src.utils.run_environment import AutocastRegime
 
     args = argparse.Namespace(mode="disease", split=None, batch_size=4,
                               checkpoint=cohort.checkpoint, data_dir=cohort.data_dir)

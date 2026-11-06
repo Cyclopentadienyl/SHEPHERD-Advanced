@@ -19,8 +19,8 @@
 > is served (503). The served mixture, Mode C and the ShepherdGNN path stay only for checkpoints
 > without a model spec (history files), until K8; the GB10 acceptance probe left them in K8-1.
 > **K8-4 (2026-11-03):** the served mixture is removed and serving refuses a checkpoint without a
-> model spec at load, before any model is built; only Mode C still runs such a file (command line,
-> until K8-6b). §8 describes what is served now.
+> model spec at load, before any model is built; Mode C, which still ran such a file, left the
+> command line in K8-6a and its executor went in K8-6b. §8 describes what is served now.
 > The §1 "Running" block and the rows marked K7 or K8-4 below say what runs on the branch; the rest
 > of this file still describes `416a242` where it says so.
 
@@ -56,8 +56,8 @@ PyTorch, `torch_geometric` (PyG's core) and the rest of the locked set in `pypro
 `uv.lock`; PyG's native extensions per platform (§9, BACKLOG 50).
 **Graph layers**: a model bundle's encoder is its model spec's (the reference is the paper's
 homogeneous GATv2 over a learned node table, `working/scorer-retraining/README.md` §2–§3). The
-ShepherdGNN path's GAT, HGT and SAGE (`--conv-type`) remain only for Mode C's measurement of
-history files, until K8.
+ShepherdGNN path's GAT, HGT and SAGE (`--conv-type`) remain only on its training path, which
+writes history files, until K8 (Mode C's measurement of those files retired in K8-6b).
 **Extension (not implemented)**: fuzzy input, free text to HPO/MONDO (`src/nlp/`).
 
 ---
@@ -159,7 +159,7 @@ scores to add to any ranking.
 |---|---|---|---|---|---|
 | Causal gene discovery | patient phenotypes and a candidate gene list from variant filtering or curation (13.3 genes on average in one setting, 244.3 in the other; policy §3.1) | Eq 12–14: `η·EMBSIM + (1−η)·SPLSIM`, its own task head, and SP also in the training loss | on the integration branch: the gene task model ranks the `candidate_genes` list (K4), which Diagnosis sends for a gene model (K6); any other model ignores it with a warning | — | work package B (`docs/working/scorer-retraining/README.md` §8; its SP specification §6 comes first); the only task in which the paper mixes SP into a ranking |
 | Patients-like-me | patient phenotypes and a reference cohort of patients with embeddings | Eq 16: `−‖z_Pi − z_Pj‖²` | not implemented | — | work package B; it needs a registered reference cohort |
-| Novel disease characterisation (disease ranking) | patient phenotypes | Eq 18: `−‖z_d − z_P‖²` over every KG disease, on the patient encoder's output (a transformer encoder and an attention-weighted average) | on the integration branch the disease task model serves Diagnosis (K3; the legacy mixture of §8 is retired since K8-4); Mode C measures the approved interim policy | the approved interim policy (statement 2) is raw cosine of an **unweighted** masked mean: not the paper's encoder, projection or objective. Cosine and negative squared L2 order alike only on the same unit vectors; that does not make the encoders equal, and Mode C is not a reproduction of the paper | work package A builds the paper-aligned disease model (`docs/working/scorer-retraining/README.md`); serving switches only through the policy's gates (package C). The raw-cosine B-1 is not built first (policy rev 11) |
+| Novel disease characterisation (disease ranking) | patient phenotypes | Eq 18: `−‖z_d − z_P‖²` over every KG disease, on the patient encoder's output (a transformer encoder and an attention-weighted average) | on the integration branch the disease task model serves Diagnosis (K3; the legacy mixture of §8 is retired since K8-4); the disease protocol measures it (task measurement, §11); Mode C, which measured the approved interim policy, retired in K8-6a (command) and K8-6b (executor) | the approved interim policy (statement 2) is raw cosine of an **unweighted** masked mean: not the paper's encoder, projection or objective. Cosine and negative squared L2 order alike only on the same unit vectors; that does not make the encoders equal, and Mode C is not a reproduction of the paper | work package A builds the paper-aligned disease model (`docs/working/scorer-retraining/README.md`); serving switches only through the policy's gates (package C). The raw-cosine B-1 is not built first (policy rev 11) |
 
 **SP for disease ranking** is this project's policy, not the paper's formula. It is an optional
 analysis view, off by default, whose sorting and filtering change the view only and never the
@@ -172,8 +172,8 @@ likewise this project's evidence policy, not a method the paper specifies
   exists here (`docs/working/task-scope/README.md`). Its SP mixture (Eq 14) is that task's formula.
 - **Patients-like-me** needs a labelled reference cohort, against which the patients it returns can
   be checked.
-- **Disease ranking** is measured by Mode C on registered cohorts, then by the institutional run
-  (BACKLOG 8a, 8b).
+- **Disease ranking** is measured by the disease protocol on registered cohorts (task measurement,
+  §11; Mode C until K8-6a), then by the institutional run (BACKLOG 8a, 8b).
 
 They may share loading, identity, records and presentation. None of them is the disease ranking's
 GNN/SP mixture. An adjustable-η analysis view (policy §1.4, a registered direction, not decided) is a
@@ -237,7 +237,7 @@ record itself (M2, M3a, M3b).
   train or val before it generates samples. It is the Trainer's own measure (val split, top-20),
   used for early stopping and checkpoint selection; it is not a test.
 - **No held-out test split** is generated, and no institutional holdout protocol is defined
-  (BACKLOG item 11). External cohorts are measured as registered versions (Mode C, §11).
+  (BACKLOG item 11). External cohorts are measured as registered versions (task measurement, §11).
 - **Built on the integration branch, awaiting acceptance** (`working/scorer-retraining/README.md`;
   `working/PLAN_PROVENANCE_CONTRACT.md` §9):
   - the KG pretraining stage and the `finetune` operation for three tasks;
@@ -276,7 +276,7 @@ Layer 4 (Models):      src/models/        bundle (spec, builder), task heads, en
 Layer 5 (Reasoning):   src/reasoning/     path_reasoning (auxiliary), explanation
 Layer 6 (Training):    src/training/      trainer, loss_functions
 Layer 7 (Inference):   src/inference/      pipeline (GNN-primary scoring)
-Layer 7b (Evaluation): src/evaluation/    Mode C measurement, test cohort registry, R10, evaluation ledger
+Layer 7b (Evaluation): src/evaluation/    measurement by protocol, test cohort registry, R10, evaluation ledger
 Layer 8 (Interface):   src/api/           FastAPI REST endpoints; src/api/services: job runner,
                                           server lists, record states, backend control
                        src/webui/         Gradio dashboard, mounted at /ui in the same process
@@ -304,7 +304,7 @@ Layer 8 (Interface):   src/api/           FastAPI REST endpoints; src/api/servic
 | PathReasoner | `src/reasoning/path_reasoning.py` | BFS path enumeration (`find_paths`, `score_paths`): the evidence for a disease row (the mixture's candidate discovery went with it in K8-4, §2.3). Its path-score ranking (`aggregate_path_scores`, `get_top_candidates`) was removed in K7 |
 | Knowledge Graph | `src/kg/graph.py` | KG data structure with PyG export |
 | Vector Index | `src/retrieval/vector_index.py` | Standalone ANN index. **Detached from diagnosis** — retained for planned vector-mapping work, not on any inference path |
-| Measurement (Mode C) | `src/evaluation/measurement.py`; no command since K8-6a | Every disease ranked by the model's raw cosine, on a registered test cohort version or a generated split: the formal Test's measurement until K6, then a command-line run (`scripts/measure_scorer.py` without `--mode`) on a checkpoint without a model spec until K8-6a, which made `--mode` required (row below). Its executor retires in K8-6b; kept Mode C reports and records are read by the shared readers (policy rev 15) |
+| Measurement (Mode C) | retired: no command since K8-6a, no executor since K8-6b | Every disease ranked by the model's raw cosine, on a registered test cohort version or a generated split: the formal Test's measurement until K6, then a command-line run (`scripts/measure_scorer.py` without `--mode`) on a checkpoint without a model spec until K8-6a, which made `--mode` required (row below). Its executor retired in K8-6b; `src/evaluation/measurement.py` keeps the report types and the ranks rule every measurement writes by. Kept Mode C reports and records are read by the shared readers (policy rev 15) |
 | Task measurement | `src/evaluation/protocols.py` (the protocols) and `src/evaluation/task_measurement.py` (their evaluators); CLI `scripts/measure_scorer.py --mode <protocol>` | A model measured by a protocol this build implements for its learning stage and task head (today disease, gene and patients_like_me, one for each task head of a finetuned model) on a registered cohort version or a generated split; what the Test page runs, with the protocol chosen among those the model's record admits (K8-6a). The protocol definition judges only whether a new measurement can run; no reader uses it. Mode D, the served ranking's measurement, was removed in K7 (`src/evaluation/mode_d.py` deleted); its kept reports and records stay readable |
 | Test cohort registry | `src/evaluation/cohort_registry.py`; CLI `scripts/import_cohort.py` | Immutable cohort versions mapped to one graph and bound to its digests, kept outside the repository (provenance contract M4) |
 | R10 | `src/evaluation/r10.py` | A test cohort's disease and phenotype-set overlap with the training and validation inputs a checkpoint records, found by digest |
@@ -466,7 +466,7 @@ the GB10 acceptance and its tested commit where one exists (`docs/working/m*-acc
 and integration tests sit beside each module.
 
 **Boundaries that are easy to confuse:**
-- **A Mode C test score is not the Diagnosis page's ranking.** Mode C ranks every disease by raw
+- **A Mode C test score is not the Diagnosis page's ranking.** Mode C ranked every disease by raw
   cosine; Diagnosis serves a task model's own head (§8; the path-gated GNN/SP mixture is retired
   since K8-4).
 - **Resume and extend are done; branch training is built for model bundles, from the CLI** (K5,
@@ -506,7 +506,7 @@ and integration tests sit beside each module.
 | **Which model serves after a start or a restart** | environment variables at startup; `/api/v1/pipeline/config` writes and reads back a file nothing else consumes | `src/api/main.py` lifespan | none | Partial | — | a Load is lost on Restart Backend; decide (BACKLOG 55, with 30 and 48) |
 | **Import a test cohort** (preview, then commit a version) | `scripts/import_cohort.py`; Test's import drawer | `src/evaluation/cohort_registry.py` | Test: Import a new version… | Connected | T1 and T4 at `2c94a4e` (T2, T3, T5, T6 measure, register, view and audit the imported version); the import drawer by hand at `773dc4a` | MyGene2 and institutional adapters, OMIM/ORPHA (BACKLOG 25) |
 | **Task measurement** of a registered version, by a protocol this build implements for the model's learning stage and task head (today disease, gene, patients-like-me); every report kept | `scripts/measure_scorer.py --mode <protocol> --cohort`; the runner's test job, which passes the protocol chosen as `--mode` and refuses, before it starts, one the listed record or version does not admit (K8-6a) | `src/evaluation/protocols.py`, `src/evaluation/task_measurement.py`, `report_store.py` | Test: Measurement (K8-6a), Start test, Result (K6) | Connected on the integration branch (K6), awaiting acceptance | unit and integration tests; the K6 browser smoke on CPU (`working/scorer-retraining/README.md` §8, "K6 delivery"): a disease and a gene child measured and registered; the probe's W8, W9 and RW2 measure a disease child (`792861b`), no GB10 record yet | a patients-like-me measurement was not run in the smoke |
-| **Mode C measurement** of a registered version; every report kept | none since K8-6a (until then `scripts/measure_scorer.py --cohort` without `--mode`, on a history file, command line only) | `measurement.run_mode_c`, which no command calls; `report_store.py` | none since K6: Test shows a kept Mode C report and can register it | Retired from the command line (K8-6a); kept Mode C reports and records are read by the shared readers (policy rev 15) | W8 at `b14c4de`; by hand at `773dc4a` | the executor retires in K8-6b (`working/scorer-retraining/README.md` §7). Not the Diagnosis ranking |
+| **Mode C measurement** of a registered version; every report kept | none since K8-6a (until then `scripts/measure_scorer.py --cohort` without `--mode`, on a history file, command line only) | none since K8-6b (the executor `measurement.run_mode_c` retired); `report_store.py` keeps its reports | none since K6: Test shows a kept Mode C report and can register it | Retired (the command in K8-6a, the executor in K8-6b); kept Mode C reports and records are read by the shared readers (policy rev 15) | W8 at `b14c4de`; by hand at `773dc4a` | none: retired (`working/scorer-retraining/README.md` §7). Not the Diagnosis ranking |
 | **Measure a generated split** (`--split {train,val}`) | `measure_scorer.py --split` | the same | none | CLI only | M3, R5 at `b14c4de` (`--split val`); its tests | none |
 | **Register a kept report** (with `--record`, or later by hand); report store and deployment registry only; D5's block | `registration.register_report`; `scripts/record_evaluation.py`; Test | `src/evaluation/registration.py`, the ledger (schema 3) | Test: Register this report | Connected | W9, RW2 at `b14c4de`; by hand at `773dc4a` | none |
 | **D5 investigation notes** | Test page only (in process) | `report_store.add_investigation_note` | Test | Partial | — | not shown on Models or the loaded-model route (BACKLOG 40) |
@@ -555,7 +555,8 @@ record, and its kept reports stay readable.
 - **Steps 2–5 and 7** become the paper-aligned disease model's steps in work package A:
   - one model builder;
   - the disease head over every disease;
-  - `canonical_ranking` and `selection_limit` still apply;
+  - `selection_limit` still applies (`canonical_ranking` retired with Mode C in K8-6b; the task
+    models rank ties by average rank, E3);
   - a new result kind for that model, not `gnn_ranking/v1` as raw cosine.
 - **The served switch** happens on the research platform when the A + B integration is delivered
   (policy rev 12); clinical adoption keeps its own conditions.
@@ -566,13 +567,13 @@ record, and its kept reports stay readable.
 | Step | Today: formal entry and shared function | Gap | Change (batch) | Old entry removed |
 |---|---|---|---|---|
 | 1. **Input** (phenotype terms) | `DiagnosisPipeline.validate_input` with `normalise_phenotypes` (`src/kg/phenotype_normalisation.py`); the API's `DiagnoseRequest`; for cohorts, the importer's `map_cases` | Serving maps a term three times, each handling a miss differently. A graph node with no tensor row is skipped silently. `validate_phenotypes=False` is a second behaviour | One mapping step that returns tensor rows. An unknown term is dropped and stated; a node without a row is refused (SPEC_1 §2.2). **Batch 4, implemented and accepted (2026-10-27)** | `_phenotypes_to_node_ids`; the per-score lookups; `PipelineConfig.validate_phenotypes` |
-| 2. **Model forward** | Serving: `_precompute_node_embeddings` (float32, cached). Mode C: `encode_full_graph`. Both build through `build_shepherd_model` | Serving does not expose its numerical regime | `embedding_regime` exposed and checked against Mode D's manifest (PLAN_B05 §3). **Batch 3, implemented** | none |
+| 2. **Model forward** | Serving: `_precompute_node_embeddings` (float32, cached). Mode C: `encode_full_graph` (retired in K8-6b). Both build through `build_shepherd_model` | Serving does not expose its numerical regime | `embedding_regime` exposed and checked against Mode D's manifest (PLAN_B05 §3). **Batch 3, implemented** | none |
 | 3. **Candidate set** | Serving: `_find_all_paths` (BFS and the direct finder, both with caps that depend on order). Mode C: every disease row | Statement 3 (every disease is scored) is not served; a truth discovery does not reach has no served rank | Batch 3 (implemented): Mode D measures today's gate and counts what it does not reach (`not_reached`). Batch 5: B-1 scores every disease row | Batch 5: discovery stops being the candidate gate; it stays only for the path-reasoning fallback |
 | 4. **Scoring** | Serving: `_calculate_combined_score`, `_calculate_gnn_score` and `_calculate_sp_score`, each called once per candidate, over the primitives in `src/inference/scoring.py`. Mode C: `masked_mean_pool`, `cosine_score_matrix` | The pool clamps indices. An unavailable model term or SP value becomes `0.0`. `(cos+1)/2` is rounded in float32 | Batch 4 (implemented and accepted, 2026-10-27): the model term fails closed (`MODEL_TERM_UNAVAILABLE`); SP gets statuses from one caller, `sp_index.sp_analysis_records`; the per-candidate `_calculate_combined_score` and `_calculate_sp_score` are gone. Batch 5: `score_patients` (raw cosine) | Batch 5: `pool_patient_embeddings`. The mixture helpers go when `served_mixture/v1` retires |
-| 5. **Ranking** (order, ties, cut) | Serving: a stable sort, then the `top_k` slice, inside `_score_and_rank_candidates`. Mode C: `canonical_ranking` (`src/evaluation/measurement.py`) | No untruncated served rank exists. There are two tie rules, and serving cannot import Mode C's | Batch 3 (implemented): `DiagnosisPipeline.rank()`, which `run()` calls before its cut. Batch 5: `canonical_ranking` moves into `scoring.py`; `selection_limit` cuts after scoring | Batch 5: serving's own sort, for the GNN kind |
+| 5. **Ranking** (order, ties, cut) | Serving: a stable sort, then the `top_k` slice, inside `_score_and_rank_candidates`. Mode C: `canonical_ranking` (`src/evaluation/measurement.py`, retired in K8-6b) | No untruncated served rank exists. There are two tie rules, and serving cannot import Mode C's | Batch 3 (implemented): `DiagnosisPipeline.rank()`, which `run()` calls before its cut. Batch 5: `canonical_ranking` moves into `scoring.py`; `selection_limit` cuts after scoring | Batch 5: serving's own sort, for the GNN kind |
 | 6. **Evidence** | `_add_explanations` calls `EvidencePanel.build_evidence`, always Mode A from discovery paths, eagerly, for the top K only | Not restricted to the target; no budget; Mode B and INSUFFICIENT unreachable; no record identity | `src/reasoning/target_evidence.py`: four declared path kinds, one fixed budget per target, computed lazily per page (SPEC_3 §7). **Batch 5, gate 3** | `EvidencePanel` and the eager step, together with the legacy result kinds |
 | 7. **Result and report** | `InferenceResult` and `DiagnosisCandidate` (`src/core/types.py`); `POST /api/v1/diagnose`; the Diagnosis page, its CSV and its report | One flat record. `confidence_score` holds two quantities. An unavailable value is written as `0.0`. The demo answer carries invented scores | The result union, discriminated by `result_kind` (SPEC_1 §2.1). Batch 4 (implemented and accepted, 2026-10-27): `served_mixture/v1`, `path_reasoning/v1`, `demo/v1`, with no alias for the removed fields. Batch 5: `gnn_ranking/v1` | `confidence_score`, `gnn_score` and the bare `sp_score`; `scripts/test_gnn_inference.py`; `generate_evidence_summary` |
-| 8. **Measurement** | Mode C: `scripts/measure_scorer.py --cohort` calls `run_mode_c`. Mode D: none | Gate 1's comparison does not exist | `run_mode_d` and `--mode D`: post-import and among-reached metrics over named case sets; the C side is `run_mode_c` itself on the same embeddings; derived readings one change at a time (PLAN_B05). **Batch 3, implemented** | none |
+| 8. **Measurement** | Mode C: `scripts/measure_scorer.py --cohort` calls `run_mode_c` (the command retired in K8-6a, the executor in K8-6b). Mode D: none | Gate 1's comparison does not exist | `run_mode_d` and `--mode D`: post-import and among-reached metrics over named case sets; the C side is `run_mode_c` itself on the same embeddings; derived readings one change at a time (PLAN_B05). **Batch 3, implemented** | none |
 | 9. **Registration and comparison** | `registration.register_report`; the ledger (D4 groups and the D5 key, both including `mode`); `report_store`'s usage history; the Test and Models pages | Labels assume Mode C; the usage history has no mode | Mode D's values go in the existing manifest fields, with no new field; labels come from each record; the usage history records a mode (PLAN_B05 §6). **Batch 3, implemented**; the ordering refuses a non-Mode-C scoring group itself (PLAN_B05 §11) | none: no ledger rule changes |
 
 **Proving correctness without rerunning old acceptances:**
@@ -611,10 +612,11 @@ it replaces an old entry**.
   archived (contract decision 2); an old plan's compatibility passage is checked against it first.
 - **No framework ahead of a user**: no plugin system, general job framework or free drag-and-drop
   dashboard as a prerequisite.
-- **One disease scorer** (Batch 2 design, §11.1). Every ranking that claims the approved policy, B-1's
-  serving and Mode C alike, goes through `score_patients` and `canonical_ranking` in
-  `src/inference/scoring.py`. There is no copy and no test-only scorer. The trainer's validation
-  scorer stays separately written, on purpose (the `scorer-independence` contract).
+- **One disease scorer** (Batch 2 design, §11.1). The paper-aligned disease model scores a patient
+  through one function in validation, measurement and serving (`patient_vectors` and the task
+  head's scores, `src/models/tasks/scoring.py`); Mode C's raw-cosine ranking (`canonical_ranking`)
+  retired in K8-6b. There is no copy and no test-only scorer. The trainer's validation scorer stays
+  separately written, on purpose (the `scorer-independence` contract).
 - **The served ranking was measured through serving's own method.** Mode D called
   `DiagnosisPipeline.rank()`, which `run()` itself calls (removed in K7 with Mode D). There was no
   second candidate construction, and Modes A and B are not revived.

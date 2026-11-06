@@ -120,11 +120,35 @@ class GraphView:
         return torch.stack([self.src[mask], self.dst[mask]])
 
     def view_ids(self, node_type: str, local: torch.Tensor) -> torch.Tensor:
-        """View ids of `node_type`'s local indices; -1 where excluded."""
+        """View ids of `node_type`'s local indices; -1 where the view excludes
+        the node.
+
+        **A local id outside its type's raw range is refused** (NEW-kg-1): an
+        id below 0, or at or past the type's raw node count, added to the
+        type's offset would index another type's node or count back from the
+        last one, and bind as a plausible node. The bound is the raw count (the
+        next type's offset, or `raw_num_nodes` for the last type), never the
+        view's surviving count, so an in-range id of a node the view excludes
+        is legal and maps to -1. An empty list gives an empty result.
+
+        Raises:
+            GraphViewError: the node type is not in the graph, or an id is out
+                of range (naming the type, the id and the raw count).
+        """
         if node_type not in self.type_offsets:
             raise GraphViewError(f"node type {node_type!r} is not in the graph")
-        raw = torch.as_tensor(local, dtype=torch.long) + self.type_offsets[node_type]
-        return self.raw_to_view[raw]
+        local = torch.as_tensor(local, dtype=torch.long)
+        offset = self.type_offsets[node_type]
+        following = self.node_types.index(node_type) + 1
+        end = (self.type_offsets[self.node_types[following]]
+               if following < len(self.node_types) else self.raw_num_nodes)
+        outside = (local < 0) | (local >= end - offset)
+        if bool(outside.any()):
+            first = int(local.reshape(-1)[outside.reshape(-1)][0])
+            raise GraphViewError(f"{node_type} id {first} is outside the graph's {end - offset} "
+                                 f"raw {node_type} nodes; it is refused, never read as "
+                                 "another node")
+        return self.raw_to_view[local + offset]
 
     def type_nodes(self, node_type: str) -> torch.Tensor:
         """The view ids of every node of `node_type`, ascending."""

@@ -693,7 +693,7 @@ def map_cases(
     A case is excluded when its disease is not a disease node
     (`ground_truth_absent`), when no term maps, or -- under ``exclude`` -- when
     any term does not map (`phenotype_unmappable`). A case with no mapped term
-    is always excluded: Mode C refuses an empty phenotype list.
+    is always excluded: a case with no phenotype cannot be scored.
     """
     from src.core.types import DataSource, NodeID
 

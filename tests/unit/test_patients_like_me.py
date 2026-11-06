@@ -269,6 +269,14 @@ def test_ranking_excludes_the_self_by_case_id_whatever_the_order(trained):
     forward = {o.query_id: o for o in rank_patients(bundle, z, val, val)}
     backward = {o.query_id: o for o in rank_patients(bundle, z, val, list(reversed(val)))}
     assert forward.keys() == backward.keys()
+    # The chunk changes no patient's vector beyond float rounding: patients of one
+    # and of more phenotypes, padded together, are computed as each is alone.
+    from src.models.tasks.patients_like_me import patient_tower_vectors
+
+    mixed = [dataclasses.replace(val[0], phenotypes=val[0].phenotypes[:1]), *val]
+    torch.testing.assert_close(patient_tower_vectors(bundle, z, mixed),
+                               patient_tower_vectors(bundle, z, mixed, chunk=1),
+                               rtol=0, atol=1e-5)
     for case_id, outcome in forward.items():
         assert outcome.status == backward[case_id].status
         assert sorted(outcome.ranks) == sorted(backward[case_id].ranks)

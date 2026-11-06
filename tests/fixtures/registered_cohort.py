@@ -3,7 +3,7 @@ A registered test cohort over a workspace with real HPO and MONDO ids.
 =====================================================================
 No other fixture combines the three things M4's flow needs: a workspace whose
 `kg.json` holds real `HP:`/`MONDO:` ids (so a source can be mapped against it),
-a checkpoint Mode C can score on that workspace, and a cohort version committed
+a checkpoint built on that workspace's tensors, and a cohort version committed
 into a registry outside the repository. This builds all three with the
 production functions, never a copy of them:
 
@@ -198,11 +198,11 @@ def write_source(path: Path, cases: List[Dict[str, Any]]) -> Path:
 
 def write_fixture_checkpoint(data_dir: Path, path: Path, *,
                              training_record: str = "pipeline") -> str:
-    """A checkpoint Mode C can score on `data_dir`; returns the digest written.
+    """A checkpoint built on `data_dir`'s tensors; returns the digest written.
 
     The model is built on the workspace's own tensors, as training builds it
     (metadata and input widths from the graph data), so `build_shepherd_model`
-    rebuilds it for measurement. Its record is training's, from training's
+    can rebuild it. Its record is training's, from training's
     reads of this workspace, then narrowed for the R10 options.
     """
     import torch

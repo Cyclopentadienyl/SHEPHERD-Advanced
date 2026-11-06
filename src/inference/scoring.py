@@ -1,11 +1,13 @@
 """
 Shared scoring primitives for served inference and offline evaluation.
 ======================================================================
-**Migration status: ended by deletion.** `DiagnosisPipeline` and the offline
-measurement in `src/evaluation` compose these functions.
-`scripts/evaluate_model.py`, the second implementation of these formulas, was
-never migrated; it is deleted (its code is at `7dab728`), and that
-second implementation ended with it rather than through this module.
+**Migration status: ended by deletion.** `DiagnosisPipeline` composed these
+functions until K8-4, and Mode C's offline measurement in `src/evaluation`
+until K8-6b; no module in src or scripts calls them now, and the Trainer value
+test (`tests/unit/test_trainer_validation_values.py`) takes its expected values
+from them. `scripts/evaluate_model.py`, the second implementation of these
+formulas, was never migrated; it is deleted (its code is at `7dab728`), and
+that second implementation ended with it rather than through this module.
 
 Scope, and a boundary that is mechanically enforced. This module covers the
 **served inference** and **offline evaluation** paths. It deliberately does not

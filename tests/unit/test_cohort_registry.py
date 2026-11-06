@@ -20,9 +20,9 @@ Contract M4 (§0.1-§0.7, §2 of the design). What is pinned here:
   counts present and consistent with each other and the version) and
   **compared with a run's graph** (§0.7);
 - the **registered-cohort fixture**: its checkpoint loads safely, matches the
-  workspace's graph, carries a pipeline-shaped record, and Mode C ranks the
-  version's samples against it; its checkpoint without a model spec records
-  what a training run over the workspace records, or nothing.
+  workspace's graph and carries a pipeline-shaped record; its checkpoint
+  without a model spec records what a training run over the workspace
+  records, or nothing.
 
 Module: tests/unit/test_cohort_registry.py
 """
@@ -1252,37 +1252,6 @@ def test_a_source_from_the_val_cases_overlaps_validation_in_every_case(registere
     assert version.manifest["counts"]["n_excluded"] == 0
     assert [(s["disease_id"], frozenset(s["phenotype_ids"])) for s in mapped] == \
         [(s.disease_id, frozenset(s.phenotype_ids)) for s in val]
-
-
-def test_mode_c_ranks_the_versions_samples_against_the_fixture_checkpoint(registered):
-    """Mode C's own function over the fixture: the model `build_shepherd_model`
-    rebuilds from the checkpoint read, the workspace's tensors, and the
-    version's samples. The manifest is a stand-in carrying the three fields
-    `run_mode_c` reads; building the real one is the measurement entry point's
-    job, not this fixture's."""
-    import torch
-
-    from src.evaluation.measurement import encode_full_graph, run_mode_c
-    from src.kg.data_loader import DiagnosisSample
-    from src.kg.storage.file_storage import read_graph_artifacts
-    from src.models.gnn.shepherd_gnn import build_shepherd_model
-    from src.utils.checkpoint_io import read_checkpoint
-
-    device = torch.device("cpu")
-    graph_data = read_graph_artifacts(registered.data_dir).graph_data
-    checkpoint = read_checkpoint(registered.checkpoint, map_location=device,
-                                 weights_only=True).checkpoint
-    model = build_shepherd_model(checkpoint, graph_data, device)
-    rows = json.loads(registered.version.samples_path.read_text())
-    samples = [DiagnosisSample(patient_id=r["patient_id"], phenotype_ids=r["phenotype_ids"],
-                               disease_id=r["disease_id"]) for r in rows]
-    stand_in = SimpleNamespace(amp_enabled=False, amp_dtype=None, n_samples=len(samples))
-    result = run_mode_c(full_graph_embeddings=encode_full_graph(model, graph_data, device),
-                        samples=samples, manifest=stand_in, device=device, batch_size=4)
-    assert result.n_ranked == len(samples) == GRAPH_SOURCE_COUNTS["keep"]["ranked_eligible"]
-    n_diseases = graph_data["x_dict"]["disease"].size(0)
-    assert all(1 <= row["rank"] <= n_diseases for row in result.to_ranks())
-    assert [row["sample_id"] for row in result.to_ranks()] == [r["patient_id"] for r in rows]
 
 
 def test_the_fixture_refuses_a_root_inside_the_repository():

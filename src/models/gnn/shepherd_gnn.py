@@ -303,11 +303,10 @@ def build_shepherd_model(
 ) -> ShepherdGNN:
     """Rebuild a trained model the way the deployed pipeline does.
 
-    **One implementation, two callers.** `src/inference/pipeline.py` uses this to
-    load the served model, and `src/evaluation` uses it so measurement's Mode C
-    encodes with production semantics. Written twice, the copies would drift, and
-    a measurement that quietly stopped describing the deployed scorer is the one
-    failure this work item cannot detect from its own output.
+    **One implementation.** `src/inference/pipeline.py` used this to load the
+    served model until K8-4, and measurement's Mode C to encode with production
+    semantics until K8-6b; it stays one function while the ShepherdGNN path
+    remains, so no second copy can drift from it.
 
     **Metadata comes from `graph_data`, never from the knowledge-graph object.**
     `scripts/train_model.py` builds the model from `graph_data` keys, which include

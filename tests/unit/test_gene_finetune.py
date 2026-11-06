@@ -159,13 +159,36 @@ def test_two_causal_genes_are_positives_and_the_joint_step_reaches_every_part(tr
     assert bundle.task_head.decoder_weight.grad.abs().sum() > 0
 
 
-def test_validation_ranks_each_case_own_list(trained):
+def test_validation_ranks_each_case_own_list(trained, monkeypatch):
     view, _, task, _ = _setup(trained)
     bundle = build_bundle(_gene_spec(), view)
     report = task.validate(bundle, torch.device("cpu"))
     assert report["ranked_units"] == len(task.val_cases) and 0 < report["pooled_mrr"] <= 1
     outcomes = task.rank_cases(bundle, task.val_cases, torch.device("cpu"))
     assert [o.candidates for o in outcomes] == [int(c.candidates.numel()) for c in task.val_cases]
+    # The chunk changes no case's scores beyond float rounding: cases of one and
+    # of more phenotypes, padded together, score their lists as each does alone.
+    from src.models.tasks.gene import score_gene_cases
+    from src.models.tasks.scoring import full_view_vectors
+
+    first = task.val_cases[0]
+    mixed = [dataclasses.replace(first, phenotypes=first.phenotypes[:1]), *task.val_cases]
+    z = full_view_vectors(bundle, view.edge_index(), view.rel, torch.device("cpu"))
+    args = (bundle, z, mixed, task.distances, task.neighbours)
+    for (scores, defined), (alone, defined_alone) in zip(
+            score_gene_cases(*args), score_gene_cases(*args, case_chunk=1), strict=True):
+        torch.testing.assert_close(scores, alone, rtol=0, atol=1e-5)
+        assert torch.equal(defined, defined_alone)
+    # Exact ties share their average rank (E3, average-rank/v1): a list scored
+    # alike ranks each of its causal genes (m + 1) / 2.
+    import src.models.tasks.gene as gene
+
+    monkeypatch.setattr(gene, "score_gene_cases", lambda bundle, z, cases, *_, **__: [
+        (torch.zeros(c.candidates.numel()), torch.ones(c.candidates.numel(), dtype=torch.bool))
+        for c in cases])
+    tied = task.rank_cases(bundle, task.val_cases, torch.device("cpu"))
+    assert [o.ranks for o in tied] == [[(c.candidates.numel() + 1) / 2] * c.truths.numel()
+                                       for c in task.val_cases]
 
 
 def _gene_config(trained, run_dir, **kw):

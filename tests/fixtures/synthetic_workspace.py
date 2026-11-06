@@ -19,9 +19,9 @@ graph is shaped so the draw cannot matter:
 
 The tests that drive the sampling loader over this workspace (the Trainer's
 validation values, `tests/unit/test_trainer_validation_values.py`) rely on that
-shape. Mode C uses no sampler: it scores every disease, so the shape matters to
-it only in that it is degenerate — no rank from this workspace is evidence about
-the scorer.
+shape. A task measurement uses no sampler: it scores every disease, so the shape
+matters to it only in that it is degenerate — no rank from this workspace is
+evidence about the scorer.
 
 The checkpoint is written in the shape the training writer produces (weights,
 config, epoch, logs, and the graph roles of `training_input_digests`): there is
@@ -105,8 +105,7 @@ def _samples(
 #: this fixture builds.
 GENERATED_TRAIN_DISEASES = (0, 1)
 GENERATED_VAL_DISEASES = (2, 3)
-#: Cases per disease in each generated split: enough that a Mode C run over
-#: `val` (four cases) spans more than one chunk at the tests' batch size of 3.
+#: Cases per disease in each generated split: two, so `val` holds four cases.
 GENERATED_CASES_PER_DISEASE = 2
 
 

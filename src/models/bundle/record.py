@@ -395,8 +395,8 @@ def finetune_parent_problem(record: ModelRecord, payload: Mapping[str, Any]) -> 
 #: What a list says of a checkpoint without a model spec (README §4: listed as
 #: history, never run). The WebUI never loads, measures or continues one, and
 #: serving refuses one at load; only the ShepherdGNN path outside it (the
-#: command line's Mode C measurement) still runs such a file, until K8 retires
-#: that path (K8-6b; README §7).
+#: command line's ShepherdGNN training, which can resume one) still runs such a
+#: file, until K8 retires that path (README §7).
 LISTED_WITHOUT_SPEC = ("no model spec (a ShepherdGNN checkpoint): listed as history and never "
                        "run from the WebUI; only the ShepherdGNN path outside it (command "
                        "line) still runs it, until that path is retired (K8)")

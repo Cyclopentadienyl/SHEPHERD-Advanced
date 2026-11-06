@@ -1951,18 +1951,14 @@ def test_commit_meeting_a_malformed_source_names_no_case(site, monkeypatch):
 
 
 def test_the_job_output_names_no_case():
-    """The measurement refuses a sample by its patient id; the job card shows
-    the refusal without it (D7)."""
-    from src.evaluation.measurement import _assert_ids_in_range
-
-    with pytest.raises(ValueError) as refused:
-        _assert_ids_in_range([SimpleNamespace(patient_id="MRN-9", phenotype_ids=[],
-                                              disease_id=0)], 10, 10)
-    text = f"ValueError: {refused.value}"
-    assert "MRN-9" in text and "MRN-9" not in tp.case_free(text)
+    """A refusal in a run's output that names a case by its id (the importer's
+    wording, `cohort_registry.parse_source`) is shown on the job card without
+    it, in the failure line and in the output (D7)."""
+    text = "MalformedSource: cases[3] (case_id 'MRN-9'): no phenotypes"
+    assert "MRN-9" not in tp.case_free(text)
     job = {"status": "failed", "inputs": {}, "error_message": text, "log": ["Traceback", text]}
     html = tp.job_html(job, [], ("none", ""))
-    assert "MRN-9" not in html and "a sample has no phenotypes" in html
+    assert "MRN-9" not in html and "cases[3]: no phenotypes" in html
 
 
 def test_notes_that_cannot_be_read_are_said_never_no_note(site, monkeypatch):

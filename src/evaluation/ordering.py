@@ -70,9 +70,9 @@ from src.config.server_settings import NEVER_ORDERED_ROLES
 #: acceptance cohort's score *is* selecting by it). The deployment settings'
 #: one constant, never a copy (M5-3 review ARCH-2).
 
-#: The metrics a Mode C record carries under metric schema 1
-#: (`src/evaluation/measurement.py`, `_authoritative`), the ones a list can be
-#: ordered by. Mean rank is better when lower; the rest when higher.
+#: The metrics a Mode C record carries under metric schema 1 (its executor,
+#: retired in K8-6b, computed them), the ones a list can be ordered by. Mean
+#: rank is better when lower; the rest when higher.
 ORDERABLE_METRICS: Tuple[str, ...] = (
     "untruncated_mrr", "hits@1", "hits@5", "hits@10", "hits@20", "hits@50", "hits@100",
     "mean_rank",

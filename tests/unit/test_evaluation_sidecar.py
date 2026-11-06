@@ -433,7 +433,9 @@ def test_every_manifest_field_is_decided_one_way_or_the_other():
 
 
 def test_the_registered_relation_states_are_the_manifests_own():
-    """Restated in the sidecar because it imports no torch; the two must agree."""
+    """The sidecar takes them from the manifest's module: R2 does not apply to a
+    registered cohort, the cohort's graph binding does not apply to a generated
+    split, and every other relation is verified."""
     from src.evaluation.measurement import (
         RELATION_NAMES,
         RELATION_STATES,

@@ -44,8 +44,8 @@ disease in the scope's samples, `k` of `n` distinct test diseases, and `cases`,
 the test cases whose disease is among them. Phenotype-set overlap: the test
 cases whose `(disease_id, frozenset(phenotype_ids))` occurs in the scope, `k` of
 `n` test cases. Order and repetition are ignored, so a training case `[0, 1]`
-and a test case `[0, 0, 1]` of one disease overlap although Mode C, which
-averages every listed position, may score them differently; that is the case
+and a test case `[0, 0, 1]` of one disease overlap although a scorer that
+averages every listed position may score them differently; that is the case
 this label exists to show. Patient ids are ignored, near-duplicates (subsets,
 supersets) are not counted, and no normalisation is applied: the frozenset is
 already free of order and repetition, and `normalise_phenotypes` keeps the same
@@ -211,7 +211,7 @@ def compute_r10(
             naming the role when the role is there at all. Only an absent
             `val_samples` beside a recorded `train_samples` is *no validation
             inputs recorded*; a malformed one leaves validation *unverifiable*.
-        test_samples: the test cohort's samples, as Mode C reads them.
+        test_samples: the test cohort's samples, as the measurement reads them.
         candidates: the files to look at, from `evidence_candidates`.
 
     Pure apart from the candidate reads. A candidate is read only while some

@@ -385,8 +385,9 @@ def _refuse_non_integer_ids(path: Path, samples: List[Any], identity: ReadIdenti
     refused although Python counts it as an `int`. Checked here because measurement,
     training, the cohort verifiers and the audits all read samples through this
     function, so the check comes before any of them converts. It says nothing
-    about range, which needs the graph: Mode C's `_assert_ids_in_range` and the
-    training loader's truth check (D3) stay where they are.
+    about range, which needs the graph: `GraphView.view_ids`, through which
+    every task binds a case, and the training loader's truth check (D3) stay
+    where they are.
 
     The refusal is an `UnparseableFile` carrying the read's identity; its `what`
     names the rule, never the patient or the value, which only the message does.

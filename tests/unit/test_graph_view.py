@@ -7,9 +7,14 @@ the excluded nodes are counted. Only then the 80/10/10 split cuts facts, so an
 edge and its reverse twin share a part. Expected values are counted by hand on
 a toy graph.
 
+`view_ids` refuses a local id outside its type's raw range, and the disease
+binder lets that refusal through (NEW-kg-1, K8-6b).
+
 Module: tests/unit/test_graph_view.py
 """
 from __future__ import annotations
+
+from types import SimpleNamespace
 
 import pytest
 
@@ -94,6 +99,75 @@ def test_mapping_round_trips_and_excluded_nodes_keep_their_ids():
     assert int(view.view_ids("gene", torch.tensor([2]))) == -1
     genes = view.type_nodes("gene")
     assert view.local_index(genes).tolist() == [0, 1]
+
+
+# --------------------------------------------------------------------------- the raw id range
+# On the toy graph the offsets are disease 0, gene 2, phenotype 5 and `raw_to_view`
+# is [0, -1, 1, 2, -1, 3, -1, -1]. Unbounded, disease 2 read a gene node, gene 3 a
+# phenotype node, disease -3 a phenotype node, gene -2 a disease node, disease -1
+# the last raw node ("outside the view"), and phenotype 3 raised a bare IndexError.
+
+
+@pytest.mark.parametrize("node_type, local, named, count", [
+    ("disease", [2], 2, 2), ("gene", [3], 3, 3), ("gene", [0, 1, 3], 3, 3),  # into the next type
+    ("phenotype", [3], 3, 3),                                                # past the last node
+    ("disease", [-1], -1, 2), ("disease", [-3], -3, 2), ("gene", [-2], -2, 3),
+])
+def test_an_id_outside_its_types_raw_range_is_refused(node_type, local, named, count):
+    view = build_graph_view(_toy())
+    with pytest.raises(GraphViewError, match=rf"^{node_type} id {named} is outside the graph's "
+                                             rf"{count} raw {node_type} nodes"):
+        view.view_ids(node_type, torch.tensor(local))
+
+
+def test_the_legal_boundary_and_an_empty_list_are_not_refused():
+    view = build_graph_view(_toy())
+    # The last id of each type; the toy view excludes d1 and g2, so both are -1.
+    assert view.view_ids("disease", torch.tensor([1])).tolist() == [-1]
+    assert view.view_ids("gene", torch.tensor([2])).tolist() == [-1]
+    empty = view.view_ids("phenotype", torch.tensor([], dtype=torch.long))
+    assert empty.numel() == 0 and empty.dtype == torch.long
+
+
+def test_the_bound_is_the_raw_count_never_the_views():
+    """gene 0..2 with gene 1 isolated, one phenotype, one disease: the view keeps
+    two gene nodes, and gene 2 is still a legal id with its own view id."""
+    gp, dp = [(0, 0), (2, 0)], [(0, 0)]
+    view = build_graph_view({
+        "num_nodes_dict": {"gene": 3, "phenotype": 1, "disease": 1},
+        "edge_index_dict": {
+            ("gene", "has", "phenotype"): _ei(gp),
+            ("phenotype", "rev_has", "gene"): _ei([(b, a) for a, b in gp]),
+            ("disease", "assoc", "phenotype"): _ei(dp),
+            ("phenotype", "rev_assoc", "disease"): _ei([(b, a) for a, b in dp]),
+        }})
+    assert view.type_offsets == {"disease": 0, "gene": 1, "phenotype": 4}
+    assert view.type_nodes("gene").numel() == 2
+    assert view.view_ids("gene", torch.tensor([2])).tolist() == [2]
+    assert view.view_ids("gene", torch.tensor([1])).tolist() == [-1]
+
+
+@pytest.mark.parametrize("disease_id", [2, -3])
+def test_the_disease_binder_lets_the_refusal_through(disease_id):
+    """No binder catches it: the run stops with the reason, naming no case,
+    instead of binding the case to another type's node."""
+    from src.models.tasks.scoring import bind_disease_cases
+
+    view = build_graph_view(_toy())
+    samples = [SimpleNamespace(patient_id="MRN-1", phenotype_ids=[0], disease_id=0),
+               SimpleNamespace(patient_id="MRN-2", phenotype_ids=[0], disease_id=disease_id)]
+    with pytest.raises(GraphViewError, match=rf"disease id {disease_id} is outside the graph's "
+                                             r"2 raw disease nodes") as refused:
+        bind_disease_cases(view, samples)
+    assert "MRN" not in str(refused.value)
+
+
+def test_a_legal_disease_the_view_excludes_is_left_out_with_its_reason():
+    from src.models.tasks.scoring import bind_disease_cases
+
+    binding = bind_disease_cases(build_graph_view(_toy()), [
+        SimpleNamespace(patient_id="MRN-1", phenotype_ids=[0], disease_id=1)])
+    assert binding.cases == [] and binding.excluded == [("MRN-1", "truth_outside_view")]
 
 
 def test_reverse_twins_share_a_fact():

@@ -6,17 +6,17 @@ wrong. Scoring it as a rank miss would turn a data-pipeline failure into
 apparent model error and contaminate the loss, `val_mrr`, early stopping and
 checkpoint selection. **The contract is refuse.**
 
-Three boundaries enforce it, each small and local, and this file covers two:
+Two boundaries enforce it, each small and local:
 
   1. **`DiagnosisDataLoader._assert_disease_truth_in_range`** — where the failure
      is created, on the host, immediately after the remap that can produce a `-1`
      hole. Covered in `tests/unit/test_data_pipeline.py`.
   2. **`DiagnosisLoss`** — the independent refusal for any caller that bypasses
      that loader. Covered below.
-  3. **Mode C's `_assert_ids_in_range`** — the measurement's own boundary: a
-     truth outside the graph's disease nodes is refused before it is ranked.
-     Covered in `tests/unit/test_measurement_mode_c.py`
-     (`test_an_out_of_range_ground_truth_is_refused`).
+
+A third, Mode C's `_assert_ids_in_range`, retired with its executor in K8-6b
+(its test file in K8-6a); the task path refuses an id outside its type's raw
+range in `GraphView.view_ids` (`tests/unit/test_graph_view.py`).
 
 **Scope of the claim below, stated narrowly on purpose.** These tests establish
 refusal *at the loss*, plus the fact that `_compute_model_outputs` no longer

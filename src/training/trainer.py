@@ -1094,8 +1094,9 @@ class Trainer:
         # **A cohort with no rows is refused rather than scored.** `mean_loss`
         # divides by `max(num_batches, 1)`, so an empty traversal returns
         # `{"loss": 0.0}` — a number about a model, produced without reading a
-        # single patient. `RankingMetrics` and `measurement.py` both refuse to
-        # invent a value for an empty cohort;
+        # single patient. `RankingMetrics` and the task measurement
+        # (`task_measurement._require_bound`) both refuse to invent a value for
+        # an empty cohort;
         # this is the same refusal at the entry point that could still fabricate
         # one. Checked after the traversal rather than before, so a generator
         # that yields nothing is caught as surely as an empty list.
