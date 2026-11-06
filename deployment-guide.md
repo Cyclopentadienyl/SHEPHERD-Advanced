@@ -1553,8 +1553,9 @@ CSV 仍然**只有一列標題**、沒有前言。結果類型的候選欄位在
 流程如下：
 
 1. `scripts/import_cohort.py` 先預覽、再提交一個對應到某個 workspace 圖的 cohort 版本；
-2. `scripts/measure_scorer.py --cohort LABEL --registry DIR` 在這個版本上量測 checkpoint
-   （Mode C），並保留完整報告；
+2. `scripts/measure_scorer.py --mode PROTOCOL --cohort LABEL --registry DIR` 以這個 build
+   針對模型的 learning stage 與 task head 所實作的一種協定，在這個版本上量測 checkpoint，並保留
+   完整報告；
 3. `--record`，或之後用 `scripts/record_evaluation.py --report`，把報告登錄到 checkpoint 旁的
    `evaluations.json`；
 4. Diagnosis 頁面的「Model in use」卡片以狀態顯示目前載入之 checkpoint 已登錄的測試（自 M5-2
@@ -1672,10 +1673,18 @@ python scripts/measure_scorer.py --mode disease \
     [--training-evidence DIR ...] [--record] [--device auto|cuda|cpu] [--batch-size 32]
 ```
 
-`--mode` 是模型的任務（`disease`、`gene` 或 `patients_like_me`），讀入 checkpoint 後立即對照
-模型紀錄檢查；Test 頁一律帶上它（自 K6 起）。沒有 `--mode` 時執行的是 **Mode C**，即任務出現
-之前模型自己的疾病排名，它只量測沒有 model spec 的 checkpoint（ShepherdGNN 歷史檔）；它在 K8
-之前仍是命令列執行。
+`--mode` 為必填，指明**協定**（protocol）：這個 build 針對模型的 learning stage 與 task head
+所實作的量測（`src/evaluation/protocols.py`），目前是 `disease`、`gene` 與 `patients_like_me`，
+finetune 模型的每個 task head 各一種。報告的 mode 就是協定的名稱。執行時依它讀到的位元組判斷
+協定，拒絕時會說明原因，並以「Nothing was written.」結尾：已登錄的版本必須列出協定所需的基因
+（`gene` 需要致病基因與候選基因，`patients_like_me` 需要致病基因），在讀入其 `cohort.json` 後
+立即檢查，早於 workspace 與 checkpoint；checkpoint 的模型紀錄必須是協定所接受的 stage 與 task
+head，在讀入 checkpoint 後立即檢查。base 會以「This model is a base: its formal test (link
+prediction on held-out knowledge-graph edges) is not implemented yet. A model finetuned from it
+can be measured.」被拒絕，沒有 model spec 的 checkpoint（ShepherdGNN 歷史檔）則作為歷史檔被
+拒絕。Test 頁傳入操作者選擇的協定（§4.14）。自 K8-6a 起沒有任何命令執行 Mode C，即任務出現
+之前模型自己的疾病排名：沒有 `--mode` 的執行會被參數解析器拒絕（結束碼 2），`--mode C` 也
+一樣，因為它不是協定。已保存的 Mode C 報告與紀錄由共用的讀取器讀取（policy rev 15）。
 
 請在已設定 GPU 鎖、且與服務使用同一把鎖的 shell 中執行（§4.11）；沒有鎖時它會拒絕，結束碼 1，
 不寫出任何東西。
@@ -1721,7 +1730,7 @@ recorded`（checkpoint 記錄了訓練輸入，而且完全沒有驗證的條目
 後者以 digest 指明排名檔。報告絕不覆寫，不論是否登錄，每份報告都會保留。`--cohort` 搭配
 `--output` 會被拒絕。
 
-主控台會印出這次執行的指標（任務的，或 Mode C 的）、覆蓋率（`N ranked of M source cases; K excluded`，附各類別）、
+主控台會印出這次執行的指標（其協定的）、覆蓋率（`N ranked of M source cases; K excluded`，附各類別）、
 以 `src/evaluation/caveats.py` 共用字句表示的四個 R10 標籤（`unverifiable` 附其原因）、一次標籤定義、報告路徑
 與 run id。報告本身只保存狀態，不含任何說明文字。
 
@@ -1930,7 +1939,7 @@ checkpoint、cohort 版本與量測設定）下的報告，會用 ledger 所用�
 **使用紀錄**是 `<registry>/versions/<label>/reports/usage.jsonl`，每行一個 JSON 物件，只追加、
 從不改寫。它記錄：
 
-- 這個版本的每一次量測（`test_run`：時間、run id、checkpoint 與報告的 digest、Mode C 的指標、
+- 這個版本的每一次量測（`test_run`：時間、run id、checkpoint 與報告的 digest、該次的 mode 與指標、
   `n_ranked`、是否為確定性執行、裝置、是否要求 `--record`）；
 - 每一次寫入 ledger 的登錄（`registered`：結果與序號）；
 - 每一次從依該版本分數排序的清單載入的模型（`model_load`：排序清單所用的指標與 scoring 分組，以及
@@ -1951,7 +1960,8 @@ shell 中手動使用（§4.11）。
 結束碼為 2）；另外兩個兩者皆適用：
 
 ```bash
-python scripts/measure_scorer.py --checkpoint <file>.pt --data-dir data/workspaces/<ws> \
+python scripts/measure_scorer.py --mode <protocol> \
+    --checkpoint <file>.pt --data-dir data/workspaces/<ws> \
     --cohort <label> --registry /srv/shepherd/cohorts [--record] \
     [--deterministic] [--expect-checkpoint-sha256 HEX] [--expect-version-sha256 HEX] \
     [--outcome FILE]
@@ -2881,11 +2891,15 @@ checkpoint：run 標題的標籤顯示「dataset not shown · operator control�
   報告，在被選取之前顯示「registration cannot be checked from the list」。
 - **Run。** 模型：伺服器清單中該 workspace 的 checkpoint，依執行、epoch、檔案與模型指紋列出。
   列出它們會開啟每一個 checkpoint，因此這是操作者控制項：唯讀的瀏覽器不會看到它，而且頁面對
-  每個 workspace 只列出一次（↻ 會重新讀取清單）。接著是執行時會尋找的 R10 證據（被量測的
+  每個 workspace 只列出一次（↻ 會重新讀取清單）。接著是 **Measurement**（自 K8-6a 起），即執行
+  以 `--mode <protocol>` 傳入的協定（§4.9）：選項是這個 build 所實作、且所選模型的紀錄符合其
+  learning stage 與 task head 的協定，目前 finetune 模型的每個 task head 各一種（Disease、Gene
+  或 Patients-like-me）。只有一個選項時它已被選取；有多個時，在你選擇之前都不選取；沒有任何
+  選項時（base，其正式測試尚未實作），Start 會說明原因。它和模型一樣是操作者控制項。Mode C 與
+  Mode D 都不是協定，因此沒有任何頁面或命令會執行它們。接著是執行時會尋找的 R10 證據（被量測的
   workspace，以及 `SHEPHERD_TRAINING_EVIDENCE_DIRS`）、**Register the result**、
-  **Deterministic execution**，以及由伺服器固定的 batch size、裝置與模式（量測程式的預設值；
-  `SHEPHERD_DEVICE`；自 K6 起為模型自己的任務，`--mode <task>`：頁面從不執行 Mode C——它在 K8
-  之前仍是對歷史檔的命令列執行——而 Mode D 已在 K7 移除）。**🔒 Start test** 透過 job runner（§4.11）啟動真正的
+  **Deterministic execution**，以及由伺服器固定的 batch size 與裝置（量測程式的預設值；
+  `SHEPHERD_DEVICE`）。**🔒 Start test** 透過 job runner（§4.11）啟動真正的
   `measure_scorer.py`，使用伺服器在自己的清單中重新找到的 workspace、版本與 checkpoint，並以
   **頁面顯示過的完整模型指紋與版本 digest 作為預期值**：執行時讀到的檔案或版本若是其他位元組，
   會在量測之前拒絕。Start 會說明它為何不可用：先說 GPU 工作（「Disabled: GPU job: … One

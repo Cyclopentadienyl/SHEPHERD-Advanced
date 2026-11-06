@@ -16,6 +16,12 @@ Research › Evaluate › Test (M5-2, UI-D): import, run, keep and register.
   ledger beside the **listed** checkpoint holding the weights (found by full
   digest, never the report's recorded path), a report that changed since it
   was shown refused;
+- **the measurement** (K2, R1): the Measurement radio offers the protocols the
+  chosen model's listed record admits (`protocols.available`), Start's reason
+  and the start take the chosen protocol and say the protocol definition's
+  reasons (the base message for a base), and the runner is given the protocol
+  apart from the model's stage and task; under test-only protocols p1 and p2 a
+  disease child offers both and starts p2 with its task still disease;
 - **D5**: a key whose runs disagree is shown "runs disagree — investigate",
   its reports cannot be registered, a note is kept with who, when and what and
   lifts nothing;
@@ -245,8 +251,8 @@ def test_a_run_id_names_its_time_and_model():
 def test_the_batch_size_shown_is_the_measurements_default():
     import scripts.measure_scorer as measure_scorer
 
-    args = measure_scorer.parse_args(["--checkpoint", "c", "--data-dir", "d", "--cohort", "x",
-                                      "--registry", "/r"])
+    args = measure_scorer.parse_args(["--mode", "disease", "--checkpoint", "c", "--data-dir",
+                                      "d", "--cohort", "x", "--registry", "/r"])
     assert args.batch_size == tp.BATCH_SIZE_SHOWN
 
 
@@ -612,8 +618,8 @@ def test_a_result_of_another_or_no_mode_is_never_shown_as_mode_c(site):
     """A record whose mode this version does not describe, or whose mode cannot
     be read, is named for what it is: never Mode C's label, tiles or coverage
     words (the internal review of Batch 3, ui_api-4). Each report row names its
-    mode first (ui_api-5), and the Run panel says Start measures the chosen
-    model's own task, never Mode C (K6 decision 13)."""
+    mode first (ui_api-5), and what the Run panel fixes names no measurement:
+    the Measurement radio offers the protocols, never Mode C."""
     import html as html_lib
 
     c_run = _keep_mode_c_report(site)
@@ -627,10 +633,8 @@ def test_a_result_of_another_or_no_mode_is_never_shown_as_mode_c(site):
         assert label in text and "Mode C" not in text
         assert "source cases ranked" not in text and "not described for this mode" in text
     assert "model ranking (Mode C): report kept" in tp.reports_html(reports, None)
-    fixed = tp.fixed_html({}, None)
-    assert "Mode C" not in fixed and "Mode D" not in fixed
-    assert "Measurement</span><span>the chosen model&#x27;s own task (a finetuned model " \
-        "only)" in fixed
+    fixed = tp.fixed_html({})
+    assert "Mode C" not in fixed and "Mode D" not in fixed and "Measurement" not in fixed
 
 
 def test_a_run_without_a_report_says_none_was_kept(site):
@@ -650,11 +654,14 @@ def test_start_waits_for_every_choice_and_says_why(site, monkeypatch):
     page, request = _page(monkeypatch)
     models = tp.read_models("demo", request)
     binding = tp.workspace_binding(site.demo, tp.find(page["workspaces"], "name", "demo"))
-    state = lambda ws, label, key, gpu=("none", ""): tp.start_state(  # noqa: E731
-        page, models, ws, label, key, binding, gpu)
+    state = lambda ws, label, key, gpu=("none", ""), protocol="disease": (  # noqa: E731
+        tp.start_state(page, models, ws, label, key, binding, gpu, protocol=protocol))
     assert state(None, LABEL, child) == (False, "Disabled: choose a workspace.")
     assert state("demo", None, child) == (False, "Disabled: choose a cohort version.")
     assert state("demo", LABEL, None) == (False, "Disabled: choose a model.")
+    # No measurement chosen (the radio's value None) is said, never filled in.
+    assert state("demo", LABEL, child, protocol=None) == (
+        False, "Disabled: choose a measurement.")
     assert state("demo", LABEL, child) == (True, None)
     busy = state("demo", LABEL, child, ("busy", "GPU job: training (job runner)"))
     assert busy == (False, "Disabled: GPU job: training (job runner). One managed GPU job at a "
@@ -690,7 +697,7 @@ def test_start_passes_the_digests_shown_and_the_servers_paths(site, monkeypatch)
     models = tp.read_models("demo", request)
     manager = FakeManager()
     result = tp.start_test_run(page, models, "demo", LABEL, child, True, True, request,
-                               manager=manager)
+                               protocol="disease", manager=manager)
     assert result["success"] is True
     (inputs,) = manager.started
     assert inputs.checkpoint_sha256 == file_sha256(path)
@@ -698,8 +705,11 @@ def test_start_passes_the_digests_shown_and_the_servers_paths(site, monkeypatch)
     assert inputs.registry == site.registry.resolve() and inputs.version_label == LABEL
     assert inputs.workspace == site.demo.resolve()
     assert inputs.checkpoint.resolve() == path.resolve()
-    # The task is the listing's, from the model record: never the client's.
-    assert inputs.task == "disease"
+    # The measurement asked, apart from the model's stage and task and the
+    # version's counts, which are the listing's: never the client's.
+    assert inputs.protocol == "disease"
+    assert (inputs.learning_stage, inputs.task) == ("finetune", "disease")
+    assert inputs.version_counts == tp.find(page["versions"], "label", LABEL)["counts"]
     assert inputs.evidence_dirs == (evidence.resolve(),)
     assert inputs.record is True and inputs.deterministic is True
 
@@ -736,7 +746,7 @@ def test_a_checkpoint_the_server_no_longer_lists_is_refused_at_start(site, monke
     path.unlink()
     manager = FakeManager()
     result = tp.start_test_run(page, models, "demo", LABEL, child, False, False, request,
-                               manager=manager)
+                               protocol="disease", manager=manager)
     assert result["success"] is False and manager.started == []
     assert result["error"].endswith("Nothing was started.")
     assert "this checkpoint" not in result["error"].lower(), "refused by the list, not the record"
@@ -1259,7 +1269,7 @@ def test_the_page_is_read_when_shown_and_polled_only_while_shown(monkeypatch):
     poll = _named(demo, "_poll")
     assert (ctx.timer_slow._id, "tick") in poll.targets and poll.queue is False
     assert poll.inputs[0] is ctx.location
-    selects = [b for b in poll.outputs if isinstance(b, (gr.Dropdown, gr.Checkbox))]
+    selects = [b for b in poll.outputs if isinstance(b, (gr.Dropdown, gr.Checkbox, gr.Radio))]
     assert selects == [], "a poll never touches a select"
     selection = _named(demo, "_on_report").outputs[:2]
     assert not [b for b in poll.outputs if b in selection], "a poll never writes the selection"
@@ -1279,14 +1289,16 @@ def test_the_poll_reads_and_writes_nothing_drawn_from_the_selection():
     by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
     start, reason = by_id["shep-test-start"], by_id["shep-test-start-reason"]
     assert start not in poll.outputs and reason not in poll.outputs
-    selection = [by_id[i] for i in ("shep-test-workspace", "shep-test-version", "shep-test-model")]
+    selection = [by_id[i] for i in ("shep-test-workspace", "shep-test-version", "shep-test-model",
+                                    "shep-test-measurement")]
     selection += _named(demo, "_on_report").outputs[:2] + [_named(demo, "_on_model_reload")
                                                            .outputs[0]]
     assert not [b for b in poll.inputs if b in selection]
     assert [by_id[i] for i in ("shep-test-job-head", "shep-test-job", "shep-test-cancel",
                                "shep-test-cancel-reason")] == poll.outputs[1:5]
     writers = [fn for fn in demo.fns.values() if {start, reason} & set(fn.outputs)]
-    assert {"_on_model", "_after_act", "_after_job_change"} <= {fn.name for fn in writers}
+    assert {"_on_model", "_on_measurement", "_after_act",
+            "_after_job_change"} <= {fn.name for fn in writers}
     for fn in writers:
         assert fn.queue is not False, fn.name
         assert (fn.concurrency_id, fn.concurrency_limit) == (tp.SELECTION_CONCURRENCY, 1), fn.name
@@ -1333,7 +1345,8 @@ def test_a_poll_hands_the_store_read_over_only_when_the_job_changed(site, monkey
     again = poll.fn("test", page, {"job_id": "test-1", "status": "running", "gpu": GPU_NONE},
                     _readonly())
     assert again[-2]["at"] != ended[-2]["at"], "each hand-off is a new value"
-    out = after.fn(page, {}, None, "demo", None, None, {"label": LABEL}, ended[-2], _readonly())
+    out = after.fn(page, {}, None, "demo", None, None, None, {"label": LABEL}, ended[-2],
+                   _readonly())
     assert reads == [LABEL] and out[0]["label"] == LABEL
 
 
@@ -1362,13 +1375,13 @@ def test_the_gpu_line_changing_hands_start_over_to_the_selections_group(site, mo
     line = ("none", "GPU jobs: none")
     handoff = poll.fn("test", page, seen, request)[-2]
     assert handoff["seen"] == handoff["now"] == {"job_id": None, "status": "idle"}
-    out = after.fn(page, models, binding, "demo", child, site.run_id, reports, handoff,
-                   request)
+    out = after.fn(page, models, binding, "demo", child, "disease", site.run_id, reports,
+                   handoff, request)
     assert out[1] == site.run_id
     assert out[start_at] == gr.update(interactive=True) and out[reason_at] == ""
     line = ("busy", "GPU job: training (job runner)")
-    out = after.fn(page, models, binding, "demo", child, site.run_id, reports, handoff,
-                   request)
+    out = after.fn(page, models, binding, "demo", child, "disease", site.run_id, reports,
+                   handoff, request)
     assert out[start_at] == gr.update(interactive=False)
     assert "Disabled: GPU job: training (job runner)." in out[reason_at]
 
@@ -1422,29 +1435,31 @@ def test_the_report_of_a_run_that_has_just_ended_is_selected(site, monkeypatch):
     reports = tp.read_reports(LABEL)
     handoff = poll.fn("test", page, {"job_id": "test-2", "status": "running", "gpu": GPU_NONE},
                       _readonly())[-2]
-    ended = after.fn(page, {}, None, "demo", None, other, reports, handoff, _readonly())
+    ended = after.fn(page, {}, None, "demo", None, None, other, reports, handoff, _readonly())
     assert ended[1] == site.run_id
     quiet = poll.fn("test", page, {"job_id": "test-2", "status": "completed", "gpu": GPU_NONE},
                     _readonly())
     assert quiet[-2] == gr.update(), "nothing is handed over once the end was seen"
-    acted = after_act.fn(page, {}, None, "demo", None, other, reports, _readonly())
+    acted = after_act.fn(page, {}, None, "demo", None, None, other, reports, _readonly())
     assert acted[1] == other, "an act's read decides no end"
     completed = {"job_id": "test-2", "status": "completed"}
-    no_end = after.fn(page, {}, None, "demo", None, other, reports,
+    no_end = after.fn(page, {}, None, "demo", None, None, other, reports,
                       {"seen": completed, "now": completed, "at": 1}, _readonly())
     assert no_end[1] == other, "a hand-off that names no end keeps the operator's choice"
     for before in ({"job_id": "test-1", "status": "completed"}, {"job_id": None, "status": "idle"}):
-        between = after.fn(page, {}, None, "demo", None, other, reports,
+        between = after.fn(page, {}, None, "demo", None, None, other, reports,
                            {"seen": before, "now": completed, "at": 2}, _readonly())
         assert between[1] == site.run_id, f"a run that started and ended after {before}"
     first = poll.fn("test", page, {}, _readonly())[-2]
     assert first["seen"] == {"job_id": None, "status": None} and first["now"] == completed
-    first_tick = after.fn(page, {}, None, "demo", None, other, reports, first, _readonly())
+    first_tick = after.fn(page, {}, None, "demo", None, None, other, reports, first,
+                          _readonly())
     assert first_tick[1] == other, "the session's first tick saw nothing before: no end"
     job.update(job_id="test-3", status="completed",
                outcome={"report_dir": str(site.reports / site.run_id), "kept": True,
                         "registered": False, "summary": "kept"})
-    moved_on = after.fn(page, {}, None, "demo", None, other, reports, handoff, _readonly())
+    moved_on = after.fn(page, {}, None, "demo", None, None, other, reports, handoff,
+                        _readonly())
     assert moved_on[1] == other, "the ended run is no longer the job read now"
 
 
@@ -1461,7 +1476,8 @@ def test_a_poll_that_sees_the_job_change_chooses_again_when_the_shown_report_is_
     gone = "20261001T000000Z-" + "a" * 12 + "-" + "b" * 8
     handoff = poll.fn("test", page, {"job_id": "test-2", "status": "completed",
                                      "gpu": ["none", "GPU jobs: none"]}, _readonly())[-2]
-    out = after.fn(page, {}, None, "demo", None, gone, {"label": LABEL}, handoff, _readonly())
+    out = after.fn(page, {}, None, "demo", None, None, gone, {"label": LABEL}, handoff,
+                   _readonly())
     assert out[1] == site.run_id
 
 
@@ -1498,7 +1514,8 @@ def test_every_write_of_the_selection_is_in_one_queued_group_of_one():
     for fn in writers:
         assert fn.queue is not False, fn.name
         assert (fn.concurrency_id, fn.concurrency_limit) == (tp.SELECTION_CONCURRENCY, 1), fn.name
-    for name in ("_on_workspace", "_on_version", "_on_model", "_on_report", "_after_job_change"):
+    for name in ("_on_workspace", "_on_version", "_on_model", "_on_measurement", "_on_report",
+                 "_after_job_change"):
         assert _named(demo, name).trigger_mode == "multiple", name
     version = _named(demo, "_on_version")
     assert version.inputs[4] in version.outputs
@@ -1577,7 +1594,7 @@ def test_a_late_read_never_writes_back_the_selection_it_started_from(site, monke
     def pick(label):
         with browser.cond:
             browser.order.append(("picked", label))
-        return join(on_version, [None, None, None, "demo", label, None, None])
+        return join(on_version, [None, None, None, "demo", label, None, None, None])
 
     asked = {}
 
@@ -1588,7 +1605,7 @@ def test_a_late_read_never_writes_back_the_selection_it_started_from(site, monke
 
     with served(demo) as base:
         browser = ServedSession(base, demo)
-        assert browser.wait(join(refresh, [None, None, None, None, None]))
+        assert browser.wait(join(refresh, [None] * 6))
         assert browser.wait(pick(LABEL))
         runs = [r["run_id"] for r in browser.state(reports_state)["runs"]]
         assert sorted(runs) == sorted([site.run_id, other]) and runs[0] == site.run_id
@@ -1596,7 +1613,7 @@ def test_a_late_read_never_writes_back_the_selection_it_started_from(site, monke
         handoff = {"seen": {"job_id": "test-9", "status": "running"},
                    "now": {"job_id": "test-9", "status": "completed"}, "at": 1}
         read_again = lambda: join(after, [None, None, None, "demo", None, None, None,  # noqa: E731
-                                          handoff])
+                                          None, handoff])
 
         # a report's row clicked while the hand-off's read is held
         held(read_again, lambda: join(on_report, [None] * 3, {"key": other}))
@@ -1612,7 +1629,7 @@ def test_a_late_read_never_writes_back_the_selection_it_started_from(site, monke
 
         # a version chosen while a workspace's event (asked with the version
         # shown then) is held: the select ends on the version chosen
-        held(lambda: join(on_workspace, [None, "demo", other_label, None, None, None]),
+        held(lambda: join(on_workspace, [None, "demo", other_label, None, None, None, None]),
              lambda: pick(LABEL))
         assert browser.state(reports_state)["label"] == LABEL
         assert shown() == LABEL, "the select shows one version and the session holds another's"
@@ -1660,10 +1677,11 @@ def test_an_ended_run_is_handed_over_once_and_a_click_after_it_stays(site, monke
 
         def hand_over(change):
             """The hand-off's listener, joined as the browser joins it."""
-            return browser.join(after, [None, None, None, "demo", None, None, None, change])
+            return browser.join(after, [None, None, None, "demo", None, None, None, None,
+                                        change])
 
         running = {"job_id": "test-9", "status": "running"}
-        assert browser.wait(browser.join(refresh, [None] * 5))
+        assert browser.wait(browser.join(refresh, [None] * 6))
         browser.set_state(ctx.location, tp.PAGE)
         newest = browser.state(selected_report)
         assert newest == site.run_id != other
@@ -1675,7 +1693,7 @@ def test_an_ended_run_is_handed_over_once_and_a_click_after_it_stays(site, monke
         assert tick().get("__type__") == "update", "nothing changed since the last tick"
 
         hold.set()
-        act = browser.join(after_act, [None, None, None, "demo", None, None, None])
+        act = browser.join(after_act, [None, None, None, "demo", None, None, None, None])
         assert entered.wait(30), "the act's read did not start"
         job.update(status="completed", outcome={"report_dir": str(site.reports / other),
                                                 "kept": True, "registered": False,
@@ -1722,9 +1740,10 @@ def test_a_run_started_here_that_ends_before_the_next_tick_is_chosen(site, monke
             return browser.predict(poll, [None, None, None])[poll.outputs.index(after.inputs[-1])]
 
         def hand_over(change):
-            return browser.join(after, [None, None, None, "demo", None, None, None, change])
+            return browser.join(after, [None, None, None, "demo", None, None, None, None,
+                                        change])
 
-        assert browser.wait(browser.join(refresh, [None] * 5))
+        assert browser.wait(browser.join(refresh, [None] * 6))
         browser.set_state(ctx.location, tp.PAGE)
         assert browser.wait(hand_over(tick()))
         assert tick().get("__type__") == "update"
@@ -1732,7 +1751,8 @@ def test_a_run_started_here_that_ends_before_the_next_tick_is_chosen(site, monke
         assert browser.state(selected_report) == other != site.run_id
 
         job.update(job_id="test-2", status="running")
-        assert browser.wait(browser.join(after_act, [None, None, None, "demo", None, None, None]))
+        assert browser.wait(browser.join(after_act, [None, None, None, "demo", None, None, None,
+                                                     None]))
         assert browser.state(selected_report) == other, "an act's read decides no end"
         job.update(status="completed", outcome={"report_dir": str(site.reports / site.run_id),
                                                 "kept": True, "registered": False,
@@ -1777,13 +1797,13 @@ def test_a_late_reload_never_writes_back_another_workspaces_checkpoints(site, mo
 
     with served(demo) as base:
         browser = ServedSession(base, demo)
-        assert browser.wait(browser.join(refresh, [None] * 5))
+        assert browser.wait(browser.join(refresh, [None] * 6))
         listing = browser.state(models_state)
         assert listing["workspace"] == "demo" and listing["items"], listing
         hold.set()
-        reloaded = browser.join(reload_, [None, None, "demo", LABEL, None, None])
+        reloaded = browser.join(reload_, [None, None, "demo", LABEL, None, None, None])
         assert entered.wait(30), "the reload did not start"
-        chosen = browser.join(on_workspace, [None, "other", LABEL, None, None, None])
+        chosen = browser.join(on_workspace, [None, "other", LABEL, None, None, None, None])
         browser.wait(chosen, timeout=1.5)
         release.set()
         assert browser.wait(reloaded, chosen)
@@ -1853,13 +1873,13 @@ def test_a_direct_call_through_gradios_api_meets_the_same_check(site, monkeypatc
         event = next(x for x in lines if x.startswith("event: ") and x != "event: heartbeat")
         return event, lines[lines.index(event) + 1][len("data:"):]
 
-    event, refused = call("http://192.0.2.10", [None, None, None])
+    event, refused = call("http://192.0.2.10", [None, None, None, None])
     assert event == "event: complete" and "Refused: " in refused
-    event, loopback = call(OPERATOR_BASE_URL, [None, None, None])
+    event, loopback = call(OPERATOR_BASE_URL, [None, None, None, None])
     assert event == "event: complete" and "Choose a cohort version the server lists" in loopback
     assert given and all(page == {} and models.get("items") == [] for page, models in given), \
         "the handler was given what the client posted"
-    event, forged = call(OPERATOR_BASE_URL, ["demo", LABEL, site.key])
+    event, forged = call(OPERATOR_BASE_URL, ["demo", LABEL, site.key, None])
     assert event == "event: error" and "not in the list of choices" in forged
     assert manager.started == []
 
@@ -2497,52 +2517,95 @@ def _model(task="disease", stage="finetune", record="model", **extra):
 
 
 def test_measure_refusal_says_why_each_kind_is_not_measured():
-    """K6 decision 13: only a model finetuned for a task is measured; each
-    other kind says why, in its own words. A record's state is said in the
-    word the Model option leads with (`renderers.record_kind_text`, K6 decision
-    6; the closing review found the page's own copies), then the page's own
-    reason."""
+    """A record's state is said in the word the Model option leads with
+    (`renderers.record_kind_text`, K6 decision 6; the closing review found the
+    page's own copies), then the page's own reason. Past it every reason is
+    the protocol definition's (`protocols`, K2): with no measurement chosen,
+    why none takes the record (a base's is the base message) or "choose a
+    measurement"; with one chosen, its refusal. The page words none itself."""
+    from src.evaluation import protocols
     from src.webui.components import renderers as r
 
     refusal = tp.measure_refusal
-    assert refusal(_model("disease"), {"counts": NO_GENES}) is None
-    assert refusal(_model(None, "base"), {"counts": NO_GENES}) == (
-        "this checkpoint is a base: it has no task to measure. Choose a model finetuned from "
-        "it for a task")
+    assert refusal(_model("disease"), {"counts": NO_GENES}, "disease") is None
+    # No measurement chosen while the record admits one is said, never filled in.
+    assert refusal(_model("disease"), {"counts": NO_GENES}, None) == tp.CHOOSE_A_MEASUREMENT
+    # A base: the base message, whatever is asked of it (§5.4).
+    for protocol in (None, "disease", "gene"):
+        assert refusal(_model(None, "base"), {"counts": NO_GENES}, protocol) == (
+            protocols.BASE_MESSAGE)
     history, refused, unread = ({"record": "history"},
                                 {"record": "refused", "record_problem": "record version 9"},
                                 {"record": None})
     for item in (history, refused, unread):
-        assert refusal(item, None).startswith(r.record_kind_text(item)), refusal(item, None)
-        assert refusal(item, None).endswith(tp.NOT_MEASURED_HERE)
-    assert refusal(history, None) == (
+        for protocol in (None, "disease"):
+            said = refusal(item, None, protocol)
+            assert said.startswith(r.record_kind_text(item)) and said.endswith(
+                tp.NOT_MEASURED_HERE), said
+    assert refusal(history, None, None) == (
         "History · never run (no model spec: a ShepherdGNN checkpoint): " + tp.NOT_MEASURED_HERE)
-    assert refusal(refused, None) == (
+    assert refusal(refused, None, None) == (
         "Record not readable (record version 9): " + tp.NOT_MEASURED_HERE)
-    assert refusal(unread, None) == "Record not read: " + tp.NOT_MEASURED_HERE
-    assert refusal(_model("C"), None) == (
-        "this checkpoint's model record names no task this page measures")
+    assert refusal(unread, None, None) == "Record not read: " + tp.NOT_MEASURED_HERE
+    # A record no protocol takes, a protocol the record does not meet, and a
+    # name that is no protocol: the definition's sentences, by its ordinary rules.
+    assert refusal(_model("C"), None, None) == protocols.available("finetune", "C")[1]
+    assert refusal(_model("gene"), None, "disease") == (
+        protocols.model_refusal("disease", "finetune", "gene"))
+    assert "It can be measured by gene." in refusal(_model("gene"), None, "disease")
+    for name in ("C", "D", "Disease"):
+        assert refusal(_model("disease"), None, name) == (
+            protocols.model_refusal(name, "finetune", "disease"))
+        assert "is not a measurement this build implements" in refusal(_model("disease"), None,
+                                                                        name)
 
 
-@pytest.mark.parametrize("task, counts, says", [
-    ("gene", NO_GENES, "this cohort version lists no causal genes, so the gene task has no "
-                       "truth to rank. Import a source that lists causal_genes and "
-                       "candidate_genes"),
-    ("gene", NO_CAUSAL, "this cohort version lists no causal genes, so the gene task"),
-    ("gene", NO_CANDIDATES, "this cohort version lists no candidate genes, the list the gene "
-                            "task ranks. Import a source that lists candidate_genes"),
-    ("gene", GENES, None),
-    ("patients_like_me", NO_GENES, "this cohort version lists no causal genes, so no two of "
-                                   "its patients can be relevant to each other. Import a "
-                                   "source that lists causal_genes"),
-    ("patients_like_me", NO_CAUSAL, "this cohort version lists no causal genes, so no two"),
-    # Candidate genes are the gene task's list; patients-like-me needs none.
+def test_the_base_message_names_the_formal_test_as_not_implemented(site, monkeypatch):
+    """§5.4, the page's half: Start's reason for a listed base, and the start's
+    refusal, are the base message, which names the formal test as not
+    implemented and says neither "no task to measure" nor "nothing to test";
+    the Measurement radio offers nothing for it."""
+    from src.evaluation import protocols
+
+    _path, base = _put_bundle(site, BUNDLE_BASE_RUN, None)
+    page, request = _page(monkeypatch)
+    models = tp.read_models("demo", request)
+    binding = tp.workspace_binding(site.demo, tp.find(page["workspaces"], "name", "demo"))
+    assert tp.measurement_choices(tp.find_model(models, base)) == []
+    message = protocols.BASE_MESSAGE
+    assert "formal test" in message and "not implemented" in message
+    assert "no task to measure" not in message and "nothing to test" not in message
+    allowed, why = tp.start_state(page, models, "demo", LABEL, base, binding, ("none", ""))
+    assert (allowed, why) == (False, f"Disabled: {message}")
+    manager = FakeManager()
+    result = tp.start_test_run(page, models, "demo", LABEL, base, False, False, request,
+                               manager=manager)
+    assert result == {"success": False, "error": f"{message} Nothing was started."}
+    assert manager.started == []
+
+
+@pytest.mark.parametrize("protocol, counts, missing", [
+    ("gene", NO_GENES, "causal"), ("gene", NO_CAUSAL, "causal"),
+    ("gene", NO_CANDIDATES, "candidate"), ("gene", GENES, None),
+    ("patients_like_me", NO_GENES, "causal"), ("patients_like_me", NO_CAUSAL, "causal"),
+    # Candidate genes are the gene measurement's list; patients-like-me needs none.
     ("patients_like_me", NO_CANDIDATES, None),
     ("disease", NO_GENES, None), ("disease", NO_CAUSAL, None), ("disease", GENES, None),
 ])
-def test_a_gene_task_needs_a_version_that_lists_its_genes(task, counts, says):
-    got = tp.measure_refusal(_model(task), {"counts": counts})
-    assert (got is None) if says is None else got.startswith(says), got
+def test_a_measurement_needs_a_version_that_lists_its_genes(protocol, counts, missing):
+    """The version's inputs, for a model the protocol takes: the definition's
+    sentence (`protocols.inputs_refusal`), naming the genes missing and the
+    source field that lists them."""
+    from src.evaluation import protocols
+
+    model = _model(protocols.PROTOCOLS[protocol].task)
+    got = tp.measure_refusal(model, {"counts": counts}, protocol)
+    assert got == protocols.inputs_refusal(protocol, counts)
+    if missing is None:
+        assert got is None
+    else:
+        assert got == (f"this cohort version lists no {missing} genes, which the {protocol} "
+                       f"measurement needs. Import a source that lists {missing}_genes.")
 
 
 def test_start_and_its_reason_refuse_what_is_not_measured_with_one_rule(site, monkeypatch):
@@ -2550,7 +2613,10 @@ def test_start_and_its_reason_refuse_what_is_not_measured_with_one_rule(site, mo
     fixture's history file are listed; Start says why (`start_state`,
     "Disabled: …") and the start refuses them before the runner is asked
     ("… Nothing was started."), from the one rule (`measure_refusal`). A gene
-    child on the fixture version, which lists no genes, is refused for that."""
+    child on the fixture version, which lists no genes, is refused for that
+    by the gene measurement, in the definition's words."""
+    from src.evaluation import protocols
+
     _put_bundle(site, BUNDLE_BASE_RUN, None)
     _put_bundle(site, "20261021-000000_refused_cccccc", "disease", record_version=999)
     _put_bundle(site, "20261022-000000_gene_dddddd", "gene")
@@ -2558,29 +2624,33 @@ def test_start_and_its_reason_refuse_what_is_not_measured_with_one_rule(site, mo
     models = tp.read_models("demo", request)
     binding = tp.workspace_binding(site.demo, tp.find(page["workspaces"], "name", "demo"))
     manager = FakeManager()
+    gene = "gatv2/20261022-000000_gene_dddddd/last.pt"
+    counts = tp.find(page["versions"], "label", LABEL)["counts"]
     cases = {
-        f"gatv2/{BUNDLE_BASE_RUN}/last.pt": "this checkpoint is a base",
+        f"gatv2/{BUNDLE_BASE_RUN}/last.pt": (None, protocols.BASE_MESSAGE),
         "gatv2/20261021-000000_refused_cccccc/last.pt":
-            "Record not readable (checkpoint record version 999",
-        site.history_key: "History · never run (no model spec",
-        "gatv2/20261022-000000_gene_dddddd/last.pt": "this cohort version lists no causal genes",
+            (None, "Record not readable (checkpoint record version 999"),
+        site.history_key: (None, "History · never run (no model spec"),
+        gene: ("gene", protocols.inputs_refusal("gene", counts)),
     }
-    for key, says in cases.items():
-        allowed, why = tp.start_state(page, models, "demo", LABEL, key, binding, ("none", ""))
+    assert cases[gene][1].startswith("this cohort version lists no causal genes")
+    for key, (protocol, says) in cases.items():
+        allowed, why = tp.start_state(page, models, "demo", LABEL, key, binding, ("none", ""),
+                                      protocol=protocol)
         assert allowed is False and why.startswith(f"Disabled: {says}") and why.endswith("."), why
         result = tp.start_test_run(page, models, "demo", LABEL, key, False, False, request,
-                                   manager=manager)
+                                   protocol=protocol, manager=manager)
         assert result["success"] is False, key
         assert result["error"].startswith(says[:1].upper() + says[1:]), result["error"]
         assert result["error"].endswith(". Nothing was started.")
     assert manager.started == []
     # The version listing causal and candidate genes lifts the gene child's refusal.
     page["versions"][0]["counts"] = {**page["versions"][0]["counts"], **GENES}
-    gene = "gatv2/20261022-000000_gene_dddddd/last.pt"
-    assert tp.start_state(page, models, "demo", LABEL, gene, binding, ("none", "")) == (True, None)
+    assert tp.start_state(page, models, "demo", LABEL, gene, binding, ("none", ""),
+                          protocol="gene") == (True, None)
     assert tp.start_test_run(page, models, "demo", LABEL, gene, False, False, request,
-                             manager=manager)["success"] is True
-    assert [inputs.task for inputs in manager.started] == ["gene"]
+                             protocol="gene", manager=manager)["success"] is True
+    assert [(i.protocol, i.task) for i in manager.started] == [("gene", "gene")]
 
 
 def test_a_refusal_naming_a_record_problem_is_shown_escaped():
@@ -2683,48 +2753,231 @@ def test_a_task_report_row_names_its_task_first():
     assert tp._row_state(plm, []).startswith("patients-like-me task: report kept")
 
 
-def test_the_fixed_measurement_is_the_chosen_models_own_task():
-    """The Model select's option names the task (`record_kind_text`); the
-    Measurement row refers to it and never names it again (rule 1.2: the two
-    come from one listing entry, so they cannot differ)."""
-    from src.webui.components import renderers as r
-
+def test_the_measurement_options_are_the_protocols_the_record_admits():
+    """§5.3: the Measurement radio's options are `protocols.available` of the
+    chosen model's listed record, each labelled with the words the pages use
+    for that mode value (`caveats.TASK_NAMES`) and valued by the protocol's
+    name, short and unique (skill §8). The only option is chosen; of several,
+    none is until the operator picks one, and a pick no longer offered goes.
+    What the server fixes names no measurement."""
     for task, words in (("disease", "Disease"), ("gene", "Gene"),
                         ("patients_like_me", "Patients-like-me")):
-        item = _model(task)
-        fixed = tp.fixed_html({}, item)
-        row = fixed.split("Measurement</span><span>")[1].split("</span>")[0]
-        assert row == "same task as the chosen model · read from its record"
-        assert r.record_kind_text(item) == words and words not in row
-    for item in (None, _model(None, "base"), {"record": "history"}, {"record": None}):
-        fixed = tp.fixed_html({}, item)
-        assert "the chosen model&#x27;s own task (a finetuned model only)" in fixed
-        assert "Mode C" not in fixed
+        choices = tp.measurement_choices(_model(task))
+        assert choices == [(words, task)]
+        assert tp.chosen_measurement(choices, None) == task
+        assert tp.chosen_measurement(choices, "another") == task
+    for item in (None, _model(None, "base"), _model("C"), {"record": "history"},
+                 {"record": None}, {"record": "refused", "record_problem": "x"}):
+        assert tp.measurement_choices(item) == []
+    assert tp.chosen_measurement([], "disease") is None
+    several = [("p1", "p1"), ("p2", "p2")]
+    assert tp.chosen_measurement(several, None) is None
+    assert tp.chosen_measurement(several, "p2") == "p2"
+    assert tp.chosen_measurement(several, "disease") is None
+    labels = [label for label, _value in tp.measurement_choices(_model("patients_like_me"))]
+    assert all(len(label) <= 40 and label.count(" · ") <= 1 for label in labels)
+    fixed = tp.fixed_html({})
+    assert "Batch size" in fixed and "Device" in fixed and "Measurement" not in fixed
 
 
-def test_the_job_card_names_the_runs_task_escaped():
-    job = {"status": "running", "inputs": {"version_label": LABEL, "task": "gene",
+def test_the_measurement_radio_sits_in_the_run_panel_for_an_operator():
+    """A radio (skill §8: under five options) labelled "Measurement", in the
+    Run panel, beside the Model select; written with the selection, so Start's
+    reason is drawn from the value it shows. The value it shows is written
+    with it into a State, which the selection's listeners read in place of
+    the radio (a value an event was asked with may no longer be among the
+    choices, and Gradio refuses it before the handler runs); only the
+    radio's own pick and Start take the radio."""
+    demo, _ctx, _registry = _page_component()
+    by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
+    radio = by_id["shep-test-measurement"]
+    assert isinstance(radio, gr.Radio) and radio.label == "Measurement"
+    parent, panels = radio.parent, []
+    while parent is not None:
+        panels.append(getattr(parent, "elem_id", None))
+        parent = parent.parent
+    assert "shep-test-run" in panels
+    pick = _named(demo, "_on_measurement")
+    mirror = pick.outputs[-1]
+    assert isinstance(mirror, gr.State) and radio in pick.outputs and radio in pick.inputs
+    for name in ("_refresh", "_on_workspace", "_on_version", "_on_model", "_on_model_reload",
+                 "_after_commit"):
+        fn = _named(demo, name)
+        assert {radio, mirror} <= set(fn.outputs) and mirror in fn.inputs, name
+    start = by_id["shep-test-start"]
+    for fn in demo.fns.values():
+        if start in fn.outputs and fn is not pick:
+            assert mirror in fn.inputs and radio not in fn.inputs, fn.name
+    assert radio in _named(demo, "_on_start").inputs
+
+
+def test_the_job_card_names_the_runs_protocol_escaped():
+    """The card names the measurement the run was asked for (`inputs["protocol"]`),
+    not the model's task: the two can differ."""
+    import html as html_lib
+
+    job = {"status": "running", "inputs": {"version_label": LABEL, "protocol": "gene",
+                                           "learning_stage": "finetune", "task": "gene",
                                            "checkpoint_sha256": "c" * 64, "workspace": "/w/ws"},
            "log": []}
     body = tp.job_body_html(job, [], ("busy", "GPU job: test run"))
-    assert "Gene task" in body
-    hostile = dict(job, inputs={**job["inputs"], "task": HOSTILE})
+    assert "Gene measurement" in body
+    other = dict(job, inputs={**job["inputs"], "protocol": "p2", "task": "disease"})
+    body = tp.job_body_html(other, [], ("busy", ""))
+    assert "p2 measurement" in body and "Disease" not in body
+    hostile = dict(job, inputs={**job["inputs"], "protocol": HOSTILE})
     body = tp.job_body_html(hostile, [], ("busy", ""))
-    assert "task not recorded" in body and HOSTILE not in body
+    assert HOSTILE not in body and f"{html_lib.escape(HOSTILE)} measurement" in body
+    for missing in (None, "", 7):
+        body = tp.job_body_html(dict(job, inputs={**job["inputs"], "protocol": missing}), [],
+                                ("busy", ""))
+        assert "measurement not recorded" in body
 
 
-def test_the_help_says_the_measurement_is_the_models_task():
+def test_the_help_says_what_the_measurement_options_are():
     """Skill §12: the titles equal the labels (pinned by the registration
-    test), the leads answer the question, and the measurement is said where
-    the choice is made: never Mode C."""
+    test), the leads answer the question within the budget, and the
+    measurement is said where the choice is made: never Mode C, never "the
+    model's own task"."""
     title, text = tp.TOPIC_HELP["test-fixed"]
     assert title == "Fixed by the server" and "Mode C" not in text
     lead = text.split("\n")[0]
     assert len(lead) <= 100 and "fixes them" in lead
-    assert "Measurement: the chosen model's own task" in text
+    assert "Measurement:" not in text and "never chosen here" not in text
+    title, text = tp.FIELD_HELP["shep-test-measurement"]
+    lead = text.split("\n")[0]
+    assert title == "Measurement" and len(lead) <= 100 and len(text.split()) <= 80
+    assert "measurements this build implements" in lead
+    assert "formal test is not implemented" in text and "Mode C" not in text
     title, text = tp.FIELD_HELP["shep-test-model"]
     assert title == "Model" and len(text.split("\n")[0]) <= 100
     assert "a base, or a file without a model spec, is listed but not measured here" in text
+    assert "measured by that task" not in text
+
+
+@pytest.fixture
+def test_only_protocols(monkeypatch):
+    """§5.5's test-only protocols, the product table untouched: p1 and p2 both
+    take a finetuned model with the disease head and run the disease
+    evaluator, so neither name is a task."""
+    from src.evaluation import protocols
+
+    table = {name: protocols.Protocol(name, "finetune", "disease", "disease")
+             for name in ("p1", "p2")}
+    monkeypatch.setattr(protocols, "PROTOCOLS", table)
+    return table
+
+
+def test_a_listed_disease_child_offers_the_test_only_protocols_and_starts_one(
+        site, monkeypatch, test_only_protocols):
+    """§5.5 wiring, the Test page's part (3): under p1 and p2, nothing on the
+    page treats a protocol's name as the model's task. A listed disease child
+    offers exactly p1 and p2 (named as they are, none chosen, Start waiting
+    for a pick); `start_state(..., protocol="p2")` is (True, None); the start
+    hands the runner protocol p2 apart from the model's task disease, and the
+    job card names p2. "disease" is no protocol here: the definition's
+    ordinary sentence. The base asked as p1 gets the definition's one reason
+    (the base message) from Start and from the start, which asks no runner."""
+    from src.evaluation import protocols
+
+    _path, child = _put_bundle(site)
+    _put_bundle(site, BUNDLE_BASE_RUN, None)
+    base = f"gatv2/{BUNDLE_BASE_RUN}/last.pt"
+    page, request = _page(monkeypatch)
+    models = tp.read_models("demo", request)
+    binding = tp.workspace_binding(site.demo, tp.find(page["workspaces"], "name", "demo"))
+    offered = [("p1", "p1"), ("p2", "p2")]
+    assert tp.measurement_choices(tp.find_model(models, child)) == offered
+    state = lambda key, protocol: tp.start_state(  # noqa: E731
+        page, models, "demo", LABEL, key, binding, ("none", ""), protocol=protocol)
+    assert state(child, None) == (False, "Disabled: choose a measurement.")
+    assert state(child, "p2") == (True, None)
+    assert state(child, "disease") == (
+        False, "Disabled: 'disease' is not a measurement this build implements (p1, p2).")
+
+    # The radio as the model's listener writes it, and a pick.
+    demo, _ctx, _registry = _page_component()
+    by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
+    on_model, on_pick = _named(demo, "_on_model"), _named(demo, "_on_measurement")
+    radio_at = on_model.outputs.index(by_id["shep-test-measurement"])
+    start_at = on_model.outputs.index(by_id["shep-test-start"])
+    reason_at = on_model.outputs.index(by_id["shep-test-start-reason"])
+    out = on_model.fn(page, models, binding, "demo", LABEL, child, None)
+    assert out[radio_at] == gr.update(choices=offered, value=None, interactive=True)
+    assert out[start_at] == gr.update(interactive=False)
+    assert "Disabled: choose a measurement." in out[reason_at]
+    picked = on_pick.fn(page, models, binding, "demo", LABEL, child, "p2")
+    assert picked == [gr.update(choices=offered, value="p2", interactive=True),
+                      gr.update(interactive=True), "", "p2"]
+    # Like the Model select, the radio is an operator's control only.
+    readonly = dict(page, access={"allowed": False, "condition": "not_local"})
+    assert on_model.fn(readonly, models, binding, "demo", LABEL, child, "p2")[radio_at] == (
+        gr.update(choices=offered, value="p2", interactive=False))
+
+    manager = FakeManager()
+    result = tp.start_test_run(page, models, "demo", LABEL, child, False, False, request,
+                               protocol="p2", manager=manager)
+    assert result["success"] is True
+    (inputs,) = manager.started
+    assert (inputs.protocol, inputs.learning_stage, inputs.task) == ("p2", "finetune", "disease")
+    card = tp.job_body_html({"status": "running", "inputs": inputs.summary(), "log": []}, [],
+                            ("busy", ""))
+    assert "p2 measurement" in card
+
+    counts = tp.find(page["versions"], "label", LABEL)["counts"]
+    reason = protocols.refusal("p1", "base", None, counts)
+    assert reason == protocols.BASE_MESSAGE and tp.measurement_choices(
+        tp.find_model(models, base)) == []
+    assert state(base, "p1") == (False, f"Disabled: {reason}")
+    assert tp.start_test_run(page, models, "demo", LABEL, base, False, False, request,
+                             protocol="p1", manager=manager) == {
+        "success": False, "error": f"{reason} Nothing was started."}
+    assert len(manager.started) == 1
+
+
+def test_a_model_picked_after_another_answers_its_second_event_without_an_error(
+        site, monkeypatch):
+    """Through the page served by Gradio, for an operator: one pick of a Model
+    option sends its input event twice, each with the values the browser held
+    when it was asked. The disease child chosen (the radio offers and shows
+    "disease"), then the base: the first of the base's events empties the
+    radio, and the second still carries "disease". Both answer, the radio
+    ends empty and Start's reason is the base message. When the selection's
+    listeners took the radio itself, Gradio checked the second event's value
+    against the choices the first had written and answered with an error
+    before the page's own handling ran (`chosen_measurement`)."""
+    import html as html_lib
+
+    from src.evaluation import protocols
+
+    _put_bundle(site, BUNDLE_BASE_RUN, None)
+    base = f"gatv2/{BUNDLE_BASE_RUN}/last.pt"
+    operator_mode(monkeypatch)
+    job = {"status": "idle", "job_id": None, "inputs": {}, "log": [], "outcome": None}
+    monkeypatch.setattr(tp, "read_job", lambda **k: dict(job))
+    monkeypatch.setattr(tp, "gpu_line", lambda **k: ("none", "GPU jobs: none"))
+    demo, _ctx, _registry = _page_component()
+    refresh, on_model = _named(demo, "_refresh"), _named(demo, "_on_model")
+    by_id = {getattr(b, "elem_id", None): b for b in demo.blocks.values()}
+    radio_at = on_model.outputs.index(by_id["shep-test-measurement"])
+    reason_at = on_model.outputs.index(by_id["shep-test-start-reason"])
+
+    with served(demo) as url:
+        browser = ServedSession(url, demo)
+        assert browser.wait(browser.join(refresh, [None] * 6))
+        picked = browser.join(on_model, [None, None, None, "demo", LABEL, site.key, None])
+        assert browser.wait(picked)
+        radio = browser.done[picked]["output"]["data"][radio_at]
+        assert radio["value"] == "disease", radio
+        # The base picked once: two events, each asked with the radio's "disease".
+        events = [browser.join(on_model, [None, None, None, "demo", LABEL, base, "disease"])
+                  for _ in range(2)]
+        assert browser.wait(*events)
+        browser.close()
+    for event in events:
+        out = browser.done[event]["output"]["data"]
+        assert (out[radio_at]["choices"], out[radio_at]["value"]) == ([], None)
+        assert html_lib.escape(protocols.BASE_MESSAGE) in out[reason_at], out[reason_at]
 
 
 def test_a_gatv2_childs_report_is_registered_beside_its_own_file(site, monkeypatch):

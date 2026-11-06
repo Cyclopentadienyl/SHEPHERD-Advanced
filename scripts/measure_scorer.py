@@ -1,28 +1,29 @@
 #!/usr/bin/env python
 r"""
-Measure a model on a cohort — by its task; Mode C from here only.
-=================================================================
-**The task modes** (`--mode disease`, `gene`, `patients_like_me`): a finetuned
-model bundle measured by its own task (`src/evaluation/task_measurement.py`,
-`docs/working/PLAN_TEST_RESULTS.md` §8), its model record checked for that
-stage and task right after the checkpoint is read. **The Test page runs the
-task modes**: the job runner always passes `--mode <task>`, the task the
-listed checkpoint's record names.
-
-**Mode C** (the default; command line only until K8 retires it): every patient
-in a cohort scored against every disease in the knowledge graph, with the model
-the deployed pipeline builds and raw cosine; the formal Test's measurement
-before the tasks (`docs/working/PLAN_TEST_RESULTS.md`, "This is Mode C").
+Measure a model on a cohort by an evaluation protocol.
+======================================================
+**`--mode` names the protocol, and is required** (`src/evaluation/protocols.py`):
+a measurement this build implements for a model's learning stage and task
+head, today disease, gene and patients_like_me, one for each task head. A
+protocol states the model record it takes and the evaluator that runs it
+(`src/evaluation/task_measurement.py`, `docs/working/PLAN_TEST_RESULTS.md` §8),
+and the report's `mode` is its name. A registered version's counts are judged
+against what the protocol needs right after its `cohort.json` is read, before
+the workspace or the checkpoint is; the checkpoint's model record is judged
+against the model the protocol takes right after the checkpoint is read. A
+refusal writes nothing. **The Test page runs these**: the job runner passes
+`--mode <protocol>`, the protocol the operator chose among those the listed
+model's record admits.
 
 **Mode D** (Batch 3's measurement of the served ranking) was removed in K7: it
-no longer runs, its kept reports and records stay readable on the Test and
-Models pages, and a new registration of one is refused.
+no longer runs, and its kept reports and records are read by the shared
+readers (policy rev 15). K7's refusal of a new registration of one still
+stands until K8-6c removes it.
 
 **A thin CLI.** Argument parsing, one read of each input, manifest assembly, one
-call into the task's run (`task_measurement.TASK_RUNS`) or
-`src.evaluation.measurement.run_mode_c`, and publishing what it returns. No
-measurement logic lives here, so the harness stays testable without a
-subprocess.
+call into the protocol's evaluator (`task_measurement.TASK_RUNS`), and
+publishing what it returns. No measurement logic lives here, so the harness
+stays testable without a subprocess.
 
 **Two kinds of cohort, named by the argument that names them** (contract M4,
 decision 8): exactly one of `--split` and `--cohort`.
@@ -30,7 +31,7 @@ decision 8): exactly one of `--split` and `--cohort`.
     # A registered test cohort version: the formal measurement. The report is
     # kept in the registry's report store; --record registers it in the ledger
     # beside the checkpoint.
-    python scripts/measure_scorer.py \
+    python scripts/measure_scorer.py --mode disease \
         --checkpoint <workspace>/runs/<arch>/<run>/checkpoints/best.pt \
         --data-dir <workspace> \
         --cohort mygene2-2026-10 --registry /srv/shepherd/registry \
@@ -39,7 +40,7 @@ decision 8): exactly one of `--split` and `--cohort`.
 
     # A generated split. --split val is the checkpoint-selection split, not
     # held-out data, and its report is not registrable (decision 9).
-    python scripts/measure_scorer.py \
+    python scripts/measure_scorer.py --mode disease \
         --checkpoint checkpoints/best.pt \
         --data-dir data/processed \
         --split val \
@@ -184,6 +185,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.evaluation import protocols
 from src.evaluation.caveats import COHORT_ARGUMENT_HELP, SPLIT_ARGUMENT_HELP
 from src.evaluation.cohort import GENERATED_SPLITS, CohortProvenance, resolve_cohort
 from src.evaluation.cohort_registry import RANKS_FILE, REPORT_FILE, cohort_version_block
@@ -199,21 +201,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-#: The measurement modes this program runs: Mode C and the task modes.
-MODES = ("C", "disease", "gene", "patients_like_me")
-#: The finetuned-bundle task measurements among them (README K3, K4).
-TASK_MODES = ("disease", "gene", "patients_like_me")
-#: Task modes whose cases carry genes; a generated split is then the
-#: workspace's functional fixture (`src.kg.task_fixture`).
-GENE_FIELD_MODES = ("gene", "patients_like_me")
-
-#: What Mode C ranks each patient against, as its manifest records it. There is
-#: no expansion to describe: the candidates are every disease in the graph.
-CANDIDATE_CONSTRUCTION = "every disease in the knowledge graph"
-
-#: How the scored model was built: through `build_shepherd_model`, the builder
-#: the deployed pipeline uses.
-MODEL_CONSTRUCTION = "production (build_shepherd_model)"
+#: The semantic fields a measurement's evaluator gives its manifest
+#: (`task_measurement.task_semantics`): every one of them, and never `mode`,
+#: which is the protocol asked (`--mode`), set by `build_manifest`.
+SEMANTIC_FIELDS: Tuple[str, ...] = (
+    "metric_schema_version", "candidate_construction", "batch_size", "score_semantics",
+    "canonical_tie_policy_version", "model_construction",
+)
 
 #: A run's two files in the report store, in the order they are published (the
 #: ranks, then the report that names them by digest: the run's commit point),
@@ -289,10 +283,10 @@ class MeasurementInputs(NamedTuple):
     (contract M2.1, S7; M2.4).
 
     Carried whole from `read_measurement_inputs` to `measurement_input_digests`
-    and the manifest, so the tensors and samples Mode C scores, the checkpoint
-    its model is built from and the digests its manifest records come from the
-    same reads and cannot be paired with another read of a file that changed in
-    between.
+    and the manifest, so the tensors and samples a measurement scores, the
+    checkpoint its model is built from and the digests its manifest records come
+    from the same reads and cannot be paired with another read of a file that
+    changed in between.
 
     Exactly one of `cohort` (a generated split) and `version` (a registered
     cohort version) is set. The other generated split, read for its binding and
@@ -326,8 +320,8 @@ class MeasurementInputs(NamedTuple):
     #: The R10 block (contract §5.4) for a registered version; `None` for a
     #: generated split, whose relation to training is the allocation's.
     r10: Optional[Dict[str, Any]]
-    #: A gene measurement over a generated split: the workspace's functional
-    #: fixture read against this manifest reading; `samples` is its split.
+    #: A protocol with gene fields over a generated split: the workspace's
+    #: functional fixture read against this manifest reading; `samples` is its split.
     task_data: Optional[Any] = None
 
 
@@ -342,20 +336,27 @@ def read_measurement_inputs(
     training_evidence: Sequence[Path] = (),
     expect_checkpoint_sha256: Optional[str] = None,
     expect_version_sha256: Optional[str] = None,
-    task: Optional[str] = None,
+    protocol: str,
 ) -> MeasurementInputs:
     """Read the manifest, the graph tensors, the cohort and the checkpoint once
     each, and verify from those reads (contract M2.1, S7; M4 §6).
 
-    `task` (a finetuned bundle's task measurement): the checkpoint's model
-    record is checked as a finetune of that task right after the checkpoint is
-    read, before anything task-specific (README §8 regression 7: the task
-    filter runs first). For a task in `GENE_FIELD_MODES`, a registered
-    version's samples are read with their gene fields, and a generated split,
-    once verified as always, is measured through the workspace's functional
-    fixture of that split, read after that check: its record against this
-    manifest reading and its file against the digest the record names
-    (`read_gene_fixture`).
+    **`protocol`** names the measurement asked for (`--mode`;
+    `src.evaluation.protocols`), and the inputs are judged by it, never by
+    taking its name for the model's task. A name that is not a protocol is
+    refused before anything is read. A registered version's counts are judged
+    against what the protocol needs (`protocols.inputs_refusal`) right after
+    its `cohort.json` is read, before the workspace and the checkpoint are.
+    The checkpoint's model record is judged against the stage and head the
+    protocol takes (`protocols.model_refusal`, raised as `ModelRecordError`)
+    right after the checkpoint is read and its graph roles compared, before
+    anything protocol-specific (README §8 regression 7: the model filter runs
+    first). For a protocol with `gene_fields`, a registered version's samples
+    are read with their gene fields, and a generated split, once verified as
+    always, is measured through the workspace's functional fixture of that
+    split, read after the model check: its record against this manifest reading
+    and its file against the digest the record names (`read_gene_fixture`).
+    Each of these refusals ends "Nothing was written."
 
     Exactly one of `split` (a generated split) and `cohort` (a registered
     version's label, with `registry`) is given; `training_evidence` applies to a
@@ -385,14 +386,15 @@ def read_measurement_inputs(
 
     **A registered version, in this order** (M4 §6): the evidence directories
     are checked (listed, nothing read); `resolve_version` reads `cohort.json`
-    once; the workspace manifest and tensors are read; the version's
-    `samples.json` is read once and refused **before it is parsed** unless its
-    digest is the one `cohort.json` binds; R1, the `kg.json` identification and
-    R5 as for a split; then the version's four graph digests and dataset record
-    must be this run's (`verify_cohort_binding`), so a version mapped against
-    another graph is refused before the checkpoint is read; then the checkpoint
-    and R3; then R10 over the evidence candidates, each read at most once and
-    compared before it is parsed. The workspace's `train_samples.json` and
+    once; its counts are judged against the protocol's needs; the workspace
+    manifest and tensors are read; the version's `samples.json` is read once
+    and refused **before it is parsed** unless its digest is the one
+    `cohort.json` binds; R1, the `kg.json` identification and R5 as for a
+    split; then the version's four graph digests and dataset record must be
+    this run's (`verify_cohort_binding`), so a version mapped against another
+    graph is refused before the checkpoint is read; then the checkpoint, R3 and
+    the model record; then R10 over the evidence candidates, each read at most
+    once and compared before it is parsed. The workspace's `train_samples.json` and
     `val_samples.json` are read only as R10 candidates.
 
     **The digests compared are those of the bytes parsed.** Each tensor's digest
@@ -414,7 +416,8 @@ def read_measurement_inputs(
     manifest reading binds and names the graph the tensors were verified as.
 
     The graph tensors load on CPU (`map_location="cpu"`, the shared reader's
-    default and what this run passed before); `encode_full_graph` moves them.
+    default and what this run passed before); the evaluator moves what it
+    scores to the run's device.
     The checkpoint keeps this site's options: `map_location` the run's device,
     `weights_only=True`. It is read at its resolved path, so the read's identity
     is the file measured and `--record` files the ledger beside it (M4 decision
@@ -434,6 +437,7 @@ def read_measurement_inputs(
         verify_graph_reads,
     )
     from src.kg.storage.file_storage import read_graph_artifacts
+    from src.models.bundle.record import ModelRecordError, read_model_record
     from src.utils.fingerprint import verify_training_record
 
     if (split is None) == (cohort is None):
@@ -442,6 +446,11 @@ def read_measurement_inputs(
                               or expect_version_sha256 is not None):
         raise ValueError("a registry, training evidence and an expected version digest apply "
                          "to a registered cohort only")
+    asked = protocols.PROTOCOLS.get(protocol) if isinstance(protocol, str) else None
+    if asked is None:
+        # `model_refusal` names a protocol it does not know before it looks at
+        # any record: the same sentence the runner and the Test page give.
+        raise ValueError(f"{protocols.model_refusal(protocol, None, None)} Nothing was written.")
 
     if split is not None:
         resolved, siblings = _resolve_generated(data_dir, split)
@@ -452,10 +461,15 @@ def read_measurement_inputs(
             data_dir, cohort, registry, training_evidence,
             expected_sha256=expect_version_sha256,
         )
+        # **What the protocol needs from the version**, judged on this one read
+        # of its `cohort.json`, before the workspace or the checkpoint is read.
+        why = protocols.inputs_refusal(protocol, version.manifest.get("counts"))
+        if why is not None:
+            raise ValueError(f"{why} Nothing was written.")
 
     manifest = read_split_manifest(data_dir)
     graph = read_graph_artifacts(data_dir, map_location="cpu")
-    gene_fields = task in GENE_FIELD_MODES
+    gene_fields = asked.gene_fields
     if version is None:
         samples, checked = _read_generated(data_dir, split, siblings)
     else:
@@ -490,11 +504,13 @@ def read_measurement_inputs(
         recorded_by=f"checkpoint {checkpoint}",
         compared_with=f"the workspace {data_dir}",
     )
-    if task is not None:
-        from src.models.bundle.record import check_model_record, read_model_record
-
-        check_model_record(read_model_record(read.checkpoint), learning_stage="finetune",
-                           task=task)
+    # **The model the protocol takes**: the record's stage and head against the
+    # protocol's requirement, never its name. A file without a model spec is
+    # refused by the record reader itself (history, never run by this build).
+    record = read_model_record(read.checkpoint)
+    why = protocols.model_refusal(protocol, record.learning_stage, record.task)
+    if why is not None:
+        raise ModelRecordError(f"{why} Nothing was written.")
     task_data = None
     if gene_fields and version is None:
         from src.kg.task_fixture import read_gene_fixture
@@ -892,8 +908,9 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
                    r10: Optional[Mapping[str, Any]] = None,
                    cuda_executed: Optional[bool] = None,
                    model: Any = None,
-                   semantics: Optional[Mapping[str, Any]] = None) -> Any:
-    """Build the manifest of one Mode C run, or of a task run (`semantics`).
+                   semantics: Mapping[str, Any]) -> Any:
+    """Build the manifest of one measurement: the protocol asked (`args.mode`)
+    measured by its evaluator, whose `semantics` give the semantic fields.
 
     `digests` is the record of what the run read, from
     `measurement_input_digests` (contract M2.1, S7); nothing here hashes a file.
@@ -901,11 +918,10 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
     `dataset_record` is the verified record's summary (`DatasetRecord.summary`,
     contract M3b): its binding state and its origin, recorded apart.
 
-    `regime` is the `AutocastRegime` `encode_full_graph` reported for the
-    embeddings Mode C scores: they are computed before this manifest is built,
-    so the regime observed here could be a different one. It is required, and
-    `run_mode_c` refuses a manifest whose regime is not the embeddings'
-    (`assert_manifest_describes_regime`).
+    `regime` is the `AutocastRegime` observed for the run's device
+    (`observe_autocast_regime`) before the evaluator runs. It is required, and
+    the evaluator refuses a manifest whose regime is not the one in effect when
+    it ranks (`task_measurement._check_regime`).
 
     `model` is optional and is used only to **observe** whether what ran was a
     `torch.compile` wrapper object. Omitting it records
@@ -926,14 +942,17 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
     Without one it is the generated split `args.split`, with no R10. The
     manifest refuses any other combination when it is built.
 
-    **A task run gives the same fields its own values** (`semantics`, from
-    `task_measurement.task_semantics`: mode, metric schema, candidate
-    construction, batch size, score semantics, tie policy, model construction)
-    and adds no field. Everything else, the regime, the digests, the relations,
-    R10 and the environment, is built here the same way for every mode.
+    **The mode is the protocol asked, set here once** (`args.mode`, the
+    `--mode` the run was started with), never by the evaluator. **The
+    evaluator gives every other semantic field** (`semantics`, from
+    `task_measurement.task_semantics`; `SEMANTIC_FIELDS`: the metric schema,
+    candidate construction, batch size, score semantics, tie policy and model
+    construction), and there is no default for any of them: a `semantics` that
+    sets `mode`, lacks one of them or names another field is refused. Everything
+    else, the regime, the digests, the relations, R10 and the environment, is
+    built here the same way for every protocol.
     """
     from src.evaluation.measurement import (
-        METRIC_SCHEMA_VERSION,
         MeasurementManifest,
         expected_relations,
         observe_torch_compile_wrapper,
@@ -941,33 +960,28 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
     from src.utils.fingerprint import compute_fingerprint
     from src.utils.run_environment import code_revision, collect_environment
 
+    if "mode" in semantics:
+        raise ValueError("an evaluator's semantics do not set the manifest's mode: the mode is "
+                         "the protocol asked (--mode)")
+    missing = [name for name in SEMANTIC_FIELDS if name not in semantics]
+    if missing:
+        raise ValueError(f"the evaluator's semantics lack {missing}")
+    unknown = sorted(set(semantics) - set(SEMANTIC_FIELDS))
+    if unknown:
+        raise ValueError(f"semantic values for fields an evaluator does not set: {unknown}")
     registered = cohort_version is not None
     code = code_revision(PROJECT_ROOT)
-    kind = {
-        "mode": "C",
-        "metric_schema_version": METRIC_SCHEMA_VERSION,
-        "candidate_construction": CANDIDATE_CONSTRUCTION,
-        "batch_size": args.batch_size,
-        "score_semantics": "raw cosine, no eta mixture and no shortest-path term",
-        "canonical_tie_policy_version": "score-desc-then-global-id-asc/v1",
-        "model_construction": MODEL_CONSTRUCTION,
-    }
-    if semantics is not None:
-        unknown = sorted(set(semantics) - set(kind))
-        if unknown:
-            raise ValueError(f"semantic values for fields a mode does not set: {unknown}")
-        kind.update(semantics)
     return MeasurementManifest(
-        mode=kind["mode"],
+        mode=args.mode,
         split=cohort_version["role"] if registered else args.split,
-        metric_schema_version=kind["metric_schema_version"],
+        metric_schema_version=semantics["metric_schema_version"],
         cohort_kind="supplied" if registered else "generated",
         n_samples=n_samples,
-        candidate_construction=kind["candidate_construction"],
-        batch_size=kind["batch_size"],
-        score_semantics=kind["score_semantics"],
-        model_construction=kind["model_construction"],
-        canonical_tie_policy_version=kind["canonical_tie_policy_version"],
+        candidate_construction=semantics["candidate_construction"],
+        batch_size=semantics["batch_size"],
+        score_semantics=semantics["score_semantics"],
+        model_construction=semantics["model_construction"],
+        canonical_tie_policy_version=semantics["canonical_tie_policy_version"],
         checkpoint_path=str(args.checkpoint),
         data_dir=str(args.data_dir),
         graph_fingerprint=compute_fingerprint(graph_data),
@@ -981,8 +995,8 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
         cuda_version=torch.version.cuda,
         device=str(device),
         dtype=str(torch.get_default_dtype()),
-        # Observed, not asserted. `run_mode_c` opens no autocast context, but a
-        # caller can, and a literal `False` then described a run that did not
+        # Observed, not asserted. The evaluator opens no autocast context, but
+        # a caller can, and a literal `False` then described a run that did not
         # happen.
         amp_enabled=regime.enabled,
         amp_dtype=regime.dtype,
@@ -999,15 +1013,18 @@ def build_manifest(args: argparse.Namespace, graph_data: Dict[str, Any],
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Measure a model on a cohort: a finetuned model by its own task (what the "
-                    "Test page runs), or Mode C (command line only until K8)"
+        description="Measure a model on a cohort by an evaluation protocol this build "
+                    "implements for the model's learning stage and task head (what the Test "
+                    "page runs)"
     )
-    parser.add_argument("--mode", choices=MODES, default="C",
-                        help="disease, gene, patients_like_me: a finetuned model bundle "
-                             "measured by its own task, average ranks "
-                             "(docs/working/PLAN_TEST_RESULTS.md §8); the Test page runs these. "
-                             "C is command-line only until K8. C (default): the approved "
-                             "scorer, raw cosine over every disease.")
+    # The protocol names are read now, from the one definition, not copied at import.
+    parser.add_argument("--mode", choices=protocols.names(), required=True,
+                        help="The evaluation protocol: a measurement this build implements "
+                             "for a model's learning stage and task head "
+                             "(src/evaluation/protocols.py), average ranks "
+                             "(docs/working/PLAN_TEST_RESULTS.md §8). The checkpoint's model "
+                             "record must be one the protocol takes; the report's mode is the "
+                             "protocol's name")
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--data-dir", type=Path, required=True)
     cohort = parser.add_mutually_exclusive_group(required=True)
@@ -1648,10 +1665,7 @@ def _run(args: argparse.Namespace, *, registry: Optional[Path]) -> int:
         )
 
     try:
-        if args.mode in TASK_MODES:
-            inputs, result = _measure_task(args, registry, device, cuda_executed)
-        else:
-            inputs, result = _measure_mode_c(args, registry, device, cuda_executed)
+        inputs, result = _measure_task(args, registry, device, cuda_executed)
     except RuntimeError as exc:
         # **No fallback** (D5): an operation without a deterministic
         # implementation ends the run, before anything is written, saying so.
@@ -1771,54 +1785,21 @@ def _run(args: argparse.Namespace, *, registry: Optional[Path]) -> int:
         raise _failure_after_publishing(exc, inputs, report_path) from exc
 
 
-def _measure_mode_c(args: argparse.Namespace, registry: Optional[Path], device: torch.device,
-                    cuda_executed: bool) -> Tuple[MeasurementInputs, Any]:
-    """Mode C's inputs and result: each input read once, and verified and
-    recorded from those reads, before any model is built or any output written
-    (contract M2.1, S7; M4 §6); then the model, the full-graph forward and
-    `run_mode_c`."""
-    from src.evaluation.measurement import encode_full_graph, run_mode_c
-    from src.models.gnn.shepherd_gnn import build_shepherd_model
-
-    inputs = read_measurement_inputs(
-        args.checkpoint, args.data_dir, device, split=args.split, cohort=args.cohort,
-        registry=registry, training_evidence=args.training_evidence,
-        expect_checkpoint_sha256=args.expect_checkpoint_sha256,
-        expect_version_sha256=args.expect_version_sha256,
-    )
-    graph_data, samples = inputs.graph.graph_data, inputs.samples.samples
-    digests = measurement_input_digests(inputs)
-
-    model = build_shepherd_model(inputs.checkpoint.checkpoint, graph_data, device)
-    # Kept **whole**: `run_mode_c` checks that its manifest describes the regime
-    # these embeddings were computed under, which a bare dict could not carry.
-    encoded = encode_full_graph(model, graph_data, device)
-
-    result = run_mode_c(
-        full_graph_embeddings=encoded,
-        samples=samples,
-        manifest=build_manifest(
-            args, graph_data, len(samples), device, digests=digests,
-            dataset_record=inputs.dataset_record.summary(),
-            cohort_version=inputs.cohort_version, r10=inputs.r10,
-            cuda_executed=cuda_executed, model=model, regime=encoded.regime,
-        ),
-        device=device,
-        batch_size=args.batch_size,
-    )
-    return inputs, result
-
-
 def _measure_task(args: argparse.Namespace, registry: Optional[Path], device: torch.device,
                   cuda_executed: bool) -> Tuple[MeasurementInputs, Any]:
-    """A finetuned bundle's task measurement (`src.evaluation.task_measurement`).
+    """The protocol asked (`--mode`) measured by its evaluator
+    (`src.evaluation.protocols`, `src.evaluation.task_measurement`).
 
-    The same reads and refusals as Mode C, before anything is built or
-    written, the model record's stage and task checked right after the
-    checkpoint read (provenance §9.3 hazard 3; `read_measurement_inputs(task=)`);
-    then the graph view rebuilt from the graph read by the spec's rule and
-    compared with the record, and the bundle built and strictly loaded. A checkpoint without a model spec is refused: it was
-    written before the switch and is history.
+    Every input read once and verified before anything is built or written,
+    the model record judged against the stage and head the protocol takes
+    right after the checkpoint read (provenance §9.3 hazard 3;
+    `read_measurement_inputs(protocol=)`); then the graph view rebuilt from the
+    graph read by the spec's rule and compared with the record, and the bundle
+    built and strictly loaded with the protocol's stage and task, never its
+    name. The semantics and the run are the protocol's evaluator's, and the
+    manifest's mode is the protocol's name (`build_manifest`). A checkpoint
+    without a model spec is refused: it was written before the switch and is
+    history.
     """
     from dataclasses import asdict as _asdict
 
@@ -1832,25 +1813,28 @@ def _measure_task(args: argparse.Namespace, registry: Optional[Path], device: to
         registry=registry, training_evidence=args.training_evidence,
         expect_checkpoint_sha256=args.expect_checkpoint_sha256,
         expect_version_sha256=args.expect_version_sha256,
-        task=args.mode,
+        protocol=args.mode,
     )
+    asked = protocols.PROTOCOLS[args.mode]
     graph_data, samples = inputs.graph.graph_data, inputs.samples.samples
     record = read_model_record(inputs.checkpoint.checkpoint)
     rule = _asdict(record.model_spec.graph_view)
     rule["exclude_relations"] = list(rule["exclude_relations"])
     view = build_graph_view(graph_data, rule=rule)
-    bundle, record = load_bundle(inputs.checkpoint.checkpoint, learning_stage="finetune",
-                                 task=args.mode, view_digest=view.digest)
+    bundle, record = load_bundle(inputs.checkpoint.checkpoint,
+                                 learning_stage=asked.learning_stage, task=asked.task,
+                                 view_digest=view.digest)
     bundle.to(device)
     manifest = build_manifest(
         args, graph_data, len(samples), device, digests=measurement_input_digests(inputs),
         dataset_record=inputs.dataset_record.summary(), cohort_version=inputs.cohort_version,
         r10=inputs.r10, cuda_executed=cuda_executed, model=bundle,
         regime=observe_autocast_regime(device),
-        semantics=task_semantics(args.mode, args.batch_size, bundle),
+        semantics=task_semantics(asked.evaluator, args.batch_size, bundle),
     )
-    result = TASK_RUNS[args.mode](bundle=bundle, view=view, samples=samples, manifest=manifest,
-                                  device=device, batch_size=args.batch_size)
+    result = TASK_RUNS[asked.evaluator](bundle=bundle, view=view, samples=samples,
+                                        manifest=manifest, device=device,
+                                        batch_size=args.batch_size)
     if inputs.task_data is not None:
         # The split's samples are the fixture's, bound by its record (not by the
         # workspace manifest, which binds the disease split R2 checked): say
@@ -1865,16 +1849,16 @@ def _measure_task(args: argparse.Namespace, registry: Optional[Path], device: to
 
 
 def _print_result(result: Any) -> None:
-    """The run's figures on the console, by its mode, each under its label."""
+    """The run's figures on the console, under its mode's label, and its
+    candidates as its manifest describes them (`candidate_construction`)."""
     from src.evaluation.caveats import mode_label
 
     print(f"\n{mode_label(result.manifest.mode, result.manifest.score_semantics)}")
     print(f"  {result.n_ranked} ranked, {result.n_ground_truth_absent} absent")
     for name, value in result.authoritative_metrics.items():
         print(f"  {name:38s} {value:.6f}")
-    label = ("candidate diseases per patient" if result.manifest.mode in ("C", "disease")
-             else "candidates per case (most)")
-    print(f"  {label:38s} {result.sampler_evidence['candidate_columns']['max']}")
+    most = result.sampler_evidence["candidate_columns"]["max"]
+    print(f"  candidates, {result.manifest.candidate_construction}: at most {most} per case")
 
 
 def _flush_stdout() -> None:

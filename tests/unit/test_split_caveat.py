@@ -151,16 +151,21 @@ def test_the_caveat_no_longer_hedges_about_which_regime_it_describes(script):
 
 
 @pytest.mark.parametrize("script", ENTRY_POINTS)
-def test_the_cohort_kind_is_decided_by_the_argument_not_stated(script):
+def test_the_cohort_kind_is_decided_by_the_argument_not_stated(script, capsys):
     """`--cohort-kind` stated what the argument now decides: `--split` is always
     generated and `--cohort` always a registered (supplied) version, so the kind
-    cannot be stated wrongly. The flag is refused, and its help text is gone."""
+    cannot be stated wrongly. The flag is refused, and its help text is gone.
+    The command line is otherwise complete (`--mode` included), so the refusal
+    is the flag's."""
     import src.evaluation.caveats as caveats
 
     module = importlib.import_module(f"scripts.{script}")
-    with pytest.raises(SystemExit):
-        module.parse_args(["--checkpoint", "c.pt", "--data-dir", "d", "--split", "val",
-                           "--output", "o.json", "--cohort-kind", "generated"])
+    with pytest.raises(SystemExit) as refused:
+        module.parse_args(["--mode", "disease", "--checkpoint", "c.pt", "--data-dir", "d",
+                           "--split", "val", "--output", "o.json",
+                           "--cohort-kind", "generated"])
+    assert refused.value.code == 2
+    assert "unrecognized arguments: --cohort-kind generated" in capsys.readouterr().err
     assert not hasattr(caveats, "COHORT_KIND_HELP")
 
 

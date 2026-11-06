@@ -1147,7 +1147,8 @@ class _RunInputs:
         self.reports = reports
         self.inputs = TestRunInputs(
             registry=reports, version_label="v1", version_sha256="a" * 64, workspace=reports,
-            checkpoint=reports / "model.pt", checkpoint_sha256="c" * 64, task="disease")
+            checkpoint=reports / "model.pt", checkpoint_sha256="c" * 64, protocol="disease",
+            learning_stage="finetune", task="disease", version_counts={"source_cases": 1})
 
     def reports_dir(self):
         return self.reports
@@ -1447,8 +1448,9 @@ def _rw3(probe, tmp_path, monkeypatch, sizes):
         "configured": False, "held": False, "unreadable": False})
     real = tmp_path / "workspaces" / "real"
     real.mkdir(parents=True)
-    version = SimpleNamespace(identity=SimpleNamespace(sha256="e" * 64))
-    child = {"path": tmp_path / "c.pt", "sha256": "c" * 64, "training_seconds": {}}
+    version = SimpleNamespace(identity=SimpleNamespace(sha256="e" * 64), manifest={"counts": {}})
+    child = {"path": tmp_path / "c.pt", "sha256": "c" * 64, "training_seconds": {},
+             "learning_stage": "finetune", "task": "disease"}
     report = probe.Report()
     probe._m5_real(report, tmp_path / "work", real, tmp_path / "workspaces", "cpu",
                    {"read": {"split_manifest.json": "f" * 64}, "task_child": child,

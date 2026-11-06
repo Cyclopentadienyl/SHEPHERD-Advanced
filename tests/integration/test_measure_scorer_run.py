@@ -22,11 +22,6 @@ while the artifact a reviewer actually receives is missing it.
 > artifacts on a synthetic graph in this container, on CPU, with a checkpoint
 > trained for one epoch.
 
-One test's subject is Mode C itself (its metric family): it measures Mode C's
-command the same way on the untrained fixture checkpoint
-(`build_registered_cohort`, `measured_mode_c`), and goes at K8-6a (EV2): that
-command has no `--mode`, so it exits 2 once `--mode` is required.
-
 Module: tests/integration/test_measure_scorer_run.py
 """
 import hashlib
@@ -45,7 +40,6 @@ from tests.fixtures.registered_cohort import (  # noqa: E402
     GRAPH_SOURCE_BINDING,
     GRAPH_SOURCE_COUNTS,
     GRAPH_SOURCE_UNRANKED,
-    build_registered_cohort,
     registered_cohort_from_child,
 )
 
@@ -119,14 +113,6 @@ def measured(trained_disease_child, tmp_path_factory):
     root = tmp_path_factory.mktemp("measure_cli") / "root"
     return _measure_once(registered_cohort_from_child(trained_disease_child, root),
                          "--mode", "disease")
-
-
-@pytest.fixture(scope="module")
-def measured_mode_c(tmp_path_factory):
-    """Mode C's command (no `--mode`), run once on a registered version of the
-    untrained fixture checkpoint, for the test whose subject is Mode C's metric
-    family; both go at K8-6a (EV2), when `--mode` becomes required."""
-    return _measure_once(build_registered_cohort(tmp_path_factory.mktemp("mode_c_cli") / "root"))
 
 
 # ---------------------------------------------------------------------------
@@ -207,22 +193,6 @@ def test_the_report_carries_only_its_summary_fields(measured):
         "manifest", "authoritative_metrics", "n_ranked", "n_ground_truth_absent",
         "sampler_evidence", "ranks",
     }
-
-
-def test_the_report_carries_only_the_untruncated_metric_family(measured_mode_c):
-    """Mode C reports the untruncated metrics and nothing truncated. The report
-    carries exactly its summary fields and the ranks' name and digest, so a
-    second metric family, or the per-sample rows, cannot ride along in it.
-    Mode C's own metrics: this goes at K8-6a (EV2), with `measured_mode_c`."""
-    measurement = measured_mode_c["measurement"]
-
-    assert set(measurement) == {
-        "manifest", "authoritative_metrics", "n_ranked", "n_ground_truth_absent",
-        "sampler_evidence", "ranks",
-    }
-    assert "untruncated_mrr" in measurement["authoritative_metrics"]
-    assert "mrr" not in measurement["authoritative_metrics"]
-    assert measurement["authoritative_metrics"]["mean_rank"] is not None
 
 
 def test_the_manifest_records_the_chunk_size_the_run_used(measured):

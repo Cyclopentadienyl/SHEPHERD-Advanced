@@ -6,7 +6,7 @@ production entry points in process -- `scripts/import_cohort.py`,
 `scripts/measure_scorer.py`, `scripts/record_evaluation.py`, each through its
 `main` -- on the demo workspace (real HPO and MONDO ids), the session's trained
 disease child over it (`trained_disease_child` in tests/conftest.py, both
-copied), measured by its task (`--mode disease`), and a registry in a tmp
+copied), measured by the disease protocol (`--mode disease`), and a registry in a tmp
 directory outside the repository, and asserts what they leave on disk: the
 registry, the report store, and the ledger's bytes and records.
 
@@ -682,7 +682,7 @@ def test_a_report_registered_through_a_link_is_shown_for_the_model_served_throug
     directory or the link itself files the ledger beside the file the link
     names -- where the service looks -- so the model status shows the record;
     no second ledger is made beside the link. The run's checkpoint is the
-    trained disease child, measured by its task on the cohort's workspace (a
+    trained disease child, measured by the disease protocol on the cohort's workspace (a
     copy of the demo workspace it was trained on)."""
     child = tmp_path / "run" / "checkpoints" / "best.pt"
     child.parent.mkdir(parents=True)

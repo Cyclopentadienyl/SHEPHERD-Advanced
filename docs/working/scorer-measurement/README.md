@@ -8,7 +8,7 @@ the served behaviour beside it.
 
 | Mode | Encoder | Candidates | Scorer | Status |
 |---|---|---|---|---|
-| **C** | full graph | every disease in the KG | raw cosine | implemented: `scripts/measure_scorer.py`, `run_mode_c`. The formal Test's measurement (`../PLAN_TEST_RESULTS.md` D3) until K6; since K6 the Test page measures a model by its task, and Mode C is a command-line run on a checkpoint without a model spec until K8 (`../scorer-retraining/README.md` §7) |
+| **C** | full graph | every disease in the KG | raw cosine | implemented: `scripts/measure_scorer.py`, `run_mode_c`. The formal Test's measurement (`../PLAN_TEST_RESULTS.md` D3) until K6; then a command-line run on a checkpoint without a model spec until K8-6a, which made `--mode` required and left no command for Mode C (`../scorer-retraining/README.md` §7); its executor retires in K8-6b, and kept Mode C reports and records are read by the shared readers (policy rev 15) |
 | **D** | full graph | production's path-reachable construction | the served score: η mixture with the SP term, or the model term alone | B-0.5, **removed in K7 (2026-10-29)**: `src/evaluation/mode_d.py` is deleted and `--mode D` refused; kept reports and records stay readable, and none is registered again. Was implemented (Batch 3, 2026-10-26; reviewed, its short GB10 run passed 2026-10-27): `scripts/measure_scorer.py --mode D`, `src/evaluation/mode_d.py` ([`PLAN_B05.md`](PLAN_B05.md), §11 as built); it resolves `PLAN_B03.md` §4's problem. Not the approved policy: it measured what the Diagnosis page served in October 2026 |
 
 **Deleted at K7 (2026-10-29):** `scripts/benchmark_sp_lookup.py` and its integration test (it only
@@ -69,15 +69,16 @@ was built from, kept as the reasoning behind it. History, not authority.
 ## Running a measurement
 
 ```
-python scripts/measure_scorer.py --checkpoint <ckpt> --data-dir <data> \
+python scripts/measure_scorer.py --mode disease --checkpoint <ckpt> --data-dir <data> \
     --split val --output reports/measurement.json
 ```
 
-Without `--mode` the CLI measures Mode C, the run for a checkpoint without a model
-spec (a history file), until K8. `--mode <task>` (`disease`, `gene` or
-`patients_like_me`) measures a task model by its own task; the Test page always
-passes it. `--mode D`, the served ranking, was removed in K7 (2026-10-29): the CLI
-refuses it, and its kept reports and records stay readable. In every mode it reads
+`--mode` is required and names a protocol this build implements for the model's
+learning stage and task head (`src/evaluation/protocols.py`; today `disease`, `gene`
+and `patients_like_me`); the Test page passes the one the operator picks. Since
+K8-6a no command runs Mode C: a run without `--mode`, or with `--mode C` or
+`--mode D`, is refused by the argument parser (exit 2). Kept Mode C and Mode D
+reports and records are read by the shared readers (policy rev 15). Every run reads
 each input once, verifies the workspace from those reads and records them (contract M2.1, S7),
 then writes two files: the report at `--output` (manifest, authoritative metrics,
 counts) and the per-sample ground-truth ranks beside it, `<output stem>_ranks.json`.
@@ -88,9 +89,9 @@ checkpoint selection, and ordinary generated workspaces contain no test
 split at all — `src/kg/sample_generator.py` writes train and val only.
 
 **A run on a synthetic workspace is not a result.** The shared fixture is
-degenerate on purpose (`tests/fixtures/synthetic_workspace.py`), so the tests take
-Mode C's expected ranks from hand-built geometry
-(`tests/unit/test_measurement_mode_c.py`), and the subprocess test
+degenerate on purpose (`tests/fixtures/synthetic_workspace.py`), so the tests check
+what a run records and writes, not its numbers (Mode C's tests on hand-built geometry
+left with its command in K8-6a), and the subprocess test
 (`tests/integration/test_measure_scorer_run.py`) shows only that the command runs
 and writes complete artifacts.
 

@@ -134,7 +134,8 @@ def test_inputs(tmp_path):
     return tm.TestRunInputs(
         registry=registry, version_label="mygene2-2026-10", version_sha256="e" * 64,
         workspace=workspace, checkpoint=workspace / "runs" / "gatv2" / "r" / "checkpoints" / "b.pt",
-        checkpoint_sha256="c" * 64, task="disease")
+        checkpoint_sha256="c" * 64, protocol="disease", learning_stage="finetune", task="disease",
+        version_counts={"source_cases": 3, "ranked_eligible": 3})
 
 
 def test_once_the_backend_stops_no_job_starts_by_any_route(monkeypatch, tmp_path, test_inputs):

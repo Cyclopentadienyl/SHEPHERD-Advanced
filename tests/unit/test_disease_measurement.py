@@ -49,9 +49,22 @@ def trained(tmp_path_factory):
             "base": trained["base"], "child": trained["disease"]}
 
 
-def test_generated_split_report(trained, tmp_path):
+def test_generated_split_report(trained, tmp_path, monkeypatch):
     import measure_scorer
 
+    from src.evaluation.measurement import expected_relations
+    from src.utils import run_environment
+
+    # The environment comes from the one collector, for this run's device and this
+    # repository; the code record is pinned so the revision check holds without .git.
+    revision = {"state": "recorded", "revision": "0" * 39 + "1", "dirty": False,
+                "modified_tracked": 0, "untracked": 0}
+    facts = run_environment.collect_environment("cpu")
+    roots, devices = [], []
+    monkeypatch.setattr(run_environment, "code_revision",
+                        lambda root: roots.append(root) or dict(revision))
+    monkeypatch.setattr(run_environment, "collect_environment",
+                        lambda device: devices.append(device) or facts)
     out = tmp_path / "report.json"
     code = measure_scorer.main(["--mode", "disease", "--checkpoint", str(trained["child"]),
                                 "--data-dir", str(trained["data_dir"]), "--split", "val",
@@ -62,6 +75,15 @@ def test_generated_split_report(trained, tmp_path):
     assert manifest["mode"] == "disease" and manifest["metric_schema_version"] == 2
     assert manifest["canonical_tie_policy_version"] == "average-rank/v1"
     assert manifest["model_construction"].startswith("model bundle")
+    assert (roots, devices) == ([measure_scorer.PROJECT_ROOT], ["cpu"])
+    assert manifest["environment"] == {"facts": facts, "code": revision}
+    assert manifest["software_revision"] == manifest["environment"]["code"]["revision"]
+    # Observed: no autocast is open, and the bundle that ran is no compile wrapper
+    # (None would mean not observed).
+    assert (manifest["amp_enabled"], manifest["amp_dtype"]) == (False, None)
+    assert manifest["torch_compile_wrapped"] is False
+    assert manifest["torch_version"] == str(torch.__version__) and manifest["graph_fingerprint"]
+    assert manifest["relations"] == expected_relations(registered=False)
     metrics = report["authoritative_metrics"]
     assert 0 < metrics["pooled_mrr"] <= 1 and "macro_recall@10" in metrics
     assert metrics["coverage"] <= 1
@@ -74,6 +96,13 @@ def test_generated_split_report(trained, tmp_path):
     cohort = [s.patient_id for s in read_samples(trained["data_dir"], "val").samples]
     ranked = check_ranks_rows(ranks, cohort)
     assert len(ranked) == report["n_ranked"]
+    # Observed, not a literal: run under autocast, the report says so.
+    with torch.autocast("cpu", dtype=torch.bfloat16):
+        assert measure_scorer.main(["--mode", "disease", "--checkpoint", str(trained["child"]),
+                                    "--data-dir", str(trained["data_dir"]), "--split", "val",
+                                    "--output", str(tmp_path / "bf16.json"), "--device", "cpu"]) == 0
+    bf16 = json.loads((tmp_path / "bf16.json").read_text())["manifest"]
+    assert (bf16["amp_enabled"], bf16["amp_dtype"]) == (True, "torch.bfloat16")
 
 
 def test_registered_cohort_is_recorded_under_task_semantics(trained, monkeypatch):
@@ -94,10 +123,14 @@ def test_registered_cohort_is_recorded_under_task_semantics(trained, monkeypatch
 
 
 def test_a_base_is_refused_before_anything_is_written(trained, tmp_path):
+    import re
+
     import measure_scorer
 
+    from src.evaluation import protocols
+
     out = tmp_path / "base.json"
-    with pytest.raises(ValueError, match="not a finetune"):
+    with pytest.raises(ValueError, match=re.escape(protocols.BASE_MESSAGE)):
         measure_scorer.main(["--mode", "disease", "--checkpoint", str(trained["base"]),
                              "--data-dir", str(trained["data_dir"]), "--split", "val",
                              "--output", str(out), "--device", "cpu"])

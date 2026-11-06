@@ -1159,8 +1159,9 @@ acceptance — and its result is recorded beside the checkpoint. The flow is:
 
 1. `scripts/import_cohort.py` previews, then commits, a cohort version mapped to one workspace's
    graph;
-2. `scripts/measure_scorer.py --cohort LABEL --registry DIR` measures the checkpoint on it (Mode
-   C) and keeps the full report;
+2. `scripts/measure_scorer.py --mode PROTOCOL --cohort LABEL --registry DIR` measures the
+   checkpoint on it by a protocol this build implements for the model's learning stage and task
+   head, and keeps the full report;
 3. `--record`, or later `scripts/record_evaluation.py --report`, registers the report in
    `evaluations.json` beside the checkpoint;
 4. the Diagnosis page's "Model in use" card shows the loaded checkpoint's recorded tests as a
@@ -1298,11 +1299,21 @@ python scripts/measure_scorer.py --mode disease \
     [--training-evidence DIR ...] [--record] [--device auto|cuda|cpu] [--batch-size 32]
 ```
 
-`--mode` is the model's task (`disease`, `gene` or `patients_like_me`), checked against the
-model record right after the checkpoint is read; the Test page always passes it (since K6).
-Without `--mode` the run is **Mode C**, the model's own disease ranking from before the tasks,
-which measures only a checkpoint without a model spec (a ShepherdGNN history file); it stays a
-command-line run until K8.
+`--mode` is required and names the **protocol**: a measurement this build implements for a
+model's learning stage and task head (`src/evaluation/protocols.py`), today `disease`, `gene` and
+`patients_like_me`, one for each task head of a finetuned model. The report's mode is the
+protocol's name. The run judges the protocol on the bytes it reads, and a refusal says why and
+ends "Nothing was written.": a registered version must list the genes the protocol needs (`gene`
+causal and candidate genes, `patients_like_me` causal genes), checked right after its
+`cohort.json` is read, before the workspace or the checkpoint; the checkpoint's model record must
+be of the stage and task head the protocol takes, checked right after the checkpoint is read. A
+base is refused with "This model is a base: its formal test (link prediction on held-out
+knowledge-graph edges) is not implemented yet. A model finetuned from it can be measured.", and a
+checkpoint without a model spec (a ShepherdGNN history file) as history. The Test page passes the
+protocol the operator chose (§4.14). Since K8-6a no command runs Mode C, the model's own disease
+ranking from before the tasks: a run without `--mode` is refused by the argument parser (exit 2),
+and so is `--mode C`, which is not a protocol. Kept Mode C reports and records are read by the
+shared readers (policy rev 15).
 
 Run it in a shell where the GPU lock is configured, the same lock as the service's (§4.11);
 without one it refuses, exit 1, with nothing written.
@@ -1356,7 +1367,7 @@ hex>/`, a new directory for every run: `ranks.json` (per case, patient-level) an
 `report.json`, which names the ranks file by its digest. Reports are never overwritten, and every
 report is kept whether or not it is registered. `--output` is refused with `--cohort`.
 
-The console prints the run's metrics (the task's, or Mode C's), the coverage (`N ranked of M source cases; K excluded`, with
+The console prints the run's metrics (its protocol's), the coverage (`N ranked of M source cases; K excluded`, with
 each category), the four R10 labels in the shared words of `src/evaluation/caveats.py` (an
 `unverifiable` label with its reason), the label definitions once, the report's path and the run
 id. The report itself keeps the states and holds no prose.
@@ -1608,7 +1619,7 @@ register again.
 per line, appended and never rewritten. It records:
 
 - every measurement of the version (`test_run`: when, run id, checkpoint and report digests,
-  Mode C's metrics, `n_ranked`, whether it was deterministic, the device, whether `--record`
+  the run's mode and metrics, `n_ranked`, whether it was deterministic, the device, whether `--record`
   was asked);
 - every registration that wrote a ledger (`registered`: outcome and sequence);
 - every model loaded from a list ordered by the version's score (`model_load`: the metric and
@@ -1633,7 +1644,8 @@ by hand too, in a shell where the GPU lock is configured (§4.11). `--expect-ver
 with `--split`); the other two apply to both:
 
 ```bash
-python scripts/measure_scorer.py --checkpoint <file>.pt --data-dir data/workspaces/<ws> \
+python scripts/measure_scorer.py --mode <protocol> \
+    --checkpoint <file>.pt --data-dir data/workspaces/<ws> \
     --cohort <label> --registry /srv/shepherd/cohorts [--record] \
     [--deterministic] [--expect-checkpoint-sha256 HEX] [--expect-version-sha256 HEX] \
     [--outcome FILE]
@@ -2724,11 +2736,16 @@ and register it. Three panels:
 - **Run.** The model: the workspace's checkpoints from the server's list, by run, epoch, file
   and model fingerprint. Listing them opens every checkpoint, so it is an operator control: a
   read-only browser is not shown it, and the page lists them once per workspace (↻ reads the
-  list again). Then the R10 evidence the run will look in (the measured workspace, and
-  `SHEPHERD_TRAINING_EVIDENCE_DIRS`), **Register the result**, **Deterministic execution**, and
-  the batch size, device and mode the server fixes (the measurement's default;
-  `SHEPHERD_DEVICE`; the model's own task, `--mode <task>`, since K6: the page never runs Mode C,
-  which stays a command-line run on a history file until K8, and Mode D was removed in K7).
+  list again). Then **Measurement** (since K8-6a), the protocol the run passes as
+  `--mode <protocol>` (§4.9): the options are the protocols this build implements whose learning
+  stage and task head the chosen model's record meets, today one for each task head of a
+  finetuned model (Disease, Gene or Patients-like-me). A single option is chosen already; of
+  several, none is until you choose one; with none (a base, whose formal test is not implemented
+  yet), Start says why. Like the model, it is an operator control. Mode C and Mode D are not
+  protocols, so no page or command runs them. Then the R10 evidence the run will look in (the
+  measured workspace, and `SHEPHERD_TRAINING_EVIDENCE_DIRS`), **Register the result**,
+  **Deterministic execution**, and the batch size and device the server fixes (the measurement's
+  default; `SHEPHERD_DEVICE`).
   **🔒 Start test** starts the real `measure_scorer.py` through the job runner (§4.11), with the
   workspace, version and checkpoint the server finds again in its lists, and **the full model
   fingerprint and version digest the page showed as the expected ones**: the run refuses before

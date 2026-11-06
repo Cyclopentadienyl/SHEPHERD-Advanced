@@ -535,7 +535,7 @@ def test_a_cuda_load_on_a_host_without_cuda_is_not_called_unparseable(cli, works
 
     with pytest.raises(RuntimeError, match="CUDA") as raised:
         cli.read_measurement_inputs(checkpoint, data_dir, torch.device("cuda"), split="val",
-                                    task="disease")
+                                    protocol="disease")
     assert not isinstance(raised.value, ValueError)
 
 
@@ -548,6 +548,53 @@ def test_the_checkpoint_read_names_no_other_read(cli):
     assert not names & {"read_once", "file_sha256", "hashlib", "open", "read_bytes",
                         "read_text"}
     assert "torch.load" not in ast.unparse(body)
+
+
+# ---------------------------------------------------------------------------
+# The manifest's mode is the protocol asked, never an evaluator's or a default
+# ---------------------------------------------------------------------------
+def test_build_manifest_takes_the_mode_from_the_protocol(cli):
+    """K8-6a (R1): `manifest.mode` is the `--mode` the run was started with,
+    set once by `build_manifest`; the evaluator gives every other semantic field
+    (`SEMANTIC_FIELDS`), with no default for any of them. Without `semantics`
+    the call is refused, and so is a semantics that sets `mode`, lacks one of
+    those fields or names another one. `build_manifest` records the name asked;
+    judging it is the CLI's choices' and `read_measurement_inputs`' work."""
+    from src.evaluation.measurement import AutocastRegime
+    from src.evaluation.task_measurement import disease_semantics
+
+    device = torch.device("cpu")
+    graph = {"num_nodes_dict": {"disease": 1}}
+    common = {"digests": {"checkpoint": "a" * 64}, "dataset_record": {"origin": "synthetic"},
+              "regime": AutocastRegime(enabled=False, dtype=None)}
+    semantics = disease_semantics(4)
+    assert "mode" not in semantics and set(semantics) == set(cli.SEMANTIC_FIELDS)
+
+    def args(mode):
+        return argparse.Namespace(mode=mode, split="val", batch_size=4,
+                                  checkpoint=Path("c.pt"), data_dir=Path("d"))
+
+    with pytest.raises(TypeError, match="semantics"):
+        cli.build_manifest(args("disease"), graph, 1, device, **common)
+    with pytest.raises(ValueError, match="do not set the manifest's mode"):
+        cli.build_manifest(args("disease"), graph, 1, device,
+                           semantics={**semantics, "mode": "disease"}, **common)
+    for field in cli.SEMANTIC_FIELDS:
+        lacking = {name: value for name, value in semantics.items() if name != field}
+        with pytest.raises(ValueError, match=re.escape(f"lack {[field]}")):
+            cli.build_manifest(args("disease"), graph, 1, device, semantics=lacking, **common)
+    with pytest.raises(ValueError, match="fields an evaluator does not set"):
+        cli.build_manifest(args("disease"), graph, 1, device,
+                           semantics={**semantics, "split": "train"}, **common)
+
+    # The same evaluator's semantics under two names: the mode is the name asked
+    # (a test-only name here, recorded as asked), every other field the evaluator's.
+    for mode in ("disease", "p1"):
+        manifest = cli.build_manifest(args(mode), graph, 1, device, semantics=semantics,
+                                      **common)
+        assert manifest.mode == mode
+        assert manifest.candidate_construction == semantics["candidate_construction"]
+        assert manifest.model_construction == semantics["model_construction"]
 
 
 # ---------------------------------------------------------------------------

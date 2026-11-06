@@ -28,6 +28,7 @@ pytest.importorskip("fastapi")
 
 import src.api.services.training_manager as tm
 from src.api.services.training_manager import TestRunInputs, TrainingManager, build_test_argv
+from src.evaluation import protocols
 from src.utils.gpu_lock import (
     LOCK_FILE_NAME,
     WORKSPACES_ROOT_ENV,
@@ -38,6 +39,10 @@ from tests.fixtures.job_processes import FakeProcess
 
 SHA_CKPT = "c" * 64
 SHA_VERSION = "e" * 64
+#: The listed version's counts (its `cohort.json`'s): a source that lists
+#: causal and candidate genes, so no protocol lacks what it needs.
+COUNTS = {"source_cases": 3, "ranked_eligible": 3,
+          "genes": {"cases_with_causal_genes": 3, "cases_with_candidate_genes": 3}}
 
 
 @pytest.fixture(autouse=True)
@@ -110,7 +115,8 @@ def inputs(tmp_path):
         registry=registry, version_label="mygene2-2026-10", version_sha256=SHA_VERSION,
         workspace=workspace,
         checkpoint=workspace / "runs" / "gatv2" / "r1" / "checkpoints" / "best.pt",
-        checkpoint_sha256=SHA_CKPT, task="disease")
+        checkpoint_sha256=SHA_CKPT, protocol="disease", learning_stage="finetune",
+        task="disease", version_counts=COUNTS)
 
 
 def reports(inputs: TestRunInputs) -> Path:
@@ -500,8 +506,8 @@ def test_the_stop_route_does_not_run_on_the_event_loop():
 
 # --------------------------------------------------------------------------- the test job's inputs
 def test_the_test_command_line_comes_from_the_inputs_only(inputs):
-    """The run always measures the model by its task (`--mode <task>`, K6): the
-    runner never launches Mode C (the CLI's default) or D."""
+    """`--mode` is the protocol asked (`inputs.protocol`), which the CLI
+    requires; the listed record's stage and task are judged, never passed."""
     outcome = Path("/tmp/job/outcome.json")
     argv = build_test_argv(inputs, None, outcome)
     assert argv[:2] == [sys.executable, str(tm.PROJECT_ROOT / "scripts" / "measure_scorer.py")]
@@ -514,18 +520,30 @@ def test_the_test_command_line_comes_from_the_inputs_only(inputs):
     assert "--batch-size" not in argv, "the CLI's default stays its one definition"
     from dataclasses import replace
 
-    for task in ("gene", "patients_like_me"):
-        argv = build_test_argv(replace(inputs, task=task), None, outcome)
-        assert argv[argv.index("--mode") + 1] == task and argv.count("--mode") == 1
+    for name in ("gene", "patients_like_me"):
+        # Each protocol asked of a listed record it takes (its own stage and head).
+        taken = protocols.PROTOCOLS[name]
+        asked = replace(inputs, protocol=name, learning_stage=taken.learning_stage,
+                        task=taken.task)
+        assert asked.reports_dir() == reports(inputs)
+        argv = build_test_argv(asked, None, outcome)
+        assert argv[argv.index("--mode") + 1] == name and argv.count("--mode") == 1
+        assert "--task" not in argv and "--learning-stage" not in argv
 
 
-def test_the_status_shows_the_runs_task(popen, inputs):
+def test_the_status_shows_the_protocol_asked_and_the_listed_record(popen, inputs):
+    """The protocol asked, and beside it the listed record's stage and task
+    (the model's), each under its own key."""
     process = FakeProcess(pid=3)
     popen(process)
     manager = TrainingManager(report_state=Reader(True, False))
     assert manager.start_test(inputs)["success"]
-    assert manager.get_test_status()["inputs"]["task"] == "disease"
-    assert inputs.summary()["task"] == "disease"
+    shown = manager.get_test_status()["inputs"]
+    assert (shown["protocol"], shown["learning_stage"], shown["task"]) == (
+        "disease", "finetune", "disease")
+    summary = inputs.summary()
+    assert (summary["protocol"], summary["learning_stage"], summary["task"]) == (
+        "disease", "finetune", "disease")
     process.finish(1)
     ended(manager, "test")
 
@@ -583,20 +601,44 @@ def test_a_deployment_device_the_cli_cannot_take_refuses_the_start(monkeypatch, 
     ({"evidence_dirs": (Path("evidence"),)}, "not an absolute path"),
     ({"version_label": "../x"}, "cohort label is refused"),
     ({"registry": Path("registry")}, "not an absolute path"),
-    # A test run measures a finetuned model by its task: Mode C, Mode D, no task
-    # and a word that is no task are refused before anything is launched.
-    ({"task": "C"}, "The task 'C' is not one of disease, gene, patients_like_me"),
-    ({"task": "D"}, "not one of"),
-    ({"task": None}, "The task None is not one of"),
-    ({"task": "Disease"}, "not one of"),
+    # The measurement asked, judged by the one protocol definition on the
+    # listed record and version, whoever calls. A name that is not a protocol,
+    # whatever it may once have meant, gets the ordinary sentence naming the
+    # protocols this build implements.
+    ({"protocol": "C"},
+     "'C' is not a measurement this build implements (disease, gene, patients_like_me)."),
+    ({"protocol": "D"},
+     "'D' is not a measurement this build implements (disease, gene, patients_like_me)."),
+    ({"protocol": None},
+     "None is not a measurement this build implements (disease, gene, patients_like_me)."),
+    ({"protocol": "Disease"},
+     "'Disease' is not a measurement this build implements (disease, gene, patients_like_me)."),
+    # A listed record the protocol does not take: a base, a head that differs,
+    # no record read.
+    ({"learning_stage": "base", "task": None}, protocols.BASE_MESSAGE),
+    ({"protocol": "gene"},
+     "the gene measurement takes a finetune model with the gene head; this checkpoint is a "
+     "finetune model with the disease head. It can be measured by disease."),
+    ({"learning_stage": None, "task": None}, protocols.NO_RECORD),
+    # A listed version without what the protocol needs.
+    ({"protocol": "gene", "task": "gene", "version_counts": {"source_cases": 3}},
+     "this cohort version lists no causal genes, which the gene measurement needs. Import a "
+     "source that lists causal_genes."),
 ])
-def test_inputs_of_the_wrong_shape_are_refused_before_launch(popen, inputs, change, says):
+def test_inputs_of_the_wrong_shape_are_refused_before_launch(monkeypatch, popen, inputs,
+                                                             change, says):
+    """Refused before a job directory is made or anything is spawned, and no
+    job is recorded: the reason, then "Nothing was started."."""
     from dataclasses import replace
 
     calls = popen()
-    result = TrainingManager().start_test(replace(inputs, **change))
+    made = []
+    monkeypatch.setattr(tm.tempfile, "mkdtemp", lambda *a, **k: made.append(k) or "/nowhere")
+    manager = TrainingManager()
+    result = manager.start_test(replace(inputs, **change))
     assert result["success"] is False and says in result["error"]
-    assert calls.calls == []
+    assert result["error"].endswith("Nothing was started.")
+    assert calls.calls == [] and made == [] and manager._last.get("test") is None
 
 
 # --------------------------------------------------------------------------- what a test run left

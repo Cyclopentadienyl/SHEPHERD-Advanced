@@ -21,24 +21,28 @@ docstring. Three panels, as the mockup draws them (``test-wide.png``,
 - **Run**: the model (WP1's checkpoint list of the workspace, every checkpoint,
   each option led by what its model record says it is,
   `renderers.record_kind_text`: listing opens every checkpoint, so it is an
-  operator control and a read-only request is not shown it), the R10 evidence
-  the server's setting names, "Register the result" and "Deterministic
-  execution", the batch size, device and measurement the server fixes (D5; the
-  measurement is the chosen model's own task, never chosen here), "🔒 Start
-  test" through the job runner (`TrainingManager.start_test`, given the task
-  from the session's listing) with the **full digests shown** as the expected
-  ones, so the run refuses before measuring when the file or the version it
-  reads is not the one chosen. **Only a model finetuned for a task is
-  measured** (K6 decision 13, `measure_refusal`, one rule for Start's reason
-  and for the start itself): a base, a history file (no model spec), a record
-  refused or not read, and a gene or patients-like-me model on a version that
-  lists no causal (or candidate) genes are refused with their reason; the
-  runner never launches Mode C, which only the command line runs until K8, and
-  Mode D was removed in K7; then the job: its state, elapsed time, inputs,
-  output tail, "🔒 Cancel" (the runner's stop for test runs only), and once it
-  has ended, **what it left, from the runner** (its outcome file, kept and
-  registered read from disk by WP4's helper; "no report was published" when
-  there is no outcome file; a cancel says what was left);
+  operator control and a read-only request is not shown it), the measurement
+  (a radio of the protocols this build implements that the chosen model's
+  listed record admits, `protocols.available`: the only one is chosen, of
+  several none is until the operator picks one, and with none Start says why),
+  the R10 evidence the server's setting names, "Register the result" and
+  "Deterministic execution", the batch size and device the server fixes (D5),
+  "🔒 Start test" through the job runner (`TrainingManager.start_test`, given
+  the measurement chosen and the model's learning stage and task from the
+  session's listing) with the **full digests shown** as the expected ones, so
+  the run refuses before measuring when the file or the version it reads is
+  not the one chosen. **A run starts only for a measurement this build
+  implements that takes the model's record and the version's inputs**
+  (`measure_refusal`, one rule for Start's reason and for the start itself,
+  which asks `protocols.refusal` after the page's own record states): a
+  history file (no model spec), a record refused or not read, a base (its
+  formal test is not implemented yet), a measurement the model's stage or task
+  head does not meet, and a measurement needing genes the version does not
+  list are refused with their reason; then the job: its state, elapsed time,
+  inputs, output tail, "🔒 Cancel" (the runner's stop for test runs only), and
+  once it has ended, **what it left, from the runner** (its outcome file, kept
+  and registered read from disk by WP4's helper; "no report was published"
+  when there is no outcome file; a cancel says what was left);
 - **Result**: the selected report as the record the ledger would hold
   (`build_record`, through the store's scan): the metrics of the record's own
   measurement (a task's, or a kept Mode C or D report's), each named by
@@ -95,10 +99,10 @@ state.
 **Every write of the selection** (the checkpoint listing, the version's
 reports, the report shown, and the list, the result, Start and its reason
 drawn from them) runs in one queued group of one (`SELECTION_CONCURRENCY`):
-page open, the workspace, the version, the model, a report's row, ↻, the read
-after an act or an import, and the read after the poll saw the job or the GPU
-line change (the poll hands that over through a hidden component's
-``.change``, naming what it saw before and what it sees now). Every choice
+page open, the workspace, the version, the model, the measurement, a report's
+row, ↻, the read after an act or an import, and the read after the poll saw
+the job or the GPU line change (the poll hands that over through a hidden
+component's ``.change``, naming what it saw before and what it sees now). Every choice
 joins it, also one made while an earlier one waits. So each starts from the
 selection the one before it wrote, in the order they were asked, and a late
 answer never writes back a selection it started from over one chosen
@@ -122,6 +126,7 @@ from typing import Any, Dict, List, Mapping, NamedTuple, Optional, Sequence, Tup
 
 import gradio as gr
 
+from src.evaluation import protocols
 from src.evaluation.caveats import (
     MODE_D_NOTE,
     PRE_B1_NOTE,
@@ -250,11 +255,22 @@ FIELD_HELP = {
         "Model",
         "The workspace's checkpoints from the server's list, each led by what its record "
         "says it is.\n"
-        "• A model finetuned for a task is measured by that task; a base, or a file without "
-        "a model spec, is listed but not measured here.\n"
+        "• A model is measured by a measurement this build implements for its stage and task "
+        "head (Measurement); a base, or a file without a model spec, is listed but not "
+        "measured here.\n"
         "• Listing opens every checkpoint, so it is an operator control.\n"
         "• The run is given the model fingerprint shown here and refuses before measuring if "
         "the file it reads holds other bytes.",
+    ),
+    "shep-test-measurement": (
+        "Measurement",
+        "What the run measures: one of the measurements this build implements for the chosen "
+        "model.\n"
+        "• Each takes a model of one learning stage and task head; the options are those the "
+        "chosen model's record meets.\n"
+        "• A single option is chosen already; of several, choose one.\n"
+        "• A base is listed but not measured yet: its formal test is not implemented.\n"
+        "• The report records the measurement as its mode.",
     ),
     "shep-test-record": (
         "Register the result",
@@ -328,9 +344,7 @@ TOPIC_HELP = {
         "A test run has no reason to vary these, so the job runner fixes them (D5).\n"
         "• Batch size: the measurement's default.\n"
         "• Device: the deployment's (SHEPHERD_DEVICE), with no fallback.\n"
-        "• Measurement: the chosen model's own task, read from its model record, never "
-        "chosen here.\n"
-        "Only deterministic execution is chosen here, and it is recorded.",
+        "The measurement and deterministic execution are chosen here; both are recorded.",
     ),
     "test-evidence": (
         "R10 evidence",
@@ -1258,89 +1272,95 @@ def evidence_html(page: Mapping[str, Any], workspace: Optional[str]) -> str:
             f'{help_button("test-evidence", "R10 evidence")}</span><span>{measured}{extra}</span></div>')
 
 
-def fixed_html(page: Mapping[str, Any], item: Optional[Mapping[str, Any]]) -> str:
-    """What the server fixes for a run (D5): the batch size, the device, and
-    the measurement, which is the chosen model's own task (`item`, the chosen
-    listing entry, or None), never chosen here. The row refers to the task the
-    Model select's option already names (`model_choices`, from the same entry),
-    never naming it again (skill rule 1.2)."""
+def fixed_html(page: Mapping[str, Any]) -> str:
+    """What the server fixes for a run (D5): the batch size and the device.
+    The measurement is chosen beside them (the Measurement radio,
+    `measurement_choices`)."""
     device = page.get("device") or {}
     if device.get("problem"):
         shown = f'<span class="shep-amber-t">{e(device["problem"])}</span>'
     else:
         value = device.get("value") or "auto"
         shown = (f"<code>{e(value)}</code>" + (" (requires CUDA)" if value == "auto" else ""))
-    measurement = ("same task as the chosen model · read from its record" if measured_task(item)
-                   else "the chosen model's own task (a finetuned model only)")
     return (f'<div class="shep-test-kv"><span class="shep-k">Batch size'
             f'{help_button("test-fixed", "Fixed by the server")}</span>'
             f'<span>{BATCH_SIZE_SHOWN} · fixed by the server</span>'
-            f'<span class="shep-k">Device</span><span>{shown} · fixed by the server</span>'
-            f'<span class="shep-k">Measurement</span><span>{e(measurement)}</span></div>')
+            f'<span class="shep-k">Device</span><span>{shown} · fixed by the server</span></div>')
 
 
-def measured_task(item: Optional[Mapping[str, Any]]) -> Optional[str]:
-    """The task a listed checkpoint is measured by: its model record's task
-    when the record is a finetuned task model's (`listed_record`), else None."""
-    if not item or item.get("record") != "model" or item.get("learning_stage") != "finetune":
-        return None
-    task = item.get("task")
-    return task if task in TASK_NAMES else None
+def measurement_label(name: Any) -> str:
+    """A protocol's words on this page: the words the pages already use for
+    that mode value (`caveats.TASK_NAMES`), or the name as it is."""
+    return TASK_NAMES.get(name, str(name)) if isinstance(name, str) else str(name)
+
+
+def measurement_choices(item: Optional[Mapping[str, Any]]) -> List[Tuple[str, str]]:
+    """The Measurement radio's options for the chosen listing entry `item`
+    (None: no model chosen): the protocols this build implements whose model
+    requirement its listed record meets (`protocols.available`, in their
+    order), each labelled by `measurement_label`, its value the protocol's
+    name. Empty when none does; Start then says why (`measure_refusal`)."""
+    if not item:
+        return []
+    names, _reason = protocols.available(item.get("learning_stage"), item.get("task"))
+    return [(measurement_label(name), name) for name in names]
+
+
+def chosen_measurement(choices: Sequence[Tuple[str, str]], value: Any) -> Optional[str]:
+    """The Measurement radio's value for its `choices`: `value` while it is one
+    of them, the only choice when there is one, else None (of several, none is
+    chosen until the operator picks one)."""
+    values = [v for _label, v in choices]
+    if value in values:
+        return value
+    return values[0] if len(values) == 1 else None
 
 
 #: This page's own reason beside a record's state (`measure_refusal`).
 NOT_MEASURED_HERE = "not measured here. Choose a model finetuned for a task"
+#: Start's reason while the chosen model offers several measurements and none is chosen.
+CHOOSE_A_MEASUREMENT = "choose a measurement"
 
 
-def measure_refusal(item: Mapping[str, Any], version: Optional[Mapping[str, Any]]
-                    ) -> Optional[str]:
+def measure_refusal(item: Mapping[str, Any], version: Optional[Mapping[str, Any]],
+                    protocol: Optional[str]) -> Optional[str]:
     """Why this page does not measure the listed checkpoint `item` on the
-    listed cohort version `version`, or None (K6 decision 13). **The one rule**
-    behind Start's reason (`start_state`) and the start itself
-    (`start_test_run`); the run checks the record again on the bytes it reads.
+    listed cohort version `version` by the protocol `protocol` (None: none
+    chosen), or None. **The one rule** behind Start's reason (`start_state`)
+    and the start itself (`start_test_run`); the run judges again on the bytes
+    it reads.
 
-    Only a model finetuned for a task is measured, by that task: a record
-    refused or not read, a file without a model spec (history, never run from
-    the WebUI) and a base are refused. A gene model needs a version that lists
-    causal and candidate genes, a patients-like-me model one that lists causal
-    genes (its `counts["genes"]`, which the importer writes only for a source
-    that lists genes); a version whose causal genes are all unmapped passes
-    here and the run refuses it. A record's state is said in the word the
-    Model option leads with (`renderers.record_kind_text`), then this page's
-    reason (`NOT_MEASURED_HERE`)."""
+    A record refused or not read and a file without a model spec (history,
+    never run from the WebUI) are said in the word the Model option leads with
+    (`renderers.record_kind_text`), then this page's reason
+    (`NOT_MEASURED_HERE`). Otherwise, with no protocol chosen, the reason no
+    protocol takes the record (`protocols.available`: a base's is the base
+    message) or `CHOOSE_A_MEASUREMENT`; with one, the protocol definition's
+    reason (`protocols.refusal`: the record's stage and task head, then the
+    version's counts, which the importer writes for genes only for a source
+    that lists them). A version whose causal genes are all unmapped passes here
+    and the run refuses it."""
     record = item.get("record")
     if record in ("refused", None, "history"):
         why = {"refused": f" ({item.get('record_problem') or 'no reason was given'})",
                "history": " (no model spec: a ShepherdGNN checkpoint)"}.get(record, "")
         return f"{r.record_kind_text(item)}{why}: {NOT_MEASURED_HERE}"
-    if item.get("learning_stage") == "base":
-        return ("this checkpoint is a base: it has no task to measure. Choose a model "
-                "finetuned from it for a task")
-    task = measured_task(item)
-    if task is None:
-        return "this checkpoint's model record names no task this page measures"
-    counts = (version or {}).get("counts")
-    genes = counts.get("genes") if isinstance(counts, Mapping) else None
-    genes = genes if isinstance(genes, Mapping) else {}
-    if task in ("gene", "patients_like_me") and not genes.get("cases_with_causal_genes"):
-        why = ("so the gene task has no truth to rank. Import a source that lists causal_genes "
-               "and candidate_genes" if task == "gene" else
-               "so no two of its patients can be relevant to each other. Import a source that "
-               "lists causal_genes")
-        return f"this cohort version lists no causal genes, {why}"
-    if task == "gene" and not genes.get("cases_with_candidate_genes"):
-        return ("this cohort version lists no candidate genes, the list the gene task ranks. "
-                "Import a source that lists candidate_genes")
-    return None
+    stage, task = item.get("learning_stage"), item.get("task")
+    if protocol is None:
+        names, reason = protocols.available(stage, task)
+        return reason if not names else CHOOSE_A_MEASUREMENT
+    return protocols.refusal(protocol, stage, task, (version or {}).get("counts"))
 
 
 def start_state(page: Mapping[str, Any], models: Mapping[str, Any], workspace: Optional[str],
                 label: Optional[str], key: Optional[str], binding: Optional[Mapping[str, Any]],
-                gpu: Tuple[str, str]) -> Tuple[bool, Optional[str]]:
-    """Whether "Start test" can be used now, and why not, in the order an
-    operator fixes things: a busy or unread GPU lock comes before the choices,
-    since no choice would enable Start while it lasts. Only a display: the
-    handler checks D8 and the runner refuses again at start."""
+                gpu: Tuple[str, str], *, protocol: Optional[str] = None
+                ) -> Tuple[bool, Optional[str]]:
+    """Whether "Start test" can be used now for the measurement `protocol`
+    (the Measurement radio's value; None: none chosen), and why not, in the
+    order an operator fixes things: a busy or unread GPU lock comes before the
+    choices, since no choice would enable Start while it lasts. Only a
+    display: the handler checks D8 and the runner refuses again at start."""
     access = page.get("access") or {}
     roots = page.get("roots") or []
     if not access.get("allowed"):
@@ -1370,7 +1390,7 @@ def start_state(page: Mapping[str, Any], models: Mapping[str, Any], workspace: O
         return False, "Disabled: choose a model."
     if item.get("problem") or not r.is_digest(item.get("sha256")):
         return False, "Disabled: this checkpoint's metadata is not readable."
-    refusal = measure_refusal(item, version)
+    refusal = measure_refusal(item, version, protocol)
     if refusal:
         return False, "Disabled: " + said(redact(refusal, roots), "")
     if (page.get("evidence") or {}).get("problem"):
@@ -1405,11 +1425,12 @@ def job_body_html(job: Mapping[str, Any], roots: Sequence[Tuple[str, str]],
     inputs = job.get("inputs") or {}
     started = utc_time(job.get("start_time"))
     evidence = inputs.get("evidence_dirs") or []
-    # The run's own task, which can differ from the model chosen now.
-    task = inputs.get("task")
+    # The run's own measurement, which can differ from the one chosen now.
+    protocol = inputs.get("protocol")
     parts = [e(inputs.get("version_label") or "—"),
              f"model <code>{e(str(inputs.get('checkpoint_sha256') or '')[:12])}</code>",
-             e(f"{TASK_NAMES[task]} task" if task in TASK_NAMES else "task not recorded"),
+             e(f"{measurement_label(protocol)} measurement"
+               if isinstance(protocol, str) and protocol.strip() else "measurement not recorded"),
              f"workspace {e(Path(str(inputs.get('workspace') or '')).name or '—')}",
              f"register {'on' if inputs.get('record') else 'off'}",
              f"deterministic {'on' if inputs.get('deterministic') else 'off'}",
@@ -2029,16 +2050,19 @@ def _outcome_box(kind: str, text: str, roots: Sequence[Tuple[str, str]] = ()) ->
 
 def start_test_run(page: Mapping[str, Any], models: Mapping[str, Any], workspace: Any,
                    label: Any, key: Any, record: Any, deterministic: Any, request: Any, *,
-                   manager: Any = None, environ: Optional[Mapping[str, str]] = None
-                   ) -> Dict[str, Any]:
+                   protocol: Any = None, manager: Any = None,
+                   environ: Optional[Mapping[str, str]] = None) -> Dict[str, Any]:
     """"Start test": D8 on this request; the workspace, the version and the
     checkpoint found in the server's lists again (never a client path); a
-    checkpoint this page does not measure refused (`measure_refusal`, the rule
+    measurement `protocol` (the Measurement radio's value) this page does not
+    start for that checkpoint and version refused (`measure_refusal`, the rule
     Start's reason shows); the **digests shown to the operator** passed as the
-    expected ones, and the task from the session's listing, so the run refuses
-    before measuring when the checkpoint or the version it reads is not the
-    one chosen, or its record is not that task's; the runner's one start for
-    test runs."""
+    expected ones, with the protocol apart from the model's learning stage and
+    task from the session's listing and the listed version's counts, so the
+    runner judges again before it starts and the run refuses before measuring
+    when the checkpoint or the version it reads is not the one chosen, or its
+    record is not one the protocol takes; the runner's one start for test
+    runs."""
     from src.api.services.server_lists import (
         ServerListRefused,
         resolve_checkpoint,
@@ -2060,7 +2084,7 @@ def start_test_run(page: Mapping[str, Any], models: Mapping[str, Any], workspace
             or not r.is_digest(item.get("sha256"))):
         return {"success": False, "error": "Choose a model the server lists in this workspace. "
                                            "Nothing was started."}
-    refusal = measure_refusal(item, version)
+    refusal = measure_refusal(item, version, protocol)
     if refusal:
         return {"success": False, "error": said(refusal[:1].upper() + refusal[1:],
                                                 "Nothing was started.")}
@@ -2079,7 +2103,9 @@ def start_test_run(page: Mapping[str, Any], models: Mapping[str, Any], workspace
     inputs = TestRunInputs(
         registry=registry.value, version_label=str(label),
         version_sha256=version["manifest_sha256"], workspace=data_dir, checkpoint=checkpoint,
-        checkpoint_sha256=item["sha256"], task=item["task"], evidence_dirs=tuple(evidence.value),
+        checkpoint_sha256=item["sha256"], protocol=protocol,
+        learning_stage=item["learning_stage"], task=item["task"],
+        version_counts=version["counts"], evidence_dirs=tuple(evidence.value),
         record=bool(record), deterministic=bool(deterministic))
     return manager.start_test(inputs)
 
@@ -2341,6 +2367,13 @@ def create_test_page(ctx: Any) -> None:
     binding_state_ = gr.State(None)
     reports_state = gr.State(dict(_EMPTY_REPORTS))
     selected_report = gr.State(None)
+    # The Measurement radio's value as it was last written (`_measurement_outputs`),
+    # which the selection's listeners read in place of the radio itself: the
+    # radio's value an event was asked with can be one the event before it in
+    # the group took away from the radio's choices (a Model pick sends its
+    # input twice, and the first event can empty the radio), and Gradio would
+    # refuse that event with an error before the page's own handling ran.
+    measurement_state = gr.State(None)
     # What this session saw of the job: the poll's alone (`_poll`).
     job_state = gr.State({})
     preview_state = gr.State(None)
@@ -2413,6 +2446,9 @@ def create_test_page(ctx: Any) -> None:
                                              elem_id="shep-test-model-reload",
                                              interactive=False)
                 model_info = plain_html("", elem_id="shep-test-model-info")
+                # The protocols the chosen model's record admits (`measurement_choices`).
+                measurement = gr.Radio(label="Measurement", choices=[], value=None,
+                                       elem_id="shep-test-measurement", interactive=False)
                 evidence = plain_html("", elem_id="shep-test-evidence")
                 with gr.Row(elem_classes=["shep-test-checks"]):
                     record = gr.Checkbox(label="Register the result", value=True,
@@ -2499,12 +2535,24 @@ def create_test_page(ctx: Any) -> None:
     def _gpu(page: Mapping[str, Any]) -> Tuple[str, str]:
         return gpu_line(operator=bool((page.get("access") or {}).get("allowed")))
 
-    def _start_outputs(page, models, binding, ws, label, key, gpu):
-        """Start and its reason, from the selection (`start_outputs`)."""
+    def _start_outputs(page, models, binding, ws, label, key, protocol, gpu):
+        """Start and its reason, from the selection (`start_outputs`); `protocol`
+        is the Measurement radio's value, as it shows it."""
         allowed = bool((page.get("access") or {}).get("allowed"))
-        can_start, why = start_state(page, models, ws, label, key, binding, gpu)
+        can_start, why = start_state(page, models, ws, label, key, binding, gpu,
+                                     protocol=protocol)
         return [gr.update(interactive=can_start),
                 _reason_html(why, kind="lock" if not allowed else "")]
+
+    def _measurement_outputs(page, models, key, protocol):
+        """The Measurement radio for the chosen model, and the value it shows
+        (`chosen_measurement`), which Start's state is then drawn from. Like
+        the Model select, it is interactive for an operator only."""
+        allowed = bool((page.get("access") or {}).get("allowed"))
+        choices = measurement_choices(find_model(models, key))
+        protocol = chosen_measurement(choices, protocol)
+        return gr.update(choices=choices, value=protocol,
+                         interactive=allowed and bool(choices)), protocol
 
     def _card_outputs(page, job, gpu):
         """The job card and Cancel, from the job alone (`card_outputs`)."""
@@ -2517,19 +2565,22 @@ def create_test_page(ctx: Any) -> None:
         return [job_head_html(job), job_body_html(job, roots, gpu),
                 gr.update(interactive=can_cancel), _reason_html(cancel_why, kind="lock")]
 
-    def _run_outputs(page, models, binding, ws, label, key, job, gpu):
+    def _run_outputs(page, models, binding, ws, label, key, protocol, job, gpu):
         allowed = bool((page.get("access") or {}).get("allowed"))
+        radio, protocol = _measurement_outputs(page, models, key, protocol)
         return [
             run_header_html(ws, label),
             _dd(model_choices(models), key, interactive=allowed and bool(models.get("items"))),
             gr.update(interactive=allowed and bool(ws)),
             model_html(page, models, key),
+            radio,
             evidence_html(page, ws),
-            fixed_html(page, find_model(models, key)),
-            *_start_outputs(page, models, binding, ws, label, key, gpu),
+            fixed_html(page),
+            *_start_outputs(page, models, binding, ws, label, key, protocol, gpu),
             *_card_outputs(page, job, gpu),
             gr.update(interactive=allowed),
             gr.update(interactive=allowed),
+            protocol,
         ]
 
     # Start and its reason depend on the selection: only the selection's group
@@ -2537,8 +2588,8 @@ def create_test_page(ctx: Any) -> None:
     # writes them too.
     start_outputs = [start, start_reason]
     card_outputs = [job_head, job_out, cancel, cancel_reason]
-    run_outputs = [run_hd, model, model_reload, model_info, evidence, fixed, *start_outputs,
-                   *card_outputs, record, deterministic]
+    run_outputs = [run_hd, model, model_reload, model_info, measurement, evidence, fixed,
+                   *start_outputs, *card_outputs, record, deterministic, measurement_state]
 
     def _result_outputs(page, reports, models, run_id, job):
         """The list, the result and its controls for `reports` as this session
@@ -2618,9 +2669,9 @@ def create_test_page(ctx: Any) -> None:
     # them), so an event that ended late would write back the selection it
     # started from over one chosen meanwhile. Every listener that writes the
     # selection, or Start and its reason drawn from it, is therefore in one
-    # group of one: the page open, the workspace, the version, the model, a
-    # report's row, ↻, the read after an act or an import, and the read after
-    # the poll saw the job or the GPU line change. They run first
+    # group of one: the page open, the workspace, the version, the model, the
+    # measurement, a report's row, ↻, the read after an act or an import, and
+    # the read after the poll saw the job or the GPU line change. They run first
     # asked, first run, each from what the one before it wrote, and the
     # browser takes a select's value when the event is asked. The group is
     # the server's, as the import's is: two sessions' events wait for each
@@ -2637,7 +2688,7 @@ def create_test_page(ctx: Any) -> None:
     every_one = {"trigger_mode": "multiple"}
 
     # ------------------------------------------------------------------ page open
-    def _refresh(ws, label, key, current_models, current_report, request: gr.Request):
+    def _refresh(ws, label, key, protocol, current_models, current_report, request: gr.Request):
         page = read_page(request)
         ws = default_workspace(page, ws)
         binding = _binding_for(page, ws)
@@ -2649,20 +2700,21 @@ def create_test_page(ctx: Any) -> None:
         reports, run_id = _reports(page, models, label, current_report, job, request)
         return [page, models, binding, reports, run_id,
                 *_cohort_outputs(page, binding, ws, label),
-                *_run_outputs(page, models, binding, ws, label, key, job, gpu),
+                *_run_outputs(page, models, binding, ws, label, key, protocol, job, gpu),
                 *_result_outputs(page, reports, models, run_id, job)]
 
     state_outputs = [page_state, models_state, binding_state_, reports_state, selected_report]
     ctx.on_page_open(PAGE, {
         "fn": _refresh,
-        "inputs": [workspace, version, model, models_state, selected_report],
+        "inputs": [workspace, version, model, measurement_state, models_state, selected_report],
         "outputs": [*state_outputs, *cohort_outputs, *run_outputs, *result_outputs],
         "show_progress": "hidden",
         **one_at_a_time,
     })
 
     # ------------------------------------------------------------------ choices
-    def _on_workspace(page, ws, label, key, current_models, current_report, request: gr.Request):
+    def _on_workspace(page, ws, label, key, protocol, current_models, current_report,
+                      request: gr.Request):
         if not page:
             return [gr.update()] * (6 + len(cohort_outputs) + len(run_outputs) + len(result_outputs))
         binding = _binding_for(page, ws)
@@ -2674,18 +2726,20 @@ def create_test_page(ctx: Any) -> None:
         # An import is made against one workspace: its drawer closes, its preview goes.
         return [models, binding, reports, run_id, None, gr.update(visible=False),
                 *_cohort_outputs(page, binding, ws, label),
-                *_run_outputs(page, models, binding, ws, label, key, job, _gpu(page)),
+                *_run_outputs(page, models, binding, ws, label, key, protocol, job, _gpu(page)),
                 *_result_outputs(page, reports, models, run_id, job)]
 
     workspace.input(_on_workspace,
-                    inputs=[page_state, workspace, version, model, models_state, selected_report],
+                    inputs=[page_state, workspace, version, model, measurement_state,
+                            models_state, selected_report],
                     outputs=[models_state, binding_state_, reports_state, selected_report,
                              preview_state, drawer, *cohort_outputs, *run_outputs,
                              *result_outputs],
                     show_progress="minimal", **one_at_a_time, **every_one) \
         .then(**ctx.chip_refresh)
 
-    def _on_version(page, binding, models, ws, label, key, current_report, request: gr.Request):
+    def _on_version(page, binding, models, ws, label, key, protocol, current_report,
+                    request: gr.Request):
         if not page:
             return [gr.update()] * (4 + len(run_outputs) + len(result_outputs))
         job = read_job()
@@ -2696,40 +2750,63 @@ def create_test_page(ctx: Any) -> None:
                 _dd(version_choices(page, binding), label,
                     interactive=not page.get("registry_problem")),
                 version_html(page, label, binding),
-                *_run_outputs(page, models, binding, ws, label, key, job, _gpu(page)),
+                *_run_outputs(page, models, binding, ws, label, key, protocol, job, _gpu(page)),
                 *_result_outputs(page, reports, models, run_id, job)]
 
     version.input(_on_version,
                   inputs=[page_state, binding_state_, models_state, workspace, version, model,
-                          selected_report],
+                          measurement_state, selected_report],
                   outputs=[reports_state, selected_report, version, version_info, *run_outputs,
                            *result_outputs],
                   show_progress="hidden", **one_at_a_time, **every_one)
 
-    def _on_model(page, models, binding, ws, label, key):
+    def _on_model(page, models, binding, ws, label, key, protocol):
         if not page:
             return [gr.update()] * len(run_outputs)
-        return _run_outputs(page, models, binding, ws, label, key, read_job(), _gpu(page))
+        return _run_outputs(page, models, binding, ws, label, key, protocol, read_job(),
+                            _gpu(page))
 
     # In the selection's group: Start and its reason are written there only,
     # so a read handed over before this choice cannot write them back after it.
     model.input(_on_model, inputs=[page_state, models_state, binding_state_, workspace, version,
-                                   model],
+                                   model, measurement_state],
                 outputs=run_outputs, show_progress="hidden", **one_at_a_time, **every_one)
 
-    def _on_model_reload(page, binding, ws, label, key, current_models, request: gr.Request):
+    def _on_measurement(page, models, binding, ws, label, key, protocol):
+        """A measurement picked: the radio (written back, as the version select
+        is, over a value an event asked before this one wrote), Start and its
+        reason for it, and the value the other listeners read
+        (``measurement_state``). Of the selection's listeners, the one given
+        the radio itself; Start takes it too, as the operator saw it."""
+        if not page:
+            return [gr.update()] * (2 + len(start_outputs))
+        radio, protocol = _measurement_outputs(page, models, key, protocol)
+        return [radio, *_start_outputs(page, models, binding, ws, label, key, protocol,
+                                       _gpu(page)), protocol]
+
+    # In the selection's group, for the same reason as the model's.
+    measurement.input(_on_measurement,
+                      inputs=[page_state, models_state, binding_state_, workspace, version, model,
+                              measurement],
+                      outputs=[measurement, *start_outputs, measurement_state],
+                      show_progress="hidden", **one_at_a_time, **every_one)
+
+    def _on_model_reload(page, binding, ws, label, key, protocol, current_models,
+                         request: gr.Request):
         if not page:
             return [gr.update()] * (1 + len(run_outputs))
         models = _models_for(page, current_models, ws, request, again=True)
         key = key if find_model(models, key) is not None else None
-        return [models, *_run_outputs(page, models, binding, ws, label, key, read_job(), _gpu(page))]
+        return [models, *_run_outputs(page, models, binding, ws, label, key, protocol, read_job(),
+                                      _gpu(page))]
 
     # In the selection's group: the listing it writes is the one the rows'
     # registration and Start are asked from. A second ↻ while one waits is
     # dropped (a click's "once"), which loses nothing: the one waiting lists
     # when it runs.
     model_reload.click(_on_model_reload,
-                       inputs=[page_state, binding_state_, workspace, version, model, models_state],
+                       inputs=[page_state, binding_state_, workspace, version, model,
+                               measurement_state, models_state],
                        outputs=[models_state, *run_outputs], show_progress="minimal",
                        **one_at_a_time) \
         .then(**ctx.chip_refresh)
@@ -2763,7 +2840,7 @@ def create_test_page(ctx: Any) -> None:
                                    prefer_outcome=prefer)
         return job, label, reports, run_id
 
-    def _after_act(page, models, binding, ws, key, current_report, reports,
+    def _after_act(page, models, binding, ws, key, protocol, current_report, reports,
                    request: gr.Request):
         """The read after Start, Cancel, Register or a note: the job card shows
         the job at once. It decides no end: an ended run's report is chosen by
@@ -2771,25 +2848,27 @@ def create_test_page(ctx: Any) -> None:
         job, label, reports, run_id = _job_read_again(page, models, current_report, reports,
                                                       request)
         gpu = _gpu(page)
-        return [reports, run_id, *_start_outputs(page, models, binding, ws, label, key, gpu),
+        return [reports, run_id,
+                *_start_outputs(page, models, binding, ws, label, key, protocol, gpu),
                 *_card_outputs(page, job, gpu),
                 *_result_outputs(page, reports, models, run_id, job)]
 
     after_outputs = [reports_state, selected_report, *start_outputs, *card_outputs,
                      *result_outputs]
-    after_inputs = [page_state, models_state, binding_state_, workspace, model,
+    after_inputs = [page_state, models_state, binding_state_, workspace, model, measurement_state,
                     selected_report, reports_state]
 
-    def _on_start(page, models, ws, label, key, rec, det, request: gr.Request):
-        result = start_test_run(page, models, ws, label, key, rec, det, request)
+    def _on_start(page, models, ws, label, key, protocol, rec, det, request: gr.Request):
+        result = start_test_run(page, models, ws, label, key, rec, det, request,
+                                protocol=protocol)
         roots = (page or {}).get("roots") or []
         if result.get("success"):
             return _outcome_box("ok", "The test run started. It checks the model and the cohort "
                                       "again on the bytes it reads before measuring.")
         return _outcome_box("amber", str(result.get("error") or "Nothing was started."), roots)
 
-    start.click(_on_start, inputs=[page_state, models_state, workspace, version, model, record,
-                                   deterministic],
+    start.click(_on_start, inputs=[page_state, models_state, workspace, version, model,
+                                   measurement, record, deterministic],
                 outputs=[action_out], show_progress="minimal") \
         .then(_after_act, inputs=after_inputs, outputs=after_outputs, show_progress="hidden",
               **one_at_a_time) \
@@ -2842,8 +2921,8 @@ def create_test_page(ctx: Any) -> None:
     ctx.timer_slow.tick(_poll, inputs=poll_inputs, outputs=[*poll_outputs, ctx.chips],
                         queue=False, show_progress="hidden")
 
-    def _after_job_change(page, models, binding, ws, key, current_report, reports, change,
-                          request: gr.Request):
+    def _after_job_change(page, models, binding, ws, key, protocol, current_report, reports,
+                          change, request: gr.Request):
         """The poll's hand-off, in the selection's group: Start and its reason
         from the selection as it is now, and the reports read again. The one
         place an end is decided, from what the poll saw on its last tick
@@ -2863,12 +2942,12 @@ def create_test_page(ctx: Any) -> None:
         job, label, reports, run_id = _job_read_again(page, models, current_report, reports,
                                                       request, ended=ended)
         return [reports, run_id,
-                *_start_outputs(page, models, binding, ws, label, key, _gpu(page)),
+                *_start_outputs(page, models, binding, ws, label, key, protocol, _gpu(page)),
                 *_result_outputs(page, reports, models, run_id, job)]
 
     job_changed.change(_after_job_change,
                        inputs=[page_state, models_state, binding_state_, workspace, model,
-                               selected_report, reports_state, job_changed],
+                               measurement_state, selected_report, reports_state, job_changed],
                        outputs=[reports_state, selected_report, *start_outputs, *result_outputs],
                        show_progress="hidden", **one_at_a_time, **every_one)
 
@@ -2958,11 +3037,12 @@ def create_test_page(ctx: Any) -> None:
         return ("", None, gr.update(interactive=False, value="🔒 Commit"), committed,
                 gr.update(visible=False), box)
 
-    def _after_commit(committed, ws, label, key, current_models, current_report,
+    def _after_commit(committed, ws, label, key, protocol, current_models, current_report,
                       request: gr.Request):
         """The page read again, as a page open reads it, with the version just
         committed chosen."""
-        return _refresh(ws, committed or label, key, current_models, current_report, request)
+        return _refresh(ws, committed or label, key, protocol, current_models, current_report,
+                        request)
 
     committed_label = gr.State(None)
     commit_btn.click(_on_commit, inputs=[page_state, preview_state, workspace, intake, new_label,
@@ -2971,8 +3051,8 @@ def create_test_page(ctx: Any) -> None:
                               import_msg],
                      show_progress="minimal", concurrency_id="shep-test-import",
                      concurrency_limit=1) \
-        .then(_after_commit, inputs=[committed_label, workspace, version, model, models_state,
-                                     selected_report],
+        .then(_after_commit, inputs=[committed_label, workspace, version, model,
+                                     measurement_state, models_state, selected_report],
               outputs=[*state_outputs, *cohort_outputs, *run_outputs, *result_outputs],
               show_progress="hidden", **one_at_a_time) \
         .then(**ctx.chip_refresh)

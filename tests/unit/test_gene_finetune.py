@@ -240,8 +240,11 @@ def test_the_stage_and_task_are_checked_before_the_fixture_is_read(trained, tmp_
     without a fixture, a finetune child given as a gene run's parent, and a
     base measured as a gene model, are refused for what they are, not sent to
     derive a fixture."""
+    import re
+
     import measure_scorer
     import train_model
+    from src.evaluation import protocols
     from src.models.bundle.record import ModelRecordError
     from src.utils.run_plan import RunPlanRefused
 
@@ -253,7 +256,7 @@ def test_the_stage_and_task_are_checked_before_the_fixture_is_read(trained, tmp_
     config, explicit = _gene_config(dict(trained, data_dir=bare, base=child), tmp_path / "again")
     with pytest.raises(RunPlanRefused, match="children never chain"):
         train_model.train(config, explicit)
-    with pytest.raises(ModelRecordError, match="a base checkpoint, not a finetune one"):
+    with pytest.raises(ModelRecordError, match=re.escape(protocols.BASE_MESSAGE)):
         measure_scorer.main(["--mode", "gene", "--checkpoint", str(trained["base"]),
                              "--data-dir", str(bare), "--split", "val",
                              "--output", str(tmp_path / "r.json"), "--device", "cpu"])

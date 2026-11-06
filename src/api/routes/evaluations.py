@@ -272,8 +272,9 @@ class RecordView(_Strict):
     counts: RecordCounts
     mode: _Text = Field(
         ..., description="the record's measurement mode (`scoring.mode`): disease, gene or "
-        "patients_like_me, a finetuned model measured by its own task (what the Test page "
-        "runs). C and D are earlier modes, kept as history: C, the model's own ranking over "
+        "patients_like_me, the protocol a model was measured by, one this build implements for "
+        "a finetuned model's learning stage and task head (what the Test page runs). C and D "
+        "are earlier modes, kept as history: C, the model's own ranking over "
         "every disease by raw cosine; D, the served ranking as Batch 3 measured it (removed in "
         "K7). A surface labels each record by its own mode")
     score_semantics: _Text = Field(

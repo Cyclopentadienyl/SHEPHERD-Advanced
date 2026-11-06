@@ -134,16 +134,18 @@ def registered_manifest(**overrides):
     """A registered cohort version's manifest, as `MeasurementManifest` builds it
     and `ModeResult.to_dict` writes it (`dataclasses.asdict`).
 
-    **By default a disease task measurement's** (`--mode disease`): the task's
-    values are `task_measurement.disease_semantics` at the default
-    `--batch-size` (32), as `scripts/measure_scorer.build_manifest(...,
-    semantics=)` takes them; every other field is built there the same way for
-    every mode. A Mode C manifest is `mode_c_report`'s, a Mode D one
-    `mode_d_report`'s."""
+    **By default a disease task measurement's** (`--mode disease`): its `mode`
+    is the protocol asked, set here as `scripts/measure_scorer.build_manifest`
+    sets it from `--mode`; the evaluator's values are
+    `task_measurement.disease_semantics` at the default `--batch-size` (32), as
+    `build_manifest(..., semantics=)` takes them; every other field is built
+    there the same way for every protocol. A Mode C manifest is
+    `mode_c_report`'s, a Mode D one `mode_d_report`'s."""
     from src.evaluation.measurement import MeasurementManifest, expected_relations
     from src.evaluation.task_measurement import disease_semantics
 
     fields = dict(
+        mode="disease",
         **disease_semantics(32),
         split="mygene2",
         cohort_kind="supplied",

@@ -5,14 +5,17 @@ The Test page's start, outcome and registration with a real test run (M5-2, UI-D
 `scripts/measure_scorer.py` (CPU, the fixture cohort, a base and a disease
 child trained for one epoch by `tests/fixtures/trained_children.train_children`
 into the workspace's `runs/gatv2`, beside a checkpoint without a model spec
-kept as history): the page's Start hands the runner the inputs from the server's lists,
-the digests shown and the task the listing's model record names; once the run
-has ended, the job card says what the runner read from disk (kept, not
-registered without "Register the result") and which task it measured, the
-version's report store lists the new report under the task's own metrics, and
+kept as history): the page offers the child the one measurement its record
+admits (disease), and Start hands the runner the inputs from the server's
+lists, the digests shown, that measurement and, apart from it, the model's
+learning stage and task the listing's model record names; once the run has
+ended, the job card says what the runner read from disk (kept, not registered
+without "Register the result") and which measurement it ran, the version's
+report store lists the new report under that measurement's own metrics, and
 the page's Register files it in the ledger beside the listed child, under
 `runs/gatv2`, after which the page reads it as registered. The base and the
-history file are listed, and Start says why it does not measure them.
+history file are listed, offered no measurement, and Start says why it does
+not measure them (for the base, the base message).
 
 > The model is trained for one epoch on CPU and the graph is synthetic: nothing
 > here is a result about the model, only about the page's flow.
@@ -85,21 +88,27 @@ def test_a_run_started_from_the_page_is_kept_shown_and_registered(site, monkeypa
     models = tp.read_models("demo", request)
     key = _key(models, "gatv2", CHILD_RUNS["disease"])
     binding = tp.workspace_binding(demo, tp.find(page["workspaces"], "name", "demo"))
-    assert tp.start_state(page, models, "demo", LABEL, key, binding, ("none", "")) == (True, None)
+    # The radio offers the child one measurement, chosen as the only one.
+    choices = tp.measurement_choices(tp.find_model(models, key))
+    assert choices == [("Disease", "disease")]
+    protocol = tp.chosen_measurement(choices, None)
+    assert tp.start_state(page, models, "demo", LABEL, key, binding, ("none", ""),
+                          protocol=protocol) == (True, None)
     manager = TrainingManager()
     started = tp.start_test_run(page, models, "demo", LABEL, key, False, False, request,
-                                manager=manager)
+                                protocol=protocol, manager=manager)
     assert started["success"], started
     assert manager._last["test"].done.wait(600), "the run did not end"
 
     job = tp.read_job(manager=manager)
     assert job["status"] == "completed", job.get("log")
     assert job["inputs"]["checkpoint_sha256"] == file_sha256(child)
-    assert job["inputs"]["task"] == "disease"
+    assert job["inputs"]["protocol"] == "disease"
+    assert (job["inputs"]["learning_stage"], job["inputs"]["task"]) == ("finetune", "disease")
     assert job["outcome"]["kept"] is True and job["outcome"]["registered"] is False
     card = tp.job_html(job, tp.path_roots(), ("none", "GPU jobs: none"))
     assert 'data-status="completed"' in card and "Report kept" in card
-    assert "Disease task" in card
+    assert "Disease measurement" in card
     assert "Not registered" in card and str(registry) not in card
 
     reports = tp.read_reports(LABEL)
@@ -142,10 +151,12 @@ def test_a_run_started_from_the_page_is_kept_shown_and_registered(site, monkeypa
 
 
 def test_a_base_and_a_history_file_are_listed_and_never_started(site, monkeypatch):
-    """K6 decision 13 on the records the production path wrote: the base and
-    the checkpoint without a model spec are listed, led by what they are, and Start
-    says why it does not measure them; the start itself refuses them before
-    the runner is asked."""
+    """On the records the production path wrote: the base and the checkpoint
+    without a model spec are listed, led by what they are, and offered no
+    measurement; Start says why it does not measure them (for the base, the
+    protocol definition's base message); the start itself refuses them before
+    the runner is asked. The child is offered its one measurement."""
+    from src.evaluation import protocols
     from src.webui.components import test_page as tp
 
     _registry, demo, _child = site
@@ -164,15 +175,14 @@ def test_a_base_and_a_history_file_are_listed_and_never_started(site, monkeypatc
         def start_test(self, inputs):
             raise AssertionError("the runner was asked to start a refused checkpoint")
 
-    for key, says in ((base, "this checkpoint is a base: it has no task to measure"),
+    for key, says in ((base, protocols.BASE_MESSAGE),
                       (history, "History · never run (no model spec: a ShepherdGNN checkpoint)")):
+        assert tp.measurement_choices(tp.find_model(models, key)) == []
         allowed, why = tp.start_state(page, models, "demo", LABEL, key, binding, ("none", ""))
         assert allowed is False and why.startswith(f"Disabled: {says}"), why
         result = tp.start_test_run(page, models, "demo", LABEL, key, False, False, request,
                                    manager=Unasked())
         assert result["success"] is False and result["error"].endswith("Nothing was started.")
         assert result["error"].startswith(says[:1].upper() + says[1:])
-    # The fixture version lists no genes; the disease task needs none.
-    # The child's option names its task; the Measurement row refers to it (rule 1.2).
-    assert "Measurement</span><span>same task as the chosen model" in tp.fixed_html(
-        page, tp.find_model(models, child))
+    # The fixture version lists no genes; the disease measurement needs none.
+    assert tp.measurement_choices(tp.find_model(models, child)) == [("Disease", "disease")]

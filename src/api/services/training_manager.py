@@ -12,7 +12,9 @@ Purpose:
     - Runs each job type's own script as a subprocess (M5): **training**,
       scripts/train_model.py with its config in a temp YAML, and **test runs**,
       scripts/measure_scorer.py on one registered cohort version, measuring a
-      finetuned model by its own task (`--mode <task>`; never Mode C or D)
+      model by the evaluation protocol asked (`--mode <protocol>`), once
+      `src.evaluation.protocols` has judged that the listed model record and
+      version admit it
     - Holds **one GPU slot**: a job that is running or stopping keeps it,
       whatever its type, and the deployment's GPU lock
       (src/utils/gpu_lock.py) is checked before a start, so a job a CLI
@@ -271,13 +273,16 @@ class TestRunInputs:
 
     The caller resolves a request's names through those lists (WP1): the
     registry from its setting, the version by label with its `cohort.json`
-    digest, the workspace by name under the workspace root, the checkpoint by
-    name and digest from that workspace's listing, `task` from the same
-    listing's model record (a finetuned model is measured by its own task; the
-    run checks it again on the bytes it reads), the evidence directories from
-    their setting. `record` and `deterministic` are the operator's two
-    choices. Nothing else is chosen: the batch size is the CLI's default and
-    the device the deployment's (D5).
+    digest and `version_counts` (that listing's `counts`), the workspace by
+    name under the workspace root, the checkpoint by name and digest from that
+    workspace's listing, `learning_stage` and `task` from the same listing's
+    model record (`task` is the model's task head, None for none), the
+    evidence directories from their setting. `protocol`, `record` and
+    `deterministic` are the operator's choices: `protocol` is the evaluation
+    protocol asked (`--mode`), one `src.evaluation.protocols` admits for that
+    record and version, and it need not be the model's task. The run judges it
+    again on the bytes it reads. Nothing else is chosen: the batch size is the
+    CLI's default and the device the deployment's (D5).
     """
 
     __test__ = False  # a dataclass, not a pytest test class, whatever its name says
@@ -288,27 +293,33 @@ class TestRunInputs:
     workspace: Path
     checkpoint: Path
     checkpoint_sha256: str
-    task: str
+    protocol: str
+    learning_stage: Optional[str]
+    task: Optional[str]
+    version_counts: Optional[Mapping[str, Any]]
     evidence_dirs: Tuple[Path, ...] = ()
     record: bool = False
     deterministic: bool = False
 
     def reports_dir(self) -> Path:
-        """The version's report store directory, after the inputs' shape is
-        checked. The run checks the files themselves when it reads them.
+        """The version's report store directory, after the measurement asked
+        is judged and the inputs' shape is checked. The run checks the files
+        themselves when it reads them.
 
         Raises:
-            ValueError: a task that is not a model spec's task
-                (`src.models.bundle.spec.TASKS`), a digest that is not a full
-                SHA-256, a path that is not absolute, or a registry or label
-                the registry's rules refuse.
+            ValueError: the reason `src.evaluation.protocols.refusal` gives
+                for the protocol asked on the listed record and version (a
+                name that is not a protocol, a model record it does not take,
+                or a version that lacks what it needs), a digest that is not
+                a full SHA-256, a path that is not absolute, or a registry or
+                label the registry's rules refuse.
         """
-        from src.evaluation import cohort_registry
-        from src.models.bundle.spec import TASKS
+        from src.evaluation import cohort_registry, protocols
 
-        if self.task not in TASKS:
-            raise ValueError(f"The task {self.task!r} is not one of {', '.join(TASKS)}: a test "
-                             "run measures a finetuned model by its task.")
+        why = protocols.refusal(self.protocol, self.learning_stage, self.task,
+                                self.version_counts)
+        if why:
+            raise ValueError(why)
         for name, digest in (("checkpoint", self.checkpoint_sha256),
                              ("cohort version", self.version_sha256)):
             if not (isinstance(digest, str) and _SHA256.fullmatch(digest)):
@@ -333,6 +344,8 @@ class TestRunInputs:
             "workspace": str(self.workspace),
             "checkpoint": str(self.checkpoint),
             "checkpoint_sha256": self.checkpoint_sha256,
+            "protocol": self.protocol,
+            "learning_stage": self.learning_stage,
             "task": self.task,
             "evidence_dirs": [str(d) for d in self.evidence_dirs],
             "record": bool(self.record),
@@ -507,16 +520,16 @@ def build_test_argv(inputs: TestRunInputs, device: Optional[str], outcome: Path)
     `outcome`, the new file in the job's own directory where the run says what
     it published (`--outcome`).
 
-    `--mode` is always the model's task, so the runner never launches Mode C
-    (README §1: archived; only the command line runs it, until K8) or Mode D
-    (removed in K7).
-    The expected digests make the run refuse before measuring when the
-    checkpoint or the version it reads is not the one chosen. `--batch-size`
-    is not passed: the CLI's default stays its one definition.
+    `--mode` is the protocol asked (`inputs.protocol`), which `reports_dir()`
+    has judged on the listed record and version before any start; the run
+    judges it again on the bytes it reads. The expected digests make the run
+    refuse before measuring when the checkpoint or the version it reads is
+    not the one chosen. `--batch-size` is not passed: the CLI's default stays
+    its one definition.
     """
     argv = [
         sys.executable, str(PROJECT_ROOT / JOB_TYPES["test"].script),
-        "--mode", inputs.task,
+        "--mode", inputs.protocol,
         "--checkpoint", str(inputs.checkpoint),
         "--data-dir", str(inputs.workspace),
         "--cohort", inputs.version_label,
@@ -1385,10 +1398,13 @@ class TrainingManager:
         version (M5), the real CLI, so it stays the single producer.
 
         `inputs` come from the server's lists and settings; the caller gates
-        the call with D8 first. The run checks the model and the cohort
-        itself when it starts, against the digests chosen, never trusting a
-        preview. It is given a job directory of its own (removed once the run
-        has ended and been read), where it writes its outcome
+        the call with D8 first. Whoever the caller is, the protocol asked is
+        judged on the listed record and version (`reports_dir()`) before the
+        slot is taken, a directory made or anything spawned: a refusal answers
+        its reason and "Nothing was started.". The run checks the model and
+        the cohort itself when it starts, against the digests chosen, never
+        trusting a preview. It is given a job directory of its own (removed
+        once the run has ended and been read), where it writes its outcome
         (`--outcome`). The version's report store is listed before launch
         too, so a report directory this run created without writing its
         outcome can still be told apart when it ends.

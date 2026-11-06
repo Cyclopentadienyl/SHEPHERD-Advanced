@@ -12,8 +12,10 @@ measurement itself:
 - the device gate: `auto` refuses to fall back to CPU, and an explicit `cpu`
   run is permitted but recorded as not CUDA;
 - that the `file_sha256` re-export is gone (contract M2.1, S9);
-- a `--batch-size` that is not a positive integer, and `--mode D` (Mode D was
-  removed in K7), each refused at the command line;
+- `--mode`, which has no default and offers the protocol names only: a run
+  without it, `--mode C` (Mode C retired in K8-6a) and `--mode D` (Mode D was
+  removed in K7) are refused by argparse's own rules, with no alias;
+- a `--batch-size` that is not a positive integer, refused at the command line;
 - `--split`, which has no default, and the missing-split error;
 - which arguments go with which kind of cohort (contract M4, decision 8):
   exactly one of `--split` and `--cohort`; `--output` with `--split` only;
@@ -248,13 +250,49 @@ def test_a_batch_size_that_is_not_a_positive_integer_is_refused_at_the_command_l
 def test_mode_d_is_not_a_mode_the_cli_runs(cohort, capsys):
     """Mode D was removed in K7: `--mode D` is refused at the command line
     (exit 2), with no alias, for either kind of cohort."""
-    from scripts.measure_scorer import MODES, parse_args
+    from scripts.measure_scorer import parse_args
 
-    assert "D" not in MODES
     with pytest.raises(SystemExit) as raised:
         parse_args(["--mode", "D", "--checkpoint", "c.pt", "--data-dir", "d", *cohort])
     assert raised.value.code == 2
     assert "invalid choice: 'D'" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("cohort", [
+    ["--split", "val", "--output", "o.json"],
+    ["--cohort", "label", "--registry", "/r"],
+], ids=["split", "cohort"])
+def test_mode_is_required(cohort, capsys):
+    """A run without `--mode` once meant Mode C. A default protocol would
+    silently measure something else, so the argument has none: argparse refuses
+    the run (exit 2), for either kind of cohort."""
+    from scripts.measure_scorer import parse_args
+
+    with pytest.raises(SystemExit) as raised:
+        parse_args(["--checkpoint", "c.pt", "--data-dir", "d", *cohort])
+    assert raised.value.code == 2
+    assert "the following arguments are required: --mode" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("cohort", [
+    ["--split", "val", "--output", "o.json"],
+    ["--cohort", "label", "--registry", "/r"],
+], ids=["split", "cohort"])
+def test_mode_c_is_no_choice(cohort, capsys):
+    """Mode C retired with the pipeline that built its model (K8-6a): `--mode C`
+    is refused by argparse's ordinary unknown-choice rule (exit 2), whose message
+    lists the protocol names this build implements, read from the one
+    definition. No alias and no refusal of its own names C."""
+    from scripts.measure_scorer import parse_args
+    from src.evaluation import protocols
+
+    with pytest.raises(SystemExit) as raised:
+        parse_args(["--mode", "C", "--checkpoint", "c.pt", "--data-dir", "d", *cohort])
+    assert raised.value.code == 2
+    err = capsys.readouterr().err
+    assert "argument --mode: invalid choice: 'C'" in err
+    listed = err.split("choose from", 1)[1]
+    assert protocols.names() and all(name in listed for name in protocols.names())
 
 
 # ==============================================================================

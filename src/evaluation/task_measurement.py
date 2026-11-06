@@ -6,10 +6,13 @@ E1–E6, U6, G4; provenance contract §9.3 hazard 2.
 
 The run reuses the measurement entry's reads, report, store, usage history and
 ledger (`scripts/measure_scorer.py`): the manifest has the same fields as
-every measurement, its task, metric schema and scoring identity given as values
-(`mode`, `metric_schema_version`, `candidate_construction`, `score_semantics`,
-`model_construction`, `canonical_tie_policy_version`), so existing ledgers and
-reports stay readable and a task record never groups with a Mode C/D one.
+every measurement, its metric schema and scoring identity given as values by
+its evaluator (`metric_schema_version`, `candidate_construction`,
+`score_semantics`, `model_construction`, `canonical_tie_policy_version`,
+`batch_size`). Its `mode` is the protocol the run was asked for, which the
+entry sets (`src.evaluation.protocols`): a protocol names the evaluator here
+that runs it, and the evaluators' names ("disease", "gene",
+"patients_like_me") key `TASK_RUNS` and `task_semantics`.
 
 **What is computed.** The bundle's node vectors by the full-view rule over the
 whole view (G4), every case bound to the view (F7), ranked against every
@@ -34,9 +37,8 @@ from src.models.bundle.metrics import ranking_report
 TASK_METRIC_SCHEMA_VERSION = 2
 TASK_KS = (1, 3, 5, 10, 20, 50, 100)
 
-#: The manifest values of a disease task measurement.
+#: The manifest values of the disease evaluator (its `mode` is the protocol's).
 DISEASE_SEMANTICS: Dict[str, Any] = {
-    "mode": "disease",
     "metric_schema_version": TASK_METRIC_SCHEMA_VERSION,
     "candidate_construction": "every disease of the model's graph view",
     "score_semantics": "disease head: -||z_d - z_P||^2 on L2-normalised projected vectors",
@@ -50,14 +52,13 @@ def disease_semantics(batch_size: int) -> Dict[str, Any]:
 
 
 def gene_semantics(batch_size: int, bundle: Any) -> Dict[str, Any]:
-    """The gene task's manifest values, η, the SP bounds and the augmentation
-    named from the model's spec (PLAN_TEST_RESULTS §8.3: they are part of the
-    scoring identity)."""
+    """The gene evaluator's manifest values, η, the SP bounds and the
+    augmentation named from the model's spec (PLAN_TEST_RESULTS §8.3: they are
+    part of the scoring identity). Its `mode` is the protocol's."""
     gene = bundle.task_head.spec.gene
     augmentation = (f"Eq 10 augmentation K={gene.augmentation_k}, omega={gene.augmentation_omega}"
                     if gene.augmentation else "no augmentation")
     return {
-        "mode": "gene",
         "metric_schema_version": TASK_METRIC_SCHEMA_VERSION,
         "candidate_construction": "each case's own candidate list, no upsampling",
         "score_semantics": (f"gene head: eta*EMBSIM + (1-eta)*SPLSIM, eta={gene.eta}; SPLSIM on "
@@ -184,9 +185,9 @@ def run_gene_measurement(*, bundle: Any, view: Any, samples: Sequence[Any],
         truth=truth, evidence=evidence)
 
 
-#: The patients-like-me manifest values (PLAN_TEST_RESULTS §8.4).
+#: The patients-like-me evaluator's manifest values (PLAN_TEST_RESULTS §8.4);
+#: its `mode` is the protocol's.
 PATIENTS_LIKE_ME_SEMANTICS: Dict[str, Any] = {
-    "mode": "patients_like_me",
     "metric_schema_version": TASK_METRIC_SCHEMA_VERSION,
     "candidate_construction": "every other patient of the measured cohort; self excluded by case id",
     "score_semantics": ("patient tower: -||z_a - z_b||^2 on L2-normalised projected vectors; a "
@@ -228,19 +229,25 @@ def run_patients_like_me_measurement(*, bundle: Any, view: Any, samples: Sequenc
                                                   "max": max(len(cases) - 1, 0)}})
 
 
-#: The task measurements this entry runs: semantics and the run, by task.
+#: The evaluators this entry runs, keyed by evaluator: a protocol names its
+#: evaluator (`src.evaluation.protocols.Protocol.evaluator`), and the run and
+#: its semantics (`task_semantics`) are found under that name, not under the
+#: protocol's name or the model's task (today the three are equal; nothing
+#: relies on it).
 TASK_RUNS = {"disease": run_disease_measurement, "gene": run_gene_measurement,
              "patients_like_me": run_patients_like_me_measurement}
 
 
-def task_semantics(task: str, batch_size: int, bundle: Any) -> Dict[str, Any]:
-    if task == "disease":
+def task_semantics(evaluator: str, batch_size: int, bundle: Any) -> Dict[str, Any]:
+    """The manifest values of the evaluator `evaluator` (a `TASK_RUNS` key),
+    every semantic field but `mode`, which is the protocol's."""
+    if evaluator == "disease":
         return disease_semantics(batch_size)
-    if task == "gene":
+    if evaluator == "gene":
         return gene_semantics(batch_size, bundle)
-    if task == "patients_like_me":
+    if evaluator == "patients_like_me":
         return {**PATIENTS_LIKE_ME_SEMANTICS, "batch_size": int(batch_size)}
-    raise ValueError(f"no task measurement for {task!r}")
+    raise ValueError(f"no task measurement for {evaluator!r}")
 
 
 __all__ = ["DISEASE_SEMANTICS", "PATIENTS_LIKE_ME_SEMANTICS", "TASK_KS",

@@ -238,22 +238,24 @@ def test_each_refusal_writes_nothing(cli, cohort, monkeypatch, case):
 
 
 def test_the_internal_entry_refuses_a_request_that_is_neither_or_both_kinds(cli, cohort):
-    """`read_measurement_inputs` is called by `main` and the Mode C tests; a call
-    naming no cohort, both, or registry arguments for a split is a caller's
-    error, refused before anything is read."""
+    """`read_measurement_inputs` is called by `main`; a call naming no cohort,
+    both, or registry arguments for a split is a caller's error, refused before
+    anything is read, whatever protocol it asks for."""
     device = torch.device("cpu")
     with count_opens() as opens:
         with pytest.raises(ValueError, match="exactly one"):
-            cli.read_measurement_inputs(cohort.checkpoint, cohort.data_dir, device)
+            cli.read_measurement_inputs(cohort.checkpoint, cohort.data_dir, device,
+                                        protocol="disease")
         with pytest.raises(ValueError, match="exactly one"):
             cli.read_measurement_inputs(cohort.checkpoint, cohort.data_dir, device,
-                                        split="val", cohort="demo-test-1")
+                                        split="val", cohort="demo-test-1", protocol="disease")
         with pytest.raises(ValueError, match="registered cohort only"):
             cli.read_measurement_inputs(cohort.checkpoint, cohort.data_dir, device,
-                                        split="val", registry=cohort.registry)
+                                        split="val", registry=cohort.registry,
+                                        protocol="disease")
         with pytest.raises(ValueError, match="none was given"):
             cli.read_measurement_inputs(cohort.checkpoint, cohort.data_dir, device,
-                                        cohort="demo-test-1")
+                                        cohort="demo-test-1", protocol="disease")
     assert not [path for path, n in opens.counts.items() if n], "something was opened"
 
 
@@ -307,7 +309,7 @@ def test_the_r10_block_is_compute_r10_over_the_checkpoints_record(cli, cohort):
 # - a graph-only record (no training file recorded) can no longer come from a
 #   measurement: the files that carry one, a base (its record names the graph
 #   and the manifest only) and a file without a model spec, are refused right
-#   after the checkpoint read (`read_measurement_inputs(task=)`), before any
+#   after the checkpoint read (`read_measurement_inputs(protocol=)`), before any
 #   model is built or anything written; so
 #   `test_neither_file_recorded_leaves_both_scopes_unverifiable_and_reads_nothing`;
 # - no validation recorded: a disease child cannot be trained without a
@@ -328,17 +330,17 @@ def test_r10_states_follow_what_the_checkpoint_records(cli, cohort):
 
 
 def test_build_manifest_takes_the_kind_from_the_version_and_requires_r10(cli, cohort):
-    """With a version block the manifest of a disease run (its semantics, as
-    `--mode disease` passes them) is a registered cohort's whatever
-    `args.split` says; without R10 beside a version it is refused, so no report
-    of a registered version can lack its overlap."""
+    """With a version block the manifest of a disease run (`--mode disease`,
+    measured by the disease evaluator's semantics) is a registered cohort's
+    whatever `args.split` says; without R10 beside a version it is refused, so
+    no report of a registered version can lack its overlap."""
     import argparse
 
     from src.evaluation.measurement import AutocastRegime
     from src.evaluation.task_measurement import disease_semantics
 
-    args = argparse.Namespace(split=None, batch_size=4, checkpoint=cohort.checkpoint,
-                              data_dir=cohort.data_dir)
+    args = argparse.Namespace(mode="disease", split=None, batch_size=4,
+                              checkpoint=cohort.checkpoint, data_dir=cohort.data_dir)
     block = cli.cohort_version_block(cohort.version)
     common = {"digests": {"checkpoint": "a" * 64}, "dataset_record": {"origin": "synthetic"},
               "regime": AutocastRegime(enabled=False, dtype=None),

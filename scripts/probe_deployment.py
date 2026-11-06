@@ -83,10 +83,10 @@ M3a's checks:
     of two planned epochs and resumed for the remaining one, stating its
     mixed precision (float16, in effect on CUDA only) and recording its parent
     and that precision, its gradient scaler's state checked right after the
-    restore against the parent's (M2); measurement by its task (M3) and
-    disease-task serving (M4) of the resumed child; the six resume refusals of
-    D1's child, each leaving no run directory and nothing changed (M5, the
-    last a parent without a model spec); serving (M6) and measurement (M7)
+    restore against the parent's (M2); measurement by the disease protocol
+    (M3) and disease-task serving (M4) of the resumed child; the six resume
+    refusals of D1's child, each leaving no run directory and nothing changed
+    (M5, the last a parent without a model spec); serving (M6) and measurement (M7)
     refusing D1's child over the same-shaped workspace; the inventory's
     verdicts, a file without a model spec refused for both uses (M8); the
     finished child extended by one epoch at a fixed rate (M9); resuming that
@@ -97,9 +97,9 @@ M3a's checks:
     (R4.finetune); a file without a model spec refused by a finetune and a
     resume before anything is written, a stripped copy of that child and the
     history file when one is given, and the stripped copy also by serving
-    before any model is built (R2); measurement of the child by its task
-    (R5) and disease-task serving, with a diagnosis of a query from the
-    workspace's own validation cases (R6); the inventory passes
+    before any model is built (R2); measurement of the child by the disease
+    protocol (R5) and disease-task serving, with a diagnosis of a query from
+    the workspace's own validation cases (R6); the inventory passes
     the child, and refuses the history file when one is given (R7); the
     workspace and the history file are unchanged by listing, size and
     modification time, not by content digest (R8), checked after every other
@@ -125,7 +125,7 @@ entry point, and the registry, the kept reports and the ledgers are all under
     that do not map and a disease that is not a node, previewed (nothing
     written) and committed by the printed preview id, its graph the
     workspace's and its counts as built (T1); a copy of the child measured by
-    its task on that version with --record: the report kept with its ranks
+    the disease protocol on that version with --record: the report kept with its ranks
     digest, its ranks one row per case of the version in its order
     (`check_ranks_rows`), its binding counts and ranked cases the ones the
     probe computes itself from the child's graph view and the version's cases
@@ -142,8 +142,8 @@ entry point, and the registry, the kept reports and the ledgers are all under
     same ledger (T5); the overlap audit in registered mode (T6).
     Phase R, after R7: N of the real workspace's val cases written back as a
     source through the real graph's ids, imported with no exclusions (RT1);
-    the child R4.finetune trained measured on it by its task with --record,
-    its binding the probe's own as in T2, training disease overlap none and
+    the child R4.finetune trained measured on it by the disease protocol with
+    --record, its binding the probe's own as in T2, training disease overlap none and
     validation phenotype-set overlap N of N, both as constructed (RT2); that
     record shown for that child served,
     uncontested (RT3).
@@ -176,8 +176,10 @@ on the console, never hidden, and said again beside the acceptance's verdict.
     Phase M, after T6, on the probe's own deployment under <work>/m5: a copy of
     the demo workspace under its own workspace root, M2's resumed disease
     child copied into a run there, filed under its encoder kind, and T1's
-    registry; W7-W11's test runs measure that listed copy by its task (a test
-    run measures a finetuned model by its task, K6). The server's lists name
+    registry; W7-W11's test runs measure that listed copy by the disease
+    protocol (a test run measures a model by a protocol this build implements
+    for its stage and task head, which the runner judges on the listed model
+    record and version, `src.evaluation.protocols`). The server's lists name
     the workspace, its
     checkpoints and the cohort versions by name and digest and resolve only
     what they list (W1). The service, started as the launcher starts it in its
@@ -2131,8 +2133,8 @@ M2_DEMO_REQUIRED: Tuple[str, ...] = (
     "C5.unidentified", "B22", "B23",
     "M11.training", "M11.serving", "M11.measurement",
     # Contract M4's flow on the same workspace and D1's disease child,
-    # functional only: import preview and commit (T1); measure by its task,
-    # keep and record (T2); the same report again and a damaged copy (T3); a
+    # functional only: import preview and commit (T1); measure by the disease
+    # protocol, keep and record (T2); the same report again and a damaged copy (T3); a
     # version mapped against M1's graph (T4); the read-only view for the
     # served child and another (T5); the overlap audit on the registered
     # version (T6).
@@ -2181,8 +2183,8 @@ def m2_acceptance(report: Report, real_requested: bool) -> Dict[str, Any]:
             "M2's source contract on this machine, through the production entry "
             "points, on the model-bundle flow: a base trained, paused and resumed, "
             "a disease child finetuned from a base, paused and resumed and "
-            "extended, the child measured by its task and served for the disease "
-            "task. The real-data models are short trainings by the reference "
+            "extended, the child measured by the disease protocol and served for the "
+            "disease task. The real-data models are short trainings by the reference "
             "recipe that show the pipeline and its checks work; they are not "
             "models of serving quality, which is chosen by the established "
             "training and evaluation. " + _architecture_scope() + " "
@@ -2754,29 +2756,31 @@ def _scaler_restore_facts(before: Dict[str, Any], after: Dict[str, Any],
     return facts
 
 
-def _measure(checkpoint: Path, data_dir: Path, output: Path, device: str, *, task: str) -> int:
+def _measure(checkpoint: Path, data_dir: Path, output: Path, device: str, *,
+             protocol: str) -> int:
     """The production measurement entry point on the generated `val` cohort,
-    measuring the finetuned model by its `task` (`--mode`)."""
+    measuring the model by the evaluation `protocol` asked (`--mode`)."""
     import scripts.measure_scorer as measure_scorer
 
     return measure_scorer.main([
-        "--mode", task, "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
+        "--mode", protocol, "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
         "--split", "val",
         "--output", str(output), "--device", device,
     ])
 
 
 def _measurement_facts(output: Path, checkpoint_sha: str, kg_digest: str,
-                       record: Any, *, task: str) -> Dict[str, Any]:
+                       record: Any, *, protocol: str) -> Dict[str, Any]:
     """`record` is the dataset record the workspace check verified: the
     measurement manifest must carry it whole, sources and digest included, and
-    name the `task` the model was measured by."""
+    name as its mode the evaluation `protocol` asked."""
     from src.utils.fingerprint import file_sha256
 
     assert output.is_file(), "the measurement wrote no report"
     result = json.loads(output.read_text())
-    assert result["manifest"].get("mode") == task, (
-        f"the measurement ran {result['manifest'].get('mode')!r}, not the {task} task")
+    assert result["manifest"].get("mode") == protocol, (
+        f"the report's mode is {result['manifest'].get('mode')!r}, not the protocol asked "
+        f"({protocol})")
     digests = result["manifest"]["artifact_digests"]
     assert digests.get("checkpoint") == checkpoint_sha, (
         "the measurement does not name the checkpoint it was given"
@@ -2792,7 +2796,7 @@ def _measurement_facts(output: Path, checkpoint_sha: str, kg_digest: str,
     return {
         "report_sha256": file_sha256(output),
         "checkpoint_sha256": checkpoint_sha,
-        "mode": task,
+        "mode": protocol,
         "dataset_record": {"binding": recorded["binding"], "origin": recorded["origin"],
                            "sha256": recorded["sha256"], "sources": len(recorded["sources"])},
         "n_ranked": result.get("n_ranked"),
@@ -3127,16 +3131,16 @@ def _import_version(registry: Path, data_dir: Path, source: Path, label: str) ->
 
 
 def _measure_cohort(checkpoint: Path, data_dir: Path, registry: Path, label: str,
-                    device: str, *extra: str, task: str) -> int:
+                    device: str, *extra: str, protocol: str) -> int:
     """The production measurement entry point on a registered cohort version
-    (contract M4): `--cohort` with `--registry`, measuring the finetuned
-    model by its `task` (`--mode`), and `extra` (`--record`). Run inside an
-    M4 flow, where that registry is the deployment's (`_registry_setting`,
-    set once for the flow)."""
+    (contract M4): `--cohort` with `--registry`, measuring the model by the
+    evaluation `protocol` asked (`--mode`), and `extra` (`--record`). Run
+    inside an M4 flow, where that registry is the deployment's
+    (`_registry_setting`, set once for the flow)."""
     import scripts.measure_scorer as measure_scorer
 
     return measure_scorer.main([
-        "--mode", task, "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
+        "--mode", protocol, "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
         "--cohort", label, "--registry", str(registry), "--device", device, *extra,
     ])
 
@@ -3482,11 +3486,13 @@ OPERATOR_ROUTES: Tuple[Tuple[str, str, int], ...] = (
 #: with (its module under `src/webui/components` and its name; its API name is
 #: the dashboard's own, `_dashboard_events`), with the data sent and what its
 #: answer says when D8 allows: Training's confirmed Stop with no training
-#: running, Test's Start with no listed version chosen, Test's Register with
-#: no kept report chosen. Allowed or refused, nothing is done.
+#: running, Test's Start with no listed version and no measurement chosen,
+#: Test's Register with no kept report chosen. Allowed or refused, nothing is
+#: done.
 GATED_EVENTS: Tuple[Tuple[str, str, Tuple[Any, ...], str], ...] = (
     ("training_console", "_on_stop", ({},), "No training is running"),
-    ("test_page", "_on_start", ({}, {}, None, None, None, False, False), "Nothing was started."),
+    ("test_page", "_on_start", ({}, {}, None, None, None, None, False, False),
+     "Nothing was started."),
     ("test_page", "_on_register", ({}, {}, {}, None, None), "Nothing was registered."),
 )
 #: The deployment settings M5's probes depend on: the server's settings
@@ -4218,19 +4224,24 @@ def _store_runs(reports: Path) -> List[str]:
         return []
 
 
-def _listed_test_inputs(label: str, workspace: str, run: str, filename: str,
-                        **choices: Any) -> Any:
+def _listed_test_inputs(label: str, workspace: str, run: str, filename: str, *,
+                        protocol: str, **choices: Any) -> Any:
     """A test run's inputs as the Test page builds them
     (`test_page.start_test_run`): the version, the workspace and the checkpoint
     found in the server's lists again by name, the digests those lists show
-    passed as the expected ones, the task the listing's model record names,
-    and the registry and evidence directories from their settings. `choices`
-    are the operator's two (`record`, `deterministic`). A test run measures a
-    finetuned model by its task (K6), the one its listing's model record
-    names: M5's test runs are given the probe's own disease children."""
+    passed as the expected ones, the evaluation `protocol` asked apart from the
+    learning stage and task the listing's model record names, the listed
+    version's counts, and the registry and evidence directories from their
+    settings. `protocol` and `choices` (`record`, `deterministic`) are the
+    operator's. As the page's Start does, the protocol is first judged on that
+    record and those counts (`src.evaluation.protocols.refusal`); the runner
+    judges it again before it starts, and the run on the bytes it reads. M5's
+    test runs ask for the disease protocol on the probe's own disease
+    children."""
     from src.api.services import server_lists
     from src.api.services.training_manager import TestRunInputs
     from src.config import server_settings
+    from src.evaluation import protocols
 
     version = next((item for item in server_lists.list_cohort_versions().items
                     if item.label == label), None)
@@ -4240,7 +4251,9 @@ def _listed_test_inputs(label: str, workspace: str, run: str, filename: str,
                    if (item.run, item.filename) == (run, filename)), None)
     assert listed is not None and listed.sha256, (
         f"the server lists no readable checkpoint {run}/{filename} in {workspace}")
-    assert listed.task, f"the listed checkpoint {run}/{filename} names no task to measure"
+    why = protocols.refusal(protocol, listed.learning_stage, listed.task, version.counts)
+    assert why is None, (
+        f"the {protocol} measurement is refused for the listed checkpoint {run}/{filename}: {why}")
     registry, evidence = (server_settings.cohort_registry(),
                           server_settings.training_evidence_dirs())
     assert registry.available and evidence.available, "the registry or evidence setting is refused"
@@ -4249,8 +4262,9 @@ def _listed_test_inputs(label: str, workspace: str, run: str, filename: str,
         workspace=server_lists.resolve_workspace(workspace),
         checkpoint=server_lists.resolve_checkpoint(workspace, listed.architecture, run,
                                                    filename),
-        checkpoint_sha256=listed.sha256, task=listed.task, evidence_dirs=tuple(evidence.value),
-        **choices)
+        checkpoint_sha256=listed.sha256, protocol=protocol,
+        learning_stage=listed.learning_stage, task=listed.task, version_counts=version.counts,
+        evidence_dirs=tuple(evidence.value), **choices)
 
 
 def _first_line(process: Any, timeout: float) -> str:
@@ -4509,10 +4523,10 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
     (`child`, W1's listed run; `checkpoint` is D1's child, the link out of the
     workspace and W10's other model) and T1's cohort version (`version` in
     `registry`). W7-W11's test runs measure W1's listed copy, on the same
-    workspace copy, the graph T1's version is bound to: a test run measures a
-    finetuned model by its task (K6), and the chain's own child is one
-    (NEW-probe-1). `m4_runs` are the run ids M4's flow published in that version's store
-    (T2's): W1 lists exactly those. `m4_registered` are those of them whose
+    workspace copy, the graph T1's version is bound to: they ask for the
+    disease protocol, which takes a finetuned disease model, and the chain's
+    own child is one (NEW-probe-1). `m4_runs` are the run ids M4's flow
+    published in that version's store (T2's): W1 lists exactly those. `m4_registered` are those of them whose
     probe passed, so registered: W1 checks each is listed as registered.
 
     Functional only: what M5 adds to serving and evaluation (the server's
@@ -4927,13 +4941,15 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
     def _task_inputs(**choices: Any) -> Any:
         """The test-run inputs for W1's listed copy of M2's disease child,
         found in the server's lists again by name (`_listed_test_inputs`):
-        listed by the digest of the bytes W1 read, and by its task."""
+        listed by the digest of the bytes W1 read, and by its model record (a
+        finetuned disease model); the disease protocol is asked of it."""
         _need("listed", "listed_sha")
         inputs = _listed_test_inputs(M4_DEMO_LABEL, M5_WORKSPACE, M5_LISTED_RUN, M5_CHECKPOINT,
-                                     **choices)
-        assert (inputs.checkpoint, inputs.checkpoint_sha256, inputs.task) == (
-            state["listed"], state["listed_sha"], "disease"), (
-            "the listed disease child is not listed by its run, its digest as read and its task")
+                                     protocol="disease", **choices)
+        assert (inputs.checkpoint, inputs.checkpoint_sha256, inputs.learning_stage,
+                inputs.task) == (state["listed"], state["listed_sha"], "finetune", "disease"), (
+            "the listed disease child is not listed by its run, its digest as read and its "
+            "model record")
         return inputs
 
     def _gpu_lock() -> Tuple[str, Dict[str, Any]]:
@@ -5054,9 +5070,11 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
             f"the outcome says kept {outcome.get('kept')}, registered {outcome.get('registered')}")
         assert kept["manifest"]["artifact_digests"]["checkpoint"] == child["sha256"]
         assert kept["manifest"]["cohort_version"]["manifest_sha256"] == version.identity.sha256
-        # **Measured by its task**, as the runner always asks (`--mode <task>`).
-        assert kept["manifest"]["mode"] == "disease", (
-            f"the run measured {kept['manifest']['mode']!r}, not the model's task")
+        # **Measured by the protocol asked**: the runner passes it as `--mode`
+        # and the report's mode is that protocol's name.
+        assert kept["manifest"]["mode"] == inputs.protocol, (
+            f"the report's mode is {kept['manifest']['mode']!r}, not the protocol asked "
+            f"({inputs.protocol})")
         entries, problems = read_usage_history(version)
         new = entries[usage_before:]
         assert not problems and [entry.get("kind") for entry in new] == ["test_run"], (
@@ -5076,7 +5094,7 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
                              "again, their digests passed as the expected ones",
                    "measured": {"model": "W1's listed copy of M2's resumed disease child",
                                 "run": M5_LISTED_RUN, "sha256": child["sha256"],
-                                "task": kept["manifest"]["mode"]},
+                                "protocol": kept["manifest"]["mode"]},
                    "status": word, "exit_code": status["exit_code"],
                    "exit_meaning": status.get("exit_meaning"),
                    "outcome_file_names_the_kept_report": True, "report_sha256": published,
@@ -5116,12 +5134,12 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
         ledger, ledger_sha256 = read_ledger(ledger_dir / "evaluations.json")
         assert [record.get("source_artifact_digest") for record in ledger["records"]] == [
             job["published"]], "the ledger does not hold one record built from the kept report"
-        # **The disease task's record**: its scoring identity and metrics are
-        # the task measurement's (`task_measurement.DISEASE_SEMANTICS`), never
-        # Mode C's.
+        # **The disease protocol's record**: its scoring mode is the protocol
+        # W8 asked, and its metrics the disease evaluator's
+        # (`task_measurement.TASK_RUNS["disease"]`).
         scoring, metrics = ledger["records"][0]["scoring"], ledger["records"][0]["metrics"]
         assert scoring.get("mode") == "disease" and "pooled_mrr" in metrics, (
-            f"the record is scored as {scoring.get('mode')!r}, not as the disease task")
+            f"the record is scored as {scoring.get('mode')!r}, not by the disease protocol")
         after = report_state(path, checkpoint=listed, expected_sha256=job["published"])
         assert (after.kept, after.registered, after.sequence) == ("kept", "registered", 1), (
             f"the report reads {after.kept}, {after.registered}")
@@ -5319,9 +5337,14 @@ def _m5_real(report: Report, runs: Path, real: Path, workspaces_root: Path, devi
         """The disease child RW2 measures and RW3's refused test start names:
         finetuned by the production trainer from R4's resumed base on the real
         workspace, which is only read, into a run directory of its own under
-        <work>/real/m5 (`_train_disease_child`). Trained once, by RW2; a
+        <work>/real/m5 (`_train_disease_child`), with the learning stage and
+        task its model record names (through the one reader), which the test
+        runs' inputs carry as the listed record's. Trained once, by RW2; a
         training that fails is RW2's failure, and RW3 then says it is not
         available."""
+        from src.models.bundle.record import read_model_record
+        from src.utils.checkpoint_io import read_checkpoint
+
         assert "read" in state, "R1 did not pass"
         assert "base" in state, "R4's resumed base is not available"
         if "task_child" not in state:
@@ -5330,16 +5353,20 @@ def _m5_real(report: Report, runs: Path, real: Path, workspaces_root: Path, devi
             state["task_child_tried"] = True
             trained = _train_disease_child(real, m5 / "disease-child", device,
                                            base=state["base"], sizes=task_sizes)
-            state["task_child"] = {"path": trained.child,
-                                   "sha256": _read_run_checkpoint(trained.child)["sha256"],
+            read = read_checkpoint(trained.child, map_location="cpu", weights_only=True)
+            record = read_model_record(read.checkpoint)
+            state["task_child"] = {"path": trained.child, "sha256": read.identity.sha256,
+                                   "learning_stage": record.learning_stage,
+                                   "task": record.task,
                                    "training_seconds": trained.seconds}
         return state["task_child"]
 
     def _test_job() -> Tuple[str, Dict[str, Any]]:
         assert "record" in state.get("m4", {}), "the cohort version (RT1, RT2) is not available"
         version = state["m4"]["version"]
-        # A test run measures a finetuned model by its task (K6): the probe's
-        # own disease child, finetuned here from R4's resumed base.
+        # The disease protocol asked of the probe's own disease child,
+        # finetuned here from R4's resumed base; the runner judges the request
+        # on the child's model record and the version's counts.
         child = _task_child()
         before, usage_before = _store_runs(reports), len(read_usage_history(version)[0])
         manager = TrainingManager()
@@ -5347,8 +5374,9 @@ def _m5_real(report: Report, runs: Path, real: Path, workspaces_root: Path, devi
             started = manager.start_test(TestRunInputs(
                 registry=registry, version_label=M4_REAL_LABEL,
                 version_sha256=version.identity.sha256, workspace=real,
-                checkpoint=child["path"], checkpoint_sha256=child["sha256"], task="disease",
-                record=True))
+                checkpoint=child["path"], checkpoint_sha256=child["sha256"],
+                protocol="disease", learning_stage=child["learning_stage"], task=child["task"],
+                version_counts=version.manifest.get("counts"), record=True))
             assert started.get("success"), "the runner refused the test run"
             not_reached = _training_stop_does_not_reach_a_test_run(manager)
             word = _job_ended(manager, "test", _TEST_RUN_SECONDS)
@@ -5365,14 +5393,16 @@ def _m5_real(report: Report, runs: Path, real: Path, workspaces_root: Path, devi
         assert published == kept_read.sha256, (
             "the outcome file's digest is not the kept report's bytes")
         assert (kept["manifest"]["artifact_digests"]["checkpoint"], kept["manifest"]["mode"]) == (
-            child["sha256"], "disease"), "the kept report is not the disease child's, by its task"
+            child["sha256"], "disease"), (
+            "the kept report is not the disease child's, or its mode is not the protocol asked "
+            "(disease)")
         assert (outcome.get("kept"), outcome.get("registered")) == (True, True), (
             f"the outcome says kept {outcome.get('kept')}, registered {outcome.get('registered')}")
         ledger, _ = read_ledger(child["path"].resolve().parent / "evaluations.json")
         assert [record.get("source_artifact_digest") for record in ledger["records"]] == [
             published], "the ledger beside the disease child does not hold the run's one record"
         assert ledger["records"][0]["scoring"].get("mode") == "disease", (
-            "the registered record is not scored as the disease task")
+            "the registered record is not scored by the disease protocol")
         new = read_usage_history(version)[0][usage_before:]
         assert [(e.get("kind"), e.get("run_id")) for e in new] == [
             ("test_run", created[0]), ("registered", created[0])], (
@@ -5385,7 +5415,7 @@ def _m5_real(report: Report, runs: Path, real: Path, workspaces_root: Path, devi
                                   "by the production trainer, in a run directory of its own",
                          "recipe": ("the reference recipe" if task_sizes is None
                                     else "the reference recipe at smaller sizes"),
-                         "sha256": child["sha256"], "task": kept["manifest"]["mode"],
+                         "sha256": child["sha256"], "protocol": kept["manifest"]["mode"],
                          "training_seconds": child["training_seconds"]},
             "status": word, "exit_code": status["exit_code"], "report_sha256": published,
             "kept": True, "registered": True, "usage_history": ["test_run", "registered"],
@@ -5404,7 +5434,9 @@ def _m5_real(report: Report, runs: Path, real: Path, workspaces_root: Path, devi
         inputs = TestRunInputs(
             registry=registry, version_label=M4_REAL_LABEL,
             version_sha256=version.identity.sha256, workspace=real, checkpoint=child["path"],
-            checkpoint_sha256=child["sha256"], task="disease")
+            checkpoint_sha256=child["sha256"], protocol="disease",
+            learning_stage=child["learning_stage"], task=child["task"],
+            version_counts=version.manifest.get("counts"))
         manager = TrainingManager()
         # A new base run by the reference recipe (or `task_sizes` over it, as
         # R3's), held by configuration (`_start_training_job` applies
@@ -5530,11 +5562,11 @@ def phase_m2_demo(
         # part claims is build, train, resume, then measure and serve that model.
         assert "child" in state, "the resumed checkpoint (M2) is not available"
         output = m2 / "measured" / "measurement.json"
-        assert _measure(state["child"], sound, output, device, task="disease") == 0, (
+        assert _measure(state["child"], sound, output, device, protocol="disease") == 0, (
             "the measurement failed")
         return "the resumed checkpoint was measured over its own workspace", _measurement_facts(
             output, _read_run_checkpoint(state["child"])["sha256"], *_kg_and_record(sound),
-            task="disease")
+            protocol="disease")
 
     report.run("M3", "m2", "CONTROL: measurement accepts the resumed checkpoint over its graph",
                _measured)
@@ -5690,7 +5722,7 @@ def phase_m2_demo(
         other = state["other"]
         output = m2 / "measure_refused" / "measurement.json"
         before = snapshot(other, include_dirs=True)
-        refuses(lambda: _measure(checkpoint, other, output, device, task="disease"),
+        refuses(lambda: _measure(checkpoint, other, output, device, protocol="disease"),
                 TrainingRecordMismatch, "kg differs")
         assert not output.parent.exists(), "the refused measurement created its output directory"
         assert_untouched(before, other, "a refused measurement", include_dirs=True)
@@ -5826,7 +5858,7 @@ def phase_m2_demo(
         copy = _without_record()
         output = m2 / "measure_no_record" / "measurement.json"
         before = snapshot(copy, include_dirs=True)
-        refuses(lambda: _measure(state["child"], copy, output, device, task="disease"),
+        refuses(lambda: _measure(state["child"], copy, output, device, protocol="disease"),
                 DatasetRecordRefused, "is not here")
         assert not output.parent.exists(), "the refused measurement created its output directory"
         assert_untouched(before, copy, "a refused measurement", include_dirs=True)
@@ -5876,7 +5908,7 @@ def phase_m2_demo(
         shutil.copyfile(checkpoint, measured)          # the child D1 trained, copied
         sha256 = _read_run_checkpoint(measured)["sha256"]
         code = _measure_cohort(measured, sound, registry, M4_DEMO_LABEL, device, "--record",
-                               task="disease")
+                               protocol="disease")
         assert code == 0, f"the measurement with --record exited {code}"
         samples = _cohort_samples(version)
         path, kept, identity, ranked = _kept_report(registry, M4_DEMO_LABEL,
@@ -5977,7 +6009,7 @@ def phase_m2_demo(
         with _observing_checkpoint_reads(reads):
             refusal = refuses(lambda: _measure_cohort(measured, sound, registry,
                                                       M4_OTHER_GRAPH_LABEL, device, "--record",
-                                                      task="disease"),
+                                                      protocol="disease"),
                               CohortBindingMismatch, "mapped against another graph")
         assert not reads, "the checkpoint was read before the refusal"
         assert_untouched(before, registry, "a refused measurement", include_dirs=True)
@@ -6292,14 +6324,14 @@ def phase_m2_real(
     def _measured() -> Tuple[str, Dict[str, Any]]:
         assert "child" in state, "R4.finetune did not pass"
         output = runs / "measurement" / "measurement.json"
-        assert _measure(state["child"], real, output, device, task="disease") == 0, (
+        assert _measure(state["child"], real, output, device, protocol="disease") == 0, (
             "the measurement failed")
-        return "measured by its task through the production entry point", _measurement_facts(
-            output, _read_run_checkpoint(state["child"])["sha256"], state["kg"],
-            state["record"], task="disease")
+        return ("measured by the disease protocol through the production entry point",
+                _measurement_facts(output, _read_run_checkpoint(state["child"])["sha256"],
+                                   state["kg"], state["record"], protocol="disease"))
 
-    report.run("R5", "real", "measurement accepts the new child and measures its task",
-               _measured)
+    report.run("R5", "real", "measurement accepts the new child and measures it by the "
+               "disease protocol", _measured)
 
     def _served() -> Tuple[str, Dict[str, Any]]:
         assert "child" in state, "R4.finetune did not pass"
@@ -6421,7 +6453,7 @@ def phase_m2_real(
         # writes beside its resolved path is under it too.
         sha256 = _read_run_checkpoint(state["child"])["sha256"]
         code = _measure_cohort(state["child"], real, registry, M4_REAL_LABEL, device, "--record",
-                               task="disease")
+                               protocol="disease")
         assert code == 0, f"the measurement with --record exited {code}"
         samples = _cohort_samples(version)
         _, kept, identity, ranked = _kept_report(registry, M4_REAL_LABEL,

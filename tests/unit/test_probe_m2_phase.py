@@ -3,7 +3,7 @@
 On the GB10 these run with `--m2-acceptance --device cuda`; here the phase
 functions run on CPU over the demo graph, so the production entry points they
 drive -- the trainer on the model-bundle path (bases and disease children,
-paused, resumed and extended), the measurement CLI by task, the disease-task
+paused, resumed and extended), the measurement CLI by the disease protocol, the disease-task
 serving build and the inventory -- are exercised end to end, and every probe
 in each phase must pass. Also: the acceptance is complete only when every
 required probe of both parts ran and passed, the CLI cannot turn the
@@ -264,7 +264,7 @@ def test_the_demo_phase_passes_and_every_required_probe_runs(tmp_path, served_st
     assert identity["scoring_mode"] == "disease_task"
     assert identity["shortest_paths"]["state"] == "absent"
     assert facts["M4"]["result_kind"] == "disease_task/v1"
-    # M3 measured the resumed child by its task.
+    # M3 measured the resumed child by the disease protocol.
     assert measured["manifest"]["mode"] == facts["M3"]["mode"] == "disease"
     assert identity["dataset_record"]["origin"] == "synthetic"
     assert (identity["settings"]["device"], identity["settings"]["device_requested"]) == (
@@ -371,7 +371,7 @@ def test_the_demo_phase_passes_and_every_required_probe_runs(tmp_path, served_st
     for mode in ("m1", "read-only"):
         assert "Finished server process" in (
             tmp_path / "m5" / f"service-{mode}" / "server.log").read_text()
-    # W8 and W9: a test run measures a finetuned model by its task (K6), so
+    # W8 and W9: a test run measures a finetuned model by a protocol (K6, K8-6a), so
     # W7-W11 name W1's listed copy of M2's disease child (NEW-probe-1): no
     # model is trained for them, and runs/gatv2 holds the listed run and the
     # link out only. W8's report is kept in T1's version, measured as the
@@ -386,7 +386,7 @@ def test_the_demo_phase_passes_and_every_required_probe_runs(tmp_path, served_st
     task_sha = hashlib.sha256(task_child.read_bytes()).hexdigest()
     assert task_sha == child
     assert facts["W8"]["measured"]["sha256"] == task_sha
-    assert facts["W8"]["measured"]["task"] == "disease"
+    assert facts["W8"]["measured"]["protocol"] == "disease"
     assert facts["W8"]["measured"]["run"] == probe.M5_LISTED_RUN
     reports = sorted((version / "reports").glob("*/report.json"))
     assert len(reports) == 2
@@ -533,7 +533,7 @@ def test_the_real_phase_passes_and_leaves_the_workspace_as_it_was(
     assert not (work / "real" / "history" / "refused").exists()
     assert digested and all(path.is_relative_to(work) for path in digested), (
         f"the phase read by content outside the work directory: {digested}")
-    # R5 and R6: the child measured by its task and served for it.
+    # R5 and R6: the child measured by the disease protocol and served for it.
     assert facts["R5"]["mode"] == "disease" and facts["R5"]["checkpoint_sha256"] == child_sha
     # Contract M3c: R6's diagnosis names the child R4.finetune trained and the
     # record from files R1 verified.
@@ -587,7 +587,7 @@ def test_the_real_phase_passes_and_leaves_the_workspace_as_it_was(
     rw2_parent = read_checkpoint(disease_child, map_location="cpu",
                                  weights_only=True).checkpoint["parent"]
     assert rw2_parent["sha256"] == facts["R4"]["child_sha256"]
-    assert (facts["RW2"]["measured"]["sha256"], facts["RW2"]["measured"]["task"]) == (
+    assert (facts["RW2"]["measured"]["sha256"], facts["RW2"]["measured"]["protocol"]) == (
         rw2_sha, "disease")
     (rw2_record,) = _ledger_records(disease_child.parent)
     assert rw2_record["source_artifact_digest"] == facts["RW2"]["report_sha256"]
