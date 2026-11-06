@@ -1389,9 +1389,11 @@ counting 0; `reached_*` over the reached cases only; the cases excluded at impor
 them, never in them. Each report also set Mode C beside it on the same embeddings. A Mode D
 number is not the model's approved ranking and does not describe the current diagnosis model.
 
-**A kept Mode D report is never registered again**: `--record`, `scripts/record_evaluation.py`
-and the Test page's Register refuse it ("… is a Mode D report (the served ranking), and Mode D was
-removed in K7 …") before anything is written; the records a ledger already holds stay, and do not
+**A kept Mode D report registers by the general rules, under its own mode** (since K8-6c, policy
+rev 15): `scripts/record_evaluation.py` and the Test page's Register check it as they check every
+report (the report store, its version block, its run directory, the runs under its key, the
+checkpoint's bytes and the ledger), and its record keeps mode D. The same report again answers
+`already_registered`, with nothing written. The records a ledger already holds stay, and do not
 stop the next registration of another report.
 
 ### Record
@@ -2779,8 +2781,9 @@ and register it. Three panels:
   when it is listed with those weights, which is where the list looks, else another listed copy
   in the workspace the run measured, else one in the workspace shown) and registers it. A
   checkpoint moved since the run is not found that way; the page says so, and
-  `scripts/record_evaluation.py` on the machine remains. A kept Mode D report is refused, with
-  nothing written (Mode D was removed in K7; §4.9). While runs under the report's key
+  `scripts/record_evaluation.py` on the machine remains. A kept Mode D report registers the
+  same way, under its own mode; a repeat says it is already registered, with nothing written
+  (§4.9). While runs under the report's key
   disagree, the page shows the block, Register is off, and **investigation notes** (who, when,
   what; 🔒 Add note) are listed and kept with the key's reports. A note never lifts the block.
   On a wide screen the note form (Who, What was found, 🔒 Add note) stays at the panel's foot,

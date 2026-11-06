@@ -846,18 +846,21 @@ def _keep_mode_d_report(site) -> str:
     return path.parent.name
 
 
-def test_a_kept_mode_d_report_is_shown_under_its_own_mode_and_its_register_is_refused(
+def test_a_kept_mode_d_report_is_shown_under_its_own_mode_and_its_register_is_enabled(
         site, monkeypatch):
     """A kept Mode D report beside a Mode C one (K7 removed Mode D, not its
     reports): the Result names its own mode and case sets, with its served
     scoring, Mode D's tiles and the reached-cases coverage, and no Mode C; each
-    report row says its mode; the help is Mode D's note. Register is off, with
-    the registration's own reason beside it, and the Mode C report's is not; a
-    click that reaches the registration anyway is refused by it, saying why:
-    nothing is written, and the report reads as before (kept, its record mode
-    D, its key uncontested)."""
+    report row says its mode; the help is Mode D's note. Register is on, as the
+    Mode C report's is: no rule refuses a report by its mode (K8-6c, policy rev
+    15). A click registers it by the general rules, under its own mode: record
+    1 in the ledger beside the listed checkpoint, mode D, a `registered` line
+    in the version's usage history, and the report reads as kept, its record
+    and its key state as before; a second click answers that it is already
+    registered, writing nothing."""
     from src.evaluation.caveats import MODE_C_RESULT_LABEL, MODE_D_NOTE, PRE_B1_NOTE, mode_label
-    from src.evaluation.registration import mode_d_refusal
+    from src.evaluation.cohort_registry import resolve_version
+    from src.evaluation.report_store import read_usage_history
 
     c_run = _keep_mode_c_report(site)
     d_run = _keep_mode_d_report(site)
@@ -889,20 +892,23 @@ def test_a_kept_mode_d_report_is_shown_under_its_own_mode_and_its_register_is_re
     assert "Help: Mode C result" in c_label and "Help: R10 labels" not in c_label
 
     page, request = _page(monkeypatch)
-    off, why = tp.register_state(page, reports, d_run)
-    assert off is False and why == f"Disabled: this is {mode_d_refusal(record)}"
-    assert "a Mode D report (the served ranking)" in why and "no new record" in why
+    assert tp.register_state(page, reports, d_run) == (True, None)
     assert tp.register_state(page, reports, c_run) == (True, None)
     models = tp.read_models("demo", request)
-    usage = _usage_lines(site)
     done, said = tp.register_selected(page, reports, models, "demo", d_run, request)
-    assert done is False
-    assert "is a Mode D report" in said and "Nothing was written" in said
-    assert not (site.checkpoint.parent / "evaluations.json").exists()
-    assert _usage_lines(site) == usage
-    again = {run["run_id"]: run for run in tp.read_reports(LABEL)["runs"]}[d_run]
+    assert done is True and said.startswith("Registered as record 1.")
+    ledger = json.loads((site.checkpoint.parent / "evaluations.json").read_text())
+    assert [(r["scoring"]["mode"], r["source_artifact_digest"]) for r in ledger["records"]] == [
+        ("D", runs[d_run]["state"]["report_sha256"])]
+    entries, _ = read_usage_history(resolve_version(site.registry, LABEL))
+    last = entries[-1]
+    assert (last["kind"], last["run_id"], last["outcome"]) == ("registered", d_run, "registered")
+    shown_again = tp.read_reports(LABEL)
+    again = {run["run_id"]: run for run in shown_again["runs"]}[d_run]
     assert again["state"]["kept"] == "kept" and again["record"] == record
     assert again["contest"]["state"] == runs[d_run]["contest"]["state"] == "uncontested"
+    repeat, said = tp.register_selected(page, shown_again, models, "demo", d_run, request)
+    assert repeat is True and "Already registered as record 1; nothing was written" in said
 
 
 def _swap(path, replacement: bytes, how: str):

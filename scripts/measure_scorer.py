@@ -17,8 +17,8 @@ model's record admits.
 
 **Mode D** (Batch 3's measurement of the served ranking) was removed in K7: it
 no longer runs, and its kept reports and records are read by the shared
-readers (policy rev 15). K7's refusal of a new registration of one still
-stands until K8-6c removes it.
+readers (policy rev 15). A kept Mode D report registers by the general rules,
+under its own mode, and a repeat answers `already_registered`.
 
 **A thin CLI.** Argument parsing, one read of each input, manifest assembly, one
 call into the protocol's evaluator (`task_measurement.TASK_RUNS`), and

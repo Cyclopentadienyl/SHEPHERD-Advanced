@@ -1405,7 +1405,8 @@ def test_report_state_says_cannot_be_checked_rather_than_no(tmp_path, checkpoint
 
 
 # ---------------------------------------------------------------------------
-# A kept Mode D report: readable, never registered (K7)
+# A kept Mode D report: registered by the general rules under its own mode
+# (K8-6c, policy rev 15)
 # ---------------------------------------------------------------------------
 def _mode_d(tmp_path) -> Path:
     """A kept Mode D report measuring `WEIGHTS`, in the version's report store:
@@ -1416,66 +1417,122 @@ def _mode_d(tmp_path) -> Path:
 
 
 @pytest.mark.parametrize("entry", ["measured", "checkpoint_dir", "checkpoint", "place"])
-def test_a_kept_mode_d_report_is_refused_and_still_reads_as_it_did(tmp_path, checkpoints,
-                                                                   entry):
-    """K7: `register_report`, the one writer behind `--record`,
-    `record_evaluation` and the Test page's Register, refuses a Mode D report
-    after reading it and before anything is written: no ledger beside the
-    checkpoint, and every file of the registry as it was (no usage-history
-    line). The gate is the writer's, never `build_record`'s: the store still
-    reads the report under its own key, mode D, uncontested, and it is still
-    kept and not registered."""
+def test_a_kept_mode_d_report_registers_by_the_general_rules(tmp_path, checkpoints, entry):
+    """Policy rev 15 (K8-6c): no rule refuses a report because its mode is D.
+    `register_report`, the one writer behind `--record`, `record_evaluation`
+    and the Test page's Register, registers a kept Mode D report by the rules
+    every report meets, under its own mode: the ledger beside the checkpoint
+    holds its record, mode D; the version's usage history has its
+    `registered` line; the store reads the report as before, under its own
+    key, uncontested; and the report is kept and registered."""
     from src.evaluation.registration import report_state
-    from src.evaluation.report_store import scan_report_store
+    from src.evaluation.report_store import read_usage_history, scan_report_store
 
     report = _mode_d(tmp_path)
-    registry = tmp_path / "registry"
-
-    def files():
-        return {path: path.read_bytes() for path in sorted(registry.rglob("*"))
-                if path.is_file()}
-
     before_scan = scan_report_store(version_of(report))
     (key,) = before_scan.reports
-    before, beside = files(), _listing(checkpoints)
     how = {"measured": {"measured": _measured(report, checkpoints)},
            "checkpoint_dir": {"checkpoint_dir": checkpoints},
            "checkpoint": {"checkpoint": checkpoints / "best.pt"},
            "place": {"place": lambda manifest: checkpoints / "best.pt",
                      "expected_report_sha256": _sha(report)}}[entry]
 
-    with pytest.raises(RegistrationRefused, match="is a Mode D report") as refused:
-        register_report(report, registered_at=WHEN, **how)
+    result = register_report(report, registered_at=WHEN, **how)
 
-    assert "Mode D was removed" in str(refused.value)
-    assert "Nothing was written" in str(refused.value)
-    assert files() == before and _listing(checkpoints) == beside
+    assert result.outcome == "registered"
+    assert result.ledger_path == checkpoints.resolve() / "evaluations.json"
+    assert result.record["scoring"]["mode"] == "D"
+    assert result.record["source_artifact_digest"] == _sha(report)
+    assert result.record["registration"] == {"sequence": 1, "registered_at": WHEN}
+    ledger, _digest = read_ledger(result.ledger_path)
+    assert ledger["records"] == [result.record]
+    entries, problems = read_usage_history(version_of(report))
+    assert problems == []
+    assert [(e["kind"], e["outcome"], e["sequence"], e["report_sha256"]) for e in entries] == [
+        ("registered", "registered", 1, _sha(report))]
     after_scan = scan_report_store(version_of(report))
     assert after_scan.reports == before_scan.reports
     ((_run_id, record),) = after_scan.reports[key].values()
     assert record["scoring"]["mode"] == "D" and after_scan.state(key) == "uncontested"
     state = report_state(report, checkpoint=checkpoints / "best.pt")
-    assert (state.kept, state.registered) == ("kept", "not_registered")
+    assert (state.kept, state.registered) == ("kept", "registered")
 
 
 def test_a_mode_d_record_already_in_a_ledger_stays_and_a_task_report_still_registers(
         tmp_path, checkpoints):
-    """The refusal makes no new Mode D record; one a ledger already holds (Batch
-    3's) stays, is read with it, and does not stop the next registration."""
+    """A Mode D record a ledger already holds (Batch 3's) stays and is read with
+    it. Its report registered again answers `already_registered` and writes
+    nothing, neither the ledger nor the usage history, as any report's repeat
+    does; and it does not stop the next registration."""
     from src.evaluation.sidecar import LEDGER_FILENAME, append_record, build_record
 
     kept = _mode_d(tmp_path)
     ledger_path = checkpoints / LEDGER_FILENAME
     old = build_record(json.loads(kept.read_text()), _sha(kept))
     write_ledger(ledger_path, append_record(empty_ledger(), old, registered_at=WHEN)[1], None)
+    before, usage = ledger_path.read_bytes(), _usage(tmp_path)
 
-    with pytest.raises(RegistrationRefused, match="is a Mode D report"):
-        _register(kept, checkpoints, beside=True)
+    again = _register(kept, checkpoints, beside=True, registered_at="2027-01-01T00:00:00Z")
+
+    assert again.outcome == "already_registered"
+    assert again.record["scoring"]["mode"] == "D"
+    assert again.record["registration"] == {"sequence": 1, "registered_at": WHEN}
+    assert ledger_path.read_bytes() == before and _usage(tmp_path) == usage
     result = _register(_report(tmp_path), checkpoints, beside=True)
 
     assert result.outcome == "registered"
     ledger, _digest = read_ledger(ledger_path)
     assert [r["scoring"]["mode"] for r in ledger["records"]] == ["D", "disease"]
+
+
+def test_a_kept_mode_d_report_whose_version_block_was_edited_is_refused_like_any_report(
+        tmp_path, checkpoints):
+    """The general checks hold for a Mode D report as for a task report
+    (`test_a_report_must_name_the_version_it_is_kept_under`): one whose
+    cohort-version block was edited (its counts, its manifest digest left as
+    it was) is refused with the version block's reason, naming what differs,
+    and nothing is written."""
+    report = _mode_d(tmp_path)
+    data = json.loads(report.read_text())
+    data["manifest"]["cohort_version"]["counts"]["n_excluded"] += 1
+    report.write_text(json.dumps(data))
+    usage = _usage(tmp_path)
+
+    with pytest.raises(RegistrationRefused, match="differing in: counts") as refused:
+        _register(report, checkpoints, beside=True)
+
+    assert "registered only under the version it measured" in str(refused.value)
+    assert "Mode D" not in str(refused.value)
+    assert not (checkpoints / "evaluations.json").exists()
+    assert _usage(tmp_path) == usage
+
+
+def test_a_kept_mode_d_reports_record_keeps_its_own_mode_and_semantics(tmp_path, checkpoints):
+    """No conversion (policy rev 15): the record registered from a kept Mode D
+    report is the one `build_record` makes of it, as for any report: its mode
+    "D", which is no protocol of this build, its scoring as recorded, and the
+    `measurement_semantics_digest` of its own manifest."""
+    from src.evaluation import protocols
+    from src.evaluation.sidecar import (
+        SCORING_SEMANTICS_FIELDS,
+        build_record,
+        measurement_semantics_digest,
+    )
+
+    report = _mode_d(tmp_path)
+    data = json.loads(report.read_text())
+    manifest = data["manifest"]
+
+    record = _register(report, checkpoints, beside=True).record
+
+    assert record["scoring"]["mode"] == manifest["mode"] == "D"
+    assert "D" not in protocols.names()
+    assert record["scoring"] == {field: manifest[field] for field in SCORING_SEMANTICS_FIELDS}
+    assert record["measurement_semantics_digest"] == measurement_semantics_digest(manifest)
+    appended = ("registration", "corroborating_reports")  # what `append_record` adds
+    built = build_record(data, _sha(report))
+    assert {k: v for k, v in record.items() if k not in appended} == built
+    assert (record["registration"]["sequence"], record["corroborating_reports"]) == (1, [])
 
 
 # ---------------------------------------------------------------------------

@@ -502,17 +502,15 @@ def test_reports_whose_modes_are_no_protocol_are_read_as_recorded(tmp_path, monk
     Models page and the Test page, each under its own mode, with the
     protocol table and every judgment of the definition made to fail if read.
 
-    At this revision registration refuses the Mode D report, by K7's
-    `mode_d_refusal`, a refusal keyed on mode D that K8-6c removes (document
-    B §3.3); the definition plays no part in it, and the D report is still
-    built, kept, listed and shown. Only what holds now is asserted: C, the kg
-    label and p1 register; D is refused with K7's words."""
+    Since K8-6c no rule refuses a report by its mode (policy rev 15): the Mode
+    D report registers by the general rules like the others, under its own
+    mode."""
     pytest.importorskip("gradio")
     pytest.importorskip("fastapi")
     from src.api.routes.evaluations import _recorded_results
     from src.evaluation.caveats import mode_label
     from src.evaluation.cohort_registry import resolve_version
-    from src.evaluation.registration import RegistrationRefused, mode_d_refusal, register_report
+    from src.evaluation.registration import register_report
     from src.evaluation.report_store import scan_report_store
     from src.evaluation.sidecar import build_record, read_ledger, records_for
     from src.utils.fingerprint import ReadIdentity
@@ -554,18 +552,13 @@ def test_reports_whose_modes_are_no_protocol_are_read_as_recorded(tmp_path, monk
         assert scan.reports[key][scan.digests[run_id]][1]["scoring"]["mode"] == mode
     assert scan.unplaced == () and scan.unbuilt == {}
 
-    # Registered where registration allows it at this revision.
+    # Registered: every one, by the general rules, under its own mode.
     for mode, path in paths.items():
-        if mode == "D":
-            with pytest.raises(RegistrationRefused) as refused:
-                register_report(path, checkpoint=weights, registered_at="2026-11-06T00:00:00Z")
-            assert mode_d_refusal(records["D"]) in str(refused.value)
-        else:
-            outcome = register_report(path, checkpoint=weights,
-                                      registered_at="2026-11-06T00:00:00Z").outcome
-            assert outcome == "registered", (mode, outcome)
+        outcome = register_report(path, checkpoint=weights,
+                                  registered_at="2026-11-06T00:00:00Z").outcome
+        assert outcome == "registered", (mode, outcome)
     ledger, _sha = read_ledger(weights.parent / "evaluations.json")
-    registered = ["C", "kg_link_prediction", "p1"]
+    registered = ["C", "D", "kg_link_prediction", "p1"]
     assert [r["scoring"]["mode"] for r in records_for(ledger, digest)] == registered
 
     # Shown: the API's view of the ledger beside the weights and the Models

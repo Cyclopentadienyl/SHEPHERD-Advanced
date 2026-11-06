@@ -121,13 +121,14 @@ state (how many, how many contested); Research › Evaluate › Models lists the
 read them through `GET /api/v1/evaluations/loaded-model`. The Test page measures a model as step 2
 does, by a protocol this build implements for its learning stage and task head, chosen among those
 its model record admits: today one for each task head of a finetuned model, and none yet for a
-base, whose formal test is not implemented. The records it registers are task records (Disease,
-Gene or Patients-like-me), each naming its protocol. A Mode C record, the model's own disease
+base, whose formal test is not implemented. A record it registers names the mode of its report: the
+protocol of a new run (Disease, Gene or Patients-like-me), or a kept report's own mode. A Mode C record, the model's own disease
 ranking from before the tasks, is historical: kept Mode C reports and records are read by the
 shared readers (policy rev 15), and since K8-6a no command writes one (`--mode` is required and
 names a protocol; a checkpoint without a model spec, a ShepherdGNN history file, is refused).
 Mode D, the served ranking Batch 3 measured, was removed in K7: its kept reports and records stay
-readable, and none is registered again.
+readable, and a kept report registers by the general rules under its own mode (a repeat answers
+`already_registered`).
 
 ## Development
 

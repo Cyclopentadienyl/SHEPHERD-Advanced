@@ -1748,9 +1748,11 @@ Mode D（`--mode D`，Batch 3 對 Diagnosis 頁 2026 年 10 月所提供排名�
 只計觸及的病例；匯入時排除的病例另列在旁，絕不計入。每份報告也在同一組 embedding 上並列了
 Mode C。Mode D 的數字不是模型的核准排名，也不描述目前的診斷模型。
 
-**已保存的 Mode D 報告不會再被登錄**：`--record`、`scripts/record_evaluation.py` 與 Test 頁的
-Register 都會在寫入任何東西之前拒絕它（「… is a Mode D report (the served ranking), and Mode D was
-removed in K7 …」）；ledger 中既有的紀錄保留，也不會擋下其他報告的下一次登錄。
+**已保存的 Mode D 報告依一般規則、以它自己的模式登錄**（自 K8-6c 起，政策 rev 15）：
+`scripts/record_evaluation.py` 與 Test 頁的 Register 會像檢查每一份報告一樣檢查它（report store、
+它的版本區塊、執行目錄、同一 key 下的多次執行、checkpoint 的位元組與 ledger），其紀錄保留 mode D。
+同一份報告再登錄一次會回答 `already_registered`，不寫入任何東西。ledger 中既有的紀錄保留，也不會
+擋下其他報告的下一次登錄。
 
 ### 登錄
 
@@ -2925,8 +2927,8 @@ checkpoint：run 標題的標籤顯示「dataset not shown · operator control�
   檔案以這些權重列出，就用它，這也是清單查看的地方；否則用執行所量測的 workspace 中另一個已
   列出的副本；再否則用所顯示 workspace 中的副本），然後登錄。執行之後
   被移動過的 checkpoint 無法以這種方式找到；頁面會說明，機器上的
-  `scripts/record_evaluation.py` 仍然可用。已保存的 Mode D 報告會被拒絕，不寫入任何東西（Mode D
-  已在 K7 移除；§4.9）。當報告所屬 key 下的多次執行不一致時，頁面顯示這個
+  `scripts/record_evaluation.py` 仍然可用。已保存的 Mode D 報告以同樣的方式、以它自己的模式登錄；
+  再登錄一次會說明已登錄，不寫入任何東西（§4.9）。當報告所屬 key 下的多次執行不一致時，頁面顯示這個
   封鎖、Register 不可用，並列出與新增 **investigation notes**（誰、何時、發現了什麼；🔒 Add
   note），與該 key 的報告保存在一起。筆記從不解除封鎖。在寬螢幕上，筆記表單（Who、What was
   found、🔒 Add note）固定在面板底部、Register 之上，所以無論報告或筆記多長都保持可見（What

@@ -2409,7 +2409,8 @@ evaluation, report, ledger or registration system, and no evaluator per task.
   not marked as passed. A new-spec model is never measured as Mode C and called comparable with
   historical numbers.
 - **Registration** stays one function, with the task in the record. Old manifests are not accepted
-  for new registration; their reports stay readable.
+  for new registration; their reports stay readable. *(Withdrawn by policy rev 15: a kept report
+  that the shared checks read registers by the general rules; see the K7 bullet below.)*
 - **Where the refusal lives (K7, 2026-10-29).** The refusal of an old mode is made in
   `register_report`, the one writer, right after it reads the stored report and before anything is
   written; never in `build_record`, which the report store also uses to read every kept report,
@@ -2420,6 +2421,9 @@ evaluation, report, ledger or registration system, and no evaluator per task.
   as before (mode D, its D5 key state), and a ledger's existing D record stays and does not stop the
   next registration. **Mode C:** the same refusal, for a C report, lands at K8 in the commit that
   moves probe T2, T3 and RT2 to task reports; until then a kept C report can still be registered.
+  **Withdrawn (policy rev 15):** no registration refusal keyed on a mode stands. K8-6c removed the
+  Mode D one, and the Mode C one never landed: a kept C or D report registers by the general rules
+  under its own mode, and a repeat answers `already_registered`.
 
 ### 8.6 Clinical evaluation status: three kinds of evidence
 
