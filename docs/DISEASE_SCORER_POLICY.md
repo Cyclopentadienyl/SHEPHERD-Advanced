@@ -3,6 +3,92 @@
 **Status:** Accepted (2026-08) by the deploying institution. **Not yet implemented** — see the
 status table in §2. Implementation is work item B-1, which remains gated (§6).
 
+**Revision: rev 15 (dated by the commit that lands it). No normative change to the institution's
+serving-scoring decision: the seven normative statements (§1), the institution's disease SP-context
+decision (§1.2) and the gates (§6) are unchanged. This revision does change engineering rules of
+the research platform that rev 13 and rev 14 recorded: it withdraws their limits on reading and
+registering kept Mode C and Mode D reports and ledger records. Those limits were the owner's
+engineering decisions (rev 13: the authorisation of 2026-10-29; rev 14: the decisions of
+2026-11-02), not the institution's.** K8 on `claude/paper-aligned-two-stage`, by the owner's
+decision of 2026-11-04 on historical measurements and the owner's decisions of 2026-11-05. Natural
+retirement: what the new pipeline cannot handle retires; what it can handle as it is, is not made
+incompatible on purpose; the old pipeline is not kept on purpose. This replaces rev 14's third
+bullet:
+- **Kept Mode C and Mode D reports and ledger records are read by the shared readers, as far as
+  those readers can interpret them.** K8-6 retires what exists only for C and D: Mode C's
+  measurement (K8-6a, K8-6b), K7's registration refusal of Mode D reports (K8-6c), and the
+  C/D-specific labels, notes, metric-name mappings, tiles, columns, help and the parser of Mode D's
+  served scoring (K8-6e). After that, a kept report that fits the common report format and
+  measurement semantics (its manifest carries every field the current measurement records, the
+  semantic fields that key it included) and passes the provenance and data-identity checks is
+  shown through the same entry as any other report, under its original mode value. It is
+  registered when it meets the general registration conditions, and a repeat answers
+  `already_registered`. No rule refuses a result because its mode is C or D, none supports those
+  names as a special case, and no C or D report is converted into a current task result.
+- **One generic display (from K8-6e).** This build adds no description of what a C or D figure
+  means and parses no field or value that only C or D writes. Every record is shown by one display
+  that serves any measurement mode: its mode as recorded (a mode the build does not describe is
+  named as such), its denominators and exclusions as recorded, its score semantics exactly as
+  recorded, and every recorded metric. A metric is shown under its recorded name with its recorded
+  value; for the modes the build measures, the pages lead with their readable metric names and
+  keep the recorded names and values one click away. A usage-history row shows its recorded mode,
+  its case count and, one click away, every metric the entry records; an entry that records no
+  mode says so and is never taken for Mode C.
+- **What the shared checks cannot read.** A report or ledger record that the shared checks cannot
+  read is not shown as a result and is never counted as one. It is listed where results are
+  listed, with what identifies it and the reason the shared check gives: a kept report by its run,
+  in the Test page's report list, as before; from K8-6e, a ledger record that names a model's
+  checkpoint digest by its index in the ledger and, where it still carries them, its registration
+  sequence and report digest, in the loaded-model API and the Models details for that model, with
+  one bounded line that names the refused fields and never their values. A ledger record that is
+  not an object, or names no checkpoint digest, belongs to no model: no model's view lists it, and
+  only the writer's refusal names it, by its index. A ledger file that does not parse as UTF-8
+  JSON, or is not a ledger as a whole, is a separate state: none of its records is shown, the
+  reason names the file, and nothing is recovered from it. The raw file and every ledger record
+  are kept as written. Reading the other records never waits on an unreadable one. Appending
+  continues whenever the writer can safely determine the new record's sequence, identity, duplicates
+  and conflicts from the data the ledger holds. When it cannot, it keeps the originals and refuses
+  that one uncertain write, writing nothing; it never guesses, skips, deletes or renumbers a record.
+  Two cases are kept apart. First, data the writer needs to number records or find duplicates is
+  missing. A record that is not an object, or has lost a key field or its registration sequence,
+  refuses every append to that ledger; the first record under a new report's key, if it has lost its
+  list of corroborating reports, refuses every append under that key. Each refusal names the
+  record's index, and the results that read stay readable. Second, a conflict under one key. While
+  the cohort version's report store keeps reports under one key that differ in a compared field,
+  registering any report under that key, even one already registered, is refused as "runs disagree"
+  before the ledger is read; the refusal names the runs and the differing fields, and measurements
+  under that key still run and keep their reports. Behind that check, the ledger compares a new
+  report with the first record under its key: a report that record already holds answers
+  `already_registered`; otherwise, if they differ in a compared field (a field one of them lacks is
+  never taken as equal), the writer refuses the new report as a contradiction, naming the held
+  record's report digest and the differing fields. Either way it is a conflict to be cleared up, not
+  proof that either experiment is invalid: it may come from a defect or from numerical
+  non-determinism. The original reports stay as written and readable, and no recorded value is
+  edited to make a registration pass. A manual repair only restores a certain omission from the
+  original report or a trusted backup, and keeps the file as it was before the repair together with
+  a record of the repair. This protection is about the ledger's integrity; it never limits which
+  experiments are run or compared.
+- **What is withdrawn.** From rev 14: "no longer read from K8-6e"; the refusal of kept C and D
+  reports by their reader; "not shown and counted as not readable" for C and D ledger records; and
+  "Rev 13's 'stay readable' for Mode D ends there, and its 'never registered again' then holds for
+  Mode C as well". From rev 13: "never registered again" for Mode D, from K8-6c. Rev 13's "stay
+  readable" holds, in the sense above.
+- **What "archived" means.** Rev 12's "the Mode C/D comparison is archived: it is not run again"
+  means that this build no longer runs the old implementations. Mode D's executor went in K7 and
+  Mode C's goes in K8-6a and K8-6b; gate 1 as written stays reproducible only from a revision
+  before K7 (`a7d0171` or earlier); no old implementation is restored. It does not restrict
+  research: a researcher may study the same question again, put kept results that the shared
+  readers read beside new ones, and later add an evaluation protocol for it through the shared
+  measurement, report and ledger flow, where its results are recorded and checked like any other
+  protocol's. Whether a comparison is valid is the researcher's judgement; the platform records
+  each result's conditions.
+- **What stands.** Rev 14's first, second and fourth bullets. From its third bullet: "the files are
+  neither deleted nor rewritten"; "a ledger that holds such records keeps serving, comparing and
+  appending" its other records, with the exceptions above; and "A Mode C or D experiment, if wanted
+  again, is redone on the new pipeline", read with the bullet above: it says how a new measurement
+  of that question is made, not that a kept result must be measured again before it is read,
+  registered or compared.
+
 **Revision: rev 14 (2026-11-02). A factual update, no normative change; the gate text and the
 institution's disease SP-context decision (§1, §1.2) are unchanged.** K8 on
 `claude/paper-aligned-two-stage`, by the owner's decisions of 2026-11-02:
