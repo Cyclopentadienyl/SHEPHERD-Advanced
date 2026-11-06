@@ -21,7 +21,7 @@ Contents:
     - server_settings.py   : the service's M5 settings, read from the environment
                              at each use (deployment mode, workspaces root,
                              cohort registry, intake directory, R10 evidence
-                             directories, ordering roles), the one rule for a
+                             directories), the one rule for a
                              directory an operator names, and the network-bind
                              rule (SPEC_4 §3.1) the launcher and
                              `src.api.main:main()` apply.

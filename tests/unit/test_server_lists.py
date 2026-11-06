@@ -715,13 +715,18 @@ class TestCohortVersions:
             assert exclusion["case_id"] not in dumped
         assert "exclusions" not in dumped and str(tmp_path) not in dumped
 
-    def test_ordering_follows_the_setting(self, registered, tmp_path):
+    def test_a_version_carries_no_ordering_field_and_the_retired_setting_changes_nothing(
+            self, registered, tmp_path):
+        """K8-6d: GET /cohorts' items carry no ``offers_ordering``, and a
+        deployment that still sets SHEPHERD_ORDERING_ROLES lists the same items
+        (the setting is not read)."""
         cohort = _registry_copy(registered, tmp_path)
         role = cohort.version.manifest["role"]
         base = {ss.ENV_REGISTRY: str(cohort.registry)}
-        (off,) = sl.list_cohort_versions(environ=base).items
-        (on,) = sl.list_cohort_versions(environ={**base, ss.ENV_ORDERING_ROLES: role}).items
-        assert (off.offers_ordering, on.offers_ordering) == (False, True)
+        without = sl.list_cohort_versions(environ=base)
+        assert sl.list_cohort_versions(environ={**base, "SHEPHERD_ORDERING_ROLES": role}) == without
+        (item,) = without.as_dict("versions")["versions"]
+        assert "offers_ordering" not in item and item["role"] == role
 
     def test_an_interrupted_import_is_listed_with_its_reason(self, registered, tmp_path):
         cohort = _registry_copy(registered, tmp_path)
@@ -1037,6 +1042,7 @@ class TestRoutes:
         body = client.get("/api/v1/cohorts").json()
         assert body["problem"] is None
         assert [v["label"] for v in body["versions"]] == [cohort.version.manifest["label"]]
+        assert "offers_ordering" not in body["versions"][0]           # retired in K8-6d
 
     def test_the_cohort_route_reads_each_runs_state_through_the_registration(
             self, client, registered, tmp_path, monkeypatch):

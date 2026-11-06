@@ -1383,7 +1383,7 @@ in `docs/working/scorer-measurement/PLAN_B05.md`.
 **Kept Mode D reports and records stay readable**, under their own label ("Served ranking of
 October 2026 (Mode D) … not the approved scorer policy", with the scoring mode and η they were
 measured under) on the Test page's Result and the Models page, which lists each mode's records in
-a table of its own and never orders a Mode D record. Their figures are named for their case set:
+a table of its own and ranks no record by its test score. Their figures are named for their case set:
 `post_import_*` and `coverage` over the version's import-eligible cases, a case not reached
 counting 0; `reached_*` over the reached cases only; the cases excluded at import counted beside
 them, never in them. Each report also set Mode C beside it on the same embeddings. A Mode D
@@ -1624,10 +1624,10 @@ per line, appended and never rewritten. It records:
   the run's mode and metrics, `n_ranked`, whether it was deterministic, the device, whether `--record`
   was asked);
 - every registration that wrote a ledger (`registered`: outcome and sequence);
-- every model loaded from a list ordered by the version's score (`model_load`: the metric and
-  scoring group that ordered the list, and whether the load took effect, with why; written by
-  the dashboard's one Load when it is used from Research › Models ordered by test score,
-  §4.14).
+- until K8-6d, every model loaded from a list ordered by the version's score (`model_load`: the
+  metric and scoring group that ordered the list, and whether the load took effect, with why).
+  Ordering by test score has retired and nothing writes these entries now; entries already
+  written stay in the file, and Research › Models shows them as recorded (§4.14).
 
 It holds aggregates only, no case id. The measurement appends its entry right after the report
 is published, before it writes its `--outcome` file. If that append fails, the run stops with
@@ -1985,7 +1985,6 @@ repository's `data/workspaces/` included.
 | `SHEPHERD_REGISTRY` | the cohort registry (§4.9), the directory the commands take as `--registry`: absolute, existing, outside the repository; the only registry reports are registered from and `--cohort` runs measure in, for the service and the commands alike | no cohort version is listed; every registration and `--cohort` measurement is refused |
 | `SHEPHERD_INTAKE_DIR` | an existing directory outside the repository where you place `shepherd-cases/1` files to import; absolute | no import source is offered |
 | `SHEPHERD_TRAINING_EVIDENCE_DIRS` | optional: R10 evidence directories, as `--training-evidence` takes them, separated by `:` (`;` on Windows); each absolute and existing | none; one bad entry refuses the whole setting |
-| `SHEPHERD_ORDERING_ROLES` | optional: cohort roles that offer ordering by test score (D4), comma-separated | none; `institutional_acceptance` is ignored even when listed (`docs/working/PLAN_TEST_RESULTS.md` §4.9 question 1) |
 
 ```bash
 export SHEPHERD_DEPLOYMENT_MODE=M1
@@ -2062,7 +2061,7 @@ and a file, or a label, and the server finds that name in its own list again.
   left out of this list; it no longer fails the whole list. Since M5-1 D8 checks it like the
   controls (§4.13).
 - **Cohort versions** (`GET /api/v1/cohorts`): each version in the registry, by label and the
-  SHA-256 of its `cohort.json`, with its role and whether that role offers ordering. It also shows
+  SHA-256 of its `cohort.json`, with its role. It also shows
   its counts, the graph and dataset record it is bound to, and when it was imported. The list
   never shows a case identifier or the exclusion list: D7 keeps those in the registry, on the
   machine. An interrupted import is listed with its reason. Each version's report store is
@@ -2306,7 +2305,7 @@ help control for every field. Nothing an operator sets changed; what moved is wh
 | **Research (pre-clinical)** › Prepare › **Training** | The run bar, the parameters for the next run, Continue… and the run view with its charts (below). It is the research page shown first |
 | **Research (pre-clinical)** › Prepare › **Fine-tune** | A base's task models (since K6): one listed base, one to three tasks (Disease, Gene, Patients-like-me), each trained as its own run in order, and a job card with each task's status, Stop and products |
 | **Research (pre-clinical)** › Evaluate › **Test** | Import a cohort version from the server's intake directory, run a test, keep and register its report (below) |
-| **Research (pre-clinical)** › Evaluate › **Models** | The server's checkpoints of a workspace, their recorded test results, ordering by test score and Load (below) |
+| **Research (pre-clinical)** › Evaluate › **Models** | The server's checkpoints of a workspace, their recorded test results, newest first or by family, and Load (below) |
 | **⚙ Settings**, at the right of the header | Runtime Settings, as before. For a read-only browser, Apply Settings and Restart Backend are greyed out, with the reason written below them |
 
 - The selected stage (Diagnosis or Research) is filled and bold; the selected research page is
@@ -2795,8 +2794,8 @@ and register it. Three panels:
 **🔒 Import a new version…** opens a drawer over Run and Result: the file in the intake directory
 (`SHEPHERD_INTAKE_DIR`, §4.12: its `*.json` files by name, size and modification time; one that
 is a link leaving the directory is listed and not offered; nothing is uploaded from the
-browser), the version label, the role (with whether it offers ordering by test score in Models:
-`SHEPHERD_ORDERING_ROLES`, and `institutional_acceptance` never does) and the lost-terms
+browser), the version label, the role (the version's declared purpose, for example mygene2,
+research_selection or institutional_acceptance) and the lost-terms
 policy. **🔒 Preview** runs the importer in the service, on the CPU (it reads the workspace's
 graph), and writes nothing. The preview shows the counts, the exclusion reasons and their
 counts, the unmappable terms with how many cases list each, and what the version binds; **case
@@ -2853,28 +2852,11 @@ regime (device, deterministic on or off) is the one the record holds, as an oper
 this; a CPU record's environment class alone does not say it). There are no Trainer validation
 figures and no Load there.
 
-**Order: Newest first | By family | By test score.** By family (since K6) draws one group per
-family, the parent first, with a Lineage column. Ordering by test score is offered only for a cohort
-version whose role is in `SHEPHERD_ORDERING_ROLES` (§4.12); the other versions are listed with
-why they are off, and `institutional_acceptance` is always off ("awaits the institution's formal
-evaluation rules"), even when the setting names it. Choose the metric (Mode C MRR (untruncated),
-Hits@k, or mean rank, which is ordered lowest first) and the cohort version. Records under
-another scoring semantics are never ordered with these; when the version's records are under
-more than one, a **Scoring semantics** choice appears. Wherever ordering is offered the page
-says: "A cohort version whose scores were used to choose a model is no longer an independent
-final test for that model." No model is ever chosen automatically by its test score. The
-groups:
-
-| Group | What is in it |
-|---|---|
-| Ordered by … on … · highest first | One number per checkpoint, by a fixed rule: its first registered record from a deterministic regime, else its first registered record (`#3 · D4 rule` when it had several). Each row shows the record's regime (`CUDA · deterministic`), and **regime differs** with its ⓘ where it is not the one most ordered rows share |
-| Contested on this version · not ordered | The record the rule picks is contested: reports under its key in the version's report store disagree. It is not ordered, and the next record is never put in its place |
-| Contested status cannot be checked · not ordered | Whether the reports under that key disagree cannot be read (the version's report store, or a report in it, cannot be read; the version is not one the registry lists). It is not ordered either, and never shown as uncontested |
-| Not compared on this version · not ordered | Records under another scoring semantics, records in two ledgers, a record or a ledger that cannot be read, or a checkpoint that cannot be read; the row says which |
-| Not tested on this cohort version · newest first | No record on this version |
-
-Just after choosing another workspace, its rows may show for a moment under "Records not read
-yet", until the page has read their ledgers.
+**Order: Newest first | By family.** By family (since K6) draws one group per family, the parent
+first, with a Lineage column. No order ranks a model by a test score: ordering by test score
+retired in K8-6d, with its role setting, its Mode C rule and its one record per checkpoint. Every
+record stays readable in the detail below, and no model is ever chosen automatically by its test
+score.
 
 **Selecting a row** shows its full model fingerprint with Copy, what it was trained on (and
 whether that is this workspace's current dataset), the Trainer's validation figure in its own
@@ -2886,22 +2868,19 @@ card, any warning, and two segments:
   in full in the header (Mode C MRR (untruncated) and Hits@10; Mode D's over the import-eligible
   cases), coverage with every exclusion (Mode D's as the import-eligible cases reached), and
   `registered #N` or amber `contested #N` with what the runs disagree on (or "contested status
-  cannot be checked", never shown as uncontested), deterministic on or off; when the list is
-  ordered, which record the fixed rule picks and how the others differ from it; then the
+  cannot be checked", never shown as uncontested), deterministic on or off; then the
   relations, the record's other metrics, R10 as states (*unverifiable* is a reason, never 0), the
   environment, the dataset and the registration;
 - **Usage history**: the entries that name this checkpoint in every listed cohort version's
-  usage history: test runs, registrations and loads from an ordered list, newest first.
+  usage history, newest first: test runs and registrations, and any model load kept from before
+  K8-6d, shown as recorded ("ordered by" its metric's name, and its scoring semantics).
 
 **🔒 Load this model** is the shared Load (the same confirmation as Diagnosis' "Change model…";
 it covers the detail while it is open, its buttons stay in view under its table however short
-the window, and Close returns to the detail with the same checkpoint still selected). When the
-list is ordered by test score, the note beside the button says so, and the Load is written to
-that version's usage history as a model load ordered by that metric, whether or not it took
-effect, with why. A Load from the list newest first writes nothing there. The page is read when
-it is shown, when the workspace changes and after every Load, including one that changed nothing
-served (a refused reload, the model in use loaded again), so the usage history shows the entry
-that Load wrote; nothing on it runs on a timer.
+the window, and Close returns to the detail with the same checkpoint still selected). A Load
+writes nothing to a usage history. The page is read when it is shown, when the workspace changes
+and after every Load, including one that changed nothing served (a refused reload, the model in
+use loaded again), so what changed meanwhile is shown; nothing on it runs on a timer.
 
 **Narrow** (below 1400 × 760, where the regions stack under one another), choosing a row scrolls
 to its detail and moves the keyboard focus there; **↑ Back to the list** in the detail's header

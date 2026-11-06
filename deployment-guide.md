@@ -1743,7 +1743,7 @@ Mode D（`--mode D`，Batch 3 對 Diagnosis 頁 2026 年 10 月所提供排名�
 
 **已保存的 Mode D 報告與紀錄仍可閱讀**，以它們自己的標籤（「Served ranking of October 2026
 (Mode D) … not the approved scorer policy」，附上量測時的評分模式與 η）顯示在 Test 頁的 Result
-與 Models 頁上；Models 頁每種模式的紀錄各列一張表，Mode D 紀錄永不參與排序。它們的數字依病例集
+與 Models 頁上；Models 頁每種模式的紀錄各列一張表，不依測試分數為任何紀錄排名。它們的數字依病例集
 命名：`post_import_*` 與 `coverage` 以版本的匯入後合格病例為分母，未觸及的病例計 0；`reached_*`
 只計觸及的病例；匯入時排除的病例另列在旁，絕不計入。每份報告也在同一組 embedding 上並列了
 Mode C。Mode D 的數字不是模型的核准排名，也不描述目前的診斷模型。
@@ -1944,9 +1944,9 @@ checkpoint、cohort 版本與量測設定）下的報告，會用 ledger 所用�
 - 這個版本的每一次量測（`test_run`：時間、run id、checkpoint 與報告的 digest、該次的 mode 與指標、
   `n_ranked`、是否為確定性執行、裝置、是否要求 `--record`）；
 - 每一次寫入 ledger 的登錄（`registered`：結果與序號）；
-- 每一次從依該版本分數排序的清單載入的模型（`model_load`：排序清單所用的指標與 scoring 分組，以及
-  載入是否生效並附原因；由儀表板唯一的 Load 在 Research › Models 依測試分數排序時使用而寫入，
-  §4.14）。
+- 在 K8-6d 之前，每一次從依該版本分數排序的清單載入的模型（`model_load`：排序清單所用的指標與
+  scoring 分組，以及載入是否生效並附原因）。依測試分數排序已退役，現在沒有任何程式寫入這類條目；
+  已寫入的條目留在檔案中，Research › Models 依其記錄內容顯示（§4.14）。
 
 它只保存彙總資料，不含任何 case id。量測會在報告發佈後、寫出 `--outcome` 檔之前，立即追加它的
 條目。若追加失敗，執行會以結束碼 1 停止（"measured, but the run did not finish"），說明報告已寫出、
@@ -2250,7 +2250,6 @@ M5 的控制項只作用於伺服器列出的項目，從不作用於請求指�
 | `SHEPHERD_REGISTRY` | cohort registry（§4.9），即各指令以 `--registry` 接收的目錄：絕對路徑、已存在、位於 repository 之外；服務與各指令唯一從中登錄報告、在其中進行 `--cohort` 量測的 registry | 不列出任何 cohort 版本；每次登錄與 `--cohort` 量測都被拒絕 |
 | `SHEPHERD_INTAKE_DIR` | 位於 repository 之外的已存在目錄，你把要匯入的 `shepherd-cases/1` 檔案放在這裡；絕對路徑 | 不提供任何匯入來源 |
 | `SHEPHERD_TRAINING_EVIDENCE_DIRS` | 選填：R10 證據目錄，與 `--training-evidence` 接收的相同，以 `:` 分隔（Windows 為 `;`）；每一個都必須是已存在的絕對路徑 | 無；只要有一個項目不合格，整個設定就被拒絕 |
-| `SHEPHERD_ORDERING_ROLES` | 選填：提供依測試分數排序（D4）的 cohort 角色，以逗號分隔 | 無；`institutional_acceptance` 即使列出也會被忽略（`docs/working/PLAN_TEST_RESULTS.md` §4.9 問題 1） |
 
 ```bash
 export SHEPHERD_DEPLOYMENT_MODE=M1
@@ -2317,7 +2316,7 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
   大小或時間可顯示，會從這份清單中略去；它不再讓整份清單失敗。自 M5-1 起，D8 像檢查控制項
   一樣檢查它（§4.13）。
 - **Cohort 版本**（`GET /api/v1/cohorts`）：registry 中的每個版本，以 label 及其 `cohort.json`
-  的 SHA-256 識別，附上它的角色，以及這個角色是否提供排序。它也顯示版本的計數、所綁定的圖與
+  的 SHA-256 識別，附上它的角色。它也顯示版本的計數、所綁定的圖與
   資料集紀錄，以及匯入時間。清單絕不顯示病例識別碼或排除清單：D7 把它們留在這台機器上的
   registry 中。中斷的匯入會附原因列出。每個版本的報告庫以 run id 列出，每個 run 都會說明它的
   報告是否保留、是否已登錄（`kept`、`registered`，各附原因，以及報告的 digest 與紀錄的序號），
@@ -2529,7 +2528,7 @@ CORS 只決定頁面能讀取什麼。不需要預檢的跨來源請求仍會抵
 | **Research (pre-clinical)** › Prepare › **Training** | run bar、下一次 run 的參數、Continue… 與附圖表的 run 檢視（見下文）。它是 Research 下最先顯示的頁面 |
 | **Research (pre-clinical)** › Prepare › **Fine-tune** | 一個 base 的任務模型（自 K6 起）：一個已列出的 base、一到三個任務（Disease、Gene、Patients-like-me），每個任務依序各自訓練成一個 run；一張 job card 顯示每個任務的狀態、Stop 與產出 |
 | **Research (pre-clinical)** › Evaluate › **Test** | 從伺服器的 intake 目錄匯入 cohort 版本、執行測試、保留並登錄其報告（見下文） |
-| **Research (pre-clinical)** › Evaluate › **Models** | 伺服器為某個 workspace 列出的 checkpoint、它們已記錄的測試結果、依測試分數排序與 Load（見下文） |
+| **Research (pre-clinical)** › Evaluate › **Models** | 伺服器為某個 workspace 列出的 checkpoint、它們已記錄的測試結果、最新在前或依 family 排列，以及 Load（見下文） |
 | 頁首右側的 **⚙ Settings** | Runtime Settings，與以前相同。對唯讀的瀏覽器，Apply Settings 與 Restart Backend 會呈灰色不可用，原因寫在它們下方 |
 
 - 選中的階段（Diagnosis 或 Research）以填色加粗體顯示；選中的研究頁面以底線加粗體顯示；
@@ -2937,9 +2936,8 @@ checkpoint：run 標題的標籤顯示「dataset not shown · operator control�
 
 **🔒 Import a new version…** 會在 Run 與 Result 上方打開一個抽屜：intake 目錄中的檔案
 （`SHEPHERD_INTAKE_DIR`，§4.12：其中的 `*.json` 檔案，依名稱、大小與修改時間列出；連結到目錄
-之外的檔案會列出但不提供選擇；不會從瀏覽器上傳任何東西）、版本標籤、role（並說明它是否在
-Models 中提供依測試分數排序：`SHEPHERD_ORDERING_ROLES`，`institutional_acceptance` 永遠不提供）
-以及遺失 term 的政策。**🔒 Preview** 在服務內以 CPU 執行匯入程式（它會讀取 workspace 的圖譜），
+之外的檔案會列出但不提供選擇；不會從瀏覽器上傳任何東西）、版本標籤、role（版本宣告的用途，例如
+mygene2、research_selection 或 institutional_acceptance）以及遺失 term 的政策。**🔒 Preview** 在服務內以 CPU 執行匯入程式（它會讀取 workspace 的圖譜），
 不寫入任何東西。預覽顯示各項數量、排除原因及其數量、無法映射的 term 及列出每個 term 的案例數，
 以及版本綁定的內容；**案例 id 不會傳送到瀏覽器**（機器上的命令列預覽會列出它們，提交後的版本
 會記錄它們）。不符合 `shepherd-cases/1` 的檔案會被拒絕，其問題依案例索引列出（最多 10 項），
@@ -2985,26 +2983,10 @@ workspace 名稱，這些資訊也不會被遮住。所有 run 都會顯示，�
 紀錄附上 `deterministic_algorithms`；CPU 紀錄單憑 environment class 看不出來）。那裡沒有 Trainer 的
 驗證數值，也沒有 Load。
 
-**Order: Newest first | By family | By test score。** By family（自 K6 起）每個 family 一組，
-parent 在前，並有 Lineage 欄。只有角色列在 `SHEPHERD_ORDERING_ROLES`（§4.12）中的 cohort
-version 才提供依測試分數排序；其他 version 會列出並說明為何關閉，而 `institutional_acceptance` 一律
-關閉（「awaits the institution's formal evaluation rules」），即使設定中列出它也一樣。選擇指標（Mode C
-MRR (untruncated)、Hits@k，或 mean rank——它以最低者在前排序）與 cohort version。其他 scoring
-semantics 下的紀錄從不與這些一起排序；當該 version 的紀錄分屬不止一種時，會出現 **Scoring
-semantics** 選項。凡是提供排序的地方，頁面都會說明：「A cohort version whose scores were used to
-choose a model is no longer an independent final test for that model.」系統從不依測試分數自動選擇
-模型。各分組：
-
-| 分組 | 內容 |
-|---|---|
-| Ordered by … on … · highest first | 每個 checkpoint 一個數值，依固定規則：它第一筆以 deterministic 環境登錄的紀錄，否則為它第一筆登錄的紀錄（有多筆時顯示 `#3 · D4 rule`）。每一列顯示該紀錄的數值環境（`CUDA · deterministic`），若不是多數已排序列共有的環境則標示 **regime differs** 並附 ⓘ |
-| Contested on this version · not ordered | 規則選中的紀錄有爭議：該 version 的報告庫中同一鍵下的報告彼此不一致。它不參與排序，也從不以下一筆紀錄遞補 |
-| Contested status cannot be checked · not ordered | 無法讀出該鍵下的報告是否彼此一致（該 version 的報告庫或其中某份報告無法讀取；該 version 不在登錄庫的清單中）。它同樣不參與排序，也從不顯示為無爭議 |
-| Not compared on this version · not ordered | 其他 scoring semantics 下的紀錄、分在兩個 ledger 中的紀錄、無法讀取的紀錄或 ledger，或無法讀取的 checkpoint；該列會說明是哪一種 |
-| Not tested on this cohort version · newest first | 在此 version 上沒有紀錄 |
-
-剛選擇另一個 workspace 時，它的各列可能短暫顯示在「Records not read yet」之下，直到頁面讀完它們的
-ledger。
+**Order: Newest first | By family。** By family（自 K6 起）每個 family 一組，parent 在前，並有
+Lineage 欄。沒有任何排列方式依測試分數為模型排名：依測試分數排序已在 K8-6d 退役，連同它的角色設定、
+它的 Mode C 規則與每個 checkpoint 只取一筆紀錄的規則。每一筆紀錄都仍可在下方的細節區讀取，系統也從不
+依測試分數自動選擇模型。
 
 **選取一列**會顯示完整的模型指紋與 Copy、它在什麼資料上訓練（以及那是否為此 workspace 目前的資料
 集）、自成一張卡片的 Trainer 驗證數值、任何警告，以及兩個分段：
@@ -3014,19 +2996,18 @@ ledger。
   該模式的 MRR 與 Hits@10（表頭寫出全名：Mode C MRR (untruncated) 與 Hits@10；Mode D 的以匯入後合格
   病例為分母）、列出每一項排除的涵蓋率（Mode D 的寫成匯入後合格病例中觸及的數目），以及 `registered #N` 或琥珀色的 `contested #N` 並
   說明各次執行在哪裡不一致（或「contested status cannot be checked」，從不顯示為無爭議）、
-  deterministic 開或關；清單已排序時，標出固定規則選中哪一筆，以及其他紀錄與它的差異；接著是各項
+  deterministic 開或關；接著是各項
   關係、該紀錄的其他指標、以狀態顯示的 R10（*unverifiable* 是一個原因，從不是 0）、執行環境、資料集
   與登錄資訊；
-- **Usage history**：每一個已列出的 cohort version 的使用紀錄中提及此 checkpoint 的項目：測試執行、
-  登錄，以及從已排序清單進行的載入，最新的在前。
+- **Usage history**：每一個已列出的 cohort version 的使用紀錄中提及此 checkpoint 的項目，最新的在前：
+  測試執行與登錄，以及 K8-6d 之前留下的模型載入，依其記錄內容顯示（「ordered by」加上它記錄的指標名稱，
+  以及它的 scoring semantics）。
 
 **🔒 Load this model** 是共用的 Load（與 Diagnosis 的「Change model…」相同的確認；確認開啟時會蓋住
 細節區，不論視窗多矮，它的按鈕都留在表格下方的可見範圍內；按 Close 回到細節區，且仍選取同一個
-checkpoint）。清單依測試分數排序時，按鈕旁的說明會指出這一點，而這次 Load 會以「依該指標排序的模型
-載入」寫入該 version 的使用紀錄，不論是否生效，並附上原因。從「Newest first」清單進行的 Load 不會在
-那裡寫入任何內容。頁面在顯示時、更換 workspace 時以及每一次 Load 之後讀取，包括沒有改變任何服務內容
-的 Load（重新載入被拒絕、再次載入正在使用的模型），因此使用紀錄會顯示該次 Load 寫入的項目；頁面上
-沒有任何東西依計時器執行。
+checkpoint）。Load 不會寫入任何使用紀錄。頁面在顯示時、更換 workspace 時以及每一次 Load 之後讀取，
+包括沒有改變任何服務內容的 Load（重新載入被拒絕、再次載入正在使用的模型），因此期間發生的變化會顯示
+出來；頁面上沒有任何東西依計時器執行。
 
 **窄版**（寬度低於 1400 或高度低於 760，各區域上下堆疊時），選取一列會捲動到它的細節區並把鍵盤焦點
 移到那裡；細節區標題列的 **↑ Back to the list** 會回到該列。

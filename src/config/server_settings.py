@@ -2,7 +2,7 @@
 Server settings: what an operator configures for M5's controls and lists.
 =========================================================================
 `docs/working/PLAN_TEST_RESULTS.md` §6 ("M5's boundaries"), D7, D8 and §4.9
-questions 1 and 3; SPEC_4 §3 (deployment mode M1). Every setting here is an
+question 3; SPEC_4 §3 (deployment mode M1). Every setting here is an
 environment variable of the service, **read at each use and never from a
 request**: no route, form or saved UI file can set one, and a change takes effect
 the next time a setting is read (a restart is the reliable way to apply one to
@@ -16,7 +16,6 @@ feature that needs it is off.
 | `SHEPHERD_REGISTRY` | the cohort registry (the `--registry` of the CLI), the only one reports are registered from and cohort versions measured in (`deployment_registry_refusal`) | no cohort feature; every registration and `--cohort` measurement refused |
 | `SHEPHERD_INTAKE_DIR` | where an operator places import sources | no import source |
 | `SHEPHERD_TRAINING_EVIDENCE_DIRS` | R10 evidence directories, `os.pathsep`-separated (optional) | none |
-| `SHEPHERD_ORDERING_ROLES` | cohort roles that offer ordering by test score, comma-separated | none |
 
 **The GPU lock's location is read here too** (`gpu_lock_location`, the one
 rule `src.utils.gpu_lock` applies). **The workspaces root is its one name**:
@@ -84,7 +83,6 @@ ENV_WORKSPACES_ROOT = "SHEPHERD_WORKSPACES_ROOT"
 ENV_REGISTRY = "SHEPHERD_REGISTRY"
 ENV_INTAKE_DIR = "SHEPHERD_INTAKE_DIR"
 ENV_TRAINING_EVIDENCE_DIRS = "SHEPHERD_TRAINING_EVIDENCE_DIRS"
-ENV_ORDERING_ROLES = "SHEPHERD_ORDERING_ROLES"
 #: The GPU lock's file name directly under the workspaces root, its one place
 #: (`gpu_lock_location`).
 GPU_LOCK_FILE_NAME = ".shepherd-gpu.lock"
@@ -105,10 +103,6 @@ ACCEPTS_NETWORK_BIND = "1"
 #: Compared exactly: `m1`, ` M1` and `M1 ` are other values, never inferred.
 OPERATOR_DEPLOYMENT_MODE = "M1"
 
-#: Roles that never offer ordering by test score, even when listed (§4.9
-#: question 1): until the institution's formal evaluation rules exist.
-NEVER_ORDERED_ROLES: Tuple[str, ...] = ("institutional_acceptance",)
-
 #: What the two patient-level directories hold, in their refusals.
 PATIENT_LEVEL_DATA = "patient-level data"
 
@@ -121,13 +115,11 @@ __all__ = [
     "ENV_BIND_HOST",
     "ENV_DEPLOYMENT_MODE",
     "ENV_INTAKE_DIR",
-    "ENV_ORDERING_ROLES",
     "ENV_REGISTRY",
     "ENV_TRAINING_EVIDENCE_DIRS",
     "ENV_WORKSPACES_ROOT",
     "GPU_LOCK_FILE_NAME",
     "GPU_LOCK_NOT_CONFIGURED",
-    "NEVER_ORDERED_ROLES",
     "OPERATOR_DEPLOYMENT_MODE",
     "Setting",
     "all_settings",
@@ -142,9 +134,6 @@ __all__ = [
     "intake_directory",
     "is_loopback_ip",
     "network_bind",
-    "offers_ordering",
-    "ordering_roles",
-    "role_offers_ordering",
     "startup_bind",
     "training_evidence_dirs",
     "workspaces_root",
@@ -465,53 +454,6 @@ def training_evidence_dirs(environ: Optional[Mapping[str, str]] = None) -> Setti
     return Setting(ENV_TRAINING_EVIDENCE_DIRS, tuple(resolved))
 
 
-def ordering_roles(environ: Optional[Mapping[str, str]] = None) -> Setting:
-    """`SHEPHERD_ORDERING_ROLES`: the cohort roles that offer ordering by test
-    score (D4; §4.9 question 1), comma-separated, surrounding spaces ignored.
-
-    Default empty: no role offers it. `institutional_acceptance` is refused even
-    when listed, and the note says so. Roles are compared exactly, and a role is
-    a lowercase identifier (`validate_role`), so an entry that is not one simply
-    matches no version.
-    """
-    raw = _raw(environ, ENV_ORDERING_ROLES) or ""
-    listed = [entry.strip() for entry in raw.split(",") if entry.strip()]
-    refused = sorted({role for role in listed if role in NEVER_ORDERED_ROLES})
-    kept: list = []
-    for role in listed:
-        if role not in NEVER_ORDERED_ROLES and role not in kept:
-            kept.append(role)
-    note = None
-    if refused:
-        note = (
-            f"{ENV_ORDERING_ROLES} lists {', '.join(refused)}, which never offers ordering by "
-            "test score until the institution's formal evaluation rules exist (§4.9 "
-            "question 1); it is ignored."
-        )
-    return Setting(ENV_ORDERING_ROLES, tuple(kept), None, note)
-
-
-def offers_ordering(role: Any, listed: Any) -> bool:
-    """**The one rule** for whether a cohort version of this role offers
-    ordering by test score, given the roles the deployment lists: a role that
-    is listed and is never one of `NEVER_ORDERED_ROLES` (§4.9 question 1).
-    Pure; D4's ordering (`src.evaluation.ordering.ordering_offered`) and every
-    page ask it, so a role added to the constant is refused everywhere at once
-    (M5-3 review ARCH-2)."""
-    if not isinstance(role, str) or role in NEVER_ORDERED_ROLES:
-        return False
-    try:
-        return role in set(listed or ())
-    except TypeError:  # an unhashable entry is no role
-        return False
-
-
-def role_offers_ordering(role: Any, environ: Optional[Mapping[str, str]] = None) -> bool:
-    """Whether a cohort version with this role offers ordering by test score
-    under this deployment's `SHEPHERD_ORDERING_ROLES` (`offers_ordering`)."""
-    return offers_ordering(role, ordering_roles(environ).value)
-
-
 def all_settings(environ: Optional[Mapping[str, str]] = None) -> Tuple[Setting, ...]:
     """Every setting as read now, in the table's order, for a status view."""
     return (
@@ -520,7 +462,6 @@ def all_settings(environ: Optional[Mapping[str, str]] = None) -> Tuple[Setting, 
         cohort_registry(environ),
         intake_directory(environ),
         training_evidence_dirs(environ),
-        ordering_roles(environ),
     )
 
 

@@ -134,7 +134,6 @@ def site(built, tmp_path, monkeypatch):
     monkeypatch.setenv("SHEPHERD_INTAKE_DIR", str(root / "intake"))
     monkeypatch.setenv("SHEPHERD_DEVICE", "cpu")
     monkeypatch.delenv("SHEPHERD_TRAINING_EVIDENCE_DIRS", raising=False)
-    monkeypatch.delenv("SHEPHERD_ORDERING_ROLES", raising=False)
     monkeypatch.delenv("SHEPHERD_DEPLOYMENT_MODE", raising=False)
     monkeypatch.setattr(served_status, "read_status", lambda: (None, "not read"))
     reports = registry / "versions" / LABEL / "reports"
@@ -299,13 +298,40 @@ def test_the_job_card_shows_the_tail_redacted_and_the_failure():
     assert "No report kept" in html and "workspace demo" in html
 
 
-def test_a_role_says_whether_it_offers_ordering(monkeypatch):
-    monkeypatch.setenv("SHEPHERD_ORDERING_ROLES", "research_selection,institutional_acceptance")
-    assert tp.role_line("research_selection").startswith(
-        "Role research_selection offers ordering by test score in Models")
-    assert "never offers ordering" in tp.role_line("institutional_acceptance")
-    assert "does not offer ordering" in tp.role_line("mygene2")
-    assert tp.role_line("").startswith("Choose the version's role")
+def test_the_import_form_offers_the_versions_own_roles_and_asks_for_one():
+    """Guard (K8-6d): the cohort-import form's Role select and its note belong
+    to the form, not to the retired ordering. The select offers the listed
+    versions' own roles, then mygene2 and institutional_acceptance, each once;
+    with no role chosen the note asks for one."""
+    page = {"versions": [{"role": "research_selection"}, {"role": "mygene2"}, {"role": None},
+                         {"role": "exploration"}, {}]}
+    assert tp.role_choices(page) == ["research_selection", "mygene2", "exploration",
+                                     "institutional_acceptance"]
+    assert tp.role_choices({}) == ["mygene2", "institutional_acceptance"]
+    prompt = ("Choose the version's role: its declared purpose (for example mygene2, "
+              "research_selection or institutional_acceptance).")
+    for unchosen in (None, "", "  "):
+        assert tp.role_line(unchosen) == prompt
+
+
+def test_the_retired_ordering_roles_setting_changes_nothing_on_the_test_page(site, monkeypatch):
+    """A deployment that still sets SHEPHERD_ORDERING_ROLES is simply not read
+    (K8-6d): the version list and the chosen version's line, the import form's
+    role choices and its note are the same with and without it; a chosen role
+    gets no note, and nothing says a role offers ordering."""
+    def shown():
+        page, _request = _page(monkeypatch)
+        version = page["versions"][0]
+        return (page["versions"], tp.version_html(page, version["label"], None),
+                tp.role_choices(page),
+                [tp.role_line(role) for role in (None, version["role"], "institutional_acceptance")])
+
+    without = shown()
+    role = without[0][0]["role"]
+    monkeypatch.setenv("SHEPHERD_ORDERING_ROLES", f"{role},institutional_acceptance")
+    assert shown() == without
+    assert "offers_ordering" not in without[0][0]
+    assert "ordering" not in without[1] and without[3][1:] == ["", ""]
 
 
 def test_unverifiable_is_a_word_never_a_count():

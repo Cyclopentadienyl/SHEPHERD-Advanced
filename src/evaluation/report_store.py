@@ -44,10 +44,11 @@ records what was found; it decides nothing. "Who" is what the operator types;
 under deployment mode M1 nothing verifies it.
 
 **The usage history** is one append-only file per version, written by the
-shared code (the measurement, the registration function, the load from an
-ordered list), so a run started from the command line counts as one started
-from the Test tab. It makes the use of a cohort for selection visible; it does
-not prevent it (D4).
+shared code (the measurement, the registration function), so a run started from
+the command line counts as one started from the Test tab. It makes the use of a
+cohort visible; it does not prevent it (D4). A ``model_load`` entry, written by
+a Load from a list ordered by test score until that ordering retired (K8-6d), is
+kept and read as written; nothing writes one now.
 
 **What it rests on: plain files and one writer at a time** (D2, D7). Deleting a
 disagreeing report lifts the block, and the files can be edited; the tools
@@ -77,9 +78,10 @@ NOTES_FILE = "notes.jsonl"
 #: (`cohort_registry.list_report_runs` leaves them out).
 STORE_FILES = (USAGE_FILE, NOTES_FILE)
 
-#: What the usage history records (D4): every measurement of the version, every
-#: registration of one of its reports, and every model loaded from a list
-#: ordered by its score.
+#: What the usage history records (D4): every measurement of the version and every
+#: registration of one of its reports; ``model_load``, a model loaded from a list
+#: once ordered by its score, stays a kind its kept entries are read as (no longer
+#: written, K8-6d).
 USAGE_KINDS: Tuple[str, ...] = ("test_run", "registered", "model_load")
 
 #: A key's state in the store (D5): every report under it agrees (or there is at
@@ -331,7 +333,7 @@ class StoreScan(NamedTuple):
         return KeyStatus("uncontested", run_ids)
 
     def state(self, key: Tuple[Any, ...]) -> str:
-        """The key's state alone, one of `CONTEST_STATES` (for D4's ordering)."""
+        """The key's state alone, one of `CONTEST_STATES`."""
         return self.status(key).state
 
     def _unplaced_problems(self) -> Tuple[str, ...]:
@@ -666,28 +668,6 @@ def record_registration(
     return entry
 
 
-def record_model_load(
-    version: "CohortVersionRead",
-    *,
-    checkpoint_sha256: str,
-    metric: str,
-    scoring_semantics_digest: str,
-    loaded: bool,
-    why: Optional[str] = None,
-    at: Optional[datetime] = None,
-) -> Dict[str, Any]:
-    """Append one manual Load of a model chosen from a list ordered by this
-    version's score (D4; §4.9 question 1) to its usage history: which weights,
-    which metric and scoring group ordered the list, and whether the load took
-    effect (with why, when it did not). Recording it does not undo that the
-    version took part in choosing a model. For the load handler (M5-2)."""
-    entry = _usage("model_load", at, checkpoint_sha256=checkpoint_sha256, metric=metric,
-                   scoring_semantics_digest=scoring_semantics_digest, loaded=bool(loaded),
-                   why=why)
-    _append_entry(version, USAGE_FILE, entry)
-    return entry
-
-
 def read_usage_history(
     version: "CohortVersionRead",
 ) -> Tuple[List[Dict[str, Any]], List[str]]:
@@ -779,7 +759,6 @@ __all__ = [
     "read_investigation_notes",
     "read_report",
     "read_usage_history",
-    "record_model_load",
     "record_registration",
     "record_test_run",
     "scan_report_store",

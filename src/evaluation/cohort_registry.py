@@ -215,8 +215,8 @@ class CohortVersionChanged(ValueError):
     It carries the facts (``path``, the ``cohort.json`` read or looked for;
     ``expected``; ``found``) and its message states only them. What the
     difference means depends on where the expectation came from (a run started
-    for a version, a list ordered by one, a version listed earlier), so each
-    caller words its own refusal from these fields."""
+    for a version, a version listed earlier), so each caller words its own
+    refusal from these fields."""
 
     def __init__(self, path: str | Path, expected: str, found: Optional[str]) -> None:
         self.path = Path(path)

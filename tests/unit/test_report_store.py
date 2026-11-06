@@ -44,13 +44,18 @@ from src.evaluation.report_store import (
     entry_mode,
     read_investigation_notes,
     read_usage_history,
-    record_model_load,
     record_registration,
     record_test_run,
     scan_report_store,
 )
 from src.evaluation.sidecar import build_record, record_key
-from tests.fixtures.report_store import new_run_id, store_bytes, store_report, version_of
+from tests.fixtures.report_store import (
+    kept_model_load,
+    new_run_id,
+    store_bytes,
+    store_report,
+    version_of,
+)
 from tests.unit.test_evaluation_sidecar import (
     DISEASE_METRICS,
     environment_block,
@@ -364,6 +369,9 @@ def test_a_note_is_refused_without_its_parts_or_a_report_under_its_key(tmp_path,
 # The usage history
 # ---------------------------------------------------------------------------
 def test_the_usage_history_appends_each_kind_in_order(tmp_path):
+    """A test run and a registration, then a ``model_load`` line kept from
+    before By test score retired (K8-6d; nothing writes one now): all three
+    kinds are read back in order."""
     first = _stored(tmp_path)
     version = version_of(first)
 
@@ -374,9 +382,9 @@ def test_the_usage_history_appends_each_kind_in_order(tmp_path):
     registered = record_registration(version, run_id=first.parent.name,
                                      report_sha256="e" * 64, checkpoint_sha256="c" * 64,
                                      outcome="registered", sequence=1, at=WHEN)
-    load = record_model_load(version, checkpoint_sha256="c" * 64, metric="untruncated_mrr",
-                             scoring_semantics_digest="s" * 64, loaded=False,
-                             why="the reload was refused", at=WHEN)
+    load = kept_model_load(version, checkpoint_sha256="c" * 64, metric="untruncated_mrr",
+                           scoring_semantics_digest="s" * 64, loaded=False,
+                           why="the reload was refused", at=run["at"])
 
     entries, problems = read_usage_history(version)
     assert entries == [run, registered, load] and problems == []
@@ -457,15 +465,17 @@ def test_an_entry_after_an_interrupted_append_starts_its_own_line(tmp_path):
     with open(path, "ab") as handle:
         handle.write(b'{"kind":"test_run","at":"2026')
 
-    load = record_model_load(version, checkpoint_sha256="a" * 64, metric="hits@1",
-                             scoring_semantics_digest="b" * 64, loaded=True, at=WHEN)
+    later = record_test_run(version, run_id=first.parent.name, report_sha256="a" * 64,
+                            checkpoint_sha256="a" * 64, metrics={"hits@1": 0.5}, n_ranked=80,
+                            deterministic=True, device="cpu", record_requested=False, mode="C",
+                            at=WHEN)
     entries, problems = read_usage_history(version)
 
-    assert [e["kind"] for e in entries] == ["test_run", "model_load"]
-    assert entries[1] == load
+    assert [e["kind"] for e in entries] == ["test_run", "test_run"]
+    assert entries[1] == later
     assert len(problems) == 1 and "line 2 is not a JSON object" in problems[0]
     assert path.read_bytes().endswith(b'"at":"2026\n' + json.dumps(
-        load, sort_keys=True, separators=(",", ":")).encode() + b"\n")
+        later, sort_keys=True, separators=(",", ":")).encode() + b"\n")
 
 
 def _failing_write_to(path, monkeypatch, *, after: int):
@@ -496,8 +506,10 @@ def test_a_failed_append_is_taken_back_leaving_no_part_of_its_entry(tmp_path, mo
     _failing_write_to(path, monkeypatch, after=10)
 
     with pytest.raises(OSError, match="No space left on device") as failed:
-        record_model_load(version, checkpoint_sha256="a" * 64, metric="hits@1",
-                          scoring_semantics_digest="b" * 64, loaded=True, at=WHEN)
+        record_test_run(version, run_id=first.parent.name, report_sha256="a" * 64,
+                        checkpoint_sha256="a" * 64, metrics={"hits@1": 0.5}, n_ranked=80,
+                        deterministic=True, device="cpu", record_requested=False, mode="C",
+                        at=WHEN)
     monkeypatch.undo()
 
     assert path.read_bytes() == before
@@ -519,8 +531,10 @@ def test_a_failed_append_that_cannot_be_taken_back_says_so(tmp_path, monkeypatch
                         lambda fd, length: (_ for _ in ()).throw(OSError(5, "I/O error")))
 
     with pytest.raises(OSError) as failed:
-        record_model_load(version, checkpoint_sha256="a" * 64, metric="hits@1",
-                          scoring_semantics_digest="b" * 64, loaded=True, at=WHEN)
+        record_test_run(version, run_id=first.parent.name, report_sha256="a" * 64,
+                        checkpoint_sha256="a" * 64, metrics={"hits@1": 0.5}, n_ranked=80,
+                        deterministic=True, device="cpu", record_requested=False, mode="C",
+                        at=WHEN)
 
     message = str(failed.value)
     assert "No space left on device" in message

@@ -14,8 +14,6 @@ default path, and one directory rule shared with `--registry`.
   `validate_registry` applies to `--registry`;
 - **the evidence directories** are `os.pathsep`-separated, and one bad entry
   refuses the whole setting;
-- **the ordering roles** default to none, and `institutional_acceptance` is
-  refused even when listed (§4.9 question 1);
 - **each read sees the environment as it is now**: no value is cached.
 
 Module: tests/unit/test_server_settings.py
@@ -216,7 +214,7 @@ class TestADirectoryThatCannotBeChecked:
 
     def test_a_status_view_still_reads_every_setting(self, locked):
         settings = ss.all_settings(_env(REGISTRY=str(locked), WORKSPACES_ROOT=str(locked)))
-        assert len(settings) == 6
+        assert len(settings) == 5
         assert "cannot be checked" in settings[2].problem
 
     def test_validate_registry_refuses_it_too(self, locked):
@@ -257,38 +255,11 @@ class TestTrainingEvidenceDirs:
         assert setting.value is None and "not an absolute path" in setting.problem
 
 
-# ---------------------------------------------------------------------------
-# The ordering roles
-# ---------------------------------------------------------------------------
-class TestOrderingRoles:
-
-    def test_default_is_none(self):
-        setting = ss.ordering_roles({})
-        assert setting.available and setting.value == () and setting.note is None
-        assert not ss.role_offers_ordering("mygene2", {})
-
-    def test_listed_roles_in_order_once(self):
-        setting = ss.ordering_roles(_env(ORDERING_ROLES=" mygene2, synthetic ,,mygene2"))
-        assert setting.value == ("mygene2", "synthetic")
-
-    def test_institutional_acceptance_is_refused_even_when_listed(self):
-        environ = _env(ORDERING_ROLES="institutional_acceptance, mygene2")
-        setting = ss.ordering_roles(environ)
-        assert setting.value == ("mygene2",)
-        assert "institutional_acceptance" in setting.note and "ignored" in setting.note
-        assert not ss.role_offers_ordering("institutional_acceptance", environ)
-        assert ss.role_offers_ordering("mygene2", environ)
-
-    @pytest.mark.parametrize("role", ["other", None, 3, ""])
-    def test_an_unlisted_role_offers_none(self, role):
-        assert not ss.role_offers_ordering(role, _env(ORDERING_ROLES="mygene2"))
-
-
 def test_all_settings_in_the_documented_order():
     names = [setting.variable for setting in ss.all_settings({})]
     assert names == [
         "SHEPHERD_DEPLOYMENT_MODE", "SHEPHERD_WORKSPACES_ROOT", "SHEPHERD_REGISTRY",
-        "SHEPHERD_INTAKE_DIR", "SHEPHERD_TRAINING_EVIDENCE_DIRS", "SHEPHERD_ORDERING_ROLES",
+        "SHEPHERD_INTAKE_DIR", "SHEPHERD_TRAINING_EVIDENCE_DIRS",
     ]
 
 

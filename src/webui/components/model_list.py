@@ -45,12 +45,9 @@ shared renderers, which escape); ``"note"`` is plain text beside the Load
 button. What a view names by key (``keys``, ``groups``, ``cells``) belongs to
 the workspace it was read from: another workspace's listing is drawn with the
 view's filter, column and note only (`view_for_listing`) until the page
-shapes its view again. Models orders the list this way (its groups "Ordered by …",
-"Contested on this version · not ordered", "Not tested on this cohort version ·
-newest first", its regime column; its families and their lineage column) and
-sets ``ModelList.ordering`` too, so that a Load from it writes a usage history
-entry. ``create_model_list(head=…, foot=…)`` places a page's own components (a
-filter, links) in the list's header and footer rows.
+shapes its view again. Models groups the list this way (its families and their
+lineage column). ``create_model_list(head=…, foot=…)`` places a page's own
+components (a filter, links) in the list's header and footer rows.
 
 **The Load**, in three steps, each a handler of its own:
 
@@ -81,10 +78,8 @@ filter, links) in the list's header and footer rows.
    can still change between this hash and the reload's own read, seconds later
    (the build reads the workspace's graph first), and the reload compares its
    read with the fingerprint before the bytes are parsed, so other bytes, or
-   none, are refused as not the model shown, never served; a usage history
-   entry (WP4
-   `record_model_load`) only when the list was ordered by a cohort version's
-   score; then the chips and the "served model changed" trigger
+   none, are refused as not the model shown, never served; then the chips and
+   the "served model changed" trigger
    (`PageContext.served_model_changed`), set whenever any part of what is
    served changed;
 3. "Keep <old>" closes the confirmation; nothing is done.
@@ -1018,7 +1013,7 @@ def _listed_context(listing: Mapping[str, Any]) -> Dict[str, Any]:
             "workspaces": list(listing.get("workspaces") or [])}
 
 
-def request_load(listing: Mapping[str, Any], key: Any, ordering: Any, request: Any, *,
+def request_load(listing: Mapping[str, Any], key: Any, request: Any, *,
                  environ: Optional[Mapping[str, str]] = None
                  ) -> Tuple[Optional[Dict[str, Any]], str]:
     """Step 1: D8 on this request; a row that is never loaded refused before
@@ -1062,8 +1057,7 @@ def request_load(listing: Mapping[str, Any], key: Any, ordering: Any, request: A
             "from_key": served_key(status),
             "to": _to_side(target, workspace, directory, workspaces),
             "to_item": _kept(target),
-            **context,
-            "ordering": dict(ordering) if isinstance(ordering, Mapping) else None}
+            **context}
     notice = None
     if target.get("sha256") != item.get("sha256"):
         notice = (f"The file changed since the list was read: it holds model "
@@ -1071,40 +1065,6 @@ def request_load(listing: Mapping[str, Any], key: Any, ordering: Any, request: A
                   " as listed. The To column is what it holds now; read the list again to see "
                   "the rest.")
     return plan, confirmation_html(plan, notice=notice)
-
-
-def _record_usage(plan: Mapping[str, Any], loaded: bool, why: Optional[str],
-                  environ: Optional[Mapping[str, str]] = None) -> Optional[str]:
-    """The usage history entry for a Load from an ordered list (D4), or why it
-    could not be written; None when the list was not ordered or it was written.
-    The version is read bound to the digest the list was ordered by
-    (`resolve_version(expected_sha256=)`, compared before decoding), so an entry
-    is never written against other bytes."""
-    ordering = plan.get("ordering")
-    if not ordering:
-        return None
-    try:
-        from src.config import server_settings
-        from src.evaluation.cohort_registry import CohortVersionChanged, resolve_version
-        from src.evaluation.report_store import record_model_load
-
-        setting = server_settings.cohort_registry(environ)
-        if not setting.available:
-            return f"the usage history was not written: {setting.problem}"
-        try:
-            version = resolve_version(setting.value, ordering["version"],
-                                      expected_sha256=ordering.get("version_sha256") or None)
-        except CohortVersionChanged:
-            return ("the usage history was not written: the cohort version changed since the "
-                    "list was ordered")
-        record_model_load(version, checkpoint_sha256=plan["to"]["sha256"],
-                          metric=ordering["metric"],
-                          scoring_semantics_digest=ordering["scoring_semantics_digest"],
-                          loaded=loaded, why=why)
-    except Exception as exc:  # noqa: BLE001 - the load stands; the page says what failed
-        logger.exception("The usage history entry could not be written")
-        return f"the usage history was not written ({type(exc).__name__})"
-    return None
 
 
 def _outcome(kind: str, headline: str, text: str = "") -> str:
@@ -1143,7 +1103,7 @@ def finish_load(plan: Optional[Mapping[str, Any]], request: Any, *,
     loaded both read again, and the confirmation shown again with a notice when
     either changed; WP2's reload with what the server resolves from the item,
     bound to the model fingerprint shown (other bytes are refused by the
-    reload's own read, and nothing is published); the usage history."""
+    reload's own read, and nothing is published)."""
     from src.api.services.server_lists import ServerListRefused
 
     access = operator_access(request)
@@ -1179,17 +1139,14 @@ def finish_load(plan: Optional[Mapping[str, Any]], request: Any, *,
         target, directory, checkpoint = _target_now({**shown, "sha256": plan["to"].get("sha256")},
                                                     plan["workspace"], environ=environ)
     except ServerListRefused as exc:
-        why = str(exc)
-        note = _record_usage(plan, False, why, environ)
-        return LoadStep(None, _outcome("grey", "Not reloaded.", f"Refused: {why} Nothing was done."
-                                       + (f" Also, {note}." if note else "")), "", now_sha, False)
+        return LoadStep(None, _outcome("grey", "Not reloaded.",
+                                       f"Refused: {exc} Nothing was done."), "", now_sha, False)
     # The refusal again on what the file holds now (rewritten into a base
     # since the confirmation, say): never reloaded, never shown to confirm.
     refusal = load_refusal(target) if loadable(target) else None
     if refusal is not None:
-        note = _record_usage(plan, False, refusal, environ)
-        return LoadStep(None, _outcome("grey", "Not reloaded.", f"{refusal} Nothing was done."
-                                       + (f" Also, {note}." if note else "")), "", now_sha, False)
+        return LoadStep(None, _outcome("grey", "Not reloaded.", f"{refusal} Nothing was done."),
+                        "", now_sha, False)
     to_now = _to_side(target, plan["workspace"], directory, workspaces)
     if _sides_differ(to_now, plan["to"]):
         new_plan["to"] = to_now
@@ -1197,11 +1154,10 @@ def finish_load(plan: Optional[Mapping[str, Any]], request: Any, *,
         notices.append(TO_CHANGED)
     if notices:
         if not loadable(target):
-            note = _record_usage(plan, False, "it cannot be loaded now", environ)
             return LoadStep(None, _outcome(
                 "grey", "Not reloaded.",
                 f"It cannot be loaded now: {target.get('problem') or 'its digest was not read'}. "
-                "Nothing was done." + (f" Also, {note}." if note else "")), "", now_sha, False)
+                "Nothing was done."), "", now_sha, False)
         return LoadStep(new_plan, confirmation_html(new_plan, notice=" ".join(
             [*notices, NOTHING_RELOADED])), "", now_sha, False)
 
@@ -1225,16 +1181,10 @@ def finish_load(plan: Optional[Mapping[str, Any]], request: Any, *,
     changed = isinstance(after, Mapping) and served_key(after) != now_key
     if not answer.get("success"):
         why = str(answer.get("message") or "the reload was refused")
-        note = _record_usage(plan, False, why, environ)
         return LoadStep(None, _outcome("grey", "Not reloaded; the model in use is unchanged.",
-                                       why + (f" Also, {note}." if note else "")),
+                                       why),
                         "", served if isinstance(after, Mapping) else now_sha, changed)
-    note = _record_usage(plan, True, None, environ)
     text = f"The model in use for every session is now {r.short_hex(served)}."
-    if plan.get("ordering") and note is None:
-        text += " The usage history records this load as made from the ordered list."
-    elif note:
-        text += f" But {note}."
     return LoadStep(None, _outcome("ok", "Reloaded.", text), "", served, changed)
 
 
@@ -1434,9 +1384,6 @@ class ModelList:
     - ``view``: `gr.State`, None or the page's view of the list
       (``task``, ``keys``, ``groups``, ``rest_title``, ``column``, ``cells``,
       ``note``: the module docstring); the list redraws on its ``.change``;
-    - ``ordering``: `gr.State`, None, or ``{"version", "version_sha256",
-      "metric", "scoring_semantics_digest"}`` when the page orders the list by a
-      cohort version's score (Models): a Load then writes a usage history entry;
     - ``phase``: `gr.State`, ``"idle"``, ``"confirming"`` or ``"loading"``
       (Diagnosis disables Run Diagnosis while it is not idle);
     - ``refresh``: keyword arguments for an event that (re)reads the list:
@@ -1459,7 +1406,6 @@ class ModelList:
     selected: Any
     plan: Any
     view: Any
-    ordering: Any
     phase: Any
     show_older: Any
     count: Any
@@ -1519,7 +1465,6 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
     selected = gr.State(None)
     plan = gr.State(None)
     view = gr.State(None)
-    ordering = gr.State(None)
     phase = gr.State("idle")
     show_older = gr.State(False)
     # The table preset (Models) keeps its header and its rows in one column
@@ -1614,8 +1559,8 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
                 outputs=[selected, rows, count, facts, load_button, reason, note],
                 show_progress="hidden")
 
-    def _request(data, key, order, request: gr.Request):
-        new_plan, html_ = request_load(data, key, order, request)
+    def _request(data, key, request: gr.Request):
+        new_plan, html_ = request_load(data, key, request)
         if new_plan is None:
             return None, gr.update(visible=False), "", html_, gr.update(), gr.update(), "idle"
         new, old = r.short_hex(new_plan["to"]["sha256"]), r.short_hex(new_plan["from"].get("sha256"))
@@ -1624,7 +1569,7 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
                 gr.update(value=f"Keep {old}" if new_plan["from"].get("sha256") else "Cancel"),
                 "confirming")
 
-    load_button.click(_request, inputs=[listing, selected, ordering],
+    load_button.click(_request, inputs=[listing, selected],
                       outputs=[plan, confirm, confirm_html, reason, reload_button, keep_button,
                                phase]).then(**ctx.chip_refresh)
 
@@ -1706,7 +1651,7 @@ def create_model_list(ctx: Any, preset: str = "clinical", *, elem_id: Optional[s
 
     confirm_html.click(_read_again, inputs=None, outputs=[reason], show_progress="hidden")
 
-    return ModelList(chosen, elem_id, workspace, listing, selected, plan, view, ordering, phase,
+    return ModelList(chosen, elem_id, workspace, listing, selected, plan, view, phase,
                      show_older, count, rows, facts, reason, note, load_button, confirm,
                      confirm_html, reload_button, keep_button, refresh, head_extra, foot_extra,
                      reload_done, after_close_js)

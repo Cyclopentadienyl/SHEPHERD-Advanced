@@ -116,9 +116,8 @@ page (one exception, recorded after this list):
   and its Load (`src/webui/components/model_list.py`; ``"clinical"`` for
   Diagnosis' drawer: rows, "In use now" pinned, the latest 4 runs;
   ``"research"`` for Models: a table, every run). A page shapes it through the
-  returned handle's ``view`` (`gr.State`: a task filter, groups such as
-  "Ordered by …", one extra column such as the regime, a note beside Load) and
-  ``ordering`` (a Load from an ordered list writes a usage history entry);
+  returned handle's ``view`` (`gr.State`: a task filter, groups such as a
+  family, one extra column such as the lineage, a note beside Load);
   ``head``/``foot`` place the page's own components in the list's header and
   footer rows. Each preset has its own element ids (``shep-models-<preset>``),
   so both can sit in one page;

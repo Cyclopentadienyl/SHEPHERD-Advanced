@@ -35,9 +35,9 @@ The shared model list and the one Load (M5-2, UI-A).
   to the model fingerprint shown: through the real `run_reload` on a disease
   child trained in the test, bytes that replace the file after the Load hashed
   it are refused on the reload's own read and never served;
-  "served model changed" set when any part of what is served changed; a usage
-  history entry only when the list was ordered by a cohort version's score,
-  and not when that version changed since;
+  "served model changed" set when any part of what is served changed; a Load
+  writes no usage history entry (that writer retired with By test score,
+  K8-6d);
 - **the wiring**: Load and Reload refresh the chips, Reload sets the "served
   model changed" trigger and the phase and re-reads the list, Keep closes the
   confirmation; the 180 s count runs in the list's own confirmation, so both
@@ -328,7 +328,7 @@ def test_load_needs_d8_on_its_own_request_and_resolves_nothing_when_refused(
     key = _key("model-12.pt")
     monkeypatch.setattr(server_lists, "resolve_checkpoint",
                         lambda *a, **k: pytest.fail("a refused Load resolved a checkpoint"))
-    plan, html = ml.request_load(listing, key, None, gradio_request(server=("192.0.2.10", 8264)))
+    plan, html = ml.request_load(listing, key, gradio_request(server=("192.0.2.10", 8264)))
     assert plan is None and "Refused: " in html
 
 
@@ -356,7 +356,7 @@ def test_load_shows_one_confirmation_from_to_with_the_changed_rows_marked(
         root, serving, monkeypatch):
     listing = _listing(root, monkeypatch)
     key = _key("model-12.pt")
-    plan, html = ml.request_load(listing, key, None, operator_request(monkeypatch))
+    plan, html = ml.request_load(listing, key, operator_request(monkeypatch))
     new, old = root["shas"]["model-12.pt"][:12], root["shas"]["model-05.pt"][:12]
     assert plan["to"]["sha256"] == root["shas"]["model-12.pt"]
     assert plan["from"]["sha256"] == root["shas"]["model-05.pt"]
@@ -373,7 +373,7 @@ def test_load_shows_one_confirmation_from_to_with_the_changed_rows_marked(
     # not a client path: the plan names the item, never a file
     assert all("/" not in str(plan[k]) or k == "run" for k in ("workspace", "filename"))
     # A gene model's To side: its task and the term it computes from its view.
-    plan, html = ml.request_load(listing, _key("model-03.pt"), None,
+    plan, html = ml.request_load(listing, _key("model-03.pt"),
                                  operator_request(monkeypatch))
     assert plan["to"]["mode"] == "gene_task" and plan["to"]["sp"] == "computed"
     assert _changed_rows(html) == ["Model", "Model fingerprint", "Task and scoring", "SP table"]
@@ -383,7 +383,7 @@ def test_load_shows_one_confirmation_from_to_with_the_changed_rows_marked(
     # rows that describe what is served say "not applicable", never words that
     # describe something served (unlisted, absent, files).
     serving["value"] = {"initialized": False}
-    plan, html = ml.request_load(_listing(root, monkeypatch), key, None,
+    plan, html = ml.request_load(_listing(root, monkeypatch), key,
                                  operator_request(monkeypatch))
     frm = _from_cells(html)
     assert plan["from"]["served"] is False and frm["Model"] == "no model loaded"
@@ -397,10 +397,10 @@ def test_load_shows_one_confirmation_from_to_with_the_changed_rows_marked(
 
 def test_an_unloadable_item_cannot_be_loaded(root, serving, monkeypatch):
     listing = _listing(root, monkeypatch)
-    plan, html = ml.request_load(listing, _key("broken.pt"), None,
+    plan, html = ml.request_load(listing, _key("broken.pt"),
                                  operator_request(monkeypatch))
     assert plan is None and "Select a model that can be loaded" in html
-    plan, html = ml.request_load(listing, "../../../etc/passwd", None,
+    plan, html = ml.request_load(listing, "../../../etc/passwd",
                                  operator_request(monkeypatch))
     assert plan is None
 
@@ -436,7 +436,7 @@ def test_a_base_a_history_file_and_a_refused_record_are_refused_before_any_read(
         monkeypatch.setattr(target, name, lambda *a, **k: pytest.fail("a refused row was read"))
     for key, why in ((_key("base.pt"), ml.BASE_REFUSAL), (_key("model-07.pt"), ml.HISTORY_REFUSAL),
                      (refused, "Record not readable: ")):
-        plan, html = ml.request_load(listing, key, None, operator_request(monkeypatch))
+        plan, html = ml.request_load(listing, key, operator_request(monkeypatch))
         assert plan is None and why in html and "Nothing was done." in html, key
         assert not ml.can_load(ml.find_item(listing, key))
     assert "record version 999" in ml.load_refusal(ml.find_item(listing, refused))
@@ -448,10 +448,9 @@ def test_a_base_a_history_file_and_a_refused_record_are_refused_before_any_read(
     assert evil not in shown and "Record not readable: &lt;img src=x" in shown
 
 
-def _plan(root, monkeypatch, ordering=None):
+def _plan(root, monkeypatch):
     listing = _listing(root, monkeypatch)
-    plan, _html = ml.request_load(listing, _key("model-12.pt"), ordering,
-                                  operator_request(monkeypatch))
+    plan, _html = ml.request_load(listing, _key("model-12.pt"), operator_request(monkeypatch))
     return plan
 
 
@@ -523,7 +522,7 @@ def test_a_reload_of_the_same_checkpoint_with_another_workspace_is_a_change(
     other.mkdir()
     serving["value"] = _status(root, served="model-05.pt", data_dir=other)
     listing = _listing(root, monkeypatch)
-    plan, _html = ml.request_load(listing, _key("model-05.pt"), None,
+    plan, _html = ml.request_load(listing, _key("model-05.pt"),
                                   operator_request(monkeypatch))
     step = ml.finish_load(plan, operator_request(monkeypatch), reload=lambda request: (
         PipelineReloadResponse(success=True, message="ok", status=PipelineStatusResponse(
@@ -587,7 +586,7 @@ def test_a_file_rewritten_into_a_base_after_the_confirmation_is_never_reloaded(
     assert calls == [] and step.plan is None and step.changed is False
     assert "Not reloaded." in step.confirm_html and ml.BASE_REFUSAL in step.confirm_html
     # Asked for again from the list read before: refused from what it holds now.
-    plan, html = ml.request_load(_listing(root, monkeypatch), _key("model-12.pt"), None,
+    plan, html = ml.request_load(_listing(root, monkeypatch), _key("model-12.pt"),
                                  operator_request(monkeypatch))
     assert plan is None and ml.BASE_REFUSAL in html
 
@@ -634,7 +633,7 @@ def test_the_to_sides_sp_state_is_the_served_identitys_one_rule(root, serving, m
 def test_a_list_read_earlier_is_caught_when_load_is_asked(root, serving, monkeypatch):
     listing = _listing(root, monkeypatch)
     new_sha, _path = _rewrite(root, "model-12.pt", 14)
-    plan, html = ml.request_load(listing, _key("model-12.pt"), None,
+    plan, html = ml.request_load(listing, _key("model-12.pt"),
                                  operator_request(monkeypatch))
     assert plan["to"]["sha256"] == new_sha and plan["to"]["model"].endswith("epoch 14")
     assert "The file changed since the list was read" in html and new_sha[:12] in html
@@ -645,7 +644,7 @@ def test_load_finds_the_item_in_the_servers_list_again(root, serving, monkeypatc
     and nothing is opened from the listing's word for it."""
     listing = _listing(root, monkeypatch)
     (root["workspace"] / "runs" / "gatv2" / RUNS[0][1] / "checkpoints" / "model-12.pt").unlink()
-    plan, html = ml.request_load(listing, _key("model-12.pt"), None,
+    plan, html = ml.request_load(listing, _key("model-12.pt"),
                                  operator_request(monkeypatch))
     assert plan is None and "Refused: " in html and "is listed in the workspace" in html
 
@@ -731,34 +730,19 @@ def _shifted(source, shift):
 
 @pytest.mark.parametrize("how", ["rename", "rewrite"])
 def test_bytes_replaced_before_the_reloads_own_read_are_refused_never_served(
-        buildable, monkeypatch, tmp_path, how):
+        buildable, monkeypatch, how):
     """EB-1, through the real `run_reload` and `build_pipeline`. A model loaded
     as shown is served (the positive control). Then another model is listed and
     confirmed, and the file is replaced after the Load hashed it, while the build
     reads the workspace's graph and before it reads the checkpoint, as a
     training run's next epoch renames a new ``last.pt`` into place (and once in
     place). The reload compares its own read with the fingerprint shown: nothing
-    is published, the model in use stays, the page says not reloaded and why,
-    and the usage history records the load as not made. Catches the reload
-    given no fingerprint (or not comparing it) and a check after publication."""
-    import src.evaluation.cohort_registry as cohort_registry
-    import src.evaluation.report_store as report_store
-    from src.config import server_settings
+    is published, the model in use stays, and the page says not reloaded and
+    why. Catches the reload given no fingerprint (or not comparing it) and a
+    check after publication."""
     from tests.fixtures.replacement import replace_after_read, replace_file
 
     api, last = buildable["api"], buildable["last"]
-    written = []
-    monkeypatch.setattr(report_store, "record_model_load",
-                        lambda version, **fields: written.append(fields))
-    version = type("V", (), {"identity": type("I", (), {"sha256": "c" * 64})()})()
-    monkeypatch.setattr(cohort_registry, "resolve_version",
-                        lambda registry, label, **kwargs: version)
-    registry = tmp_path / "registry"
-    registry.mkdir()
-    monkeypatch.setattr(server_settings, "cohort_registry",
-                        lambda environ=None: server_settings.Setting("SHEPHERD_REGISTRY", registry))
-    ordering = {"version": "mygene2-2026-09", "version_sha256": "c" * 64,
-                "metric": "untruncated_mrr", "scoring_semantics_digest": "s" * 64}
     published = []
     publish = api.publish_pipeline
 
@@ -770,8 +754,7 @@ def test_bytes_replaced_before_the_reloads_own_read_are_refused_never_served(
 
     def plan_for_last():
         listing = ml.list_models("data", operator_request(monkeypatch))
-        plan, html = ml.request_load(listing, buildable["key"], ordering,
-                                     operator_request(monkeypatch))
+        plan, html = ml.request_load(listing, buildable["key"], operator_request(monkeypatch))
         assert plan is not None, html
         return plan
 
@@ -802,22 +785,18 @@ def test_bytes_replaced_before_the_reloads_own_read_are_refused_never_served(
     assert f"it holds {held[:12]} now, not {shown[:12]}" in step.confirm_html
     assert "Reloaded" not in step.confirm_html.replace("Not reloaded", "")
     assert step.served == first and step.changed is False and step.plan is None
-    assert [entry["loaded"] for entry in written] == [True, False]
-    assert written[-1]["checkpoint_sha256"] == shown
-    assert "is not the model that was shown" in written[-1]["why"]
 
 
 @pytest.mark.parametrize("bytes_now", ["torn", "another graph", "not a dict", "gone"])
 def test_any_other_bytes_at_the_shown_file_are_refused_as_not_the_model_shown(
-        buildable, monkeypatch, tmp_path, bytes_now):
+        buildable, monkeypatch, bytes_now):
     """Root-cause round 3 (INT-R1), through the real `run_reload` and
     `build_pipeline`: whatever replaced the confirmed file after the Load
     hashed it -- torn bytes, a checkpoint recorded for another graph, a pickle
     that is not a checkpoint, or nothing -- is refused on the build's one
     checkpoint read before torch parses it, as "not the model that was shown":
     never as unreadable, another graph's or not a checkpoint. No model is
-    built, nothing is published, the model in use stays, and the usage history
-    records the load as not made, with that reason."""
+    built, nothing is published, and the model in use stays."""
     from tests.unit.test_served_identity import (
         change_after_the_graph_read,
         never_parsed_or_built,
@@ -825,12 +804,10 @@ def test_any_other_bytes_at_the_shown_file_are_refused_as_not_the_model_shown(
     )
 
     api, last = buildable["api"], buildable["last"]
-    _version, ordering, written = _ordered_by_a_version(monkeypatch, tmp_path)
 
     def plan_for_last():
         listing = ml.list_models("data", operator_request(monkeypatch))
-        plan, html = ml.request_load(listing, buildable["key"], ordering,
-                                     operator_request(monkeypatch))
+        plan, html = ml.request_load(listing, buildable["key"], operator_request(monkeypatch))
         assert plan is not None, html
         return plan
 
@@ -853,9 +830,6 @@ def test_any_other_bytes_at_the_shown_file_are_refused_as_not_the_model_shown(
         step.confirm_html, step.confirm_html
     assert api.app_state.pipeline is serving
     assert step.served == shown and step.changed is False and step.plan is None
-    assert [entry["loaded"] for entry in written] == [True, False]
-    assert written[-1]["checkpoint_sha256"] == shown
-    assert "is not the model that was shown" in written[-1]["why"]
 
 
 def test_a_refused_reload_leaves_the_model_in_use_and_says_so(root, serving, monkeypatch):
@@ -872,100 +846,9 @@ def test_a_refused_reload_leaves_the_model_in_use_and_says_so(root, serving, mon
     assert "Not reloaded" in raising.confirm_html and "RuntimeError" in raising.confirm_html
 
 
-def _ordered_by_a_version(monkeypatch, tmp_path):
-    """A registry holding one committed version, the deployment's, and the
-    ordering of a list by that version's score; the usage history entries a
-    Load writes are collected instead of appended."""
-    import src.evaluation.report_store as report_store
-    from src.config import server_settings
-    from tests.fixtures.report_store import store_version
-    from tests.unit.test_evaluation_sidecar import cohort_version
-
-    written = []
-    monkeypatch.setattr(report_store, "record_model_load",
-                        lambda version, **fields: written.append(fields))
-    registry = tmp_path / "registry"
-    version = store_version(registry, cohort_version())
-    monkeypatch.setattr(server_settings, "cohort_registry",
-                        lambda environ=None: server_settings.Setting("SHEPHERD_REGISTRY", registry))
-    ordering = {"version": version.manifest["label"], "version_sha256": version.identity.sha256,
-                "metric": "untruncated_mrr", "scoring_semantics_digest": "s" * 64}
-    return version, ordering, written
-
-
-def test_the_usage_history_is_written_only_for_a_list_ordered_by_a_versions_score(
-        root, serving, monkeypatch, tmp_path):
-    from src.api.routes.pipeline import PipelineReloadResponse, PipelineStatusResponse
-
-    _version, ordering, written = _ordered_by_a_version(monkeypatch, tmp_path)
-
-    def reload(request):
-        return PipelineReloadResponse(success=True, message="ok", status=PipelineStatusResponse(
-            **_status(root, served="model-12.pt")))
-
-    unordered = ml.finish_load(_plan(root, monkeypatch), operator_request(monkeypatch),
-                               reload=reload)
-    # an unordered list: no entry is tried, so none is said to be missing
-    assert written == [] and "usage history" not in unordered.confirm_html
-    serving["value"] = _status(root)
-    step = ml.finish_load(_plan(root, monkeypatch, ordering), operator_request(monkeypatch),
-                          reload=reload)
-    assert written == [{"checkpoint_sha256": root["shas"]["model-12.pt"],
-                        "metric": "untruncated_mrr", "scoring_semantics_digest": "s" * 64,
-                        "loaded": True, "why": None}]
-    assert "usage history records this load" in step.confirm_html
-    serving["value"] = _status(root)
-    ml.finish_load(_plan(root, monkeypatch, ordering), operator_request(monkeypatch),
-                   reload=lambda request: PipelineReloadResponse(
-                       success=False, message="refused", status=PipelineStatusResponse(
-                           **_status(root))))
-    assert written[-1]["loaded"] is False and written[-1]["why"] == "refused"
-    # The cohort version changed since the list was ordered: no entry is
-    # written against it, and the page says why.
-    count = len(written)
-    stale = {**ordering, "version_sha256": "d" * 64}
-    step = ml.finish_load(_plan(root, monkeypatch, stale), operator_request(monkeypatch),
-                          reload=reload)
-    assert len(written) == count
-    assert "the cohort version changed since the list was ordered" in step.confirm_html
-
-
-@pytest.mark.parametrize("bytes_now", ["torn", "another schema", "gone"])
-def test_a_version_whose_bytes_changed_since_the_ordering_gets_no_entry_and_is_said_changed(
-        root, serving, monkeypatch, tmp_path, bytes_now):
-    """Root-cause round 3 (INT-R2): the usage history's version is read bound
-    to the digest the list was ordered by, compared before it is decoded
-    (`resolve_version(expected_sha256=)`), so other bytes at the version --
-    torn, another schema, or none -- are said as "changed since the list was
-    ordered", never as a version that cannot be read, and no entry is
-    written."""
-    import src.evaluation.cohort_registry as cohort_registry
-    from src.api.routes.pipeline import PipelineReloadResponse, PipelineStatusResponse
-
-    version, ordering, written = _ordered_by_a_version(monkeypatch, tmp_path)
-    path = version.identity.path
-    if bytes_now == "gone":
-        path.unlink()
-    elif bytes_now == "torn":
-        path.write_bytes(path.read_bytes()[:40])
-    else:
-        manifest = json.loads(path.read_bytes())
-        manifest["schema_version"] = 99
-        path.write_bytes(cohort_registry.encode_json(manifest))
-
-    step = ml.finish_load(_plan(root, monkeypatch, ordering), operator_request(monkeypatch),
-                          reload=lambda request: PipelineReloadResponse(
-                              success=True, message="ok", status=PipelineStatusResponse(
-                                  **_status(root, served="model-12.pt"))))
-
-    assert written == []
-    assert ("But the usage history was not written: the cohort version changed since the "
-            "list was ordered.") in step.confirm_html, step.confirm_html
-
-
 def test_a_markup_workspace_name_is_escaped_in_the_confirmation(root, serving, monkeypatch):
     listing = _listing(root, monkeypatch)
-    plan, _html = ml.request_load(listing, _key("model-12.pt"), None,
+    plan, _html = ml.request_load(listing, _key("model-12.pt"),
                                   operator_request(monkeypatch))
     plan["to"]["workspace"] = "<b>x</b>"
     html = ml.confirmation_html(plan)
@@ -992,24 +875,22 @@ def test_a_pages_view_orders_filters_and_adds_a_column(root, serving, monkeypatc
     keys = [ml.item_key(i) for i in listing["items"]]
     first, second = _key("model-01.pt"), _key("model-12.pt")
     view = {"task": "disease",
-            "groups": [{"title": "Ordered by Mode C MRR (untruncated) on v1 · highest first",
-                        "keys": [first, second, "gatv2/nope/x.pt"]},
-                       {"title": "Contested on this version · not ordered", "keys": []}],
-            "rest_title": "Not tested on this cohort version · newest first",
-            "column": "Mode C MRR, v1 · regime",
-            "cells": {first: '0.2310<div class="shep-sub">CUDA · deterministic</div>'},
-            "note": "The usage history records <ordered by …>."}
+            "groups": [{"title": "Group A", "keys": [first, second, "gatv2/nope/x.pt"]},
+                       {"title": "Group B", "keys": []}],
+            "rest_title": "The rest · newest first",
+            "column": "A page column",
+            "cells": {first: 'a cell<div class="shep-sub">its second line</div>'},
+            "note": "A note from the page <b>."}
     html = ml.list_html(listing, None, ml.PRESETS["research"], view=view)
-    ordered = html.index("Ordered by Mode C MRR")
+    ordered = html.index("Group A")
     assert ordered < html.index("disease_cccccc") < html.index("disease_8c2e7a") < html.index(
-        "Contested on this version") < html.index("Not tested on this cohort version")
+        "Group B") < html.index("The rest · newest first")
     for other in ("run_e4c2a9", "gene_aaaaaa", "base_aaaaaa", "run_dddddd"):
         assert other not in html, other                    # not disease models: filtered out
-    assert ">Mode C MRR, v1 · regime</th>" in html and "CUDA · deterministic" in html
+    assert ">A page column</th>" in html and "its second line" in html
     assert ml.count_line(listing, ml.PRESETS["research"], False, view) == (
         "in the groups below · 4 checkpoints in 3 runs · Disease only, of 9 listed")
-    assert ml.note_html(view) == ('<span class="shep-note">The usage history records '
-                                  '&lt;ordered by …&gt;.</span>')
+    assert ml.note_html(view) == '<span class="shep-note">A note from the page &lt;b&gt;.</span>'
     # the clinical rows draw a page's cell as one more line of the row
     rows = ml.list_html(listing, None, ml.PRESETS["clinical"],
                         view={"cells": {second: "<b>regime</b>"}})
@@ -1180,8 +1061,8 @@ def test_every_row_says_what_its_file_is_in_both_presets(root, serving, monkeypa
     """README §5 (map B7): every row leads with its kind word
     (`renderers.record_kind_text`), whatever the view or the order: the
     drawer's rows, which list every task's models together, and the research
-    table's Model cell under any order (here, groups as By test score draws
-    them), its history and unreadable files included."""
+    table's Model cell under any order (here, a page's group and column), its
+    history and unreadable files included."""
     listing = _listing(root, monkeypatch)
     rows = ml.list_html(listing, None, ml.PRESETS["clinical"], show_older=True)
     for name, kind in (("model-12.pt", "Disease"), ("model-05.pt", "Disease"),
@@ -1189,9 +1070,8 @@ def test_every_row_says_what_its_file_is_in_both_presets(root, serving, monkeypa
         row = _row_of(rows, name)
         assert (f'"><span class="shep-row-sub shep-row-kind">{kind}</span>'
                 f'<span class="shep-row-main">') in row, (name, row)
-    view = {"groups": [{"title": "Ordered by Mode C MRR (untruncated) on v1 · highest first",
-                        "keys": [_key("model-07.pt")]}],
-            "column": "Mode C MRR, v1 · regime", "cells": {}}
+    view = {"groups": [{"title": "Group A", "keys": [_key("model-07.pt")]}],
+            "column": "A page column", "cells": {}}
     table = ml.list_html(listing, None, ml.PRESETS["research"], view=view)
     for name, kind in (("base.pt", "Base"), ("model-07.pt", "History · never run"),
                        ("broken.pt", "Record not read"), ("model-03.pt", "Gene")):

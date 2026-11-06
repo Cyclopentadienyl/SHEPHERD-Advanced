@@ -248,16 +248,14 @@ class ReportItem:
 @dataclass(frozen=True)
 class CohortVersionItem:
     """One cohort version in the registry: its label and the digest of its
-    `cohort.json` (the version's identity), its role and whether that role
-    offers ordering by test score (`SHEPHERD_ORDERING_ROLES`), and the
-    aggregates its manifest records. Never its exclusions by case: D7 keeps
+    `cohort.json` (the version's identity), its role, and the aggregates its
+    manifest records. Never its exclusions by case: D7 keeps
     case identifiers on the machine. A version that cannot be read is listed
     with `problem`."""
 
     label: str
     manifest_sha256: Optional[str]
     role: Optional[str]
-    offers_ordering: bool
     source_format: Optional[str]
     source_sha256: Optional[str]
     counts: Optional[Dict[str, Any]]
@@ -1034,13 +1032,12 @@ def _report_items(
     return tuple(items), None
 
 
-def _version_item(listed: Any, report_state: Optional[ReportStateReader],
-                  environ: Optional[Mapping[str, str]], *,
+def _version_item(listed: Any, report_state: Optional[ReportStateReader], *,
                   store: Optional[Any] = None,
                   operator: bool = False) -> CohortVersionItem:
     if listed.version is None:
-        return CohortVersionItem(listed.label, None, None, False, None, None, None, None,
-                                 None, None, listed.problem)
+        return CohortVersionItem(listed.label, None, None, None, None, None, None, None,
+                                 None, listed.problem)
     manifest = listed.version.manifest
     source = _as_dict(manifest.get("source")) or {}
     imported = _as_dict(manifest.get("imported")) or {}
@@ -1051,7 +1048,6 @@ def _version_item(listed: Any, report_state: Optional[ReportStateReader],
         label=listed.label,
         manifest_sha256=listed.version.identity.sha256,
         role=role,
-        offers_ordering=server_settings.role_offers_ordering(role, environ),
         source_format=source.get("format"),
         source_sha256=source.get("sha256"),
         counts=_as_dict(manifest.get("counts")),
@@ -1111,7 +1107,7 @@ def list_cohort_versions(
         listed = list_versions(setting.value)
     except RegistryRefused as exc:
         return Listing((), str(exc))
-    return Listing(tuple(_version_item(entry, report_state, environ) for entry in listed))
+    return Listing(tuple(_version_item(entry, report_state) for entry in listed))
 
 
 def _registry_root(environ: Optional[Mapping[str, str]]) -> Path:
@@ -1163,12 +1159,11 @@ def cohort_version_item(
         ServerListRefused: as `resolve_cohort_version`.
     """
     return version_item(resolve_cohort_version(label, environ=environ),
-                        report_state=report_state, environ=environ)
+                        report_state=report_state)
 
 
 def version_item(version: Any, *, report_state: Optional[ReportStateReader] = None,
-                 store: Optional[Any] = None, operator: bool = False,
-                 environ: Optional[Mapping[str, str]] = None) -> CohortVersionItem:
+                 store: Optional[Any] = None, operator: bool = False) -> CohortVersionItem:
     """A cohort version already read (`resolve_cohort_version`), listed as
     `list_cohort_versions` lists it. `store` is that version's one scan
     (`record_states.read_report_store`), for a caller that shows the scan's
@@ -1178,7 +1173,7 @@ def version_item(version: Any, *, report_state: Optional[ReportStateReader] = No
     from src.evaluation.cohort_registry import ListedVersion
 
     return _version_item(ListedVersion(version.manifest.get("label"), version, None),
-                         report_state, environ, store=store, operator=operator)
+                         report_state, store=store, operator=operator)
 
 
 def resolve_report(label: Any, run_id: Any, *,

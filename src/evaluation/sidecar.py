@@ -20,11 +20,11 @@ distinction survives — nothing infers, nothing defaults, and nothing fills a g
 with a plausible value.
 
 **What a record copies, and what it does not** (schema 3). A record copies what
-the read-only view and D4's comparison need: the key, the scoring semantics and
-the numerical regime, the cohort version's identity and aggregate counts, the
-metrics, the relation states, R10 and the environment. The full report stays the
-source: the record names it by digest, and the rest of the manifest, the rank
-file and anything at case level stay there.
+the read-only view shows and what lets records be grouped and compared: the key,
+the scoring semantics and the numerical regime, the cohort version's identity
+and aggregate counts, the metrics, the relation states, R10 and the environment.
+The full report stays the source: the record names it by digest, and the rest
+of the manifest, the rank file and anything at case level stay there.
 
 - **No run paths.** The manifest's `checkpoint_path` and `data_dir` stay in the
   report: they say where one run happened to find its files, and a checkpoint
@@ -133,9 +133,9 @@ SEMANTIC_MANIFEST_FIELDS: Tuple[str, ...] = (
     "cudnn_benchmark",
 )
 
-#: D4's scoring semantics: what makes two results rankings of the same kind, so a
-#: comparison across checkpoints groups by these and nothing narrower. A record
-#: carries them and their own digest (`scoring_semantics_digest`).
+#: D4's scoring semantics: what makes two results rankings of the same kind, so
+#: records of different checkpoints can be grouped by these. A record carries
+#: them and their own digest (`scoring_semantics_digest`).
 SCORING_SEMANTICS_FIELDS: Tuple[str, ...] = (
     "mode",
     "cohort_kind",
@@ -147,9 +147,9 @@ SCORING_SEMANTICS_FIELDS: Tuple[str, ...] = (
 )
 
 #: The rest of the semantic list: the regime a number was computed under. Two
-#: records in one scoring group can differ here, and D4 shows that difference
-#: rather than hiding it. With ``SCORING_SEMANTICS_FIELDS`` it partitions
-#: ``SEMANTIC_MANIFEST_FIELDS``, which a test checks.
+#: records in one scoring group can differ here, and each record keeps it, so
+#: that difference can be shown rather than hidden. With ``SCORING_SEMANTICS_FIELDS``
+#: it partitions ``SEMANTIC_MANIFEST_FIELDS``, which a test checks.
 REGIME_FIELDS: Tuple[str, ...] = (
     "batch_size",
     "software_revision",
@@ -236,7 +236,7 @@ SEMANTIC_ARTIFACT_ROLES: Tuple[str, ...] = (
 #: cohort — and the cohort's role. Since schema 3 the cohort is the **cohort
 #: version's manifest digest**: it binds the samples, the source, the graph, the
 #: mapping policy and the counts, so two versions with identical samples but
-#: different sources are two cohorts (D4: one cohort version per comparison).
+#: different sources are two cohorts.
 KEY_FIELDS: Tuple[str, ...] = (
     "checkpoint_digest",
     "cohort_role",
@@ -390,8 +390,8 @@ def scoring_semantics_digest(manifest: Dict[str, Any]) -> str:
 
     Coarser than ``measurement_semantics_digest`` on purpose: two runs at
     different batch sizes or on different revisions are two measurements, and
-    still the same scoring, so D4 groups them and shows the regime difference.
-    Absent fields hash as ``null``, as there.
+    still the same scoring, so they can be grouped with their regime difference
+    shown. Absent fields hash as ``null``, as there.
     """
     return _canonical_digest(
         {field: manifest.get(field, None) for field in SCORING_SEMANTICS_FIELDS}

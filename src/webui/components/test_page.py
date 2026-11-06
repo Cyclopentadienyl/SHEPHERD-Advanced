@@ -60,9 +60,8 @@ docstring. Three panels, as the mockup draws them (``test-wide.png``,
 **Import** (a drawer over Run and Result; D7): the files the operator placed
 in the server's intake directory (`server_lists.list_intake_files`; a request
 names a file and the server finds it in that listing again, refusing any other
-name or a link that leaves the directory); version label, role (with whether it
-offers ordering by test score in Models: `SHEPHERD_ORDERING_ROLES`, and never
-``institutional_acceptance``) and the lost-terms policy; "🔒 Preview" runs the
+name or a link that leaves the directory); version label, role (the version's
+declared purpose) and the lost-terms policy; "🔒 Preview" runs the
 importer (`prepare_import`, in this process on the CPU; it reads the
 workspace's graph) and **shows only the exclusion reasons and their counts**
 (no case id reaches the browser: the CLI preview on the machine and the
@@ -179,9 +178,6 @@ SERVER_PATH = "a server path"
 #: The investigation note's fields are never narrower (px): "Who" holds a
 #: normal name whole.
 NOTE_FIELD_MIN_WIDTH = 240
-
-#: The roles a version may be given that never offer ordering (§4.9 question 1).
-_NEVER_ORDERED = ("institutional_acceptance",)
 
 #: The lost-terms policy, as the select names it.
 POLICY_CHOICES = [("keep case", "keep"),
@@ -300,9 +296,7 @@ FIELD_HELP = {
     "shep-test-role": (
         "Role",
         "The cohort version's declared purpose, for example mygene2, research_selection or "
-        "institutional_acceptance. Whether Models offers ordering by test score is decided by "
-        "the role (the server's SHEPHERD_ORDERING_ROLES), never by the source's name; "
-        "institutional_acceptance never offers it.",
+        "institutional_acceptance.",
     ),
     "shep-test-partial": (
         "Lost terms",
@@ -613,8 +607,7 @@ def read_reports(label: Any, *, environ: Optional[Mapping[str, str]] = None) -> 
     except ServerListRefused as exc:
         return {**empty, "problem": str(exc)}
     store = read_report_store(version)
-    item = version_item(version, report_state=stored_report_state, store=store, operator=True,
-                        environ=environ)
+    item = version_item(version, report_state=stored_report_state, store=store, operator=True)
     notes, notes_problems = [], []
     try:
         notes, notes_problems = read_investigation_notes(version)
@@ -1007,8 +1000,6 @@ def version_html(page: Mapping[str, Any], label: Optional[str],
     kind = {"bound": "ok", "another": "amber", "unknown": "grey"}[state]
     chip = r.chip(words, kind) if state != "bound" else (
         f'<span class="shep-tag shep-tag-ok">{e(words)} {OK_MARK}</span>')
-    ordering = ("offers ordering by test score in Models" if version.get("offers_ordering")
-                else "does not offer ordering by test score in Models")
     excluded = counts.get("excluded") if isinstance(counts.get("excluded"), Mapping) else {}
     reasons = " · ".join(f"{str(k).replace('_', ' ')} {_count(v)}" for k, v in excluded.items())
     imported = str(version.get("imported_at") or "").replace("T", " ").replace("Z", " UTC")
@@ -1018,7 +1009,7 @@ def version_html(page: Mapping[str, Any], label: Optional[str],
         f'source cases · {_count(counts.get("ranked_eligible"))} ranked-eligible'
         f'{" (" + e(reasons) + " excluded)" if reasons else ""}</div>'
         f'<div>{r.fingerprint_html("version", version.get("manifest_sha256"))} {chip}</div>'
-        f'<div class="shep-sub">The role {e(ordering)}. Imported {e(imported or "—")} · '
+        f'<div class="shep-sub">Imported {e(imported or "—")} · '
         f'{e(version.get("source_format") or "")}</div></div>')
 
 
@@ -1890,35 +1881,20 @@ def intake_note_html(listing: Mapping[str, Any], roots: Sequence[Tuple[str, str]
     return "".join(notes)
 
 
-def role_line(role: Any, *, environ: Optional[Mapping[str, str]] = None) -> str:
-    """Whether a version with this role offers ordering by test score in Models
-    (`role_offers_ordering`: listed in SHEPHERD_ORDERING_ROLES, never
-    institutional_acceptance)."""
-    from src.config import server_settings
-
+def role_line(role: Any) -> str:
+    """The import form's note under Role: with no role chosen, what to choose;
+    for a chosen role, no note."""
     if not isinstance(role, str) or not role.strip():
         return ("Choose the version's role: its declared purpose (for example mygene2, "
                 "research_selection or institutional_acceptance).")
-    role = role.strip()
-    if role in _NEVER_ORDERED:
-        return (f"Role {role} never offers ordering by test score in Models, until the "
-                "institution's formal evaluation rules exist.")
-    if server_settings.role_offers_ordering(role, environ):
-        return (f"Role {role} offers ordering by test score in Models: it is in the server's "
-                "model-selection roles setting (SHEPHERD_ORDERING_ROLES). "
-                "institutional_acceptance does not.")
-    return (f"Role {role} does not offer ordering by test score in Models: it is not in the "
-            "server's model-selection roles setting (SHEPHERD_ORDERING_ROLES). "
-            "institutional_acceptance never does.")
+    return ""
 
 
-def role_choices(page: Mapping[str, Any], *, environ: Optional[Mapping[str, str]] = None
-                 ) -> List[str]:
-    from src.config import server_settings
-
+def role_choices(page: Mapping[str, Any]) -> List[str]:
+    """The import form's Role choices: the listed versions' own roles, then
+    mygene2 and institutional_acceptance, each once (a role may also be typed)."""
     roles: List[str] = []
-    for role in [*(server_settings.ordering_roles(environ).value or ()),
-                 *(v.get("role") for v in page.get("versions") or []), "mygene2",
+    for role in [*(v.get("role") for v in page.get("versions") or []), "mygene2",
                  "institutional_acceptance"]:
         if isinstance(role, str) and role and role not in roles:
             roles.append(role)

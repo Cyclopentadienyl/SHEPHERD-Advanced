@@ -3505,7 +3505,7 @@ GATED_EVENTS: Tuple[Tuple[str, str, Tuple[Any, ...], str], ...] = (
 #: deployment's own lock, root and registry are never used.
 _M5_SETTINGS: Tuple[str, ...] = (
     "SHEPHERD_DEPLOYMENT_MODE", "SHEPHERD_WORKSPACES_ROOT", "SHEPHERD_REGISTRY",
-    "SHEPHERD_INTAKE_DIR", "SHEPHERD_TRAINING_EVIDENCE_DIRS", "SHEPHERD_ORDERING_ROLES",
+    "SHEPHERD_INTAKE_DIR", "SHEPHERD_TRAINING_EVIDENCE_DIRS",
     "SHEPHERD_ACCEPT_UNAUTHENTICATED_NETWORK_BIND", "SHEPHERD_BIND_HOST", "SHEPHERD_DEVICE",
     "SHEPHERD_KG_PATH", "SHEPHERD_CHECKPOINT_PATH", "SHEPHERD_DATA_DIR",
 )
@@ -4635,9 +4635,8 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
         assert versions.available, "the server lists no cohort versions"
         demo = next((entry for entry in versions.items if entry.label == M4_DEMO_LABEL), None)
         assert demo is not None and demo.problem is None, "T1's version is not listed"
-        assert (demo.manifest_sha256, demo.role, demo.offers_ordering) == (
-            version.identity.sha256, M4_ROLE, False), (
-            "the version is not listed by T1's digest and role, ordering off by default")
+        assert (demo.manifest_sha256, demo.role) == (version.identity.sha256, M4_ROLE), (
+            "the version is not listed by T1's digest and role")
         # What the later probes need is kept before W1's own run checks, so a
         # failure here is W1's and never W2-W11's.
         state.update(workspace=workspace, listed=listed, listed_sha=listed_sha,
@@ -4671,7 +4670,7 @@ def _m5_demo(report: Report, work: Path, sound: Path, checkpoint: Path, device: 
                                           else "not made: no symbolic links here"),
             "names_refused_by_resolution": len(refused),
             "cohort_version": {"label": demo.label, "manifest_sha256": demo.manifest_sha256,
-                               "role": demo.role, "offers_ordering": demo.offers_ordering,
+                               "role": demo.role,
                                "reports": [{"kept": listed_runs[run].get("kept"),
                                             "registered": listed_runs[run].get("registered")}
                                            for run in m4_runs]},
