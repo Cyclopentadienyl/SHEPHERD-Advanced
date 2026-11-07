@@ -5,8 +5,10 @@ How a condition group's runs compare, for every surface that shows it: of ledger
 run is kept as its own record, and how the runs of one condition group compare
 in the store is **a description that decides nothing**. The state names stay as
 machine values with a new meaning (Decision 3): ``contested`` says runs under
-these conditions differ (investigate), ``cannot_be_checked`` that the
-comparison is incomplete, never read as agreeing, and ``uncontested`` neither.
+these conditions differ and only describes it (a surface flags it for
+investigation when the group records deterministic algorithms on, so its runs
+were expected to agree), ``cannot_be_checked`` that the comparison is
+incomplete, never read as agreeing, and ``uncontested`` neither.
 No surface disables, hides, orders out or refuses a record or a run by them.
 
 **One implementation** (BACKLOG 36, the M5 review's P2-6), moved here from the

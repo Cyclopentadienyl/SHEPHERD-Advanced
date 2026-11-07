@@ -1945,8 +1945,10 @@ deployment's: SHEPHERD_REGISTRY (…) resolves to …」）。整個搬移的 re
 **結果不同的執行都會保留並加以描述，從不拒絕**（政策 rev 16，自 K8-6r.2 起；在此之前它們會封鎖其鍵）。
 每一次有效的執行都是自己的紀錄，所以同一組條件（同一個 checkpoint、cohort 版本與量測設定）下結果
 不同的執行都照記錄保留。登錄只讀取它要登錄的那次執行，並在結果之後印出群組說明（見上文）。存放處、
-Test 頁、Models 與 API 把這樣的群組描述為「runs under these conditions differ — investigate」，
-指出不同之處與每一個帶有不同報告的執行。API 對它保留 `contested` 這個值，但意義已改為上述描述。
+Test 頁、Models 與 API 把這樣的群組描述為「runs under these conditions differ」，指出不同之處與每一個
+帶有不同報告的執行。未開啟 deterministic algorithms 時，執行結果本來就可能不同：這段描述是中性的，
+每一個結果照記錄都是有效的。只有當該群組記錄 deterministic algorithms 開啟時，它的執行才本應一致，
+頁面才以琥珀色加上「— investigate」標出差異。API 對它保留 `contested` 這個值，但意義已改為上述描述。
 不加 `--record` 時，執行一律印出之後登錄用的指令。調查的方式：
 
 - 比較各報告的環境資訊（每份 `report.json` 的 `manifest.environment`）；
@@ -2920,7 +2922,8 @@ checkpoint：run 標題的標籤顯示「dataset not shown · operator control�
   對照這個 workspace 的圖譜映射（「bound to this graph」，或「mapped against another graph」，
   執行時會被拒絕）。其下是該版本 report store 的每一個執行目錄，最新的在前：何時執行、用哪個
   模型、是否保留了報告、是否已登錄；當同一群組的執行結果不同時顯示「runs under these conditions
-  differ — investigate」，比較不完整時顯示「comparison incomplete」。沒有保留報告的執行會說明這一點；目前正在執行的測試位於最上方一列，而這台
+  differ」（只有當該群組記錄 deterministic algorithms 開啟時，才以琥珀色加上「— investigate」），
+  比較不完整時顯示「comparison incomplete」。沒有保留報告的執行會說明這一點；目前正在執行的測試位於最上方一列，而這台
   伺服器上最後一次結束時 store 中什麼也沒有的測試執行（在建立執行目錄之前就被取消，或失敗）會
   保留為一列，直到下一次啟動或重新啟動伺服器。清單列出最新的 8 份報告以及選取的那一份；
   **Show all N reports** 會列出其餘的（這個瀏覽器分頁會記住這個選擇）。對操作者而言，每一列的
@@ -3037,9 +3040,10 @@ Lineage 欄。沒有任何排列方式依測試分數為模型排名：依測試
 - **Recorded test results**：ledger 為這組權重記錄的每一筆紀錄，每種量測模式各一張表，各自在該模式的
   標籤與說明之下（自 Batch 3 起：先 Mode C 的紀錄，再 Mode D 的）。每一列有 cohort version 與其角色、
   該模式的 MRR 與 Hits@10（表頭寫出全名：Mode C MRR (untruncated) 與 Hits@10；Mode D 的以匯入後合格
-  病例為分母）、列出每一項排除的涵蓋率（Mode D 的寫成匯入後合格病例中觸及的數目），以及 `registered #N`，或琥珀色的
-  `runs differ #N` 附「runs under these conditions differ — investigate」與不同之處（或「comparison
-  incomplete」，從不顯示為一致）、deterministic 開或關、在每次執行各有自己的紀錄之前併入它的報告
+  病例為分母）、列出每一項排除的涵蓋率（Mode D 的寫成匯入後合格病例中觸及的數目），以及 `registered #N`，或
+  `runs differ #N` 附「runs under these conditions differ」與不同之處（中性；只有當該群組記錄
+  deterministic algorithms 開啟、執行本應一致時，才以琥珀色加 ▲ 與「— investigate」標出），或「comparison
+  incomplete」（從不顯示為一致）、deterministic 開或關、在每次執行各有自己的紀錄之前併入它的報告
   （若有），以及這種紀錄與具名執行之間的「possible overlap with record N (not recorded)」；接著是
   各項關係、該紀錄的其他指標、以狀態顯示的 R10（*unverifiable* 是一個原因，從不是 0）、執行環境、
   資料集，以及附上其執行的登錄資訊（在每次執行各有自己的紀錄之前寫入的紀錄為「not recorded」）。

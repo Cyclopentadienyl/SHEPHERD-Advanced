@@ -1632,9 +1632,12 @@ until then they blocked their key). Every valid run is its own record, so runs u
 conditions (same checkpoint, cohort version and measurement settings) whose results differ are
 all kept as recorded. The registration reads only the run it registers, and prints the group
 note after its outcome (above). The store, the Test page, Models and the API describe such a
-group as "runs under these conditions differ — investigate", naming what differs and every run
-that carries a differing report. The API keeps the value `contested` for it, with this new
-meaning. Without `--record` the run always prints the register-later command. To investigate:
+group as "runs under these conditions differ", naming what differs and every run that carries a
+differing report. Without deterministic algorithms, runs can differ: the description is
+neutral, and every result is valid as recorded. Only when the group records deterministic
+algorithms on were its runs expected to agree, so the pages mark the difference in amber with
+"— investigate". The API keeps the value `contested` for it, with this new meaning. Without
+`--record` the run always prints the register-later command. To investigate:
 
 - compare the reports' environment facts (each `report.json`'s `manifest.environment`);
 - re-run with `--deterministic`, which is its own set of conditions. Deterministic runs are
@@ -2778,8 +2781,9 @@ and register it. Three panels:
   its version digest and whether it was mapped against this workspace's graph ("bound to this
   graph", or "mapped against another graph", which a run would refuse). Below them, every run
   directory of the version's report store, newest first: when it ran, on which model, whether a
-  report was kept, whether it is registered, and "runs under these conditions differ —
-  investigate" when the runs of its group differ, or "comparison incomplete". A run that kept no
+  report was kept, whether it is registered, and "runs under these conditions differ" when the
+  runs of its group differ (in amber with "— investigate" only when the group records
+  deterministic algorithms on), or "comparison incomplete". A run that kept no
   report says so; a test running now is the top
   row, and the last test run on this server that ended with nothing in the store (cancelled
   before its run directory, or failed) stays a row until the next start or a restart. The
@@ -2930,8 +2934,10 @@ card, any warning, and two segments:
   then Mode D's). Each row gives the cohort version and its role, the mode's MRR and Hits@10 named
   in full in the header (Mode C MRR (untruncated) and Hits@10; Mode D's over the import-eligible
   cases), coverage with every exclusion (Mode D's as the import-eligible cases reached), and
-  `registered #N`, or amber `runs differ #N` with "runs under these conditions differ —
-  investigate" and what differs (or "comparison incomplete", never shown as agreeing),
+  `registered #N`, or `runs differ #N` with "runs under these conditions differ" and what
+  differs (neutral; amber with ▲ and "— investigate" only when the group records deterministic
+  algorithms on, so its runs were expected to agree), or "comparison incomplete" (never shown
+  as agreeing),
   deterministic on or off, the reports merged into it before each run had its own record when
   there are any, and "possible overlap with record N (not recorded)" between such a record and a
   named run; then the relations, the record's other metrics, R10 as states (*unverifiable* is a

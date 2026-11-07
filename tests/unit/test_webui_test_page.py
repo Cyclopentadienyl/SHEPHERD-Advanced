@@ -22,9 +22,10 @@ Research › Evaluate › Test (M5-2, UI-D): import, run, keep and register.
   reasons (the base message for a base), and the runner is given the protocol
   apart from the model's stage and task; under test-only protocols p1 and p2 a
   disease child offers both and starts p2 with its task still disease;
-- **D5**: a key whose runs disagree is shown "runs disagree — investigate",
-  its reports cannot be registered, a note is kept with who, when and what and
-  lifts nothing;
+- **D5** (policy rev 16): a group whose runs differ is described in neutral
+  words ("runs under these conditions differ"), flagged in amber with ▲ and
+  "— investigate" only when it records deterministic algorithms on; each run
+  can be registered; a note is kept with who, when and what and lifts nothing;
 - **D7**: the preview shows exclusion reasons and their counts, never a case
   id; there is no upload control;
 - **every message true**: the job's pill is never green for a failed or
@@ -449,13 +450,20 @@ def test_runs_that_differ_are_described_and_each_can_be_registered(site, monkeyp
     assert runs[other]["record"]["source_artifact_digest"] != (
         runs[site.run_id]["record"]["source_artifact_digest"])
     html = tp.reports_html(reports, other)
-    assert "runs under these conditions differ on pooled_mrr" in html and "investigate" in html
+    assert "runs under these conditions differ on pooled_mrr" in html
+    # The site's runs record deterministic algorithms off: the difference is
+    # described in neutral words, never amber and never "investigate".
+    assert runs[other]["record"]["regime"]["deterministic_algorithms"] is False
+    assert "investigate" not in html and "shep-tag-amber" not in html and "▲" not in html
+    assert "shep-amber-t" not in tp._row_state(runs[other], [])
     assert "disagree" not in html
     for run_id in (site.run_id, other):
         assert tp.register_state(page, reports, run_id) == (True, None)
         assert tp._row_state(runs[run_id], []).count(" · ") <= 1
     result = tp.result_html(reports, site.run_id, [], notes=[])
-    assert "Runs under these conditions differ — investigate." in result
+    assert "<b>Runs under these conditions differ</b> on: pooled_mrr" in result
+    assert "investigate" not in result and "▲" not in result
+    assert "shep-tag-amber" not in result and "shep-notice-amber" not in result
     assert "each can be registered" in result and "block" not in result.replace(
         "shep-test-block", "")
     assert tp.notes_visible(reports, site.run_id)
@@ -544,19 +552,79 @@ def test_a_run_whose_bytes_a_merged_record_holds_shows_the_possible_overlap(site
     assert "possible overlap" not in tp._record_html(run["record"], run, registered)
 
 
+def _with_determinism(reports, flag):
+    """The listing with every run's record saying deterministic algorithms
+    `flag` (the setting is in the group's semantics, so all its runs share it)."""
+    runs = []
+    for run in reports["runs"]:
+        record = run.get("record")
+        if isinstance(record, dict):
+            run = {**run, "record": {**record, "regime": {**record["regime"],
+                                                          "deterministic_algorithms": flag}}}
+        runs.append(run)
+    return {**reports, "runs": runs}
+
+
 def test_deterministic_runs_that_differ_are_flagged_for_investigation(site):
-    """A6 (K8-6r.2): when the runs of a group differ and the group records
-    deterministic algorithms on, the result says they were expected to agree;
-    a non-deterministic group does not say so. Neither disables anything."""
+    """A6 (K8-6r.2; policy rev 16): when the runs of a group differ and the
+    group records deterministic algorithms on, they were expected to agree, so
+    the row, its chip, the Result's chip and its block flag it in amber with ▲
+    and "— investigate". A group without them describes the same difference in
+    neutral words: no amber, no ▲, no "investigate"; the row's chip is then the
+    run's own state ("Registered ✓ #N" once registered), the row's words still
+    describing the difference. A determinism the record does not say (None) is
+    neutral too, and the block does not claim it was off. Neither disables
+    anything, and the notes stay shown either way."""
+    from html import unescape
+
     other = _disagreeing_copy(site)
-    run = dict({r["run_id"]: r for r in tp.read_reports(LABEL)["runs"]}[other])
-    plain = tp.block_html(run, [], [])
-    assert "Runs under these conditions differ — investigate." in plain
-    assert "expected to agree" not in plain
-    record = dict(run["record"], regime={**run["record"]["regime"],
-                                         "deterministic_algorithms": True})
-    flagged = tp.block_html({**run, "record": record}, [], [])
-    assert "Deterministic algorithms were on, so these runs were expected to agree." in flagged
+    for flag in (True, False, None):
+        reports = _with_determinism(tp.read_reports(LABEL), flag)
+        run = {r["run_id"]: r for r in reports["runs"]}[other]
+        row = tp._row_state(run, [])
+        chip = tp._row_chip(run)
+        result = tp.result_html(reports, other, [], notes=[])
+        block = tp.block_html(run, [], [])
+        assert row.count(" · ") <= 1
+        assert "runs under these conditions differ on pooled_mrr" in row
+        assert tp.notes_visible(reports, other)
+        if flag:
+            assert row.endswith(" — investigate: deterministic runs were expected to agree</span>")
+            assert '<span class="shep-amber-t"><span aria-hidden="true">▲</span> runs under' in row
+            assert chip == ('<span class="shep-tag shep-tag-amber"><span aria-hidden="true">▲'
+                            '</span> runs differ</span>')
+            assert ('<span class="shep-tag shep-tag-amber"><span aria-hidden="true">▲</span> '
+                    'Runs differ — investigate</span>') in result
+            assert block.startswith('<div class="shep-notice shep-notice-amber shep-test-block">')
+            assert "Runs under these conditions differ — investigate." in unescape(block)
+            assert ("Deterministic algorithms were on, so these runs were expected to agree."
+                    in block)
+        else:
+            assert "investigate" not in row + chip + result and "▲" not in row + chip + result
+            assert "amber" not in row + chip + block
+            assert "shep-tag-amber" not in result and "shep-notice-amber" not in result
+            assert chip == '<span class="shep-tag shep-tag-grey">runs differ</span>'
+            assert '<span class="shep-tag shep-tag-grey">Runs differ</span>' in result
+            assert block.startswith('<div class="shep-reason shep-reason-grey shep-test-block">')
+            assert "<b>Runs under these conditions differ</b> on: pooled_mrr" in block
+            if flag is False:
+                assert ("Without deterministic algorithms, runs can differ; every run is kept "
+                        "as recorded and each can be registered." in block)
+            else:   # not recorded: nothing is said about it either way
+                assert "deterministic" not in block.lower()
+                assert "Every run is kept as recorded and each can be registered." in block
+            assert "An investigation note records what was looked at." in block
+            assert "expected to agree" not in block
+        # Once registered, the row's chip: amber "runs differ" stays first in a
+        # deterministic group; otherwise the run's own "Registered ✓ #3", and
+        # the row's words still describe the difference.
+        registered = {**run, "state": {**run["state"], "registered": "registered",
+                                       "sequence": 3}}
+        assert ("registered #3" in tp._row_state(registered, [])
+                and "runs under these conditions differ on pooled_mrr"
+                in tp._row_state(registered, []))
+        assert tp._row_chip(registered) == (chip if flag else (
+            f'<span class="shep-tag shep-tag-ok">Registered {tp.OK_MARK} #3</span>'))
 
 
 def _uncomparable_copy(site):

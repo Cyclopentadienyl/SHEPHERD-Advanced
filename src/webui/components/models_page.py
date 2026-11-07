@@ -47,7 +47,8 @@ exclusion, relations, R10 as states with counts only where the state has one,
 so *unverifiable* is a word and never 0, environment, registration and its
 run, or "not recorded" for a record merged before each run had its own record;
 a possible overlap between such a record and a named run; "runs under these
-conditions differ — investigate" or "comparison incomplete" per record, never
+conditions differ" (neutral; amber with "— investigate" only for a group that
+records deterministic algorithms on) or "comparison incomplete" per record, never
 agreeing by default, and never hiding or ordering out a record)
 and "Usage history" (the entries of every listed cohort version's usage history
 that name this checkpoint, newest first, each shown as it was recorded).
@@ -194,10 +195,11 @@ PAGE_HELP = {
     "models-contested": (
         "Runs differ",
         "Runs kept under this record's conditions in the cohort version's report store have "
-        "results that differ. Every run is kept as recorded, and each can be registered: "
-        "investigate the difference, comparing environment facts first. When deterministic "
-        "algorithms were on, the runs were expected to agree. Investigation notes are kept "
-        "with the reports (Test page); they record what was found and change nothing.",
+        "results that differ. Every run is kept as recorded, and each can be registered. "
+        "Without deterministic algorithms, runs can differ. With them on, the runs were "
+        "expected to agree, so the difference is flagged: investigate it, comparing "
+        "environment facts first. Investigation notes are kept with the reports (Test page); "
+        "they record what was found and change nothing.",
     ),
     "models-usage": (
         "Usage history",
@@ -677,12 +679,17 @@ def _contested_value(name: str, value: Any) -> str:
     return fmt_metric(name, value)
 
 
-def contest_html(state: Optional[Mapping[str, Any]], *, mode: Optional[str]) -> str:
+def contest_html(state: Optional[Mapping[str, Any]], *, mode: Optional[str],
+                 deterministic: Optional[bool]) -> str:
     """How a record's condition group compares, beside it: "runs under these
-    conditions differ — investigate" (with what differs, each metric named in
-    the record's `mode`, which every caller gives: no mode is assumed) or
-    "comparison incomplete"; nothing when the runs agree. A description: it
-    hides and refuses nothing."""
+    conditions differ" (with what differs, each metric named in the record's
+    `mode`) or "comparison incomplete"; nothing when the runs agree. Every
+    caller gives the mode and whether the group records deterministic
+    algorithms on (`deterministic`, from the record's regime: every run of the
+    group shares it); neither is assumed. Only a deterministic group's runs
+    were expected to agree, so only there is the difference amber, with ▲ and
+    "— investigate"; otherwise, and when it is not known (None), it is neutral.
+    A description: it hides and refuses nothing."""
     if state is None:
         return ('<div class="shep-mp-delta shep-muted">comparison incomplete: it was '
                 'not read</div>')
@@ -698,9 +705,17 @@ def contest_html(state: Optional[Mapping[str, Any]], *, mode: Optional[str]) -> 
                        for run in state.get("runs") or [] if name in (run.get("values") or {})]
             if per_run:
                 values.append(f"{metric_label(name, mode)} " + " vs ".join(per_run))
-        what = "; ".join(values) or (", ".join(str(n) for n in names) + " differ")
-        return (f'<div class="shep-mp-delta shep-amber-t">runs under these conditions differ — '
-                f'investigate: {r.e(what)}</div>')
+        # The runs' values when they are given, else the fields' names alone
+        # (an API answer that could not show them), else nothing more.
+        shown, fields = "; ".join(values), ", ".join(str(n) for n in names)
+        if deterministic is True:
+            what = shown or fields
+            return (f'<div class="shep-mp-delta shep-amber-t">{r.WARN_MARK} runs under these '
+                    f'conditions differ — investigate{": " + r.e(what) if what else ""}. '
+                    'Deterministic algorithms were on, so they were expected to agree.</div>')
+        detail = f": {shown}" if shown else f" on: {fields}" if fields else ""
+        return (f'<div class="shep-mp-delta shep-muted">runs under these conditions differ'
+                f'{r.e(detail)}</div>')
     problems = "; ".join(str(p) for p in state.get("problems") or [])
     return ('<div class="shep-mp-delta shep-muted">comparison incomplete'
             + (f": {r.e(r.short_reason(problems, 160))}" if problems else "") + "</div>")
@@ -736,26 +751,30 @@ def run_text(view: Mapping[str, Any]) -> str:
 
 
 def _record_cell(view: Mapping[str, Any], state: Optional[Mapping[str, Any]]) -> str:
-    """The record's sequence and its group's description: an amber "runs
-    differ" chip asks for attention and blocks nothing; the merged reports and a
-    possible overlap with another record, when there are any."""
+    """The record's sequence and its group's description: a "runs differ" chip,
+    neutral, or amber with ▲ for a group that records deterministic algorithms
+    on (its runs were expected to agree), which asks for attention and blocks
+    nothing; the merged reports and a possible overlap with another record,
+    when there are any."""
     sequence = _get(view, "registration", "sequence")
     kind = (state or {}).get("state")
+    deterministic = view.get("deterministic") if type(view.get("deterministic")) is bool else None
     if kind == "contested":
-        chip = (r.chip(f"runs differ #{sequence}", "amber")
-                + help_button("models-contested", "Runs differ"))
+        chip = (r.warn_chip(f"runs differ #{sequence}") if deterministic is True
+                else r.chip(f"runs differ #{sequence}", "grey"))
+        chip += help_button("models-contested", "Runs differ")
     elif kind == "uncontested":
         chip = r.chip(f"registered #{sequence}", "ok")
     else:
         chip = r.chip(f"registered #{sequence}", "grey")
-    determinism = ("deterministic on" if view.get("deterministic") is True else
-                   "deterministic off" if view.get("deterministic") is False else
+    determinism = ("deterministic on" if deterministic is True else
+                   "deterministic off" if deterministic is False else
                    "determinism not read")
     parts = [f'{chip} <span class="shep-sub">{r.e(determinism)}</span>']
     for text in (merged_text(view), overlap_text(view)):
         if text:
             parts.append(f'<div class="shep-sub">{r.e(text)}</div>')
-    parts.append(contest_html(state, mode=record_mode(view)))
+    parts.append(contest_html(state, mode=record_mode(view), deterministic=deterministic))
     return "".join(parts)
 
 
@@ -970,8 +989,7 @@ def _run_words(run: Any) -> str:
 
 def warn_mark_html(text: str) -> str:
     """A condition to watch (skill §6): amber, ▲ and its words, escaped."""
-    return (f'<span class="shep-mp-warn"><span aria-hidden="true">▲</span> '
-            f'{r.e(text)}</span>')
+    return f'<span class="shep-mp-warn">{r.WARN_MARK} {r.e(text)}</span>'
 
 
 def parent_html(item: Mapping[str, Any], row: Optional[Mapping[str, Any]]) -> str:

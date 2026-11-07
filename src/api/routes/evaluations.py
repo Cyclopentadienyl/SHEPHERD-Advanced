@@ -380,10 +380,13 @@ class RecordContest(_Strict):
         ..., description="Machine values kept for compatibility; since K8-6r.2 they only "
         "describe and decide nothing (no record is hidden, ordered out or refused by them). "
         "uncontested: the reports the store keeps under the record's condition group agree; "
-        "contested: runs under these conditions differ (investigate), every run kept as "
-        "recorded; cannot_be_checked: the comparison is incomplete (no cohort registry "
-        "configured, a version the registry does not list, a report of the group that cannot "
-        "be compared), never to be read as uncontested")
+        "contested: runs under these conditions differ, every run kept as recorded; the value "
+        "only describes the difference, and only when the group records deterministic "
+        "algorithms on (the record's deterministic_algorithms is true) were its runs expected "
+        "to agree, so the difference is flagged for investigation; cannot_be_checked: the "
+        "comparison is incomplete (no cohort registry configured, a version the registry does "
+        "not list, a report of the group that cannot be compared), never to be read as "
+        "uncontested")
     differing: List[_Text] = Field(..., description="contested: the fields the reports "
                                    "differ on, when they can be shown; otherwise empty")
     runs: List[ContestRun] = Field(..., description="contested: every run carrying a "

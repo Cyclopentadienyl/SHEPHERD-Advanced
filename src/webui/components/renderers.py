@@ -106,6 +106,9 @@ _CHECK = ('<svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true" fo
 #: The dashboard's check mark (an inline svg that stays on its line), for a
 #: page's own "✓ …" (M5-3 review ARCH-4: pages used the private name).
 CHECK = _CHECK
+#: The mark of a condition to watch (the skill's §6): ▲ before its words, in
+#: amber, so the colour never carries the meaning alone.
+WARN_MARK = '<span aria-hidden="true">▲</span>'
 
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _RUN_TIME = re.compile(r"^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})")
@@ -161,6 +164,11 @@ def chip(text: str, kind: str = "neutral", *, title: Optional[str] = None) -> st
     """A small state chip (amber synthetic, green verified, grey, red, accent)."""
     attr = f' title="{e(title)}"' if title else ""
     return f'<span class="shep-tag shep-tag-{kind}"{attr}>{e(text)}</span>'
+
+
+def warn_chip(text: str) -> str:
+    """An amber chip with ▲ before its words: a condition to watch (the skill's §6)."""
+    return f'<span class="shep-tag shep-tag-amber">{WARN_MARK} {e(text)}</span>'
 
 
 def fingerprint_html(label: str, digest: Any, *, digits: int = SHORT_HEX, copy: bool = True,

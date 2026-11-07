@@ -12,7 +12,9 @@ registry's report store (`tests/fixtures/model_records.py`):
   dataset or cohort version (a guard); a kept ``model_load`` usage entry is
   shown with its recorded fields;
 - **D5 (policy rev 16)**: a record whose group's runs differ is described
-  ("runs under these conditions differ — investigate", with what differs), a
+  ("runs under these conditions differ", with what differs; neutral, and amber
+  with ▲ and "— investigate" only for a group that records deterministic
+  algorithms on), a
   comparison that is incomplete is never read as agreeing, and every record is
   shown with its run ("not recorded" for one merged before each run had its own
   record);
@@ -385,7 +387,10 @@ def test_a_disagreeing_value_that_is_not_a_finite_number_leaves_the_record_conte
 
     operator = contest_states([record], CohortVersions.listed())[key_text(record_key(record))]
     assert operator["state"] == "contested"
-    operator_html = mp.contest_html(operator, mode=record["scoring"]["mode"])
+    # model-40's runs record deterministic algorithms on: flagged for investigation.
+    assert record["regime"]["deterministic_algorithms"] is True
+    operator_html = mp.contest_html(operator, mode=record["scoring"]["mode"],
+                                    deterministic=record["regime"]["deterministic_algorithms"])
     assert ("runs under these conditions differ — investigate" in operator_html
             and f"{shown} (run" in operator_html)
     assert "nan" not in operator_html.lower().replace("not a finite number", "")
@@ -395,7 +400,8 @@ def test_a_disagreeing_value_that_is_not_a_finite_number_leaves_the_record_conte
     (view,) = data["answer"]["records"]
     assert view["contest"]["state"] == "contested"
     readonly_html = mp.contest_html(data["contest"][key_text(record_key(record))],
-                                    mode=mp.record_mode(view))
+                                    mode=mp.record_mode(view),
+                                    deterministic=view["deterministic_algorithms"])
     assert "runs under these conditions differ — investigate" in readonly_html
     assert "not a finite number (run" in readonly_html
     assert "runs differ #" in mp.readonly_parts(data)["records"]
@@ -552,9 +558,11 @@ def test_the_detail_keeps_validation_and_mode_c_apart(world, monkeypatch):
     assert records.index("registered #3") < records.index("registered #2")
     assert records.index("registered #2") < records.index("runs differ #1")
     assert "D4 rule" not in records and "Δ " not in records
-    # the acceptance record's group has runs that differ, with what they say
+    # the acceptance record's group has runs that differ, with what they say:
+    # its runs record deterministic algorithms off, so in neutral words
     assert ("runs differ #1" in records
-            and "runs under these conditions differ — investigate" in records)
+            and "runs under these conditions differ: " in records
+            and "investigate" not in records)
     assert "0.2051" in records and "0.2077" in records
     # no role says anything about ordering
     assert "ordering" not in records
@@ -1098,7 +1106,7 @@ def test_read_only_shows_the_model_in_use_from_the_ledger_and_opens_no_checkpoin
     # each record's determinism, from the environment class the route answers
     assert 'registered #3</span> <span class="shep-sub">deterministic on</span>' in records
     assert 'registered #2</span> <span class="shep-sub">deterministic off</span>' in records
-    assert ("runs under these conditions differ — investigate" in records
+    assert ("runs under these conditions differ: " in records and "investigate" not in records
             and mp.NO_LOAD_HERE in records)
     assert str(world["root"]) not in records and str(world["registry"]) not in records
     header = mp.left_header_html(listing, data, "deployment_mode")
@@ -1551,7 +1559,8 @@ def test_every_record_is_shown_with_its_run_and_its_groups_description(world, mo
     """G7, G9 (K8-6r.2): every record the ledger holds for the checkpoint is
     shown, each with the run it was registered from, the group whose runs
     differ described in plain words ("runs differ", "runs under these
-    conditions differ — investigate"), nothing hidden or ordered out by it.
+    conditions differ", neutral for these runs without deterministic
+    algorithms), nothing hidden or ordered out by it.
     HEAD: no run was shown, and the words were "contested" / "runs disagree"."""
     from src.evaluation.sidecar import read_ledger
 
@@ -1565,9 +1574,48 @@ def test_every_record_is_shown_with_its_run_and_its_groups_description(world, mo
         assert f"from run {record['run_id']}, report" in records
         assert f"#{record['registration']['sequence']}" in records
     assert "runs differ #1" in records
-    assert "runs under these conditions differ — investigate" in records
+    assert "runs under these conditions differ: " in records and "investigate" not in records
     shown = re.sub(r"<[^>]+>", " ", records)      # the words a person reads
     assert "contested" not in shown and "disagree" not in shown
+
+
+def test_runs_that_differ_are_flagged_only_in_a_deterministic_group(world, monkeypatch):
+    """Policy rev 16 (a difference is described, never a problem): model-40's
+    group records deterministic algorithms on, so its runs were expected to
+    agree and the record is flagged: an amber "runs differ #1" chip with ▲, and
+    "runs under these conditions differ — investigate" saying they were
+    expected to agree. model-05's acceptance group records them off: the same
+    difference reads "runs differ #1" in a grey chip and "runs under these
+    conditions differ: …" in neutral words, with no ▲, amber or "investigate".
+    A determinism that is not known is never assumed: it reads as neutral."""
+    listing, data = _read(world, monkeypatch)
+    flagged = mp.detail_parts(listing, data, _key(world, "model-40.pt"), NEWEST_CTL)["records"]
+    assert ('<span class="shep-tag shep-tag-amber"><span aria-hidden="true">▲</span> '
+            'runs differ #1</span>') in flagged
+    assert ('<div class="shep-mp-delta shep-amber-t"><span aria-hidden="true">▲</span> runs '
+            "under these conditions differ — investigate: ") in flagged
+    assert "Deterministic algorithms were on, so they were expected to agree." in flagged
+
+    plain = mp.detail_parts(listing, data, _key(world, "model-05.pt"), NEWEST_CTL)["records"]
+    assert '<span class="shep-tag shep-tag-grey">runs differ #1</span>' in plain
+    assert '<div class="shep-mp-delta shep-muted">runs under these conditions differ: ' in plain
+    assert "investigate" not in plain and "▲" not in plain and "expected to agree" not in plain
+    assert "shep-tag-amber\">runs differ" not in plain and "shep-amber-t\">runs" not in plain
+
+    # Without the runs' values (an API answer that could not show them), the
+    # fields alone, the verb said once; with no field either, the words alone.
+    state = {"state": "contested", "differing": ["pooled_mrr"], "runs": []}
+    for deterministic in (False, None):
+        text = mp.contest_html(state, mode="disease", deterministic=deterministic)
+        assert text == ('<div class="shep-mp-delta shep-muted">runs under these conditions '
+                        "differ on: pooled_mrr</div>")
+        assert mp.contest_html({"state": "contested", "differing": [], "runs": []},
+                               mode="disease", deterministic=deterministic) == (
+            '<div class="shep-mp-delta shep-muted">runs under these conditions differ</div>')
+    assert mp.contest_html(state, mode="disease", deterministic=True) == (
+        '<div class="shep-mp-delta shep-amber-t"><span aria-hidden="true">▲</span> runs under '
+        "these conditions differ — investigate: pooled_mrr. Deterministic algorithms were on, "
+        "so they were expected to agree.</div>")
 
 
 def test_a_merged_record_and_a_named_run_show_their_possible_overlap(world):

@@ -59,11 +59,12 @@ docstring. Three panels, as the mockup draws them (``test-wide.png``,
   store that could not be listed says so, and the run is registered from the
   command line by naming its report). **Another run never disables it**: how
   the runs of its condition group compare is a description ("runs under these
-  conditions differ — investigate", "comparison incomplete"), and investigation
-  notes (who, when, what) are listed and added (gated); they record and change
-  nothing. On a wide screen the note form stays at the panel's foot above
-  Register, outside the scrolling report, so "🔒 Add note" is in view without
-  scrolling.
+  conditions differ", in neutral words; amber with "— investigate" only when
+  the group records deterministic algorithms on, so its runs were expected to
+  agree; "comparison incomplete"), and investigation notes (who, when, what)
+  are listed and added (gated); they record and change nothing. On a wide
+  screen the note form stays at the panel's foot above Register, outside the
+  scrolling report, so "🔒 Add note" is in view without scrolling.
 
 **Import** (a drawer over Run and Result; D7): the files the operator placed
 in the server's intake directory (`server_lists.list_intake_files`; a request
@@ -1035,12 +1036,14 @@ def version_html(page: Mapping[str, Any], label: Optional[str],
 
 
 def _row_chip(run: Mapping[str, Any]) -> str:
-    """The row's one chip. "runs differ" (amber) asks for attention and
-    blocks nothing; "comparison incomplete" (grey) describes the group."""
+    """The row's one chip. In a group that records deterministic algorithms on,
+    "▲ runs differ" (amber) asks for attention, since its runs were expected
+    to agree; elsewhere "runs differ" and "comparison incomplete" (grey)
+    describe the group after the run's own state. None blocks anything."""
     contest = run.get("contest") or {}
     state = run.get("state") or {}
-    if contest.get("state") == "contested":
-        return r.chip("runs differ", "amber")
+    if contest.get("state") == "contested" and _deterministic_group(run):
+        return r.warn_chip("runs differ")
     if run.get("problem"):
         return r.chip("not read", "grey")
     if state.get("kept") != "kept":
@@ -1050,6 +1053,8 @@ def _row_chip(run: Mapping[str, Any]) -> str:
         seq = state.get("sequence")
         return (f'<span class="shep-tag shep-tag-ok">Registered {OK_MARK}'
                 f'{" #" + str(seq) if isinstance(seq, int) else ""}</span>')
+    if contest.get("state") == "contested":
+        return r.chip("runs differ", "grey")
     if contest.get("state") == "cannot_be_checked":
         return r.chip("comparison incomplete", "grey")
     return r.chip("not registered" if state.get("registered") == "not_registered"
@@ -1090,13 +1095,17 @@ def _row_state(run: Mapping[str, Any], roots: Sequence[Tuple[str, str]]) -> str:
         parts.append("registration cannot be checked from the list")
     line = lead + " · ".join(parts)
     # The group's description, after a semicolon: the row keeps one " · "
-    # (the skill's §5), and it describes, never disables.
+    # (the skill's §5), and it describes, never disables. In neutral words,
+    # unless the group records deterministic algorithms on: its runs were
+    # expected to agree, so the difference is flagged (amber, ▲, "investigate").
     if contest.get("state") == "contested":
         others = [x for x in contest.get("disagreeing_runs") or [] if x != run.get("run_id")]
-        line += (f'; <span class="shep-amber-t">runs under these conditions differ on '
-                 f'{e(", ".join(contest.get("differing") or ()))}'
-                 f'{" (with " + e(", ".join(run_time(x) or x for x in others)) + ")" if others else ""}'
-                 ' — investigate</span>')
+        what = (f'runs under these conditions differ on '
+                f'{e(", ".join(contest.get("differing") or ()))}'
+                f'{" (with " + e(", ".join(run_time(x) or x for x in others)) + ")" if others else ""}')
+        line += (f'; <span class="shep-amber-t">{r.WARN_MARK} {what} — investigate: deterministic '
+                 'runs were expected to agree</span>' if _deterministic_group(run)
+                 else f"; {what}")
     elif contest.get("state") == "cannot_be_checked":
         line += "; comparison incomplete"
     return line
@@ -1615,7 +1624,8 @@ def result_html(reports: Mapping[str, Any], run_id: Optional[str],
                             else "Registration: cannot be checked from the list", "neutral"))
     contest = run.get("contest") or {}
     if contest.get("state") == "contested":
-        chips.append(r.chip("Runs differ — investigate", "amber"))
+        chips.append(r.warn_chip("Runs differ — investigate") if _deterministic_group(run)
+                     else r.chip("Runs differ", "grey"))
     parts = [f'<div class="shep-test-chips">{"".join(chips)}</div>']
     if run.get("problem"):
         parts.append(_reason_html(redact(run["problem"], roots)))
@@ -1828,12 +1838,15 @@ def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
             f'<div class="shep-test-tiles">{tiles}</div><div class="shep-kv shep-test-lines">{kv}</div>')
 
 
-def _deterministic_group(run: Mapping[str, Any]) -> bool:
-    """Whether the run's condition group records deterministic algorithms on:
-    the setting is in the group's semantics, so every run of it shares it."""
+def _deterministic_group(run: Mapping[str, Any]) -> Optional[bool]:
+    """Whether the run's condition group records deterministic algorithms on
+    (True) or off (False): the setting is in the group's semantics, so every
+    run of it shares it. None when the run's record does not say (no record
+    read, or no boolean there): nothing is assumed, and None reads as off."""
     record = run.get("record") if isinstance(run.get("record"), Mapping) else {}
     regime = record.get("regime") if isinstance(record.get("regime"), Mapping) else {}
-    return regime.get("deterministic_algorithms") is True
+    value = regime.get("deterministic_algorithms")
+    return value if type(value) is bool else None
 
 
 def block_html(run: Mapping[str, Any], roots: Sequence[Tuple[str, str]],
@@ -1841,21 +1854,35 @@ def block_html(run: Mapping[str, Any], roots: Sequence[Tuple[str, str]],
     """How the report's condition group compares in the store, and the
     investigation notes kept with it: who, when, what. **A description, never
     a block** (policy rev 16): every run is kept as recorded, and nothing here
-    disables Register. Notes that cannot be read are said, so "no note is
-    kept" is never shown when one may be."""
+    disables Register. Runs that differ are described in neutral words; only a
+    group that records deterministic algorithms on, whose runs were expected
+    to agree, is flagged for investigation (amber, ▲). Notes that cannot be
+    read are said, so "no note is kept" is never shown when one may be."""
     contest = run.get("contest") or {}
     key = run.get("key")
     parts = []
     if contest.get("state") == "contested":
         others = ", ".join(run_time(x) or x for x in contest.get("disagreeing_runs") or ())
-        expected = (" Deterministic algorithms were on, so these runs were expected to agree."
-                    if _deterministic_group(run) else "")
-        parts.append(
-            '<div class="shep-notice shep-notice-amber shep-test-block"><b>Runs under these '
-            f'conditions differ — investigate.</b> They differ on: '
-            f'{e(", ".join(contest.get("differing") or ()))} (runs {e(others)}).{expected} '
-            "Every run is kept as recorded and each can be registered; compare their "
-            "environment facts first. An investigation note records what was found.</div>")
+        differing = e(", ".join(contest.get("differing") or ()))
+        deterministic = _deterministic_group(run)
+        if deterministic:
+            parts.append(
+                '<div class="shep-notice shep-notice-amber shep-test-block"><b>'
+                f'{r.WARN_MARK} Runs under these conditions differ — investigate.</b> They differ '
+                f'on: {differing} (runs {e(others)}). Deterministic algorithms were on, so these '
+                "runs were expected to agree. Every run is kept as recorded and each can be "
+                "registered; compare their environment facts first. An investigation note "
+                "records what was found.</div>")
+        else:
+            # "Without deterministic algorithms" only when the record says so:
+            # a determinism not recorded is not asserted either way.
+            parts.append(
+                '<div class="shep-reason shep-reason-grey shep-test-block"><span><b>Runs under '
+                f'these conditions differ</b> on: {differing} (runs {e(others)}). '
+                + ("Without deterministic algorithms, runs can differ; every"
+                   if deterministic is False else "Every")
+                + " run is kept as recorded and each can be registered. An investigation note "
+                "records what was looked at.</span></div>")
     elif contest.get("state") == "cannot_be_checked":
         problems = "; ".join(redact(p, roots) for p in contest.get("problems") or ())
         if key:
