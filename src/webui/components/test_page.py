@@ -14,10 +14,10 @@ docstring. Three panels, as the mockup draws them (``test-wide.png``,
   and whether its report is registered (the registration's one helper,
   `server_lists.stored_report_state`, asked again for an operator beside the
   listed checkpoint Register would use: `refine_rows`, `ledger_checkpoint`)
-  and D5's state of its key ("runs disagree — investigate"), both from the
-  server's one run listing that ``GET /api/v1/cohorts`` shares
-  (`server_lists.version_item`); a running test, or the last one that ended
-  with nothing in the store, is the top row;
+  and how its condition group reads ("runs under these conditions differ",
+  "comparison incomplete"), both from the server's one run listing that
+  ``GET /api/v1/cohorts`` shares (`server_lists.version_item`); a running
+  test, or the last one that ended with nothing in the store, is the top row;
 - **Run**: the model (WP1's checkpoint list of the workspace, every checkpoint,
   each option led by what its model record says it is,
   `renderers.record_kind_text`: listing opens every checkpoint, so it is an
@@ -51,11 +51,19 @@ docstring. Three panels, as the mockup draws them (``test-wide.png``,
   origin, whether it is kept and registered; "🔒 Register this report" through the one
   registration function (`register_report`, the ledger beside the listed
   checkpoint holding the weights it measured, found by digest in the server's
-  checkpoint list, never the report's recorded path); while runs under its key
-  disagree, the block is shown and the button is off, and investigation notes
-  (who, when, what) are listed and added (gated) **without lifting the block**;
-  on a wide screen the note form stays at the panel's foot above Register,
-  outside the scrolling report, so "🔒 Add note" is in view without scrolling.
+  checkpoint list, never the report's recorded path). **Register is enabled
+  for a kept report of this run that the page can confirm** (policy rev 16,
+  K8-6r.2; `register_state`): it is off only for a request that is not an
+  operator's, a run that kept no report, this run already registered, or this
+  run's own report not built (its own reason) or not read by the listing (a
+  store that could not be listed says so, and the run is registered from the
+  command line by naming its report). **Another run never disables it**: how
+  the runs of its condition group compare is a description ("runs under these
+  conditions differ — investigate", "comparison incomplete"), and investigation
+  notes (who, when, what) are listed and added (gated); they record and change
+  nothing. On a wide screen the note form stays at the panel's foot above
+  Register, outside the scrolling report, so "🔒 Add note" is in view without
+  scrolling.
 
 **Import** (a drawer over Run and Result; D7): the files the operator placed
 in the server's intake directory (`server_lists.list_intake_files`; a request
@@ -277,9 +285,10 @@ FIELD_HELP = {
         "Deterministic execution",
         "Runs with PyTorch's deterministic algorithms, cuDNN deterministic and its benchmark "
         "off. An operation with no deterministic implementation refuses the run; it never "
-        "falls back. It is recorded, so a deterministic run is a different measurement key, "
-        "the way forward when runs under one key disagree. It guards against known "
-        "non-deterministic operations; it does not certify a number.",
+        "falls back. It is recorded, so deterministic runs are their own condition group: "
+        "they are expected to agree, and a difference between them asks for an "
+        "investigation. It guards against known non-deterministic operations; it does not "
+        "certify a number.",
     ),
     "shep-test-intake": (
         "File in the intake directory (server)",
@@ -309,8 +318,8 @@ FIELD_HELP = {
     ),
     "shep-test-note-what": (
         "What was found",
-        "What the investigation found. The note is kept in the report store with this key's "
-        "reports; it deletes no report and does not lift the block.",
+        "What the investigation found. The note is kept in the report store with this "
+        "condition group's reports; it deletes no report and changes nothing.",
     ),
 }
 #: Help a rendered ⓘ names.
@@ -582,13 +591,16 @@ def read_models(workspace: Any, request: Any, *,
 
 def read_reports(label: Any, *, environ: Optional[Mapping[str, str]] = None) -> Dict[str, Any]:
     """One cohort version's report store for one session: every run directory,
-    newest first, with what it kept, whether its report is registered and the
-    D5 state of its key, as the server's one run listing gives them
+    newest first, with what it kept, whether its report is registered and how
+    its condition group reads, as the server's one run listing gives them
     (`server_lists.version_item`, the listing ``GET /api/v1/cohorts`` shares,
-    here with the problems' words for the operator); each run's key and record
-    (the record the ledger would hold) from the same one scan of the store,
-    found by the run's id for the bytes its state read; and the investigation
-    notes kept with the key. The version is read once. Opens no checkpoint."""
+    here with the problems' words for the operator); each run's group and
+    record (the record the ledger would hold) from the same one scan of the
+    store, found by the run's id for the bytes its state read (byte-identical
+    runs are each their own); its own problem when the scan could not build
+    it (``unbuilt``); the store's own listing problem, when the scan could not
+    list it (``store_problem``); and the investigation notes kept with the
+    group. The version is read once. Opens no checkpoint."""
     from src.api.services.record_states import read_report_store
     from src.api.services.server_lists import (
         ServerListRefused,
@@ -599,7 +611,7 @@ def read_reports(label: Any, *, environ: Optional[Mapping[str, str]] = None) -> 
     from src.evaluation.report_store import read_investigation_notes
 
     empty = {"label": label, "runs": [], "problem": None, "notes": [], "notes_problems": [],
-             "version_sha256": None}
+             "version_sha256": None, "store_problem": None}
     if not label:
         return empty
     try:
@@ -613,16 +625,22 @@ def read_reports(label: Any, *, environ: Optional[Mapping[str, str]] = None) -> 
         notes, notes_problems = read_investigation_notes(version)
     except Exception as exc:  # noqa: BLE001
         notes_problems = [f"the investigation notes could not be read ({type(exc).__name__})"]
+    # **The store's own listing problem** (Decision 10): with it, no run's
+    # report can be confirmed here, and a run is registered from the command
+    # line by naming its report. Another run's problem is never this.
+    store_problem = store.problem or ("; ".join(
+        problem for run, problem in store.scan.unplaced if run is None) or None)
     runs = []
     for report in item.reports:
-        # By the digest of the bytes the run's state read: no key (and so no
-        # note) for a report replaced since the scan read it; and byte-identical
-        # copies under other runs are one report in the scan, so a run's own
-        # digest names its record.
+        # By the run's id, for the digest of the bytes its state read: no group
+        # (and so no note) for a report replaced since the scan read it; a
+        # byte-identical report of another run is that run's own record.
         digest = (report.state or {}).get("report_sha256")
         placed = store.scan.run_key(report.run_id, digest) if store.scan is not None else None
         key, unbuilt = placed if placed is not None else (None, None)
-        built = store.scan.reports.get(key, {}).get(digest) if key is not None else None
+        built = store.scan.reports.get(key, {}).get(report.run_id) if key is not None else None
+        if built is not None and built[1].get("source_artifact_digest") != digest:
+            built = None
         runs.append({
             "run_id": report.run_id, "when": run_time(report.run_id),
             "sha12": run_sha12(report.run_id), "state": report.state,
@@ -631,7 +649,8 @@ def read_reports(label: Any, *, environ: Optional[Mapping[str, str]] = None) -> 
             "contest": report.contest, "unbuilt": unbuilt,
         })
     return {"label": item.label, "version_sha256": item.manifest_sha256, "runs": runs,
-            "problem": item.reports_problem, "notes": notes, "notes_problems": notes_problems}
+            "problem": item.reports_problem, "notes": notes, "notes_problems": notes_problems,
+            "store_problem": store_problem}
 
 
 class LedgerPlace(NamedTuple):
@@ -780,7 +799,9 @@ def _refined_state(page: Mapping[str, Any], label: Any, run: Mapping[str, Any],
         beside += f" in workspace {place.item.get('workspace')}"
     return {**state, "kept": fresh.kept, "why_kept": fresh.why_kept,
             "registered": fresh.registered, "why_registered": fresh.why_registered,
-            "sequence": fresh.sequence, "checked_beside": beside}
+            "sequence": fresh.sequence, "checked_beside": beside,
+            "historical_overlap": list(fresh.historical_overlap),
+            "replaced_after_registration": fresh.replaced_after_registration}
 
 
 def _operator_listing(page: Mapping[str, Any], models: Mapping[str, Any]) -> bool:
@@ -1014,10 +1035,12 @@ def version_html(page: Mapping[str, Any], label: Optional[str],
 
 
 def _row_chip(run: Mapping[str, Any]) -> str:
+    """The row's one chip. "runs differ" (amber) asks for attention and
+    blocks nothing; "comparison incomplete" (grey) describes the group."""
     contest = run.get("contest") or {}
     state = run.get("state") or {}
     if contest.get("state") == "contested":
-        return r.chip("runs disagree", "amber")
+        return r.chip("runs differ", "amber")
     if run.get("problem"):
         return r.chip("not read", "grey")
     if state.get("kept") != "kept":
@@ -1028,7 +1051,7 @@ def _row_chip(run: Mapping[str, Any]) -> str:
         return (f'<span class="shep-tag shep-tag-ok">Registered {OK_MARK}'
                 f'{" #" + str(seq) if isinstance(seq, int) else ""}</span>')
     if contest.get("state") == "cannot_be_checked":
-        return r.chip("disagreement not checked", "grey")
+        return r.chip("comparison incomplete", "grey")
     return r.chip("not registered" if state.get("registered") == "not_registered"
                   else "registration not checked", "neutral")
 
@@ -1061,18 +1084,21 @@ def _row_state(run: Mapping[str, Any], roots: Sequence[Tuple[str, str]]) -> str:
         seq = state.get("sequence")
         parts.append(f"registered{' #' + str(seq) if isinstance(seq, int) else ''}")
     elif registered == "not_registered":
-        parts.append("not registered")
+        parts.append("not registered" + (" (its report was replaced after it was registered)"
+                                         if state.get("replaced_after_registration") else ""))
     else:
         parts.append("registration cannot be checked from the list")
     line = lead + " · ".join(parts)
+    # The group's description, after a semicolon: the row keeps one " · "
+    # (the skill's §5), and it describes, never disables.
     if contest.get("state") == "contested":
         others = [x for x in contest.get("disagreeing_runs") or [] if x != run.get("run_id")]
-        line += (f' · <span class="shep-amber-t">runs disagree — investigate: they differ on '
+        line += (f'; <span class="shep-amber-t">runs under these conditions differ on '
                  f'{e(", ".join(contest.get("differing") or ()))}'
-                 f'{" with " + e(", ".join(run_time(x) or x for x in others)) if others else ""}'
-                 '</span>')
+                 f'{" (with " + e(", ".join(run_time(x) or x for x in others)) + ")" if others else ""}'
+                 ' — investigate</span>')
     elif contest.get("state") == "cannot_be_checked":
-        line += " · whether runs under its key disagree cannot be checked"
+        line += "; comparison incomplete"
     return line
 
 
@@ -1589,15 +1615,14 @@ def result_html(reports: Mapping[str, Any], run_id: Optional[str],
                             else "Registration: cannot be checked from the list", "neutral"))
     contest = run.get("contest") or {}
     if contest.get("state") == "contested":
-        chips.append(r.chip("Runs disagree — investigate", "amber"))
+        chips.append(r.chip("Runs differ — investigate", "amber"))
     parts = [f'<div class="shep-test-chips">{"".join(chips)}</div>']
     if run.get("problem"):
         parts.append(_reason_html(redact(run["problem"], roots)))
     if record is None:
         if state.get("kept") == "kept":
-            why = run.get("unbuilt") or "; ".join(
-                (run.get("contest") or {}).get("problems") or []) or (
-                "the report store's comparison did not read it")
+            why = run.get("unbuilt") or reports.get("store_problem") or (
+                "the report store's listing did not read it")
             parts.append(_reason_html("This report cannot be shown or compared: "
                                       + redact(why, roots)))
         else:
@@ -1607,8 +1632,27 @@ def result_html(reports: Mapping[str, Any], run_id: Optional[str],
                 "is registered, and nothing here can be."))
     else:
         parts.append(_record_html(record, run, state))
+    parts.append(_registration_reason_html(state, roots))
     parts.append(block_html(run, roots, notes or [], notes_problems))
     return head + f'<div class="shep-test-pad shep-test-result">{"".join(parts)}</div>'
+
+
+def _registration_reason_html(state: Mapping[str, Any], roots: Sequence[Tuple[str, str]]) -> str:
+    """Why this run's registration reads as it does, where "not registered"
+    or "cannot be checked" alone would mislead (K8-6r.2): a record names this
+    run with other bytes (its report was replaced after it was registered, so
+    a registration is refused), or the ledger beside the listed checkpoint was
+    read and cannot tell (this run's identity record damaged, the run-identity
+    boundary lost, a record whose sequence cannot be read). The registration's
+    own words (`report_state`), redacted."""
+    why = state.get("why_registered")
+    if state.get("kept") != "kept" or not why:
+        return ""
+    if state.get("registered") == "not_registered" and state.get("replaced_after_registration"):
+        return _reason_html("Not registered: " + redact(why, roots))
+    if state.get("registered") == "cannot_be_checked" and state.get("checked_beside"):
+        return _reason_html("Registration cannot be checked: " + redact(why, roots))
+    return ""
 
 
 def _tile_note(mode: Optional[str], name: str, n_ranked: Any, eligible: str) -> str:
@@ -1758,13 +1802,21 @@ def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
     seq = state.get("sequence")
     beside = state.get("checked_beside")
     where = f" (the ledger beside {e(beside)} was read)" if beside else ""
+    # A record merged before each run had its own record may hold these bytes
+    # (K8-6r.2): said as a possible overlap, never as registered.
+    merged = [n for n in state.get("historical_overlap") or [] if isinstance(n, int)]
+    overlap = (f"; possible overlap with record{'s' if len(merged) != 1 else ''} "
+               f"{', '.join(str(n) for n in merged)}, merged before each run had its own record "
+               "(not recorded whether this run is one of them); registering adds this run's "
+               "own record" if merged and registered != "registered" else "")
     lines.append(("Registration",
-                  f"registered as record {seq}{where}" if registered == "registered" and isinstance(seq, int)
-                  else f"registered{where}" if registered == "registered"
-                  else f"not registered{where}" if registered == "not_registered"
-                  else "none found beside the checkpoint the run read, or its ledger cannot be "
-                       "read (a registration beside another copy of the weights is looked for only "
-                       "with the checkpoint list, an operator control)"))
+                  (f"registered as record {seq}{where}" if registered == "registered" and isinstance(seq, int)
+                   else f"registered{where}" if registered == "registered"
+                   else f"not registered{where}" if registered == "not_registered"
+                   else f"cannot be checked{where}" if beside
+                   else "none found beside the checkpoint the run read, or its ledger cannot be "
+                        "read (a registration beside another copy of the weights is looked for only "
+                        "with the checkpoint list, an operator control)") + e(overlap)))
     # The R10 labels' ⓘ sits beside the first R10 line, which it explains.
     kv = "".join(f'<span class="shep-k">{e(k)}'
                  f'{help_button("test-r10", "R10 labels") if k == "R10, training" else ""}</span>'
@@ -1776,28 +1828,44 @@ def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
             f'<div class="shep-test-tiles">{tiles}</div><div class="shep-kv shep-test-lines">{kv}</div>')
 
 
+def _deterministic_group(run: Mapping[str, Any]) -> bool:
+    """Whether the run's condition group records deterministic algorithms on:
+    the setting is in the group's semantics, so every run of it shares it."""
+    record = run.get("record") if isinstance(run.get("record"), Mapping) else {}
+    regime = record.get("regime") if isinstance(record.get("regime"), Mapping) else {}
+    return regime.get("deterministic_algorithms") is True
+
+
 def block_html(run: Mapping[str, Any], roots: Sequence[Tuple[str, str]],
                notes: Sequence[Mapping[str, Any]], notes_problems: Sequence[str] = ()) -> str:
-    """D5's block on the report's key, and the investigation notes kept with
-    it: who, when, what. A note never lifts the block. Notes that cannot be
-    read are said, so "no note is kept" is never shown when one may be."""
+    """How the report's condition group compares in the store, and the
+    investigation notes kept with it: who, when, what. **A description, never
+    a block** (policy rev 16): every run is kept as recorded, and nothing here
+    disables Register. Notes that cannot be read are said, so "no note is
+    kept" is never shown when one may be."""
     contest = run.get("contest") or {}
     key = run.get("key")
     parts = []
     if contest.get("state") == "contested":
         others = ", ".join(run_time(x) or x for x in contest.get("disagreeing_runs") or ())
+        expected = (" Deterministic algorithms were on, so these runs were expected to agree."
+                    if _deterministic_group(run) else "")
         parts.append(
-            '<div class="shep-notice shep-notice-amber shep-test-block"><b>Runs disagree — '
-            f'investigate.</b> Reports under this key differ on: '
-            f'{e(", ".join(contest.get("differing") or ()))} (runs {e(others)}). While they do, '
-            "no report under this key is registered, checked or unchecked: registering one "
-            "would be choosing between results. Every report stays in the store; compare their "
-            "environment facts first. A deterministic re-run is another key. An investigation "
-            "note records what was found; it does not lift the block.</div>")
+            '<div class="shep-notice shep-notice-amber shep-test-block"><b>Runs under these '
+            f'conditions differ — investigate.</b> They differ on: '
+            f'{e(", ".join(contest.get("differing") or ()))} (runs {e(others)}).{expected} '
+            "Every run is kept as recorded and each can be registered; compare their "
+            "environment facts first. An investigation note records what was found.</div>")
     elif contest.get("state") == "cannot_be_checked":
         problems = "; ".join(redact(p, roots) for p in contest.get("problems") or ())
-        parts.append(_reason_html("Whether runs under this key disagree cannot be checked, so no "
-                                  f"report under it is registered: {problems}"))
+        if key:
+            parts.append(_reason_html(f"Comparison incomplete: {problems}. This describes the "
+                                      "group only; it does not stop a registration."))
+        else:
+            # This run's own report could not be placed in a group: its own
+            # reason, which marks no other run (K8-6r.2).
+            parts.append(_reason_html(f"This run's report cannot be compared: {problems}. It "
+                                      "marks no other run."))
     if key:
         from src.evaluation.sidecar import KEY_FIELDS
 
@@ -1812,19 +1880,44 @@ def block_html(run: Mapping[str, Any], roots: Sequence[Tuple[str, str]],
                          f'notes ({len(mine)})</div><ul>{items}</ul></div>')
         if shown and notes_problems:
             parts.append(_reason_html(
-                "The investigation notes cannot all be read, so a note kept for this key may be "
-                "missing here: " + "; ".join(redact(p, roots) for p in notes_problems)))
+                "The investigation notes cannot all be read, so a note kept for this group may "
+                "be missing here: " + "; ".join(redact(p, roots) for p in notes_problems)))
         elif shown and not mine:
-            parts.append('<div class="shep-sub">No investigation note is kept for this key.</div>')
+            parts.append('<div class="shep-sub">No investigation note is kept for this '
+                         'group.</div>')
     return "".join(parts)
+
+
+def _store_not_listed(problem: str, roots: Sequence[Tuple[str, str]], what: str) -> str:
+    """Why Register is off when the store could not be listed (Decision 10):
+    no report can be confirmed here, and the command line registers a named
+    report it verifies. Who acts: the operator, on the server."""
+    return (f"Disabled: the report store could not be listed, so {what}'s report cannot be "
+            f"confirmed here: {redact(problem, roots).rstrip('.')}. Register it from the "
+            "command line by naming its report (scripts/record_evaluation.py --report …).")
 
 
 def register_state(page: Mapping[str, Any], reports: Mapping[str, Any],
                    run_id: Optional[str]) -> Tuple[bool, Optional[str]]:
-    """Whether "Register this report" can be used, and why not."""
+    """Whether "Register this report" can be used, and why not.
+
+    **Enabled for a kept report of this run the page can confirm** (policy rev
+    16, K8-6r.2; Decision 10). Off only when the request is not an
+    operator's, the run kept no report, **this run** is already registered
+    (`report_state` finds the record naming this run with these bytes), or
+    this run's own report was not built (its own reason) or not read by the
+    listing; a store that could not be listed says so and points to the
+    command line, which registers a named report it verifies. How the runs of
+    the condition group compare, and any other run's problem, never disables
+    it."""
     access = page.get("access") or {}
+    roots = page.get("roots") or []
     run = find(reports.get("runs") or [], "run_id", run_id)
     if run is None:
+        # The version was read but its store's runs could not be listed.
+        listing = reports.get("problem") if reports.get("version_sha256") else None
+        if listing and not reports.get("runs") and access.get("allowed"):
+            return False, _store_not_listed(listing, roots, "a run")
         return False, None
     if not access.get("allowed"):
         return False, operator_only(access)
@@ -1833,13 +1926,14 @@ def register_state(page: Mapping[str, Any], reports: Mapping[str, Any],
         return False, "Disabled: no report was kept in this run."
     if state.get("registered") == "registered":
         return False, "Already registered."
-    contest = (run.get("contest") or {}).get("state")
-    if contest == "contested":
-        return False, ("Disabled: runs disagree — investigate. Registering one would be choosing "
-                       "between results; an investigation note does not lift this.")
-    if contest == "cannot_be_checked" or run.get("record") is None:
-        return False, ("Disabled: whether runs under this key disagree cannot be checked, so no "
-                       "report under it is registered.")
+    if run.get("record") is None:
+        if run.get("unbuilt"):
+            return False, ("Disabled: this report cannot be registered: "
+                           f"{redact(run['unbuilt'], roots)}")
+        if reports.get("store_problem"):
+            return False, _store_not_listed(reports["store_problem"], roots, "this run")
+        return False, ("Disabled: the report store's listing did not read this report (it may "
+                       "have been written or replaced since); press ↻ to read it again.")
     return True, None
 
 
@@ -2100,10 +2194,17 @@ def register_selected(page: Mapping[str, Any], reports: Mapping[str, Any],
     (`ledger_checkpoint`: the listed file holding the weights the report
     measured, by full digest, the file the run read first; never the report's
     recorded path), then checks the deployment's registry, the store, the
-    version, D5's block and the checkpoint's bytes again. The page reads and
-    judges no report itself (round 3 of the review fixes, F2)."""
+    version and the checkpoint's bytes again. The page reads and judges no
+    report itself (round 3 of the review fixes, F2). A registered run's message
+    carries the two notes that decide nothing (`group_note`,
+    `historical_note`)."""
     from src.api.services.server_lists import ServerListRefused, resolve_report
-    from src.evaluation.registration import RegistrationRefused, corroboration_note, register_report
+    from src.evaluation.registration import (
+        RegistrationRefused,
+        group_note,
+        historical_note,
+        register_report,
+    )
 
     access = operator_access(request)
     if not access.allowed:
@@ -2148,13 +2249,11 @@ def register_selected(page: Mapping[str, Any], reports: Mapping[str, Any],
     # Not named `said`: that would make the module's `said` local to this
     # function, and the refusals above would fail before it is assigned.
     message = {"registered": f"Registered as record {sequence}.",
-               "corroborated": f"Added to record {sequence} as a corroborating report: it agrees "
-                               "on every compared field.",
                "already_registered": f"Already registered as record {sequence}; nothing was "
                                      "written."}.get(result.outcome, result.outcome)
-    note = corroboration_note(result, path)
-    if note:
-        message += f" {note}"
+    for note in (group_note(result), historical_note(result)):
+        if note:
+            message += f" {note}"
     if result.usage_history_problem:
         message += f" {result.usage_history_problem[:1].upper()}{result.usage_history_problem[1:]}."
     return True, message
@@ -2163,7 +2262,8 @@ def register_selected(page: Mapping[str, Any], reports: Mapping[str, Any],
 def add_note(reports: Mapping[str, Any], run_id: Any, who: Any, what: Any, request: Any, *,
              environ: Optional[Mapping[str, str]] = None) -> Tuple[bool, str]:
     """"Add note": D8 on this request; one investigation note kept with the
-    report's key in the store (`add_investigation_note`). It lifts nothing."""
+    report's condition group in the store (`add_investigation_note`). It
+    records what was found and changes nothing."""
     from src.api.services.server_lists import ServerListRefused, resolve_cohort_version
     from src.evaluation.report_store import add_investigation_note
     from src.utils.file_lock import FileLockBusy
@@ -2173,7 +2273,7 @@ def add_note(reports: Mapping[str, Any], run_id: Any, who: Any, what: Any, reque
         return False, access.refusal
     run = find(reports.get("runs") or [], "run_id", run_id)
     if run is None or not run.get("key"):
-        return False, "Select a report whose key is known first. Nothing was written."
+        return False, "Select a report whose condition group is known first. Nothing was written."
     try:
         version = resolve_cohort_version(reports.get("label"), environ=environ)
         add_investigation_note(version, tuple(run["key"]), who=str(who or ""), what=str(what or ""))
@@ -2187,7 +2287,7 @@ def add_note(reports: Mapping[str, Any], run_id: Any, who: Any, what: Any, reque
                        "again.")
     except (OSError, ValueError) as exc:
         return False, str(exc)
-    return True, "The note was kept with this key's reports. The block stays until the reports agree."
+    return True, "The note was kept with this group's reports. It records what was found and changes nothing."
 
 
 def open_import(request: Any, *, environ: Optional[Mapping[str, str]] = None) -> Dict[str, Any]:
@@ -2452,8 +2552,9 @@ def create_test_page(ctx: Any) -> None:
                        scale=14, min_width=360):
             with gr.Column(elem_classes=["shep-test-bd", "shep-test-bd-flush"]):
                 result_out = plain_html(result_html({}, None, []), elem_id="shep-test-result-body")
-            # The investigation note form (shown while runs under the report's
-            # key disagree) is outside the scrolling body: on a wide screen it
+            # The investigation note form (shown while the runs of the report's
+            # condition group differ, or their comparison is incomplete) is
+            # outside the scrolling body: on a wide screen it
             # stays at the panel's foot, above Register, so Add note is in view
             # however long the report (in a short window it takes at most half
             # the panel and scrolls in its own region); narrow, it follows the

@@ -364,7 +364,7 @@ def recorded_for(item: Mapping[str, Any], directory: Path, *,
                  environ: Optional[Mapping[str, str]] = None) -> Optional[Dict[str, Any]]:
     """The served checkpoint's recorded tests, as the shared list reads them
     (`model_list.recorded_tests_for`: the ledger beside it, the report stores
-    for contested; no checkpoint is opened)."""
+    for the group descriptions; no checkpoint is opened)."""
     from src.webui.components.model_list import item_key, recorded_tests_for
 
     try:

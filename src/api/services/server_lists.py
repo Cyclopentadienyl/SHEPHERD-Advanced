@@ -48,11 +48,13 @@ registered is read by the registration's one helper, passed in as
 `report_state` (`stored_report_state` is that helper for a run directory);
 nothing here infers either from which files exist.
 
-**D5's state of each run's key** (`ReportItem.contest`) comes with the run's
-state, from one scan of the version's store (`record_states.run_contest`, the
-one layer that turns a scan into a shown D5 state, for records too): the one
-run listing that `GET /api/v1/cohorts` and the Test page share, so the two
-cannot disagree about a run, and neither judges D5 itself. It is bound to the
+**How each run's condition group compares** (`ReportItem.contest`; policy rev
+16, a description that decides nothing) comes with the run's state, from one
+scan of the version's store (`record_states.run_contest`, the one layer that
+turns a scan into a shown description, for records too): the one run listing
+that `GET /api/v1/cohorts` and the Test page share, so the two cannot disagree
+about a run, and neither compares runs itself. A run whose report cannot be
+read is listed with its own reason only; it never marks another run. It is bound to the
 bytes the run's state read, so one item never describes two versions of a
 report. The open route's listing leaves out the problems' words, which may name
 a server path; the Test page's keeps them for the operator. A version whose
@@ -233,11 +235,14 @@ class CheckpointItem:
 class ReportItem:
     """One run directory of a version's report store. `state` is what the
     report-state reader says of it (kept, registered); `None`, with `problem`,
-    when it was not read. `contest` is D5's state of the key its report is
-    under, for the bytes `state` read (`record_states.run_contest`): ``state``
-    (uncontested, contested, cannot_be_checked), ``differing``,
-    ``disagreeing_runs`` and ``problems`` (empty but on an operator's listing);
-    `None` when the run's state was not read or it kept no report."""
+    when it was not read. `contest` describes how the condition group its
+    report is under compares, for the bytes `state` read
+    (`record_states.run_contest`): ``state`` (uncontested; contested, runs
+    under these conditions differ; cannot_be_checked, the comparison is
+    incomplete: machine values that decide nothing), ``differing``,
+    ``disagreeing_runs`` (every run carrying a differing report) and
+    ``problems`` (empty but on an operator's listing); `None` when the run's
+    state was not read or it kept no report."""
 
     run_id: str
     state: Optional[Dict[str, Any]]
@@ -1001,7 +1006,7 @@ def _report_items(
     store: Optional[Any] = None, operator: bool = False,
 ) -> Tuple[Tuple[ReportItem, ...], Optional[str]]:
     """The version's runs, newest first. Given `report_state`, each with what
-    it kept, whether its report is registered, and D5's state of its key for
+    it kept, whether its report is registered, and its group's description for
     those bytes (`run_contest`) from one scan of the store (`store`, a
     `record_states.read_report_store`, made here when not given)."""
     from src.api.services.record_states import read_report_store, run_contest
@@ -1066,12 +1071,16 @@ def stored_report_state(run_directory: Path) -> Dict[str, Any]:
     (`src.evaluation.registration.report_state`): kept from the store,
     registered from the ledger beside the checkpoint the report records it
     measured, since a list knows no checkpoint file. So ``registered`` is
-    ``registered`` when that ledger names the report, and otherwise
-    ``cannot_be_checked``, never ``not_registered``: a registration filed
-    beside another copy of the same weights is not looked for, and the reason
-    says which ledger was. JSON-ready: ``kept`` and
+    ``registered`` when that ledger names this run with this report,
+    ``not_registered`` only when it names this run with other bytes (the
+    report was replaced after it was registered:
+    ``replaced_after_registration``), and otherwise ``cannot_be_checked``: a
+    registration filed beside another copy of the same weights is not looked
+    for, and the reason says which ledger was. JSON-ready: ``kept`` and
     ``registered`` (one of the registration's states each), their reasons,
-    the report's digest and the ledger record's sequence. No field is a server
+    the report's digest, the ledger record's sequence and, when no record names
+    this run, the records merged before each run had its own record that hold
+    its bytes (``historical_overlap``, a possible overlap). No field is a server
     path (a reason may name one, for the operator)."""
     from src.evaluation.cohort_registry import REPORT_FILE
     from src.evaluation.registration import report_state
@@ -1079,7 +1088,9 @@ def stored_report_state(run_directory: Path) -> Dict[str, Any]:
     state = report_state(Path(run_directory) / REPORT_FILE)
     return {"kept": state.kept, "why_kept": state.why_kept,
             "registered": state.registered, "why_registered": state.why_registered,
-            "report_sha256": state.report_sha256, "sequence": state.sequence}
+            "report_sha256": state.report_sha256, "sequence": state.sequence,
+            "historical_overlap": list(state.historical_overlap),
+            "replaced_after_registration": state.replaced_after_registration}
 
 
 def list_cohort_versions(
@@ -1092,7 +1103,7 @@ def list_cohort_versions(
     `report_state`, given a run directory, says what that run kept and whether
     its report is registered: the registration's one helper
     (`stored_report_state`, which the API route passes). With it, each run
-    also carries D5's state of its key, without the problems' words (one scan
+    also carries its group's description, without the problems' words (one scan
     of each version's store). Without it, each run is listed with no state and
     says so, and no store is scanned.
 
@@ -1152,7 +1163,7 @@ def cohort_version_item(
 ) -> CohortVersionItem:
     """One cohort version as `list_cohort_versions` lists it, with its report
     store's runs and, given `report_state`, what each kept, whether its report
-    is registered and D5's state of its key: for a page that shows one
+    is registered and its group's description: for a page that shows one
     version's reports without reading every other version's.
 
     Raises:
@@ -1168,7 +1179,7 @@ def version_item(version: Any, *, report_state: Optional[ReportStateReader] = No
     `list_cohort_versions` lists it. `store` is that version's one scan
     (`record_states.read_report_store`), for a caller that shows the scan's
     records too, so the store is scanned once; made here when not given. `operator` keeps the
-    problems' words in each run's D5 state, for an operator's page (the Test
+    problems' words in each run's group description, for an operator's page (the Test
     page); the open route's listing leaves them out."""
     from src.evaluation.cohort_registry import ListedVersion
 

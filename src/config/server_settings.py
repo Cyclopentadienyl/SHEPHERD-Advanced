@@ -368,8 +368,8 @@ def deployment_registry_refusal(registry: Path,
     version is measured in** (D5, D7, BACKLOG 37): `locate_store_report` asks it
     for every registration, the UI's included, and `measure_scorer.py` for every
     ``--cohort`` run, before either reads anything in the registry. Another
-    directory keeps its own report store, disagreement block and usage history,
-    which the service never reads.
+    directory keeps its own report store and usage history, which the service
+    never reads.
 
     **Compared as resolved paths** (`Path.resolve()` on both sides): a link to
     the configured directory is that directory. Never by device and inode

@@ -98,6 +98,14 @@ def _report(cohort):
     return path, json.loads(path.read_text())
 
 
+def _new_report(cohort, *earlier):
+    """The one report a run wrote beside the `earlier` ones. Never taken by
+    name order: two runs within one second are ordered by their run ids'
+    random part, not by when they ran."""
+    (path,) = set(_reports(cohort)) - set(earlier)
+    return path
+
+
 def _nothing_written(cohort):
     return (not (cohort.version.directory / "reports").exists()
             and not (cohort.checkpoint.parent / LEDGER).exists())
@@ -439,20 +447,27 @@ def test_record_files_beside_the_bytes_read_though_the_link_is_retargeted_during
         "the report keeps the path the operator gave")
 
 
-def test_the_same_inputs_measured_again_are_already_registered(cli, cohort, capsys):
-    """Two runs over the same inputs write byte-identical reports in two run
-    directories; the second registration is a no-op and leaves the ledger's
-    bytes as they were."""
+def test_the_same_inputs_measured_again_are_a_second_record_of_their_own_run(cli, cohort,
+                                                                             capsys):
+    """A3 (K8-6r.2): two runs over the same inputs write byte-identical reports
+    in two run directories; each run is its own execution, so the second is
+    registered as record 2 naming its run, the first record unchanged. HEAD:
+    "Already held as record 1; nothing written"."""
     assert cli.main(_argv(cohort, "--record")) == 0
     ledger = cohort.checkpoint.parent / LEDGER
-    before = ledger.read_bytes()
+    (first_record,) = json.loads(ledger.read_text())["records"]
+    (first,) = _reports(cohort)
 
     assert cli.main(_argv(cohort, "--record")) == 0
 
-    first, second = _reports(cohort)
+    second = _new_report(cohort, first)
     assert first.read_bytes() == second.read_bytes()
-    assert ledger.read_bytes() == before
-    assert "Already held as record 1; nothing written" in capsys.readouterr().out
+    records = json.loads(ledger.read_text())["records"]
+    assert records[0] == first_record
+    assert [r["run_id"] for r in records] == [first.parent.name, second.parent.name]
+    assert records[1]["source_artifact_digest"] == records[0]["source_artifact_digest"]
+    printed = capsys.readouterr().out
+    assert "Registered as record 2" in printed and "Already held" not in printed
 
 
 @pytest.mark.parametrize("case", ["read_only", "unwritable_directory", "schema_2_ledger"])
@@ -885,9 +900,10 @@ def test_each_run_and_each_registration_is_in_the_versions_usage_history(cli, co
     after its report is published, and the registration function the
     registration, so command-line runs count."""
     assert cli.main(_argv(cohort)) == 0
+    (first,) = _reports(cohort)
     assert cli.main(_argv(cohort, "--record")) == 0
 
-    first, second = _reports(cohort)
+    second = _new_report(cohort, first)
     entries = _usage(cohort)
     assert [e["kind"] for e in entries] == ["test_run", "test_run", "registered"]
     runs = {e["run_id"]: e for e in entries if e["kind"] == "test_run"}
@@ -899,7 +915,9 @@ def test_each_run_and_each_registration_is_in_the_versions_usage_history(cli, co
         assert entry["n_ranked"] == report["n_ranked"]
         assert (entry["deterministic"], entry["device"]) == (False, "cpu")
     assert sorted(e["record_requested"] for e in runs.values()) == [False, True]
-    assert entries[2]["outcome"] in ("registered", "already_registered", "corroborated")
+    # The run registered is its own execution (K8-6r.2): its own record.
+    assert (entries[2]["outcome"], entries[2]["run_id"], entries[2]["sequence"]) == (
+        "registered", second.parent.name, 1)
     text = (cohort.version.directory / "reports" / "usage.jsonl").read_text()
     assert "case-" not in text and "phenotype_ids" not in text
 
@@ -1174,32 +1192,33 @@ def test_when_both_the_history_and_the_outcome_fail_the_message_says_both(
     assert "this run is in its version's usage history" not in message
 
 
-def test_a_disagreeing_run_is_kept_and_not_registered_without_a_later_command(
-    cli, cohort, capsys
-):
-    """D5 through --record: a second run under a key whose stored reports
-    disagree exits 3, keeps its report, and offers no register-later command,
-    since none would be accepted while they disagree."""
-    import secrets
+def test_a_run_whose_values_differ_is_registered_with_the_group_note(cli, cohort, capsys,
+                                                                     tmp_path):
+    """G4, A1 (K8-6r.2) through --record: a run whose value differs from the
+    registered run of its group (here a kept report with another pooled_top1,
+    registered as record 1) exits 0 with "Registered as record 2" and the
+    group note, which names record 1, its run and what differs and decides
+    nothing; record 1 is unchanged. HEAD: exit 3, "runs disagree —
+    investigate", no register-later command."""
+    from src.evaluation.registration import register_report
 
-    assert cli.main(_argv(cohort, "--record")) == 0
-    (first,) = _reports(cohort)
-    edited = json.loads(first.read_text())
-    edited["authoritative_metrics"]["pooled_top1"] = (
-        0.5 + edited["authoritative_metrics"]["pooled_top1"] / 2)
-    stamp, checkpoint, _ = first.parent.name.split("-")
-    other = first.parents[1] / f"{stamp}-{checkpoint}-{secrets.token_hex(4)}"
-    other.mkdir()
-    (other / "report.json").write_text(json.dumps(edited))
+    assert cli.main(_argv(cohort)) == 0
+    other = _disagreeing_report(cohort)
+    first = register_report(other, checkpoint_dir=cohort.checkpoint.parent)
+    assert (first.outcome, first.record["registration"]["sequence"]) == ("registered", 1)
     capsys.readouterr()
+    out = tmp_path / "outcome.json"
 
-    assert cli.main(_argv(cohort, "--record")) == 3
+    assert cli.main(_argv(cohort, "--record", "--outcome", str(out))) == 0
 
-    err = capsys.readouterr().err
-    assert "runs disagree — investigate" in err and "disagree on: pooled_top1 (" in err
-    assert "where the investigation can read it" in err
-    assert "Register it later with" not in err
-    assert len(_reports(cohort)) == 3
+    printed = capsys.readouterr().out
+    assert "Registered as record 2" in printed
+    assert ("Runs under these conditions differ: record 2 (this run) differs from record 1 "
+            f"(run {other.parent.name}) on pooled_top1") in printed
+    assert "Each run is kept as recorded." in printed
+    records = json.loads((cohort.checkpoint.parent / LEDGER).read_text())["records"]
+    assert records[0] == first.record and len(records) == 2
+    assert _outcome(out)["registration"]["outcome"] == "registered"
 
 
 def _disagreeing_report(cohort):
@@ -1218,45 +1237,36 @@ def _disagreeing_report(cohort):
     return other / "report.json"
 
 
-def test_without_record_a_disagreeing_run_offers_no_register_later_command(
-    cli, cohort, capsys, tmp_path
+@pytest.mark.parametrize("store", ["runs that differ", "another run's broken report"])
+def test_without_record_the_register_later_command_is_always_printed(
+    cli, cohort, capsys, tmp_path, store
 ):
-    """The reviewer's P3 (2026-10-20): without --record the run checks the
-    store as a registration would, so it never prints a command D5 would
-    refuse: it says the runs disagree, and its outcome says so too."""
+    """G4, C1 (K8-6r.2): without --record the run checks nothing in the store,
+    since no other run's report or result can refuse its registration: the
+    register-later command is always printed, and the outcome file says only
+    that --record was not given. HEAD: no command while the runs disagree,
+    and "refused until that can be checked" for another run's broken report."""
+    from tests.fixtures.report_store import store_bytes
+
     assert cli.main(_argv(cohort)) == 0
-    _disagreeing_report(cohort)
+    if store == "runs that differ":
+        _disagreeing_report(cohort)
+    else:
+        store_bytes(cohort.registry, b"{broken", version=cohort.version)
     capsys.readouterr()
     out = tmp_path / "outcome.json"
 
     assert cli.main(_argv(cohort, "--outcome", str(out))) == 0
 
     printed = capsys.readouterr().out
-    assert "Not registered (no --record), and runs disagree — investigate" in printed
-    assert "disagree on: pooled_top1 (" in printed
-    assert "No register-later command is offered" in printed
-    assert "Register it with" not in printed and "record_evaluation.py" not in printed
+    assert "Not registered (no --record). Register it with:" in printed
+    assert "record_evaluation.py --report" in printed
+    assert "disagree" not in printed and "cannot be checked" not in printed
     registration = _outcome(out)["registration"]
     assert (registration["registered"], registration["outcome"]) == (False, "not_requested")
-    assert "runs disagree — investigate" in registration["why"]
+    assert registration["why"] == ("--record was not given; the report is kept for a later "
+                                   "registration")
     assert not (cohort.checkpoint.parent / LEDGER).exists()
-
-
-def test_without_record_a_key_that_cannot_be_checked_says_registering_waits_for_it(
-    cli, cohort, capsys, tmp_path
-):
-    from tests.fixtures.report_store import store_bytes
-
-    damaged = store_bytes(cohort.registry, b"{broken", version=cohort.version)
-    out = tmp_path / "outcome.json"
-
-    assert cli.main(_argv(cohort, "--outcome", str(out))) == 0
-
-    printed = capsys.readouterr().out
-    assert "cannot be checked" in printed and str(damaged) in printed
-    assert "A later registration is refused until that can be checked" in printed
-    assert "record_evaluation.py --report" in printed
-    assert "cannot be checked" in _outcome(out)["registration"]["why"]
 
 
 def test_a_runs_report_replaced_by_a_link_out_of_the_store_is_not_offered_later(
@@ -1293,12 +1303,13 @@ def test_a_runs_report_replaced_by_a_link_out_of_the_store_is_not_offered_later(
     assert not (cohort.checkpoint.parent / LEDGER).exists()
 
 
-def test_a_report_in_the_store_too_deep_to_compare_is_a_refusal_not_a_traceback(
+def test_another_report_in_the_store_too_deep_to_compare_never_blocks_this_run(
     cli, cohort, capsys, tmp_path
 ):
-    """The reviewer's P3 (2026-10-20): a hand-edited report in the store that
-    nests too deeply to be built leaves its key "cannot be checked"; --record
-    exits 3 saying so, and the outcome file is complete."""
+    """C3 (K8-6r.2): a hand-edited report of another run that nests too deeply
+    to be built is that run's own problem: --record registers this run, reads
+    no other report, and the outcome file is complete. HEAD: exit 3, "cannot
+    be checked ... nests too deeply"."""
     assert cli.main(_argv(cohort)) == 0
     deep_path = _disagreeing_report(cohort)
     deep = json.loads(deep_path.read_text())
@@ -1310,12 +1321,15 @@ def test_a_report_in_the_store_too_deep_to_compare_is_a_refusal_not_a_traceback(
     capsys.readouterr()
     out = tmp_path / "outcome.json"
 
-    assert cli.main(_argv(cohort, "--record", "--outcome", str(out))) == 3
+    assert cli.main(_argv(cohort, "--record", "--outcome", str(out))) == 0
 
-    err = capsys.readouterr().err
-    assert "cannot be checked" in err and "nests too deeply" in err and str(deep_path) in err
+    captured = capsys.readouterr()
+    assert "Registered as record 1" in captured.out
+    assert "nests too deeply" not in captured.out + captured.err
     outcome = _outcome(out)
-    assert outcome["complete"] is True and outcome["registration"]["registered"] is False
+    assert outcome["complete"] is True and outcome["registration"]["registered"] is True
+    (record,) = json.loads((cohort.checkpoint.parent / LEDGER).read_text())["records"]
+    assert record["run_id"] == Path(outcome["report"]).parent.name
 
 
 def test_deterministic_runs_are_recorded_so_and_the_settings_are_put_back(

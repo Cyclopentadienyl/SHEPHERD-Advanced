@@ -78,7 +78,8 @@ RECORD_VIEW_KEYS = {
     "cohort", "counts", "mode", "score_semantics", "metrics", "n_ranked", "relations", "r10",
     "environment_class",
     "deterministic_algorithms", "gpu", "dataset_origin", "scoring_semantics_digest", "measurement_semantics_digest",
-    "registration", "n_corroborating", "source_artifact_digest", "contest",
+    "registration", "run_id", "historical_overlap", "n_corroborating", "source_artifact_digest",
+    "contest",
 }
 
 
@@ -249,6 +250,10 @@ def test_the_loaded_checkpoints_records_are_shown(app, served, tmp_path, monkeyp
     assert body["records_not_shown"] == 0
     (view,) = body["records"]
     assert set(view) == RECORD_VIEW_KEYS
+    # The record names the run it was registered from (K8-6r.2), and overlaps
+    # no record merged before each run had its own.
+    (kept,) = (tmp_path / "reports").glob("versions/*/reports/*/report.json")
+    assert (view["run_id"], view["historical_overlap"]) == (kept.parent.name, [])
     # Each record carries its own mode, so a surface labels it by that mode.
     assert (view["mode"], view["score_semantics"]) == (
         record["scoring"]["mode"], record["scoring"]["score_semantics"])
@@ -354,22 +359,118 @@ def test_two_imports_of_one_label_are_shown_as_two_versions(app, served, tmp_pat
             != second["cohort"]["version_manifest_sha256"])
 
 
-def test_a_corroborating_report_is_counted(app, served, tmp_path):
-    """The same result from other report bytes is corroboration (D5): one record,
-    one corroborating report."""
+def _old_merged_ledger(ledger_path: Path, source: Path, merged: Path) -> dict:
+    """A schema 3 ledger as the writer before K8-6r.2 left it: one record
+    built from `source`, naming no run, with `merged`'s digest merged into it
+    as a corroborating report (what that writer did with equal values)."""
+    from src.evaluation.sidecar import build_record, empty_ledger, write_ledger
+
+    record = build_record(json.loads(source.read_bytes()), _sha(source))
+    record["corroborating_reports"] = [_sha(merged)]
+    record["registration"] = {"sequence": 1, "registered_at": "2026-10-15T12:00:00Z"}
+    write_ledger(ledger_path, {**empty_ledger(), "schema_version": 3, "records": [record]}, None)
+    return record
+
+
+def test_an_old_merged_record_and_the_runs_whose_bytes_it_holds_are_kept_apart(
+    app, served, tmp_path, monkeypatch
+):
+    """G1, A7 (d) (K8-6r.2): a record merged before each run had its own record
+    is shown as written, its run null ("not recorded") and its merged report
+    counted; each run that registers bytes it holds is a record of its own,
+    naming its run. Both sides show the possible overlap (`historical_overlap`),
+    never confirmed and never counted as two independent runs. The old record
+    gains no run. HEAD: no `run_id` field, and both runs answered
+    `already_registered` (one record)."""
+    from tests.fixtures.report_store import store_report
+
     _, _, checkpoint = served
+    registry = tmp_path / "reports"
+    monkeypatch.setenv("SHEPHERD_REGISTRY", str(registry))
     report = _report_for(_sha(checkpoint))
-    first = _register(report, checkpoint.parent, tmp_path / "reports")
-    again = _register(report, checkpoint.parent, tmp_path / "reports", indent=4)
-    assert again.outcome == "corroborated"
+    first = store_report(registry, report)                       # D1, run R1
+    second = store_report(registry, report, indent=4)            # D2, run R2
+    ledger_path = checkpoint.parent / "evaluations.json"
+    old = _old_merged_ledger(ledger_path, first, second)
+    environ = {"SHEPHERD_REGISTRY": str(registry)}
+    for path in (second, first):
+        result = register_report(path, checkpoint_dir=checkpoint.parent, registered_at=WHEN,
+                                 environ=environ)
+        assert result.outcome == "registered" and result.historical_overlap
 
-    (view,) = _get(app)["records"]
+    body = _get(app)
 
-    assert view["n_corroborating"] == 1
-    kept = {_sha(path) for path in (tmp_path / "reports").glob("versions/*/reports/*/report.json")}
-    assert view["source_artifact_digest"] == first.record["source_artifact_digest"]
-    assert kept == {first.record["source_artifact_digest"],
-                    *again.record["corroborating_reports"]}
+    assert body["records_not_shown"] == 0
+    views = {view["registration"]["sequence"]: view for view in body["records"]}
+    assert sorted(views) == [1, 2, 3]
+    assert (views[1]["run_id"], views[1]["n_corroborating"], views[1]["historical_overlap"]) == (
+        None, 1, [2, 3])
+    assert (views[2]["run_id"], views[2]["n_corroborating"], views[2]["historical_overlap"]) == (
+        second.parent.name, 0, [1])
+    assert (views[3]["run_id"], views[3]["n_corroborating"], views[3]["historical_overlap"]) == (
+        first.parent.name, 0, [1])
+    ledger = json.loads(ledger_path.read_text())
+    assert ledger["records"][0] == old and "run_id" not in ledger["records"][0]
+    assert (ledger["schema_version"], ledger["run_identity_from_sequence"]) == (4, 2)
+
+
+def test_every_run_of_a_group_is_its_own_record_and_the_description_names_each(
+    app, served, tmp_path, monkeypatch
+):
+    """G1 (K8-6r.2): two byte-identical runs and a run whose value differs, all
+    registered, are three records, each naming its run; the group's
+    description names every run carrying a differing report, both
+    byte-identical runs included. HEAD: the byte-identical run answered
+    `already_registered` and the differing one was refused (one record)."""
+    from tests.fixtures.report_store import store_bytes, version_of
+
+    registry, kept, record = _registered_with_registry(served, tmp_path, monkeypatch)
+    twin = store_bytes(registry, kept.read_bytes(), version=version_of(kept),
+                       checkpoint_sha256=record["checkpoint_digest"])
+    other = _disagreeing(kept, 0.4321)
+    _, _, checkpoint = served
+    environ = {"SHEPHERD_REGISTRY": str(registry)}
+    for path in (twin, other):
+        assert register_report(path, checkpoint_dir=checkpoint.parent, registered_at=WHEN,
+                               environ=environ).outcome == "registered"
+
+    views = _get(app)["records"]
+
+    assert [view["run_id"] for view in views] == [kept.parent.name, twin.parent.name,
+                                                  other.parent.name]
+    for view in views:
+        assert view["contest"]["state"] == "contested"
+        assert sorted(run["run"] for run in view["contest"]["runs"]) == sorted(
+            [kept.parent.name, twin.parent.name, other.parent.name])
+        assert view["historical_overlap"] == []
+
+
+@pytest.mark.parametrize("damage", ["no run_id", "boundary lost"])
+def test_a_record_whose_run_cannot_be_read_is_not_shown_as_historical(
+    app, served, tmp_path, monkeypatch, damage
+):
+    """A8, A12 (f) (K8-6r.2): a record at or after the run-identity boundary
+    without its run, or every record that names no run once the boundary is
+    lost, is counted as not shown (never shown with run "not recorded"); a
+    record that still names its run is shown, and the ledger is read, never
+    ``ledger_not_read``. HEAD: no schema 4, so the file was not read."""
+    registry, kept, record = _registered_with_registry(served, tmp_path, monkeypatch)
+    _, _, checkpoint = served
+    twin = _disagreeing(kept, 0.4321)
+    register_report(twin, checkpoint_dir=checkpoint.parent, registered_at=WHEN,
+                    environ={"SHEPHERD_REGISTRY": str(registry)})
+    ledger = checkpoint.parent / "evaluations.json"
+    if damage == "no run_id":
+        _edit_ledger(ledger, lambda data: data["records"][0].pop("run_id"))
+    else:
+        _edit_ledger(ledger, lambda data: (data.pop("run_identity_from_sequence"),
+                                           data["records"][0].pop("run_id")))
+
+    body = _get(app)
+
+    assert body["state"] == "records" and body["records_not_shown"] == 1
+    (view,) = body["records"]
+    assert view["run_id"] == twin.parent.name
 
 
 def test_records_for_other_weights_only_are_no_records(app, served, tmp_path):
@@ -637,7 +738,9 @@ def test_every_block_r10_computes_is_shown_as_computed(tmp_path, situation):
 
     block = _computed_r10(tmp_path, situation)
     record = build_record(_report_for(OTHER_CHECKPOINT, r10=block), "e" * 64)
-    _, ledger = append_record(empty_ledger(), record, registered_at=WHEN)
+    _, ledger = append_record(empty_ledger(), record,
+                              run_id=f"20261016T120000Z-{OTHER_CHECKPOINT[:12]}-00000001",
+                              registered_at=WHEN)
 
     view = _record_view(ledger["records"][0])
 
@@ -1099,9 +1202,10 @@ def test_a_contested_state_whose_details_cannot_be_shown_stays_contested(
 def test_a_state_that_cannot_be_read_is_cannot_be_checked_never_uncontested(
     app, served, tmp_path, monkeypatch, case
 ):
-    """No registry configured, a report in the store that cannot be read, or a
-    version the server's registry does not list: "cannot_be_checked", with no
-    server path in the answer, and never a 500."""
+    """No registry configured, or a version the server's registry does not
+    list: "cannot_be_checked", with no server path in the answer, and never a
+    500. Another run's report in the store that cannot be read is that run's
+    own problem (K8-6r.2, C1): this record's group reads uncontested."""
     from tests.fixtures.report_store import store_bytes, version_of
 
     registry, kept, record = _registered_with_registry(served, tmp_path, monkeypatch)
@@ -1118,5 +1222,50 @@ def test_a_state_that_cannot_be_read_is_cannot_be_checked_never_uncontested(
     body = _get(app)
 
     (view,) = body["records"]
-    assert view["contest"] == {"state": "cannot_be_checked", "differing": [], "runs": []}
+    expected = "uncontested" if case == "unreadable_report" else "cannot_be_checked"
+    assert view["contest"] == {"state": expected, "differing": [], "runs": []}
     assert str(tmp_path) not in json.dumps(body)
+
+
+def test_the_state_descriptions_say_their_meaning_changed_and_decide_nothing():
+    """G9 (K8-6r.2, Decision 3): the group description's machine values stay
+    (`uncontested`, `contested`, `cannot_be_checked`), and the API's own
+    descriptions say they changed meaning and decide nothing; `run_id` and
+    `historical_overlap` are described. HEAD: "the record stays, marked", no
+    run field."""
+    from src.api.routes.evaluations import RecordContest, RecordView
+
+    state = RecordContest.model_fields["state"]
+    assert set(state.annotation.__args__) == {"uncontested", "contested", "cannot_be_checked"}
+    assert "since K8-6r.2 they only describe and decide nothing" in state.description
+    assert "runs under these conditions differ" in state.description
+    assert "stays, marked" not in state.description
+    assert "not recorded" in RecordView.model_fields["run_id"].description
+    assert "Not confirmed" in RecordView.model_fields["historical_overlap"].description
+
+
+def test_reading_a_schema_3_ledger_shows_its_records_as_merged_and_leaves_its_bytes(
+    app, served, tmp_path
+):
+    """A12 (a), G1 (K8-6r.2): the route reads a schema 3 ledger as written, each
+    record shown with `run_id` null ("not recorded"), and never rewrites the
+    file. HEAD: no `run_id` field (a guard on the bytes)."""
+    from src.evaluation.sidecar import append_record, build_record, empty_ledger, write_ledger
+
+    _, _, checkpoint = served
+    record = build_record(_report_for(_sha(checkpoint)), "e" * 64)
+    _, ledger = append_record(empty_ledger(), record,
+                              run_id=f"20261016T120000Z-{_sha(checkpoint)[:12]}-00000001",
+                              registered_at=WHEN)
+    old = {**ledger, "schema_version": 3, "records": [
+        {k: v for k, v in ledger["records"][0].items() if k != "run_id"}]}
+    old.pop("run_identity_from_sequence")
+    path = checkpoint.parent / "evaluations.json"
+    write_ledger(path, old, None)
+    before = path.read_bytes()
+
+    body = _get(app)
+
+    (view,) = body["records"]
+    assert (view["run_id"], view["historical_overlap"], view["n_corroborating"]) == (None, [], 0)
+    assert path.read_bytes() == before

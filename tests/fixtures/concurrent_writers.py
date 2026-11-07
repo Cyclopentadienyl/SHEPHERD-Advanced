@@ -119,6 +119,7 @@ def register(name: str, registry: str, report: str, checkpoint_dir: str, start: 
         answers.put({"name": name, "outcome": result.outcome,
                      "sequence": result.record["registration"]["sequence"],
                      "source": result.record["source_artifact_digest"],
+                     "run_id": result.record.get("run_id"),
                      "ledger": str(result.ledger_path),
                      "problem": result.usage_history_problem})
     except RegistrationRefused as exc:

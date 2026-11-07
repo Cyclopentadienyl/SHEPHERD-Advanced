@@ -685,26 +685,29 @@ def test_what_the_run_published_is_read_from_its_outcome_and_the_disk(popen, inp
         "investigate.")
 
 
-def test_a_refused_registration_is_said_even_when_an_earlier_record_names_the_same_bytes(
+def test_a_refused_registration_is_said_even_when_the_runs_record_is_found(
         popen, inputs):
-    """M5-3 review EVAL-2: repeated runs of one measurement on one machine can
-    publish byte-identical reports, so the ledger may hold an earlier run's
-    record naming this report's bytes while this run's own --record was
-    refused (runs disagree). The card showed "Registered ✓" with no word of
-    the refusal; the summary now says both."""
-    reader = Reader(True, True, why_registered="record 2 in evaluations.json names this report")
+    """M5-3 review EVAL-2, by run since K8-6r.2: the record found names this
+    run and these bytes, so it was registered meanwhile by another
+    registration of this run's report while this run's own --record was
+    refused (here, the ledger busy). The card showed "Registered ✓" with no
+    word of the refusal; the summary says both, and never that an earlier
+    run's record holding the same bytes is this run's."""
+    reader = Reader(True, True, why_registered="record 2 in evaluations.json names this run "
+                                               "and report")
     status = _run(TrainingManager(report_state=reader), popen, inputs, code=3, outcome={
         "registration": {"requested": True, "registered": False, "outcome": "refused",
-                         "why": "runs disagree — investigate"}})
+                         "why": "the ledger is busy"}})
     outcome = status["outcome"]
     assert outcome["registered"] is True
     run_dir = reports(inputs) / RUN_ID
     assert outcome["summary"] == (
         f"When the run ended, a report was kept at {run_dir}; it was registered (at that time: "
-        "record 2 in evaluations.json names this report). This run's own registration was "
-        "refused: runs disagree — investigate. "
-        "The record found names the same report bytes, which an earlier run of this "
-        "measurement registered; it says nothing of this run's refusal.")
+        "record 2 in evaluations.json names this run and report). This run's own registration "
+        "was refused: the ledger is busy. "
+        "The record found names this run and these report bytes, so this run's report was "
+        "registered meanwhile by another registration of it; that says nothing of this run's "
+        "refusal.")
     # Not asked to register: the record found is the whole answer.
     status = _run(TrainingManager(report_state=reader), popen, inputs, code=0, outcome={
         "registration": {"requested": False, "registered": False, "outcome": "not_requested",

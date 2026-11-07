@@ -1882,7 +1882,14 @@ class TrainingManager:
         from the registration's helper, and the summary that says so. Both are
         read once, as the run ends, and the summary says them as that moment's
         reading: a report registered later reads so in the Test page's Result,
-        not here (the M5 close-out, 2026-10-25)."""
+        not here (the M5 close-out, 2026-10-25).
+
+        **Registered means this run's own record** (policy rev 16, K8-6r.2):
+        the helper finds the record naming this run with these bytes, never a
+        record that only holds the same bytes. Another run's byte-identical
+        report reads not registered, and so does a run whose bytes only a
+        record merged before each run had its own record holds: the helper's
+        reason then carries that possible overlap, which this summary repeats."""
         from src.evaluation.registration import USAGE_HISTORY_NOT_WRITTEN
 
         state = self._report_state(report, checkpoint=Path(job.inputs["checkpoint"]),
@@ -1913,14 +1920,15 @@ class TrainingManager:
         refused_itself = (isinstance(registration, dict) and registration.get("requested") is True
                           and registration.get("registered") is False)
         if registered is True and refused_itself and isinstance(why, str) and why:
-            # Repeated runs of one measurement on one machine can publish
-            # byte-identical reports, so the record found may be an earlier
-            # run's registration of the same bytes while this run's own was
-            # refused (M5-3 review EVAL-2): both are said, never the record alone.
+            # The record found names this run and these bytes (K8-6r.2), so
+            # this run's report was registered meanwhile by another entry
+            # point while this run's own attempt was refused (M5-3 review
+            # EVAL-2): both are said, never the record alone.
             said += (f" This run's own registration was refused: {why}"
                      + ("" if why.endswith(".") else ".")
-                     + " The record found names the same report bytes, which an earlier run "
-                       "of this measurement registered; it says nothing of this run's refusal.")
+                     + " The record found names this run and these report bytes, so this "
+                       "run's report was registered meanwhile by another registration of it; "
+                       "that says nothing of this run's refusal.")
         elif isinstance(why, str) and why and (
                 registered is not True or USAGE_HISTORY_NOT_WRITTEN in why):
             # Not registered: the run's own why. Registered, but the usage

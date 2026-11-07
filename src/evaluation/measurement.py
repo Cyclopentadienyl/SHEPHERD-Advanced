@@ -308,7 +308,7 @@ class MeasurementManifest:
 
     **Recorded, never enforced** (R11). The facts that can move a number are
     semantic fields above; the GPU model, driver, cuDNN, TF32 and PyG facts inform
-    an investigation of two disagreeing runs and do not key them."""
+    an investigation of two runs whose results differ and do not key them."""
 
     def __post_init__(self) -> None:
         """Refuse a manifest whose relation states are not the ones its run earned.

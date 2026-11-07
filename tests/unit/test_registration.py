@@ -5,11 +5,18 @@ into a record in the ledger beside its checkpoint (`PLAN_TEST_RESULTS.md` D5, §
 phase 1 step 2). What is pinned here:
 
   - **the acceptance cases at this level**: not registering writes nothing; the
-    same report again is a no-op that leaves the ledger's bytes as they were;
-    another report with the same result corroborates; a contradiction is refused
-    naming what differs, ledger unchanged; a damaged report, a generated split's
-    report, a schema 2 ledger and a ledger that is a JSON list are refused with
-    one message that says nothing was written;
+    same run's same report again is a no-op that leaves the ledger's bytes as
+    they were; a damaged report, a generated split's report, a schema 2 ledger
+    and a ledger that is a JSON list are refused with one message that says
+    nothing was written;
+  - **since K8-6r.2 (policy rev 16), registration by the verified run**: every
+    run is its own record, whatever its bytes or values (rows A1-A3, A6, A7,
+    A9, A11, B2); the same run's same report is ``already_registered`` (A4); the
+    same run's other bytes are refused, since a run's report is sealed (A5,
+    A10); what keeps the write from completing safely refuses it (A8); the
+    ledger is schema 4 from its first append (A12); another report of the store
+    never blocks, and the selected report's own problems still refuse (C1-C5);
+    `report_state` agrees with the writer;
   - **BACKLOG 18**: the report and the ledger are each parsed and identified from
     one read, so a report replaced while it is registered is recorded as the
     bytes read, never as one file's numbers under the other's digest; and the
@@ -36,11 +43,11 @@ phase 1 step 2). What is pinned here:
     off that structure, a link out of the store refused; a registry moved as a
     whole once `SHEPHERD_REGISTRY` names its new place, a link to a stored
     report accepted), naming its version exactly and
-    kept in a run directory named for its checkpoint; runs that disagree under
-    one key block every registration under it, checked or unchecked, a store
-    that cannot be checked refuses too, and a note does not lift the block; a
-    registration is in the version's usage history; `report_state` reads kept
-    and registered from disk.
+    kept in a run directory named for its checkpoint; a registration is in the
+    version's usage history; `report_state` reads kept and registered from
+    disk. (Rev 15's D5 block -- runs that disagree under one key, or a store
+    that cannot be checked, refusing every registration under it -- is
+    withdrawn from K8-6r.2.)
 
 The reports are built by `MeasurementManifest` itself
 (`tests/unit/test_evaluation_sidecar.registered_report`) and kept in a report
@@ -52,6 +59,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import os
 import subprocess
 import sys
@@ -64,11 +72,12 @@ from src.evaluation.registration import (
     RegistrationRefused,
     RegistrationResult,
     ReportNotAsPublished,
-    corroboration_note,
+    group_note,
+    historical_note,
     register_report,
 )
 from src.utils.fingerprint import ReadIdentity
-from src.evaluation.sidecar import empty_ledger, read_ledger, write_ledger
+from src.evaluation.sidecar import build_record, empty_ledger, read_ledger, write_ledger
 from tests.fixtures.report_store import store_bytes, store_report, version_of
 from tests.unit.test_evaluation_sidecar import (
     DISEASE_METRICS,
@@ -143,6 +152,26 @@ def _listing(directory: Path):
     return {p.name: p.read_bytes() for p in sorted(directory.iterdir())}
 
 
+def _again_in_another_run(report: Path) -> Path:
+    """The same report bytes kept in a second run directory of its version: a
+    second run whose report is byte-identical (two CPU runs of one test)."""
+    return store_bytes(Path(report).parents[4], Path(report).read_bytes(),
+                       version=version_of(report), checkpoint_sha256=DIGEST)
+
+
+def _historical(ledger_path: Path, report: Path, corroborating=(), *, sequence=1,
+                registered_at=WHEN) -> dict:
+    """A schema 3 ledger as the writer before K8-6r.2 left it, written at
+    `ledger_path`: one record built from `report`, naming no run, with
+    `corroborating` digests merged into it. Returns that record."""
+    record = build_record(json.loads(Path(report).read_text()), _sha(report))
+    record["corroborating_reports"] = list(corroborating)
+    record["registration"] = {"sequence": sequence, "registered_at": registered_at}
+    ledger = {**empty_ledger(), "schema_version": 3, "records": [record]}
+    write_ledger(ledger_path, ledger, None)
+    return record
+
+
 # ---------------------------------------------------------------------------
 # The acceptance cases
 # ---------------------------------------------------------------------------
@@ -196,98 +225,71 @@ def test_the_same_report_again_is_a_no_op_and_the_ledger_bytes_stay(tmp_path, ch
     assert first.ledger_path.read_bytes() == before
 
 
-def test_another_report_with_the_same_result_corroborates(tmp_path, checkpoints):
-    """Byte-different (measured again after the checkpoint moved, under another
-    driver) with every compared field equal: its digest joins the first record."""
+def test_another_run_with_the_same_result_is_its_own_record_with_its_environment(
+    tmp_path, checkpoints
+):
+    """A2 (K8-6r.2): byte-different (measured again after the checkpoint moved,
+    under another driver, finding other R10 evidence), every compared field
+    equal: a record of its own, with its own run, environment and R10; the
+    first record keeps its own. Rev 15's merge into the first record
+    (the old merge into the first record) is withdrawn. HEAD: merged, one record."""
     first = _register(_report(tmp_path), checkpoints)
     moved = registered_manifest()["environment"]
     moved["facts"]["gpu"]["driver"] = "999.0"
-    other = _report(tmp_path, checkpoint_path="/moved/best.pt",
-                    data_dir="/moved", environment=moved)
+    other = _report(tmp_path, checkpoint_path="/moved/best.pt", data_dir="/moved",
+                    environment=moved, r10=r10_block(training_state="overlap"))
 
     result = _register(other, checkpoints)
 
-    assert result.outcome == "corroborated"
-    assert result.record["source_artifact_digest"] == first.record["source_artifact_digest"]
-    assert result.record["corroborating_reports"] == [_sha(other)]
-    assert result.excluded_differences == ("environment",)
-    assert result.record["environment"] == first.record["environment"], "the record keeps its own"
+    assert result.outcome == "registered"
+    assert result.record["run_id"] == other.parent.name != first.record["run_id"]
+    assert result.record["source_artifact_digest"] == _sha(other)
+    assert result.record["environment"] == moved
+    assert result.record["r10"] == r10_block(training_state="overlap")
+    assert result.record["corroborating_reports"] == []
+    assert result.group_differences == () and group_note(result) is None
     ledger, _ = read_ledger(result.ledger_path)
-    assert len(ledger["records"]) == 1
+    assert [r["registration"]["sequence"] for r in ledger["records"]] == [1, 2]
+    assert ledger["records"][0] == first.record, "the first record keeps its own"
 
 
-def test_a_corroboration_says_which_uncompared_fields_this_report_measured_differently(
+def test_two_runs_whose_values_differ_are_both_registered_and_described(
     tmp_path, checkpoints
 ):
-    """Finding 3: a re-run that found the training evidence the first did not
-    (and ran under another driver) corroborates, and the record keeps its own
-    R10 and environment -- so the result names both fields, and the one note
-    both entry points print says the record kept its own values and names the
-    report holding this run's. A re-run that agrees on them too has nothing to
-    say."""
-    report = _report(tmp_path)
-    first = _register(report, checkpoints)
-    same = _register(_report(tmp_path, data_dir="/elsewhere"), checkpoints)
+    """A1 (K8-6r.2): two runs of one group, `pooled_mrr` 0.5 and 0.5001,
+    deterministic algorithms off: two records (sequences 1 and 2), each with
+    its own run, metrics, environment and R10; the second's group note names
+    `pooled_mrr` and record 1, and asks no investigation. The first, sent
+    again, answers ``already_registered`` and its note names record 2. HEAD:
+    both refused as runs that disagree."""
     environment = registered_manifest()["environment"]
     environment["facts"]["gpu"]["driver"] = "999.0"
-    other = _report(tmp_path, data_dir="/again",
-                    r10=r10_block(training_state="overlap"), environment=environment)
+    one = _report(tmp_path, metrics={**DISEASE_METRICS, "pooled_mrr": 0.5},
+                  deterministic_algorithms=False)
+    two = _report(tmp_path, metrics={**DISEASE_METRICS, "pooled_mrr": 0.5001},
+                  deterministic_algorithms=False, environment=environment,
+                  r10=r10_block(training_state="overlap"))
 
-    result = _register(other, checkpoints)
+    first = _register(one, checkpoints)
+    second = _register(two, checkpoints)
 
-    assert same.outcome == result.outcome == "corroborated"
-    assert same.excluded_differences == ()
-    assert result.excluded_differences == ("r10", "environment")
-    assert result.record["r10"] == first.record["r10"], "the record keeps its own labels"
-    assert corroboration_note(result, other) == (
-        "This report's r10 and environment differ from record 1's; they are not "
-        f"compared, so the record keeps its own and this report's are in {other}.")
-    assert corroboration_note(same, tmp_path / "same.json") is None
-    assert corroboration_note(first, report) is None
-
-
-def test_the_cli_prints_the_note_when_a_corroborating_report_found_other_r10(
-    tmp_path, checkpoints, caplog
-):
-    import logging
-
-    import scripts.record_evaluation as record_evaluation
-
-    _register(_report(tmp_path), checkpoints)
-    other = _report(tmp_path, data_dir="/again",
-                    r10=r10_block(training_state="overlap"))
-
-    with caplog.at_level(logging.INFO, logger=record_evaluation.logger.name):
-        assert record_evaluation.main(["--checkpoint-dir", str(checkpoints),
-                                       "--report", str(other)]) == 0
-
-    said = [r.getMessage() for r in caplog.records]
-    assert any(m.startswith("This report agrees with record 1") for m in said)
-    assert (f"This report's r10 differ from record 1's; they are not compared, so the "
-            f"record keeps its own and this report's are in {other}.") in said
-
-
-def test_the_ledger_refuses_a_contradiction_the_store_no_longer_shows(
-    tmp_path, checkpoints
-):
-    """The ledger's own rule still stands behind D5's block: the first report
-    is registered and then removed from the store (deleting a report lifts the
-    block, D5), so the store shows no disagreement; a report under the same key
-    with other results is still refused by the ledger, naming what differs."""
-    first_report = _report(tmp_path)
-    first = _register(first_report, checkpoints)
-    before = first.ledger_path.read_bytes()
-    first_report.unlink()
-    edited = _report(tmp_path, metrics={**DISEASE_METRICS, "pooled_mrr": 0.9,
-                                        "pooled_top1": 0.5})
-
-    with pytest.raises(RegistrationRefused) as refused:
-        _register(edited, checkpoints)
-
-    message = str(refused.value)
-    assert "disagrees on: pooled_mrr, pooled_top1" in message
-    assert message.endswith(f"Nothing was written to {first.ledger_path}.")
-    assert first.ledger_path.read_bytes() == before
+    assert (first.outcome, second.outcome) == ("registered", "registered")
+    ledger, _ = read_ledger(second.ledger_path)
+    assert [(r["registration"]["sequence"], r["run_id"]) for r in ledger["records"]] == [
+        (1, one.parent.name), (2, two.parent.name)]
+    assert [r["metrics"]["pooled_mrr"] for r in ledger["records"]] == [0.5, 0.5001]
+    assert ledger["records"][1]["environment"] == environment != ledger["records"][0][
+        "environment"]
+    assert ledger["records"][1]["r10"] == r10_block(training_state="overlap")
+    (other,) = second.group_differences
+    assert (other.sequence, other.run_id, other.historical, other.differing,
+            other.deterministic) == (1, one.parent.name, False, ("pooled_mrr",), False)
+    assert group_note(second) == (
+        f"Runs under these conditions differ: record 2 (this run) differs from record 1 (run "
+        f"{one.parent.name}) on pooled_mrr. Each run is kept as recorded.")
+    again = _register(one, checkpoints)
+    assert again.outcome == "already_registered" and again.record == first.record
+    assert [d.sequence for d in again.group_differences] == [2]
 
 
 # ---------------------------------------------------------------------------
@@ -296,88 +298,101 @@ def test_the_ledger_refuses_a_contradiction_the_store_no_longer_shows(
 _OTHER_METRICS = {**DISEASE_METRICS, "pooled_mrr": 0.9, "pooled_top1": 0.5}
 
 
-def test_runs_that_disagree_block_every_registration_under_their_key(tmp_path, checkpoints):
-    """A registered report, then a second run under the same key with other
-    results: the second is refused "runs disagree -- investigate", naming the
-    metrics, before the ledger is read; the first, registered before the
-    disagreement appeared, cannot be registered again either (checked or
-    unchecked, any report under the key), and its record stays as it was."""
-    from src.evaluation.registration import RunsDisagree
-
+def test_runs_that_differ_never_block_a_registration_through_any_entry_point(
+    tmp_path, checkpoints
+):
+    """Policy rev 16 (G9 at this level): a registered run, then runs of its
+    group with other results, through the run's own registration, a directory
+    search and a named file: each registers as its own run; the first, sent
+    again, is ``already_registered`` and its record stays as it was. HEAD:
+    every one refused "runs disagree -- investigate"."""
     first_report = _report(tmp_path)
     first = _register(first_report, checkpoints)
-    before = first.ledger_path.read_bytes()
-    edited = _report(tmp_path, metrics=_OTHER_METRICS)
+    before = first.record
 
-    for report, beside in ((edited, False), (edited, True), (first_report, True)):
-        with pytest.raises(RunsDisagree) as refused:
-            _register(report, checkpoints, beside=beside)
-        message = str(refused.value)
-        assert message.startswith("runs disagree — investigate.")
-        assert "disagree on: pooled_mrr, pooled_top1" in message
-        assert first_report.parent.name in message and edited.parent.name in message
-        # Refused before the checkpoint is looked for, so a directory search
-        # has not named the ledger yet.
-        assert message.endswith(f"Nothing was written to {first.ledger_path}." if not beside
-                                else "Nothing was written.")
-        assert refused.value.status.state == "contested"
-    assert first.ledger_path.read_bytes() == before
+    results = [
+        _register(_report(tmp_path, metrics=_OTHER_METRICS), checkpoints),
+        _register(_report(tmp_path, metrics=_OTHER_METRICS), checkpoints, beside=True),
+        register_report(_report(tmp_path, metrics=_OTHER_METRICS),
+                        checkpoint=checkpoints / "best.pt", registered_at=WHEN),
+    ]
+
+    assert [(r.outcome, r.record["registration"]["sequence"]) for r in results] == [
+        ("registered", 2), ("registered", 3), ("registered", 4)]
+    assert all("pooled_mrr" in r.group_differences[0].differing for r in results)
+    again = _register(first_report, checkpoints, beside=True)
+    assert again.outcome == "already_registered" and again.record == before
 
 
-def test_disagreeing_runs_block_a_key_nothing_was_registered_under(tmp_path, checkpoints):
-    """Within one key, picking the better run is prevented: two disagreeing
-    reports, neither registered, and neither can be. A report under another
-    key (another batch size is another measurement) is not affected."""
-    from src.evaluation.registration import RunsDisagree
-
-    one, two = _report(tmp_path), _report(tmp_path, metrics=_OTHER_METRICS)
+def test_a_group_whose_runs_differ_never_affects_another_group(tmp_path, checkpoints):
+    """B3 (guard): two runs of one group differ in the store, neither
+    registered; a run of another group (another batch size is another
+    measurement) registers as before."""
+    _report(tmp_path), _report(tmp_path, metrics=_OTHER_METRICS)
     other_key = _report(tmp_path, batch_size=8)
 
-    for report in (one, two):
-        with pytest.raises(RunsDisagree):
-            _register(report, checkpoints)
-    assert not (checkpoints / "evaluations.json").exists()
-    assert _register(other_key, checkpoints).outcome == "registered"
+    result = _register(other_key, checkpoints)
+
+    assert result.outcome == "registered"
+    assert len(read_ledger(result.ledger_path)[0]["records"]) == 1
 
 
-def test_an_investigation_note_does_not_lift_the_block(tmp_path, checkpoints):
-    """The note is kept in the store with the key's reports, never in the
-    ledger, and the block stands after it."""
-    from src.evaluation.registration import RunsDisagree
+def test_two_differing_runs_nothing_was_registered_under_both_register(tmp_path, checkpoints):
+    """Policy rev 16: within one group, no run is chosen and none is refused:
+    two runs that differ, neither registered, both register, each its own
+    record. HEAD: both refused as runs that disagree, and nothing written."""
+    one, two = _report(tmp_path), _report(tmp_path, metrics=_OTHER_METRICS)
+
+    outcomes = [_register(report, checkpoints).outcome for report in (one, two)]
+
+    assert outcomes == ["registered", "registered"]
+    ledger, _ = read_ledger(checkpoints / "evaluations.json")
+    assert [r["run_id"] for r in ledger["records"]] == [one.parent.name, two.parent.name]
+
+
+def test_an_investigation_note_decides_nothing(tmp_path, checkpoints):
+    """The note is kept in the store with the group's reports, never in the
+    ledger; the group's differing runs register with it there, and it stays.
+    HEAD: the second run refused as runs that disagree."""
     from src.evaluation.report_store import add_investigation_note, read_investigation_notes
-    from src.evaluation.sidecar import build_record, record_key
+    from src.evaluation.sidecar import record_key
 
     one, two = _report(tmp_path), _report(tmp_path, metrics=_OTHER_METRICS)
     key = record_key(build_record(json.loads(one.read_text()), _sha(one)))
     add_investigation_note(version_of(one), key, who="technician", what="driver differs")
 
-    with pytest.raises(RunsDisagree):
-        _register(two, checkpoints)
+    assert [_register(r, checkpoints).outcome for r in (one, two)] == ["registered"] * 2
     notes, problems = read_investigation_notes(version_of(one), key)
     assert [note["what"] for note in notes] == ["driver differs"] and problems == []
-    assert not (checkpoints / "evaluations.json").exists()
+    assert "driver differs" not in (checkpoints / "evaluations.json").read_text()
 
 
-def test_a_store_that_cannot_be_checked_refuses_rather_than_reading_uncontested(
-    tmp_path, checkpoints
-):
-    """D5: a contested state that cannot be checked is never read as
-    uncontested. A report in the store whose key cannot be told (here damaged
-    JSON) leaves every key of the version unable to be checked, and the
-    refusal names the file; with it moved out, the registration goes ahead."""
-    from src.evaluation.registration import DisagreementNotChecked
+def test_another_runs_broken_report_never_blocks_a_complete_run(tmp_path, checkpoints):
+    """C1 (K8-6r.2, F2): another model's run directory holds broken JSON. The
+    complete run registers, reading only its own report; the broken bytes are
+    unchanged; the store lists the broken run with its own reason only, and the
+    complete run's group reads uncontested. HEAD: refused, its disagreement not checked,
+    naming the broken file."""
+    from src.evaluation.report_store import scan_report_store
+    from tests.fixtures.opens import count_opens
 
     report = _report(tmp_path)
-    damaged = store_bytes(tmp_path / "registry", b"{broken", version=version_of(report))
+    broken = store_bytes(tmp_path / "registry", b"{broken", version=version_of(report),
+                         checkpoint_sha256="0" * 64)
+    before = broken.read_bytes()
 
-    with pytest.raises(DisagreementNotChecked) as refused:
-        _register(report, checkpoints)
+    with count_opens() as opens:
+        result = _register(report, checkpoints)
 
-    assert "cannot be checked" in str(refused.value)
-    assert str(damaged) in str(refused.value)
-    assert not (checkpoints / "evaluations.json").exists()
-    damaged.rename(tmp_path / "moved-out.json")
-    assert _register(report, checkpoints).outcome == "registered"
+    assert result.outcome == "registered"
+    assert opens.opens(broken) == 0, "another report is never read to register this one"
+    assert broken.read_bytes() == before
+    scan = scan_report_store(version_of(report))
+    assert scan.run_status(report.parent.name, _sha(report)).state == "uncontested"
+    status = scan.run_status(broken.parent.name, None)
+    assert status.state == "cannot_be_checked" and status.run_ids == (broken.parent.name,)
+    (problem,) = status.problems
+    assert str(broken) in problem and "does not parse" in problem
 
 
 # ---------------------------------------------------------------------------
@@ -537,23 +552,32 @@ def test_a_report_in_a_run_directory_named_for_other_weights_is_refused(
 
 
 def test_a_registration_is_appended_to_the_versions_usage_history(tmp_path, checkpoints):
-    """D4: a registration that wrote a ledger is in the version's usage history,
-    whichever entry point made it; the same report again writes nothing there
-    either. A failed append does not undo the registration, and says so."""
-    from src.evaluation.report_store import read_usage_history
+    """D4 and G6 (K8-6r.2): each registration that wrote a ledger is in the
+    version's usage history with its own run and sequence, whichever entry
+    point made it; the same run's report again writes nothing there either. An
+    entry written before K8-6r.2 with the retired outcome ``corroborated`` is
+    read as written. HEAD: the second run was merged into sequence 1."""
+    from src.evaluation.report_store import USAGE_FILE, _append_entry, read_usage_history
 
     report = _report(tmp_path)
+    old = {"kind": "registered", "at": "2026-10-20T00:00:00Z", "run_id": "kept-as-written",
+           "report_sha256": "b" * 64, "checkpoint_sha256": DIGEST, "outcome": "corroborated",
+           "sequence": 1}
+    _append_entry(version_of(report), USAGE_FILE, old)
     first = _register(report, checkpoints, beside=True)
     again = _register(report, checkpoints, beside=True)
-    other = _register(_report(tmp_path, data_dir="/elsewhere"), checkpoints, beside=True)
+    other_report = _report(tmp_path, data_dir="/elsewhere")
+    other = _register(other_report, checkpoints, beside=True)
 
     entries, problems = read_usage_history(version_of(report))
     assert problems == []
-    assert [(e["kind"], e["outcome"], e["sequence"]) for e in entries] == [
-        ("registered", "registered", 1), ("registered", "corroborated", 1)]
-    assert entries[0]["report_sha256"] == _sha(report)
-    assert entries[0]["run_id"] == report.parent.name
-    assert entries[0]["checkpoint_sha256"] == DIGEST
+    assert entries[0] == old, "an old entry is read as written"
+    assert [(e["kind"], e["outcome"], e["sequence"], e["run_id"]) for e in entries[1:]] == [
+        ("registered", "registered", 1, report.parent.name),
+        ("registered", "registered", 2, other_report.parent.name)]
+    assert entries[1]["report_sha256"] == _sha(report)
+    assert entries[1]["checkpoint_sha256"] == DIGEST
+    assert again.outcome == "already_registered"
     assert (first.usage_history_problem, again.usage_history_problem,
             other.usage_history_problem) == (None, None, None)
 
@@ -788,8 +812,9 @@ def test_a_report_replaced_after_its_read_is_recorded_as_the_bytes_read(
     assert report.read_bytes() == bytes_b, "the replacement happened"
     assert result.record["source_artifact_digest"] == hashlib.sha256(bytes_a).hexdigest()
     assert result.record["metrics"] == json.loads(bytes_a)["authoritative_metrics"]
-    # B registered now is B: a different result under the same key, refused.
-    with pytest.raises(RegistrationRefused, match="disagrees on"):
+    # B sent now as this run is other bytes than its record holds: refused,
+    # since a run's report is sealed when it is published (A5).
+    with pytest.raises(RegistrationRefused, match="a run's report is sealed when it is published"):
         _register(report, checkpoints)
 
 
@@ -867,7 +892,7 @@ def test_another_writers_append_between_this_read_and_this_write_is_refused(
     """
     import src.evaluation.sidecar as sidecar
     from src.evaluation.registration import LedgerBusy
-    from src.evaluation.sidecar import append_record, build_record, ledger_digest
+    from src.evaluation.sidecar import append_record, ledger_digest
     from tests.fixtures.replacement import hook_read_once
 
     ledger_path = checkpoints / "evaluations.json"
@@ -884,7 +909,7 @@ def test_another_writers_append_between_this_read_and_this_write_is_refused(
     parsed, _ = read_ledger(ledger_path)
     _register(report_b, checkpoints)
     record_a = build_record(json.loads(report_a.read_text()), _sha(report_a))
-    _, with_a = append_record(parsed, record_a, registered_at=WHEN)
+    _, with_a = append_record(parsed, record_a, run_id=report_a.parent.name, registered_at=WHEN)
     write_ledger(ledger_path, with_a, expected_digest=ledger_digest(ledger_path))
     assert batches() == [32, 8], "the old order erased B's record"
 
@@ -927,7 +952,8 @@ def test_another_writers_append_between_this_read_and_this_write_is_refused(
         fired.append(path)
         current, digest = read_ledger(ledger_path)
         record_b = build_record(json.loads(report_b.read_text()), _sha(report_b))
-        _, with_b = append_record(current, record_b, registered_at=WHEN)
+        _, with_b = append_record(current, record_b, run_id=report_b.parent.name,
+                                  registered_at=WHEN)
         write_ledger(ledger_path, with_b, expected_digest=digest)
 
     hook_read_once(monkeypatch, on_return=raw_writer_b)
@@ -1742,10 +1768,14 @@ def test_report_state_reads_kept_and_registered_from_the_store_and_the_ledger(
     state = report_state(report, checkpoint=checkpoints / "best.pt")
     assert (state.kept, state.registered, state.sequence) == ("kept", "registered", 1)
 
-    corroborating = _report(tmp_path, data_dir="/elsewhere")
-    _register(corroborating, checkpoints, beside=True)
-    state = report_state(corroborating, checkpoint=checkpoints / "best.pt")
-    assert (state.registered, state.sequence) == ("registered", 1), "a corroborating report"
+    # Another run with equal values is not this run (K8-6r.2): not registered
+    # until it is, then its own record.
+    another = _report(tmp_path, data_dir="/elsewhere")
+    state = report_state(another, checkpoint=checkpoints / "best.pt")
+    assert (state.registered, state.sequence) == ("not_registered", None)
+    _register(another, checkpoints, beside=True)
+    state = report_state(another, checkpoint=checkpoints / "best.pt")
+    assert (state.registered, state.sequence) == ("registered", 2)
 
 
 def test_report_state_never_calls_a_replaced_or_missing_report_kept(tmp_path, checkpoints):
@@ -1846,29 +1876,35 @@ def test_a_kept_mode_d_report_registers_by_the_general_rules(tmp_path, checkpoin
 
 def test_a_mode_d_record_already_in_a_ledger_stays_and_a_task_report_still_registers(
         tmp_path, checkpoints):
-    """A Mode D record a ledger already holds (Batch 3's) stays and is read with
-    it. Its report registered again answers `already_registered` and writes
-    nothing, neither the ledger nor the usage history, as any report's repeat
-    does; and it does not stop the next registration."""
-    from src.evaluation.sidecar import LEDGER_FILENAME, append_record, build_record
+    """A Mode D record a ledger already holds (Batch 3's, written before each
+    run had its own record: schema 3, no run) stays as written and is read with
+    it. Its report registered again from its run directory is its own record
+    now (A11's trade-off, K8-6r.2), noted as a possible overlap with record 1;
+    sent once more it answers ``already_registered`` and writes nothing, neither
+    the ledger nor the usage history; and none of it stops the next
+    registration."""
+    from src.evaluation.sidecar import LEDGER_FILENAME
 
     kept = _mode_d(tmp_path)
     ledger_path = checkpoints / LEDGER_FILENAME
-    old = build_record(json.loads(kept.read_text()), _sha(kept))
-    write_ledger(ledger_path, append_record(empty_ledger(), old, registered_at=WHEN)[1], None)
+    old = _historical(ledger_path, kept)
+
+    named = _register(kept, checkpoints, beside=True, registered_at="2027-01-01T00:00:00Z")
+    assert (named.outcome, named.record["registration"]["sequence"]) == ("registered", 2)
+    assert named.record["scoring"]["mode"] == "D" and named.record["run_id"] == kept.parent.name
+    assert named.historical_overlap == (
+        "possible overlap with record 1, merged before each run had its own record: not "
+        "recorded whether this run is one of them",)
     before, usage = ledger_path.read_bytes(), _usage(tmp_path)
-
-    again = _register(kept, checkpoints, beside=True, registered_at="2027-01-01T00:00:00Z")
-
-    assert again.outcome == "already_registered"
-    assert again.record["scoring"]["mode"] == "D"
-    assert again.record["registration"] == {"sequence": 1, "registered_at": WHEN}
+    again = _register(kept, checkpoints, beside=True)
+    assert again.outcome == "already_registered" and again.record == named.record
     assert ledger_path.read_bytes() == before and _usage(tmp_path) == usage
     result = _register(_report(tmp_path), checkpoints, beside=True)
 
     assert result.outcome == "registered"
     ledger, _digest = read_ledger(ledger_path)
-    assert [r["scoring"]["mode"] for r in ledger["records"]] == ["D", "disease"]
+    assert ledger["records"][0] == old
+    assert [r["scoring"]["mode"] for r in ledger["records"]] == ["D", "D", "disease"]
 
 
 def test_a_kept_mode_d_report_whose_version_block_was_edited_is_refused_like_any_report(
@@ -1899,11 +1935,7 @@ def test_a_kept_mode_d_reports_record_keeps_its_own_mode_and_semantics(tmp_path,
     "D", which is no protocol of this build, its scoring as recorded, and the
     `measurement_semantics_digest` of its own manifest."""
     from src.evaluation import protocols
-    from src.evaluation.sidecar import (
-        SCORING_SEMANTICS_FIELDS,
-        build_record,
-        measurement_semantics_digest,
-    )
+    from src.evaluation.sidecar import SCORING_SEMANTICS_FIELDS, measurement_semantics_digest
 
     report = _mode_d(tmp_path)
     data = json.loads(report.read_text())
@@ -1915,10 +1947,11 @@ def test_a_kept_mode_d_reports_record_keeps_its_own_mode_and_semantics(tmp_path,
     assert "D" not in protocols.names()
     assert record["scoring"] == {field: manifest[field] for field in SCORING_SEMANTICS_FIELDS}
     assert record["measurement_semantics_digest"] == measurement_semantics_digest(manifest)
-    appended = ("registration", "corroborating_reports")  # what `append_record` adds
+    appended = ("registration", "corroborating_reports", "run_id")  # `append_record`'s
     built = build_record(data, _sha(report))
     assert {k: v for k, v in record.items() if k not in appended} == built
-    assert (record["registration"]["sequence"], record["corroborating_reports"]) == (1, [])
+    assert (record["registration"]["sequence"], record["corroborating_reports"],
+            record["run_id"]) == (1, [], report.parent.name)
 
 
 # ---------------------------------------------------------------------------
@@ -2175,3 +2208,630 @@ def test_record_evaluation_refuses_a_report_in_a_copy_of_the_registry(tmp_path, 
 
     assert "is not the deployment's" in str(refused.value.code)
     assert not (checkpoints / "evaluations.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# Registration by the verified run (K8-6r.2, policy rev 16): rows A, B and C
+# ---------------------------------------------------------------------------
+def test_byte_identical_reports_of_two_runs_are_two_records(tmp_path, checkpoints):
+    """A3: the same bytes in two run directories are two runs. Run 2 reads
+    ``not_registered`` before its registration and ``registered`` after;
+    record 2 has the same source digest and its own run. HEAD: run 2 read
+    ``registered`` and answered ``already_registered``."""
+    from src.evaluation.registration import report_state
+
+    one = _report(tmp_path)
+    two = _again_in_another_run(one)
+    first = _register(one, checkpoints)
+
+    before = report_state(two, checkpoint=checkpoints / "best.pt")
+    second = _register(two, checkpoints)
+    after = report_state(two, checkpoint=checkpoints / "best.pt")
+
+    assert (before.registered, after.registered, after.sequence) == (
+        "not_registered", "registered", 2)
+    assert second.outcome == "registered"
+    assert second.record["source_artifact_digest"] == first.record["source_artifact_digest"]
+    assert (first.record["run_id"], second.record["run_id"]) == (one.parent.name,
+                                                                 two.parent.name)
+    assert second.group_differences == () and second.historical_overlap == ()
+
+
+@pytest.mark.parametrize("entry", ["measured", "checkpoint", "checkpoint_dir", "place"])
+def test_the_same_runs_report_again_writes_nothing_through_every_entry_point(
+    tmp_path, checkpoints, entry
+):
+    """A4 (guard): the same run's report again, through `measured`,
+    `checkpoint`, `checkpoint_dir` and `place`: ``already_registered``; the
+    ledger's and the usage history's bytes unchanged."""
+    report = _report(tmp_path)
+    first = _register(report, checkpoints)
+    ledger, usage = first.ledger_path.read_bytes(), _usage(tmp_path)
+    how = {"measured": {"measured": _measured(report, checkpoints)},
+           "checkpoint": {"checkpoint": checkpoints / "best.pt"},
+           "checkpoint_dir": {"checkpoint_dir": checkpoints},
+           "place": {"place": lambda manifest: checkpoints / "best.pt",
+                     "expected_report_sha256": _sha(report)}}[entry]
+
+    again = register_report(report, registered_at="2027-01-01T00:00:00Z", **how)
+
+    assert again.outcome == "already_registered"
+    assert again.record["registration"] == {"sequence": 1, "registered_at": WHEN}
+    assert first.ledger_path.read_bytes() == ledger and _usage(tmp_path) == usage
+
+
+@pytest.mark.parametrize("overrides", [{"data_dir": "/elsewhere"}, {"batch_size": 16}],
+                         ids=["equal-values-other-data-dir", "another-group"])
+def test_a_runs_report_replaced_after_its_registration_is_refused(
+    tmp_path, checkpoints, overrides
+):
+    """A5: the same run's report.json replaced after registration, (a) with
+    equal values and another `data_dir`, (b) with another group (batch size
+    16): refused, naming record 1 and both digests, since a run's report is
+    sealed when it is published; the ledger and the usage history unchanged.
+    HEAD: (a) merged into record 1, (b) a new record."""
+    from src.evaluation.registration import report_state
+
+    report = _report(tmp_path)
+    first = _register(report, checkpoints, beside=True)
+    sealed = _sha(report)
+    replacement = registered_report(**overrides)
+    replacement["manifest"]["artifact_digests"]["checkpoint"] = DIGEST
+    replacement["manifest"]["cohort_version"]["manifest_sha256"] = (
+        version_of(report).identity.sha256)
+    report.write_text(json.dumps(replacement))
+    ledger, usage = first.ledger_path.read_bytes(), _usage(tmp_path)
+
+    with pytest.raises(RegistrationRefused) as refused:
+        _register(report, checkpoints, beside=True)
+
+    said = str(refused.value)
+    assert (f"run {report.parent.name} is already registered as record 1 from report "
+            f"{sealed[:12]}...; this report ({_sha(report)[:12]}...) is other bytes: a run's "
+            "report is sealed when it is published, so this file was replaced after it was "
+            "registered") in said
+    assert said.endswith(f"Nothing was written to {first.ledger_path}.")
+    assert first.ledger_path.read_bytes() == ledger and _usage(tmp_path) == usage
+    state = report_state(report, checkpoint=checkpoints / "best.pt")
+    assert state.registered == "not_registered" and "sealed" in state.why_registered
+
+
+def test_deterministic_runs_whose_values_differ_are_kept_and_flagged_for_investigation(
+    tmp_path, checkpoints
+):
+    """A6: deterministic algorithms on in both runs, values differ: both kept;
+    the group note says so and asks for an investigation. HEAD: refused."""
+    one = _report(tmp_path)
+    two = _report(tmp_path, metrics={**DISEASE_METRICS, "pooled_mrr": 0.4501})
+
+    first, second = _register(one, checkpoints), _register(two, checkpoints)
+
+    assert (first.outcome, second.outcome) == ("registered", "registered")
+    (other,) = second.group_differences
+    assert other.deterministic is True
+    assert group_note(second).endswith(
+        "This run and record 1 both record deterministic algorithms on, so they were "
+        "expected to agree: investigate.")
+
+
+@pytest.mark.parametrize("first_registered_at", [
+    "2026-10-15T08:00:00Z", WHEN, "2099-01-01T00:00:00Z", "not a time",
+], ids=["earlier", "same-second", "future", "unreadable"])
+def test_runs_whose_bytes_an_old_merged_record_holds_each_get_their_own_record(
+    tmp_path, checkpoints, first_registered_at
+):
+    """A7 (Decision 1): a schema 3 ledger whose record 1 names no run and holds
+    D1 with corroborating [D2]. (a) D1 and (b) D2, each from its own run
+    directory, become records of their own with their runs, whatever record
+    1's time; each result's historical note names record 1 as not confirmed;
+    `report_state` reads ``not_registered`` before (with the overlap note) and
+    ``registered`` after; each resent answers ``already_registered``. (c) D3 of
+    the same group is its own record with no note. (d) Record 1 stays equal as
+    a JSON value, with no run, environment or R10 added. HEAD: (a) and (b)
+    ``already_registered``; D3 merged into record 1."""
+    from src.evaluation.registration import report_state
+
+    d1 = _report(tmp_path)
+    d2 = _report(tmp_path, data_dir="/elsewhere")
+    d3 = _report(tmp_path, data_dir="/third")
+    ledger_path = checkpoints / "evaluations.json"
+    old = _historical(ledger_path, d1, [_sha(d2)], registered_at=first_registered_at)
+    overlap = ("possible overlap with record 1, merged before each run had its own record: "
+               "not recorded whether this run is one of them")
+
+    for sequence, report in ((2, d1), (3, d2)):
+        before = report_state(report, checkpoint=checkpoints / "best.pt")
+        assert before.registered == "not_registered"
+        assert ("its bytes equal a report merged into record 1 before each run had its own "
+                "record; registering it adds its own record") in before.why_registered
+        result = _register(report, checkpoints)
+        assert (result.outcome, result.record["registration"]["sequence"],
+                result.record["run_id"]) == ("registered", sequence, report.parent.name)
+        assert result.historical_overlap == (overlap,)
+        assert historical_note(result) == overlap[:1].upper() + overlap[1:] + "."
+        after = report_state(report, checkpoint=checkpoints / "best.pt")
+        assert (after.registered, after.sequence) == ("registered", sequence)
+        assert _register(report, checkpoints).outcome == "already_registered"
+    third = _register(d3, checkpoints)
+    assert (third.outcome, third.historical_overlap) == ("registered", ())
+
+    ledger, _ = read_ledger(ledger_path)
+    assert ledger["records"][0] == old
+    assert ledger["schema_version"] == 4 and ledger["run_identity_from_sequence"] == 2
+
+
+@pytest.mark.parametrize("boundary", ["absent", "x", 0, 99], ids=[
+    "missing", "not-an-integer", "below-1", "above-next"])
+def test_a_ledger_whose_boundary_is_lost_still_reads_and_refuses_only_the_unsure_write(
+    tmp_path, checkpoints, boundary
+):
+    """A8 (fact-check of revision 6) through the registration: a schema 4
+    ledger whose run-identity boundary is lost while it holds records. A run no
+    record names is refused naming the field, the ledger unchanged, and
+    `report_state` reads ``cannot_be_checked`` with the same reason; the run a
+    record names with its report answers ``already_registered`` and reads
+    ``registered``; the file still reads as a ledger."""
+    from src.evaluation.registration import report_state
+
+    named = _report(tmp_path)
+    other = _report(tmp_path, batch_size=8)
+    first = _register(named, checkpoints)
+    data = json.loads(first.ledger_path.read_text())
+    if boundary == "absent":
+        del data["run_identity_from_sequence"]
+    else:
+        data["run_identity_from_sequence"] = boundary
+    first.ledger_path.write_text(json.dumps(data))
+    before = first.ledger_path.read_bytes()
+
+    with pytest.raises(RegistrationRefused) as refused:
+        _register(other, checkpoints)
+    assert ("the file's run-identity boundary (run_identity_from_sequence) cannot be read"
+            in str(refused.value))
+    assert first.ledger_path.read_bytes() == before
+    state = report_state(other, checkpoint=checkpoints / "best.pt")
+    assert state.registered == "cannot_be_checked"
+    assert "restore the boundary from a trusted backup" in state.why_registered
+    assert _register(named, checkpoints).outcome == "already_registered"
+    assert report_state(named, checkpoint=checkpoints / "best.pt").registered == "registered"
+    assert read_ledger(first.ledger_path)[0]["records"][0]["run_id"] == named.parent.name
+
+
+@pytest.mark.parametrize("lost", [("registration", "run_id"), ("registration",)],
+                         ids=["sequence-and-run", "sequence-only"])
+def test_a_record_without_its_sequence_reads_as_the_writer_answers(tmp_path, checkpoints,
+                                                                     lost):
+    """A8 (review of K8-6r.2): run one's record lost its registration
+    sequence (and, in the first case, its run). A run no intact record names
+    is refused with that record named, and `report_state` reads
+    ``cannot_be_checked`` with the same reason (before the fix: ``not_registered``,
+    "holds no record naming this run", while its registration was refused). A
+    run whose intact record is found reads ``registered`` and answers
+    ``already_registered``, nothing written (before the fix: refused). Run one
+    itself, when its record still names it, is this run's damaged identity
+    record (clarification 1): refused and ``cannot_be_checked``, never
+    ``already_registered`` as a record with no sequence."""
+    from src.evaluation.registration import report_state
+
+    one = _report(tmp_path)
+    two = _report(tmp_path, batch_size=8)
+    three = _report(tmp_path, batch_size=16)
+    first = _register(one, checkpoints)
+    _register(two, checkpoints)
+    data = json.loads(first.ledger_path.read_text())
+    for field in lost:
+        del data["records"][0][field]
+    first.ledger_path.write_text(json.dumps(data))
+    before = first.ledger_path.read_bytes()
+    best = checkpoints / "best.pt"
+    why = "the ledger's record 0 has no registration sequence"
+
+    for report in ([one, three] if "run_id" in lost else [three]):
+        state = report_state(report, checkpoint=best)
+        assert state.registered == "cannot_be_checked" and why in state.why_registered
+        with pytest.raises(RegistrationRefused, match=why):
+            _register(report, checkpoints)
+    if "run_id" not in lost:
+        damaged = "names run .* but its registration sequence cannot be read"
+        state = report_state(one, checkpoint=best)
+        assert state.registered == "cannot_be_checked"
+        assert re.search(damaged, state.why_registered)
+        with pytest.raises(RegistrationRefused, match=damaged):
+            _register(one, checkpoints)
+    for report in [two]:
+        assert report_state(report, checkpoint=best).registered == "registered"
+        assert _register(report, checkpoints).outcome == "already_registered"
+    assert first.ledger_path.read_bytes() == before
+
+
+@POSIX
+def test_two_byte_identical_runs_registered_at_once_by_two_processes_are_two_records(
+    tmp_path, checkpoints
+):
+    """A9 (with K8-6r.1's harness): two processes register two runs whose
+    reports are byte-identical, at once: two records, each with its run.
+    HEAD: one ``registered``, the other ``already_registered``."""
+    one = _report(tmp_path)
+    two = _again_in_another_run(one)
+
+    answers = _register_at_once(tmp_path, checkpoints, [one, two])
+
+    assert sorted((a["outcome"], a["sequence"]) for a in answers) == [
+        ("registered", 1), ("registered", 2)]
+    assert {a["run_id"] for a in answers} == {one.parent.name, two.parent.name}
+    ledger, _ = read_ledger(checkpoints / "evaluations.json")
+    assert sorted(r["run_id"] for r in ledger["records"]) == sorted(
+        [one.parent.name, two.parent.name])
+
+
+@pytest.mark.parametrize("swap", [False, True], ids=["historical-first", "named-first"])
+def test_this_runs_record_is_found_before_any_old_merged_record_holding_its_bytes(
+    tmp_path, checkpoints, swap
+):
+    """A10 (REVIEW-P5 §3.1): record 1 is historical, holding D1 with
+    corroborating [D2]; record 2 names run R1 with D3. R1's report offered as
+    D2, then as D1: refused as a replaced report naming record 2, the ledger
+    unchanged, and `report_state` reads ``not_registered`` with that reason;
+    R1 resent as D3 answers ``already_registered`` with record 2 and reads
+    ``registered``. (e) The same with record 2 placed first. HEAD: no run
+    identity; all three ``already_registered`` by digest."""
+    from src.evaluation.registration import report_state
+
+    d1 = _report(tmp_path)
+    d2 = _report(tmp_path, data_dir="/elsewhere")
+    r1 = _report(tmp_path, data_dir="/third")
+    d3 = r1.read_bytes()
+    ledger_path = checkpoints / "evaluations.json"
+    _historical(ledger_path, d1, [_sha(d2)])
+    named = _register(r1, checkpoints)
+    assert named.record["registration"]["sequence"] == 2
+    if swap:
+        data = json.loads(ledger_path.read_text())
+        data["records"].reverse()
+        ledger_path.write_text(json.dumps(data))
+    before = ledger_path.read_bytes()
+
+    for other in (d2, d1):
+        r1.write_bytes(other.read_bytes())
+        with pytest.raises(RegistrationRefused) as refused:
+            _register(r1, checkpoints)
+        assert (f"run {r1.parent.name} is already registered as record 2 from report "
+                f"{named.record['source_artifact_digest'][:12]}...") in str(refused.value)
+        state = report_state(r1, checkpoint=checkpoints / "best.pt")
+        assert state.registered == "not_registered" and "sealed" in state.why_registered
+        assert ledger_path.read_bytes() == before
+    r1.write_bytes(d3)
+    again = _register(r1, checkpoints)
+    assert again.outcome == "already_registered" and again.record == named.record
+    state = report_state(r1, checkpoint=checkpoints / "best.pt")
+    assert (state.registered, state.sequence) == ("registered", 2)
+    assert ledger_path.read_bytes() == before
+
+
+@pytest.mark.parametrize("usage", ["entry", "absent", "unreadable", "other-entry"])
+def test_a_run_registered_before_run_identity_and_sent_again_gets_a_named_record(
+    tmp_path, checkpoints, usage
+):
+    """A11 (the trade-off, pinned): a run registered under schema 3 (record 1
+    holds its D1, no run) sent again from its own run directory is registered
+    as record 2 naming the run, its note naming record 1 as a possible
+    overlap; sent again it answers ``already_registered`` from record 2;
+    record 1 is unchanged. With the version's usage history holding a
+    ``registered`` entry for that run, record 1's sequence and D1, the note
+    cites it; with the usage file absent, unreadable or without the entry, the
+    outcome and the record are the same. HEAD: ``already_registered``."""
+    from src.evaluation.report_store import USAGE_FILE, record_registration
+
+    report = _report(tmp_path)
+    old = _historical(checkpoints / "evaluations.json", report)
+    usage_path = version_of(report).directory / "reports" / USAGE_FILE
+    if usage == "entry":
+        record_registration(version_of(report), run_id=report.parent.name,
+                            report_sha256=_sha(report), checkpoint_sha256=DIGEST,
+                            outcome="registered", sequence=1)
+    elif usage == "unreadable":
+        usage_path.write_bytes(b"\xff\xfe not utf-8\n")
+    elif usage == "other-entry":
+        record_registration(version_of(report), run_id=report.parent.name,
+                            report_sha256=_sha(report), checkpoint_sha256=DIGEST,
+                            outcome="registered", sequence=7)
+
+    result = _register(report, checkpoints)
+
+    assert (result.outcome, result.record["registration"]["sequence"],
+            result.record["run_id"]) == ("registered", 2, report.parent.name)
+    (note,) = result.historical_overlap
+    assert note.startswith("possible overlap with record 1, merged before each run had its "
+                           "own record: not recorded whether this run is one of them")
+    cited = (f" (the usage history names run {report.parent.name}'s registration into "
+             "record 1)")
+    assert note.endswith(cited) == (usage == "entry")
+    again = _register(report, checkpoints)
+    assert again.outcome == "already_registered" and again.record == result.record
+    assert read_ledger(checkpoints / "evaluations.json")[0]["records"][0] == old
+
+
+def test_a_ledger_a_registration_creates_starts_at_schema_4_with_boundary_1(
+    tmp_path, checkpoints
+):
+    """A12 (c) and (g): no file, or the empty file `write_ledger(path,
+    empty_ledger(), None)` writes (no boundary on disk, not damaged): the first
+    registration answers ``registered`` with sequence 1 and writes schema 4
+    with `run_identity_from_sequence` 1."""
+    other_dir = tmp_path / "other" / "checkpoints"
+    other_dir.mkdir(parents=True)
+    (other_dir / "best.pt").write_bytes(WEIGHTS)
+    write_ledger(other_dir / "evaluations.json", empty_ledger(), None)
+    assert "run_identity_from_sequence" not in json.loads(
+        (other_dir / "evaluations.json").read_text())
+
+    for directory in (checkpoints, other_dir):
+        result = _register(_report(tmp_path), directory)
+        on_disk = json.loads(result.ledger_path.read_text())
+        assert (result.outcome, result.record["registration"]["sequence"]) == ("registered", 1)
+        assert (on_disk["schema_version"], on_disk["run_identity_from_sequence"]) == (4, 1)
+
+
+def test_reading_a_schema_3_ledger_through_report_state_leaves_its_bytes(tmp_path, checkpoints):
+    """A12 (a) (guard): reading never rewrites a file."""
+    from src.evaluation.registration import report_state
+
+    report = _report(tmp_path)
+    _historical(checkpoints / "evaluations.json", report)
+    before = (checkpoints / "evaluations.json").read_bytes()
+
+    report_state(report, checkpoint=checkpoints / "best.pt")
+    read_ledger(checkpoints / "evaluations.json")
+
+    assert (checkpoints / "evaluations.json").read_bytes() == before
+
+
+@pytest.mark.parametrize("overrides", [{"batch_size": 8}, {"deterministic_algorithms": False}],
+                         ids=["batch-size", "deterministic-setting"])
+def test_changed_conditions_register_as_they_are(tmp_path, checkpoints, overrides):
+    """B1 (guard): another batch size or deterministic setting is its own
+    record, with its values as reported. (Another cohort version or checkpoint:
+    `test_evaluation_sidecar`'s separate-measurement tests.)"""
+    first = _register(_report(tmp_path), checkpoints)
+    other = _register(_report(tmp_path, **overrides), checkpoints)
+
+    assert (first.outcome, other.outcome) == ("registered", "registered")
+    assert other.record["regime"][next(iter(overrides))] == next(iter(overrides.values()))
+    assert len(read_ledger(other.ledger_path)[0]["records"]) == 2
+
+
+def test_a_seed_change_the_manifest_does_not_record_is_one_group_two_records(
+    tmp_path, checkpoints
+):
+    """B2: two runs whose manifests differ in nothing recorded (a seed the
+    manifest does not record) and whose metrics differ: the same group, each
+    its own record. HEAD: the second refused, as in A1."""
+    from src.evaluation.sidecar import record_key
+
+    one = _register(_report(tmp_path), checkpoints)
+    two = _register(_report(tmp_path, metrics={**DISEASE_METRICS, "pooled_top1": 0.3}),
+                    checkpoints)
+
+    assert record_key(one.record) == record_key(two.record)
+    assert (one.outcome, two.outcome) == ("registered", "registered")
+    assert two.group_differences[0].differing == ("pooled_top1",)
+
+
+def test_a_same_group_report_this_revision_cannot_compare_is_a_note_never_a_block(
+    tmp_path, checkpoints
+):
+    """C2: a report of the same group whose manifest has a field the current
+    format lacks. The complete run registers; the group's description names
+    that file as ``cannot_be_checked``. HEAD: refused, its disagreement not checked."""
+    from src.evaluation.report_store import scan_report_store
+
+    report = _report(tmp_path)
+    odd = json.loads(report.read_text())
+    odd["manifest"]["retired_field"] = 1
+    other = store_bytes(tmp_path / "registry", json.dumps(odd).encode(),
+                        version=version_of(report), checkpoint_sha256=DIGEST)
+
+    result = _register(report, checkpoints)
+
+    assert result.outcome == "registered"
+    scan = scan_report_store(version_of(report))
+    status = scan.run_status(report.parent.name, _sha(report))
+    assert status.state == "cannot_be_checked"
+    (problem,) = status.problems
+    assert str(other) in problem and "retired_field" in problem
+
+
+def test_a_link_a_run_directory_out_of_the_store_or_a_deep_report_never_blocks(
+    tmp_path, checkpoints
+):
+    """C3: a report.json that is a link, a run directory a link takes out of
+    the store, and another run's report too deep to build: the complete run
+    registers, and each of the three is listed by its own run with its own
+    reason. HEAD: refused, its disagreement not checked."""
+    from src.evaluation.report_store import scan_report_store
+    from tests.fixtures.report_store import new_run_id
+
+    report = _report(tmp_path)
+    reports = report.parents[1]
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "report.json").write_bytes(report.read_bytes())
+    linked_file = reports / new_run_id("1" * 64)
+    linked_file.mkdir()
+    (linked_file / "report.json").symlink_to(elsewhere / "report.json")
+    linked_dir = reports / new_run_id("2" * 64)
+    linked_dir.symlink_to(elsewhere, target_is_directory=True)
+    deep = store_bytes(tmp_path / "registry", ("[" * 80 + "]" * 80).encode(),
+                       version=version_of(report), checkpoint_sha256="3" * 64)
+
+    assert _register(report, checkpoints).outcome == "registered"
+
+    scan = scan_report_store(version_of(report))
+    assert scan.run_status(report.parent.name, _sha(report)).state == "uncontested"
+    for run in (linked_file.name, linked_dir.name, deep.parent.name):
+        status = scan.run_status(run, scan.digests.get(run))
+        assert status.state == "cannot_be_checked" and status.run_ids == (run,), run
+        assert len(status.problems) == 1, status.problems
+
+
+def test_a_store_that_cannot_be_listed_never_stops_a_named_verified_report(
+    tmp_path, checkpoints, monkeypatch
+):
+    """C5 (Decision 10): the store's listing fails. The command line's
+    registration of an explicitly named report it verifies reads only that
+    report and registers; the store's description of every group, and of each
+    run, says the store could not be listed. HEAD: the registration's scan
+    made it a refusal, its disagreement not checked."""
+    from pathlib import Path as _Path
+
+    from src.evaluation.report_store import scan_report_store
+
+    report = _report(tmp_path)
+    real = _Path.iterdir
+
+    def unlistable(self):
+        if self.name == "reports":
+            raise PermissionError(13, "Permission denied", str(self))
+        return real(self)
+
+    monkeypatch.setattr(_Path, "iterdir", unlistable)
+
+    result = register_report(report, checkpoint=checkpoints / "best.pt", registered_at=WHEN)
+
+    assert result.outcome == "registered"
+    scan = scan_report_store(version_of(report))
+    from src.evaluation.sidecar import record_key
+
+    status = scan.status(record_key(result.record))
+    assert status.state == "cannot_be_checked"
+    assert "could not be listed" in status.problems[0]
+    run = scan.run_status(report.parent.name, _sha(report))
+    assert run.state == "cannot_be_checked" and "could not be listed" in run.problems[0]
+
+
+# ---------------------------------------------------------------------------
+# K8-6r.2's surfaces: the CLIs' notes, `--show`, the job summary
+# ---------------------------------------------------------------------------
+def test_record_evaluation_prints_the_group_note_and_the_historical_note(
+    tmp_path, checkpoints, caplog
+):
+    """G4, A7 (K8-6r.2) through record_evaluation: a run whose values differ
+    from a registered run of its group prints "Registered record 2" and the
+    group note, which names record 1, its run and what differs; a run whose
+    bytes a record merged before each run had its own record holds prints the
+    historical note, never "already holds". Both are information: each run is
+    registered. HEAD: the differing run was refused ("runs disagree") and the
+    merged bytes answered "already holds this report"."""
+    import logging
+
+    import scripts.record_evaluation as record_evaluation
+
+    first = _report(tmp_path)
+    assert record_evaluation.main(["--checkpoint-dir", str(checkpoints),
+                                   "--report", str(first)]) == 0
+    differing = _report(tmp_path, metrics={**DISEASE_METRICS, "pooled_mrr": 0.5001})
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger=record_evaluation.logger.name):
+        assert record_evaluation.main(["--checkpoint-dir", str(checkpoints),
+                                       "--report", str(differing)]) == 0
+    said = caplog.text
+    assert "Registered record 2" in said
+    assert (f"Runs under these conditions differ: record 2 (this run) differs from record 1 "
+            f"(run {first.parent.name}) on pooled_mrr. Each run is kept as recorded.") in said
+
+    merged = _report(tmp_path, data_dir="/elsewhere")
+    old_checkpoints = tmp_path / "old-ledger"
+    _historical(old_checkpoints / "evaluations.json", merged)
+    (old_checkpoints / "best.pt").write_bytes(WEIGHTS)
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger=record_evaluation.logger.name):
+        assert record_evaluation.main(["--checkpoint-dir", str(old_checkpoints),
+                                       "--report", str(merged)]) == 0
+    said = caplog.text
+    assert "Registered record 2" in said and "already holds" not in said
+    assert ("Possible overlap with record 1, merged before each run had its own record: not "
+            "recorded whether this run is one of them") in said
+
+
+def test_show_prints_each_records_run_and_the_possible_overlaps(tmp_path, checkpoints, caplog):
+    """G8, A12 (a), A8 (K8-6r.2): `record_evaluation --show` prints every record
+    as written (JSON) and, for each, its run: "not recorded" for a record
+    merged before each run had its own record, with the possible overlap on
+    both sides; reading a schema 3 file leaves its bytes; a record whose run
+    identity cannot be read is said with its reason, never as historical.
+    HEAD: no run or overlap was said."""
+    import logging
+
+    import scripts.record_evaluation as record_evaluation
+
+    d1 = _report(tmp_path)
+    d2 = _again_in_another_run(d1)
+    ledger_path = checkpoints / "evaluations.json"
+    _historical(ledger_path, d1, [_sha(d2)])
+    before = ledger_path.read_bytes()
+    with caplog.at_level(logging.INFO, logger=record_evaluation.logger.name):
+        assert record_evaluation.main(["--checkpoint-dir", str(checkpoints), "--show",
+                                       DIGEST]) == 0
+    assert ledger_path.read_bytes() == before, "reading a schema 3 file never rewrites it"
+    assert "record 1: run not recorded (registered before each run had its own record)" in (
+        caplog.text)
+
+    _register(d2, checkpoints)
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger=record_evaluation.logger.name):
+        assert record_evaluation.main(["--checkpoint-dir", str(checkpoints), "--show",
+                                       DIGEST]) == 0
+    said = caplog.text
+    assert ("record 1: run not recorded (registered before each run had its own record); "
+            "possible overlap with record 2 (not recorded)") in said
+    assert (f"record 2: run {d2.parent.name}; possible overlap with record 1 "
+            "(not recorded)") in said
+
+    data = json.loads(ledger_path.read_text())
+    data["records"][1].pop("run_id")
+    ledger_path.write_text(json.dumps(data))
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger=record_evaluation.logger.name):
+        assert record_evaluation.main(["--checkpoint-dir", str(checkpoints), "--show",
+                                       DIGEST]) == 0
+    assert "record 2: its run cannot be read: its run identity is missing" in caplog.text
+
+
+@pytest.mark.parametrize("case", ["another run's byte-identical report", "an old merged record"])
+def test_the_job_summary_reads_a_run_registered_only_by_its_own_record(
+    tmp_path, checkpoints, case
+):
+    """G5 (K8-6r.2), with the real `report_state`: a run whose byte-identical
+    report another run registered reads not registered until it is registered
+    itself; a run whose bytes only a record merged before each run had its own
+    record holds reads not registered, the summary carrying the possible
+    overlap, never "it was registered". HEAD: both read "it was registered"."""
+    from types import SimpleNamespace
+
+    from src.api.services.training_manager import TrainingManager
+
+    first = _report(tmp_path)
+    run = _again_in_another_run(first)
+    if case == "another run's byte-identical report":
+        _register(first, checkpoints)
+    else:
+        _historical(checkpoints / "evaluations.json", first)
+    manager = TrainingManager()
+    job = SimpleNamespace(inputs={"checkpoint": str(checkpoints / "best.pt"), "record": False},
+                          stop_signal=None)
+
+    said = manager._report_outcome(job, run, _sha(run), {"complete": True}, {})
+
+    assert said["kept"] is True and said["registered"] is False
+    assert "it was not registered" in said["summary"]
+    assert "it was registered" not in said["summary"]
+    if case == "an old merged record":
+        assert ("its bytes equal a report merged into record 1 before each run had its own "
+                "record; registering it adds its own record") in said["summary"]
+        from src.evaluation.registration import report_state
+
+        state = report_state(run, checkpoint=checkpoints / "best.pt")
+        assert (state.registered, state.historical_overlap) == ("not_registered", (1,))
+    _register(run, checkpoints)
+    again = manager._report_outcome(job, run, _sha(run), {"complete": True}, {})
+    assert again["registered"] is True and "it was registered" in again["summary"]

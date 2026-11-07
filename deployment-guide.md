@@ -1750,8 +1750,8 @@ Mode C。Mode D 的數字不是模型的核准排名，也不描述目前的診�
 
 **已保存的 Mode D 報告依一般規則、以它自己的模式登錄**（自 K8-6c 起，政策 rev 15）：
 `scripts/record_evaluation.py` 與 Test 頁的 Register 會像檢查每一份報告一樣檢查它（report store、
-它的版本區塊、執行目錄、同一 key 下的多次執行、checkpoint 的位元組與 ledger），其紀錄保留 mode D。
-同一份報告再登錄一次會回答 `already_registered`，不寫入任何東西。ledger 中既有的紀錄保留，也不會
+它的版本區塊、執行目錄、checkpoint 的位元組與 ledger），其紀錄保留 mode D。
+同一次執行的同一份報告再登錄一次會回答 `already_registered`，不寫入任何東西。ledger 中既有的紀錄保留，也不會
 擋下其他報告的下一次登錄。
 
 ### 登錄
@@ -1780,15 +1780,30 @@ Mode C。Mode D 的數字不是模型的核准排名，也不描述目前的診�
   第二個 ledger。量測與服務都以解析後路徑讀取 checkpoint，所以目錄在讀取檔案時就已確定。執行
   期間、或載入後未重新載入時被改指向的連結，不會改變該次執行的紀錄登錄在哪裡，也不會改變到哪裡
   找已載入模型的紀錄。不會為 ledger 建立任何目錄。
-- **結果**：已登錄（附序號）；已存在（同一份報告再次登錄：不寫入任何東西）；與既有紀錄一致
-  （報告的 digest 加入該紀錄的佐證報告清單）。R10 與環境不參與比對，因為各自只對自己的報告
-  成立。當佐證報告的 R10 或環境與紀錄不同時（例如重跑時加上 `--training-evidence`，找到了第一次
-  沒找到的證據），**紀錄保留自己的值，不會更新**。登錄會以一行說明這件事並指出該報告，較晚那次
-  執行的 R10 就保存在其中。與同一鍵——同一個 checkpoint、cohort 版本與量測設定，結果卻不同——
-  的紀錄互相矛盾的報告會被拒絕，並指出不同的欄位。沒有覆寫旗標；錯誤的紀錄以編輯這個可讀的
-  JSON 檔來更正，會留下 diff。
+- **依執行登錄**（政策 rev 16，自 K8-6r.2 起）。一次執行就是版本報告存放處中的一個執行目錄。
+  每筆紀錄都寫明它（`run_id`），ledger 會先找這次執行。結果：
+  - **已登錄**（附序號）：每一次經過驗證的執行都有自己的紀錄，保留自己的數值、環境與 R10，
+    不論位元組或時間為何。報告位元組完全相同的兩次執行是兩筆紀錄，數值不同的兩次執行也是。
+  - **已存在**（`already_registered`）：同一次執行、同一份報告位元組再次登錄；不寫入任何東西。
+  - **拒絕**：同一次執行帶著其他位元組回來。一次執行的報告在發佈時即封存，所以這個檔案是在
+    登錄之後被替換的。訊息會指出該紀錄與兩個 digest。
+  - **拒絕，不寫入任何東西**：這次寫入本身無法安全完成時，訊息會指出該紀錄：某筆紀錄不是物件
+    或遺失了登錄序號（無法配置下一個序號），或這次執行自己的身分紀錄損壞（從執行身分邊界起
+    應寫明執行卻沒有寫明的紀錄、寫明這次執行但 cohort、checkpoint 或報告 digest 讀不了的紀錄，
+    或兩筆紀錄寫明同一次執行）。請從可信的備份還原該紀錄，再重新登錄。系統不猜測、不略過、
+    不重新編號。找到完好紀錄的執行仍照上述回答。
+
+  結果之後可能附上兩則說明，只供參考，從不拒絕任何東西。**群組說明**列出同一組條件（同一個
+  checkpoint、cohort 版本與量測設定）下結果不同的其他紀錄、其執行與不同之處："Runs under these
+  conditions differ: … Each run is kept as recorded."。兩次執行都開啟 deterministic algorithms
+  時，會補充它們本應一致，需要調查。**歷史說明**指出在每次執行各有自己的紀錄之前寫入、且持有這份
+  報告位元組的紀錄："possible overlap with record N, … not recorded whether this run is one of
+  them"。這種舊紀錄從不替另一次執行回答 `already_registered`。沒有覆寫旗標；錯誤的紀錄以編輯
+  這個可讀的 JSON 檔來更正，會留下 diff。
 - **之後查看**：`python scripts/record_evaluation.py --checkpoint <file> --show
-  <checkpoint sha256>` 讀取服務為該檔案所讀的 ledger，也就是其解析後路徑旁的那一個。若改用
+  <checkpoint sha256>` 讀取服務為該檔案所讀的 ledger，也就是其解析後路徑旁的那一個。它照原樣
+  印出紀錄（JSON），再為每筆紀錄印一行：它的執行（在每次執行各有自己的紀錄之前寫入的紀錄為「not
+  recorded」），以及這種紀錄與具名執行之間可能的重疊。若改用
   `--checkpoint-dir <dir>`，`--show` 讀的是該目錄內的 `evaluations.json`；對一個放連結的目錄
   而言，那不是服務所讀的 ledger。空的回答代表這個 ledger 沒有這組權重的結果，不代表它們從未被
   評估過。
@@ -1805,8 +1820,8 @@ Mode C。Mode D 的數字不是模型的核准排名，也不描述目前的診�
 | 指令 | 0 | 1 | 2 | 3 |
 |---|---|---|---|---|
 | `import_cohort.py` | 已印出預覽，或已提交版本 | 拒絕，一則以 "Nothing was written." 結尾的訊息（沒有任何案例可排名的預覽也是） | 命令列被拒絕 | — |
-| `measure_scorer.py` | 已量測（加 `--record` 時：已登錄、已存在或一致） | 某項檢查拒絕了這次執行：一則訊息，不寫入任何東西（在沒有 CUDA 的主機上給 `--device auto` 或 `cuda` 也是，在讀取任何東西之前）；或**已量測，但報告沒有寫出**（例如磁碟已滿或唯讀）：一則訊息說明可能留下了什麼，而那絕不會是可登錄的報告——`--output` 旁這次執行的排名檔，或報告存放處中沒有 `report.json` 的執行目錄（寫出報告之後才失敗的執行，例如主控台被關閉，會說明報告在哪裡） | 命令列被拒絕，包括屬於另一種 cohort 的參數 | **已量測，但登錄被拒絕**：訊息會指出報告與之後登錄用的 `record_evaluation.py` 指令；若報告檔已不是這次執行發佈的位元組，則如實說明，並要求重新量測（那份報告可能已不存在）；若這份報告的鍵下有結果不一致的執行，則說明 "runs disagree — investigate" 並保留報告，不印出之後登錄用的指令（只要這些執行仍不一致，任何登錄都不會被接受） |
-| `record_evaluation.py` | 已登錄、已存在、一致，或已顯示 | 拒絕，一則訊息；不寫入任何東西 | 命令列被拒絕，包括 `--checkpoint` 與 `--checkpoint-dir` 都沒給或都給 | — |
+| `measure_scorer.py` | 已量測（加 `--record` 時：已登錄或已存在） | 某項檢查拒絕了這次執行：一則訊息，不寫入任何東西（在沒有 CUDA 的主機上給 `--device auto` 或 `cuda` 也是，在讀取任何東西之前）；或**已量測，但報告沒有寫出**（例如磁碟已滿或唯讀）：一則訊息說明可能留下了什麼，而那絕不會是可登錄的報告——`--output` 旁這次執行的排名檔，或報告存放處中沒有 `report.json` 的執行目錄（寫出報告之後才失敗的執行，例如主控台被關閉，會說明報告在哪裡） | 命令列被拒絕，包括屬於另一種 cohort 的參數 | **已量測，但登錄被拒絕**：訊息會指出報告與之後登錄用的 `record_evaluation.py` 指令；若報告檔已不是這次執行發佈的位元組，則如實說明，並要求重新量測（那份報告可能已不存在） |
+| `record_evaluation.py` | 已登錄、已存在，或已顯示 | 拒絕，一則訊息；不寫入任何東西 | 命令列被拒絕，包括 `--checkpoint` 與 `--checkpoint-dir` 都沒給或都給 | — |
 | `audit_split_overlap.py` | 已寫出報告 | 拒絕，一則訊息；不寫入任何東西 | 命令列被拒絕（例如已移除的 `--evaluation-cohort-kind`、只給 `--registry` 不給 `--cohort` 或反之，或與 `--cohort` 一起給出 `--splits`），並印出 usage 行 | — |
 
 若 checkpoint 目錄對你而言是唯讀的，量測會以結束碼 3 結束：報告會保留，由可以寫入該目錄的人
@@ -1818,15 +1833,16 @@ Mode C。Mode D 的數字不是模型的核准排名，也不描述目前的診�
 ——即使換成另一份合法報告（另一個 checkpoint 的，或另一個 cohort 版本的），或已變成指向報告存放處之外
 檔案的連結——就不登錄任何東西，以結束碼 3 結束，並說明該路徑上的檔案不是它發佈的報告（或已不存在），
 因此這次執行自己的報告可能已不存在：請重新量測以登錄這次量測。只有在讀回的報告確實是發佈的那份、而是
-其他環節（例如 ledger）拒絕時，才會印出之後登錄用的指令；這個鍵下的執行結果不一致時則絕不印出。之後用
-`record_evaluation.py` 登錄時，仍照舊以指定的 checkpoint 檔核對報告。
+其他環節（例如 ledger）拒絕時，才會印出之後登錄用的指令。不加 `--record` 時一律印出這行指令：其他
+執行的報告或結果都不能拒絕一次登錄。之後用 `record_evaluation.py` 登錄時，仍照舊以指定的
+checkpoint 檔核對報告。
 
 ### Diagnosis 頁面顯示什麼
 
 **自 M5-2 起（2026-10-21），Diagnosis 頁面只以狀態顯示目前載入之 checkpoint 已登錄的測試**，
-位於「Model in use」卡片上："Recorded tests: 3 · 1 contested"、"3 · contested state not checked"（未設定 registry，
-或沒有任何一筆紀錄的 cohort 版本或其報告存放處能讀取；絕不顯示為沒有爭議）、"3 · 1 contested ·
-contested state of 1 not checked"（部分紀錄的狀態無法檢查；分開計數）、"none in ledger"、
+位於「Model in use」卡片上："Recorded tests: 3 · runs differ for 1"、"3 · comparison incomplete"（未設定
+registry，或沒有任何一筆紀錄的 cohort 版本或其報告存放處能讀取；絕不顯示為一致）、"3 · runs differ
+for 1; comparison incomplete for 1"（分開計數）、"none in ledger"、
 "no ledger"、"ledger not readable" 或 "not read"，與該 checkpoint 在「Change model…」中那一列的用語相同，並以
 checkpoint 的 digest 而不是檔名來找（換成另一個模型之後，絕不會顯示前一個模型的狀態）。它的 ›
 會打開 Details 的 Evidence，同一個狀態在那裡與訓練器的驗證數值並列（任務模型為 "Validation pooled MRR
@@ -1836,10 +1852,14 @@ checkpoint 的 digest 而不是檔名來找（換成另一個模型之後，絕�
 在 M5-2 之前，模型狀態（Model Configuration）在「Serving」那一行下方，為目前載入的 checkpoint
 （`sha256:<前 12 字元>…`）完整列出 **「Recorded test results (Mode C)」**，透過
 `GET /api/v1/evaluations/loaded-model` 讀取，用語如下。這個 route 仍以這些紀錄回應 API 用戶端，
-且自 M5 審查起（BACKLOG 36）每筆紀錄都附上它的 D5 狀態（`contest`：`uncontested`；`contested`，
-附上不一致的欄位與各次執行；`cannot_be_checked`，絕不視為沒有爭議），由儀表板本身的實作依服務的
-`SHEPHERD_REGISTRY` 算出，但不附原因本身的文字，因為那些文字可能指名伺服器上的路徑。D5 的調查
-備註（investigation notes）不會顯示（BACKLOG 40）：
+且自 M5 審查起（BACKLOG 36）每筆紀錄都附上它的條件群組在存放處中的比較情形（`contest`），由儀表板
+本身的實作依服務的 `SHEPHERD_REGISTRY` 算出，但不附原因本身的文字，因為那些文字可能指名伺服器上的
+路徑。**自 K8-6r.2 起這些值只做描述**（政策 rev 16）：`uncontested`（各次執行一致）、`contested`
+（同樣條件下的執行結果不同，附上不同的欄位與每一個帶有不同報告的執行）與 `cannot_be_checked`
+（比較不完整，絕不視為一致）對 API 用戶端保留同樣的字串，但都不再隱藏、排除或拒絕任何紀錄。每筆
+紀錄也附上 `run_id`（登錄它的那次執行；在每次執行各有自己的紀錄之前寫入的紀錄為 `null`，顯示為
+「not recorded」）與 `historical_overlap`（它可能與之為同一次執行的紀錄序號，從未確認）。無法讀取
+執行身分的紀錄計入 `records_not_shown`。調查備註（investigation notes）不會顯示（BACKLOG 40）：
 
 - 紀錄區塊開頭（第一筆紀錄之前）出現一次 **"Disease ranking by the model, approved scorer
   policy (Mode C)."** 與說明 **"This is the model's own Mode C disease ranking. Until B-1 ships,
@@ -1852,7 +1872,7 @@ checkpoint 的 digest 而不是檔名來找（換成另一個模型之後，絕�
   排除數）；已檢查的關係（✓ 或不適用）；四個 R10 標籤——`unverifiable`（附該範圍的原因，與主控台
   相同）與 `no validation inputs recorded` 以文字顯示，**絕不顯示為零或數字**；環境類別（CUDA
   且開或關 deterministic algorithms，或 CPU）與 GPU；dataset 來源（合成 workspace 會特別標出）；
-  登錄序號與時間，以及佐證報告數。
+  登錄序號與時間、它的執行，以及在每次執行各有自己的紀錄之前併入它的報告數。
 - 沒有紀錄時改為一句話：載入的 checkpoint 旁沒有 ledger；ledger 未讀取，附原因，原因會指出
   檔案、絕不指出其目錄（例如下述的 schema 2 檔案）；這個 ledger 沒有這組權重的結果；有些紀錄
   因不符登錄寫出的形狀而未顯示；或 "The loaded model changed while its recorded results were
@@ -1873,11 +1893,19 @@ checkpoint 的 digest 而不是檔名來找（換成另一個模型之後，絕�
   is not registered"）。`--split val` 是挑選 checkpoint 用的 split，不是保留的測試資料。
 - **產生的 split 的報告與排名檔改為先寫入暫存檔再改名就位**（排名檔先）；已存在的 `--output`
   仍會被取代。
-- **ledger schema 3。** 既有的 schema 1 或 2 的 `evaluations.json` 會被拒絕——`--record`、
-  `record_evaluation.py`（`--report` 與 `--show`）以及讀取已登錄結果的程式都會拒絕，後者會回報
-  ledger 未讀取（Diagnosis 卡片上為 "Recorded tests: ledger not readable"）。沒有任何東西會遷移它，其結果也不會被帶過來：**請手動封存**，例如
+- **ledger schema 3（M4），自 K8-6r.2 起為 schema 4。** 既有的 schema 1 或 2 的 `evaluations.json`
+  會被拒絕——`--record`、`record_evaluation.py`（`--report` 與 `--show`）以及讀取已登錄結果的程式
+  都會拒絕，後者會回報 ledger 未讀取（Diagnosis 卡片上為 "Recorded tests: ledger not readable"）。
+  沒有任何東西會遷移它，其結果也不會被帶過來：**請手動封存**，例如
   `mv evaluations.json evaluations.v2.json`，以寫出它的版本讀取，並以這個版本重新量測需要的
   結果，再登錄新的報告（拒絕訊息也這麼說）。M4 之前寫出的報告同樣會被拒絕，並指示重新量測。
+  **schema 3 與 4 都照原樣讀取**，讀取從不改寫檔案。第一次登錄進 schema 3 檔案時會寫成 schema 4，
+  並記錄從哪個序號起每筆紀錄都寫明它的執行（`run_identity_from_sequence`）；較早的紀錄照原樣保留，
+  其執行為「not recorded」，不會替它們編造執行。新的 ledger 從 schema 4 開始。只認得 schema 3 的
+  版本會拒絕 schema 4 檔案（「ledger not readable」），直到再次升級為止；檔案中的內容不會遺失。
+  `run_identity_from_sequence` 遺失或變得讀不了（檔案有紀錄卻沒有這個欄位、不是整數、小於 1，
+  或大於下一個序號）的 schema 4 檔案仍可讀取，但沒有紀錄寫明的執行都不能登錄進去：請從可信的
+  備份還原這個欄位。手動修改後仍可讀取的值會照寫入的樣子採用，與其他手動修改一樣。
 - **`record_evaluation.py`** 接受 `--checkpoint FILE` 或 `--checkpoint-dir DIR`，恰好一個。不論
   哪一個，ledger 都寫在 checkpoint 解析後路徑的旁邊。對於 checkpoint 是連結的目錄，那是在連結
   目標旁邊，不再是所指名的目錄中。
@@ -1887,7 +1915,7 @@ checkpoint 的 digest 而不是檔名來找（換成另一個模型之後，絕�
   dataset record digest 會與這個 workspace 的 manifest 所記錄的比對，不載入 tensor；只讀
   `train`。報告的 `schema_version` 為 6。
 
-### 自 M5-1 起：只從報告存放處登錄、結果不一致的執行、使用紀錄、確定性執行
+### 自 M5-1 起：只從報告存放處登錄、結果不同的執行、使用紀錄、確定性執行
 
 以下同時適用於 `measure_scorer.py --record` 與 `record_evaluation.py --report`，因為兩者走同一個
 登錄函式。上面的結束碼不變。
@@ -1905,7 +1933,7 @@ checkpoint 的 digest 而不是檔名來找（換成另一個模型之後，絕�
 holds … Register the store's original instead」。副本仍可閱讀與分享，但不能登錄。指向存放處中
 報告的連結，視為存放處中的原件；存放處中那個本身是連結、指向別處檔案的 `report.json` 則不算。
 **registry 必須是部署的 registry**（自 M5 審查起，BACKLOG 37）：整個 registry 的副本以相同的結構
-持有相同的位元組，但它會有自己的使用紀錄與自己的不一致封鎖，而 Research › Models 與 job runner
+持有相同的位元組，但它會有自己的報告存放處與使用紀錄，而 Research › Models 與 job runner
 從不讀取它們，所以副本中的報告會被拒絕（「… is not registered: the registry … is not the
 deployment's: SHEPHERD_REGISTRY (…) resolves to …」）。整個搬移的 registry，在服務與你的 shell
 中的 `SHEPHERD_REGISTRY` 都指名它的新位置之後，便可再次使用；沒有任何絕對路徑被存成身分。如果
@@ -1914,40 +1942,37 @@ deployment's: SHEPHERD_REGISTRY (…) resolves to …」）。整個搬移的 re
 誤用的 registry；刻意把這個變數設成副本後執行的指令，就會使用那個副本。產生的 split 的報告寫在
 `--output`，從不在存放處中，所以現在它是因為這個原因被拒絕。
 
-**結果不一致的執行會封鎖其鍵（"runs disagree — investigate"）。** 存放處中同一個鍵（同一個
-checkpoint、cohort 版本與量測設定）下的報告，會用 ledger 所用的同一種比對互相比較。只要其中兩份
-結果不同，這個鍵下的任何報告都不會被登錄。這適用於加或不加 `--record` 的執行、之後的
-`record_evaluation.py`，以及再次登錄一份已登錄的報告。訊息會指出哪些不同、是哪些執行。在不一致
-出現之前已登錄的紀錄仍留在 ledger 中。在 `--record` 之下，執行以結束碼 3 結束並保留報告，但不會
-印出之後登錄用的指令，因為只要這些執行仍不一致，任何登錄都不會被接受。不加 `--record` 時，執行在
-發佈報告後以同樣方式檢查存放處：它以結束碼 0 結束（如同任何不登錄的執行），印出
-"Not registered (no --record), and runs disagree — investigate" 與不同之處，取代那行指令；它的
-`--outcome` 檔中 `registration.why` 也這樣說明。若無法檢查這些執行是否不一致（見下文），不加
-`--record` 的執行會印出指令，並說明在能夠檢查之前登錄都會被拒絕。往下走的方式：
+**結果不同的執行都會保留並加以描述，從不拒絕**（政策 rev 16，自 K8-6r.2 起；在此之前它們會封鎖其鍵）。
+每一次有效的執行都是自己的紀錄，所以同一組條件（同一個 checkpoint、cohort 版本與量測設定）下結果
+不同的執行都照記錄保留。登錄只讀取它要登錄的那次執行，並在結果之後印出群組說明（見上文）。存放處、
+Test 頁、Models 與 API 把這樣的群組描述為「runs under these conditions differ — investigate」，
+指出不同之處與每一個帶有不同報告的執行。API 對它保留 `contested` 這個值，但意義已改為上述描述。
+不加 `--record` 時，執行一律印出之後登錄用的指令。調查的方式：
 
 - 比較各報告的環境資訊（每份 `report.json` 的 `manifest.environment`）；
-- 以 `--deterministic` 重跑，這是不同的鍵。
+- 以 `--deterministic` 重跑，這是自己的一組條件。確定性執行本應一致，所以說明與頁面會把它們之間的
+  差異標出、要求調查。
 
 調查備註記錄誰看過、何時看過、發現了什麼。備註存在
-`<registry>/versions/<label>/reports/notes.jsonl`，與該鍵的報告放在一起，絕不寫進 ledger，也不會
-解除封鎖。Research › Test 可從儀表板新增備註，這是操作者控制項（§4.14）。封鎖建立在一般檔案上：刪除不一致的
-報告就會解除它。這些工具從不刪除任何東西。
+`<registry>/versions/<label>/reports/notes.jsonl`，與該群組的報告放在一起，絕不寫進 ledger，也不
+改變任何東西。Research › Test 可從儀表板新增備註，這是操作者控制項（§4.14）。這些工具從不刪除任何
+東西。
 
-**「無法檢查」同樣會被拒絕，絕不視為沒有爭議。** 存放處中有下列任一情形時，整個版本都無法檢查：
-
-- 一份無法讀取或解析的報告；
-- 一個是連結、指向存放處之外的執行目錄或 `report.json`；
-- 一份無法判斷其鍵的報告。
-
-較早版本寫出、本版本不讀取其 manifest 的報告，只會封鎖它所指名的那個鍵。拒絕訊息會指出每個檔案。
-把檔案移出 `reports/` 或加以修復，再登錄一次。
+**其他執行的報告從不擋下一次登錄。** 存放處中無法讀取或解析的報告、是連結且指向存放處之外的執行目錄
+或 `report.json`，以及無法判斷其條件的報告，都各自以自己的執行、附自己的原因列出，不會標記其他執行
+或任何群組。同一組條件下本版本無法比較的報告，會讓該群組的比較不完整（`cannot_be_checked`，
+「comparison incomplete」），這只是描述。你要登錄的報告仍會完整檢查：它在存放處中的位置、位元組、
+版本區塊、執行目錄、checkpoint 與 ledger。完全無法列出的存放處會讓 Test 頁無法確認任何報告，因此
+Register 保持不可用並說明原因；請以 `record_evaluation.py --report …` 登錄該次執行，它只讀取那份
+報告。
 
 **使用紀錄**是 `<registry>/versions/<label>/reports/usage.jsonl`，每行一個 JSON 物件，只追加、
 從不改寫。它記錄：
 
 - 這個版本的每一次量測（`test_run`：時間、run id、checkpoint 與報告的 digest、該次的 mode 與指標、
   `n_ranked`、是否為確定性執行、裝置、是否要求 `--record`）；
-- 每一次寫入 ledger 的登錄（`registered`：結果與序號）；
+- 每一次寫入 ledger 的登錄（`registered`：它的 run id、結果與該次執行自己的序號）。K8-6r.2 之前
+  以已退役的結果 `corroborated` 寫入的項目保留在檔案中，並依其記錄內容顯示；
 - 在 K8-6d 之前，每一次從依該版本分數排序的清單載入的模型（`model_load`：排序清單所用的指標與
   scoring 分組，以及載入是否生效並附原因）。依測試分數排序已退役，現在沒有任何程式寫入這類條目；
   已寫入的條目留在檔案中，Research › Models 依其記錄內容顯示（§4.14）。
@@ -1980,7 +2005,7 @@ python scripts/measure_scorer.py --mode <protocol> \
   warn-only）、確定性的 cuDNN 並關閉其 benchmark，以及在該變數未設定時設定
   `CUBLAS_WORKSPACE_CONFIG=:4096:8`。它絕不退回非確定性執行或改用其他裝置。沒有確定性實作的運算會
   讓這次執行被拒絕、不寫入任何東西；PyTorch 未記載為確定性的 `CUBLAS_WORKSPACE_CONFIG` 也是。
-  manifest 會記錄這些設定，所以確定性執行是不同的鍵。PyTorch 只在相同平台、裝置與版本上承諾可重現；
+  manifest 會記錄這些設定，所以確定性執行是自己的一組條件。PyTorch 只在相同平台、裝置與版本上承諾可重現；
   確定性模式防範已知的非確定性運算，並不為某個數字背書。
 - `--expect-checkpoint-sha256` 與 `--expect-version-sha256`：當讀到的 checkpoint，或版本的
   `cohort.json`，具有其他 SHA-256 時（檔案在被選定之後改變了），在量測或寫入任何東西之前就拒絕這次
@@ -2328,20 +2353,25 @@ export SHEPHERD_INTAKE_DIR=/srv/shepherd/intake
   registry 中。中斷的匯入會附原因列出。每個版本的報告庫以 run id 列出，每個 run 都會說明它的
   報告是否保留、是否已登錄（`kept`、`registered`，各附原因，以及報告的 digest 與紀錄的序號），
   來自登錄流程本身對報告庫的讀取，以及對報告所記錄、它量測的 checkpoint 旁邊那份 ledger 的讀取。
-  那份 ledger 載有這份報告時，`registered` 為 `registered`，否則為 `cannot_be_checked`，絕不是
-  `not_registered`：登錄在同一份權重的其他副本旁邊的紀錄（`record_evaluation --checkpoint` 接受
+  那份 ledger 載有這份報告時，`registered` 為 `registered`；只有在它以其他位元組寫明這次執行時
+  才是 `not_registered`（`replaced_after_registration` 為 true：報告在登錄之後被替換，原因會指出
+  該紀錄與兩個 digest）；其他情況為 `cannot_be_checked`：登錄在同一份權重的其他副本旁邊的紀錄（`record_evaluation --checkpoint` 接受
   任何位元組相同的檔案）不會被查找，原因會指出查過的是哪一份 ledger。以相對路徑記錄 checkpoint 的
   報告，或無法讀取的報告，沒有可查的 ledger：這時 `registered` 同樣為 `cannot_be_checked`，並說明
-  原因。執行之後被移走的 checkpoint，會在執行讀取它的位置查找。有 `report.json` 的每個 run 也帶有
-  它的報告所屬 key 的 D5 狀態（`contest`：`uncontested`；`contested`，附上不同的欄位與 run；
-  `cannot_be_checked`，絕不能當成 uncontested 解讀），與 Research › Test 對那個 run 顯示的狀態相同，
-  但不含原因本身的文字，因為它可能指出伺服器路徑（自審查修正的根因回合起）。沒有 `report.json` 的
+  原因。執行之後被移走的 checkpoint，會在執行讀取它的位置查找。`registered` 表示有一筆紀錄寫明
+  **這次執行**與這些位元組（自 K8-6r.2 起）：另一次執行位元組相同的報告不算這次執行的登錄。只有
+  在每次執行各有自己的紀錄之前寫入的紀錄持有其位元組的執行，是未登錄，原因會說明（「its bytes equal
+  a report merged into record N …」）。有 `report.json` 的每個 run 也帶有它的報告所屬條件在報告庫中
+  的比較情形（`contest`），與 Research › Test 對那個 run 顯示的描述相同，但不含原因本身的文字，因為
+  它可能指出伺服器路徑。自 K8-6r.2 起這些值只做描述，字串對 API 用戶端保留不變：`uncontested`；
+  `contested`（同樣條件下的執行結果不同，附上不同的欄位與每一個帶有不同報告的執行，位元組相同的
+  執行各自列名）；`cannot_be_checked`（比較不完整，絕不能當成一致解讀）。沒有 `report.json` 的
   run 目錄（中斷、取消或被拒絕的執行），以及狀態沒有被讀取的 run（它的 `problem` 說明原因），
-  `contest` 為 `null`。報告無法讀取、或無法得知其 key 的 run 是 `cannot_be_checked`；可以讀取但無法
-  比較的 run 是 `cannot_be_checked`，除非它的 key 底下的報告已經不一致（這時是 `contested`）。無法
-  掃描的報告庫中的每個 run 也是 `cannot_be_checked`，報告在報告庫的掃描與其狀態的讀取之間被替換的
-  run 也是：一個 run 的狀態與它的 `contest` 永遠描述同一份位元組。每個請求會把每個列出版本的報告庫
-  掃描一次。
+  `contest` 為 `null`。報告無法讀取、或無法得知其條件的 run 是 `cannot_be_checked`，只附它自己的
+  原因，不會標記其他 run。可以讀取但無法比較的報告會讓其群組的比較不完整，除非該群組的執行已經不同
+  （這時是 `contested`）。無法掃描的報告庫中的每個 run 也是 `cannot_be_checked`，報告在報告庫的
+  掃描與其狀態的讀取之間被替換的 run 也是：一個 run 的狀態與它的 `contest` 永遠描述同一份位元組。
+  每個請求會把每個列出版本的報告庫掃描一次。
 
 ### 建置時間：`workspace_build.json`
 
@@ -2889,8 +2919,8 @@ checkpoint：run 標題的標籤顯示「dataset not shown · operator control�
   （registry 的清單，`SHEPHERD_REGISTRY`），附上它的 role、各項數量、版本 digest，以及它是否
   對照這個 workspace 的圖譜映射（「bound to this graph」，或「mapped against another graph」，
   執行時會被拒絕）。其下是該版本 report store 的每一個執行目錄，最新的在前：何時執行、用哪個
-  模型、是否保留了報告、是否已登錄；當同一個 key 下的報告不一致時顯示「runs disagree —
-  investigate」（D5）。沒有保留報告的執行會說明這一點；目前正在執行的測試位於最上方一列，而這台
+  模型、是否保留了報告、是否已登錄；當同一群組的執行結果不同時顯示「runs under these conditions
+  differ — investigate」，比較不完整時顯示「comparison incomplete」。沒有保留報告的執行會說明這一點；目前正在執行的測試位於最上方一列，而這台
   伺服器上最後一次結束時 store 中什麼也沒有的測試執行（在建立執行目錄之前就被取消，或失敗）會
   保留為一列，直到下一次啟動或重新啟動伺服器。清單列出最新的 8 份報告以及選取的那一份；
   **Show all N reports** 會列出其餘的（這個瀏覽器分頁會記住這個選擇）。對操作者而言，每一列的
@@ -2927,6 +2957,8 @@ checkpoint：run 標題的標籤顯示「dataset not shown · operator control�
 - **Result。** 選取的報告，以帳本將會保存的紀錄形式顯示：該模式的指標（任務的；已保存的 Mode C
   或 Mode D 報告以它自己的標籤顯示）、含每一類排除的涵蓋率、各項關係、以文字表示的 R10（*unverifiable* 從不顯示為 0）、環境、資料集來源，
   以及是否已登錄（對操作者而言，是在清單中持有它所量測權重的 checkpoint 旁的帳本中檢查）。
+  有紀錄以其他位元組寫明這次執行（報告在登錄之後被替換），或那份帳本無法判斷時，Result 會列出
+  登錄給的原因。
   **🔒 Register this report** 透過唯一的登錄函式（§4.9）登錄一份已保留的報告：伺服器在版本的
   store 中找到報告、確認其位元組就是顯示過的那些、從它自己的 checkpoint 清單找出帳本應在的
   位置（以完整 digest 找到持有該權重的已列出檔案，從不使用報告記錄的路徑：若執行讀取的那個
@@ -2934,9 +2966,13 @@ checkpoint：run 標題的標籤顯示「dataset not shown · operator control�
   列出的副本；再否則用所顯示 workspace 中的副本），然後登錄。執行之後
   被移動過的 checkpoint 無法以這種方式找到；頁面會說明，機器上的
   `scripts/record_evaluation.py` 仍然可用。已保存的 Mode D 報告以同樣的方式、以它自己的模式登錄；
-  再登錄一次會說明已登錄，不寫入任何東西（§4.9）。當報告所屬 key 下的多次執行不一致時，頁面顯示這個
-  封鎖、Register 不可用，並列出與新增 **investigation notes**（誰、何時、發現了什麼；🔒 Add
-  note），與該 key 的報告保存在一起。筆記從不解除封鎖。在寬螢幕上，筆記表單（Who、What was
+  同一次執行再登錄一次會說明已登錄，不寫入任何東西（§4.9）。**對頁面能確認的這次執行的已保留報告，
+  Register 一律可用**（政策 rev 16，自 K8-6r.2 起）。它只在下列情形不可用：唯讀請求、這次執行沒有
+  保留報告、這次執行已登錄，或這次執行自己的報告無法建立（附它自己的原因）或清單沒有讀到它。存放處
+  無法列出時會說明這一點，並指向 `record_evaluation.py --report …`。其他執行、結果不同的群組，以及
+  別處無法讀取的報告，從不讓它不可用。當報告所屬群組的執行結果不同、或比較不完整時，頁面加以描述，並
+  列出與新增 **investigation notes**（誰、何時、發現了什麼；🔒 Add note），與該群組的報告保存在一起。
+  筆記記錄發現了什麼，不改變任何東西。登錄的訊息附上群組說明與歷史說明。在寬螢幕上，筆記表單（Who、What was
   found、🔒 Add note）固定在面板底部、Register 之上，所以無論報告或筆記多長都保持可見（What
   was found 最多長到四行，之後在框內捲動）。筆記檔案無法讀取時，頁面會說明這一點（可能缺少某
   則筆記），從不顯示「沒有保存筆記」。
@@ -2977,7 +3013,7 @@ workspace 名稱，這些資訊也不會被遮住。所有 run 都會顯示，�
   指標，數值下方寫出它的名稱（base 為 LP accuracy，任務模型為 pooled MRR，沒有 model spec 的檔案
   為其前 20 名的 MRR）。它從來不是測試結果，也從不與測試結果放在同一欄；
 - **Recorded tests**：checkpoint 旁的 ledger 所記錄的內容，以狀態顯示（「none in ledger」、「no
-  ledger」、「3 · 1 contested」……），從不顯示某個結果的數值。
+  ledger」、「3 · runs differ for 1」……），從不顯示某個結果的數值。
 
 **列出清單會開啟該 workspace 的每一個 checkpoint**，因此清單是操作者控制項（§4.13）。
 自 M5-3 起，伺服器對每個 checkpoint 檔案只讀一次，檔案改變時（依其裝置、inode、大小、修改與
@@ -3001,11 +3037,13 @@ Lineage 欄。沒有任何排列方式依測試分數為模型排名：依測試
 - **Recorded test results**：ledger 為這組權重記錄的每一筆紀錄，每種量測模式各一張表，各自在該模式的
   標籤與說明之下（自 Batch 3 起：先 Mode C 的紀錄，再 Mode D 的）。每一列有 cohort version 與其角色、
   該模式的 MRR 與 Hits@10（表頭寫出全名：Mode C MRR (untruncated) 與 Hits@10；Mode D 的以匯入後合格
-  病例為分母）、列出每一項排除的涵蓋率（Mode D 的寫成匯入後合格病例中觸及的數目），以及 `registered #N` 或琥珀色的 `contested #N` 並
-  說明各次執行在哪裡不一致（或「contested status cannot be checked」，從不顯示為無爭議）、
-  deterministic 開或關；接著是各項
-  關係、該紀錄的其他指標、以狀態顯示的 R10（*unverifiable* 是一個原因，從不是 0）、執行環境、資料集
-  與登錄資訊；
+  病例為分母）、列出每一項排除的涵蓋率（Mode D 的寫成匯入後合格病例中觸及的數目），以及 `registered #N`，或琥珀色的
+  `runs differ #N` 附「runs under these conditions differ — investigate」與不同之處（或「comparison
+  incomplete」，從不顯示為一致）、deterministic 開或關、在每次執行各有自己的紀錄之前併入它的報告
+  （若有），以及這種紀錄與具名執行之間的「possible overlap with record N (not recorded)」；接著是
+  各項關係、該紀錄的其他指標、以狀態顯示的 R10（*unverifiable* 是一個原因，從不是 0）、執行環境、
+  資料集，以及附上其執行的登錄資訊（在每次執行各有自己的紀錄之前寫入的紀錄為「not recorded」）。
+  每一筆紀錄都會顯示，這些描述不會隱藏或排除任何紀錄；
 - **Usage history**：每一個已列出的 cohort version 的使用紀錄中提及此 checkpoint 的項目，最新的在前：
   測試執行與登錄，以及 K8-6d 之前留下的模型載入，依其記錄內容顯示（「ordered by」加上它記錄的指標名稱，
   以及它的 scoring semantics）。

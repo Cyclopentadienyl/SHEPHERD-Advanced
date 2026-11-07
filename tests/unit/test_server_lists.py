@@ -1115,7 +1115,8 @@ class TestRoutes:
         assert listed["state"]["registered"] == "cannot_be_checked"
         assert "report.json" in listed["state"]["why_kept"]
         assert set(listed["state"]) == {"kept", "why_kept", "registered", "why_registered",
-                                        "report_sha256", "sequence"}
+                                        "report_sha256", "sequence", "historical_overlap",
+                                        "replaced_after_registration"}
 
     def test_a_kept_report_not_found_in_its_ledger_is_never_listed_as_not_registered(
             self, tmp_path):

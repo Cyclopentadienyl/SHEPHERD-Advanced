@@ -1391,10 +1391,10 @@ number is not the model's approved ranking and does not describe the current dia
 
 **A kept Mode D report registers by the general rules, under its own mode** (since K8-6c, policy
 rev 15): `scripts/record_evaluation.py` and the Test page's Register check it as they check every
-report (the report store, its version block, its run directory, the runs under its key, the
-checkpoint's bytes and the ledger), and its record keeps mode D. The same report again answers
-`already_registered`, with nothing written. The records a ledger already holds stay, and do not
-stop the next registration of another report.
+report (the report store, its version block, its run directory, the checkpoint's bytes and the
+ledger), and its record keeps mode D. The same run's report again answers `already_registered`,
+with nothing written. The records a ledger already holds stay, and do not stop the next
+registration of another report.
 
 ### Record
 
@@ -1427,19 +1427,40 @@ stop the next registration of another report.
   is read. A link retargeted during a run, or after a load without a reload, does not move where
   that run's record is filed or where the loaded model's records are looked up. No directory is
   created for a ledger.
-- **Outcomes:** registered (with its sequence number); already held (the same report again:
-  nothing written); agrees with an existing record (the report's digest is added to that record's
-  corroborating reports). R10 and the environment are not compared, because each is true of its
-  own report. When a corroborating report's R10 or environment differ from the record's (say, a
-  re-run with `--training-evidence` found evidence the first run did not), **the record keeps
-  its own values and is not updated**. The registration says so in one line, naming the report,
-  which keeps the later run's R10. A report that contradicts a record with the same key — same
-  checkpoint, cohort version and measurement settings, different results — is refused, naming
-  the fields that differ. There is no override flag; a wrong record is corrected by editing the
-  readable JSON file, which leaves a diff.
+- **Registered by the run** (policy rev 16, since K8-6r.2). A run is its run directory in the
+  version's report store. Each record names it (`run_id`), and the ledger looks for this run
+  first. The outcomes:
+  - **registered** (with its sequence number): every verified run gets a record of its own,
+    with its own values, environment and R10, whatever its bytes or times. Two runs with
+    byte-identical reports are two records, and so are two runs whose values differ.
+  - **already held** (`already_registered`): the same run with the same report bytes again;
+    nothing is written.
+  - **refused** when the same run comes back with other bytes: a run's report is sealed when it
+    is published, so the file was replaced after it was registered. The message names the
+    record and both digests.
+  - **refused, nothing written,** when the write itself cannot be made safely, naming the
+    record: a record that is not an object or has lost its registration sequence (the next
+    sequence cannot be allocated), or this run's own identity record damaged (a record from the
+    run-identity boundary on that should name its run and does not, a record naming this run
+    whose cohort, checkpoint or report digest cannot be read, or two records naming this run).
+    Restore the record from a trusted backup, then register again. Nothing is guessed, skipped
+    or renumbered. A run whose intact record is found still answers as above.
+
+  After the outcome, two notes may follow. They are information only and never refuse
+  anything. **The group note** names each other record of the same conditions (same checkpoint,
+  cohort version and measurement settings) whose results differ, with its run and what differs:
+  "Runs under these conditions differ: … Each run is kept as recorded." When both runs had
+  deterministic algorithms on, it adds that they were expected to agree: investigate. **The
+  historical note** names a record written before each run had its own record that holds this
+  report's bytes: "possible overlap with record N, … not recorded whether this run is one of
+  them". Such an older record never answers `already_registered` for another run.
+  There is no override flag; a wrong record is corrected by editing the readable JSON file,
+  which leaves a diff.
 - **What is shown later:** `python scripts/record_evaluation.py --checkpoint <file> --show
   <checkpoint sha256>` reads the ledger the service reads for that file, beside its resolved
-  path. With `--checkpoint-dir <dir>` instead, `--show` reads the `evaluations.json` inside that
+  path. It prints the records as written (JSON), then one line each with its run ("not
+  recorded" for a record written before each run had its own record) and any possible
+  overlap between such a record and a named run. With `--checkpoint-dir <dir>` instead, `--show` reads the `evaluations.json` inside that
   directory, which for a directory of links is not the one the service reads. An empty answer
   means this ledger holds no result for those weights, not that they were never evaluated.
 - **Registrations into one ledger take turns.** A registration holds the ledger's lock
@@ -1457,8 +1478,8 @@ stop the next registration of another report.
 | Command | 0 | 1 | 2 | 3 |
 |---|---|---|---|---|
 | `import_cohort.py` | preview printed, or version committed | refused, with one message ending "Nothing was written." (also a preview in which no case can be ranked) | the command line was rejected | — |
-| `measure_scorer.py` | measured (with `--record`: registered, already held or agreeing) | a check refused the run: one message, nothing written (so does `--device auto` or `cuda` on a host without CUDA, before anything is read); or **measured, but the report was not written** (a full or read-only disk, for example): one message saying what may be left, which is never a report that can be registered -- this run's ranks beside `--output`, or a run directory without `report.json` in the report store (a run that fails after writing its report, its console closed for example, says where the report is) | the command line was rejected, including an argument of the other kind of cohort | **measured, but the registration refused**: the message names the report and the `record_evaluation.py` command to register it later; or, when the report file no longer holds the bytes the run published, says so and asks for a re-measurement instead (that report may be gone); or, when runs under the report's key disagree, says "runs disagree — investigate" and keeps the report, with no register-later command (none would be accepted while they disagree) |
-| `record_evaluation.py` | registered, already held, agreeing, or shown | refused, with one message; nothing written | the command line was rejected, including neither or both of `--checkpoint` and `--checkpoint-dir` | — |
+| `measure_scorer.py` | measured (with `--record`: registered or already held) | a check refused the run: one message, nothing written (so does `--device auto` or `cuda` on a host without CUDA, before anything is read); or **measured, but the report was not written** (a full or read-only disk, for example): one message saying what may be left, which is never a report that can be registered -- this run's ranks beside `--output`, or a run directory without `report.json` in the report store (a run that fails after writing its report, its console closed for example, says where the report is) | the command line was rejected, including an argument of the other kind of cohort | **measured, but the registration refused**: the message names the report and the `record_evaluation.py` command to register it later; or, when the report file no longer holds the bytes the run published, says so and asks for a re-measurement instead (that report may be gone) |
+| `record_evaluation.py` | registered, already held, or shown | refused, with one message; nothing written | the command line was rejected, including neither or both of `--checkpoint` and `--checkpoint-dir` | — |
 | `audit_split_overlap.py` | report written | refused, with one message; nothing written | the command line was rejected (for example the removed `--evaluation-cohort-kind`, `--registry` without `--cohort` or the reverse, or `--splits` beside `--cohort`), with the usage line | — |
 
 A measurement whose checkpoint directory is read-only to you ends with exit 3: the report is kept,
@@ -1474,17 +1495,18 @@ of another cohort version, or is now a link to a file outside the report store -
 registered, the run exits 3, and it says the report at that path is not the one it published (or
 is gone), so the run's own report may not exist any more: measure again to register this
 measurement. The command for a later registration is printed only when the report read back is
-the one published and something else refused it, such as the ledger, and never while runs under
-its key disagree. A later registration with `record_evaluation.py` checks the checkpoint file it
-is given against the report, as before.
+the one published and something else refused it, such as the ledger. Without `--record` the
+command is always printed: no other run's report or result can refuse a registration. A later
+registration with `record_evaluation.py` checks the checkpoint file it is given against the
+report, as before.
 
 ### What the Diagnosis page shows
 
 **Since M5-2 (2026-10-21) the Diagnosis page shows the loaded checkpoint's recorded tests as a
-state only**, on its "Model in use" card: "Recorded tests: 3 · 1 contested", "3 · contested state
-not checked" (no registry is set, or no record's cohort version or report store can be read;
-never shown as uncontested), "3 · 1 contested · contested state of 1 not checked" (some
-records' state cannot be checked; counted apart), "none in ledger", "no ledger", "ledger not
+state only**, on its "Model in use" card: "Recorded tests: 3 · runs differ for 1", "3 ·
+comparison incomplete" (no registry is set, or no record's cohort version or report store can be
+read; never shown as agreeing), "3 · runs differ for 1; comparison incomplete for 1" (counted
+apart), "none in ledger", "no ledger", "ledger not
 readable" or "not read", the same words as the checkpoint's row in
 "Change model…", found by the checkpoint's digest, not its file name (after another model is
 loaded the previous model's state is never shown). Its › opens Details at Evidence, where the same
@@ -1496,11 +1518,18 @@ records themselves are listed under Research › Evaluate › Models.
 Until M5-2 the model status (Model Configuration) listed them in full under its "Serving" line,
 as **"Recorded test results (Mode C)"** for the loaded checkpoint (`sha256:<first 12>…`), read
 through `GET /api/v1/evaluations/loaded-model`, in the words below. The route still answers API
-clients with those records, and since the M5 review (BACKLOG 36) each record carries its D5
-state (`contest`: `uncontested`; `contested`, with the fields and the runs that differ;
-`cannot_be_checked`, never to be read as uncontested), from the dashboard's own implementation
-over the service's `SHEPHERD_REGISTRY`, without the reasons' own words, which may name a server
-path. D5's investigation notes are not shown (BACKLOG 40):
+clients with those records, and since the M5 review (BACKLOG 36) each record carries how its
+condition group compares in the store (`contest`), from the dashboard's own implementation over
+the service's `SHEPHERD_REGISTRY`, without the reasons' own words, which may name a server path.
+**Since K8-6r.2 these values only describe** (policy rev 16): `uncontested` (the runs agree),
+`contested` (runs under these conditions differ, with the fields and every run that carries a
+differing report) and `cannot_be_checked` (the comparison is incomplete, never to be read as
+agreeing) stay as the same strings for API clients, but none of them hides, orders out or
+refuses a record any more. Each record also carries `run_id` (the run it was registered from, or
+`null` for a record written before each run had its own record, shown as "not recorded") and
+`historical_overlap` (the sequences of the records it may be one execution with, never
+confirmed). A record whose run identity cannot be read is counted in `records_not_shown`.
+Investigation notes are not shown (BACKLOG 40):
 
 - The records are introduced once, above the first, by **"Disease ranking by the model,
   approved scorer policy (Mode C)."** and the note **"This is the model's own Mode C disease
@@ -1515,7 +1544,8 @@ path. D5's investigation notes are not shown (BACKLOG 40):
   as the console gives it) and `no validation inputs recorded` are shown as words, **never as
   zero or a number**; the environment class (CUDA with deterministic algorithms on or off, or
   CPU) and the GPU; the dataset origin (a synthetic workspace is called out); the registration's
-  sequence and time and the number of corroborating reports.
+  sequence and time, its run, and the number of reports merged into it before each run had its
+  own record.
 - Instead of records, a sentence: no ledger beside the loaded checkpoint; the ledger was not read,
   with the reason, which names the file and never its directory (for example a schema 2 file,
   below); this ledger holds no result for these weights; some records not shown because they do
@@ -1540,14 +1570,23 @@ path. D5's investigation notes are not shown (BACKLOG 40):
   not held-out data.
 - **A generated split's report and ranks are staged and renamed into place** (ranks first); an
   existing `--output` is still replaced.
-- **Ledger schema 3.** An existing `evaluations.json` of schema 1 or 2 is refused — by
-  `--record`, by `record_evaluation.py` (`--report` and `--show`) and by the recorded-results
-  readers, which report the ledger as not read (on the Diagnosis card: "Recorded tests: ledger
-  not readable"). Nothing migrates it and its results are not carried over:
-  **archive it by hand**, for example `mv evaluations.json evaluations.v2.json`, read it with the
-  revision that wrote it, and re-measure what you need with this revision, then register the new
-  reports (the refusal says the same). A report written before M4 is refused too, with an
-  instruction to re-measure.
+- **Ledger schema 3 (M4), schema 4 since K8-6r.2.** An existing `evaluations.json` of schema
+  1 or 2 is refused — by `--record`, by `record_evaluation.py` (`--report` and `--show`) and by
+  the recorded-results readers, which report the ledger as not read (on the Diagnosis card:
+  "Recorded tests: ledger not readable"). Nothing migrates it and its results are not carried
+  over: **archive it by hand**, for example `mv evaluations.json evaluations.v2.json`, read it
+  with the revision that wrote it, and re-measure what you need with this revision, then
+  register the new reports (the refusal says the same). A report written before M4 is refused
+  too, with an instruction to re-measure. **Schema 3 and 4 are both read** as written, and
+  reading never rewrites a file. The first registration into a schema 3 file writes schema 4
+  and records from which sequence every record names its run (`run_identity_from_sequence`);
+  earlier records stay as written, their run "not recorded", and no run is invented for them. A
+  new ledger starts at schema 4. A build that knows only schema 3 refuses a schema 4 file
+  ("ledger not readable") until it is upgraded again; nothing in the file is lost. A schema 4
+  file whose `run_identity_from_sequence` was lost or made unreadable (missing while the file
+  holds records, not an integer, below 1, or above the next sequence) is still read, but no run
+  that a record does not name can be registered into it: restore that field from a trusted
+  backup. A hand edit that leaves it readable is taken as written, as any other hand edit is.
 - **`record_evaluation.py`** takes `--checkpoint FILE` or `--checkpoint-dir DIR`, exactly one.
   With either, the ledger is written beside the checkpoint's resolved path. For a directory whose
   checkpoint is a link, that is beside the link's target, no longer in the directory named.
@@ -1557,7 +1596,7 @@ path. D5's investigation notes are not shown (BACKLOG 40):
   version's graph and dataset record digests are compared with those this workspace's manifest
   records, without loading tensors; only `train` is read. The report's `schema_version` is 6.
 
-### Since M5-1: registration from the report store, disagreeing runs, history, determinism
+### Since M5-1: registration from the report store, runs that differ, history, determinism
 
 These apply to `measure_scorer.py --record` and `record_evaluation.py --report` alike, since
 both go through the one registration function. The exit codes above are unchanged.
@@ -1577,8 +1616,8 @@ store holds … Register the store's original instead". You can still read and s
 you cannot register it. A link to a stored report counts as the stored original. A `report.json`
 in the store that is a link to a file elsewhere does not count. **The registry must be the
 deployment's** (since the M5 review, BACKLOG 37): a copy of the whole registry holds the same
-bytes in the same structure, but it would keep its own usage history and its own disagreement
-block, which Research › Models and the job runner never read, so its reports are refused ("…
+bytes in the same structure, but it would keep its own report store and usage history, which
+Research › Models and the job runner never read, so its reports are refused ("…
 is not registered: the registry … is not the deployment's: SHEPHERD_REGISTRY (…) resolves to …").
 A registry moved as a whole works again once `SHEPHERD_REGISTRY` names its new place, for the
 service and in your shell; no absolute path is stored as an identity. If `--record` finds its
@@ -1588,39 +1627,35 @@ same way. The check catches a registry reached by mistake; a command run with th
 a copy on purpose uses that copy. A generated split's report,
 written to `--output`, is never in a store, so this is now why it is refused.
 
-**Runs that disagree block their key ("runs disagree — investigate").** The store's reports
-under one key (same checkpoint, cohort version and measurement settings) are compared with the
-same comparison the ledger uses. If two of them differ in results, no report under that key is
-registered. This applies to a run with `--record` or without it, to a later
-`record_evaluation.py`, and to registering again a report that was already registered. The
-message names what differs and which runs. A record registered before the disagreement appeared
-stays in the ledger. Under `--record` the run exits 3 and keeps its report, but prints no
-register-later command, since none would be accepted while the runs disagree. Without `--record`
-the run checks the store the same way after publishing: it exits 0, as a run that registers
-nothing does, prints "Not registered (no --record), and runs disagree — investigate" with what
-differs instead of the command, and its `--outcome` file's `registration.why` says the same.
-When whether the runs disagree cannot be checked (below), the run without `--record` prints the
-command and says a registration is refused until that can be checked. To move forward:
+**Runs that differ are kept and described, never refused** (policy rev 16, since K8-6r.2;
+until then they blocked their key). Every valid run is its own record, so runs under one set of
+conditions (same checkpoint, cohort version and measurement settings) whose results differ are
+all kept as recorded. The registration reads only the run it registers, and prints the group
+note after its outcome (above). The store, the Test page, Models and the API describe such a
+group as "runs under these conditions differ — investigate", naming what differs and every run
+that carries a differing report. The API keeps the value `contested` for it, with this new
+meaning. Without `--record` the run always prints the register-later command. To investigate:
 
 - compare the reports' environment facts (each `report.json`'s `manifest.environment`);
-- re-run with `--deterministic`, which is a different key.
+- re-run with `--deterministic`, which is its own set of conditions. Deterministic runs are
+  expected to agree, so the note and the pages flag a difference between them for
+  investigation.
 
 An investigation note records who looked, when and what they found. Notes go to
-`<registry>/versions/<label>/reports/notes.jsonl`, kept with the key's reports and never in the
-ledger, and they do not lift the block. Research › Test adds one from the dashboard, as an
-operator control (§4.14). The block rests on plain files: deleting a disagreeing report lifts it. The tools
-never delete anything.
+`<registry>/versions/<label>/reports/notes.jsonl`, kept with the group's reports and never in
+the ledger. They change nothing. Research › Test adds one from the dashboard, as an operator
+control (§4.14). The tools never delete anything.
 
-**"Cannot be checked" is refused too, and never read as uncontested.** The whole version cannot
-be checked when the store holds:
-
-- a report that cannot be read or parsed;
-- a run directory or `report.json` that is a link out of the store;
-- a report whose key cannot be told.
-
-A report from an earlier revision, whose manifest this one does not read, blocks only the key
-it names. The refusal names each file. Move the file out of `reports/`, or repair it, and
-register again.
+**Another run's report never blocks a registration.** A report in the store that cannot be read
+or parsed, a run directory or `report.json` that is a link out of the store, and a report whose
+conditions cannot be told are each listed by their own run with their own reason. They mark no
+other run and no group. A report of the same conditions that this revision cannot compare makes
+that group's comparison incomplete (`cannot_be_checked`, "comparison incomplete"), which is a
+description only. The report you register is still checked in full: its place in the store, its
+bytes, its version block, its run directory, its checkpoint and the ledger. A store that cannot
+be listed at all leaves the Test page unable to confirm a report, so its Register stays off and
+says why; register the run with `record_evaluation.py --report …`, which reads only that
+report.
 
 **The usage history** is `<registry>/versions/<label>/reports/usage.jsonl`, one JSON object
 per line, appended and never rewritten. It records:
@@ -1628,7 +1663,9 @@ per line, appended and never rewritten. It records:
 - every measurement of the version (`test_run`: when, run id, checkpoint and report digests,
   the run's mode and metrics, `n_ranked`, whether it was deterministic, the device, whether `--record`
   was asked);
-- every registration that wrote a ledger (`registered`: outcome and sequence);
+- every registration that wrote a ledger (`registered`: its run id, outcome and the run's own
+  sequence). Entries written before K8-6r.2 with the retired outcome `corroborated` stay in the
+  file and are shown as recorded;
 - until K8-6d, every model loaded from a list ordered by the version's score (`model_load`: the
   metric and scoring group that ordered the list, and whether the load took effect, with why).
   Ordering by test score has retired and nothing writes these entries now; entries already
@@ -1667,8 +1704,8 @@ python scripts/measure_scorer.py --mode <protocol> \
   `CUBLAS_WORKSPACE_CONFIG=:4096:8` when that variable is unset. It never falls back to
   non-deterministic execution or to another device. An operation with no deterministic
   implementation refuses the run with nothing written, and so does a `CUBLAS_WORKSPACE_CONFIG`
-  that PyTorch does not document as deterministic. The manifest records the settings, so a
-  deterministic run is a different key. PyTorch promises reproducibility only on the same
+  that PyTorch does not document as deterministic. The manifest records the settings, so
+  deterministic runs are their own set of conditions. PyTorch promises reproducibility only on the same
   platform, device and versions; deterministic mode guards against known non-deterministic
   operations and does not certify a number.
 - `--expect-checkpoint-sha256` and `--expect-version-sha256` refuse the run before anything is
@@ -2077,24 +2114,32 @@ and a file, or a label, and the server finds that name in its own list again.
   listed by run id, and each run says whether its report is kept and whether it is registered
   (`kept`, `registered`, each with its reason, the report's digest and the record's sequence),
   from the registration's own reading of the store and of the ledger beside the checkpoint the
-  report records it measured. `registered` is `registered` when that ledger names the report,
-  and otherwise `cannot_be_checked`, never `not_registered`: a registration filed beside
+  report records it measured. `registered` is `registered` when that ledger names the report;
+  `not_registered` only when it names this run with other bytes (`replaced_after_registration`
+  true: the report was replaced after it was registered, and the reason names the record and
+  both digests); and otherwise `cannot_be_checked`: a registration filed beside
   another copy of the same weights (`record_evaluation --checkpoint` takes any file with the
   measured bytes) is not looked for, and the reason names the ledger that was. A report that
   names its checkpoint by a relative path, or that cannot be read, has no ledger to look in:
   `registered` is then `cannot_be_checked` too, saying why. A checkpoint moved since the run is
-  looked for where the run read it. Each run with a `report.json` also carries D5's state of
-  its report's key (`contest`: `uncontested`; `contested`, with the fields and the runs that
-  differ; `cannot_be_checked`, never to be read as uncontested), the same state Research › Test
-  shows for that run, without the reasons' own words, which may name a server path (since the
-  root-cause round of the review fixes). `contest` is `null` for a run directory with no
-  `report.json` (an interrupted, cancelled or refused run) and for a run whose state was not
-  read (its `problem` says why). A run whose report cannot be read, or whose key cannot be told,
-  is `cannot_be_checked`; one that can be read but not compared is `cannot_be_checked` unless
-  the reports under its key already disagree (then `contested`). So is every run of a store
-  that cannot be scanned, and a run whose report was replaced between the store's scan and the
-  read of its state: a run's state and its `contest` always describe the same bytes. Each
-  request scans every listed version's report store once.
+  looked for where the run read it. `registered` means a record names **this run** with these
+  bytes (since K8-6r.2): another run's byte-identical report is not this run's registration. A
+  run whose bytes only a record written before each run had its own record holds is not
+  registered, and its reason says so ("its bytes equal a report merged into record N …"). Each
+  run with a `report.json` also carries how its report's conditions compare in the store
+  (`contest`), the same description Research › Test shows for that run, without the reasons'
+  own words, which may name a server path. Since K8-6r.2 these values only describe, and the
+  strings stayed for API clients: `uncontested`; `contested` (runs under these conditions
+  differ, with the fields and every run that carries a differing report, byte-identical runs
+  each named); `cannot_be_checked` (the comparison is incomplete, never to be read as agreeing).
+  `contest` is `null` for a run directory with no `report.json` (an interrupted, cancelled or
+  refused run) and for a run whose state was not read (its `problem` says why). A run whose
+  report cannot be read, or whose conditions cannot be told, is `cannot_be_checked` with its own
+  reason only, and marks no other run. A report that can be read but not compared makes its
+  group's comparison incomplete unless the group's runs already differ (then `contested`). So
+  is every run of a store that cannot be scanned, and a run whose report was replaced between
+  the store's scan and the read of its state: a run's state and its `contest` always describe
+  the same bytes. Each request scans every listed version's report store once.
 
 ### The build time: `workspace_build.json`
 
@@ -2733,8 +2778,9 @@ and register it. Three panels:
   its version digest and whether it was mapped against this workspace's graph ("bound to this
   graph", or "mapped against another graph", which a run would refuse). Below them, every run
   directory of the version's report store, newest first: when it ran, on which model, whether a
-  report was kept, whether it is registered, and "runs disagree — investigate" when reports
-  under its key disagree (D5). A run that kept no report says so; a test running now is the top
+  report was kept, whether it is registered, and "runs under these conditions differ —
+  investigate" when the runs of its group differ, or "comparison incomplete". A run that kept no
+  report says so; a test running now is the top
   row, and the last test run on this server that ended with nothing in the store (cancelled
   before its run directory, or failed) stays a row until the next start or a restart. The
   newest 8 reports are listed, and the selected one; **Show all N reports** lists the rest
@@ -2782,7 +2828,9 @@ and register it. Three panels:
   task's; a kept Mode C or Mode D report under its own label), coverage with each exclusion, the relations, R10 in words (*unverifiable* is
   never a 0), the environment, the dataset origin, and whether it is registered (for an
   operator, checked in the ledger beside the listed checkpoint holding the weights it
-  measured). **🔒 Register this report** registers a kept report through the one registration
+  measured). When a record names this run with other bytes (the report was replaced after it
+  was registered), or that ledger cannot tell, the Result gives the registration's reason.
+  **🔒 Register this report** registers a kept report through the one registration
   function (§4.9): the server finds the report in the version's store, checks that its bytes
   are the ones shown, finds where its ledger goes from its own checkpoint list (the listed file
   holding the weights, by full digest, never the path the report records: the file the run read
@@ -2790,10 +2838,16 @@ and register it. Three panels:
   in the workspace the run measured, else one in the workspace shown) and registers it. A
   checkpoint moved since the run is not found that way; the page says so, and
   `scripts/record_evaluation.py` on the machine remains. A kept Mode D report registers the
-  same way, under its own mode; a repeat says it is already registered, with nothing written
-  (§4.9). While runs under the report's key
-  disagree, the page shows the block, Register is off, and **investigation notes** (who, when,
-  what; 🔒 Add note) are listed and kept with the key's reports. A note never lifts the block.
+  same way, under its own mode; the same run again says it is already registered, with nothing
+  written (§4.9). **Register is on for any kept report of this run the page can confirm**
+  (policy rev 16, since K8-6r.2). It is off only for a read-only request, a run that kept no
+  report, this run already registered, or this run's own report not built (its own reason) or
+  not read by the listing. When the store cannot be listed, it says so and points to
+  `record_evaluation.py --report …`. Another run, a group whose runs differ and an unreadable
+  report elsewhere never turn it off. When the runs of the report's group differ, or their
+  comparison is incomplete, the page describes it and lists **investigation notes** (who, when,
+  what; 🔒 Add note), kept with the group's reports. A note records what was found and changes
+  nothing. The registration's message carries the group note and the historical note.
   On a wide screen the note form (Who, What was found, 🔒 Add note) stays at the panel's foot,
   above Register, so it is in view however long the report or the note (What was found grows
   to four lines, then scrolls inside itself).
@@ -2845,7 +2899,7 @@ Every run is shown, newest first. Columns:
   selects by, named under its value (a base's LP accuracy, a task model's pooled MRR, a history
   file's MRR over its top 20). It is never a test result and never shares a column with one;
 - **Recorded tests**: what the ledger beside the checkpoint holds, as a state ("none in
-  ledger", "no ledger", "3 · 1 contested", …), never a number of a result.
+  ledger", "no ledger", "3 · runs differ for 1", …), never a number of a result.
 
 **Listing opens every checkpoint of the workspace**, so the list is an operator control (§4.13).
 Since M5-3 the server reads each checkpoint file once and again only when it changes (its
@@ -2876,10 +2930,14 @@ card, any warning, and two segments:
   then Mode D's). Each row gives the cohort version and its role, the mode's MRR and Hits@10 named
   in full in the header (Mode C MRR (untruncated) and Hits@10; Mode D's over the import-eligible
   cases), coverage with every exclusion (Mode D's as the import-eligible cases reached), and
-  `registered #N` or amber `contested #N` with what the runs disagree on (or "contested status
-  cannot be checked", never shown as uncontested), deterministic on or off; then the
-  relations, the record's other metrics, R10 as states (*unverifiable* is a reason, never 0), the
-  environment, the dataset and the registration;
+  `registered #N`, or amber `runs differ #N` with "runs under these conditions differ —
+  investigate" and what differs (or "comparison incomplete", never shown as agreeing),
+  deterministic on or off, the reports merged into it before each run had its own record when
+  there are any, and "possible overlap with record N (not recorded)" between such a record and a
+  named run; then the relations, the record's other metrics, R10 as states (*unverifiable* is a
+  reason, never 0), the environment, the dataset and the registration with its run ("not
+  recorded" for a record written before each run had its own record). Every record is shown;
+  none is hidden or ordered out by these descriptions;
 - **Usage history**: the entries that name this checkpoint in every listed cohort version's
   usage history, newest first: test runs and registrations, and any model load kept from before
   K8-6d, shown as recorded ("ordered by" its metric's name, and its scoring semantics).

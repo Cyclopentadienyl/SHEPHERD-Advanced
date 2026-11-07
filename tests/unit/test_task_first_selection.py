@@ -613,11 +613,12 @@ def test_a_ledger_does_not_change_what_automatic_selection_chooses(service):
 
     without = chosen()
     ledger = empty_ledger()
-    for path, pooled_mrr in ((other, 0.99), (best, 0.01)):
+    for n, (path, pooled_mrr) in enumerate(((other, 0.99), (best, 0.01)), start=1):
         report = registered_report(metrics={"pooled_mrr": pooled_mrr}, **disease_semantics(32))
         report["manifest"]["artifact_digests"]["checkpoint"] = file_sha256(path)
         digest = hashlib.sha256(json.dumps(report, sort_keys=True).encode()).hexdigest()
-        ledger = append_record(ledger, build_record(report, digest),
+        run_id = f"20261020T090000Z-{file_sha256(path)[:12]}-0000000{n}"
+        ledger = append_record(ledger, build_record(report, digest), run_id=run_id,
                                registered_at="2026-10-20T09:00:00Z")[1]
     write_ledger(best.parent / LEDGER_FILENAME, ledger, None)
     tested = {record["checkpoint_digest"]: record["metrics"]["pooled_mrr"]

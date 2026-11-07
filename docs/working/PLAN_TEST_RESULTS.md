@@ -609,6 +609,15 @@ the Load control are M5-2's (done: §6, "M5's boundaries", Model Management as i
 
 ### D5 — The checkbox, reports and records
 
+> **Note (2026-11-07, K8-6r.2, policy rev 16).** The blocking rules below are history. A key whose
+> runs disagree no longer blocks anything, and "cannot be checked" refuses nothing: every valid run
+> is registered as its own record, naming its run (`run_id`), and runs under one key that differ
+> are kept and described ("runs under these conditions differ — investigate"). The state names
+> `uncontested`, `contested` and `cannot_be_checked` stay as values that only describe. A
+> registration reads only the run it registers. The ledger is schema 4 since then (schema 3 is
+> still read; §5's schema-3 passages are history too). The current rules:
+> `docs/DISEASE_SCORER_POLICY.md` rev 16 and `deployment-guide.en.md` §4.9.
+
 The owner's semantics, followed as stated:
 
 - **Every run keeps its report**, checked or not. The report is the measurement's full output:

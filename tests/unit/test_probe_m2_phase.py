@@ -871,8 +871,10 @@ def test_the_m4_evidence_checks_fire(tmp_path):
     """The checks T2, T5, RT2 and RT3 rest on, each shown to fail: ranks that
     are not the bytes the report names, a ledger record from another report or
     a second record, and a view that shows another report's record or none, or
-    the record with a D5 state other than uncontested (root-cause round,
-    INT-1: before it, "cannot_be_checked" passed)."""
+    the record with a group description other than uncontested (root-cause round,
+    INT-1: before it, "cannot_be_checked" passed); a record that names no run,
+    a ledger that is not schema 4 from record 1, and a view without the
+    record's run or with an overlap (K8-6r.2)."""
     import json
     from types import SimpleNamespace
 
@@ -887,15 +889,26 @@ def test_the_m4_evidence_checks_fire(tmp_path):
 
     record = {"checkpoint_digest": "c", "cohort_digest": "v", "source_artifact_digest": "r",
               "corroborating_reports": [], "registration": {"sequence": 1},
-              "cohort": {"label": "l", "role": "o"}, "n_ranked": 1}
+              "cohort": {"label": "l", "role": "o"}, "n_ranked": 1,
+              "run_id": "20261107T080000Z-0123456789ab-01234567"}
     version = SimpleNamespace(identity=SimpleNamespace(sha256="v"))
 
-    def ledger(*records):
+    def ledger(*records, schema=(4, 1)):
+        head = {"schema_version": schema[0]}
+        if schema[1] is not None:
+            head["run_identity_from_sequence"] = schema[1]
         (tmp_path / "evaluations.json").write_text(
-            json.dumps({"schema_version": 3, "records": list(records)}))
+            json.dumps({**head, "records": list(records)}))
 
     ledger(record)
     assert probe._the_record(tmp_path, SimpleNamespace(sha256="r"), "c", version)[0] == record
+    ledger({k: v for k, v in record.items() if k != "run_id"})
+    with pytest.raises(AssertionError, match="does not name the run"):
+        probe._the_record(tmp_path, SimpleNamespace(sha256="r"), "c", version)
+    ledger(record, schema=(3, None))
+    with pytest.raises(AssertionError, match="not schema 4"):
+        probe._the_record(tmp_path, SimpleNamespace(sha256="r"), "c", version)
+    ledger(record)
     with pytest.raises(AssertionError, match="not built from the kept report's bytes"):
         probe._the_record(tmp_path, SimpleNamespace(sha256="another"), "c", version)
     ledger(record, dict(record, cohort_digest="w"))
@@ -905,7 +918,7 @@ def test_the_m4_evidence_checks_fire(tmp_path):
     view = {"source_artifact_digest": "r", "registration": {"sequence": 1},
             "cohort": {"label": "l", "role": "o"}, "n_ranked": 1,
             "r10": {"validation": {"evidence": {"state": "found"}}},
-            "environment_class": "CPU",
+            "environment_class": "CPU", "run_id": record["run_id"], "historical_overlap": [],
             "contest": {"state": "uncontested", "differing": [], "runs": []}}
     answer = {"state": "records", "checkpoint_sha256": "c", "ledger": {"sha256": "L"},
               "records": [view], "records_not_shown": 0}
@@ -920,12 +933,14 @@ def test_the_m4_evidence_checks_fire(tmp_path):
          "as not found"),
         (dict(answer, records=[dict(view, contest={"state": "cannot_be_checked",
                                                    "differing": [], "runs": []})]),
-         "D5 state as cannot_be_checked"),
+         "group description as cannot_be_checked"),
         (dict(answer, records=[dict(view, contest={"state": "contested", "differing": ["mrr"],
                                                    "runs": []})]),
-         "D5 state as contested"),
+         "group description as contested"),
         (dict(answer, records=[{k: v for k, v in view.items() if k != "contest"}]),
-         "D5 state as None"),
+         "group description as None"),
+        (dict(answer, records=[dict(view, run_id=None)]), "does not show the run"),
+        (dict(answer, records=[dict(view, historical_overlap=[2])]), "shows an overlap"),
     ):
         with pytest.raises(AssertionError, match=message):
             probe._the_view_shows(broken, record, "L", ("validation",))

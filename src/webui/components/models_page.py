@@ -3,7 +3,8 @@ Research › Evaluate › Models: the research preset of the shared model list (
 ========================================================================================
 `docs/working/PLAN_TEST_RESULTS.md` §6, "M5's boundaries" (Model Management on
 the shared model list, Trainer validation and each cohort's Mode C results kept
-apart), D5 (contested records) and D8 (the list is an operator control). D4's
+apart), D5 (every run's record, each with its run; runs under one condition
+group that differ are described) and D8 (the list is an operator control). D4's
 ordering by test score retired in K8-6d, with its role list, its Mode C rule and
 its one record per checkpoint: no order ranks a model by a test score.
 
@@ -43,8 +44,11 @@ metric on val, never beside a Mode C number), Model Facts' warnings, and two
 in-page segments: "Recorded test results" (every record its ledger holds, one
 table per mode, as the API's record view shows a record: its mode's label, coverage with every
 exclusion, relations, R10 as states with counts only where the state has one,
-so *unverifiable* is a word and never 0, environment, registration; contested or
-"contested status cannot be checked" per record, never uncontested by default)
+so *unverifiable* is a word and never 0, environment, registration and its
+run, or "not recorded" for a record merged before each run had its own record;
+a possible overlap between such a record and a named run; "runs under these
+conditions differ — investigate" or "comparison incomplete" per record, never
+agreeing by default, and never hiding or ordering out a record)
 and "Usage history" (the entries of every listed cohort version's usage history
 that name this checkpoint, newest first, each shown as it was recorded).
 
@@ -53,10 +57,10 @@ refuses gets no list: the page says why (the three conditions of an operator
 request) and shows "Recorded test results of the model in use", read by the
 API's own read-only route function (`get_loaded_model_evaluations`): the ledger
 beside the served checkpoint, filtered by the served digest, **opening no
-checkpoint**, with each record's contested state as that route answers it (the
-one implementation, `record_states.contest_states`; never computed again here,
-so this view and an API client cannot disagree). Its reasons name no server
-path.
+checkpoint**, with each record's run and group description as that route
+answers them (the one implementation, `record_states.contest_states`; never
+computed again here, so this view and an API client cannot disagree). Its
+reasons name no server path.
 
 **Per browser session:** the page's data, its controls and the selection are
 `gr.State` or component values; nothing here is module state. Nothing ticks: the
@@ -188,11 +192,12 @@ PAGE_HELP = {
         "• By family: each base, then its finetuned models.",
     ),
     "models-contested": (
-        "Contested",
-        "Two or more reports kept under this record's key in the cohort version's report store "
-        "disagree (D5). No report under the key can be registered while they do. Investigation "
-        "notes are kept with the reports (Test page); they record what was found and never "
-        "lift the block.",
+        "Runs differ",
+        "Runs kept under this record's conditions in the cohort version's report store have "
+        "results that differ. Every run is kept as recorded, and each can be registered: "
+        "investigate the difference, comparing environment facts first. When deterministic "
+        "algorithms were on, the runs were expected to agree. Investigation notes are kept "
+        "with the reports (Test page); they record what was found and change nothing.",
     ),
     "models-usage": (
         "Usage history",
@@ -414,8 +419,9 @@ def read_page(listing: Mapping[str, Any], *, environ: Optional[Mapping[str, str]
               ) -> Dict[str, Any]:
     """The page's data for one operator listing, read once per listing: the
     cohort versions (WP1's list) and the usage history entries that name a
-    listed checkpoint; each listed checkpoint's ledger records and every record
-    key's contested state come from the listing, which read them for its rows.
+    listed checkpoint; each listed checkpoint's ledger records (with each
+    record's run) and every record group's description come from the listing,
+    which read them for its rows.
     Plain data for a `gr.State`."""
     data: Dict[str, Any] = {"listing_key": listing_key(listing), "readonly": False}
     try:
@@ -424,8 +430,8 @@ def read_page(listing: Mapping[str, Any], *, environ: Optional[Mapping[str, str]
         logger.exception("The cohort versions could not be listed")
         data.update({"versions": [], "problem": "the cohort versions could not be listed"})
     items = list(listing.get("items") or [])
-    # The ledgers beside the listed checkpoints and their records' contested
-    # states, as the shared listing read them once for its own rows
+    # The ledgers beside the listed checkpoints and their records' group
+    # descriptions, as the shared listing read them once for its own rows
     # (`model_list.list_models`): never read a second time here.
     data["ledgers"] = dict(listing.get("ledgers") or {})
     data["contest"] = dict(listing.get("contest") or {})
@@ -439,7 +445,7 @@ def _route_records() -> Dict[str, Any]:
     """The API's read-only route for the served model's recorded results
     (`get_loaded_model_evaluations`), called in this process on an event loop
     of its own: the ledger beside the served checkpoint, filtered by the served
-    digest, opening no checkpoint, each record with its D5 state. The handler
+    digest, opening no checkpoint, each record with its run and group description. The handler
     takes the served identity before its one ``await``, which reads the files
     in the threadpool, and runs to completion here."""
     from fastapi.encoders import jsonable_encoder
@@ -452,7 +458,7 @@ def _route_records() -> Dict[str, Any]:
 def read_readonly() -> Dict[str, Any]:
     """The read-only view's data: the status (for the served digest and the
     time it was read), the route's answer for the served model, and each of its
-    records' D5 states **as the route answered them** (with no problem text: no
+    records' group descriptions **as the route answered them** (with no problem text: no
     server path reaches a read-only request), read with the service's own
     settings."""
     data: Dict[str, Any] = {"readonly": True, "listing_key": None}
@@ -467,11 +473,11 @@ def read_readonly() -> Dict[str, Any]:
         answer = {"state": "unavailable"}
     data["answer"] = answer
     records = answer.get("records") if isinstance(answer.get("records"), list) else []
-    # **Each record's D5 state as the route answered it** (`record_states.
-    # contest_states`, the one implementation), never computed a second time
-    # here, so this view and an API client cannot disagree (BACKLOG 36). A
-    # record without one reads "cannot be checked" where it is shown
-    # (`contest_html`), never uncontested. The route gives null for every value
+    # **Each record's group description as the route answered it**
+    # (`record_states.contest_states`, the one implementation), never computed
+    # a second time here, so this view and an API client cannot disagree
+    # (BACKLOG 36). A record without one reads "comparison incomplete" where it
+    # is shown (`contest_html`), never agreeing. The route gives null for every value
     # that is not a finite number, so it is passed on as NaN and shown "not a
     # finite number", never "not reported": the report may hold NaN or text.
     contest: Dict[str, Dict[str, Any]] = {}
@@ -502,19 +508,31 @@ def route_record_key(record: Mapping[str, Any], checkpoint_sha: Any
 # ---------------------------------------------------------------------------
 # One record, as a person reads it
 # ---------------------------------------------------------------------------
-def record_view(record: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
+def record_view(record: Mapping[str, Any], reading: Optional[Sequence[Any]] = None, *,
+                ledger: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """A ledger record as the API's record view (`RecordView`: aggregates and
-    digests only, every field checked), plus what the page needs beside it: the
-    key (D5), the device and whether deterministic algorithms were on. None when the
-    record does not have the shape registration writes (it is counted, never
-    shown half-read)."""
+    digests only, every field checked; its run and possible overlaps), plus what
+    the page needs beside it: the condition group, the device and whether
+    deterministic algorithms were on. `reading` is the record's
+    ``[run_id, historical, problem, overlaps]`` as its ledger's boundary reads it
+    (`model_list.ledger_records`). None when the record does not have the shape
+    registration writes or its run identity cannot be read (it is counted,
+    never shown half-read, never shown as historical), and the server's log
+    says why, naming `ledger` (the file it was read from) when given, as the
+    API's route logs a record it does not show."""
     from src.api.routes.evaluations import _record_view
-    from src.evaluation.sidecar import record_key
+    from src.evaluation.sidecar import RecordIdentity, record_key
 
+    identity, overlaps = None, ()
+    if reading is not None:
+        run_id, historical, problem, found = reading
+        identity, overlaps = RecordIdentity(run_id, bool(historical), problem), tuple(found)
     try:
-        view = _record_view(dict(record)).model_dump(mode="json")
+        view = _record_view(dict(record), identity, overlaps).model_dump(mode="json")
         key = record_key(dict(record))
-    except ValueError:
+    except ValueError as exc:
+        logger.warning("A ledger record%s is not shown: %s",
+                       f" in {ledger}" if ledger else "", exc)
         return None
     regime = record.get("regime") if isinstance(record.get("regime"), Mapping) else {}
     flag = regime.get("deterministic_algorithms")
@@ -644,7 +662,7 @@ def r10_html(r10: Any) -> str:
 
 
 def _contested_value(name: str, value: Any) -> str:
-    """A disagreeing run's value as `contest_html` shows it: null is "not
+    """A differing run's value as `contest_html` shows it: null is "not
     reported"; a value that is not a finite number (NaN, infinity, text, an
     object, an integer too large for a float: a hand edit) is "not a finite
     number", never formatted as one."""
@@ -660,11 +678,13 @@ def _contested_value(name: str, value: Any) -> str:
 
 
 def contest_html(state: Optional[Mapping[str, Any]], *, mode: Optional[str]) -> str:
-    """A record's D5 state beside it: contested (with what the runs disagree on,
-    each metric named in the record's `mode`, which every caller gives: no mode
-    is assumed) or "cannot be checked"; nothing for an uncontested key."""
+    """How a record's condition group compares, beside it: "runs under these
+    conditions differ — investigate" (with what differs, each metric named in
+    the record's `mode`, which every caller gives: no mode is assumed) or
+    "comparison incomplete"; nothing when the runs agree. A description: it
+    hides and refuses nothing."""
     if state is None:
-        return ('<div class="shep-mp-delta shep-muted">contested status cannot be checked: it was '
+        return ('<div class="shep-mp-delta shep-muted">comparison incomplete: it was '
                 'not read</div>')
     kind = state.get("state")
     if kind == "uncontested":
@@ -678,20 +698,52 @@ def contest_html(state: Optional[Mapping[str, Any]], *, mode: Optional[str]) -> 
                        for run in state.get("runs") or [] if name in (run.get("values") or {})]
             if per_run:
                 values.append(f"{metric_label(name, mode)} " + " vs ".join(per_run))
-        what = "; ".join(values) or (" · ".join(str(n) for n in names) + " differ")
-        return (f'<div class="shep-mp-delta shep-amber-t">runs disagree — investigate: '
-                f'{r.e(what)}</div>')
+        what = "; ".join(values) or (", ".join(str(n) for n in names) + " differ")
+        return (f'<div class="shep-mp-delta shep-amber-t">runs under these conditions differ — '
+                f'investigate: {r.e(what)}</div>')
     problems = "; ".join(str(p) for p in state.get("problems") or [])
-    return ('<div class="shep-mp-delta shep-muted">contested status cannot be checked'
+    return ('<div class="shep-mp-delta shep-muted">comparison incomplete'
             + (f": {r.e(r.short_reason(problems, 160))}" if problems else "") + "</div>")
 
 
+def merged_text(view: Mapping[str, Any]) -> Optional[str]:
+    """A record's merged reports, shown only when there are any: "N reports
+    merged into this record before each run had its own record" (K8-6r.2)."""
+    n = view.get("n_corroborating")
+    if not _number(n) or not n:
+        return None
+    return (f"{n} report{'s' if n != 1 else ''} merged into this record before each run had "
+            "its own record")
+
+
+def overlap_text(view: Mapping[str, Any]) -> Optional[str]:
+    """"possible overlap with record N (not recorded)": the records this one
+    may be one execution with (`RecordView.historical_overlap`), never
+    confirmed; None when there are none."""
+    found = [n for n in view.get("historical_overlap") or [] if _number(n)]
+    if not found:
+        return None
+    many = len(found) != 1
+    return (f"possible overlap with record{'s' if many else ''} "
+            f"{', '.join(str(n) for n in found)} (not recorded)")
+
+
+def run_text(view: Mapping[str, Any]) -> str:
+    """The run a record was registered from, or "not recorded" for a record
+    merged before each run had its own record."""
+    run_id = view.get("run_id")
+    return f"run {run_id}" if isinstance(run_id, str) and run_id else "run not recorded"
+
+
 def _record_cell(view: Mapping[str, Any], state: Optional[Mapping[str, Any]]) -> str:
+    """The record's sequence and its group's description: an amber "runs
+    differ" chip asks for attention and blocks nothing; the merged reports and a
+    possible overlap with another record, when there are any."""
     sequence = _get(view, "registration", "sequence")
     kind = (state or {}).get("state")
     if kind == "contested":
-        chip = (r.chip(f"contested #{sequence}", "amber")
-                + help_button("models-contested", "Contested"))
+        chip = (r.chip(f"runs differ #{sequence}", "amber")
+                + help_button("models-contested", "Runs differ"))
     elif kind == "uncontested":
         chip = r.chip(f"registered #{sequence}", "ok")
     else:
@@ -699,10 +751,10 @@ def _record_cell(view: Mapping[str, Any], state: Optional[Mapping[str, Any]]) ->
     determinism = ("deterministic on" if view.get("deterministic") is True else
                    "deterministic off" if view.get("deterministic") is False else
                    "determinism not read")
-    n = view.get("n_corroborating")
-    corroborating = (f'<span class="shep-sub">{r.e(n)} corroborating report'
-                     f'{"s" if n != 1 else ""}</span>' if _number(n) and n else "")
-    parts = [f'{chip} <span class="shep-sub">{r.e(determinism)}</span> {corroborating}']
+    parts = [f'{chip} <span class="shep-sub">{r.e(determinism)}</span>']
+    for text in (merged_text(view), overlap_text(view)):
+        if text:
+            parts.append(f'<div class="shep-sub">{r.e(text)}</div>')
     parts.append(contest_html(state, mode=record_mode(view)))
     return "".join(parts)
 
@@ -759,13 +811,11 @@ def _mode_table(mode: Optional[str], views: Sequence[Mapping[str, Any]],
             environment += (f" · GPU {gpu.get('name') or 'name not read'}, driver "
                             f"{gpu.get('driver') or 'not read'}")
         origin = view.get("dataset_origin")
-        n = view.get("n_corroborating")
-        corroborating = ("no corroborating report" if n == 0 else
-                         f"{n} corroborating report{'s' if n != 1 else ''}" if _number(n)
-                         else "corroborating reports not reported")
+        # The record's run once, here; its merged reports and overlaps are in
+        # the Record cell (the skill's rule 1.2).
         registration = (f"Registered #{_get(view, 'registration', 'sequence')} at "
-                        f"{_utc_text(_get(view, 'registration', 'registered_at'))} · "
-                        f"{corroborating} · from report {r.short_hex(view.get('source'))}")
+                        f"{_utc_text(_get(view, 'registration', 'registered_at'))} from "
+                        f"{run_text(view)}, report {r.short_hex(view.get('source'))}")
         more = (f'<tr class="shep-mp-more"><td colspan="5">'
                 f'<span class="shep-mp-ln">{relations_html(view.get("relations"))}'
                 f'{" · " + r.e(" · ".join(others)) if others else ""}{over}</span>'
@@ -894,8 +944,8 @@ def records_block_html(views: Sequence[Mapping[str, Any]], contest: Mapping[str,
         many = not_shown != 1
         parts.append(f'<p class="shep-mp-p shep-amber-t">{not_shown} record{"s" if many else ""} '
                      f'for these weights {"are" if many else "is"} not shown: '
-                     f'{"they do" if many else "it does"} not have the shape registration writes '
-                     "(the server's log says why).</p>")
+                     f'{"they do" if many else "it does"} not have the shape registration writes, '
+                     "or the run identity cannot be read (the server's log says why).</p>")
     return "".join(parts)
 
 
@@ -1203,7 +1253,7 @@ def detail_parts(listing: Mapping[str, Any], data: Mapping[str, Any], key: Any,
     records, count, contested = _records_for_item(ledger, data)
     usage, n_usage = usage_html(item, data)
     seg_records = f"Recorded test results · {count}" + (
-        f" · {contested} contested" if contested else "")
+        f" ({contested} where runs differ)" if contested else "")
     return {"header": header, "top": top, "records": records, "usage": usage,
             "seg": [(seg_records, RECORDS), (f"Usage history · {n_usage}", USAGE)]}
 
@@ -1226,8 +1276,9 @@ def _records_for_item(ledger: Optional[Mapping[str, Any]], data: Mapping[str, An
     if ledger["state"] == "none":
         return f'<p class="shep-mp-p">{r.e(RECORD_ABSENCE)}</p>', 0, 0
     views, not_shown = [], 0
-    for record in ledger["records"]:
-        view = record_view(record)
+    readings = ledger.get("readings") or [None] * len(ledger["records"])
+    for record, reading in zip(ledger["records"], readings):
+        view = record_view(record, reading, ledger=ledger.get("ledger"))
         if view is None:
             not_shown += 1
         else:
@@ -1313,8 +1364,8 @@ def usage_html(item: Mapping[str, Any], data: Mapping[str, Any]) -> Tuple[str, i
 
 def readonly_parts(data: Mapping[str, Any]) -> Dict[str, Any]:
     """"Recorded test results of the model in use": the served digest (from
-    the status), then the route's records for it, each with its contested
-    state. Nothing here opened a checkpoint."""
+    the status), then the route's records for it, each with its run and its
+    group's description. Nothing here opened a checkpoint."""
     header = (f'<div class="shep-panel-hd"><h2>{r.e(READONLY_TITLE)}</h2>'
               f'<span class="shep-panel-right">{r.e(READONLY_WHERE)}</span></div>')
     answer = data.get("answer") or {}

@@ -3270,8 +3270,15 @@ def _the_record(ledger_dir: Path, report_identity: Any, checkpoint_sha256: str,
                 version: Any) -> Tuple[Dict[str, Any], str]:
     """The ledger beside the checkpoint, through the one ledger reader, holding
     exactly one record: this checkpoint's, on this version, built from the kept
-    report's bytes. Returns the record and the digest of the ledger read."""
-    from src.evaluation.sidecar import LEDGER_FILENAME, read_ledger
+    report's bytes, naming the run it was registered from in a schema-4 ledger
+    whose run identity starts at that record (K8-6r.2). Returns the record and
+    the digest of the ledger read."""
+    from src.evaluation.sidecar import (
+        LEDGER_FILENAME,
+        RUN_ID_PATTERN,
+        RUN_IDENTITY_FROM_SEQUENCE,
+        read_ledger,
+    )
 
     ledger, ledger_sha256 = read_ledger(ledger_dir / LEDGER_FILENAME)
     assert ledger_sha256 is not None, "no ledger was written beside the checkpoint"
@@ -3285,6 +3292,10 @@ def _the_record(ledger_dir: Path, report_identity: Any, checkpoint_sha256: str,
     assert record.get("source_artifact_digest") == report_identity.sha256, (
         "the record was not built from the kept report's bytes")
     assert record.get("corroborating_reports") == [], "the record lists corroborating reports"
+    assert isinstance(record.get("run_id"), str) and RUN_ID_PATTERN.fullmatch(record["run_id"]), (
+        "the record does not name the run it was registered from")
+    assert (ledger.get("schema_version"), ledger.get(RUN_IDENTITY_FROM_SEQUENCE)) == (4, 1), (
+        "the ledger a registration created is not schema 4 with run identity from record 1")
     return record, ledger_sha256
 
 
@@ -3368,7 +3379,7 @@ def _serve_and_view(data_dir: Path, checkpoint: Path, expected_sha256: str,
     as the dashboard's Load sends path, digest and task), then the status and the loaded model's recorded results read as the
     Diagnosis panel reads them: two GETs on the application, status first.
     Called inside an M4 flow, so the route reads the probe's registry as the
-    deployment's (`_registry_setting`), and each record's D5 state is from the
+    deployment's (`_registry_setting`), and each record's group description is from the
     probe's report store.
 
     Returns the digest the status reports for the served checkpoint, which
@@ -3407,7 +3418,7 @@ def _serve_and_view(data_dir: Path, checkpoint: Path, expected_sha256: str,
     return served["sha256"], answer
 
 
-#: A record's D5 state when the one report its key has in the store is the one
+#: A record's group description when the one report its key has in the store is the one
 #: it was built from (`GET /api/v1/evaluations/loaded-model`, `contest`).
 UNCONTESTED = {"state": "uncontested", "differing": [], "runs": []}
 
@@ -3429,6 +3440,8 @@ def _the_view_shows(answer: Dict[str, Any], record: Dict[str, Any], ledger_sha25
     assert view["source_artifact_digest"] == record["source_artifact_digest"], (
         "the view shows a record built from another report")
     assert view["registration"]["sequence"] == record["registration"]["sequence"]
+    assert (view.get("run_id"), view.get("historical_overlap")) == (record["run_id"], []), (
+        "the view does not show the run the record names, or shows an overlap")
     assert (view["cohort"]["label"], view["cohort"]["role"], view["n_ranked"]) == (
         record["cohort"]["label"], record["cohort"]["role"], record["n_ranked"])
     for scope in scopes:
@@ -3438,7 +3451,8 @@ def _the_view_shows(answer: Dict[str, Any], record: Dict[str, Any], ledger_sha25
     # reads the probe's registry, so the record's state is from its store.
     contest = view.get("contest") or {}
     assert contest == UNCONTESTED, (
-        f"the view shows the record's D5 state as {contest.get('state')}, not uncontested")
+        f"the view shows the record's group description as {contest.get('state')}, not "
+        "uncontested")
     return {"state": answer["state"], "checkpoint_sha256": answer["checkpoint_sha256"],
             "records": len(shown), "source_artifact_digest": view["source_artifact_digest"],
             "registration_sequence": view["registration"]["sequence"],
@@ -3567,7 +3581,7 @@ def _registry_setting(registry: Path):
     in the deployment's registry (BACKLOG 37), and for M4's probes that is the
     probe's. **Opened once around each M4 flow** (T1-T6, RT1-RT3; root-cause
     round, INT-1), never per call, so every step of the flow that reads the
-    setting inherits it, the loaded-model route's D5 state included, whatever
+    setting inherits it, the loaded-model route's group description included, whatever
     the operator's shell names."""
     current = {name: os.environ.get(name) for name in _M5_SETTINGS}
     with _deployment_settings({**current, "SHEPHERD_REGISTRY": str(registry)}):
@@ -6074,7 +6088,7 @@ def phase_m2_demo(
     # **The probe's registry is the deployment's for the whole flow** (root-cause
     # round, INT-1), set once here as phases M and R set their GPU lock, so every
     # step that reads SHEPHERD_REGISTRY inherits it: measure_scorer --cohort,
-    # record_evaluation and the loaded-model route's D5 state alike.
+    # record_evaluation and the loaded-model route's group description alike.
     with _registry_setting(registry):
         report.run("T1", "m2",
                    "M4: an import preview writes nothing and its id commits a version bound "

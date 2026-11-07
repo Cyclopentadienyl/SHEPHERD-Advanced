@@ -18,7 +18,7 @@ model's record admits.
 **Mode D** (Batch 3's measurement of the served ranking) was removed in K7: it
 no longer runs, and its kept reports and records are read by the shared
 readers (policy rev 15). A kept Mode D report registers by the general rules,
-under its own mode, and a repeat answers `already_registered`.
+under its own mode, and the same run's report again answers `already_registered`.
 
 **A thin CLI.** Argument parsing, one read of each input, manifest assembly, one
 call into the protocol's evaluator (`task_measurement.TASK_RUNS`), and
@@ -1279,8 +1279,7 @@ def register_later_command(report_path: Path, checkpoint: Path) -> str:
 def _registration_outcome(requested: bool, **fields: Any) -> Dict[str, Any]:
     """The ``registration`` block of the `--outcome` file. Before an attempt it
     says so (``registered`` is `None`: not yet established); without
-    `--record` it says the report was not registered because none was asked,
-    and ``why`` may say what a later registration would meet
+    `--record` it says the report was not registered because none was asked
     (`_offer_later_registration`)."""
     if not requested:
         return {"requested": False, "registered": False, "outcome": "not_requested",
@@ -1310,8 +1309,7 @@ def _register(
 
     A refusal returns `EXIT_NOT_REGISTERED` with the reason. When the report is
     still the one published, it is kept and the command that registers it later
-    is printed -- unless runs under its key disagree (`RunsDisagree`, D5), when
-    no later registration under that key would be accepted either, or its
+    is printed -- unless its
     registry is no longer the deployment's (`NotFromTheDeploymentRegistry`: the
     deployment's `SHEPHERD_REGISTRY` resolves elsewhere than when the run was
     allowed to start, the link it names retargeted during the run, say; the run
@@ -1323,14 +1321,21 @@ def _register(
     may be gone, and the operator is told to re-measure. A registration that
     stands although the version's usage history could not be appended says so
     on stderr.
+
+    **A registered run prints two notes that decide nothing** (policy rev 16,
+    K8-6r.2): how its record differs from the other records of its condition
+    group (`group_note`: every run is kept as recorded; deterministic runs that
+    differ are flagged for investigation), and a possible overlap with records
+    merged before each run had its own record (`historical_note`: not
+    confirmed). No other run's report or result refuses this registration.
     """
     from src.evaluation.registration import (
         MeasuredRun,
         NotFromTheDeploymentRegistry,
         RegistrationRefused,
         ReportNotAsPublished,
-        RunsDisagree,
-        corroboration_note,
+        group_note,
+        historical_note,
         register_report,
     )
 
@@ -1345,15 +1350,6 @@ def _register(
             f"\nNOT REGISTERED. {exc}\n"
             "The measurement itself succeeded; nothing at that path is offered for a "
             "later registration in this run's name.",
-            file=sys.stderr,
-        )
-        return EXIT_NOT_REGISTERED, _registration_outcome(
-            True, registered=False, outcome="refused", why=str(exc))
-    except RunsDisagree as exc:
-        print(
-            f"\nNOT REGISTERED. {exc}\n"
-            f"The measurement succeeded and its report is kept at {report_path}, where the "
-            "investigation can read it beside the others.",
             file=sys.stderr,
         )
         return EXIT_NOT_REGISTERED, _registration_outcome(
@@ -1382,13 +1378,11 @@ def _register(
     said = {
         "registered": f"Registered as record {sequence}",
         "already_registered": f"Already held as record {sequence}; nothing written",
-        "corroborated": (f"Agrees with record {sequence}; this report's digest was added to "
-                         "its corroborating reports"),
     }[registered.outcome]
     print(f"\n{said} in {registered.ledger_path}")
-    note = corroboration_note(registered, report_path)
-    if note is not None:
-        print(note)
+    for note in (group_note(registered), historical_note(registered)):
+        if note is not None:
+            print(note)
     why = said
     if registered.usage_history_problem is not None:
         print(f"NOTE: {registered.usage_history_problem}.", file=sys.stderr)
@@ -1398,43 +1392,16 @@ def _register(
         ledger=str(registered.ledger_path), why=why)
 
 
-def _offer_later_registration(
-    inputs: MeasurementInputs, result: ModeResult, report_path: Path
-) -> Dict[str, Any]:
-    """Without `--record`: say the report was not registered and how to
-    register it later -- unless D5 would refuse that now. Returns what the
-    `--outcome` file says about the registration.
+def _offer_later_registration(inputs: MeasurementInputs, report_path: Path) -> Dict[str, Any]:
+    """Without `--record`: say the report was not registered and print the
+    command that registers it later. Returns what the `--outcome` file says
+    about the registration.
 
-    The store is checked under this report's key (`key_refusal`, the check
-    `register_report` makes), so the message stays true: **while runs under
-    the key disagree no register-later command is printed**, as under
-    `--record`, since none would be accepted; while that cannot be checked,
-    the command is printed saying it is refused until it can be. The key is
-    read from the report this run published (`report_key`, which is the
-    record's key for a report `build_record` accepts).
+    **The command is always printed** (policy rev 16, K8-6r.2): a registration
+    reads only the run it registers, so no other run's report or result can
+    refuse it, and nothing is checked here.
     """
-    from src.evaluation.registration import RunsDisagree, key_refusal
-    from src.evaluation.sidecar import report_key
-
     command = register_later_command(report_path, Path(inputs.checkpoint.identity.path))
-    key = report_key(result.to_dict())
-    block = key_refusal(inputs.version, key) if key is not None else None
-    if isinstance(block, RunsDisagree):
-        print(f"\nNot registered (no --record), and {block}\n"
-              f"The report is kept at {report_path}, where the investigation can read it "
-              "beside the others. No register-later command is offered: none would be "
-              "accepted while the runs disagree.\n")
-        return _registration_outcome(False, why=(
-            f"--record was not given, and {block} The report is kept for the "
-            "investigation; no registration under its key is accepted while the runs "
-            "disagree"))
-    if block is not None:
-        print(f"\nNot registered (no --record), and {block}\n"
-              "A later registration is refused until that can be checked; then register it "
-              f"with:\n  {command}\n")
-        return _registration_outcome(False, why=(
-            f"--record was not given; the report is kept for a later registration, which is "
-            f"refused until this can be checked: {block}"))
     print(f"\nNot registered (no --record). Register it with:\n  {command}\n")
     return _registration_outcome(False)
 
@@ -1764,8 +1731,7 @@ def _run(args: argparse.Namespace, *, registry: Optional[Path]) -> int:
                 _flush_stdout()
                 status, registration = _register(report_path, report_sha256, inputs)
             else:
-                status, registration = 0, _offer_later_registration(inputs, result,
-                                                                     report_path)
+                status, registration = 0, _offer_later_registration(inputs, report_path)
             if args.outcome is not None:
                 _write_outcome(args.outcome, complete=True, inputs=inputs, run_id=run_id,
                                report_path=report_path, report_sha256=report_sha256,

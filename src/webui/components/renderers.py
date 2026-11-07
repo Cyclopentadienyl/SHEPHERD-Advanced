@@ -389,11 +389,12 @@ class RecordedTests(NamedTuple):
     """What a checkpoint's ledger records for its weights, as a state (never a
     number of a result): `state` is ``records``, ``none`` (the ledger holds no
     record for these weights), ``no_ledger`` or ``not_read``; `count` the
-    records for these weights; `contested` how many of them are contested in
-    their cohort version's report store, and `unchecked` how many whose state
-    there could not be checked, counted apart, so a known contested record is
-    never hidden by another that cannot be checked (`contested` None: none of
-    them could be checked)."""
+    records for these weights; `contested` how many of them are in a condition
+    group whose runs differ in their cohort version's report store, and
+    `unchecked` how many whose comparison there is incomplete, counted apart, so
+    a known difference is never hidden by a comparison that is incomplete
+    (`contested` None: no comparison was read). Descriptions only: they hide,
+    order or refuse nothing (policy rev 16)."""
 
     state: str
     count: int = 0
@@ -403,9 +404,9 @@ class RecordedTests(NamedTuple):
 
 
 def recorded_tests_text(recorded: Optional[RecordedTests]) -> str:
-    """"Recorded tests: 3 · 1 contested · contested state of 1 not checked":
-    states, never a number of a result; an unchecked record is never shown as
-    uncontested."""
+    """"Recorded tests: 3 · runs differ for 1; comparison incomplete for 1":
+    states, never a number of a result; a record whose comparison is
+    incomplete is never shown as agreeing. One " · " (the skill's §5)."""
     if recorded is None:
         return "Recorded tests: not read"
     if recorded.state == "no_ledger":
@@ -416,13 +417,13 @@ def recorded_tests_text(recorded: Optional[RecordedTests]) -> str:
         return "Recorded tests: none in ledger"
     contested = recorded.contested or 0
     unchecked = recorded.count if recorded.contested is None else recorded.unchecked
-    parts = [f"Recorded tests: {recorded.count}"]
+    notes = []
     if contested:
-        parts.append(f"{contested} contested")
+        notes.append(f"runs differ for {contested}")
     if unchecked:
-        parts.append("contested state not checked" if unchecked >= recorded.count
-                     else f"contested state of {unchecked} not checked")
-    return " · ".join(parts)
+        notes.append("comparison incomplete" if unchecked >= recorded.count
+                     else f"comparison incomplete for {unchecked}")
+    return f"Recorded tests: {recorded.count}" + (f" · {'; '.join(notes)}" if notes else "")
 
 
 #: Run layout keys whose name is not their upper case (a model bundle's

@@ -12,9 +12,11 @@ one gated Load, no second implementation).
 workspace (SPEC_4 C3), so it is an operator control: D8's helper is asked on the
 triggering request first, and a read-only request gets the reason and no list.
 Each row's recorded tests are a state read from the ledger beside the
-checkpoint (`read_ledger`, `records_for`) and, for contested, from the cohort
+checkpoint (`read_ledger`, `records_for`) and, for how each record's condition
+group compares (runs that differ, a comparison incomplete), from the cohort
 version's report store (`record_states.contest_states`, the one implementation
-the API's route shares): never a number of a result. An
+the API's route shares): never a number of a result, and a description that
+hides, orders or refuses nothing. An
 unreadable entry is greyed "metadata not readable · cannot be loaded". "In use"
 is matched by the **full** model fingerprint the status serves and marks the
 checkpoint only.
@@ -130,8 +132,8 @@ from typing import (
 
 import gradio as gr
 
-# D5's state of a record key: one implementation, shared with the API's route
-# (BACKLOG 36).
+# How a record's condition group compares (a description): one implementation,
+# shared with the API's route (BACKLOG 36).
 from src.api.services.record_states import CohortVersions, contest_states, key_text
 from src.api.services.server_lists import record_matches
 from src.core.types import SCORING_MODE_SP_STATES, SCORING_MODE_TASKS, TASK_SCORING_MODES
@@ -236,12 +238,15 @@ def ledger_records(workspace_dir: Path, items: Sequence[Mapping[str, Any]]
     directory) and `records_for`: ``state`` (``records``, ``none``,
     ``no_ledger`` or ``not_read``), the records as the ledger holds them (kept
     on the server, in the session's state; never sent to the browser as they
-    are), ``problem`` (naming the file, never its directory) and ``ledger``
-    (the ledger's resolved path, which only tells two ledgers apart).
+    are), ``readings`` beside them (each record's run as the file's boundary
+    reads it and its possible overlaps, `evaluations.record_reading`, as
+    ``[run_id, historical, problem, overlaps]``), ``problem`` (naming the file,
+    never its directory) and ``ledger`` (the ledger's resolved path, which only
+    tells two ledgers apart).
 
     The checkpoint file is never opened: its path is the run layout's, resolved
     to find the directory its ledger is in, as registration writes it."""
-    from src.api.routes.evaluations import _ledger_problem
+    from src.api.routes.evaluations import _ledger_problem, record_reading
     from src.evaluation.sidecar import LEDGER_FILENAME, read_ledger, records_for
     from src.utils.checkpoint_paths import RUN_CHECKPOINTS_DIRNAME, RUNS_DIRNAME
 
@@ -280,17 +285,21 @@ def ledger_records(workspace_dir: Path, items: Sequence[Mapping[str, Any]]
                         "problem": None}
         else:
             records = records_for(ledger, item["sha256"])
+            reading = record_reading(ledger)
+            readings = [[found.run_id, found.historical, found.problem, list(overlaps)]
+                        for found, overlaps in (reading[id(record)] for record in records)]
             out[key] = {"state": "records" if records else "none", "records": records,
-                        "ledger": str(ledger_path), "problem": None}
+                        "readings": readings, "ledger": str(ledger_path), "problem": None}
     return out
 
 
 def recorded_tests(ledgers: Mapping[str, Mapping[str, Any]],
                    contest: Mapping[str, Mapping[str, Any]]) -> Dict[str, r.RecordedTests]:
     """Each checkpoint's recorded tests as a state, from what `ledger_records`
-    and `contest_states` read: how many records, how many contested and how
-    many whose contested state cannot be checked, counted apart (M5-3 review
-    EVAL-3: one uncheckable record hid a known contested one)."""
+    and `contest_states` read: how many records, how many in a group whose runs
+    differ and how many whose comparison is incomplete, counted apart (M5-3
+    review EVAL-3: one uncheckable record hid a known difference). Counts that
+    describe; nothing is hidden or refused by them."""
     from src.evaluation.sidecar import record_key
 
     out: Dict[str, r.RecordedTests] = {}
@@ -412,7 +421,7 @@ def list_models(workspace: Any, request: Any, *, family: bool = False,
                                          if checkpoints.problem else None))
     if family and checkpoints.available:
         listing["family"] = family_views(chosen, checkpoints, root, environ=environ)
-    # The ledgers beside the checkpoints and their records' contested states,
+    # The ledgers beside the checkpoints and their records' group descriptions,
     # read once for the rows and kept in the listing (server side, in the
     # session's state) for a page that shows them (Models).
     ledgers: Dict[str, Dict[str, Any]] = {}

@@ -291,8 +291,9 @@ def test_the_report_is_registered_beside_the_checkpoint(measured):
     cohort = measured["cohort"]
     ledger = json.loads((cohort.checkpoint.parent / "evaluations.json").read_text())
 
-    assert ledger["schema_version"] == 3
+    assert (ledger["schema_version"], ledger["run_identity_from_sequence"]) == (4, 1)
     (record,) = ledger["records"]
+    assert record["run_id"] == measured["run_dir"].name
     assert record["checkpoint_digest"] == cohort.checkpoint_sha256
     assert record["cohort_digest"] == _sha(cohort.version.directory / "cohort.json")
     assert record["source_artifact_digest"] == _sha(measured["run_dir"] / "report.json")

@@ -86,7 +86,7 @@ def register(registry: Path, checkpoint: Path, report: Dict[str, Any], *,
     ledger_path = Path(checkpoint).resolve().parent / LEDGER_FILENAME
     ledger, digest = read_ledger(ledger_path)
     outcome, updated = append_record(ledger if digest else empty_ledger(), record,
-                                     registered_at=registered_at)
+                                     run_id=path.parent.name, registered_at=registered_at)
     assert outcome == "registered", outcome
     write_ledger(ledger_path, updated, digest)
     held = [r for r in updated["records"]

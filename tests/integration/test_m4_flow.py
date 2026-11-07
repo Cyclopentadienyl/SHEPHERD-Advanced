@@ -279,11 +279,16 @@ def test_registering_the_same_report_again_is_a_no_op(cohort):
     assert _ledger(cohort).read_bytes() == before
 
 
-def test_a_remeasurement_with_other_report_bytes_corroborates(cohort, tmp_path, capsys):
-    """The same checkpoint and version measured from a copy of the workspace: the
-    report's paths differ, its key and every compared field agree, so its digest
-    joins the first record's corroborating reports; no second record."""
+def test_a_remeasurement_with_other_report_bytes_is_a_record_of_its_own_run(
+    cohort, tmp_path, capsys
+):
+    """A2 end to end (K8-6r.2): the same checkpoint and version measured from a
+    copy of the workspace: the report's paths differ and every compared field
+    agrees, and each run is its own record, naming its run; the first record
+    is unchanged and nothing is merged. HEAD: its digest joined the first
+    record's corroborating reports, no second record."""
     assert _measure(cohort, "--record") == 0
+    (first_record,) = _records(cohort)
     copy = tmp_path / "workspace-copy"
     shutil.copytree(cohort.data_dir, copy)
 
@@ -291,10 +296,13 @@ def test_a_remeasurement_with_other_report_bytes_corroborates(cohort, tmp_path, 
 
     first, second = _reports(cohort)
     assert first.read_bytes() != second.read_bytes()
-    (record,) = _records(cohort)
-    assert record["source_artifact_digest"] == _sha(first)
-    assert record["corroborating_reports"] == [_sha(second)]
-    assert "Agrees with record 1" in capsys.readouterr().out
+    records = _records(cohort)
+    assert records[0] == first_record
+    assert [(r["run_id"], r["source_artifact_digest"], r["corroborating_reports"])
+            for r in records] == [(first.parent.name, _sha(first), []),
+                                  (second.parent.name, _sha(second), [])]
+    out = capsys.readouterr().out
+    assert "Registered as record 2" in out and "Runs under these conditions differ" not in out
 
 
 def _beside_in_the_store(report: Path, data: bytes) -> Path:
@@ -309,24 +317,34 @@ def _beside_in_the_store(report: Path, data: bytes) -> Path:
     return run_dir / "report.json"
 
 
-def test_a_contradicting_run_blocks_its_key_and_the_ledger_is_unchanged(cohort):
-    """D5 (since M5-1): a second run under the same key with an edited metric,
-    kept in the store. Registering it is refused ("runs disagree --
-    investigate"), naming the metric, and so is registering the first report
-    again; the ledger keeps its bytes."""
+def test_a_run_whose_value_differs_is_registered_and_described(cohort, caplog):
+    """A1, G4 end to end (K8-6r.2): a second run of the same group with an
+    edited metric, kept in the store, registers through record_evaluation as
+    record 2 naming its run, and the group note names the metric and record 1;
+    registering the first report again writes nothing. HEAD: both refused
+    ("runs disagree -- investigate")."""
+    import logging
+
     assert _measure(cohort, "--record") == 0
     first = _only_report(cohort)
-    before = _ledger(cohort).read_bytes()
+    (first_record,) = _records(cohort)
     edited = json.loads(first.read_text())
     metrics = edited["authoritative_metrics"]
     metrics["pooled_top1"] = 0.5 + metrics["pooled_top1"] / 2
     second = _beside_in_the_store(first, json.dumps(edited).encode("utf-8"))
 
-    for report in (second, first):
-        message = _record_refused(report, cohort.checkpoint.parent)
-        assert "runs disagree — investigate" in message and "pooled_top1" in message
-        assert "Nothing was written" in message
+    with caplog.at_level(logging.INFO):
+        assert _record(second, cohort.checkpoint.parent) == 0
+    said = caplog.text
+    assert "Registered record 2" in said
+    assert (f"Runs under these conditions differ: record 2 (this run) differs from record 1 "
+            f"(run {first.parent.name}) on pooled_top1") in said
+    before = _ledger(cohort).read_bytes()
+    assert _record(first, cohort.checkpoint.parent) == 0
     assert _ledger(cohort).read_bytes() == before
+    records = _records(cohort)
+    assert records[0] == first_record
+    assert [r["run_id"] for r in records] == [first.parent.name, second.parent.name]
 
 
 def test_a_copy_outside_the_store_is_refused_and_the_original_registers(cohort, tmp_path):
@@ -709,14 +727,15 @@ def _record_through(report, flag, named):
     return record_evaluation.main(["--report", str(report), flag, str(named)])
 
 
-def test_a_corroborating_rerun_that_found_r10_evidence_says_the_record_keeps_its_own(
+def test_a_rerun_that_found_r10_evidence_is_its_own_record_with_its_own_r10(
     cohort, tmp_path, capsys
 ):
-    """Finding 3: measured with `--record` from a re-sampled workspace (R10
-    unverifiable), then again with the training workspace as evidence: the
-    second run corroborates, the record keeps its own unverifiable labels, and
-    the console says so, naming the report that holds the labels this run
-    found, rather than reporting plain agreement."""
+    """Finding 3, by run since K8-6r.2 (A2): measured with `--record` from a
+    re-sampled workspace (R10 unverifiable), then again with the training
+    workspace as evidence: the second run is a record of its own, keeping the
+    R10 labels it found, and the first record keeps its own unverifiable
+    labels; nothing is merged. HEAD: the second run was merged into record 1, and its R10
+    was left in its report only."""
     resampled = write_demo_workspace(tmp_path / "resampled", sample_seed=7)
     assert _measure(cohort, "--record", data_dir=resampled) == 0
     capsys.readouterr()
@@ -726,13 +745,12 @@ def test_a_corroborating_rerun_that_found_r10_evidence_says_the_record_keeps_its
 
     out = capsys.readouterr().out
     second = _reports(cohort)[-1]
-    assert "Agrees with record 1" in out
-    assert re.search(
-        r"This report's r10( and environment)? differ from record 1's; they are not "
-        r"compared, so the record keeps its own and this report's are in "
-        + re.escape(str(second)) + r"\.", out), out
-    (record,) = _records(cohort)
-    _unverifiable_everywhere(record["r10"])
+    assert "Registered as record 2" in out
+    first_record, second_record = _records(cohort)
+    _unverifiable_everywhere(first_record["r10"])
+    assert second_record["run_id"] == second.parent.name
+    assert second_record["r10"] == _r10(second)
+    assert second_record["r10"]["training"]["evidence"]["state"] == "found"
     assert _r10(second)["training"]["evidence"]["state"] == "found"
 
 
@@ -799,8 +817,8 @@ def test_a_tampered_samples_file_is_refused_by_digest(cohort):
 
 def test_a_checkpoint_moved_with_unchanged_bytes_keeps_its_records(cohort, tmp_path, capsys):
     """Records are found by digest, not file name: the checkpoint moved with its
-    ledger is found by `--show`, and measuring it from the new place corroborates
-    the record already there."""
+    ledger is found by `--show`, and measuring it from the new place adds the
+    new run's own record beside the one already there (K8-6r.2)."""
     import scripts.record_evaluation as record_evaluation
 
     assert _measure(cohort, "--record") == 0
@@ -814,8 +832,9 @@ def test_a_checkpoint_moved_with_unchanged_bytes_keeps_its_records(cohort, tmp_p
     assert shown["checkpoint_digest"] == cohort.checkpoint_sha256
 
     assert _measure(cohort, "--record", checkpoint=moved / "best.pt") == 0
-    (record,) = json.loads((moved / LEDGER).read_text())["records"]
-    assert len(record["corroborating_reports"]) == 1
+    first, second = json.loads((moved / LEDGER).read_text())["records"]
+    assert first == shown and second["run_id"] != first["run_id"]
+    assert (first["corroborating_reports"], second["corroborating_reports"]) == ([], [])
 
 
 # ---------------------------------------------------------------------------

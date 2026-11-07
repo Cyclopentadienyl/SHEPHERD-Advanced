@@ -549,7 +549,7 @@ def test_reports_whose_modes_are_no_protocol_are_read_as_recorded(tmp_path, monk
         run_id = path.parent.name
         key, problem = scan.run_key(run_id, scan.digests[run_id])
         assert problem is None and key is not None, (mode, problem)
-        assert scan.reports[key][scan.digests[run_id]][1]["scoring"]["mode"] == mode
+        assert scan.reports[key][run_id][1]["scoring"]["mode"] == mode
     assert scan.unplaced == () and scan.unbuilt == {}
 
     # Registered: every one, by the general rules, under its own mode.

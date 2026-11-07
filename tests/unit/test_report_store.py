@@ -1,20 +1,22 @@
-"""The report store (M5-1): disagreement by key, notes and the usage history.
+"""The report store (M5-1): each run listed, each group described, notes and the usage history.
 
 `src/evaluation/report_store.py` (`PLAN_TEST_RESULTS.md` D4, D5 as amended
-2026-10-19). What is pinned here, on reports built by `MeasurementManifest` and
-kept in a store by `tests/fixtures/report_store.py`:
+2026-10-19; policy rev 16 from K8-6r.2). What is pinned here, on reports built
+by `MeasurementManifest` and kept in a store by `tests/fixtures/report_store.py`:
 
-- **a key's state** comes from the ledger's own comparison (`differing_fields`):
-  agreeing reports (and byte-identical copies) are uncontested, any compared
-  field that differs is contested and named, R10 and the environment are not
-  compared; a key no report is under is uncontested;
-- **"cannot be checked", never uncontested**: a report that cannot be read, a
-  report whose key cannot be told, a run directory or ``report.json`` that is a
-  link out of the store leave every key unable to be checked; a report that
-  parses but cannot be compared leaves only its own key so; an interrupted run
-  directory (no ``report.json``) and entries that are not run directories are
-  passed over;
-- a report the caller already read is not read again (`known`);
+- **every run is listed by its id** (``reports[group][run id]``), byte-identical
+  runs included; **a group's description** (machine values that decide
+  nothing) comes from the one comparison (`differing_fields`): agreeing
+  reports are uncontested, any compared field that differs is contested and
+  named with every run carrying a differing report, R10 and the environment
+  are not compared; a group no report is under is uncontested;
+- **the scan lists, it never gates**: a report that cannot be read, a report
+  whose group cannot be told, a run directory or ``report.json`` that is a
+  link out of the store is listed by its run with its own reason only and
+  marks no group; a report that parses but cannot be compared is a note on its
+  own group's description; a store that cannot be listed is said for every
+  group and run; an interrupted run directory (no ``report.json``) and
+  entries that are not run directories are passed over;
 - **investigation notes** are appended with their key, only for a key the store
   holds, and change no state;
 - **the usage history** is append-only, one JSON line per entry, aggregates
@@ -86,13 +88,13 @@ def _key(path: Path):
 # A key's state
 # ---------------------------------------------------------------------------
 def test_the_states_are_the_three_d5_names():
+    """G9 (Decision 3): the names stay as machine values; they describe."""
     assert CONTEST_STATES == ("uncontested", "contested", "cannot_be_checked")
 
 
 def test_agreeing_reports_are_uncontested_whatever_their_r10_and_environment(tmp_path):
-    """Corroboration in the ledger is agreement in the store: R10 and the
-    environment are not compared; paths differ; a byte-identical copy is one
-    report."""
+    """R10 and the environment are not compared; paths differ; a byte-identical
+    copy is compared once and still listed as its own run (K8-6r.2)."""
     first = _stored(tmp_path)
     second = _stored(tmp_path, data_dir="/elsewhere", r10=r10_block(training_state="overlap"),
                      environment=environment_block(driver="999.0"))
@@ -100,17 +102,27 @@ def test_agreeing_reports_are_uncontested_whatever_their_r10_and_environment(tmp
     copy.parent.mkdir()
     copy.write_bytes(first.read_bytes())
 
-    status = scan_report_store(version_of(first)).status(_key(first))
+    scan = scan_report_store(version_of(first))
+    status = scan.status(_key(first))
 
     assert status.state == "uncontested"
     assert status.run_ids == tuple(sorted([first.parent.name, second.parent.name,
                                            copy.parent.name])), "every run, copies included"
     assert status.differing == () and status.problems == ()
+    runs = scan.reports[_key(first)]
+    assert sorted(runs) == sorted([first.parent.name, second.parent.name, copy.parent.name])
+    assert all(runs[run][0] == run for run in runs), "each run named by its own id"
+    assert runs[copy.parent.name][1] == runs[first.parent.name][1], "the copy's record"
 
 
 def test_reports_that_differ_on_a_compared_field_are_contested_and_named(tmp_path):
+    """Every run carrying a differing report is named, a byte-identical copy
+    included (K8-6r.2 (e)); the description refuses nothing."""
     first = _stored(tmp_path)
     second = _stored(tmp_path, metrics=OTHER_METRICS)
+    copy = first.parents[1] / new_run_id("c" * 64) / "report.json"
+    copy.parent.mkdir()
+    copy.write_bytes(second.read_bytes())
     other_key = _stored(tmp_path, batch_size=8, metrics=OTHER_METRICS)
 
     scan = scan_report_store(version_of(first))
@@ -118,7 +130,8 @@ def test_reports_that_differ_on_a_compared_field_are_contested_and_named(tmp_pat
 
     assert status.state == scan.state(_key(first)) == "contested"
     assert status.differing == ("pooled_mrr", "pooled_top1")
-    assert status.disagreeing_runs == tuple(sorted([first.parent.name, second.parent.name]))
+    assert status.disagreeing_runs == tuple(sorted([first.parent.name, second.parent.name,
+                                                    copy.parent.name]))
     assert scan.state(_key(other_key)) == "uncontested", "another batch size is another key"
 
 
@@ -140,9 +153,12 @@ def test_a_key_no_report_is_under_is_uncontested(tmp_path):
 
 
 @pytest.mark.parametrize("damage", ["not_json", "not_a_report", "unreadable_run_dir_link"])
-def test_a_report_whose_key_cannot_be_told_leaves_every_key_unable_to_be_checked(
+def test_a_report_whose_key_cannot_be_told_is_listed_by_its_run_and_marks_no_group(
     tmp_path, damage
 ):
+    """K8-6r.2 (F2's root): such a report is listed by its run with its own
+    reason only; every group's description stays as it was. HEAD: it left every
+    key of the version ``cannot_be_checked``."""
     first = _stored(tmp_path)
     version = version_of(first)
     if damage == "unreadable_run_dir_link":
@@ -151,16 +167,21 @@ def test_a_report_whose_key_cannot_be_told_leaves_every_key_unable_to_be_checked
         (outside / "report.json").write_bytes(first.read_bytes())
         link = first.parents[1] / new_run_id("c" * 64)
         link.symlink_to(outside, target_is_directory=True)
-        named = str(link)
+        named, run = str(link), link.name
     else:
-        named = str(store_bytes(tmp_path / "registry",
-                                b"{broken" if damage == "not_json" else b'{"hello": 1}',
-                                version=version))
+        path = store_bytes(tmp_path / "registry",
+                           b"{broken" if damage == "not_json" else b'{"hello": 1}',
+                           version=version)
+        named, run = str(path), path.parent.name
 
-    status = scan_report_store(version).status(_key(first))
+    scan = scan_report_store(version)
 
-    assert status.state == "cannot_be_checked"
-    assert any(named in problem for problem in status.problems), status.problems
+    assert scan.status(_key(first)).state == "uncontested"
+    assert scan.status(("a" * 64, "r", "b" * 64, "c" * 64)).state == "uncontested"
+    status = scan.run_status(run, scan.digests.get(run))
+    assert (status.state, status.run_ids) == ("cannot_be_checked", (run,))
+    (problem,) = status.problems
+    assert named in problem
 
 
 def test_a_report_json_that_is_a_link_cannot_be_checked(tmp_path):
@@ -173,10 +194,11 @@ def test_a_report_json_that_is_a_link_cannot_be_checked(tmp_path):
 
     scan = scan_report_store(version_of(first))
 
-    assert scan.state(_key(first)) == "contested", "the second stored report still disagrees"
-    assert any(str(linked) in p and "is a link" in p for _run, p in scan.unplaced)
+    assert scan.state(_key(first)) == "contested", "the second stored report still differs"
+    assert any(run == linked.parent.name and str(linked) in p and "is a link" in p
+               for run, p in scan.unplaced)
     other_key = scan.status(("a" * 64, "r", "b" * 64, "c" * 64))
-    assert other_key.state == "cannot_be_checked", "the link could be under any key"
+    assert other_key.state == "uncontested", "the link is its own run's problem only"
 
 
 def test_a_report_that_parses_but_cannot_be_compared_affects_only_its_own_key(tmp_path):
@@ -215,6 +237,8 @@ def test_every_report_the_scan_read_is_named_by_its_run_id(tmp_path):
     scan = scan_report_store(version)
 
     key = _key(first)
+    assert scan.reports[key] == {first.parent.name: (
+        first.parent.name, build_record(json.loads(first.read_bytes()), _sha(first)))}
     (unbuilt,) = scan.unbuilt[key]
     assert unbuilt[0] == stale.parent.name and "python_seed" in unbuilt[1]
     (unplaced,) = scan.unplaced
@@ -311,22 +335,6 @@ def test_a_version_with_no_report_store_has_no_reports(tmp_path):
     scan = scan_report_store(version)
 
     assert scan.reports == {} and scan.unplaced == ()
-
-
-def test_a_report_the_caller_read_is_not_read_again(tmp_path):
-    from tests.fixtures.opens import count_opens
-
-    first = _stored(tmp_path)
-    second = _stored(tmp_path, metrics=OTHER_METRICS)
-    data = first.read_bytes()
-    record = build_record(json.loads(data), hashlib.sha256(data).hexdigest())
-
-    with count_opens() as opens:
-        status = scan_report_store(version_of(first),
-                                   known=(first.parent.name, record)).status(record_key(record))
-
-    assert opens.opens(first) == 0 and opens.opens(second) == 1
-    assert status.state == "contested"
 
 
 # ---------------------------------------------------------------------------

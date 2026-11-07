@@ -433,20 +433,130 @@ def test_the_selected_reports_registration_is_asked_beside_the_listed_checkpoint
     assert tp.refine_registration(page, reports, site.run_id, models) is reports
 
 
-def test_a_disagreeing_key_is_shown_runs_disagree_and_cannot_be_registered(site, monkeypatch):
+def test_runs_that_differ_are_described_and_each_can_be_registered(site, monkeypatch):
+    """G3, G9 (K8-6r.2; policy rev 16, Decision 3): a group whose runs differ
+    (``contested``, kept as a machine value) is described in plain words on the
+    row and in the result, and Register stays enabled for every run of it: the
+    description decides nothing. Each run's record is its own (looked up by its
+    run id), and the row keeps one " · " (the skill's §5). HEAD: Register
+    disabled with "runs disagree — investigate"."""
     other = _disagreeing_copy(site)
     page, _request = _page(monkeypatch)
     reports = tp.read_reports(LABEL)
     runs = {r["run_id"]: r for r in reports["runs"]}
     assert runs[other]["contest"]["state"] == "contested"
     assert "pooled_mrr" in runs[other]["contest"]["differing"]
+    assert runs[other]["record"]["source_artifact_digest"] != (
+        runs[site.run_id]["record"]["source_artifact_digest"])
     html = tp.reports_html(reports, other)
-    assert "runs disagree — investigate" in html
-    allowed, why = tp.register_state(page, reports, site.run_id)
-    assert allowed is False and why.startswith("Disabled: runs disagree — investigate.")
+    assert "runs under these conditions differ on pooled_mrr" in html and "investigate" in html
+    assert "disagree" not in html
+    for run_id in (site.run_id, other):
+        assert tp.register_state(page, reports, run_id) == (True, None)
+        assert tp._row_state(runs[run_id], []).count(" · ") <= 1
     result = tp.result_html(reports, site.run_id, [], notes=[])
-    assert "Runs disagree — investigate." in result and "does not lift the block" in result
+    assert "Runs under these conditions differ — investigate." in result
+    assert "each can be registered" in result and "block" not in result.replace(
+        "shep-test-block", "")
     assert tp.notes_visible(reports, site.run_id)
+
+
+def _twin_copy(site):
+    """The kept report's bytes in a new run directory: a second run whose
+    report is byte-identical (two CPU runs of one test)."""
+    source = site.reports / site.run_id
+    copy = site.reports / f"20261020T190000Z-{site.sha[:12]}-0be11e5d"
+    shutil.copytree(source, copy)
+    return copy.name
+
+
+def test_the_route_and_the_page_read_a_byte_identical_run_by_its_own_record(site, monkeypatch):
+    """G2, G3, A3 (K8-6r.2): after run 1 is registered from the page, a second
+    run with byte-identical report bytes is not registered on
+    ``GET /api/v1/cohorts`` nor on the Test page, whose Register stays enabled
+    for it; "Already registered." applies to run 1's own record only, and
+    registering run 2 adds record 2 naming it. HEAD: run 2 read registered by
+    its bytes, and Register said "Already registered." for it."""
+    page, request = _page(monkeypatch)
+    models = tp.read_models("demo", request)
+    done, said = tp.register_selected(page, tp.read_reports(LABEL), models, "demo", site.run_id,
+                                      request)
+    assert done is True and said.startswith("Registered as record 1."), said
+    twin = _twin_copy(site)
+
+    # The route and the page's listing say the same of each run (the list
+    # knows no checkpoint file, so neither reads "registered" for the twin).
+    route = _cohorts_route_runs(LABEL)
+    listed = {run["run_id"]: run for run in tp.read_reports(LABEL)["runs"]}
+    for run_id in (site.run_id, twin):
+        assert route[run_id]["state"] == listed[run_id]["state"]
+        assert listed[run_id]["contest"]["state"] == "uncontested"
+    assert listed[twin]["state"]["registered"] != "registered"
+    # Asked beside the listed checkpoint Register would use, by run.
+    reports = tp.refine_rows(page, tp.read_reports(LABEL), models)
+    reports = tp.refine_registration(page, reports, twin, models)
+    states = {run["run_id"]: run["state"] for run in reports["runs"]}
+    assert states[site.run_id]["registered"] == "registered"
+    assert states[twin]["registered"] == "not_registered"
+    assert "holds no record naming this run" in states[twin]["why_registered"]
+    assert tp.register_state(page, reports, site.run_id) == (False, "Already registered.")
+    assert tp.register_state(page, reports, twin) == (True, None)
+
+    done, said = tp.register_selected(page, reports, models, "demo", twin, request)
+    assert done is True and said.startswith("Registered as record 2."), said
+    ledger = json.loads((site.checkpoint.parent / "evaluations.json").read_text())
+    assert [r["run_id"] for r in ledger["records"]] == [site.run_id, twin]
+    assert len({r["source_artifact_digest"] for r in ledger["records"]}) == 1
+
+
+def test_a_store_whose_runs_cannot_be_listed_says_why_register_is_off():
+    """C5 (Decision 10): a version whose report store's runs cannot be listed
+    has no report the page can confirm, so Register is off for an operator,
+    saying why and that the command line registers a named report; a
+    read-only request is told only that operator controls are off. A version
+    that could not be read at all is not this case."""
+    reports = {"runs": [], "version_sha256": "a" * 64,
+               "problem": "the report store of 'v' could not be listed (PermissionError)"}
+    allowed, why = tp.register_state({"access": {"allowed": True}}, reports, None)
+    assert allowed is False and why.startswith(
+        "Disabled: the report store could not be listed, so a run's report cannot be "
+        "confirmed here: the report store of 'v' could not be listed (PermissionError).")
+    assert "scripts/record_evaluation.py --report" in why
+    assert tp.register_state({"access": {"allowed": True}},
+                             {**reports, "version_sha256": None}, None) == (False, None)
+
+
+def test_a_run_whose_bytes_a_merged_record_holds_shows_the_possible_overlap(site):
+    """A7 on the page (K8-6r.2): a run not registered whose bytes a record
+    merged before each run had its own record holds says so beside its
+    registration, as a possible overlap, never as registered; a registered
+    run never shows it."""
+    run = {r["run_id"]: r for r in tp.read_reports(LABEL)["runs"]}[site.run_id]
+    state = {"kept": "kept", "registered": "not_registered", "checked_beside": "x/y/last.pt",
+             "historical_overlap": [1]}
+    import html as html_lib
+
+    text = html_lib.unescape(re.sub(r"<[^>]+>", "", tp._record_html(run["record"], run, state)))
+    assert ("not registered (the ledger beside x/y/last.pt was read); possible overlap with "
+            "record 1, merged before each run had its own record (not recorded whether this "
+            "run is one of them); registering adds this run's own record") in text
+    registered = {**state, "registered": "registered", "sequence": 2}
+    assert "possible overlap" not in tp._record_html(run["record"], run, registered)
+
+
+def test_deterministic_runs_that_differ_are_flagged_for_investigation(site):
+    """A6 (K8-6r.2): when the runs of a group differ and the group records
+    deterministic algorithms on, the result says they were expected to agree;
+    a non-deterministic group does not say so. Neither disables anything."""
+    other = _disagreeing_copy(site)
+    run = dict({r["run_id"]: r for r in tp.read_reports(LABEL)["runs"]}[other])
+    plain = tp.block_html(run, [], [])
+    assert "Runs under these conditions differ — investigate." in plain
+    assert "expected to agree" not in plain
+    record = dict(run["record"], regime={**run["record"]["regime"],
+                                         "deterministic_algorithms": True})
+    flagged = tp.block_html({**run, "record": record}, [], [])
+    assert "Deterministic algorithms were on, so these runs were expected to agree." in flagged
 
 
 def _uncomparable_copy(site):
@@ -521,23 +631,52 @@ def test_the_cohort_route_and_the_test_page_give_each_run_the_same_d5_state(
     assert sorted(route) == sorted(page) == sorted(with_report)
     for run_id in with_report:
         shown, listed = page[run_id]["contest"], route[run_id]["contest"]
-        assert shown["state"] == listed["state"] == expected, (run_id, shown, listed)
+        # An unreadable other report is its own run's problem only (C1,
+        # K8-6r.2): it never marks another run.
+        wanted = ("uncontested" if case == "a report whose key cannot be told"
+                  and run_id == site.run_id else expected)
+        assert shown["state"] == listed["state"] == wanted, (run_id, shown, listed)
         assert shown["differing"] == listed["differing"]
         assert shown["disagreeing_runs"] == listed["disagreeing_runs"]
         assert listed["problems"] == []
-        assert bool(shown["problems"]) == (expected == "cannot_be_checked")
+        assert bool(shown["problems"]) == (wanted == "cannot_be_checked")
     assert str(site.root) not in json.dumps([run["contest"] for run in route.values()])
     if case == "contested":
         assert "pooled_mrr" in route[added]["contest"]["differing"]
         assert sorted(route[added]["contest"]["disagreeing_runs"]) == sorted(with_report)
+    operator = {"access": {"allowed": True}}
     if case == "a report whose key cannot be told":
+        # C1 (K8-6r.2): the broken run is listed with its own reason only; the
+        # valid run reads uncontested and its Register stays enabled.
         assert page[added]["key"] is None and "could not be read" in page[added]["unbuilt"]
-        assert tp.register_state({"access": {"allowed": True}}, tp.read_reports(LABEL),
-                                 site.run_id)[0] is False
+        assert page[added]["contest"]["problems"] == [page[added]["unbuilt"]]
+        reports = tp.read_reports(LABEL)
+        assert tp.register_state(operator, reports, site.run_id) == (True, None)
+        # Not JSON, so the helper reads it as no report kept: its own reason.
+        assert tp.register_state(operator, reports, added) == (
+            False, "Disabled: no report was kept in this run.")
+        block = tp.block_html(page[added], [], [])
+        assert "This run&#x27;s report cannot be compared" in block and "marks no other run" in block
+        assert "Comparison incomplete" not in block
     if case == "a report that cannot be compared":
+        # C2 (K8-6r.2): the group's description names that file as
+        # cannot_be_checked; the complete run's Register stays enabled.
         assert page[added]["key"] == page[site.run_id]["key"]
         assert "cannot be compared" in page[added]["unbuilt"]
         assert page[added]["record"] is None and page[site.run_id]["record"] is not None
+        reports = tp.read_reports(LABEL)
+        assert tp.register_state(operator, reports, site.run_id) == (True, None)
+        assert tp.register_state(operator, reports, added)[1].startswith(
+            "Disabled: this report cannot be registered:")
+    if case == "a store that cannot be scanned":
+        # C5 (Decision 10): no report of the store can be confirmed here, so
+        # Register is off saying why and where a run is registered instead.
+        reports = tp.read_reports(LABEL)
+        allowed, why = tp.register_state(operator, reports, site.run_id)
+        assert allowed is False and why.startswith(
+            "Disabled: the report store could not be listed, so this run's report cannot be "
+            "confirmed here: its report store could not be read (RuntimeError).")
+        assert "Register it from the command line by naming its report" in why
 
 
 @pytest.mark.parametrize("replacement", ["damaged", "another report"])
@@ -802,6 +941,66 @@ def test_register_files_the_record_beside_the_listed_checkpoint(site, monkeypatc
     again, said = tp.register_selected(page, tp.read_reports(LABEL), models, "demo",
                                        site.run_id, request)
     assert again is True and "Already registered as record 1" in said
+
+
+def test_a_registered_run_whose_report_was_replaced_says_so_before_register(site, monkeypatch):
+    """A5 on the Test page (review of K8-6r.2): a run registered from the page
+    whose report.json is then replaced by other valid bytes reads "not
+    registered", and the page says why before Register is pressed: the row and
+    the Result name the replacement, the Result with the registration's own
+    words (the record and both digests), redacted. Pressing Register is refused
+    with the same words; the ledger is unchanged. Before the fix the page said
+    only "not registered"."""
+    page, request = _page(monkeypatch)
+    models = tp.read_models("demo", request)
+    done, said = tp.register_selected(page, tp.read_reports(LABEL), models, "demo",
+                                      site.run_id, request)
+    assert done is True and said.startswith("Registered as record 1."), said
+    ledger = site.checkpoint.parent / "evaluations.json"
+    before = ledger.read_bytes()
+    path = site.reports / site.run_id / "report.json"
+    data = json.loads(path.read_text())
+    data["manifest"]["data_dir"] = str(data["manifest"].get("data_dir")) + "-moved"
+    path.write_text(json.dumps(data, indent=2, sort_keys=True))
+
+    reports = tp.refine_rows(page, tp.read_reports(LABEL), models)
+    reports = tp.refine_registration(page, reports, site.run_id, models)
+    run = tp.find(reports["runs"], "run_id", site.run_id)
+
+    assert run["state"]["registered"] == "not_registered"
+    assert run["state"]["replaced_after_registration"] is True
+    assert "not registered (its report was replaced after it was registered)" in \
+        tp._row_state(run, page["roots"])
+    text = " ".join(re.sub(r"<[^>]+>", " ", tp.result_html(reports, site.run_id, page["roots"],
+                                                            notes=[])).split())
+    assert "Not registered: " in text and "is already registered as record 1 from report" in text
+    assert "so this file was replaced after it was registered" in text
+    assert str(site.checkpoint.parent) not in text
+    done, said = tp.register_selected(page, reports, models, "demo", site.run_id, request)
+    assert done is False and "is already registered as record 1 from report" in said
+    assert ledger.read_bytes() == before
+
+
+def test_a_registration_the_listed_checkpoints_ledger_cannot_tell_gives_its_reason():
+    """Review of K8-6r.2: when the ledger beside the listed checkpoint was read
+    and cannot tell (here a record that lost its sequence), the Result gives
+    the registration's own reason, redacted and escaped; the list's own
+    "cannot be checked" (no checkpoint looked in) keeps its one sentence and
+    adds nothing."""
+    roots = [("/srv/ws", "<workspaces>")]
+    state = {"kept": "kept", "registered": "cannot_be_checked",
+             "checked_beside": "gatv2/r1/last.pt",
+             "why_registered": ("/srv/ws/demo/runs/gatv2/r1/checkpoints/evaluations.json: the "
+                                "ledger's record 0 has no registration sequence, so the next "
+                                "sequence cannot be allocated safely")}
+
+    html = tp._registration_reason_html(state, roots)
+
+    assert ("Registration cannot be checked: &lt;workspaces&gt;/demo/runs/gatv2/r1/checkpoints/"
+            "evaluations.json: the ledger&#x27;s record 0 has no registration sequence") in html
+    assert "/srv/ws" not in html
+    assert tp._registration_reason_html({**state, "checked_beside": None}, roots) == ""
+    assert tp._registration_reason_html({**state, "registered": "not_registered"}, roots) == ""
 
 
 def test_register_is_refused_for_a_read_only_request(site, monkeypatch):
@@ -1207,17 +1406,27 @@ def test_no_listed_checkpoint_with_the_weights_no_registration(site, monkeypatch
     assert _usage_lines(site) == usage_before
 
 
-def test_a_disagreeing_keys_report_is_refused_by_the_one_registration(site, monkeypatch):
-    _disagreeing_copy(site)
+def test_each_run_of_a_group_whose_runs_differ_registers_with_the_note(site, monkeypatch):
+    """G3 (K8-6r.2): the Test page's Register, through the one registration,
+    registers each run of a group whose runs differ as a record of its own,
+    and its message carries the group note, which decides nothing. HEAD:
+    refused, "runs disagree — investigate", nothing written."""
+    other = _disagreeing_copy(site)
     page, request = _page(monkeypatch)
     models = tp.read_models("demo", request)
     done, said = tp.register_selected(page, tp.read_reports(LABEL), models, "demo", site.run_id,
                                       request)
-    assert done is False and "runs disagree — investigate" in said
-    assert not (site.checkpoint.parent / "evaluations.json").exists()
+    assert done is True and said.startswith("Registered as record 1."), said
+    done, said = tp.register_selected(page, tp.read_reports(LABEL), models, "demo", other,
+                                      request)
+    assert done is True and said.startswith("Registered as record 2."), said
+    assert "Runs under these conditions differ: record 2 (this run) differs from record 1" in said
+    assert "pooled_mrr" in said
+    ledger = json.loads((site.checkpoint.parent / "evaluations.json").read_text())
+    assert [r["run_id"] for r in ledger["records"]] == [site.run_id, other]
 
 
-def test_a_note_is_kept_with_the_key_and_lifts_nothing(site, monkeypatch):
+def test_a_note_is_kept_with_the_group_and_changes_nothing(site, monkeypatch):
     _disagreeing_copy(site)
     reports = tp.read_reports(LABEL)
     done, said = tp.add_note(reports, site.run_id, "", "found", operator_request(monkeypatch))
@@ -1231,7 +1440,11 @@ def test_a_note_is_kept_with_the_key_and_lifts_nothing(site, monkeypatch):
     page = tp.read_page(operator_request(monkeypatch))
     html = tp.result_html(reports, site.run_id, [], notes=reports["notes"])
     assert "ops &lt;b&gt;" in html and "cuDNN differs" in html and "Investigation notes (1)" in html
-    assert tp.register_state(page, reports, site.run_id)[0] is False, "a note lifts nothing"
+    # A note records what was found and changes nothing: Register was enabled
+    # before it and stays so (K8-6r.2), whatever the group's description.
+    assert tp.register_state(page, reports, site.run_id) == (True, None)
+    assert _said == ("The note was kept with this group's reports. It records what was found "
+                     "and changes nothing.")
 
 
 # --------------------------------------------------------------------------- the import

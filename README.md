@@ -117,7 +117,7 @@ guide §4.11): `SHEPHERD_REGISTRY` naming the deployment's registry, the `<regis
 | 3. Record | `--record` on step 2, or later `scripts/record_evaluation.py --report <report> --checkpoint <file>`, the command step 2 prints | a record in `evaluations.json` beside the checkpoint's resolved path, where the service reads it |
 
 The Diagnosis page's "Model in use" card shows the loaded checkpoint's recorded results as a
-state (how many, how many contested); Research › Evaluate › Models lists them, and API clients
+state (how many, and for how many the runs under the same conditions differ); Research › Evaluate › Models lists them, each with its run, and API clients
 read them through `GET /api/v1/evaluations/loaded-model`. The Test page measures a model as step 2
 does, by a protocol this build implements for its learning stage and task head, chosen among those
 its model record admits: today one for each task head of a finetuned model, and none yet for a
@@ -127,8 +127,8 @@ ranking from before the tasks, is historical: kept Mode C reports and records ar
 shared readers (policy rev 15), and since K8-6a no command writes one (`--mode` is required and
 names a protocol; a checkpoint without a model spec, a ShepherdGNN history file, is refused).
 Mode D, the served ranking Batch 3 measured, was removed in K7: its kept reports and records stay
-readable, and a kept report registers by the general rules under its own mode (a repeat answers
-`already_registered`).
+readable, and a kept report registers by the general rules under its own mode (the same run's
+report again answers `already_registered`).
 
 ## Development
 

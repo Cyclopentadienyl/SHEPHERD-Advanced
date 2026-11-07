@@ -11,8 +11,11 @@ registry's report store (`tests/fixtures/model_records.py`):
   nothing, and no record is dropped or set apart for its family, training
   dataset or cohort version (a guard); a kept ``model_load`` usage entry is
   shown with its recorded fields;
-- **D5**: a contested record is said with what the runs disagree on, and a
-  state that cannot be checked is never read as uncontested;
+- **D5 (policy rev 16)**: a record whose group's runs differ is described
+  ("runs under these conditions differ — investigate", with what differs), a
+  comparison that is incomplete is never read as agreeing, and every record is
+  shown with its run ("not recorded" for one merged before each run had its own
+  record);
 - **task and family**: the Task select's options (the list's one vocabulary,
   short, unique); every row's kind in the shared list's Model cell, under
   every order; By family's groups (parent first, indented Lineage cells, a
@@ -271,14 +274,14 @@ def test_a_contested_state_that_cannot_be_checked_is_never_shown_uncontested(wor
     listing, data = _read(world, monkeypatch)
     assert {s["state"] for s in data["contest"].values()} == {"cannot_be_checked"}
     records = mp.detail_parts(listing, data, _key(world, "model-05.pt"), NEWEST_CTL)["records"]
-    assert "contested status cannot be checked" in records
+    assert "comparison incomplete" in records
     assert "registered #3" in records and "shep-tag-ok" not in records
     # A record key with no state in the page's data (read after the store was
     # asked, say): every record says its state was not read.
     data["contest"] = {}
     records = mp.detail_parts(listing, data, _key(world, "model-05.pt"), NEWEST_CTL)["records"]
-    assert records.count("contested status cannot be checked: it was not read") == 3
-    assert "shep-tag-ok" not in records and "runs disagree" not in records
+    assert records.count("comparison incomplete: it was not read") == 3
+    assert "shep-tag-ok" not in records and "runs under these conditions differ" not in records
 
 
 def test_a_record_whose_version_the_registry_does_not_list_cannot_be_checked(world, monkeypatch):
@@ -363,7 +366,7 @@ def test_a_disagreeing_value_that_is_not_a_finite_number_leaves_the_record_conte
     MRR is NaN, null, text, an object or an integer too large for a float (the
     verification's break: `math.isfinite` cannot take it, and an
     `OverflowError` took the page with it). The operator's view and the read-only
-    view (the API's answer) both say "runs disagree"; the value is never
+    view (the API's answer) both say "runs under these conditions differ"; the value is never
     formatted as a number: the operator's view says "not reported" for null and
     "not a finite number" otherwise, and the read-only view, which gets null
     for every value that is not a finite number, says "not a finite number"."""
@@ -383,7 +386,8 @@ def test_a_disagreeing_value_that_is_not_a_finite_number_leaves_the_record_conte
     operator = contest_states([record], CohortVersions.listed())[key_text(record_key(record))]
     assert operator["state"] == "contested"
     operator_html = mp.contest_html(operator, mode=record["scoring"]["mode"])
-    assert "runs disagree — investigate" in operator_html and f"{shown} (run" in operator_html
+    assert ("runs under these conditions differ — investigate" in operator_html
+            and f"{shown} (run" in operator_html)
     assert "nan" not in operator_html.lower().replace("not a finite number", "")
 
     _served_read_only(world, monkeypatch, name="model-40.pt")
@@ -392,9 +396,9 @@ def test_a_disagreeing_value_that_is_not_a_finite_number_leaves_the_record_conte
     assert view["contest"]["state"] == "contested"
     readonly_html = mp.contest_html(data["contest"][key_text(record_key(record))],
                                     mode=mp.record_mode(view))
-    assert "runs disagree — investigate" in readonly_html
+    assert "runs under these conditions differ — investigate" in readonly_html
     assert "not a finite number (run" in readonly_html
-    assert "contested #" in mp.readonly_parts(data)["records"]
+    assert "runs differ #" in mp.readonly_parts(data)["records"]
 
 
 def test_the_page_reads_no_ledger_and_scans_no_store_the_listing_already_read(world,
@@ -473,8 +477,11 @@ def _kept_c_and_d_records():
     from tests.unit.test_evaluation_sidecar import mode_c_report, mode_d_report
 
     ledger = empty_ledger()
-    for report, digest in ((mode_c_report(), "c" * 64), (mode_d_report(), "d" * 64)):
-        ledger = append_record(ledger, build_record(report, digest),
+    for n, (report, digest) in enumerate(((mode_c_report(), "c" * 64),
+                                          (mode_d_report(), "d" * 64)), start=1):
+        record = build_record(report, digest)
+        run_id = f"20261027T120000Z-{record['checkpoint_digest'][:12]}-0000000{n}"
+        ledger = append_record(ledger, record, run_id=run_id,
                                registered_at="2026-10-27T12:00:00Z")[1]
     return ledger["records"]
 
@@ -543,15 +550,16 @@ def test_the_detail_keeps_validation_and_mode_c_apart(world, monkeypatch):
     assert e(mode_label("disease")) in records and "Disease pooled MRR" in records
     # newest registration first: no record is picked or put ahead of the others
     assert records.index("registered #3") < records.index("registered #2")
-    assert records.index("registered #2") < records.index("contested #1")
+    assert records.index("registered #2") < records.index("runs differ #1")
     assert "D4 rule" not in records and "Δ " not in records
-    # the acceptance record is contested, with what the runs say
-    assert "contested #1" in records and "runs disagree — investigate" in records
+    # the acceptance record's group has runs that differ, with what they say
+    assert ("runs differ #1" in records
+            and "runs under these conditions differ — investigate" in records)
     assert "0.2051" in records and "0.2077" in records
     # no role says anything about ordering
     assert "ordering" not in records
     # The heading names no mode: each record's table carries its own (PLAN_B05 §6).
-    assert detail["seg"][0] == ("Recorded test results · 3 · 1 contested", mp.RECORDS)
+    assert detail["seg"][0] == ("Recorded test results · 3 (1 where runs differ)", mp.RECORDS)
     # a role code is never broken inside its name in its narrow column: not
     # "research_selectio" / "n" (1440x900), nor "research_" / "selection" (M5-3);
     # it stays whole, in a titled ellipsis where it does not fit
@@ -643,7 +651,7 @@ def test_the_usage_history_lists_every_listed_versions_entries_for_a_listed_chec
          (MYGENE, "model_load")])
     detail = mp.detail_parts(listing, data, _key(world, "model-05.pt"),
                              {"task": mp.ALL_TASKS, "order": mp.NEWEST})
-    assert detail["seg"] == [("Recorded test results · 3 · 1 contested", mp.RECORDS),
+    assert detail["seg"] == [("Recorded test results · 3 (1 where runs differ)", mp.RECORDS),
                              ("Usage history · 7", mp.USAGE)]
     usage = detail["usage"]
     assert usage.count(">Test run<") == 3 and usage.count(">Registered<") == 3
@@ -653,7 +661,7 @@ def test_the_usage_history_lists_every_listed_versions_entries_for_a_listed_chec
         assert f"<td>{label}</td>" in usage
     records = detail["records"]
     assert all(f"{word} #{n}" in records
-               for word, n in (("contested", 1), ("registered", 2), ("registered", 3)))
+               for word, n in (("runs differ", 1), ("registered", 2), ("registered", 3)))
     assert world["shas"]["model-05.pt"] in detail["top"]
 
 
@@ -1086,11 +1094,12 @@ def test_read_only_shows_the_model_in_use_from_the_ledger_and_opens_no_checkpoin
     assert mp.READONLY_TITLE in parts["header"] and "opens no checkpoint" in parts["header"]
     assert sha in parts["top"] and parts["seg"] is None
     records = parts["records"]
-    assert "registered #3" in records and "contested #1" in records
+    assert "registered #3" in records and "runs differ #1" in records
     # each record's determinism, from the environment class the route answers
     assert 'registered #3</span> <span class="shep-sub">deterministic on</span>' in records
     assert 'registered #2</span> <span class="shep-sub">deterministic off</span>' in records
-    assert "runs disagree — investigate" in records and mp.NO_LOAD_HERE in records
+    assert ("runs under these conditions differ — investigate" in records
+            and mp.NO_LOAD_HERE in records)
     assert str(world["root"]) not in records and str(world["registry"]) not in records
     header = mp.left_header_html(listing, data, "deployment_mode")
     assert "Model list unavailable: read-only, deployment mode not set to M1." in header
@@ -1153,24 +1162,33 @@ def _served_read_only(world, monkeypatch, name="model-05.pt"):
 
 
 def test_read_only_names_no_server_path_when_a_report_store_cannot_be_read(world, monkeypatch):
-    """A report in the version's store that cannot be read makes its keys'
-    state "cannot be checked", and the store's own words name the file by its
-    absolute path: the operator's view keeps them, a read-only request never
-    gets them (D8)."""
+    """A report of the record's condition group that cannot be compared makes
+    the group's comparison incomplete, and the store's own words name the file
+    by its absolute path: the operator's view keeps them, a read-only request
+    never gets them (D8). A report that cannot be read at all is its own run's
+    problem only (K8-6r.2, C1): it leaves the group's description as it was."""
     from src.evaluation.report_store import scan_report_store
     from src.evaluation.sidecar import record_key
     from tests.fixtures.report_store import store_bytes, version_of
 
     _served_read_only(world, monkeypatch)
     version = version_of(world["det_report"])
-    bad = store_bytes(world["registry"], b"{not json", version=version,
-                      checkpoint_sha256=world["shas"]["model-05.pt"])
-    status = scan_report_store(version).status(record_key(dict(world["det"])))
+    key = record_key(dict(world["det"]))
+    broken = store_bytes(world["registry"], b"{not json", version=version,
+                         checkpoint_sha256=world["shas"]["model-05.pt"])
+    scan = scan_report_store(version)
+    assert scan.status(key).state == "uncontested"
+    assert [problem for run, problem in scan.unplaced if run == broken.parent.name]
+    report = json.loads(world["det_report"].read_bytes())
+    del report["authoritative_metrics"]
+    bad = store_bytes(world["registry"], json.dumps(report, sort_keys=True).encode(),
+                      version=version, checkpoint_sha256=world["shas"]["model-05.pt"])
+    status = scan_report_store(version).status(key)
     assert status.state == "cannot_be_checked" and str(bad) in " ".join(status.problems)
     records = mp.readonly_parts(mp.read_readonly())["records"]
-    assert 'registered #3</span>' in records and "contested status cannot be checked" in records
+    assert 'registered #3</span>' in records and "comparison incomplete" in records
     assert str(world["registry"].parent) not in records and "report.json" not in records
-    assert "could not be read" not in records
+    assert "could not be read" not in records and "cannot be compared" not in records
 
 
 def test_read_only_says_when_what_is_served_cannot_be_read(world, monkeypatch):
@@ -1526,3 +1544,117 @@ def test_the_table_fits_its_frame_beside_a_classic_scrollbar():
     wide = mp.PAGE_CSS[mp.PAGE_CSS.index("@media (min-width: 1400px) and (min-height: 760px) {"):]
     wide = wide[:wide.index("@media", 10)].replace(f"{mp._PAGE} ", "")
     assert ".shep-mtbl th, .shep-mtbl td { padding-left: 7px; padding-right: 7px; }" in wide
+
+
+# --------------------------------------------------------------------------- K8-6r.2
+def test_every_record_is_shown_with_its_run_and_its_groups_description(world, monkeypatch):
+    """G7, G9 (K8-6r.2): every record the ledger holds for the checkpoint is
+    shown, each with the run it was registered from, the group whose runs
+    differ described in plain words ("runs differ", "runs under these
+    conditions differ — investigate"), nothing hidden or ordered out by it.
+    HEAD: no run was shown, and the words were "contested" / "runs disagree"."""
+    from src.evaluation.sidecar import read_ledger
+
+    listing, data = _read(world, monkeypatch)
+    records = mp.detail_parts(listing, data, _key(world, "model-05.pt"), NEWEST_CTL)["records"]
+    ledger, _ = read_ledger(world["paths"]["model-05.pt"].parent / "evaluations.json")
+    mine = [r for r in ledger["records"]
+            if r["checkpoint_digest"] == world["shas"]["model-05.pt"]]
+    assert len(mine) == 3
+    for record in mine:
+        assert f"from run {record['run_id']}, report" in records
+        assert f"#{record['registration']['sequence']}" in records
+    assert "runs differ #1" in records
+    assert "runs under these conditions differ — investigate" in records
+    shown = re.sub(r"<[^>]+>", " ", records)      # the words a person reads
+    assert "contested" not in shown and "disagree" not in shown
+
+
+def test_a_merged_record_and_a_named_run_show_their_possible_overlap(world):
+    """G7, A7 (d) (K8-6r.2): a record merged before each run had its own record
+    shows its run as "not recorded" and its merged report counted; it and the
+    named run whose report it holds each show "possible overlap with record N
+    (not recorded)"; a record whose run identity cannot be read is counted as
+    not shown, never shown as merged. HEAD: no run, no overlap, "1
+    corroborating report"."""
+    import copy as _copy
+
+    from src.api.routes.evaluations import record_reading
+
+    named = _copy.deepcopy(dict(world["det"]))
+    named["registration"] = {"sequence": 2, "registered_at": "2026-11-07T10:00:00Z"}
+    merged = _copy.deepcopy(named)
+    merged.pop("run_id")
+    merged["registration"] = {"sequence": 1, "registered_at": "2026-10-01T10:00:00Z"}
+    merged["source_artifact_digest"] = "d" * 64
+    merged["corroborating_reports"] = [named["source_artifact_digest"]]
+    lost = _copy.deepcopy(named)
+    lost.pop("run_id")
+    lost["registration"] = {"sequence": 3, "registered_at": "2026-11-07T11:00:00Z"}
+    ledger = {"schema_version": 4, "run_identity_from_sequence": 2,
+              "records": [merged, named, lost]}
+    reading = record_reading(ledger)
+    entry = {"state": "records", "records": ledger["records"],
+             "readings": [[found.run_id, found.historical, found.problem, list(overlaps)]
+                          for found, overlaps in (reading[id(r)] for r in ledger["records"])]}
+
+    html, count, _contested = mp._records_for_item(entry, {"contest": {}})
+
+    assert count == 3
+    assert "from run not recorded, report dddddddddddd" in html
+    assert f"from run {named['run_id']}, report" in html
+    assert "1 report merged into this record before each run had its own record" in html
+    assert "possible overlap with record 2 (not recorded)" in html
+    assert "possible overlap with record 1 (not recorded)" in html
+    assert "1 record for these weights is not shown" in html
+    assert "corroborating" not in html
+
+
+def test_records_whose_run_cannot_be_told_are_counted_and_the_log_says_why(world, caplog):
+    """A8 (review of K8-6r.2): with the file's run-identity boundary lost,
+    each record that names no run is counted as not shown (never shown as
+    merged), and the server's log says why, naming the ledger file, as the
+    page says it does; the record that names its run is shown. Before the fix
+    the page claimed the log said why and nothing was logged."""
+    import copy as _copy
+    import logging
+
+    from src.api.routes.evaluations import record_reading
+
+    named = _copy.deepcopy(dict(world["det"]))
+    named["registration"] = {"sequence": 2, "registered_at": "2026-11-07T10:00:00Z"}
+    unnamed = _copy.deepcopy(named)
+    unnamed.pop("run_id")
+    unnamed["registration"] = {"sequence": 1, "registered_at": "2026-10-01T10:00:00Z"}
+    ledger = {"schema_version": 4, "records": [unnamed, named]}   # no boundary
+    reading = record_reading(ledger)
+    entry = {"state": "records", "records": ledger["records"],
+             "ledger": "/srv/x/evaluations.json",
+             "readings": [[found.run_id, found.historical, found.problem, list(overlaps)]
+                          for found, overlaps in (reading[id(r)] for r in ledger["records"])]}
+
+    with caplog.at_level(logging.WARNING, logger=mp.__name__):
+        html, count, _contested = mp._records_for_item(entry, {"contest": {}})
+
+    assert count == 2
+    assert f"from run {named['run_id']}, report" in html
+    assert "1 record for these weights is not shown" in html
+    assert "from run not recorded" not in html
+    (logged,) = [rec.getMessage() for rec in caplog.records]
+    assert logged.startswith("A ledger record in /srv/x/evaluations.json is not shown: ")
+    assert ("the file's run-identity boundary (run_identity_from_sequence) cannot be read "
+            "(it is missing while the file holds 2 records)") in logged
+
+
+def test_an_old_corroborated_usage_entry_is_shown_as_recorded():
+    """G6 (K8-6r.2), a guard: a usage-history entry written before K8-6r.2 with
+    the retired outcome ``corroborated`` is shown as it was recorded, never
+    reworded or dropped; a new one names its run and its own sequence."""
+    old = mp.usage_entry_html({"kind": "registered", "at": "2026-10-20T00:00:00Z",
+                               "version": "v", "run_id": "r-old", "outcome": "corroborated",
+                               "sequence": 1})
+    new = mp.usage_entry_html({"kind": "registered", "at": "2026-11-07T00:00:00Z",
+                               "version": "v", "run_id": "r-new", "outcome": "registered",
+                               "sequence": 2})
+    assert "#1 · corroborated" in old and "report of run r-old" in old
+    assert "#2 · registered" in new and "report of run r-new" in new

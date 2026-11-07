@@ -355,3 +355,26 @@ def test_the_playbook_s_safety_net_is_the_load_s_refusal_in_the_code_s_words(
     rows = [row for row in _text("docs/TRAINING_PIPELINE_PLAYBOOK.md").splitlines()
             if row.startswith("|") and "rebuild" in row.split("|")[1]]
     assert rows and all("does not match this workspace's graph" in row for row in rows), rows
+
+
+@pytest.mark.parametrize("guide, says", [
+    ("deployment-guide.en.md", ("Since K8-6r.2 these values only describe",
+                                "Runs that differ are kept and described, never refused",
+                                "Another run's report never blocks a registration",
+                                "Schema 3 and 4 are both read")),
+    ("deployment-guide.md", ("自 K8-6r.2 起這些值只做描述",
+                             "結果不同的執行都會保留並加以描述，從不拒絕",
+                             "其他執行的報告從不擋下一次登錄",
+                             "schema 3 與 4 都照原樣讀取")),
+])
+def test_the_guides_say_the_state_names_changed_meaning_and_no_run_blocks_another(guide, says):
+    """G9 (K8-6r.2, Decision 3): both guides say the state names stayed as
+    values with a new meaning that decides nothing, that runs that differ are
+    kept, that another run's report never blocks a registration, and that the
+    ledger reads schema 3 and 4; neither still states the withdrawn rules as
+    current. HEAD: "Runs that disagree block their key"."""
+    text = _text(guide)
+    for said in says:
+        assert said in text, said
+    assert "Runs that disagree block their key" not in text
+    assert "結果不一致的執行會封鎖其鍵" not in text

@@ -138,14 +138,14 @@ def test_the_row_shows_recorded_tests_as_a_state_never_a_number():
     html = r.model_row_html(checkpoint(validation=0.3180), [workspace()],
                             recorded=r.RecordedTests("records", 3, 1))
     plain = text_of(html)
-    assert "Recorded tests: 3 · 1 contested" in plain
+    assert "Recorded tests: 3 · runs differ for 1" in plain
     assert "0.318" not in plain
     assert r.recorded_tests_text(r.RecordedTests("none")) == "Recorded tests: none in ledger"
     assert r.recorded_tests_text(r.RecordedTests("no_ledger")) == "Recorded tests: no ledger"
     assert r.recorded_tests_text(r.RecordedTests("not_read")) == (
         "Recorded tests: ledger not readable")
     assert r.recorded_tests_text(r.RecordedTests("records", 2, None)) == (
-        "Recorded tests: 2 · contested state not checked")
+        "Recorded tests: 2 · comparison incomplete")
 
 
 def test_an_unreadable_checkpoint_is_greyed_and_cannot_be_loaded():
@@ -254,7 +254,7 @@ def test_the_research_table_row_has_its_columns_and_escapes():
     assert "dataset <b>demo</b>" in cells[1] and "synthetic" in cells[1]
     assert cells[2] == '0.3180<div class="shep-sub">Validation pooled MRR (Trainer)</div>'
     assert cells[3] == "<span>regime</span>"
-    assert cells[4] == "3 · 1 contested"
+    assert cells[4] == "3 · runs differ for 1"
     unmatched = r.model_table_row_html(checkpoint(fingerprint=FP_B), [workspace()])
     assert "matches no listed workspace" in unmatched and unmatched.count("<td") == 4
     broken = r.model_table_row_html(checkpoint(sha=None, problem="bad"), [])

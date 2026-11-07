@@ -19,12 +19,15 @@ ledger holds no result for these weights*. Every function here is written so tha
 distinction survives — nothing infers, nothing defaults, and nothing fills a gap
 with a plausible value.
 
-**What a record copies, and what it does not** (schema 3). A record copies what
-the read-only view shows and what lets records be grouped and compared: the key,
-the scoring semantics and the numerical regime, the cohort version's identity
-and aggregate counts, the metrics, the relation states, R10 and the environment.
-The full report stays the source: the record names it by digest, and the rest
-of the manifest, the rank file and anything at case level stay there.
+**What a record copies, and what it does not** (schema 3 and 4). A record
+copies what the read-only view shows and what lets records be grouped and
+compared: the condition group (the key), the scoring semantics and the numerical
+regime, the cohort version's identity and aggregate counts, the metrics, the
+relation states, R10 and the environment. The full report stays the source: the
+record names it by digest, and the rest of the manifest, the rank file and
+anything at case level stay there. Since schema 4 a record also names its run
+(``run_id``): the run directory in the version's report store that keeps the
+report. The report's bytes do not carry it, so the ledger records it.
 
 - **No run paths.** The manifest's `checkpoint_path` and `data_dir` stay in the
   report: they say where one run happened to find its files, and a checkpoint
@@ -36,24 +39,39 @@ of the manifest, the rank file and anything at case level stay there.
   (`src/api/routes/evaluations.py`); `record_evaluation.py --show` prints the
   record as it is, on the operator's machine.
 - **No case ids.** The cohort block is aggregates only (`COHORT_VERSION_FIELDS`).
-- **No prose.** A wording change between revisions would make an identical
-  re-registration look like a contradiction, so the surfaces render the
-  standing text from `src/evaluation/caveats.py` instead.
+- **No prose.** A wording change between revisions would make two records of
+  identical results read as different, so the surfaces render the standing
+  text from `src/evaluation/caveats.py` instead.
 
 **Not a registry, and deliberately not becoming one.** No parent/child graph, no
 lineage walk, no cross-file joins. The registration sequence orders the records
 of this one file; nothing relates two ledgers.
 
-**Contradiction is refused, not merged.** A key identifies one measurement. If
-the same key arrives with different results, one of the two is wrong about what
-it measured, and a ledger that silently kept the newer one would erase the
-evidence that they disagreed. **The same result arriving again is not a
-contradiction** (D5's duplicate rule): the same report is a no-op, and another
-report whose compared fields all agree — a re-run, or a checkpoint measured again
-after a move — adds its digest to the first record's corroborating reports. That
-is a duplicate rule, not arbitration: nothing chooses between two results. There
-is no override flag: correcting a bad record means editing a readable JSON file,
-which leaves a diff, rather than passing a flag that leaves nothing.
+**Every run is kept; a repeat is the same run's same report** (policy rev 16,
+from K8-6r.2). A run is one real execution: its run directory in the cohort
+version's report store, verified with its cohort version, its report's digest
+and its checkpoint. The key is the run's condition group: it groups runs to show
+and compare them and never refuses one. The writer looks for this run first,
+among the records that name a run (`find_run`): the same run with the same
+report bytes is ``already_registered`` and nothing is written; the same run with
+other bytes is refused, since a run's report is sealed when it is published.
+Any other verified run gets a record of its own, whether its values equal
+another run's or differ, and whatever its bytes or times. A difference between
+runs of one group is described (`differing_fields`), never refused.
+
+**Records written before each run had its own record are read as written.** A
+schema 3 file's records, and a schema 4 file's records before its run-identity
+boundary, name no run ("not recorded"); one may stand for several reports
+(``corroborating_reports``). They are never consulted to decide an outcome: a
+run whose bytes such a record holds is registered as its own record, with a
+note that the overlap is possible and not confirmed (`historical_overlap`).
+What such a record lacks never refuses a verified run. Only what keeps this
+write from completing safely refuses it: a ledger that does not parse, a record
+whose registration sequence cannot be read, an unreadable boundary, or this
+run's own identity record damaged. Nothing is guessed, skipped, deleted or
+renumbered. There is no override flag: correcting a bad record means editing a
+readable JSON file, which leaves a diff, rather than passing a flag that leaves
+nothing.
 
 Standard library only — no torch, no I/O beyond one file.
 
@@ -65,17 +83,27 @@ import copy
 import hashlib
 import json
 import os
+import re
 from contextlib import AbstractContextManager
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 from src.evaluation.measurement import expected_relations
 from src.utils.file_lock import exclusive_lock
 from src.utils.file_modes import create_staging_file
 
-#: Bumped when a record's shape changes in a way that makes an old file
-#: unreadable under the new rules. A reader that finds a version it does not know
-#: refuses rather than guessing which fields it can trust.
+#: Bumped when a record's meaning or the rules a writer must follow change, so
+#: that a writer that does not know them refuses the file instead of applying old
+#: rules to it, and when a record's shape makes an old file unreadable. The
+#: reader keeps reading every version whose meaning it knows
+#: (`READABLE_LEDGER_SCHEMAS`); one that finds a version it does not know refuses
+#: rather than guessing which fields it can trust.
+#:
+#: **4 since K8-6r.2: each record names its run from the file's run-identity
+#: boundary on; a repeat is the same run's same report.** A writer that knows
+#: only schema 3 would still merge a report into the first record of its group;
+#: it refuses a schema 4 file at read instead. An append writes schema 4 and
+#: leaves every earlier record as written.
 #:
 #: **3 since M4.** A schema 3 record is keyed by the cohort version's manifest
 #: digest rather than the samples digest, and carries what schema 2 lacked: the
@@ -85,7 +113,23 @@ from src.utils.file_modes import create_staging_file
 #: beside them as though comparable with fields missing, so a schema 1 or 2 file
 #: is refused and is read with the revision that wrote it. (2 was the Mode A/B
 #: retirement's R2, which shortened the semantics field list.)
-LEDGER_SCHEMA_VERSION = 3
+LEDGER_SCHEMA_VERSION = 4
+
+#: The schemas the one reader reads, each with its own meaning: a schema 3 file
+#: as written (every record "not recorded" for its run), a schema 4 file with its
+#: boundary. Reading never rewrites a file.
+READABLE_LEDGER_SCHEMAS: Tuple[int, ...] = (3, 4)
+
+#: The schema 4 ledger field naming the registration sequence from which every
+#: record names its run (`run_identity_boundary`). Set by the first append to a
+#: file that has none; a record before it is historical, a record from it on
+#: must carry a readable ``run_id``.
+RUN_IDENTITY_FROM_SEQUENCE = "run_identity_from_sequence"
+
+#: A run directory's name, as `cohort_registry.create_report_dir` makes it,
+#: restated here (standard library only): importing `cohort_registry` would load
+#: the graph package. A test pins it equal to `cohort_registry.RUN_ID_PATTERN`.
+RUN_ID_PATTERN = re.compile(r"[0-9]{8}T[0-9]{6}Z-([0-9a-f]{12})-[0-9a-f]{8}")
 
 #: The conventional file name, beside the checkpoints it describes.
 LEDGER_FILENAME = "evaluations.json"
@@ -100,17 +144,17 @@ LEDGER_LOCK_GRACE_SECONDS = 10.0
 
 #: Manifest fields that can change a number, hashed into one semantics digest.
 #:
-#: **A false contradiction is worse than a missed one, and this list is chosen on
-#: that asymmetry.** A missed contradiction leaves two records the reader can
-#: compare; a false one *blocks a legitimate append*, so the rule is to include
-#: anything that could move a metric. An earlier key of
-#: (checkpoint, cohort, mode, tie policy) failed exactly this way: two honest runs
-#: at different batch sizes collided and the second was refused as a
-#: contradiction, although `batch_size` is the chunk of cases a run scores at
-#: once and can move its numbers at floating-point level.
+#: **Anything that could move a metric is included**, so that two runs in one
+#: condition group differ only in what the recorded conditions do not fix, and a
+#: difference between them is one to investigate rather than one a left-out
+#: condition explains. An earlier key of (checkpoint, cohort, mode, tie policy)
+#: put two honest runs at different batch sizes in one group, although
+#: `batch_size` is the chunk of cases a run scores at once and can move its
+#: numbers at floating-point level. The group only describes: since K8-6r.2 no
+#: group refuses a run.
 #:
 #: Explicit rather than "every field", so that adding a non-semantic field later
-#: does not churn every key and silence the contradiction check. That claim is
+#: does not split every group. That claim is
 #: only worth making if it is checkable: this list and ``NON_SEMANTIC_FIELDS``
 #: below must together cover every field of ``MeasurementManifest``, and
 #: ``tests/unit/test_evaluation_sidecar.py`` fails if a new field belongs to
@@ -228,7 +272,7 @@ NON_SEMANTIC_FIELDS: Dict[str, str] = {
     "environment": (
         "the contract §5.3 facts, recorded and never refused (R11). The facts that "
         "can move a number are semantic fields above; the GPU, driver, cuDNN, TF32 "
-        "and PyG facts inform an investigation of two disagreeing runs (D5)"
+        "and PyG facts inform an investigation of two runs whose results differ"
     ),
 }
 
@@ -238,7 +282,9 @@ SEMANTIC_ARTIFACT_ROLES: Tuple[str, ...] = (
     "node_features", "edge_indices", "num_nodes", "split_manifest",
 )
 
-#: What makes two records the same measurement.
+#: A record's condition group: what makes two runs measurements under the same
+#: recorded conditions, to show and compare them. Never a run's identity (a run
+#: is its ``run_id``), and never a reason to refuse one.
 #:
 #: ``mode`` was in an earlier version of this key and is now inside the semantics
 #: digest with everything else that can move a number. What remains outside it are
@@ -289,8 +335,9 @@ _RECORD_COHORT_FIELDS: Tuple[str, ...] = (
     "counts",
 )
 
-#: Record fields that must agree for a second report under one key to corroborate
-#: the first rather than contradict it (D5's duplicate rule).
+#: Record fields compared between two runs of one condition group to describe how
+#: they differ (`differing_fields`): the report store's description of a group and
+#: the registration's group note. A difference decides nothing.
 RECORD_COMPARED_FIELDS: Tuple[str, ...] = (
     "scoring_semantics_digest",
     "scoring",
@@ -304,8 +351,8 @@ RECORD_COMPARED_FIELDS: Tuple[str, ...] = (
 
 #: Record fields outside the comparison, each for a stated reason. With
 #: ``KEY_FIELDS`` and ``RECORD_COMPARED_FIELDS`` they cover every field of a
-#: registered record, which a test checks, so a field cannot escape the duplicate
-#: rule by oversight.
+#: registered record, which a test checks, so a field cannot escape the
+#: comparison by oversight.
 RECORD_EXCLUDED_FIELDS: Dict[str, str] = {
     "r10": (
         "a re-run may find evidence the first did not, so two runs of one "
@@ -314,32 +361,34 @@ RECORD_EXCLUDED_FIELDS: Dict[str, str] = {
     ),
     "environment": (
         "R11: recorded, never refused. A difference informs an investigation of "
-        "two runs; it does not make the second a contradiction"
+        "two runs; each record keeps its own run's"
     ),
     "source_artifact_digest": (
-        "the report's bytes, which can differ between two runs of one measurement "
-        "(their paths, their environment) and can also be identical (the same run "
-        "repeated on one machine); it is what the duplicate rule adds to the "
-        "corroborating reports"
+        "the report's bytes, which can differ between two runs under one group "
+        "(their paths, their environment) and can also be identical (two runs on "
+        "one machine). With the run it tells a repeat (the same run's same bytes) "
+        "from a replaced report; it never stands in for the run"
     ),
-    "corroborating_reports": "the ledger's own record of later agreeing reports",
+    "run_id": (
+        "the run the record was registered from (schema 4), assigned by the ledger "
+        "(`append_record`): it tells runs apart and is never compared"
+    ),
+    "corroborating_reports": (
+        "reports merged into a record before each run had its own record (schema 3, "
+        "and records before a schema 4 file's run-identity boundary); [] on every "
+        "record registered since"
+    ),
     "registration": "when and in what order this ledger registered the record",
 }
 
-#: The excluded fields each report measures for itself. When a report
-#: corroborates a record, the record keeps its first report's values of these,
-#: so a re-run that found R10 evidence the first did not, or ran under another
-#: driver, changes nothing in the ledger. A registration says so when this
-#: report's values differ (`RegistrationResult.excluded_differences`), naming
-#: the report that holds them, rather than reporting plain agreement.
-CORROBORATION_KEEPS_FIRST: Tuple[str, ...] = ("r10", "environment")
-
-#: What ``append_record`` can do with a record, by name.
-REGISTRATION_OUTCOMES: Tuple[str, ...] = ("registered", "already_registered", "corroborated")
+#: What ``append_record`` can do with a record, by name. (``corroborated``, the
+#: merge of another run's report into a group's first record, retired in
+#: K8-6r.2; a usage-history entry written with it is read as written.)
+REGISTRATION_OUTCOMES: Tuple[str, ...] = ("registered", "already_registered")
 
 #: How a record's regime is described where a person reads it: the device class
-#: and whether deterministic algorithms were on, which is what decides whether two
-#: disagreeing runs are a contradiction or variation to investigate.
+#: and whether deterministic algorithms were on, which says whether two runs of
+#: one group whose values differ were expected to agree (on: investigate).
 ENVIRONMENT_CLASSES: Tuple[str, ...] = (
     "CUDA, deterministic algorithms on",
     "CUDA, deterministic algorithms off",
@@ -363,19 +412,18 @@ def measurement_semantics_digest(manifest: Dict[str, Any]) -> str:
     """SHA-256 over everything about a run that could change its numbers.
 
     **Not the source artifact's digest.** That changes with a timestamp, a
-    reordered dict or an added descriptive field, so using it as identity would
-    make every re-run a new record and the contradiction check would never fire.
-    This hashes a named list of semantic fields, so two runs that differ in
-    nothing that matters produce the same digest.
+    reordered dict or an added descriptive field, so grouping by it would put
+    every run in a group of its own, and runs under identical conditions could
+    not be compared. This hashes a named list of semantic fields, so two runs
+    that differ in nothing that matters produce the same digest.
 
-    **What "the same measurement" means here is narrower than bit-determinism.**
+    **What "the same conditions" means here is narrower than bit-determinism.**
     Two records under one digest were produced under identical recorded
-    semantics. Whether they were therefore *bound* to agree
-    depends on the regime those fields describe: under `deterministic_algorithms`
-    a disagreement is a contradiction, and under a non-deterministic CUDA regime
-    it is a finding to investigate. The ledger refuses the second record either
-    way, because two answers filed under one identity cannot both stand — but the
-    refusal is an instruction to look, not a proof of a defect.
+    semantics. Whether they were therefore *expected* to agree depends on the
+    regime those fields describe: under `deterministic_algorithms` a difference
+    asks for an investigation, and under a non-deterministic CUDA regime it may
+    be variation the regime permits. Either way each run keeps its own record,
+    and the difference is described, never refused.
 
     A field the manifest does not carry is hashed as ``null`` rather than skipped,
     so a manifest that dropped one cannot collide with a manifest carrying a value
@@ -409,7 +457,11 @@ def scoring_semantics_digest(manifest: Dict[str, Any]) -> str:
 
 
 def empty_ledger() -> Dict[str, Any]:
-    """A ledger holding nothing, which is a different thing from no ledger."""
+    """A ledger holding nothing, which is a different thing from no ledger.
+
+    Schema 4 with no records and no run-identity boundary: no record's identity
+    is undetermined and the next sequence is plainly 1, so its boundary is 1
+    (`run_identity_boundary`) and the first append writes it."""
     return {
         "schema_version": LEDGER_SCHEMA_VERSION,
         "what_this_is": (
@@ -432,10 +484,17 @@ def read_ledger(path: Path) -> Tuple[Dict[str, Any], Optional[str]]:
     guard.
 
     A missing file is not an error: the first record has to be appendable to a
-    directory that has none. A file that is not UTF-8 JSON, not an object, has
-    no records list or carries another ``schema_version`` **is** an error, named
+    directory that has none, and `empty_ledger` is returned for it. A file that
+    is not UTF-8 JSON, not an object, has no records list or carries a
+    ``schema_version`` outside `READABLE_LEDGER_SCHEMAS` **is** an error, named
     by its path, because reading it under this version's rules would be a guess
     about which of its fields still mean what they say.
+
+    **Schema 3 and 4 are read as they are, and nothing is rewritten** (K8-6r.2):
+    a schema 3 file's records name no run; a schema 4 file's boundary is read by
+    `run_identity_boundary`, not here, so a file whose boundary is lost still
+    reads, and its readable results stay readable. Only an append writes schema
+    4 (`append_record`).
     """
     from src.utils.fingerprint import read_once
 
@@ -460,22 +519,23 @@ def read_ledger(path: Path) -> Tuple[Dict[str, Any], Optional[str]]:
             "object"
         )
     version = ledger.get("schema_version")
+    readable = " and ".join(str(v) for v in READABLE_LEDGER_SCHEMAS)
     if type(version) is int and version in (1, 2):
         # **Not "register again".** No report written before schema 3 can be
         # registered under it (`build_record` refuses its manifest), and this text
         # is shown where no current report is at hand (the model status,
         # `--show`), so it says what can be done: re-measure.
         raise ValueError(
-            f"{path} is ledger schema {version}; this code reads schema "
-            f"{LEDGER_SCHEMA_VERSION}. Archive it, for example as "
+            f"{path} is ledger schema {version}; this code reads schemas "
+            f"{readable}. Archive it, for example as "
             f"evaluations.v{version}.json; it is read with the revision that wrote "
             "it. Its results are not carried over: re-measure with this revision "
             "and register the new reports."
         )
-    if type(version) is not int or version != LEDGER_SCHEMA_VERSION:
+    if type(version) is not int or version not in READABLE_LEDGER_SCHEMAS:
         raise ValueError(
-            f"{path} is ledger schema {version!r}; this code reads "
-            f"{LEDGER_SCHEMA_VERSION}. Read it with the revision that wrote it "
+            f"{path} is ledger schema {version!r}; this code reads schemas "
+            f"{readable}. Read it with the revision that wrote it "
             "rather than reinterpreting its fields under new rules."
         )
     if not isinstance(ledger.get("records"), list):
@@ -484,7 +544,8 @@ def read_ledger(path: Path) -> Tuple[Dict[str, Any], Optional[str]]:
 
 
 def record_key(record: Dict[str, Any]) -> Tuple[Any, ...]:
-    """The identity of a measurement, as a tuple.
+    """A record's condition group (`KEY_FIELDS`), as a tuple: what its runs are
+    grouped and compared by, never a run's identity.
 
     A tuple rather than a joined string: joining needs a separator, a separator
     needs escaping, and an unescaped one lets two different keys collide. Nothing
@@ -686,50 +747,319 @@ def build_record(report: Dict[str, Any], source_digest: str) -> Dict[str, Any]:
     }
 
 
-def _sequence(record: Dict[str, Any], index: int) -> int:
-    """A record's registration sequence, refused rather than guessed when a hand
-    edit left it unreadable: a new sequence computed past a gap could repeat one."""
-    registration = record.get("registration")
+def _readable_sequence(record: Any) -> Optional[int]:
+    """A record's registration sequence, or None when it cannot be read."""
+    registration = record.get("registration") if isinstance(record, dict) else None
     sequence = registration.get("sequence") if isinstance(registration, dict) else None
-    if type(sequence) is not int or sequence < 1:
-        raise ValueError(
-            f"the ledger's record {index} has no registration sequence; it was edited "
-            "into a shape this code cannot append to without guessing"
-        )
-    return sequence
+    return sequence if type(sequence) is int and sequence >= 1 else None
+
+
+def sequence_problem(ledger: Dict[str, Any]) -> Optional[str]:
+    """Why the next registration sequence cannot be allocated safely, naming
+    the first record, in file order, that is not an object or has no readable
+    registration sequence; None when every record's sequence reads. Refused
+    rather than guessed: a new sequence computed past a gap could repeat one.
+
+    **What makes a write itself uncertain** (K8-6r.2 (ii)(b)0), in one place:
+    `append_record` refuses an append with it, and `report_state` reads
+    ``cannot_be_checked`` with it when no record names the run, so the state
+    and the writer agree."""
+    for index, record in enumerate(_ledger_records(ledger)):
+        if not isinstance(record, dict):
+            return (f"the ledger's record {index} is not an object, so the next registration "
+                    "sequence cannot be allocated safely")
+        if _readable_sequence(record) is None:
+            return (f"the ledger's record {index} has no registration sequence, so the next "
+                    "sequence cannot be allocated safely; it was edited into a shape this code "
+                    "cannot append to without guessing")
+    return None
+
+
+def _run_id(record: Any) -> Optional[str]:
+    """The run a record names, when it names one readably: a run directory's name
+    (`RUN_ID_PATTERN`). None when the field is missing or is anything else."""
+    run_id = record.get("run_id") if isinstance(record, dict) else None
+    return run_id if isinstance(run_id, str) and RUN_ID_PATTERN.fullmatch(run_id) else None
+
+
+def _ledger_records(ledger: Dict[str, Any]) -> List[Any]:
+    records = ledger.get("records") if isinstance(ledger, dict) else None
+    return records if isinstance(records, list) else []
+
+
+def _schema_4(ledger: Dict[str, Any]) -> bool:
+    version = ledger.get("schema_version") if isinstance(ledger, dict) else None
+    return type(version) is int and version == 4
+
+
+def run_identity_boundary(ledger: Dict[str, Any]) -> Tuple[Optional[int], Optional[str]]:
+    """The sequence from which every record of this ledger names its run, as
+    ``(boundary, None)``; ``(None, why)`` when it cannot be read; ``(None, None)``
+    for a schema 3 file, which has none (every record is historical).
+
+    **The one place the boundary is read** (K8-6r.2): `find_run`,
+    `append_record`, `historical_overlap` and the readers' record view
+    (`record_identities`) all take it from here, so they agree. A schema 4 file
+    that holds no record and names no boundary is not damaged: its boundary is 1,
+    and the first append writes it. Unreadable: missing while the file holds
+    records, not an integer, below 1, or above the next sequence. Reading it
+    never changes the file.
+    """
+    if not _schema_4(ledger):
+        return None, None
+    records = _ledger_records(ledger)
+    if RUN_IDENTITY_FROM_SEQUENCE not in ledger:
+        if not records:
+            return 1, None
+        return None, (f"it is missing while the file holds {len(records)} "
+                      f"record{'' if len(records) == 1 else 's'}")
+    value = ledger[RUN_IDENTITY_FROM_SEQUENCE]
+    if type(value) is not int:
+        return None, f"it is {value!r}, not an integer"
+    if value < 1:
+        return None, f"it is {value}, below 1"
+    following = max((s for s in map(_readable_sequence, records) if s is not None),
+                    default=0) + 1
+    if value > following:
+        return None, f"it is {value}, above the next sequence {following}"
+    return value, None
+
+
+def _boundary_lost(why: str) -> str:
+    return (f"the file's run-identity boundary ({RUN_IDENTITY_FROM_SEQUENCE}) cannot be "
+            f"read ({why})")
+
+
+class RecordIdentity(NamedTuple):
+    """How one ledger record's run reads (`record_identities`).
+
+    - ``run_id`` set: a result naming its run.
+    - ``historical``: written before each run had its own record (a schema 3
+      file, or before a schema 4 file's boundary); its run is "not recorded".
+    - ``problem`` set: its identity cannot be read (at or after the boundary
+      without a readable ``run_id``, or the boundary lost); listed as an
+      unreadable item with this reason, never shown as historical.
+    """
+
+    run_id: Optional[str]
+    historical: bool
+    problem: Optional[str]
+
+
+def record_identities(ledger: Dict[str, Any]) -> List[RecordIdentity]:
+    """Each record's identity, in file order, by the file's boundary
+    (`run_identity_boundary`), **never by the presence of a ``run_id`` key
+    alone**: a record before the boundary is historical whatever it carries, and
+    a hand edit that removes a ``run_id`` cannot make a later record look
+    historical, since its sequence still lies at or after the boundary.
+
+    A record whose sequence cannot be read is a result when it names its run,
+    and otherwise unreadable; with the boundary lost, likewise for every record.
+    Reads only; for every reader and for `find_run`.
+    """
+    boundary, why = run_identity_boundary(ledger)
+    out: List[RecordIdentity] = []
+    for record in _ledger_records(ledger):
+        if not isinstance(record, dict):
+            out.append(RecordIdentity(None, False, "it is not an object"))
+            continue
+        if not _schema_4(ledger):
+            out.append(RecordIdentity(None, True, None))
+            continue
+        run_id = _run_id(record)
+        sequence = _readable_sequence(record)
+        if boundary is not None and sequence is not None and sequence < boundary:
+            out.append(RecordIdentity(None, True, None))
+        elif run_id is not None:
+            out.append(RecordIdentity(run_id, False, None))
+        elif boundary is None:
+            out.append(RecordIdentity(None, False, (
+                f"whether it names its run cannot be told: {_boundary_lost(why)}")))
+        elif sequence is None:
+            out.append(RecordIdentity(None, False, (
+                "it has no readable registration sequence, so whether it must name its "
+                "run cannot be told")))
+        elif "run_id" not in record:
+            out.append(RecordIdentity(None, False, "its run identity is missing"))
+        else:
+            out.append(RecordIdentity(None, False, (
+                f"its run identity cannot be read: run_id {record['run_id']!r} is not a run "
+                "directory's name")))
+    return out
+
+
+class RunLookup(NamedTuple):
+    """What `find_run` found: the record naming the run and its index, or
+    neither; or why whether this run is registered cannot be told (``problem``),
+    in which case nothing may be appended for it."""
+
+    index: Optional[int]
+    record: Optional[Dict[str, Any]]
+    problem: Optional[str]
+
+
+def _shown_sequence(record: Any, index: int) -> str:
+    sequence = _readable_sequence(record)
+    return f"record {sequence}" if sequence is not None else f"the record at index {index}"
+
+
+def find_run(
+    ledger: Dict[str, Any],
+    run_id: str,
+    cohort_digest: Optional[str],
+    checkpoint_digest: Optional[str],
+) -> RunLookup:
+    """**The exact same-run lookup** (policy rev 16, K8-6r.2): the record that
+    names run `run_id` of cohort version `cohort_digest` for checkpoint
+    `checkpoint_digest`, among the records with an explicit identity only, and
+    before any other record is consulted. `append_record`, `held_record` and
+    `report_state` all call it first, so the outcome, the record returned and
+    the state agree.
+
+    The records looked at: in a schema 4 file, those at or after its boundary,
+    and a record whose sequence cannot be read that names a run; in a schema 4
+    file whose boundary cannot be read, those that name a run readably; none in
+    a schema 3 file. Among them:
+
+    - a readable cohort digest that is not `cohort_digest`, or a readable
+      checkpoint digest that is not `checkpoint_digest`, is not this run, and
+      neither is a readable run id that is not `run_id`;
+    - a record with no readable run id that may be this run (its digests are
+      these or cannot be read): **problem**, naming its index;
+    - a record naming this run whose cohort or checkpoint digest, whose
+      report digest, or whose registration sequence cannot be read:
+      **problem**, naming its index;
+    - two records naming this run: **problem**, naming both;
+    - with the boundary lost and no record naming this run: **problem**, saying
+      the boundary cannot be read.
+
+    `cohort_digest` or `checkpoint_digest` None means unknown (a report that
+    could not be read): that filter is not applied. Never writes, never
+    guesses: a problem is returned, not resolved.
+    """
+    boundary, why = run_identity_boundary(ledger)
+    records = _ledger_records(ledger)
+    problems: List[str] = []
+    named: List[int] = []
+    for index, (record, identity) in enumerate(zip(records, record_identities(ledger))):
+        if not isinstance(record, dict) or identity.historical:
+            continue
+        if identity.run_id is None and (boundary is None or _readable_sequence(record) is None):
+            # Not a record of this file's explicit identities as far as can be
+            # told: the boundary is lost, or its sequence cannot be read (which
+            # refuses an append, and leaves a state "cannot be checked", by
+            # `sequence_problem`, once no record names this run).
+            continue
+        cohort = record.get("cohort_digest")
+        checkpoint = record.get("checkpoint_digest")
+        if ((cohort_digest is not None and _is_digest(cohort) and cohort != cohort_digest)
+                or (checkpoint_digest is not None and _is_digest(checkpoint)
+                    and checkpoint != checkpoint_digest)):
+            continue
+        if identity.run_id is not None and identity.run_id != run_id:
+            continue
+        if identity.run_id is None:
+            problems.append(
+                f"the ledger's record {index} should name its run and does not, so whether "
+                "it is this run cannot be told")
+            continue
+        named.append(index)
+        unreadable = [field for field, value in (("cohort digest", cohort),
+                                                 ("checkpoint digest", checkpoint))
+                      if not _is_digest(value)]
+        if unreadable:
+            problems.append(
+                f"the ledger's record {index} names run {run_id} but its "
+                f"{' and '.join(unreadable)} cannot be read, so whether it is this run's "
+                "record cannot be told")
+        elif not _is_digest(record.get("source_artifact_digest")):
+            problems.append(
+                f"{_shown_sequence(record, index)} (the ledger's record {index}) names run "
+                f"{run_id} but its report digest cannot be read, so whether this report is "
+                "the one registered cannot be told")
+        elif _readable_sequence(record) is None:
+            # This run's own record with its registration lost by a hand edit:
+            # damaged identity, never an answer that it is registered as some
+            # record (clarification 1).
+            problems.append(
+                f"the ledger's record {index} names run {run_id} but its registration "
+                "sequence cannot be read, so this run's record is damaged; restore it from "
+                "the original report or a trusted backup")
+    if len(named) > 1:
+        problems.append(
+            f"the ledger's records {', '.join(str(i) for i in named)} all name run {run_id} "
+            "(a hand edit, or a writer that took no lock), so which is this run's record "
+            "cannot be told")
+    if problems:
+        return RunLookup(None, None, "; ".join(problems))
+    if named:
+        return RunLookup(named[0], records[named[0]], None)
+    if boundary is None and why is not None:
+        return RunLookup(None, None, (
+            f"{_boundary_lost(why)}, so whether a record that names no run is this run "
+            "cannot be told; restore the boundary from a trusted backup, then register "
+            "again"))
+    return RunLookup(None, None, None)
+
+
+def sealed_run_refusal(found: RunLookup, run_id: str, source_digest: str) -> str:
+    """Why run `run_id`'s report with bytes `source_digest` is not the one its
+    record holds: the run's report is sealed when it is published, so other
+    bytes are a replaced report. The writer's refusal and `report_state`'s
+    reason, in one wording."""
+    held = str(found.record.get("source_artifact_digest"))
+    return (
+        f"run {run_id} is already registered as {_shown_sequence(found.record, found.index)} "
+        f"from report {held[:12]}...; this report ({source_digest[:12]}...) is other bytes: "
+        "a run's report is sealed when it is published, so this file was replaced after "
+        "it was registered"
+    )
 
 
 def append_record(
-    ledger: Dict[str, Any], record: Dict[str, Any], *, registered_at: str
+    ledger: Dict[str, Any], record: Dict[str, Any], *, run_id: str, registered_at: str
 ) -> Tuple[str, Dict[str, Any]]:
-    """Register a record, or recognise it, or refuse a key that already carries a
-    different result. Returns the outcome and the ledger to write.
+    """Register the record of run `run_id`, or recognise it, or refuse a write
+    that cannot complete safely. Returns the outcome and the ledger to write.
+    The steps, by the plan's numbers (K8-6r.2 (ii)(b)), in the order they run:
 
-    - **registered**: no record has this key. It is appended with the next
-      sequence (the largest in the file plus one, from 1), no corroborating
-      reports, and ``registered_at``.
-    - **already_registered**: a record under this key was built from the same
-      report bytes, or lists them among its corroborating reports. The ledger is
-      returned as it is: a ledger rebuilt from the same reports twice is the same
-      ledger.
-    - **corroborated**: a record under this key came from another report, and
-      every field in ``RECORD_COMPARED_FIELDS`` agrees. The new report's digest
-      is added to that first record's corroborating reports; the first record
-      keeps its R10, environment and registration.
+    1. **The exact same-run lookup** (`find_run`), before any other record is
+       consulted: the same run with the same report bytes is
+       **already_registered**, and the ledger is returned as it is; the same
+       run with other bytes is refused (`sealed_run_refusal`); this run's own
+       identity record damaged, or the boundary lost while no record names this
+       run, is refused with its reason.
+    0. **What makes the write itself uncertain** is refused before anything is
+       appended, naming the record (`sequence_problem`): a record that is not
+       an object or has no readable registration sequence, since the next
+       sequence cannot be allocated safely otherwise. Checked once the lookup
+       found no record of this run: a run it found is answered with nothing
+       written, as `report_state` reads it, so a damaged record elsewhere never
+       turns the same run's same report into a refusal.
+    2. **Otherwise registered**: the record gets ``run_id``, no corroborating
+       reports and ``registration`` {the largest sequence in the file plus one,
+       from 1; ``registered_at``}, whatever its bytes and whatever the times. The
+       ledger is returned as schema 4; when the file had no boundary (schema 3,
+       no file, or an empty schema 4 file) its ``run_identity_from_sequence`` is
+       this record's sequence. Every earlier record is left as written, with no
+       run invented for it.
 
-    Anything else under the key is refused, naming the compared fields that
-    differ (the metric names, when only the metrics do) — not because one of the
-    two is provably wrong, but because the ledger cannot choose between them and
-    neither may stand unexamined. Whether the difference is a defect or
-    variation the regime permits is a question for a person:
-    `deterministic_algorithms` and the cuDNN fields inform that investigation
-    rather than settling it.
+    **Nothing else is compared or consulted**: no metric, regime, environment,
+    R10, cohort, relation or condition group, and no historical record. A lost
+    group field, source digest or corroborating list on any other record never
+    refuses. How this run relates to the historical records and to its group is
+    described after the decision (`historical_overlap`, `group_differences`).
 
     Pure: the ledger and the record passed in are never changed.
     """
     if not isinstance(registered_at, str) or not registered_at:
         raise ValueError("a registration needs the time it was made")
-    for field in ("corroborating_reports", "registration"):
+    if not isinstance(run_id, str) or RUN_ID_PATTERN.fullmatch(run_id) is None:
+        raise ValueError(
+            f"the run id {run_id!r} is not a run directory's name; a record names the run "
+            "whose report it was built from"
+        )
+    for field in ("run_id", "corroborating_reports", "registration"):
         if field in record:
             raise ValueError(
                 f"the record already carries {field}, which only the ledger assigns"
@@ -742,58 +1072,230 @@ def append_record(
             f"the record lacks {', '.join(absent)}; only a record build_record made "
             "is appended"
         )
-    key = record_key(record)
     digest = record["source_artifact_digest"]
     records = ledger["records"]
-    # **Every record is checked before any is compared,** so a hand edit that left
-    # one unreadable refuses the append wherever it sits in the file.
-    sequences = []
-    for index, existing in enumerate(records):
-        if not isinstance(existing, dict):
-            raise ValueError(f"the ledger's record {index} is not an object")
-        try:
-            record_key(existing)
-        except ValueError as exc:
-            raise ValueError(f"the ledger's record {index}: {exc}") from exc
-        sequences.append(_sequence(existing, index))
-    for index, existing in enumerate(records):
-        if record_key(existing) != key:
-            continue
-        corroborating = existing.get("corroborating_reports")
-        if not isinstance(corroborating, list):
-            raise ValueError(
-                f"the ledger's record {index} has no corroborating_reports list"
-            )
-        if digest == existing.get("source_artifact_digest") or digest in corroborating:
+    # 1. **This run first**, among the records that name a run: a run found is
+    # answered here, and nothing is written for it either way.
+    found = find_run(ledger, run_id, record["cohort_digest"], record["checkpoint_digest"])
+    if found.record is not None:
+        if found.record.get("source_artifact_digest") == digest:
             return "already_registered", ledger
-        differing = differing_fields(existing, record)
-        if not differing:
-            updated = {**existing, "corroborating_reports": corroborating + [digest]}
-            return "corroborated", {
-                **ledger, "records": records[:index] + [updated] + records[index + 1:],
-            }
-        raise ValueError(_contradiction(existing, record, differing))
+        raise ValueError(sealed_run_refusal(found, run_id, digest))
+    if found.problem is not None:
+        raise ValueError(found.problem)
+    # 0. **Every record's sequence reads before one is appended,** so a hand
+    # edit that left one unreadable refuses the append wherever it sits.
+    uncertain = sequence_problem(ledger)
+    if uncertain is not None:
+        raise ValueError(uncertain)
+    # 2. **Its own record.**
+    sequence = max(map(_readable_sequence, records), default=0) + 1
     registered = {
         **copy.deepcopy(record),
+        "run_id": run_id,
         "corroborating_reports": [],
-        "registration": {
-            "sequence": max(sequences, default=0) + 1,
-            "registered_at": registered_at,
-        },
+        "registration": {"sequence": sequence, "registered_at": registered_at},
     }
-    return "registered", {**ledger, "records": records + [registered]}
+    updated = {**ledger, "schema_version": LEDGER_SCHEMA_VERSION,
+               "records": records + [registered]}
+    if not _schema_4(ledger) or RUN_IDENTITY_FROM_SEQUENCE not in ledger:
+        updated[RUN_IDENTITY_FROM_SEQUENCE] = sequence
+    return "registered", updated
+
+
+def held_record(ledger: Dict[str, Any], record: Dict[str, Any], run_id: str) -> Dict[str, Any]:
+    """The record `ledger` holds for run `run_id` of `record`'s cohort version
+    and checkpoint (`find_run`): the one appended, or the one found for an
+    ``already_registered`` run. Never the condition group's first record."""
+    found = find_run(ledger, run_id, record.get("cohort_digest"),
+                     record.get("checkpoint_digest"))
+    if found.record is None:
+        raise ValueError(found.problem or f"no record of this ledger names run {run_id}")
+    return found.record
+
+
+def _group(record: Dict[str, Any]) -> Optional[Tuple[Any, ...]]:
+    """A record's condition group, or None when a group field is missing."""
+    try:
+        return record_key(record)
+    except ValueError:
+        return None
+
+
+def _readable_group(record: Dict[str, Any]) -> Optional[Tuple[Any, ...]]:
+    """A record's condition group when every field of it reads (the three
+    digests as digests, the cohort role as a non-empty string); None when one
+    is missing or cannot be read, so the group cannot be told."""
+    group = _group(record)
+    if group is None:
+        return None
+    readable = all(
+        (isinstance(value, str) and bool(value)) if field == "cohort_role" else _is_digest(value)
+        for field, value in zip(KEY_FIELDS, group))
+    return group if readable else None
+
+
+class HistoricalNote(NamedTuple):
+    """One historical record's relation to a run's report (`historical_overlap`):
+    its index and sequence (None when unreadable), whether it holds the report's
+    digest (a possible overlap) or its relation cannot be checked, and the
+    sentence for a person."""
+
+    index: int
+    sequence: Optional[int]
+    possible_overlap: bool
+    text: str
+
+
+def historical_overlap(ledger: Dict[str, Any], record: Dict[str, Any]) -> Tuple[HistoricalNote, ...]:
+    """**The historical note** (K8-6r.2 (ii)(b)3): how the records written before
+    each run had its own record relate to `record`'s report. Informational,
+    derived from the ledger alone, and never consulted to decide an outcome.
+
+    - A historical record holding the report's digest among its readable source
+      or corroborating digests: "possible overlap with record N, merged before
+      each run had its own record: not recorded whether this run is one of them".
+    - A historical record of `record`'s condition group, or of a group that
+      cannot be read, whose source digest or corroborating list cannot be read:
+      "its relation to record N cannot be checked: <field> cannot be read". One
+      of another readable group gets no note: the old writer merged a report only
+      into a record of its own group.
+
+    Nothing is stored: historical records no longer change, so a stored flag
+    would only repeat what the ledger says.
+    """
+    digest = record.get("source_artifact_digest")
+    group = _group(record)
+    notes: List[HistoricalNote] = []
+    for index, (existing, identity) in enumerate(
+            zip(_ledger_records(ledger), record_identities(ledger))):
+        if not isinstance(existing, dict) or not identity.historical:
+            continue
+        sequence = _readable_sequence(existing)
+        shown = _shown_sequence(existing, index)
+        source = existing.get("source_artifact_digest")
+        corroborating = existing.get("corroborating_reports")
+        listed = corroborating if isinstance(corroborating, list) else []
+        held = [d for d in [source, *listed] if _is_digest(d)]
+        if _is_digest(digest) and digest in held:
+            notes.append(HistoricalNote(index, sequence, True, (
+                f"possible overlap with {shown}, merged before each run had its own record: "
+                "not recorded whether this run is one of them")))
+            continue
+        # Another group only when every field of it reads: a group field that
+        # is missing or unreadable leaves the group one that cannot be read.
+        theirs = _readable_group(existing)
+        if theirs is not None and theirs != group:
+            continue
+        lost = []
+        if not _is_digest(source):
+            lost.append("source_artifact_digest")
+        if not isinstance(corroborating, list) or not all(_is_digest(d) for d in corroborating):
+            lost.append("corroborating_reports")
+        if lost:
+            notes.append(HistoricalNote(index, sequence, False, (
+                f"its relation to {shown} cannot be checked: {' and '.join(lost)} "
+                "cannot be read")))
+    return tuple(notes)
+
+
+def possible_overlaps(ledger: Dict[str, Any]) -> List[Tuple[int, ...]]:
+    """For each record, in file order, the registration sequences of the
+    records it may overlap (K8-6r.2 (e)), for the readers that show records
+    (the API's ``historical_overlap``, Models, ``record_evaluation --show``):
+
+    - a record that names its run: each historical record holding its report
+      digest among its readable source or corroborating digests;
+    - a historical record: each record naming a run whose report digest it
+      holds so.
+
+    **Derived and informational**, by the same reading as `historical_overlap`
+    (`record_identities`, the file's boundary): whether a historical record and
+    a named run were one execution was never recorded, so an overlap is never
+    confirmed, never counted as two independent runs and never a reason for
+    anything. Empty for a record whose identity or digests cannot be read, and
+    a record whose sequence cannot be read is not named."""
+    records = _ledger_records(ledger)
+    identities = record_identities(ledger)
+    held_by: Dict[int, List[str]] = {}
+    for index, (record, identity) in enumerate(zip(records, identities)):
+        if isinstance(record, dict) and identity.historical:
+            listed = record.get("corroborating_reports")
+            listed = listed if isinstance(listed, list) else []
+            held_by[index] = [d for d in [record.get("source_artifact_digest"), *listed]
+                              if _is_digest(d)]
+    out: List[List[int]] = [[] for _ in records]
+    for index, (record, identity) in enumerate(zip(records, identities)):
+        if not isinstance(record, dict) or identity.run_id is None:
+            continue
+        digest = record.get("source_artifact_digest")
+        if not _is_digest(digest):
+            continue
+        for old, digests in held_by.items():
+            if digest not in digests:
+                continue
+            old_sequence = _readable_sequence(records[old])
+            new_sequence = _readable_sequence(record)
+            if old_sequence is not None:
+                out[index].append(old_sequence)
+            if new_sequence is not None:
+                out[old].append(new_sequence)
+    return [tuple(sorted(set(found))) for found in out]
+
+
+class GroupDifference(NamedTuple):
+    """One other record of a run's condition group whose compared fields differ
+    (`group_differences`): its sequence and index, its run (None: "not
+    recorded" for a historical record, or unreadable), the difference names, and
+    whether both runs record deterministic algorithms on (then they were
+    expected to agree: investigate)."""
+
+    index: int
+    sequence: Optional[int]
+    run_id: Optional[str]
+    historical: bool
+    differing: Tuple[str, ...]
+    deterministic: bool
+
+
+def _deterministic(record: Dict[str, Any]) -> bool:
+    regime = record.get("regime")
+    return isinstance(regime, dict) and regime.get("deterministic_algorithms") is True
+
+
+def group_differences(ledger: Dict[str, Any], held: Dict[str, Any]) -> Tuple[GroupDifference, ...]:
+    """Each other record of `held`'s condition group that differs from it on a
+    compared field (`differing_fields`, named by `difference_names`), in file
+    order. Informational (Decision 11): a description at registration, never a
+    reason to refuse, and nothing is stored. `held` is the record the ledger
+    holds for this run (`held_record`), found in `ledger` by identity."""
+    group = _group(held)
+    if group is None:
+        return ()
+    out: List[GroupDifference] = []
+    for index, (existing, identity) in enumerate(
+            zip(_ledger_records(ledger), record_identities(ledger))):
+        if existing is held or not isinstance(existing, dict) or _group(existing) != group:
+            continue
+        fields = differing_fields(existing, held)
+        if not fields:
+            continue
+        out.append(GroupDifference(
+            index, _readable_sequence(existing), identity.run_id, identity.historical,
+            tuple(difference_names(existing, held, fields)),
+            _deterministic(existing) and _deterministic(held)))
+    return tuple(out)
 
 
 def differing_fields(existing: Dict[str, Any], record: Dict[str, Any]) -> List[str]:
-    """The fields of ``RECORD_COMPARED_FIELDS`` on which two records under one key
-    disagree, in that list's order; empty when one corroborates the other.
+    """The fields of ``RECORD_COMPARED_FIELDS`` on which two records of one
+    condition group differ, in that list's order; empty when they agree.
 
-    **The ledger's own comparison, and the only one** (D5's duplicate rule):
-    `append_record` uses it against the record a ledger holds, and the report
-    store uses it between the reports it keeps under one key
-    (`src/evaluation/report_store.py`), so "runs disagree" means in the store
-    exactly what a contradiction means in the ledger. A field one record lacks
-    and the other has differs; a field both lack does not.
+    **The one comparison, and it only describes** (policy rev 16): the report
+    store's description of a group (`StoreScan.status`) and the registration's
+    group note (`group_differences`) both use it, so "runs under these
+    conditions differ" means the same everywhere. It refuses nothing. A field
+    one record lacks and the other has differs; a field both lack does not.
     """
     missing = object()
     return [
@@ -805,7 +1307,7 @@ def differing_fields(existing: Dict[str, Any], record: Dict[str, Any]) -> List[s
 def difference_names(
     existing: Dict[str, Any], record: Dict[str, Any], differing: List[str]
 ) -> List[str]:
-    """How a disagreement is named for a person: the differing fields, or, when
+    """How a difference is named for a person: the differing fields, or, when
     only the metrics differ, the metric names that do."""
     if differing != ["metrics"]:
         return list(differing)
@@ -821,12 +1323,12 @@ def report_key(report: Any) -> Optional[Tuple[Any, ...]]:
     without `build_record`'s checks, or `None` when the manifest does not give
     all four parts.
 
-    **For telling which key a report belongs to, never for filing it.** A report
-    the store keeps that `build_record` refuses (written by an earlier revision,
-    say) cannot be compared, but its key can often still be read, so the report
-    store marks only that key "cannot be checked" rather than every key of the
-    version (D5). For a report `build_record` accepts, this is the record's
-    `record_key`, which a test pins.
+    **For telling which group a report belongs to, never for filing it.** A
+    report the store keeps that `build_record` refuses (written by an earlier
+    revision, say) cannot be compared, but its group can often still be read, so
+    the report store's description of that group says the comparison is
+    incomplete, naming the file; it refuses nothing. For a report `build_record`
+    accepts, this is the record's `record_key`, which a test pins.
     """
     manifest = report.get("manifest") if isinstance(report, dict) else None
     if not isinstance(manifest, dict):
@@ -844,25 +1346,6 @@ def report_key(report: Any) -> Optional[Tuple[Any, ...]]:
     except (TypeError, ValueError, RecursionError):
         return None
     return (checkpoint, role, cohort, semantics)
-
-
-def _contradiction(
-    existing: Dict[str, Any], record: Dict[str, Any], differing: List[str]
-) -> str:
-    """The refusal of a second, different result under one key."""
-    names = difference_names(existing, record, differing)
-    return (
-        f"this ledger already holds a record for checkpoint "
-        f"{record['checkpoint_digest'][:12]}... on cohort version "
-        f"{record['cohort']['label']} ({record['cohort_digest'][:12]}...) under "
-        f"identical measurement semantics "
-        f"({record['measurement_semantics_digest'][:12]}...), from report "
-        f"{str(existing.get('source_artifact_digest'))[:12]}..., and this report "
-        f"({record['source_artifact_digest'][:12]}...) disagrees on: "
-        f"{', '.join(names)}. The ledger cannot choose between them, and neither "
-        "may stand unexamined: whether this is a defect or variation the recorded "
-        "regime permits is for a person to determine."
-    )
 
 
 def find_checkpoint(directory: Path, digest: str) -> Optional[Path]:
@@ -930,10 +1413,11 @@ def environment_class(record_or_regime: Dict[str, Any]) -> str:
     """The class of regime a result was measured under, in one phrase.
 
     Takes a record or its ``regime`` block. CUDA runs are told apart by whether
-    deterministic algorithms were on, because that decides whether two
-    disagreeing runs under one key are a contradiction or variation to
-    investigate (D5). A CPU run is a development number and a different
-    measurement from any CUDA run (the device is in the key).
+    deterministic algorithms were on, because that says whether two runs of one
+    group whose values differ were expected to agree (on: investigate) or may
+    differ by variation the regime permits; neither is refused. A CPU run is a
+    development number and a different measurement from any CUDA run (the device
+    is in the key).
 
     A device that is neither, or a determinism flag that is not a boolean, is
     refused rather than classed: there is no class to guess.
@@ -1042,8 +1526,9 @@ def write_ledger(
 
 __all__ = [
     "COHORT_VERSION_FIELDS",
-    "CORROBORATION_KEEPS_FIRST",
     "ENVIRONMENT_CLASSES",
+    "GroupDifference",
+    "HistoricalNote",
     "KEY_FIELDS",
     "LEDGER_FILENAME",
     "LEDGER_LOCK_GRACE_SECONDS",
@@ -1051,12 +1536,17 @@ __all__ = [
     "LEDGER_SCHEMA_VERSION",
     "MAX_REPORT_DEPTH",
     "NON_SEMANTIC_FIELDS",
+    "READABLE_LEDGER_SCHEMAS",
     "RECORD_COMPARED_FIELDS",
     "RECORD_EXCLUDED_FIELDS",
     "REGIME_FIELDS",
     "REGISTERED_RELATIONS",
     "REGISTRATION_OUTCOMES",
+    "RUN_IDENTITY_FROM_SEQUENCE",
+    "RUN_ID_PATTERN",
+    "RecordIdentity",
     "ReportNestsTooDeeply",
+    "RunLookup",
     "SCORING_SEMANTICS_FIELDS",
     "SEMANTIC_ARTIFACT_ROLES",
     "SEMANTIC_MANIFEST_FIELDS",
@@ -1068,14 +1558,22 @@ __all__ = [
     "empty_ledger",
     "environment_class",
     "find_checkpoint",
+    "find_run",
+    "group_differences",
+    "held_record",
+    "historical_overlap",
     "ledger_digest",
     "ledger_lock",
     "ledger_lock_path",
     "measurement_semantics_digest",
+    "possible_overlaps",
     "read_ledger",
+    "record_identities",
     "record_key",
     "records_for",
     "report_key",
+    "run_identity_boundary",
     "scoring_semantics_digest",
+    "sealed_run_refusal",
     "write_ledger",
 ]

@@ -11,7 +11,7 @@ The shared model list and the one Load (M5-2, UI-A).
   finetuned for a task only, the latest 4 runs then "Show older runs"; the
   research preset every run; an unreadable checkpoint greyed; each row's
   recorded tests a state read from the ledger beside the checkpoint and, for
-  contested, the report store;
+  how each record's group compares (a description), the report store;
 - **the presets and the page's view**: the research preset is a table with
   "In use (Diagnosis)" on its own row, not pinned, and its listing carries the
   family view of the same one listing; a page's view lists one filter of the
@@ -251,11 +251,13 @@ def test_each_rows_recorded_tests_come_from_the_ledger_beside_it(root, serving, 
 
 
 def test_contested_and_unchecked_are_counted_apart_from_the_report_store(root, monkeypatch):
-    """A record contested in its version's report store is counted; one whose
-    state cannot be checked (its store, or a version the registry does not
-    list) is counted apart and never as uncontested, and never hides a known
-    contested one (M5-3 review EVAL-3: one uncheckable record turned
-    "2 · 1 contested" into "3 · contested state not checked")."""
+    """A record whose group's runs differ in its version's report store
+    (``contested``, a description since K8-6r.2) is counted; one whose
+    comparison is incomplete (its store, or a version the registry does not
+    list) is counted apart and never as agreeing, and never hides a known
+    difference (M5-3 review EVAL-3: one uncheckable record turned
+    "2 · 1 contested" into "3 · contested state not checked"). The row keeps
+    one " · " (the skill's §5)."""
     import src.evaluation.report_store as report_store
     import src.evaluation.sidecar as sidecar
     from src.webui.components import renderers as r
@@ -304,7 +306,7 @@ def test_contested_and_unchecked_are_counted_apart_from_the_report_store(root, m
     assert (result.state, result.count, result.contested, result.unchecked) == (
         "records", 4, 2, 1)
     assert r.recorded_tests_text(result) == (
-        "Recorded tests: 4 · 2 contested · contested state of 1 not checked")
+        "Recorded tests: 4 · runs differ for 2; comparison incomplete for 1")
     states["2" * 64] = "cannot_be_checked"
     result = ml.recorded_tests_for(root["workspace"], [item])[ml.item_key(item)]
     assert (result.count, result.contested, result.unchecked) == (4, 2, 2)
@@ -312,7 +314,7 @@ def test_contested_and_unchecked_are_counted_apart_from_the_report_store(root, m
     states["2" * 64] = "uncontested"
     result = ml.recorded_tests_for(root["workspace"], [item])[ml.item_key(item)]
     assert r.recorded_tests_text(result) == (
-        "Recorded tests: 4 · contested state of 1 not checked")
+        "Recorded tests: 4 · comparison incomplete for 1")
 
 
 # --------------------------------------------------------------------------- the Load
