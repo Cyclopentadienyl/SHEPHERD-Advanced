@@ -12,6 +12,7 @@ directory under the same umask, so the tests hold under whatever policy the
 host applies -- umask or default ACL -- rather than restating a formula.
 """
 import asyncio
+import errno
 import os
 import shutil
 import stat
@@ -356,3 +357,189 @@ def test_publish_bytes_refuses_anything_but_bytes_before_staging(data, tmp_path)
     with pytest.raises(TypeError, match="nothing was written"):
         publish_bytes(tmp_path / "out.json", data)
     assert list(tmp_path.iterdir()) == []
+
+
+# ------------------------------------------------- publish_bytes(replace=False)
+# K8-6r.4: a target that is taken is never overwritten. The hard link places the
+# file and fails when anything is there; where hard links are not supported, an
+# O_EXCL claim of the target and a replace of that claim do the same. Only
+# FileExistsError is a collision.
+def _sha(data: bytes) -> str:
+    import hashlib
+
+    return hashlib.sha256(data).hexdigest()
+
+
+#: The errors `os.link` gives on Linux where it cannot make the link at all.
+NO_HARD_LINKS = {"EPERM": errno.EPERM, "ENOTSUP": errno.ENOTSUP, "EXDEV": errno.EXDEV}
+
+
+def _no_hard_links(monkeypatch, number):
+    """`os.link` as a filesystem without hard links answers it."""
+    def refuse(src, dst, *args, **kwargs):
+        raise OSError(number, os.strerror(number), str(src), None, str(dst))
+
+    assert number in (errno.EPERM, errno.ENOTSUP, errno.EXDEV)
+    monkeypatch.setattr(file_modes.os, "link", refuse)
+
+
+@pytest.fixture(params=["link", *NO_HARD_LINKS])
+def placement(request, monkeypatch):
+    """Both ways a file is placed without replacing: the hard link, and the
+    claim-then-replace fallback for each error that sends `os.link` there."""
+    if request.param != "link":
+        _no_hard_links(monkeypatch, NO_HARD_LINKS[request.param])
+    return request.param
+
+
+def test_a_new_target_gets_the_bytes_and_their_digest_and_no_staged_file(placement, tmp_path):
+    """E4, E6: published whole, the digest of the bytes written, nothing left beside it."""
+    from src.utils.file_modes import publish_bytes
+
+    target = tmp_path / "report.json"
+    assert publish_bytes(target, b'{"run": 1}', replace=False) == _sha(b'{"run": 1}')
+    assert target.read_bytes() == b'{"run": 1}'
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["report.json"]
+
+
+def test_an_existing_target_is_refused_and_kept(placement, tmp_path):
+    """E1, E4, E6: the second publication raises FileExistsError naming the
+    target only, and the first file's bytes and mode are as they were."""
+    from src.utils.file_modes import publish_bytes
+
+    target = tmp_path / "report.json"
+    publish_bytes(target, b"first", replace=False)
+    os.chmod(target, 0o640)
+    with pytest.raises(FileExistsError) as taken:
+        publish_bytes(target, b"second", replace=False)
+    assert taken.value.filename == str(target) and taken.value.filename2 is None
+    assert "never replaced" in str(taken.value)
+    assert target.read_bytes() == b"first" and _mode(target) == 0o640
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["report.json"]
+
+
+def test_a_dangling_link_at_the_target_is_refused_and_left_as_it_was(placement, tmp_path):
+    """E4, E6: a link to nothing is something there; neither the link nor the
+    claim follows it to create the file it points at."""
+    from src.utils.file_modes import publish_bytes
+
+    target = tmp_path / "report.json"
+    target.symlink_to(tmp_path / "elsewhere.json")
+    with pytest.raises(FileExistsError):
+        publish_bytes(target, b"new", replace=False)
+    assert target.is_symlink() and os.readlink(target) == str(tmp_path / "elsewhere.json")
+    assert not (tmp_path / "elsewhere.json").exists()
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["report.json"]
+
+
+def test_an_empty_claimed_file_is_never_replaced_either(placement, tmp_path):
+    """E9: another run's claim, an empty file, is a taken place like any other."""
+    from src.utils.file_modes import publish_bytes
+
+    target = tmp_path / "report.json"
+    target.write_bytes(b"")
+    with pytest.raises(FileExistsError):
+        publish_bytes(target, b"new", replace=False)
+    assert target.read_bytes() == b""
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["report.json"]
+
+
+def test_a_collision_at_the_link_does_not_fall_back_to_a_claim(tmp_path, monkeypatch):
+    """Only FileExistsError is a collision: a taken target is never claimed,
+    so the fallback's replace never runs against it."""
+    from src.utils.file_modes import publish_bytes
+
+    target = tmp_path / "report.json"
+    target.write_bytes(b"first")
+    real_open, opened = os.open, []
+    monkeypatch.setattr(file_modes.os, "open", lambda path, *a, **k: (
+        opened.append(Path(path)) or real_open(path, *a, **k)))
+    monkeypatch.setattr(file_modes.os, "replace",
+                        lambda *a, **k: pytest.fail("a taken target was replaced"))
+    with pytest.raises(FileExistsError):
+        publish_bytes(target, b"second", replace=False)
+    assert target not in opened, "the taken target was opened to be claimed"
+    assert target.read_bytes() == b"first"
+
+
+@pytest.mark.parametrize("error", sorted(NO_HARD_LINKS))
+def test_a_failed_replace_of_the_claim_leaves_only_the_empty_claim(error, tmp_path, monkeypatch):
+    """E6, E8, E9 (b): the claim was made, the replace onto it failed (a full
+    disk): the target is this call's empty file, never removed by name, and the
+    staged file is gone. A later publication there is refused by that claim."""
+    from src.utils.file_modes import publish_bytes
+
+    _no_hard_links(monkeypatch, NO_HARD_LINKS[error])
+    real_replace = file_modes.os.replace
+
+    def full_disk(src, dst, *args, **kwargs):
+        raise OSError(errno.ENOSPC, "No space left on device", str(dst))
+
+    target = tmp_path / "report.json"
+    monkeypatch.setattr(file_modes.os, "replace", full_disk)
+    with pytest.raises(OSError, match="No space left"):
+        publish_bytes(target, b"new", replace=False)
+    assert target.is_file() and not target.is_symlink() and target.read_bytes() == b""
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["report.json"]
+
+    monkeypatch.setattr(file_modes.os, "replace", real_replace)
+    with pytest.raises(FileExistsError):
+        publish_bytes(target, b"again", replace=False)
+    assert target.read_bytes() == b""
+    retry = tmp_path / "retry.json"
+    assert publish_bytes(retry, b"again", replace=False) == _sha(b"again")
+    assert retry.read_bytes() == b"again"
+
+
+def test_the_link_is_the_commit_point_so_a_failed_tidy_is_not_a_failed_publication(
+        tmp_path, monkeypatch):
+    """Once the hard link has placed the file, `target` holds the whole bytes.
+    An error removing the staging name after that (an I/O error) must not
+    report the whole file as failed: the call returns the digest, and the
+    staging name, a second name for the same bytes, may be left beside it."""
+    from src.utils.file_modes import publish_bytes
+
+    real_unlink = Path.unlink
+
+    def io_error_at_the_staging_name(self, missing_ok=False):
+        if self.name.endswith(".tmp"):
+            raise OSError(errno.EIO, "Input/output error", str(self))
+        return real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", io_error_at_the_staging_name)
+    target = tmp_path / "report.json"
+    assert publish_bytes(target, b'{"whole": true}', replace=False) == _sha(b'{"whole": true}')
+    assert target.read_bytes() == b'{"whole": true}'
+    left = [p for p in tmp_path.iterdir() if p != target]
+    assert all(p.name.endswith(".tmp") and p.read_bytes() == b'{"whole": true}' for p in left)
+
+
+@pytest.mark.parametrize("fail_at", ["fsync", "link"])
+def test_a_failure_before_placement_leaves_no_file(fail_at, tmp_path, monkeypatch):
+    """A write that fails before the file is placed (a full disk at the flush,
+    or at the link itself on a filesystem that then also refuses the claim)
+    leaves no target and no staged file."""
+    from src.utils.file_modes import publish_bytes
+
+    def full_disk(*args, **kwargs):
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(file_modes.os, fail_at, full_disk)
+    if fail_at == "link":
+        real_open = os.open
+        monkeypatch.setattr(file_modes.os, "open", lambda path, flags, mode=0o777: (
+            full_disk() if Path(path).name == "report.json" else real_open(path, flags, mode)))
+    target = tmp_path / "report.json"
+    with pytest.raises(OSError, match="No space left"):
+        publish_bytes(target, b"new", replace=False)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_the_default_still_replaces(tmp_path):
+    """Every other writer keeps `os.replace` (the default is unchanged)."""
+    from src.utils.file_modes import publish_bytes
+
+    target = tmp_path / "out.json"
+    target.write_bytes(b"old")
+    publish_bytes(target, b"new")
+    assert target.read_bytes() == b"new"

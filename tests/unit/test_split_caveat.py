@@ -109,7 +109,26 @@ def test_the_split_caveat_names_two_distinct_limits(script):
     assert "--cohort" in help_text and "import_cohort.py" in help_text, (
         "where a supplied cohort goes instead"
     )
-    assert "not registered" in help_text, "a generated split's report is not registrable"
+    assert "not registered" in help_text, "a generated split's report is not registered"
+    assert "does not yet support a generated split's data identity" in help_text, (
+        "the ledger's limit is the reason (policy rev 16, K8-6r.4), not a lesser result"
+    )
+    assert "report and ranks stay at --output" in help_text, "where the result is kept"
+
+
+@pytest.mark.parametrize("script", ENTRY_POINTS)
+def test_the_record_and_output_help_give_the_ledgers_limit_and_the_new_file_rule(script):
+    """K8-6r.4: `--record` gives the ledger's limit as the reason a generated
+    split's report is not registered, and `--output` says it names a new file
+    that, with its ranks file, is never replaced (Decisions 9 and 12)."""
+    _, record_help = _option_help(script, "--record")
+    _, output_help = _option_help(script, "--output")
+
+    assert "does not yet support a generated split's data identity" in record_help
+    assert "stay at --output" in record_help
+    assert "a new file" in output_help
+    assert "neither it nor its ranks file may exist" in output_help
+    assert "neither is ever replaced" in output_help
 
 
 @pytest.mark.parametrize("script", ENTRY_POINTS)

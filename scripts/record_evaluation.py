@@ -15,7 +15,10 @@ The record is derived from the report, never from the command line: a run's own
 manifest is what says which checkpoint, which cohort version and which mode it
 was, and re-asserting any of that here would let the ledger describe a run that
 did not happen. Only a registered cohort version's report is registered; a
-generated split's is refused.
+generated split's is refused, because the ledger does not yet support a
+generated split's data identity (it has no registered cohort version), not
+because such a result counts for less; its report and ranks stay at the
+measurement's `--output` (policy rev 16, K8-6r.4).
 
 **Only a report the registry's report store holds** (D5, since M5): `--report`
 names `<registry>/versions/<label>/reports/<run id>/report.json`, the path the

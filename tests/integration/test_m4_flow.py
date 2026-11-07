@@ -572,7 +572,8 @@ def test_not_registering_keeps_the_report_for_a_later_registration(cohort):
 def test_a_generated_split_report_is_refused_by_record_evaluation(trained_disease_child,
                                                                   tmp_path):
     """BEHAVIOUR CHANGE (M4 decision 9): the ledger records results on registered
-    test cohort versions only; a generated `val` report is selection data. Since
+    test cohort versions only, and does not yet support a generated split's data
+    identity (reworded in K8-6r.4: not because such a result counts for less). Since
     M5-1 it is refused first for where it is: written to `--output`, never into a
     report store, it is not a report the store holds. (One placed in a store is
     refused by `build_record` as a generated split's,

@@ -3564,7 +3564,12 @@ its §4.9 the owner questions, and its "Phase 1 as implemented" the step-by-step
     `--cohort` and `--registry` without `--cohort` (or the reverse) are refused as argument
     errors (exit 2), and its report schema is 6;
   - the generated report and its ranks are staged and renamed into place, ranks first; an
-    existing `--output` is still replaced.
+    existing `--output` is still replaced. *Superseded by K8-6r.4 (2026-11-07):* neither file
+    replaces one. A run whose `--output` or ranks file exists is refused before anything is
+    read, and each file is placed with `publish_bytes(..., replace=False)` (a hard link, or
+    where there are none a claimed empty file then replaced), so a file that appears after the
+    check is not overwritten either; an empty claimed file or ranks with no report beside them
+    are shown as a failed publication and refuse the next run on that path, never deleted.
 - **Not claimed, and not done.**
   - No GB10 acceptance yet. The tests run on the CPU over synthetic fixtures
     (`tests/fixtures/registered_cohort.py`; the end-to-end acceptance in

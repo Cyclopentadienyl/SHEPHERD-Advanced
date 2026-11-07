@@ -807,10 +807,17 @@ def test_build_record_neither_changes_nor_aliases_the_report():
 # What build_record refuses
 # ---------------------------------------------------------------------------
 def test_a_generated_splits_report_is_not_registered():
-    """The ledger records results on registered test cohort versions (D3); a
-    generated `val` is selection data (spec §0.9)."""
-    with pytest.raises(ValueError, match="generated split's report is not registered"):
+    """The ledger records results on registered test cohort versions (D3), and
+    does not yet support a generated split's data identity: the refusal says
+    so, and no longer calls the result selection data, a lesser kind of result
+    (K8-6r.4, policy rev 16). The refusal itself is unchanged."""
+    with pytest.raises(ValueError, match="generated split's report is not registered") as refused:
         build_record(generated_report(), REPORT_A)
+    message = str(refused.value)
+    assert ("the ledger does not yet support a generated split's data identity (it has no "
+            "registered cohort version), not because such a result counts for less") in message
+    assert "its report and ranks stay at --output" in message
+    assert "selection data" not in message
 
 
 @pytest.mark.parametrize("field", ["python_seed", "legacy_truncation_k", "num_workers"])

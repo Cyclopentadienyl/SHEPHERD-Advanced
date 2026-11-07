@@ -1245,7 +1245,10 @@ default M4 runs on and a concrete example. An answer changes a default; it adds 
    `record_evaluation.py` refuses that report ("a generated split's report is not registered"):
    `val` is the selection split, and D3 labels a result by cohort role and version. Confirm.
    *Recommendation:* confirm; a `val` number stays in its own report as checkpoint-selection
-   data.
+   data. *Reworded in K8-6r.4 (2026-11-07), behaviour unchanged:* the reason is that the ledger
+   does not yet support a generated split's data identity (it has no registered cohort version),
+   not that such a result counts for less; its report and ranks stay at `--output`, and extending
+   the ledger to them is later work (policy rev 16).
 
 **Checked against the literature (the reviewer, 2026-10-17).** The reviewer checked the six
 questions against the SHEPHERD paper and its code [S1–S3], PhEval [S4], STARD 2015 [S5], Mondo

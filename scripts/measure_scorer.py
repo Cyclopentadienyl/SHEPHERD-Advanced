@@ -39,7 +39,9 @@ decision 8): exactly one of `--split` and `--cohort`.
         [--expect-checkpoint-sha256 HEX] [--expect-version-sha256 HEX] [--outcome FILE]
 
     # A generated split. --split val is the checkpoint-selection split, not
-    # held-out data, and its report is not registrable (decision 9).
+    # held-out data. Its report and ranks are new files at --output, and are
+    # not registered: the ledger does not yet support a generated split's data
+    # identity (it has no registered cohort version).
     python scripts/measure_scorer.py --mode disease \
         --checkpoint checkpoints/best.pt \
         --data-dir data/processed \
@@ -93,8 +95,37 @@ manifest observes the settings in effect, and they are in the semantics digest,
 so a deterministic run is another key (D5).
 
 **A generated split's report goes to `--output`**, with `<output stem>_ranks.json`
-beside it, both staged and renamed into place; an existing `--output` is
-replaced, as it always was.
+beside it, **and neither ever replaces a file** (K8-6r.4, policy rev 16). Before
+the GPU lock and any read, `_check_generated_targets` refuses a run whose
+`--output` is a directory or whose `--output` or ranks file already exists (a
+link, even a dangling one, included), naming an empty file at `--output` as a
+claimed place whose publication failed and ranks with no report at `--output`
+as an interrupted publication, never as a result (or, for either, another
+run's publication not yet finished; the ranks name may also hold a file
+another `--output` wrote), and leaving them in place: no earlier file is
+deleted or renamed to make room. At publication each file is
+staged and then placed with `publish_bytes(..., replace=False)`, the ranks
+first and the report last as the commit point, so a file that appears after
+the check is not overwritten either: that run fails (`ReportNotWritten`), and
+of two runs on one new `--output` one publishes both files and the other none.
+A run whose report fails after its ranks leaves its own ranks with no report
+beside them, which the next run on that path is refused by, so they are never
+paired with another run's report. The report and ranks are not registered:
+the ledger does not yet support a generated split's data identity (it has no
+registered cohort version), not because such a result counts for less;
+extending the ledger to it is later work.
+
+**Where the filesystem has no hard links** (`publish_bytes`' fallback), each
+file is claimed as a new empty file (`O_CREAT | O_EXCL`) and the staged file is
+then renamed onto that claim. That rename is itself an overwriting call: it
+does not overwrite another run's file only because the target is still the
+empty file this run claimed a moment before, and because every supported
+publisher follows the same claim-then-replace rule (only `_publish_generated`
+publishes a generated output, and it never replaces or removes a claim). It is
+not safe against another writer, or a person, replacing or removing the
+claimed file between the claim and the rename, and nothing here claims to
+close that window. A failure after the claim leaves the empty file at
+`--output` (or at the ranks), which the next run is refused by.
 
 Exit status, run as a program (`_exit_as_program`): 0 measured (and, with
 `--record`, registered or already held); 1 refused before anything was written,
@@ -138,6 +169,7 @@ import os
 import platform
 import re
 import signal
+import stat
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, NamedTuple, Optional, Sequence, Tuple
@@ -1051,12 +1083,15 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
                              "checkpoint, as scripts/record_evaluation.py --report "
                              "would. A refused registration exits 3; the report is kept "
                              "unless it is no longer the one the run published. --cohort "
-                             "only: a generated split's report is not registered")
+                             "only: a generated split's report is not registered, because the "
+                             "ledger does not yet support a generated split's data identity; "
+                             "its report and ranks stay at --output")
     parser.add_argument("--output", type=Path, default=None,
-                        help="Where a generated split's measurement JSON is written; the "
-                             "per-sample ranks go beside it, as <output stem>_ranks.json. "
-                             "Required with --split; refused with --cohort, whose report "
-                             "the registry's report store keeps")
+                        help="Where a generated split's measurement JSON is written: a new "
+                             "file. The per-sample ranks go beside it, as <output "
+                             "stem>_ranks.json; neither it nor its ranks file may exist, and "
+                             "neither is ever replaced. Required with --split; refused with "
+                             "--cohort, whose report the registry's report store keeps")
     parser.add_argument("--batch-size", type=_positive_int, default=32,
                         help="Patients scored per chunk (a positive integer). Recorded on "
                              "the manifest: it can move the numbers at floating-point level")
@@ -1127,7 +1162,8 @@ def _refuse_mixed_arguments(parser: argparse.ArgumentParser, args: argparse.Name
             parser.error(
                 f"{', '.join(given)} apply to a registered cohort version (--cohort LABEL "
                 "--registry DIR) only: a generated split has no version, its report is not "
-                "registered and R10 is not computed for it. Nothing was read or written."
+                "registered (the ledger does not yet support a generated split's data "
+                "identity) and R10 is not computed for it. Nothing was read or written."
             )
         if args.output is None:
             parser.error(
@@ -1148,22 +1184,92 @@ def _refuse_mixed_arguments(parser: argparse.ArgumentParser, args: argparse.Name
         )
 
 
+def _ranks_path(output: Path) -> Path:
+    """Where a generated split's ranks go: `<output stem>_ranks.json` beside
+    `output`. The one name the check, the publication and the failure message
+    use."""
+    return output.with_name(f"{output.stem}_ranks.json")
+
+
+def _check_generated_targets(output: Optional[Path]) -> None:
+    """Refuse a generated split's run whose report or ranks file is already
+    there, before the GPU lock and anything is read (K8-6r.4).
+
+    A ``ValueError`` ending "Nothing was read or written." when `output` is a
+    directory, or when `output` or its ranks file exists (``lexists``: a link,
+    even a dangling one, counts). What is found is named: an empty file at
+    `output` is a place an earlier run claimed and whose publication failed,
+    not a report, and ranks with no report at `output` are an interrupted
+    publication, not a result. Only those two names are looked at, so each
+    is said with what else it may be: another run's publication not yet
+    finished leaves the same files, and the ranks name may hold a file
+    another `--output` wrote (one with the same stem, or one named so). Each
+    is left in place: nothing is deleted or renamed to make room. The check
+    creates no directory. It is not the guarantee: a file that appears after
+    it is still never overwritten (`_publish_generated`).
+    """
+    if output is None:
+        return
+    if output.is_dir():
+        raise ValueError(
+            f"--output {output} is a directory; it names the new file a generated split's "
+            "report is written to. Nothing was read or written.")
+    ranks = _ranks_path(output)
+    report_there = os.path.lexists(output)
+    report_empty = report_there and _empty_file(output)
+    found = []
+    if report_empty:
+        found.append(f"{output} is an empty file: a claimed place whose publication failed, "
+                     "or another run's not yet finished, not a report")
+    elif report_there:
+        found.append(f"{output} exists")
+    if os.path.lexists(ranks):
+        if report_there and not report_empty:
+            found.append(f"{ranks} exists")
+        else:
+            found.append(f"{ranks} exists with no report at {output}: ranks a run on this "
+                         "--output left with no report are an interrupted publication, or "
+                         "another run's not yet finished, not a result; it may also be a file "
+                         "another --output wrote under that name")
+    if found:
+        raise ValueError(
+            f"--output {output} cannot be used: {'; '.join(found)}. A generated split's run "
+            "writes its report and its ranks as new files: it never replaces a file, nor "
+            "deletes or renames one to make room, so what is there stays as it is. Measure "
+            "again to a new --output. Nothing was read or written.")
+
+
+def _empty_file(path: Path) -> bool:
+    """A regular file of no bytes at `path` itself (a link is not followed)."""
+    try:
+        found = os.lstat(path)
+    except OSError:
+        return False
+    return stat.S_ISREG(found.st_mode) and found.st_size == 0
+
+
 def _publish_generated(result: ModeResult, output: Path) -> Tuple[Path, Path]:
-    """A generated split's report at `output` and its ranks beside it.
+    """A generated split's report at `output` and its ranks beside it, each a
+    new file that never replaces one (K8-6r.4).
 
     Both are encoded before anything is written, so a value JSON cannot hold
-    refuses with nothing on disk; then the ranks and the report are each staged
-    and renamed into place, the report last. An existing `output` is replaced,
-    as it always was.
+    refuses with nothing on disk. Then each is staged and placed with
+    `publish_bytes(..., replace=False)`: the ranks first and the report last,
+    as the commit point. A run that finds its ranks file taken (another run's
+    ranks appeared after `_check_generated_targets`) writes nothing; one whose
+    report then fails leaves its own ranks with no report beside them, which
+    the next run on that path is refused by, so they are never paired with
+    another run's report. No earlier file is deleted or renamed. The parent
+    directory is made here, at publication only.
     """
     from src.utils.file_modes import publish_bytes
 
-    ranks_path = output.with_name(f"{output.stem}_ranks.json")
+    ranks_path = _ranks_path(output)
     report_bytes = json.dumps(result.to_dict(), indent=2, allow_nan=False).encode("utf-8")
     ranks_bytes = json.dumps(result.to_ranks(), indent=2, allow_nan=False).encode("utf-8")
     output.parent.mkdir(parents=True, exist_ok=True)
-    publish_bytes(ranks_path, ranks_bytes)
-    publish_bytes(output, report_bytes)
+    publish_bytes(ranks_path, ranks_bytes, replace=False)
+    publish_bytes(output, report_bytes, replace=False)
     return output, ranks_path
 
 
@@ -1213,10 +1319,16 @@ def _publication_failure(
 
     `publish_bytes` leaves its target as it was, and each kind of cohort
     publishes its report last, so a failure leaves at most what was published
-    before it: for a generated split, the ranks beside `output` (whatever was
-    there before, or nothing); for a registered version, a new run directory,
-    empty or holding only `RANKS_FILE`, with no report to commit it. Which of
-    those happened depends on the step that failed, so the message says "may".
+    before it: for a generated split, which replaces no file (K8-6r.4), this
+    run's ranks beside `output` with no report, and, where the filesystem has
+    no hard links, an empty file this run claimed at `output` or at the ranks;
+    for a registered version, a new run directory, empty or holding only
+    `RANKS_FILE`, with no report to commit it. Which of those happened depends
+    on the step that failed, so the message says "may". A generated split's
+    file that is already taken (`FileExistsError` naming it, raised only when
+    something appeared there after `_check_generated_targets`) is said exactly:
+    a taken ranks file means this run wrote no file at all; a taken report
+    means this run's ranks are beside a report that is not this run's.
 
     **`create_report_dir`'s own refusal is kept as it is.** Its text already
     says what it created ("Nothing was written." before the run directory, or
@@ -1228,11 +1340,24 @@ def _publication_failure(
     if isinstance(exc, RegistryRefused):
         return ReportNotWritten(str(exc))
     if inputs.version is None:
-        ranks = output.with_name(f"{output.stem}_ranks.json")
+        ranks = _ranks_path(output)
+        if isinstance(exc, FileExistsError) and exc.filename == str(ranks):
+            return ReportNotWritten(
+                f"{_sentence(exc)} No file was replaced, and this run wrote no file: {ranks} "
+                f"appeared after this run checked it and is not this run's, and {output} was "
+                "not written. Measure again to a new --output."
+            )
+        if isinstance(exc, FileExistsError) and exc.filename == str(output):
+            return ReportNotWritten(
+                f"{_sentence(exc)} No file was replaced. {output} appeared after this run "
+                f"checked it and is not this run's report; {ranks} holds this run's ranks, "
+                "which do not belong to that file. Measure again to a new --output."
+            )
         return ReportNotWritten(
-            f"{_sentence(exc)} {output} was left as it was (whatever was there before, or "
-            f"no file), and {ranks} may already hold this run's ranks, so the two may not "
-            "belong to one run. Measure again to write both."
+            f"{_sentence(exc)} No file was replaced. No report was written at {output}; "
+            f"{ranks} may hold this run's ranks, or an empty file this run claimed, with no "
+            f"report beside it, an interrupted write, and {output} may be an empty file this "
+            "run claimed. Measure again to a new --output."
         )
     return ReportNotWritten(
         f"{_sentence(exc)} No {REPORT_FILE} was published, so this run kept no report and "
@@ -1578,6 +1703,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     args = parse_args(argv)
     _check_outcome_target(args.outcome)
+    _check_generated_targets(args.output)
     registry = _refuse_another_registry(args)
     # **One managed GPU job at a time** (M5): the deployment's GPU lock, taken
     # before the device is resolved or anything is read, and held until this

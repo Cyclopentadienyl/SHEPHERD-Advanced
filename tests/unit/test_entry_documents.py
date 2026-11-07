@@ -378,3 +378,44 @@ def test_the_guides_say_the_state_names_changed_meaning_and_no_run_blocks_anothe
         assert said in text, said
     assert "Runs that disagree block their key" not in text
     assert "結果不一致的執行會封鎖其鍵" not in text
+
+
+@pytest.mark.parametrize("guide, says, withdrawn", [
+    ("deployment-guide.en.md",
+     ("because the ledger does not yet support a generated split's data identity",
+      "not because such a result counts for less",
+      "*Superseded by K8-6r.4 (2026-11-07):* neither file ever\n  replaces one",
+      "a claimed place whose publication failed, not a report",
+      "an interrupted publication, not a result",
+      "a report at `--output` is refused before that, because no registry's report store holds",
+      "That\n  rename is itself an overwriting call: it overwrites no other run's file only while "
+      "the target is\n  still the empty file this run has just claimed"),
+     ("A generated split's report is not registrable",
+      "That rename replaces\n  only the empty file this run has just claimed")),
+    ("deployment-guide.md",
+     ("原因是 ledger 尚未支援產生的\n  split 這種資料身分",
+      "而不是這樣的結果比較不重要",
+      "*已由 K8-6r.4（2026-11-07）取代：* 兩個檔案都絕不取代既有檔案",
+      "發佈失敗的已佔用位置，不是報告",
+      "一次中斷的發佈，不是\n  結果",
+      "`--output` 上的報告會更早被拒絕，\n  因為沒有任何 registry 的報告存放處持有它",
+      "這次改名本身就是會覆寫的呼叫：只有在目標仍是這次執行剛佔用的那個空檔案\n  時，它才不會覆寫"
+      "其他執行的檔案"),
+     ("產生的 split 的報告不可登錄", "這次改名只取代這次執行剛佔用的那個空檔案")),
+])
+def test_the_guides_say_why_a_generated_report_is_not_registered_and_that_it_is_kept(
+        guide, says, withdrawn):
+    """K8-6r.4 (Decisions 9 and 12): both guides give the ledger's limit as the
+    reason a generated split's report is not registered, not a lesser result,
+    and say that a report at `--output` meets the report store's refusal first;
+    mark "an existing `--output` is still replaced" as superseded; name an
+    empty claimed file and ranks with no report as failed publications; and
+    state the fallback's rename as an overwriting call that is safe only while
+    the target is still this run's claim (Decision 9: the limit stated without
+    overclaiming). HEAD: "A generated split's report is not registrable", and
+    the output replaced."""
+    text = _text(guide)
+    for said in says:
+        assert said in text, said
+    for gone in withdrawn:
+        assert gone not in text, gone

@@ -82,6 +82,9 @@ reports and records are read by the shared readers (policy rev 15). Every run re
 each input once, verifies the workspace from those reads and records them (contract M2.1, S7),
 then writes two files: the report at `--output` (manifest, authoritative metrics,
 counts) and the per-sample ground-truth ranks beside it, `<output stem>_ranks.json`.
+Since K8-6r.4 both are new files that never replace one: a run whose `--output` or
+ranks file already exists is refused before anything is read, so measure each run to
+its own `--output`.
 
 **`--split` has no default, and `val` is not held-out data.** It is the
 split the current training configuration uses for early stopping and

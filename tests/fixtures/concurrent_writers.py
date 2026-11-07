@@ -15,7 +15,11 @@ through multiprocessing events, barriers and a queue.
 - `append_test_run` and `append_registration` append one usage-history entry;
 - `failing_append` appends a ``test_run`` entry whose write fails (ENOSPC), and
   whose write and undo each wait for other writers first, so that without a
-  lock its undo would cut their lines.
+  lock its undo would cut their lines;
+- `measure_generated` (K8-6r.4) runs `scripts/measure_scorer.py`'s `main` on a
+  generated split, held at a file-marker barrier once it has passed `main`'s
+  check of its `--output`, and again right before it publishes, so two of them
+  publish to one `--output` at once.
 
 **Every wait is bounded** (`WAIT`, `BARRIER_WAIT`): a hang fails the test that
 waits, never the suite. `processes` stops, by its pid, any process still alive
@@ -29,6 +33,7 @@ import errno
 import multiprocessing
 import os
 import threading
+import time
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
@@ -228,6 +233,88 @@ def failing_append(name: str, registry: str, label: str, sized: Any,
         os.write, os.ftruncate = real_write, real_truncate
 
 
+def _marker_barrier(markers: Path, step: str, name: str, names: Sequence[str]) -> bool:
+    """A barrier across processes made of files: leave ``<step>-<name>`` in
+    ``markers`` and wait, within `WAIT`, until every one of ``names`` has left
+    its own. False when the wait ran out."""
+    (markers / f"{step}-{name}").touch()
+    deadline = time.monotonic() + WAIT
+    while time.monotonic() < deadline:
+        if all((markers / f"{step}-{other}").exists() for other in names):
+            return True
+        time.sleep(0.005)
+    return False
+
+
+def measure_generated(name: str, argv: Sequence[str], lock_root: str, markers: str,
+                      names: Sequence[str], no_hard_links: bool, answers: Any) -> None:
+    """Run `scripts/measure_scorer.py`'s `main` with ``argv`` (a generated
+    split and its `--output`), under a GPU lock of its own (``lock_root``: two
+    deployments, or two roots, writing to one shared place), and put what it
+    did on ``answers``.
+
+    Held at two file-marker barriers in ``markers``: right after `main`'s check
+    of the output has passed (``checked``), and right before publication
+    (``publishing``), so every process in ``names`` has passed the check and
+    publishes at the same moment. With ``no_hard_links``, `os.link` answers as
+    a filesystem without hard links does (EPERM). Every publication is
+    recorded with the digest of the bytes it tried (``tried``) and, when it
+    placed them, of the bytes placed (``placed``)."""
+    import contextlib
+    import hashlib
+    import io
+
+    os.environ["SHEPHERD_WORKSPACES_ROOT"] = lock_root
+    import scripts.measure_scorer as cli
+    import src.utils.file_modes as file_modes
+
+    if no_hard_links:
+        def no_link(src, dst, *args, **kwargs):
+            raise OSError(errno.EPERM, "Operation not permitted", str(src), None, str(dst))
+
+        os.link = no_link
+    where = Path(markers)
+    passed = {"checked": False, "publishing": False}
+    tried: dict[str, str] = {}
+    placed: dict[str, str] = {}
+
+    real_check = getattr(cli, "_check_generated_targets", None)
+    if real_check is not None:
+        def check(output):
+            real_check(output)
+            passed["checked"] = _marker_barrier(where, "checked", name, names)
+
+        cli._check_generated_targets = check
+    else:  # a revision without the check: every run passes it
+        passed["checked"] = True
+    real_publish_generated = cli._publish_generated
+
+    def publish_generated(result, output):
+        passed["publishing"] = _marker_barrier(where, "publishing", name, names)
+        return real_publish_generated(result, output)
+
+    cli._publish_generated = publish_generated
+    real_publish = file_modes.publish_bytes
+
+    def publish(target, data, **kwargs):
+        tried[Path(target).name] = hashlib.sha256(data).hexdigest()
+        digest = real_publish(target, data, **kwargs)
+        placed[Path(target).name] = digest
+        return digest
+
+    file_modes.publish_bytes = publish
+    answer: dict[str, Any] = {"name": name, "status": None, "error": None, "cause": None,
+                              "message": None}
+    try:
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            answer["status"] = cli.main(list(argv))
+    except Exception as exc:  # noqa: BLE001 - reported to the test, which judges it
+        answer.update(error=type(exc).__name__, message=str(exc),
+                      cause=type(exc.__cause__).__name__ if exc.__cause__ else None)
+    answer.update(passed, tried=tried, placed=placed)
+    answers.put(answer)
+
+
 __all__ = [
     "BARRIER_WAIT",
     "CONTEXT",
@@ -238,6 +325,7 @@ __all__ = [
     "append_test_run",
     "failing_append",
     "hold_lock",
+    "measure_generated",
     "processes",
     "register",
 ]

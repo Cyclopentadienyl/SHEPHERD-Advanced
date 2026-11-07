@@ -383,6 +383,23 @@ def test_an_argument_of_the_other_kind_of_cohort_is_refused_before_anything_runs
     assert list(tmp_path.iterdir()) == [], "something was written"
 
 
+def test_a_generated_splits_record_refusal_gives_the_ledgers_limit_as_the_reason(
+    capsys, monkeypatch, tmp_path
+):
+    """K8-6r.4 (Decision 12): `--record` with `--split` is refused because the
+    ledger does not yet support a generated split's data identity, not because
+    such a result counts for less."""
+    import scripts.measure_scorer as measure_scorer
+
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as refused:
+        measure_scorer.main([*_BASE, "--split", "val", "--output", "o.json", "--record"])
+
+    assert refused.value.code == 2
+    assert ("a generated split has no version, its report is not registered (the ledger does "
+            "not yet support a generated split's data identity)") in capsys.readouterr().err
+
+
 @pytest.mark.parametrize("extra", [
     ["--split", "val", "--output", "o.json"],
     ["--cohort", "demo-test-1", "--registry", "/r"],

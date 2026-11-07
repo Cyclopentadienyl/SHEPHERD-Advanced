@@ -1482,14 +1482,17 @@ registration of another report.
   was not, it says "the usage history was not written" with the reason, and the record stands.
   A ledger changed by something that takes no lock, such as a hand edit, is still refused
   rather than overwritten.
-- Only a **registered cohort version's** report is recorded; a report from `--split` is not.
+- Only a **registered cohort version's** report is recorded; a report from `--split` is not,
+  because the ledger does not yet support a generated split's data identity (it has no
+  registered cohort version), not because such a result counts for less (policy rev 16). Its
+  report and ranks stay at `--output`; extending the ledger to them is later work.
 
 ### Exit codes
 
 | Command | 0 | 1 | 2 | 3 |
 |---|---|---|---|---|
 | `import_cohort.py` | preview printed, or version committed | refused, with one message ending "Nothing was written." (also a preview in which no case can be ranked) | the command line was rejected | — |
-| `measure_scorer.py` | measured (with `--record`: registered or already held) | a check refused the run: one message, nothing written (so does `--device auto` or `cuda` on a host without CUDA, before anything is read); or **measured, but the report was not written** (a full or read-only disk, for example): one message saying what may be left, which is never a report that can be registered -- this run's ranks beside `--output`, or a run directory without `report.json` in the report store (a run that fails after writing its report, its console closed for example, says where the report is) | the command line was rejected, including an argument of the other kind of cohort | **measured, but the registration refused**: the message names the report and the `record_evaluation.py` command to register it later; or, when the report file no longer holds the bytes the run published, says so and asks for a re-measurement instead (that report may be gone) |
+| `measure_scorer.py` | measured (with `--record`: registered or already held) | a check refused the run: one message, nothing written (so does `--device auto` or `cuda` on a host without CUDA, before anything is read); or **measured, but the report was not written** (a full or read-only disk, for example): one message saying what may be left, which is never a report that can be registered -- this run's ranks beside `--output` with no report, or an empty file it claimed at `--output` or at the ranks (since K8-6r.4 each refuses the next run on that path), or a run directory without `report.json` in the report store (a run that fails after writing its report, its console closed for example, says where the report is) | the command line was rejected, including an argument of the other kind of cohort | **measured, but the registration refused**: the message names the report and the `record_evaluation.py` command to register it later; or, when the report file no longer holds the bytes the run published, says so and asks for a re-measurement instead (that report may be gone) |
 | `record_evaluation.py` | registered, already held, or shown | refused, with one message; nothing written | the command line was rejected, including neither or both of `--checkpoint` and `--checkpoint-dir` | — |
 | `audit_split_overlap.py` | report written | refused, with one message; nothing written | the command line was rejected (for example the removed `--evaluation-cohort-kind`, `--registry` without `--cohort` or the reverse, or `--splits` beside `--cohort`), with the usage line | — |
 
@@ -1576,11 +1579,33 @@ Investigation notes are not shown (BACKLOG 40):
   only and needs `--output`; `--registry`, `--training-evidence` and `--record` are refused with
   it. An institutional or external cohort is imported and measured with `--cohort LABEL
   --registry DIR`.
-- **A generated split's report is not registrable**: `record_evaluation.py` refuses it ("a
-  generated split's report is not registered"). `--split val` is the checkpoint-selection split,
-  not held-out data.
+- **A generated split's report is not registered**: `record_evaluation.py` refuses it ("a
+  generated split's report is not registered"). *Reworded in K8-6r.4 (2026-11-07), behaviour
+  unchanged:* the reason is that the ledger does not yet support a generated split's data
+  identity (it has no registered cohort version), not that such a result counts for less; its
+  report and ranks stay at `--output`, and extending the ledger to them is later work. Since M5
+  a report at `--output` is refused before that, because no registry's report store holds it
+  ("… is not a report the registry's report store holds", below); the message quoted here is
+  for one placed in a store. Behind both is the same reason: a generated split has no registered
+  cohort version, and so no report store. `--split val` is the checkpoint-selection split, not
+  held-out data.
 - **A generated split's report and ranks are staged and renamed into place** (ranks first); an
-  existing `--output` is still replaced.
+  existing `--output` is still replaced. *Superseded by K8-6r.4 (2026-11-07):* neither file ever
+  replaces one. A run whose `--output` or `<output stem>_ranks.json` already exists (a link
+  included) is refused before anything is read, saying what it found, and a file that appears
+  after that check is not overwritten either: the run then fails, saying what it left. An empty
+  file at `--output` is a claimed place whose publication failed, not a report, and ranks with no
+  report beside them are an interrupted publication, not a result: each refuses the next run on
+  that path and stays where it is, since no earlier file is deleted or renamed to make room.
+  The refusal looks at those two names only, so it also says what else such a file may be:
+  another run's publication not yet finished, or, at the ranks name, a file another `--output`
+  wrote. Measure to a new `--output`. Each file is placed by a hard link, which fails when
+  anything is already there; where the filesystem has no hard links (FAT or exFAT, say), the
+  target is first claimed as a new empty file and the written file then renamed onto it. That
+  rename is itself an overwriting call: it overwrites no other run's file only while the target is
+  still the empty file this run has just claimed, so it relies on nothing else replacing or
+  removing that claim in between, which this program never does and cannot stop another writer or
+  a person from doing. Neither Windows nor a real FAT or exFAT mount has been tested.
 - **Ledger schema 3 (M4), schema 4 since K8-6r.2.** An existing `evaluations.json` of schema
   1 or 2 is refused — by `--record`, by `record_evaluation.py` (`--report` and `--show`) and by
   the recorded-results readers, which report the ledger as not read (on the Diagnosis card:

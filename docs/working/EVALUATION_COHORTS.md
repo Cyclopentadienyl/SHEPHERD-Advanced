@@ -1215,7 +1215,10 @@ Points where the implementation had to decide something this section left open:
   event.
 - **Only registered cohort versions are recorded** (since M4). A generated split's report is
   refused ("a generated split's report is not registered"): `val` is the selection split
-  (`PLAN_TEST_RESULTS.md` §4.9, M4 question 6). A report written before M4 lacks the fields a
+  (`PLAN_TEST_RESULTS.md` §4.9, M4 question 6). *Reworded in K8-6r.4 (2026-11-07), behaviour
+  unchanged:* the reason is that the ledger does not yet support a generated split's data
+  identity (it has no registered cohort version), not that such a result counts for less; its
+  report and ranks stay at `--output`, and extending the ledger to them is later work. A report written before M4 lacks the fields a
   schema 3 record copies and is refused with an instruction to re-measure; a schema 1 or 2
   ledger is refused, naming the file, and archived by hand, never read or migrated.
 - **The same result again is not a contradiction** (since M4, `PLAN_TEST_RESULTS.md` D5). The

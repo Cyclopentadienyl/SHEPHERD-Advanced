@@ -89,7 +89,9 @@ SPLIT_ARGUMENT_HELP = (
     "institutional or external cohort is not a split of the workspace: it is "
     "imported as a registered cohort version (scripts/import_cohort.py) and "
     "measured with --cohort. A generated split's report is not registered in the "
-    "ledger. Two distinct limits apply, and they are not the same limit. (1) "
+    "ledger, which does not yet support a generated split's data identity; its "
+    "report and ranks stay at --output. Two distinct limits apply, and they are "
+    "not the same limit. (1) "
     + SELECTION_CONTAMINATION
     + " (2) "
     + GENERATED_VAL_IS_DISEASE_DISJOINT

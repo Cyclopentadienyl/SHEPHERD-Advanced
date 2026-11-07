@@ -609,9 +609,12 @@ def build_record(report: Dict[str, Any], source_digest: str) -> Dict[str, Any]:
     the report by it.
 
     **Only a registered cohort version's report is recorded.** A generated split
-    is refused: the ledger records results on test cohort versions (D3 labels a
-    result by role *and version*), and a generated `val` is selection data. A
-    report whose relation states are not a registered result's is refused too;
+    is refused because the ledger does not yet support a generated split's data
+    identity: it records results by registered cohort version (D3 labels a
+    result by role *and version*), and a generated split has none. That is a
+    limit of the ledger, not a judgement that such a result counts for less
+    (policy rev 16): its report and ranks stay at `--output`, and extending the
+    ledger to them is later work. A report whose relation states are not a registered result's is refused too;
     the measurement cannot write one, so such a file was edited or is not a
     report. Every refusal is a ``ValueError`` naming what is wrong — never a
     ``KeyError`` or ``TypeError`` from a file of the wrong shape.
@@ -663,9 +666,10 @@ def build_record(report: Dict[str, Any], source_digest: str) -> Dict[str, Any]:
         raise ValueError(
             f"this is a generated split's report (`{manifest['split']}`, no cohort "
             "version), and a generated split's report is not registered: the ledger "
-            "records results on registered test cohort versions, and a generated "
-            "split is selection data. Measure a registered version "
-            "(--cohort LABEL --registry DIR) to record a result."
+            "does not yet support a generated split's data identity (it has no "
+            "registered cohort version), not because such a result counts for less; "
+            "its report and ranks stay at --output. To record a result in the ledger, "
+            "measure a registered version (--cohort LABEL --registry DIR)."
         )
     if manifest["cohort_kind"] != "supplied":
         raise ValueError(

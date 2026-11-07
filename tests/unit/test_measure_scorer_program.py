@@ -268,10 +268,10 @@ def _fail_publishing(monkeypatch, is_report):
 
     real = file_modes.publish_bytes
 
-    def publish(target, data):
+    def publish(target, data, **kwargs):
         if is_report(Path(target)):
             raise OSError(errno.ENOSPC, "No space left on device", str(target))
-        return real(target, data)
+        return real(target, data, **kwargs)
 
     monkeypatch.setattr(file_modes, "publish_bytes", publish)
 
@@ -279,31 +279,58 @@ def _fail_publishing(monkeypatch, is_report):
 def test_a_generated_report_that_could_not_be_written_says_what_may_be_there(
     cli, workspace, tmp_path, monkeypatch, capsys
 ):
-    """The ranks are published first: when the report then fails, the new ranks
-    sit beside the earlier report. The message says so, and never that nothing
-    was written; `main` raises it as `ReportNotWritten`, the cause chained."""
+    """The ranks are published first, on a new `--output` (K8-6r.4: a used one
+    is refused before anything is read, below): when the report then fails,
+    this run's ranks stay with no report beside them. The message says what may
+    be there, that no file was replaced, and never that nothing was written;
+    `main` raises it as `ReportNotWritten`, the cause chained."""
     data_dir, checkpoint = workspace
     output = tmp_path / "run" / "measurement.json"
     ranks = output.parent / "measurement_ranks.json"
-    output.parent.mkdir()
-    output.write_text("an earlier report")
-    _fail_publishing(monkeypatch, lambda target: target == output)
+    _fail_publishing(monkeypatch, lambda target: target.name == "measurement.json")
 
     assert cli._run_as_program(_generated(data_dir, checkpoint, output)) == 1
 
     err = capsys.readouterr().err
     line = _one_line(err, NOT_WRITTEN)
     assert "No space left on device" in line
-    assert f"{output} was left as it was" in line
-    assert f"{ranks} may already hold this run's ranks" in line
+    assert line.endswith(
+        f"No file was replaced. No report was written at {output}; {ranks} may hold this "
+        "run's ranks, or an empty file this run claimed, with no report beside it, an "
+        f"interrupted write, and {output} may be an empty file this run claimed. Measure "
+        "again to a new --output.")
     assert "nothing was written" not in err.lower() and REFUSED not in err
-    assert output.read_text() == "an earlier report"
-    assert ranks.is_file()
+    assert not output.exists() and ranks.is_file()
 
+    another = tmp_path / "another" / "measurement.json"
     with pytest.raises(cli.ReportNotWritten) as failed:
-        cli.main(_generated(data_dir, checkpoint, output))
+        cli.main(_generated(data_dir, checkpoint, another))
     assert isinstance(failed.value.__cause__, OSError)
     assert not isinstance(failed.value, (ValueError, OSError))
+
+
+def test_a_used_generated_output_is_one_refusal_line(cli, workspace, tmp_path, monkeypatch,
+                                                     capsys):
+    """An `--output` an earlier run used (here, its report) is refused before
+    anything is read (K8-6r.4): one line, exit 1, saying nothing was read or
+    written exactly once, no traceback, and the earlier file kept."""
+    data_dir, checkpoint = workspace
+    output = tmp_path / "run" / "measurement.json"
+    output.parent.mkdir()
+    output.write_text("an earlier report")
+    _no_model(monkeypatch)
+
+    assert cli._run_as_program(_generated(data_dir, checkpoint, output)) == 1
+
+    err = capsys.readouterr().err
+    line = _one_line(err, REFUSED)
+    assert line == (
+        f"{REFUSED}--output {output} cannot be used: {output} exists. A generated split's run "
+        "writes its report and its ranks as new files: it never replaces a file, nor deletes "
+        "or renames one to make room, so what is there stays as it is. Measure again to a new "
+        "--output. Nothing was read or written.")
+    assert output.read_text() == "an earlier report"
+    assert sorted(p.name for p in output.parent.iterdir()) == ["measurement.json"]
 
 
 def test_a_registered_report_that_could_not_be_written_says_what_may_be_there(

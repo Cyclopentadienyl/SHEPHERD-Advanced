@@ -386,29 +386,50 @@ def test_an_in_process_generated_run_writes_its_report_at_output(trained_disease
     ]
 
 
-def test_an_existing_output_is_replaced_staged(trained_disease_child, tmp_path, monkeypatch):
-    """The generated path kept its overwrite of an existing `--output`, now
-    through `publish_bytes`: staged beside the target and renamed into place, so
-    no staging file is left and the old bytes are gone."""
+def test_an_existing_output_is_refused_and_a_new_one_is_published_without_replacing(
+        trained_disease_child, tmp_path, monkeypatch):
+    """E3 (K8-6r.4; until then this test pinned the overwrite of an existing
+    `--output`). An `--output` an earlier run's report and ranks hold is refused
+    by `main` before the GPU lock and before any model is built, and both
+    files keep their bytes. A new `--output` is published through
+    `publish_bytes(..., replace=False)`, the ranks first and the report last,
+    with no staging file left."""
     import scripts.measure_scorer as cli
+    import src.models.bundle.record as bundle_record
     import src.utils.file_modes as file_modes
 
     data_dir, checkpoint = trained_disease_child["data_dir"], trained_disease_child["disease"]
+
+    def argv(output):
+        return ["--mode", "disease", "--checkpoint", str(checkpoint), "--data-dir",
+                str(data_dir), "--split", "val", "--output", str(output), "--device", "cpu"]
+
+    used = tmp_path / "used" / "measurement.json"
+    used.parent.mkdir()
+    used.write_text("an earlier report")
+    used.with_name("measurement_ranks.json").write_text("an earlier run's ranks")
+    with monkeypatch.context() as patch:
+        patch.setattr(bundle_record, "load_bundle",
+                      lambda *a, **k: pytest.fail("a model was built after a refusal"))
+        patch.setattr(cli, "take_gpu_lock",
+                      lambda *a, **k: pytest.fail("the GPU lock was taken after a refusal"))
+        with pytest.raises(ValueError, match="cannot be used") as refused:
+            cli.main(argv(used))
+    assert str(refused.value).endswith("Nothing was read or written.")
+    assert used.read_text() == "an earlier report"
+    assert used.with_name("measurement_ranks.json").read_text() == "an earlier run's ranks"
+
     output = tmp_path / "run" / "measurement.json"
-    output.parent.mkdir()
-    output.write_text("an earlier report")
     published = []
     real = file_modes.publish_bytes
     monkeypatch.setattr(file_modes, "publish_bytes",
-                        lambda target, data: published.append(Path(target).name)
-                        or real(target, data))
+                        lambda target, data, **kwargs: published.append(
+                            (Path(target).name, kwargs)) or real(target, data, **kwargs))
 
-    assert cli.main([
-        "--mode", "disease", "--checkpoint", str(checkpoint), "--data-dir", str(data_dir),
-        "--split", "val", "--output", str(output), "--device", "cpu",
-    ]) == 0
+    assert cli.main(argv(output)) == 0
 
-    assert published == ["measurement_ranks.json", "measurement.json"], "the report is last"
+    assert published == [("measurement_ranks.json", {"replace": False}),
+                         ("measurement.json", {"replace": False})], "the report is last"
     assert json.loads(output.read_text())["manifest"]["mode"] == "disease"
     assert sorted(p.name for p in output.parent.iterdir()) == [
         "measurement.json", "measurement_ranks.json",

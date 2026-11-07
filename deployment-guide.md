@@ -1821,14 +1821,16 @@ Mode C。Mode D 的數字不是模型的核准排名，也不描述目前的診�
   `record_evaluation.py` 結束碼 1）。若 ledger 已寫入但使用紀錄沒有，會說「the usage history
   was not written」並附原因，紀錄照樣成立。不取鎖的修改（例如手動編輯）改過 ledger 時，仍會
   拒絕而不是覆蓋。
-- 只有**已登錄 cohort 版本**的報告會被登錄；`--split` 的報告不會。
+- 只有**已登錄 cohort 版本**的報告會被登錄；`--split` 的報告不會，原因是 ledger 尚未支援產生的
+  split 這種資料身分（它沒有已登錄的 cohort 版本），而不是這樣的結果比較不重要（政策 rev 16）。
+  它的報告與排名檔留在 `--output`；把 ledger 擴充到它們是之後的工作。
 
 ### 結束碼
 
 | 指令 | 0 | 1 | 2 | 3 |
 |---|---|---|---|---|
 | `import_cohort.py` | 已印出預覽，或已提交版本 | 拒絕，一則以 "Nothing was written." 結尾的訊息（沒有任何案例可排名的預覽也是） | 命令列被拒絕 | — |
-| `measure_scorer.py` | 已量測（加 `--record` 時：已登錄或已存在） | 某項檢查拒絕了這次執行：一則訊息，不寫入任何東西（在沒有 CUDA 的主機上給 `--device auto` 或 `cuda` 也是，在讀取任何東西之前）；或**已量測，但報告沒有寫出**（例如磁碟已滿或唯讀）：一則訊息說明可能留下了什麼，而那絕不會是可登錄的報告——`--output` 旁這次執行的排名檔，或報告存放處中沒有 `report.json` 的執行目錄（寫出報告之後才失敗的執行，例如主控台被關閉，會說明報告在哪裡） | 命令列被拒絕，包括屬於另一種 cohort 的參數 | **已量測，但登錄被拒絕**：訊息會指出報告與之後登錄用的 `record_evaluation.py` 指令；若報告檔已不是這次執行發佈的位元組，則如實說明，並要求重新量測（那份報告可能已不存在） |
+| `measure_scorer.py` | 已量測（加 `--record` 時：已登錄或已存在） | 某項檢查拒絕了這次執行：一則訊息，不寫入任何東西（在沒有 CUDA 的主機上給 `--device auto` 或 `cuda` 也是，在讀取任何東西之前）；或**已量測，但報告沒有寫出**（例如磁碟已滿或唯讀）：一則訊息說明可能留下了什麼，而那絕不會是可登錄的報告——`--output` 旁這次執行沒有報告的排名檔，或它在 `--output` 或排名檔位置佔用的空檔案（自 K8-6r.4 起，兩者都會讓同一路徑上的下一次執行被拒絕），或報告存放處中沒有 `report.json` 的執行目錄（寫出報告之後才失敗的執行，例如主控台被關閉，會說明報告在哪裡） | 命令列被拒絕，包括屬於另一種 cohort 的參數 | **已量測，但登錄被拒絕**：訊息會指出報告與之後登錄用的 `record_evaluation.py` 指令；若報告檔已不是這次執行發佈的位元組，則如實說明，並要求重新量測（那份報告可能已不存在） |
 | `record_evaluation.py` | 已登錄、已存在，或已顯示 | 拒絕，一則訊息；不寫入任何東西 | 命令列被拒絕，包括 `--checkpoint` 與 `--checkpoint-dir` 都沒給或都給 | — |
 | `audit_split_overlap.py` | 已寫出報告 | 拒絕，一則訊息；不寫入任何東西 | 命令列被拒絕（例如已移除的 `--evaluation-cohort-kind`、只給 `--registry` 不給 `--cohort` 或反之，或與 `--cohort` 一起給出 `--splits`），並印出 usage 行 | — |
 
@@ -1897,10 +1899,27 @@ checkpoint 的 digest 而不是檔名來找（換成另一個模型之後，絕�
   `<split>_samples.json` 也一併移除。`--split` 只接受產生器的 `train` 或 `val`，且需要
   `--output`；與它一起給出 `--registry`、`--training-evidence` 或 `--record` 會被拒絕。院方或外部
   cohort 以 `--cohort LABEL --registry DIR` 匯入並量測。
-- **產生的 split 的報告不可登錄**：`record_evaluation.py` 拒絕它（"a generated split's report
-  is not registered"）。`--split val` 是挑選 checkpoint 用的 split，不是保留的測試資料。
+- **產生的 split 的報告不會被登錄**：`record_evaluation.py` 拒絕它（"a generated split's report
+  is not registered"）。*K8-6r.4（2026-11-07）改寫說法，行為不變：* 原因是 ledger 尚未支援產生的
+  split 這種資料身分（它沒有已登錄的 cohort 版本），而不是這樣的結果比較不重要；它的報告與排名檔
+  留在 `--output`，把 ledger 擴充到它們是之後的工作。自 M5 起，`--output` 上的報告會更早被拒絕，
+  因為沒有任何 registry 的報告存放處持有它（"… is not a report the registry's report store
+  holds"，見下文）；上面引用的訊息是給被放進存放處的報告。兩者背後是同一個原因：產生的 split
+  沒有已登錄的 cohort 版本，因此也沒有報告存放處。
+  `--split val` 是挑選 checkpoint 用的 split，不是保留的測試資料。
 - **產生的 split 的報告與排名檔改為先寫入暫存檔再改名就位**（排名檔先）；已存在的 `--output`
-  仍會被取代。
+  仍會被取代。*已由 K8-6r.4（2026-11-07）取代：* 兩個檔案都絕不取代既有檔案。`--output` 或
+  `<output stem>_ranks.json` 已存在（連結也算）的執行，會在讀取任何東西之前被拒絕，並說明它找到
+  什麼；在檢查之後才出現的檔案同樣不會被覆寫：這次執行會失敗，並說明它留下了什麼。`--output`
+  上的空檔案是一個發佈失敗的已佔用位置，不是報告；旁邊沒有報告的排名檔是一次中斷的發佈，不是
+  結果：兩者都會讓同一路徑上的下一次執行被拒絕，並留在原處，因為不會為了騰出位置而刪除或改名
+  任何既有檔案。拒絕訊息只檢查這兩個名稱，所以也會說明這樣的檔案還可能是什麼：另一次尚未完成的
+  發佈，或在排名檔名稱上，另一個 `--output` 寫下的檔案。請改用新的 `--output` 重新量測。每個檔案以硬連結放到位，只要那裡已有任何東西，
+  硬連結就會失敗；在沒有硬連結的檔案系統上（例如 FAT 或 exFAT），會先以新的空檔案佔用目標，再把
+  寫好的檔案改名到它上面。這次改名本身就是會覆寫的呼叫：只有在目標仍是這次執行剛佔用的那個空檔案
+  時，它才不會覆寫其他執行的檔案，因此它依賴期間沒有其他東西取代或移除這個佔用：本程式從不這麼
+  做，但無法阻止其他寫入者或人這麼做。Windows 與真正的 FAT 或
+  exFAT 掛載都未測試。
 - **ledger schema 3（M4），自 K8-6r.2 起為 schema 4。** 既有的 schema 1 或 2 的 `evaluations.json`
   會被拒絕——`--record`、`record_evaluation.py`（`--report` 與 `--show`）以及讀取已登錄結果的程式
   都會拒絕，後者會回報 ledger 未讀取（Diagnosis 卡片上為 "Recorded tests: ledger not readable"）。
