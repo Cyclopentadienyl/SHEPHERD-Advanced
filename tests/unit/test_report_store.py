@@ -407,12 +407,13 @@ def test_the_usage_history_appends_each_kind_in_order(tmp_path):
     assert len(lines) == 3 and all(json.loads(line) for line in lines)
 
 
-def test_a_test_run_names_its_mode_and_an_entry_from_before_the_key_reads_as_mode_c(tmp_path):
+def test_a_test_run_names_its_mode_and_an_entry_without_the_key_has_none(tmp_path):
     """`record_test_run` requires the run's mode (K7: no writer default records
-    "C" for a mode it was not told; a call without one is a TypeError and
-    writes nothing), and `entry_mode` reads it back. An entry written before
-    the key existed (Batch 3's M4/M5 registries, every one Mode C) reads as Mode
-    C; a key that is present but empty or not a string is no mode, never C."""
+    a mode it was not told; a call without one is a TypeError and writes
+    nothing), and `entry_mode` reads it back as recorded. An entry written
+    before the key existed (Batch 3's M4/M5 registries) has no mode, and none
+    is inferred for it (K8-6e.2), as for a key that is present but empty or
+    not a string."""
     first = _stored(tmp_path)
     version = version_of(first)
     run = dict(run_id=first.parent.name, report_sha256="e" * 64, checkpoint_sha256="c" * 64,
@@ -428,7 +429,7 @@ def test_a_test_run_names_its_mode_and_an_entry_from_before_the_key_reads_as_mod
     entries, problems = read_usage_history(version)
     assert [entry_mode(entry) for entry in entries] == ["disease", "C", "D"] and not problems
     before_the_key = {name: value for name, value in entries[0].items() if name != "mode"}
-    assert entry_mode(before_the_key) == "C"
+    assert entry_mode(before_the_key) is None
     for damaged in (None, "", " ", 7):
         assert entry_mode({**entries[2], "mode": damaged}) is None
 

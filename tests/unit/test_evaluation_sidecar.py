@@ -259,12 +259,11 @@ def mode_c_report(metrics=None, n_ranked=80, **manifest_overrides):
     """A Mode C report of a registered cohort version: Mode C's semantic values
     on the default manifest's other fields, and its metric schema 1 names.
 
-    **The explicit builder for a test whose subject is a Mode C report or
-    record** (its caveat label, its words, By test score, which orders Mode C
-    groups only): every other test reads the disease default of
-    `registered_report`, so retiring Mode C does not reach it by accident. K8-6e
-    makes this report the subject of the generic refusal of a report or record
-    this build does not read."""
+    **The explicit builder for a test whose subject is a kept Mode C report or
+    record**: every other test reads the disease default of
+    `registered_report`, so retiring Mode C does not reach it by accident.
+    Since K8-6e.2 this report is a subject of the generic display: read,
+    registered and shown as recorded by the one display for every mode (R2)."""
     return registered_report(metrics or MODE_C_METRICS, n_ranked,
                              **{**MODE_C_SEMANTICS, **manifest_overrides})
 
@@ -775,7 +774,7 @@ def test_the_record_keeps_no_run_paths_no_prose_and_no_case_ids():
     assert "manifest" not in record
     assert "why_this_is_here" not in text
     standing = [caveats.DISEASE_TASK_RESULT_LABEL, caveats.DISEASE_TASK_NOTE,
-                caveats.MODE_C_RESULT_LABEL, caveats.PRE_B1_NOTE, caveats.RECORD_ABSENCE,
+                caveats.RECORD_ABSENCE,
                 *caveats.R10_STATE_TEXT.values(), *caveats.R10_UNVERIFIABLE_REASON.values(),
                 *(label["definition"] for labels in caveats.R10_LABEL_TEXT.values()
                   for label in labels.values())]

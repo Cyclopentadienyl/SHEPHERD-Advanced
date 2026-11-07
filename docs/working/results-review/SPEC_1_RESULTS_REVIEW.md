@@ -252,13 +252,15 @@ before batch 4.
 - **Replaced:** `score_patients` and `masked_mean_pool` as the served scorer, by the model bundle's
   patient encoder and disease head, whose math is shared from `src.models`
   ([`../scorer-retraining/README.md`](../scorer-retraining/README.md) §3).
-- **Still apply:** `canonical_ranking`'s move, `selection_limit`, the one mapping step and the one SP
-  caller.
+- **Still apply:** `selection_limit`, the one mapping step and the one SP caller. *(2026-11-07:
+  `canonical_ranking`'s move does not apply: it retired with Mode C in K8-6b, `f35bb93`, and the
+  measurement's order is the task evaluators' `average-rank/v1`.)*
 It settles `PLAN_TEST_RESULTS.md` D3's two open served behaviours, the disease clamp and the
 unknown-phenotype handling, and policy §2.1's "one scorer, not two".
 
 **The home is `src/inference/scoring.py`.**
-- Serving and Mode C can both import it.
+- Serving and Mode C could both import it. *(2026-11-07: Mode C retired in K8-6b, so only serving
+  could.)*
 - The trainer cannot, under the `layers` contract. That keeps the trainer's validation values written
   independently, as the `scorer-independence` contract in `.import-linter.ini` intends.
 - `src.reasoning` is not a home: statements 4a and 6 keep ranking and evidence apart.
@@ -270,7 +272,7 @@ unknown-phenotype handling, and policy §2.1's "one scorer, not two".
 | Patient representation | The unweighted masked mean of the phenotype rows. Out-of-range or non-integer rows are refused, and so is an empty row | `masked_mean_pool`. `pool_patient_embeddings`, which clamps, is deleted, and its clamp test is inverted into a refusal test |
 | Disease set | Every disease row of the bound tensors: global ids `0..D−1` in the node mapping's disease order. NodeIDs appear only at the edge, through `kg.get_reverse_node_mapping` | `score_patients` (below). There is no lookup to miss and no clamp |
 | Score | Raw cosine in the embedding dtype: float32 at serving, with no autocast. Confidence is never a weight (§4.5) | `cosine_score_matrix` |
-| Order and ties | Score descending, ties to the lower global id; non-finite refused | `canonical_ranking` and `_require_integer_ids`, moved unchanged from `src/evaluation/measurement.py` |
+| Order and ties | Score descending, ties to the lower global id; non-finite refused | `canonical_ranking` and `_require_integer_ids`, moved unchanged from `src/evaluation/measurement.py`. *Not done (2026-11-07): both retired with Mode C in K8-6b (`f35bb93`); the task evaluators order by average rank, `average-rank/v1`* |
 | Selection | `selection_limit` cuts the ordered list after scoring, never before (§6.1) | the caller, B-1's pipeline method |
 
 **One composed function.** `score_patients(phenotype_table, disease_table, rows, mask, disease_ids)`
@@ -285,6 +287,8 @@ lives in `scoring.py` and returns the scores and the order.
 - `run_mode_c` calls it in place of its own three calls to the same primitives.
 - Mode C keeps its cohort checks (`_assert_ids_in_range`, `_assert_cohort_is_intact`): they run first
   and name the case.
+
+*(2026-11-07, K8-6e.2: Mode C's executor, `canonical_ranking`, `ranks_of_truth`, `_require_integer_ids` and Mode C's cohort checks retired in K8-6b (`f35bb93`) instead of moving; the measurement's order is now the task evaluators' `average-rank/v1`. The two bullets above on `run_mode_c` and Mode C's cohort checks, and the rows below that name them, are the Batch 2 plan, not done.)*
 
 **Missing data and invalid values, in one place:**
 
@@ -314,9 +318,9 @@ per-candidate count of unreachable pairs, which it already computes internally.
 
 | Caller | Moves to |
 |---|---|
-| `run_mode_c` | `score_patients`, importing the ranking from `scoring`. Its metrics, ranks, digests and the manifest's semantic fields stay equal before and after (timestamps, revision and run metadata excluded, as `../scorer-measurement/PLAN_B05.md` §8 defines). The README's "not edited" list binds Mode D's package; B-1 moves the code and changes no rule |
-| `ranks_of_truth` | imports `_require_integer_ids` from `scoring` |
-| `tests/unit/test_measurement_ranking.py` | imports from `scoring` |
+| `run_mode_c` (*not done, 2026-11-07: retired in K8-6b*) | `score_patients`, importing the ranking from `scoring`. Its metrics, ranks, digests and the manifest's semantic fields stay equal before and after (timestamps, revision and run metadata excluded, as `../scorer-measurement/PLAN_B05.md` §8 defines). The README's "not edited" list binds Mode D's package; B-1 moves the code and changes no rule |
+| `ranks_of_truth` | imports `_require_integer_ids` from `scoring`. *Not done (2026-11-07): `ranks_of_truth` and `_require_integer_ids` both retired with Mode C's executor in K8-6b* |
+| `tests/unit/test_measurement_ranking.py` | imports from `scoring`. *Not done (2026-11-07): the file was deleted in K8-6b, its still-valid checks moved to the task tests* |
 | `tests/unit/test_scoring_primitives.py` | the clamp test (`test_pooling_clamps_out_of_range_indices`) is inverted into a refusal; its other uses of `pool_patient_embeddings` move to `masked_mean_pool`. `test_exact_ties_break_by_candidate_order` stays while `served_mixture/v1` is served, and goes when it retires |
 | B-1's serving path | `score_patients`, then the selection |
 | `_calculate_gnn_score`, `cosine_scores`, `normalise_cosine_to_unit_interval`, `mix_embedding_and_sp_scores` | used by `served_mixture/v1` only; deleted when it retires. The owner's switch default decides when |

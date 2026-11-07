@@ -1749,12 +1749,15 @@ Mode D（`--mode D`，Batch 3 對 Diagnosis 頁 2026 年 10 月所提供排名�
 頁面或工作會啟動它。它 2026-10-27 的 GB10 執行保留為證據，在
 `docs/working/batch3-acceptance-2026-10-27/`；設計在 `docs/working/scorer-measurement/PLAN_B05.md`。
 
-**已保存的 Mode D 報告與紀錄仍可閱讀**，以它們自己的標籤（「Served ranking of October 2026
-(Mode D) … not the approved scorer policy」，附上量測時的評分模式與 η）顯示在 Test 頁的 Result
-與 Models 頁上；Models 頁每種模式的紀錄各列一張表，不依測試分數為任何紀錄排名。它們的數字依病例集
-命名：`post_import_*` 與 `coverage` 以版本的匯入後合格病例為分母，未觸及的病例計 0；`reached_*`
-只計觸及的病例；匯入時排除的病例另列在旁，絕不計入。每份報告也在同一組 embedding 上並列了
-Mode C。Mode D 的數字不是模型的核准排名，也不描述目前的診斷模型。
+**已保存的 Mode D 報告與紀錄仍可閱讀**，由這個版本未描述的每種模式共用的同一種顯示，依記錄內容顯示
+（自 K8-6e.2 起，2026-11-07；在此之前以 Mode D 自己的標籤顯示）：在 Test 頁的 Result 與 Models 頁上，
+它們讀作「Mode D (a measurement mode this version does not describe)」，每個指標以記錄中的名稱與數值
+顯示、不四捨五入（`post_import_mrr 0.35`），score semantics 依記錄原文顯示
+（`served:gnn_only:eta=1.0:sp=none`），絕不拆成評分模式與 η。Models 頁每種模式的紀錄各列一張表，
+依首次出現的順序排列，不依測試分數為任何紀錄排名。Batch 3 這些名稱的意義：`post_import_*` 與
+`coverage` 以版本的匯入後合格病例為分母，未觸及的病例計 0；`reached_*` 只計觸及的病例；匯入時排除
+的病例另列在旁，絕不計入。每份報告也在同一組 embedding 上並列了 Mode C。Mode D 的數字不是模型的
+核准排名，也不描述目前的診斷模型。
 
 **已保存的 Mode D 報告依一般規則、以它自己的模式登錄**（自 K8-6c 起，政策 rev 15）：
 `scripts/record_evaluation.py` 與 Test 頁的 Register 會像檢查每一份報告一樣檢查它（report store、
@@ -3000,8 +3003,11 @@ checkpoint：run 標題的標籤顯示「dataset not shown · operator control�
   登錄的報告，卡片仍保留執行結束時的狀態，並指向 Result：報告現在的登錄狀態以 Result 為準。頁面顯示時每 5 秒讀取一次工作狀態；剛結束的執行的報告會被選取，
   每次執行只選取一次。頁面重新讀取版本的報告庫期間（工作狀態改變、某個操作或匯入之後）所做的
   選擇，會在那次讀取結束後套用，絕不會被它改回；期間做了多次選擇時，留下的是最後一次。
-- **Result。** 選取的報告，以帳本將會保存的紀錄形式顯示：該模式的指標（任務的；已保存的 Mode C
-  或 Mode D 報告以它自己的標籤顯示）、含每一類排除的涵蓋率、各項關係、以文字表示的 R10（*unverifiable* 從不顯示為 0）、環境、資料集來源，
+- **Result。** 選取的報告，以帳本將會保存的紀錄形式、由每種模式共用的同一種顯示呈現（自 K8-6e.2 起）：
+  任務的方塊與文字指標，每個指標的記錄原文收在一次點擊之內（「Recorded metrics (N)」）；這個版本
+  未描述的模式（包括已保存的 Mode C 或 Mode D 報告）的報告讀作「Mode <mode> (a measurement mode this
+  version does not describe)」，以一列「Recorded metrics」列出每個指標的記錄名稱與數值；score
+  semantics 依記錄原文顯示；含每一類排除的涵蓋率、各項關係、以文字表示的 R10（*unverifiable* 從不顯示為 0）、環境、資料集來源，
   以及是否已登錄（對操作者而言，是在清單中持有它所量測權重的 checkpoint 旁的帳本中檢查）。
   有紀錄以其他位元組寫明這次執行（報告在登錄之後被替換），或那份帳本無法判斷時，Result 會列出
   登錄給的原因。
@@ -3080,15 +3086,18 @@ Lineage 欄。沒有任何排列方式依測試分數為模型排名：依測試
 **選取一列**會顯示完整的模型指紋與 Copy、它在什麼資料上訓練（以及那是否為此 workspace 目前的資料
 集）、自成一張卡片的 Trainer 驗證數值、任何警告，以及兩個分段：
 
-- **Recorded test results**：ledger 為這組權重記錄的每一筆紀錄，每種量測模式各一張表，各自在該模式的
-  標籤與說明之下（自 Batch 3 起：先 Mode C 的紀錄，再 Mode D 的）。每一列有 cohort version 與其角色、
-  該模式的 MRR 與 Hits@10（表頭寫出全名：Mode C MRR (untruncated) 與 Hits@10；Mode D 的以匯入後合格
-  病例為分母）、列出每一項排除的涵蓋率（Mode D 的寫成匯入後合格病例中觸及的數目），以及 `registered #N`，或
+- **Recorded test results**：ledger 為這組權重記錄的每一筆紀錄，每種量測模式各一張表，依首次出現的
+  順序排列，各自在該模式的標籤（任務另有說明）之下，由每種模式共用的同一種顯示呈現（自 K8-6e.2 起；
+  在此之前先列 Mode C 的紀錄，再列 Mode D 的，各有自己的標籤）。每一列有 cohort version 與其角色；
+  任務的 pooled MRR 與第二個指標（表頭寫出全名），或者對這個版本未描述的模式（包括已保存的 Mode C 或
+  Mode D 紀錄），以一欄「Recorded metrics」列出每個指標的記錄名稱與數值、不四捨五入；列出每一項排除
+  的涵蓋率；以及 `registered #N`，或
   `runs differ #N` 附「runs under these conditions differ」與不同之處（中性；只有當該群組記錄
   deterministic algorithms 開啟、執行本應一致時，才以琥珀色加 ▲ 與「— investigate」標出），或「comparison
   incomplete」（從不顯示為一致）、deterministic 開或關、在每次執行各有自己的紀錄之前併入它的報告
   （若有），以及這種紀錄與具名執行之間的「possible overlap with record N (not recorded)」；接著是
-  各項關係、該紀錄的其他指標、以狀態顯示的 R10（*unverifiable* 是一個原因，從不是 0）、執行環境、
+  各項關係、任務紀錄的其他文字指標、以狀態顯示的 R10（*unverifiable* 是一個原因，從不是 0）、依記錄
+  原文的「Score semantics: …」、任務紀錄收在「Recorded metrics (N)」之後的每個指標原文、執行環境、
   資料集，以及附上其執行的登錄資訊（在每次執行各有自己的紀錄之前寫入的紀錄為「not recorded」）。
   每一筆紀錄都會顯示，這些描述不會隱藏或排除任何紀錄。這組權重中無法當作結果讀取的紀錄（自
   K8-6e.1 起）絕不顯示為結果、也不算作結果：表格下方是 "▲ 1 record for these weights cannot be read
@@ -3097,7 +3106,10 @@ Lineage 欄。沒有任何排列方式依測試分數為模型排名：依測試
   results · 3 (1 not readable)"。唯讀檢視列出同樣的項目，取自該 route；
 - **Usage history**：每一個已列出的 cohort version 的使用紀錄中提及此 checkpoint 的項目，最新的在前：
   測試執行與登錄，以及 K8-6d 之前留下的模型載入，依其記錄內容顯示（「ordered by」加上它記錄的指標名稱，
-  以及它的 scoring semantics）。
+  以及它的 scoring semantics）。測試執行讀作任務在已排名案例上的第一個指標，或其他模式的標籤與案例數，
+  接著是執行方式，再來是收在「Recorded metrics (N)」之後、它記錄的每個指標（未記錄任何指標時為
+  「no metric recorded」）。使用紀錄尚未記錄模式之前寫入的項目讀作「Measurement mode not recorded」
+  （自 K8-6e.2 起；在此之前讀作 Mode C）。
 
 **🔒 Load this model** 是共用的 Load（與 Diagnosis 的「Change model…」相同的確認；確認開啟時會蓋住
 細節區，不論視窗多矮，它的按鈕都留在表格下方的可見範圍內；按 Close 回到細節區，且仍選取同一個

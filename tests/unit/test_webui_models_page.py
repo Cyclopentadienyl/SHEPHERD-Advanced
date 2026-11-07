@@ -57,7 +57,7 @@ import pytest
 
 gr = pytest.importorskip("gradio")
 
-from src.evaluation.caveats import MODE_C_RESULT_LABEL, PRE_B1_NOTE, mode_label  # noqa: E402
+from src.evaluation.caveats import mode_label  # noqa: E402
 from src.utils.fingerprint import file_sha256  # noqa: E402
 from src.webui.components import model_list as ml  # noqa: E402
 from src.webui.components import models_page as mp  # noqa: E402
@@ -455,42 +455,53 @@ def test_newest_first_gives_the_load_no_ordering(world, monkeypatch):
 
 
 
-def test_a_record_of_another_or_no_mode_is_never_shown_as_mode_c(world, monkeypatch):
+def test_a_record_of_another_or_no_mode_is_shown_as_recorded(world, monkeypatch):
     """A record or usage entry whose mode this version does not describe, or
-    whose mode cannot be read, is named for what it is: never under Mode C's
-    label, note, metric names or coverage words (the internal review of Batch 3,
-    ui_api-4). An entry written before `mode` existed still reads as Mode C."""
+    whose mode cannot be read, is named for what it is, by the one display for
+    every mode (R2, K8-6e.2): its own label; a "Recorded metrics" column with
+    every metric as recorded in place of the fixed columns and their "not
+    described" cells; no claim of what its cases are; never another mode's
+    words. An entry written before `mode` existed reads "Measurement mode not
+    recorded", never Mode C, with its metrics as recorded one click away."""
     _listing, data = _read(world, monkeypatch)
     record = next(r for entry in data["ledgers"].values() for r in entry.get("records") or [])
     view = mp.record_view(record)
     assert view["mode"] == "disease"
     for mode, label in (("E", "Mode E (a measurement mode this version does not describe)"),
                         (None, "Measurement mode not recorded")):
-        text = _text(mp.records_block_html([{**view, "mode": mode}], {}))
+        raw = mp.records_block_html([{**view, "mode": mode}], {})
+        text = _text(raw)
         assert label in text
-        assert MODE_C_RESULT_LABEL not in text and PRE_B1_NOTE not in text
-        assert "Mode C" not in text and "source cases ranked" not in text
-        assert "not described" in text and "what they are is not described" in text
+        assert "Mode C" not in text and "Disease" not in text
+        assert re.findall(r"<th[^>]*>([^<]*)</th>", raw)[1:3] == ["Recorded metrics", "Coverage"]
+        assert '<th scope="col" colspan="2">Recorded metrics</th>' in raw
+        assert ">not described<" not in raw and "what they are is not described" in text
+        for name, value in view["metrics"].items():          # every one, unrounded
+            assert f"{name} {json.dumps(value)}" in _words(raw), name
         assert "The Trainer validation figure is not among these records' metrics." in text
     entry = {"kind": "test_run", "at": "2026-10-26T12:00:00Z", "version": "v", "run_id": "r",
              "metrics": {"untruncated_mrr": 0.5}, "n_ranked": 3, "device": "cpu",
              "deterministic": True, "record_requested": False}
-    assert "Mode C MRR (untruncated) 0.5000 over 3 ranked cases" in _text(
-        mp.usage_entry_html(entry))
+    row = mp.usage_entry_html(entry)
+    assert "Measurement mode not recorded, 3 cases" in _text(row) and "Mode C" not in _text(row)
+    assert ('<details class="shep-mp-fold"><summary>Recorded metrics (1)</summary>' in row
+            and "<details class=\"shep-mp-fold\" open" not in row)
+    assert "untruncated_mrr 0.5" in _words(row)
     for bad in (None, "", 7):
         shown = _text(mp.usage_entry_html({**entry, "mode": bad}))
         assert "Measurement mode not recorded" in shown and "Mode C" not in shown
 
 
-def _kept_c_and_d_records():
-    """A Mode C record and a kept Mode D record of one checkpoint and version, as
-    a ledger holds them (Batch 3 registered both; Mode D no longer runs, K7)."""
+def _kept_c_and_d_records(*more):
+    """A kept Mode C record and a kept Mode D record of one checkpoint and
+    version, as a ledger holds them (Batch 3 registered both; neither mode runs
+    now), then `more` reports, registered in that order."""
     from src.evaluation.sidecar import append_record, build_record, empty_ledger
     from tests.unit.test_evaluation_sidecar import mode_c_report, mode_d_report
 
     ledger = empty_ledger()
-    for n, (report, digest) in enumerate(((mode_c_report(), "c" * 64),
-                                          (mode_d_report(), "d" * 64)), start=1):
+    reports = ((mode_c_report(), "c" * 64), (mode_d_report(), "d" * 64), *more)
+    for n, (report, digest) in enumerate(reports, start=1):
         record = build_record(report, digest)
         run_id = f"20261027T120000Z-{record['checkpoint_digest'][:12]}-0000000{n}"
         ledger = append_record(ledger, record, run_id=run_id,
@@ -498,45 +509,226 @@ def _kept_c_and_d_records():
     return ledger["records"]
 
 
-def test_kept_mode_d_records_are_shown_under_their_own_mode_and_never_ordered():
-    """Kept Mode D records are history (K7 removed Mode D, not its records):
-    each mode's label and note once, directly above its own table, each table
-    named for its mode, its columns named in full with the mode and the case
-    set; one served setting shown goes in the label, two go on each record's
-    line; the usage history names a Mode D run's figure by its case set."""
-    from src.evaluation.caveats import MODE_D_NOTE, mode_label
+def _table(raw, mode_label_text):
+    """The records table named for `mode_label_text` (its aria-label)."""
+    start = raw.index(f'aria-label="{e("Recorded test results, " + mode_label_text)}"')
+    return raw[start:raw.index("</table>", start)]
 
+
+def test_kept_c_and_d_records_are_shown_as_recorded_by_the_one_display():
+    """Kept Mode C and Mode D records (no rule refuses or hides them, policy rev
+    15) are shown by the one display for every mode, as recorded (R2): each
+    mode's own generic label above its table, the table named for it; one
+    "Recorded metrics" column listing every metric by its recorded name and its
+    value unrounded; each record's score semantics exactly as recorded, two D
+    records with different semantics each with its own; the tables in the order
+    first shown, never C first; no C/D label, note, case-set words, derived
+    served scoring or mean-rank rounding. A usage entry of either mode reads
+    its label, its count and its metrics as recorded."""
     records = _kept_c_and_d_records()
     views = [mp.record_view(record) for record in records]
     assert [view["mode"] for view in views] == ["C", "D"]
     raw = mp.records_block_html(views, {})
-    block = _text(raw)
-    assert block.count(PRE_B1_NOTE) == 1 and block.count(MODE_D_NOTE) == 1
-    assert 'aria-label="Recorded test results, model ranking (Mode C)"' in raw
-    assert 'aria-label="Recorded test results, served ranking (Mode D)"' in raw
-    d_label = mode_label("D", views[1]["score_semantics"])
-    order = [MODE_C_RESULT_LABEL, "Mode C MRR (untruncated)", "Mode C Hits@10", d_label,
-             "Mode D MRR (import-eligible)", "Mode D Hits@10 (import-eligible)"]
-    assert [block.index(text) for text in order] == sorted(block.index(text) for text in order)
-    assert ("scored as the Diagnosis page then scored them (gnn_only, η = 1.0); not the "
-            "approved scorer policy") in block
-    assert "served scoring" not in block and "56 of 80 import-eligible cases reached" in block
-    # Two served settings: the label without them, each record's line its own.
+    block, words = _text(raw), _words(raw)
+    c_label, d_label = mode_label("C"), mode_label("D")
+    assert c_label == "Mode C (a measurement mode this version does not describe)"
+    assert d_label == "Mode D (a measurement mode this version does not describe)"
+    assert f"{c_label}." in block and f"{d_label}." in block
+    c_table, d_table = _table(raw, c_label), _table(raw, d_label)
+    for table in (c_table, d_table):
+        assert '<th scope="col" colspan="2">Recorded metrics</th>' in table
+        assert ">not described<" not in table and 'class="shep-mp-fold"' not in table
+    c_main = c_table[c_table.index('class="shep-mp-main"'):c_table.index('class="shep-mp-more"')]
+    for line in ("untruncated_mrr 0.5", "hits@1 0.25", "hits@10 0.75", "mean_rank 3.0"):
+        assert line in _words(c_main), line
+    d_main = d_table[d_table.index('class="shep-mp-main"'):d_table.index('class="shep-mp-more"')]
+    for line in ("post_import_mrr 0.35", "post_import_hits@1 0.2", "coverage 0.7",
+                 "reached_mrr 0.5", "reached_mean_rank 2.43", "reached_hits@10 0.9"):
+        assert line in _words(d_main), line
+    assert "Score semantics: raw cosine, no eta mixture and no shortest-path term" in words
+    assert "Score semantics: served:gnn_only:eta=1.0:sp=none" in words
+    for gone in ("approved scorer policy", "Served ranking", "import-eligible)", "reached only",
+                 "η =", "served scoring", "MRR (untruncated)", "Mode C metrics", "Mode D metrics",
+                 "October 2026", "Diagnosis page", "2.43 ", "reached by"):
+        assert gone not in block, gone
+    # first shown first: the D record first, then C; never C first by its name
+    raw_dc = mp.records_block_html(views[::-1], {})
+    assert raw_dc.index(e(d_label)) < raw_dc.index(e(c_label))
+    assert raw.index(e(c_label)) < raw.index(e(d_label))
+    # Two D records with different semantics: one table, each its own semantics.
     other = {**views[1], "score_semantics": "served:gnn_plus_shortest_path:eta=0.7:sp=abc"}
-    two = _text(mp.records_block_html([views[1], other], {}))
-    assert f"{mode_label('D')}." in two
-    assert "served scoring gnn_only, η = 1.0" in two
-    assert "served scoring gnn_plus_shortest_path, η = 0.7" in two
-    d_only = _text(mp.records_block_html(views[1:], {}))
-    assert "Mode D MRR (import-eligible)" in d_only and "Mode D Hits@10 (import-eligible)" in d_only
-    assert MODE_C_RESULT_LABEL not in d_only and PRE_B1_NOTE not in d_only
-    assert "Mode C MRR" not in d_only and "Mode C metrics" not in d_only
+    two = mp.records_block_html([views[1], other], {})
+    assert two.count('<table class="shep-tbl shep-mp-rec"') == 1
+    assert "Score semantics: served:gnn_only:eta=1.0:sp=none" in _words(two)
+    assert "Score semantics: served:gnn_plus_shortest_path:eta=0.7:sp=abc" in _words(two)
+    assert "η" not in _text(two)
 
-    entry = {"kind": "test_run", "at": "2026-10-27T12:00:00Z", "version": "v", "run_id": "r",
-             "mode": "D", "metrics": {"post_import_mrr": 0.35}, "n_ranked": 56,
-             "device": "cuda", "deterministic": True, "record_requested": True}
-    assert "Mode D MRR (import-eligible) 0.3500 · 56 cases reached" in _text(
-        mp.usage_entry_html(entry))
+    for entry_mode, metrics, n in (("D", {"post_import_mrr": 0.35, "coverage": 0.7}, 56),
+                                   ("C", {"untruncated_mrr": 0.5, "mean_rank": 3.0}, 80)):
+        entry = {"kind": "test_run", "at": "2026-10-27T12:00:00Z", "version": "v",
+                 "run_id": "r", "mode": entry_mode, "metrics": metrics, "n_ranked": n,
+                 "device": "cuda", "deterministic": True, "record_requested": True}
+        row = mp.usage_entry_html(entry)
+        assert f"{mode_label(entry_mode)}, {n} cases" in _text(row)
+        assert f"Recorded metrics ({len(metrics)})" in row
+        for name, value in metrics.items():
+            assert f"{name} {value}" in _words(row)
+        assert "reached" not in _text(row) and "import-eligible" not in _text(row)
+
+
+def test_a_mode_never_seen_before_is_shown_as_recorded_with_no_list_of_modes():
+    """No list of modes decides what is shown (the reviewer, 2026-11-07: the
+    three tasks are not a read whitelist): a record whose mode no build has
+    ever named, beside a disease record and kept C and D ones, is read by the
+    shared readers and shown like any mode without words of its own, its
+    label naming its recorded mode, every metric and its score semantics as
+    recorded; nothing is dropped, hidden or put last for its mode's name."""
+    from tests.unit.test_evaluation_sidecar import registered_report
+
+    new = registered_report({"zz_new_metric@7": 0.123456789, "pooled_mrr": 0.5},
+                            mode="zz_protocol_never_seen", score_semantics="zz: a new score")
+    records = _kept_c_and_d_records((new, "e" * 64), (registered_report(), "f" * 64))
+    views = [mp.record_view(record) for record in records]
+    assert all(view is not None for view in views)
+    assert [view["mode"] for view in views] == ["C", "D", "zz_protocol_never_seen", "disease"]
+    views = views[::-1]                     # newest first, as the page shows them
+    raw = mp.records_block_html(views, {})
+    label = mode_label("zz_protocol_never_seen")
+    assert label == "Mode zz_protocol_never_seen (a measurement mode this version does not describe)"
+    order = [raw.index(e(text)) for text in (
+        mode_label("disease"), label, mode_label("D"), mode_label("C"))]
+    assert order == sorted(order), order
+    table = _table(raw, label)
+    assert "zz_new_metric@7 0.123456789" in _words(table) and "pooled_mrr 0.5" in _words(table)
+    assert "Score semantics: zz: a new score" in _words(table)
+    assert raw.count('<table class="shep-tbl shep-mp-rec"') == 4
+
+
+def test_a_task_record_keeps_its_columns_and_shows_every_metric_one_click_away():
+    """A record of a measurement this build describes keeps its two columns and
+    its readable words (R2); every metric as recorded is one click away in a
+    closed native disclosure, "Recorded metrics (N)", with the raw names and
+    unrounded values; its score semantics as recorded on its detail line."""
+    from tests.unit.test_evaluation_sidecar import DISEASE_METRICS, registered_report
+
+    records = _kept_c_and_d_records((registered_report(), "f" * 64))
+    view = mp.record_view(records[2])
+    raw = mp.records_block_html([view], {})
+    heads = re.findall(r'<th scope="col" class="shep-num">([^<]*)</th>', raw)
+    assert heads == ["Disease pooled MRR", "Disease pooled top-10"]
+    assert "Recorded metrics</th>" not in raw
+    fold = re.search(r'<details class="shep-mp-fold"><summary>Recorded metrics \((\d+)\)'
+                     r'</summary>(.*?)</details>', raw)
+    assert fold and int(fold.group(1)) == len(DISEASE_METRICS)
+    assert "macro_precision@3 0.16666666666666666" in _words(fold.group(2))
+    assert "pooled_top10 0.75" in _words(fold.group(2))
+    assert "Disease conservative pooled MRR 0.4500" in _text(raw)
+    assert ("Score semantics: disease head: -||z_d - z_P||^2 on L2-normalised projected vectors"
+            in _words(raw))
+
+
+def test_the_read_only_view_shows_kept_c_and_d_records_and_a_task_record_the_same_way(
+        tmp_path, monkeypatch):
+    """The read-only view reads the API's route (no checkpoint opened) and
+    draws its kept C and D records and its task record with the shared
+    `records_block_html`, as the operator's detail draws the ledger: the same
+    labels, columns, recorded metrics and score semantics."""
+    import src.api.main as api_main
+    from src.api.services.record_states import key_text
+    from src.evaluation.sidecar import LEDGER_FILENAME, append_record, build_record, empty_ledger
+    from src.utils.fingerprint import ReadIdentity
+    from tests.unit.test_evaluation_sidecar import (
+        mode_c_report,
+        mode_d_report,
+        registered_report,
+    )
+
+    weights = tmp_path / "runs" / "checkpoints" / "best.pt"
+    weights.parent.mkdir(parents=True)
+    weights.write_bytes(b"stand-in weights")
+    sha = file_sha256(weights)
+    ledger = empty_ledger()
+    for n, report in enumerate((mode_c_report(), mode_d_report(), registered_report()), 1):
+        report["manifest"]["artifact_digests"]["checkpoint"] = sha
+        record = build_record(report, f"{n}" * 64)
+        ledger = append_record(ledger, record, run_id=f"20261027T120000Z-{sha[:12]}-0000000{n}",
+                               registered_at="2026-10-27T12:00:00Z")[1]
+    (weights.parent / LEDGER_FILENAME).write_text(json.dumps(ledger))
+    monkeypatch.setattr(api_main.app_state, "pipeline",
+                        _ServedPipeline(ReadIdentity(weights.resolve(), sha)))
+    answer = mp._route_records()
+    assert [r["mode"] for r in answer["records"]] == ["C", "D", "disease"]
+    contest = {}
+    for record in answer["records"]:
+        contest[key_text(mp.route_record_key(record, sha))] = {**record["contest"],
+                                                              "problems": []}
+    readonly = mp.readonly_parts({"answer": answer, "served_sha": sha, "status_at": "now",
+                                  "contest": contest})["records"]
+    views = sorted((mp.record_view(r) for r in ledger["records"]),
+                   key=lambda v: -v["registration"]["sequence"])
+    operator = mp.records_block_html(views, contest)
+    assert readonly.replace(f'<p class="shep-note">{e(mp.NO_LOAD_HERE)}</p>', "") == operator
+    for text in (mode_label("C"), mode_label("D"), mode_label("disease"),
+                 "Score semantics: served:gnn_only:eta=1.0:sp=none", "untruncated_mrr 0.5",
+                 "post_import_mrr 0.35", "Recorded metrics (", "Disease pooled MRR"):
+        assert text in _words(readonly), text
+
+
+def test_a_hostile_metric_name_and_score_semantics_are_literal_text_on_models():
+    """A metric name and a score semantics holding markup are shown as literal
+    text (escaped) in the records table, its disclosure and a usage row."""
+    from tests.unit.test_evaluation_sidecar import registered_report
+
+    hostile = "<img src=x onerror=alert(1)>"
+    metrics = {hostile: 0.5, "pooled_mrr": 0.25}
+    for mode in ("zz_new", "disease"):
+        report = registered_report(metrics, mode=mode, score_semantics=hostile)
+        view = mp.record_view(_kept_c_and_d_records((report, "f" * 64))[2])
+        raw = mp.records_block_html([view], {})
+        assert hostile not in raw and e(hostile) in raw, mode
+        assert f"{hostile} 0.5" in _words(raw) and f"Score semantics: {hostile}" in _words(raw)
+    row = mp.usage_entry_html({"kind": "test_run", "at": "2026-10-27T12:00:00Z", "version": "v",
+                               "run_id": "r", "mode": hostile, "metrics": metrics,
+                               "n_ranked": 3, "device": "cpu", "deterministic": True})
+    assert hostile not in row and f"{hostile} 0.5" in _words(row)
+
+
+def test_a_usage_row_lists_its_metrics_as_recorded_or_says_there_are_none():
+    """Each `test_run` usage row: a described mode's first column figure "over
+    N ranked cases", any other mode's label and count ("case count not
+    recorded" when it has none), then how it ran on a line
+    of its own (one " · " per line, skill §5), then its metrics as recorded
+    behind a closed disclosure; "no metric recorded" when it records none, and
+    a metrics value that is not a list of names "not readable as recorded"."""
+    base = {"kind": "test_run", "at": "2026-10-27T12:00:00Z", "version": "v", "run_id": "r",
+            "n_ranked": 8, "device": "cuda", "deterministic": True, "record_requested": True}
+    disease = mp.usage_entry_html({**base, "mode": "disease",
+                                   "metrics": {"pooled_mrr": 0.45, "pooled_top10": 0.75}})
+    assert "Disease pooled MRR 0.4500 over 8 ranked cases" in _text(disease)
+    assert "CUDA · deterministic; registration asked" in _text(disease)
+    assert "Recorded metrics (2)" in disease and "pooled_top10 0.75" in _words(disease)
+    for cell in re.findall(r"<div[^>]*>([^<]*)</div>", disease):
+        assert cell.count(" · ") <= 1, cell
+    empty = mp.usage_entry_html({**base, "mode": "disease", "metrics": {}})
+    assert "no metric recorded" in _text(empty) and "Recorded metrics" not in empty
+    absent = mp.usage_entry_html({**base, "mode": "disease"})
+    assert "no metric recorded" in _text(absent)
+    damaged = mp.usage_entry_html({**base, "mode": "disease", "metrics": [0.5]})
+    assert "metrics not readable as recorded" in _text(damaged)
+    assert "no metric recorded" not in _text(damaged)
+    # An entry with no case count (a hand edit: the writer always records it)
+    # says so in words, never Python's None.
+    for n_ranked in ({}, {"n_ranked": None}, {"n_ranked": "8"}, {"n_ranked": True}):
+        entry = {**base, **n_ranked}
+        if not n_ranked:
+            del entry["n_ranked"]
+        kept = _text(mp.usage_entry_html({**entry, "mode": "D", "metrics": {"x": 1}}))
+        assert ("Mode D (a measurement mode this version does not describe), case count not "
+                "recorded") in kept and "None" not in kept
+        described = _text(mp.usage_entry_html({**entry, "mode": "disease",
+                                               "metrics": {"pooled_mrr": 0.45}}))
+        assert "Disease pooled MRR 0.4500, case count not recorded" in described
+        assert "None" not in described
 
 
 # --------------------------------------------------------------------------- the detail
@@ -1713,6 +1905,24 @@ def test_runs_that_differ_are_flagged_only_in_a_deterministic_group(world, monke
         '<div class="shep-mp-delta shep-amber-t"><span aria-hidden="true">▲</span> runs under '
         "these conditions differ — investigate: pooled_mrr. Deterministic algorithms were on, "
         "so they were expected to agree.</div>")
+
+
+@pytest.mark.parametrize("mode, values, shown", [
+    ("C", (0.47333333333333333, 0.47334), ("0.47333333333333333", "0.47334")),
+    ("D", (2.123456789, 2.1234567), ("2.123456789", "2.1234567")),
+    ("disease", (0.47333333333333333, 0.47334), ("0.47333333333333333", "0.47334")),
+], ids=["kept_c", "kept_d", "described"])
+def test_runs_that_differ_past_the_fourth_decimal_never_read_as_equal(mode, values, shown):
+    """The K8-6e.2 review: a contested group's runs are shown with each value as
+    recorded, unrounded, whatever the record's mode (the Batch 3 ledger holds
+    two Mode C records of one checkpoint), so two runs that differ past the
+    fourth decimal never read as equal ("0.4733 vs 0.4733")."""
+    state = {"state": "contested", "differing": ["untruncated_mrr"],
+             "runs": [{"run": "r1", "values": {"untruncated_mrr": values[0]}},
+                      {"run": "r2", "values": {"untruncated_mrr": values[1]}}]}
+    for deterministic in (True, False):
+        text = _text(mp.contest_html(state, mode=mode, deterministic=deterministic))
+        assert f"untruncated_mrr {shown[0]} (run r1) vs {shown[1]} (run r2)" in text, text
 
 
 def test_a_merged_record_and_a_named_run_show_their_possible_overlap(world):

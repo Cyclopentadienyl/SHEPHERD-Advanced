@@ -307,28 +307,25 @@ class RecordView(_Strict):
     cohort: RecordCohort
     counts: RecordCounts
     mode: _Text = Field(
-        ..., description="the record's measurement mode (`scoring.mode`): disease, gene or "
-        "patients_like_me, the protocol a model was measured by, one this build implements for "
-        "a finetuned model's learning stage and task head (what the Test page runs). C and D "
-        "are earlier modes, kept as history: C, the model's own ranking over "
-        "every disease by raw cosine; D, the served ranking as Batch 3 measured it (removed in "
-        "K7). A surface labels each record by its own mode")
+        ..., description="the record's measurement mode (`scoring.mode`), as recorded: the "
+        "protocol its report names. This build runs disease, gene and patients_like_me, each "
+        "for a finetuned model's learning stage and task head (what the Test page runs); a "
+        "record of any other mode is read and returned the same way. A surface labels each "
+        "record by its own mode")
     score_semantics: _Text = Field(
-        ..., description="the record's `scoring.score_semantics`: what its score is, as its "
-        "measurement named it (a task record: the task head's score); for a Mode D record, "
-        "`served:<scoring mode>:eta=<eta>:sp=<build id or none>`")
+        ..., description="the record's `scoring.score_semantics`, as recorded: what its score "
+        "is, in its measurement's own words (a task record: the task head's score). Returned "
+        "whole, never split or interpreted")
     metrics: Dict[str, _Metric] = Field(
-        ..., description="the metrics of the record's mode. A task mode: `pooled_mrr`, "
-        "`pooled_top<k>`, `macro_recall@<k>`, `macro_precision@<k>`, `macro_mrr`, "
-        "`best_positive_mrr` and `conservative_pooled_mrr` (each left out when it has no "
-        "case to average), and `coverage`, the share of the cases measured that were ranked. "
-        "Mode C: over n_ranked ranked cases; `untruncated_mrr` is not the trainer's top-20 "
-        "`val_mrr`. Mode D: `post_import_*` and `coverage` over the version's import-eligible "
-        "cases (`counts.ranked_eligible`, 0 for a case not reached), `reached_*` over the "
-        "n_ranked reached cases")
+        ..., description="the record's metrics, as recorded: each name as its measurement "
+        "wrote it, with its value. A task mode's: `pooled_mrr`, `pooled_top<k>`, "
+        "`macro_recall@<k>`, `macro_precision@<k>`, `macro_mrr`, `best_positive_mrr` and "
+        "`conservative_pooled_mrr` (each left out when it has no case to average), and "
+        "`coverage`, the share of the cases measured that were ranked. None of them is the "
+        "Trainer's validation figure")
     n_ranked: _Count = Field(
-        ..., description="A task mode or Mode C: the cases ranked; Mode D: the "
-        "import-eligible cases the served pipeline reached")
+        ..., description="the record's `n_ranked`, as recorded: for a task mode, the cases "
+        "ranked")
     relations: Dict[str, Literal["verified", "not_applicable"]]
     r10: R10View
     environment_class: str

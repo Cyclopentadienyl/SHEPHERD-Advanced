@@ -128,7 +128,9 @@ shared readers (policy rev 15), and since K8-6a no command writes one (`--mode` 
 names a protocol; a checkpoint without a model spec, a ShepherdGNN history file, is refused).
 Mode D, the served ranking Batch 3 measured, was removed in K7: its kept reports and records stay
 readable, and a kept report registers by the general rules under its own mode (the same run's
-report again answers `already_registered`).
+report again answers `already_registered`). Since K8-6e.2 the Test and Models pages show a kept
+Mode C or Mode D record, like any mode this build has no words for, as recorded: its own mode,
+every metric by its recorded name and value, and its score semantics exactly as recorded.
 
 ## Development
 

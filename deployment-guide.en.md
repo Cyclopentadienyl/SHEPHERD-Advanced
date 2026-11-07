@@ -1391,14 +1391,18 @@ input to the scorer policy's gate 1 comparison) was removed in K7 with its execu
 2026-10-27 is kept as evidence in `docs/working/batch3-acceptance-2026-10-27/`, and its design
 in `docs/working/scorer-measurement/PLAN_B05.md`.
 
-**Kept Mode D reports and records stay readable**, under their own label ("Served ranking of
-October 2026 (Mode D) … not the approved scorer policy", with the scoring mode and η they were
-measured under) on the Test page's Result and the Models page, which lists each mode's records in
-a table of its own and ranks no record by its test score. Their figures are named for their case set:
-`post_import_*` and `coverage` over the version's import-eligible cases, a case not reached
-counting 0; `reached_*` over the reached cases only; the cases excluded at import counted beside
-them, never in them. Each report also set Mode C beside it on the same embeddings. A Mode D
-number is not the model's approved ranking and does not describe the current diagnosis model.
+**Kept Mode D reports and records stay readable**, shown as recorded by the one display every
+mode this version does not describe gets (since K8-6e.2, 2026-11-07; before it, under a Mode D
+label of their own): on the Test page's Result and the Models page they read "Mode D (a
+measurement mode this version does not describe)", every metric by its recorded name and value,
+unrounded (`post_import_mrr 0.35`), and the score semantics exactly as recorded
+(`served:gnn_only:eta=1.0:sp=none`), never split into a scoring mode and η. The Models page lists
+each mode's records in a table of its own, in the order first shown, and ranks no record by its
+test score. What Batch 3's names meant: `post_import_*` and `coverage` were over the version's
+import-eligible cases, a case not reached counting 0; `reached_*` over the reached cases only; the
+cases excluded at import were counted beside them, never in them. Each report also set Mode C
+beside it on the same embeddings. A Mode D number is not the model's approved ranking and does not
+describe the current diagnosis model.
 
 **A kept Mode D report registers by the general rules, under its own mode** (since K8-6c, policy
 rev 15): `scripts/record_evaluation.py` and the Test page's Register check it as they check every
@@ -2887,9 +2891,13 @@ and register it. Three panels:
   just ended is selected, once for that run. A choice made while the page reads the version's
   store again (after the job changed, an act or an import) applies once that read has ended;
   the read never undoes it, and of several choices made meanwhile the last one stays.
-- **Result.** The selected report as the record the ledger would hold: its mode's metrics (a
-  task's; a kept Mode C or Mode D report under its own label), coverage with each exclusion, the relations, R10 in words (*unverifiable* is
-  never a 0), the environment, the dataset origin, and whether it is registered (for an
+- **Result.** The selected report as the record the ledger would hold, by one display for every
+  mode (since K8-6e.2): a task's tiles and figures in words, with every metric as recorded one
+  click away ("Recorded metrics (N)"); a report of a mode this version does not describe, a kept
+  Mode C or Mode D report included, under "Mode <mode> (a measurement mode this version does not
+  describe)", with one "Recorded metrics" row listing every metric by its recorded name and
+  value; the score semantics exactly as recorded; coverage with each exclusion, the relations,
+  R10 in words (*unverifiable* is never a 0), the environment, the dataset origin, and whether it is registered (for an
   operator, checked in the ledger beside the listed checkpoint holding the weights it
   measured). When a record names this run with other bytes (the report was replaced after it
   was registered), or that ledger cannot tell, the Result gives the registration's reason.
@@ -2989,19 +2997,23 @@ whether that is this workspace's current dataset), the Trainer's validation figu
 card, any warning, and two segments:
 
 - **Recorded test results**: every record the ledger holds for these weights, one table per
-  measurement mode, each under its mode's label and note (since Batch 3: Mode C's records first,
-  then Mode D's). Each row gives the cohort version and its role, the mode's MRR and Hits@10 named
-  in full in the header (Mode C MRR (untruncated) and Hits@10; Mode D's over the import-eligible
-  cases), coverage with every exclusion (Mode D's as the import-eligible cases reached), and
+  measurement mode, in the order first shown, each under its mode's label (and a task's note),
+  by one display for every mode (since K8-6e.2; before it, Mode C's records came first, then
+  Mode D's, under labels of their own). Each row gives the cohort version and its role; a task's
+  pooled MRR and its second figure named in full in the header, or, for a mode this version does
+  not describe (a kept Mode C or Mode D record included), one "Recorded metrics" column listing
+  every metric by its recorded name and value, unrounded; coverage with every exclusion; and
   `registered #N`, or `runs differ #N` with "runs under these conditions differ" and what
   differs (neutral; amber with ▲ and "— investigate" only when the group records deterministic
   algorithms on, so its runs were expected to agree), or "comparison incomplete" (never shown
   as agreeing),
   deterministic on or off, the reports merged into it before each run had its own record when
   there are any, and "possible overlap with record N (not recorded)" between such a record and a
-  named run; then the relations, the record's other metrics, R10 as states (*unverifiable* is a
-  reason, never 0), the environment, the dataset and the registration with its run ("not
-  recorded" for a record written before each run had its own record). Every record is shown;
+  named run; then the relations, a task record's other metrics in words, R10 as states
+  (*unverifiable* is a reason, never 0), "Score semantics: …" exactly as recorded, a task
+  record's every metric as recorded behind "Recorded metrics (N)", the environment, the dataset
+  and the registration with its run ("not recorded" for a record written before each run had its
+  own record). Every record is shown;
   none is hidden or ordered out by these descriptions. A record for these weights that cannot be
   read as a result (since K8-6e.1) is never shown or counted as one: under the tables, "▲ 1
   record for these weights cannot be read as a result. The ledger keeps it as written." and a
@@ -3010,7 +3022,11 @@ card, any warning, and two segments:
   readable)". The read-only view lists the same items, from the route;
 - **Usage history**: the entries that name this checkpoint in every listed cohort version's
   usage history, newest first: test runs and registrations, and any model load kept from before
-  K8-6d, shown as recorded ("ordered by" its metric's name, and its scoring semantics).
+  K8-6d, shown as recorded ("ordered by" its metric's name, and its scoring semantics). A test
+  run reads a task's first figure over its ranked cases, or another mode's label and case count,
+  then how it ran, then every metric it records behind "Recorded metrics (N)" ("no metric
+  recorded" when it records none). An entry written before the usage history recorded a mode
+  reads "Measurement mode not recorded" (since K8-6e.2; before it, Mode C).
 
 **🔒 Load this model** is the shared Load (the same confirmation as Diagnosis' "Change model…";
 it covers the detail while it is open, its buttons stay in view under its table however short

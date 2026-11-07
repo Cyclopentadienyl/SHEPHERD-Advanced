@@ -674,8 +674,8 @@ def record_test_run(
 
     **`mode` is required**, the run's own manifest mode: nothing is recorded
     under a mode the caller did not name. An entry written before the key
-    existed (Batch 3) has none and reads as Mode C, the only mode that wrote any
-    (`entry_mode`)."""
+    existed (Batch 3) has none, and reads as a mode not recorded (`entry_mode`):
+    no mode is inferred for it (K8-6e.2)."""
     entry = _usage("test_run", at, run_id=run_id, report_sha256=report_sha256,
                    checkpoint_sha256=checkpoint_sha256, mode=str(mode), metrics=dict(metrics),
                    n_ranked=n_ranked, deterministic=bool(deterministic), device=str(device),
@@ -685,12 +685,9 @@ def record_test_run(
 
 
 def entry_mode(entry: Mapping[str, Any]) -> Optional[str]:
-    """A `test_run` entry's measurement mode: its `mode`; "C" for an entry
-    written before the key existed (the key absent), when Mode C was the only
-    mode that wrote; None when the key is there and is not a non-empty string (a
-    hand edit), which is never taken for Mode C."""
-    if "mode" not in entry:
-        return "C"
+    """A `test_run` entry's measurement mode: its `mode` when that is a
+    non-empty string; None otherwise, absent (an entry written before the key
+    existed) or damaged (a hand edit) alike. No mode is ever inferred."""
     mode = entry.get("mode")
     return mode if isinstance(mode, str) and mode.strip() else None
 

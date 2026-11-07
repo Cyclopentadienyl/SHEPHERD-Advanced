@@ -44,9 +44,12 @@ docstring. Three panels, as the mockup draws them (``test-wide.png``,
   and registered read from disk by WP4's helper; "no report was published"
   when there is no outcome file; a cancel says what was left);
 - **Result**: the selected report as the record the ledger would hold
-  (`build_record`, through the store's scan): the metrics of the record's own
-  measurement (a task's, or a kept Mode C or D report's), each named by
-  `caveats.metric_text`, coverage with every exclusion, relations, R10 in the
+  (`build_record`, through the store's scan), by **one display for every
+  mode** (R2, K8-6e.2): a measurement this build describes in its tiles and
+  words (`caveats.metric_text`) with every metric as recorded one click away;
+  any other mode's metrics, a kept report's included, as recorded
+  (`caveats.recorded_metric_lines`); the score semantics as recorded,
+  coverage with every exclusion, relations, R10 in the
   caveats' words (*unverifiable* is a word, never a 0), environment, dataset
   origin, whether it is kept and registered; "🔒 Register this report" through the one
   registration function (`register_report`, the ledger beside the listed
@@ -134,8 +137,6 @@ import gradio as gr
 
 from src.evaluation import protocols
 from src.evaluation.caveats import (
-    MODE_D_NOTE,
-    PRE_B1_NOTE,
     R10_LABEL_TEXT,
     R10_STATE_TEXT,
     R10_UNVERIFIABLE_REASON,
@@ -144,6 +145,7 @@ from src.evaluation.caveats import (
     metric_text,
     mode_label,
     mode_note,
+    recorded_metric_lines,
 )
 from src.webui.components import renderers as r
 from src.webui.components.chips import D8_SHORT, chips_on_change
@@ -204,33 +206,26 @@ _R10_EVIDENCE_WORDS = {
     "not_recorded": "evidence not recorded by the checkpoint",
     "search_incomplete": "evidence search incomplete",
 }
-#: The metrics shown as tiles, in order, by the record's mode (`scoring.mode`);
-#: each is named by `caveats.metric_text`. Mode D's are over the import-eligible
-#: cases, a case not reached counting 0 (PLAN_B05 §5). A task's
-#: (`src.evaluation.task_measurement`) are pooled over its positive pairs or a
-#: mean over its ranked cases, and its coverage; Mode C and D stay for the
-#: reports kept from before the tasks (the page starts neither).
+#: The metrics shown as tiles, in order, by the record's mode (`scoring.mode`),
+#: for a measurement this build describes; each is named by
+#: `caveats.metric_text`. A task's (`src.evaluation.task_measurement`) are
+#: pooled over its positive pairs or a mean over its ranked cases, and its
+#: coverage. A record of any other mode has no tiles: its metrics as recorded
+#: are its main result (`_record_html`).
 _TILES = {
-    "C": ("untruncated_mrr", "hits@1", "hits@5", "hits@10"),
-    "D": ("post_import_mrr", "post_import_hits@1", "post_import_hits@10", "coverage"),
     "disease": ("pooled_mrr", "pooled_top1", "pooled_top10", "coverage"),
     "gene": ("pooled_mrr", "pooled_top1", "macro_recall@5", "coverage"),
     "patients_like_me": ("pooled_mrr", "pooled_top10", "macro_recall@10", "coverage"),
 }
-#: The mean rank Mode C and D report, over the cases they ranked or reached (a
-#: task reports none).
-_MEAN_RANK = {"C": "mean_rank", "D": "reached_mean_rank"}
 #: A task record's metric families that take a cut-off k, each shown as one
 #: row (its k values in order), and its single figures shown as a row each.
 _TASK_FAMILIES = ("pooled_top", "macro_recall@", "macro_precision@")
 _TASK_ROWS = ("macro_mrr", "best_positive_mrr")
-#: The ⓘ beside each mode's label.
-_MODE_HELP = {"C": "test-mode-c", "D": "test-mode-d",
-              **{task: f"test-mode-{task}" for task in TASK_NAMES}}
+#: The ⓘ beside a described measurement's label.
+_MODE_HELP = {task: f"test-mode-{task}" for task in TASK_NAMES}
 #: Each report row's mode, first in its state line: a plain label, the code
 #: beside it. A report of another mode, or one whose mode cannot be read, says so.
-_MODE_ROW_WORDS = {"C": "model ranking (Mode C)", "D": "served ranking (Mode D)",
-                   **{task: f"{name.lower()} task" for task, name in TASK_NAMES.items()}}
+_MODE_ROW_WORDS = {task: f"{name.lower()} task" for task, name in TASK_NAMES.items()}
 #: The job's statuses, as its pill shows them: never green for failed,
 #: stopped or cancelled.
 _PILLS = {
@@ -333,8 +328,6 @@ TOPIC_HELP = {
         "the policy and every count. Commit prepares again from the same inputs and refuses "
         "unless it gives the same id, so what is committed is what was previewed.",
     ),
-    "test-mode-c": ("Mode C result", PRE_B1_NOTE),
-    "test-mode-d": ("Mode D result", MODE_D_NOTE),
     **{f"test-mode-{task}": (f"{name} task result", mode_note(task))
        for task, name in TASK_NAMES.items()},
     "test-r10": (
@@ -1677,22 +1670,18 @@ def _registration_reason_html(state: Mapping[str, Any], roots: Sequence[Tuple[st
     return ""
 
 
-def _tile_note(mode: Optional[str], name: str, n_ranked: Any, eligible: str) -> str:
-    """What a tile's figure is over: Mode D's import-eligible cases; a task's
-    positive pairs (pooled), ranked cases (macro) or the share of the
-    import-eligible cases ranked (coverage), with no count, since the record's
-    Coverage row says "n of M" once (skill rule 1.2); otherwise the cases
-    ranked."""
-    if mode == "D":
-        return f"over {eligible} import-eligible"
-    if mode in TASK_NAMES:
-        if name == "coverage":
-            return "share of import-eligible cases ranked"
-        if name.startswith("pooled_"):
-            return "pooled over positive pairs"
-        if name.startswith("macro_"):
-            return "mean over the ranked cases"
-    return f"over {_count(n_ranked)} ranked"
+def _tile_note(name: str) -> str:
+    """What a described measurement's tile figure is over: its positive pairs
+    (pooled), its ranked cases (macro) or the share of the import-eligible cases
+    ranked (coverage), with no count, since the record's Coverage row says "n of
+    M" once (skill rule 1.2)."""
+    if name == "coverage":
+        return "share of import-eligible cases ranked"
+    if name.startswith("pooled_"):
+        return "pooled over positive pairs"
+    if name.startswith("macro_"):
+        return "mean over the ranked cases"
+    return ""
 
 
 def _figure_words(mode: str, name: str) -> str:
@@ -1733,28 +1722,24 @@ def _task_rows(mode: str, metrics: Mapping[str, Any], tiles: Sequence[str]
     return rows
 
 
-def _mode_rows(mode: Optional[str], metrics: Mapping[str, Any], tiles: Sequence[str],
-               n_ranked: Any) -> List[Tuple[str, str]]:
-    """A kept Mode C or D record's figures past its tiles (or a record of a
-    mode this version does not describe): its mean rank, and every other
-    figure, each named by `caveats.metric_text`."""
-    mean_name = _MEAN_RANK.get(mode)
-    mean = metrics.get(mean_name) if mean_name else None
-    if mean_name is None:
-        mean_text = "—"
-    elif isinstance(mean, (int, float)) and not isinstance(mean, bool):
-        mean_text = (f"{e(metric_text(mode, mean_name))} "
-                     f"{e(_number(mean).rstrip('0').rstrip('.'))}, over {e(_count(n_ranked))} "
-                     f"{'reached' if mode == 'D' else 'ranked'} cases")
-    else:
-        mean_text = (f"{e(metric_text(mode, mean_name))} not reported"
-                     + (": no case was reached" if mode == "D" and n_ranked == 0 else ""))
-    return [
-        ("Mean rank", mean_text),
-        ("Other metrics", " · ".join(f"{e(metric_text(mode, k))} {e(_number(v))}"
-                                     for k, v in sorted(metrics.items())
-                                     if k not in set(tiles) | {mean_name}) or "—"),
-    ]
+def recorded_metrics_html(metrics: Mapping[str, Any]) -> str:
+    """Every metric of a record as recorded, one per line
+    (`caveats.recorded_metric_lines`: the name as written, a code, and the
+    value's JSON text, unrounded), every value escaped; "no metric recorded"
+    when it holds none."""
+    lines = recorded_metric_lines(metrics)
+    if not lines:
+        return '<span class="shep-muted">no metric recorded</span>'
+    return "".join(f"<div><code>{e(name)}</code> {e(value)}</div>" for name, value in lines)
+
+
+def _semantics_text(scoring: Mapping[str, Any]) -> str:
+    """The record's `scoring.score_semantics` exactly as recorded, a code, or
+    "not recorded": never split, interpreted or rebuilt."""
+    raw = scoring.get("score_semantics")
+    if isinstance(raw, str) and raw.strip():
+        return f"<code>{e(raw)}</code>"
+    return '<span class="shep-muted">not recorded</span>'
 
 
 def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
@@ -1764,12 +1749,11 @@ def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
     metrics = record.get("metrics") if isinstance(record.get("metrics"), Mapping) else {}
     n_ranked = record.get("n_ranked")
     counts = cohort.get("counts") if isinstance(cohort.get("counts"), Mapping) else {}
-    # Labelled by the record's own mode, never by Mode C's for every record.
+    # Labelled by the record's own mode, as recorded, never by another's.
     scoring = record.get("scoring") if isinstance(record.get("scoring"), Mapping) else {}
     mode = scoring.get("mode") if isinstance(scoring.get("mode"), str) and \
         scoring.get("mode").strip() else None
-    semantics = scoring.get("score_semantics")
-    label = mode_label(mode, semantics if isinstance(semantics, str) else None)
+    label = mode_label(mode)
     tile_names = _TILES.get(mode, ())
     task = mode in TASK_NAMES
     eligible = _count(counts.get("ranked_eligible"))
@@ -1782,35 +1766,32 @@ def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
     tiles = "".join(
         f'<div class="shep-test-tile"><div class="shep-test-tile-l">{e(metric_text(mode, name))}</div>'
         f'<div class="shep-test-tile-v">{e(_number(metrics.get(name)))}</div>'
-        f'<div class="shep-test-tile-n">{e(_tile_note(mode, name, n_ranked, eligible))}</div>'
+        f'<div class="shep-test-tile-n">{e(_tile_note(name))}</div>'
         '</div>'
         for name in tile_names)
     excluded = counts.get("excluded") if isinstance(counts.get("excluded"), Mapping) else {}
     reasons = " · ".join(f"{str(k).replace('_', ' ')} {_count(v)}" for k, v in excluded.items())
     excluded_text = (f"{e(_count(counts.get('n_excluded')))} excluded"
-                     f"{' at import' if mode == 'D' or task else ''}"
+                     f"{' at import' if task else ''}"
                      f"{': ' + e(reasons) if reasons else ''}")
     if task:
         coverage = (f"<b>{e(_count(n_ranked))} of {e(eligible)}</b> import-eligible cases ranked "
                     f"by the model · {e(_count(counts.get('source_cases')))} source cases; "
                     f"{excluded_text}")
-    elif mode == "D":
-        coverage = (f"<b>{e(_count(n_ranked))} of {e(eligible)}</b> import-eligible cases reached "
-                    f"by the served pipeline · {e(_count(counts.get('source_cases')))} source "
-                    f"cases; {excluded_text}")
-    elif mode == "C":
-        coverage = (f"<b>{e(_count(n_ranked))} of {e(_count(counts.get('source_cases')))}</b> source "
-                    f"cases ranked ({e(eligible)} eligible) · {excluded_text}")
     else:
         # No claim of what this mode's n_ranked counts.
         coverage = (f"{e(_count(counts.get('source_cases')))} source cases · {excluded_text}; "
                     f"{e(_count(n_ranked))} cases counted by the record; what they are is not "
                     "described for this mode")
+    # One display for every mode (R2): a described measurement's figures in
+    # words, every metric as recorded one click away (below); any other mode's
+    # metrics as recorded are its main result, one per line.
     figures = (_task_rows(mode, metrics, tile_names) if task
-               else _mode_rows(mode, metrics, tile_names, n_ranked))
+               else [("Recorded metrics", recorded_metrics_html(metrics))])
     lines = [
         ("Coverage", coverage),
         *figures,
+        ("Score semantics", _semantics_text(scoring)),
         ("Relations", _relations(record.get("relations"))),
         *_r10_lines(record.get("r10")),
         ("Environment", _environment(record)),
@@ -1845,9 +1826,14 @@ def _record_html(record: Mapping[str, Any], run: Mapping[str, Any],
                  f'<span class="shep-v">{v}</span>' for k, v in lines)
     topic = _MODE_HELP.get(mode)
     mode_help = help_button(topic, TOPIC_HELP[topic][0]) if topic else ""
+    fold = (f'<details class="shep-test-fold shep-test-recm"><summary>Recorded metrics '
+            f'({len(metrics)})</summary>{recorded_metrics_html(metrics)}</details>'
+            if task and metrics else
+            '<div class="shep-sub shep-test-recm">no metric recorded</div>' if task else "")
     return (f'<div class="shep-sub">{line}</div>'
             f'<div class="shep-test-label">{e(label)}{mode_help}</div>'
-            f'<div class="shep-test-tiles">{tiles}</div><div class="shep-kv shep-test-lines">{kv}</div>')
+            f'<div class="shep-test-tiles">{tiles}</div><div class="shep-kv shep-test-lines">{kv}</div>'
+            f'{fold}')
 
 
 def _deterministic_group(run: Mapping[str, Any]) -> Optional[bool]:
@@ -3173,7 +3159,9 @@ def create_test_page(ctx: Any) -> None:
 _PAGE = "#" + page_elem_id(PAGE)
 
 #: This page's style sheet (the page contract: listed in `src/webui/app.py`'s
-#: ``PAGE_CSS``), scoped to its own ids.
+#: ``PAGE_CSS``), scoped to its own ids. ``.shep-test-recm``: a described
+#: measurement's metrics as recorded (R2), one click away under its figures, its
+#: summary a 24 px target that shows the keyboard focus (skill §10).
 PAGE_CSS = f"""
 {_PAGE} #shep-test-row {{ position: relative; gap: 12px; }}
 {_PAGE} .shep-test-bd {{ padding: 12px 16px !important; gap: 10px !important; }}
@@ -3216,6 +3204,9 @@ PAGE_CSS = f"""
 {_PAGE} .shep-test-fail {{ color: var(--shep-red-700); font-size: 15px; }}
 {_PAGE} .shep-test-fold summary {{ cursor: pointer; }}
 {_PAGE} .shep-test-fold[open] summary {{ margin-bottom: 6px; }}
+{_PAGE} .shep-test-recm {{ margin-top: 12px; font-size: 15px; overflow-wrap: anywhere; }}
+{_PAGE} .shep-test-recm > summary {{ min-height: 24px; line-height: 24px; width: max-content; max-width: 100%; color: var(--shep-text-2); }}
+{_PAGE} .shep-test-recm > summary:focus-visible {{ outline: 2px solid var(--shep-accent); outline-offset: 2px; }}
 {_PAGE} .shep-test-outcome {{ display: flex; flex-direction: column; gap: 6px; font-size: 15px; }}
 {_PAGE} .shep-test-chips {{ display: flex; flex-wrap: wrap; gap: 6px 8px; }}
 {_PAGE} .shep-test-label {{ font-weight: 600; font-size: 15px; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }}

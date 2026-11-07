@@ -1544,18 +1544,11 @@ def test_the_r10_states_say_neither_zero_nor_no_leakage():
     assert "not evidence about data outside them" in R10_STATE_TEXT["none"]
 
 
-def test_the_result_label_the_mode_c_note_and_the_absence_sentence():
-    """The Mode C note is dated history (owner decision 4, K7): its figures'
-    denominator, and that the number does not describe the current diagnosis
-    model; no claim of what the page serves today."""
-    from src.evaluation.caveats import MODE_C_RESULT_LABEL, PRE_B1_NOTE, RECORD_ABSENCE
+def test_the_absence_sentence():
+    """What an empty answer from a ledger means, and what it does not. (The
+    Mode C label and note it was pinned with retired in K8-6e.2, R2.)"""
+    from src.evaluation.caveats import RECORD_ABSENCE
 
-    assert MODE_C_RESULT_LABEL == (
-        "Disease ranking by the model, approved scorer policy (Mode C)")
-    assert PRE_B1_NOTE == (
-        "Mode C (October 2026, before the task models) ranks every disease by the model's raw "
-        "cosine; its figures are over the cases ranked. The Diagnosis page never ranked by "
-        "Mode C, so this number does not describe the current diagnosis model.")
     assert RECORD_ABSENCE == (
         "This ledger holds no result for these weights; that does not mean they were "
         "never evaluated.")

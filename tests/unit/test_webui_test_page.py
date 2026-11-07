@@ -898,12 +898,14 @@ def test_the_result_shows_aggregates_and_states_never_a_case_or_a_path(site):
     assert "R1 graph files match the workspace manifest" in html
 
 
-def test_a_result_of_another_or_no_mode_is_never_shown_as_mode_c(site):
+def test_a_result_of_another_or_no_mode_is_shown_as_recorded(site):
     """A record whose mode this version does not describe, or whose mode cannot
-    be read, is named for what it is: never Mode C's label, tiles or coverage
-    words (the internal review of Batch 3, ui_api-4). Each report row names its
-    mode first (ui_api-5), and what the Run panel fixes names no measurement:
-    the Measurement radio offers the protocols, never Mode C."""
+    be read, is named for what it is by the one display for every mode (R2):
+    its own label, no tiles and no claim of what its cases are, its metrics as
+    recorded in one "Recorded metrics" row; never another mode's words. Each
+    report row names its mode first (ui_api-5), a kept Mode C report's as "mode
+    C, not described by this version", and what the Run panel fixes names no
+    measurement: the Measurement radio offers the protocols."""
     import html as html_lib
 
     c_run = _keep_mode_c_report(site)
@@ -913,10 +915,13 @@ def test_a_result_of_another_or_no_mode_is_never_shown_as_mode_c(site):
     for mode, label in (("E", "Mode E (a measurement mode this version does not describe)"),
                         (None, "Measurement mode not recorded")):
         changed = {**record, "scoring": {**record["scoring"], "mode": mode}}
-        text = html_lib.unescape(re.sub(r"<[^>]+>", "", tp._record_html(changed, run, {})))
-        assert label in text and "Mode C" not in text
+        raw = tp._record_html(changed, run, {})
+        text = html_lib.unescape(re.sub(r"<[^>]+>", "", raw))
+        assert label in text and "Mode C" not in text and "shep-test-tile-l" not in raw
         assert "source cases ranked" not in text and "not described for this mode" in text
-    assert "model ranking (Mode C): report kept" in tp.reports_html(reports, None)
+        assert '<span class="shep-k">Recorded metrics</span>' in raw
+        assert "<div><code>untruncated_mrr</code> 0.5</div>" in raw
+    assert "mode C, not described by this version: report kept" in tp.reports_html(reports, None)
     fixed = tp.fixed_html({})
     assert "Mode C" not in fixed and "Mode D" not in fixed and "Measurement" not in fixed
 
@@ -1294,9 +1299,9 @@ def _site_manifest(site):
 def _keep_mode_c_report(site) -> str:
     """A kept Mode C report of the site's checkpoint on its version, built
     (`mode_c_report`) on the site report's other manifest fields, whatever mode
-    that report was measured in: the subject of the Mode C readers here until
-    K8-6e. Its mode is part of its key, so it never contests the site's disease
-    report. Its run id."""
+    that report was measured in: a subject of the one display for every mode
+    (R2, K8-6e.2). Its mode is part of its key, so it never contests the site's
+    disease report. Its run id."""
     from src.evaluation.cohort_registry import resolve_version
     from tests.fixtures.report_store import store_bytes
     from tests.unit.test_evaluation_sidecar import mode_c_report
@@ -1326,19 +1331,21 @@ def _keep_mode_d_report(site) -> str:
     return path.parent.name
 
 
-def test_a_kept_mode_d_report_is_shown_under_its_own_mode_and_its_register_is_enabled(
+def test_a_kept_mode_d_report_is_shown_as_recorded_and_its_register_is_enabled(
         site, monkeypatch):
     """A kept Mode D report beside a Mode C one (K7 removed Mode D, not its
-    reports): the Result names its own mode and case sets, with its served
-    scoring, Mode D's tiles and the reached-cases coverage, and no Mode C; each
-    report row says its mode; the help is Mode D's note. Register is on, as the
-    Mode C report's is: no rule refuses a report by its mode (K8-6c, policy rev
-    15). A click registers it by the general rules, under its own mode: record
-    1 in the ledger beside the listed checkpoint, mode D, a `registered` line
-    in the version's usage history, and the report reads as kept, its record
-    and its key state as before; a second click answers that it is already
-    registered, writing nothing."""
-    from src.evaluation.caveats import MODE_C_RESULT_LABEL, MODE_D_NOTE, PRE_B1_NOTE, mode_label
+    reports), shown by the one display for every mode (R2): its generic label,
+    no tiles, every metric by its recorded name and value, its score semantics
+    verbatim (no η derived, no case-set words), the generic coverage; each
+    report row says its mode as one this version does not describe; no Mode C
+    or D help topic, and no ⓘ on either label. Register is on, as the Mode C
+    report's is: no rule refuses a report by its mode (K8-6c, policy rev 15). A
+    click registers it by the general rules, under its own mode: record 1 in
+    the ledger beside the listed checkpoint, mode D, a `registered` line in the
+    version's usage history, and the report reads as kept, its record and its
+    key state as before; a second click answers that it is already registered,
+    writing nothing."""
+    from src.evaluation.caveats import mode_label
     from src.evaluation.cohort_registry import resolve_version
     from src.evaluation.report_store import read_usage_history
 
@@ -1348,28 +1355,28 @@ def test_a_kept_mode_d_report_is_shown_under_its_own_mode_and_its_register_is_en
     runs = {run["run_id"]: run for run in reports["runs"]}
     record = runs[d_run]["record"]
     assert record["scoring"]["mode"] == "D"
-    eligible = record["cohort"]["counts"]["ranked_eligible"]
-    result = _shown(tp.result_html(reports, d_run, []))
-    assert mode_label("D", record["scoring"]["score_semantics"]) in result
-    assert ("scored as the Diagnosis page then scored them (gnn_only, η = 1.0); not the "
-            "approved scorer policy") in result
-    assert "Mode D MRR (import-eligible)" in result and "Mode D coverage" in result
-    assert (f"{eligible - 1} of {eligible} import-eligible cases reached by the served "
-            "pipeline") in result
-    assert "Mode C" not in result and PRE_B1_NOTE not in result
-    assert tp.TOPIC_HELP["test-mode-d"] == ("Mode D result", MODE_D_NOTE)
-    assert "a Mode C record shown here is a separate run" in MODE_D_NOTE
+    d_html = tp.result_html(reports, d_run, [])
+    result = _shown(d_html)
+    assert mode_label("D") in result and "Mode D (" in result
+    assert "shep-test-tile-l" not in d_html and "Mean rank" not in result
+    assert "<div><code>post_import_mrr</code> 0.35</div>" in d_html
+    assert "<div><code>reached_mean_rank</code> 2.43</div>" in d_html
+    assert ('<span class="shep-k">Score semantics</span><span class="shep-v"><code>'
+            'served:gnn_only:eta=1.0:sp=none</code></span>') in d_html
+    for gone in ("η =", "import-eligible)", "reached only", "reached by the served pipeline",
+                 "Served ranking", "approved scorer policy", "Mode C"):
+        assert gone not in result, gone
+    assert "test-mode-d" not in tp.TOPIC_HELP and "test-mode-c" not in tp.TOPIC_HELP
     rows = _shown(tp.reports_html(reports, None))
-    assert "served ranking (Mode D): report kept" in rows
-    assert "model ranking (Mode C): report kept" in rows
+    assert "mode D, not described by this version: report kept" in rows
+    assert "mode C, not described by this version: report kept" in rows
     c_html = tp.result_html(reports, c_run, [])
     c_result = _shown(c_html)
-    assert MODE_C_RESULT_LABEL in c_result and "Mode D" not in c_result
-    # The kept C report's Result label carries Mode C's help (EV8 keeps it
-    # until K8-6e), not the R10 help.
-    c_label = c_html[c_html.index('class="shep-test-label"'):]
-    c_label = c_label[:c_label.index("</div>")]
-    assert "Help: Mode C result" in c_label and "Help: R10 labels" not in c_label
+    assert mode_label("C") in c_result and "Mode D" not in c_result
+    for label_html in (c_html, d_html):
+        label = label_html[label_html.index('class="shep-test-label"'):]
+        label = label[:label.index("</div>")]
+        assert "data-help" not in label, label
 
     page, request = _page(monkeypatch)
     assert tp.register_state(page, reports, d_run) == (True, None)
@@ -3238,6 +3245,118 @@ def test_a_task_record_shows_its_own_tiles_coverage_and_figures(mode):
     assert tp.TOPIC_HELP[f"test-mode-{mode}"] == (f"{TASK_NAMES[mode]} task result",
                                                   mode_note(mode))
     assert HOSTILE not in raw and html_lib.escape(HOSTILE, quote=False) in raw
+
+
+def _kept_record(report):
+    """The record the ledger would hold for `report`, as the Test page's
+    Result reads it (`build_record`, through the store's scan)."""
+    from src.evaluation.sidecar import build_record
+
+    return build_record(report, "f" * 64)
+
+
+def _result_text(raw):
+    import html as html_lib
+
+    return " ".join(html_lib.unescape(re.sub(r"<[^>]+>", " ", raw)).split())
+
+
+def test_a_kept_mode_c_record_is_shown_as_recorded_by_the_one_display():
+    """A kept Mode C record (R2, K8-6e.2): its generic label, no tiles and no
+    "Mean rank" row; one "Recorded metrics" row listing every metric by its
+    recorded name and its value unrounded; its score semantics exactly as
+    recorded; the generic coverage (source cases, exclusions by reason, the
+    cases its record counts, with no claim of what they are); no ⓘ beside its
+    label, since no help topic describes it."""
+    from src.evaluation.caveats import mode_label
+    from tests.unit.test_evaluation_sidecar import mode_c_report
+
+    record = _kept_record(mode_c_report())
+    raw = tp._record_html(record, {}, {})
+    text = _result_text(raw)
+    assert mode_label("C") in text and "approved scorer policy" not in text
+    assert "shep-test-tile-l" not in raw and "Mean rank" not in text
+    recorded = raw.split('<span class="shep-k">Recorded metrics</span><span class="shep-v">')[1]
+    recorded = recorded.split("</span>")[0]
+    assert re.findall(r"<div><code>([^<]*)</code> ([^<]*)</div>", recorded) == [
+        (name, json.dumps(value)) for name, value in record["metrics"].items()]
+    assert {"untruncated_mrr": "0.5", "hits@1": "0.25", "hits@10": "0.75",
+            "mean_rank": "3.0"} == dict(re.findall(r"<code>([^<]*)</code> ([^<]*)<", recorded))
+    assert (f"Score semantics {record['scoring']['score_semantics']}" in text
+            and record["scoring"]["score_semantics"] == MODE_C_SEMANTICS_TEXT)
+    assert ("100 source cases · 20 excluded: ground truth absent 12 · phenotype unmappable 8; "
+            "80 cases counted by the record; what they are is not described for this mode"
+            ) in text
+    label = raw[raw.index('class="shep-test-label"'):]
+    assert "data-help" not in label[:label.index("</div>")]
+
+
+#: The score semantics a kept Mode C report records (`MODE_C_SEMANTICS`).
+MODE_C_SEMANTICS_TEXT = "raw cosine, no eta mixture and no shortest-path term"
+
+
+def test_a_record_of_a_mode_no_build_has_words_for_is_shown_as_recorded():
+    """A "kg_link_prediction" record (no such test is implemented, N1) and a
+    record whose mode no build has ever named: the recorded metrics are the
+    main result, with no tiles, no "Mean rank" row and no list of modes that
+    decides what is shown (the three tasks are not a read whitelist)."""
+    from src.evaluation.caveats import mode_label
+    from tests.unit.test_evaluation_sidecar import registered_report
+
+    for mode in ("kg_link_prediction", "zz_protocol_never_seen"):
+        record = _kept_record(registered_report(mode=mode))
+        raw = tp._record_html(record, {}, {})
+        text = _result_text(raw)
+        assert mode_label(mode) in text and f"Mode {mode} (" in text
+        assert "shep-test-tile-l" not in raw and "Mean rank" not in text
+        assert "macro_precision@3 0.16666666666666666" in text
+        assert len(re.findall(r"<div><code>", raw)) == len(record["metrics"])
+        assert "Other metrics" not in text and "Pooled top-k" not in text
+
+
+def test_a_task_record_keeps_its_tiles_and_shows_every_metric_one_click_away():
+    """A task record (R2): its tiles and rows unchanged; every metric as
+    recorded behind a closed native disclosure, "Recorded metrics (N)", under
+    its figures; its score semantics as recorded in its own row."""
+    from src.webui.components.renderers import e
+    from tests.unit.test_evaluation_sidecar import DISEASE_METRICS, registered_report
+
+    record = _kept_record(registered_report())
+    raw = tp._record_html(record, {}, {})
+    assert len(re.findall(r'shep-test-tile-l">', raw)) == 4
+    assert "Conservative pooled MRR" in raw and "Pooled top-k" in raw
+    fold = re.search(r'<details class="shep-test-fold shep-test-recm"><summary>Recorded metrics '
+                     r'\((\d+)\)</summary>(.*?)</details>', raw)
+    assert fold and int(fold.group(1)) == len(DISEASE_METRICS)
+    assert "<div><code>macro_precision@3</code> 0.16666666666666666</div>" in fold.group(2)
+    assert raw.index("shep-test-lines") < raw.index("shep-test-recm")
+    assert ('<span class="shep-k">Score semantics</span><span class="shep-v"><code>'
+            + e(record["scoring"]["score_semantics"]) + "</code></span>") in raw
+
+
+def test_only_the_described_measurements_have_help_topics():
+    """No help topic exists only for a mode this build does not describe: the
+    Mode C and Mode D topics retired (R2); each task's topic stays."""
+    from src.evaluation.caveats import TASK_NAMES
+
+    assert "test-mode-c" not in tp.TOPIC_HELP and "test-mode-d" not in tp.TOPIC_HELP
+    assert sorted(k for k in tp.TOPIC_HELP if k.startswith("test-mode-")) == sorted(
+        f"test-mode-{task}" for task in TASK_NAMES)
+
+
+def test_a_hostile_metric_name_and_score_semantics_are_literal_text_on_test():
+    """A metric name and a score semantics holding markup are shown as literal
+    text on the Result, for a described measurement (in its disclosure) and
+    any other mode (its recorded metrics row)."""
+    from tests.unit.test_evaluation_sidecar import registered_report
+
+    for mode in ("disease", "zz_new"):
+        record = _kept_record(registered_report({HOSTILE: 0.5, "pooled_mrr": 0.25}, mode=mode,
+                                                score_semantics=HOSTILE))
+        raw = tp._record_html(record, {}, {})
+        assert HOSTILE not in raw, mode
+        assert f"{HOSTILE} 0.5" in _result_text(raw)
+        assert f"Score semantics {HOSTILE}" in _result_text(raw)
 
 
 def test_a_task_report_row_names_its_task_first():

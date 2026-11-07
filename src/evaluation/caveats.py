@@ -9,17 +9,25 @@ before it moved to ``src/utils/provenance.py``: a claim spelled differently in
 two places cannot be compared, and a claim that has to be corrected in two
 places will eventually be corrected in one.
 
-**Constants, and pure lookups over them (`mode_label`, `served_scoring`, `mode_note`,
-`metric_text`), with the one name of each finetuned task (`TASK_NAMES`). No
-imports beyond the standard library, no I/O.** These strings are rendered into
-``--help`` text, where ``argparse`` performs ``%`` substitution, so every literal
-percent sign here is escaped as ``%%``.
+**Constants, and pure lookups over them (`mode_label`, `mode_note`,
+`metric_text`, `recorded_metric_lines`, `recorded_value_text`), with the one
+name of each finetuned task (`TASK_NAMES`). No imports beyond the standard
+library, no I/O.** These strings are rendered into ``--help`` text, where
+``argparse`` performs ``%`` substitution, so every literal percent sign here
+is escaped as ``%%``.
+
+**One display for every recorded mode** (policy rev 15, R2; K8-6e.2). Words
+exist only for the measurements this build describes (`TASK_NAMES`). A record of
+any other mode, a kept one included, is named by its own recorded mode and shown
+as recorded: its metric names and values (`recorded_metric_lines`) and its score
+semantics, never relabelled, hidden or refused for its mode's name.
 
 Module: src/evaluation/caveats.py
 """
 from __future__ import annotations
 
-from typing import Iterable, Optional
+import json
+from typing import Any, Iterable, List, Mapping, Optional, Tuple
 
 #: Why a metric measured on `val` is not an independent test result.
 #:
@@ -115,40 +123,6 @@ COHORT_ARGUMENT_HELP = (
 # ledger record. Constants only; each surface renders them, none rewords them.
 # ---------------------------------------------------------------------------
 
-#: D3's label for a recorded result: what was ranked, by what, under which
-#: policy. Shown with every recorded number so it cannot be quoted as another.
-MODE_C_RESULT_LABEL = "Disease ranking by the model, approved scorer policy (Mode C)"
-
-#: Why a recorded Mode C number is not the Diagnosis page's performance, as
-#: dated history (owner decision 4, K7). Mode C has been the formal test since
-#: M4 (2026-10-16). B-1, which was to make the page rank by Mode C, was
-#: superseded by the task models (served since K3, 2026-10-27), so the page
-#: never ranked by it. The name is the B-1 plan's, which the note was written for.
-PRE_B1_NOTE = (
-    "Mode C (October 2026, before the task models) ranks every disease by the model's raw "
-    "cosine; its figures are over the cases ranked. The Diagnosis page never ranked by Mode C, "
-    "so this number does not describe the current diagnosis model."
-)
-
-#: Mode D's label for a recorded result (`docs/working/scorer-measurement/
-#: PLAN_B05.md` §5), as dated history: what the Diagnosis page served when
-#: Batch 3 measured it (October 2026), which was not the approved policy. Mode D
-#: was removed in K7; its kept records are still shown under this label.
-#: `mode_label` adds the record's scoring mode and mixing weight from its
-#: `score_semantics`.
-_MODE_D_LABEL_HEAD = ("Served ranking of October 2026 (Mode D): diseases reached by path "
-                      "discovery, scored as the Diagnosis page then scored them")
-_MODE_D_LABEL_TAIL = "; not the approved scorer policy"
-MODE_D_RESULT_LABEL = _MODE_D_LABEL_HEAD + _MODE_D_LABEL_TAIL
-
-#: Shown beside a Mode D record, as `PRE_B1_NOTE` is beside a Mode C one.
-MODE_D_NOTE = (
-    "Mode D measured the Diagnosis page's October 2026 ranking over import-eligible cases; "
-    "cases excluded at import are counted beside it, not in it. Its report set Mode C beside "
-    "it on the same embeddings; a Mode C record shown here is a separate run. A Mode D number "
-    "is not the model's approved ranking and does not describe the current diagnosis model."
-)
-
 #: **Each finetuned task's name, the one every surface shows** (K6 decision 6):
 #: the Test page's measurement, the Models page's filter and records, the
 #: Fine-tune page's options and the Diagnosis card's name line read it, and
@@ -166,10 +140,10 @@ def task_list_text(names: Iterable[str]) -> str:
     names = list(names)
     return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
 
-#: Each recorded mode's label, by the record's `scoring.mode`.
+#: Each described measurement's label, by the record's `scoring.mode`.
 #: A finetuned model bundle's disease task measurement
 #: (`src.evaluation.task_measurement`): its own scoring semantics, never grouped
-#: with a Mode C or D record.
+#: with a record of another mode.
 DISEASE_TASK_RESULT_LABEL = ("Disease task (model bundle): every disease of the model's "
                              "graph view, average ranks")
 DISEASE_TASK_NOTE = ("A score from the finetuned model's disease head, uncalibrated. Pooled "
@@ -188,55 +162,57 @@ PATIENTS_LIKE_ME_NOTE = ("A similarity from the finetuned model's patient tower,
                          "pair is relevant when the two patients share a causal gene; a patient "
                          "with no other relevant patient has no recall, not a recall of 0.")
 
-MODE_RESULT_LABELS = {"C": MODE_C_RESULT_LABEL, "D": MODE_D_RESULT_LABEL,
-                      "disease": DISEASE_TASK_RESULT_LABEL, "gene": GENE_TASK_RESULT_LABEL,
+MODE_RESULT_LABELS = {"disease": DISEASE_TASK_RESULT_LABEL, "gene": GENE_TASK_RESULT_LABEL,
                       "patients_like_me": PATIENTS_LIKE_ME_RESULT_LABEL}
 
-#: The note each mode's record is shown with.
-MODE_RESULT_NOTES = {"C": PRE_B1_NOTE, "D": MODE_D_NOTE, "disease": DISEASE_TASK_NOTE,
-                     "gene": GENE_TASK_NOTE, "patients_like_me": PATIENTS_LIKE_ME_NOTE}
+#: The note each described measurement's record is shown with.
+MODE_RESULT_NOTES = {"disease": DISEASE_TASK_NOTE, "gene": GENE_TASK_NOTE,
+                     "patients_like_me": PATIENTS_LIKE_ME_NOTE}
 
 
-#: The label of a record whose mode cannot be read: never taken for Mode C.
+#: The label of a record whose mode cannot be read: never taken for another mode.
 MODE_NOT_RECORDED_LABEL = "Measurement mode not recorded"
 
 
-def mode_label(mode: Optional[str], score_semantics: Optional[str] = None) -> str:
-    """The label a record of `mode` is shown under. A Mode D record's served
-    scoring mode and mixing weight are added from its `score_semantics`
-    (``served:<scoring mode>:eta=<eta>:sp=<build id>``) when given. A mode this
-    version does not know is named as such, and a mode that cannot be read
-    (None) says so: neither is shown under another mode's label."""
+def mode_label(mode: Optional[str]) -> str:
+    """The label a record of `mode` is shown under: a described measurement's
+    own label; any other mode named by its recorded value as one this version
+    does not describe; a mode that cannot be read (None) says so. Neither of
+    the last two is shown under another mode's label, and neither is refused."""
     if not mode or not mode.strip():
         return MODE_NOT_RECORDED_LABEL
     label = MODE_RESULT_LABELS.get(mode)
     if label is None:
         return f"Mode {mode} (a measurement mode this version does not describe)"
-    served = served_scoring(score_semantics) if mode == "D" else None
-    return f"{_MODE_D_LABEL_HEAD} ({served}){_MODE_D_LABEL_TAIL}" if served else label
-
-
-def served_scoring(score_semantics: Optional[str]) -> Optional[str]:
-    """A Mode D record's served scoring mode and mixing weight, "hybrid, η = 0.5",
-    from its `score_semantics` (``served:<scoring mode>:eta=<eta>:sp=<build id>``);
-    None for any other value."""
-    if not isinstance(score_semantics, str) or not score_semantics.startswith("served:"):
-        return None
-    fields = score_semantics.split(":")
-    parts = dict(part.split("=", 1) for part in fields[2:] if "=" in part)
-    return f"{fields[1]}, \u03b7 = {parts.get('eta', '?')}"
+    return label
 
 
 def mode_note(mode: Optional[str]) -> Optional[str]:
     """The note a record of `mode` is shown with, or None for a mode this
-    version does not know or cannot read."""
+    version does not describe or cannot read."""
     return MODE_RESULT_NOTES.get(mode) if mode and mode.strip() else None
 
 
-#: Mode D's metric families by name prefix (PLAN_B05 §5), as a surface names
-#: their case set: every import-eligible case (0 for one not reached), or the
-#: reached cases only.
-MODE_D_CASE_SETS = {"post_import_": "import-eligible", "reached_": "reached only"}
+def recorded_value_text(value: Any) -> str:
+    """A recorded value as `recorded_metric_lines` shows it: its JSON text,
+    unrounded ("0.5", "3.0", a string quoted)."""
+    try:
+        return json.dumps(value, ensure_ascii=True, allow_nan=True)
+    except (TypeError, ValueError):  # not JSON (never so from a parsed file)
+        return repr(value)
+
+
+def recorded_metric_lines(metrics: Mapping[str, Any]) -> List[Tuple[str, str]]:
+    """**The one rendering of "as recorded"** (R2): each metric of the mapping
+    a page gives, in its order, a ``(name, value)`` pair: the name as written
+    and the value's JSON text, unrounded (`recorded_value_text`). The text is
+    the value as that mapping holds it: a report or usage entry keeps a whole
+    number as written ("1"), while the API's record view holds every metric as
+    a number with a fraction, so a page showing a record through it reads
+    "1.0" for the same value. Every page wraps the pairs in its own markup and
+    escapes them; nothing here names, rounds, orders or drops a metric by its
+    name or its record's mode."""
+    return [(str(name), recorded_value_text(value)) for name, value in metrics.items()]
 
 
 #: A task measurement's metrics (`src.models.bundle.metrics.ranking_report`),
@@ -250,12 +226,6 @@ _TASK_METRIC_FAMILIES = {"pooled_top": "pooled top-", "macro_recall@": "macro re
 
 
 def _metric_words(name: str) -> str:
-    if name == "mrr":
-        return "MRR"
-    if name == "mean_rank":
-        return "mean rank"
-    if name.startswith("hits@"):
-        return f"Hits@{name[len('hits@'):]}"
     if name in _TASK_METRIC_WORDS:
         return _TASK_METRIC_WORDS[name]
     for prefix, words in _TASK_METRIC_FAMILIES.items():
@@ -265,25 +235,17 @@ def _metric_words(name: str) -> str:
 
 
 def metric_text(mode: Optional[str], name: str) -> str:
-    """A recorded metric as a surface names it, never without its mode: "Mode C
-    MRR (untruncated)", "Mode C Hits@10", "Mode D MRR (import-eligible)", "Mode D
-    mean rank (reached only)", "Mode D coverage"; a task's by its name
-    (`TASK_NAMES`): "Gene pooled MRR", "Disease pooled top-10",
-    "Patients-like-me macro recall@10"; "MRR (mode not recorded)" when the mode
-    cannot be read."""
+    """A recorded metric as a surface names it, never without its mode: a
+    described measurement's in words, by its task's name (`TASK_NAMES`): "Gene
+    pooled MRR", "Disease pooled top-10", "Patients-like-me macro recall@10";
+    any other mode's by its recorded mode and the name as recorded, whatever
+    the mode: "Mode kg_link_prediction pooled_mrr"; "pooled MRR (mode not
+    recorded)" when the mode cannot be read."""
     if not mode or not mode.strip():
         return f"{_metric_words(name)} (mode not recorded)"
     if mode in TASK_NAMES:
         return f"{TASK_NAMES[mode]} {_metric_words(name)}"
-    if mode == "C" and name == "untruncated_mrr":
-        return "Mode C MRR (untruncated)"
-    if mode == "D":
-        if name == "coverage":
-            return "Mode D coverage"
-        for prefix, case_set in MODE_D_CASE_SETS.items():
-            if name.startswith(prefix):
-                return f"Mode D {_metric_words(name[len(prefix):])} ({case_set})"
-    return f"Mode {mode} {_metric_words(name)}"
+    return f"Mode {mode} {name}"
 
 
 #: R10's four labels (contract §5.4), keyed as a record's `r10` block is: scope,

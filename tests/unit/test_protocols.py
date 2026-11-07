@@ -576,6 +576,6 @@ def test_reports_whose_modes_are_no_protocol_are_read_as_recorded(tmp_path, monk
         run = runs[path.parent.name]
         assert run["record"]["scoring"]["mode"] == mode and run["unbuilt"] is None
         shown = html.unescape(re.sub(r"<[^>]+>", "", tp.result_html(reports, run["run_id"], [])))
-        assert mode_label(mode, run["record"]["scoring"]["score_semantics"]) in shown
+        assert mode_label(mode) in shown
     assert len(re.findall(r"report kept", html.unescape(
         re.sub(r"<[^>]+>", "", tp.reports_html(reports, None))))) == len(paths)

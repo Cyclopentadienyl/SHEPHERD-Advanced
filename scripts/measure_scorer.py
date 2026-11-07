@@ -1951,7 +1951,7 @@ def _print_result(result: Any) -> None:
     candidates as its manifest describes them (`candidate_construction`)."""
     from src.evaluation.caveats import mode_label
 
-    print(f"\n{mode_label(result.manifest.mode, result.manifest.score_semantics)}")
+    print(f"\n{mode_label(result.manifest.mode)}")
     print(f"  {result.n_ranked} ranked, {result.n_ground_truth_absent} absent")
     for name, value in result.authoritative_metrics.items():
         print(f"  {name:38s} {value:.6f}")

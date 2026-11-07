@@ -299,6 +299,34 @@ def test_the_loaded_checkpoints_records_are_shown(app, served, tmp_path, monkeyp
     assert view["contest"] == {"state": "uncontested", "differing": [], "runs": []}
 
 
+def test_kept_c_and_d_records_are_returned_as_recorded(tmp_path):
+    """A guard (R2, K8-6e.2): the record view carries a kept Mode C and a kept
+    Mode D record's mode, score semantics and metrics exactly as the ledger
+    holds them, beside a task record: no name mapped, no value rounded, no
+    score semantics split, and no record left out for its mode."""
+    from src.api.routes.evaluations import _recorded_results
+    from tests.unit.test_evaluation_sidecar import mode_c_report, mode_d_report
+
+    weights = tmp_path / "runs" / "checkpoints" / "best.pt"
+    weights.parent.mkdir(parents=True)
+    weights.write_bytes(b"stand-in weights")
+    digest = _sha(weights)
+    registry = tmp_path / "registry"
+    for report in (mode_c_report(), mode_d_report(), registered_report()):
+        report["manifest"]["artifact_digests"]["checkpoint"] = digest
+        assert _register(report, weights.parent, registry).outcome == "registered"
+    ledger = json.loads((weights.parent / "evaluations.json").read_text())
+    answer = _recorded_results(ReadIdentity(weights, digest))
+    assert answer.state == "records" and answer.records_not_shown == 0
+    assert [(v.mode, v.score_semantics, v.metrics) for v in answer.records] == [
+        (r["scoring"]["mode"], r["scoring"]["score_semantics"], r["metrics"])
+        for r in ledger["records"]]
+    assert [v.mode for v in answer.records] == ["C", "D", "disease"]
+    assert answer.records[1].score_semantics == "served:gnn_only:eta=1.0:sp=none"
+    assert answer.records[0].metrics == {"untruncated_mrr": 0.5, "mean_rank": 3.0,
+                                         "hits@1": 0.25, "hits@10": 0.75}
+
+
 def test_no_path_case_id_or_rank_reaches_the_response(app, served, tmp_path):
     """D7, aggregates only. The record carries the R10 evidence paths and the
     cohort's graph digests; the view leaves both behind."""

@@ -395,8 +395,10 @@ def test_a_listed_checkpoint_leads_with_its_kind_word():
 
 def test_a_task_metric_is_named_by_its_task_never_as_a_mode():
     """K6 decision 6: one vocabulary. A task measurement's metric reads "Gene
-    pooled MRR", never "Mode gene pooled_mrr"; Mode C's and the kept Mode D
-    records' names are unchanged; the task names are the model spec's tasks."""
+    pooled MRR", never "Mode gene pooled_mrr"; any other mode's metric, a kept
+    Mode C or D record's included, is its recorded mode and its name as
+    recorded (R2, K8-6e.2: no C/D words); the task names are the model spec's
+    tasks."""
     from src.evaluation.caveats import TASK_NAMES, metric_text, task_list_text
     from src.models.bundle.spec import TASKS
 
@@ -416,8 +418,9 @@ def test_a_task_metric_is_named_by_its_task_never_as_a_mode():
     assert (metric_text("C", "untruncated_mrr"), metric_text("C", "hits@10"),
             metric_text("D", "post_import_mrr"), metric_text("D", "coverage"),
             metric_text("D", "reached_mean_rank"), metric_text(None, "pooled_mrr")) == (
-        "Mode C MRR (untruncated)", "Mode C Hits@10", "Mode D MRR (import-eligible)",
-        "Mode D coverage", "Mode D mean rank (reached only)", "pooled MRR (mode not recorded)")
+        "Mode C untruncated_mrr", "Mode C hits@10", "Mode D post_import_mrr",
+        "Mode D coverage", "Mode D reached_mean_rank", "pooled MRR (mode not recorded)")
+    assert metric_text("zz_never_seen", "mrr") == "Mode zz_never_seen mrr"
 
 
 def test_a_bundle_run_reads_gatv2_and_a_shepherdgnn_run_its_upper_case():

@@ -2,8 +2,8 @@
 Research › Evaluate › Models: the research preset of the shared model list (M5-2, UI-D).
 ========================================================================================
 `docs/working/PLAN_TEST_RESULTS.md` §6, "M5's boundaries" (Model Management on
-the shared model list, Trainer validation and each cohort's Mode C results kept
-apart), D5 (every run's record, each with its run; runs under one condition
+the shared model list, Trainer validation and each cohort's recorded test results
+kept apart), D5 (every run's record, each with its run; runs under one condition
 group that differ are described) and D8 (the list is an operator control). D4's
 ordering by test score retired in K8-6d, with its role list, its Mode C rule and
 its one record per checkpoint: no order ranks a model by a test score.
@@ -31,8 +31,9 @@ children, with a Lineage column (the operation and the exact parent file,
 indented by depth; a task's base kept as a context row; a parent that is not
 available said in amber, "▲ parent unavailable: …"), and under All the
 history files, the records not read and the records not readable as groups
-after them. Every record is shown in the detail with its own metrics
-(`RECORD_COLUMNS`).
+after them. Every record is shown in the detail with its own metrics, as
+recorded (`RECORD_COLUMNS` names the two shown in columns for a measurement this
+build describes).
 Load is refused for a base, a history file or a record not readable before
 anything is read (`model_list.load_refusal`), its reason beside the button.
 
@@ -40,9 +41,13 @@ anything is read (`model_list.load_refusal`), its reason beside the button.
 it was trained on, what it is (kind, operation, parent, family, encoder and its
 relation to the paper, README §5 axis 2: "matches the reference recipe" or the
 fields that differ), the Trainer's validation figure in its own card (a selection
-metric on val, never beside a Mode C number), Model Facts' warnings, and two
+metric on val, never beside a test result), Model Facts' warnings, and two
 in-page segments: "Recorded test results" (every record its ledger holds, one
-table per mode, as the API's record view shows a record: its mode's label, coverage with every
+table per mode in the order first shown, as the API's record view shows a record
+by **one display for every mode** (R2, K8-6e.2): its mode's label, a described
+measurement's two columns in words with every metric as recorded one click away,
+any other mode's metrics as recorded in one column, its score semantics as
+recorded, coverage with every
 exclusion, relations, R10 as states with counts only where the state has one,
 so *unverifiable* is a word and never 0, environment, registration and its
 run, or "not recorded" for a record merged before each run had its own record;
@@ -109,7 +114,8 @@ from src.evaluation.caveats import (
     metric_text,
     mode_label,
     mode_note,
-    served_scoring,
+    recorded_metric_lines,
+    recorded_value_text,
 )
 from src.webui.components import model_list as ml
 from src.webui.components import renderers as r
@@ -124,14 +130,12 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Words
 # ---------------------------------------------------------------------------
-#: The two metrics a record shows in their own columns (an MRR and a top-10
-#: figure), by its mode; Mode D's are over the import-eligible cases (PLAN_B05
-#: §5). A task's: its pooled MRR (README §2.6 E1) and, for genes and
-#: patients-like-me, the macro recall@10 reported beside it (E2); the disease
-#: task's pooled top-10 (one truth per case).
+#: The two metrics a record of a measurement this build describes shows in their
+#: own columns (an MRR and a top-10 figure), by its mode: its pooled MRR (README
+#: §2.6 E1) and, for genes and patients-like-me, the macro recall@10 reported
+#: beside it (E2); the disease task's pooled top-10 (one truth per case). A record
+#: of any other mode shows every metric as recorded in one column instead.
 RECORD_COLUMNS: Dict[str, Tuple[str, str]] = {
-    "C": ("untruncated_mrr", "hits@10"),
-    "D": ("post_import_mrr", "post_import_hits@10"),
     "disease": ("pooled_mrr", "pooled_top10"),
     "gene": ("pooled_mrr", "macro_recall@10"),
     "patients_like_me": ("pooled_mrr", "macro_recall@10"),
@@ -308,10 +312,13 @@ def _number(value: Any) -> bool:
 
 
 def fmt_metric(name: str, value: Any) -> str:
-    """A recorded value as shown: four decimals, two for a mean rank."""
+    """A described measurement's value in its column or its words: four
+    decimals. Every value is also shown unrounded, as recorded
+    (`recorded_metric_html`), and a differing run's value only so
+    (`_contested_value`)."""
     if not _number(value):
         return "not reported"
-    return f"{value:.2f}" if str(name).endswith("mean_rank") else f"{value:.4f}"
+    return f"{value:.4f}"
 
 
 def metric_label(name: Any, mode: str) -> str:
@@ -322,7 +329,7 @@ def metric_label(name: Any, mode: str) -> str:
 
 def record_mode(view: Mapping[str, Any]) -> Optional[str]:
     """A record view's measurement mode (`RecordView.mode`), or None when the
-    view carries none it can read (never taken for Mode C)."""
+    view carries none it can read (never taken for another mode)."""
     mode = view.get("mode")
     return mode if isinstance(mode, str) and mode.strip() else None
 
@@ -582,9 +589,9 @@ def regime_text(device: Any, deterministic: Any) -> str:
 
 
 def coverage_html(view: Mapping[str, Any]) -> str:
-    """The record's case sets: a Mode C record's ranked cases of the source cases;
-    a Mode D record's reached cases and a task record's ranked cases of the
-    import-eligible ones (PLAN_B05 §4)."""
+    """The record's case sets: a task record's ranked cases of the
+    import-eligible ones (PLAN_B05 §4); for any other mode, its source cases and
+    exclusions and the cases its record counts, with no claim of what they are."""
     counts = view.get("counts") if isinstance(view.get("counts"), Mapping) else {}
     excluded = counts.get("excluded") if isinstance(counts.get("excluded"), Mapping) else None
     if excluded is None:
@@ -593,16 +600,6 @@ def coverage_html(view: Mapping[str, Any]) -> str:
         reasons = " · ".join(f"{str(name).replace('_', ' ')} {count}"
                              for name, count in excluded.items()) or "none"
     mode = record_mode(view)
-    if mode == "D":
-        return (f'<div>{r.e(view.get("n_ranked"))} of {r.e(counts.get("ranked_eligible"))} '
-                'import-eligible cases reached</div>'
-                f'<div class="shep-sub">{r.e(counts.get("source_cases"))} source cases; '
-                f'{r.e(counts.get("n_excluded"))} excluded at import: {r.e(reasons)}</div>')
-    if mode == "C":
-        return (f'<div>{r.e(view.get("n_ranked"))} of {r.e(counts.get("source_cases"))} source '
-                f'cases ranked ({r.e(counts.get("ranked_eligible"))} eligible)</div>'
-                f'<div class="shep-sub">{r.e(counts.get("n_excluded"))} excluded: '
-                f'{r.e(reasons)}</div>')
     if mode in TASK_NAMES:
         # A task record's n_ranked counts the version's import-eligible cases
         # (query patients) with a ranked positive; its coverage metric is that
@@ -669,11 +666,13 @@ def r10_html(r10: Any) -> str:
     return "".join(lines)
 
 
-def _contested_value(name: str, value: Any) -> str:
-    """A differing run's value as `contest_html` shows it: null is "not
-    reported"; a value that is not a finite number (NaN, infinity, text, an
-    object, an integer too large for a float: a hand edit) is "not a finite
-    number", never formatted as one."""
+def _contested_value(value: Any) -> str:
+    """A differing run's value as `contest_html` shows it, whatever the mode:
+    a finite number as recorded, unrounded (`caveats.recorded_value_text`), so
+    two runs that differ never read as equal; null is "not reported"; a value
+    that is not a finite number (NaN, infinity, text, an object, an integer
+    too large for a float: a hand edit) is "not a finite number", never
+    formatted as one."""
     if value is None:
         return "not reported"
     try:
@@ -682,14 +681,15 @@ def _contested_value(name: str, value: Any) -> str:
         finite = False
     if not finite:
         return "not a finite number"
-    return fmt_metric(name, value)
+    return recorded_value_text(value)
 
 
 def contest_html(state: Optional[Mapping[str, Any]], *, mode: Optional[str],
                  deterministic: Optional[bool]) -> str:
     """How a record's condition group compares, beside it: "runs under these
     conditions differ" (with what differs, each metric named in the record's
-    `mode`) or "comparison incomplete"; nothing when the runs agree. Every
+    `mode` and each run's value as recorded, `_contested_value`) or
+    "comparison incomplete"; nothing when the runs agree. Every
     caller gives the mode and whether the group records deterministic
     algorithms on (`deterministic`, from the record's regime: every run of the
     group shares it); neither is assumed. Only a deterministic group's runs
@@ -706,7 +706,7 @@ def contest_html(state: Optional[Mapping[str, Any]], *, mode: Optional[str],
         values = []
         names = state.get("differing") or []
         for name in names:
-            per_run = [f"{_contested_value(name, run['values'][name])} (run "
+            per_run = [f"{_contested_value(run['values'][name])} (run "
                        f"{run_time(run['run']) or run['run']})"
                        for run in state.get("runs") or [] if name in (run.get("values") or {})]
             if per_run:
@@ -785,22 +785,59 @@ def _record_cell(view: Mapping[str, Any], state: Optional[Mapping[str, Any]]) ->
 
 
 def records_table_html(views: Sequence[Mapping[str, Any]], contest: Mapping[str, Any]) -> str:
-    """The records, **one table per mode, never mixed**, each row a main row and a
-    row of detail: the cohort version (label, version digest, synthetic, role),
-    the mode's MRR and Hits@10 in their own columns, named in full in the header
-    (`RECORD_COLUMNS`, `caveats.metric_text`: the mode and the case set), coverage,
-    the record's state; then relations, the other metrics, R10 per scope,
-    environment, dataset and registration. A Mode D record's served scoring is in
-    its mode's label when every Mode D record shown shares it
-    (`_uniform_semantics`), else on its own detail row."""
+    """The records, **one table per mode, never mixed**, the tables in the order
+    their modes are first shown (`_by_mode`), each row a main row and a row of
+    detail. **One display for every mode** (R2): the main row holds the cohort
+    version (label, version digest, synthetic, role), the metrics, coverage and
+    the record's state. A measurement this build describes shows its two
+    columns (`RECORD_COLUMNS`) in words (`caveats.metric_text`); any other
+    mode, a kept one included, shows every metric as recorded in one "Recorded
+    metrics" column (`recorded_metric_html`). The detail row: relations, a
+    described measurement's other metrics in words, R10 per scope, the score
+    semantics as recorded, every metric as recorded behind a closed disclosure
+    (a described measurement only), environment, dataset and registration."""
     return "".join(_mode_table(mode, group, contest) for mode, group in _by_mode(views))
+
+
+def recorded_metric_html(metrics: Mapping[str, Any]) -> str:
+    """Every metric of a record or usage entry as recorded, one per line
+    (`caveats.recorded_metric_lines`: the name as written, a code, and the
+    value's JSON text, unrounded), every value escaped; "no metric recorded"
+    when it holds none. A record's metrics come through its record view
+    (`RecordView`), which holds every metric as a number with a fraction, so a
+    whole number recorded as 1 reads "1.0" here and "1" on the Test page,
+    which shows the report's own value; a usage entry's are shown as its
+    history holds them."""
+    lines = recorded_metric_lines(metrics)
+    if not lines:
+        return '<span class="shep-mp-ln shep-muted">no metric recorded</span>'
+    return "".join(f'<span class="shep-mp-ln"><code>{r.e(name)}</code> {r.e(value)}</span>'
+                   for name, value in lines)
+
+
+def recorded_metric_fold(metrics: Mapping[str, Any]) -> str:
+    """A described measurement's metrics as recorded, one click away: a closed
+    native disclosure, "Recorded metrics (N)" (skill §1.5, §10), or "no metric
+    recorded" when it holds none."""
+    if not metrics:
+        return '<span class="shep-mp-ln shep-muted">no metric recorded</span>'
+    return (f'<details class="shep-mp-fold"><summary>Recorded metrics ({len(metrics)})'
+            f'</summary>{recorded_metric_html(metrics)}</details>')
+
+
+def semantics_html(view: Mapping[str, Any]) -> str:
+    """"Score semantics: <the record's `score_semantics` exactly as recorded>",
+    or "not recorded": never split, interpreted or rebuilt."""
+    raw = view.get("score_semantics")
+    value = (f"<code>{r.e(raw)}</code>" if isinstance(raw, str) and raw.strip()
+             else '<span class="shep-muted">not recorded</span>')
+    return f'<span class="shep-mp-ln">Score semantics: {value}</span>'
 
 
 def _mode_table(mode: Optional[str], views: Sequence[Mapping[str, Any]],
                 contest: Mapping[str, Any]) -> str:
     """One mode's records as one table (`records_table_html`)."""
     columns = RECORD_COLUMNS.get(mode) if mode else None
-    served_per_row = mode == "D" and _uniform_semantics(views) is None
     body = []
     for view in views:
         cohort = view.get("cohort") if isinstance(view.get("cohort"), Mapping) else {}
@@ -815,21 +852,24 @@ def _mode_table(mode: Optional[str], views: Sequence[Mapping[str, Any]],
                        f'{r.e(r.short_hex(cohort.get("version_manifest_sha256")))}</code>) '
                        f'{synthetic}</div><div class="shep-sub">role '
                        f'{r.ident_html(role)}</div>')
-        mrr, hits = (fmt_metric(name, metrics.get(name)) for name in columns) if columns else (
-            "not described", "not described")
-        main = (f'<tr class="shep-mp-main"><td>{cohort_cell}</td>'
-                f'<td class="shep-num">{r.e(mrr)}</td>'
-                f'<td class="shep-num">{r.e(hits)}</td>'
+        if columns:
+            mrr, hits = (fmt_metric(name, metrics.get(name)) for name in columns)
+            metric_cells = (f'<td class="shep-num">{r.e(mrr)}</td>'
+                            f'<td class="shep-num">{r.e(hits)}</td>')
+            others = [f"{metric_label(name, mode)} {fmt_metric(name, value)}"
+                      for name, value in sorted(metrics.items(),
+                                                key=lambda kv: _metric_order(kv[0]))
+                      if name not in columns]
+            fold = f'<div class="shep-mp-ln">{recorded_metric_fold(metrics)}</div>'
+        else:
+            # A mode this build has no words for: every metric, as recorded, is
+            # the main result; the detail row repeats none of them.
+            metric_cells = (f'<td colspan="2" class="shep-mp-recm">'
+                            f'{recorded_metric_html(metrics)}</td>')
+            others, fold = [], ""
+        main = (f'<tr class="shep-mp-main"><td>{cohort_cell}</td>{metric_cells}'
                 f'<td>{coverage_html(view)}</td>'
                 f'<td>{_record_cell(view, state)}</td></tr>')
-        others = [f"{metric_label(name, mode)} {fmt_metric(name, value)}"
-                  for name, value in sorted(metrics.items(), key=lambda kv: _metric_order(kv[0]))
-                  if name not in (columns or ())]
-        served = served_scoring(view.get("score_semantics")) if served_per_row else None
-        if served:
-            others.insert(0, f"served scoring {served}")
-        # A Mode D record's case sets are its coverage cell and each metric's name.
-        over = f", over {r.e(view.get('n_ranked'))} ranked cases" if mode == "C" else ""
         gpu = view.get("gpu") if isinstance(view.get("gpu"), Mapping) else None
         environment = str(view.get("environment_class") or "not reported")
         if gpu is not None:
@@ -843,59 +883,40 @@ def _mode_table(mode: Optional[str], views: Sequence[Mapping[str, Any]],
                         f"{run_text(view)}, report {r.short_hex(view.get('source'))}")
         more = (f'<tr class="shep-mp-more"><td colspan="5">'
                 f'<span class="shep-mp-ln">{relations_html(view.get("relations"))}'
-                f'{" · " + r.e(" · ".join(others)) if others else ""}{over}</span>'
-                f'{r10_html(view.get("r10"))}'
+                f'{" · " + r.e(" · ".join(others)) if others else ""}</span>'
+                f'{r10_html(view.get("r10"))}{semantics_html(view)}{fold}'
                 f'<span class="shep-mp-ln">Environment: {r.e(environment)} · Dataset: '
                 f'<b>{r.e(origin)}</b> · {r.e(registration)}</span></td></tr>')
         body.append(main + more)
-    # Each table named for its mode, so a screen reader tells them apart.
+    heads = (f'<th scope="col" class="shep-num">{_column_head(mode, 0)}</th>'
+             f'<th scope="col" class="shep-num">{_column_head(mode, 1)}</th>' if columns else
+             '<th scope="col" colspan="2">Recorded metrics</th>')
+    # Each table named for its mode's label, so a screen reader tells them apart.
     return ('<div class="shep-tbl-wrap shep-mp-recwrap"><table class="shep-tbl shep-mp-rec" '
-            f'aria-label="{r.e(_TABLE_NAMES.get(mode, "Recorded test results, " + mode_label(mode)))}">'
+            f'aria-label="{r.e("Recorded test results, " + mode_label(mode))}">'
             '<colgroup><col class="shep-mp-c1"><col '
             'class="shep-mp-c2"><col class="shep-mp-c3"><col class="shep-mp-c4"><col></colgroup>'
-            '<thead><tr><th scope="col">Cohort version</th>'
-            f'<th scope="col" class="shep-num">{_column_head(mode, 0)}</th>'
-            f'<th scope="col" class="shep-num">{_column_head(mode, 1)}</th>'
+            f'<thead><tr><th scope="col">Cohort version</th>{heads}'
             '<th scope="col">Coverage</th>'
             f'<th scope="col">Record</th></tr></thead><tbody>{"".join(body)}</tbody></table>'
             '</div>')
 
 
-#: Each mode's records table as assistive technology names it.
-_TABLE_NAMES = {"C": "Recorded test results, model ranking (Mode C)",
-                "D": "Recorded test results, served ranking (Mode D)"}
-
-
 def _by_mode(views: Sequence[Mapping[str, Any]]
              ) -> List[Tuple[Optional[str], List[Mapping[str, Any]]]]:
-    """The records shown, grouped by mode: Mode C first, then Mode D, then any
-    other in the order first seen; each group in the order given."""
+    """The records shown, grouped by mode, the groups in the order their modes
+    are first shown and each group in the order given: no mode is put first or
+    last by its name."""
     groups: Dict[Optional[str], List[Mapping[str, Any]]] = {}
     for view in views:
         groups.setdefault(record_mode(view), []).append(view)
-    order = list(groups)
-    return sorted(groups.items(), key=lambda kv: (kv[0] != "C", kv[0] != "D",
-                                                 order.index(kv[0])))
-
-
-def _uniform_semantics(views: Sequence[Mapping[str, Any]]) -> Optional[str]:
-    """The score semantics every Mode D record of `views` shares, when they share
-    one served scoring mode and mixing weight (`caveats.served_scoring`); else
-    None."""
-    served = {served_scoring(view.get("score_semantics")) for view in views}
-    if len(served) != 1 or None in served:
-        return None
-    return str(views[0].get("score_semantics"))
+    return list(groups.items())
 
 
 def _column_head(mode: Optional[str], index: int) -> str:
-    """A metric column's header: the metric in full, its mode and case set
-    ("Mode C MRR (untruncated)", "Mode D MRR (import-eligible)"); the bare metric
-    for a mode this version does not describe, whose cells say so."""
-    columns = RECORD_COLUMNS.get(mode) if mode else None
-    if columns is None:
-        return ("MRR", "Hits@10")[index]
-    head, _sep, tail = metric_text(mode, columns[index]).partition(" (")
+    """A described measurement's metric column header: the metric in full, with
+    its task ("Disease pooled MRR"); a part in parentheses kept on one line."""
+    head, _sep, tail = metric_text(mode, RECORD_COLUMNS[mode][index]).partition(" (")
     return r.e(head) + (f' <span class="shep-nowrap">({r.e(tail)}</span>' if tail else "")
 
 
@@ -908,41 +929,28 @@ _TASK_FAMILIES = ("pooled_top", "macro_recall@", "macro_precision@")
 
 
 def _metric_order(name: str) -> Tuple[int, int, int, str]:
-    """MRR, mean rank, Hits@K by K, the rest; Mode D's import-eligible family
-    first, then coverage, then its reached family. A task record's after
-    coverage: its MRRs, then each cut-off family by k."""
+    """A described measurement's other metrics, in words: coverage, its MRRs,
+    then each cut-off family by k; any other name after them, by name."""
+    if name == "coverage":
+        return (0, 0, 0, name)
     if name in _TASK_FIGURES:
-        return (3, _TASK_FIGURES.index(name), 0, name)
+        return (1, _TASK_FIGURES.index(name), 0, name)
     for index, prefix in enumerate(_TASK_FAMILIES):
         k = name[len(prefix):]
         if name.startswith(prefix) and k.isdigit():
-            return (4 + index, 0, int(k), name)
-    family, base = 0, name
-    if name.startswith("post_import_"):
-        base = name[len("post_import_"):]
-    elif name == "coverage":
-        family = 1
-    elif name.startswith("reached_"):
-        family, base = 2, name[len("reached_"):]
-    if base in ("untruncated_mrr", "mrr"):
-        return (family, 0, 0, name)
-    if base == "mean_rank":
-        return (family, 1, 0, name)
-    k = base[len("hits@"):]
-    if base.startswith("hits@") and k.isdigit():
-        return (family, 2, int(k), name)
-    return (family, 3, 0, name)
+            return (2 + index, 0, int(k), name)
+    return (2 + len(_TASK_FAMILIES), 0, 0, name)
 
 
 def records_block_html(views: Sequence[Mapping[str, Any]], contest: Mapping[str, Any], *,
                        unreadable: Sequence[Mapping[str, Any]] = ()) -> str:
-    """Each shown mode's label and note once (the Mode C note beside Mode C
-    records only), the dataset line, the table, the R10 definitions behind a
-    ⓘ, and the records that cannot be read as results (`unreadable_html`)."""
+    """Each shown mode's label (and a described measurement's note) once,
+    directly above its own table, the tables in the order their modes are first
+    shown; the dataset line; the R10 definitions behind a ⓘ; and the records
+    that cannot be read as results (`unreadable_html`). The same for the
+    operator's detail and the read-only view."""
     parts = []
     if views:
-        groups = _by_mode(views)
-        modes = [mode for mode, _group in groups]
         origins = {v.get("dataset_origin") for v in views}
         if len(origins) == 1 and next(iter(origins)) in ORIGIN_MEANING:
             origin = next(iter(origins))
@@ -950,21 +958,14 @@ def records_block_html(views: Sequence[Mapping[str, Any]], contest: Mapping[str,
                     else f"<b>{r.e(origin)}</b>")
             parts.append(f'<p class="shep-mp-p">Dataset of every record below: {word} — '
                          f'{r.e(ORIGIN_MEANING[origin])}.</p>')
-        # Each mode's label and note directly above its own table.
-        for mode, group in groups:
+        for mode, group in _by_mode(views):
             note = mode_note(mode)
-            label = mode_label(mode, _uniform_semantics(group) if mode == "D" else None)
-            parts.append(f'<p class="shep-mp-p"><b>{r.e(label)}.</b>'
+            parts.append(f'<p class="shep-mp-p"><b>{r.e(mode_label(mode))}.</b>'
                          + (f" {r.e(note)}" if note else "") + "</p>")
             parts.append(records_table_html(group, contest))
-        over = {"C": "Mode C metrics are over the ranked cases",
-                "D": "Mode D metrics over the import-eligible or the reached cases, as each "
-                     "name says"}
-        sets = "; ".join(over[m] for m in modes if m in over)
-        figure = ("; the Trainer validation figure is not among them." if sets else
-                  "The Trainer validation figure is not among these records' metrics.")
         parts.append(f'<p class="shep-note">R10 labels '
-                     f'{help_button("models-r10", "R10 labels")} · {sets}{figure}</p>')
+                     f'{help_button("models-r10", "R10 labels")} · The Trainer validation '
+                     "figure is not among these records' metrics.</p>")
     parts.append(unreadable_html(unreadable))
     return "".join(parts)
 
@@ -1362,20 +1363,35 @@ def usage_entry_html(entry: Mapping[str, Any]) -> str:
     if kind == "test_run":
         from src.evaluation.report_store import entry_mode
 
-        metrics = entry.get("metrics") if isinstance(entry.get("metrics"), Mapping) else {}
-        # Named in the entry's own mode, which the figure's label carries.
+        recorded = entry.get("metrics")
+        metrics = recorded if isinstance(recorded, Mapping) else {}
+        # Named in the entry's own mode, which the figure's label carries; an
+        # entry that records none reads "Measurement mode not recorded".
         mode = entry_mode(entry)
         what = "Test run"
         columns = RECORD_COLUMNS.get(mode)
+        n_ranked = entry.get("n_ranked")
+        counted = type(n_ranked) is int
         if columns is None:
-            figure = f"{mode_label(mode)}, {entry.get('n_ranked')} cases"
+            figure = (f"{mode_label(mode)}, "
+                      + (f"{n_ranked} cases" if counted else "case count not recorded"))
         else:
             value = f"{metric_label(columns[0], mode)} {fmt_metric(columns[0], metrics.get(columns[0]))}"
-            figure = (f"{value} · {entry.get('n_ranked')} cases reached" if mode == "D"
-                      else f"{value} over {entry.get('n_ranked')} ranked cases")
-        result = (f"{figure} · {regime_text(entry.get('device'), entry.get('deterministic'))}"
-                  + (" · registration asked" if entry.get("record_requested") else ""))
+            figure = (f"{value} over {n_ranked} ranked cases" if counted
+                      else f"{value}, case count not recorded")
+        # One " · " per line (the skill's §5): the figure, then how it ran,
+        # then every metric the entry records, as recorded, one click away.
+        how = (regime_text(entry.get("device"), entry.get("deterministic"))
+               + ("; registration asked" if entry.get("record_requested") else ""))
+        listed = (recorded_metric_fold(metrics)
+                  if recorded is None or isinstance(recorded, Mapping) else
+                  '<span class="shep-mp-ln shep-muted">metrics not readable as recorded'
+                  '</span>')
         detail = f"run {entry.get('run_id')}"
+        return (f'<tr><td class="shep-nowrap">{r.e(when)}</td><td>{version}</td>'
+                f'<td><div class="shep-w600">{r.e(what)}</div><div class="shep-sub">'
+                f'{r.e(detail)}</div></td><td><div>{r.e(figure)}</div>'
+                f'<div class="shep-sub">{r.e(how)}</div>{listed}</td></tr>')
     elif kind == "registered":
         what = "Registered"
         result = f"#{entry.get('sequence')} · {entry.get('outcome')}"
@@ -1753,6 +1769,11 @@ PAGE_CSS = f"""
 {_PAGE} .shep-mp-rec tr.shep-mp-main td {{ border-bottom: 0; }}
 {_PAGE} .shep-mp-rec tr.shep-mp-more td {{ background: var(--shep-panel-2); font-size: 14px; color: var(--shep-text-2); }}
 {_PAGE} .shep-mp-ln {{ display: block; line-height: 1.45; }}
+/* Every metric as recorded (R2): a closed native disclosure, its summary a 24 px
+   target that shows the keyboard focus (skill §10). */
+{_PAGE} .shep-mp-fold > summary {{ cursor: pointer; min-height: 24px; line-height: 24px; width: max-content; max-width: 100%; }}
+{_PAGE} .shep-mp-fold > summary:focus-visible {{ outline: 2px solid var(--shep-accent); outline-offset: 2px; }}
+{_PAGE} .shep-mp-fold[open] > summary {{ margin-bottom: 2px; }}
 {_PAGE} .shep-mp-delta {{ font-size: 14px; margin-top: 4px; }}
 {_PAGE} .shep-mp-refusal {{ display: flex; flex-direction: column; gap: 6px; margin: 12px 0;
   border: 1px solid var(--shep-grey-200); background: var(--shep-grey-50); border-radius: 8px;
